@@ -1181,7 +1181,8 @@ describe('browserManager', () => {
       setWindowOpenHandler: guestSetWindowOpenHandlerMock,
       on: guestOnMock,
       off: guestOffMock,
-      openDevTools: guestOpenDevToolsMock
+      openDevTools: guestOpenDevToolsMock,
+      close: vi.fn()
     }
     webContentsFromIdMock.mockReturnValue(guest)
 
@@ -1314,7 +1315,8 @@ describe('browserManager', () => {
       setWindowOpenHandler: guestSetWindowOpenHandlerMock,
       on: guestOnMock,
       off: guestOffMock,
-      openDevTools: guestOpenDevToolsMock
+      openDevTools: guestOpenDevToolsMock,
+      close: vi.fn()
     }
     webContentsFromIdMock.mockImplementation((id: number) => {
       if (id === guest.id) {
@@ -2009,7 +2011,8 @@ describe('browserManager', () => {
       setWindowOpenHandler: guestSetWindowOpenHandlerMock,
       on: guestOnMock,
       off: guestOffMock,
-      openDevTools: guestOpenDevToolsMock
+      openDevTools: guestOpenDevToolsMock,
+      close: vi.fn()
     }
     const item = createDownloadItem()
     webContentsFromIdMock.mockImplementation((id: number) => {
@@ -2032,6 +2035,7 @@ describe('browserManager', () => {
 
     browserManager.unregisterGuest('browser-1')
 
+    expect(guest.close).toHaveBeenCalledTimes(1)
     expect(item.cancel).toHaveBeenCalledTimes(1)
     expect(rendererSendMock).toHaveBeenCalledWith(
       'browser:download-finished',
@@ -2739,6 +2743,7 @@ describe('browserManager', () => {
       on: guestOnMock,
       off: guestOffMock,
       openDevTools: guestOpenDevToolsMock,
+      close: vi.fn(),
       getURL: vi.fn(() => 'https://example.com/'),
       debugger: {
         isAttached: vi.fn(() => false),
