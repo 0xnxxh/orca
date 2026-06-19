@@ -2,13 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useAppStore } from '../../store'
 import { useMountedRef } from '@/hooks/useMountedRef'
+import {
+  replacePairedMobileDevices,
+  usePairedMobileDevices,
+  type PairedMobileDevice
+} from '../mobile/paired-mobile-devices'
 import { useMobilePairingDevicePolling } from './mobile-pairing-device-polling'
 import {
   selectRefreshedNetworkAddress,
   type MobileNetworkInterface
 } from './mobile-network-interface-selection'
 import { MobilePairingQrSection } from './MobilePairingQrSection'
-import { MobilePairedDevicesSection, type PairedDevice } from './MobilePairedDevicesSection'
+import { MobilePairedDevicesSection } from './MobilePairedDevicesSection'
 import { MobileAutoRestoreFitSection } from './MobileAutoRestoreFitSection'
 import { MobilePairingConnectionOptions } from './MobilePairingConnectionOptions'
 import { MobilePairingSetupSection } from './MobilePairingSetupSection'
@@ -24,7 +29,6 @@ export function MobilePane(): React.JSX.Element {
   const [pairingUrl, setPairingUrl] = useState<string | null>(null)
   const [endpoint, setEndpoint] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [devices, setDevices] = useState<PairedDevice[]>([])
   const [qrEnlarged, setQrEnlarged] = useState(false)
   const [networkInterfaces, setNetworkInterfaces] = useState<MobileNetworkInterface[]>([])
   const [selectedAddress, setSelectedAddress] = useState<string | undefined>(undefined)
@@ -36,10 +40,11 @@ export function MobilePane(): React.JSX.Element {
   // TestFlight preview and Android APK.
   const [connectionMode, setConnectionMode] = useState<MobilePairingConnectionMode>('local-only')
   const [rotateNextQr, setRotateNextQr] = useState(false)
-  const devicesRef = useRef<PairedDevice[]>([])
+  const devicesRef = useRef<readonly PairedMobileDevice[]>([])
   const wasSignedInRef = useRef(signedIn)
   const codeCopiedResetTimerRef = useRef<number | null>(null)
   const mountedRef = useMountedRef()
+  const { devices, refresh: refreshDevices } = usePairedMobileDevices({ refreshOnMount: false })
 
   const clearCodeCopiedResetTimer = useCallback((): void => {
     if (codeCopiedResetTimerRef.current !== null) {
@@ -48,17 +53,17 @@ export function MobilePane(): React.JSX.Element {
     }
   }, [])
 
+  useEffect(() => {
+    devicesRef.current = devices
+  }, [devices])
+
   const loadDevices = useCallback(async () => {
     try {
-      const result = await window.api.mobile.listDevices()
-      if (mountedRef.current) {
-        devicesRef.current = result.devices
-        setDevices(result.devices)
-      }
+      devicesRef.current = await refreshDevices()
     } catch {
       // Silently fail — device list is non-critical
     }
-  }, [mountedRef])
+  }, [refreshDevices])
 
   const loadNetworkInterfaces = useCallback(
     async (opts: { notifyOnError?: boolean } = {}) => {
@@ -185,12 +190,17 @@ export function MobilePane(): React.JSX.Element {
   async function revokeDevice(deviceId: string) {
     try {
       await window.api.mobile.revokeDevice({ deviceId })
+      try {
+        // Why: the backend may have learned about another phone while Settings
+        // was open, so refresh from source-of-truth after mutating it.
+        devicesRef.current = await refreshDevices({ force: true })
+      } catch (err) {
+        console.error('mobile.listDevices failed after revoke', err)
+        const nextDevices = devicesRef.current.filter((d) => d.deviceId !== deviceId)
+        devicesRef.current = nextDevices
+        replacePairedMobileDevices(nextDevices)
+      }
       if (mountedRef.current) {
-        setDevices((prev) => {
-          const nextDevices = prev.filter((d) => d.deviceId !== deviceId)
-          devicesRef.current = nextDevices
-          return nextDevices
-        })
         toast.success(translate('auto.components.settings.MobilePane.2e3dd0bc29', 'Device revoked'))
       }
     } catch {
