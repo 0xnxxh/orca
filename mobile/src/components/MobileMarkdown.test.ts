@@ -91,4 +91,16 @@ describe('parseMobileMarkdown', () => {
       `${literalPlaceholder} and \`Array<string>\``
     )
   })
+
+  it('strips HTML tags outside the allow-list instead of leaking raw markup', () => {
+    const svg = normalizeMobileMarkdownPreviewHtml(
+      '<p>Logo <svg viewBox="0 0 1 1"><path d="M0 0"/></svg> done</p>'
+    )
+    expect(svg).not.toContain('<svg')
+    expect(svg).not.toContain('<path')
+    expect(svg).toContain('Logo')
+    expect(svg).toContain('done')
+    expect(normalizeMobileMarkdownPreviewHtml('<center>Title</center>')).toBe('Title')
+    expect(normalizeMobileMarkdownPreviewHtml('<my-widget>Hi</my-widget>')).toBe('Hi')
+  })
 })

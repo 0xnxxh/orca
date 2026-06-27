@@ -54,8 +54,25 @@ function stripTags(value: string): string {
   const stripped = decodeHtmlEntities(
     protectedText
       .replace(/<!--[\s\S]*?-->/g, '')
-      .replace(/<\/?([A-Za-z][A-Za-z0-9:-]*)(?:\s[^<>]*)?\/?>/g, (tag, name: string) =>
-        strippableHtmlTagNames.has(name.toLowerCase()) ? '' : tag
+      .replace(
+        /(\w)?(<\/?)([A-Za-z][A-Za-z0-9:-]*)((?:\s[^<>]*)?)(\/?)>/g,
+        (match, prevChar: string | undefined, open: string, name: string, attrs: string, selfClose: string) => {
+          // Why: distinguish real HTML/markup tags from generic-type prose like
+          // `Array<string>`. Closing/self-closing/attributed tags and
+          // custom/namespaced names (hyphen or colon) are never generics, so
+          // strip them regardless of the allow-list. A bare `<word>` is only a
+          // generic when glued to a preceding identifier char.
+          const looksLikeGeneric =
+            Boolean(prevChar) &&
+            open !== '</' &&
+            selfClose !== '/' &&
+            attrs.trim().length === 0 &&
+            !/[-:]/.test(name)
+          if (looksLikeGeneric && !strippableHtmlTagNames.has(name.toLowerCase())) {
+            return match
+          }
+          return prevChar ?? ''
+        }
       ),
     true
   )
