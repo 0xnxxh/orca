@@ -978,6 +978,7 @@ class InMemoryOrchestrationMessages {
     priority?: MessagePriority
     threadId?: string
     payload?: string
+    workspaceKey?: string | null
   }): MessageRow {
     this.sequence += 1
     const row: MessageRow = {
@@ -994,7 +995,8 @@ class InMemoryOrchestrationMessages {
       sequence: this.sequence,
       created_at: '1970-01-01 00:00:00',
       delivered_at: null,
-      sender_pane_key: null
+      sender_pane_key: null,
+      workspace_key: msg.workspaceKey ?? null
     }
     this.messages.push(row)
     return row
