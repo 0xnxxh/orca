@@ -3573,6 +3573,26 @@ describe('orca cli worktree awareness', () => {
     })
   })
 
+  it('treats --worktree all as explicit global orchestration run scope', async () => {
+    process.env.ORCA_TERMINAL_HANDLE = 'term_coord'
+    queueFixtures(callMock, okFixture('req_run', { runId: 'run_1', status: 'running' }))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      ['orchestration', 'run', '--spec', 'ship it', '--worktree', 'all', '--json'],
+      '/tmp/repo/feature/src'
+    )
+
+    expect(callMock).toHaveBeenCalledTimes(1)
+    expect(callMock).toHaveBeenCalledWith('orchestration.run', {
+      spec: 'ship it',
+      from: 'term_coord',
+      pollIntervalMs: undefined,
+      maxConcurrent: undefined,
+      worktree: 'all'
+    })
+  })
+
   it('accepts and resolves --worktree for orchestration run-stop', async () => {
     queueFixtures(
       callMock,
@@ -3588,6 +3608,21 @@ describe('orca cli worktree awareness', () => {
 
     expect(callMock).toHaveBeenNthCalledWith(2, 'orchestration.runStop', {
       worktree: 'id:repo::/tmp/repo/feature'
+    })
+  })
+
+  it('passes --worktree all through for explicit global orchestration run-stop', async () => {
+    queueFixtures(callMock, okFixture('req_run_stop', { runId: 'run_1', stopped: true }))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      ['orchestration', 'run-stop', '--worktree', 'all', '--json'],
+      '/tmp/repo/feature/src'
+    )
+
+    expect(callMock).toHaveBeenCalledTimes(1)
+    expect(callMock).toHaveBeenCalledWith('orchestration.runStop', {
+      worktree: 'all'
     })
   })
 

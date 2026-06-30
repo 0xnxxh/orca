@@ -130,11 +130,11 @@ Dispatch rules:
 orca orchestration gate-create --task <task_id> --question <text> [--options <json_array>] [--json]
 orca orchestration gate-resolve --id <gate_id> --resolution <text> [--json]
 orca orchestration gate-list [--task <task_id>] [--status <status>] [--json]
-orca orchestration run --spec <text> [--from <handle>] [--poll-interval-ms <n>] [--max-concurrent <n>] [--worktree <selector>] [--json]
-orca orchestration run-stop [--json]
+orca orchestration run --spec <text> [--from <handle>] [--poll-interval-ms <n>] [--max-concurrent <n>] [--worktree <selector|all>] [--json]
+orca orchestration run-stop [--worktree <selector|all>] [--json]
 ```
 
-`run` returns immediately with a run ID. Query progress with `task-list`. Use `ask` for worker-to-coordinator questions; it creates a `decision_gate` message that the coordinator answers with `reply`. Use `gate-create` only for coordinator-managed task DAG decisions, not for answering a worker's `ask`.
+`run` returns immediately with a run ID. `--worktree <selector>` scopes ownership to that workspace; `--worktree all` (or no `--worktree`) is the explicit global coordinator and cannot safely run alongside scoped coordinators because it sees all tasks. `run-stop` with no `--worktree` is only for the legacy single-active-run case; pass `--worktree <selector>` or `--worktree all` when more than one coordinator may be active. Query progress with `task-list`. Use `ask` for worker-to-coordinator questions; it creates a `decision_gate` message that the coordinator answers with `reply`. Use `gate-create` only for coordinator-managed task DAG decisions, not for answering a worker's `ask`.
 
 Recovery only: `orca orchestration reset --tasks|--messages|--all --json` clears runtime-global orchestration state. Do not run it during active coordination unless explicitly abandoning that state.
 

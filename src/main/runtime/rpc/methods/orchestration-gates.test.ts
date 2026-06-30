@@ -22,6 +22,14 @@ function expectOk(response: RpcResponse): Extract<RpcResponse, { ok: true }> {
   return response
 }
 
+function expectError(response: RpcResponse, message: RegExp): Extract<RpcResponse, { ok: false }> {
+  if (response.ok) {
+    throw new Error(`expected error response, got ok: ${JSON.stringify(response.result)}`)
+  }
+  expect(response.error.message).toMatch(message)
+  return response
+}
+
 function runId(response: RpcResponse): string {
   return (expectOk(response).result as { runId: string }).runId
 }
@@ -108,6 +116,46 @@ describe('orchestration start/stop guard scoping (#4389)', () => {
     }
   })
 
+  it('treats --worktree all as the explicit global coordinator scope', async () => {
+    const db = new OrchestrationDb(':memory:')
+    const runtime = makeRuntime(db)
+    const dispatcher = new RpcDispatcher({ runtime, methods: ORCHESTRATION_GATE_METHODS })
+    try {
+      db.createTask({ spec: 'global-work' })
+
+      const globalRunId = runId(
+        await dispatcher.dispatch(
+          makeRequest('orchestration.run', {
+            spec: 'global',
+            from: 'coord_global',
+            worktree: 'all',
+            pollIntervalMs: SHORT_POLL_MS
+          })
+        )
+      )
+
+      expect(db.getCoordinatorRun(globalRunId)?.workspace_key).toBeNull()
+      expect(db.getActiveGlobalCoordinatorRun()?.id).toBe(globalRunId)
+
+      db.createTask({ spec: 'a-work', workspaceKey: 'worktree:wt_a' })
+      expectError(
+        await dispatcher.dispatch(
+          makeRequest('orchestration.run', {
+            spec: 'scoped',
+            from: 'coord_a',
+            worktree: 'worktree:wt_a',
+            pollIntervalMs: SHORT_POLL_MS
+          })
+        ),
+        /Coordinator already running/
+      )
+
+      await stopAndDrain(dispatcher, ['all'])
+    } finally {
+      db.close()
+    }
+  })
+
   it('does not fall back to the global coordinator when an explicit worktree selector fails', async () => {
     const db = new OrchestrationDb(':memory:')
     const runtime = makeRuntime(db)
@@ -156,10 +204,7 @@ describe('orchestration start/stop guard scoping (#4389)', () => {
           pollIntervalMs: SHORT_POLL_MS
         })
       )
-      expect(second.ok).toBe(false)
-      if (!second.ok) {
-        expect(second.error.message).toMatch(/Coordinator already running/)
-      }
+      expectError(second, /Coordinator already running/)
 
       await stopAndDrain(dispatcher, ['worktree:wt_a'])
     } finally {
@@ -207,6 +252,134 @@ describe('orchestration start/stop guard scoping (#4389)', () => {
       expect(db.getActiveCoordinatorRun('worktree:wt_a')?.id).toBe(runAId)
 
       await stopAndDrain(dispatcher, ['worktree:wt_a'])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('runStop --worktree all stops the global coordinator exactly', async () => {
+    const db = new OrchestrationDb(':memory:')
+    const runtime = makeRuntime(db)
+    const dispatcher = new RpcDispatcher({ runtime, methods: ORCHESTRATION_GATE_METHODS })
+    try {
+      db.createTask({ spec: 'global-work' })
+      const globalRunId = runId(
+        await dispatcher.dispatch(
+          makeRequest('orchestration.run', {
+            spec: 'global',
+            from: 'coord_global',
+            worktree: 'all',
+            pollIntervalMs: SHORT_POLL_MS
+          })
+        )
+      )
+
+      const stopGlobal = expectOk(
+        await dispatcher.dispatch(makeRequest('orchestration.runStop', { worktree: 'all' }))
+      )
+
+      expect((stopGlobal.result as { runId: string }).runId).toBe(globalRunId)
+      await new Promise((resolve) => setTimeout(resolve, SHORT_POLL_MS * 4))
+      expect(db.getCoordinatorRun(globalRunId)?.status).toBe('failed')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('runStop with a scoped worktree does not match the global coordinator', async () => {
+    const db = new OrchestrationDb(':memory:')
+    const runtime = makeRuntime(db)
+    const dispatcher = new RpcDispatcher({ runtime, methods: ORCHESTRATION_GATE_METHODS })
+    try {
+      db.createTask({ spec: 'global-work' })
+      const globalRunId = runId(
+        await dispatcher.dispatch(
+          makeRequest('orchestration.run', {
+            spec: 'global',
+            from: 'coord_global',
+            worktree: 'all',
+            pollIntervalMs: SHORT_POLL_MS
+          })
+        )
+      )
+
+      expectError(
+        await dispatcher.dispatch(
+          makeRequest('orchestration.runStop', { worktree: 'worktree:wt_a' })
+        ),
+        /No active coordinator run for requested worktree/
+      )
+      expect(db.getActiveGlobalCoordinatorRun()?.id).toBe(globalRunId)
+
+      await stopAndDrain(dispatcher, ['all'])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('runStop with no worktree stops the only active scoped coordinator', async () => {
+    const db = new OrchestrationDb(':memory:')
+    const runtime = makeRuntime(db)
+    const dispatcher = new RpcDispatcher({ runtime, methods: ORCHESTRATION_GATE_METHODS })
+    try {
+      db.createTask({ spec: 'a-work', workspaceKey: 'worktree:wt_a' })
+      const runAId = runId(
+        await dispatcher.dispatch(
+          makeRequest('orchestration.run', {
+            spec: 'a',
+            from: 'coord_a',
+            worktree: 'worktree:wt_a',
+            pollIntervalMs: SHORT_POLL_MS
+          })
+        )
+      )
+
+      const stopOnlyRun = expectOk(await dispatcher.dispatch(makeRequest('orchestration.runStop')))
+
+      expect((stopOnlyRun.result as { runId: string }).runId).toBe(runAId)
+      await new Promise((resolve) => setTimeout(resolve, SHORT_POLL_MS * 4))
+      expect(db.getCoordinatorRun(runAId)?.status).toBe('failed')
+    } finally {
+      db.close()
+    }
+  })
+
+  it('runStop with no worktree rejects multiple active scoped coordinators', async () => {
+    const db = new OrchestrationDb(':memory:')
+    const runtime = makeRuntime(db)
+    const dispatcher = new RpcDispatcher({ runtime, methods: ORCHESTRATION_GATE_METHODS })
+    try {
+      db.createTask({ spec: 'a-work', workspaceKey: 'worktree:wt_a' })
+      db.createTask({ spec: 'b-work', workspaceKey: 'worktree:wt_b' })
+      const runAId = runId(
+        await dispatcher.dispatch(
+          makeRequest('orchestration.run', {
+            spec: 'a',
+            from: 'coord_a',
+            worktree: 'worktree:wt_a',
+            pollIntervalMs: SHORT_POLL_MS
+          })
+        )
+      )
+      const runBId = runId(
+        await dispatcher.dispatch(
+          makeRequest('orchestration.run', {
+            spec: 'b',
+            from: 'coord_b',
+            worktree: 'worktree:wt_b',
+            pollIntervalMs: SHORT_POLL_MS
+          })
+        )
+      )
+
+      expectError(
+        await dispatcher.dispatch(makeRequest('orchestration.runStop')),
+        /Multiple active coordinator runs/
+      )
+      expect(db.getActiveCoordinatorRunForWorkspace('worktree:wt_a')?.id).toBe(runAId)
+      expect(db.getActiveCoordinatorRunForWorkspace('worktree:wt_b')?.id).toBe(runBId)
+
+      await stopAndDrain(dispatcher, ['worktree:wt_a', 'worktree:wt_b'])
     } finally {
       db.close()
     }
