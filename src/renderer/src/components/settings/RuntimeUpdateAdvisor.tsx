@@ -10,6 +10,7 @@ import { NativeChatCopyButton } from '../native-chat/NativeChatCopyButton'
 import { Button } from '../ui/button'
 import { translate } from '@/i18n/i18n'
 import { buildRuntimeUpdateAdvisorGuide } from './runtime-update-advisor-model'
+import { useRuntimeReleaseMetadata } from './use-runtime-release-metadata'
 
 /** 'checking' disables the button and shows a spinner; 'still-blocked' means the
  *  last recheck came back incompatible, so an inline note confirms the click had
@@ -31,7 +32,10 @@ export function RuntimeUpdateAdvisor({
   recheckState,
   onRecheck
 }: RuntimeUpdateAdvisorProps): React.JSX.Element | null {
-  const guide = buildRuntimeUpdateAdvisorGuide({ verdict, status, portHint })
+  // Lazily fetched only for a shown server-too-old block; pending/failed → the
+  // guide renders version-less. Manifest values win over server-supplied hints.
+  const releaseMetadata = useRuntimeReleaseMetadata(verdict, status)
+  const guide = buildRuntimeUpdateAdvisorGuide({ verdict, status, portHint, releaseMetadata })
   if (!guide) {
     return null
   }

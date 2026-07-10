@@ -106,6 +106,40 @@ describe('deriveRuntimeUpdateGuideInput trust boundary', () => {
     expect(derived.assetUrl).toBeUndefined()
   })
 
+  it('lets client-fetched manifest metadata win over server-supplied hints', () => {
+    const derived = deriveRuntimeUpdateGuideInput({
+      verdict: SERVER_TOO_OLD,
+      status: status({
+        installKind: 'linux-deb',
+        currentVersion: '1.0.0',
+        // Startup-stale server hints — the manifest must override them.
+        latestVersion: '1.1.0',
+        updateAvailable: false
+      }),
+      releaseMetadata: {
+        latestVersion: '1.4.0',
+        updateAvailable: true,
+        assetUrl:
+          'https://github.com/stablyai/orca/releases/latest/download/orca-ide_1.4.0_amd64.deb'
+      }
+    })
+    expect(derived.latestVersion).toBe('1.4.0')
+    expect(derived.updateAvailable).toBe(true)
+    expect(derived.assetUrl).toBe(
+      'https://github.com/stablyai/orca/releases/latest/download/orca-ide_1.4.0_amd64.deb'
+    )
+  })
+
+  it('falls back to server-supplied version hints while the manifest is absent', () => {
+    const derived = deriveRuntimeUpdateGuideInput({
+      verdict: SERVER_TOO_OLD,
+      status: status({ latestVersion: '1.1.0', updateAvailable: true })
+    })
+    expect(derived.latestVersion).toBe('1.1.0')
+    expect(derived.updateAvailable).toBe(true)
+    expect(derived.assetUrl).toBeUndefined()
+  })
+
   it('maps unrecognized install/restart kinds to unknown', () => {
     const derived = deriveRuntimeUpdateGuideInput({
       verdict: SERVER_TOO_OLD,

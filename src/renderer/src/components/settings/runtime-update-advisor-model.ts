@@ -5,6 +5,7 @@
 // `status.updateInfo` through the shared validator — lives in one place.
 
 import type { RuntimeCompatVerdict } from '../../../../shared/protocol-compat'
+import type { ReleaseMetadata } from '../../../../shared/runtime-release-manifest'
 import type { RuntimeStatus } from '../../../../shared/runtime-types'
 import {
   buildRuntimeUpdateGuide,
@@ -19,18 +20,24 @@ export type RuntimeUpdateAdvisorModelInput = {
   /** Port from the client's own paired endpoint — a hint the guide falls back
    *  from when absent. Never sourced from server metadata. */
   portHint?: number
+  /** Client-fetched release-manifest metadata. Wins over server-supplied
+   *  latestVersion/updateAvailable (which are startup-stale hints), and is the
+   *  only source of the exact deb/rpm asset URL. Absent while pending/failed. */
+  releaseMetadata?: ReleaseMetadata
 }
 
 /**
  * Derive the guide-matrix input from the verdict + status. `status.updateInfo`
  * is untrusted server data, so it always passes through `validateRuntimeUpdateInfo`
- * before any field selects a template or fills a placeholder. `assetUrl` is left
- * unset — a later unit supplies exact release asset URLs.
+ * before any field selects a template or fills a placeholder. `assetUrl` and the
+ * winning latestVersion/updateAvailable come from the client-fetched manifest via
+ * `input.releaseMetadata` when available.
  */
 export function deriveRuntimeUpdateGuideInput(
   input: RuntimeUpdateAdvisorModelInput
 ): RuntimeUpdateGuideInput {
   const validated = validateRuntimeUpdateInfo(input.status.updateInfo)
+  const release = input.releaseMetadata
   return {
     verdict: input.verdict,
     hostPlatform: input.status.hostPlatform,
@@ -40,8 +47,11 @@ export function deriveRuntimeUpdateGuideInput(
     serviceName: validated.serviceName,
     installPath: validated.installPath,
     currentVersion: validated.currentVersion,
-    latestVersion: validated.latestVersion,
-    updateAvailable: validated.updateAvailable,
+    // Client-fetched manifest wins; fall back to the server's startup-stale hint
+    // only when the manifest is pending or failed (`??` keeps a manifest `false`).
+    latestVersion: release?.latestVersion ?? validated.latestVersion,
+    updateAvailable: release?.updateAvailable ?? validated.updateAvailable,
+    assetUrl: release?.assetUrl,
     docsUrl: validated.docsUrl,
     port: input.portHint
   }

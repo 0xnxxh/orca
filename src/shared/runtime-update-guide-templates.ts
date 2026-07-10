@@ -9,6 +9,10 @@ import type { RuntimeInstallKind, RuntimeRestartKind } from './runtime-types'
 // Only unversioned artifact names are stable at the `latest/download` path;
 // versioned deb/rpm filenames must come from release metadata, never invented.
 const LATEST_DOWNLOAD_BASE = 'https://github.com/stablyai/orca/releases/latest/download'
+// Same generic feed the desktop updater publishes electron-updater manifests to;
+// the release-metadata lookup fetches `latest-*.yml` and resolves asset URLs
+// against this base, so both share one source of truth for the origin.
+export const ORCA_LATEST_DOWNLOAD_BASE_URL = LATEST_DOWNLOAD_BASE
 export const ORCA_RELEASES_PAGE_URL = 'https://github.com/stablyai/orca/releases'
 export const ORCA_HEADLESS_DOC_URL =
   'https://github.com/stablyai/orca/blob/main/docs/reference/headless-linux-server.md'
