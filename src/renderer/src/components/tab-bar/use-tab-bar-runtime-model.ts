@@ -2,10 +2,12 @@ import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { GitFileStatus, GlobalSettings, Tab, TuiAgent } from '../../../../shared/types'
 import type { ProjectExecutionRuntimeResolution } from '../../../../shared/project-execution-runtime'
+import { toLegacyAutoPreference } from '../../../../shared/tui-agent-selection'
 import { useAppStore } from '../../store'
 import { buildStatusMap } from '../right-sidebar/status-display'
 import { useDetectedAgents } from '@/hooks/useDetectedAgents'
 import { useAgentDetectionTargetForWorktree } from '@/hooks/useAgentDetectionTarget'
+import { useLocalAgentCatalog } from '@/hooks/useLocalAgentCatalog'
 import { getConnectionIdFromState } from '@/lib/connection-context'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
 import { isNativeChatTranscriptLocalReadable } from '@/lib/native-chat-transcript-readability'
@@ -22,7 +24,11 @@ import {
   selectTabBarAgentProjections,
   type TabBarAgentProjections
 } from './tab-agent-types-by-tab-id'
-import { buildTabAgentLaunchOptions, orderTabLaunchAgents } from './tab-agent-launch-options'
+import {
+  buildTabAgentLaunchOptions,
+  deriveTabCustomAgentEntries,
+  orderTabLaunchAgents
+} from './tab-agent-launch-options'
 import type { TabAgentLaunchOption } from './tab-agent-launch-options'
 import { shouldShowWindowsShellMenu } from './windows-shell-menu-visibility'
 import { createUnifiedTabLookup } from './tab-bar-item-model'
@@ -33,6 +39,7 @@ type AppStoreState = ReturnType<typeof useAppStore.getState>
 type GitStatusEntries = AppStoreState['gitStatusByWorktree'][string]
 const EMPTY_GIT_STATUS_ENTRIES: GitStatusEntries = []
 const EMPTY_AGENT_CMD_OVERRIDES: Partial<Record<TuiAgent, string>> = {}
+const EMPTY_DISABLED_TUI_AGENTS: readonly TuiAgent[] = []
 const EMPTY_UNIFIED_TABS: readonly Tab[] = []
 
 export function getProjectRuntimeShellMenuMode(
@@ -134,20 +141,24 @@ export function useTabBarRuntimeModel({
     }
     return s.sshConnectionStates.get(worktreeConnectionId)?.remotePlatform ?? null
   })
-  const defaultAgent = useAppStore((s) => s.settings?.defaultTuiAgent)
+  const defaultAgent = toLegacyAutoPreference(useAppStore((s) => s.settings?.defaultTuiAgent))
   const agentCmdOverrides = useAppStore(
     (s) => s.settings?.agentCmdOverrides ?? EMPTY_AGENT_CMD_OVERRIDES
   )
   const agentDetectionTarget = useAgentDetectionTargetForWorktree(worktreeId)
-  const { detectedIds } = useDetectedAgents(agentDetectionTarget)
-  const agentLaunchOptions = useMemo(
-    () =>
-      buildTabAgentLaunchOptions(
-        orderTabLaunchAgents(defaultAgent, detectedIds ?? []),
-        agentCmdOverrides
-      ),
-    [agentCmdOverrides, defaultAgent, detectedIds]
+  const disabledTuiAgents = useAppStore(
+    (s) => s.settings?.disabledTuiAgents ?? EMPTY_DISABLED_TUI_AGENTS
   )
+  const { snapshot: localAgentCatalog } = useLocalAgentCatalog()
+  const { detectedIds } = useDetectedAgents(agentDetectionTarget)
+  const agentLaunchOptions = useMemo(() => {
+    const customs = deriveTabCustomAgentEntries(localAgentCatalog, disabledTuiAgents)
+    return buildTabAgentLaunchOptions(
+      orderTabLaunchAgents(defaultAgent, detectedIds ?? [], customs),
+      agentCmdOverrides,
+      customs
+    )
+  }, [agentCmdOverrides, defaultAgent, detectedIds, disabledTuiAgents, localAgentCatalog])
   const isWebClient = (globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__ === true
   const windowsTerminalCapabilityOwnerKey = getWindowsTerminalCapabilityOwnerKey(
     activeRuntimeEnvironmentId,
