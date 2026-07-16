@@ -76,6 +76,10 @@ function ghApiHostArgs(ownerRepo: GitHubOwnerRepoSlug): string[] {
   return ownerRepo.host && ownerRepo.host !== 'github.com' ? ['--hostname', ownerRepo.host] : []
 }
 
+function encodeGitHubContentPath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/')
+}
+
 const PR_FILE_VIEWED_STATES_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
@@ -1251,7 +1255,7 @@ async function fetchContentAtRef(args: {
         '-H',
         'Accept: application/vnd.github.raw',
         ...ghApiHostArgs(args.ownerRepo),
-        `repos/${args.ownerRepo.owner}/${args.ownerRepo.repo}/contents/${encodeURI(args.path)}?ref=${encodeURIComponent(args.ref)}`
+        `repos/${args.ownerRepo.owner}/${args.ownerRepo.repo}/contents/${encodeGitHubContentPath(args.path)}?ref=${encodeURIComponent(args.ref)}`
       ],
       {
         ...ghRepoExecOptions(
