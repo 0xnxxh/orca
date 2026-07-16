@@ -13,6 +13,8 @@ const {
   getPRCommentsMock,
   rateLimitGuardMock,
   noteRateLimitSpendMock,
+  repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpendMock,
   acquireMock,
   releaseMock
 } = vi.hoisted(() => ({
@@ -24,6 +26,8 @@ const {
   getPRCommentsMock: vi.fn(),
   rateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
   noteRateLimitSpendMock: vi.fn(),
+  repositoryRateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
+  noteRepositoryRateLimitSpendMock: vi.fn(),
   acquireMock: vi.fn(),
   releaseMock: vi.fn()
 }))
@@ -50,7 +54,9 @@ vi.mock('./client', () => ({
 
 vi.mock('./rate-limit', () => ({
   rateLimitGuard: rateLimitGuardMock,
-  noteRateLimitSpend: noteRateLimitSpendMock
+  noteRateLimitSpend: noteRateLimitSpendMock,
+  repositoryRateLimitGuard: repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpend: noteRepositoryRateLimitSpendMock
 }))
 
 import { getWorkItemDetails } from './work-item-details'
@@ -66,6 +72,9 @@ describe('getWorkItemDetails PR file viewed state', () => {
     rateLimitGuardMock.mockReset()
     rateLimitGuardMock.mockReturnValue({ blocked: false })
     noteRateLimitSpendMock.mockReset()
+    repositoryRateLimitGuardMock.mockReset()
+    repositoryRateLimitGuardMock.mockReturnValue({ blocked: false })
+    noteRepositoryRateLimitSpendMock.mockReset()
     acquireMock.mockReset()
     releaseMock.mockReset()
     acquireMock.mockResolvedValue(undefined)

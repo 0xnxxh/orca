@@ -120,6 +120,36 @@ export function noteRateLimitSpend(bucket: RateLimitBucketKind, cost = 1): void 
   }
 }
 
+// Why: this snapshot covers native github.com only; GHES and WSL use quotas protected by the runner's scoped breaker.
+export function spendsSharedGitHubComQuota(
+  repository: { host?: string } | null | undefined,
+  executionOptions?: { wslDistro?: string }
+): boolean {
+  const host = repository?.host
+  return (!host || host.toLowerCase() === 'github.com') && !executionOptions?.wslDistro
+}
+
+export function repositoryRateLimitGuard(
+  repository: { host?: string } | null | undefined,
+  bucket: RateLimitBucketKind,
+  executionOptions?: { wslDistro?: string }
+): ReturnType<typeof rateLimitGuard> {
+  return spendsSharedGitHubComQuota(repository, executionOptions)
+    ? rateLimitGuard(bucket)
+    : { blocked: false }
+}
+
+export function noteRepositoryRateLimitSpend(
+  repository: { host?: string } | null | undefined,
+  bucket: RateLimitBucketKind,
+  cost = 1,
+  executionOptions?: { wslDistro?: string }
+): void {
+  if (spendsSharedGitHubComQuota(repository, executionOptions)) {
+    noteRateLimitSpend(bucket, cost)
+  }
+}
+
 // Why: the breaker only knows "blocked", not the reset time; one exempt probe refines it to the real reset or clears a stale block (single-flight so a 403 burst probes once).
 let resetRefinementInFlight: Promise<void> | null = null
 
@@ -178,8 +208,9 @@ async function fetchRateLimitSnapshot(): Promise<GetRateLimitResult> {
   try {
     // Why: this singleton snapshot guards native github.com traffic. Pin the
     // host so a process-level GH_HOST cannot make it describe a GHES account.
-    const { stdout } = await ghExecFileAsync(['api', '--hostname', 'github.com', 'rate_limit'], {
-      encoding: 'utf-8'
+    const { stdout } = await ghExecFileAsync(['api', 'rate_limit'], {
+      encoding: 'utf-8',
+      host: 'github.com'
     })
     const parsed = JSON.parse(stdout) as GhRateLimitPayload
     const snapshot: GitHubRateLimitSnapshot = {

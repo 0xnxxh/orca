@@ -134,15 +134,13 @@ describe('setPRFileViewed', () => {
       })
     ).resolves.toBe(true)
 
+    // The runner injects --hostname at spawn time from options.host, so the
+    // mocked call sees unqualified argv plus the Enterprise host in options.
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        'api',
-        '--hostname',
-        'github.acme-corp.com',
-        'graphql',
-        'pullRequestId=PR_enterprise'
-      ]),
-      {}
+      expect.arrayContaining(['api', 'graphql', 'pullRequestId=PR_enterprise']),
+      { host: 'github.acme-corp.com' }
     )
+    const [args] = ghExecFileAsyncMock.mock.calls[0]
+    expect(args).not.toContain('--hostname')
   })
 })

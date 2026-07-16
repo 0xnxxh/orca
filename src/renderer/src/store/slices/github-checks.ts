@@ -1,6 +1,7 @@
 import type { AppState } from '../types'
 import type { PRCheckDetail, CheckStatus, GitHubOwnerRepo } from '../../../../shared/types'
 import { getGitHubPRCacheKey } from './github-cache-key'
+import { githubRepoIdentityKey } from '../../../../shared/github-repository-identity-key'
 
 export function normalizeBranchName(branch: string): string {
   return branch.replace(/^refs\/heads\//, '')
@@ -97,12 +98,7 @@ export function syncPRChecksStatus(
 }
 
 function normalizedPRRepo(repo?: GitHubOwnerRepo | null): string | null {
-  if (!repo) {
-    return null
-  }
-  const slug = `${repo.owner.toLowerCase()}/${repo.repo.toLowerCase()}`
-  const host = repo.host?.toLowerCase()
-  return host && host !== 'github.com' ? `${host}/${slug}` : slug
+  return repo ? githubRepoIdentityKey(repo) : null
 }
 
 function samePRRepo(left?: GitHubOwnerRepo | null, right?: GitHubOwnerRepo | null): boolean {

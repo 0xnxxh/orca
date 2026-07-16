@@ -28,7 +28,10 @@ vi.mock('../git/runner', () => ({
 
 vi.mock('./rate-limit', () => ({
   rateLimitGuard: rateLimitGuardMock,
-  noteRateLimitSpend: vi.fn()
+  noteRateLimitSpend: vi.fn(),
+  repositoryRateLimitGuard: vi.fn(() => ({ blocked: false })),
+  noteRepositoryRateLimitSpend: vi.fn(),
+  spendsSharedGitHubComQuota: vi.fn(() => true)
 }))
 
 import { getPRCheckDetails, _resetOwnerRepoCache } from './client'
@@ -212,9 +215,9 @@ describe('getPRCheckDetails', () => {
   })
 
   it('isolates failed-job log tails for the same job ID on different GitHub hosts', async () => {
-    ghExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+    ghExecFileAsyncMock.mockImplementation(async (args: string[], options?: { host?: string }) => {
       const endpoint = args.find((arg) => arg.startsWith('repos/')) ?? ''
-      const enterprise = args.includes('github.acme-corp.com')
+      const enterprise = options?.host === 'github.acme-corp.com'
       if (endpoint.endsWith('/check-runs/99')) {
         return {
           stdout: JSON.stringify({
@@ -264,6 +267,6 @@ describe('getPRCheckDetails', () => {
       args.some((arg) => arg.endsWith('/actions/jobs/9901/logs'))
     )
     expect(logCalls).toHaveLength(2)
-    expect(logCalls[1]?.[0]).toEqual(expect.arrayContaining(['--hostname', 'github.acme-corp.com']))
+    expect(logCalls[1]?.[1]).toEqual(expect.objectContaining({ host: 'github.acme-corp.com' }))
   })
 })

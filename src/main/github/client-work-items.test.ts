@@ -64,7 +64,10 @@ vi.mock('../git/runner', () => ({
 vi.mock('./rate-limit', () => ({
   rateLimitGuard: rateLimitGuardMock,
   noteRateLimitSpend: noteRateLimitSpendMock,
-  getRateLimit: vi.fn(async () => ({ ok: false, error: 'not probed in tests' }))
+  getRateLimit: vi.fn(async () => ({ ok: false, error: 'not probed in tests' })),
+  repositoryRateLimitGuard: vi.fn(() => ({ blocked: false })),
+  noteRepositoryRateLimitSpend: vi.fn(),
+  spendsSharedGitHubComQuota: () => true
 }))
 
 import {

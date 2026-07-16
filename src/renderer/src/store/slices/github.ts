@@ -2,6 +2,7 @@
 import type { StateCreator } from 'zustand'
 import { toast } from 'sonner'
 import type { AppState } from '../types'
+import { githubRepoIdentityKey } from '../../../../shared/github-repository-identity-key'
 import type {
   ClassifiedError,
   GitHubOwnerRepo,
@@ -859,9 +860,7 @@ function evictRepoCacheEntries<T>(
 }
 
 function normalizedRepoIdentity(repo: GitHubOwnerRepo): string {
-  const slug = `${repo.owner.toLowerCase()}/${repo.repo.toLowerCase()}`
-  const host = repo.host?.toLowerCase()
-  return host && host !== 'github.com' ? `${host}/${slug}` : slug
+  return githubRepoIdentityKey(repo)
 }
 
 function normalizedHeadSha(headSha?: string): string | null {
