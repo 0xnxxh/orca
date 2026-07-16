@@ -49,12 +49,15 @@ describe('getRateLimit', () => {
         fetchedAt: 1_000
       }
     })
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
+      ['api', '--hostname', 'github.com', 'rate_limit'],
+      { encoding: 'utf-8' }
+    )
   })
 
   it('caches a failed probe for the TTL instead of re-spawning gh', async () => {
-    // Why: regression for #7553 — GHES with rate limiting disabled fails every
-    // probe. Refreshes fail open past the failure, so without a negative cache
-    // each queued refresh would spawn its own doomed gh subprocess.
+    // Why: refreshes fail open past a probe failure, so without a negative cache
+    // an auth or transport failure would spawn the same doomed gh call repeatedly.
     ghExecFileAsyncMock.mockRejectedValue(new Error('HTTP 404: Rate limiting is not enabled.'))
 
     const first = await getRateLimit()

@@ -859,7 +859,9 @@ function evictRepoCacheEntries<T>(
 }
 
 function normalizedRepoIdentity(repo: GitHubOwnerRepo): string {
-  return `${repo.owner.toLowerCase()}/${repo.repo.toLowerCase()}`
+  const slug = `${repo.owner.toLowerCase()}/${repo.repo.toLowerCase()}`
+  const host = repo.host?.toLowerCase()
+  return host && host !== 'github.com' ? `${host}/${slug}` : slug
 }
 
 function normalizedHeadSha(headSha?: string): string | null {

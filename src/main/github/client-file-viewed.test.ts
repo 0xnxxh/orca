@@ -1,7 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { ghExecFileAsyncMock, acquireMock, releaseMock } = vi.hoisted(() => ({
+const {
+  ghExecFileAsyncMock,
+  getOwnerRepoMock,
+  getEnterpriseGitHubRepoSlugMock,
+  acquireMock,
+  releaseMock
+} = vi.hoisted(() => ({
   ghExecFileAsyncMock: vi.fn(),
+  getOwnerRepoMock: vi.fn(),
+  getEnterpriseGitHubRepoSlugMock: vi.fn(),
   acquireMock: vi.fn(),
   releaseMock: vi.fn()
 }))
@@ -10,7 +18,7 @@ vi.mock('./gh-utils', () => ({
   execFileAsync: vi.fn(),
   ghExecFileAsync: ghExecFileAsyncMock,
   gitExecFileAsync: vi.fn(),
-  getOwnerRepo: vi.fn(),
+  getOwnerRepo: getOwnerRepoMock,
   getIssueOwnerRepo: vi.fn(),
   getOwnerRepoForRemote: vi.fn(),
   resolveIssueSource: vi.fn(),
@@ -31,11 +39,19 @@ vi.mock('./gh-utils', () => ({
   _resetOwnerRepoCache: vi.fn()
 }))
 
+vi.mock('./github-enterprise-repository', () => ({
+  getEnterpriseGitHubRepoSlug: getEnterpriseGitHubRepoSlugMock
+}))
+
 import { setPRFileViewed } from './client'
 
 describe('setPRFileViewed', () => {
   beforeEach(() => {
     ghExecFileAsyncMock.mockReset()
+    getOwnerRepoMock.mockReset()
+    getOwnerRepoMock.mockResolvedValue({ owner: 'acme', repo: 'orca' })
+    getEnterpriseGitHubRepoSlugMock.mockReset()
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(null)
     acquireMock.mockReset()
     releaseMock.mockReset()
     acquireMock.mockResolvedValue(undefined)
@@ -97,5 +113,36 @@ describe('setPRFileViewed', () => {
       cwd: '/repo-root',
       wslDistro: 'Ubuntu'
     })
+  })
+
+  it('routes SSH-backed GitHub Enterprise file-viewed mutations to the Enterprise host', async () => {
+    getOwnerRepoMock.mockResolvedValueOnce(null)
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValueOnce({
+      owner: 'team',
+      repo: 'orca',
+      host: 'github.acme-corp.com'
+    })
+    ghExecFileAsyncMock.mockResolvedValueOnce({ stdout: '{}' })
+
+    await expect(
+      setPRFileViewed({
+        repoPath: '/remote/repo',
+        connectionId: 'ssh-1',
+        pullRequestId: 'PR_enterprise',
+        path: 'src/enterprise.ts',
+        viewed: true
+      })
+    ).resolves.toBe(true)
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        'api',
+        '--hostname',
+        'github.acme-corp.com',
+        'graphql',
+        'pullRequestId=PR_enterprise'
+      ]),
+      {}
+    )
   })
 })

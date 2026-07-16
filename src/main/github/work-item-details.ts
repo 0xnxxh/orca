@@ -15,14 +15,18 @@ import {
   ghExecFileAsync,
   acquire,
   release,
-  getOwnerRepo,
   getIssueOwnerRepo,
   ghRepoExecOptions,
   githubRepoContext,
   type LocalGitExecOptions
 } from './gh-utils'
-import { getWorkItem, getPRChecks, getPRComments } from './client'
-import { getEnterpriseGitHubRepoSlug } from './github-enterprise-repository'
+import { getWorkItem, getWorkItemByOwnerRepo, getPRChecks, getPRComments } from './client'
+import {
+  getOriginGitHubApiRepository,
+  githubApiHostArgs,
+  isGitHubDotComRepository,
+  type GitHubApiRepository
+} from './github-api-repository'
 import { noteRateLimitSpend, rateLimitGuard } from './rate-limit'
 import { getPRReviewCommentLineNumbersFromPatch } from './pr-review-comment-lines'
 import { isMaxBufferOverflowError } from '../git/max-buffer-overflow'
@@ -39,38 +43,29 @@ function localGitOptionArgs(options: LocalGitExecOptions = {}): [] | [LocalGitEx
   return Object.keys(options).length > 0 ? [options] : []
 }
 
-function hostedReviewLocalGitOptions(options: LocalGitExecOptions = {}): {
-  localGitExecOptions?: LocalGitExecOptions
-} {
-  return Object.keys(options).length > 0 ? { localGitExecOptions: options } : {}
-}
-
-async function getOriginApiOwnerRepo(
-  repoPath: string,
-  connectionId?: string | null,
-  localGitOptions: LocalGitExecOptions = {}
-): Promise<GitHubOwnerRepoSlug | null> {
-  const ownerRepo = await getOwnerRepo(
-    repoPath,
-    connectionId,
-    ...localGitOptionArgs(localGitOptions)
-  )
-  return (
-    ownerRepo ??
-    (await getEnterpriseGitHubRepoSlug(
-      repoPath,
-      connectionId,
-      hostedReviewLocalGitOptions(localGitOptions)
-    ))
-  )
-}
-
-function ghApiHostArgs(ownerRepo: GitHubOwnerRepoSlug): string[] {
-  return ownerRepo.host && ownerRepo.host !== 'github.com' ? ['--hostname', ownerRepo.host] : []
-}
-
 function encodeGitHubContentPath(path: string): string {
   return path.split('/').map(encodeURIComponent).join('/')
+}
+
+function repositoryRateLimitGuard(
+  repository: GitHubApiRepository | null,
+  bucket: 'core' | 'graphql' | 'search',
+  executionOptions: Pick<LocalGitExecOptions, 'wslDistro'> = {}
+): ReturnType<typeof rateLimitGuard> {
+  return (!repository || isGitHubDotComRepository(repository)) && !executionOptions.wslDistro
+    ? rateLimitGuard(bucket)
+    : { blocked: false }
+}
+
+function noteRepositoryRateLimitSpend(
+  repository: GitHubApiRepository | null,
+  bucket: 'core' | 'graphql' | 'search',
+  cost = 1,
+  executionOptions: Pick<LocalGitExecOptions, 'wslDistro'> = {}
+): void {
+  if ((!repository || isGitHubDotComRepository(repository)) && !executionOptions.wslDistro) {
+    noteRateLimitSpend(bucket, cost)
+  }
 }
 
 const PR_FILE_VIEWED_STATES_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
@@ -154,8 +149,6 @@ type GraphQLIssueDetailsResponse = {
   }
   errors?: { message?: string }[]
 }
-
-type GitHubOwnerRepoSlug = { owner: string; repo: string; host?: string }
 
 type RestTimelineUser = {
   login?: string | null
@@ -305,7 +298,7 @@ function parseRestTimelineEventLines(stdout: string): RestTimelineEvent[] {
 }
 
 async function getIssueTimelineItems(
-  ownerRepo: GitHubOwnerRepoSlug,
+  ownerRepo: GitHubApiRepository,
   issueNumber: number,
   ghOptions: ReturnType<typeof ghRepoExecOptions>
 ): Promise<GitHubIssueTimelineItem[]> {
@@ -315,7 +308,7 @@ async function getIssueTimelineItems(
       const { stdout } = await ghExecFileAsync(
         [
           'api',
-          ...ghApiHostArgs(ownerRepo),
+          ...githubApiHostArgs(ownerRepo),
           '--cache',
           '60s',
           `repos/${ownerRepo.owner}/${ownerRepo.repo}/issues/${issueNumber}/timeline?per_page=${GITHUB_REST_PAGE_SIZE}&page=${page}`,
@@ -512,20 +505,20 @@ function isBinaryHint(file: RESTPRFile): boolean {
   return file.patch === undefined && file.changes > 0
 }
 
-async function getPRHeadBaseSha(
+async function getPRMetadata(
   repoPath: string,
   prNumber: number,
+  ownerRepo: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
-): Promise<{ headSha: string; baseSha: string } | null> {
+): Promise<{ body: string; headSha?: string; baseSha?: string }> {
   const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   try {
     if (ownerRepo) {
       const { stdout } = await ghExecFileAsync(
         [
           'api',
-          ...ghApiHostArgs(ownerRepo),
+          ...githubApiHostArgs(ownerRepo),
           '--cache',
           '60s',
           `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`
@@ -533,28 +526,32 @@ async function getPRHeadBaseSha(
         ghOptions
       )
       const data = JSON.parse(stdout) as {
+        body?: string | null
         head?: { sha?: string }
         base?: { sha?: string }
       }
-      if (data.head?.sha && data.base?.sha) {
-        return { headSha: data.head.sha, baseSha: data.base.sha }
+      return {
+        body: data.body ?? '',
+        ...(data.head?.sha ? { headSha: data.head.sha } : {}),
+        ...(data.base?.sha ? { baseSha: data.base.sha } : {})
       }
-      return null
     }
     const { stdout } = await ghExecFileAsync(
-      ['pr', 'view', String(prNumber), '--json', 'headRefOid,baseRefOid'],
+      ['pr', 'view', String(prNumber), '--json', 'body,headRefOid,baseRefOid'],
       ghOptions
     )
     const data = JSON.parse(stdout) as {
+      body?: string
       headRefOid?: string
       baseRefOid?: string
     }
-    if (data.headRefOid && data.baseRefOid) {
-      return { headSha: data.headRefOid, baseSha: data.baseRefOid }
+    return {
+      body: data.body ?? '',
+      ...(data.headRefOid ? { headSha: data.headRefOid } : {}),
+      ...(data.baseRefOid ? { baseSha: data.baseRefOid } : {})
     }
-    return null
   } catch {
-    return null
+    return { body: '' }
   }
 }
 
@@ -562,27 +559,35 @@ async function getPRHeadBaseSha(
 async function getPRFiles(
   repoPath: string,
   prNumber: number,
+  ownerRepo: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubPRFile[] | null> {
   const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   if (!ownerRepo) {
     return null
   }
   try {
-    const { stdout } = await ghExecFileAsync(
-      [
-        'api',
-        ...ghApiHostArgs(ownerRepo),
-        '--cache',
-        '60s',
-        `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}/files?per_page=100`
-      ],
-      ghOptions
-    )
-    const data = JSON.parse(stdout) as RESTPRFile[]
-    return data.slice(0, MAX_PR_FILES).map((file) => ({
+    const data: RESTPRFile[] = []
+    for (let page = 1; data.length < MAX_PR_FILES; page += 1) {
+      const pageSuffix = page === 1 ? '' : `&page=${page}`
+      const { stdout } = await ghExecFileAsync(
+        [
+          'api',
+          ...githubApiHostArgs(ownerRepo),
+          '--cache',
+          '60s',
+          `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}/files?per_page=100${pageSuffix}`
+        ],
+        ghOptions
+      )
+      const pageData = JSON.parse(stdout) as RESTPRFile[]
+      data.push(...pageData.slice(0, MAX_PR_FILES - data.length))
+      if (pageData.length < 100) {
+        break
+      }
+    }
+    return data.map((file) => ({
       path: file.filename,
       oldPath: file.previous_filename,
       status: mapFileStatus(file.status),
@@ -604,15 +609,15 @@ type PRFileViewedStatesResult = {
 async function getPRFileViewedStates(
   repoPath: string,
   prNumber: number,
+  ownerRepo: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<PRFileViewedStatesResult | null> {
   const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   if (!ownerRepo) {
     return null
   }
-  if (rateLimitGuard('graphql').blocked) {
+  if (repositoryRateLimitGuard(ownerRepo, 'graphql', localGitOptions).blocked) {
     return null
   }
   const viewedStates = new Map<string, GitHubPRFileViewedState>()
@@ -623,7 +628,7 @@ async function getPRFileViewedStates(
     for (let fetched = 0; fetched < MAX_PR_FILES; fetched += 100) {
       const args = [
         'api',
-        ...ghApiHostArgs(ownerRepo),
+        ...githubApiHostArgs(ownerRepo),
         'graphql',
         '-f',
         `query=${PR_FILE_VIEWED_STATES_QUERY}`,
@@ -637,7 +642,7 @@ async function getPRFileViewedStates(
       if (after) {
         args.push('-f', `after=${after}`)
       }
-      noteRateLimitSpend('graphql')
+      noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, localGitOptions)
       const { stdout } = await ghExecFileAsync(args, ghOptions)
       const parsed = JSON.parse(stdout) as {
         data?: {
@@ -791,43 +796,10 @@ async function getIssueBodyAndComments(
   }
 }
 
-async function getPRBody(
-  repoPath: string,
-  prNumber: number,
-  connectionId?: string | null,
-  localGitOptions: LocalGitExecOptions = {}
-): Promise<string> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
-  try {
-    if (ownerRepo) {
-      const { stdout } = await ghExecFileAsync(
-        [
-          'api',
-          ...ghApiHostArgs(ownerRepo),
-          '--cache',
-          '60s',
-          `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`
-        ],
-        ghOptions
-      )
-      const data = JSON.parse(stdout) as { body?: string | null }
-      return data.body ?? ''
-    }
-    const { stdout } = await ghExecFileAsync(
-      ['pr', 'view', String(prNumber), '--json', 'body'],
-      ghOptions
-    )
-    const data = JSON.parse(stdout) as { body?: string }
-    return data.body ?? ''
-  } catch {
-    return ''
-  }
-}
-
 async function getWorkItemParticipants(
   repoPath: string,
   item: Pick<GitHubWorkItem, 'number' | 'type'>,
+  resolvedRepository: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubAssignableUser[]> {
@@ -835,19 +807,19 @@ async function getWorkItemParticipants(
   const ownerRepo =
     item.type === 'issue'
       ? await getIssueOwnerRepo(repoPath, connectionId, ...localGitOptionArgs(localGitOptions))
-      : await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
+      : resolvedRepository
   if (!ownerRepo) {
     return []
   }
-  if (rateLimitGuard('graphql').blocked) {
+  if (repositoryRateLimitGuard(ownerRepo, 'graphql', localGitOptions).blocked) {
     return []
   }
   try {
-    noteRateLimitSpend('graphql')
+    noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, localGitOptions)
     const { stdout } = await ghExecFileAsync(
       [
         'api',
-        ...ghApiHostArgs(ownerRepo),
+        ...githubApiHostArgs(ownerRepo),
         'graphql',
         '-f',
         `query=${WORK_ITEM_PARTICIPANTS_QUERY}`,
@@ -893,6 +865,7 @@ async function getWorkItemParticipants(
 async function getGitHubUsersByLogin(
   repoPath: string,
   logins: string[],
+  repository: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubAssignableUser[]> {
@@ -902,14 +875,14 @@ async function getGitHubUsersByLogin(
   if (uniqueLogins.length === 0) {
     return []
   }
-  if (rateLimitGuard('graphql').blocked) {
+  const guard = repositoryRateLimitGuard(repository, 'graphql', localGitOptions)
+  if (guard.blocked) {
     // Why: log the skip — callers degrade silently to blank GHE avatars, so it's otherwise untraceable.
     console.warn(
       `getGitHubUsersByLogin skipped: GraphQL rate-limit budget exhausted (${uniqueLogins.length} logins unresolved)`
     )
     return []
   }
-  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   const fields = uniqueLogins
     .map(
       (login, index) =>
@@ -917,11 +890,11 @@ async function getGitHubUsersByLogin(
     )
     .join('\n')
   try {
-    noteRateLimitSpend('graphql')
+    noteRepositoryRateLimitSpend(repository, 'graphql', 1, localGitOptions)
     const { stdout } = await ghExecFileAsync(
       [
         'api',
-        ...(ownerRepo ? ghApiHostArgs(ownerRepo) : []),
+        ...(repository ? githubApiHostArgs(repository) : []),
         'graphql',
         '-f',
         `query=query { ${fields} }`
@@ -1020,6 +993,7 @@ async function getMentionParticipants(
   >,
   comments: PRComment[],
   participants: GitHubAssignableUser[],
+  repository: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubAssignableUser[]> {
@@ -1035,6 +1009,7 @@ async function getMentionParticipants(
   const graphQlUsers = await getGitHubUsersByLogin(
     repoPath,
     visibleLogins,
+    repository,
     connectionId,
     localGitOptions
   )
@@ -1045,6 +1020,7 @@ async function getPRChecksForDetails(
   repoPath: string,
   prNumber: number,
   headSha: string | undefined,
+  repository: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<PRCheckDetail[]> {
@@ -1053,7 +1029,7 @@ async function getPRChecksForDetails(
       repoPath,
       prNumber,
       headSha,
-      null,
+      repository,
       undefined,
       connectionId,
       ...localGitOptionArgs(localGitOptions)
@@ -1072,14 +1048,33 @@ export async function getWorkItemDetails(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubWorkItemDetails | null> {
-  // Why: getWorkItem self-manages acquire/release; call it outside our semaphore so the cheap lookup doesn't block detail fetches.
-  const item: Omit<GitHubWorkItem, 'repoId'> | null = await getWorkItem(
-    repoPath,
-    number,
-    type,
-    connectionId,
-    ...localGitOptionArgs(localGitOptions)
-  )
+  const originApiRepository =
+    type === 'issue'
+      ? null
+      : await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
+  // Why: cwd-less SSH gh must not fall through to a same-number github.com PR.
+  if (connectionId && type === 'pr' && !originApiRepository) {
+    return null
+  }
+  // Why: connection-backed GHES repos need a host-qualified identity during the initial lookup.
+  const useExplicitEnterpriseRepository =
+    type === 'pr' && originApiRepository !== null && !isGitHubDotComRepository(originApiRepository)
+  const item: Omit<GitHubWorkItem, 'repoId'> | null = useExplicitEnterpriseRepository
+    ? await getWorkItemByOwnerRepo(
+        repoPath,
+        originApiRepository,
+        number,
+        'pr',
+        connectionId,
+        ...localGitOptionArgs(localGitOptions)
+      )
+    : await getWorkItem(
+        repoPath,
+        number,
+        type,
+        connectionId,
+        ...localGitOptionArgs(localGitOptions)
+      )
   if (!item) {
     return null
   }
@@ -1111,13 +1106,14 @@ export async function getWorkItemDetails(
       // Fallback: fetch body/comments and participants in parallel.
       const [{ body, comments, assignees, timelineItems }, participants] = await Promise.all([
         getIssueBodyAndComments(repoPath, item.number, connectionId, localGitOptions),
-        getWorkItemParticipants(repoPath, item, connectionId, localGitOptions)
+        getWorkItemParticipants(repoPath, item, null, connectionId, localGitOptions)
       ])
       const mentionParticipants = await getMentionParticipants(
         repoPath,
         item,
         comments,
         participants,
+        null,
         connectionId,
         localGitOptions
       )
@@ -1131,34 +1127,54 @@ export async function getWorkItemDetails(
       }
     }
 
-    // PR: fetch body + comments + checks + files + head/base SHAs in parallel.
-    const [body, comments, shas, files, viewedStates, participants] = await Promise.all([
-      getPRBody(repoPath, item.number, connectionId, localGitOptions),
+    // PR: fetch metadata + comments + files + viewed states + participants in parallel.
+    const [metadata, comments, files, viewedStates, participants] = await Promise.all([
+      getPRMetadata(repoPath, item.number, originApiRepository, connectionId, localGitOptions),
       getPRComments(
         repoPath,
         item.number,
-        undefined,
+        { prRepo: originApiRepository },
         connectionId,
         ...localGitOptionArgs(localGitOptions)
       ),
-      getPRHeadBaseSha(repoPath, item.number, connectionId, localGitOptions),
-      getPRFiles(repoPath, item.number, connectionId, localGitOptions),
-      getPRFileViewedStates(repoPath, item.number, connectionId, localGitOptions),
-      getWorkItemParticipants(repoPath, item, connectionId, localGitOptions)
+      getPRFiles(repoPath, item.number, originApiRepository, connectionId, localGitOptions),
+      getPRFileViewedStates(
+        repoPath,
+        item.number,
+        originApiRepository,
+        connectionId,
+        localGitOptions
+      ),
+      getWorkItemParticipants(repoPath, item, originApiRepository, connectionId, localGitOptions)
     ])
 
     // Why: mention-author lookup and checks are independent, so run them in parallel.
     const [mentionParticipants, checks] = await Promise.all([
-      getMentionParticipants(repoPath, item, comments, participants, connectionId, localGitOptions),
-      getPRChecksForDetails(repoPath, item.number, shas?.headSha, connectionId, localGitOptions)
+      getMentionParticipants(
+        repoPath,
+        item,
+        comments,
+        participants,
+        originApiRepository,
+        connectionId,
+        localGitOptions
+      ),
+      getPRChecksForDetails(
+        repoPath,
+        item.number,
+        metadata.headSha,
+        originApiRepository,
+        connectionId,
+        localGitOptions
+      )
     ])
 
     return {
       item: enrichItemDisplayAvatars(item, mentionParticipants),
-      body,
+      body: metadata.body,
       comments,
-      headSha: shas?.headSha,
-      baseSha: shas?.baseSha,
+      headSha: metadata.headSha,
+      baseSha: metadata.baseSha,
       pullRequestId: viewedStates?.pullRequestId,
       checks,
       // Why: null (failed fetch) vs empty PR — Files tab shows retry, not "No files changed."
@@ -1176,7 +1192,7 @@ async function fetchContentAtRef(args: {
   repoPath: string
   connectionId?: string | null
   localGitOptions?: LocalGitExecOptions
-  ownerRepo: GitHubOwnerRepoSlug
+  ownerRepo: GitHubApiRepository
   path: string
   ref: string
 }): Promise<{ content: string; isBinary: boolean; tooLarge?: boolean }> {
@@ -1188,7 +1204,7 @@ async function fetchContentAtRef(args: {
         '300s',
         '-H',
         'Accept: application/vnd.github.raw',
-        ...ghApiHostArgs(args.ownerRepo),
+        ...githubApiHostArgs(args.ownerRepo),
         `repos/${args.ownerRepo.owner}/${args.ownerRepo.repo}/contents/${encodeGitHubContentPath(args.path)}?ref=${encodeURIComponent(args.ref)}`
       ],
       {
@@ -1223,7 +1239,7 @@ export async function getPRFileContents(args: {
   headSha: string
   baseSha: string
 }): Promise<GitHubPRFileContents> {
-  const ownerRepo = await getOriginApiOwnerRepo(
+  const ownerRepo = await getOriginGitHubApiRepository(
     args.repoPath,
     args.connectionId,
     args.localGitOptions

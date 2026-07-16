@@ -100,7 +100,9 @@ function normalizedPRRepo(repo?: GitHubOwnerRepo | null): string | null {
   if (!repo) {
     return null
   }
-  return `${repo.owner.toLowerCase()}/${repo.repo.toLowerCase()}`
+  const slug = `${repo.owner.toLowerCase()}/${repo.repo.toLowerCase()}`
+  const host = repo.host?.toLowerCase()
+  return host && host !== 'github.com' ? `${host}/${slug}` : slug
 }
 
 function samePRRepo(left?: GitHubOwnerRepo | null, right?: GitHubOwnerRepo | null): boolean {

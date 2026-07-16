@@ -41,6 +41,7 @@ describe('isGhRateLimitProbe', () => {
   it('recognizes the exempt rate_limit endpoint only', () => {
     expect(isGhRateLimitProbe(['api', 'rate_limit'])).toBe(true)
     expect(isGhRateLimitProbe(['api', '/rate_limit'])).toBe(true)
+    expect(isGhRateLimitProbe(['api', '--hostname', 'github.com', 'rate_limit'])).toBe(true)
     expect(isGhRateLimitProbe(['api', 'search/issues?q=x'])).toBe(false)
     expect(isGhRateLimitProbe(['pr', 'list'])).toBe(false)
   })
@@ -76,12 +77,33 @@ describe('breaker state', () => {
     expect(getGhRateLimitBlockedUntilMs('core', now)).toBe(now + 60_000)
   })
 
+  it('isolates blocks by host and execution runtime scope', () => {
+    const now = 1_000_000
+    recordGhPrimaryRateLimit('core', now + 60_000, 'native:github.com')
+
+    expect(getGhRateLimitBlockedUntilMs('core', now, 'native:github.com')).toBe(now + 60_000)
+    expect(getGhRateLimitBlockedUntilMs('core', now, 'native:github.acme-corp.com')).toBeNull()
+    expect(getGhRateLimitBlockedUntilMs('core', now, 'wsl:ubuntu:github.com')).toBeNull()
+  })
+
   it('notifyGhPrimaryRateLimit applies a fallback block and fires the reset probe', () => {
     const probe = vi.fn()
     registerGhRateLimitResetProbe(probe)
     notifyGhPrimaryRateLimit('search')
     expect(probe).toHaveBeenCalledWith('search')
     expect(getGhRateLimitBlockedUntilMs('search')).toBeGreaterThan(Date.now())
+  })
+
+  it('does not refine a non-default scope with the native github.com probe', () => {
+    const probe = vi.fn()
+    registerGhRateLimitResetProbe(probe)
+
+    notifyGhPrimaryRateLimit('core', 'native:github.acme-corp.com')
+
+    expect(probe).not.toHaveBeenCalled()
+    expect(
+      getGhRateLimitBlockedUntilMs('core', Date.now(), 'native:github.acme-corp.com')
+    ).not.toBeNull()
   })
 
   it('creates an error that classifies as rate_limited, not permission_denied', () => {

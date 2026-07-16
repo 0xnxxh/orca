@@ -4,7 +4,9 @@ function normalizedPRRepoIdentity(prRepo?: GitHubOwnerRepo | null): string {
   if (!prRepo) {
     return 'none'
   }
-  return `${prRepo.owner.toLowerCase()}/${prRepo.repo.toLowerCase()}`
+  const slug = `${prRepo.owner.toLowerCase()}/${prRepo.repo.toLowerCase()}`
+  const host = prRepo.host?.toLowerCase()
+  return host && host !== 'github.com' ? `${host}/${slug}` : slug
 }
 
 export function checksPanelAsyncResultKey(

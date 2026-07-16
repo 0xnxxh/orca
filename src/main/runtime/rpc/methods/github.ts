@@ -42,7 +42,10 @@ const RateLimit = z.object({
 
 const SlugRepo = z.object({
   owner: requiredString('Missing owner'),
-  repo: requiredString('Missing repo')
+  repo: requiredString('Missing repo'),
+  // Why: Enterprise host identity must survive RPC parsing; Zod strips
+  // undeclared fields before the runtime can host-qualify gh requests.
+  host: OptionalString
 })
 
 const SlugAssignableUsers = SlugRepo.extend({

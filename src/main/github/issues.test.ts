@@ -138,6 +138,40 @@ describe('issue source operations', () => {
     )
   })
 
+  it('routes PR conversation comments to the supplied Enterprise host', async () => {
+    ghExecFileAsyncMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        id: 9,
+        user: { login: 'octo', avatar_url: '', type: 'User' },
+        body: 'Enterprise comment',
+        created_at: '2026-07-16T00:00:00.000Z',
+        html_url: 'https://github.acme-corp.com/team/orca/pull/7#issuecomment-9'
+      })
+    })
+
+    await expect(
+      addIssueComment('/remote/repo', 7, 'Enterprise comment', 'ssh-1', {
+        owner: 'team',
+        repo: 'orca',
+        host: 'github.acme-corp.com'
+      })
+    ).resolves.toMatchObject({ ok: true })
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
+      [
+        'api',
+        '--hostname',
+        'github.acme-corp.com',
+        '-X',
+        'POST',
+        'repos/team/orca/issues/7/comments',
+        '--raw-field',
+        'body=Enterprise comment'
+      ],
+      {}
+    )
+  })
+
   it('lists issues from the issue owner/repo', async () => {
     getIssueOwnerRepoMock.mockResolvedValueOnce({ owner: 'stablyai', repo: 'orca' })
     ghExecFileAsyncMock.mockResolvedValueOnce({ stdout: '[]' })
