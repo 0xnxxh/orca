@@ -8,8 +8,6 @@ const {
   gitExecFileAsyncMock,
   extractExecErrorMock,
   getRateLimitMock,
-  rateLimitGuardMock,
-  noteRateLimitSpendMock,
   repositoryRateLimitGuardMock,
   noteRepositoryRateLimitSpendMock,
   spendsSharedGitHubComQuotaMock,
@@ -32,11 +30,11 @@ const {
     return { stderr: String(err), stdout: '' }
   }),
   getRateLimitMock: vi.fn(),
-  rateLimitGuardMock: vi.fn(() => ({ blocked: false })),
-  noteRateLimitSpendMock: vi.fn(),
   repositoryRateLimitGuardMock: vi.fn(() => ({ blocked: false })),
   noteRepositoryRateLimitSpendMock: vi.fn(),
-  spendsSharedGitHubComQuotaMock: vi.fn(() => true),
+  spendsSharedGitHubComQuotaMock: vi.fn<
+    (repository?: { host?: string } | null, options?: { wslDistro?: string }) => boolean
+  >(() => true),
   acquireMock: vi.fn(),
   releaseMock: vi.fn()
 }))
@@ -71,8 +69,6 @@ vi.mock('../git/runner', () => ({
 
 vi.mock('./rate-limit', () => ({
   getRateLimit: getRateLimitMock,
-  rateLimitGuard: rateLimitGuardMock,
-  noteRateLimitSpend: noteRateLimitSpendMock,
   repositoryRateLimitGuard: repositoryRateLimitGuardMock,
   noteRepositoryRateLimitSpend: noteRepositoryRateLimitSpendMock,
   spendsSharedGitHubComQuota: spendsSharedGitHubComQuotaMock
@@ -211,9 +207,14 @@ describe('getPRChecks', () => {
     extractExecErrorMock.mockClear()
     getRateLimitMock.mockReset()
     getRateLimitMock.mockResolvedValue({ resources: {} })
-    rateLimitGuardMock.mockReset()
-    rateLimitGuardMock.mockReturnValue({ blocked: false })
-    noteRateLimitSpendMock.mockReset()
+    repositoryRateLimitGuardMock.mockReset()
+    repositoryRateLimitGuardMock.mockReturnValue({ blocked: false })
+    noteRepositoryRateLimitSpendMock.mockReset()
+    spendsSharedGitHubComQuotaMock.mockReset()
+    spendsSharedGitHubComQuotaMock.mockImplementation(
+      (repository?: { host?: string } | null, options?: { wslDistro?: string }) =>
+        (!repository?.host || repository.host.toLowerCase() === 'github.com') && !options?.wslDistro
+    )
     acquireMock.mockReset()
     releaseMock.mockReset()
     acquireMock.mockResolvedValue(undefined)
@@ -601,6 +602,12 @@ describe('getPRChecks', () => {
         wslDistro: 'Ubuntu',
         env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' })
       })
+    )
+    expect(getRateLimitMock).not.toHaveBeenCalled()
+    expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
+      { owner: 'acme', repo: 'widgets', host: 'github.com' },
+      'graphql',
+      expect.objectContaining({ cwd: '/repo-root', wslDistro: 'Ubuntu', host: 'github.com' })
     )
   })
 

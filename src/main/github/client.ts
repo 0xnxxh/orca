@@ -118,7 +118,6 @@ import { mapGraphQLReactionGroups, type GitHubGraphQLReactionGroup } from './com
 import {
   getRateLimit,
   noteRepositoryRateLimitSpend,
-  rateLimitGuard,
   repositoryRateLimitGuard,
   spendsSharedGitHubComQuota,
   type RateLimitBucketKind
@@ -191,11 +190,10 @@ async function assertRateLimitBudget(
   repository?: GitHubApiRepository | null,
   executionOptions?: Pick<GhExecOptions, 'wslDistro'>
 ): Promise<void> {
-  if (!spendsSharedGitHubComQuota(repository, executionOptions)) {
-    return
+  if (spendsSharedGitHubComQuota(repository, executionOptions)) {
+    await getRateLimit()
   }
-  await getRateLimit()
-  const guard = rateLimitGuard(bucket)
+  const guard = repositoryRateLimitGuard(repository, bucket, executionOptions)
   if (guard.blocked) {
     throw new Error(
       `GitHub ${bucket} rate limit is low; retry after ${new Date(guard.resetAt * 1000).toLocaleTimeString()}`
