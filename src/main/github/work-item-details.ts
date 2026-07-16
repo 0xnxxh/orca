@@ -1086,14 +1086,15 @@ export async function getWorkItemDetails(
       : await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
   // Why: SSH-backed gh runs without a cwd, so an unresolved PR repository must
   // not fall through to gh's default host and show a same-number github.com PR.
-  if (connectionId && type === 'pr' && !originApiRepository) {
+  // Covers type-less lookups too — they can also reach the PR path below.
+  if (connectionId && type !== 'issue' && !originApiRepository) {
     return null
   }
   // Why: connection-backed repos have no local cwd for gh to inspect, so GHES
   // must use its host-qualified repository identity during the initial lookup.
   const useExplicitEnterpriseRepository =
     type === 'pr' && originApiRepository !== null && !isGitHubDotComRepository(originApiRepository)
-  const item: Omit<GitHubWorkItem, 'repoId'> | null = useExplicitEnterpriseRepository
+  let item: Omit<GitHubWorkItem, 'repoId'> | null = useExplicitEnterpriseRepository
     ? await getWorkItemByOwnerRepo(
         repoPath,
         originApiRepository,
@@ -1109,6 +1110,17 @@ export async function getWorkItemDetails(
         connectionId,
         ...localGitOptionArgs(localGitOptions)
       )
+  if (!item && useExplicitEnterpriseRepository && !connectionId) {
+    // Why: on a local fork checkout the PR lives on the base repo, which the
+    // origin slug can't see — the cwd lets gh resolve the actual remote.
+    item = await getWorkItem(
+      repoPath,
+      number,
+      type,
+      connectionId,
+      ...localGitOptionArgs(localGitOptions)
+    )
+  }
   if (!item) {
     return null
   }

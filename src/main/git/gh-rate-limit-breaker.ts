@@ -25,7 +25,13 @@ const FALLBACK_BLOCK_MS: Record<GhRateLimitBucket, number> = {
   graphql: 5 * 60_000
 }
 
-const DEFAULT_SCOPE = 'native:github.com'
+// Why: the runner derives scopes with this builder too — a format drift would
+// silently split blocks from the default-scope reads below.
+export function ghRateLimitScopeKey(runtime: string, host: string): string {
+  return `${runtime}:${host.toLowerCase()}`
+}
+
+const DEFAULT_SCOPE = ghRateLimitScopeKey('native', 'github.com')
 const blockedUntilMsByScopeAndBucket = new Map<string, number>()
 let resetProbe: ((bucket: GhRateLimitBucket) => void) | null = null
 

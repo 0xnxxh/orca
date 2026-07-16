@@ -26,6 +26,9 @@ const WorkItem = RepoSelector.extend({
 const WorkItemByOwnerRepo = RepoSelector.extend({
   owner: requiredString('Missing owner'),
   ownerRepo: requiredString('Missing repo'),
+  // Why: Enterprise host identity must survive RPC parsing; Zod strips
+  // undeclared fields before the runtime can host-qualify gh requests.
+  host: OptionalString,
   number: z.number().int().positive(),
   type: z.enum(['issue', 'pr'])
 })
@@ -345,7 +348,11 @@ export const GITHUB_METHODS: RpcMethod[] = [
     handler: async (params, { runtime }) =>
       runtime.getRepoWorkItemByOwnerRepo(
         params.repo,
-        { owner: params.owner, repo: params.ownerRepo },
+        {
+          owner: params.owner,
+          repo: params.ownerRepo,
+          ...(params.host ? { host: params.host } : {})
+        },
         params.number,
         params.type
       )

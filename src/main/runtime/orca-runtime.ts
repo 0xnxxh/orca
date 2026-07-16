@@ -13913,7 +13913,7 @@ export class OrcaRuntimeService {
 
   async getRepoWorkItemByOwnerRepo(
     repoSelector: string,
-    ownerRepo: { owner: string; repo: string },
+    ownerRepo: { owner: string; repo: string; host?: string },
     number: number,
     type: 'issue' | 'pr'
   ): Promise<Awaited<ReturnType<typeof getWorkItemByOwnerRepo>>> {
