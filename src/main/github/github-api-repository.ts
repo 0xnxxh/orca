@@ -3,13 +3,29 @@ import {
   githubRepoIdentityKey,
   isDefaultGitHubHost
 } from '../../shared/github-repository-identity-key'
-import { getOwnerRepoForRemote, type LocalGitExecOptions } from './gh-utils'
+import {
+  getOwnerRepoForRemote,
+  ghRepoExecOptions,
+  githubRepoContext,
+  type LocalGitExecOptions
+} from './gh-utils'
 import {
   getEnterpriseGitHubRepoSlug,
   getEnterpriseGitHubRepoSlugForRemote
 } from './github-enterprise-repository'
 
 export type GitHubApiRepository = GitHubOwnerRepo
+export type GitHubRepoExecOptions = ReturnType<typeof ghRepoExecOptions> & { host?: string }
+export type GitHubRepoExecution = {
+  ownerRepo: GitHubApiRepository | null
+  ghOptions: GitHubRepoExecOptions
+}
+
+type GitHubApiRepositoryResolution =
+  | GitHubApiRepository
+  | null
+  | undefined
+  | (() => Promise<GitHubApiRepository | null>)
 
 // Why: the enterprise branch spawns an uncached `git remote get-url` (an SSH
 // round trip on connection-backed repos) — hot paths like per-file contents
@@ -256,6 +272,27 @@ export function githubHostExecOptions(repository: GitHubApiRepository | null | u
   host?: string
 } {
   return repository?.host ? { host: repository.host } : {}
+}
+
+export async function resolveGitHubRepoExecution(
+  repoPath: string,
+  repository?: GitHubApiRepositoryResolution,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<GitHubRepoExecution> {
+  // Why: issue-scoped paths retain their upstream-first resolver while sharing
+  // the same repo-scoped and host-scoped gh execution option construction.
+  const ownerRepo =
+    typeof repository === 'function'
+      ? await repository()
+      : await resolveGitHubApiRepository(repoPath, repository, connectionId, localGitOptions)
+  return {
+    ownerRepo,
+    ghOptions: {
+      ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+      ...githubHostExecOptions(ownerRepo)
+    }
+  }
 }
 
 export function githubRepositoryWebHost(repository: GitHubApiRepository): string {
