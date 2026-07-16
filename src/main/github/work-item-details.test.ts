@@ -667,10 +667,10 @@ describe('getWorkItemDetails', () => {
     })
     ghExecFileAsyncMock.mockImplementation(async (args: string[]) => {
       const endpoint = args.find((arg) => arg.startsWith('repos/')) ?? ''
-      if (endpoint === 'repos/team/orca/contents/src/enterprise.ts?ref=base-sha') {
+      if (endpoint === 'repos/team/orca/contents/src/path%23with%3Fchars.ts?ref=base-sha') {
         return { stdout: 'base content' }
       }
-      if (endpoint === 'repos/team/orca/contents/src/enterprise.ts?ref=head-sha') {
+      if (endpoint === 'repos/team/orca/contents/src/path%23with%3Fchars.ts?ref=head-sha') {
         return { stdout: 'head content' }
       }
       throw new Error(`unexpected gh call: ${args.join(' ')}`)
@@ -679,7 +679,7 @@ describe('getWorkItemDetails', () => {
     const contents = await getPRFileContents({
       repoPath: '/repo-root',
       prNumber: 7,
-      path: 'src/enterprise.ts',
+      path: 'src/path#with?chars.ts',
       status: 'modified',
       headSha: 'head-sha',
       baseSha: 'base-sha'
