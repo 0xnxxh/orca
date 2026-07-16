@@ -23,7 +23,8 @@ import {
   getGhRateLimitBlockedUntilMs,
   isGhPrimaryRateLimitStderr,
   isGhRateLimitProbe,
-  notifyGhPrimaryRateLimit
+  notifyGhPrimaryRateLimit,
+  type GhRateLimitBucket
 } from './gh-rate-limit-breaker'
 import { getDefaultWslDistro, parseWslPath, toWindowsWslPath, type WslPathInfo } from '../wsl'
 import { addWslEnvKeys } from '../wsl-env'
@@ -1297,15 +1298,39 @@ export function applyGhHostToArgs(args: string[], host?: string): string[] {
     if (arg.startsWith('--repo=')) {
       return `--repo=${hostQualifiedGhRepoValue(arg.slice('--repo='.length), host)}`
     }
+    if (arg.startsWith('-R=')) {
+      return `-R=${hostQualifiedGhRepoValue(arg.slice('-R='.length), host)}`
+    }
+    if (arg.startsWith('-R') && arg.length > '-R'.length) {
+      return `-R${hostQualifiedGhRepoValue(arg.slice('-R'.length), host)}`
+    }
     return arg
   })
 }
 
 function ghRateLimitScope(options: GhExecOptions, resolved: ResolvedCommand): string {
-  const distro = resolved.wsl?.distro ?? options.wslDistro
-  const runtime = distro ? `wsl:${distro.toLowerCase()}` : 'native'
+  const runtime = resolved.wsl ? `wsl:${resolved.wsl.distro.toLowerCase()}` : 'native'
   const host = options.host ?? options.env?.GH_HOST ?? process.env.GH_HOST ?? 'github.com'
   return `${runtime}:${host.toLowerCase()}`
+}
+
+function assertGhRateLimitScopeAvailable(
+  options: GhExecOptions,
+  resolved: ResolvedCommand,
+  bucket: GhRateLimitBucket,
+  exemptProbe: boolean
+): void {
+  if (exemptProbe) {
+    return
+  }
+  const blockedUntilMs = getGhRateLimitBlockedUntilMs(
+    bucket,
+    Date.now(),
+    ghRateLimitScope(options, resolved)
+  )
+  if (blockedUntilMs !== null) {
+    throw createGhRateLimitBlockedError(bucket, blockedUntilMs)
+  }
 }
 
 /**
@@ -1319,22 +1344,15 @@ export async function ghExecFileAsync(
   args: string[],
   options: GhExecOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
+  // Why: retry safety must reflect the original call even when fallbacks replace the resolved command.
+  const idempotent = options.idempotent ?? argsLookIdempotent(args)
   args = applyGhHostToArgs(args, options.host)
   let resolved = resolveCommand('gh', args, options.cwd, options.wslDistro)
   // Why: while a bucket is rate-limited every spawn returns 403 — fail fast; the probe is exempt so the breaker can learn the reset.
   // Why: scope by runtime and host so unrelated github.com, GHES, and WSL quotas cannot block each other.
   const rateLimitBucket = classifyGhRateLimitBucket(args)
-  const initialRateLimitScope = ghRateLimitScope(options, resolved)
-  if (!isGhRateLimitProbe(args)) {
-    const blockedUntilMs = getGhRateLimitBlockedUntilMs(
-      rateLimitBucket,
-      Date.now(),
-      initialRateLimitScope
-    )
-    if (blockedUntilMs !== null) {
-      throw createGhRateLimitBlockedError(rateLimitBucket, blockedUntilMs)
-    }
-  }
+  const rateLimitProbe = isGhRateLimitProbe(args)
+  assertGhRateLimitScopeAvailable(options, resolved, rateLimitBucket, rateLimitProbe)
   let lastError: unknown
   let attemptedHostFallback = false
   let attemptedDefaultWslFallback = false
@@ -1368,6 +1386,7 @@ export async function ghExecFileAsync(
           // Why: WSL-only Windows installs have no host gh.exe, and global calls (rate_limit/auth) carry no cwd to route by.
           resolved = wslResolved
           attemptedDefaultWslFallback = true
+          assertGhRateLimitScopeAvailable(options, resolved, rateLimitBucket, rateLimitProbe)
           attempt = -1
           continue
         }
@@ -1375,12 +1394,11 @@ export async function ghExecFileAsync(
       if (!attemptedHostFallback && canFallBackToHostGitHubCli('gh', args, resolved, stderr)) {
         resolved = resolveHostGitHubCli('gh', args)
         attemptedHostFallback = true
+        assertGhRateLimitScopeAvailable(options, resolved, rateLimitBucket, rateLimitProbe)
         attempt = -1
         continue
       }
       const isLastAttempt = attempt >= GH_RETRY_DELAYS_MS.length
-      // Why: only retry idempotent calls; a transient error can arrive after a write already applied, so retrying would duplicate it.
-      const idempotent = options.idempotent ?? argsLookIdempotent(args)
       if (idempotent && !isLastAttempt && isTransientGhError(stderr)) {
         // Why: honor the server's Retry-After over our backoff (a shorter sleep just re-fails); cap so a huge hint can't stall IPC.
         const retryAfterMs = parseRetryAfterMs(stderr)

@@ -75,7 +75,10 @@ describe('setPRFileViewed', () => {
     expect(args.find((arg: string) => arg.startsWith('query='))).toContain('markFileAsViewed')
     expect(args).toContain('pullRequestId=PR_kwDO123')
     expect(args).toContain('path=src/app.ts')
-    expect(ghExecFileAsyncMock.mock.calls[0][1]).toEqual({ cwd: '/repo-root' })
+    expect(ghExecFileAsyncMock.mock.calls[0][1]).toEqual({
+      cwd: '/repo-root',
+      host: 'github.com'
+    })
     expect(releaseMock).toHaveBeenCalledTimes(1)
   })
 
@@ -111,6 +114,7 @@ describe('setPRFileViewed', () => {
 
     expect(ghExecFileAsyncMock.mock.calls[0][1]).toEqual({
       cwd: '/repo-root',
+      host: 'github.com',
       wslDistro: 'Ubuntu'
     })
   })

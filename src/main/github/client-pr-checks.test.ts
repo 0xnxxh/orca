@@ -422,12 +422,12 @@ describe('getPRChecks', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
       ['api', '--cache', '60s', 'repos/acme/widgets/commits/head-oid/check-runs?per_page=100'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       3,
       ['api', '--cache', '60s', 'repos/acme/widgets/commits/head-oid/status?per_page=100'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(checks).toEqual([
       {
@@ -505,7 +505,7 @@ describe('getPRChecks', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       3,
       ['pr', 'checks', '42', '--json', 'name,state,link', '--repo', 'acme/widgets'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(checks).toEqual([
       {
@@ -542,7 +542,11 @@ describe('getPRChecks', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
       ['api', '-X', 'POST', 'repos/acme/widgets/actions/runs/77/rerun-failed-jobs'],
-      { cwd: '/repo-root', env: { ...process.env, GH_PROMPT_DISABLED: '1' } }
+      {
+        cwd: '/repo-root',
+        env: { ...process.env, GH_PROMPT_DISABLED: '1' },
+        host: 'github.com'
+      }
     )
   })
 
@@ -611,7 +615,7 @@ describe('getPRChecks', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
       ['pr', 'checks', '42', '--json', 'name,state,link', '--repo', 'acme/widgets'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
   })
 

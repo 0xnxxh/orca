@@ -3713,7 +3713,7 @@ describe('updatePRState', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['pr', 'reopen', '3977', '--repo', 'stablyai/orca'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(acquireMock).toHaveBeenCalledTimes(1)
     expect(releaseMock).toHaveBeenCalledTimes(1)
@@ -3729,7 +3729,7 @@ describe('updatePRState', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['pr', 'close', '3977', '--repo', 'stablyai/orca'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
   })
 
@@ -3745,7 +3745,7 @@ describe('updatePRState', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['pr', 'reopen', '3977', '--repo', 'stablyai/orca'],
-      {}
+      { host: 'github.com' }
     )
   })
 })
@@ -3834,12 +3834,12 @@ describe('GitHub GraphQL rate-limit guard', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       1,
       ['api', '--cache', '60s', 'repos/stablyai/orca/issues/7/comments?per_page=100'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
       ['api', '--cache', '60s', 'repos/stablyai/orca/pulls/7/reviews?per_page=100'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
   })
 
@@ -3889,20 +3889,21 @@ describe('GitHub GraphQL rate-limit guard', () => {
         '--json',
         'number,title,state,url,statusCheckRollup,updatedAt,isDraft,mergeable,reviewDecision,mergeStateStatus,autoMergeRequest,baseRefName,headRefName,baseRefOid,headRefOid'
       ],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
       ['pr', 'merge', '7', '--squash', '--repo', 'stablyai/orca'],
       expect.objectContaining({
         cwd: '/repo-root',
-        env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' })
+        env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' }),
+        host: 'github.com'
       })
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       3,
       ['pr', 'edit', '7', '--title', 'New title', '--repo', 'stablyai/orca'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
   })
 
@@ -3931,7 +3932,7 @@ describe('GitHub GraphQL rate-limit guard', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       1,
       ['pr', 'view', '7', '--json', 'id,headRefOid,baseRefName', '--repo', 'stablyai/orca'],
-      {}
+      { host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
@@ -3946,14 +3947,16 @@ describe('GitHub GraphQL rate-limit guard', () => {
         'expectedHeadOid=head-oid'
       ]),
       expect.objectContaining({
-        env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' })
+        env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' }),
+        host: 'github.com'
       })
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       3,
       ['pr', 'merge', '7', '--disable-auto', '--repo', 'stablyai/orca'],
       expect.objectContaining({
-        env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' })
+        env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' }),
+        host: 'github.com'
       })
     )
     expect(ghExecFileAsyncMock.mock.calls[0]?.[1]).not.toHaveProperty('cwd')

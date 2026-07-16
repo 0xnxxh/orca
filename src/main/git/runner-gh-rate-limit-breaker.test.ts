@@ -89,9 +89,18 @@ describe('ghExecFileAsync rate-limit breaker', () => {
         env: { ...process.env, GH_HOST: 'github.acme-corp.com' }
       })
     ).resolves.toMatchObject({ stdout: '[]' })
-    await expect(
-      ghExecFileAsync(['api', 'repos/a/b/pulls'], { wslDistro: 'Ubuntu' })
-    ).resolves.toMatchObject({ stdout: '[]' })
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      await expect(
+        ghExecFileAsync(['api', 'repos/a/b/pulls'], { wslDistro: 'Ubuntu' })
+      ).resolves.toMatchObject({ stdout: '[]' })
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        configurable: true,
+        value: originalPlatform
+      })
+    }
     expect(execFileMock).toHaveBeenCalledTimes(5)
   })
 

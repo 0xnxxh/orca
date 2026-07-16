@@ -132,17 +132,17 @@ describe('getPRCheckDetails', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       1,
       ['api', 'repos/acme/widgets/check-runs/88'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
       ['api', 'repos/acme/widgets/check-runs/88/annotations?per_page=20'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       3,
       ['api', 'repos/acme/widgets/actions/runs/77/jobs?per_page=100'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
   })
 
@@ -209,7 +209,7 @@ describe('getPRCheckDetails', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       4,
       ['api', 'repos/acme/widgets/actions/jobs/8801/logs'],
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(4)
   })

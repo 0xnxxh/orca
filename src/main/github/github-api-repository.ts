@@ -49,14 +49,13 @@ export function isGitHubDotComRepository(repository: GitHubApiRepository): boole
   return !repository.host || repository.host.toLowerCase() === 'github.com'
 }
 
-// Why: the gh runner host-qualifies argv (`--hostname`, `HOST/OWNER/REPO`)
-// from `options.host`, so merging this into a call's exec options is the one
-// step a call site needs to target GHES. github.com stays unset to keep gh's
-// default-host resolution (and existing argv) unchanged.
+// Why: the gh runner host-qualifies argv from `options.host`, so every known
+// host must be carried through. Pinning github.com prevents a process-level
+// GH_HOST from silently redirecting an otherwise unambiguous API request.
 export function githubHostExecOptions(repository: GitHubApiRepository | null | undefined): {
   host?: string
 } {
-  return repository?.host && !isGitHubDotComRepository(repository) ? { host: repository.host } : {}
+  return repository?.host ? { host: repository.host } : {}
 }
 
 export function githubRepositoryWebHost(repository: GitHubApiRepository): string {
