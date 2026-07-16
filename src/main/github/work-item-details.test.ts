@@ -14,8 +14,6 @@ const {
   getWorkItemByOwnerRepoMock,
   getPRChecksMock,
   getPRCommentsMock,
-  rateLimitGuardMock,
-  noteRateLimitSpendMock,
   repositoryRateLimitGuardMock,
   noteRepositoryRateLimitSpendMock,
   ghRepoExecOptionsMock,
@@ -32,8 +30,6 @@ const {
   getWorkItemByOwnerRepoMock: vi.fn(),
   getPRChecksMock: vi.fn(),
   getPRCommentsMock: vi.fn(),
-  rateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
-  noteRateLimitSpendMock: vi.fn(),
   repositoryRateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
   noteRepositoryRateLimitSpendMock: vi.fn(),
   ghRepoExecOptionsMock: vi.fn((context) =>
@@ -73,8 +69,6 @@ vi.mock('./github-enterprise-repository', () => ({
 }))
 
 vi.mock('./rate-limit', () => ({
-  rateLimitGuard: rateLimitGuardMock,
-  noteRateLimitSpend: noteRateLimitSpendMock,
   repositoryRateLimitGuard: repositoryRateLimitGuardMock,
   noteRepositoryRateLimitSpend: noteRepositoryRateLimitSpendMock
 }))
@@ -102,9 +96,6 @@ describe('getWorkItemDetails', () => {
     getWorkItemByOwnerRepoMock.mockReset()
     getPRChecksMock.mockReset()
     getPRCommentsMock.mockReset()
-    rateLimitGuardMock.mockReset()
-    rateLimitGuardMock.mockReturnValue({ blocked: false })
-    noteRateLimitSpendMock.mockReset()
     repositoryRateLimitGuardMock.mockReset()
     repositoryRateLimitGuardMock.mockReturnValue({ blocked: false })
     noteRepositoryRateLimitSpendMock.mockReset()
@@ -248,6 +239,68 @@ describe('getWorkItemDetails', () => {
       }
     ])
     expect(details?.participants?.[0]?.login).toBe('issue-author')
+    expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
+      { owner: 'acme', repo: 'widgets' },
+      'graphql',
+      {}
+    )
+    expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
+      { owner: 'acme', repo: 'widgets' },
+      'graphql',
+      1,
+      {}
+    )
+  })
+
+  it('scopes collapsed issue GraphQL accounting to the selected WSL runtime', async () => {
+    const repository = { owner: 'acme', repo: 'widgets' }
+    const localGitOptions = { wslDistro: 'Ubuntu' }
+    getWorkItemMock.mockResolvedValueOnce({
+      id: 'issue:923',
+      type: 'issue',
+      number: 923,
+      title: 'Use upstream issues',
+      state: 'open',
+      url: 'https://github.com/acme/widgets/issues/923',
+      labels: [],
+      updatedAt: '2026-04-01T00:00:00Z',
+      author: 'issue-author'
+    })
+    getIssueOwnerRepoMock.mockResolvedValue(repository)
+    ghExecFileAsyncMock
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          data: {
+            repository: {
+              issue: {
+                body: 'WSL issue body',
+                assignees: { nodes: [] },
+                participants: { nodes: [] },
+                comments: { nodes: [] }
+              }
+            }
+          }
+        })
+      })
+      .mockResolvedValueOnce({ stdout: '' })
+
+    const details = await getWorkItemDetails('/repo-root', 923, 'issue', null, localGitOptions)
+
+    expect(details?.body).toBe('WSL issue body')
+    expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
+      repository,
+      'graphql',
+      localGitOptions
+    )
+    expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
+      repository,
+      'graphql',
+      1,
+      localGitOptions
+    )
+    expect(ghExecFileAsyncMock.mock.calls.every((call) => call[1]?.wslDistro === 'Ubuntu')).toBe(
+      true
+    )
   })
 
   it('enriches a non-participating assignee avatar from the GraphQL assignees connection', async () => {
@@ -432,14 +485,6 @@ describe('getWorkItemDetails', () => {
   })
 
   it('skips optional GraphQL issue detail calls when the cached GraphQL budget is low', async () => {
-    // github.com repos share the singleton quota, so both the raw and
-    // repository-scoped guards report the same low-budget block.
-    rateLimitGuardMock.mockReturnValue({
-      blocked: true,
-      remaining: 3,
-      limit: 5000,
-      resetAt: 1_800_000_000
-    })
     repositoryRateLimitGuardMock.mockReturnValue({
       blocked: true,
       remaining: 3,
@@ -467,7 +512,6 @@ describe('getWorkItemDetails', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(3)
     expect(ghExecFileAsyncMock.mock.calls.some((call) => call[0][1] === 'graphql')).toBe(false)
-    expect(noteRateLimitSpendMock).not.toHaveBeenCalled()
     expect(noteRepositoryRateLimitSpendMock).not.toHaveBeenCalled()
     expect(details?.body).toBe('Issue body')
     expect(details?.participants).toEqual([])
@@ -588,12 +632,6 @@ describe('getWorkItemDetails', () => {
 
   it('routes local WSL PR detail fan-out through the selected distro', async () => {
     const localGitOptions = { wslDistro: 'Ubuntu' }
-    rateLimitGuardMock.mockReturnValue({
-      blocked: true,
-      remaining: 0,
-      limit: 5000,
-      resetAt: 1_800_000_000
-    })
     getWorkItemMock.mockResolvedValueOnce({
       id: 'pr:42',
       type: 'pr',
@@ -671,8 +709,6 @@ describe('getWorkItemDetails', () => {
     expect(ghExecFileAsyncMock.mock.calls.every((call) => call[1]?.wslDistro === 'Ubuntu')).toBe(
       true
     )
-    expect(rateLimitGuardMock).not.toHaveBeenCalled()
-    expect(noteRateLimitSpendMock).not.toHaveBeenCalled()
   })
 
   it('uses the GitHub Enterprise host for SSH-backed PR work item details', async () => {
