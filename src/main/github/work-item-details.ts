@@ -22,6 +22,7 @@ import {
   type LocalGitExecOptions
 } from './gh-utils'
 import { getWorkItem, getPRChecks, getPRComments } from './client'
+import { getEnterpriseGitHubRepoSlug } from './github-enterprise-repository'
 import { noteRateLimitSpend, rateLimitGuard } from './rate-limit'
 import { getPRReviewCommentLineNumbersFromPatch } from './pr-review-comment-lines'
 import { isMaxBufferOverflowError } from '../git/max-buffer-overflow'
@@ -36,6 +37,36 @@ const GITHUB_RAW_CONTENT_MAX_BUFFER_BYTES = 8 * 1024 * 1024
 
 function localGitOptionArgs(options: LocalGitExecOptions = {}): [] | [LocalGitExecOptions] {
   return Object.keys(options).length > 0 ? [options] : []
+}
+
+function hostedReviewLocalGitOptions(options: LocalGitExecOptions = {}): {
+  localGitExecOptions?: LocalGitExecOptions
+} {
+  return Object.keys(options).length > 0 ? { localGitExecOptions: options } : {}
+}
+
+async function getOriginApiOwnerRepo(
+  repoPath: string,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<GitHubOwnerRepoSlug | null> {
+  const ownerRepo = await getOwnerRepo(
+    repoPath,
+    connectionId,
+    ...localGitOptionArgs(localGitOptions)
+  )
+  return (
+    ownerRepo ??
+    (await getEnterpriseGitHubRepoSlug(
+      repoPath,
+      connectionId,
+      hostedReviewLocalGitOptions(localGitOptions)
+    ))
+  )
+}
+
+function ghApiHostArgs(ownerRepo: GitHubOwnerRepoSlug): string[] {
+  return ownerRepo.host && ownerRepo.host !== 'github.com' ? ['--hostname', ownerRepo.host] : []
 }
 
 const PR_FILE_VIEWED_STATES_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
@@ -120,7 +151,7 @@ type GraphQLIssueDetailsResponse = {
   errors?: { message?: string }[]
 }
 
-type GitHubOwnerRepoSlug = { owner: string; repo: string }
+type GitHubOwnerRepoSlug = { owner: string; repo: string; host?: string }
 
 type RestTimelineUser = {
   login?: string | null
@@ -280,6 +311,7 @@ async function getIssueTimelineItems(
       const { stdout } = await ghExecFileAsync(
         [
           'api',
+          ...ghApiHostArgs(ownerRepo),
           '--cache',
           '60s',
           `repos/${ownerRepo.owner}/${ownerRepo.repo}/issues/${issueNumber}/timeline?per_page=${GITHUB_REST_PAGE_SIZE}&page=${page}`,
@@ -483,15 +515,17 @@ async function getPRHeadBaseSha(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ headSha: string; baseSha: string } | null> {
   const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getOwnerRepo(
-    repoPath,
-    connectionId,
-    ...localGitOptionArgs(localGitOptions)
-  )
+  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   try {
     if (ownerRepo) {
       const { stdout } = await ghExecFileAsync(
-        ['api', '--cache', '60s', `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`],
+        [
+          'api',
+          ...ghApiHostArgs(ownerRepo),
+          '--cache',
+          '60s',
+          `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`
+        ],
         ghOptions
       )
       const data = JSON.parse(stdout) as {
@@ -528,11 +562,7 @@ async function getPRFiles(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubPRFile[] | null> {
   const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getOwnerRepo(
-    repoPath,
-    connectionId,
-    ...localGitOptionArgs(localGitOptions)
-  )
+  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   if (!ownerRepo) {
     return null
   }
@@ -540,6 +570,7 @@ async function getPRFiles(
     const { stdout } = await ghExecFileAsync(
       [
         'api',
+        ...ghApiHostArgs(ownerRepo),
         '--cache',
         '60s',
         `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}/files?per_page=100`
@@ -573,11 +604,7 @@ async function getPRFileViewedStates(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<PRFileViewedStatesResult | null> {
   const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getOwnerRepo(
-    repoPath,
-    connectionId,
-    ...localGitOptionArgs(localGitOptions)
-  )
+  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   if (!ownerRepo) {
     return null
   }
@@ -592,6 +619,7 @@ async function getPRFileViewedStates(
     for (let fetched = 0; fetched < MAX_PR_FILES; fetched += 100) {
       const args = [
         'api',
+        ...ghApiHostArgs(ownerRepo),
         'graphql',
         '-f',
         `query=${PR_FILE_VIEWED_STATES_QUERY}`,
@@ -766,15 +794,17 @@ async function getPRBody(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<string> {
   const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getOwnerRepo(
-    repoPath,
-    connectionId,
-    ...localGitOptionArgs(localGitOptions)
-  )
+  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   try {
     if (ownerRepo) {
       const { stdout } = await ghExecFileAsync(
-        ['api', '--cache', '60s', `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`],
+        [
+          'api',
+          ...ghApiHostArgs(ownerRepo),
+          '--cache',
+          '60s',
+          `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`
+        ],
         ghOptions
       )
       const data = JSON.parse(stdout) as { body?: string | null }
@@ -801,7 +831,7 @@ async function getWorkItemParticipants(
   const ownerRepo =
     item.type === 'issue'
       ? await getIssueOwnerRepo(repoPath, connectionId, ...localGitOptionArgs(localGitOptions))
-      : await getOwnerRepo(repoPath, connectionId, ...localGitOptionArgs(localGitOptions))
+      : await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   if (!ownerRepo) {
     return []
   }
@@ -813,6 +843,7 @@ async function getWorkItemParticipants(
     const { stdout } = await ghExecFileAsync(
       [
         'api',
+        ...ghApiHostArgs(ownerRepo),
         'graphql',
         '-f',
         `query=${WORK_ITEM_PARTICIPANTS_QUERY}`,
@@ -874,6 +905,7 @@ async function getGitHubUsersByLogin(
     )
     return []
   }
+  const ownerRepo = await getOriginApiOwnerRepo(repoPath, connectionId, localGitOptions)
   const fields = uniqueLogins
     .map(
       (login, index) =>
@@ -883,7 +915,13 @@ async function getGitHubUsersByLogin(
   try {
     noteRateLimitSpend('graphql')
     const { stdout } = await ghExecFileAsync(
-      ['api', 'graphql', '-f', `query=query { ${fields} }`],
+      [
+        'api',
+        ...(ownerRepo ? ghApiHostArgs(ownerRepo) : []),
+        'graphql',
+        '-f',
+        `query=query { ${fields} }`
+      ],
       ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
     )
     const data = JSON.parse(stdout) as {
@@ -1134,8 +1172,7 @@ async function fetchContentAtRef(args: {
   repoPath: string
   connectionId?: string | null
   localGitOptions?: LocalGitExecOptions
-  owner: string
-  repo: string
+  ownerRepo: GitHubOwnerRepoSlug
   path: string
   ref: string
 }): Promise<{ content: string; isBinary: boolean; tooLarge?: boolean }> {
@@ -1147,7 +1184,8 @@ async function fetchContentAtRef(args: {
         '300s',
         '-H',
         'Accept: application/vnd.github.raw',
-        `repos/${args.owner}/${args.repo}/contents/${encodeURI(args.path)}?ref=${encodeURIComponent(args.ref)}`
+        ...ghApiHostArgs(args.ownerRepo),
+        `repos/${args.ownerRepo.owner}/${args.ownerRepo.repo}/contents/${encodeURI(args.path)}?ref=${encodeURIComponent(args.ref)}`
       ],
       {
         ...ghRepoExecOptions(
@@ -1181,10 +1219,10 @@ export async function getPRFileContents(args: {
   headSha: string
   baseSha: string
 }): Promise<GitHubPRFileContents> {
-  const ownerRepo = await getOwnerRepo(
+  const ownerRepo = await getOriginApiOwnerRepo(
     args.repoPath,
     args.connectionId,
-    ...localGitOptionArgs(args.localGitOptions)
+    args.localGitOptions
   )
   if (!ownerRepo) {
     return {
@@ -1209,8 +1247,7 @@ export async function getPRFileContents(args: {
             repoPath: args.repoPath,
             connectionId: args.connectionId,
             localGitOptions: args.localGitOptions,
-            owner: ownerRepo.owner,
-            repo: ownerRepo.repo,
+            ownerRepo,
             path: originalPath,
             ref: originalRef
           })
@@ -1223,8 +1260,7 @@ export async function getPRFileContents(args: {
             repoPath: args.repoPath,
             connectionId: args.connectionId,
             localGitOptions: args.localGitOptions,
-            owner: ownerRepo.owner,
-            repo: ownerRepo.repo,
+            ownerRepo,
             path: args.path,
             ref: args.headSha
           })
