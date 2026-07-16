@@ -591,7 +591,11 @@ describe('getPRChecks', () => {
         stdout: JSON.stringify([{ name: 'lint', state: 'PASS', link: 'https://example.com/lint' }])
       })
 
-    await getPRChecks('/repo-root', 42, undefined, { owner: 'acme', repo: 'widgets' })
+    await getPRChecks('/repo-root', 42, undefined, {
+      owner: 'acme',
+      repo: 'widgets',
+      host: 'github.com'
+    })
 
     expect(getOwnerRepoMock).not.toHaveBeenCalled()
     expectGraphQLRollupCall()

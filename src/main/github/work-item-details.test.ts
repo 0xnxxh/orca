@@ -10,6 +10,7 @@ const {
   getIssueOwnerRepoMock,
   getEnterpriseGitHubRepoSlugMock,
   getWorkItemMock,
+  getWorkItemByOwnerRepoMock,
   getPRChecksMock,
   getPRCommentsMock,
   rateLimitGuardMock,
@@ -24,6 +25,7 @@ const {
   getIssueOwnerRepoMock: vi.fn(),
   getEnterpriseGitHubRepoSlugMock: vi.fn(),
   getWorkItemMock: vi.fn(),
+  getWorkItemByOwnerRepoMock: vi.fn(),
   getPRChecksMock: vi.fn(),
   getPRCommentsMock: vi.fn(),
   rateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
@@ -54,6 +56,7 @@ vi.mock('./gh-utils', () => ({
 
 vi.mock('./client', () => ({
   getWorkItem: getWorkItemMock,
+  getWorkItemByOwnerRepo: getWorkItemByOwnerRepoMock,
   getPRChecks: getPRChecksMock,
   getPRComments: getPRCommentsMock
 }))
@@ -77,6 +80,7 @@ describe('getWorkItemDetails', () => {
     getEnterpriseGitHubRepoSlugMock.mockReset()
     getEnterpriseGitHubRepoSlugMock.mockResolvedValue(null)
     getWorkItemMock.mockReset()
+    getWorkItemByOwnerRepoMock.mockReset()
     getPRChecksMock.mockReset()
     getPRCommentsMock.mockReset()
     rateLimitGuardMock.mockReset()
@@ -478,6 +482,12 @@ describe('getWorkItemDetails', () => {
 
   it('routes local WSL PR detail fan-out through the selected distro', async () => {
     const localGitOptions = { wslDistro: 'Ubuntu' }
+    rateLimitGuardMock.mockReturnValue({
+      blocked: true,
+      remaining: 0,
+      limit: 5000,
+      resetAt: 1_800_000_000
+    })
     getWorkItemMock.mockResolvedValueOnce({
       id: 'pr:42',
       type: 'pr',
@@ -539,7 +549,7 @@ describe('getWorkItemDetails', () => {
     expect(getPRCommentsMock).toHaveBeenCalledWith(
       '/repo-root',
       42,
-      undefined,
+      { prRepo: { owner: 'acme', repo: 'widgets', host: 'github.com' } },
       null,
       localGitOptions
     )
@@ -547,7 +557,7 @@ describe('getWorkItemDetails', () => {
       '/repo-root',
       42,
       'head-sha',
-      null,
+      { owner: 'acme', repo: 'widgets', host: 'github.com' },
       undefined,
       null,
       localGitOptions
@@ -555,10 +565,12 @@ describe('getWorkItemDetails', () => {
     expect(ghExecFileAsyncMock.mock.calls.every((call) => call[1]?.wslDistro === 'Ubuntu')).toBe(
       true
     )
+    expect(rateLimitGuardMock).not.toHaveBeenCalled()
+    expect(noteRateLimitSpendMock).not.toHaveBeenCalled()
   })
 
-  it('uses the GitHub Enterprise host for PR files in work item details', async () => {
-    getWorkItemMock.mockResolvedValueOnce({
+  it('uses the GitHub Enterprise host for SSH-backed PR work item details', async () => {
+    getWorkItemByOwnerRepoMock.mockResolvedValueOnce({
       id: 'pr:7',
       type: 'pr',
       number: 7,
@@ -630,7 +642,7 @@ describe('getWorkItemDetails', () => {
       throw new Error(`unexpected gh call: ${args.join(' ')}`)
     })
 
-    const details = await getWorkItemDetails('/repo-root', 7, 'pr')
+    const details = await getWorkItemDetails('/remote/repo', 7, 'pr', 'ssh-1')
 
     expect(details?.body).toBe('Enterprise PR body')
     expect(details?.headSha).toBe('head-sha')
@@ -648,6 +660,29 @@ describe('getWorkItemDetails', () => {
         viewerViewedState: 'VIEWED'
       }
     ])
+    expect(getWorkItemMock).not.toHaveBeenCalled()
+    expect(getWorkItemByOwnerRepoMock).toHaveBeenCalledWith(
+      '/remote/repo',
+      { owner: 'team', repo: 'orca', host: 'github.acme-corp.com' },
+      7,
+      'pr',
+      'ssh-1'
+    )
+    expect(getEnterpriseGitHubRepoSlugMock).toHaveBeenCalledTimes(1)
+    expect(getPRCommentsMock).toHaveBeenCalledWith(
+      '/remote/repo',
+      7,
+      { prRepo: { owner: 'team', repo: 'orca', host: 'github.acme-corp.com' } },
+      'ssh-1'
+    )
+    expect(getPRChecksMock).toHaveBeenCalledWith(
+      '/remote/repo',
+      7,
+      'head-sha',
+      { owner: 'team', repo: 'orca', host: 'github.acme-corp.com' },
+      undefined,
+      'ssh-1'
+    )
     const apiCalls = ghExecFileAsyncMock.mock.calls
       .map(([args]) => args as string[])
       .filter((args) => args[0] === 'api')
@@ -656,6 +691,46 @@ describe('getWorkItemDetails', () => {
     expect(
       apiCalls.every((args) => args[args.indexOf('--hostname') + 1] === 'github.acme-corp.com')
     ).toBe(true)
+    expect(
+      ghExecFileAsyncMock.mock.calls.every(([, options]) => Object.keys(options).length === 0)
+    ).toBe(true)
+  })
+
+  it('does not fall back to the default host after an Enterprise PR lookup fails', async () => {
+    getOwnerRepoMock.mockResolvedValue(null)
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue({
+      owner: 'team',
+      repo: 'orca',
+      host: 'github.acme-corp.com'
+    })
+    getWorkItemByOwnerRepoMock.mockResolvedValue(null)
+    getWorkItemMock.mockResolvedValue({
+      id: 'pr:7',
+      type: 'pr',
+      number: 7,
+      title: 'Wrong github.com PR',
+      state: 'open',
+      url: 'https://github.com/team/orca/pull/7',
+      labels: [],
+      updatedAt: '2026-07-16T00:00:00Z',
+      author: 'wrong-author'
+    })
+
+    await expect(getWorkItemDetails('/remote/repo', 7, 'pr', 'ssh-1')).resolves.toBeNull()
+
+    expect(getWorkItemByOwnerRepoMock).toHaveBeenCalledTimes(1)
+    expect(getWorkItemMock).not.toHaveBeenCalled()
+  })
+
+  it('does not query the default host when an SSH PR repository is unresolved', async () => {
+    getOwnerRepoMock.mockResolvedValue(null)
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(null)
+
+    await expect(getWorkItemDetails('/remote/repo', 7, 'pr', 'ssh-1')).resolves.toBeNull()
+
+    expect(getWorkItemMock).not.toHaveBeenCalled()
+    expect(getWorkItemByOwnerRepoMock).not.toHaveBeenCalled()
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })
 
   it('uses the GitHub Enterprise host when fetching PR file contents', async () => {

@@ -43,6 +43,7 @@ vi.mock('./gh-utils', () => ({
 
 vi.mock('./client', () => ({
   getWorkItem: getWorkItemMock,
+  getWorkItemByOwnerRepo: vi.fn(),
   getPRChecks: getPRChecksMock,
   getPRComments: getPRCommentsMock
 }))
@@ -162,7 +163,7 @@ describe('getWorkItemDetails PR file viewed state', () => {
       '/repo-root',
       42,
       'head-sha',
-      null,
+      { owner: 'stablyai', repo: 'orca', host: 'github.com' },
       undefined,
       undefined
     )

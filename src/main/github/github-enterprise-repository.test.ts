@@ -149,6 +149,23 @@ describe('isGitHubHostAuthenticated', () => {
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(1)
   })
 
+  it('coalesces concurrent probes for the same runtime and host', async () => {
+    let finishProbe: (() => void) | undefined
+    ghExecFileAsyncMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishProbe = () => resolve({ stdout: '', stderr: '' })
+        })
+    )
+
+    const first = isGitHubHostAuthenticated('github.acme-corp.com', '/repo')
+    const second = isGitHubHostAuthenticated('github.acme-corp.com', '/repo')
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(1)
+    finishProbe?.()
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true])
+  })
+
   it('does not share cache state across WSL distros', async () => {
     mockHostAuthenticated()
 

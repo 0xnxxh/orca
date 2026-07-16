@@ -1402,6 +1402,44 @@ function nonInteractiveGhEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proce
   }
 }
 
+function ghFlagValue(args: readonly string[], names: readonly string[]): string | undefined {
+  for (const name of names) {
+    const index = args.indexOf(name)
+    if (index >= 0 && args[index + 1]) {
+      return args[index + 1]
+    }
+    const prefix = `${name}=`
+    const inline = args.find((arg) => arg.startsWith(prefix))
+    if (inline) {
+      return inline.slice(prefix.length)
+    }
+  }
+  return undefined
+}
+
+function ghRequestHost(args: readonly string[], env?: NodeJS.ProcessEnv): string {
+  const explicitHost = ghFlagValue(args, ['--hostname'])
+  if (explicitHost) {
+    return explicitHost.toLowerCase()
+  }
+  const repository = ghFlagValue(args, ['--repo', '-R'])
+  const repositoryParts = repository?.split('/') ?? []
+  if (repositoryParts.length >= 3) {
+    return repositoryParts[0].toLowerCase()
+  }
+  return (env?.GH_HOST ?? process.env.GH_HOST ?? 'github.com').toLowerCase()
+}
+
+function ghRateLimitScope(
+  args: readonly string[],
+  options: GhExecOptions,
+  resolved: ResolvedCommand
+): string {
+  const distro = resolved.wsl?.distro ?? options.wslDistro
+  const runtime = distro ? `wsl:${distro.toLowerCase()}` : 'native'
+  return `${runtime}:${ghRequestHost(args, options.env)}`
+}
+
 /**
  * Async gh CLI execution. Drop-in replacement for
  * `execFileAsync('gh', args, { cwd, encoding, ... })`.
@@ -1414,17 +1452,24 @@ export async function ghExecFileAsync(
   args: string[],
   options: GhExecOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
+  let resolved = resolveCommand('gh', args, options.cwd, options.wslDistro)
   // Why: while a bucket's primary rate limit is exhausted, every spawn would
   // return the same 403 — fail fast without paying the subprocess cost. The
   // rate_limit probe itself is exempt so the breaker can learn the reset time.
+  // Scope by execution runtime and host so github.com, GHES, and WSL accounts
+  // cannot block one another after an unrelated quota exhaustion.
   const rateLimitBucket = classifyGhRateLimitBucket(args)
+  const initialRateLimitScope = ghRateLimitScope(args, options, resolved)
   if (!isGhRateLimitProbe(args)) {
-    const blockedUntilMs = getGhRateLimitBlockedUntilMs(rateLimitBucket)
+    const blockedUntilMs = getGhRateLimitBlockedUntilMs(
+      rateLimitBucket,
+      Date.now(),
+      initialRateLimitScope
+    )
     if (blockedUntilMs !== null) {
       throw createGhRateLimitBlockedError(rateLimitBucket, blockedUntilMs)
     }
   }
-  let resolved = resolveCommand('gh', args, options.cwd, options.wslDistro)
   let lastError: unknown
   let attemptedHostFallback = false
   let attemptedDefaultWslFallback = false
@@ -1444,7 +1489,7 @@ export async function ghExecFileAsync(
       lastError = err
       const { stderr } = extractExecError(err)
       if (isGhPrimaryRateLimitStderr(stderr)) {
-        notifyGhPrimaryRateLimit(rateLimitBucket)
+        notifyGhPrimaryRateLimit(rateLimitBucket, ghRateLimitScope(args, options, resolved))
       }
       if (
         process.platform === 'win32' &&

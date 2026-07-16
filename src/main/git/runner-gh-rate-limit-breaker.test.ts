@@ -71,11 +71,35 @@ describe('ghExecFileAsync rate-limit breaker', () => {
     expect(execFileMock).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps other GitHub hosts and WSL runtimes working when github.com is blocked', async () => {
+    mockGhFailure(PRIMARY_RATE_LIMIT_STDERR)
+    await expect(ghExecFileAsync(['api', 'repos/a/b/pulls'])).rejects.toThrow()
+
+    mockGhSuccess('[]')
+    await expect(
+      ghExecFileAsync(['api', '--hostname', 'github.acme-corp.com', 'repos/a/b/pulls'])
+    ).resolves.toMatchObject({ stdout: '[]' })
+    await expect(
+      ghExecFileAsync(['pr', 'list', '--repo', 'github.acme-corp.com/a/b'])
+    ).resolves.toMatchObject({ stdout: '[]' })
+    await expect(
+      ghExecFileAsync(['api', 'repos/a/b/pulls'], {
+        env: { ...process.env, GH_HOST: 'github.acme-corp.com' }
+      })
+    ).resolves.toMatchObject({ stdout: '[]' })
+    await expect(
+      ghExecFileAsync(['api', 'repos/a/b/pulls'], { wslDistro: 'Ubuntu' })
+    ).resolves.toMatchObject({ stdout: '[]' })
+    expect(execFileMock).toHaveBeenCalledTimes(5)
+  })
+
   it('never blocks the exempt rate_limit probe', async () => {
     mockGhFailure(PRIMARY_RATE_LIMIT_STDERR)
     await expect(ghExecFileAsync(['api', 'repos/a/b/pulls'])).rejects.toThrow()
     mockGhSuccess('{"resources":{}}')
-    await expect(ghExecFileAsync(['api', 'rate_limit'])).resolves.toMatchObject({
+    await expect(
+      ghExecFileAsync(['api', '--hostname', 'github.com', 'rate_limit'])
+    ).resolves.toMatchObject({
       stdout: '{"resources":{}}'
     })
     expect(execFileMock).toHaveBeenCalledTimes(2)

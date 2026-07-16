@@ -15,6 +15,7 @@ import type {
 } from '../../shared/types'
 import { mapIssueInfo } from './mappers'
 import type { LocalGitExecOptions, OwnerRepo } from './gh-utils'
+import { githubApiHostArgs, resolveGitHubApiRepository } from './github-api-repository'
 // prettier-ignore
 import { ghExecFileAsync, acquire, release, getIssueOwnerRepo, resolveIssueSource, classifyGhError, classifyListIssuesError, ghRepoExecOptions, githubRepoContext, extractExecError } from './gh-utils'
 
@@ -411,8 +412,9 @@ export async function addIssueComment(
 ): Promise<GitHubCommentResult> {
   const context = githubRepoContext(repoPath, connectionId, localGitOptions)
   const ghOptions = ghRepoExecOptions(context)
-  const ownerRepo =
-    ownerRepoOverride ?? (await getIssueOwnerRepo(repoPath, connectionId, localGitOptions))
+  const ownerRepo = ownerRepoOverride
+    ? await resolveGitHubApiRepository(repoPath, ownerRepoOverride, connectionId, localGitOptions)
+    : await getIssueOwnerRepo(repoPath, connectionId, localGitOptions)
   if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
@@ -421,6 +423,7 @@ export async function addIssueComment(
     const { stdout } = await ghExecFileAsync(
       [
         'api',
+        ...githubApiHostArgs(ownerRepo),
         '-X',
         'POST',
         `repos/${ownerRepo.owner}/${ownerRepo.repo}/issues/${issueNumber}/comments`,

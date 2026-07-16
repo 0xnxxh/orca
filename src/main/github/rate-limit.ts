@@ -222,7 +222,11 @@ export async function getRateLimit(options?: { force?: boolean }): Promise<GetRa
 async function fetchRateLimitSnapshot(): Promise<GetRateLimitResult> {
   await acquire()
   try {
-    const { stdout } = await ghExecFileAsync(['api', 'rate_limit'], { encoding: 'utf-8' })
+    // Why: this singleton snapshot guards native github.com traffic. Pin the
+    // host so a process-level GH_HOST cannot make it describe a GHES account.
+    const { stdout } = await ghExecFileAsync(['api', '--hostname', 'github.com', 'rate_limit'], {
+      encoding: 'utf-8'
+    })
     const parsed = JSON.parse(stdout) as GhRateLimitPayload
     const snapshot: GitHubRateLimitSnapshot = {
       core: parseBucket(parsed.resources?.core),

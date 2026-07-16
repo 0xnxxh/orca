@@ -966,6 +966,22 @@ describe('createGitHubSlice.fetchPRChecks', () => {
     })
   })
 
+  it('isolates PR detail caches by Enterprise host', () => {
+    const githubRepo = { owner: 'Acme', repo: 'Widgets', host: 'github.com' }
+    const enterpriseRepo = {
+      owner: 'Acme',
+      repo: 'Widgets',
+      host: 'github.acme-corp.com'
+    }
+
+    expect(prChecksCacheSuffix(12, enterpriseRepo, 'head')).not.toBe(
+      prChecksCacheSuffix(12, githubRepo, 'head')
+    )
+    expect(prCommentsCacheSuffix(12, enterpriseRepo)).not.toBe(
+      prCommentsCacheSuffix(12, githubRepo)
+    )
+  })
+
   it('bounds checks cache entries across many repo and head combinations', async () => {
     vi.useFakeTimers()
 

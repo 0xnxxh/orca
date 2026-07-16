@@ -27,6 +27,7 @@ type HostAuthCacheEntry = {
 }
 
 const hostAuthCache = new Map<string, HostAuthCacheEntry>()
+const hostAuthInFlight = new Map<string, Promise<boolean>>()
 
 // Why: gh's authenticated hosts live in per-runtime config — a WSL distro and an
 // SSH host each carry their own `hosts.yml` — so cache state must be keyed by the
@@ -39,6 +40,7 @@ function runtimeCacheKey(connectionId?: string | null, wslDistro?: string): stri
 /** @internal - exposed for tests only */
 export function _resetGitHubHostAuthCache(): void {
   hostAuthCache.clear()
+  hostAuthInFlight.clear()
 }
 
 // Only gh's own stdout/stderr — not the Error.message — counts as an
@@ -74,26 +76,44 @@ export async function isGitHubHostAuthenticated(
   if (cached && cached.expiresAt > now) {
     return cached.authenticated
   }
-  const execOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  let authenticated: boolean
-  try {
-    await ghExecFileAsync(['auth', 'status', '--hostname', normalizedHost], execOptions)
-    authenticated = true
-  } catch (error) {
-    const output = ghCommandOutput(error)
-    if (!output) {
-      // Indeterminate (gh missing / spawn failure) — do not cache so a later
-      // probe (gh installed, tunnel ready, token added) can recover.
-      return false
-    }
-    // gh exits non-zero when a host has a token problem but still prints the
-    // per-host status; treat the host as GitHub only when it is actually listed.
-    authenticated = parseAuthStatus(output).some(
-      (account) => account.host.toLowerCase() === normalizedHost
-    )
+  const inFlight = hostAuthInFlight.get(cacheKey)
+  if (inFlight) {
+    return inFlight
   }
-  hostAuthCache.set(cacheKey, { authenticated, expiresAt: now + HOST_AUTH_TTL_MS })
-  return authenticated
+  // Why: provider detection and review loading can probe the same runtime at
+  // once; coalesce them so one host never spawns duplicate auth subprocesses.
+  const probe = (async () => {
+    const execOptions = ghRepoExecOptions(
+      githubRepoContext(repoPath, connectionId, localGitOptions)
+    )
+    let authenticated: boolean
+    try {
+      await ghExecFileAsync(['auth', 'status', '--hostname', normalizedHost], execOptions)
+      authenticated = true
+    } catch (error) {
+      const output = ghCommandOutput(error)
+      if (!output) {
+        // Indeterminate (gh missing / spawn failure) — do not cache so a later
+        // probe (gh installed, tunnel ready, token added) can recover.
+        return false
+      }
+      // gh exits non-zero when a host has a token problem but still prints the
+      // per-host status; treat the host as GitHub only when it is actually listed.
+      authenticated = parseAuthStatus(output).some(
+        (account) => account.host.toLowerCase() === normalizedHost
+      )
+    }
+    hostAuthCache.set(cacheKey, { authenticated, expiresAt: Date.now() + HOST_AUTH_TTL_MS })
+    return authenticated
+  })()
+  hostAuthInFlight.set(cacheKey, probe)
+  try {
+    return await probe
+  } finally {
+    if (hostAuthInFlight.get(cacheKey) === probe) {
+      hostAuthInFlight.delete(cacheKey)
+    }
+  }
 }
 
 /**
