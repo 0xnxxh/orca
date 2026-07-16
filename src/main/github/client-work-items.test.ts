@@ -20,7 +20,7 @@ const {
   getOwnerRepoForRemoteMock: vi.fn(),
   resolveIssueSourceMock: vi.fn(),
   gitExecFileAsyncMock: vi.fn(),
-  rateLimitGuardMock: vi.fn(() => ({ blocked: false })),
+  rateLimitGuardMock: vi.fn((_bucket?: unknown) => ({ blocked: false })),
   noteRateLimitSpendMock: vi.fn(),
   acquireMock: vi.fn(),
   releaseMock: vi.fn()
@@ -65,8 +65,11 @@ vi.mock('./rate-limit', () => ({
   rateLimitGuard: rateLimitGuardMock,
   noteRateLimitSpend: noteRateLimitSpendMock,
   getRateLimit: vi.fn(async () => ({ ok: false, error: 'not probed in tests' })),
-  repositoryRateLimitGuard: vi.fn(() => ({ blocked: false })),
-  noteRepositoryRateLimitSpend: vi.fn(),
+  // Mirror production: shared-scope calls delegate to the global guard/spend.
+  repositoryRateLimitGuard: vi.fn((_repo: unknown, bucket: string) => rateLimitGuardMock(bucket)),
+  noteRepositoryRateLimitSpend: vi.fn((_repo: unknown, bucket: string, cost?: number) =>
+    noteRateLimitSpendMock(bucket, cost)
+  ),
   spendsSharedGitHubComQuota: () => true
 }))
 
@@ -78,6 +81,14 @@ import {
 } from './client'
 import { _resetGhCwdRepoNegativeCache } from './gh-cwd-repo-negative-cache'
 import { GITHUB_WORK_ITEMS_QUERY_MAX_BYTES } from '../../shared/github-work-items-query-bounds'
+
+import { _resetOriginGitHubApiRepositoryCache } from './github-api-repository'
+
+// The origin-repository cache is module-level state; reset it so slugs
+// resolved by one test cannot leak into the next.
+beforeEach(() => {
+  _resetOriginGitHubApiRepositoryCache()
+})
 
 describe('listWorkItems', () => {
   beforeEach(() => {

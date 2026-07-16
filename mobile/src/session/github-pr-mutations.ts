@@ -1,6 +1,6 @@
 import type { GitHubPRMergeMethod } from '../../../src/shared/types'
 import type { RpcClient } from '../transport/rpc-client'
-import { buildGithubPrParams, type GitHubPrRepoSlug } from './github-pr-rpc'
+import { buildGithubPrParams, githubPrRepoSlugParam, type GitHubPrRepoSlug } from './github-pr-rpc'
 
 // Mutation wrappers for the github.* PR surface, split out so github-pr-rpc.ts
 // stays under the max-lines budget. They mirror the read wrappers' shape but
@@ -105,7 +105,7 @@ export async function fetchUpdatePRTitle(
   // METHODS_ACCEPTING_PR_REPO read allow-list — pass it explicitly so it reaches the
   // host schema (which declares it optional/nullable).
   if (args.prRepo) {
-    params.prRepo = { owner: args.prRepo.owner, repo: args.prRepo.repo }
+    params.prRepo = githubPrRepoSlugParam(args.prRepo)
   }
   const response = await sendRaw(
     client,
@@ -226,7 +226,7 @@ export async function fetchAddPRReviewCommentReply(
   // centralized METHODS_ACCEPTING_PR_REPO allow-list (read-focused) — pass it
   // explicitly so it reaches the host schema, which declares it optional.
   if (args.prRepo) {
-    params.prRepo = { owner: args.prRepo.owner, repo: args.prRepo.repo }
+    params.prRepo = githubPrRepoSlugParam(args.prRepo)
   }
   return sendGithubPrMutation(
     client,
@@ -247,7 +247,7 @@ export async function fetchAddIssueComment(
     type: 'pr'
   }
   if (args.prRepo) {
-    params.prRepo = { owner: args.prRepo.owner, repo: args.prRepo.repo }
+    params.prRepo = githubPrRepoSlugParam(args.prRepo)
   }
   return sendGithubPrMutation(
     client,

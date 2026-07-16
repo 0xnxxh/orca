@@ -31,7 +31,13 @@ export {
 
 // Why: a fork PR's head lives in a different owner/repo; the host's SlugRepo
 // (`{ owner, repo }`) identifies it. Only a subset of github.* methods accept it.
-export type GitHubPrRepoSlug = { owner: string; repo: string }
+// Why: `host` must survive the RPC boundary or GHES actions on the host fall
+// back to a same-named github.com repo (src/shared/types.ts identity contract).
+export type GitHubPrRepoSlug = { owner: string; repo: string; host?: string }
+
+export function githubPrRepoSlugParam(slug: GitHubPrRepoSlug): Record<string, string> {
+  return { owner: slug.owner, repo: slug.repo, ...(slug.host ? { host: slug.host } : {}) }
+}
 
 export type GitHubPrReadOutcome<T> = { ok: true; result: T } | { ok: false; error: string }
 
@@ -62,7 +68,7 @@ export function buildGithubPrParams(
     ...params
   }
   if (options?.prRepo && METHODS_ACCEPTING_PR_REPO.has(method) && !('prRepo' in built)) {
-    built.prRepo = { owner: options.prRepo.owner, repo: options.prRepo.repo }
+    built.prRepo = githubPrRepoSlugParam(options.prRepo)
   }
   if (options?.headSha && METHODS_ACCEPTING_HEAD_SHA.has(method) && !('headSha' in built)) {
     built.headSha = options.headSha

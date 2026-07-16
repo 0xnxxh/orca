@@ -24,6 +24,7 @@ import {
   classifyGhRateLimitBucket,
   createGhRateLimitBlockedError,
   getGhRateLimitBlockedUntilMs,
+  ghRateLimitScopeKey,
   isGhPrimaryRateLimitStderr,
   isGhRateLimitProbe,
   notifyGhPrimaryRateLimit,
@@ -1435,32 +1436,37 @@ export function applyGhHostToArgs(args: string[], host?: string): string[] {
   if (result[0] === 'api' && !hasGhHostnameFlag(result)) {
     result = ['api', '--hostname', host, ...result.slice(1)]
   }
-  // github.com is gh's default resolution for bare OWNER/REPO shorthand.
-  if (host.toLowerCase() === 'github.com') {
-    return result
-  }
-  return result.map((arg, i) => {
-    const prev = result[i - 1]
-    if (prev === '--repo' || prev === '-R') {
-      return hostQualifiedGhRepoValue(arg, host)
+  // Why: bare OWNER/REPO shorthand resolves against gh's default host — GH_HOST
+  // when set — so github.com must be qualified too, not just GHES, or a
+  // process-level GH_HOST redirects pinned github.com commands.
+  // Combined short forms (`-Ra/b`, `-R=a/b`) are deliberately not rewritten:
+  // no call site uses them, and prefix-matching `-R` corrupts free-text values
+  // of other flags (e.g. a --title that happens to start with `-R`).
+  const qualified: string[] = []
+  for (let i = 0; i < result.length; i += 1) {
+    const arg = result[i]
+    if (arg === '--repo' || arg === '-R') {
+      qualified.push(arg)
+      const value = result[i + 1]
+      if (value !== undefined) {
+        qualified.push(hostQualifiedGhRepoValue(value, host))
+        i += 1
+      }
+      continue
     }
     if (arg.startsWith('--repo=')) {
-      return `--repo=${hostQualifiedGhRepoValue(arg.slice('--repo='.length), host)}`
+      qualified.push(`--repo=${hostQualifiedGhRepoValue(arg.slice('--repo='.length), host)}`)
+      continue
     }
-    if (arg.startsWith('-R=')) {
-      return `-R=${hostQualifiedGhRepoValue(arg.slice('-R='.length), host)}`
-    }
-    if (arg.startsWith('-R') && arg.length > '-R'.length) {
-      return `-R${hostQualifiedGhRepoValue(arg.slice('-R'.length), host)}`
-    }
-    return arg
-  })
+    qualified.push(arg)
+  }
+  return qualified
 }
 
 function ghRateLimitScope(options: GhExecOptions, resolved: ResolvedCommand): string {
   const runtime = resolved.wsl ? `wsl:${resolved.wsl.distro.toLowerCase()}` : 'native'
   const host = options.host ?? options.env?.GH_HOST ?? process.env.GH_HOST ?? 'github.com'
-  return `${runtime}:${host.toLowerCase()}`
+  return ghRateLimitScopeKey(runtime, host)
 }
 
 function assertGhRateLimitScopeAvailable(

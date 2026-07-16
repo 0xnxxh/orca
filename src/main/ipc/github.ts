@@ -474,6 +474,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
         repoPath: string
         owner: string
         repo: string
+        host?: string
         number: number
         type: 'issue' | 'pr'
       }
@@ -481,7 +482,9 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
       const repo = assertRegisteredRepo(args, store)
       return getWorkItemByOwnerRepo(
         repo.path,
-        { owner: args.owner, repo: args.repo },
+        // Why: Enterprise host identity must survive the IPC boundary or the
+        // lookup falls back to gh's default host for a same-named repo.
+        { owner: args.owner, repo: args.repo, ...(args.host ? { host: args.host } : {}) },
         args.number,
         args.type,
         repoConnectionId(repo),

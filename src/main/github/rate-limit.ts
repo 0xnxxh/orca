@@ -18,6 +18,7 @@ import type {
   GitHubRateLimitBucket,
   GitHubRateLimitSnapshot
 } from '../../shared/types'
+import { isDefaultGitHubHost } from '../../shared/github-repository-identity-key'
 import { acquire, release } from './gh-utils'
 import { ghExecFileAsync } from '../git/runner'
 import {
@@ -168,8 +169,7 @@ export function spendsSharedGitHubComQuota(
   repository: { host?: string } | null | undefined,
   executionOptions?: { wslDistro?: string }
 ): boolean {
-  const host = repository?.host
-  return (!host || host.toLowerCase() === 'github.com') && !executionOptions?.wslDistro
+  return isDefaultGitHubHost(repository?.host) && !executionOptions?.wslDistro
 }
 
 export function repositoryRateLimitGuard(

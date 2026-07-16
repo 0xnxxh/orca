@@ -239,7 +239,9 @@ function parseOwnerRepoFromItemUrl(url: string): GitHubOwnerRepo | null {
     if (segments.length < 2) {
       return null
     }
-    return { owner: segments[0], repo: segments[1] }
+    // Why: the URL proves the host. Leaving it off lets the main process stamp
+    // a GHES origin's host onto what is provably a github.com repo.
+    return { owner: segments[0], repo: segments[1], host: 'github.com' }
   } catch {
     return null
   }
