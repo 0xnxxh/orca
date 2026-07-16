@@ -85,7 +85,6 @@ import {
   rememberGhCwdResolutionFailure
 } from './gh-cwd-repo-negative-cache'
 import type { GitHubRepoContext } from './github-repository-identity'
-import { getEnterpriseGitHubRepoSlug } from './github-enterprise-repository'
 import {
   getOriginGitHubApiRepository,
   githubHostExecOptions,
@@ -117,7 +116,6 @@ import {
 import { mapGraphQLReactionGroups, type GitHubGraphQLReactionGroup } from './comment-reactions'
 import {
   getRateLimit,
-  noteRateLimitSpend,
   noteRepositoryRateLimitSpend,
   rateLimitGuard,
   repositoryRateLimitGuard,
@@ -1454,7 +1452,7 @@ async function countWorkItemsForQuery(
     ghOptions
   )
   // Why: over-counting cache hits is the safe direction — the next probe corrects the estimate.
-  noteRateLimitSpend('search')
+  noteRepositoryRateLimitSpend(ownerRepo, 'search', 1, localGitOptions)
   return Number.parseInt(stdout.trim(), 10) || 0
 }
 
@@ -1507,8 +1505,10 @@ export async function countWorkItems(
   const effectiveQuery = parsedQuery ?? defaultOpenWorkItemQuery()
 
   // Why: counts are decorative, so stop when the 30/min search budget is gone rather than spawn into 403s (getRateLimit is 30s-cached).
-  await getRateLimit()
-  if (rateLimitGuard('search').blocked) {
+  if (spendsSharedGitHubComQuota(ownerRepo, localGitOptions)) {
+    await getRateLimit()
+  }
+  if (repositoryRateLimitGuard(ownerRepo, 'search', localGitOptions).blocked) {
     return 0
   }
 
@@ -1801,15 +1801,12 @@ export async function createGitHubPullRequest(
     }
   }
 
-  // Why: github.com-only slug parsing returns null for GHES; fall back to the enterprise resolver (#8312).
-  // Why: use origin, not the fork parent — the unqualified head branch was pushed there (getOwnerRepo upstream-first since #7331).
-  const ownerRepo =
-    (await getOwnerRepoForRemote(
-      repoPath,
-      'origin',
-      connectionId,
-      ...hostedReviewLocalGitOptionArgs(options)
-    )) ?? (await getEnterpriseGitHubRepoSlug(repoPath, connectionId, options))
+  // Why: creation targets the origin owning the unqualified head branch; the shared resolver preserves its host (#7331, #8312).
+  const ownerRepo = await getOriginGitHubApiRepository(
+    repoPath,
+    connectionId,
+    getHostedReviewLocalGitOptions(options)
+  )
   if (!ownerRepo) {
     return {
       ok: false,
@@ -4246,7 +4243,7 @@ export async function getPRComments(
       ['pr', 'view', String(prNumber), '--json', 'comments'],
       ghOptions
     )
-    noteRateLimitSpend('graphql')
+    noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, ghOptions)
     const data = JSON.parse(stdout) as {
       comments: {
         author: { login: string }

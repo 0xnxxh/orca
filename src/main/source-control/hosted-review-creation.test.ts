@@ -393,7 +393,7 @@ describe('createHostedReview', () => {
     )
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['auth', 'status', '--hostname', 'github.com'],
-      { cwd: '/repo', wslDistro: 'Ubuntu' }
+      { cwd: '/repo', wslDistro: 'Ubuntu', host: 'github.com' }
     )
     expect(createGitHubPullRequestMock).toHaveBeenCalledWith(
       '/repo',
@@ -578,7 +578,7 @@ describe('createHostedReview', () => {
     expect(getUpstreamStatusMock).not.toHaveBeenCalled()
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['auth', 'status', '--hostname', 'github.com'],
-      {}
+      { host: 'github.com' }
     )
     expect(createGitHubPullRequestMock).toHaveBeenCalledWith(
       '/remote/repo',

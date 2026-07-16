@@ -53,36 +53,56 @@ describe('applyGhHostToArgs', () => {
     ])
   })
 
-  it('qualifies inline long and short repo forms for a GHES host', () => {
+  it('qualifies the inline --repo= form for a GHES host', () => {
     expect(applyGhHostToArgs(['pr', 'list', '--repo=a/b'], 'github.acme-corp.com')).toEqual([
       'pr',
       'list',
       '--repo=github.acme-corp.com/a/b'
     ])
+  })
+
+  it('leaves combined -R short forms untouched (indistinguishable from free-text values)', () => {
     expect(applyGhHostToArgs(['pr', 'list', '-R=a/b'], 'github.acme-corp.com')).toEqual([
       'pr',
       'list',
-      '-R=github.acme-corp.com/a/b'
+      '-R=a/b'
     ])
     expect(applyGhHostToArgs(['pr', 'list', '-Ra/b'], 'github.acme-corp.com')).toEqual([
       'pr',
       'list',
-      '-Rgithub.acme-corp.com/a/b'
+      '-Ra/b'
     ])
   })
 
-  it('leaves --repo untouched for the github.com host (gh default resolution)', () => {
+  it('does not rewrite free-text flag values that merely start with -R', () => {
+    expect(
+      applyGhHostToArgs(
+        ['pr', 'edit', '7', '--title', '-Refactor foo/bar', '--repo', 'a/b'],
+        'github.acme-corp.com'
+      )
+    ).toEqual([
+      'pr',
+      'edit',
+      '7',
+      '--title',
+      '-Refactor foo/bar',
+      '--repo',
+      'github.acme-corp.com/a/b'
+    ])
+  })
+
+  it('qualifies --repo for the github.com host so GH_HOST cannot redirect it', () => {
     expect(applyGhHostToArgs(['pr', 'list', '--repo', 'a/b'], 'github.com')).toEqual([
       'pr',
       'list',
       '--repo',
-      'a/b'
+      'github.com/a/b'
     ])
     expect(applyGhHostToArgs(['pr', 'list', '--repo', 'a/b'], 'GitHub.com')).toEqual([
       'pr',
       'list',
       '--repo',
-      'a/b'
+      'GitHub.com/a/b'
     ])
   })
 
@@ -101,13 +121,10 @@ describe('applyGhHostToArgs', () => {
     ).toEqual(['pr', 'list', '--repo', 'github.acme-corp.com/a/b'])
     expect(
       applyGhHostToArgs(
-        ['pr', 'list', '-R=https://github.acme-corp.com/a/b'],
+        ['pr', 'list', '-R', 'https://github.acme-corp.com/a/b'],
         'github.acme-corp.com'
       )
-    ).toEqual(['pr', 'list', '-R=https://github.acme-corp.com/a/b'])
-    expect(
-      applyGhHostToArgs(['pr', 'list', '-Rgithub.acme-corp.com/a/b'], 'github.acme-corp.com')
-    ).toEqual(['pr', 'list', '-Rgithub.acme-corp.com/a/b'])
+    ).toEqual(['pr', 'list', '-R', 'https://github.acme-corp.com/a/b'])
   })
 
   it('injects --hostname and qualifies --repo together for GHES api calls', () => {

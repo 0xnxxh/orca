@@ -122,6 +122,14 @@ import {
   updatePRTitle
 } from './client'
 
+import { _resetOriginGitHubApiRepositoryCache } from './github-api-repository'
+
+// The origin-repository cache is module-level state; reset it so slugs
+// resolved by one test cannot leak into the next.
+beforeEach(() => {
+  _resetOriginGitHubApiRepositoryCache()
+})
+
 describe('GitHub PR local runtime routing', () => {
   beforeEach(() => {
     execFileAsyncMock.mockReset()

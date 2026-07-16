@@ -78,6 +78,14 @@ vi.mock('./rate-limit', () => ({
 
 import { getPRFileContents, getWorkItemDetails } from './work-item-details'
 
+import { _resetOriginGitHubApiRepositoryCache } from './github-api-repository'
+
+// The origin-repository cache is module-level state; reset it so slugs
+// resolved by one test cannot leak into the next.
+beforeEach(() => {
+  _resetOriginGitHubApiRepositoryCache()
+})
+
 describe('getWorkItemDetails', () => {
   beforeEach(() => {
     ghExecFileAsyncMock.mockReset()
