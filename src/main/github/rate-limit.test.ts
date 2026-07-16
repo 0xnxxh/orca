@@ -13,7 +13,15 @@ vi.mock('./gh-utils', () => ({
   release: vi.fn()
 }))
 
-import { getRateLimit, rateLimitGuard, _resetRateLimitCache } from './rate-limit'
+import {
+  getRateLimit,
+  rateLimitGuard,
+  noteRateLimitSpend,
+  spendsSharedGitHubComQuota,
+  repositoryRateLimitGuard,
+  noteRepositoryRateLimitSpend,
+  _resetRateLimitCache
+} from './rate-limit'
 
 const PAYLOAD = JSON.stringify({
   resources: {
@@ -49,10 +57,12 @@ describe('getRateLimit', () => {
         fetchedAt: 1_000
       }
     })
-    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
-      ['api', '--hostname', 'github.com', 'rate_limit'],
-      { encoding: 'utf-8' }
-    )
+    // The runner injects --hostname at spawn from the `host` option, so the
+    // probe passes bare argv and pins the host to github.com through options.
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(['api', 'rate_limit'], {
+      encoding: 'utf-8',
+      host: 'github.com'
+    })
   })
 
   it('caches a failed probe for the TTL instead of re-spawning gh', async () => {
@@ -137,5 +147,83 @@ describe('rateLimitGuard', () => {
     vi.setSystemTime(61_000)
 
     expect(rateLimitGuard('core')).toEqual({ blocked: false })
+  })
+})
+
+// Why: only default github.com traffic on the native runtime shares this
+// snapshot's budget. GHES hosts and WSL distros run against separate quotas,
+// so the shared guard must bypass them entirely.
+describe('shared-quota host scoping', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    ghExecFileAsyncMock.mockReset()
+    _resetRateLimitCache()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function cacheExhaustedSnapshot(resetEpochSeconds: number): Promise<void> {
+    ghExecFileAsyncMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        resources: {
+          core: { limit: 5000, remaining: 3, reset: resetEpochSeconds },
+          search: { limit: 30, remaining: 28, reset: resetEpochSeconds },
+          graphql: { limit: 5000, remaining: 4900, reset: resetEpochSeconds }
+        }
+      })
+    })
+    expect((await getRateLimit()).ok).toBe(true)
+  }
+
+  it('treats github.com / no host on the native runtime as sharing the budget', () => {
+    expect(spendsSharedGitHubComQuota(undefined)).toBe(true)
+    expect(spendsSharedGitHubComQuota(null)).toBe(true)
+    expect(spendsSharedGitHubComQuota({ host: 'github.com' })).toBe(true)
+    expect(spendsSharedGitHubComQuota({ host: 'GitHub.com' })).toBe(true)
+  })
+
+  it('excludes GHES hosts and WSL runtimes from the shared budget', () => {
+    expect(spendsSharedGitHubComQuota({ host: 'github.acme-corp.com' })).toBe(false)
+    expect(spendsSharedGitHubComQuota({ host: 'github.com' }, { wslDistro: 'Ubuntu' })).toBe(false)
+    expect(spendsSharedGitHubComQuota(undefined, { wslDistro: 'Ubuntu' })).toBe(false)
+  })
+
+  it('applies the shared guard for github.com but bypasses non-shared scopes', async () => {
+    await cacheExhaustedSnapshot(61)
+
+    expect(repositoryRateLimitGuard({ host: 'github.com' }, 'core')).toEqual({
+      blocked: true,
+      remaining: 3,
+      limit: 5000,
+      resetAt: 61
+    })
+    expect(repositoryRateLimitGuard({ host: 'github.acme-corp.com' }, 'core')).toEqual({
+      blocked: false
+    })
+    expect(
+      repositoryRateLimitGuard({ host: 'github.com' }, 'core', { wslDistro: 'Ubuntu' })
+    ).toEqual({ blocked: false })
+  })
+
+  it('debits shared-budget spend but no-ops for non-shared scopes', async () => {
+    await cacheExhaustedSnapshot(61)
+
+    noteRepositoryRateLimitSpend({ host: 'github.acme-corp.com' }, 'core')
+    const afterEnterprise = rateLimitGuard('core')
+    expect(afterEnterprise.blocked && afterEnterprise.remaining).toBe(3)
+
+    noteRepositoryRateLimitSpend({ host: 'github.com' }, 'core')
+    const afterShared = rateLimitGuard('core')
+    expect(afterShared.blocked && afterShared.remaining).toBe(2)
+  })
+
+  it('matches noteRateLimitSpend when the scope is shared github.com', async () => {
+    await cacheExhaustedSnapshot(61)
+    noteRateLimitSpend('core')
+    const guard = rateLimitGuard('core')
+    expect(guard.blocked && guard.remaining).toBe(2)
   })
 })

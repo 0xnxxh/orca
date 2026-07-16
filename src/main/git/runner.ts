@@ -1140,6 +1140,11 @@ type GhExecOptions = Omit<GitExecOptions, 'cwd'> & {
   cwd?: string
   wslDistro?: string
   idempotent?: boolean
+  // Why: `gh api` and `--repo OWNER/REPO` shorthand resolve against gh's
+  // default host, not the repo's remote. Carrying the host here lets the
+  // runner qualify every spawn once, so call sites can't silently fall back
+  // to github.com for GHES repos; it also scopes the rate-limit breaker.
+  host?: string
 }
 
 const NON_IDEMPOTENT_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE'])
@@ -1402,42 +1407,54 @@ function nonInteractiveGhEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proce
   }
 }
 
-function ghFlagValue(args: readonly string[], names: readonly string[]): string | undefined {
-  for (const name of names) {
-    const index = args.indexOf(name)
-    if (index >= 0 && args[index + 1]) {
-      return args[index + 1]
-    }
-    const prefix = `${name}=`
-    const inline = args.find((arg) => arg.startsWith(prefix))
-    if (inline) {
-      return inline.slice(prefix.length)
-    }
-  }
-  return undefined
+function hasGhHostnameFlag(args: readonly string[]): boolean {
+  return args.some((arg) => arg === '--hostname' || arg.startsWith('--hostname='))
 }
 
-function ghRequestHost(args: readonly string[], env?: NodeJS.ProcessEnv): string {
-  const explicitHost = ghFlagValue(args, ['--hostname'])
-  if (explicitHost) {
-    return explicitHost.toLowerCase()
+function hostQualifiedGhRepoValue(value: string, host: string): string {
+  // URLs and already-qualified HOST/OWNER/REPO values pass through untouched.
+  if (value.includes('://') || value.split('/').length !== 2) {
+    return value
   }
-  const repository = ghFlagValue(args, ['--repo', '-R'])
-  const repositoryParts = repository?.split('/') ?? []
-  if (repositoryParts.length >= 3) {
-    return repositoryParts[0].toLowerCase()
-  }
-  return (env?.GH_HOST ?? process.env.GH_HOST ?? 'github.com').toLowerCase()
+  return `${host}/${value}`
 }
 
-function ghRateLimitScope(
-  args: readonly string[],
-  options: GhExecOptions,
-  resolved: ResolvedCommand
-): string {
+/**
+ * Host-qualify a gh invocation from `options.host`: `--hostname` for `api`
+ * calls, `HOST/OWNER/REPO` for `--repo`/`-R` shorthand. SSH-backed repos run
+ * gh with no cwd, so this is their only host signal (#8312).
+ *
+ * @internal exported for tests.
+ */
+export function applyGhHostToArgs(args: string[], host?: string): string[] {
+  if (!host) {
+    return args
+  }
+  let result = args
+  if (result[0] === 'api' && !hasGhHostnameFlag(result)) {
+    result = ['api', '--hostname', host, ...result.slice(1)]
+  }
+  // github.com is gh's default resolution for bare OWNER/REPO shorthand.
+  if (host.toLowerCase() === 'github.com') {
+    return result
+  }
+  return result.map((arg, i) => {
+    const prev = result[i - 1]
+    if (prev === '--repo' || prev === '-R') {
+      return hostQualifiedGhRepoValue(arg, host)
+    }
+    if (arg.startsWith('--repo=')) {
+      return `--repo=${hostQualifiedGhRepoValue(arg.slice('--repo='.length), host)}`
+    }
+    return arg
+  })
+}
+
+function ghRateLimitScope(options: GhExecOptions, resolved: ResolvedCommand): string {
   const distro = resolved.wsl?.distro ?? options.wslDistro
   const runtime = distro ? `wsl:${distro.toLowerCase()}` : 'native'
-  return `${runtime}:${ghRequestHost(args, options.env)}`
+  const host = options.host ?? options.env?.GH_HOST ?? process.env.GH_HOST ?? 'github.com'
+  return `${runtime}:${host.toLowerCase()}`
 }
 
 /**
@@ -1452,6 +1469,7 @@ export async function ghExecFileAsync(
   args: string[],
   options: GhExecOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
+  args = applyGhHostToArgs(args, options.host)
   let resolved = resolveCommand('gh', args, options.cwd, options.wslDistro)
   // Why: while a bucket's primary rate limit is exhausted, every spawn would
   // return the same 403 — fail fast without paying the subprocess cost. The
@@ -1459,7 +1477,7 @@ export async function ghExecFileAsync(
   // Scope by execution runtime and host so github.com, GHES, and WSL accounts
   // cannot block one another after an unrelated quota exhaustion.
   const rateLimitBucket = classifyGhRateLimitBucket(args)
-  const initialRateLimitScope = ghRateLimitScope(args, options, resolved)
+  const initialRateLimitScope = ghRateLimitScope(options, resolved)
   if (!isGhRateLimitProbe(args)) {
     const blockedUntilMs = getGhRateLimitBlockedUntilMs(
       rateLimitBucket,
@@ -1489,7 +1507,7 @@ export async function ghExecFileAsync(
       lastError = err
       const { stderr } = extractExecError(err)
       if (isGhPrimaryRateLimitStderr(stderr)) {
-        notifyGhPrimaryRateLimit(rateLimitBucket, ghRateLimitScope(args, options, resolved))
+        notifyGhPrimaryRateLimit(rateLimitBucket, ghRateLimitScope(options, resolved))
       }
       if (
         process.platform === 'win32' &&

@@ -41,7 +41,9 @@ vi.mock('./github-enterprise-repository', () => ({
 
 vi.mock('./rate-limit', () => ({
   rateLimitGuard: vi.fn(() => ({ blocked: false })),
-  noteRateLimitSpend: vi.fn()
+  noteRateLimitSpend: vi.fn(),
+  repositoryRateLimitGuard: vi.fn(() => ({ blocked: false })),
+  noteRepositoryRateLimitSpend: vi.fn()
 }))
 
 import { getWorkItemDetails } from './work-item-details'

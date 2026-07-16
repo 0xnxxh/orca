@@ -15,6 +15,8 @@ const {
   getPRCommentsMock,
   rateLimitGuardMock,
   noteRateLimitSpendMock,
+  repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpendMock,
   ghRepoExecOptionsMock,
   githubRepoContextMock,
   acquireMock,
@@ -30,6 +32,8 @@ const {
   getPRCommentsMock: vi.fn(),
   rateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
   noteRateLimitSpendMock: vi.fn(),
+  repositoryRateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
+  noteRepositoryRateLimitSpendMock: vi.fn(),
   ghRepoExecOptionsMock: vi.fn((context) =>
     context.connectionId
       ? {}
@@ -67,7 +71,9 @@ vi.mock('./github-enterprise-repository', () => ({
 
 vi.mock('./rate-limit', () => ({
   rateLimitGuard: rateLimitGuardMock,
-  noteRateLimitSpend: noteRateLimitSpendMock
+  noteRateLimitSpend: noteRateLimitSpendMock,
+  repositoryRateLimitGuard: repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpend: noteRepositoryRateLimitSpendMock
 }))
 
 import { getPRFileContents, getWorkItemDetails } from './work-item-details'
@@ -86,6 +92,9 @@ describe('getWorkItemDetails', () => {
     rateLimitGuardMock.mockReset()
     rateLimitGuardMock.mockReturnValue({ blocked: false })
     noteRateLimitSpendMock.mockReset()
+    repositoryRateLimitGuardMock.mockReset()
+    repositoryRateLimitGuardMock.mockReturnValue({ blocked: false })
+    noteRepositoryRateLimitSpendMock.mockReset()
     ghRepoExecOptionsMock.mockClear()
     githubRepoContextMock.mockClear()
     acquireMock.mockReset()
@@ -410,7 +419,15 @@ describe('getWorkItemDetails', () => {
   })
 
   it('skips optional GraphQL issue detail calls when the cached GraphQL budget is low', async () => {
+    // github.com repos share the singleton quota, so both the raw and
+    // repository-scoped guards report the same low-budget block.
     rateLimitGuardMock.mockReturnValue({
+      blocked: true,
+      remaining: 3,
+      limit: 5000,
+      resetAt: 1_800_000_000
+    })
+    repositoryRateLimitGuardMock.mockReturnValue({
       blocked: true,
       remaining: 3,
       limit: 5000,
@@ -438,6 +455,7 @@ describe('getWorkItemDetails', () => {
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(3)
     expect(ghExecFileAsyncMock.mock.calls.some((call) => call[0][1] === 'graphql')).toBe(false)
     expect(noteRateLimitSpendMock).not.toHaveBeenCalled()
+    expect(noteRepositoryRateLimitSpendMock).not.toHaveBeenCalled()
     expect(details?.body).toBe('Issue body')
     expect(details?.participants).toEqual([])
   })
@@ -687,12 +705,11 @@ describe('getWorkItemDetails', () => {
       .map(([args]) => args as string[])
       .filter((args) => args[0] === 'api')
     expect(apiCalls.length).toBeGreaterThan(0)
-    expect(apiCalls.every((args) => args.includes('--hostname'))).toBe(true)
+    expect(apiCalls.every((args) => !args.includes('--hostname'))).toBe(true)
     expect(
-      apiCalls.every((args) => args[args.indexOf('--hostname') + 1] === 'github.acme-corp.com')
-    ).toBe(true)
-    expect(
-      ghExecFileAsyncMock.mock.calls.every(([, options]) => Object.keys(options).length === 0)
+      ghExecFileAsyncMock.mock.calls.every(
+        ([, options]) => options?.host === 'github.acme-corp.com'
+      )
     ).toBe(true)
   })
 
@@ -768,9 +785,11 @@ describe('getWorkItemDetails', () => {
     })
     const apiCalls = ghExecFileAsyncMock.mock.calls.map(([args]) => args as string[])
     expect(apiCalls).toHaveLength(2)
-    expect(apiCalls.every((args) => args.includes('--hostname'))).toBe(true)
+    expect(apiCalls.every((args) => !args.includes('--hostname'))).toBe(true)
     expect(
-      apiCalls.every((args) => args[args.indexOf('--hostname') + 1] === 'github.acme-corp.com')
+      ghExecFileAsyncMock.mock.calls.every(
+        ([, options]) => options?.host === 'github.acme-corp.com'
+      )
     ).toBe(true)
   })
 

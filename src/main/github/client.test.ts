@@ -101,7 +101,14 @@ vi.mock('./local-git-config-signature', () => ({
 vi.mock('./rate-limit', () => ({
   getRateLimit: getRateLimitMock,
   rateLimitGuard: rateLimitGuardMock,
-  noteRateLimitSpend: noteRateLimitSpendMock
+  noteRateLimitSpend: noteRateLimitSpendMock,
+  // Why: the repository-scoped guards share the same bucket-keyed budget as the
+  // legacy ones, so delegate to the existing mocks to keep per-bucket blocking
+  // and spend assertions working unchanged.
+  repositoryRateLimitGuard: (_repository: unknown, bucket: string) => rateLimitGuardMock(bucket),
+  noteRepositoryRateLimitSpend: (_repository: unknown, bucket: string) =>
+    noteRateLimitSpendMock(bucket),
+  spendsSharedGitHubComQuota: () => true
 }))
 
 import {
@@ -4161,9 +4168,9 @@ describe('GitHub GraphQL rate-limit guard', () => {
       baseRefName: 'main',
       headRefOid: 'head-oid'
     }
-    ghExecFileAsyncMock.mockImplementation(async (args) => {
+    ghExecFileAsyncMock.mockImplementation(async (args, options) => {
       if (args.includes('graphql')) {
-        const enterprise = args.includes('github.acme-corp.com')
+        const enterprise = options?.host === 'github.acme-corp.com'
         return {
           stdout: JSON.stringify({
             data: {
@@ -4195,9 +4202,7 @@ describe('GitHub GraphQL rate-limit guard', () => {
     expect(enterprise?.autoMergeAllowed).toBe(false)
     const graphqlCalls = ghExecFileAsyncMock.mock.calls.filter(([args]) => args.includes('graphql'))
     expect(graphqlCalls).toHaveLength(2)
-    expect(graphqlCalls[1]?.[0]).toEqual(
-      expect.arrayContaining(['--hostname', 'github.acme-corp.com'])
-    )
+    expect(graphqlCalls[1]?.[1]).toEqual(expect.objectContaining({ host: 'github.acme-corp.com' }))
   })
 
   it('returns conflicting file details instead of running gh merge when PR is dirty', async () => {
