@@ -61,10 +61,11 @@ describe('getEnterpriseGitHubRepoSlug', () => {
       repo: 'orca',
       host: 'github.acme-corp.com'
     })
-    // The auth probe targets the remote's host, not a hardcoded github.com.
+    // The auth probe targets the remote's host, not a hardcoded github.com, and
+    // scopes any breaker trip to that host via the exec options.
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['auth', 'status', '--hostname', 'github.acme-corp.com'],
-      { cwd: '/repo' }
+      { cwd: '/repo', host: 'github.acme-corp.com' }
     )
   })
 
@@ -89,7 +90,7 @@ describe('getEnterpriseGitHubRepoSlug', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['auth', 'status', '--hostname', 'github.acme-corp.com'],
-      { cwd: '/repo', wslDistro: 'Ubuntu' }
+      { cwd: '/repo', wslDistro: 'Ubuntu', host: 'github.acme-corp.com' }
     )
   })
 
@@ -137,7 +138,7 @@ describe('isGitHubHostAuthenticated', () => {
     ).resolves.toBe(true)
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['auth', 'status', '--hostname', 'github.acme-corp.com'],
-      {}
+      { host: 'github.acme-corp.com' }
     )
   })
 

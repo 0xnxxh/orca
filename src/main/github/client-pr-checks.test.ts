@@ -10,6 +10,9 @@ const {
   getRateLimitMock,
   rateLimitGuardMock,
   noteRateLimitSpendMock,
+  repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpendMock,
+  spendsSharedGitHubComQuotaMock,
   acquireMock,
   releaseMock
 } = vi.hoisted(() => ({
@@ -31,6 +34,9 @@ const {
   getRateLimitMock: vi.fn(),
   rateLimitGuardMock: vi.fn(() => ({ blocked: false })),
   noteRateLimitSpendMock: vi.fn(),
+  repositoryRateLimitGuardMock: vi.fn(() => ({ blocked: false })),
+  noteRepositoryRateLimitSpendMock: vi.fn(),
+  spendsSharedGitHubComQuotaMock: vi.fn(() => true),
   acquireMock: vi.fn(),
   releaseMock: vi.fn()
 }))
@@ -66,7 +72,10 @@ vi.mock('../git/runner', () => ({
 vi.mock('./rate-limit', () => ({
   getRateLimit: getRateLimitMock,
   rateLimitGuard: rateLimitGuardMock,
-  noteRateLimitSpend: noteRateLimitSpendMock
+  noteRateLimitSpend: noteRateLimitSpendMock,
+  repositoryRateLimitGuard: repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpend: noteRepositoryRateLimitSpendMock,
+  spendsSharedGitHubComQuota: spendsSharedGitHubComQuotaMock
 }))
 
 import { getPRChecks, rerunPRChecks, _resetOwnerRepoCache } from './client'

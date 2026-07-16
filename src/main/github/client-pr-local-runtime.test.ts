@@ -93,7 +93,15 @@ vi.mock('./conflict-summary', () => ({
 vi.mock('./rate-limit', () => ({
   getRateLimit: getRateLimitMock,
   rateLimitGuard: rateLimitGuardMock,
-  noteRateLimitSpend: noteRateLimitSpendMock
+  noteRateLimitSpend: noteRateLimitSpendMock,
+  repositoryRateLimitGuard: vi.fn(() => ({ blocked: false })),
+  noteRepositoryRateLimitSpend: vi.fn(),
+  spendsSharedGitHubComQuota: (
+    repository?: { host?: string } | null,
+    executionOptions?: { wslDistro?: string }
+  ) =>
+    (!repository?.host || repository.host.toLowerCase() === 'github.com') &&
+    !executionOptions?.wslDistro
 }))
 
 import {
@@ -488,16 +496,14 @@ describe('GitHub PR local runtime routing', () => {
     const prViewCall = ghExecFileAsyncMock.mock.calls.find(
       ([args]) => args[0] === 'pr' && args[1] === 'view'
     )
-    expect(prViewCall?.[0]).toEqual(
-      expect.arrayContaining(['--repo', 'github.acme-corp.com/team/orca'])
-    )
-    expect(prViewCall?.[1]).toEqual({})
+    // The runner host-qualifies argv at spawn time from options.host, so the
+    // mocked call sees the unqualified --repo plus the host in exec options.
+    expect(prViewCall?.[0]).toEqual(expect.arrayContaining(['--repo', 'team/orca']))
+    expect(prViewCall?.[1]).toEqual({ host: 'github.acme-corp.com' })
     const prCalls = ghExecFileAsyncMock.mock.calls.filter(([args]) => args[0] === 'pr')
     expect(
       prCalls.every(
-        ([args]) =>
-          args.includes('--repo') &&
-          args[args.indexOf('--repo') + 1] === 'github.acme-corp.com/team/orca'
+        ([args]) => args.includes('--repo') && args[args.indexOf('--repo') + 1] === 'team/orca'
       )
     ).toBe(true)
     const apiCalls = ghExecFileAsyncMock.mock.calls.filter(([args]) => args[0] === 'api')
@@ -505,8 +511,8 @@ describe('GitHub PR local runtime routing', () => {
     expect(
       apiCalls.every(
         ([args, options]) =>
-          args.includes('--hostname') &&
-          args[args.indexOf('--hostname') + 1] === 'github.acme-corp.com' &&
+          !args.includes('--hostname') &&
+          options.host === 'github.acme-corp.com' &&
           options.cwd === undefined &&
           options.wslDistro === undefined
       )

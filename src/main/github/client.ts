@@ -89,13 +89,12 @@ import type { GitHubRepoContext } from './github-repository-identity'
 import { getEnterpriseGitHubRepoSlug } from './github-enterprise-repository'
 import {
   getOriginGitHubApiRepository,
-  githubApiHostArgs,
-  githubCliRepositoryArgument,
+  githubHostExecOptions,
   githubRepositoryWebHost,
-  isGitHubDotComRepository,
   resolveGitHubApiRepository,
   type GitHubApiRepository
 } from './github-api-repository'
+import { githubRepoIdentityKey } from '../../shared/github-repository-identity-key'
 export { _resetOwnerRepoCache } from './gh-utils'
 export {
   getIssue,
@@ -120,11 +119,14 @@ import { mapGraphQLReactionGroups, type GitHubGraphQLReactionGroup } from './com
 import {
   getRateLimit,
   noteRateLimitSpend,
+  noteRepositoryRateLimitSpend,
   rateLimitGuard,
+  repositoryRateLimitGuard,
+  spendsSharedGitHubComQuota,
   type RateLimitBucketKind
 } from './rate-limit'
 
-type GhExecOptions = ReturnType<typeof ghRepoExecOptions>
+type GhExecOptions = ReturnType<typeof ghRepoExecOptions> & { host?: string }
 type HostedReviewLocalGitOptions = ReturnType<typeof getHostedReviewLocalGitOptions>
 
 const ORCA_REPO = 'stablyai/orca'
@@ -191,9 +193,7 @@ async function assertRateLimitBudget(
   repository?: GitHubApiRepository | null,
   executionOptions?: Pick<GhExecOptions, 'wslDistro'>
 ): Promise<void> {
-  // The global snapshot is for the default github.com account. Applying it to
-  // GHES or WSL can block a healthy runtime based on an unrelated quota.
-  if ((repository && !isGitHubDotComRepository(repository)) || executionOptions?.wslDistro) {
+  if (!spendsSharedGitHubComQuota(repository, executionOptions)) {
     return
   }
   await getRateLimit()
@@ -203,27 +203,6 @@ async function assertRateLimitBudget(
       `GitHub ${bucket} rate limit is low; retry after ${new Date(guard.resetAt * 1000).toLocaleTimeString()}`
     )
   }
-}
-
-function noteRepositoryRateLimitSpend(
-  repository: GitHubApiRepository | null,
-  bucket: RateLimitBucketKind,
-  cost = 1,
-  executionOptions?: Pick<GhExecOptions, 'wslDistro'>
-): void {
-  if ((!repository || isGitHubDotComRepository(repository)) && !executionOptions?.wslDistro) {
-    noteRateLimitSpend(bucket, cost)
-  }
-}
-
-function repositoryRateLimitGuard(
-  repository: GitHubApiRepository | null,
-  bucket: RateLimitBucketKind,
-  executionOptions?: Pick<GhExecOptions, 'wslDistro'>
-): ReturnType<typeof rateLimitGuard> {
-  return (!repository || isGitHubDotComRepository(repository)) && !executionOptions?.wslDistro
-    ? rateLimitGuard(bucket)
-    : { blocked: false }
 }
 
 function prRefreshUpstreamError(
@@ -862,14 +841,13 @@ async function fetchIssueWorkItem(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<MainWorkItem | null> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   if (ownerRepo) {
     const { stdout } = await ghExecFileAsync(
-      [
-        'api',
-        ...githubApiHostArgs(ownerRepo),
-        `repos/${ownerRepo.owner}/${ownerRepo.repo}/issues/${number}`
-      ],
+      ['api', `repos/${ownerRepo.owner}/${ownerRepo.repo}/issues/${number}`],
       ghOptions
     )
     const item = JSON.parse(stdout) as Record<string, unknown>
@@ -903,7 +881,7 @@ async function fetchPullRequestReviewFields(
           'view',
           String(number),
           '--repo',
-          githubCliRepositoryArgument(ownerRepo),
+          `${ownerRepo.owner}/${ownerRepo.repo}`,
           '--json',
           WORK_ITEM_PR_REVIEW_JSON_FIELDS
         ]
@@ -930,7 +908,10 @@ async function fetchPullRequestWorkItem(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<MainWorkItem> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   if (ownerRepo) {
     try {
       const { stdout } = await ghExecFileAsync(
@@ -939,7 +920,7 @@ async function fetchPullRequestWorkItem(
           'view',
           String(number),
           '--repo',
-          githubCliRepositoryArgument(ownerRepo),
+          `${ownerRepo.owner}/${ownerRepo.repo}`,
           '--json',
           WORK_ITEM_PR_DETAIL_JSON_FIELDS
         ],
@@ -968,11 +949,7 @@ async function fetchPullRequestWorkItem(
       }
     } catch {
       const { stdout } = await ghExecFileAsync(
-        [
-          'api',
-          ...githubApiHostArgs(ownerRepo),
-          `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${number}`
-        ],
+        ['api', `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${number}`],
         ghOptions
       )
       const mapped = mapPullRequestWorkItem(
@@ -1819,7 +1796,7 @@ function parseCreatePRPayload(stdout: string): { number: number; url: string } |
 
 async function findOpenPRByHeadBase(args: {
   repoPath: string
-  repoArg: string
+  repo: GitHubApiRepository
   head: string
   base: string
   connectionId?: string | null
@@ -1831,7 +1808,7 @@ async function findOpenPRByHeadBase(args: {
       'pr',
       'list',
       '--repo',
-      args.repoArg,
+      `${args.repo.owner}/${args.repo.repo}`,
       '--head',
       args.head,
       '--base',
@@ -1845,7 +1822,8 @@ async function findOpenPRByHeadBase(args: {
     ],
     {
       ...ghRepoExecOptions(context),
-      ...(args.connectionId ? {} : getHostedReviewLocalGitOptions(args.options))
+      ...(args.connectionId ? {} : getHostedReviewLocalGitOptions(args.options)),
+      ...githubHostExecOptions(args.repo)
     }
   )
   const list = JSON.parse(stdout) as { number?: number; url?: string }[]
@@ -1923,8 +1901,8 @@ export async function createGitHubPullRequest(
       error: 'Creating pull requests requires a GitHub remote.'
     }
   }
-  // Host-qualified for GHES so gh targets the Enterprise server, not github.com.
-  const repoArg = githubCliRepositoryArgument(ownerRepo)
+  // The runner host-qualifies --repo from options.host for GHES (#8312).
+  const repoArg = `${ownerRepo.owner}/${ownerRepo.repo}`
 
   const base = normalizeHostedReviewBaseRef(input.base)
   const head = input.head ? normalizeHostedReviewHeadRef(input.head) || undefined : undefined
@@ -1976,6 +1954,7 @@ export async function createGitHubPullRequest(
       const { stdout } = await ghExecFileAsync(createArgs, {
         ...ghRepoExecOptions(context),
         ...(connectionId ? {} : getHostedReviewLocalGitOptions(options)),
+        ...githubHostExecOptions(ownerRepo),
         timeout: 60_000,
         idempotent: false
       })
@@ -1986,7 +1965,7 @@ export async function createGitHubPullRequest(
       const found = head
         ? await findOpenPRByHeadBase({
             repoPath,
-            repoArg,
+            repo: ownerRepo,
             head,
             base,
             connectionId,
@@ -2010,7 +1989,7 @@ export async function createGitHubPullRequest(
       ) {
         const existing = await findOpenPRByHeadBase({
           repoPath,
-          repoArg,
+          repo: ownerRepo,
           head,
           base,
           connectionId,
@@ -2287,8 +2266,7 @@ async function detectRepositoryMergeMetadata(
   branchName: string | undefined,
   ghOptions: GhExecOptions
 ): Promise<GitHubRepositoryMergeMetadata> {
-  const host = ownerRepo.host?.toLowerCase() ?? 'github.com'
-  const cacheKey = `${host}/${ownerRepo.owner.toLowerCase()}/${ownerRepo.repo.toLowerCase()}:${branchName ?? '__repo__'}`
+  const cacheKey = `${githubRepoIdentityKey(ownerRepo)}:${branchName ?? '__repo__'}`
   pruneRepositoryMergeMetadataCache()
   const cached = repositoryMergeMetadataCache.get(cacheKey)
   if (cached) {
@@ -2322,7 +2300,6 @@ async function detectRepositoryMergeMetadata(
     noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, ghOptions)
     const args = [
       'api',
-      ...githubApiHostArgs(ownerRepo),
       'graphql',
       '-f',
       `query=${query}`,
@@ -2334,7 +2311,10 @@ async function detectRepositoryMergeMetadata(
     if (branchName) {
       args.push('-f', `branch=${branchName}`)
     }
-    const { stdout } = await ghExecFileAsync(args, ghOptions)
+    const { stdout } = await ghExecFileAsync(args, {
+      ...ghOptions,
+      ...githubHostExecOptions(ownerRepo)
+    })
     const parsed = JSON.parse(stdout) as {
       data?: {
         repository?: {
@@ -2420,12 +2400,8 @@ async function getRestPRForBranch(
 ): Promise<PullRequestLookupData | null> {
   const head = encodeURIComponent(`${headOwner}:${branchName}`)
   const { stdout } = await ghExecFileAsync(
-    [
-      'api',
-      ...githubApiHostArgs(prRepo),
-      `repos/${prRepo.owner}/${prRepo.repo}/pulls?head=${head}&state=all&per_page=1`
-    ],
-    ghOptions
+    ['api', `repos/${prRepo.owner}/${prRepo.repo}/pulls?head=${head}&state=all&per_page=1`],
+    { ...ghOptions, ...githubHostExecOptions(prRepo) }
   )
   const list = JSON.parse(stdout) as RestPullRequest[]
   const pr = list[0]
@@ -2442,7 +2418,7 @@ async function getFallbackPRListForBranch(
       'pr',
       'list',
       '--repo',
-      githubCliRepositoryArgument(prRepo),
+      `${prRepo.owner}/${prRepo.repo}`,
       '--head',
       branchName,
       '--state',
@@ -2452,7 +2428,7 @@ async function getFallbackPRListForBranch(
       '--json',
       PR_BRANCH_LIST_JSON_FIELDS
     ],
-    ghOptions
+    { ...ghOptions, ...githubHostExecOptions(prRepo) }
   )
   const list = JSON.parse(stdout) as PullRequestLookupData[]
   return list[0] ?? null
@@ -2855,12 +2831,8 @@ async function getRestPRByNumber(
   ghOptions: ReturnType<typeof ghRepoExecOptions>
 ): Promise<PullRequestLookupData | null> {
   const { stdout } = await ghExecFileAsync(
-    [
-      'api',
-      ...githubApiHostArgs(ownerRepo),
-      `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${number}`
-    ],
-    ghOptions
+    ['api', `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${number}`],
+    { ...ghOptions, ...githubHostExecOptions(ownerRepo) }
   )
   return mapRestPullRequest(JSON.parse(stdout) as RestPullRequest)
 }
@@ -2877,11 +2849,11 @@ async function getPRByNumber(
         'view',
         String(number),
         '--repo',
-        githubCliRepositoryArgument(ownerRepo),
+        `${ownerRepo.owner}/${ownerRepo.repo}`,
         '--json',
         PR_LOOKUP_JSON_FIELDS
       ],
-      ghOptions
+      { ...ghOptions, ...githubHostExecOptions(ownerRepo) }
     )
     return hydratePullRequestLookupData(
       ownerRepo,
@@ -3566,7 +3538,6 @@ async function getPRChecksViaRestFallback(
     const { stdout } = await ghExecFileAsync(
       [
         'api',
-        ...githubApiHostArgs(ownerRepo),
         ...cacheArgs,
         `repos/${ownerRepo.owner}/${ownerRepo.repo}/commits/${encodedHeadSha}/check-runs?per_page=100`
       ],
@@ -3584,7 +3555,6 @@ async function getPRChecksViaRestFallback(
       const statusResult = await ghExecFileAsync(
         [
           'api',
-          ...githubApiHostArgs(ownerRepo),
           ...cacheArgs,
           `repos/${ownerRepo.owner}/${ownerRepo.repo}/commits/${encodedHeadSha}/status?per_page=100`
         ],
@@ -3608,7 +3578,6 @@ async function getPRChecksViaRestFallback(
       const suitesResult = await ghExecFileAsync(
         [
           'api',
-          ...githubApiHostArgs(ownerRepo),
           ...cacheArgs,
           `repos/${ownerRepo.owner}/${ownerRepo.repo}/commits/${encodedHeadSha}/check-suites?per_page=100`
         ],
@@ -3655,13 +3624,16 @@ export async function getPRChecks(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<PRCheckDetail[]> {
   void headSha
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await resolveGitHubApiRepository(
     repoPath,
     prRepo,
     connectionId,
     localGitOptions
   )
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   if (connectionId && !ownerRepo) {
     throw new Error(GITHUB_WORK_ITEMS_SSH_REMOTE_REQUIRED_MESSAGE)
   }
@@ -3671,7 +3643,7 @@ export async function getPRChecks(
     try {
       const fallbackArgs = ['pr', 'checks', String(prNumber), '--json', 'name,state,link']
       if (ownerRepo) {
-        fallbackArgs.push('--repo', githubCliRepositoryArgument(ownerRepo))
+        fallbackArgs.push('--repo', `${ownerRepo.owner}/${ownerRepo.repo}`)
       }
       const { stdout } = await ghExecFileAsync(fallbackArgs, ghOptions).catch((err: unknown) => {
         const { stderr } = extractExecError(err)
@@ -3713,7 +3685,6 @@ export async function getPRChecks(
         const { stdout } = await ghExecFileAsync(
           [
             'api',
-            ...githubApiHostArgs(ownerRepo),
             'graphql',
             ...cacheArgs,
             '-f',
@@ -3889,9 +3860,7 @@ async function attachFailedJobLogTails(
   // a lazy, bounded follow-up request instead of a burst of hosted log downloads.
   for (const job of failedJobs) {
     const jobCacheKey = getCheckJobLogTailCacheKey(job)
-    const cacheKey = jobCacheKey
-      ? `${githubRepositoryWebHost(ownerRepo).toLowerCase()}/${ownerRepo.owner.toLowerCase()}/${ownerRepo.repo.toLowerCase()}:${jobCacheKey}`
-      : null
+    const cacheKey = jobCacheKey ? `${githubRepoIdentityKey(ownerRepo)}:${jobCacheKey}` : null
     if (!cacheKey) {
       continue
     }
@@ -3901,11 +3870,7 @@ async function attachFailedJobLogTails(
     }
     try {
       const { stdout } = await ghExecFileAsync(
-        [
-          'api',
-          ...githubApiHostArgs(ownerRepo),
-          `repos/${ownerRepo.owner}/${ownerRepo.repo}/actions/jobs/${job.id}/logs`
-        ],
+        ['api', `repos/${ownerRepo.owner}/${ownerRepo.repo}/actions/jobs/${job.id}/logs`],
         ghOptions
       )
       job.logTail = sliceCheckLogTail(stdout)
@@ -3944,7 +3909,6 @@ export async function getPRCheckDetails(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<PRCheckRunDetails | null> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await resolveGitHubApiRepository(
     repoPath,
     args.prRepo,
@@ -3954,6 +3918,10 @@ export async function getPRCheckDetails(
   if (!ownerRepo) {
     return null
   }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
 
   await acquire()
   try {
@@ -3961,11 +3929,7 @@ export async function getPRCheckDetails(
     let annotations: PRCheckRunDetails['annotations'] = []
     if (args.checkRunId) {
       const { stdout } = await ghExecFileAsync(
-        [
-          'api',
-          ...githubApiHostArgs(ownerRepo),
-          `repos/${ownerRepo.owner}/${ownerRepo.repo}/check-runs/${args.checkRunId}`
-        ],
+        ['api', `repos/${ownerRepo.owner}/${ownerRepo.repo}/check-runs/${args.checkRunId}`],
         ghOptions
       )
       checkRun = JSON.parse(stdout) as Record<string, unknown>
@@ -3973,7 +3937,6 @@ export async function getPRCheckDetails(
         const annotationsResult = await ghExecFileAsync(
           [
             'api',
-            ...githubApiHostArgs(ownerRepo),
             `repos/${ownerRepo.owner}/${ownerRepo.repo}/check-runs/${args.checkRunId}/annotations?per_page=20`
           ],
           ghOptions
@@ -3991,7 +3954,6 @@ export async function getPRCheckDetails(
         const { stdout } = await ghExecFileAsync(
           [
             'api',
-            ...githubApiHostArgs(ownerRepo),
             `repos/${ownerRepo.owner}/${ownerRepo.repo}/actions/runs/${workflowRunId}/jobs?per_page=100`
           ],
           ghOptions
@@ -4048,10 +4010,13 @@ export async function rerunPRChecks(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubRerunPRChecksResult> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
   if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
 
   const checks = await getPRChecks(
@@ -4096,7 +4061,7 @@ export async function rerunPRChecks(
       const endpoint = options.failedOnly
         ? `repos/${ownerRepo.owner}/${ownerRepo.repo}/actions/runs/${runId}/rerun-failed-jobs`
         : `repos/${ownerRepo.owner}/${ownerRepo.repo}/actions/runs/${runId}/rerun`
-      await ghExecFileAsync(['api', ...githubApiHostArgs(ownerRepo), '-X', 'POST', endpoint], {
+      await ghExecFileAsync(['api', '-X', 'POST', endpoint], {
         ...ghOptions,
         env: { ...process.env, GH_PROMPT_DISABLED: '1' }
       })
@@ -4106,7 +4071,6 @@ export async function rerunPRChecks(
       await ghExecFileAsync(
         [
           'api',
-          ...githubApiHostArgs(ownerRepo),
           '-X',
           'POST',
           `repos/${ownerRepo.owner}/${ownerRepo.repo}/check-runs/${checkRunId}/rerequest`
@@ -4189,13 +4153,16 @@ export async function getPRComments(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<PRComment[]> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await resolveGitHubApiRepository(
     repoPath,
     options?.prRepo,
     connectionId,
     localGitOptions
   )
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   if (connectionId && !ownerRepo) {
     throw new Error(GITHUB_WORK_ITEMS_SSH_REMOTE_REQUIRED_MESSAGE)
   }
@@ -4223,7 +4190,6 @@ export async function getPRComments(
         reviewThreadsFetch = ghExecFileAsync(
           [
             'api',
-            ...githubApiHostArgs(ownerRepo),
             'graphql',
             '-f',
             `query=${REVIEW_THREADS_QUERY}`,
@@ -4239,12 +4205,7 @@ export async function getPRComments(
       }
       const [issueResult, threadsResult, reviewsResult] = await Promise.allSettled([
         ghExecFileAsync(
-          [
-            'api',
-            ...githubApiHostArgs(ownerRepo),
-            ...cacheArgs,
-            `${base}/issues/${prNumber}/comments?per_page=100`
-          ],
+          ['api', ...cacheArgs, `${base}/issues/${prNumber}/comments?per_page=100`],
           ghOptions
         ),
         reviewThreadsFetch,
@@ -4253,12 +4214,7 @@ export async function getPRComments(
         // Without this, a reviewer who submits "LGTM" without inline threads
         // would have their comment silently dropped from the panel.
         ghExecFileAsync(
-          [
-            'api',
-            ...githubApiHostArgs(ownerRepo),
-            ...cacheArgs,
-            `${base}/pulls/${prNumber}/reviews?per_page=100`
-          ],
+          ['api', ...cacheArgs, `${base}/pulls/${prNumber}/reviews?per_page=100`],
           ghOptions
         )
       ])
@@ -4451,9 +4407,6 @@ export async function setPRFileViewed(args: {
   path: string
   viewed: boolean
 }): Promise<boolean> {
-  const ghOptions = ghRepoExecOptions(
-    githubRepoContext(args.repoPath, args.connectionId, args.localGitOptions)
-  )
   const ownerRepo = await getOriginGitHubApiRepository(
     args.repoPath,
     args.connectionId,
@@ -4461,6 +4414,10 @@ export async function setPRFileViewed(args: {
   )
   if (args.connectionId && !ownerRepo) {
     return false
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(args.repoPath, args.connectionId, args.localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
   const mutation = args.viewed ? 'markFileAsViewed' : 'unmarkFileAsViewed'
   const query = `mutation($pullRequestId: ID!, $path: String!) {
@@ -4473,7 +4430,6 @@ export async function setPRFileViewed(args: {
     await ghExecFileAsync(
       [
         'api',
-        ...(ownerRepo ? githubApiHostArgs(ownerRepo) : []),
         'graphql',
         '-f',
         `query=${query}`,
@@ -4505,10 +4461,13 @@ export async function resolveReviewThread(
 ): Promise<boolean> {
   const mutation = resolve ? 'resolveReviewThread' : 'unresolveReviewThread'
   const query = `mutation($threadId: ID!) { ${mutation}(input: { threadId: $threadId }) { thread { isResolved } } }`
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
   if (connectionId && !ownerRepo) {
     return false
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
   const guard = repositoryRateLimitGuard(ownerRepo, 'graphql', ghOptions)
   if (guard.blocked) {
@@ -4521,15 +4480,7 @@ export async function resolveReviewThread(
   try {
     noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, ghOptions)
     await ghExecFileAsync(
-      [
-        'api',
-        ...(ownerRepo ? githubApiHostArgs(ownerRepo) : []),
-        'graphql',
-        '-f',
-        `query=${query}`,
-        '-f',
-        `threadId=${threadId}`
-      ],
+      ['api', 'graphql', '-f', `query=${query}`, '-f', `threadId=${threadId}`],
       ghOptions
     )
     return true
@@ -4584,7 +4535,6 @@ export async function addPRReviewCommentReply(
   prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubCommentResult> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await resolveGitHubApiRepository(
     repoPath,
     prRepo,
@@ -4594,12 +4544,15 @@ export async function addPRReviewCommentReply(
   if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   await acquire()
   try {
     const { stdout } = await ghExecFileAsync(
       [
         'api',
-        ...githubApiHostArgs(ownerRepo),
         '-X',
         'POST',
         `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}/comments/${commentId}/replies`,
@@ -4630,9 +4583,6 @@ export async function addPRReviewComment(
     localGitOptions?: LocalGitExecOptions
   }
 ): Promise<GitHubCommentResult> {
-  const ghOptions = ghRepoExecOptions(
-    githubRepoContext(args.repoPath, args.connectionId, args.localGitOptions)
-  )
   const ownerRepo = await getOriginGitHubApiRepository(
     args.repoPath,
     args.connectionId,
@@ -4641,11 +4591,14 @@ export async function addPRReviewComment(
   if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(args.repoPath, args.connectionId, args.localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   await acquire()
   try {
     const fields = [
       'api',
-      ...githubApiHostArgs(ownerRepo),
       '-X',
       'POST',
       `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${args.prNumber}/comments`,
@@ -4699,7 +4652,6 @@ export async function mergePR(
   prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await resolveGitHubApiRepository(
     repoPath,
     prRepo,
@@ -4708,6 +4660,10 @@ export async function mergePR(
   )
   if (connectionId && !ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
   await acquire()
   try {
@@ -4728,7 +4684,7 @@ export async function mergePR(
     // is handled by worktree deletion (local) and GitHub's auto-delete setting (remote).
     const args = ['pr', 'merge', String(prNumber), `--${method}`]
     if (ownerRepo) {
-      args.push('--repo', githubCliRepositoryArgument(ownerRepo))
+      args.push('--repo', `${ownerRepo.owner}/${ownerRepo.repo}`)
     }
     await ghExecFileAsync(args, {
       ...ghOptions,
@@ -4753,7 +4709,6 @@ export async function setPRAutoMerge(
   prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await resolveGitHubApiRepository(
     repoPath,
     prRepo,
@@ -4763,6 +4718,10 @@ export async function setPRAutoMerge(
   if (connectionId && !ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   await acquire()
   try {
     if (enabled) {
@@ -4770,7 +4729,7 @@ export async function setPRAutoMerge(
     }
     const args = ['pr', 'merge', String(prNumber), '--disable-auto']
     if (ownerRepo) {
-      args.push('--repo', githubCliRepositoryArgument(ownerRepo))
+      args.push('--repo', `${ownerRepo.owner}/${ownerRepo.repo}`)
     }
     await ghExecFileAsync(args, {
       ...ghOptions,
@@ -4809,7 +4768,7 @@ async function getPRAutoMergeIdentity(
 ): Promise<PRAutoMergeIdentity | null> {
   const args = ['pr', 'view', String(prNumber), '--json', PR_AUTO_MERGE_IDENTITY_JSON_FIELDS]
   if (ownerRepo) {
-    args.push('--repo', githubCliRepositoryArgument(ownerRepo))
+    args.push('--repo', `${ownerRepo.owner}/${ownerRepo.repo}`)
   }
   const { stdout } = await ghExecFileAsync(args, ghOptions)
   const data = JSON.parse(stdout) as PRAutoMergeIdentity
@@ -4828,7 +4787,7 @@ async function runPRAutoMergeCommand(
 ): Promise<void> {
   const args = ['pr', 'merge', String(prNumber), '--auto', `--${method}`]
   if (ownerRepo) {
-    args.push('--repo', githubCliRepositoryArgument(ownerRepo))
+    args.push('--repo', `${ownerRepo.owner}/${ownerRepo.repo}`)
   }
   await ghExecFileAsync(args, {
     ...ghOptions,
@@ -4873,7 +4832,6 @@ async function enablePRAutoMerge(
   }`
   const args = [
     'api',
-    ...(ownerRepo ? githubApiHostArgs(ownerRepo) : []),
     'graphql',
     '-f',
     `query=${query}`,
@@ -4969,11 +4927,11 @@ export async function updatePRState(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const context = githubRepoContext(repoPath, connectionId, localGitOptions)
-  const ghOptions = ghRepoExecOptions(context)
   const ownerRepo = await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
   if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
+  const ghOptions = { ...ghRepoExecOptions(context), ...githubHostExecOptions(ownerRepo) }
 
   await acquire()
   try {
@@ -4981,7 +4939,7 @@ export async function updatePRState(
     // Why: GitHub can reject REST pull state PATCHes for reopen paths with a
     // generic 422; gh's PR commands use GitHub's supported reopen flow.
     await ghExecFileAsync(
-      ['pr', cmd, String(prNumber), '--repo', githubCliRepositoryArgument(ownerRepo)],
+      ['pr', cmd, String(prNumber), '--repo', `${ownerRepo.owner}/${ownerRepo.repo}`],
       {
         ...ghOptions
       }
@@ -5007,16 +4965,19 @@ export async function requestPRReviewers(
   if (logins.length === 0) {
     return { ok: false, error: 'Enter at least one reviewer' }
   }
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
   if (connectionId && !ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
   await acquire()
   try {
     const args = ['pr', 'edit', String(prNumber), '--add-reviewer', logins.join(',')]
     if (ownerRepo) {
-      args.push('--repo', githubCliRepositoryArgument(ownerRepo))
+      args.push('--repo', `${ownerRepo.owner}/${ownerRepo.repo}`)
     }
     await ghExecFileAsync(args, {
       ...ghOptions,
@@ -5043,16 +5004,19 @@ export async function removePRReviewers(
   if (logins.length === 0) {
     return { ok: false, error: 'Enter at least one reviewer' }
   }
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
   if (connectionId && !ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
   await acquire()
   try {
     const args = ['pr', 'edit', String(prNumber), '--remove-reviewer', logins.join(',')]
     if (ownerRepo) {
-      args.push('--repo', githubCliRepositoryArgument(ownerRepo))
+      args.push('--repo', `${ownerRepo.owner}/${ownerRepo.repo}`)
     }
     await ghExecFileAsync(args, {
       ...ghOptions,
@@ -5079,7 +5043,6 @@ export async function updatePRTitle(
   prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<boolean> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await resolveGitHubApiRepository(
     repoPath,
     prRepo,
@@ -5089,11 +5052,15 @@ export async function updatePRTitle(
   if (connectionId && !ownerRepo) {
     return false
   }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   await acquire()
   try {
     const args = ['pr', 'edit', String(prNumber), '--title', title]
     if (ownerRepo) {
-      args.push('--repo', githubCliRepositoryArgument(ownerRepo))
+      args.push('--repo', `${ownerRepo.owner}/${ownerRepo.repo}`)
     }
     await ghExecFileAsync(args, {
       ...ghOptions
@@ -5115,7 +5082,6 @@ export async function updatePRDetails(
   prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   const ownerRepo = await resolveGitHubApiRepository(
     repoPath,
     prRepo,
@@ -5124,6 +5090,10 @@ export async function updatePRDetails(
   )
   if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
 
   const fields: string[] = []
@@ -5146,7 +5116,6 @@ export async function updatePRDetails(
     await ghExecFileAsync(
       [
         'api',
-        ...githubApiHostArgs(ownerRepo),
         '-X',
         'PATCH',
         `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`,

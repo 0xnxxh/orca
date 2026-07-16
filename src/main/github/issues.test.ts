@@ -160,15 +160,13 @@ describe('issue source operations', () => {
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       [
         'api',
-        '--hostname',
-        'github.acme-corp.com',
         '-X',
         'POST',
         'repos/team/orca/issues/7/comments',
         '--raw-field',
         'body=Enterprise comment'
       ],
-      {}
+      expect.objectContaining({ host: 'github.acme-corp.com' })
     )
   })
 

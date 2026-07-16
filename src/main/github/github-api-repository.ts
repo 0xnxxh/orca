@@ -45,21 +45,18 @@ export async function resolveGitHubApiRepository(
   return connectionId ? null : repository
 }
 
-export function githubApiHostArgs(repository: GitHubApiRepository): string[] {
-  const host = repository.host
-  return host && host.toLowerCase() !== 'github.com' ? ['--hostname', host] : []
-}
-
 export function isGitHubDotComRepository(repository: GitHubApiRepository): boolean {
   return !repository.host || repository.host.toLowerCase() === 'github.com'
 }
 
-// Why: owner/repo shorthand targets gh's default host, and SSH-backed repos
-// have no local cwd from which gh can infer an Enterprise hostname.
-export function githubCliRepositoryArgument(repository: GitHubApiRepository): string {
-  return !isGitHubDotComRepository(repository)
-    ? `${repository.host}/${repository.owner}/${repository.repo}`
-    : `${repository.owner}/${repository.repo}`
+// Why: the gh runner host-qualifies argv (`--hostname`, `HOST/OWNER/REPO`)
+// from `options.host`, so merging this into a call's exec options is the one
+// step a call site needs to target GHES. github.com stays unset to keep gh's
+// default-host resolution (and existing argv) unchanged.
+export function githubHostExecOptions(repository: GitHubApiRepository | null | undefined): {
+  host?: string
+} {
+  return repository?.host && !isGitHubDotComRepository(repository) ? { host: repository.host } : {}
 }
 
 export function githubRepositoryWebHost(repository: GitHubApiRepository): string {

@@ -75,12 +75,14 @@ describe('ghExecFileAsync rate-limit breaker', () => {
     mockGhFailure(PRIMARY_RATE_LIMIT_STDERR)
     await expect(ghExecFileAsync(['api', 'repos/a/b/pulls'])).rejects.toThrow()
 
+    // The breaker scope now comes from options.host / GH_HOST / wslDistro, not
+    // from sniffing argv — so an Enterprise host must be routed via options.host.
     mockGhSuccess('[]')
     await expect(
-      ghExecFileAsync(['api', '--hostname', 'github.acme-corp.com', 'repos/a/b/pulls'])
+      ghExecFileAsync(['api', 'repos/a/b/pulls'], { host: 'github.acme-corp.com' })
     ).resolves.toMatchObject({ stdout: '[]' })
     await expect(
-      ghExecFileAsync(['pr', 'list', '--repo', 'github.acme-corp.com/a/b'])
+      ghExecFileAsync(['pr', 'list', '--repo', 'a/b'], { host: 'github.acme-corp.com' })
     ).resolves.toMatchObject({ stdout: '[]' })
     await expect(
       ghExecFileAsync(['api', 'repos/a/b/pulls'], {

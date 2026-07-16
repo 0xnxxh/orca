@@ -160,6 +160,39 @@ export function noteRateLimitSpend(bucket: RateLimitBucketKind, cost = 1): void 
   }
 }
 
+// Why: this module's snapshot describes the default github.com account on the
+// native runtime only. GHES and WSL traffic runs against other quotas, so it
+// must neither consult nor debit the shared budget (the runner's per-scope
+// breaker still protects those hosts after a real 403).
+export function spendsSharedGitHubComQuota(
+  repository: { host?: string } | null | undefined,
+  executionOptions?: { wslDistro?: string }
+): boolean {
+  const host = repository?.host
+  return (!host || host.toLowerCase() === 'github.com') && !executionOptions?.wslDistro
+}
+
+export function repositoryRateLimitGuard(
+  repository: { host?: string } | null | undefined,
+  bucket: RateLimitBucketKind,
+  executionOptions?: { wslDistro?: string }
+): ReturnType<typeof rateLimitGuard> {
+  return spendsSharedGitHubComQuota(repository, executionOptions)
+    ? rateLimitGuard(bucket)
+    : { blocked: false }
+}
+
+export function noteRepositoryRateLimitSpend(
+  repository: { host?: string } | null | undefined,
+  bucket: RateLimitBucketKind,
+  cost = 1,
+  executionOptions?: { wslDistro?: string }
+): void {
+  if (spendsSharedGitHubComQuota(repository, executionOptions)) {
+    noteRateLimitSpend(bucket, cost)
+  }
+}
+
 // Why: when the runner's breaker trips it only knows "blocked", not for how
 // long. `gh api rate_limit` is exempt from limits, so one forced probe turns
 // the fallback block into the bucket's real reset time (or clears a block
@@ -224,8 +257,9 @@ async function fetchRateLimitSnapshot(): Promise<GetRateLimitResult> {
   try {
     // Why: this singleton snapshot guards native github.com traffic. Pin the
     // host so a process-level GH_HOST cannot make it describe a GHES account.
-    const { stdout } = await ghExecFileAsync(['api', '--hostname', 'github.com', 'rate_limit'], {
-      encoding: 'utf-8'
+    const { stdout } = await ghExecFileAsync(['api', 'rate_limit'], {
+      encoding: 'utf-8',
+      host: 'github.com'
     })
     const parsed = JSON.parse(stdout) as GhRateLimitPayload
     const snapshot: GitHubRateLimitSnapshot = {

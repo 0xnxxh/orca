@@ -25,11 +25,16 @@ import {
 import { getWorkItem, getWorkItemByOwnerRepo, getPRChecks, getPRComments } from './client'
 import {
   getOriginGitHubApiRepository,
-  githubApiHostArgs,
+  githubHostExecOptions,
   isGitHubDotComRepository,
   type GitHubApiRepository
 } from './github-api-repository'
-import { noteRateLimitSpend, rateLimitGuard } from './rate-limit'
+import {
+  noteRateLimitSpend,
+  noteRepositoryRateLimitSpend,
+  rateLimitGuard,
+  repositoryRateLimitGuard
+} from './rate-limit'
 import { getPRReviewCommentLineNumbersFromPatch } from './pr-review-comment-lines'
 import { isMaxBufferOverflowError } from '../git/max-buffer-overflow'
 
@@ -52,27 +57,6 @@ function localGitOptionArgs(options: LocalGitExecOptions = {}): [] | [LocalGitEx
 
 function encodeGitHubContentPath(path: string): string {
   return path.split('/').map(encodeURIComponent).join('/')
-}
-
-function repositoryRateLimitGuard(
-  repository: GitHubApiRepository | null,
-  bucket: 'core' | 'graphql' | 'search',
-  executionOptions: Pick<LocalGitExecOptions, 'wslDistro'> = {}
-): ReturnType<typeof rateLimitGuard> {
-  return (!repository || isGitHubDotComRepository(repository)) && !executionOptions.wslDistro
-    ? rateLimitGuard(bucket)
-    : { blocked: false }
-}
-
-function noteRepositoryRateLimitSpend(
-  repository: GitHubApiRepository | null,
-  bucket: 'core' | 'graphql' | 'search',
-  cost = 1,
-  executionOptions: Pick<LocalGitExecOptions, 'wslDistro'> = {}
-): void {
-  if ((!repository || isGitHubDotComRepository(repository)) && !executionOptions.wslDistro) {
-    noteRateLimitSpend(bucket, cost)
-  }
 }
 
 const PR_FILE_VIEWED_STATES_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
@@ -320,14 +304,13 @@ async function getIssueTimelineItems(
       const { stdout } = await ghExecFileAsync(
         [
           'api',
-          ...githubApiHostArgs(ownerRepo),
           '--cache',
           '60s',
           `repos/${ownerRepo.owner}/${ownerRepo.repo}/issues/${issueNumber}/timeline?per_page=${GITHUB_REST_PAGE_SIZE}&page=${page}`,
           '--jq',
           '.[] | @json'
         ],
-        ghOptions
+        { ...ghOptions, ...githubHostExecOptions(ownerRepo) }
       )
       // Why: --jq emits compact NDJSON while explicit pages let us stop once
       // supported activity reaches the drawer cap.
@@ -535,17 +518,14 @@ async function getPRMetadata(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ body: string; headSha?: string; baseSha?: string }> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   try {
     if (ownerRepo) {
       const { stdout } = await ghExecFileAsync(
-        [
-          'api',
-          ...githubApiHostArgs(ownerRepo),
-          '--cache',
-          '60s',
-          `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`
-        ],
+        ['api', '--cache', '60s', `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`],
         ghOptions
       )
       const data = JSON.parse(stdout) as {
@@ -588,9 +568,12 @@ async function getPRFiles(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubPRFile[] | null> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   if (!ownerRepo) {
     return null
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
   try {
     const data: RESTPRFile[] = []
@@ -599,7 +582,6 @@ async function getPRFiles(
       const { stdout } = await ghExecFileAsync(
         [
           'api',
-          ...githubApiHostArgs(ownerRepo),
           '--cache',
           '60s',
           `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}/files?per_page=100${pageSuffix}`
@@ -638,9 +620,12 @@ async function getPRFileViewedStates(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<PRFileViewedStatesResult | null> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
   if (!ownerRepo) {
     return null
+  }
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
   }
   if (repositoryRateLimitGuard(ownerRepo, 'graphql', localGitOptions).blocked) {
     return null
@@ -653,7 +638,6 @@ async function getPRFileViewedStates(
     for (let fetched = 0; fetched < MAX_PR_FILES; fetched += 100) {
       const args = [
         'api',
-        ...githubApiHostArgs(ownerRepo),
         'graphql',
         '-f',
         `query=${PR_FILE_VIEWED_STATES_QUERY}`,
@@ -846,7 +830,6 @@ async function getWorkItemParticipants(
     const { stdout } = await ghExecFileAsync(
       [
         'api',
-        ...githubApiHostArgs(ownerRepo),
         'graphql',
         '-f',
         `query=${WORK_ITEM_PARTICIPANTS_QUERY}`,
@@ -859,7 +842,10 @@ async function getWorkItemParticipants(
         '-F',
         `isPr=${item.type === 'pr'}`
       ],
-      ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
+      {
+        ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+        ...githubHostExecOptions(ownerRepo)
+      }
     )
     const data = JSON.parse(stdout) as {
       data?: {
@@ -920,14 +906,11 @@ async function getGitHubUsersByLogin(
   try {
     noteRepositoryRateLimitSpend(repository, 'graphql', 1, localGitOptions)
     const { stdout } = await ghExecFileAsync(
-      [
-        'api',
-        ...(repository ? githubApiHostArgs(repository) : []),
-        'graphql',
-        '-f',
-        `query=query { ${fields} }`
-      ],
-      ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
+      ['api', 'graphql', '-f', `query=query { ${fields} }`],
+      {
+        ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+        ...githubHostExecOptions(repository)
+      }
     )
     const data = JSON.parse(stdout) as {
       data?: Record<
@@ -1270,13 +1253,13 @@ async function fetchContentAtRef(args: {
         '300s',
         '-H',
         'Accept: application/vnd.github.raw',
-        ...githubApiHostArgs(args.ownerRepo),
         `repos/${args.ownerRepo.owner}/${args.ownerRepo.repo}/contents/${encodeGitHubContentPath(args.path)}?ref=${encodeURIComponent(args.ref)}`
       ],
       {
         ...ghRepoExecOptions(
           githubRepoContext(args.repoPath, args.connectionId, args.localGitOptions)
         ),
+        ...githubHostExecOptions(args.ownerRepo),
         maxBuffer: GITHUB_RAW_CONTENT_MAX_BUFFER_BYTES
       }
     )

@@ -83,9 +83,12 @@ export async function isGitHubHostAuthenticated(
   // Why: provider detection and review loading can probe the same runtime at
   // once; coalesce them so one host never spawns duplicate auth subprocesses.
   const probe = (async () => {
-    const execOptions = ghRepoExecOptions(
-      githubRepoContext(repoPath, connectionId, localGitOptions)
-    )
+    const execOptions = {
+      ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+      // Why: scope any rate-limit breaker trip from this probe to the probed
+      // host, not to gh's default account.
+      host: normalizedHost
+    }
     let authenticated: boolean
     try {
       await ghExecFileAsync(['auth', 'status', '--hostname', normalizedHost], execOptions)
