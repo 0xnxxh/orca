@@ -18,7 +18,7 @@ import {
 } from './task-page-github-work-item-mutation-registry'
 import type { TaskPageGitHubPatchWorkItem } from './task-page-github-work-item-mutation-types'
 
-export { adoptQuietSearchFieldsForItem, MAX_LAG_TRAILS }
+export { adoptQuietSearchFieldsForItem, LAG_BACKOFF_MS, LAG_WALL_BUDGET_MS, MAX_LAG_TRAILS }
 
 type QuietRunner = (queryKey: string) => Promise<readonly GitHubWorkItem[]>
 let quietRunner: QuietRunner | null = null
@@ -117,8 +117,12 @@ export async function scheduleTaskPageQuietRevalidate(queryKey: string): Promise
   }
   const after = getOrCreateQuietRevalidateState(queryKey)
   if (after.dirtyGeneration > runGeneration) {
+    // Why: mirror processTaskPageQuietRevalidateSettle — index the backoff by the
+    // worst lag attempt (Math.max), not the count of lagging keys, so several
+    // items each lagging once cannot jump the delay tier.
     const lagValues = [...after.lagSkipAttempts.values()]
-    const delay = LAG_BACKOFF_MS[Math.min(lagValues.length, LAG_BACKOFF_MS.length - 1)] ?? 500
+    const attempts = lagValues.length === 0 ? 0 : Math.max(...lagValues)
+    const delay = LAG_BACKOFF_MS[Math.min(attempts, LAG_BACKOFF_MS.length - 1)] ?? 500
     await new Promise((resolve) => setTimeout(resolve, delay))
     await scheduleTaskPageQuietRevalidate(queryKey)
   }

@@ -2,6 +2,7 @@ import type { GitHubWorkItem } from '../../../shared/types'
 import type { TaskSourceContext } from '../../../shared/task-source-context'
 import { getRegistryMergedTaskPageGitHubWorkItem } from './task-page-github-work-item-mutation-composition'
 import {
+  getStickyHideEntry,
   hasConfirmedAuthorityForItem,
   hasPendingTaskPageGitHubOpsForItem,
   resolveItemSourceScope,
@@ -53,7 +54,6 @@ export function materializeTaskPageItemList(args: {
   previousItems: readonly GitHubWorkItem[]
   queryKey: string
 }): GitHubWorkItem[] {
-  void args.queryKey
   const overlaid = applyPendingTaskPageGitHubMutationsToItems(args.networkItems)
   const byKey = new Map(overlaid.map((item) => [taskPageGitHubItemKey(item.repoId, item.id), item]))
   for (const item of args.previousItems) {
@@ -62,11 +62,14 @@ export function materializeTaskPageItemList(args: {
       continue
     }
     // Why: retain in-flight pending rows for rollback visibility; also retain
-    // confirmed-authority rows still soft-hidden while search lag omits them.
-    if (
-      !hasPendingTaskPageGitHubOpsForItem(item.repoId, item.id) &&
-      !hasConfirmedAuthorityForItem(item.repoId, item.id)
-    ) {
+    // confirmed rows soft-hidden by a sticky hide scoped to THIS query while
+    // search lag omits them. Requiring the query-scoped sticky avoids retaining
+    // non-membership confirms (e.g. auto-merge) as stale ghosts across refetch.
+    const hasPending = hasPendingTaskPageGitHubOpsForItem(item.repoId, item.id)
+    const sticky = getStickyHideEntry(k)
+    const hasConfirmedStickyHide =
+      hasConfirmedAuthorityForItem(item.repoId, item.id) && sticky?.queryKey === args.queryKey
+    if (!hasPending && !hasConfirmedStickyHide) {
       continue
     }
     const scope = resolveItemSourceScope(item.repoId, item.id)

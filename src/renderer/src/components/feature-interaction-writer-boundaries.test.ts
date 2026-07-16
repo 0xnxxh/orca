@@ -59,7 +59,9 @@ describe('feature interaction writer boundaries', () => {
       join(COMPONENT_ROOT, '../hooks/useTaskPageGitHubWorkItemMutation.ts'),
       'utf8'
     )
-    expect(hookSource).toContain(githubWriter)
+    expect(
+      sourceBetween(hookSource, "if (confirmed === 'confirmed')", 'return confirmed')
+    ).toContain(githubWriter)
     expect(
       sourceBetween(
         source,

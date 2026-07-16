@@ -49,6 +49,8 @@ export {
   scheduleTaskPageQuietRevalidate,
   setTaskPageQuietRevalidateRunner,
   settleQuietSearchRevalidate,
+  LAG_BACKOFF_MS,
+  LAG_WALL_BUDGET_MS,
   MAX_LAG_TRAILS
 } from './task-page-github-work-item-quiet-revalidate'
 

@@ -149,7 +149,10 @@ import { folderWorkspaceToWorktree } from '../../../shared/folder-workspace-work
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import { useRepoAssigneesBySlug } from '@/hooks/useGitHubSlugMetadata'
 import { useTaskPageGitHubWorkItemMutation } from '@/hooks/useTaskPageGitHubWorkItemMutation'
+import { useMountedRef } from '@/hooks/useMountedRef'
 import {
+  LAG_BACKOFF_MS,
+  LAG_WALL_BUDGET_MS,
   materializeTaskPageItemList,
   MAX_LAG_TRAILS,
   overlayPendingOnTaskPagePages,
@@ -6664,6 +6667,11 @@ export default function TaskPage(): React.JSX.Element {
     githubWorkItemMutationQueryKey
   ])
 
+  // Why: track true unmount only. The quiet-revalidate coalescing keys off the
+  // shared quietState (inFlight/trailingQueued), so a nonce-triggered re-render
+  // must NOT cancel the in-flight run's trailing bookkeeping.
+  const quietRevalidateMountedRef = useMountedRef()
+
   // Why: dedicated quiet revalidate path (K23) — never tasksFiltering / skeleton,
   // never blanks pages, never bumps taskRefreshNonce. Single-flight with backoff
   // trailing; never clear confirmed authority (K21).
@@ -6683,7 +6691,6 @@ export default function TaskPage(): React.JSX.Element {
     quietState.inFlight = true
     quietState.trailingQueued = false
     quietState.fetchStartedAtGeneration = quietState.dirtyGeneration
-    let cancelled = false
     const q = stripRepoQualifiers(appliedTaskSearch.trim())
     const repoArgs = selectedRepos.map((r) => ({
       repoId: r.id,
@@ -6692,13 +6699,14 @@ export default function TaskPage(): React.JSX.Element {
       sourceContext: getTaskPageRepoSourceContext(r, 'github')
     }))
     const sourceContextByRepoId = new Map(repoArgs.map((r) => [r.repoId, r.sourceContext] as const))
-    const lagBackoffMs = [500, 1000, 2000, 4000, 8000] as const
     void fetchWorkItemsAcrossRepos(repoArgs, PER_REPO_FETCH_LIMIT, CROSS_REPO_DISPLAY_LIMIT, q, {
       force: true,
       noCache: true
     })
       .then(async ({ items }) => {
-        if (cancelled) {
+        // Why: skip renderer state writes after unmount, but still let .finally
+        // settle the shared quietState so a queued trailing is never stranded.
+        if (!quietRevalidateMountedRef.current) {
           return
         }
         reapplyPendingTaskPageGitHubMutationsToCache({
@@ -6724,19 +6732,19 @@ export default function TaskPage(): React.JSX.Element {
         const lagValues = [...quietState.lagSkipAttempts.values()]
         const attempts = lagValues.length === 0 ? 0 : Math.max(...lagValues)
         const wallExceeded =
-          quietState.lastConfirmAt > 0 && Date.now() - quietState.lastConfirmAt > 90_000
+          quietState.lastConfirmAt > 0 && Date.now() - quietState.lastConfirmAt > LAG_WALL_BUDGET_MS
         // Why: a new mutation confirmed while this fetch was in flight (queued) is
         // fresh work and must always revalidate — only lag *retries* (needTrailing)
         // are bounded by attempts/wall so a stuck server can't spin forever.
         const hasQueuedWork = quietState.trailingQueued
         quietState.trailingQueued = false
         const lagTrail = settle.needTrailing && attempts < MAX_LAG_TRAILS && !wallExceeded
-        if ((hasQueuedWork || lagTrail) && !cancelled) {
+        if ((hasQueuedWork || lagTrail) && quietRevalidateMountedRef.current) {
           const delay = hasQueuedWork
             ? 0
-            : (lagBackoffMs[Math.min(attempts, lagBackoffMs.length - 1)] ?? 500)
+            : (LAG_BACKOFF_MS[Math.min(attempts, LAG_BACKOFF_MS.length - 1)] ?? 500)
           window.setTimeout(() => {
-            if (!cancelled) {
+            if (quietRevalidateMountedRef.current) {
               setQuietRefreshNonce((current) => current + 1)
             }
           }, delay)
@@ -6748,14 +6756,14 @@ export default function TaskPage(): React.JSX.Element {
       })
       .finally(() => {
         quietState.inFlight = false
-        if (quietState.trailingQueued && !cancelled) {
+        // Why: drain a trailing queued from the shared quietState — not the old
+        // per-render cancelled flag, which stranded the retry when a new nonce
+        // arrived mid-flight. Gate the renderer bump on mount only.
+        if (quietState.trailingQueued && quietRevalidateMountedRef.current) {
           quietState.trailingQueued = false
           setQuietRefreshNonce((current) => current + 1)
         }
       })
-    return () => {
-      cancelled = true
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quietRefreshNonce])
 
