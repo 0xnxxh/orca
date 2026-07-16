@@ -11,7 +11,13 @@ import type {
   PRRefreshOutcome
 } from '../../shared/types'
 import { getPRForBranchOutcome, type GitHubPRBranchLookupOptions } from './client'
-import { getRateLimit, noteRateLimitSpend, rateLimitGuard } from './rate-limit'
+import { getOriginGitHubApiRepository } from './github-api-repository'
+import {
+  getRateLimit,
+  noteRepositoryRateLimitSpend,
+  repositoryRateLimitGuard,
+  spendsSharedGitHubComQuota
+} from './rate-limit'
 import { recordCoalescedCrashBreadcrumb } from '../crash-reporting/crash-breadcrumb-store'
 import { sendToTrustedUIRenderer } from '../ipc/ui'
 
@@ -705,14 +711,21 @@ async function drainQueue(): Promise<void> {
       )
 
       if (isBackground(next.reason)) {
-        // Why: the probe only warms rateLimitGuard's cached snapshot, so a
-        // failed probe must fail open — GHES with rate limiting disabled 404s
-        // every probe (#7553). A genuinely broken gh surfaces per-key as typed
-        // fetch outcomes instead (visible keys additionally back off).
-        await getRateLimit()
+        const executionOptions = next.candidate.localGitOptions ?? {}
+        const repository = await getOriginGitHubApiRepository(
+          next.candidate.repoPath,
+          next.candidate.connectionId,
+          executionOptions
+        )
+        // Why: the singleton snapshot describes native github.com only. GHES
+        // and WSL refreshes rely on the runner's scoped breaker after a real 403.
+        if (spendsSharedGitHubComQuota(repository, executionOptions)) {
+          // A failed probe must fail open; fetch outcomes still surface a broken gh.
+          await getRateLimit()
+        }
         const buckets = backgroundRefreshBuckets()
         const blockedGuard = buckets
-          .map((bucket) => rateLimitGuard(bucket))
+          .map((bucket) => repositoryRateLimitGuard(repository, bucket, executionOptions))
           .find((guard) => guard.blocked)
         if (blockedGuard?.blocked) {
           const retryAt = blockedGuard.resetAt * 1000
@@ -736,7 +749,7 @@ async function drainQueue(): Promise<void> {
           noteActiveStart(next)
         }
         for (const bucket of buckets) {
-          noteRateLimitSpend(bucket)
+          noteRepositoryRateLimitSpend(repository, bucket, 1, executionOptions)
         }
       }
 
