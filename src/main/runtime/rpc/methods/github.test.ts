@@ -175,7 +175,7 @@ describe('github RPC methods', () => {
         repo: 'repo-1',
         prNumber: 7,
         headSha: 'abc123',
-        prRepo: { owner: 'acme', repo: 'widgets' },
+        prRepo: { owner: 'acme', repo: 'widgets', host: 'github.acme-corp.com' },
         noCache: true
       })
     )
@@ -184,7 +184,7 @@ describe('github RPC methods', () => {
       'repo-1',
       7,
       'abc123',
-      { owner: 'acme', repo: 'widgets' },
+      { owner: 'acme', repo: 'widgets', host: 'github.acme-corp.com' },
       {
         noCache: true
       }

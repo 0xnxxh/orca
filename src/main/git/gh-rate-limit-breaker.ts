@@ -25,8 +25,13 @@ const FALLBACK_BLOCK_MS: Record<GhRateLimitBucket, number> = {
   graphql: 5 * 60_000
 }
 
-const blockedUntilMsByBucket = new Map<GhRateLimitBucket, number>()
+const DEFAULT_SCOPE = 'native:github.com'
+const blockedUntilMsByScopeAndBucket = new Map<string, number>()
 let resetProbe: ((bucket: GhRateLimitBucket) => void) | null = null
+
+function breakerKey(bucket: GhRateLimitBucket, scope = DEFAULT_SCOPE): string {
+  return `${scope}\0${bucket}`
+}
 
 // gh api flags that take a separate value, so the endpoint arg can be found.
 const GH_API_VALUE_FLAGS = new Set([
@@ -103,25 +108,32 @@ export function isGhPrimaryRateLimitStderr(stderr: string): boolean {
   return s.includes('api rate limit exceeded') && !s.includes('secondary rate limit')
 }
 
-export function recordGhPrimaryRateLimit(bucket: GhRateLimitBucket, blockedUntilMs: number): void {
-  const existing = blockedUntilMsByBucket.get(bucket) ?? 0
-  blockedUntilMsByBucket.set(bucket, Math.max(existing, blockedUntilMs))
+export function recordGhPrimaryRateLimit(
+  bucket: GhRateLimitBucket,
+  blockedUntilMs: number,
+  scope = DEFAULT_SCOPE
+): void {
+  const key = breakerKey(bucket, scope)
+  const existing = blockedUntilMsByScopeAndBucket.get(key) ?? 0
+  blockedUntilMsByScopeAndBucket.set(key, Math.max(existing, blockedUntilMs))
 }
 
-export function clearGhRateLimitBlock(bucket: GhRateLimitBucket): void {
-  blockedUntilMsByBucket.delete(bucket)
+export function clearGhRateLimitBlock(bucket: GhRateLimitBucket, scope = DEFAULT_SCOPE): void {
+  blockedUntilMsByScopeAndBucket.delete(breakerKey(bucket, scope))
 }
 
 export function getGhRateLimitBlockedUntilMs(
   bucket: GhRateLimitBucket,
-  nowMs: number = Date.now()
+  nowMs: number = Date.now(),
+  scope = DEFAULT_SCOPE
 ): number | null {
-  const blockedUntil = blockedUntilMsByBucket.get(bucket)
+  const key = breakerKey(bucket, scope)
+  const blockedUntil = blockedUntilMsByScopeAndBucket.get(key)
   if (blockedUntil === undefined) {
     return null
   }
   if (blockedUntil <= nowMs) {
-    blockedUntilMsByBucket.delete(bucket)
+    blockedUntilMsByScopeAndBucket.delete(key)
     return null
   }
   return blockedUntil
@@ -136,8 +148,13 @@ export function registerGhRateLimitResetProbe(
 }
 
 /** Called by the runner when a gh spawn came back with a primary 403. */
-export function notifyGhPrimaryRateLimit(bucket: GhRateLimitBucket): void {
-  recordGhPrimaryRateLimit(bucket, Date.now() + FALLBACK_BLOCK_MS[bucket])
+export function notifyGhPrimaryRateLimit(bucket: GhRateLimitBucket, scope = DEFAULT_SCOPE): void {
+  recordGhPrimaryRateLimit(bucket, Date.now() + FALLBACK_BLOCK_MS[bucket], scope)
+  // The registered probe uses native github.com credentials; it cannot refine
+  // a GHES or WSL bucket without querying the wrong account/runtime.
+  if (scope !== DEFAULT_SCOPE) {
+    return
+  }
   try {
     resetProbe?.(bucket)
   } catch {
@@ -161,6 +178,6 @@ export function createGhRateLimitBlockedError(
 
 /** @internal — test-only */
 export function _resetGhRateLimitBreaker(): void {
-  blockedUntilMsByBucket.clear()
+  blockedUntilMsByScopeAndBucket.clear()
   resetProbe = null
 }

@@ -1154,7 +1154,9 @@ export type PRConflictSummary = {
   localMergeState?: 'clean'
 }
 
-export type GitHubRepositoryIdentity = { owner: string; repo: string }
+// Why: host must survive renderer/RPC boundaries so Enterprise review actions
+// cannot silently fall back to a same-named repository on github.com.
+export type GitHubRepositoryIdentity = { owner: string; repo: string; host?: string }
 
 export type GitHubPRMergeMethod = 'merge' | 'squash' | 'rebase'
 
