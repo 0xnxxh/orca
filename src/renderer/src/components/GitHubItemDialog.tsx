@@ -187,6 +187,7 @@ import {
   GITHUB_PR_MERGE_METHOD_LABELS,
   resolveGitHubPRMergeMethods
 } from '../../../shared/github-pr-merge-methods'
+import { githubProjectHost } from '../../../shared/github-project-identity'
 import { githubRepoIdentityKey } from '../../../shared/github-repository-identity-key'
 import {
   findGithubIssueWorkspaceAttachment,
@@ -305,6 +306,25 @@ export type GitHubItemDialogProjectOrigin = {
   projectId: string
   projectItemId: string
   cacheKey: string
+}
+
+// Why: every PR mutation needs the same host-pinned identity so process GH_HOST
+// cannot redirect a github.com item or a Project row to the wrong server.
+function resolvePullRequestRepo(
+  item: Pick<GitHubWorkItem, 'prRepo' | 'url'>,
+  projectOrigin?: Pick<GitHubItemDialogProjectOrigin, 'owner' | 'repo' | 'host'>
+): GitHubOwnerRepo | null {
+  const repo =
+    item.prRepo ??
+    (projectOrigin
+      ? {
+          owner: projectOrigin.owner,
+          repo: projectOrigin.repo,
+          host: projectOrigin.host
+        }
+      : null) ??
+    parseOwnerRepoFromItemUrl(item.url)
+  return repo ? { ...repo, host: githubProjectHost(repo.host) } : null
 }
 
 type GitHubItemDialogProps = {
@@ -687,12 +707,14 @@ function PRReviewersPanel({
   loading,
   repoPath,
   sourceContext,
+  projectOrigin,
   onReviewersRequested
 }: {
   item: GitHubWorkItem
   loading: boolean
   repoPath: string | null
   sourceContext?: TaskSourceContext | null
+  projectOrigin?: GitHubItemDialogProjectOrigin
   onReviewersRequested: (reviewRequests: GitHubAssignableUser[]) => void
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
@@ -792,20 +814,23 @@ function PRReviewersPanel({
     return Array.from(byLogin.values())
   }, [item.author, item.latestReviews, localReviewRequests])
 
-  const reviewSlug = useMemo(() => parseOwnerRepoFromItemUrl(item.url), [item.url])
+  const reviewRepo = useMemo(
+    () => resolvePullRequestRepo(item, projectOrigin),
+    [item, projectOrigin]
+  )
   const reviewerMetadataBySlug = useRepoAssigneesBySlug(
-    open && reviewSlug ? reviewSlug.owner : null,
-    open && reviewSlug ? reviewSlug.repo : null,
+    open && reviewRepo ? reviewRepo.owner : null,
+    open && reviewRepo ? reviewRepo.repo : null,
     reviewerSeedUsers.map((user) => user.login),
     sourceSettings,
-    reviewSlug?.host
+    reviewRepo?.host
   )
   const reviewerMetadataByPath = useRepoAssignees(
-    open && !reviewSlug ? repoPath : null,
-    open && !reviewSlug ? item.repoId : null,
+    open && !reviewRepo ? repoPath : null,
+    open && !reviewRepo ? item.repoId : null,
     sourceSettings
   )
-  const reviewerMetadata = reviewSlug ? reviewerMetadataBySlug : reviewerMetadataByPath
+  const reviewerMetadata = reviewRepo ? reviewerMetadataBySlug : reviewerMetadataByPath
   const displayItem = { ...item, reviewRequests: localReviewRequests }
   const reviewers = getGitHubPRReviewerRows(displayItem)
   const authorLogin = item.author?.toLowerCase() ?? null
@@ -939,7 +964,7 @@ function PRReviewersPanel({
                 repo: runtimeRepo,
                 prNumber: item.number,
                 reviewers: logins,
-                prRepo: item.prRepo ?? reviewSlug
+                prRepo: reviewRepo
               },
               { timeoutMs: 30_000 }
             )
@@ -949,7 +974,7 @@ function PRReviewersPanel({
               sourceContext,
               prNumber: item.number,
               reviewers: logins,
-              prRepo: item.prRepo ?? reviewSlug
+              prRepo: reviewRepo
             })
       if (!reviewerPanelMountedRef.current) {
         return
@@ -1036,7 +1061,7 @@ function PRReviewersPanel({
                 repo: runtimeRepo,
                 prNumber: item.number,
                 reviewers: logins,
-                prRepo: item.prRepo ?? reviewSlug
+                prRepo: reviewRepo
               },
               { timeoutMs: 30_000 }
             )
@@ -1046,7 +1071,7 @@ function PRReviewersPanel({
               sourceContext,
               prNumber: item.number,
               reviewers: logins,
-              prRepo: item.prRepo ?? reviewSlug
+              prRepo: reviewRepo
             })
       if (!reviewerPanelMountedRef.current) {
         return
@@ -3148,6 +3173,7 @@ function ConversationTab({
   }
 
   const bodySlug = useMemo(() => parseOwnerRepoFromItemUrl(item.url), [item.url])
+  const prRepo = useMemo(() => resolvePullRequestRepo(item, projectOrigin), [item, projectOrigin])
   const markdownGitHubRepo = useMemo(
     () => (projectOrigin ? { owner: projectOrigin.owner, repo: projectOrigin.repo } : bodySlug),
     [bodySlug, projectOrigin]
@@ -3221,7 +3247,7 @@ function ConversationTab({
               repoId: item.repoId,
               sourceContext,
               prNumber: item.number,
-              prRepo: item.prRepo ?? parseOwnerRepoFromItemUrl(item.url),
+              prRepo,
               commentId: comment.id,
               body: replyBody,
               threadId: comment.threadId,
@@ -3235,7 +3261,7 @@ function ConversationTab({
               number: item.number,
               body: `@${comment.author} ${replyBody}`,
               type: item.type,
-              prRepo: item.prRepo ?? parseOwnerRepoFromItemUrl(item.url)
+              prRepo
             })
 
       if (!result.ok) {
@@ -3253,11 +3279,10 @@ function ConversationTab({
     [
       canUseRepoMutationContext,
       item.number,
-      item.prRepo,
       item.repoId,
       item.type,
-      item.url,
       onCommentAdded,
+      prRepo,
       repoPath,
       sourceContext
     ]
@@ -3288,6 +3313,7 @@ function ConversationTab({
           loading={loading}
           repoPath={repoPath}
           sourceContext={sourceContext}
+          projectOrigin={projectOrigin}
           onReviewersRequested={onReviewersRequested}
         />
         <aside className="overflow-hidden rounded-lg border border-border/50 bg-card/50 shadow-xs">
@@ -3403,7 +3429,7 @@ function ConversationTab({
           repoId={item.repoId}
           sourceContext={sourceContext}
           prNumber={item.number}
-          prRepo={item.prRepo ?? parseOwnerRepoFromItemUrl(item.url)}
+          prRepo={prRepo}
           files={files}
           headSha={headSha}
           baseSha={baseSha}
@@ -3811,7 +3837,7 @@ function ConversationTab({
             sourceContext={sourceContext}
             issueNumber={item.number}
             itemType={item.type}
-            prRepo={item.prRepo ?? parseOwnerRepoFromItemUrl(item.url)}
+            prRepo={prRepo}
             onCommentAdded={onCommentAdded}
           />
         )}
@@ -3855,6 +3881,7 @@ function PRActionsPanel({
     )
   )
   const mergeTarget = getActiveRuntimeTarget(sourceSettings)
+  const prRepo = resolvePullRequestRepo(item, projectOrigin)
   const canMutateWithRepoContext =
     !!repoPath || !!projectOrigin || mergeTarget.kind === 'environment'
   const canMutateState = localState !== 'merged' && canMutateWithRepoContext
@@ -3919,7 +3946,7 @@ function PRActionsPanel({
         sourceContext,
         projectOrigin,
         number: item.number,
-        prRepo: item.prRepo ?? parseOwnerRepoFromItemUrl(item.url),
+        prRepo,
         updates: { state: nextState }
       })
       useAppStore.getState().recordFeatureInteraction('github-tasks')
@@ -3974,7 +4001,7 @@ function PRActionsPanel({
                 repo: getGitHubRuntimeRepoId(sourceContext, repoId ?? item.repoId),
                 prNumber: item.number,
                 method,
-                prRepo: item.prRepo ?? null
+                prRepo
               },
               { timeoutMs: 30_000 }
             )
@@ -3984,7 +4011,7 @@ function PRActionsPanel({
               sourceContext,
               prNumber: item.number,
               method,
-              prRepo: item.prRepo ?? null
+              prRepo
             })
       if (!result.ok) {
         toast.error(result.error)
@@ -4032,7 +4059,7 @@ function PRActionsPanel({
                 prNumber: item.number,
                 enabled,
                 method: enabled ? mergeMethods.defaultMethod : undefined,
-                prRepo: item.prRepo ?? null
+                prRepo
               },
               { timeoutMs: 30_000 }
             )
@@ -4043,7 +4070,7 @@ function PRActionsPanel({
               prNumber: item.number,
               enabled,
               method: enabled ? mergeMethods.defaultMethod : undefined,
-              prRepo: item.prRepo ?? null
+              prRepo
             })
       if (!result.ok) {
         toast.error(result.error)
@@ -4438,10 +4465,7 @@ function ChecksTab({
   }
   const { localChecks, expandedCheckKey, detailsByCheckKey } = resolvedChecksState
   const list = useMemo(() => localChecks ?? checks ?? [], [checks, localChecks])
-  const prRepo = useMemo(
-    () => item.prRepo ?? parseOwnerRepoFromItemUrl(item.url),
-    [item.prRepo, item.url]
-  )
+  const prRepo = useMemo(() => resolvePullRequestRepo(item), [item])
   const runtimeHost = getGitHubSourceRuntimeHost(sourceContext)
   const canUseChecksRepoContext = canUseGitHubRepoContext(repoPath, sourceContext)
   const sorted = [...list].sort(
@@ -5273,7 +5297,7 @@ async function runIssueUpdate(args: {
     const updateArgs = {
       owner: args.projectOrigin.owner,
       repo: args.projectOrigin.repo,
-      ...(args.projectOrigin.host ? { host: args.projectOrigin.host } : {}),
+      host: githubProjectHost(args.projectOrigin.host),
       number: args.number,
       updates: args.updates
     }
@@ -5371,7 +5395,7 @@ async function runWorkItemBodyUpdate(args: {
     const updateArgs = {
       owner: targetSlug.owner,
       repo: targetSlug.repo,
-      ...(targetSlug.host ? { host: targetSlug.host } : {}),
+      host: githubProjectHost(targetSlug.host),
       number: args.item.number,
       updates: { body: args.body }
     }
@@ -5432,7 +5456,7 @@ async function runPullRequestStateUpdate(args: {
     const updateArgs = {
       owner: args.projectOrigin.owner,
       repo: args.projectOrigin.repo,
-      ...(args.projectOrigin.host ? { host: args.projectOrigin.host } : {}),
+      host: githubProjectHost(args.projectOrigin.host),
       number: args.number,
       updates: args.updates
     }
@@ -7159,7 +7183,7 @@ export default function GitHubItemDialog({
           repoPath: repoPath ?? '',
           sourceContext,
           prNumber: workItem.number,
-          prRepo: workItem.prRepo ?? parseOwnerRepoFromItemUrl(workItem.url),
+          prRepo: resolvePullRequestRepo(workItem, projectOrigin),
           pullRequestId: details.pullRequestId,
           path,
           viewed
@@ -7189,6 +7213,7 @@ export default function GitHubItemDialog({
       canUseDetailsRepoContext,
       details?.pullRequestId,
       detailsCacheKey,
+      projectOrigin,
       repoPath,
       sourceContext,
       workItem
@@ -7697,7 +7722,7 @@ export default function GitHubItemDialog({
                 <>
                   <TabsContent value="checks" className="mt-0">
                     <ChecksTab
-                      item={workItem}
+                      item={displayWorkItem ?? workItem}
                       repoPath={repoPath}
                       repoId={effectiveRepoId}
                       sourceContext={sourceContext}
@@ -7747,7 +7772,7 @@ export default function GitHubItemDialog({
                         repoId={effectiveRepoId ?? ''}
                         sourceContext={sourceContext}
                         prNumber={workItem.number}
-                        prRepo={workItem.prRepo ?? parseOwnerRepoFromItemUrl(workItem.url)}
+                        prRepo={resolvePullRequestRepo(workItem, projectOrigin)}
                         prUrl={workItem.url}
                         headSha={details?.headSha}
                         baseSha={details?.baseSha}

@@ -22,6 +22,7 @@ vi.mock('./github-enterprise-repository', async (importOriginal) => ({
 
 import {
   _resetOriginGitHubApiRepositoryCache,
+  getOriginGitHubApiRepository,
   githubHostExecOptions,
   resolveGitHubApiRepository,
   resolveGitHubRepoExecution
@@ -154,6 +155,12 @@ describe('resolveGitHubRepoExecution', () => {
     ).resolves.toEqual({ ownerRepo: null, ghOptions: {} })
   })
 
+  it('rejects a host-less caller-specific resolver for an unresolved local repository', async () => {
+    await expect(
+      resolveGitHubRepoExecution('/repo', async () => ({ owner: 'upstream', repo: 'widgets' }))
+    ).resolves.toEqual({ ownerRepo: null, ghOptions: { cwd: '/repo' } })
+  })
+
   it('preserves an authoritative null from a caller-specific resolver', async () => {
     getOwnerRepoMock.mockResolvedValue({ owner: 'origin', repo: 'widgets' })
 
@@ -163,5 +170,28 @@ describe('resolveGitHubRepoExecution', () => {
     })
 
     expect(getOwnerRepoMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('origin repository cache', () => {
+  it('does not cache an indeterminate Enterprise auth probe', async () => {
+    const enterprise = {
+      owner: 'acme',
+      repo: 'widgets',
+      host: 'github.acme-corp.com'
+    }
+    getEnterpriseGitHubRepoSlugMock
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(enterprise)
+
+    await expect(getOriginGitHubApiRepository('/repo')).resolves.toBeNull()
+    await expect(getOriginGitHubApiRepository('/repo')).resolves.toEqual(enterprise)
+    expect(getEnterpriseGitHubRepoSlugMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('still caches a definitive negative Enterprise probe', async () => {
+    await expect(getOriginGitHubApiRepository('/repo')).resolves.toBeNull()
+    await expect(getOriginGitHubApiRepository('/repo')).resolves.toBeNull()
+    expect(getEnterpriseGitHubRepoSlugMock).toHaveBeenCalledTimes(1)
   })
 })

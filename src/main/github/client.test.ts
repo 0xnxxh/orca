@@ -76,6 +76,9 @@ vi.mock('./gh-utils', () => ({
     if (lower.includes('rate limit')) {
       return { type: 'rate_limited', message: stderr }
     }
+    if (lower.includes('resource not accessible')) {
+      return { type: 'permission_denied', message: stderr }
+    }
     return { type: 'unknown', message: stderr }
   },
   parseGitHubOwnerRepo: (remoteUrl: string) => {
@@ -3776,6 +3779,45 @@ describe('getPRForBranch', () => {
     )
   })
 
+  it('probes the next PR work-item candidate after a permission denial', async () => {
+    const upstream = { owner: 'upstream', repo: 'orca', host: 'github.com' }
+    const origin = { owner: 'fork', repo: 'orca', host: 'github.com' }
+    resolvePRRepositoryCandidatesMock.mockResolvedValueOnce({
+      candidates: [upstream, origin],
+      headRepo: origin
+    })
+    ghExecFileAsyncMock
+      .mockRejectedValueOnce(new Error('GraphQL: Resource not accessible by integration'))
+      .mockRejectedValueOnce(new Error('GraphQL: Resource not accessible by integration'))
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          number: 42,
+          title: 'Origin PR',
+          state: 'OPEN',
+          url: 'https://github.com/fork/orca/pull/42',
+          labels: [],
+          updatedAt: '2026-07-16T00:00:00Z',
+          author: { login: 'octo' },
+          isDraft: false
+        })
+      })
+      .mockRejectedValueOnce(new Error('metadata unavailable'))
+
+    await expect(getWorkItem('/repo-root', 42, 'pr')).resolves.toMatchObject({
+      number: 42,
+      title: 'Origin PR',
+      prRepo: origin
+    })
+
+    expect(ghExecFileAsyncMock.mock.calls[0][0]).toEqual(
+      expect.arrayContaining(['pr', 'view', '--repo', 'upstream/orca'])
+    )
+    expect(ghExecFileAsyncMock.mock.calls[1][0]).toEqual(['api', 'repos/upstream/orca/pulls/42'])
+    expect(ghExecFileAsyncMock.mock.calls[2][0]).toEqual(
+      expect.arrayContaining(['pr', 'view', '--repo', 'fork/orca'])
+    )
+  })
+
   it('normalizes reviewer avatars from REST pull request payloads', async () => {
     getOwnerRepoMock.mockResolvedValueOnce({ owner: 'acme', repo: 'widgets' })
     ghExecFileAsyncMock.mockResolvedValueOnce({
@@ -4089,7 +4131,8 @@ describe('GitHub GraphQL rate-limit guard', () => {
     await expect(
       setPRAutoMerge('/repo-root', 7, true, 'squash', undefined, {
         owner: 'stablyai',
-        repo: 'orca'
+        repo: 'orca',
+        host: 'github.com'
       })
     ).resolves.toEqual({ ok: true })
 
@@ -4116,7 +4159,8 @@ describe('GitHub GraphQL rate-limit guard', () => {
     await expect(
       setPRAutoMerge('/repo-root', 7, true, 'squash', undefined, {
         owner: 'stablyai',
-        repo: 'orca'
+        repo: 'orca',
+        host: 'github.com'
       })
     ).resolves.toEqual({
       ok: false,
@@ -4137,21 +4181,23 @@ describe('GitHub GraphQL rate-limit guard', () => {
     await expect(
       setPRAutoMerge('/repo-root', 7, true, 'squash', undefined, {
         owner: 'stablyai',
-        repo: 'orca'
+        repo: 'orca',
+        host: 'github.com'
       })
     ).resolves.toEqual({ ok: true })
 
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
       expect.arrayContaining(['api', 'graphql', '-f', 'branch=main']),
-      { cwd: '/repo-root' }
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       3,
       ['pr', 'merge', '7', '--auto', '--squash', '--repo', 'stablyai/orca'],
       expect.objectContaining({
         cwd: '/repo-root',
-        env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' })
+        env: expect.objectContaining({ GH_PROMPT_DISABLED: '1' }),
+        host: 'github.com'
       })
     )
     expect(

@@ -88,6 +88,18 @@ ghe.acme.io
     expect(accounts[1].scopes).toContain('project')
   })
 
+  it('parses a ported GHES auth-status section', () => {
+    const text = `ghe.acme.io:8443
+  ✓ Logged in to ghe.acme.io:8443 account bob (keyring)
+  - Active account: true
+  - Token scopes: 'project', 'repo'
+`
+
+    expect(parseAuthStatus(text)).toEqual([
+      expect.objectContaining({ host: 'ghe.acme.io:8443', user: 'bob', active: true })
+    ])
+  })
+
   it('recovers host from the Logged-in line when the section header is missing', () => {
     // gh prints a colon after the host on some versions; we tolerate it,
     // but if the regex ever fails to match the header we still want

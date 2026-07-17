@@ -24,11 +24,20 @@ describe('GitHub Enterprise slug routing boundaries', () => {
       'function getChecksLabel'
     )
 
-    expect(statusSection).toContain(
-      '...(parsedOwnerRepo.host ? { host: parsedOwnerRepo.host } : {})'
-    )
+    expect(statusSection).toContain('host: githubProjectHost(parsedOwnerRepo.host)')
     expect(assigneeSection).toContain('parsed?.slug.host')
-    expect(assigneeSection).toContain('...(parsed?.slug.host ? { host: parsed.slug.host } : {})')
+    expect(assigneeSection).toContain('host: githubProjectHost(parsed?.slug.host)')
+  })
+
+  it('uses URL-host fallback for TaskPage reviewer and merge mutations', () => {
+    const source = componentSource('TaskPage.tsx')
+    const reviewSection = sourceBetween(source, 'function PRReviewCell', 'function PRChecksCell')
+    const mergeSection = sourceBetween(source, 'function PRMergeCell', 'function getPageNumbers')
+
+    expect(reviewSection).toContain('resolveTaskPullRequestRepo(item)')
+    expect(reviewSection.match(/prRepo: reviewRepo/g)).toHaveLength(4)
+    expect(mergeSection).toContain('const prRepo = resolveTaskPullRequestRepo(item)')
+    expect(mergeSection).not.toContain('prRepo: item.prRepo ?? null')
   })
 
   it('keeps PR base-repository hosts on checks-sidebar comment writes', () => {
@@ -39,7 +48,7 @@ describe('GitHub Enterprise slug routing boundaries', () => {
       'const handleReplyToComment = useCallback'
     )
 
-    expect(conversationSection).toContain('...(pr.prRepo.host ? { host: pr.prRepo.host } : {})')
+    expect(conversationSection).toContain('host: githubProjectHost(pr.prRepo.host)')
     expect(conversationSection).toContain('updateIssueCommentBySlug({')
     expect(conversationSection).toContain('deleteIssueCommentBySlug({')
   })

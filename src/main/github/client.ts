@@ -981,7 +981,8 @@ async function fetchPullRequestWorkItemFromCandidates(
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      if (classifyGhError(message).type !== 'not_found') {
+      const classification = classifyGhError(message).type
+      if (classification !== 'not_found' && classification !== 'permission_denied') {
         throw err
       }
     }
@@ -4380,7 +4381,7 @@ export async function setPRFileViewed(args: {
     args.connectionId,
     args.localGitOptions
   )
-  if (args.connectionId && !ownerRepo) {
+  if (!ownerRepo) {
     return false
   }
   const mutation = args.viewed ? 'markFileAsViewed' : 'unmarkFileAsViewed'
@@ -4432,7 +4433,7 @@ export async function resolveReviewThread(
     connectionId,
     localGitOptions
   )
-  if (connectionId && !ownerRepo) {
+  if (!ownerRepo) {
     return false
   }
   const guard = repositoryRateLimitGuard(ownerRepo, 'graphql', ghOptions)
@@ -4617,7 +4618,7 @@ export async function mergePR(
     connectionId,
     localGitOptions
   )
-  if (connectionId && !ownerRepo) {
+  if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
   await acquire()
@@ -4668,7 +4669,7 @@ export async function setPRAutoMerge(
     connectionId,
     localGitOptions
   )
-  if (connectionId && !ownerRepo) {
+  if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
   await acquire()
@@ -4919,7 +4920,7 @@ export async function requestPRReviewers(
     connectionId,
     localGitOptions
   )
-  if (connectionId && !ownerRepo) {
+  if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
   await acquire()
@@ -4960,7 +4961,7 @@ export async function removePRReviewers(
     connectionId,
     localGitOptions
   )
-  if (connectionId && !ownerRepo) {
+  if (!ownerRepo) {
     return { ok: false, error: 'Could not resolve GitHub owner/repo for this repository' }
   }
   await acquire()
@@ -5000,7 +5001,7 @@ export async function updatePRTitle(
     connectionId,
     localGitOptions
   )
-  if (connectionId && !ownerRepo) {
+  if (!ownerRepo) {
     return false
   }
   await acquire()

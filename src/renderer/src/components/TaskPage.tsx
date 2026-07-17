@@ -124,6 +124,7 @@ import {
   getLinearStatePillStyle
 } from '@/components/linear-state-pill-style'
 import { parseTaskQuery, stripRepoQualifiers, withQualifier } from '../../../shared/task-query'
+import { githubProjectHost } from '../../../shared/github-project-identity'
 import {
   buildLinearTeamUrl,
   getLinearOrganizationUrlKeyFromIssueUrl
@@ -1180,7 +1181,7 @@ function GHStatusCell({
               {
                 owner: parsedOwnerRepo.owner,
                 repo: parsedOwnerRepo.repo,
-                ...(parsedOwnerRepo.host ? { host: parsedOwnerRepo.host } : {}),
+                host: githubProjectHost(parsedOwnerRepo.host),
                 number: item.number,
                 updates
               },
@@ -1189,7 +1190,7 @@ function GHStatusCell({
           : window.api.gh.updateIssueBySlug({
               owner: parsedOwnerRepo.owner,
               repo: parsedOwnerRepo.repo,
-              ...(parsedOwnerRepo.host ? { host: parsedOwnerRepo.host } : {}),
+              host: githubProjectHost(parsedOwnerRepo.host),
               number: item.number,
               updates
             })
@@ -1822,7 +1823,7 @@ function GHAssigneesCell({
           const args = {
             owner,
             repo: repoName,
-            ...(parsed?.slug.host ? { host: parsed.slug.host } : {}),
+            host: githubProjectHost(parsed?.slug.host),
             number: item.number,
             updates
           }
@@ -2051,6 +2052,15 @@ function sameOptionalGitHubOwnerRepo(
     : sameGitHubOwnerRepo(leftValue, rightValue)
 }
 
+// Why: Task grid PR actions must keep the URL's host when list data has not
+// hydrated prRepo yet, while still pinning host-less github.com identities.
+function resolveTaskPullRequestRepo(
+  item: Pick<GitHubWorkItem, 'prRepo' | 'url'>
+): GitHubOwnerRepo | null {
+  const repo = item.prRepo ?? parseGitHubIssueOrPRLink(item.url)?.slug ?? null
+  return repo ? { ...repo, host: githubProjectHost(repo.host) } : null
+}
+
 function mergeReviewerSuggestions(
   users: GitHubAssignableUser[],
   seedUsers: GitHubAssignableUser[]
@@ -2188,13 +2198,13 @@ function PRReviewCell({
     return Array.from(byLogin.values())
   }, [item.author, item.latestReviews, localReviewRequests])
 
-  const reviewSlug = useMemo(() => parseGitHubIssueOrPRLink(item.url)?.slug ?? null, [item.url])
+  const reviewRepo = useMemo(() => resolveTaskPullRequestRepo(item), [item])
   const reviewerMetadata = useRepoAssigneesBySlug(
-    open && reviewSlug ? reviewSlug.owner : null,
-    open && reviewSlug ? reviewSlug.repo : null,
+    open && reviewRepo ? reviewRepo.owner : null,
+    open && reviewRepo ? reviewRepo.repo : null,
     reviewerSeedUsers.map((user) => user.login),
     sourceSettings,
-    reviewSlug?.host
+    reviewRepo?.host
   )
 
   const authorLogin = item.author?.toLowerCase() ?? null
@@ -2327,7 +2337,7 @@ function PRReviewCell({
                 repo: runtimeRepoId,
                 prNumber: item.number,
                 reviewers: logins,
-                prRepo: item.prRepo ?? null
+                prRepo: reviewRepo
               },
               { timeoutMs: 30_000 }
             )
@@ -2337,7 +2347,7 @@ function PRReviewCell({
               sourceContext,
               prNumber: item.number,
               reviewers: logins,
-              prRepo: item.prRepo ?? null
+              prRepo: reviewRepo
             })
       if (result.ok) {
         toast.success(translate('auto.components.TaskPage.8f06dbb9e5', 'Reviewer requested'))
@@ -2387,7 +2397,7 @@ function PRReviewCell({
                 repo: runtimeRepoId,
                 prNumber: item.number,
                 reviewers: logins,
-                prRepo: item.prRepo ?? null
+                prRepo: reviewRepo
               },
               { timeoutMs: 30_000 }
             )
@@ -2397,7 +2407,7 @@ function PRReviewCell({
               sourceContext,
               prNumber: item.number,
               reviewers: logins,
-              prRepo: item.prRepo ?? null
+              prRepo: reviewRepo
             })
       if (result.ok) {
         toast.success(
@@ -2530,7 +2540,7 @@ function PRReviewCell({
         >
           {primaryReviewer ? (
             <>
-              <ReviewChipAvatar reviewer={primaryReviewer} avatarHost={item.prRepo?.host} />
+              <ReviewChipAvatar reviewer={primaryReviewer} avatarHost={reviewRepo?.host} />
               {extraReviewerCount > 0 ? (
                 <span className="text-[10px] tabular-nums text-muted-foreground">
                   +{extraReviewerCount}
@@ -2766,6 +2776,7 @@ function PRMergeCell({
   }
   const mergePresentation = presentGitHubPRMergeState(item)
   const mergeMethods = resolveGitHubPRMergeMethods(item.mergeMethodSettings)
+  const prRepo = resolveTaskPullRequestRepo(item)
   const mergeDisabled = !repo || merging || !mergePresentation.directMergeAvailable
 
   const handleMerge = async (method: GitHubPRMergeMethod): Promise<void> => {
@@ -2801,7 +2812,7 @@ function PRMergeCell({
                 repo: runtimeRepoId,
                 prNumber: item.number,
                 method,
-                prRepo: item.prRepo ?? null
+                prRepo
               },
               { timeoutMs: 30_000 }
             )
@@ -2811,7 +2822,7 @@ function PRMergeCell({
               sourceContext,
               prNumber: item.number,
               method,
-              prRepo: item.prRepo ?? null
+              prRepo
             })
       if (result.ok) {
         useAppStore.getState().recordFeatureInteraction('github-tasks')
@@ -2847,7 +2858,7 @@ function PRMergeCell({
                 prNumber: item.number,
                 enabled,
                 method: enabled ? mergeMethods.defaultMethod : undefined,
-                prRepo: item.prRepo ?? null
+                prRepo
               },
               { timeoutMs: 30_000 }
             )
@@ -2858,7 +2869,7 @@ function PRMergeCell({
               prNumber: item.number,
               enabled,
               method: enabled ? mergeMethods.defaultMethod : undefined,
-              prRepo: item.prRepo ?? null
+              prRepo
             })
       if (result.ok) {
         useAppStore.getState().recordFeatureInteraction('github-tasks')

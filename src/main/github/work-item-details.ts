@@ -22,7 +22,6 @@ import {
 import { getWorkItem, getPRChecks, getPRComments } from './client'
 import {
   getIssueGitHubApiRepository,
-  getOriginGitHubApiRepository,
   githubHostExecOptions,
   resolveGitHubRepoExecution,
   type GitHubApiRepository
@@ -493,6 +492,11 @@ async function getPRMetadata(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ body: string; headSha?: string; baseSha?: string }> {
+  if (!ownerRepo) {
+    // Why: a bare `gh pr view` can honor ambient GH_HOST/GH_REPO after hosted
+    // repository resolution fails, returning metadata for the wrong PR.
+    return { body: '' }
+  }
   const ghOptions = {
     ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
     ...githubHostExecOptions(ownerRepo)
@@ -502,35 +506,19 @@ async function getPRMetadata(
   }
   try {
     noteRepositoryRateLimitSpend(ownerRepo, 'core', 1, ghOptions)
-    if (ownerRepo) {
-      const { stdout } = await ghExecFileAsync(
-        ['api', '--cache', '60s', `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`],
-        ghOptions
-      )
-      const data = JSON.parse(stdout) as {
-        body?: string | null
-        head?: { sha?: string }
-        base?: { sha?: string }
-      }
-      return {
-        body: data.body ?? '',
-        ...(data.head?.sha ? { headSha: data.head.sha } : {}),
-        ...(data.base?.sha ? { baseSha: data.base.sha } : {})
-      }
-    }
     const { stdout } = await ghExecFileAsync(
-      ['pr', 'view', String(prNumber), '--json', 'body,headRefOid,baseRefOid'],
+      ['api', '--cache', '60s', `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`],
       ghOptions
     )
     const data = JSON.parse(stdout) as {
-      body?: string
-      headRefOid?: string
-      baseRefOid?: string
+      body?: string | null
+      head?: { sha?: string }
+      base?: { sha?: string }
     }
     return {
       body: data.body ?? '',
-      ...(data.headRefOid ? { headSha: data.headRefOid } : {}),
-      ...(data.baseRefOid ? { baseSha: data.baseRefOid } : {})
+      ...(data.head?.sha ? { headSha: data.head.sha } : {}),
+      ...(data.base?.sha ? { baseSha: data.base.sha } : {})
     }
   } catch {
     return { body: '' }
@@ -869,6 +857,9 @@ async function getGitHubUsersByLogin(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubAssignableUser[]> {
+  if (!repository) {
+    return []
+  }
   const uniqueLogins = Array.from(
     new Set(logins.filter((login) => login && login !== 'ghost').map((login) => login.trim()))
   ).slice(0, 40)
@@ -1022,6 +1013,9 @@ async function getPRChecksForDetails(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<PRCheckDetail[]> {
+  if (!repository) {
+    return []
+  }
   try {
     return await getPRChecks(
       repoPath,
@@ -1069,8 +1063,8 @@ export async function getWorkItemDetails(
   const resolvedRepository =
     item.type === 'issue'
       ? await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions)
-      : (item.prRepo ??
-        (await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)))
+      : (await resolveGitHubRepoExecution(repoPath, item.prRepo, connectionId, localGitOptions))
+          .ownerRepo
 
   if (item.type === 'issue') {
     return withWorkItemDetailsPermit(async () => {
@@ -1150,13 +1144,15 @@ export async function getWorkItemDetails(
         getWorkItemParticipants(repoPath, item, resolvedRepository, connectionId, localGitOptions)
       )
     ]),
-    getPRComments(
-      repoPath,
-      item.number,
-      { prRepo: resolvedRepository },
-      connectionId,
-      ...localGitOptionArgs(localGitOptions)
-    )
+    resolvedRepository
+      ? getPRComments(
+          repoPath,
+          item.number,
+          { prRepo: resolvedRepository },
+          connectionId,
+          ...localGitOptionArgs(localGitOptions)
+        )
+      : Promise.resolve([])
   ])
 
   // Why: mention hydration spawns gh directly while checks owns a permit; bound them without nesting.
@@ -1183,7 +1179,10 @@ export async function getWorkItemDetails(
   ])
 
   return {
-    item: enrichItemDisplayAvatars(item, mentionParticipants),
+    item: enrichItemDisplayAvatars(
+      resolvedRepository ? { ...item, prRepo: resolvedRepository } : item,
+      mentionParticipants
+    ),
     body: metadata.body,
     comments,
     headSha: metadata.headSha,
