@@ -19,12 +19,11 @@ import {
   githubRepoContext,
   type LocalGitExecOptions
 } from './gh-utils'
-import { getWorkItem, getWorkItemByOwnerRepo, getPRChecks, getPRComments } from './client'
+import { getWorkItem, getPRChecks, getPRComments } from './client'
 import {
   getIssueGitHubApiRepository,
   getOriginGitHubApiRepository,
   githubHostExecOptions,
-  isGitHubDotComRepository,
   type GitHubApiRepository
 } from './github-api-repository'
 import { noteRepositoryRateLimitSpend, repositoryRateLimitGuard } from './rate-limit'
@@ -1026,61 +1025,22 @@ export async function getWorkItemDetails(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubWorkItemDetails | null> {
-  const originApiRepository =
-    type === 'issue'
-      ? null
-      : await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
-  // Why: cwd-less SSH gh must not fall through to a same-number github.com PR, including for type-less lookups.
-  if (connectionId && type !== 'issue' && !originApiRepository) {
-    return null
-  }
-  const issueApiRepository =
-    type === 'issue'
-      ? await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions)
-      : null
-  // Why: cwd-less SSH issue lookups must not fall through to a same-number github.com issue.
-  if (connectionId && type === 'issue' && !issueApiRepository) {
-    return null
-  }
-  // Why: connection-backed GHES repos need a host-qualified identity during the initial lookup.
-  const useExplicitEnterpriseRepository =
-    type === 'pr' && originApiRepository !== null && !isGitHubDotComRepository(originApiRepository)
-  let item: Omit<GitHubWorkItem, 'repoId'> | null = useExplicitEnterpriseRepository
-    ? await getWorkItemByOwnerRepo(
-        repoPath,
-        originApiRepository,
-        number,
-        'pr',
-        connectionId,
-        ...localGitOptionArgs(localGitOptions)
-      )
-    : await getWorkItem(
-        repoPath,
-        number,
-        type,
-        connectionId,
-        ...localGitOptionArgs(localGitOptions)
-      )
-  if (!item && useExplicitEnterpriseRepository && !connectionId) {
-    // Why: on a local fork checkout the PR lives on the base repo, which the
-    // origin slug can't see — the cwd lets gh resolve the actual remote.
-    item = await getWorkItem(
-      repoPath,
-      number,
-      type,
-      connectionId,
-      ...localGitOptionArgs(localGitOptions)
-    )
-  }
+  const item: Omit<GitHubWorkItem, 'repoId'> | null = await getWorkItem(
+    repoPath,
+    number,
+    type,
+    connectionId,
+    ...localGitOptionArgs(localGitOptions)
+  )
   if (!item) {
     return null
   }
 
   const resolvedRepository =
     item.type === 'issue'
-      ? (issueApiRepository ??
-        (await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions)))
-      : (item.prRepo ?? originApiRepository)
+      ? await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions)
+      : (item.prRepo ??
+        (await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)))
 
   await acquire()
   try {
