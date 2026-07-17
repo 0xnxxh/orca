@@ -184,6 +184,10 @@ export function getGhRateLimitBlockedUntilMs(
     blockedUntilMsByScopeAndBucket.delete(key)
     return null
   }
+  // Why: active blocks are hot entries; refresh their insertion order so a
+  // stream of one-off hostile hosts evicts cold scopes before an active one.
+  blockedUntilMsByScopeAndBucket.delete(key)
+  blockedUntilMsByScopeAndBucket.set(key, blockedUntil)
   return blockedUntil
 }
 

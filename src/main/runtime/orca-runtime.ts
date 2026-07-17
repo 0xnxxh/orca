@@ -12710,7 +12710,10 @@ export class OrcaRuntimeService {
       const updated = this.store.updateRepo(repo.id, {
         upstream: {
           owner: existingProject.providerIdentity.owner,
-          repo: existingProject.providerIdentity.repo
+          repo: existingProject.providerIdentity.repo,
+          ...(existingProject.providerIdentity.host
+            ? { host: existingProject.providerIdentity.host }
+            : {})
         }
       })
       if (!updated) {
@@ -13811,7 +13814,7 @@ export class OrcaRuntimeService {
     return isWslUncPath(scope.path) ? 'linux' : process.platform
   }
 
-  async getRepoSlug(repoSelector: string): Promise<{ owner: string; repo: string } | null> {
+  async getRepoSlug(repoSelector: string): Promise<GitHubOwnerRepo | null> {
     const repo = await this.resolveRepoSelector(repoSelector)
     const options = this.getHostedReviewExecutionOptions(repo)
     return options
@@ -13819,7 +13822,7 @@ export class OrcaRuntimeService {
       : getRepoSlug(repo.path, repo.connectionId ?? null)
   }
 
-  async getRepoUpstream(repoSelector: string): Promise<{ owner: string; repo: string } | null> {
+  async getRepoUpstream(repoSelector: string): Promise<GitHubOwnerRepo | null> {
     const repo = await this.resolveRepoSelector(repoSelector)
     const options = this.getHostedReviewExecutionOptions(repo)
     return options
@@ -13840,7 +13843,7 @@ export class OrcaRuntimeService {
         if (repo.upstream !== undefined || repo.kind === 'folder' || repo.connectionId) {
           continue
         }
-        let upstream: { owner: string; repo: string } | null
+        let upstream: GitHubOwnerRepo | null
         try {
           upstream = await getRepoUpstream(repo.path, null)
         } catch {
@@ -14528,7 +14531,11 @@ export class OrcaRuntimeService {
   async rerunRepoPRChecks(
     repoSelector: string,
     prNumber: number,
-    options?: { headSha?: string; failedOnly?: boolean }
+    options?: {
+      headSha?: string
+      failedOnly?: boolean
+      prRepo?: GitHubOwnerRepo | null
+    }
   ): Promise<Awaited<ReturnType<typeof rerunPRChecks>>> {
     const repo = await this.resolveRepoSelector(repoSelector)
     return rerunPRChecks(
@@ -14579,6 +14586,7 @@ export class OrcaRuntimeService {
     repoSelector: string,
     args: {
       prNumber: number
+      prRepo?: GitHubOwnerRepo | null
       path: string
       oldPath?: string
       status: GitHubPRFile['status']
@@ -14598,7 +14606,8 @@ export class OrcaRuntimeService {
   async resolveRepoReviewThread(
     repoSelector: string,
     threadId: string,
-    resolve: boolean
+    resolve: boolean,
+    prRepo?: GitHubOwnerRepo | null
   ): Promise<Awaited<ReturnType<typeof resolveReviewThread>>> {
     const repo = await this.resolveRepoSelector(repoSelector)
     return resolveReviewThread(
@@ -14606,6 +14615,7 @@ export class OrcaRuntimeService {
       threadId,
       resolve,
       repo.connectionId ?? null,
+      prRepo ?? null,
       ...this.getLocalGitExecutionOptionArgs(repo)
     )
   }
@@ -14613,6 +14623,7 @@ export class OrcaRuntimeService {
   async setRepoPRFileViewed(
     repoSelector: string,
     args: {
+      prRepo?: GitHubOwnerRepo | null
       pullRequestId: string
       path: string
       viewed: boolean
@@ -14700,7 +14711,8 @@ export class OrcaRuntimeService {
   async updateRepoPRState(
     repoSelector: string,
     prNumber: number,
-    updates: GitHubPullRequestStateUpdate
+    updates: GitHubPullRequestStateUpdate,
+    prRepo?: GitHubOwnerRepo | null
   ): Promise<Awaited<ReturnType<typeof updatePRState>>> {
     const repo = await this.resolveRepoSelector(repoSelector)
     return updatePRState(
@@ -14708,6 +14720,7 @@ export class OrcaRuntimeService {
       prNumber,
       updates,
       repo.connectionId ?? null,
+      prRepo ?? null,
       ...this.getLocalGitExecutionOptionArgs(repo)
     )
   }
@@ -14715,7 +14728,8 @@ export class OrcaRuntimeService {
   async requestRepoPRReviewers(
     repoSelector: string,
     prNumber: number,
-    reviewers: string[]
+    reviewers: string[],
+    prRepo?: GitHubOwnerRepo | null
   ): Promise<Awaited<ReturnType<typeof requestPRReviewers>>> {
     const repo = await this.resolveRepoSelector(repoSelector)
     return requestPRReviewers(
@@ -14723,6 +14737,7 @@ export class OrcaRuntimeService {
       prNumber,
       reviewers,
       repo.connectionId ?? null,
+      prRepo ?? null,
       ...this.getLocalGitExecutionOptionArgs(repo)
     )
   }
@@ -14730,7 +14745,8 @@ export class OrcaRuntimeService {
   async removeRepoPRReviewers(
     repoSelector: string,
     prNumber: number,
-    reviewers: string[]
+    reviewers: string[],
+    prRepo?: GitHubOwnerRepo | null
   ): Promise<Awaited<ReturnType<typeof removePRReviewers>>> {
     const repo = await this.resolveRepoSelector(repoSelector)
     return removePRReviewers(
@@ -14738,6 +14754,7 @@ export class OrcaRuntimeService {
       prNumber,
       reviewers,
       repo.connectionId ?? null,
+      prRepo ?? null,
       ...this.getLocalGitExecutionOptionArgs(repo)
     )
   }

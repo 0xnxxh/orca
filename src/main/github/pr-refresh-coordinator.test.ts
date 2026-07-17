@@ -2,6 +2,7 @@
 request timestamps, and follow-up scheduling against shared module state. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { GitHubPRRefreshCandidate, PRInfo } from '../../shared/types'
+import { isWslUncPath } from '../../shared/wsl-paths'
 
 const {
   sendMock,
@@ -117,8 +118,10 @@ describe('pr-refresh-coordinator', () => {
     repositoryRateLimitGuardMock.mockReturnValue({ blocked: false })
     spendsSharedGitHubComQuotaMock.mockReset()
     spendsSharedGitHubComQuotaMock.mockImplementation(
-      (repository: { host?: string } | null, options?: { wslDistro?: string }) =>
-        (!repository?.host || repository.host.toLowerCase() === 'github.com') && !options?.wslDistro
+      (repository: { host?: string } | null, options?: { cwd?: string; wslDistro?: string }) =>
+        (!repository?.host || repository.host.toLowerCase() === 'github.com') &&
+        !options?.wslDistro &&
+        !(options?.cwd && isWslUncPath(options.cwd))
     )
     getAllWebContentsMock.mockReturnValue([
       {
@@ -596,12 +599,20 @@ describe('pr-refresh-coordinator', () => {
     {
       scope: 'GitHub Enterprise',
       repository: { owner: 'acme', repo: 'widgets', host: 'github.acme-corp.com' },
+      repoPath: '/repo',
       localGitOptions: undefined
     },
     {
       scope: 'WSL',
       repository: { owner: 'acme', repo: 'widgets', host: 'github.com' },
+      repoPath: '/repo',
       localGitOptions: { wslDistro: 'Ubuntu' }
+    },
+    {
+      scope: 'implicit WSL UNC',
+      repository: { owner: 'acme', repo: 'widgets', host: 'github.com' },
+      repoPath: String.raw`\\wsl.localhost\Ubuntu\home\me\widgets`,
+      localGitOptions: undefined
     }
   ])('bypasses the shared budget for $scope background refreshes', async (testCase) => {
     const { enqueuePRRefresh } = await import('./pr-refresh-coordinator')
@@ -610,9 +621,20 @@ describe('pr-refresh-coordinator', () => {
       kind: 'no-pr',
       fetchedAt: Date.now()
     })
-    const executionOptions = testCase.localGitOptions ?? {}
+    const executionOptions = {
+      cwd: testCase.repoPath,
+      ...testCase.localGitOptions
+    }
 
-    enqueuePRRefresh(makeCandidate({ localGitOptions: testCase.localGitOptions }), 'active', 80, 1)
+    enqueuePRRefresh(
+      makeCandidate({
+        repoPath: testCase.repoPath,
+        localGitOptions: testCase.localGitOptions
+      }),
+      'active',
+      80,
+      1
+    )
 
     await vi.advanceTimersByTimeAsync(0)
 

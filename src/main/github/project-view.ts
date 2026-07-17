@@ -15,6 +15,7 @@ import {
   isValidOwnerSlug,
   assertSlug,
   assertPositiveInt,
+  projectHostAuthenticationError,
   projectGhExecOptions,
   type GraphqlVars
 } from './project-view/internals'
@@ -887,6 +888,10 @@ async function fetchItemsPageWithRaw(args: {
       stderr: string
     }
 > {
+  const authError = await projectHostAuthenticationError(args.host)
+  if (authError) {
+    return { ok: false, error: authError, rawErrors: [], stderr: '' }
+  }
   const root = ownerQueryRoot(args.ownerType)
   const afterArg = args.after ? `, after: $after` : ''
   const afterVar = args.after ? `$after:String!, ` : ''
@@ -1619,32 +1624,42 @@ export function parseProjectPaste(input: string, host?: string): ParsedPaste | n
   if (isGitHubProjectRefInputTooLarge(trimmed)) {
     return null
   }
-  // URL forms. Why: GHES project URLs live on the enterprise host — accept it
-  // alongside github.com when the caller supplies one.
-  const escapedHost = host ? host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : null
-  const urlRe = new RegExp(
-    `^https?://(?:github\\.com${escapedHost ? `|${escapedHost}` : ''})/(orgs|users)/([^/]+)/projects/(\\d+)(?:/views/(\\d+))?`,
-    'i'
-  )
-  const m = trimmed.match(urlRe)
-  if (m) {
-    const [, kindSeg, owner, nStr, vStr] = m
-    const number = Number.parseInt(nStr, 10)
-    if (!Number.isInteger(number) || number < 1) {
+  // Why: URL parsing enforces an exact Project path and rejects credentials;
+  // a prefix regex could silently turn `/projects/1evil` into Project 1.
+  try {
+    const url = new URL(trimmed)
+    const allowedHosts = new Set(['github.com', ...(host ? [host.trim().toLowerCase()] : [])])
+    const parts = url.pathname.split('/').filter(Boolean)
+    const hasView = parts.length === 6 && parts[4] === 'views'
+    if (
+      (url.protocol !== 'https:' && url.protocol !== 'http:') ||
+      url.username ||
+      url.password ||
+      !allowedHosts.has(url.host.toLowerCase()) ||
+      (parts[0] !== 'orgs' && parts[0] !== 'users') ||
+      !isValidOwnerSlug(parts[1]) ||
+      parts[2] !== 'projects' ||
+      (parts.length !== 4 && !hasView)
+    ) {
       return null
     }
-    if (!isValidOwnerSlug(owner)) {
+    const number = Number(parts[3])
+    const viewNumber = hasView ? Number(parts[5]) : undefined
+    if (
+      !Number.isSafeInteger(number) ||
+      number < 1 ||
+      (hasView && (!Number.isSafeInteger(viewNumber) || (viewNumber ?? 0) < 1))
+    ) {
       return null
     }
-    const viewNumber = vStr ? Number.parseInt(vStr, 10) : undefined
     return {
-      kind: kindSeg === 'orgs' ? 'org' : 'user',
-      owner,
+      kind: parts[0] === 'orgs' ? 'org' : 'user',
+      owner: parts[1],
       number,
-      ...(viewNumber !== undefined && Number.isInteger(viewNumber) && viewNumber >= 1
-        ? { viewNumber }
-        : {})
+      ...(viewNumber !== undefined ? { viewNumber } : {})
     }
+  } catch {
+    // Shorthand parsing below remains available for non-URL input.
   }
   // owner/number shorthand — owner alphabet matches OWNER_SLUG_RE.
   const shortRe = /^([A-Za-z0-9][A-Za-z0-9-]*)\/(\d+)$/

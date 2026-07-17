@@ -1509,7 +1509,7 @@ export type PreloadApi = {
     repoUpstream: (args: {
       repoPath: string
       repoId?: string
-    }) => Promise<{ owner: string; repo: string } | null>
+    }) => Promise<{ owner: string; repo: string; host?: string } | null>
     prForBranch: (args: {
       repoPath: string
       repoId?: string
@@ -1567,6 +1567,7 @@ export type PreloadApi = {
     prFileContents: (
       args: GitHubRepoSelectorArgs & {
         prNumber: number
+        prRepo?: GitHubOwnerRepo | null
         path: string
         oldPath?: string
         status: GitHubPRFile['status']
@@ -1620,6 +1621,7 @@ export type PreloadApi = {
         prNumber: number
         headSha?: string
         failedOnly?: boolean
+        prRepo?: GitHubOwnerRepo | null
       }
     ) => Promise<{ ok: true; count: number } | { ok: false; error: string }>
     prComments: (args: {
@@ -1636,10 +1638,12 @@ export type PreloadApi = {
       sourceContext?: TaskSourceContext | null
       threadId: string
       resolve: boolean
+      prRepo?: GitHubOwnerRepo | null
     }) => Promise<boolean>
     setPRFileViewed: (
       args: GitHubRepoSelectorArgs & {
         prNumber: number
+        prRepo?: GitHubOwnerRepo | null
         pullRequestId: string
         path: string
         viewed: boolean
@@ -1671,18 +1675,21 @@ export type PreloadApi = {
       args: GitHubRepoSelectorArgs & {
         prNumber: number
         updates: { state: 'open' | 'closed' }
+        prRepo?: GitHubOwnerRepo | null
       }
     ) => Promise<{ ok: true } | { ok: false; error: string }>
     requestPRReviewers: (
       args: GitHubRepoSelectorArgs & {
         prNumber: number
         reviewers: string[]
+        prRepo?: GitHubOwnerRepo | null
       }
     ) => Promise<{ ok: true } | { ok: false; error: string }>
     removePRReviewers: (
       args: GitHubRepoSelectorArgs & {
         prNumber: number
         reviewers: string[]
+        prRepo?: GitHubOwnerRepo | null
       }
     ) => Promise<{ ok: true } | { ok: false; error: string }>
     updateIssue: (

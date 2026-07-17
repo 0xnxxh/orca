@@ -147,48 +147,51 @@ export async function fetchSetPRAutoMerge(
 export async function fetchUpdatePRState(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string,
-  args: { prNumber: number; state: 'open' | 'closed' }
+  args: { prNumber: number; state: 'open' | 'closed'; prRepo?: GitHubPrRepoSlug | null }
 ): Promise<GitHubPrMutationOutcome> {
-  // updatePRState does NOT accept prRepo (KTD3) — buildGithubPrParams omits it.
   return sendGithubPrMutation(
     client,
     'github.updatePRState',
-    buildGithubPrParams('github.updatePRState', worktreeId, {
-      prNumber: args.prNumber,
-      updates: { state: args.state }
-    })
+    buildGithubPrParams(
+      'github.updatePRState',
+      worktreeId,
+      { prNumber: args.prNumber, updates: { state: args.state } },
+      { prRepo: args.prRepo }
+    )
   )
 }
 
 export async function fetchRequestPRReviewers(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string,
-  args: { prNumber: number; reviewers: string[] }
+  args: { prNumber: number; reviewers: string[]; prRepo?: GitHubPrRepoSlug | null }
 ): Promise<GitHubPrMutationOutcome> {
-  // requestPRReviewers does NOT accept prRepo (KTD3).
   return sendGithubPrMutation(
     client,
     'github.requestPRReviewers',
-    buildGithubPrParams('github.requestPRReviewers', worktreeId, {
-      prNumber: args.prNumber,
-      reviewers: args.reviewers
-    })
+    buildGithubPrParams(
+      'github.requestPRReviewers',
+      worktreeId,
+      { prNumber: args.prNumber, reviewers: args.reviewers },
+      { prRepo: args.prRepo }
+    )
   )
 }
 
 export async function fetchRemovePRReviewers(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string,
-  args: { prNumber: number; reviewers: string[] }
+  args: { prNumber: number; reviewers: string[]; prRepo?: GitHubPrRepoSlug | null }
 ): Promise<GitHubPrMutationOutcome> {
-  // removePRReviewers does NOT accept prRepo (KTD3).
   return sendGithubPrMutation(
     client,
     'github.removePRReviewers',
-    buildGithubPrParams('github.removePRReviewers', worktreeId, {
-      prNumber: args.prNumber,
-      reviewers: args.reviewers
-    })
+    buildGithubPrParams(
+      'github.removePRReviewers',
+      worktreeId,
+      { prNumber: args.prNumber, reviewers: args.reviewers },
+      { prRepo: args.prRepo }
+    )
   )
 }
 
@@ -262,15 +265,17 @@ export async function fetchAddIssueComment(
 export async function fetchResolveReviewThread(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string,
-  args: { threadId: string; resolve: boolean }
+  args: { threadId: string; resolve: boolean; prRepo?: GitHubPrRepoSlug | null }
 ): Promise<GitHubPrMutationOutcome> {
   const response = await sendRaw(
     client,
     'github.resolveReviewThread',
-    buildGithubPrParams('github.resolveReviewThread', worktreeId, {
-      threadId: args.threadId,
-      resolve: args.resolve
-    })
+    buildGithubPrParams(
+      'github.resolveReviewThread',
+      worktreeId,
+      { threadId: args.threadId, resolve: args.resolve },
+      { prRepo: args.prRepo }
+    )
   )
   if (!response.ok) {
     return {
@@ -315,9 +320,13 @@ export async function fetchDeleteIssueComment(
 export async function fetchRerunPRChecks(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string,
-  args: { prNumber: number; headSha?: string | null; failedOnly?: boolean }
+  args: {
+    prNumber: number
+    headSha?: string | null
+    failedOnly?: boolean
+    prRepo?: GitHubPrRepoSlug | null
+  }
 ): Promise<GitHubPrMutationOutcome> {
-  // rerunPRChecks does NOT accept prRepo (KTD3); headSha is a plain param here.
   const params: Record<string, unknown> = { prNumber: args.prNumber }
   if (args.failedOnly !== undefined) {
     params.failedOnly = args.failedOnly
@@ -328,6 +337,6 @@ export async function fetchRerunPRChecks(
   return sendGithubPrMutation(
     client,
     'github.rerunPRChecks',
-    buildGithubPrParams('github.rerunPRChecks', worktreeId, params)
+    buildGithubPrParams('github.rerunPRChecks', worktreeId, params, { prRepo: args.prRepo })
   )
 }

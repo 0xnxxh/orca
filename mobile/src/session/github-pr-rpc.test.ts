@@ -278,9 +278,17 @@ describe('buildGithubPrParams — method-aware prRepo / headSha', () => {
     for (const method of [
       'github.prChecks',
       'github.prCheckDetails',
+      'github.rerunPRChecks',
+      'github.resolveReviewThread',
+      'github.setPRFileViewed',
+      'github.updatePRState',
+      'github.requestPRReviewers',
+      'github.removePRReviewers',
       'github.mergePR',
       'github.setPRAutoMerge',
-      'github.prComments'
+      'github.prComments',
+      'github.prFileContents',
+      'github.addPRReviewComment'
     ]) {
       const params = buildGithubPrParams(method, WORKTREE_ID, { prNumber: 1 }, { prRepo: fork })
       expect(params.prRepo).toEqual(fork)
@@ -288,13 +296,7 @@ describe('buildGithubPrParams — method-aware prRepo / headSha', () => {
   })
 
   it('omits prRepo for methods that reject it', () => {
-    for (const method of [
-      'github.updatePRState',
-      'github.requestPRReviewers',
-      'github.removePRReviewers',
-      'github.listAssignableUsers',
-      'github.rerunPRChecks'
-    ]) {
+    for (const method of ['github.repoSlug', 'github.prForBranch', 'github.listAssignableUsers']) {
       const params = buildGithubPrParams(method, WORKTREE_ID, { prNumber: 1 }, { prRepo: fork })
       expect('prRepo' in params).toBe(false)
     }

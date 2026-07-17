@@ -79,7 +79,9 @@ vi.mock('../git/runner', () => ({
 }))
 
 vi.mock('./github-enterprise-repository', () => ({
-  getEnterpriseGitHubRepoSlug: getEnterpriseGitHubRepoSlugMock
+  getEnterpriseGitHubRepoSlug: getEnterpriseGitHubRepoSlugMock,
+  getEnterpriseGitHubRepoSlugForRemote: getEnterpriseGitHubRepoSlugMock,
+  isGitHubHostAuthenticated: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('../providers/ssh-git-dispatch', () => ({
@@ -228,7 +230,7 @@ describe('GitHub PR local runtime routing', () => {
 
     await getPRComments('/repo-root', 7, { prRepo }, null, localGitOptions)
     await expect(
-      resolveReviewThread('/repo-root', 'thread-1', true, null, localGitOptions)
+      resolveReviewThread('/repo-root', 'thread-1', true, null, prRepo, localGitOptions)
     ).resolves.toBe(true)
     await expect(
       addPRReviewCommentReply(
@@ -249,6 +251,7 @@ describe('GitHub PR local runtime routing', () => {
         repoPath: '/repo-root',
         connectionId: null,
         localGitOptions,
+        prRepo,
         prNumber: 7,
         body: 'Inline',
         commitId: 'head-oid',
@@ -263,13 +266,13 @@ describe('GitHub PR local runtime routing', () => {
       updatePRDetails('/repo-root', 7, { body: 'New body' }, null, prRepo, localGitOptions)
     ).resolves.toEqual({ ok: true })
     await expect(
-      updatePRState('/repo-root', 7, { state: 'closed' }, null, localGitOptions)
+      updatePRState('/repo-root', 7, { state: 'closed' }, null, prRepo, localGitOptions)
     ).resolves.toEqual({ ok: true })
     await expect(
-      requestPRReviewers('/repo-root', 7, ['octo'], null, localGitOptions)
+      requestPRReviewers('/repo-root', 7, ['octo'], null, prRepo, localGitOptions)
     ).resolves.toEqual({ ok: true })
     await expect(
-      removePRReviewers('/repo-root', 7, ['octo'], null, localGitOptions)
+      removePRReviewers('/repo-root', 7, ['octo'], null, prRepo, localGitOptions)
     ).resolves.toEqual({ ok: true })
     await expect(
       setPRAutoMerge('/repo-root', 7, true, 'squash', null, prRepo, localGitOptions)
@@ -449,9 +452,16 @@ describe('GitHub PR local runtime routing', () => {
       getPRCheckDetails('/remote/repo', { checkRunId: 88, prRepo: enterpriseRepo }, 'ssh-1')
     ).resolves.toMatchObject({ name: 'lint', conclusion: 'failure' })
     await expect(
-      rerunPRChecks('/remote/repo', 7, { headSha: 'head-sha', failedOnly: true }, 'ssh-1')
+      rerunPRChecks(
+        '/remote/repo',
+        7,
+        { headSha: 'head-sha', failedOnly: true, prRepo: enterpriseRepo },
+        'ssh-1'
+      )
     ).resolves.toEqual({ ok: true, count: 1 })
-    await expect(resolveReviewThread('/remote/repo', 'thread-1', true, 'ssh-1')).resolves.toBe(true)
+    await expect(
+      resolveReviewThread('/remote/repo', 'thread-1', true, 'ssh-1', enterpriseRepo)
+    ).resolves.toBe(true)
     await expect(
       addPRReviewCommentReply(
         '/remote/repo',
@@ -469,6 +479,7 @@ describe('GitHub PR local runtime routing', () => {
       addPRReviewComment({
         repoPath: '/remote/repo',
         connectionId: 'ssh-1',
+        prRepo: enterpriseRepo,
         prNumber: 7,
         body: 'Enterprise inline comment',
         commitId: 'head-sha',
@@ -482,13 +493,19 @@ describe('GitHub PR local runtime routing', () => {
     await expect(
       updatePRDetails('/remote/repo', 7, { body: 'New body' }, 'ssh-1', enterpriseRepo)
     ).resolves.toEqual({ ok: true })
-    await expect(updatePRState('/remote/repo', 7, { state: 'closed' }, 'ssh-1')).resolves.toEqual({
+    await expect(
+      updatePRState('/remote/repo', 7, { state: 'closed' }, 'ssh-1', enterpriseRepo)
+    ).resolves.toEqual({
       ok: true
     })
-    await expect(requestPRReviewers('/remote/repo', 7, ['octo'], 'ssh-1')).resolves.toEqual({
+    await expect(
+      requestPRReviewers('/remote/repo', 7, ['octo'], 'ssh-1', enterpriseRepo)
+    ).resolves.toEqual({
       ok: true
     })
-    await expect(removePRReviewers('/remote/repo', 7, ['octo'], 'ssh-1')).resolves.toEqual({
+    await expect(
+      removePRReviewers('/remote/repo', 7, ['octo'], 'ssh-1', enterpriseRepo)
+    ).resolves.toEqual({
       ok: true
     })
     await expect(

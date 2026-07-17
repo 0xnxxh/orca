@@ -11,6 +11,9 @@ const {
   gitExecFileAsyncMock,
   rateLimitGuardMock,
   noteRateLimitSpendMock,
+  repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpendMock,
+  spendsSharedGitHubComQuotaMock,
   acquireMock,
   releaseMock
 } = vi.hoisted(() => ({
@@ -23,6 +26,11 @@ const {
   gitExecFileAsyncMock: vi.fn(),
   rateLimitGuardMock: vi.fn((_bucket?: unknown) => ({ blocked: false })),
   noteRateLimitSpendMock: vi.fn(),
+  repositoryRateLimitGuardMock: vi.fn((_repo: unknown, bucket: string) =>
+    rateLimitGuardMock(bucket)
+  ),
+  noteRepositoryRateLimitSpendMock: vi.fn(),
+  spendsSharedGitHubComQuotaMock: vi.fn(() => true),
   acquireMock: vi.fn(),
   releaseMock: vi.fn()
 }))
@@ -67,11 +75,9 @@ vi.mock('./rate-limit', () => ({
   noteRateLimitSpend: noteRateLimitSpendMock,
   getRateLimit: vi.fn(async () => ({ ok: false, error: 'not probed in tests' })),
   // Mirror production: shared-scope calls delegate to the global guard/spend.
-  repositoryRateLimitGuard: vi.fn((_repo: unknown, bucket: string) => rateLimitGuardMock(bucket)),
-  noteRepositoryRateLimitSpend: vi.fn((_repo: unknown, bucket: string, cost?: number) =>
-    noteRateLimitSpendMock(bucket, cost)
-  ),
-  spendsSharedGitHubComQuota: () => true
+  repositoryRateLimitGuard: repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpend: noteRepositoryRateLimitSpendMock,
+  spendsSharedGitHubComQuota: spendsSharedGitHubComQuotaMock
 }))
 
 vi.mock('./github-api-repository', async (importOriginal) => {
@@ -135,6 +141,10 @@ describe('listWorkItems query paging', () => {
     rateLimitGuardMock.mockReset()
     rateLimitGuardMock.mockReturnValue({ blocked: false })
     noteRateLimitSpendMock.mockReset()
+    repositoryRateLimitGuardMock.mockClear()
+    noteRepositoryRateLimitSpendMock.mockReset()
+    spendsSharedGitHubComQuotaMock.mockReset()
+    spendsSharedGitHubComQuotaMock.mockReturnValue(true)
     acquireMock.mockReset()
     releaseMock.mockReset()
     acquireMock.mockResolvedValue(undefined)
@@ -163,6 +173,31 @@ describe('listWorkItems query paging', () => {
     expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
     expect(acquireMock).not.toHaveBeenCalled()
     expect(releaseMock).not.toHaveBeenCalled()
+  })
+
+  it('uses an implicit WSL UNC cwd for search quota accounting', async () => {
+    const repository = { owner: 'acme', repo: 'widgets', host: 'github.com' }
+    const repoPath = String.raw`\\wsl.localhost\Ubuntu\home\me\widgets`
+    getIssueOwnerRepoMock.mockResolvedValueOnce(repository)
+    getOwnerRepoMock.mockResolvedValueOnce(repository)
+    ghExecFileAsyncMock.mockResolvedValueOnce({ stdout: '3' })
+    spendsSharedGitHubComQuotaMock.mockReturnValue(false)
+
+    await expect(countWorkItems(repoPath, 'is:issue is:open')).resolves.toBe(3)
+
+    const executionOptions = { cwd: repoPath, host: 'github.com' }
+    expect(spendsSharedGitHubComQuotaMock).toHaveBeenCalledWith(repository, executionOptions)
+    expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
+      repository,
+      'search',
+      executionOptions
+    )
+    expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
+      repository,
+      'search',
+      1,
+      executionOptions
+    )
   })
 
   it('passes review-requested as a --search qualifier (gh CLI has no dedicated flag)', async () => {

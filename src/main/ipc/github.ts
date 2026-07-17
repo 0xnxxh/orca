@@ -543,6 +543,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
       args: {
         repoPath: string
         prNumber: number
+        prRepo?: GitHubOwnerRepo | null
         path: string
         oldPath?: string
         status: GitHubPRFile['status']
@@ -555,6 +556,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
         repoPath: repo.path,
         connectionId: repoConnectionId(repo),
         localGitOptions: localGitOptionArgs(store, repo)[0],
+        prRepo: args.prRepo ?? null,
         prNumber: args.prNumber,
         path: args.path,
         oldPath: args.oldPath,
@@ -675,6 +677,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
         sourceContext?: TaskSourceContext | null
         threadId: string
         resolve: boolean
+        prRepo?: GitHubOwnerRepo | null
       }
     ) => {
       const repo = assertRegisteredRepo(args, store)
@@ -688,6 +691,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
         args.threadId,
         args.resolve,
         repoConnectionId(repo),
+        args.prRepo ?? null,
         ...localGitOptionArgs(store, repo)
       )
     }
@@ -701,6 +705,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
         repoPath: string
         repoId?: string
         prNumber: number
+        prRepo?: GitHubOwnerRepo | null
         pullRequestId: string
         path: string
         viewed: boolean
@@ -721,6 +726,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
         repoPath: repo.path,
         connectionId: repoConnectionId(repo),
         localGitOptions: localGitOptionArgs(store, repo)[0],
+        prRepo: args.prRepo ?? null,
         pullRequestId: args.pullRequestId.trim(),
         path: args.path,
         viewed: Boolean(args.viewed)
@@ -799,6 +805,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
       args: {
         repoPath: string
         prNumber: number
+        prRepo?: GitHubOwnerRepo | null
         commitId: string
         path: string
         line: number
@@ -837,6 +844,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
       }
       const result = await addPRReviewComment({
         repoPath: repo.path,
+        prRepo: args.prRepo ?? null,
         prNumber: args.prNumber,
         commitId: args.commitId.trim(),
         path: args.path,
@@ -951,7 +959,11 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
     'gh:updatePRState',
     async (
       event,
-      args: RepoScopedArgs & { prNumber: number; updates: GitHubPullRequestStateUpdate }
+      args: RepoScopedArgs & {
+        prNumber: number
+        updates: GitHubPullRequestStateUpdate
+        prRepo?: GitHubOwnerRepo | null
+      }
     ) => {
       const repo = assertRegisteredRepo(args, store)
       if (
@@ -966,6 +978,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
         args.prNumber,
         args.updates,
         repoConnectionId(repo),
+        args.prRepo ?? null,
         ...localGitOptionArgs(store, repo)
       )
       if (result.ok) {
@@ -982,7 +995,12 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
     'gh:rerunPRChecks',
     async (
       _event,
-      args: RepoScopedArgs & { prNumber: number; headSha?: string; failedOnly?: boolean }
+      args: RepoScopedArgs & {
+        prNumber: number
+        headSha?: string
+        failedOnly?: boolean
+        prRepo?: GitHubOwnerRepo | null
+      }
     ) => {
       const repo = assertRegisteredRepo(args, store)
       if (
@@ -995,7 +1013,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
       return rerunPRChecks(
         repo.path,
         args.prNumber,
-        { headSha: args.headSha, failedOnly: args.failedOnly },
+        { headSha: args.headSha, failedOnly: args.failedOnly, prRepo: args.prRepo ?? null },
         repoConnectionId(repo),
         ...localGitOptionArgs(store, repo)
       )
@@ -1004,13 +1022,21 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
 
   ipcMain.handle(
     'gh:requestPRReviewers',
-    async (event, args: RepoScopedArgs & { prNumber: number; reviewers: string[] }) => {
+    async (
+      event,
+      args: RepoScopedArgs & {
+        prNumber: number
+        reviewers: string[]
+        prRepo?: GitHubOwnerRepo | null
+      }
+    ) => {
       const repo = assertRegisteredRepo(args, store)
       const result = await requestPRReviewers(
         repo.path,
         args.prNumber,
         args.reviewers,
         repoConnectionId(repo),
+        args.prRepo ?? null,
         ...localGitOptionArgs(store, repo)
       )
       if (result.ok) {
@@ -1025,13 +1051,21 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
 
   ipcMain.handle(
     'gh:removePRReviewers',
-    async (event, args: RepoScopedArgs & { prNumber: number; reviewers: string[] }) => {
+    async (
+      event,
+      args: RepoScopedArgs & {
+        prNumber: number
+        reviewers: string[]
+        prRepo?: GitHubOwnerRepo | null
+      }
+    ) => {
       const repo = assertRegisteredRepo(args, store)
       const result = await removePRReviewers(
         repo.path,
         args.prNumber,
         args.reviewers,
         repoConnectionId(repo),
+        args.prRepo ?? null,
         ...localGitOptionArgs(store, repo)
       )
       if (result.ok) {

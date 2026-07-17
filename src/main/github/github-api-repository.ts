@@ -11,7 +11,8 @@ import {
 } from './gh-utils'
 import {
   getEnterpriseGitHubRepoSlug,
-  getEnterpriseGitHubRepoSlugForRemote
+  getEnterpriseGitHubRepoSlugForRemote,
+  isGitHubHostAuthenticated
 } from './github-enterprise-repository'
 
 export type GitHubApiRepository = GitHubOwnerRepo
@@ -241,7 +242,22 @@ export async function resolveGitHubApiRepository(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubApiRepository | null> {
   if (repository?.host) {
-    return repository
+    const host = repository.host.trim().toLowerCase()
+    if (!host) {
+      return null
+    }
+    if (isDefaultGitHubHost(host)) {
+      return { ...repository, host }
+    }
+    // Why: client-supplied hosts must match gh's local auth inventory before
+    // they can receive ambient Enterprise credentials from a host-pinned call.
+    const authenticated = await isGitHubHostAuthenticated(
+      host,
+      repoPath,
+      connectionId,
+      localGitOptions
+    )
+    return authenticated ? { ...repository, host } : null
   }
   const originRepository = await getOriginGitHubApiRepository(
     repoPath,
