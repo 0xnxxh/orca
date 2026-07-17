@@ -4,10 +4,15 @@ export type GitHubRemoteIdentity = GitHubOwnerRepo & { host: string }
 
 function normalizeGitHubRemoteHost(host: string): string {
   const normalizedHost = host.toLowerCase()
-  // Why: GitHub documents ssh.github.com:443 as SSH-over-HTTPS for github.com repos.
-  return normalizedHost === 'ssh.github.com' || normalizedHost === 'ssh.github.com:443'
-    ? 'github.com'
-    : normalizedHost
+  // Why: GitHub documents ssh.github.com as SSH-over-HTTPS for github.com repos.
+  return normalizedHost === 'ssh.github.com' ? 'github.com' : normalizedHost
+}
+
+// Why: HTTP ports identify the GHES web/API endpoint; SSH and git ports are
+// transport-only and must not leak into gh's host identity.
+function hostFromRemoteUrl(url: URL): string {
+  const protocol = url.protocol.toLowerCase()
+  return protocol === 'http:' || protocol === 'https:' ? url.host : url.hostname
 }
 
 function parseGitHubRemotePath(path: string): Pick<GitHubRemoteIdentity, 'owner' | 'repo'> | null {
@@ -36,9 +41,7 @@ export function parseGitHubRemoteIdentity(remoteUrl: string): GitHubRemoteIdenti
       return null
     }
     const path = parseGitHubRemotePath(url.pathname)
-    // Why: GHES may be served on a non-default port. `hostname` silently drops
-    // it, sending authenticated API calls to a different endpoint on port 443.
-    return path ? { host: normalizeGitHubRemoteHost(url.host), ...path } : null
+    return path ? { host: normalizeGitHubRemoteHost(hostFromRemoteUrl(url)), ...path } : null
   } catch {
     return null
   }

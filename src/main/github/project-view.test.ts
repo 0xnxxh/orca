@@ -167,6 +167,15 @@ describe('parseProjectPaste', () => {
     ).toEqual({ kind: 'org', owner: 'acme', number: 7 })
   })
 
+  it('preserves a GHES custom port while parsing project URLs', () => {
+    expect(
+      parseProjectPaste(
+        'https://github.corp.example:8443/orgs/acme/projects/7',
+        'github.corp.example:8443'
+      )
+    ).toEqual({ kind: 'org', owner: 'acme', number: 7 })
+  })
+
   it('returns null for empty input', () => {
     expect(parseProjectPaste('')).toBeNull()
     expect(parseProjectPaste('   ')).toBeNull()

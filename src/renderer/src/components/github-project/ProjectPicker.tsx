@@ -825,7 +825,7 @@ function AuthErrorBanner({ error }: { error: GitHubProjectViewError }): React.JS
   )
 }
 
-function parseProjectInput(
+export function parseProjectInput(
   input: string
 ): { owner: string; number: number; host?: string; viewNumber?: number } | null {
   if (!input) {

@@ -227,18 +227,18 @@ import {
   type TaskPageGitHubCloseAction
 } from '@/components/task-page-github-status-actions'
 
-// Why: the dialog lacks owner/repo context, so recover it from the canonical URL present on every item; non-GitHub hosts return null (matches the indicator's suppression rule).
+// Why: the dialog lacks repository context, so recover its host-aware identity from the canonical item URL.
 function parseOwnerRepoFromItemUrl(url: string): GitHubOwnerRepo | null {
   try {
     const parsed = new URL(url)
-    if (parsed.hostname !== 'github.com') {
+    if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || !parsed.host) {
       return null
     }
     const segments = parsed.pathname.split('/').filter(Boolean)
     if (segments.length < 2) {
       return null
     }
-    return { owner: segments[0], repo: segments[1] }
+    return { owner: segments[0], repo: segments[1], host: parsed.host }
   } catch {
     return null
   }
@@ -514,7 +514,8 @@ function PRAssigneesPanel({
     slugOwner,
     slugRepo,
     assigneeLogins,
-    sourceSettings
+    sourceSettings,
+    projectOrigin?.host ?? assigneeSlug?.host
   )
   const repoAssigneesByPath = useRepoAssignees(repoPath, item.repoId, sourceSettings)
   const repoAssignees = slugOwner && slugRepo ? repoAssigneesBySlug : repoAssigneesByPath
@@ -795,7 +796,8 @@ function PRReviewersPanel({
     open && reviewSlug ? reviewSlug.owner : null,
     open && reviewSlug ? reviewSlug.repo : null,
     reviewerSeedUsers.map((user) => user.login),
-    sourceSettings
+    sourceSettings,
+    reviewSlug?.host
   )
   const reviewerMetadataByPath = useRepoAssignees(
     open && !reviewSlug ? repoPath : null,
@@ -5211,6 +5213,7 @@ async function runIssueUpdate(args: {
     const updateArgs = {
       owner: args.projectOrigin.owner,
       repo: args.projectOrigin.repo,
+      ...(args.projectOrigin.host ? { host: args.projectOrigin.host } : {}),
       number: args.number,
       updates: args.updates
     }
@@ -5291,7 +5294,11 @@ async function runWorkItemBodyUpdate(args: {
 }): Promise<void> {
   if (args.item.type === 'pr') {
     const targetSlug = args.projectOrigin
-      ? { owner: args.projectOrigin.owner, repo: args.projectOrigin.repo }
+      ? {
+          owner: args.projectOrigin.owner,
+          repo: args.projectOrigin.repo,
+          host: args.projectOrigin.host
+        }
       : args.parsedSlug
     if (!targetSlug) {
       throw new Error('No GitHub repository context available for this pull request.')
@@ -5304,6 +5311,7 @@ async function runWorkItemBodyUpdate(args: {
     const updateArgs = {
       owner: targetSlug.owner,
       repo: targetSlug.repo,
+      ...(targetSlug.host ? { host: targetSlug.host } : {}),
       number: args.item.number,
       updates: { body: args.body }
     }
@@ -5363,6 +5371,7 @@ async function runPullRequestStateUpdate(args: {
     const updateArgs = {
       owner: args.projectOrigin.owner,
       repo: args.projectOrigin.repo,
+      ...(args.projectOrigin.host ? { host: args.projectOrigin.host } : {}),
       number: args.number,
       updates: args.updates
     }
@@ -5570,7 +5579,12 @@ function GHEditSection({
     projectOrigin ? null : repoId,
     sourceSettings
   )
-  const repoLabelsBySlug = useRepoLabelsBySlug(slugOwner, slugRepo, sourceSettings)
+  const repoLabelsBySlug = useRepoLabelsBySlug(
+    slugOwner,
+    slugRepo,
+    sourceSettings,
+    projectOrigin?.host
+  )
   const repoLabels = projectOrigin ? repoLabelsBySlug : repoLabelsByPath
   const repositoryLabelsUrl = useMemo(() => getGitHubRepositoryLabelsUrl(item.url), [item.url])
   const repoAssigneesByPath = useRepoAssignees(
@@ -5578,7 +5592,13 @@ function GHEditSection({
     projectOrigin ? null : repoId,
     sourceSettings
   )
-  const repoAssigneesBySlug = useRepoAssigneesBySlug(slugOwner, slugRepo, assignees, sourceSettings)
+  const repoAssigneesBySlug = useRepoAssigneesBySlug(
+    slugOwner,
+    slugRepo,
+    assignees,
+    sourceSettings,
+    projectOrigin?.host
+  )
   const repoAssignees = projectOrigin ? repoAssigneesBySlug : repoAssigneesByPath
   const hasAttachedWorkspace =
     attachedWorkspaceLabel !== null && attachedWorkspaceLabel !== undefined

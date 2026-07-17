@@ -66,12 +66,12 @@ describe('updateIssueBySlug', () => {
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       1,
       ['issue', 'close', '12', '--repo', 'acme/widgets', '--reason', 'completed'],
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8', host: 'github.com' }
     )
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       2,
       ['issue', 'close', '13', '--repo', 'acme/widgets', '--reason', 'not planned'],
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8', host: 'github.com' }
     )
     expect(runRestMock).not.toHaveBeenCalled()
   })
@@ -88,7 +88,7 @@ describe('updateIssueBySlug', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['issue', 'close', '12', '--repo', 'acme/widgets', '--duplicate-of', '99'],
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8', host: 'github.com' }
     )
     expect(runRestMock).not.toHaveBeenCalled()
   })
@@ -121,7 +121,7 @@ describe('updateIssueBySlug', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['issue', 'reopen', '12', '--repo', 'acme/widgets'],
-      { encoding: 'utf-8' }
+      { encoding: 'utf-8', host: 'github.com' }
     )
   })
 
