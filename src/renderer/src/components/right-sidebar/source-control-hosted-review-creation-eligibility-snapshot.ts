@@ -13,7 +13,8 @@ export function buildLoadingHostedReviewCreationEligibility(
     review: null,
     canCreate: false,
     blockedReason: null,
-    nextAction: null
+    nextAction: null,
+    reviewLookupOutcome: 'unavailable'
   }
 }
 
@@ -77,7 +78,8 @@ export function buildLocalBlockerHostedReviewCreationEligibility(
     review: null,
     canCreate: false as const,
     defaultBaseRef: null,
-    head: branch
+    head: branch,
+    reviewLookupOutcome: 'unavailable' as const
   }
   if (status.hasUncommittedChanges) {
     return { ...base, blockedReason: 'dirty', nextAction: 'commit' }

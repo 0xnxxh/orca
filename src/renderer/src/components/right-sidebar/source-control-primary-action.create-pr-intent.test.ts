@@ -84,7 +84,8 @@ describe('resolvePrimaryAction Create PR intent', () => {
         review: null,
         canCreate: false,
         blockedReason: 'needs_sync',
-        nextAction: 'sync'
+        nextAction: 'sync',
+        reviewLookupOutcome: 'not_found'
       }
     })
     const result = resolvePrimaryAction(input)

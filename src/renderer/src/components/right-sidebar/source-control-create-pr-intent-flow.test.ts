@@ -257,7 +257,8 @@ describe('source-control Create PR intent flow helpers', () => {
           review: null,
           canCreate: false,
           blockedReason: 'needs_sync',
-          nextAction: 'sync'
+          nextAction: 'sync',
+          reviewLookupOutcome: 'not_found'
         }
       })
     ).toBe('sync')
