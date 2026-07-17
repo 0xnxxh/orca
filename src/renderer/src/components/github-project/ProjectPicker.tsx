@@ -814,6 +814,7 @@ function AuthErrorBanner({ error }: { error: GitHubProjectViewError }): React.JS
       <GhAuthErrorHelp
         error={error as GitHubProjectViewError & { type: 'auth_required' | 'scope_missing' }}
         variant="banner"
+        host="github.com"
       />
     )
   }

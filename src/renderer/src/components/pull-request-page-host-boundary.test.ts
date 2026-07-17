@@ -48,7 +48,8 @@ describe('PullRequestPage host boundaries', () => {
     expect(section).toContain('getSettingsForRepoRuntimeOwner(s, item.repoId ?? repoId ?? null)')
     expect(section).toContain('getTaskSourceRuntimeSettings(sourceContext)')
     expect(section).toContain('useRepoLabels(')
-    expect(section).toContain('useRepoLabelsBySlug(slugOwner, slugRepo, sourceSettings)')
+    expect(section).toContain('useRepoLabelsBySlug(')
+    expect(section).toContain('projectOrigin?.host')
     expect(section).toContain('useRepoAssignees(')
     expect(section).toContain('useRepoAssigneesBySlug(')
     expect(section).toContain('sourceSettings')
@@ -267,6 +268,10 @@ describe('PullRequestPage host boundaries', () => {
     expect(editHelperSection).toContain("'github.updatePRState'")
     expect(editHelperSection).toContain("'github.project.updateIssueBySlug'")
     expect(editHelperSection).toContain("'github.project.updatePullRequestBySlug'")
+    expect(editHelperSection).toContain(
+      '...(args.projectOrigin.host ? { host: args.projectOrigin.host } : {})'
+    )
+    expect(editHelperSection).toContain('...(targetSlug.host ? { host: targetSlug.host } : {})')
     expect(editHelperSection).toContain('sourceContext?: TaskSourceContext | null')
     expect(editHelperSection).toContain("args.sourceContext?.provider === 'github'")
     expect(editHelperSection).toContain('getTaskSourceRuntimeSettings(args.sourceContext)')

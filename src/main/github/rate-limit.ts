@@ -242,6 +242,24 @@ const DEFAULT_BREAKER_SCOPE = ghRateLimitScopeKey('native', 'github.com')
 // versa).
 const scopeRefinementInFlight = new Map<string, Promise<void>>()
 const scopeProbeFailureAtMs = new Map<string, number>()
+const SCOPE_PROBE_FAILURE_MAX_ENTRIES = 512
+
+function rememberScopeProbeFailure(scope: string, failedAt: number): void {
+  for (const [key, at] of scopeProbeFailureAtMs) {
+    if (failedAt - at >= RATE_LIMIT_CACHE_TTL_MS) {
+      scopeProbeFailureAtMs.delete(key)
+    }
+  }
+  scopeProbeFailureAtMs.delete(scope)
+  scopeProbeFailureAtMs.set(scope, failedAt)
+  while (scopeProbeFailureAtMs.size > SCOPE_PROBE_FAILURE_MAX_ENTRIES) {
+    const oldestKey = scopeProbeFailureAtMs.keys().next().value
+    if (oldestKey === undefined) {
+      break
+    }
+    scopeProbeFailureAtMs.delete(oldestKey)
+  }
+}
 
 function refineBreakerForScope(scope: string): void {
   // Default scope keeps the existing shared-snapshot refinement path.
@@ -288,7 +306,9 @@ function refineBreakerForScope(scope: string): void {
         release()
       }
     } catch {
-      scopeProbeFailureAtMs.set(scope, Date.now())
+      // Why: GHES hosts can be supplied through pasted project URLs. Bound the
+      // negative cache so repeated failing hosts cannot accumulate forever.
+      rememberScopeProbeFailure(scope, Date.now())
     } finally {
       scopeRefinementInFlight.delete(scope)
     }

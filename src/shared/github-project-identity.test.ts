@@ -7,6 +7,9 @@ describe('GitHub project identity', () => {
 
     expect(githubProjectIdentityKey(project)).toBe('organization:acme:7')
     expect(githubProjectIdentityKey({ ...project, host: 'github.com' })).toBe('organization:acme:7')
+    expect(githubProjectIdentityKey({ ...project, host: ' GitHub.com ' })).toBe(
+      'organization:acme:7'
+    )
     expect(githubProjectIdentityKey({ ...project, host: 'GHE.EXAMPLE:8443' })).toBe(
       'ghe.example:8443:organization:acme:7'
     )

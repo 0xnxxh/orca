@@ -2604,10 +2604,6 @@ function parseTrackedUpstreamBranch(upstreamRef: string): TrackedUpstreamBranch 
   return parsed
 }
 
-function prOwnerRepoKey(ownerRepo: OwnerRepo): string {
-  return `${ownerRepo.owner.toLowerCase()}/${ownerRepo.repo.toLowerCase()}`
-}
-
 function shouldRetryTrackedUpstreamBranch(
   upstreamBranch: TrackedUpstreamBranch,
   branchName: string,
@@ -2620,7 +2616,7 @@ function shouldRetryTrackedUpstreamBranch(
   if (!headRepo) {
     return true
   }
-  return prOwnerRepoKey(upstreamHeadRepo) !== prOwnerRepoKey(headRepo)
+  return githubRepoIdentityKey(upstreamHeadRepo) !== githubRepoIdentityKey(headRepo)
 }
 
 async function getTrackedUpstreamBranch(

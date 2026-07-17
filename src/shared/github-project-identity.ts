@@ -11,9 +11,8 @@ export type GitHubProjectIdentity = {
  * legacy shape so existing github.com project preferences survive upgrades. */
 export function githubProjectIdentityKey(project: GitHubProjectIdentity): string {
   const projectKey = `${project.ownerType}:${project.owner.toLowerCase()}:${project.number}`
-  return project.host && !isDefaultGitHubHost(project.host)
-    ? `${project.host.toLowerCase()}:${projectKey}`
-    : projectKey
+  const host = project.host?.trim().toLowerCase()
+  return host && !isDefaultGitHubHost(host) ? `${host}:${projectKey}` : projectKey
 }
 
 /** Project API calls must pin github.com too; otherwise process GH_HOST can
