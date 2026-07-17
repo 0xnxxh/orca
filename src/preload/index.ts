@@ -1450,7 +1450,8 @@ const api = {
     rateLimit: (args?: { force?: boolean }): Promise<GetRateLimitResult> =>
       ipcRenderer.invoke('gh:rateLimit', args),
 
-    diagnoseAuth: (): Promise<GhAuthDiagnostic> => ipcRenderer.invoke('gh:diagnoseAuth'),
+    diagnoseAuth: (args?: { host?: string }): Promise<GhAuthDiagnostic> =>
+      ipcRenderer.invoke('gh:diagnoseAuth', args),
 
     // ── ProjectV2 (GitHub Projects) ───────────────────────────────────
     listAccessibleProjects: (

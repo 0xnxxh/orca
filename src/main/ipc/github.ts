@@ -1161,7 +1161,9 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
     getRateLimit(args?.force ? { force: true } : undefined)
   )
 
-  ipcMain.handle('gh:diagnoseAuth', () => diagnoseGhAuth())
+  ipcMain.handle('gh:diagnoseAuth', (_event, args?: { host?: string }) =>
+    diagnoseGhAuth(args?.host)
+  )
 
   // ── GitHub ProjectV2 view handlers ─────────────────────────────────
   // Why: registered unconditionally so enabling the experimental flag at
