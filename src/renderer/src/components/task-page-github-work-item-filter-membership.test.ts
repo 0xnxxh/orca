@@ -108,6 +108,26 @@ describe('shouldSoftHideTaskPageGitHubWorkItem', () => {
     ).toBe(true)
   })
 
+  it('hides non-draft items under is:draft', () => {
+    const query = baseQuery({ scope: 'pr', state: 'open', draft: true })
+    expect(
+      shouldSoftHideTaskPageGitHubWorkItem({
+        item: { state: 'open', assignees: [], reviewRequests: [] },
+        query,
+        viewerLogin: 'me',
+        skipMeQualifiers: false
+      })
+    ).toBe(true)
+    expect(
+      shouldSoftHideTaskPageGitHubWorkItem({
+        item: { state: 'draft', assignees: [], reviewRequests: [] },
+        query,
+        viewerLogin: 'me',
+        skipMeQualifiers: false
+      })
+    ).toBe(false)
+  })
+
   it('hides when review-requested @me is missing', () => {
     expect(
       shouldSoftHideTaskPageGitHubWorkItem({

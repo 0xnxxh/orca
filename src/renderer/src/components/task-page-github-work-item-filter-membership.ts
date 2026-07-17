@@ -46,6 +46,12 @@ export function shouldSoftHideTaskPageGitHubWorkItem(args: {
   }
   // state === null | 'all' → no state-based soft-hide
 
+  // Why: is:draft forces state to 'open', so a draft that turns non-draft still
+  // passes the state check; the draft qualifier soft-hides it explicitly.
+  if (query.draft && item.state !== 'draft') {
+    return true
+  }
+
   // Assignee membership
   if (query.assignee) {
     const assignee = query.assignee.trim()
