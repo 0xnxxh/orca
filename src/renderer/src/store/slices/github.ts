@@ -4,6 +4,7 @@ import type { StateCreator } from 'zustand'
 import { toast } from 'sonner'
 import type { AppState } from '../types'
 import { githubRepoIdentityKey } from '../../../../shared/github-repository-identity-key'
+import { githubProjectIdentityKey } from '../../../../shared/github-project-identity'
 import type {
   ClassifiedError,
   GitHubOwnerRepo,
@@ -440,9 +441,11 @@ export function projectViewCacheKey(
   projectNumber: number,
   resolvedViewId: string,
   queryOverride?: string,
-  sourceScope = 'local'
+  sourceScope = 'local',
+  host?: string
 ): string {
-  return `github-project:${sourceScope}:${ownerType}:${owner}:${projectNumber}:${resolvedViewId}${queryOverrideKeyPart(queryOverride)}`
+  const projectKey = githubProjectIdentityKey({ ownerType, owner, number: projectNumber, host })
+  return `github-project:${sourceScope}:${projectKey}:${resolvedViewId}${queryOverrideKeyPart(queryOverride)}`
 }
 
 function projectViewRequestKey(args: GetProjectViewTableArgs, sourceScope: string): string {
@@ -456,7 +459,13 @@ function projectViewRequestKey(args: GetProjectViewTableArgs, sourceScope: strin
       : args.viewName
         ? `name:${args.viewName}`
         : 'default'
-  return `${sourceScope}:${args.ownerType}:${args.owner}:${args.projectNumber}:${selector}${queryOverrideKeyPart(args.queryOverride)}`
+  const projectKey = githubProjectIdentityKey({
+    ownerType: args.ownerType,
+    owner: args.owner,
+    number: args.projectNumber,
+    host: args.host
+  })
+  return `${sourceScope}:${projectKey}:${selector}${queryOverrideKeyPart(args.queryOverride)}`
 }
 
 function projectViewSourceScope(settings: AppState['settings']): string {
@@ -2232,7 +2241,8 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           args.projectNumber,
           args.viewId,
           args.queryOverride,
-          sourceScope
+          sourceScope,
+          args.host
         )
       : null
     if (!options?.force && maybeKnownKey) {
@@ -2274,7 +2284,8 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             table.project.number,
             table.selectedView.id,
             args.queryOverride,
-            sourceScope
+            sourceScope,
+            table.project.host
           )
           set((s) => ({
             projectViewCache: withBoundedCacheEntry(s.projectViewCache, key, {
@@ -2364,6 +2375,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             'github.project.updateItemField',
             {
               projectId: table.project.id,
+              host: table.project.host,
               itemId: rowId,
               fieldId,
               value
@@ -2372,6 +2384,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           )
         : await window.api.gh.updateProjectItemField({
             projectId: table.project.id,
+            host: table.project.host,
             itemId: rowId,
             fieldId,
             value
@@ -2422,6 +2435,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
             'github.project.clearItemField',
             {
               projectId: table.project.id,
+              host: table.project.host,
               itemId: rowId,
               fieldId
             },
@@ -2429,6 +2443,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           )
         : await window.api.gh.clearProjectItemField({
             projectId: table.project.id,
+            host: table.project.host,
             itemId: rowId,
             fieldId
           })
@@ -2532,6 +2547,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       const args = {
         owner,
         repo,
+        host: table.project.host,
         number,
         updates: {
           ...(updates.title !== undefined ? { title: updates.title } : {}),
@@ -2563,6 +2579,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
       const args = {
         owner,
         repo,
+        host: table.project.host,
         number,
         updates: {
           ...(updates.title !== undefined ? { title: updates.title } : {}),
@@ -2656,6 +2673,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     const args = {
       owner,
       repo,
+      host: table.project.host,
       number,
       issueTypeId: issueType?.id ?? null
     }
