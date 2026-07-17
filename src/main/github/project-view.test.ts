@@ -136,6 +136,7 @@ describe('parseProjectPaste', () => {
       kind: 'org',
       owner: 'acme',
       number: 42,
+      host: 'github.com',
       viewNumber: 3
     })
   })
@@ -144,7 +145,8 @@ describe('parseProjectPaste', () => {
     expect(parseProjectPaste('https://github.com/users/octocat/projects/1')).toEqual({
       kind: 'user',
       owner: 'octocat',
-      number: 1
+      number: 1,
+      host: 'github.com'
     })
   })
 
@@ -158,13 +160,14 @@ describe('parseProjectPaste', () => {
       kind: 'org',
       owner: 'acme',
       number: 7,
+      host: 'github.corp.example',
       viewNumber: 2
     })
     expect(parseProjectPaste(url)).toBeNull()
     // github.com URLs still parse when a GHES host is supplied.
     expect(
       parseProjectPaste('https://github.com/orgs/acme/projects/7', 'github.corp.example')
-    ).toEqual({ kind: 'org', owner: 'acme', number: 7 })
+    ).toEqual({ kind: 'org', owner: 'acme', number: 7, host: 'github.com' })
   })
 
   it('preserves a GHES custom port while parsing project URLs', () => {
@@ -173,7 +176,12 @@ describe('parseProjectPaste', () => {
         'https://github.corp.example:8443/orgs/acme/projects/7',
         'github.corp.example:8443'
       )
-    ).toEqual({ kind: 'org', owner: 'acme', number: 7 })
+    ).toEqual({
+      kind: 'org',
+      owner: 'acme',
+      number: 7,
+      host: 'github.corp.example:8443'
+    })
   })
 
   it('rejects credentials and paths that only begin like a Project URL', () => {

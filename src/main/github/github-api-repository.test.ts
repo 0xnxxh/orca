@@ -1,22 +1,36 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as GitHubEnterpriseRepository from './github-enterprise-repository'
+import type * as GhUtils from './gh-utils'
 
-const { isGitHubHostAuthenticatedMock } = vi.hoisted(() => ({
-  isGitHubHostAuthenticatedMock: vi.fn()
+const { getEnterpriseGitHubRepoSlugMock, getOwnerRepoMock, isGitHubHostAuthenticatedMock } =
+  vi.hoisted(() => ({
+    getEnterpriseGitHubRepoSlugMock: vi.fn(),
+    getOwnerRepoMock: vi.fn(),
+    isGitHubHostAuthenticatedMock: vi.fn()
+  }))
+
+vi.mock('./gh-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof GhUtils>()),
+  getOwnerRepo: getOwnerRepoMock
 }))
 
 vi.mock('./github-enterprise-repository', async (importOriginal) => ({
   ...(await importOriginal<typeof GitHubEnterpriseRepository>()),
+  getEnterpriseGitHubRepoSlug: getEnterpriseGitHubRepoSlugMock,
   isGitHubHostAuthenticated: isGitHubHostAuthenticatedMock
 }))
 
 import {
+  _resetOriginGitHubApiRepositoryCache,
   githubHostExecOptions,
   resolveGitHubApiRepository,
   resolveGitHubRepoExecution
 } from './github-api-repository'
 
 beforeEach(() => {
+  _resetOriginGitHubApiRepositoryCache()
+  getEnterpriseGitHubRepoSlugMock.mockReset().mockResolvedValue(null)
+  getOwnerRepoMock.mockReset().mockResolvedValue(null)
   isGitHubHostAuthenticatedMock.mockReset().mockResolvedValue(false)
 })
 
@@ -80,6 +94,20 @@ describe('resolveGitHubRepoExecution', () => {
     )
   })
 
+  it.each([
+    { owner: 'acme%2Fadmin', repo: 'widgets' },
+    { owner: 'acme', repo: '..' }
+  ])('rejects repository overrides that could alter a gh REST path: %o', async (repository) => {
+    await expect(
+      resolveGitHubApiRepository('/repo', {
+        ...repository,
+        host: 'github.com'
+      })
+    ).resolves.toBeNull()
+
+    expect(isGitHubHostAuthenticatedMock).not.toHaveBeenCalled()
+  })
+
   it('normalizes github.com without spending an auth inventory probe', async () => {
     await expect(
       resolveGitHubApiRepository('/repo', {
@@ -92,14 +120,48 @@ describe('resolveGitHubRepoExecution', () => {
     expect(isGitHubHostAuthenticatedMock).not.toHaveBeenCalled()
   })
 
-  it('uses a caller-specific repository resolver without changing its identity', async () => {
+  it('backfills the origin host for a host-less caller-specific resolver', async () => {
     const ownerRepo = { owner: 'upstream', repo: 'widgets' }
+    getOwnerRepoMock.mockResolvedValue({ owner: 'fork', repo: 'widgets' })
 
-    await expect(
-      resolveGitHubRepoExecution('/remote/repo', async () => ownerRepo, 'ssh-1')
-    ).resolves.toEqual({
-      ownerRepo,
-      ghOptions: {}
+    await expect(resolveGitHubRepoExecution('/repo', async () => ownerRepo)).resolves.toEqual({
+      ownerRepo: { ...ownerRepo, host: 'github.com' },
+      ghOptions: { cwd: '/repo', host: 'github.com' }
     })
+  })
+
+  it('backfills an Enterprise origin host for a host-less caller-specific resolver', async () => {
+    const ownerRepo = { owner: 'upstream', repo: 'widgets' }
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue({
+      owner: 'fork',
+      repo: 'widgets',
+      host: 'github.acme-corp.com'
+    })
+
+    await expect(resolveGitHubRepoExecution('/repo', async () => ownerRepo)).resolves.toEqual({
+      ownerRepo: { ...ownerRepo, host: 'github.acme-corp.com' },
+      ghOptions: { cwd: '/repo', host: 'github.acme-corp.com' }
+    })
+  })
+
+  it('rejects a host-less caller-specific resolver for a connection-backed repository', async () => {
+    await expect(
+      resolveGitHubRepoExecution(
+        '/remote/repo',
+        async () => ({ owner: 'upstream', repo: 'widgets' }),
+        'ssh-1'
+      )
+    ).resolves.toEqual({ ownerRepo: null, ghOptions: {} })
+  })
+
+  it('preserves an authoritative null from a caller-specific resolver', async () => {
+    getOwnerRepoMock.mockResolvedValue({ owner: 'origin', repo: 'widgets' })
+
+    await expect(resolveGitHubRepoExecution('/repo', async () => null)).resolves.toEqual({
+      ownerRepo: null,
+      ghOptions: { cwd: '/repo' }
+    })
+
+    expect(getOwnerRepoMock).not.toHaveBeenCalled()
   })
 })

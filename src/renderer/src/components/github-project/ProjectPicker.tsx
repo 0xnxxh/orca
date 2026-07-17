@@ -3,7 +3,7 @@
 // header tab strip). Pinned + Recent come from settings; Browse all lazy-loads
 // from `listAccessibleProjects` and is cached for 5 minutes. Paste-to-add
 // accepts org/user project URLs and `owner/number` shorthand.
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ChevronDown, Loader, Pin, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { GhAuthErrorHelp } from '@/components/github-project/GhAuthErrorHelp'
@@ -61,22 +61,29 @@ type Props = {
 }
 
 function getProjectPickerRuntimeScope(
-  settings: Parameters<typeof getActiveRuntimeTarget>[0]
+  settings: Parameters<typeof getActiveRuntimeTarget>[0],
+  host: string
 ): string {
   const target = getActiveRuntimeTarget(settings)
-  return target.kind === 'environment' ? `runtime:${target.environmentId}` : 'local'
+  const runtimeScope = target.kind === 'environment' ? `runtime:${target.environmentId}` : 'local'
+  return `${runtimeScope}\0${host.toLowerCase()}`
 }
 
 async function listAccessibleProjectsForRuntime(
-  settings: Parameters<typeof getActiveRuntimeTarget>[0]
+  settings: Parameters<typeof getActiveRuntimeTarget>[0],
+  host: string
 ): Promise<ListAccessibleProjectsResult> {
   const target = getActiveRuntimeTarget(settings)
-  const args = { host: 'github.com' }
+  const args = { host }
   return target.kind === 'environment'
     ? callRuntimeRpc<ListAccessibleProjectsResult>(target, 'github.project.listAccessible', args, {
         timeoutMs: 60_000
       })
     : window.api.gh.listAccessibleProjects(args)
+}
+
+export function getProjectPickerBrowseHost(activeProject: { host?: string } | null): string {
+  return githubProjectHost(activeProject?.host).toLowerCase()
 }
 
 async function listProjectViewsForRuntime(
@@ -131,7 +138,11 @@ export default function ProjectPicker({ activeProject, onSelect }: Props): React
   const [query, setQuery] = useState('')
   const [browseLoading, setBrowseLoading] = useState(false)
   const [browseError, setBrowseError] = useState<GitHubProjectViewError | null>(null)
-  const browseCache = peekProjectPickerBrowseCacheEntry(getProjectPickerRuntimeScope(settings))
+  const browseHost = getProjectPickerBrowseHost(activeProject ?? projectSettings.activeProject)
+  const browseCacheKey = getProjectPickerRuntimeScope(settings, browseHost)
+  const activeBrowseCacheKeyRef = useRef(browseCacheKey)
+  activeBrowseCacheKeyRef.current = browseCacheKey
+  const browseCache = peekProjectPickerBrowseCacheEntry(browseCacheKey)
   const [browseProjects, setBrowseProjects] = useState<GitHubProjectSummary[]>(
     () => browseCache?.projects ?? []
   )
@@ -152,46 +163,52 @@ export default function ProjectPicker({ activeProject, onSelect }: Props): React
   const [viewLoading, setViewLoading] = useState(false)
 
   const loadBrowse = useCallback(async () => {
-    const cacheKey = getProjectPickerRuntimeScope(settings)
+    const cacheKey = browseCacheKey
     const cached = getProjectPickerBrowseCacheEntry(cacheKey)
     if (cached) {
+      setBrowseLoading(false)
+      setBrowseError(null)
       setBrowseProjects(cached.projects)
       setPartialFailures(cached.partialFailures ?? [])
       return
     }
     setBrowseLoading(true)
     setBrowseError(null)
+    setBrowseProjects([])
+    setPartialFailures([])
     try {
-      const res = await listAccessibleProjectsForRuntime(settings)
+      const res = await listAccessibleProjectsForRuntime(settings, browseHost)
       if (res.ok) {
         rememberProjectPickerBrowseCacheEntry(cacheKey, {
           projects: res.projects,
           partialFailures: res.partialFailures
         })
-        if (!mountedRef.current) {
+        // Why: runtime or active-host changes can leave the prior request in
+        // flight; its scoped cache is useful, but its rows must not cross hosts.
+        if (!mountedRef.current || activeBrowseCacheKeyRef.current !== cacheKey) {
           return
         }
         setBrowseProjects(res.projects)
         setPartialFailures(res.partialFailures ?? [])
       } else {
-        if (!mountedRef.current) {
+        if (!mountedRef.current || activeBrowseCacheKeyRef.current !== cacheKey) {
           return
         }
         setBrowseError(res.error)
       }
     } catch (err) {
-      if (mountedRef.current) {
+      if (mountedRef.current && activeBrowseCacheKeyRef.current === cacheKey) {
         setBrowseError({
           type: 'unknown',
           message: err instanceof Error ? err.message : 'Failed to list projects'
         })
       }
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && activeBrowseCacheKeyRef.current === cacheKey) {
         setBrowseLoading(false)
       }
     }
-  }, [mountedRef, settings])
+  }, [browseCacheKey, browseHost, mountedRef, settings])
 
   useEffect(() => {
     if (open && !viewPickFor) {
@@ -449,7 +466,7 @@ export default function ProjectPicker({ activeProject, onSelect }: Props): React
                 />
               </div>
             </div>
-            {browseError ? <AuthErrorBanner error={browseError} /> : null}
+            {browseError ? <AuthErrorBanner error={browseError} host={browseHost} /> : null}
             {!browseError && partialFailures.length > 0 ? (
               <PartialFailuresBanner failures={partialFailures} />
             ) : null}
@@ -808,13 +825,19 @@ function PartialFailuresBanner({
   )
 }
 
-function AuthErrorBanner({ error }: { error: GitHubProjectViewError }): React.JSX.Element {
+function AuthErrorBanner({
+  error,
+  host
+}: {
+  error: GitHubProjectViewError
+  host: string
+}): React.JSX.Element {
   if (error.type === 'auth_required' || error.type === 'scope_missing') {
     return (
       <GhAuthErrorHelp
         error={error as GitHubProjectViewError & { type: 'auth_required' | 'scope_missing' }}
         variant="banner"
-        host="github.com"
+        host={host}
       />
     )
   }

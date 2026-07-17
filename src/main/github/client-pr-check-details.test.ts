@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as GithubEnterpriseRepositoryModule from './github-enterprise-repository'
 
 const { ghExecFileAsyncMock, getOwnerRepoMock, rateLimitGuardMock } = vi.hoisted(() => ({
   ghExecFileAsyncMock: vi.fn(),
@@ -24,6 +25,11 @@ vi.mock('./gh-utils', () => ({
 
 vi.mock('../git/runner', () => ({
   gitExecFileAsync: vi.fn()
+}))
+
+vi.mock('./github-enterprise-repository', async (importOriginal) => ({
+  ...(await importOriginal<typeof GithubEnterpriseRepositoryModule>()),
+  isGitHubHostAuthenticated: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('./rate-limit', () => ({

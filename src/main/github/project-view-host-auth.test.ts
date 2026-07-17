@@ -36,6 +36,7 @@ vi.mock('./github-enterprise-repository', () => ({
 }))
 
 import { runGraphql, runRest } from './project-view/internals'
+import { _resetProjectViewCachesForTests, resolveProjectRef } from './project-view'
 
 describe('project view host authentication boundary', () => {
   beforeEach(() => {
@@ -44,6 +45,7 @@ describe('project view host authentication boundary', () => {
     ghExecFileAsyncMock.mockReset()
     hostAuthenticatedMock.mockReset()
     noteRepositoryRateLimitSpendMock.mockReset()
+    _resetProjectViewCachesForTests()
   })
 
   it('does not send GraphQL or REST requests to an unconfigured host', async () => {
@@ -88,6 +90,36 @@ describe('project view host authentication boundary', () => {
       runGraphql('query { viewer { login } }', {}, { host: 'github.com' })
     ).resolves.toMatchObject({ ok: true })
 
+    expect(hostAuthenticatedMock).not.toHaveBeenCalled()
+  })
+
+  it('uses a pasted github.com URL instead of the ambient Enterprise host', async () => {
+    ghExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+      const query = args.find((arg) => arg.startsWith('query=')) ?? ''
+      return query.includes('projectV2')
+        ? {
+            stdout: JSON.stringify({
+              data: { organization: { projectV2: { id: 'PVT_7', title: 'Roadmap' } } }
+            }),
+            stderr: ''
+          }
+        : {
+            stdout: JSON.stringify({ data: { organization: { login: 'acme' } } }),
+            stderr: ''
+          }
+    })
+
+    await expect(
+      resolveProjectRef({
+        input: 'https://github.com/orgs/acme/projects/7',
+        host: 'github.corp.example'
+      })
+    ).resolves.toMatchObject({ ok: true, host: 'github.com' })
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(2)
+    expect(
+      ghExecFileAsyncMock.mock.calls.every(([, options]) => options.host === 'github.com')
+    ).toBe(true)
     expect(hostAuthenticatedMock).not.toHaveBeenCalled()
   })
 })
