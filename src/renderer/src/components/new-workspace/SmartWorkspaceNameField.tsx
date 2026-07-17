@@ -82,6 +82,7 @@ import {
   type TaskSourceContext
 } from '../../../../shared/task-source-context'
 import { parseExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
+import { githubRepoIdentityKey } from '../../../../shared/github-repository-identity-key'
 
 type RepoOption = ReturnType<typeof useAppStore.getState>['repos'][number]
 const EMPTY_REPO_SEARCH_REPOS: readonly RepoOption[] = []
@@ -583,6 +584,7 @@ export default function SmartWorkspaceNameField({
             sourceContext: target.githubSourceContext,
             owner: directLink.slug.owner,
             repo: directLink.slug.repo,
+            ...(directLink.slug.host ? { host: directLink.slug.host } : {}),
             number: directLink.number,
             type: directLink.type
           })
@@ -605,6 +607,7 @@ export default function SmartWorkspaceNameField({
               kind: 'link',
               owner: directLink.slug.owner,
               repo: directLink.slug.repo,
+              ...(directLink.slug.host ? { host: directLink.slug.host } : {}),
               number: directLink.number,
               type: directLink.type
             },
@@ -653,6 +656,7 @@ export default function SmartWorkspaceNameField({
               kind: 'link' as const,
               owner: directLink.slug.owner,
               repo: directLink.slug.repo,
+              ...(directLink.slug.host ? { host: directLink.slug.host } : {}),
               number: directLink.number,
               type: directLink.type
             }
@@ -1164,6 +1168,7 @@ export default function SmartWorkspaceNameField({
           sourceContext,
           owner: crossRepoPrompt.link.slug.owner,
           repo: crossRepoPrompt.link.slug.repo,
+          ...(crossRepoPrompt.link.slug.host ? { host: crossRepoPrompt.link.slug.host } : {}),
           number: crossRepoPrompt.link.number,
           type: crossRepoPrompt.link.type
         })
@@ -1803,10 +1808,7 @@ function RowLabel({ row }: { row: RowEntry }): React.JSX.Element {
 }
 
 function sameSlug(left: RepoSlug, right: RepoSlug): boolean {
-  return (
-    left.owner.toLowerCase() === right.owner.toLowerCase() &&
-    left.repo.toLowerCase() === right.repo.toLowerCase()
-  )
+  return githubRepoIdentityKey(left) === githubRepoIdentityKey(right)
 }
 
 async function getRepoSlugCached(

@@ -2012,6 +2012,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
             sourceContext: selectedRepoGitHubSourceContext,
             owner: normalizedLinkQuery.directLink.slug.owner,
             repo: normalizedLinkQuery.directLink.slug.repo,
+            ...(normalizedLinkQuery.directLink.slug.host
+              ? { host: normalizedLinkQuery.directLink.slug.host }
+              : {}),
             number: normalizedLinkQuery.directLink.number,
             type: normalizedLinkQuery.directLink.type
           })

@@ -39,12 +39,14 @@ export type PrCommentMutations = {
   editComment: (args: {
     owner: string
     repo: string
+    host?: string
     commentId: number
     body: string
   }) => Promise<GitHubPrMutationOutcome>
   deleteComment: (args: {
     owner: string
     repo: string
+    host?: string
     commentId: number
   }) => Promise<GitHubPrMutationOutcome>
 }

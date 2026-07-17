@@ -101,7 +101,9 @@ export function parseGitHubIssueOrPRLink(input: string): GitHubIssueOrPRLink | n
   return {
     // Why: the URL proves the host — GHES links must keep their server identity
     // instead of being treated as github.com slugs.
-    slug: { owner: match[1], repo: match[2], host: url.hostname },
+    // Why: GHES installations on non-default ports require the full URL host;
+    // `hostname` would silently redirect later API calls to port 443.
+    slug: { owner: match[1], repo: match[2], host: url.host },
     type: match[3].toLowerCase() === 'pull' ? 'pr' : 'issue',
     number
   }

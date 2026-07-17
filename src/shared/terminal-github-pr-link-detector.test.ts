@@ -156,8 +156,8 @@ describe('createTerminalGitHubPRLinkDetector', () => {
     expect(observe('Created https://github.internal:8443/MyOrg/my_repo/pull/397\r\n')).toEqual([
       {
         url: 'https://github.internal:8443/MyOrg/my_repo/pull/397',
-        // Ports are dropped to match parseGitHubRemoteIdentity's hostname identity.
-        slug: { owner: 'MyOrg', repo: 'my_repo', host: 'github.internal' },
+        // Why: GHES on a non-default port needs the port in its host identity.
+        slug: { owner: 'MyOrg', repo: 'my_repo', host: 'github.internal:8443' },
         number: 397
       }
     ])

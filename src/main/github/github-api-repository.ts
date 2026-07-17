@@ -15,6 +15,7 @@ export type GitHubApiRepository = GitHubOwnerRepo
 // round trip on connection-backed repos) — hot paths like per-file contents
 // and viewed-state toggles resolve per call, so cache like ownerRepoCache does.
 const ORIGIN_REPO_CACHE_TTL_MS = 30_000
+const ORIGIN_REPO_CACHE_MAX_ENTRIES = 512
 const originRepoCache = new Map<string, { value: GitHubApiRepository | null; expiresAt: number }>()
 const originRepoInFlight = new Map<string, Promise<GitHubApiRepository | null>>()
 
@@ -31,6 +32,26 @@ function originRepoCacheKey(
 export function _resetOriginGitHubApiRepositoryCache(): void {
   originRepoCache.clear()
   originRepoInFlight.clear()
+}
+
+/** @internal - exposed for cache-bound tests only */
+export function _getOriginGitHubApiRepositoryCacheSize(): number {
+  return originRepoCache.size
+}
+
+function pruneOriginRepoCache(now: number): void {
+  for (const [key, entry] of originRepoCache) {
+    if (entry.expiresAt <= now) {
+      originRepoCache.delete(key)
+    }
+  }
+  while (originRepoCache.size > ORIGIN_REPO_CACHE_MAX_ENTRIES) {
+    const oldestKey = originRepoCache.keys().next().value
+    if (oldestKey === undefined) {
+      return
+    }
+    originRepoCache.delete(oldestKey)
+  }
 }
 
 /**
@@ -56,8 +77,10 @@ export async function getGitHubApiRepositoryForRemote(
     return { ...ownerRepo, host: 'github.com' }
   }
   const cacheKey = originRepoCacheKey(repoPath, remoteName, connectionId, localGitOptions)
+  const now = Date.now()
+  pruneOriginRepoCache(now)
   const cached = originRepoCache.get(cacheKey)
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.expiresAt > now) {
     return cached.value
   }
   const inFlight = originRepoInFlight.get(cacheKey)
@@ -77,6 +100,7 @@ export async function getGitHubApiRepositoryForRemote(
             enterpriseOptions
           )
     originRepoCache.set(cacheKey, { value: slug, expiresAt: Date.now() + ORIGIN_REPO_CACHE_TTL_MS })
+    pruneOriginRepoCache(Date.now())
     return slug
   })()
   originRepoInFlight.set(cacheKey, probe)
@@ -241,11 +265,11 @@ export function githubRepositoryWebHost(repository: GitHubApiRepository): string
 /**
  * Positional `HOST/OWNER/REPO` argv value (e.g. `gh repo view <slug>`).
  * Positional slugs bypass the runner's `--repo` qualifier, so they must be
- * qualified here; github.com stays bare for compatibility with gh's default.
+ * qualified here whenever the host is known.
  */
 export function githubRepositorySlugArg(repository: GitHubApiRepository): string {
   const slug = `${repository.owner}/${repository.repo}`
-  return repository.host && !isDefaultGitHubHost(repository.host)
-    ? `${repository.host}/${slug}`
-    : slug
+  // Why: github.com must be explicit too; otherwise process-level GH_HOST can
+  // redirect positional `gh repo view OWNER/REPO` calls to an Enterprise host.
+  return repository.host ? `${repository.host}/${slug}` : slug
 }

@@ -20,6 +20,7 @@ export type GitHubEnterpriseRepoSlug = GitHubOwnerRepo & { host: string }
 // mirrors the `glab auth status` signal GitLab self-hosted detection uses, so a
 // GHES remote is not left to fall through to Gitea (#8312).
 const HOST_AUTH_TTL_MS = 60_000
+const HOST_AUTH_CACHE_MAX_ENTRIES = 512
 
 type HostAuthCacheEntry = {
   authenticated: boolean
@@ -41,6 +42,26 @@ function runtimeCacheKey(connectionId?: string | null, wslDistro?: string): stri
 export function _resetGitHubHostAuthCache(): void {
   hostAuthCache.clear()
   hostAuthInFlight.clear()
+}
+
+/** @internal - exposed for cache-bound tests only */
+export function _getGitHubHostAuthCacheSize(): number {
+  return hostAuthCache.size
+}
+
+function pruneHostAuthCache(now: number): void {
+  for (const [key, entry] of hostAuthCache) {
+    if (entry.expiresAt <= now) {
+      hostAuthCache.delete(key)
+    }
+  }
+  while (hostAuthCache.size > HOST_AUTH_CACHE_MAX_ENTRIES) {
+    const oldestKey = hostAuthCache.keys().next().value
+    if (oldestKey === undefined) {
+      return
+    }
+    hostAuthCache.delete(oldestKey)
+  }
 }
 
 // Only gh's own stdout/stderr — not the Error.message — counts as an
@@ -72,6 +93,7 @@ export async function isGitHubHostAuthenticated(
   const normalizedHost = host.toLowerCase()
   const cacheKey = `${runtimeCacheKey(connectionId, localGitOptions.wslDistro)}\0${normalizedHost}`
   const now = Date.now()
+  pruneHostAuthCache(now)
   const cached = hostAuthCache.get(cacheKey)
   if (cached && cached.expiresAt > now) {
     return cached.authenticated
@@ -107,6 +129,7 @@ export async function isGitHubHostAuthenticated(
       )
     }
     hostAuthCache.set(cacheKey, { authenticated, expiresAt: Date.now() + HOST_AUTH_TTL_MS })
+    pruneHostAuthCache(Date.now())
     return authenticated
   })()
   hostAuthInFlight.set(cacheKey, probe)
