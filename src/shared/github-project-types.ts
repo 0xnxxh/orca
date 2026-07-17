@@ -184,6 +184,7 @@ export type GitHubProjectRow = {
 export type GitHubProjectTable = {
   project: {
     id: string
+    host?: string
     owner: string
     ownerType: GitHubProjectOwnerType
     number: number
@@ -201,6 +202,7 @@ export type GitHubProjectTable = {
 
 export type GitHubProjectSummary = {
   id: string
+  host?: string
   owner: string
   ownerType: GitHubProjectOwnerType
   number: number
@@ -217,15 +219,21 @@ export type GitHubProjectViewSummary = {
 }
 
 export type GitHubProjectSettings = {
-  pinned: { owner: string; ownerType: GitHubProjectOwnerType; number: number }[]
+  pinned: { owner: string; ownerType: GitHubProjectOwnerType; number: number; host?: string }[]
   recent: {
     owner: string
     ownerType: GitHubProjectOwnerType
     number: number
+    host?: string
     lastOpenedAt: string
   }[]
   lastViewByProject: Record<string, { viewId: string }>
-  activeProject: { owner: string; ownerType: GitHubProjectOwnerType; number: number } | null
+  activeProject: {
+    owner: string
+    ownerType: GitHubProjectOwnerType
+    number: number
+    host?: string
+  } | null
 }
 
 // ─── Classified errors ─────────────────────────────────────────────────
@@ -279,6 +287,7 @@ export type ResolveProjectRefResult =
       ownerType: GitHubProjectOwnerType
       number: number
       title: string
+      host?: string
       // Why: when the input is a /views/{n} URL, surface the parsed view
       // number so the picker can skip the view-pick step and commit the
       // selection directly. Absent for owner/number shorthand and project

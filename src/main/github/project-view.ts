@@ -50,6 +50,7 @@ import {
   GITHUB_PROJECT_REF_INPUT_TOO_LARGE_ERROR,
   isGitHubProjectRefInputTooLarge
 } from '../../shared/github-project-ref-input'
+import { githubProjectHost } from '../../shared/github-project-identity'
 
 // Re-export the public API so existing `./project-view` call sites keep working; the split is internal-only.
 export { isValidOwnerSlug, isValidRepoSlug, isValidSlug } from './project-view/internals'
@@ -1318,6 +1319,7 @@ export async function getProjectViewTable(
   const table: GitHubProjectTable = {
     project: {
       id: project.id,
+      host: githubProjectHost(args.host),
       owner: args.owner,
       ownerType: args.ownerType,
       number: args.projectNumber,
@@ -1363,7 +1365,7 @@ type RawViewerDiscovery = {
 export async function listAccessibleProjects(
   args?: ListAccessibleProjectsArgs
 ): Promise<ListAccessibleProjectsResult> {
-  const host = args?.host
+  const host = githubProjectHost(args?.host)
   const viewerProjects: GitHubProjectSummary[] = []
   const orgProjects: GitHubProjectSummary[] = []
   // Why: collect per-org failures so the picker shows a "some orgs didn't load" banner instead of aborting discovery on the first 504.
@@ -1416,6 +1418,7 @@ export async function listAccessibleProjects(
         n.owner?.__typename === 'Organization' ? 'organization' : 'user'
       viewerProjects.push({
         id: n.id,
+        host,
         owner: ownerLogin,
         ownerType,
         number: n.number,
@@ -1490,6 +1493,7 @@ export async function listAccessibleProjects(
         }
         orgProjects.push({
           id: n.id,
+          host,
           owner: login,
           ownerType: 'organization',
           number: n.number,
@@ -1710,6 +1714,7 @@ export async function resolveProjectRef(
     ownerType,
     number: parsed.number,
     title: p.title ?? '',
+    host: githubProjectHost(args.host),
     // Why: forward the view number from /views/{n} URLs so the renderer can skip the view-pick step (bare owner/number shorthand carries none).
     ...(parsed.kind !== 'bare' && parsed.viewNumber !== undefined
       ? { viewNumber: parsed.viewNumber }
