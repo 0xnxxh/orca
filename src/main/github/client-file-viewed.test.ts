@@ -156,4 +156,21 @@ describe('setPRFileViewed', () => {
     const [args] = ghExecFileAsyncMock.mock.calls[0]
     expect(args).not.toContain('--hostname')
   })
+
+  it('refuses an unresolved local file-viewed mutation', async () => {
+    getOwnerRepoMock.mockResolvedValue(null)
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(null)
+
+    await expect(
+      setPRFileViewed({
+        repoPath: '/repo-root',
+        prRepo: { owner: 'team', repo: 'orca' },
+        pullRequestId: 'PR_unresolved',
+        path: 'src/app.ts',
+        viewed: true
+      })
+    ).resolves.toBe(false)
+
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
+  })
 })

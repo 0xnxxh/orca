@@ -130,9 +130,16 @@ export async function getGitHubApiRepositoryForRemote(
             connectionId,
             enterpriseOptions
           )
-    originRepoCache.set(cacheKey, { value: slug, expiresAt: Date.now() + ORIGIN_REPO_CACHE_TTL_MS })
-    pruneOriginRepoCache(Date.now())
-    return slug
+    // Why: undefined means the gh auth inventory could not be read. Caching it
+    // as a negative would turn a transient spawn failure into a 30-second miss.
+    if (slug !== undefined) {
+      originRepoCache.set(cacheKey, {
+        value: slug,
+        expiresAt: Date.now() + ORIGIN_REPO_CACHE_TTL_MS
+      })
+      pruneOriginRepoCache(Date.now())
+    }
+    return slug ?? null
   })()
   originRepoInFlight.set(cacheKey, probe)
   try {
@@ -289,9 +296,9 @@ export async function resolveGitHubApiRepository(
   if (originRepository?.host) {
     return { ...repository, host: originRepository.host }
   }
-  // Why: connection-backed gh has no cwd to infer a host from. An unhosted
-  // legacy identity is unsafe there because gh would target its default account.
-  return connectionId ? null : repository
+  // Why: a host-less identity can honor ambient GH_HOST even with a local cwd.
+  // Only a resolved origin may supply the execution host for legacy clients.
+  return null
 }
 
 export function isGitHubDotComRepository(repository: GitHubApiRepository): boolean {

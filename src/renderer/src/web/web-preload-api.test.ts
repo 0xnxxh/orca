@@ -2781,8 +2781,9 @@ describe('web GitHub preload API', () => {
       },
       {
         key: 'listAccessibleProjects',
+        args: { host: 'ghe.example.com' },
         expectedMethod: 'github.project.listAccessible',
-        expectedParams: undefined
+        expectedParams: { host: 'ghe.example.com' }
       },
       {
         key: 'resolveProjectRef',

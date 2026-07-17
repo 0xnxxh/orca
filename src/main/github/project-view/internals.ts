@@ -186,7 +186,7 @@ export async function runGraphql<T>(
       if (parsed.errors && parsed.errors.length > 0) {
         return {
           ok: false,
-          error: classifyProjectError(stderr, stdout),
+          error: classifyProjectError(stderr, stdout, exec?.host),
           raw: { stderr, stdout }
         }
       }
@@ -213,7 +213,7 @@ export async function runGraphql<T>(
     const { stderr, stdout: maybeStdout } = extractExecError(err)
     return {
       ok: false,
-      error: classifyProjectError(stderr, maybeStdout),
+      error: classifyProjectError(stderr, maybeStdout, exec?.host),
       raw: { stderr, stdout: maybeStdout }
     }
   } finally {
@@ -263,7 +263,7 @@ export async function runRest<T>(
     }
   } catch (err) {
     const { stderr, stdout: maybeStdout } = extractExecError(err)
-    return { ok: false, error: classifyProjectError(stderr, maybeStdout) }
+    return { ok: false, error: classifyProjectError(stderr, maybeStdout, options?.host) }
   } finally {
     release()
   }

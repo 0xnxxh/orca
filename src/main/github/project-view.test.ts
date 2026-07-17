@@ -68,6 +68,19 @@ describe('classifyProjectError', () => {
   it('classifies auth-required when gh is not signed in', () => {
     expect(classifyProjectError('gh auth login required', '').type).toBe('auth_required')
   })
+
+  it('pins Enterprise auth and scope remediation to the selected host', () => {
+    expect(
+      classifyProjectError('gh auth login required', '', 'github.acme.test').message
+    ).toContain('gh auth login --hostname github.acme.test')
+    expect(
+      classifyProjectError(
+        'your token has not been granted the required scopes',
+        '',
+        'github.acme.test'
+      ).message
+    ).toContain('gh auth refresh --hostname github.acme.test')
+  })
 })
 
 describe('isValidOwnerSlug', () => {
@@ -245,6 +258,13 @@ describe('project view owner caches', () => {
     )
     expect(_getProjectViewOwnerTypeForTests('owner-0')).toBeUndefined()
     expect(_getProjectViewOwnerTypeForTests('owner-1')).toBe('user')
+  })
+
+  it('shares owner type probes between implicit and explicit github.com hosts', () => {
+    _rememberProjectViewOwnerTypeForTests('acme', 'organization')
+
+    expect(_getProjectViewOwnerTypeForTests('acme', 'github.com')).toBe('organization')
+    expect(_getProjectViewCacheSizesForTests().ownerTypes).toBe(1)
   })
 
   it('LRU-evicts old parent-field retry and warning probes', () => {

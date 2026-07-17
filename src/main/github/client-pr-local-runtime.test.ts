@@ -333,6 +333,31 @@ describe('GitHub PR local runtime routing', () => {
     expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })
 
+  it('refuses unresolved local PR mutations instead of using ambient gh defaults', async () => {
+    const legacyRepo = { owner: 'team', repo: 'orca' }
+    getOwnerRepoMock.mockResolvedValue(null)
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(null)
+
+    await expect(
+      resolveReviewThread('/repo-root', 'thread-1', true, null, legacyRepo)
+    ).resolves.toBe(false)
+    await expect(updatePRTitle('/repo-root', 7, 'New title', null, legacyRepo)).resolves.toBe(false)
+    await expect(
+      requestPRReviewers('/repo-root', 7, ['octo'], null, legacyRepo)
+    ).resolves.toMatchObject({ ok: false })
+    await expect(
+      removePRReviewers('/repo-root', 7, ['octo'], null, legacyRepo)
+    ).resolves.toMatchObject({ ok: false })
+    await expect(mergePR('/repo-root', 7, 'squash', null, legacyRepo)).resolves.toMatchObject({
+      ok: false
+    })
+    await expect(
+      setPRAutoMerge('/repo-root', 7, true, 'squash', null, legacyRepo)
+    ).resolves.toMatchObject({ ok: false })
+
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
+  })
+
   it('host-qualifies SSH-backed GitHub Enterprise review reads and mutations', async () => {
     const enterpriseRepo = {
       owner: 'team',

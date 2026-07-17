@@ -2,6 +2,7 @@
 // renderer can act on (auth vs scope vs rate limit vs drift), shared by the
 // project-view read and mutation paths.
 import type { GitHubProjectViewError } from '../../../shared/github-project-types'
+import { githubProjectHost } from '../../../shared/github-project-identity'
 
 export type GhGraphqlErrorShape = {
   type?: string
@@ -53,9 +54,14 @@ export function errorsIndicateParentField(errors: GhGraphqlErrorShape[], stderr:
   })
 }
 
-export function classifyProjectError(stderr: string, stdout: string): GitHubProjectViewError {
+export function classifyProjectError(
+  stderr: string,
+  stdout: string,
+  host?: string
+): GitHubProjectViewError {
   const errors = extractGraphqlErrors(stderr, stdout)
   const s = stderr.toLowerCase()
+  const selectedHost = githubProjectHost(host)
 
   // Auth
   if (
@@ -65,7 +71,7 @@ export function classifyProjectError(stderr: string, stdout: string): GitHubProj
   ) {
     return {
       type: 'auth_required',
-      message: 'Sign in to GitHub to load project tasks. Run `gh auth login`.'
+      message: `Sign in to GitHub to load project tasks. Run \`gh auth login --hostname ${selectedHost}\`.`
     }
   }
   // Scope
@@ -76,8 +82,7 @@ export function classifyProjectError(stderr: string, stdout: string): GitHubProj
   ) {
     return {
       type: 'scope_missing',
-      message:
-        'GitHub project access needs additional scopes. Run `gh auth refresh -s project -s read:org -s repo`.'
+      message: `GitHub project access needs additional scopes. Run \`gh auth refresh --hostname ${selectedHost} -s project -s read:org -s repo\`.`
     }
   }
   // Rate limit

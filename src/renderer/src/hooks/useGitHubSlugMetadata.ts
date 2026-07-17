@@ -19,6 +19,7 @@ import {
   loadMetadata
 } from './metadata-request-cache'
 import { githubRepoIdentityKey } from '../../../shared/github-repository-identity-key'
+import { githubProjectHost } from '../../../shared/github-project-identity'
 
 type MetadataState<T> = {
   data: T
@@ -88,10 +89,10 @@ export function useRepoLabelsBySlug(
         ? callRuntimeRpc<ListLabelsBySlugResult>(
             target,
             'github.project.listLabelsBySlug',
-            { owner, repo, ...(host ? { host } : {}) },
+            { owner, repo, host: githubProjectHost(host) },
             { timeoutMs: 30_000 }
           )
-        : window.api.gh.listLabelsBySlug({ owner, repo, ...(host ? { host } : {}) })
+        : window.api.gh.listLabelsBySlug({ owner, repo, host: githubProjectHost(host) })
       ).then((res) => {
         if (!res.ok) {
           throw new Error(res.error.message)
@@ -178,7 +179,7 @@ export function useRepoAssigneesBySlug(
     const args = {
       owner,
       repo,
-      ...(host ? { host } : {}),
+      host: githubProjectHost(host),
       ...(seedKey ? { seedLogins: seedKey.split(',') } : {})
     }
     loadMetadata(slugAssigneeStore, key, () =>

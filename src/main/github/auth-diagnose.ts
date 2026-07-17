@@ -39,7 +39,7 @@ export function parseAuthStatus(text: string): GhAuthAccount[] {
     // (internal GHES like `github` or `ghe-internal`); we also recover the
     // host from the `Logged in to <host>` line below if this header was
     // missed, so a parser miss never silently drops every account.
-    const hostMatch = line.match(/^([a-z0-9][a-z0-9.-]*)\s*:?\s*$/i)
+    const hostMatch = line.match(/^([a-z0-9][a-z0-9.-]*(?::\d+)?)\s*:?\s*$/i)
     if (hostMatch && !/^logged\b/i.test(line)) {
       currentHost = hostMatch[1]
       continue

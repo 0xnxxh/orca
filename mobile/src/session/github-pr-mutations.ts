@@ -101,16 +101,10 @@ export async function fetchUpdatePRTitle(
   args: { prNumber: number; title: string; prRepo?: GitHubPrRepoSlug | null }
 ): Promise<GitHubPrMutationOutcome> {
   const params: Record<string, unknown> = { prNumber: args.prNumber, title: args.title }
-  // updatePRTitle accepts prRepo for fork PRs, but it is not in the centralized
-  // METHODS_ACCEPTING_PR_REPO read allow-list — pass it explicitly so it reaches the
-  // host schema (which declares it optional/nullable).
-  if (args.prRepo) {
-    params.prRepo = githubPrRepoSlugParam(args.prRepo)
-  }
   const response = await sendRaw(
     client,
     'github.updatePRTitle',
-    buildGithubPrParams('github.updatePRTitle', worktreeId, params)
+    buildGithubPrParams('github.updatePRTitle', worktreeId, params, { prRepo: args.prRepo })
   )
   if (!response.ok) {
     return { ok: false, error: response.error || 'Request failed: github.updatePRTitle' }
@@ -225,16 +219,12 @@ export async function fetchAddPRReviewCommentReply(
   if (typeof args.line === 'number') {
     params.line = args.line
   }
-  // addPRReviewCommentReply accepts prRepo for fork PRs, but it is not in the
-  // centralized METHODS_ACCEPTING_PR_REPO allow-list (read-focused) — pass it
-  // explicitly so it reaches the host schema, which declares it optional.
-  if (args.prRepo) {
-    params.prRepo = githubPrRepoSlugParam(args.prRepo)
-  }
   return sendGithubPrMutation(
     client,
     'github.addPRReviewCommentReply',
-    buildGithubPrParams('github.addPRReviewCommentReply', worktreeId, params)
+    buildGithubPrParams('github.addPRReviewCommentReply', worktreeId, params, {
+      prRepo: args.prRepo
+    })
   )
 }
 
@@ -249,13 +239,10 @@ export async function fetchAddIssueComment(
     body: args.body,
     type: 'pr'
   }
-  if (args.prRepo) {
-    params.prRepo = githubPrRepoSlugParam(args.prRepo)
-  }
   return sendGithubPrMutation(
     client,
     'github.addIssueComment',
-    buildGithubPrParams('github.addIssueComment', worktreeId, params)
+    buildGithubPrParams('github.addIssueComment', worktreeId, params, { prRepo: args.prRepo })
   )
 }
 

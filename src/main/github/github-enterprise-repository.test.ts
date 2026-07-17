@@ -78,6 +78,28 @@ describe('getEnterpriseGitHubRepoSlug', () => {
     })
   })
 
+  it('uses the unique ported auth host for a hostname-only SSH remote', async () => {
+    mockOriginRemote('git@ghe.acme.com:team/orca.git')
+    mockHostAuthenticated('ghe.acme.com:8443')
+
+    await expect(getEnterpriseGitHubRepoSlug('/repo')).resolves.toEqual({
+      owner: 'team',
+      repo: 'orca',
+      host: 'ghe.acme.com:8443'
+    })
+  })
+
+  it('uses the auth inventory host when an HTTPS remote includes a non-default port', async () => {
+    mockOriginRemote('https://ghe.acme.com:8443/team/orca.git')
+    mockHostAuthenticated('ghe.acme.com')
+
+    await expect(getEnterpriseGitHubRepoSlug('/repo')).resolves.toEqual({
+      owner: 'team',
+      repo: 'orca',
+      host: 'ghe.acme.com'
+    })
+  })
+
   it('probes gh in the repository WSL runtime, not the host/default distro', async () => {
     mockOriginRemote('https://github.acme-corp.com/team/orca.git')
     mockHostAuthenticated()
@@ -118,6 +140,22 @@ describe('getEnterpriseGitHubRepoSlug', () => {
     gitExecFileAsyncMock.mockRejectedValue(new Error('no such remote'))
 
     await expect(getEnterpriseGitHubRepoSlug('/repo')).resolves.toBeNull()
+  })
+
+  it('preserves an indeterminate auth inventory failure so a later probe can recover', async () => {
+    mockOriginRemote('git@ghe.acme.com:team/orca.git')
+    ghExecFileAsyncMock.mockRejectedValueOnce(
+      Object.assign(new Error('not installed'), { stdout: '', stderr: '' })
+    )
+
+    await expect(getEnterpriseGitHubRepoSlug('/repo')).resolves.toBeUndefined()
+
+    mockHostAuthenticated('ghe.acme.com:8443')
+    await expect(getEnterpriseGitHubRepoSlug('/repo')).resolves.toEqual({
+      owner: 'team',
+      repo: 'orca',
+      host: 'ghe.acme.com:8443'
+    })
   })
 })
 
@@ -224,6 +262,24 @@ describe('isGitHubHostAuthenticated', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(['auth', 'status'], { cwd: '/repo' })
     expect(ghExecFileAsyncMock.mock.calls.flat()).not.toContain('evil.example.test')
+  })
+
+  it('does not guess between multiple ported auth hosts for one SSH hostname', async () => {
+    ghExecFileAsyncMock.mockResolvedValue({
+      stdout: `ghe.acme.com:8443
+  ✓ Logged in to ghe.acme.com:8443 account kelora (keyring)
+ghe.acme.com:9443
+  ✓ Logged in to ghe.acme.com:9443 account other (keyring)`,
+      stderr: ''
+    })
+
+    await expect(isGitHubHostAuthenticated('ghe.acme.com', '/repo')).resolves.toBe(false)
+  })
+
+  it('treats default web ports as the same auth host', async () => {
+    mockHostAuthenticated('ghe.acme.com:443')
+
+    await expect(isGitHubHostAuthenticated('ghe.acme.com', '/repo')).resolves.toBe(true)
   })
 
   it('validates a global project host by inventory without targeting it', async () => {
