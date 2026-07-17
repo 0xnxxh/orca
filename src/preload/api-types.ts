@@ -1520,6 +1520,7 @@ export type PreloadApi = {
       repoId?: string
       owner: string
       repo: string
+      host?: string
       number: number
       type: 'issue' | 'pr'
     }) => Promise<Omit<GitHubWorkItem, 'repoId'> | null>
@@ -1715,8 +1716,8 @@ export type PreloadApi = {
      * `force: true` to bust after a known-expensive op.
      */
     rateLimit: (args?: { force?: boolean }) => Promise<GetRateLimitResult>
-  /** Explains scope_missing ProjectV2 failures — notably a shell `GITHUB_TOKEN` shadowing the keyring credential, where `gh auth refresh` is a no-op. */
-  diagnoseAuth: (args?: { host?: string }) => Promise<GhAuthDiagnostic>
+    /** Explains scope_missing ProjectV2 failures — notably a shell `GITHUB_TOKEN` shadowing the keyring credential, where `gh auth refresh` is a no-op. */
+    diagnoseAuth: (args?: { host?: string }) => Promise<GhAuthDiagnostic>
     // ── ProjectV2 (GitHub Projects) ─────────────────────────────────
     listAccessibleProjects: (
       args?: ListAccessibleProjectsArgs

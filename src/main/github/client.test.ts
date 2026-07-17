@@ -3625,7 +3625,9 @@ describe('getPRForBranch', () => {
     await expect(getRepoUpstream('/repo-root')).resolves.toBeNull()
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
-      ['repo', 'view', 'StablyAI/Orca', '--json', 'isFork,parent'],
+      // Why: positional slugs are explicit about github.com too, so GH_HOST
+      // cannot redirect them.
+      ['repo', 'view', 'github.com/StablyAI/Orca', '--json', 'isFork,parent'],
       { cwd: '/repo-root', host: 'github.com', timeout: 10_000 }
     )
   })

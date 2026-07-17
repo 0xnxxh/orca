@@ -1477,11 +1477,8 @@ async function countWorkItemsForQuery(
 }
 
 function sameOwnerRepo(left: OwnerRepo | null, right: OwnerRepo | null): boolean {
-  // Why: GitHub owner/repo names are case-insensitive, so differently-cased remotes are the same repo (don't split into two searches).
-  return (
-    left?.owner.toLowerCase() === right?.owner.toLowerCase() &&
-    left?.repo.toLowerCase() === right?.repo.toLowerCase()
-  )
+  // Why: casing does not distinguish GitHub repos, but the same slug on different hosts does.
+  return Boolean(left && right && githubRepoIdentityKey(left) === githubRepoIdentityKey(right))
 }
 
 function defaultOpenWorkItemQuery(): ParsedTaskQuery {
@@ -2911,6 +2908,11 @@ export async function getPRForBranchOutcome(
       connectionId,
       localGitOptions
     )
+    // Why: connection-backed gh runs without a repository cwd. A bare lookup
+    // here can honor process GH_REPO/GH_HOST and return an unrelated PR.
+    if (connectionId && candidates.length === 0) {
+      return { kind: 'no-pr', fetchedAt: Date.now() }
+    }
     let data: PullRequestLookupData | null = null
     let dataRepo: OwnerRepo | null = null
     let dataHeadRepo: OwnerRepo | null = headRepo
