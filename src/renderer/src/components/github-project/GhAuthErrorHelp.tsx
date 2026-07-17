@@ -122,10 +122,11 @@ type Remediation = {
   docsUrl?: string
 }
 
-function buildRemediation(
+export function buildRemediation(
   errorMessage: string,
   kind: AuthErrorKind,
-  diag: GhAuthDiagnostic | null
+  diag: GhAuthDiagnostic | null,
+  requestedHost?: string
 ): Remediation {
   // Diagnostic still loading or unavailable — fall back to the canned advice
   // so the UI never gets worse than the pre-diagnosis behavior.
@@ -138,7 +139,10 @@ function buildRemediation(
             'auto.components.github.project.GhAuthErrorHelp.b436c586d1',
             'Copy command'
           ),
-          command: kind === 'auth_required' ? LOGIN_CMD : REFRESH_CMD
+          command:
+            kind === 'auth_required'
+              ? loginCommandForHost(requestedHost)
+              : refreshCommandForHost(requestedHost)
         }
       ]
     }
@@ -173,7 +177,7 @@ function buildRemediation(
             'auto.components.github.project.GhAuthErrorHelp.9c2da6353b',
             'Copy login command'
           ),
-          command: LOGIN_CMD
+          command: loginCommandForHost(diag.requiredHost ?? requestedHost)
         }
       ],
       docsUrl: 'https://cli.github.com/'
@@ -264,7 +268,7 @@ function buildRemediation(
           'auto.components.github.project.GhAuthErrorHelp.3fefeebde4',
           'Copy refresh command'
         ),
-        command: REFRESH_CMD
+        command: refreshCommandForHost(diag.requiredHost ?? requestedHost)
       }
     ],
     docsUrl:
@@ -299,7 +303,7 @@ export function GhAuthErrorHelp({
     }
   }, [host])
 
-  const remedy = buildRemediation(error.message, error.type, diag)
+  const remedy = buildRemediation(error.message, error.type, diag, host)
   const docsUrl = remedy.docsUrl
 
   if (variant === 'banner') {

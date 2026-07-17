@@ -2,6 +2,7 @@ import React from 'react'
 import type { GitHubOwnerRepo } from '../../../../shared/types'
 import RepoBadgeLabel from '@/components/repo/RepoBadgeLabel'
 import { cn } from '@/lib/utils'
+import { githubRepoIdentityKey } from '../../../../shared/github-repository-identity-key'
 
 export type IssueSourceIndicatorProps = {
   /** Resolved issue-source owner/repo. `null` means the source hasn't been
@@ -39,13 +40,9 @@ export function sameGitHubOwnerRepo(
   if (!left || !right) {
     return false
   }
-  // Why: GitHub treats owner/repo names case-insensitively, so remotes with
-  // different casing (e.g. StablyAI/Orca vs stablyai/orca) resolve to the
-  // same repo and must suppress the indicator.
-  return (
-    left.owner.toLowerCase() === right.owner.toLowerCase() &&
-    left.repo.toLowerCase() === right.repo.toLowerCase()
-  )
+  // Why: names are case-insensitive, but the same slug on github.com and GHES
+  // identifies different repositories and must not suppress source routing.
+  return githubRepoIdentityKey(left) === githubRepoIdentityKey(right)
 }
 
 /**

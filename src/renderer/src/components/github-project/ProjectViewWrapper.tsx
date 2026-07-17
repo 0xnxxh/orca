@@ -906,6 +906,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
         <ErrorState
           error={error.error}
           totalCount={error.totalCount}
+          host={activeProject.host}
           onOpenInGitHub={() => {
             if (selectedViewUrl) {
               void window.api.shell.openUrl(selectedViewUrl)
@@ -1262,10 +1263,12 @@ function ViewTabStrip({
 function ErrorState({
   error,
   totalCount,
+  host,
   onOpenInGitHub
 }: {
   error: GitHubProjectViewError
   totalCount?: number
+  host?: string
   onOpenInGitHub: () => void
 }): React.JSX.Element {
   // Auth/scope errors get a richer `gh auth status` remediation UI; bail early before the generic block.
@@ -1274,6 +1277,7 @@ function ErrorState({
       <div className="flex flex-1 flex-col items-start gap-3 p-6 text-sm">
         <GhAuthErrorHelp
           error={error as GitHubProjectViewError & { type: 'auth_required' | 'scope_missing' }}
+          host={host}
         />
         <Button size="sm" variant="outline" onClick={onOpenInGitHub}>
           <ExternalLink className="mr-1 size-3.5" />{' '}

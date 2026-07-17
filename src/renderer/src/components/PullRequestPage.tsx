@@ -223,20 +223,18 @@ import {
 import { translate } from '@/i18n/i18n'
 import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
 
-// Why: the item URL is the only owner/repo source present on every work item across the IPC boundary; non-GitHub hosts return null (matching the indicator's suppression).
+// Why: the item URL is the only host-aware repository identity present on every work item across IPC.
 function parseOwnerRepoFromItemUrl(url: string): GitHubOwnerRepo | null {
   try {
     const parsed = new URL(url)
-    if (parsed.hostname !== 'github.com') {
+    if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') || !parsed.host) {
       return null
     }
     const segments = parsed.pathname.split('/').filter(Boolean)
     if (segments.length < 2) {
       return null
     }
-    // Why: the URL proves the host. Leaving it off lets the main process stamp
-    // a GHES origin's host onto what is provably a github.com repo.
-    return { owner: segments[0], repo: segments[1], host: 'github.com' }
+    return { owner: segments[0], repo: segments[1], host: parsed.host }
   } catch {
     return null
   }
@@ -287,6 +285,7 @@ function normalizeItemDialogTab(
 export type PullRequestPageProjectOrigin = {
   owner: string
   repo: string
+  host?: string
   number: number
   type: 'issue' | 'pr'
   projectId: string
@@ -563,7 +562,8 @@ function PRAssigneesPanel({
     slugOwner,
     slugRepo,
     assigneeLogins,
-    sourceSettings
+    sourceSettings,
+    projectOrigin?.host ?? assigneeSlug?.host
   )
   const repoAssigneesByPath = useRepoAssignees(repoPath, item.repoId, sourceSettings)
   const repoAssignees = slugOwner && slugRepo ? repoAssigneesBySlug : repoAssigneesByPath
@@ -841,7 +841,8 @@ function PRReviewersPanel({
     open && reviewSlug ? reviewSlug.owner : null,
     open && reviewSlug ? reviewSlug.repo : null,
     reviewerSeedUsers.map((user) => user.login),
-    sourceSettings
+    sourceSettings,
+    reviewSlug?.host
   )
   const reviewerMetadataByPath = useRepoAssignees(
     open && !reviewSlug ? repoPath : null,
@@ -3249,7 +3250,10 @@ function ConversationTab({
 
   const bodySlug = useMemo(() => parseOwnerRepoFromItemUrl(item.url), [item.url])
   const markdownGitHubRepo = useMemo(
-    () => (projectOrigin ? { owner: projectOrigin.owner, repo: projectOrigin.repo } : bodySlug),
+    () =>
+      projectOrigin
+        ? { owner: projectOrigin.owner, repo: projectOrigin.repo, host: projectOrigin.host }
+        : bodySlug,
     [bodySlug, projectOrigin]
   )
   const canEditBody =
@@ -5491,6 +5495,7 @@ async function runIssueUpdate(args: {
     const updateArgs = {
       owner: args.projectOrigin.owner,
       repo: args.projectOrigin.repo,
+      ...(args.projectOrigin.host ? { host: args.projectOrigin.host } : {}),
       number: args.number,
       updates: args.updates
     }
@@ -5571,7 +5576,11 @@ async function runWorkItemBodyUpdate(args: {
 }): Promise<void> {
   if (args.item.type === 'pr') {
     const targetSlug = args.projectOrigin
-      ? { owner: args.projectOrigin.owner, repo: args.projectOrigin.repo }
+      ? {
+          owner: args.projectOrigin.owner,
+          repo: args.projectOrigin.repo,
+          host: args.projectOrigin.host
+        }
       : args.parsedSlug
     if (!targetSlug) {
       throw new Error('No GitHub repository context available for this pull request.')
@@ -5584,6 +5593,7 @@ async function runWorkItemBodyUpdate(args: {
     const updateArgs = {
       owner: targetSlug.owner,
       repo: targetSlug.repo,
+      ...(targetSlug.host ? { host: targetSlug.host } : {}),
       number: args.item.number,
       updates: { body: args.body }
     }
@@ -5643,6 +5653,7 @@ async function runPullRequestStateUpdate(args: {
     const updateArgs = {
       owner: args.projectOrigin.owner,
       repo: args.projectOrigin.repo,
+      ...(args.projectOrigin.host ? { host: args.projectOrigin.host } : {}),
       number: args.number,
       updates: args.updates
     }
@@ -5785,14 +5796,25 @@ function GHEditSection({
     projectOrigin ? null : repoId,
     sourceSettings
   )
-  const repoLabelsBySlug = useRepoLabelsBySlug(slugOwner, slugRepo, sourceSettings)
+  const repoLabelsBySlug = useRepoLabelsBySlug(
+    slugOwner,
+    slugRepo,
+    sourceSettings,
+    projectOrigin?.host
+  )
   const repoLabels = projectOrigin ? repoLabelsBySlug : repoLabelsByPath
   const repoAssigneesByPath = useRepoAssignees(
     projectOrigin ? null : repoPath,
     projectOrigin ? null : repoId,
     sourceSettings
   )
-  const repoAssigneesBySlug = useRepoAssigneesBySlug(slugOwner, slugRepo, assignees, sourceSettings)
+  const repoAssigneesBySlug = useRepoAssigneesBySlug(
+    slugOwner,
+    slugRepo,
+    assignees,
+    sourceSettings,
+    projectOrigin?.host
+  )
   const repoAssignees = projectOrigin ? repoAssigneesBySlug : repoAssigneesByPath
 
   // Why: sync local assignees on item change / detail resolve, but skip if the user made an optimistic edit so we don't clobber in-flight changes.

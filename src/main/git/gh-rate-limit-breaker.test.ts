@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  _getGhRateLimitBlockCount,
   _resetGhRateLimitBreaker,
   classifyGhRateLimitBucket,
   createGhRateLimitBlockedError,
@@ -115,6 +116,19 @@ describe('breaker state', () => {
     expect(getGhRateLimitBlockedUntilMs('core', now, 'native:github.com')).toBe(now + 60_000)
     expect(getGhRateLimitBlockedUntilMs('core', now, 'native:github.acme-corp.com')).toBeNull()
     expect(getGhRateLimitBlockedUntilMs('core', now, 'wsl:ubuntu:github.com')).toBeNull()
+  })
+
+  it('bounds retained blocks across user-supplied Enterprise host scopes', () => {
+    const now = Date.now()
+    for (let i = 0; i < 1_200; i += 1) {
+      recordGhPrimaryRateLimit('core', now + 60_000, `native:ghe-${i}.example.test`)
+    }
+
+    expect(_getGhRateLimitBlockCount()).toBe(1024)
+    expect(getGhRateLimitBlockedUntilMs('core', now, 'native:ghe-1199.example.test')).toBe(
+      now + 60_000
+    )
+    expect(getGhRateLimitBlockedUntilMs('core', now, 'native:ghe-0.example.test')).toBeNull()
   })
 
   it('notifyGhPrimaryRateLimit applies a fallback block and fires the reset probe', () => {

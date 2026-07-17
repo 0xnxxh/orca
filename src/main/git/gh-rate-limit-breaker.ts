@@ -57,6 +57,7 @@ export function parseGhRateLimitScopeKey(scope: string): GhRateLimitScopeParts |
 }
 
 const DEFAULT_SCOPE = ghRateLimitScopeKey('native', 'github.com')
+const GH_RATE_LIMIT_BLOCK_MAX_ENTRIES = 1024
 const blockedUntilMsByScopeAndBucket = new Map<string, number>()
 let resetProbe: ((bucket: GhRateLimitBucket, scope: string) => void) | null = null
 
@@ -146,7 +147,18 @@ export function recordGhPrimaryRateLimit(
 ): void {
   const key = breakerKey(bucket, scope)
   const existing = blockedUntilMsByScopeAndBucket.get(key) ?? 0
+  // Why: host scopes can originate from pasted GHES URLs. Refresh insertion
+  // order and cap retained blocks so a stream of failing hosts cannot grow the
+  // main-process map for the lifetime of the app.
+  blockedUntilMsByScopeAndBucket.delete(key)
   blockedUntilMsByScopeAndBucket.set(key, Math.max(existing, blockedUntilMs))
+  while (blockedUntilMsByScopeAndBucket.size > GH_RATE_LIMIT_BLOCK_MAX_ENTRIES) {
+    const oldestKey = blockedUntilMsByScopeAndBucket.keys().next().value
+    if (oldestKey === undefined) {
+      break
+    }
+    blockedUntilMsByScopeAndBucket.delete(oldestKey)
+  }
 }
 
 export function clearGhRateLimitBlock(bucket: GhRateLimitBucket, scope = DEFAULT_SCOPE): void {
@@ -158,6 +170,11 @@ export function getGhRateLimitBlockedUntilMs(
   nowMs: number = Date.now(),
   scope = DEFAULT_SCOPE
 ): number | null {
+  for (const [key, blockedUntil] of blockedUntilMsByScopeAndBucket) {
+    if (blockedUntil <= nowMs) {
+      blockedUntilMsByScopeAndBucket.delete(key)
+    }
+  }
   const key = breakerKey(bucket, scope)
   const blockedUntil = blockedUntilMsByScopeAndBucket.get(key)
   if (blockedUntil === undefined) {
@@ -168,6 +185,11 @@ export function getGhRateLimitBlockedUntilMs(
     return null
   }
   return blockedUntil
+}
+
+/** @internal — cache-bound tests only. */
+export function _getGhRateLimitBlockCount(): number {
+  return blockedUntilMsByScopeAndBucket.size
 }
 
 /** Register the (single) callback that refreshes precise reset times after a

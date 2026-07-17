@@ -1180,6 +1180,7 @@ function GHStatusCell({
               {
                 owner: parsedOwnerRepo.owner,
                 repo: parsedOwnerRepo.repo,
+                ...(parsedOwnerRepo.host ? { host: parsedOwnerRepo.host } : {}),
                 number: item.number,
                 updates
               },
@@ -1188,6 +1189,7 @@ function GHStatusCell({
           : window.api.gh.updateIssueBySlug({
               owner: parsedOwnerRepo.owner,
               repo: parsedOwnerRepo.repo,
+              ...(parsedOwnerRepo.host ? { host: parsedOwnerRepo.host } : {}),
               number: item.number,
               updates
             })
@@ -1795,7 +1797,8 @@ function GHAssigneesCell({
     open ? owner : null,
     open ? repoName : null,
     seedLogins,
-    sourceSettings
+    sourceSettings,
+    parsed?.slug.host
   )
 
   const toggleAssignee = useCallback(
@@ -1819,6 +1822,7 @@ function GHAssigneesCell({
           const args = {
             owner,
             repo: repoName,
+            ...(parsed?.slug.host ? { host: parsed.slug.host } : {}),
             number: item.number,
             updates
           }
@@ -2188,7 +2192,8 @@ function PRReviewCell({
     open && reviewSlug ? reviewSlug.owner : null,
     open && reviewSlug ? reviewSlug.repo : null,
     reviewerSeedUsers.map((user) => user.login),
-    sourceSettings
+    sourceSettings,
+    reviewSlug?.host
   )
 
   const authorLogin = item.author?.toLowerCase() ?? null

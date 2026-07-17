@@ -2,7 +2,7 @@
 // support — cache identity, quota scoping, and exec-host routing must all
 // agree on it, so the predicate lives here once.
 export function isDefaultGitHubHost(host?: string): boolean {
-  return !host || host.toLowerCase() === 'github.com'
+  return !host?.trim() || host.trim().toLowerCase() === 'github.com'
 }
 
 // Why: cache keys and equality checks for GitHub repos must include the host,
@@ -14,5 +14,6 @@ export function githubRepoIdentityKey(repo: {
   host?: string
 }): string {
   const slug = `${repo.owner.toLowerCase()}/${repo.repo.toLowerCase()}`
-  return repo.host && !isDefaultGitHubHost(repo.host) ? `${repo.host.toLowerCase()}/${slug}` : slug
+  const host = repo.host?.trim().toLowerCase()
+  return host && !isDefaultGitHubHost(host) ? `${host}/${slug}` : slug
 }
