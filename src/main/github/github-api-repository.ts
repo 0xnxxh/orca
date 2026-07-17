@@ -1,7 +1,13 @@
-import type { GitHubOwnerRepo } from '../../shared/types'
-import { isDefaultGitHubHost } from '../../shared/github-repository-identity-key'
+import type { GitHubOwnerRepo, IssueSourcePreference } from '../../shared/types'
+import {
+  githubRepoIdentityKey,
+  isDefaultGitHubHost
+} from '../../shared/github-repository-identity-key'
 import { getOwnerRepoForRemote, type LocalGitExecOptions } from './gh-utils'
-import { getEnterpriseGitHubRepoSlug } from './github-enterprise-repository'
+import {
+  getEnterpriseGitHubRepoSlug,
+  getEnterpriseGitHubRepoSlugForRemote
+} from './github-enterprise-repository'
 
 export type GitHubApiRepository = GitHubOwnerRepo
 
@@ -14,10 +20,11 @@ const originRepoInFlight = new Map<string, Promise<GitHubApiRepository | null>>(
 
 function originRepoCacheKey(
   repoPath: string,
+  remoteName: string,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): string {
-  return `${connectionId ?? 'local'}\0${localGitOptions.wslDistro ?? ''}\0${repoPath}`
+  return `${connectionId ?? 'local'}\0${localGitOptions.wslDistro ?? ''}\0${repoPath}\0${remoteName}`
 }
 
 /** @internal - exposed for tests only */
@@ -26,23 +33,29 @@ export function _resetOriginGitHubApiRepositoryCache(): void {
   originRepoInFlight.clear()
 }
 
-export async function getOriginGitHubApiRepository(
+/**
+ * Host-qualified repository identity for one remote: github.com remotes come
+ * from the cached slug parser; any other GitHub-shaped host is auth-gated so a
+ * non-GitHub forge never routes to the GitHub provider.
+ */
+export async function getGitHubApiRepositoryForRemote(
   repoPath: string,
+  remoteName: string,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubApiRepository | null> {
-  // Why: this resolver represents the checkout origin; generic PR resolution
-  // prefers upstream on fork checkouts (#7331).
+  // Why: generic PR resolution prefers upstream, but this API represents the
+  // caller-selected remote exactly (#7331).
   const ownerRepo = await getOwnerRepoForRemote(
     repoPath,
-    'origin',
+    remoteName,
     connectionId,
     localGitOptions
   )
   if (ownerRepo) {
     return { ...ownerRepo, host: 'github.com' }
   }
-  const cacheKey = originRepoCacheKey(repoPath, connectionId, localGitOptions)
+  const cacheKey = originRepoCacheKey(repoPath, remoteName, connectionId, localGitOptions)
   const cached = originRepoCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value
@@ -54,7 +67,15 @@ export async function getOriginGitHubApiRepository(
   const probe = (async () => {
     const enterpriseOptions =
       Object.keys(localGitOptions).length > 0 ? { localGitExecOptions: localGitOptions } : {}
-    const slug = await getEnterpriseGitHubRepoSlug(repoPath, connectionId, enterpriseOptions)
+    const slug =
+      remoteName === 'origin'
+        ? await getEnterpriseGitHubRepoSlug(repoPath, connectionId, enterpriseOptions)
+        : await getEnterpriseGitHubRepoSlugForRemote(
+            repoPath,
+            remoteName,
+            connectionId,
+            enterpriseOptions
+          )
     originRepoCache.set(cacheKey, { value: slug, expiresAt: Date.now() + ORIGIN_REPO_CACHE_TTL_MS })
     return slug
   })()
@@ -65,6 +86,111 @@ export async function getOriginGitHubApiRepository(
     if (originRepoInFlight.get(cacheKey) === probe) {
       originRepoInFlight.delete(cacheKey)
     }
+  }
+}
+
+export async function getOriginGitHubApiRepository(
+  repoPath: string,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<GitHubApiRepository | null> {
+  return getGitHubApiRepositoryForRemote(repoPath, 'origin', connectionId, localGitOptions)
+}
+
+/** Hosted mirror of getIssueOwnerRepo: issues prefer `upstream` over `origin`. */
+export async function getIssueGitHubApiRepository(
+  repoPath: string,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<GitHubApiRepository | null> {
+  const upstream = await getGitHubApiRepositoryForRemote(
+    repoPath,
+    'upstream',
+    connectionId,
+    localGitOptions
+  )
+  if (upstream) {
+    return upstream
+  }
+  return getGitHubApiRepositoryForRemote(repoPath, 'origin', connectionId, localGitOptions)
+}
+
+export type GitHubApiRepositoryCandidates = {
+  candidates: GitHubApiRepository[]
+  headRepo: GitHubApiRepository | null
+}
+
+/** Hosted mirror of resolvePRRepositoryCandidates: upstream first, then origin. */
+export async function resolveGitHubApiRepositoryCandidates(
+  repoPath: string,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<GitHubApiRepositoryCandidates> {
+  const [upstream, origin] = await Promise.all([
+    getGitHubApiRepositoryForRemote(repoPath, 'upstream', connectionId, localGitOptions),
+    getGitHubApiRepositoryForRemote(repoPath, 'origin', connectionId, localGitOptions)
+  ])
+  const seen = new Set<string>()
+  const candidates: GitHubApiRepository[] = []
+  for (const candidate of [upstream, origin]) {
+    if (!candidate) {
+      continue
+    }
+    const key = githubRepoIdentityKey(candidate)
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    candidates.push(candidate)
+  }
+  return { candidates, headRepo: origin }
+}
+
+export type ResolvedGitHubApiRepositorySource = {
+  source: GitHubApiRepository | null
+  /** True when explicit upstream is gone and resolver fell back to origin. */
+  fellBack: boolean
+}
+
+/** Hosted mirror of resolveIssueSource — same preference semantics. */
+export async function resolveIssueGitHubApiRepositorySource(
+  repoPath: string,
+  preference: IssueSourcePreference | undefined,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<ResolvedGitHubApiRepositorySource> {
+  if (preference === 'upstream') {
+    const upstream = await getGitHubApiRepositoryForRemote(
+      repoPath,
+      'upstream',
+      connectionId,
+      localGitOptions
+    )
+    if (upstream) {
+      return { source: upstream, fellBack: false }
+    }
+    const origin = await getGitHubApiRepositoryForRemote(
+      repoPath,
+      'origin',
+      connectionId,
+      localGitOptions
+    )
+    return { source: origin, fellBack: origin !== null }
+  }
+  if (preference === 'origin') {
+    return {
+      source: await getGitHubApiRepositoryForRemote(
+        repoPath,
+        'origin',
+        connectionId,
+        localGitOptions
+      ),
+      fellBack: false
+    }
+  }
+  return {
+    source: await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions),
+    fellBack: false
   }
 }
 
@@ -110,4 +236,16 @@ export function githubHostExecOptions(repository: GitHubApiRepository | null | u
 
 export function githubRepositoryWebHost(repository: GitHubApiRepository): string {
   return repository.host ?? 'github.com'
+}
+
+/**
+ * Positional `HOST/OWNER/REPO` argv value (e.g. `gh repo view <slug>`).
+ * Positional slugs bypass the runner's `--repo` qualifier, so they must be
+ * qualified here; github.com stays bare for compatibility with gh's default.
+ */
+export function githubRepositorySlugArg(repository: GitHubApiRepository): string {
+  const slug = `${repository.owner}/${repository.repo}`
+  return repository.host && !isDefaultGitHubHost(repository.host)
+    ? `${repository.host}/${slug}`
+    : slug
 }

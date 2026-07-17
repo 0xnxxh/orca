@@ -13,7 +13,11 @@ vi.mock('child_process', () => ({
 }))
 
 import { ghExecFileAsync } from './runner'
-import { _resetGhRateLimitBreaker } from './gh-rate-limit-breaker'
+import {
+  _resetGhRateLimitBreaker,
+  getGhRateLimitBlockedUntilMs,
+  registerGhRateLimitResetProbe
+} from './gh-rate-limit-breaker'
 
 const PRIMARY_RATE_LIMIT_STDERR =
   'gh: API rate limit exceeded for user ID 1775218. Please wait. (HTTP 403)'
@@ -102,6 +106,37 @@ describe('ghExecFileAsync rate-limit breaker', () => {
       })
     }
     expect(execFileMock).toHaveBeenCalledTimes(5)
+  })
+
+  it('scopes a WSL UNC-cwd 403 to the distro runtime and probes that scope', async () => {
+    // Why: a \\wsl.localhost\... cwd routes gh through wsl.exe, so the 403
+    // belongs to the distro's account — the native scope must stay usable and
+    // the reset probe must be told which scope tripped.
+    const probe = vi.fn()
+    registerGhRateLimitResetProbe(probe)
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    try {
+      mockGhFailure(PRIMARY_RATE_LIMIT_STDERR)
+      await expect(
+        ghExecFileAsync(['api', 'repos/a/b/pulls'], {
+          cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo'
+        })
+      ).rejects.toThrow()
+
+      expect(probe).toHaveBeenCalledWith('core', 'wsl:ubuntu:github.com')
+      expect(
+        getGhRateLimitBlockedUntilMs('core', Date.now(), 'wsl:ubuntu:github.com')
+      ).not.toBeNull()
+      expect(getGhRateLimitBlockedUntilMs('core', Date.now())).toBeNull()
+
+      mockGhSuccess('[]')
+      await expect(ghExecFileAsync(['api', 'repos/a/b/pulls'])).resolves.toMatchObject({
+        stdout: '[]'
+      })
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
   })
 
   it('never blocks the exempt rate_limit probe', async () => {

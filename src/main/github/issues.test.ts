@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as GithubApiRepositoryModule from './github-api-repository'
 import type * as GhUtils from './gh-utils'
 
 const {
@@ -24,6 +25,26 @@ vi.mock('./gh-utils', async () => {
     resolveIssueSource: resolveIssueSourceMock,
     acquire: acquireMock,
     release: releaseMock
+  }
+})
+
+vi.mock('./github-api-repository', async (importOriginal) => {
+  const actual = await importOriginal<typeof GithubApiRepositoryModule>()
+  return {
+    ...actual,
+    // Why: these suites drive source resolution through the legacy gh-utils
+    // mocks; bridge the hosted seams onto the same mocks.
+    getIssueGitHubApiRepository: (
+      repoPath: string,
+      connectionId?: string | null,
+      localGitOptions?: unknown
+    ) => getIssueOwnerRepoMock(repoPath, connectionId, localGitOptions),
+    resolveIssueGitHubApiRepositorySource: (
+      repoPath: string,
+      preference: unknown,
+      connectionId?: string | null,
+      localGitOptions?: unknown
+    ) => resolveIssueSourceMock(repoPath, preference, connectionId, localGitOptions)
   }
 })
 

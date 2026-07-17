@@ -609,6 +609,7 @@ import {
 import type {
   ClearProjectItemFieldArgs,
   GetProjectViewTableArgs,
+  ListAccessibleProjectsArgs,
   ListAssignableUsersBySlugArgs,
   ListIssueTypesBySlugArgs,
   ListLabelsBySlugArgs,
@@ -14882,8 +14883,10 @@ export class OrcaRuntimeService {
     )
   }
 
-  async listGitHubProjects(): Promise<Awaited<ReturnType<typeof listAccessibleProjects>>> {
-    return listAccessibleProjects()
+  async listGitHubProjects(
+    args?: ListAccessibleProjectsArgs
+  ): Promise<Awaited<ReturnType<typeof listAccessibleProjects>>> {
+    return listAccessibleProjects(args)
   }
 
   async listGitHubLabelsBySlug(

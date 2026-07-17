@@ -258,6 +258,7 @@ import type {
   GetProjectViewTableResult,
   GitHubProjectCommentMutationResult,
   GitHubProjectMutationResult,
+  ListAccessibleProjectsArgs,
   ListAccessibleProjectsResult,
   ListAssignableUsersBySlugArgs,
   ListAssignableUsersBySlugResult,
@@ -1717,7 +1718,9 @@ export type PreloadApi = {
     /** Explains scope_missing ProjectV2 failures — notably a shell `GITHUB_TOKEN` shadowing the keyring credential, where `gh auth refresh` is a no-op. */
     diagnoseAuth: () => Promise<GhAuthDiagnostic>
     // ── ProjectV2 (GitHub Projects) ─────────────────────────────────
-    listAccessibleProjects: () => Promise<ListAccessibleProjectsResult>
+    listAccessibleProjects: (
+      args?: ListAccessibleProjectsArgs
+    ) => Promise<ListAccessibleProjectsResult>
     resolveProjectRef: (args: ResolveProjectRefArgs) => Promise<ResolveProjectRefResult>
     listProjectViews: (args: ListProjectViewsArgs) => Promise<ListProjectViewsResult>
     getProjectViewTable: (args: GetProjectViewTableArgs) => Promise<GetProjectViewTableResult>

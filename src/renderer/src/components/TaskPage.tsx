@@ -1505,17 +1505,21 @@ function formatPRDelta(item: GitHubWorkItem): string | null {
 }
 
 function ReviewChipAvatar({
-  reviewer
+  reviewer,
+  avatarHost
 }: {
   reviewer: GitHubPRPrimaryReviewer | null
+  avatarHost?: string
 }): React.JSX.Element {
   if (reviewer?.login) {
-    // Why: gh pr list --json reviewRequests can return only logins; prefer API avatar_url so GHE renders (falls back to login URL, then initials). See #8784.
+    // Why: review requests may contain only logins; use the PR host before falling back to initials.
+    const avatarUrl =
+      reviewer.avatarUrl || `https://${avatarHost ?? 'github.com'}/${reviewer.login}.png?size=40`
     return (
       <GitHubUserAvatar
         login={reviewer.login}
         name={reviewer.name}
-        avatarUrl={reviewer.avatarUrl}
+        avatarUrl={avatarUrl}
         title={reviewer.name ? `${reviewer.name} (${reviewer.login})` : reviewer.login}
         className="size-5"
       />
@@ -2508,7 +2512,7 @@ function PRReviewCell({
         >
           {primaryReviewer ? (
             <>
-              <ReviewChipAvatar reviewer={primaryReviewer} />
+              <ReviewChipAvatar reviewer={primaryReviewer} avatarHost={item.prRepo?.host} />
               {extraReviewerCount > 0 ? (
                 <span className="text-[10px] tabular-nums text-muted-foreground">
                   +{extraReviewerCount}

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as GithubApiRepositoryModule from './github-api-repository'
 import type * as GhUtils from './gh-utils'
 
 const {
@@ -49,6 +50,37 @@ vi.mock('./rate-limit', () => ({
   noteRepositoryRateLimitSpend: vi.fn(),
   spendsSharedGitHubComQuota: () => true
 }))
+
+vi.mock('./github-api-repository', async (importOriginal) => {
+  const actual = await importOriginal<typeof GithubApiRepositoryModule>()
+  return {
+    ...actual,
+    // Why: these suites drive source resolution through the legacy gh-utils
+    // mocks; bridge the hosted seams onto the same mocks.
+    resolveIssueGitHubApiRepositorySource: (
+      repoPath: string,
+      preference: unknown,
+      connectionId?: string | null,
+      localGitOptions?: unknown
+    ) => resolveIssueSourceMock(repoPath, preference, connectionId, localGitOptions),
+    getIssueGitHubApiRepository: (repoPath: string, connectionId?: string | null) =>
+      getIssueOwnerRepoMock(repoPath, connectionId),
+    getOriginGitHubApiRepository: (
+      repoPath: string,
+      connectionId?: string | null,
+      localGitOptions?: unknown
+    ) => getOwnerRepoMock(repoPath, connectionId, localGitOptions),
+    getGitHubApiRepositoryForRemote: (
+      repoPath: string,
+      remoteName: string,
+      connectionId?: string | null,
+      localGitOptions?: unknown
+    ) =>
+      remoteName === 'origin'
+        ? getOwnerRepoMock(repoPath, connectionId, localGitOptions)
+        : getOwnerRepoForRemoteMock(repoPath, remoteName, connectionId, localGitOptions)
+  }
+})
 
 import { countWorkItems, getWorkItem, listWorkItems, _resetOwnerRepoCache } from './client'
 
