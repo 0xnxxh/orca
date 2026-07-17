@@ -152,6 +152,21 @@ describe('parseProjectPaste', () => {
     expect(parseProjectPaste('https://github.com/orgs/co_op/projects/1')).toBeNull()
   })
 
+  it('accepts enterprise-host URLs only when that host is provided (GHES)', () => {
+    const url = 'https://github.corp.example/orgs/acme/projects/7/views/2'
+    expect(parseProjectPaste(url, 'github.corp.example')).toEqual({
+      kind: 'org',
+      owner: 'acme',
+      number: 7,
+      viewNumber: 2
+    })
+    expect(parseProjectPaste(url)).toBeNull()
+    // github.com URLs still parse when a GHES host is supplied.
+    expect(
+      parseProjectPaste('https://github.com/orgs/acme/projects/7', 'github.corp.example')
+    ).toEqual({ kind: 'org', owner: 'acme', number: 7 })
+  })
+
   it('returns null for empty input', () => {
     expect(parseProjectPaste('')).toBeNull()
     expect(parseProjectPaste('   ')).toBeNull()

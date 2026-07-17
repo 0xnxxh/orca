@@ -53,11 +53,6 @@ import {
   gitExecFileAsync,
   acquire,
   release,
-  getOwnerRepo,
-  getIssueOwnerRepo,
-  getOwnerRepoForRemote,
-  resolvePRRepositoryCandidates,
-  resolveIssueSource,
   classifyGhError,
   classifyListIssuesError,
   ghRepoExecOptions,
@@ -87,10 +82,15 @@ import {
 } from './gh-cwd-repo-negative-cache'
 import type { GitHubRepoContext } from './github-repository-identity'
 import {
+  getGitHubApiRepositoryForRemote,
+  getIssueGitHubApiRepository,
   getOriginGitHubApiRepository,
   githubHostExecOptions,
+  githubRepositorySlugArg,
   githubRepositoryWebHost,
   resolveGitHubApiRepository,
+  resolveGitHubApiRepositoryCandidates,
+  resolveIssueGitHubApiRepositorySource,
   type GitHubApiRepository
 } from './github-api-repository'
 import { githubRepoIdentityKey } from '../../shared/github-repository-identity-key'
@@ -302,7 +302,7 @@ export async function getPullRequestPushTarget(
 ): Promise<PullRequestPushTarget | null> {
   const context = githubRepoContext(repoPath, connectionId, localGitOptions)
   const ghOptions = ghRepoExecOptions(context)
-  const { candidates } = await resolvePRRepositoryCandidates(
+  const { candidates } = await resolveGitHubApiRepositoryCandidates(
     repoPath,
     connectionId,
     localGitOptions
@@ -318,9 +318,7 @@ export async function getPullRequestPushTarget(
       try {
         const { stdout } = await ghExecFileAsync(
           ['api', `repos/${candidate.owner}/${candidate.repo}/pulls/${prNumber}`],
-          {
-            ...ghOptions
-          }
+          { ...ghOptions, ...githubHostExecOptions(candidate) }
         )
         prStdout = stdout
         break
@@ -337,7 +335,12 @@ export async function getPullRequestPushTarget(
     if (!prStdout) {
       return null
     }
-    const origin = await getOwnerRepoForRemote(repoPath, 'origin', connectionId, localGitOptions)
+    const origin = await getGitHubApiRepositoryForRemote(
+      repoPath,
+      'origin',
+      connectionId,
+      localGitOptions
+    )
     const pr = JSON.parse(prStdout) as {
       maintainer_can_modify?: boolean
       head?: {
@@ -1096,10 +1099,8 @@ async function resolvePrWorkItemSource(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<ResolvedPrWorkItemSource> {
   const [originCandidate, upstreamCandidate] = await Promise.all([
-    // Why: this caller combines both remotes itself, so it needs origin
-    // specifically (getOwnerRepo is upstream-first since #7331).
-    getOwnerRepoForRemote(repoPath, 'origin', connectionId, localGitOptions),
-    getOwnerRepoForRemote(repoPath, 'upstream', connectionId, localGitOptions)
+    getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions),
+    getGitHubApiRepositoryForRemote(repoPath, 'upstream', connectionId, localGitOptions)
   ])
   const source =
     preference === 'upstream' ? (upstreamCandidate ?? originCandidate) : originCandidate
@@ -1170,12 +1171,15 @@ async function listRecentWorkItems(
     // side, matching the parent design doc's partial-failure rule (§2).
     const [issuesSettled, prsSettled] = await Promise.allSettled([
       issueOwnerRepo
-        ? ghExecFileAsync(issueRequest.args, ghOptions)
+        ? ghExecFileAsync(issueRequest.args, {
+            ...ghOptions,
+            ...githubHostExecOptions(issueOwnerRepo)
+          })
         : requiresExplicitRepo
           ? Promise.resolve({ stdout: '[]' })
           : ghCwdResolvedExec(repoContext, issueRequest.args, ghOptions),
       prOwnerRepo
-        ? ghExecFileAsync(prRequest.args, ghOptions)
+        ? ghExecFileAsync(prRequest.args, { ...ghOptions, ...githubHostExecOptions(prOwnerRepo) })
         : requiresExplicitRepo
           ? Promise.resolve({ stdout: '[]' })
           : ghCwdResolvedExec(repoContext, prRequest.args, ghOptions)
@@ -1203,7 +1207,10 @@ async function listRecentWorkItems(
       prs = (JSON.parse(prsSettled.value.stdout) as Record<string, unknown>[])
         .slice(prRequest.offset, prRequest.offset + limit)
         .map((item) => mapPullRequestWorkItem(item, prOwnerRepo))
-      prs = await hydrateWorkItemRepositoryMergeMetadata(prs, prOwnerRepo, ghOptions)
+      prs = await hydrateWorkItemRepositoryMergeMetadata(prs, prOwnerRepo, {
+        ...ghOptions,
+        ...githubHostExecOptions(prOwnerRepo)
+      })
     } else {
       // Why: PR-side failures must preserve the pre-diff behavior of
       // Promise.all by re-throwing so the rejection propagates up through
@@ -1298,7 +1305,10 @@ async function listQueriedWorkItems(
     })
     try {
       const { stdout } = issueOwnerRepo
-        ? await ghExecFileAsync(request.args, ghOptions)
+        ? await ghExecFileAsync(request.args, {
+            ...ghOptions,
+            ...githubHostExecOptions(issueOwnerRepo)
+          })
         : await ghCwdResolvedExec(repoContext, request.args, ghOptions)
       const items = (JSON.parse(stdout) as Record<string, unknown>[])
         .filter((item) => !('pull_request' in item))
@@ -1332,12 +1342,18 @@ async function listQueriedWorkItems(
     })
     try {
       const { stdout } = prOwnerRepo
-        ? await ghExecFileAsync(request.args, ghOptions)
+        ? await ghExecFileAsync(request.args, {
+            ...ghOptions,
+            ...githubHostExecOptions(prOwnerRepo)
+          })
         : await ghCwdResolvedExec(repoContext, request.args, ghOptions)
       const mapped = (JSON.parse(stdout) as Record<string, unknown>[])
         .slice(request.offset, request.offset + limit)
         .map((item) => mapPullRequestWorkItem(item, prOwnerRepo))
-      const hydrated = await hydrateWorkItemRepositoryMergeMetadata(mapped, prOwnerRepo, ghOptions)
+      const hydrated = await hydrateWorkItemRepositoryMergeMetadata(mapped, prOwnerRepo, {
+        ...ghOptions,
+        ...githubHostExecOptions(prOwnerRepo)
+      })
       successfulRequestCount += 1
       if (query.state === 'closed') {
         return hydrated.filter((item) => item.state !== 'merged')
@@ -1392,7 +1408,7 @@ export async function listWorkItems(
     }
   }
   const [issueResolved, prResolved] = await Promise.all([
-    resolveIssueSource(repoPath, preference, connectionId, localGitOptions),
+    resolveIssueGitHubApiRepositorySource(repoPath, preference, connectionId, localGitOptions),
     resolvePrWorkItemSource(repoPath, preference, connectionId, localGitOptions)
   ])
   const issueOwnerRepo = issueResolved.source
@@ -1500,7 +1516,10 @@ async function countWorkItemsForQuery(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<number> {
   const searchQ = buildSearchQueryString(ownerRepo, query)
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   const { stdout } = await ghExecFileAsync(
     [
       'api',
@@ -1557,7 +1576,7 @@ export async function countWorkItems(
     return 0
   }
   const [issueResolved, prResolved] = await Promise.all([
-    resolveIssueSource(repoPath, preference, connectionId, localGitOptions),
+    resolveIssueGitHubApiRepositorySource(repoPath, preference, connectionId, localGitOptions),
     resolvePrWorkItemSource(repoPath, preference, connectionId, localGitOptions)
   ])
   const issueOwnerRepo = issueResolved.source
@@ -1654,15 +1673,11 @@ export async function getRepoSlug(
   repoPath: string,
   connectionId?: string | null,
   options: HostedReviewExecutionOptions = {}
-): Promise<{ owner: string; repo: string } | null> {
-  // Why: the slug is the checkout's own identity (renderer display, icon
-  // autodetect), so it must stay origin-based — getOwnerRepo became
-  // upstream-first for PR reads in #7331.
-  return getOwnerRepoForRemote(
+): Promise<GitHubApiRepository | null> {
+  return getOriginGitHubApiRepository(
     repoPath,
-    'origin',
     connectionId,
-    ...hostedReviewLocalGitOptionArgs(options)
+    getHostedReviewLocalGitOptions(options)
   )
 }
 
@@ -1681,29 +1696,30 @@ export async function getRepoUpstream(
 ): Promise<OwnerRepo | null> {
   const localGitArgs = hostedReviewLocalGitOptionArgs(options)
   const localGitOptions = localGitArgs[0] ?? {}
-  // Why: must be origin specifically — the fork-parent fast-path below compares
-  // it against the upstream remote (getOwnerRepo is upstream-first since #7331).
-  const origin = await getOwnerRepoForRemote(repoPath, 'origin', connectionId, ...localGitArgs)
+  const origin = await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
   if (!origin) {
     return null
   }
-  const upstreamRemote = await getOwnerRepoForRemote(
+  const upstreamRemote = await getGitHubApiRepositoryForRemote(
     repoPath,
     'upstream',
     connectionId,
-    ...localGitArgs
+    localGitOptions
   )
   if (upstreamRemote && !sameOwnerRepo(upstreamRemote, origin)) {
     return upstreamRemote
   }
   await acquire()
   try {
+    // Why: positional slugs bypass the runner's --repo qualifier, so the slug
+    // itself must carry the Enterprise host.
     const { stdout } = await ghExecFileAsync(
-      ['repo', 'view', `${origin.owner}/${origin.repo}`, '--json', 'isFork,parent'],
+      ['repo', 'view', githubRepositorySlugArg(origin), '--json', 'isFork,parent'],
       // Why: best-effort fork lookup runs at add-time; cap latency so a stalled
       // gh process can't hold up repo creation.
       {
         ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+        ...githubHostExecOptions(origin),
         timeout: 10_000
       }
     )
@@ -1713,7 +1729,10 @@ export async function getRepoUpstream(
     }
     const owner = data.parent?.owner?.login
     const repo = data.parent?.name
-    return data.isFork && owner && repo ? { owner, repo } : null
+    // Why: a fork parent lives on the same server as the fork.
+    return data.isFork && owner && repo
+      ? { owner, repo, ...(origin.host ? { host: origin.host } : {}) }
+      : null
   } catch {
     return null
   } finally {
@@ -2020,7 +2039,7 @@ export async function getWorkItem(
     if (type === 'issue') {
       return await fetchIssueWorkItem(
         repoPath,
-        await getIssueOwnerRepo(repoPath, connectionId, localGitOptions),
+        await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions),
         number,
         connectionId,
         localGitOptions
@@ -2029,7 +2048,7 @@ export async function getWorkItem(
     if (type === 'pr') {
       return await fetchPullRequestWorkItem(
         repoPath,
-        await getOwnerRepo(repoPath, connectionId, localGitOptions),
+        await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions),
         number,
         connectionId,
         localGitOptions
@@ -2039,7 +2058,7 @@ export async function getWorkItem(
     try {
       const issue = await fetchIssueWorkItem(
         repoPath,
-        await getIssueOwnerRepo(repoPath, connectionId, localGitOptions),
+        await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions),
         number,
         connectionId,
         localGitOptions
@@ -2060,7 +2079,7 @@ export async function getWorkItem(
     }
     return await fetchPullRequestWorkItem(
       repoPath,
-      await getOwnerRepo(repoPath, connectionId, localGitOptions),
+      await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions),
       number,
       connectionId,
       localGitOptions
@@ -2964,10 +2983,11 @@ export async function getPRForBranch(
 // Why: the exact-linked fallback (`gh pr view` with no resolved repo candidates)
 // returns dataRepo=null, which would leave the merged-PR membership probe unable
 // to run. Derive the PR's own repo from its web URL so a diverged merged linked
-// PR can still be confirmed and cleared. Host-agnostic to cover GitHub Enterprise.
+// PR can still be confirmed and cleared. The URL's hostname carries the identity
+// for GitHub Enterprise, so the probe targets the PR's actual server.
 function ownerRepoFromPullRequestUrl(url: string): OwnerRepo | null {
-  const match = url.match(/^https?:\/\/[^/\s]+\/([^/\s]+)\/([^/\s]+)\/pull\/\d+/)
-  return match ? { owner: match[1], repo: match[2] } : null
+  const match = url.match(/^https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/pull\/\d+/)
+  return match ? { owner: match[2], repo: match[3], host: match[1] } : null
 }
 
 export async function getPRForBranchOutcome(
@@ -2992,10 +3012,10 @@ export async function getPRForBranchOutcome(
 
   await acquire()
   try {
-    const { candidates, headRepo } = await resolvePRRepositoryCandidates(
+    const { candidates, headRepo } = await resolveGitHubApiRepositoryCandidates(
       repoPath,
       connectionId,
-      ...localGitArgs
+      localGitOptions
     )
     let data: PullRequestLookupData | null = null
     let dataRepo: OwnerRepo | null = null
@@ -3114,11 +3134,11 @@ export async function getPRForBranchOutcome(
         )
         if (upstreamBranch) {
           const upstreamHeadRepo =
-            (await getOwnerRepoForRemote(
+            (await getGitHubApiRepositoryForRemote(
               repoPath,
               upstreamBranch.remoteName,
               connectionId,
-              ...localGitArgs
+              localGitOptions
             )) ?? headRepo
           if (
             upstreamHeadRepo &&

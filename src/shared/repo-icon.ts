@@ -31,10 +31,11 @@ export function faviconUrlFromWebsite(rawUrl: string): string | null {
 
 // Why: the GitHub owner avatar is the default repo icon, built the same way in
 // main (auto-detect) and renderer (picker); keep the URL and label in one place.
-export function githubAvatarIcon(slug: { owner: string; repo: string }): RepoIcon {
+export function githubAvatarIcon(slug: { owner: string; repo: string; host?: string }): RepoIcon {
+  // Why: GHES serves the same /<login>.png avatar convention as github.com.
   return {
     type: 'image',
-    src: `https://github.com/${encodeURIComponent(slug.owner)}.png?size=64`,
+    src: `https://${slug.host ?? 'github.com'}/${encodeURIComponent(slug.owner)}.png?size=64`,
     source: 'github',
     label: `${slug.owner}/${slug.repo}`
   }
