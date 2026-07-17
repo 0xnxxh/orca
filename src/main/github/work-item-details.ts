@@ -15,24 +15,19 @@ import {
   ghExecFileAsync,
   acquire,
   release,
-  getIssueOwnerRepo,
   ghRepoExecOptions,
   githubRepoContext,
   type LocalGitExecOptions
 } from './gh-utils'
 import { getWorkItem, getWorkItemByOwnerRepo, getPRChecks, getPRComments } from './client'
 import {
+  getIssueGitHubApiRepository,
   getOriginGitHubApiRepository,
   githubHostExecOptions,
   isGitHubDotComRepository,
   type GitHubApiRepository
 } from './github-api-repository'
-import {
-  noteRateLimitSpend,
-  noteRepositoryRateLimitSpend,
-  rateLimitGuard,
-  repositoryRateLimitGuard
-} from './rate-limit'
+import { noteRepositoryRateLimitSpend, repositoryRateLimitGuard } from './rate-limit'
 import { getPRReviewCommentLineNumbersFromPatch } from './pr-review-comment-lines'
 import { isMaxBufferOverflowError } from '../git/max-buffer-overflow'
 
@@ -330,6 +325,7 @@ async function getIssueTimelineItems(
 async function getIssueDetailsViaGraphQL(
   repoPath: string,
   issueNumber: number,
+  ownerRepo: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{
@@ -341,20 +337,18 @@ async function getIssueDetailsViaGraphQL(
   participants: GitHubAssignableUser[]
   timelineItems: GitHubIssueTimelineItem[]
 } | null> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getIssueOwnerRepo(
-    repoPath,
-    connectionId,
-    ...localGitOptionArgs(localGitOptions)
-  )
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   if (!ownerRepo) {
     return null
   }
-  if (rateLimitGuard('graphql').blocked) {
+  if (repositoryRateLimitGuard(ownerRepo, 'graphql', localGitOptions).blocked) {
     return null
   }
   try {
-    noteRateLimitSpend('graphql')
+    noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, localGitOptions)
     const { stdout } = await ghExecFileAsync(
       [
         'api',
@@ -686,6 +680,7 @@ function mergePRFileViewedStates(
 async function getIssueBodyAndComments(
   repoPath: string,
   issueNumber: number,
+  ownerRepo: GitHubApiRepository | null,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{
@@ -694,12 +689,10 @@ async function getIssueBodyAndComments(
   assignees: string[]
   timelineItems: GitHubIssueTimelineItem[]
 }> {
-  const ghOptions = ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-  const ownerRepo = await getIssueOwnerRepo(
-    repoPath,
-    connectionId,
-    ...localGitOptionArgs(localGitOptions)
-  )
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
   try {
     if (ownerRepo) {
       const [issueResult, commentsResult, timelineItems] = await Promise.all([
@@ -748,6 +741,11 @@ async function getIssueBodyAndComments(
       const assignees = (issue.assignees ?? []).map((a) => a.login)
       return { body: issue.body ?? '', comments, assignees, timelineItems }
     }
+    if (connectionId) {
+      // Why: connection-backed gh has no cwd. A bare issue lookup could honor
+      // process GH_REPO/GH_HOST and return an unrelated repository's issue.
+      return { body: '', comments: [], assignees: [], timelineItems: [] }
+    }
     // Fallback: non-GitHub remote
     const { stdout } = await ghExecFileAsync(
       ['issue', 'view', String(issueNumber), '--json', 'body,comments,assignees'],
@@ -787,11 +785,8 @@ async function getWorkItemParticipants(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubAssignableUser[]> {
-  // Why: fork work items live upstream, so resolve owner/repo with the same upstream-first resolvers as body/comments (#7331).
-  const ownerRepo =
-    item.type === 'issue'
-      ? await getIssueOwnerRepo(repoPath, connectionId, ...localGitOptionArgs(localGitOptions))
-      : resolvedRepository
+  // Why: reuse the fan-out's repository identity so details cannot drift across hosts.
+  const ownerRepo = resolvedRepository
   if (!ownerRepo) {
     return []
   }
@@ -1039,6 +1034,14 @@ export async function getWorkItemDetails(
   if (connectionId && type !== 'issue' && !originApiRepository) {
     return null
   }
+  const issueApiRepository =
+    type === 'issue'
+      ? await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions)
+      : null
+  // Why: cwd-less SSH issue lookups must not fall through to a same-number github.com issue.
+  if (connectionId && type === 'issue' && !issueApiRepository) {
+    return null
+  }
   // Why: connection-backed GHES repos need a host-qualified identity during the initial lookup.
   const useExplicitEnterpriseRepository =
     type === 'pr' && originApiRepository !== null && !isGitHubDotComRepository(originApiRepository)
@@ -1073,6 +1076,12 @@ export async function getWorkItemDetails(
     return null
   }
 
+  const resolvedRepository =
+    item.type === 'issue'
+      ? (issueApiRepository ??
+        (await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions)))
+      : (item.prRepo ?? originApiRepository)
+
   await acquire()
   try {
     if (item.type === 'issue') {
@@ -1080,6 +1089,7 @@ export async function getWorkItemDetails(
       const collapsed = await getIssueDetailsViaGraphQL(
         repoPath,
         item.number,
+        resolvedRepository,
         connectionId,
         localGitOptions
       )
@@ -1099,15 +1109,21 @@ export async function getWorkItemDetails(
       }
       // Fallback: fetch body/comments and participants in parallel.
       const [{ body, comments, assignees, timelineItems }, participants] = await Promise.all([
-        getIssueBodyAndComments(repoPath, item.number, connectionId, localGitOptions),
-        getWorkItemParticipants(repoPath, item, null, connectionId, localGitOptions)
+        getIssueBodyAndComments(
+          repoPath,
+          item.number,
+          resolvedRepository,
+          connectionId,
+          localGitOptions
+        ),
+        getWorkItemParticipants(repoPath, item, resolvedRepository, connectionId, localGitOptions)
       ])
       const mentionParticipants = await getMentionParticipants(
         repoPath,
         item,
         comments,
         participants,
-        null,
+        resolvedRepository,
         connectionId,
         localGitOptions
       )
@@ -1123,23 +1139,23 @@ export async function getWorkItemDetails(
 
     // PR: fetch metadata + comments + files + viewed states + participants in parallel.
     const [metadata, comments, files, viewedStates, participants] = await Promise.all([
-      getPRMetadata(repoPath, item.number, originApiRepository, connectionId, localGitOptions),
+      getPRMetadata(repoPath, item.number, resolvedRepository, connectionId, localGitOptions),
       getPRComments(
         repoPath,
         item.number,
-        { prRepo: originApiRepository },
+        { prRepo: resolvedRepository },
         connectionId,
         ...localGitOptionArgs(localGitOptions)
       ),
-      getPRFiles(repoPath, item.number, originApiRepository, connectionId, localGitOptions),
+      getPRFiles(repoPath, item.number, resolvedRepository, connectionId, localGitOptions),
       getPRFileViewedStates(
         repoPath,
         item.number,
-        originApiRepository,
+        resolvedRepository,
         connectionId,
         localGitOptions
       ),
-      getWorkItemParticipants(repoPath, item, originApiRepository, connectionId, localGitOptions)
+      getWorkItemParticipants(repoPath, item, resolvedRepository, connectionId, localGitOptions)
     ])
 
     // Why: mention-author lookup and checks are independent, so run them in parallel.
@@ -1149,7 +1165,7 @@ export async function getWorkItemDetails(
         item,
         comments,
         participants,
-        originApiRepository,
+        resolvedRepository,
         connectionId,
         localGitOptions
       ),
@@ -1157,7 +1173,7 @@ export async function getWorkItemDetails(
         repoPath,
         item.number,
         metadata.headSha,
-        originApiRepository,
+        resolvedRepository,
         connectionId,
         localGitOptions
       )
