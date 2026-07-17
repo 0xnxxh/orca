@@ -239,13 +239,14 @@ describe('getWorkItemDetails', () => {
       }
     ])
     expect(details?.participants?.[0]?.login).toBe('issue-author')
+    // Why: issue identities resolve hosted, pinned to github.com for dotcom.
     expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
-      { owner: 'acme', repo: 'widgets' },
+      { owner: 'acme', repo: 'widgets', host: 'github.com' },
       'graphql',
       {}
     )
     expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
-      { owner: 'acme', repo: 'widgets' },
+      { owner: 'acme', repo: 'widgets', host: 'github.com' },
       'graphql',
       1,
       {}
@@ -266,7 +267,7 @@ describe('getWorkItemDetails', () => {
       updatedAt: '2026-04-01T00:00:00Z',
       author: 'issue-author'
     })
-    getIssueOwnerRepoMock.mockResolvedValue(repository)
+    getOwnerRepoForRemoteMock.mockResolvedValue(repository)
     ghExecFileAsyncMock
       .mockResolvedValueOnce({
         stdout: JSON.stringify({
@@ -287,13 +288,14 @@ describe('getWorkItemDetails', () => {
     const details = await getWorkItemDetails('/repo-root', 923, 'issue', null, localGitOptions)
 
     expect(details?.body).toBe('WSL issue body')
+    // Why: issue identities resolve hosted, pinned to github.com for dotcom.
     expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
-      repository,
+      { ...repository, host: 'github.com' },
       'graphql',
       localGitOptions
     )
     expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
-      repository,
+      { ...repository, host: 'github.com' },
       'graphql',
       1,
       localGitOptions
@@ -620,12 +622,11 @@ describe('getWorkItemDetails', () => {
   })
 
   it('does not query the default host when an SSH issue repository is unresolved', async () => {
-    getOwnerRepoMock.mockResolvedValue(null)
-    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(null)
+    getWorkItemMock.mockResolvedValue(null)
 
     await expect(getWorkItemDetails('/remote/repo', 7, 'issue', 'ssh-1')).resolves.toBeNull()
 
-    expect(getWorkItemMock).not.toHaveBeenCalled()
+    expect(getWorkItemMock).toHaveBeenCalledWith('/remote/repo', 7, 'issue', 'ssh-1')
     expect(getWorkItemByOwnerRepoMock).not.toHaveBeenCalled()
     expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })
@@ -712,7 +713,7 @@ describe('getWorkItemDetails', () => {
   })
 
   it('uses the GitHub Enterprise host for SSH-backed PR work item details', async () => {
-    getWorkItemByOwnerRepoMock.mockResolvedValueOnce({
+    getWorkItemMock.mockResolvedValueOnce({
       id: 'pr:7',
       type: 'pr',
       number: 7,
@@ -721,13 +722,8 @@ describe('getWorkItemDetails', () => {
       url: 'https://github.acme-corp.com/team/orca/pull/7',
       labels: [],
       updatedAt: '2026-07-16T00:00:00Z',
-      author: 'pr-author'
-    })
-    getOwnerRepoMock.mockResolvedValue(null)
-    getEnterpriseGitHubRepoSlugMock.mockResolvedValue({
-      owner: 'team',
-      repo: 'orca',
-      host: 'github.acme-corp.com'
+      author: 'pr-author',
+      prRepo: { owner: 'team', repo: 'orca', host: 'github.acme-corp.com' }
     })
     getPRCommentsMock.mockResolvedValue([])
     getPRChecksMock.mockResolvedValue([])
@@ -802,15 +798,8 @@ describe('getWorkItemDetails', () => {
         viewerViewedState: 'VIEWED'
       }
     ])
-    expect(getWorkItemMock).not.toHaveBeenCalled()
-    expect(getWorkItemByOwnerRepoMock).toHaveBeenCalledWith(
-      '/remote/repo',
-      { owner: 'team', repo: 'orca', host: 'github.acme-corp.com' },
-      7,
-      'pr',
-      'ssh-1'
-    )
-    expect(getEnterpriseGitHubRepoSlugMock).toHaveBeenCalledTimes(1)
+    expect(getWorkItemMock).toHaveBeenCalledWith('/remote/repo', 7, 'pr', 'ssh-1')
+    expect(getWorkItemByOwnerRepoMock).not.toHaveBeenCalled()
     expect(getPRCommentsMock).toHaveBeenCalledWith(
       '/remote/repo',
       7,
@@ -838,38 +827,21 @@ describe('getWorkItemDetails', () => {
   })
 
   it('does not fall back to the default host after an Enterprise PR lookup fails', async () => {
-    getOwnerRepoMock.mockResolvedValue(null)
-    getEnterpriseGitHubRepoSlugMock.mockResolvedValue({
-      owner: 'team',
-      repo: 'orca',
-      host: 'github.acme-corp.com'
-    })
-    getWorkItemByOwnerRepoMock.mockResolvedValue(null)
-    getWorkItemMock.mockResolvedValue({
-      id: 'pr:7',
-      type: 'pr',
-      number: 7,
-      title: 'Wrong github.com PR',
-      state: 'open',
-      url: 'https://github.com/team/orca/pull/7',
-      labels: [],
-      updatedAt: '2026-07-16T00:00:00Z',
-      author: 'wrong-author'
-    })
+    getWorkItemMock.mockResolvedValue(null)
 
     await expect(getWorkItemDetails('/remote/repo', 7, 'pr', 'ssh-1')).resolves.toBeNull()
 
-    expect(getWorkItemByOwnerRepoMock).toHaveBeenCalledTimes(1)
-    expect(getWorkItemMock).not.toHaveBeenCalled()
+    expect(getWorkItemMock).toHaveBeenCalledTimes(1)
+    expect(getWorkItemByOwnerRepoMock).not.toHaveBeenCalled()
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })
 
   it('does not query the default host when an SSH PR repository is unresolved', async () => {
-    getOwnerRepoMock.mockResolvedValue(null)
-    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(null)
+    getWorkItemMock.mockResolvedValue(null)
 
     await expect(getWorkItemDetails('/remote/repo', 7, 'pr', 'ssh-1')).resolves.toBeNull()
 
-    expect(getWorkItemMock).not.toHaveBeenCalled()
+    expect(getWorkItemMock).toHaveBeenCalledWith('/remote/repo', 7, 'pr', 'ssh-1')
     expect(getWorkItemByOwnerRepoMock).not.toHaveBeenCalled()
     expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })

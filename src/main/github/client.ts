@@ -856,6 +856,12 @@ async function fetchIssueWorkItem(
     return mapIssueWorkItem(item)
   }
 
+  if (connectionId) {
+    // Why: SSH-backed gh has no repository cwd. A bare lookup could honor the
+    // local process GH_REPO/GH_HOST and return an unrelated repository item.
+    return null
+  }
+
   const { stdout } = await ghExecFileAsync(
     ['issue', 'view', String(number), '--json', 'number,title,state,url,labels,updatedAt,author'],
     ghOptions
@@ -906,7 +912,7 @@ async function fetchPullRequestWorkItem(
   number: number,
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
-): Promise<MainWorkItem> {
+): Promise<MainWorkItem | null> {
   const ghOptions = {
     ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
     ...githubHostExecOptions(ownerRepo)
@@ -960,11 +966,50 @@ async function fetchPullRequestWorkItem(
     }
   }
 
+  if (connectionId) {
+    // Why: connection-backed gh cannot infer a repository from cwd. Refuse a
+    // bare call so process-level GH_REPO/GH_HOST cannot redirect the lookup.
+    return null
+  }
+
   const { stdout } = await ghExecFileAsync(
     ['pr', 'view', String(number), '--json', WORK_ITEM_PR_DETAIL_JSON_FIELDS],
     ghOptions
   )
   return mapPullRequestWorkItem(JSON.parse(stdout) as Record<string, unknown>)
+}
+
+async function fetchPullRequestWorkItemFromCandidates(
+  repoPath: string,
+  number: number,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<MainWorkItem | null> {
+  const { candidates } = await resolveGitHubApiRepositoryCandidates(
+    repoPath,
+    connectionId,
+    localGitOptions
+  )
+  if (candidates.length === 0) {
+    return fetchPullRequestWorkItem(repoPath, null, number, connectionId, localGitOptions)
+  }
+  for (const candidate of candidates) {
+    try {
+      return await fetchPullRequestWorkItem(
+        repoPath,
+        candidate,
+        number,
+        connectionId,
+        localGitOptions
+      )
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (classifyGhError(message).type !== 'not_found') {
+        throw err
+      }
+    }
+  }
+  return null
 }
 
 type WorkItemListRequest = {
@@ -2041,9 +2086,8 @@ export async function getWorkItem(
       )
     }
     if (type === 'pr') {
-      return await fetchPullRequestWorkItem(
+      return await fetchPullRequestWorkItemFromCandidates(
         repoPath,
-        await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions),
         number,
         connectionId,
         localGitOptions
@@ -2072,9 +2116,8 @@ export async function getWorkItem(
         throw err
       }
     }
-    return await fetchPullRequestWorkItem(
+    return await fetchPullRequestWorkItemFromCandidates(
       repoPath,
-      await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions),
       number,
       connectionId,
       localGitOptions
