@@ -19,6 +19,7 @@ import type { Repo } from '../../../shared/types'
 import type { GlobalSettings } from '../../../shared/types'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { settingsForRepoOwner, slugByRepoId, slugCacheKey, type SlugIndex } from './repo-slug-cache'
+import { githubRepoIdentityKey } from '../../../shared/github-repository-identity-key'
 
 export { lookupReposBySlugFromCache } from './repo-slug-cache'
 
@@ -50,7 +51,7 @@ async function resolveRepoSlug(
     const target = getActiveRuntimeTarget(settings)
     const result =
       target.kind === 'environment'
-        ? await callRuntimeRpc<{ owner: string; repo: string } | null>(
+        ? await callRuntimeRpc<{ owner: string; repo: string; host?: string } | null>(
             target,
             'github.repoSlug',
             { repo: repo.id },
@@ -61,7 +62,7 @@ async function resolveRepoSlug(
       slugByRepoId.set(cacheKey, null)
       return null
     }
-    const slug = `${result.owner}/${result.repo}`.toLowerCase()
+    const slug = githubRepoIdentityKey(result)
     slugByRepoId.set(cacheKey, slug)
     return slug
   } catch {
@@ -104,7 +105,7 @@ async function buildIndex(
 }
 
 export type RepoSlugIndexState = {
-  lookupSlug: (slug: string | null | undefined) => Repo[]
+  lookupSlug: (slug: string | null | undefined, host?: string) => Repo[]
   ready: boolean
 }
 
@@ -134,11 +135,12 @@ export function useRepoSlugIndex(): RepoSlugIndexState {
 
   return useMemo(
     () => ({
-      lookupSlug: (slug: string | null | undefined): Repo[] => {
-        if (!slug) {
+      lookupSlug: (slug: string | null | undefined, host?: string): Repo[] => {
+        const [owner, repo] = slug?.split('/') ?? []
+        if (!owner || !repo) {
           return []
         }
-        return index.get(slug.toLowerCase()) ?? []
+        return index.get(githubRepoIdentityKey({ owner, repo, host })) ?? []
       },
       ready
     }),

@@ -4,6 +4,7 @@
 import type { GlobalSettings, Repo } from '../../../shared/types'
 import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { getSettingsForRepoRuntimeOwner } from './repo-runtime-owner'
+import { githubRepoIdentityKey } from '../../../shared/github-repository-identity-key'
 
 /** Lowercased `owner/repo` → Repo[]. */
 export type SlugIndex = Map<string, Repo[]>
@@ -34,16 +35,18 @@ export function settingsForRepoOwner(
 export function lookupReposBySlugFromCache(
   repos: readonly Repo[],
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined,
-  slug: string | null | undefined
+  slug: string | null | undefined,
+  host?: string
 ): Repo[] {
-  const target = slug?.toLowerCase()
-  if (!target) {
+  const [owner, repo] = slug?.split('/') ?? []
+  if (!owner || !repo) {
     return []
   }
+  const target = githubRepoIdentityKey({ owner, repo, host })
   const matched: Repo[] = []
   for (const repo of repos) {
     const cacheKey = slugCacheKey(repo.id, settingsForRepoOwner(repo, settings))
-    if (slugByRepoId.get(cacheKey)?.toLowerCase() === target) {
+    if (slugByRepoId.get(cacheKey) === target) {
       matched.push(repo)
     }
   }

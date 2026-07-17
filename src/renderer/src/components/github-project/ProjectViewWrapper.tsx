@@ -63,6 +63,10 @@ import {
 } from './project-visible-table-cache'
 import { translate } from '@/i18n/i18n'
 import { buildTaskSourceContextFromRepo } from '../../../../shared/task-source-context'
+import {
+  githubProjectHost,
+  githubProjectIdentityKey
+} from '../../../../shared/github-project-identity'
 
 type Props = {
   selectedRepoIds: ReadonlySet<string>
@@ -72,7 +76,12 @@ const ORCA_FEATURE_REQUEST_URL = 'https://github.com/stablyai/orca/issues/new'
 
 function listProjectViewsForRuntime(
   settings: Parameters<typeof getActiveRuntimeTarget>[0],
-  args: { owner: string; ownerType: 'organization' | 'user'; projectNumber: number }
+  args: {
+    owner: string
+    ownerType: 'organization' | 'user'
+    projectNumber: number
+    host?: string
+  }
 ): Promise<ListProjectViewsResult> {
   const target = getActiveRuntimeTarget(settings)
   return target.kind === 'environment'
@@ -146,6 +155,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
             owner: selection.owner,
             ownerType: selection.ownerType,
             projectNumber: selection.projectNumber,
+            host: githubProjectHost(selection.host),
             ...(selection.viewId ? { viewId: selection.viewId } : {}),
             ...(queryOverride !== undefined ? { queryOverride } : {})
           },
@@ -180,7 +190,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
     if (!activeProject) {
       return
     }
-    const key = `${activeProject.ownerType}:${activeProject.owner}:${activeProject.number}`
+    const key = githubProjectIdentityKey(activeProject)
     const viewId = lastViewByProject[key]?.viewId
     if (!viewId) {
       return
@@ -193,7 +203,8 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       activeProject.number,
       viewId,
       queryOverride,
-      projectViewSourceScope
+      projectViewSourceScope,
+      activeProject.host
     )
     if (projectViewCache[cacheKey]?.data) {
       return
@@ -203,6 +214,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
         owner: activeProject.owner,
         ownerType: activeProject.ownerType,
         projectNumber: activeProject.number,
+        host: githubProjectHost(activeProject.host),
         viewId
       },
       false,
@@ -224,7 +236,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
     if (!activeProject) {
       return
     }
-    const projectKey = `${projectViewSourceScope}:${activeProject.ownerType}:${activeProject.owner}:${activeProject.number}`
+    const projectKey = `${projectViewSourceScope}:${githubProjectIdentityKey(activeProject)}`
     if (viewListByProject[projectKey]) {
       return
     }
@@ -232,7 +244,8 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
     void listProjectViewsForRuntime(settings, {
       owner: activeProject.owner,
       ownerType: activeProject.ownerType,
-      projectNumber: activeProject.number
+      projectNumber: activeProject.number,
+      host: githubProjectHost(activeProject.host)
     })
       .then((res) => {
         if (cancelled) {
@@ -262,7 +275,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       if (!activeProject) {
         return
       }
-      const projectKey = `${activeProject.ownerType}:${activeProject.owner}:${activeProject.number}`
+      const projectKey = githubProjectIdentityKey(activeProject)
       const current = lastViewByProject[projectKey]?.viewId
       if (current === viewId) {
         return
@@ -292,6 +305,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
         owner: activeProject.owner,
         ownerType: activeProject.ownerType,
         projectNumber: activeProject.number,
+        host: githubProjectHost(activeProject.host),
         viewId
       })
     },
@@ -302,7 +316,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
     if (!activeProject) {
       return null
     }
-    const key = `${activeProject.ownerType}:${activeProject.owner}:${activeProject.number}`
+    const key = githubProjectIdentityKey(activeProject)
     const viewId = lastViewByProject[key]?.viewId
     if (!viewId) {
       return null
@@ -318,7 +332,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
     if (!activeProject) {
       return null
     }
-    const key = `${activeProject.ownerType}:${activeProject.owner}:${activeProject.number}`
+    const key = githubProjectIdentityKey(activeProject)
     const viewId = lastViewByProject[key]?.viewId
     if (!viewId) {
       return null
@@ -329,7 +343,8 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       activeProject.number,
       viewId,
       currentAppliedOverride,
-      projectViewSourceScope
+      projectViewSourceScope,
+      activeProject.host
     )
   }, [activeProject, lastViewByProject, currentAppliedOverride, projectViewSourceScope])
 
@@ -504,6 +519,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       return {
         owner,
         repo,
+        host: githubProjectHost(table.project.host),
         number: row.content.number,
         type: row.itemType === 'PULL_REQUEST' ? 'pr' : 'issue',
         projectId: table.project.id,
@@ -537,6 +553,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       const resolution = resolveSelectedProjectRowRepo({
         row,
         lookupSlug,
+        host: table.project.host,
         slugIndexReady,
         selectedRepoIds
       })
@@ -764,13 +781,15 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
                   owner: activeProject.owner,
                   ownerType: activeProject.ownerType,
                   number: activeProject.number,
+                  host: githubProjectHost(activeProject.host),
                   title: table.project.title
                 }
               : activeProject
                 ? {
                     owner: activeProject.owner,
                     ownerType: activeProject.ownerType,
-                    number: activeProject.number
+                    number: activeProject.number,
+                    host: githubProjectHost(activeProject.host)
                   }
                 : null
           }
@@ -790,7 +809,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
               if (!activeProject) {
                 return
               }
-              const key = `${activeProject.ownerType}:${activeProject.owner}:${activeProject.number}`
+              const key = githubProjectIdentityKey(activeProject)
               const viewId = lastViewByProject[key]?.viewId
               if (!viewId) {
                 return
@@ -812,6 +831,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
                   owner: activeProject.owner,
                   ownerType: activeProject.ownerType,
                   projectNumber: activeProject.number,
+                  host: githubProjectHost(activeProject.host),
                   viewId
                 },
                 true,
@@ -847,7 +867,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
                 if (!activeProject || !currentCacheKey) {
                   return
                 }
-                const key = `${activeProject.ownerType}:${activeProject.owner}:${activeProject.number}`
+                const key = githubProjectIdentityKey(activeProject)
                 const viewId = lastViewByProject[key]?.viewId
                 if (!viewId) {
                   return
@@ -857,6 +877,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
                     owner: activeProject.owner,
                     ownerType: activeProject.ownerType,
                     projectNumber: activeProject.number,
+                    host: githubProjectHost(activeProject.host),
                     viewId
                   },
                   true,
@@ -896,7 +917,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
 
       {activeProject
         ? (() => {
-            const projectKey = `${activeProject.ownerType}:${activeProject.owner}:${activeProject.number}`
+            const projectKey = githubProjectIdentityKey(activeProject)
             const scopedProjectKey = `${projectViewSourceScope}:${projectKey}`
             const views = viewListByProject[scopedProjectKey] ?? []
             const activeViewId = lastViewByProject[projectKey]?.viewId ?? null

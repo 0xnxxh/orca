@@ -12,6 +12,7 @@ import {
   type RateLimitBucketKind
 } from '../rate-limit'
 import type { GitHubProjectViewError } from '../../../shared/github-project-types'
+import { githubProjectHost } from '../../../shared/github-project-identity'
 import {
   classifyProjectError,
   driftError,
@@ -38,7 +39,7 @@ export type ProjectGhExecOptions = { cwd?: string; host?: string }
 // Why: owner/project-addressed calls carry only a host (no repo slug), so they
 // can't reuse githubHostExecOptions — mirror its host pinning for that shape.
 export function projectGhExecOptions(host: string | undefined): ProjectGhExecOptions {
-  return host ? { host } : {}
+  return { host: githubProjectHost(host) }
 }
 
 // ─── Slug validation ──────────────────────────────────────────────────
