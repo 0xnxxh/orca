@@ -41,16 +41,22 @@ export function githubPrRepoSlugParam(slug: GitHubPrRepoSlug): Record<string, st
 
 export type GitHubPrReadOutcome<T> = { ok: true; result: T } | { ok: false; error: string }
 
-// Why: `prRepo` is method-asymmetric (KTD3). These are the only github.* methods
-// whose host schema (SlugRepo on PullRequest/PullRequestChecks/PullRequestCheckDetails)
-// accepts it; the rest reject the key. Centralizing the allow-list keeps a fork's
-// prRepo from leaking into a schema that would reject it.
+// Why: `prRepo` remains method-asymmetric. Keep the RPC schema allow-list here
+// so fork/GHES identity reaches every PR-scoped read or mutation that accepts it.
 const METHODS_ACCEPTING_PR_REPO = new Set<string>([
   'github.prChecks',
   'github.prCheckDetails',
+  'github.rerunPRChecks',
+  'github.resolveReviewThread',
+  'github.setPRFileViewed',
+  'github.updatePRState',
+  'github.requestPRReviewers',
+  'github.removePRReviewers',
   'github.mergePR',
   'github.setPRAutoMerge',
-  'github.prComments'
+  'github.prComments',
+  'github.prFileContents',
+  'github.addPRReviewComment'
 ])
 
 // Why: only github.prChecks declares a `headSha` param (PullRequestCheckDetails

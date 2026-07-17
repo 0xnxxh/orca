@@ -58,7 +58,7 @@ export type SmartGitHubSubmitLookup = {
 
 const SMART_GITHUB_SUBMIT_LOOKUP_TTL_MS = 60_000
 const SMART_GITHUB_SUBMIT_LOOKUP_CACHE_MAX_ENTRIES = 128
-const GITHUB_ITEM_URL_RE = /https?:\/\/(?:www\.)?github\.com\/\S+/i
+const GITHUB_ITEM_URL_RE = /https?:\/\/[^\s/]+\/\S+/i
 const TRAILING_GITHUB_ITEM_URL_PUNCTUATION_RE = /[),.;\]}]+$/
 
 type SmartGitHubSubmitLookupCacheEntry = {

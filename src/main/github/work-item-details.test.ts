@@ -65,7 +65,8 @@ vi.mock('./client', () => ({
 
 vi.mock('./github-enterprise-repository', () => ({
   getEnterpriseGitHubRepoSlug: getEnterpriseGitHubRepoSlugMock,
-  getEnterpriseGitHubRepoSlugForRemote: getEnterpriseGitHubRepoSlugForRemoteMock
+  getEnterpriseGitHubRepoSlugForRemote: getEnterpriseGitHubRepoSlugForRemoteMock,
+  isGitHubHostAuthenticated: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('./rate-limit', () => ({
@@ -243,19 +244,19 @@ describe('getWorkItemDetails', () => {
     expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
       { owner: 'acme', repo: 'widgets', host: 'github.com' },
       'graphql',
-      {}
+      { cwd: '/repo-root', host: 'github.com' }
     )
     expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
       { owner: 'acme', repo: 'widgets', host: 'github.com' },
       'graphql',
       1,
-      {}
+      { cwd: '/repo-root', host: 'github.com' }
     )
   })
 
-  it('scopes collapsed issue GraphQL accounting to the selected WSL runtime', async () => {
+  it('scopes collapsed issue GraphQL accounting to an implicit WSL UNC runtime', async () => {
     const repository = { owner: 'acme', repo: 'widgets' }
-    const localGitOptions = { wslDistro: 'Ubuntu' }
+    const repoPath = String.raw`\\wsl.localhost\Ubuntu\home\me\widgets`
     getWorkItemMock.mockResolvedValueOnce({
       id: 'issue:923',
       type: 'issue',
@@ -285,24 +286,22 @@ describe('getWorkItemDetails', () => {
       })
       .mockResolvedValueOnce({ stdout: '' })
 
-    const details = await getWorkItemDetails('/repo-root', 923, 'issue', null, localGitOptions)
+    const details = await getWorkItemDetails(repoPath, 923, 'issue')
 
     expect(details?.body).toBe('WSL issue body')
     // Why: issue identities resolve hosted, pinned to github.com for dotcom.
     expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
       { ...repository, host: 'github.com' },
       'graphql',
-      localGitOptions
+      { cwd: repoPath, host: 'github.com' }
     )
     expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
       { ...repository, host: 'github.com' },
       'graphql',
       1,
-      localGitOptions
+      { cwd: repoPath, host: 'github.com' }
     )
-    expect(ghExecFileAsyncMock.mock.calls.every((call) => call[1]?.wslDistro === 'Ubuntu')).toBe(
-      true
-    )
+    expect(ghExecFileAsyncMock.mock.calls.every((call) => call[1]?.cwd === repoPath)).toBe(true)
   })
 
   it('enriches a non-participating assignee avatar from the GraphQL assignees connection', async () => {
@@ -321,7 +320,7 @@ describe('getWorkItemDetails', () => {
       author: 'issue-author',
       assignees: [{ login: 'ghe-assignee', name: 'GHE Assignee', avatarUrl: '' }]
     })
-    getIssueOwnerRepoMock.mockResolvedValue({ owner: 'acme', repo: 'widgets' })
+    getOwnerRepoForRemoteMock.mockResolvedValue({ owner: 'acme', repo: 'widgets' })
     ghExecFileAsyncMock
       .mockResolvedValueOnce({
         stdout: JSON.stringify({
@@ -612,7 +611,9 @@ describe('getWorkItemDetails', () => {
     expect(getWorkItemMock).toHaveBeenCalledWith('/remote/repo', 7, 'issue', 'ssh-1')
     expect(getWorkItemByOwnerRepoMock).not.toHaveBeenCalled()
     expect(getEnterpriseGitHubRepoSlugMock).toHaveBeenCalledTimes(1)
-    expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(enterpriseRepository, 'graphql', {})
+    expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(enterpriseRepository, 'graphql', {
+      host: 'github.acme-corp.com'
+    })
     expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalled()
     expect(
       ghExecFileAsyncMock.mock.calls.every(
@@ -846,13 +847,13 @@ describe('getWorkItemDetails', () => {
     expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })
 
-  it('uses the GitHub Enterprise host when fetching PR file contents', async () => {
-    getOwnerRepoMock.mockResolvedValue(null)
-    getEnterpriseGitHubRepoSlugMock.mockResolvedValue({
+  it('uses the selected upstream GitHub Enterprise repo for both PR file sides', async () => {
+    getOwnerRepoMock.mockResolvedValue({ owner: 'fork', repo: 'orca' })
+    const prRepo = {
       owner: 'team',
       repo: 'orca',
       host: 'github.acme-corp.com'
-    })
+    }
     ghExecFileAsyncMock.mockImplementation(async (args: string[]) => {
       const endpoint = args.find((arg) => arg.startsWith('repos/')) ?? ''
       if (endpoint === 'repos/team/orca/contents/src/path%23with%3Fchars.ts?ref=base-sha') {
@@ -866,6 +867,7 @@ describe('getWorkItemDetails', () => {
 
     const contents = await getPRFileContents({
       repoPath: '/repo-root',
+      prRepo,
       prNumber: 7,
       path: 'src/path#with?chars.ts',
       status: 'modified',

@@ -1,4 +1,5 @@
 import { getRepoExecutionHostId } from './execution-host'
+import { githubRepoIdentityKey, isDefaultGitHubHost } from './github-repository-identity-key'
 import type {
   Project,
   ProjectHostSetup,
@@ -16,17 +17,18 @@ export type ProjectHostSetupProjection = {
   setups: ProjectHostSetup[]
 }
 
-function normalizeIdentityPart(value: string): string {
-  return value.trim().toLowerCase()
-}
-
 function getProjectProviderIdentity(
   repo: Pick<Repo, 'upstream' | 'repoIcon' | 'gitRemoteIdentity'>
 ): ProjectProviderIdentity | null {
   const owner = typeof repo.upstream?.owner === 'string' ? repo.upstream.owner.trim() : ''
   const name = typeof repo.upstream?.repo === 'string' ? repo.upstream.repo.trim() : ''
   if (owner && name) {
-    return { provider: 'github', owner, repo: name }
+    return {
+      provider: 'github',
+      owner,
+      repo: name,
+      ...(repo.upstream?.host ? { host: repo.upstream.host } : {})
+    }
   }
   if (repo.repoIcon?.type === 'image' && repo.repoIcon.source === 'github') {
     const parts = (repo.repoIcon.label?.trim() ?? '').split('/')
@@ -35,7 +37,19 @@ function getProjectProviderIdentity(
     // Why: repo auto-detect can know the GitHub slug through the generated
     // avatar icon even when legacy `upstream` has not been backfilled yet.
     if (iconOwner && iconRepo && parts.length === 2) {
-      return { provider: 'github', owner: iconOwner, repo: iconRepo }
+      let host: string | undefined
+      try {
+        const url = new URL(repo.repoIcon.src)
+        host = url.protocol === 'https:' ? url.host : undefined
+      } catch {
+        // Legacy persisted icons can be malformed; keep the host-less fallback.
+      }
+      return {
+        provider: 'github',
+        owner: iconOwner,
+        repo: iconRepo,
+        ...(host && !isDefaultGitHubHost(host) ? { host } : {})
+      }
     }
   }
   const canonicalKey = repo.gitRemoteIdentity?.canonicalKey.trim()
@@ -73,7 +87,7 @@ export function getProjectIdentityKey(
 ): string {
   const identity = getProjectProviderIdentity(repo)
   if (identity) {
-    return `github:${normalizeIdentityPart(identity.owner)}/${normalizeIdentityPart(identity.repo)}`
+    return `github:${githubRepoIdentityKey(identity)}`
   }
   const gitRemoteIdentity = getProjectGitRemoteIdentity(repo)
   if (gitRemoteIdentity) {

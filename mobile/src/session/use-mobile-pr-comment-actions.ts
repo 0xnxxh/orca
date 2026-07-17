@@ -30,7 +30,11 @@ export type PrCommentMutations = {
     line?: number
     prRepo?: GitHubPrRepoSlug | null
   }) => Promise<GitHubPrMutationOutcome>
-  resolveThread: (args: { threadId: string; resolve: boolean }) => Promise<GitHubPrMutationOutcome>
+  resolveThread: (args: {
+    threadId: string
+    resolve: boolean
+    prRepo?: GitHubPrRepoSlug | null
+  }) => Promise<GitHubPrMutationOutcome>
   addRootComment: (args: {
     prNumber: number
     body: string
@@ -171,9 +175,9 @@ export function useMobilePrCommentActions(input: PrCommentActionsInput) {
       if (!mutations || !params) {
         return Promise.resolve(false)
       }
-      return run(resolveKey(params.threadId), () => mutations.resolveThread(params))
+      return run(resolveKey(params.threadId), () => mutations.resolveThread({ ...params, prRepo }))
     },
-    [mutations, run]
+    [mutations, prRepo, run]
   )
 
   const addRootComment = useCallback(

@@ -113,6 +113,72 @@ describe('project host setup projection', () => {
     )
   })
 
+  it('keeps same-named github.com and GHES repositories in separate projects', () => {
+    const projection = projectHostSetupProjectionFromRepos([
+      repo({
+        id: 'dotcom-repo',
+        path: '/work/dotcom',
+        displayName: 'widgets',
+        upstream: { owner: 'acme', repo: 'widgets', host: 'github.com' }
+      }),
+      repo({
+        id: 'enterprise-repo',
+        path: '/work/enterprise',
+        displayName: 'widgets',
+        upstream: { owner: 'acme', repo: 'widgets', host: 'github.acme.test' }
+      })
+    ])
+
+    expect(projection.projects).toHaveLength(2)
+    expect(projection.projects.map((project) => project.id)).toEqual([
+      'github:acme/widgets',
+      'github:github.acme.test/acme/widgets'
+    ])
+    expect(projection.projects[1]?.providerIdentity).toEqual({
+      provider: 'github',
+      owner: 'acme',
+      repo: 'widgets',
+      host: 'github.acme.test'
+    })
+  })
+
+  it('groups GHES icon identities only when their hosts match', () => {
+    const enterpriseIcon = (host: string) => ({
+      type: 'image' as const,
+      src: `https://${host}/acme.png?size=64`,
+      source: 'github' as const,
+      label: 'acme/widgets'
+    })
+    const projection = projectHostSetupProjectionFromRepos([
+      repo({
+        id: 'enterprise-local',
+        path: '/work/local',
+        displayName: 'widgets',
+        repoIcon: enterpriseIcon('github.acme.test')
+      }),
+      repo({
+        id: 'enterprise-ssh',
+        path: '/work/ssh',
+        displayName: 'widgets',
+        connectionId: 'builder',
+        repoIcon: enterpriseIcon('github.acme.test')
+      }),
+      repo({
+        id: 'other-enterprise',
+        path: '/work/other',
+        displayName: 'widgets',
+        repoIcon: enterpriseIcon('github.other.test')
+      })
+    ])
+
+    expect(projection.projects).toHaveLength(2)
+    expect(projection.projects[0]).toMatchObject({
+      id: 'github:github.acme.test/acme/widgets',
+      sourceRepoIds: ['enterprise-local', 'enterprise-ssh']
+    })
+    expect(projection.projects[1]?.id).toBe('github:github.other.test/acme/widgets')
+  })
+
   it('uses GitHub repo icon metadata as a provider identity fallback', () => {
     const projection = projectHostSetupProjectionFromRepos([
       repo({

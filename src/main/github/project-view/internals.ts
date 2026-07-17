@@ -13,6 +13,8 @@ import {
 } from '../rate-limit'
 import type { GitHubProjectViewError } from '../../../shared/github-project-types'
 import { githubProjectHost } from '../../../shared/github-project-identity'
+import { isDefaultGitHubHost } from '../../../shared/github-repository-identity-key'
+import { isGitHubHostAuthenticatedForGlobalCli } from '../github-enterprise-repository'
 import {
   classifyProjectError,
   driftError,
@@ -40,6 +42,24 @@ export type ProjectGhExecOptions = { cwd?: string; host?: string }
 // can't reuse githubHostExecOptions — mirror its host pinning for that shape.
 export function projectGhExecOptions(host: string | undefined): ProjectGhExecOptions {
   return { host: githubProjectHost(host) }
+}
+
+export async function projectHostAuthenticationError(
+  host: string | undefined
+): Promise<GitHubProjectViewError | null> {
+  const selectedHost = githubProjectHost(host)
+  if (
+    isDefaultGitHubHost(selectedHost) ||
+    (await isGitHubHostAuthenticatedForGlobalCli(selectedHost))
+  ) {
+    return null
+  }
+  // Why: never target an unconfigured pasted host with gh; ambient
+  // GH_ENTERPRISE_TOKEN credentials could otherwise be sent to that server.
+  return {
+    type: 'auth_required',
+    message: `GitHub CLI is not authenticated to ${selectedHost}. Run gh auth login --hostname ${selectedHost}.`
+  }
 }
 
 // ─── Slug validation ──────────────────────────────────────────────────
@@ -132,6 +152,10 @@ export async function runGraphql<T>(
   | { ok: true; data: T }
   | { ok: false; error: GitHubProjectViewError; raw: { stderr: string; stdout: string } }
 > {
+  const authError = await projectHostAuthenticationError(exec?.host)
+  if (authError) {
+    return { ok: false, error: authError, raw: { stderr: '', stdout: '' } }
+  }
   // Why: GHES traffic runs against its own quota — only github.com requests
   // consult/debit the shared snapshot.
   const guard = repositoryRateLimitGuard({ host: exec?.host }, 'graphql')
@@ -203,6 +227,10 @@ export async function runRest<T>(
   bucket: RateLimitBucketKind = 'core',
   options?: { expectEmpty?: boolean; host?: string }
 ): Promise<{ ok: true; data: T } | { ok: false; error: GitHubProjectViewError }> {
+  const authError = await projectHostAuthenticationError(options?.host)
+  if (authError) {
+    return { ok: false, error: authError }
+  }
   // Why: GHES traffic runs against its own quota — only github.com requests
   // consult/debit the shared snapshot.
   const guard = repositoryRateLimitGuard({ host: options?.host }, bucket)

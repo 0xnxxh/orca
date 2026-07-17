@@ -5,13 +5,31 @@ const {
   getOwnerRepoMock,
   getWorkItemMock,
   getPRChecksMock,
-  getPRCommentsMock
+  getPRCommentsMock,
+  noteRepositoryRateLimitSpendMock,
+  repositoryRateLimitGuardMock
 } = vi.hoisted(() => ({
   ghExecFileAsyncMock: vi.fn(),
   getOwnerRepoMock: vi.fn(),
   getWorkItemMock: vi.fn(),
   getPRChecksMock: vi.fn(),
-  getPRCommentsMock: vi.fn()
+  getPRCommentsMock: vi.fn(),
+  noteRepositoryRateLimitSpendMock:
+    vi.fn<
+      (
+        repository: { host?: string } | null | undefined,
+        bucket: string,
+        cost?: number,
+        options?: { cwd?: string; host?: string }
+      ) => void
+    >(),
+  repositoryRateLimitGuardMock: vi.fn<
+    (
+      repository: { host?: string } | null | undefined,
+      bucket: string,
+      options?: { cwd?: string; host?: string }
+    ) => { blocked: false }
+  >(() => ({ blocked: false }))
 }))
 
 vi.mock('./gh-utils', () => ({
@@ -36,14 +54,15 @@ vi.mock('./client', () => ({
 }))
 
 vi.mock('./github-enterprise-repository', () => ({
-  getEnterpriseGitHubRepoSlug: vi.fn().mockResolvedValue(null)
+  getEnterpriseGitHubRepoSlug: vi.fn().mockResolvedValue(null),
+  isGitHubHostAuthenticated: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('./rate-limit', () => ({
   rateLimitGuard: vi.fn(() => ({ blocked: false })),
   noteRateLimitSpend: vi.fn(),
-  repositoryRateLimitGuard: vi.fn(() => ({ blocked: false })),
-  noteRepositoryRateLimitSpend: vi.fn()
+  repositoryRateLimitGuard: repositoryRateLimitGuardMock,
+  noteRepositoryRateLimitSpend: noteRepositoryRateLimitSpendMock
 }))
 
 import { getWorkItemDetails } from './work-item-details'
@@ -106,6 +125,8 @@ describe('getWorkItemDetails PR file listing', () => {
     getPRChecksMock.mockResolvedValue([])
     getPRCommentsMock.mockReset()
     getPRCommentsMock.mockResolvedValue([])
+    noteRepositoryRateLimitSpendMock.mockReset()
+    repositoryRateLimitGuardMock.mockClear()
   })
 
   it('loads files beyond the first 100-result REST page', async () => {
@@ -145,6 +166,12 @@ describe('getWorkItemDetails PR file listing', () => {
       'repos/acme/widgets/pulls/108/files?per_page=100',
       'repos/acme/widgets/pulls/108/files?per_page=100&page=2'
     ])
+    expect(
+      noteRepositoryRateLimitSpendMock.mock.calls.filter(([, bucket]) => bucket === 'core')
+    ).toHaveLength(3)
+    expect(
+      repositoryRateLimitGuardMock.mock.calls.filter(([, bucket]) => bucket === 'core')
+    ).toHaveLength(3)
   })
 
   // Why: a rate-limited/auth-failed file fetch must not render as an empty PR;

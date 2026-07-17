@@ -15,7 +15,8 @@ vi.mock('../git/runner', () => ({
 import {
   _resetGitHubHostAuthCache,
   getEnterpriseGitHubRepoSlug,
-  isGitHubHostAuthenticated
+  isGitHubHostAuthenticated,
+  isGitHubHostAuthenticatedForGlobalCli
 } from './github-enterprise-repository'
 
 function mockOriginRemote(url: string): void {
@@ -61,12 +62,9 @@ describe('getEnterpriseGitHubRepoSlug', () => {
       repo: 'orca',
       host: 'github.acme-corp.com'
     })
-    // The auth probe targets the remote's host, not a hardcoded github.com, and
-    // scopes any breaker trip to that host via the exec options.
-    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
-      ['auth', 'status', '--hostname', 'github.acme-corp.com'],
-      { cwd: '/repo', host: 'github.acme-corp.com' }
-    )
+    // Why: inventory configured gh hosts without targeting the untrusted remote;
+    // passing it as --hostname could expose an ambient enterprise token.
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(['auth', 'status'], { cwd: '/repo' })
   })
 
   it('resolves a GHES SCP-style SSH remote', async () => {
@@ -88,10 +86,10 @@ describe('getEnterpriseGitHubRepoSlug', () => {
       localGitExecOptions: { wslDistro: 'Ubuntu' }
     })
 
-    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
-      ['auth', 'status', '--hostname', 'github.acme-corp.com'],
-      { cwd: '/repo', wslDistro: 'Ubuntu', host: 'github.acme-corp.com' }
-    )
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(['auth', 'status'], {
+      cwd: '/repo',
+      wslDistro: 'Ubuntu'
+    })
   })
 
   it('leaves github.com to getOwnerRepo without probing gh auth', async () => {
@@ -136,10 +134,7 @@ describe('isGitHubHostAuthenticated', () => {
     await expect(
       isGitHubHostAuthenticated('github.acme-corp.com', '/remote/repo', 'ssh-1')
     ).resolves.toBe(true)
-    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
-      ['auth', 'status', '--hostname', 'github.acme-corp.com'],
-      { host: 'github.acme-corp.com' }
-    )
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(['auth', 'status'], {})
   })
 
   it('caches per runtime+host so detection polling does not re-spawn gh', async () => {
@@ -155,7 +150,12 @@ describe('isGitHubHostAuthenticated', () => {
     ghExecFileAsyncMock.mockImplementation(
       () =>
         new Promise((resolve) => {
-          finishProbe = () => resolve({ stdout: '', stderr: '' })
+          finishProbe = () =>
+            resolve({
+              stdout:
+                'github.acme-corp.com\n  ✓ Logged in to github.acme-corp.com account kelora (keyring)',
+              stderr: ''
+            })
         })
     )
 
@@ -173,6 +173,66 @@ describe('isGitHubHostAuthenticated', () => {
     await isGitHubHostAuthenticated('github.acme-corp.com', '/repo', null, { wslDistro: 'Ubuntu' })
     await isGitHubHostAuthenticated('github.acme-corp.com', '/repo', null, { wslDistro: 'Debian' })
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('derives cache scope from an implicit WSL UNC repository path', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    ghExecFileAsyncMock.mockImplementation(async (_args: string[], options: { cwd?: string }) => ({
+      stdout: options.cwd?.includes('Ubuntu')
+        ? 'github.com\n  ✓ Logged in to github.com account other (keyring)'
+        : 'github.acme-corp.com\n  ✓ Logged in to github.acme-corp.com account kelora (keyring)',
+      stderr: ''
+    }))
+
+    try {
+      await expect(isGitHubHostAuthenticated('github.acme-corp.com', '/native/repo')).resolves.toBe(
+        true
+      )
+      await expect(
+        isGitHubHostAuthenticated(
+          'github.acme-corp.com',
+          String.raw`\\wsl.localhost\Ubuntu\home\me\repo`
+        )
+      ).resolves.toBe(false)
+      await expect(
+        isGitHubHostAuthenticated(
+          'github.acme-corp.com',
+          String.raw`\\wsl.localhost\Debian\home\me\repo`
+        )
+      ).resolves.toBe(true)
+
+      expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(3)
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
+    }
+  })
+
+  it('shares the native gh auth probe across SSH connections', async () => {
+    mockHostAuthenticated()
+
+    await isGitHubHostAuthenticated('github.acme-corp.com', '/remote/a', 'ssh-1')
+    await isGitHubHostAuthenticated('github.acme-corp.com', '/remote/b', 'ssh-2')
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not target an unconfigured remote host with ambient credentials', async () => {
+    mockHostAuthenticated('github.acme-corp.com')
+
+    await expect(isGitHubHostAuthenticated('evil.example.test', '/repo')).resolves.toBe(false)
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(['auth', 'status'], { cwd: '/repo' })
+    expect(ghExecFileAsyncMock.mock.calls.flat()).not.toContain('evil.example.test')
+  })
+
+  it('validates a global project host by inventory without targeting it', async () => {
+    mockHostAuthenticated('github.acme-corp.com')
+
+    await expect(isGitHubHostAuthenticatedForGlobalCli('evil.example.test')).resolves.toBe(false)
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(['auth', 'status'], {})
+    expect(ghExecFileAsyncMock.mock.calls.flat()).not.toContain('evil.example.test')
   })
 
   it('treats a listed host as authenticated even when gh exits non-zero', async () => {

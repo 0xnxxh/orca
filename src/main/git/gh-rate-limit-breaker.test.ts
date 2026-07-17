@@ -131,6 +131,21 @@ describe('breaker state', () => {
     expect(getGhRateLimitBlockedUntilMs('core', now, 'native:ghe-0.example.test')).toBeNull()
   })
 
+  it('keeps a recently-read active scope when the bounded map evicts', () => {
+    const now = Date.now()
+    const hotScope = 'native:active.example.test'
+    recordGhPrimaryRateLimit('core', now + 60_000, hotScope)
+    for (let i = 0; i < 1_023; i += 1) {
+      recordGhPrimaryRateLimit('core', now + 60_000, `native:cold-${i}.example.test`)
+    }
+
+    expect(getGhRateLimitBlockedUntilMs('core', now, hotScope)).toBe(now + 60_000)
+    recordGhPrimaryRateLimit('core', now + 60_000, 'native:new.example.test')
+
+    expect(getGhRateLimitBlockedUntilMs('core', now, hotScope)).toBe(now + 60_000)
+    expect(getGhRateLimitBlockedUntilMs('core', now, 'native:cold-0.example.test')).toBeNull()
+  })
+
   it('notifyGhPrimaryRateLimit applies a fallback block and fires the reset probe', () => {
     const probe = vi.fn()
     registerGhRateLimitResetProbe(probe)

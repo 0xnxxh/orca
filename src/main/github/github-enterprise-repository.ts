@@ -12,6 +12,7 @@ import {
   parseGitHubRemoteIdentity,
   type LocalGitExecOptions
 } from './github-repository-identity'
+import { parseWslPath } from '../wsl'
 
 export type GitHubEnterpriseRepoSlug = GitHubOwnerRepo & { host: string }
 
@@ -30,12 +31,11 @@ type HostAuthCacheEntry = {
 const hostAuthCache = new Map<string, HostAuthCacheEntry>()
 const hostAuthInFlight = new Map<string, Promise<boolean>>()
 
-// Why: gh's authenticated hosts live in per-runtime config — a WSL distro and an
-// SSH host each carry their own `hosts.yml` — so cache state must be keyed by the
-// runtime that executes gh, not shared under one "local" bucket. Mirrors the
-// runtime scoping used by owner/repo resolution.
-function runtimeCacheKey(connectionId?: string | null, wslDistro?: string): string {
-  return connectionId ?? `local:${wslDistro ?? 'host'}`
+// Why: connection-backed Git operations execute remotely, but gh intentionally
+// executes on the native host. Only WSL selects a distinct gh config/runtime.
+function runtimeCacheKey(repoPath: string, wslDistro?: string): string {
+  const resolvedDistro = wslDistro ?? parseWslPath(repoPath)?.distro
+  return `local:${resolvedDistro?.toLowerCase() ?? 'host'}`
 }
 
 /** @internal - exposed for tests only */
@@ -78,11 +78,10 @@ function ghCommandOutput(error: unknown): string {
 /**
  * Whether `gh` is authenticated to `host` from the repository's own runtime.
  *
- * The probe runs `gh auth status --hostname <host>` with the repo's execution
- * options (cwd / WSL distro, or SSH-local like the create path), so a GHES login
- * stored only in that runtime's gh config — or a `GH_ENTERPRISE_TOKEN` inferred
- * from it — is honored instead of the host/default-distro gh. Cached briefly per
- * runtime+host so provider-detection polling does not re-spawn gh each time.
+ * The probe inventories gh's configured hosts and matches `host` locally. It
+ * deliberately does not pass an untrusted remote host to gh because ambient
+ * enterprise tokens could otherwise be sent to that host during validation.
+ * Cached briefly per runtime+host so provider-detection polling stays cheap.
  */
 export async function isGitHubHostAuthenticated(
   host: string,
@@ -91,7 +90,7 @@ export async function isGitHubHostAuthenticated(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<boolean> {
   const normalizedHost = host.toLowerCase()
-  const cacheKey = `${runtimeCacheKey(connectionId, localGitOptions.wslDistro)}\0${normalizedHost}`
+  const cacheKey = `${runtimeCacheKey(repoPath, localGitOptions.wslDistro)}\0${normalizedHost}`
   const now = Date.now()
   pruneHostAuthCache(now)
   const cached = hostAuthCache.get(cacheKey)
@@ -106,15 +105,14 @@ export async function isGitHubHostAuthenticated(
   // once; coalesce them so one host never spawns duplicate auth subprocesses.
   const probe = (async () => {
     const execOptions = {
-      ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
-      // Why: scope any rate-limit breaker trip from this probe to the probed
-      // host, not to gh's default account.
-      host: normalizedHost
+      ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
     }
     let authenticated: boolean
     try {
-      await ghExecFileAsync(['auth', 'status', '--hostname', normalizedHost], execOptions)
-      authenticated = true
+      const { stdout, stderr } = await ghExecFileAsync(['auth', 'status'], execOptions)
+      authenticated = parseAuthStatus(`${stdout}\n${stderr}`).some(
+        (account) => account.host.toLowerCase() === normalizedHost
+      )
     } catch (error) {
       const output = ghCommandOutput(error)
       if (!output) {
@@ -140,6 +138,12 @@ export async function isGitHubHostAuthenticated(
       hostAuthInFlight.delete(cacheKey)
     }
   }
+}
+
+/** Safely validate a project-selected host without giving the untrusted host
+ * to gh. Global project calls have no repository cwd, so they use native gh. */
+export function isGitHubHostAuthenticatedForGlobalCli(host: string): Promise<boolean> {
+  return isGitHubHostAuthenticated(host, '', 'project-host-validation')
 }
 
 /**

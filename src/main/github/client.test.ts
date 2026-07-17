@@ -3701,6 +3701,39 @@ describe('getPRForBranch', () => {
     )
   })
 
+  it('does not confuse same-slug PR repositories across GitHub hosts', async () => {
+    const enterprise = { owner: 'team', repo: 'orca', host: 'github.acme-corp.com' }
+    const dotCom = { owner: 'team', repo: 'orca', host: 'github.com' }
+    resolvePRRepositoryCandidatesMock.mockResolvedValueOnce({
+      candidates: [enterprise, dotCom],
+      headRepo: dotCom
+    })
+    getOwnerRepoForRemoteMock.mockResolvedValueOnce(dotCom)
+    getRemoteUrlForRepoMock.mockResolvedValueOnce('git@github.com:team/orca.git')
+    ghExecFileAsyncMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        head: {
+          ref: 'feature',
+          repo: {
+            full_name: 'team/orca',
+            name: 'orca',
+            clone_url: 'https://github.acme-corp.com/team/orca.git',
+            ssh_url: 'git@github.acme-corp.com:team/orca.git',
+            owner: { login: 'team' }
+          }
+        }
+      })
+    })
+
+    await expect(getPullRequestPushTarget('/repo-root', 7)).resolves.toEqual({
+      pushTarget: {
+        remoteName: 'pr-team-orca',
+        branchName: 'feature',
+        remoteUrl: 'git@github.acme-corp.com:team/orca.git'
+      }
+    })
+  })
+
   it('probes additional PR repo candidates when the first lookup is not found', async () => {
     resolvePRRepositoryCandidatesMock.mockResolvedValueOnce({
       candidates: [
@@ -4282,6 +4315,13 @@ describe('GitHub GraphQL rate-limit guard', () => {
   })
 
   it('isolates merge metadata for the same slug on different GitHub hosts', async () => {
+    resolvePRRepositoryCandidatesMock.mockResolvedValue({
+      candidates: [
+        { owner: 'acme', repo: 'widgets', host: 'github.com' },
+        { owner: 'acme', repo: 'widgets', host: 'github.acme-corp.com' }
+      ],
+      headRepo: { owner: 'acme', repo: 'widgets', host: 'github.com' }
+    })
     const prView = {
       number: 7,
       title: 'PR',
@@ -4329,6 +4369,25 @@ describe('GitHub GraphQL rate-limit guard', () => {
     const graphqlCalls = ghExecFileAsyncMock.mock.calls.filter(([args]) => args.includes('graphql'))
     expect(graphqlCalls).toHaveLength(2)
     expect(graphqlCalls[1]?.[1]).toEqual(expect.objectContaining({ host: 'github.acme-corp.com' }))
+  })
+
+  it('rejects explicit work-item lookups outside configured repository candidates', async () => {
+    resolvePRRepositoryCandidatesMock.mockResolvedValueOnce({
+      candidates: [{ owner: 'acme', repo: 'widgets', host: 'github.com' }],
+      headRepo: { owner: 'acme', repo: 'widgets', host: 'github.com' }
+    })
+
+    await expect(
+      getWorkItemByOwnerRepo(
+        '/repo-root',
+        { owner: 'victim', repo: 'secrets', host: 'evil.example.test' },
+        7,
+        'pr'
+      )
+    ).resolves.toBeNull()
+
+    expect(acquireMock).not.toHaveBeenCalled()
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })
 
   it('returns conflicting file details instead of running gh merge when PR is dirty', async () => {
