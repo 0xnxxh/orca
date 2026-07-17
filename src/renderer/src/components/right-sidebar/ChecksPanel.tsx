@@ -2857,6 +2857,7 @@ export default function ChecksPanel(): React.JSX.Element {
       const result = await window.api.gh.updateIssueCommentBySlug({
         owner: pr.prRepo.owner,
         repo: pr.prRepo.repo,
+        ...(pr.prRepo.host ? { host: pr.prRepo.host } : {}),
         commentId: comment.id,
         body
       })
@@ -2892,6 +2893,7 @@ export default function ChecksPanel(): React.JSX.Element {
       const result = await window.api.gh.deleteIssueCommentBySlug({
         owner: pr.prRepo.owner,
         repo: pr.prRepo.repo,
+        ...(pr.prRepo.host ? { host: pr.prRepo.host } : {}),
         commentId: comment.id
       })
       if (!result.ok) {

@@ -57,7 +57,8 @@ describe('GitHubItemDialog source host boundaries', () => {
 
     expect(section).toContain('getTaskSourceRuntimeSettings(sourceContext)')
     expect(section).toContain('useRepoLabels(')
-    expect(section).toContain('useRepoLabelsBySlug(slugOwner, slugRepo, sourceSettings)')
+    expect(section).toContain('useRepoLabelsBySlug(')
+    expect(section).toContain('projectOrigin?.host')
     expect(section).toContain('useRepoAssignees(')
     expect(section).toContain('useRepoAssigneesBySlug(')
     expect(section).toContain('sourceSettings')
