@@ -134,13 +134,19 @@ vi.mock('./github-api-repository', async (importOriginal) => {
       // Mirror production: dotcom origin slugs come back pinned to github.com.
       return slug ? { host: 'github.com', ...slug } : slug
     },
-    getIssueGitHubApiRepository: (repoPath: string, connectionId?: string | null) =>
-      getIssueOwnerRepoMock(repoPath, connectionId),
+    getIssueGitHubApiRepository: async (repoPath: string, connectionId?: string | null) => {
+      const slug = await getIssueOwnerRepoMock(repoPath, connectionId)
+      // Mirror production: issue slugs come back host-qualified to github.com.
+      return slug ? { host: 'github.com', ...slug } : slug
+    },
     resolveIssueGitHubApiRepositorySource: async (
       repoPath: string,
       _preference: unknown,
       connectionId?: string | null
-    ) => ({ source: await getIssueOwnerRepoMock(repoPath, connectionId), fellBack: false })
+    ) => {
+      const slug = await getIssueOwnerRepoMock(repoPath, connectionId)
+      return { source: slug ? { host: 'github.com', ...slug } : slug, fellBack: false }
+    }
   }
 })
 

@@ -2377,6 +2377,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         get(),
         owner,
         repo,
+        table.project.host,
         settingsForProjectViewCacheKey(get().settings, cacheKey)
       )
     )
@@ -2506,6 +2507,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         get(),
         owner,
         repo,
+        table.project.host,
         settingsForProjectViewCacheKey(get().settings, cacheKey)
       )
     )

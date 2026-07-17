@@ -399,6 +399,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
   const [repoNotInOrca, setRepoNotInOrca] = useState<{
     owner: string
     repo: string
+    host?: string
     url: string | null
   } | null>(null)
   const liveRepoIds = useMemo(() => new Set(repos.map((repo) => repo.id)), [repos])
@@ -597,6 +598,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       const resolution = resolveSelectedProjectRowRepo({
         row,
         lookupSlug,
+        host: table.project.host,
         slugIndexReady,
         selectedRepoIds
       })
@@ -614,6 +616,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
         setRepoNotInOrca({
           owner: origin.owner,
           repo: origin.repo,
+          host: origin.host,
           url: row.content.url ?? null
         })
         return
