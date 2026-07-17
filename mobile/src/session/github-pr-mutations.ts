@@ -292,11 +292,10 @@ export async function fetchResolveReviewThread(
 // GitHubProjectMutationResult `{ ok }` envelope sendGithubPrMutation reads.
 export async function fetchUpdateIssueComment(
   client: Pick<RpcClient, 'sendRequest'>,
-  args: { owner: string; repo: string; commentId: number; body: string }
+  args: { owner: string; repo: string; host?: string; commentId: number; body: string }
 ): Promise<GitHubPrMutationOutcome> {
   return sendGithubPrMutation(client, 'github.project.updateIssueCommentBySlug', {
-    owner: args.owner,
-    repo: args.repo,
+    ...githubPrRepoSlugParam(args),
     commentId: args.commentId,
     body: args.body
   })
@@ -305,11 +304,10 @@ export async function fetchUpdateIssueComment(
 // Delete a root conversation (issue) comment. Slug-addressed like the edit wrapper.
 export async function fetchDeleteIssueComment(
   client: Pick<RpcClient, 'sendRequest'>,
-  args: { owner: string; repo: string; commentId: number }
+  args: { owner: string; repo: string; host?: string; commentId: number }
 ): Promise<GitHubPrMutationOutcome> {
   return sendGithubPrMutation(client, 'github.project.deleteIssueCommentBySlug', {
-    owner: args.owner,
-    repo: args.repo,
+    ...githubPrRepoSlugParam(args),
     commentId: args.commentId
   })
 }

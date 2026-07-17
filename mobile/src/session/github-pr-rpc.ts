@@ -113,7 +113,10 @@ export async function fetchGithubRepoSlug(
       const record = value as Record<string, unknown>
       const owner = record.owner
       const repo = record.repo
-      return typeof owner === 'string' && typeof repo === 'string' ? { owner, repo } : null
+      const host = record.host
+      return typeof owner === 'string' && typeof repo === 'string'
+        ? { owner, repo, ...(typeof host === 'string' && host ? { host } : {}) }
+        : null
     }
   )
 }

@@ -1539,12 +1539,9 @@ async function countWorkItemsForQuery(
 
 function sameOwnerRepo(left: OwnerRepo | null, right: OwnerRepo | null): boolean {
   // Why: GitHub treats owner and repo names as case-insensitive, so remotes
-  // with different casing (StablyAI/Orca vs stablyai/orca) point at the same
-  // repo and should not split into two search queries.
-  return (
-    left?.owner.toLowerCase() === right?.owner.toLowerCase() &&
-    left?.repo.toLowerCase() === right?.repo.toLowerCase()
-  )
+  // with different casing point at the same repo, but identical slugs on
+  // github.com and GHES are independent repositories.
+  return Boolean(left && right && githubRepoIdentityKey(left) === githubRepoIdentityKey(right))
 }
 
 function defaultOpenWorkItemQuery(): ParsedTaskQuery {
@@ -3017,6 +3014,11 @@ export async function getPRForBranchOutcome(
       connectionId,
       localGitOptions
     )
+    // Why: connection-backed gh runs without a repository cwd. A bare lookup
+    // here can honor process GH_REPO/GH_HOST and return an unrelated PR.
+    if (connectionId && candidates.length === 0) {
+      return { kind: 'no-pr', fetchedAt: Date.now() }
+    }
     let data: PullRequestLookupData | null = null
     let dataRepo: OwnerRepo | null = null
     let dataHeadRepo: OwnerRepo | null = headRepo
