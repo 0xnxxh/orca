@@ -12,7 +12,7 @@ describe('resolvePasteIntent', () => {
   it('classifies a GitHub issue/PR URL as a github-link', () => {
     expect(resolvePasteIntent('https://github.com/acme/widgets/pull/12')).toEqual({
       kind: 'github-link',
-      link: { slug: { owner: 'acme', repo: 'widgets' }, number: 12, type: 'pr' }
+      link: { slug: { owner: 'acme', repo: 'widgets', host: 'github.com' }, number: 12, type: 'pr' }
     })
   })
 
