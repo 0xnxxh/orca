@@ -24,12 +24,12 @@ const HOST_AUTH_TTL_MS = 60_000
 const HOST_AUTH_CACHE_MAX_ENTRIES = 512
 
 type HostAuthCacheEntry = {
-  authenticated: boolean
+  authenticatedHost: string | null
   expiresAt: number
 }
 
 const hostAuthCache = new Map<string, HostAuthCacheEntry>()
-const hostAuthInFlight = new Map<string, Promise<boolean>>()
+const hostAuthInFlight = new Map<string, Promise<string | null | undefined>>()
 
 // Why: connection-backed Git operations execute remotely, but gh intentionally
 // executes on the native host. Only WSL selects a distinct gh config/runtime.
@@ -75,6 +75,110 @@ function ghCommandOutput(error: unknown): string {
     .join('\n')
 }
 
+type NormalizedGitHubHost = {
+  hostname: string
+  port: string | null
+  authority: string
+}
+
+function normalizeGitHubHost(host: string): NormalizedGitHubHost | null {
+  const match = host
+    .trim()
+    .toLowerCase()
+    .match(/^([a-z0-9][a-z0-9.-]*)(?::(\d+))?$/i)
+  if (!match) {
+    return null
+  }
+  const hostname = match[1]
+  const rawPort = match[2] ?? null
+  // Why: default web ports do not distinguish a gh auth host from the same
+  // hostname without an explicit port.
+  const port = rawPort === '80' || rawPort === '443' ? null : rawPort
+  return { hostname, port, authority: port ? `${hostname}:${port}` : hostname }
+}
+
+function authenticatedHostFromInventory(host: string, output: string): string | null {
+  const requested = normalizeGitHubHost(host)
+  if (!requested) {
+    return null
+  }
+  const inventory = Array.from(
+    new Map(
+      parseAuthStatus(output)
+        .map((account) => normalizeGitHubHost(account.host))
+        .filter((candidate): candidate is NormalizedGitHubHost => candidate !== null)
+        .map((candidate) => [candidate.authority, candidate])
+    ).values()
+  )
+  const exact = inventory.find((candidate) => candidate.authority === requested.authority)
+  if (exact) {
+    return exact.authority
+  }
+  const compatible = inventory.filter(
+    (candidate) =>
+      candidate.hostname === requested.hostname && (!requested.port || candidate.port === null)
+  )
+  // Why: an SSH remote has no API port. Only a unique auth-inventory host can
+  // safely supply it; multiple ported endpoints on one hostname are ambiguous.
+  return compatible.length === 1 ? compatible[0].authority : null
+}
+
+async function resolveAuthenticatedGitHubHost(
+  host: string,
+  repoPath: string,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<string | null | undefined> {
+  const normalizedHost = normalizeGitHubHost(host)?.authority ?? host.trim().toLowerCase()
+  const cacheKey = `${runtimeCacheKey(repoPath, localGitOptions.wslDistro)}\0${normalizedHost}`
+  const now = Date.now()
+  pruneHostAuthCache(now)
+  const cached = hostAuthCache.get(cacheKey)
+  if (cached && cached.expiresAt > now) {
+    return cached.authenticatedHost
+  }
+  const inFlight = hostAuthInFlight.get(cacheKey)
+  if (inFlight) {
+    return inFlight
+  }
+  // Why: provider detection and review loading can probe the same runtime at
+  // once; coalesce them so one host never spawns duplicate auth subprocesses.
+  const probe = (async () => {
+    const execOptions = {
+      ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
+    }
+    let authenticatedHost: string | null
+    try {
+      const { stdout, stderr } = await ghExecFileAsync(['auth', 'status'], execOptions)
+      authenticatedHost = authenticatedHostFromInventory(host, `${stdout}\n${stderr}`)
+    } catch (error) {
+      const output = ghCommandOutput(error)
+      if (!output) {
+        // Indeterminate (gh missing / spawn failure) — do not cache so a later
+        // probe (gh installed, tunnel ready, token added) can recover.
+        return undefined
+      }
+      // gh exits non-zero when a host has a token problem but still prints the
+      // per-host status; trust only hosts that are actually listed.
+      authenticatedHost = authenticatedHostFromInventory(host, output)
+    }
+    hostAuthCache.set(cacheKey, {
+      authenticatedHost,
+      expiresAt: Date.now() + HOST_AUTH_TTL_MS
+    })
+    pruneHostAuthCache(Date.now())
+    return authenticatedHost
+  })()
+  hostAuthInFlight.set(cacheKey, probe)
+  try {
+    return await probe
+  } finally {
+    if (hostAuthInFlight.get(cacheKey) === probe) {
+      hostAuthInFlight.delete(cacheKey)
+    }
+  }
+}
+
 /**
  * Whether `gh` is authenticated to `host` from the repository's own runtime.
  *
@@ -89,55 +193,9 @@ export async function isGitHubHostAuthenticated(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<boolean> {
-  const normalizedHost = host.toLowerCase()
-  const cacheKey = `${runtimeCacheKey(repoPath, localGitOptions.wslDistro)}\0${normalizedHost}`
-  const now = Date.now()
-  pruneHostAuthCache(now)
-  const cached = hostAuthCache.get(cacheKey)
-  if (cached && cached.expiresAt > now) {
-    return cached.authenticated
-  }
-  const inFlight = hostAuthInFlight.get(cacheKey)
-  if (inFlight) {
-    return inFlight
-  }
-  // Why: provider detection and review loading can probe the same runtime at
-  // once; coalesce them so one host never spawns duplicate auth subprocesses.
-  const probe = (async () => {
-    const execOptions = {
-      ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions))
-    }
-    let authenticated: boolean
-    try {
-      const { stdout, stderr } = await ghExecFileAsync(['auth', 'status'], execOptions)
-      authenticated = parseAuthStatus(`${stdout}\n${stderr}`).some(
-        (account) => account.host.toLowerCase() === normalizedHost
-      )
-    } catch (error) {
-      const output = ghCommandOutput(error)
-      if (!output) {
-        // Indeterminate (gh missing / spawn failure) — do not cache so a later
-        // probe (gh installed, tunnel ready, token added) can recover.
-        return false
-      }
-      // gh exits non-zero when a host has a token problem but still prints the
-      // per-host status; treat the host as GitHub only when it is actually listed.
-      authenticated = parseAuthStatus(output).some(
-        (account) => account.host.toLowerCase() === normalizedHost
-      )
-    }
-    hostAuthCache.set(cacheKey, { authenticated, expiresAt: Date.now() + HOST_AUTH_TTL_MS })
-    pruneHostAuthCache(Date.now())
-    return authenticated
-  })()
-  hostAuthInFlight.set(cacheKey, probe)
-  try {
-    return await probe
-  } finally {
-    if (hostAuthInFlight.get(cacheKey) === probe) {
-      hostAuthInFlight.delete(cacheKey)
-    }
-  }
+  return Boolean(
+    await resolveAuthenticatedGitHubHost(host, repoPath, connectionId, localGitOptions)
+  )
 }
 
 /** Safely validate a project-selected host without giving the untrusted host
@@ -158,7 +216,7 @@ export async function getEnterpriseGitHubRepoSlugForRemote(
   remoteName: string,
   connectionId?: string | null,
   options: HostedReviewExecutionOptions = {}
-): Promise<GitHubEnterpriseRepoSlug | null> {
+): Promise<GitHubEnterpriseRepoSlug | null | undefined> {
   const localGitOptions = getHostedReviewLocalGitOptions(options)
   const context = githubRepoContext(repoPath, connectionId, localGitOptions)
   let remoteUrl: string | null
@@ -171,19 +229,24 @@ export async function getEnterpriseGitHubRepoSlugForRemote(
   if (!identity || identity.host === 'github.com') {
     return null
   }
-  const authenticated = await isGitHubHostAuthenticated(
+  const authenticatedHost = await resolveAuthenticatedGitHubHost(
     identity.host,
     repoPath,
     connectionId,
     localGitOptions
   )
-  return authenticated ? { owner: identity.owner, repo: identity.repo, host: identity.host } : null
+  if (authenticatedHost === undefined) {
+    return undefined
+  }
+  return authenticatedHost
+    ? { owner: identity.owner, repo: identity.repo, host: authenticatedHost }
+    : null
 }
 
 export async function getEnterpriseGitHubRepoSlug(
   repoPath: string,
   connectionId?: string | null,
   options: HostedReviewExecutionOptions = {}
-): Promise<GitHubEnterpriseRepoSlug | null> {
+): Promise<GitHubEnterpriseRepoSlug | null | undefined> {
   return getEnterpriseGitHubRepoSlugForRemote(repoPath, 'origin', connectionId, options)
 }

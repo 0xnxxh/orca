@@ -1488,6 +1488,22 @@ function explicitGhHostname(args: readonly string[]): string | undefined {
   return undefined
 }
 
+function explicitGhRepoHostname(args: readonly string[]): string | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    let value: string | undefined
+    if (args[i] === '--repo' || args[i] === '-R') {
+      value = args[i + 1]
+    } else if (args[i].startsWith('--repo=')) {
+      value = args[i].slice('--repo='.length)
+    }
+    const parts = value?.trim().split('/')
+    if (parts?.length === 3 && parts.every(Boolean)) {
+      return parts[0]
+    }
+  }
+  return undefined
+}
+
 function ghRateLimitScope(
   args: readonly string[],
   options: GhExecOptions,
@@ -1499,6 +1515,7 @@ function ghRateLimitScope(
   const host =
     explicitGhHostname(args) ??
     options.host ??
+    explicitGhRepoHostname(args) ??
     options.env?.GH_HOST ??
     process.env.GH_HOST ??
     'github.com'

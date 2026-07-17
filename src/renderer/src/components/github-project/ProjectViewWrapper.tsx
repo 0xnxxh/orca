@@ -96,6 +96,43 @@ function getProjectViewSourceScope(settings: Parameters<typeof getActiveRuntimeT
   return target.kind === 'environment' ? `runtime:${target.environmentId}` : 'local'
 }
 
+export function buildProjectWorkItem(
+  row: GitHubProjectRow,
+  repoId: string,
+  host?: string
+): GitHubWorkItem | null {
+  if (row.itemType !== 'ISSUE' && row.itemType !== 'PULL_REQUEST') {
+    return null
+  }
+  if (row.content.number == null || !row.content.url) {
+    return null
+  }
+  const [owner, repo] = row.content.repository?.split('/') ?? []
+  // Why: Project rows can reach mutation controls before detail hydration, so
+  // preserve their host-bearing repository identity on the initial item.
+  const prRepo = owner && repo ? { owner, repo, host: githubProjectHost(host) } : undefined
+  return {
+    id: `${row.itemType === 'PULL_REQUEST' ? 'pr' : 'issue'}:${row.content.number}`,
+    type: row.itemType === 'PULL_REQUEST' ? 'pr' : 'issue',
+    number: row.content.number,
+    title: row.content.title,
+    state:
+      row.content.state === 'MERGED'
+        ? 'merged'
+        : row.content.state === 'CLOSED'
+          ? 'closed'
+          : row.content.isDraft
+            ? 'draft'
+            : 'open',
+    url: row.content.url,
+    labels: row.content.labels.map((label) => label.name),
+    updatedAt: row.updatedAt,
+    author: null,
+    repoId,
+    prRepo
+  }
+}
+
 export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
   const projectViewCache = useAppStore((s) => s.projectViewCache)
@@ -470,37 +507,6 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
     setRepoNotInOrca(resolvedMissingRepoDialogs.repoNotInOrca)
   }
 
-  const buildWorkItem = useCallback(
-    (row: GitHubProjectRow, repoId: string): GitHubWorkItem | null => {
-      if (row.itemType !== 'ISSUE' && row.itemType !== 'PULL_REQUEST') {
-        return null
-      }
-      if (row.content.number == null || !row.content.url) {
-        return null
-      }
-      return {
-        id: `${row.itemType === 'PULL_REQUEST' ? 'pr' : 'issue'}:${row.content.number}`,
-        type: row.itemType === 'PULL_REQUEST' ? 'pr' : 'issue',
-        number: row.content.number,
-        title: row.content.title,
-        state:
-          row.content.state === 'MERGED'
-            ? 'merged'
-            : row.content.state === 'CLOSED'
-              ? 'closed'
-              : row.content.isDraft
-                ? 'draft'
-                : 'open',
-        url: row.content.url,
-        labels: row.content.labels.map((l) => l.name),
-        updatedAt: row.updatedAt,
-        author: null,
-        repoId
-      }
-    },
-    []
-  )
-
   const buildOrigin = useCallback(
     (
       row: GitHubProjectRow,
@@ -569,7 +575,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
         return
       }
       if (resolution.status === 'selected_match') {
-        const workItem = buildWorkItem(row, resolution.repo.id)
+        const workItem = buildProjectWorkItem(row, resolution.repo.id, table.project.host)
         if (workItem) {
           setDialogRepoItem({
             workItem,
@@ -612,8 +618,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       lookupSlug,
       slugIndexReady,
       selectedRepoIds,
-      openProjectRowUrlWithToast,
-      buildWorkItem
+      openProjectRowUrlWithToast
     ]
   )
 
@@ -675,7 +680,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       if (resolution.status !== 'selected_match') {
         return
       }
-      const workItem = buildWorkItem(row, resolution.repo.id)
+      const workItem = buildProjectWorkItem(row, resolution.repo.id, table.project.host)
       if (!workItem) {
         return
       }
@@ -704,8 +709,7 @@ export default function ProjectViewWrapper({ selectedRepoIds }: Props): React.JS
       lookupSlug,
       slugIndexReady,
       selectedRepoIds,
-      openProjectRowUrlWithToast,
-      buildWorkItem
+      openProjectRowUrlWithToast
     ]
   )
 

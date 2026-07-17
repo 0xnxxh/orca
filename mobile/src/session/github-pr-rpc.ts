@@ -54,9 +54,12 @@ const METHODS_ACCEPTING_PR_REPO = new Set<string>([
   'github.removePRReviewers',
   'github.mergePR',
   'github.setPRAutoMerge',
+  'github.updatePRTitle',
   'github.prComments',
   'github.prFileContents',
-  'github.addPRReviewComment'
+  'github.addPRReviewComment',
+  'github.addIssueComment',
+  'github.addPRReviewCommentReply'
 ])
 
 // Why: only github.prChecks declares a `headSha` param (PullRequestCheckDetails

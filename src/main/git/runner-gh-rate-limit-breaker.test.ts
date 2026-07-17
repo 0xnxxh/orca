@@ -138,6 +138,23 @@ describe('ghExecFileAsync rate-limit breaker', () => {
     }
   })
 
+  it.each([
+    ['--repo', ['pr', 'list', '--repo', 'github.acme-corp.com/acme/widgets']],
+    ['-R', ['pr', 'list', '-R', 'github.acme-corp.com/acme/widgets']],
+    ['--repo=', ['pr', 'list', '--repo=github.acme-corp.com/acme/widgets']]
+  ])('scopes a pre-qualified %s value to its repository host', async (_name, args) => {
+    mockGhFailure(PRIMARY_RATE_LIMIT_STDERR)
+
+    await expect(
+      ghExecFileAsync(args, { env: { ...process.env, GH_HOST: 'github.com' } })
+    ).rejects.toThrow('rate limit')
+
+    expect(
+      getGhRateLimitBlockedUntilMs('core', Date.now(), 'native:github.acme-corp.com')
+    ).not.toBeNull()
+    expect(getGhRateLimitBlockedUntilMs('core', Date.now(), 'native:github.com')).toBeNull()
+  })
+
   it('scopes a WSL UNC-cwd 403 to the distro runtime and probes that scope', async () => {
     // Why: a \\wsl.localhost\... cwd routes gh through wsl.exe, so the 403
     // belongs to the distro's account — the native scope must stay usable and

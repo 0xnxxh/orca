@@ -7240,6 +7240,12 @@ describe('IssueSourceIndicator suppression', () => {
     expect(itemMarkup).toContain('up/r')
     expect(itemMarkup).toContain('Issue from')
     expect(itemMarkup).not.toContain('Issues from')
+
+    const enterpriseEl = React.createElement(IssueSourceIndicator, {
+      issues: { owner: 'up', repo: 'r', host: 'ghe.example.test' },
+      prs: { owner: 'fork', repo: 'r', host: 'ghe.example.test' }
+    })
+    expect(renderToStaticMarkup(enterpriseEl)).toContain('ghe.example.test/up/r')
   })
 })
 

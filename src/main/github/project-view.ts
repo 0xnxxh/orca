@@ -149,15 +149,15 @@ const parentFieldProbeInFlight = new Map<string, Promise<void>>()
 
 // Why: GHES owners are a separate namespace and capability surface from
 // github.com owners with the same login — scope cache keys by host so one
-// host's probe result can't leak into another. Host-less keys keep the
-// legacy shape so existing entries/tests are unaffected.
+// host's probe result can't leak into another. Normalize github.com so
+// host-less callers share the same probe state as explicitly pinned calls.
 function ownerScopeKey(owner: string, ownerType: GitHubProjectOwnerType, host?: string): string {
   const base = `${owner}\u0000${ownerType}`
-  return host ? `${base}\u0000${host}` : base
+  return `${base}\u0000${githubProjectHost(host)}`
 }
 
 function ownerTypeCacheKey(owner: string, host?: string): string {
-  return host ? `${owner}\u0000${host}` : owner
+  return `${owner}\u0000${githubProjectHost(host)}`
 }
 
 function rememberOwnerType(
@@ -964,7 +964,7 @@ async function fetchItemsPageWithRaw(args: {
       if (execFailed) {
         return {
           ok: false,
-          error: classifyProjectError(stderr, stdout),
+          error: classifyProjectError(stderr, stdout, args.host),
           rawErrors: [],
           stderr
         }
@@ -982,7 +982,7 @@ async function fetchItemsPageWithRaw(args: {
     if (execFailed && (!parsed.errors || parsed.errors.length === 0) && !parsed.data) {
       return {
         ok: false,
-        error: classifyProjectError(stderr, stdout),
+        error: classifyProjectError(stderr, stdout, args.host),
         rawErrors: [],
         stderr
       }
@@ -990,7 +990,7 @@ async function fetchItemsPageWithRaw(args: {
     if (parsed.errors && parsed.errors.length > 0) {
       return {
         ok: false,
-        error: classifyProjectError(stderr, stdout),
+        error: classifyProjectError(stderr, stdout, args.host),
         rawErrors: parsed.errors,
         stderr
       }

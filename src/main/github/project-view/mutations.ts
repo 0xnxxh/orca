@@ -251,7 +251,7 @@ export async function updateIssueBySlug(
       await ghExecFileAsync(stateArgs, { encoding: 'utf-8', ...githubHostExecOptions(args) })
     } catch (err) {
       const { stderr, stdout } = extractExecError(err)
-      return { ok: false, error: classifyProjectError(stderr, stdout) }
+      return { ok: false, error: classifyProjectError(stderr, stdout, args.host) }
     } finally {
       release()
     }
@@ -558,7 +558,7 @@ export async function listLabelsBySlug(
     }
   } catch (err) {
     const { stderr, stdout: maybeStdout } = extractExecError(err)
-    return { ok: false, error: classifyProjectError(stderr, maybeStdout) }
+    return { ok: false, error: classifyProjectError(stderr, maybeStdout, args.host) }
   } finally {
     release()
   }
@@ -610,7 +610,7 @@ export async function listAssignableUsersBySlug(
     }
   } catch (err) {
     const { stderr } = extractExecError(err)
-    return { ok: false, error: classifyProjectError(stderr, '') }
+    return { ok: false, error: classifyProjectError(stderr, '', args.host) }
   } finally {
     release()
   }

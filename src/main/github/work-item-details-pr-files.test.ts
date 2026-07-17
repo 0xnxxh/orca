@@ -6,6 +6,7 @@ type RateLimitGuardResult =
 
 const {
   ghExecFileAsyncMock,
+  getEnterpriseGitHubRepoSlugMock,
   getOwnerRepoMock,
   getWorkItemMock,
   getPRChecksMock,
@@ -14,6 +15,7 @@ const {
   repositoryRateLimitGuardMock
 } = vi.hoisted(() => ({
   ghExecFileAsyncMock: vi.fn(),
+  getEnterpriseGitHubRepoSlugMock: vi.fn(),
   getOwnerRepoMock: vi.fn(),
   getWorkItemMock: vi.fn(),
   getPRChecksMock: vi.fn(),
@@ -58,7 +60,7 @@ vi.mock('./client', () => ({
 }))
 
 vi.mock('./github-enterprise-repository', () => ({
-  getEnterpriseGitHubRepoSlug: vi.fn().mockResolvedValue(null),
+  getEnterpriseGitHubRepoSlug: getEnterpriseGitHubRepoSlugMock,
   isGitHubHostAuthenticated: vi.fn().mockResolvedValue(true)
 }))
 
@@ -124,6 +126,8 @@ describe('getWorkItemDetails PR file listing', () => {
     ghExecFileAsyncMock.mockReset()
     getOwnerRepoMock.mockReset()
     getOwnerRepoMock.mockResolvedValue({ owner: 'acme', repo: 'widgets' })
+    getEnterpriseGitHubRepoSlugMock.mockReset()
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(null)
     getWorkItemMock.mockReset()
     getPRChecksMock.mockReset()
     getPRChecksMock.mockResolvedValue([])
@@ -221,6 +225,63 @@ describe('getWorkItemDetails PR file listing', () => {
 
     expect(details?.filesUnavailable).toBe(false)
     expect(details?.files).toEqual([])
+  })
+
+  it('backfills the Enterprise origin host before a host-less PR detail fan-out', async () => {
+    const enterprise = { owner: 'team', repo: 'orca', host: 'github.acme-corp.com' }
+    getWorkItemMock.mockResolvedValueOnce({
+      ...pullRequestItem(8, 'Host-less Enterprise PR'),
+      author: '',
+      prRepo: { owner: 'team', repo: 'orca' }
+    })
+    getOwnerRepoMock.mockResolvedValue(null)
+    getEnterpriseGitHubRepoSlugMock.mockResolvedValue(enterprise)
+    ghExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+      const endpoint = args.find((arg) => arg.startsWith('repos/')) ?? ''
+      if (endpoint === 'repos/team/orca/pulls/8') {
+        return { stdout: JSON.stringify({ body: 'Enterprise body' }) }
+      }
+      if (endpoint === 'repos/team/orca/pulls/8/files?per_page=100') {
+        return { stdout: '[]' }
+      }
+      return auxiliaryPRResponse(args)
+    })
+
+    const details = await getWorkItemDetails('/remote/repo', 8, 'pr', 'ssh-1')
+
+    expect(details?.item.prRepo).toEqual(enterprise)
+    expect(getPRCommentsMock).toHaveBeenCalledWith(
+      '/remote/repo',
+      8,
+      { prRepo: enterprise },
+      'ssh-1'
+    )
+    expect(getPRChecksMock).toHaveBeenCalledWith(
+      '/remote/repo',
+      8,
+      undefined,
+      enterprise,
+      undefined,
+      'ssh-1'
+    )
+    expect(
+      ghExecFileAsyncMock.mock.calls.every(([, options]) => options?.host === enterprise.host)
+    ).toBe(true)
+  })
+
+  it('does not run bare PR detail commands when local host resolution fails', async () => {
+    getWorkItemMock.mockResolvedValueOnce({
+      ...pullRequestItem(9, 'Unresolved PR'),
+      prRepo: { owner: 'team', repo: 'orca' }
+    })
+    getOwnerRepoMock.mockResolvedValue(null)
+
+    const details = await getWorkItemDetails('/repo-root', 9, 'pr')
+
+    expect(details).toMatchObject({ body: '', comments: [], checks: [], filesUnavailable: true })
+    expect(getPRCommentsMock).not.toHaveBeenCalled()
+    expect(getPRChecksMock).not.toHaveBeenCalled()
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })
 
   it('uses the selected upstream GitHub Enterprise repo for both PR file sides', async () => {
