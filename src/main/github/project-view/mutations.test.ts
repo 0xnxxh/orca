@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { acquireMock, ghExecFileAsyncMock, releaseMock, runRestMock } = vi.hoisted(() => ({
-  acquireMock: vi.fn(),
-  ghExecFileAsyncMock: vi.fn(),
-  releaseMock: vi.fn(),
-  runRestMock: vi.fn()
-}))
+const { acquireMock, ghExecFileAsyncMock, releaseMock, runGraphqlMock, runRestMock } = vi.hoisted(
+  () => ({
+    acquireMock: vi.fn(),
+    ghExecFileAsyncMock: vi.fn(),
+    releaseMock: vi.fn(),
+    runGraphqlMock: vi.fn(),
+    runRestMock: vi.fn()
+  })
+)
 
 vi.mock('./internals', () => ({
   acquire: acquireMock,
@@ -17,9 +20,12 @@ vi.mock('./internals', () => ({
   ghExecFileAsync: ghExecFileAsyncMock,
   rateLimitGuard: () => ({ blocked: false }),
   noteRateLimitSpend: vi.fn(),
+  repositoryRateLimitGuard: () => ({ blocked: false }),
+  noteRepositoryRateLimitSpend: vi.fn(),
+  projectGhExecOptions: (host?: string) => (host ? { host } : {}),
   classifyProjectError: (stderr: string) => ({ type: 'unknown', message: stderr }),
   rateLimitedError: () => ({ type: 'rate_limited', message: 'rate limited' }),
-  runGraphql: vi.fn(),
+  runGraphql: runGraphqlMock,
   runRest: runRestMock,
   validateSlugArgs: (owner: string, repo: string) =>
     owner && repo ? { ok: true } : { ok: false, error: { type: 'validation_error' } },
@@ -29,7 +35,7 @@ vi.mock('./internals', () => ({
       : { ok: false, error: { type: 'validation_error', message: `${name} invalid` } }
 }))
 
-import { updateIssueBySlug } from './mutations'
+import { getWorkItemDetailsBySlug, updateIssueBySlug } from './mutations'
 
 describe('updateIssueBySlug', () => {
   beforeEach(() => {
@@ -116,6 +122,67 @@ describe('updateIssueBySlug', () => {
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['issue', 'reopen', '12', '--repo', 'acme/widgets'],
       { encoding: 'utf-8' }
+    )
+  })
+
+  it('threads the GHES host into gh exec and REST options', async () => {
+    await expect(
+      updateIssueBySlug({
+        owner: 'acme',
+        repo: 'widgets',
+        number: 12,
+        host: 'github.corp.example',
+        updates: { state: 'closed', stateReason: 'completed', title: 'New title' }
+      })
+    ).resolves.toEqual({ ok: true })
+
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
+      ['issue', 'close', '12', '--repo', 'acme/widgets', '--reason', 'completed'],
+      { encoding: 'utf-8', host: 'github.corp.example' }
+    )
+    expect(runRestMock).toHaveBeenCalledWith(
+      ['-X', 'PATCH', 'repos/acme/widgets/issues/12', '--raw-field', 'title=New title'],
+      undefined,
+      'core',
+      { host: 'github.corp.example' }
+    )
+  })
+})
+
+describe('getWorkItemDetailsBySlug', () => {
+  beforeEach(() => {
+    runGraphqlMock.mockReset()
+  })
+
+  it('threads the GHES host into the GraphQL exec options', async () => {
+    runGraphqlMock.mockResolvedValue({
+      ok: true,
+      data: {
+        repository: {
+          issue: {
+            id: 'I_1',
+            number: 7,
+            title: 'Enterprise issue',
+            url: 'https://github.corp.example/acme/widgets/issues/7',
+            state: 'OPEN'
+          }
+        }
+      }
+    })
+
+    const result = await getWorkItemDetailsBySlug({
+      owner: 'acme',
+      repo: 'widgets',
+      number: 7,
+      type: 'issue',
+      host: 'github.corp.example'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(runGraphqlMock).toHaveBeenCalledWith(
+      expect.any(String),
+      { owner: 'acme', repo: 'widgets', num: 7 },
+      { host: 'github.corp.example' }
     )
   })
 })

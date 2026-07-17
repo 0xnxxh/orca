@@ -1,5 +1,6 @@
 /* oxlint-disable max-lines -- Why: GitHub client fixtures cover local and SSH repo identity paths in one suite so mocked CLI behavior stays consistent. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as GithubApiRepositoryModule from './github-api-repository'
 
 type RateLimitGuardResult =
   | { blocked: false }
@@ -110,6 +111,38 @@ vi.mock('./rate-limit', () => ({
     noteRateLimitSpendMock(bucket),
   spendsSharedGitHubComQuota: () => true
 }))
+
+vi.mock('./github-api-repository', async (importOriginal) => {
+  const actual = await importOriginal<typeof GithubApiRepositoryModule>()
+  return {
+    ...actual,
+    // Why: these suites inject repo identities through the legacy gh-utils
+    // mocks; bridge the hosted seams onto the same mocks so per-test setups
+    // keep driving resolution without real enterprise probes.
+    resolveGitHubApiRepositoryCandidates: (
+      repoPath: string,
+      connectionId?: string | null,
+      localGitOptions?: unknown
+    ) => resolvePRRepositoryCandidatesMock(repoPath, connectionId, localGitOptions),
+    getGitHubApiRepositoryForRemote: (
+      repoPath: string,
+      remoteName: string,
+      connectionId?: string | null
+    ) => getOwnerRepoForRemoteMock(repoPath, remoteName, connectionId),
+    getOriginGitHubApiRepository: async (repoPath: string, connectionId?: string | null) => {
+      const slug = await getOwnerRepoMock(repoPath, connectionId)
+      // Mirror production: dotcom origin slugs come back pinned to github.com.
+      return slug ? { host: 'github.com', ...slug } : slug
+    },
+    getIssueGitHubApiRepository: (repoPath: string, connectionId?: string | null) =>
+      getIssueOwnerRepoMock(repoPath, connectionId),
+    resolveIssueGitHubApiRepositorySource: async (
+      repoPath: string,
+      _preference: unknown,
+      connectionId?: string | null
+    ) => ({ source: await getIssueOwnerRepoMock(repoPath, connectionId), fellBack: false })
+  }
+})
 
 import {
   checkOrcaStarred,
@@ -3554,7 +3587,7 @@ describe('getPRForBranch', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
       ['repo', 'view', 'StablyAI/Orca', '--json', 'isFork,parent'],
-      { cwd: '/repo-root', timeout: 10_000 }
+      { cwd: '/repo-root', host: 'github.com', timeout: 10_000 }
     )
   })
 
@@ -3582,8 +3615,43 @@ describe('getPRForBranch', () => {
 
     await expect(getRepoUpstream('/repo-root')).resolves.toEqual({
       owner: 'stablyai',
-      repo: 'orca'
+      repo: 'orca',
+      // Why: fork parents live on the same server as the fork's origin.
+      host: 'github.com'
     })
+  })
+
+  it('routes GHES push-target probes through the Enterprise host', async () => {
+    const ghes = { owner: 'team', repo: 'orca', host: 'github.acme-corp.com' }
+    resolvePRRepositoryCandidatesMock.mockResolvedValueOnce({
+      candidates: [ghes],
+      headRepo: ghes
+    })
+    getOwnerRepoForRemoteMock.mockResolvedValueOnce(ghes)
+    ghExecFileAsyncMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        head: {
+          ref: 'feature',
+          repo: {
+            full_name: 'team/orca',
+            name: 'orca',
+            clone_url: 'https://github.acme-corp.com/team/orca.git',
+            ssh_url: 'git@github.acme-corp.com:team/orca.git',
+            owner: { login: 'team' }
+          }
+        }
+      })
+    })
+
+    await expect(getPullRequestPushTarget('/repo-root', 7)).resolves.toEqual({
+      pushTarget: { remoteName: 'origin', branchName: 'feature' }
+    })
+    // Why: the candidate probe must pin options.host so the runner targets the
+    // Enterprise server instead of gh's default host.
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
+      ['api', 'repos/team/orca/pulls/7'],
+      expect.objectContaining({ host: 'github.acme-corp.com' })
+    )
   })
 
   it('probes additional PR repo candidates when the first lookup is not found', async () => {

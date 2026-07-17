@@ -120,14 +120,15 @@ export async function isGitHubHostAuthenticated(
 }
 
 /**
- * Resolve owner/repo for a GitHub Enterprise Server `origin` remote — a custom
- * host the user is gh-authenticated to. Returns null for github.com (already
- * handled by {@link getOwnerRepo}) and for hosts gh is not logged in to
+ * Resolve owner/repo for a GitHub Enterprise Server remote — a custom host the
+ * user is gh-authenticated to. Returns null for github.com (already handled by
+ * {@link getOwnerRepo}) and for hosts gh is not logged in to
  * (Gitea/Forgejo/self-hosted GitLab/etc.), so GHES routes to the GitHub provider
  * without a GitHub provider stealing another forge's remote.
  */
-export async function getEnterpriseGitHubRepoSlug(
+export async function getEnterpriseGitHubRepoSlugForRemote(
   repoPath: string,
+  remoteName: string,
   connectionId?: string | null,
   options: HostedReviewExecutionOptions = {}
 ): Promise<GitHubEnterpriseRepoSlug | null> {
@@ -135,7 +136,7 @@ export async function getEnterpriseGitHubRepoSlug(
   const context = githubRepoContext(repoPath, connectionId, localGitOptions)
   let remoteUrl: string | null
   try {
-    remoteUrl = await getRemoteUrlForRepo(context, 'origin')
+    remoteUrl = await getRemoteUrlForRepo(context, remoteName)
   } catch {
     return null
   }
@@ -150,4 +151,12 @@ export async function getEnterpriseGitHubRepoSlug(
     localGitOptions
   )
   return authenticated ? { owner: identity.owner, repo: identity.repo, host: identity.host } : null
+}
+
+export async function getEnterpriseGitHubRepoSlug(
+  repoPath: string,
+  connectionId?: string | null,
+  options: HostedReviewExecutionOptions = {}
+): Promise<GitHubEnterpriseRepoSlug | null> {
+  return getEnterpriseGitHubRepoSlugForRemote(repoPath, 'origin', connectionId, options)
 }

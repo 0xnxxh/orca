@@ -7,6 +7,7 @@ import {
   isGhPrimaryRateLimitStderr,
   isGhRateLimitProbe,
   notifyGhPrimaryRateLimit,
+  parseGhRateLimitScopeKey,
   recordGhPrimaryRateLimit,
   registerGhRateLimitResetProbe
 } from './gh-rate-limit-breaker'
@@ -59,6 +60,36 @@ describe('isGhPrimaryRateLimitStderr', () => {
   })
 })
 
+describe('parseGhRateLimitScopeKey', () => {
+  it('parses native and wsl scopes, keeping ported hosts intact', () => {
+    expect(parseGhRateLimitScopeKey('native:github.com')).toEqual({
+      runtime: 'native',
+      host: 'github.com'
+    })
+    expect(parseGhRateLimitScopeKey('native:ghe.corp:8443')).toEqual({
+      runtime: 'native',
+      host: 'ghe.corp:8443'
+    })
+    expect(parseGhRateLimitScopeKey('wsl:ubuntu:github.com')).toEqual({
+      runtime: 'wsl',
+      wslDistro: 'ubuntu',
+      host: 'github.com'
+    })
+    expect(parseGhRateLimitScopeKey('wsl:ubuntu:ghe.corp:8443')).toEqual({
+      runtime: 'wsl',
+      wslDistro: 'ubuntu',
+      host: 'ghe.corp:8443'
+    })
+  })
+
+  it('rejects malformed scopes', () => {
+    expect(parseGhRateLimitScopeKey('native:')).toBeNull()
+    expect(parseGhRateLimitScopeKey('wsl:ubuntu')).toBeNull()
+    expect(parseGhRateLimitScopeKey('wsl:ubuntu:')).toBeNull()
+    expect(parseGhRateLimitScopeKey('ssh:github.com')).toBeNull()
+  })
+})
+
 describe('breaker state', () => {
   it('blocks until the recorded time, then expires', () => {
     const now = 1_000_000
@@ -90,17 +121,22 @@ describe('breaker state', () => {
     const probe = vi.fn()
     registerGhRateLimitResetProbe(probe)
     notifyGhPrimaryRateLimit('search')
-    expect(probe).toHaveBeenCalledWith('search')
+    expect(probe).toHaveBeenCalledWith('search', 'native:github.com')
     expect(getGhRateLimitBlockedUntilMs('search')).toBeGreaterThan(Date.now())
   })
 
-  it('does not refine a non-default scope with the native github.com probe', () => {
+  it('fires the reset probe with the tripping scope for non-default scopes', () => {
+    // Why: a WSL-only Windows install (or GHES) would otherwise stay on the
+    // blunt 5-minute fallback forever — the probe must learn which scope to
+    // query.
     const probe = vi.fn()
     registerGhRateLimitResetProbe(probe)
 
     notifyGhPrimaryRateLimit('core', 'native:github.acme-corp.com')
+    notifyGhPrimaryRateLimit('core', 'wsl:ubuntu:github.com')
 
-    expect(probe).not.toHaveBeenCalled()
+    expect(probe).toHaveBeenNthCalledWith(1, 'core', 'native:github.acme-corp.com')
+    expect(probe).toHaveBeenNthCalledWith(2, 'core', 'wsl:ubuntu:github.com')
     expect(
       getGhRateLimitBlockedUntilMs('core', Date.now(), 'native:github.acme-corp.com')
     ).not.toBeNull()

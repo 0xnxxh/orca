@@ -19,11 +19,14 @@ import type {
   GitHubRateLimitSnapshot
 } from '../../shared/types'
 import { isDefaultGitHubHost } from '../../shared/github-repository-identity-key'
+import { isWslUncPath } from '../../shared/wsl-paths'
 import { acquire, release } from './gh-utils'
 import { ghExecFileAsync } from '../git/runner'
 import {
   clearGhRateLimitBlock,
   getGhRateLimitBlockedUntilMs,
+  ghRateLimitScopeKey,
+  parseGhRateLimitScopeKey,
   recordGhPrimaryRateLimit,
   registerGhRateLimitResetProbe,
   type GhRateLimitBucket
@@ -73,6 +76,8 @@ function parseBucket(
 export function _resetRateLimitCache(): void {
   cached = null
   probeFailure = null
+  scopeProbeFailureAtMs.clear()
+  scopeRefinementInFlight.clear()
 }
 
 // Why: hard-stop thresholds for the circuit breaker. We refuse to issue a new
@@ -167,15 +172,21 @@ export function noteRateLimitSpend(bucket: RateLimitBucketKind, cost = 1): void 
 // breaker still protects those hosts after a real 403).
 export function spendsSharedGitHubComQuota(
   repository: { host?: string } | null | undefined,
-  executionOptions?: { wslDistro?: string }
+  executionOptions?: { wslDistro?: string; cwd?: string }
 ): boolean {
-  return isDefaultGitHubHost(repository?.host) && !executionOptions?.wslDistro
+  if (!isDefaultGitHubHost(repository?.host) || executionOptions?.wslDistro) {
+    return false
+  }
+  // Why: a \\wsl.localhost\... (or \\wsl$\...) cwd makes the runner spawn gh
+  // inside WSL, so it spends that distro's quota. The UNC shape is
+  // platform-unambiguous, so no win32 gate is needed.
+  return !(executionOptions?.cwd && isWslUncPath(executionOptions.cwd))
 }
 
 export function repositoryRateLimitGuard(
   repository: { host?: string } | null | undefined,
   bucket: RateLimitBucketKind,
-  executionOptions?: { wslDistro?: string }
+  executionOptions?: { wslDistro?: string; cwd?: string }
 ): ReturnType<typeof rateLimitGuard> {
   return spendsSharedGitHubComQuota(repository, executionOptions)
     ? rateLimitGuard(bucket)
@@ -186,7 +197,7 @@ export function noteRepositoryRateLimitSpend(
   repository: { host?: string } | null | undefined,
   bucket: RateLimitBucketKind,
   cost = 1,
-  executionOptions?: { wslDistro?: string }
+  executionOptions?: { wslDistro?: string; cwd?: string }
 ): void {
   if (spendsSharedGitHubComQuota(repository, executionOptions)) {
     noteRateLimitSpend(bucket, cost)
@@ -224,7 +235,68 @@ function refineBreakerFromSnapshot(): void {
   })()
 }
 
-registerGhRateLimitResetProbe(() => refineBreakerFromSnapshot())
+const DEFAULT_BREAKER_SCOPE = ghRateLimitScopeKey('native', 'github.com')
+// Why: non-default scopes (GHES hosts, WSL runtimes) have their own quota and
+// their own probe lifecycle — single-flight and failure negative-cache are
+// keyed per scope so a GHES 403 storm can't starve a WSL refinement (or vice
+// versa).
+const scopeRefinementInFlight = new Map<string, Promise<void>>()
+const scopeProbeFailureAtMs = new Map<string, number>()
+
+function refineBreakerForScope(scope: string): void {
+  // Default scope keeps the existing shared-snapshot refinement path.
+  if (scope === DEFAULT_BREAKER_SCOPE) {
+    refineBreakerFromSnapshot()
+    return
+  }
+  const parts = parseGhRateLimitScopeKey(scope)
+  if (!parts || scopeRefinementInFlight.has(scope)) {
+    return
+  }
+  // Why: GHES with rate limiting disabled 404s every probe. Fail open (the
+  // fallback block stands) and don't re-probe in a tight loop while the
+  // breaker keeps tripping.
+  const failedAt = scopeProbeFailureAtMs.get(scope)
+  if (failedAt !== undefined && Date.now() - failedAt < RATE_LIMIT_CACHE_TTL_MS) {
+    return
+  }
+  const probe = (async () => {
+    try {
+      await acquire()
+      try {
+        // Run the probe on the tripping scope's runtime/host so it describes
+        // that account's buckets, not the native github.com ones.
+        const { stdout } = await ghExecFileAsync(['api', 'rate_limit'], {
+          encoding: 'utf-8',
+          host: parts.host,
+          ...(parts.runtime === 'wsl' ? { wslDistro: parts.wslDistro } : {})
+        })
+        const parsed = JSON.parse(stdout) as GhRateLimitPayload
+        scopeProbeFailureAtMs.delete(scope)
+        // Why: mirrors the default-scope refinement, but records into the
+        // per-scope breaker only — the shared snapshot must keep describing
+        // native github.com exclusively.
+        for (const bucket of ['core', 'search', 'graphql'] as GhRateLimitBucket[]) {
+          const b = parseBucket(parsed.resources?.[bucket])
+          if (b.limit > 0 && b.remaining <= 0) {
+            recordGhPrimaryRateLimit(bucket, b.resetAt * 1000, scope)
+          } else if (b.limit > 0) {
+            clearGhRateLimitBlock(bucket, scope)
+          }
+        }
+      } finally {
+        release()
+      }
+    } catch {
+      scopeProbeFailureAtMs.set(scope, Date.now())
+    } finally {
+      scopeRefinementInFlight.delete(scope)
+    }
+  })()
+  scopeRefinementInFlight.set(scope, probe)
+}
+
+registerGhRateLimitResetProbe((_bucket, scope) => refineBreakerForScope(scope))
 
 // Why: a 90-repo fan-out that primes the guard concurrently must resolve to
 // one `gh api rate_limit` spawn, not one per repo — the TTL cache alone can't
