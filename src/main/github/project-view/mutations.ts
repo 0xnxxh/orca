@@ -16,7 +16,7 @@ import {
   type GraphqlVars
 } from './internals'
 import { classifyProjectError, rateLimitedError } from './project-error-classification'
-import { githubHostExecOptions } from '../github-api-repository'
+import { githubProjectHost } from '../../../shared/github-project-identity'
 import type { GitHubAssignableUser, GitHubWorkItemDetails, PRComment } from '../../../shared/types'
 import type {
   AddIssueCommentBySlugArgs,
@@ -39,6 +39,10 @@ import type {
   UpdatePullRequestBySlugArgs,
   UpdateProjectItemFieldArgs
 } from '../../../shared/github-project-types'
+
+function githubHostExecOptions(args: { host?: string }): { host: string } {
+  return { host: githubProjectHost(args.host) }
+}
 
 // ─── Project field mutations ──────────────────────────────────────────
 
