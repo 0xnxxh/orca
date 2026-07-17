@@ -206,6 +206,10 @@ export default function MonacoEditor({
   // add-review-note shortcut reads the live selection target through a ref.
   const selectionAnnotationTargetRef = useRef<MonacoMarkdownSelectionAnnotationTarget | null>(null)
   selectionAnnotationTargetRef.current = selectionAnnotationTarget
+  // Why: claim open drafts synchronously so a same-tick second chord cannot
+  // remount the composer before React commits commentPopover state.
+  const commentPopoverRef = useRef<MarkdownCommentPopoverState | null>(null)
+  commentPopoverRef.current = commentPopover
   const isDark =
     settings?.theme === 'dark' ||
     (settings?.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -425,10 +429,16 @@ export default function MonacoEditor({
       // mirrors the last-rendered selection target and is null unless markdown
       // annotations are enabled and text is selected.
       const cleanupAddReviewNoteShortcut = installEditorAddReviewNoteShortcut(editorDomNode, () => {
+        // Why: product B — keep an open draft instead of remounting (same-tick
+        // races and editor-focused second chords before the composer guard runs).
+        if (commentPopoverRef.current) {
+          return true
+        }
         const target = selectionAnnotationTargetRef.current
         if (!target) {
           return false
         }
+        commentPopoverRef.current = target
         setCommentPopover(target)
         setSelectionAnnotationTarget(null)
         return true
