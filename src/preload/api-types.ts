@@ -1758,7 +1758,7 @@ export type PreloadApi = {
      * shell and silently shadows the keyring credential — in that case
      * `gh auth refresh` is a no-op and the UI must say so.
      */
-    diagnoseAuth: () => Promise<GhAuthDiagnostic>
+    diagnoseAuth: (args?: { host?: string }) => Promise<GhAuthDiagnostic>
     // ── ProjectV2 (GitHub Projects) ─────────────────────────────────
     listAccessibleProjects: (
       args?: ListAccessibleProjectsArgs
