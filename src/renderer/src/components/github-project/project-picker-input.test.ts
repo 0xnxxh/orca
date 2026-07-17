@@ -16,4 +16,16 @@ describe('ProjectPicker project input', () => {
   it('keeps owner/number shorthand on the default host', () => {
     expect(parseProjectInput('acme/7')).toEqual({ owner: 'acme', number: 7 })
   })
+
+  it('rejects credentials and malformed Project routes', () => {
+    for (const input of [
+      'https://user:token@github.corp.example/orgs/acme/projects/7',
+      'https://github.corp.example/orgs/acme/projects/7evil',
+      'https://github.corp.example/orgs/acme/projects/7/views/2evil',
+      'https://github.corp.example/orgs/acme/projects/7/files',
+      'https://github.corp.example/orgs/co_op/projects/7'
+    ]) {
+      expect(parseProjectInput(input)).toBeNull()
+    }
+  })
 })

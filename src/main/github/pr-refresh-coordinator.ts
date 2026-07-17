@@ -12,6 +12,7 @@ import type {
 } from '../../shared/types'
 import { getPRForBranchOutcome, type GitHubPRBranchLookupOptions } from './client'
 import { getOriginGitHubApiRepository } from './github-api-repository'
+import { ghRepoExecOptions, githubRepoContext } from './gh-utils'
 import {
   getRateLimit,
   noteRepositoryRateLimitSpend,
@@ -711,7 +712,13 @@ async function drainQueue(): Promise<void> {
       )
 
       if (isBackground(next.reason)) {
-        const executionOptions = next.candidate.localGitOptions ?? {}
+        const executionOptions = ghRepoExecOptions(
+          githubRepoContext(
+            next.candidate.repoPath,
+            next.candidate.connectionId,
+            next.candidate.localGitOptions
+          )
+        )
         const repository = await getOriginGitHubApiRepository(
           next.candidate.repoPath,
           next.candidate.connectionId,

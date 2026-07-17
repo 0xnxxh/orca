@@ -119,6 +119,17 @@ function argsUseGhApiPlaceholders(args: string[]): boolean {
   )
 }
 
+function hasExplicitRepoViewTarget(args: string[]): boolean {
+  const target = args[2]
+  return (
+    args[0] === 'repo' &&
+    args[1] === 'view' &&
+    typeof target === 'string' &&
+    !target.startsWith('-') &&
+    target.includes('/')
+  )
+}
+
 function canRunGitHubCliWithoutRepoCwd(args: string[]): boolean {
   if (hasExplicitRepoArg(args)) {
     return true
@@ -126,7 +137,7 @@ function canRunGitHubCliWithoutRepoCwd(args: string[]): boolean {
   if (args[0] === 'api') {
     return !argsUseGhApiPlaceholders(args)
   }
-  return args[0] === 'auth'
+  return args[0] === 'auth' || hasExplicitRepoViewTarget(args)
 }
 
 function isMissingCommandInWsl(stderr: string, command: string): boolean {
@@ -1463,13 +1474,39 @@ export function applyGhHostToArgs(args: string[], host?: string): string[] {
   return qualified
 }
 
-function ghRateLimitScope(options: GhExecOptions, resolved: ResolvedCommand): string {
+function explicitGhHostname(args: readonly string[]): string | undefined {
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '--hostname') {
+      const value = args[i + 1]?.trim()
+      return value || undefined
+    }
+    if (args[i].startsWith('--hostname=')) {
+      const value = args[i].slice('--hostname='.length).trim()
+      return value || undefined
+    }
+  }
+  return undefined
+}
+
+function ghRateLimitScope(
+  args: readonly string[],
+  options: GhExecOptions,
+  resolved: ResolvedCommand
+): string {
   const runtime = resolved.wsl ? `wsl:${resolved.wsl.distro.toLowerCase()}` : 'native'
-  const host = options.host ?? options.env?.GH_HOST ?? process.env.GH_HOST ?? 'github.com'
+  // Why: an explicit argv hostname controls the actual gh request even when
+  // GH_HOST or options.host disagree, so breaker state must follow that host.
+  const host =
+    explicitGhHostname(args) ??
+    options.host ??
+    options.env?.GH_HOST ??
+    process.env.GH_HOST ??
+    'github.com'
   return ghRateLimitScopeKey(runtime, host)
 }
 
 function assertGhRateLimitScopeAvailable(
+  args: readonly string[],
   options: GhExecOptions,
   resolved: ResolvedCommand,
   bucket: GhRateLimitBucket,
@@ -1481,7 +1518,7 @@ function assertGhRateLimitScopeAvailable(
   const blockedUntilMs = getGhRateLimitBlockedUntilMs(
     bucket,
     Date.now(),
-    ghRateLimitScope(options, resolved)
+    ghRateLimitScope(args, options, resolved)
   )
   if (blockedUntilMs !== null) {
     throw createGhRateLimitBlockedError(bucket, blockedUntilMs)
@@ -1510,7 +1547,7 @@ export async function ghExecFileAsync(
   // cannot block one another after an unrelated quota exhaustion.
   const rateLimitBucket = classifyGhRateLimitBucket(args)
   const rateLimitProbe = isGhRateLimitProbe(args)
-  assertGhRateLimitScopeAvailable(options, resolved, rateLimitBucket, rateLimitProbe)
+  assertGhRateLimitScopeAvailable(args, options, resolved, rateLimitBucket, rateLimitProbe)
   let lastError: unknown
   let attemptedHostFallback = false
   let attemptedDefaultWslFallback = false
@@ -1530,7 +1567,7 @@ export async function ghExecFileAsync(
       lastError = err
       const { stderr } = extractExecError(err)
       if (isGhPrimaryRateLimitStderr(stderr)) {
-        notifyGhPrimaryRateLimit(rateLimitBucket, ghRateLimitScope(options, resolved))
+        notifyGhPrimaryRateLimit(rateLimitBucket, ghRateLimitScope(args, options, resolved))
       }
       if (
         process.platform === 'win32' &&
@@ -1546,7 +1583,7 @@ export async function ghExecFileAsync(
           // global calls like rate_limit/auth do not carry a repo cwd to route by.
           resolved = wslResolved
           attemptedDefaultWslFallback = true
-          assertGhRateLimitScopeAvailable(options, resolved, rateLimitBucket, rateLimitProbe)
+          assertGhRateLimitScopeAvailable(args, options, resolved, rateLimitBucket, rateLimitProbe)
           attempt = -1
           continue
         }
@@ -1554,7 +1591,7 @@ export async function ghExecFileAsync(
       if (!attemptedHostFallback && canFallBackToHostGitHubCli('gh', args, resolved, stderr)) {
         resolved = resolveHostGitHubCli('gh', args)
         attemptedHostFallback = true
-        assertGhRateLimitScopeAvailable(options, resolved, rateLimitBucket, rateLimitProbe)
+        assertGhRateLimitScopeAvailable(args, options, resolved, rateLimitBucket, rateLimitProbe)
         attempt = -1
         continue
       }

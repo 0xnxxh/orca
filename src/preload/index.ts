@@ -1305,6 +1305,7 @@ const api = {
       repoId?: string
       sourceContext?: TaskSourceContext | null
       prNumber: number
+      prRepo?: GitHubOwnerRepo | null
       path: string
       oldPath?: string
       status: string
@@ -1369,6 +1370,7 @@ const api = {
       prNumber: number
       headSha?: string
       failedOnly?: boolean
+      prRepo?: GitHubOwnerRepo | null
     }): Promise<{ ok: true; count: number } | { ok: false; error: string }> =>
       ipcRenderer.invoke('gh:rerunPRChecks', args),
 
@@ -1387,6 +1389,7 @@ const api = {
       sourceContext?: TaskSourceContext | null
       threadId: string
       resolve: boolean
+      prRepo?: GitHubOwnerRepo | null
     }): Promise<boolean> => ipcRenderer.invoke('gh:resolveReviewThread', args),
 
     setPRFileViewed: (args: {
@@ -1394,6 +1397,7 @@ const api = {
       repoId?: string
       sourceContext?: TaskSourceContext | null
       prNumber: number
+      prRepo?: GitHubOwnerRepo | null
       pullRequestId: string
       path: string
       viewed: boolean
@@ -1434,6 +1438,7 @@ const api = {
       sourceContext?: TaskSourceContext | null
       prNumber: number
       updates: { state: 'open' | 'closed' }
+      prRepo?: GitHubOwnerRepo | null
     }): Promise<{ ok: true } | { ok: false; error: string }> =>
       ipcRenderer.invoke('gh:updatePRState', args),
 
@@ -1443,6 +1448,7 @@ const api = {
       sourceContext?: TaskSourceContext | null
       prNumber: number
       reviewers: string[]
+      prRepo?: GitHubOwnerRepo | null
     }): Promise<{ ok: true } | { ok: false; error: string }> =>
       ipcRenderer.invoke('gh:requestPRReviewers', args),
 
@@ -1452,6 +1458,7 @@ const api = {
       sourceContext?: TaskSourceContext | null
       prNumber: number
       reviewers: string[]
+      prRepo?: GitHubOwnerRepo | null
     }): Promise<{ ok: true } | { ok: false; error: string }> =>
       ipcRenderer.invoke('gh:removePRReviewers', args),
 
@@ -1492,6 +1499,7 @@ const api = {
       repoId?: string
       sourceContext?: TaskSourceContext | null
       prNumber: number
+      prRepo?: GitHubOwnerRepo | null
       commitId: string
       path: string
       line: number

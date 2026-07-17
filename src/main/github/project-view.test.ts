@@ -176,6 +176,13 @@ describe('parseProjectPaste', () => {
     ).toEqual({ kind: 'org', owner: 'acme', number: 7 })
   })
 
+  it('rejects credentials and paths that only begin like a Project URL', () => {
+    expect(parseProjectPaste('https://user:token@github.com/orgs/acme/projects/1')).toBeNull()
+    expect(parseProjectPaste('https://github.com/orgs/acme/projects/1evil')).toBeNull()
+    expect(parseProjectPaste('https://github.com/orgs/acme/projects/1/views/2evil')).toBeNull()
+    expect(parseProjectPaste('https://github.com/orgs/acme/projects/1/files')).toBeNull()
+  })
+
   it('returns null for empty input', () => {
     expect(parseProjectPaste('')).toBeNull()
     expect(parseProjectPaste('   ')).toBeNull()

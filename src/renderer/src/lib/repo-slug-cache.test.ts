@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Repo } from '../../../shared/types'
 import { githubRepoIdentityKey } from '../../../shared/github-repository-identity-key'
 import {
+  REPO_SLUG_FAILURE_TTL_MS,
+  clearRepoSlugCacheValues,
+  nextRepoSlugFailureRetryDelay,
+  readRepoSlugCache,
+  rememberRepoSlug,
   lookupReposBySlugFromCache,
   settingsForRepoOwner,
   slugByRepoId,
@@ -20,7 +25,7 @@ function repo(id: string): Repo {
 }
 
 describe('repo slug cache host identity', () => {
-  beforeEach(() => slugByRepoId.clear())
+  beforeEach(() => clearRepoSlugCacheValues())
 
   it('does not route a GHES project row to a same-named github.com repo', () => {
     const dotCom = repo('dotcom')
@@ -39,5 +44,14 @@ describe('repo slug cache host identity', () => {
     expect(
       lookupReposBySlugFromCache([dotCom, enterprise], null, 'acme/widgets', 'ghe.example:8443')
     ).toEqual([enterprise])
+  })
+
+  it('expires negative slug resolutions so an external GHES login can recover', () => {
+    const key = slugCacheKey('enterprise', null)
+    rememberRepoSlug(key, null, 1_000)
+
+    expect(readRepoSlugCache(key, 1_000)).toEqual({ hit: true, value: null })
+    expect(nextRepoSlugFailureRetryDelay(new Set([key]), 1_000)).toBe(REPO_SLUG_FAILURE_TTL_MS)
+    expect(readRepoSlugCache(key, 1_000 + REPO_SLUG_FAILURE_TTL_MS)).toEqual({ hit: false })
   })
 })

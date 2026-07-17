@@ -1,6 +1,24 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as GitHubEnterpriseRepository from './github-enterprise-repository'
 
-import { githubHostExecOptions, resolveGitHubRepoExecution } from './github-api-repository'
+const { isGitHubHostAuthenticatedMock } = vi.hoisted(() => ({
+  isGitHubHostAuthenticatedMock: vi.fn()
+}))
+
+vi.mock('./github-enterprise-repository', async (importOriginal) => ({
+  ...(await importOriginal<typeof GitHubEnterpriseRepository>()),
+  isGitHubHostAuthenticated: isGitHubHostAuthenticatedMock
+}))
+
+import {
+  githubHostExecOptions,
+  resolveGitHubApiRepository,
+  resolveGitHubRepoExecution
+} from './github-api-repository'
+
+beforeEach(() => {
+  isGitHubHostAuthenticatedMock.mockReset().mockResolvedValue(false)
+})
 
 describe('githubHostExecOptions', () => {
   it('pins every known repository host', () => {
@@ -21,6 +39,7 @@ describe('githubHostExecOptions', () => {
 describe('resolveGitHubRepoExecution', () => {
   it('combines local repository and GitHub host execution options', async () => {
     const ownerRepo = { owner: 'acme', repo: 'widgets', host: 'github.acme-corp.com' }
+    isGitHubHostAuthenticatedMock.mockResolvedValue(true)
 
     await expect(
       resolveGitHubRepoExecution('/repo', ownerRepo, null, { wslDistro: 'Ubuntu' })
@@ -32,6 +51,45 @@ describe('resolveGitHubRepoExecution', () => {
         host: 'github.acme-corp.com'
       }
     })
+    expect(isGitHubHostAuthenticatedMock).toHaveBeenCalledWith(
+      'github.acme-corp.com',
+      '/repo',
+      null,
+      { wslDistro: 'Ubuntu' }
+    )
+  })
+
+  it('rejects an explicit Enterprise host absent from the local gh auth inventory', async () => {
+    await expect(
+      resolveGitHubApiRepository(
+        '/remote/repo',
+        {
+          owner: 'acme',
+          repo: 'widgets',
+          host: 'evil.example.test'
+        },
+        'ssh-1'
+      )
+    ).resolves.toBeNull()
+
+    expect(isGitHubHostAuthenticatedMock).toHaveBeenCalledWith(
+      'evil.example.test',
+      '/remote/repo',
+      'ssh-1',
+      {}
+    )
+  })
+
+  it('normalizes github.com without spending an auth inventory probe', async () => {
+    await expect(
+      resolveGitHubApiRepository('/repo', {
+        owner: 'acme',
+        repo: 'widgets',
+        host: ' GitHub.COM '
+      })
+    ).resolves.toEqual({ owner: 'acme', repo: 'widgets', host: 'github.com' })
+
+    expect(isGitHubHostAuthenticatedMock).not.toHaveBeenCalled()
   })
 
   it('uses a caller-specific repository resolver without changing its identity', async () => {

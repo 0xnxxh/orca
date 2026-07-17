@@ -26,6 +26,7 @@ import {
   getIssueGitHubApiRepository,
   getOriginGitHubApiRepository,
   githubHostExecOptions,
+  resolveGitHubRepoExecution,
   type GitHubApiRepository
 } from './github-api-repository'
 import { noteRepositoryRateLimitSpend, repositoryRateLimitGuard } from './rate-limit'
@@ -359,11 +360,11 @@ async function getIssueDetailsViaGraphQL(
   if (!ownerRepo) {
     return null
   }
-  if (repositoryRateLimitGuard(ownerRepo, 'graphql', localGitOptions).blocked) {
+  if (repositoryRateLimitGuard(ownerRepo, 'graphql', ghOptions).blocked) {
     return null
   }
   try {
-    noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, localGitOptions)
+    noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, ghOptions)
     const { stdout } = await ghExecFileAsync(
       [
         'api',
@@ -515,7 +516,11 @@ async function getPRMetadata(
     ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
     ...githubHostExecOptions(ownerRepo)
   }
+  if (repositoryRateLimitGuard(ownerRepo, 'core', ghOptions).blocked) {
+    return { body: '' }
+  }
   try {
+    noteRepositoryRateLimitSpend(ownerRepo, 'core', 1, ghOptions)
     if (ownerRepo) {
       const { stdout } = await ghExecFileAsync(
         ['api', '--cache', '60s', `repos/${ownerRepo.owner}/${ownerRepo.repo}/pulls/${prNumber}`],
@@ -571,7 +576,11 @@ async function getPRFiles(
   try {
     const data: RESTPRFile[] = []
     for (let page = 1; data.length < MAX_PR_FILES; page += 1) {
+      if (repositoryRateLimitGuard(ownerRepo, 'core', ghOptions).blocked) {
+        return null
+      }
       const pageSuffix = page === 1 ? '' : `&page=${page}`
+      noteRepositoryRateLimitSpend(ownerRepo, 'core', 1, ghOptions)
       const { stdout } = await ghExecFileAsync(
         [
           'api',
@@ -620,7 +629,7 @@ async function getPRFileViewedStates(
     ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
     ...githubHostExecOptions(ownerRepo)
   }
-  if (repositoryRateLimitGuard(ownerRepo, 'graphql', localGitOptions).blocked) {
+  if (repositoryRateLimitGuard(ownerRepo, 'graphql', ghOptions).blocked) {
     return null
   }
   const viewedStates = new Map<string, GitHubPRFileViewedState>()
@@ -644,7 +653,7 @@ async function getPRFileViewedStates(
       if (after) {
         args.push('-f', `after=${after}`)
       }
-      noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, localGitOptions)
+      noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, ghOptions)
       const { stdout } = await ghExecFileAsync(args, ghOptions)
       const parsed = JSON.parse(stdout) as {
         data?: {
@@ -815,11 +824,15 @@ async function getWorkItemParticipants(
   if (!ownerRepo) {
     return []
   }
-  if (repositoryRateLimitGuard(ownerRepo, 'graphql', localGitOptions).blocked) {
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
+  if (repositoryRateLimitGuard(ownerRepo, 'graphql', ghOptions).blocked) {
     return []
   }
   try {
-    noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, localGitOptions)
+    noteRepositoryRateLimitSpend(ownerRepo, 'graphql', 1, ghOptions)
     const { stdout } = await ghExecFileAsync(
       [
         'api',
@@ -835,10 +848,7 @@ async function getWorkItemParticipants(
         '-F',
         `isPr=${item.type === 'pr'}`
       ],
-      {
-        ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
-        ...githubHostExecOptions(ownerRepo)
-      }
+      ghOptions
     )
     const data = JSON.parse(stdout) as {
       data?: {
@@ -881,7 +891,11 @@ async function getGitHubUsersByLogin(
   if (uniqueLogins.length === 0) {
     return []
   }
-  const guard = repositoryRateLimitGuard(repository, 'graphql', localGitOptions)
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(repository)
+  }
+  const guard = repositoryRateLimitGuard(repository, 'graphql', ghOptions)
   if (guard.blocked) {
     // Why: surface the skip. Callers degrade silently to login-based avatar URLs
     // (blank on GHE), so without this log "why are avatars missing" is untraceable.
@@ -897,13 +911,10 @@ async function getGitHubUsersByLogin(
     )
     .join('\n')
   try {
-    noteRepositoryRateLimitSpend(repository, 'graphql', 1, localGitOptions)
+    noteRepositoryRateLimitSpend(repository, 'graphql', 1, ghOptions)
     const { stdout } = await ghExecFileAsync(
       ['api', 'graphql', '-f', `query=query { ${fields} }`],
-      {
-        ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
-        ...githubHostExecOptions(repository)
-      }
+      ghOptions
     )
     const data = JSON.parse(stdout) as {
       data?: Record<
@@ -1066,6 +1077,15 @@ async function getPRChecksForDetails(
   }
 }
 
+async function withWorkItemDetailsPermit<T>(operation: () => Promise<T>): Promise<T> {
+  await acquire()
+  try {
+    return await operation()
+  } finally {
+    release()
+  }
+}
+
 export async function getWorkItemDetails(
   repoPath: string,
   number: number,
@@ -1090,9 +1110,8 @@ export async function getWorkItemDetails(
       : (item.prRepo ??
         (await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)))
 
-  await acquire()
-  try {
-    if (item.type === 'issue') {
+  if (item.type === 'issue') {
+    return withWorkItemDetailsPermit(async () => {
       // Why: try the collapsed single-GraphQL path first — body, assignees,
       // participants, and comments all return in one round-trip. On any
       // failure (permissions, partial errors, non-GitHub remote), strictly
@@ -1152,33 +1171,45 @@ export async function getWorkItemDetails(
         participants: mentionParticipants,
         timelineItems
       }
-    }
+    })
+  }
 
-    // PR: fetch metadata + comments + files + viewed states + participants in parallel.
-    const [metadata, comments, files, viewedStates, participants] = await Promise.all([
-      getPRMetadata(repoPath, item.number, resolvedRepository, connectionId, localGitOptions),
-      getPRComments(
-        repoPath,
-        item.number,
-        { prRepo: resolvedRepository },
-        connectionId,
-        ...localGitOptionArgs(localGitOptions)
+  // Why: getPRComments and getPRChecks own their semaphore permits. Keeping an
+  // outer permit while awaiting either can deadlock four concurrent detail loads.
+  const [[metadata, files, viewedStates, participants], comments] = await Promise.all([
+    Promise.all([
+      withWorkItemDetailsPermit(() =>
+        getPRMetadata(repoPath, item.number, resolvedRepository, connectionId, localGitOptions)
       ),
-      getPRFiles(repoPath, item.number, resolvedRepository, connectionId, localGitOptions),
-      getPRFileViewedStates(
-        repoPath,
-        item.number,
-        resolvedRepository,
-        connectionId,
-        localGitOptions
+      withWorkItemDetailsPermit(() =>
+        getPRFiles(repoPath, item.number, resolvedRepository, connectionId, localGitOptions)
       ),
-      getWorkItemParticipants(repoPath, item, resolvedRepository, connectionId, localGitOptions)
-    ])
+      withWorkItemDetailsPermit(() =>
+        getPRFileViewedStates(
+          repoPath,
+          item.number,
+          resolvedRepository,
+          connectionId,
+          localGitOptions
+        )
+      ),
+      withWorkItemDetailsPermit(() =>
+        getWorkItemParticipants(repoPath, item, resolvedRepository, connectionId, localGitOptions)
+      )
+    ]),
+    getPRComments(
+      repoPath,
+      item.number,
+      { prRepo: resolvedRepository },
+      connectionId,
+      ...localGitOptionArgs(localGitOptions)
+    )
+  ])
 
-    // Why: run the mention-author GraphQL lookup in parallel with the final
-    // checks fetch instead of serially — both depend only on data from the
-    // Promise.all above, so there's no ordering requirement between them.
-    const [mentionParticipants, checks] = await Promise.all([
+  // Why: mention hydration directly spawns gh, while checks owns a permit.
+  // Bound the direct spawn separately so neither operation nests a permit.
+  const [mentionParticipants, checks] = await Promise.all([
+    withWorkItemDetailsPermit(() =>
       getMentionParticipants(
         repoPath,
         item,
@@ -1187,33 +1218,31 @@ export async function getWorkItemDetails(
         resolvedRepository,
         connectionId,
         localGitOptions
-      ),
-      getPRChecksForDetails(
-        repoPath,
-        item.number,
-        metadata.headSha,
-        resolvedRepository,
-        connectionId,
-        localGitOptions
       )
-    ])
+    ),
+    getPRChecksForDetails(
+      repoPath,
+      item.number,
+      metadata.headSha,
+      resolvedRepository,
+      connectionId,
+      localGitOptions
+    )
+  ])
 
-    return {
-      item: enrichItemDisplayAvatars(item, mentionParticipants),
-      body: metadata.body,
-      comments,
-      headSha: metadata.headSha,
-      baseSha: metadata.baseSha,
-      pullRequestId: viewedStates?.pullRequestId,
-      checks,
-      // Why: distinguish a failed file fetch (null) from an empty PR so the
-      // Files tab surfaces a retry instead of "No files changed."
-      files: files === null ? undefined : mergePRFileViewedStates(files, viewedStates),
-      filesUnavailable: files === null,
-      participants: mentionParticipants
-    }
-  } finally {
-    release()
+  return {
+    item: enrichItemDisplayAvatars(item, mentionParticipants),
+    body: metadata.body,
+    comments,
+    headSha: metadata.headSha,
+    baseSha: metadata.baseSha,
+    pullRequestId: viewedStates?.pullRequestId,
+    checks,
+    // Why: distinguish a failed file fetch (null) from an empty PR so the
+    // Files tab surfaces a retry instead of "No files changed."
+    files: files === null ? undefined : mergePRFileViewedStates(files, viewedStates),
+    filesUnavailable: files === null,
+    participants: mentionParticipants
   }
 }
 
@@ -1267,6 +1296,7 @@ export async function getPRFileContents(args: {
   repoPath: string
   connectionId?: string | null
   localGitOptions?: LocalGitExecOptions
+  prRepo?: GitHubApiRepository | null
   prNumber: number
   path: string
   oldPath?: string
@@ -1274,8 +1304,9 @@ export async function getPRFileContents(args: {
   headSha: string
   baseSha: string
 }): Promise<GitHubPRFileContents> {
-  const ownerRepo = await getOriginGitHubApiRepository(
+  const { ownerRepo } = await resolveGitHubRepoExecution(
     args.repoPath,
+    args.prRepo,
     args.connectionId,
     args.localGitOptions
   )

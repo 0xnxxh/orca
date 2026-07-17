@@ -183,7 +183,7 @@ function pruneRepositoryMergeMetadataCache(now = Date.now()): void {
 async function assertRateLimitBudget(
   bucket: RateLimitBucketKind,
   repository?: GitHubApiRepository | null,
-  executionOptions?: Pick<GhExecOptions, 'wslDistro'>
+  executionOptions?: Pick<GhExecOptions, 'cwd' | 'wslDistro'>
 ): Promise<void> {
   if (spendsSharedGitHubComQuota(repository, executionOptions)) {
     await getRateLimit()
@@ -340,6 +340,7 @@ export async function getPullRequestPushTarget(
   await acquire()
   try {
     let prStdout = ''
+    let matchedRepository: GitHubApiRepository | null = null
     for (const candidate of candidates) {
       try {
         const { stdout } = await ghExecFileAsync(
@@ -347,6 +348,7 @@ export async function getPullRequestPushTarget(
           { ...ghOptions, ...githubHostExecOptions(candidate) }
         )
         prStdout = stdout
+        matchedRepository = candidate
         break
       } catch (error) {
         // Why: in fork workflows `origin` is often the contributor fork while
@@ -358,7 +360,7 @@ export async function getPullRequestPushTarget(
         throw error
       }
     }
-    if (!prStdout) {
+    if (!prStdout || !matchedRepository) {
       return null
     }
     const origin = await getGitHubApiRepositoryForRemote(
@@ -393,8 +395,8 @@ export async function getPullRequestPushTarget(
     }
     if (
       origin &&
-      origin.owner.toLowerCase() === owner.toLowerCase() &&
-      origin.repo.toLowerCase() === repo.toLowerCase()
+      githubRepoIdentityKey(origin) ===
+        githubRepoIdentityKey({ owner, repo, host: matchedRepository.host })
     ) {
       return {
         pushTarget: { remoteName: 'origin', branchName },
@@ -1604,7 +1606,7 @@ async function countWorkItemsForQuery(
   )
   // Why: over-counts gh cache hits, which is the safe direction — the search
   // bucket is only 30/min and the next probe corrects the estimate.
-  noteRepositoryRateLimitSpend(ownerRepo, 'search', 1, localGitOptions)
+  noteRepositoryRateLimitSpend(ownerRepo, 'search', 1, ghOptions)
   return Number.parseInt(stdout.trim(), 10) || 0
 }
 
@@ -1656,16 +1658,20 @@ export async function countWorkItems(
 
   const parsedQuery = trimmedQuery ? parseTaskQuery(trimmedQuery) : null
   const effectiveQuery = parsedQuery ?? defaultOpenWorkItemQuery()
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(repoPath, connectionId, localGitOptions)),
+    ...githubHostExecOptions(ownerRepo)
+  }
 
   // Why: counts are decorative (pagination totals). The search bucket is only
   // 30/min, so a multi-repo Tasks page must stop counting when the budget is
   // gone instead of converting the remaining repos into 403 spawns. getRateLimit
   // is 30s-cached and single-flight, so priming here is one spawn per window.
   // Only shared github.com traffic consults the snapshot; other scopes bypass.
-  if (spendsSharedGitHubComQuota(ownerRepo, localGitOptions)) {
+  if (spendsSharedGitHubComQuota(ownerRepo, ghOptions)) {
     await getRateLimit()
   }
-  if (repositoryRateLimitGuard(ownerRepo, 'search', localGitOptions).blocked) {
+  if (repositoryRateLimitGuard(ownerRepo, 'search', ghOptions).blocked) {
     return 0
   }
 
@@ -2169,14 +2175,34 @@ export async function getWorkItemByOwnerRepo(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<MainWorkItem | null> {
+  const { candidates } = await resolveGitHubApiRepositoryCandidates(
+    repoPath,
+    connectionId,
+    localGitOptions
+  )
+  const requestedKey = githubRepoIdentityKey(ownerRepo)
+  const matchedRepository = candidates.find(
+    (candidate) => githubRepoIdentityKey(candidate) === requestedKey
+  )
+  // Why: this lookup is reachable from pasted links. Restricting it to a
+  // configured remote prevents gh from sending credentials to an arbitrary host.
+  if (!matchedRepository) {
+    return null
+  }
   await acquire()
   try {
     if (type === 'issue') {
-      return await fetchIssueWorkItem(repoPath, ownerRepo, number, connectionId, localGitOptions)
+      return await fetchIssueWorkItem(
+        repoPath,
+        matchedRepository,
+        number,
+        connectionId,
+        localGitOptions
+      )
     }
     return await fetchPullRequestWorkItem(
       repoPath,
-      ownerRepo,
+      matchedRepository,
       number,
       connectionId,
       localGitOptions
@@ -4085,13 +4111,17 @@ function parseActionsRunId(url: string | null | undefined): number | undefined {
 export async function rerunPRChecks(
   repoPath: string,
   prNumber: number,
-  options: { headSha?: string; failedOnly?: boolean } = {},
+  options: {
+    headSha?: string
+    failedOnly?: boolean
+    prRepo?: GitHubApiRepository | null
+  } = {},
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubRerunPRChecksResult> {
   const { ownerRepo, ghOptions } = await resolveGitHubRepoExecution(
     repoPath,
-    undefined,
+    options.prRepo,
     connectionId,
     localGitOptions
   )
@@ -4479,13 +4509,14 @@ export async function setPRFileViewed(args: {
   repoPath: string
   connectionId?: string | null
   localGitOptions?: LocalGitExecOptions
+  prRepo?: GitHubApiRepository | null
   pullRequestId: string
   path: string
   viewed: boolean
 }): Promise<boolean> {
   const { ownerRepo, ghOptions } = await resolveGitHubRepoExecution(
     args.repoPath,
-    undefined,
+    args.prRepo,
     args.connectionId,
     args.localGitOptions
   )
@@ -4530,13 +4561,14 @@ export async function resolveReviewThread(
   threadId: string,
   resolve: boolean,
   connectionId?: string | null,
+  prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<boolean> {
   const mutation = resolve ? 'resolveReviewThread' : 'unresolveReviewThread'
   const query = `mutation($threadId: ID!) { ${mutation}(input: { threadId: $threadId }) { thread { isResolved } } }`
   const { ownerRepo, ghOptions } = await resolveGitHubRepoExecution(
     repoPath,
-    undefined,
+    prRepo,
     connectionId,
     localGitOptions
   )
@@ -4655,7 +4687,7 @@ export async function addPRReviewComment(
 ): Promise<GitHubCommentResult> {
   const { ownerRepo, ghOptions } = await resolveGitHubRepoExecution(
     args.repoPath,
-    undefined,
+    args.prRepo,
     args.connectionId,
     args.localGitOptions
   )
@@ -4983,11 +5015,12 @@ export async function updatePRState(
   prNumber: number,
   updates: GitHubPullRequestStateUpdate,
   connectionId?: string | null,
+  prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const { ownerRepo, ghOptions } = await resolveGitHubRepoExecution(
     repoPath,
-    undefined,
+    prRepo,
     connectionId,
     localGitOptions
   )
@@ -5021,6 +5054,7 @@ export async function requestPRReviewers(
   prNumber: number,
   reviewers: string[],
   connectionId?: string | null,
+  prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const logins = reviewers.map((reviewer) => reviewer.trim()).filter(Boolean)
@@ -5029,7 +5063,7 @@ export async function requestPRReviewers(
   }
   const { ownerRepo, ghOptions } = await resolveGitHubRepoExecution(
     repoPath,
-    undefined,
+    prRepo,
     connectionId,
     localGitOptions
   )
@@ -5061,6 +5095,7 @@ export async function removePRReviewers(
   prNumber: number,
   reviewers: string[],
   connectionId?: string | null,
+  prRepo?: GitHubApiRepository | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const logins = reviewers.map((reviewer) => reviewer.trim()).filter(Boolean)
@@ -5069,7 +5104,7 @@ export async function removePRReviewers(
   }
   const { ownerRepo, ghOptions } = await resolveGitHubRepoExecution(
     repoPath,
-    undefined,
+    prRepo,
     connectionId,
     localGitOptions
   )

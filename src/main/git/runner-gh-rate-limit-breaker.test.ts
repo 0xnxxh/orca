@@ -108,6 +108,36 @@ describe('ghExecFileAsync rate-limit breaker', () => {
     expect(execFileMock).toHaveBeenCalledTimes(5)
   })
 
+  it.each([
+    ['separate', ['--hostname', 'github.com']],
+    ['inline', ['--hostname=github.com']]
+  ])('scopes an explicit %s hostname ahead of process GH_HOST', async (_name, hostnameArgs) => {
+    const originalGhHost = process.env.GH_HOST
+    process.env.GH_HOST = 'github.acme-corp.com'
+    try {
+      mockGhFailure(PRIMARY_RATE_LIMIT_STDERR)
+      await expect(ghExecFileAsync(['api', ...hostnameArgs, 'repos/a/b/pulls'])).rejects.toThrow(
+        'rate limit'
+      )
+
+      expect(getGhRateLimitBlockedUntilMs('core', Date.now(), 'native:github.com')).not.toBeNull()
+      expect(
+        getGhRateLimitBlockedUntilMs('core', Date.now(), 'native:github.acme-corp.com')
+      ).toBeNull()
+
+      mockGhSuccess('[]')
+      await expect(ghExecFileAsync(['api', 'repos/a/b/pulls'])).resolves.toMatchObject({
+        stdout: '[]'
+      })
+    } finally {
+      if (originalGhHost === undefined) {
+        delete process.env.GH_HOST
+      } else {
+        process.env.GH_HOST = originalGhHost
+      }
+    }
+  })
+
   it('scopes a WSL UNC-cwd 403 to the distro runtime and probes that scope', async () => {
     // Why: a \\wsl.localhost\... cwd routes gh through wsl.exe, so the 403
     // belongs to the distro's account — the native scope must stay usable and

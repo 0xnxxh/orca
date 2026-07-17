@@ -40,7 +40,8 @@ vi.mock('./gh-utils', () => ({
 }))
 
 vi.mock('./github-enterprise-repository', () => ({
-  getEnterpriseGitHubRepoSlug: getEnterpriseGitHubRepoSlugMock
+  getEnterpriseGitHubRepoSlug: getEnterpriseGitHubRepoSlugMock,
+  isGitHubHostAuthenticated: vi.fn().mockResolvedValue(true)
 }))
 
 import { setPRFileViewed } from './client'

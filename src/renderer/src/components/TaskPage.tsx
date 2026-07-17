@@ -1894,6 +1894,7 @@ function GHAssigneesCell({
       item.type,
       owner,
       patchWorkItem,
+      parsed?.slug.host,
       pendingLogin,
       repo,
       repoName,
@@ -2335,7 +2336,12 @@ function PRReviewCell({
           ? await callRuntimeRpc<{ ok: boolean; error?: string }>(
               target,
               'github.requestPRReviewers',
-              { repo: runtimeRepoId, prNumber: item.number, reviewers: logins },
+              {
+                repo: runtimeRepoId,
+                prNumber: item.number,
+                reviewers: logins,
+                prRepo: item.prRepo ?? null
+              },
               { timeoutMs: 30_000 }
             )
           : await window.api.gh.requestPRReviewers({
@@ -2343,7 +2349,8 @@ function PRReviewCell({
               repoId: repo.id,
               sourceContext,
               prNumber: item.number,
-              reviewers: logins
+              reviewers: logins,
+              prRepo: item.prRepo ?? null
             })
       if (result.ok) {
         toast.success(translate('auto.components.TaskPage.8f06dbb9e5', 'Reviewer requested'))
@@ -2389,7 +2396,12 @@ function PRReviewCell({
           ? await callRuntimeRpc<{ ok: boolean; error?: string }>(
               target,
               'github.removePRReviewers',
-              { repo: runtimeRepoId, prNumber: item.number, reviewers: logins },
+              {
+                repo: runtimeRepoId,
+                prNumber: item.number,
+                reviewers: logins,
+                prRepo: item.prRepo ?? null
+              },
               { timeoutMs: 30_000 }
             )
           : await window.api.gh.removePRReviewers({
@@ -2397,7 +2409,8 @@ function PRReviewCell({
               repoId: repo.id,
               sourceContext,
               prNumber: item.number,
-              reviewers: logins
+              reviewers: logins,
+              prRepo: item.prRepo ?? null
             })
       if (result.ok) {
         toast.success(

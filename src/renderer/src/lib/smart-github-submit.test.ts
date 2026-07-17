@@ -42,6 +42,21 @@ describe('getSmartGitHubSubmitIntent', () => {
     })
   })
 
+  it('finds an embedded GitHub Enterprise item URL', () => {
+    expect(
+      getSmartGitHubSubmitIntent(
+        'please review https://github.acme.test/platform/widgets/pull/2049 before release'
+      )
+    ).toEqual({
+      kind: 'link',
+      host: 'github.acme.test',
+      owner: 'platform',
+      repo: 'widgets',
+      number: 2049,
+      type: 'pr'
+    })
+  })
+
   it('finds an embedded GitHub item URL when prose punctuation touches the URL', () => {
     expect(
       getSmartGitHubSubmitIntent('review (https://github.com/stablyai/orca/pull/2049), please')

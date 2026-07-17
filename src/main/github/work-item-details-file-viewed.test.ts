@@ -26,8 +26,22 @@ const {
   getPRCommentsMock: vi.fn(),
   rateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
   noteRateLimitSpendMock: vi.fn(),
-  repositoryRateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
-  noteRepositoryRateLimitSpendMock: vi.fn(),
+  repositoryRateLimitGuardMock: vi.fn<
+    (
+      repository: { host?: string } | null | undefined,
+      bucket: string,
+      options?: { cwd?: string; host?: string }
+    ) => RateLimitGuardResult
+  >(() => ({ blocked: false })),
+  noteRepositoryRateLimitSpendMock:
+    vi.fn<
+      (
+        repository: { host?: string } | null | undefined,
+        bucket: string,
+        cost?: number,
+        options?: { cwd?: string; host?: string }
+      ) => void
+    >(),
   acquireMock: vi.fn(),
   releaseMock: vi.fn()
 }))
@@ -184,6 +198,21 @@ describe('getWorkItemDetails PR file viewed state', () => {
       undefined,
       undefined
     )
+    expect(repositoryRateLimitGuardMock.mock.calls.length).toBeGreaterThan(0)
+    expect(
+      repositoryRateLimitGuardMock.mock.calls.every(([, bucket, options]) =>
+        bucket === 'graphql'
+          ? options?.cwd === '/repo-root' && options?.host === 'github.com'
+          : true
+      )
+    ).toBe(true)
+    expect(
+      noteRepositoryRateLimitSpendMock.mock.calls.every(([, bucket, , options]) =>
+        bucket === 'graphql'
+          ? options?.cwd === '/repo-root' && options?.host === 'github.com'
+          : true
+      )
+    ).toBe(true)
   })
 
   it('keeps PR details loadable when checks lookup fails', async () => {

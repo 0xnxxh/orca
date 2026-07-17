@@ -12,6 +12,7 @@ import {
   runRest,
   validateSlugArgs,
   assertPositiveInt,
+  projectHostAuthenticationError,
   projectGhExecOptions,
   type GraphqlVars
 } from './internals'
@@ -216,6 +217,10 @@ export async function updateIssueBySlug(
       return { ok: false, error: duplicate.error }
     }
   }
+  const authError = await projectHostAuthenticationError(args.host)
+  if (authError) {
+    return { ok: false, error: authError }
+  }
 
   // Title/body go through PATCH /repos/{owner}/{repo}/issues/{n}.
   // State uses gh issue close/reopen so duplicate closes can record a target.
@@ -223,6 +228,10 @@ export async function updateIssueBySlug(
   const base = `repos/${args.owner}/${args.repo}/issues/${args.number}`
 
   if (state !== undefined) {
+    const guard = repositoryRateLimitGuard(args, 'core')
+    if (guard.blocked) {
+      return { ok: false, error: rateLimitedError(guard) }
+    }
     const stateArgs =
       state === 'closed'
         ? ['issue', 'close', String(args.number), '--repo', `${args.owner}/${args.repo}`]
@@ -237,6 +246,7 @@ export async function updateIssueBySlug(
       }
     }
     await acquire()
+    noteRepositoryRateLimitSpend(args, 'core')
     try {
       await ghExecFileAsync(stateArgs, { encoding: 'utf-8', ...githubHostExecOptions(args) })
     } catch (err) {
@@ -522,6 +532,10 @@ export async function listLabelsBySlug(
   if (!v.ok) {
     return v
   }
+  const authError = await projectHostAuthenticationError(args.host)
+  if (authError) {
+    return { ok: false, error: authError }
+  }
   const guard = repositoryRateLimitGuard(args, 'core')
   if (guard.blocked) {
     return { ok: false, error: rateLimitedError(guard) }
@@ -556,6 +570,10 @@ export async function listAssignableUsersBySlug(
   const v = validateSlugArgs(args.owner, args.repo)
   if (!v.ok) {
     return v
+  }
+  const authError = await projectHostAuthenticationError(args.host)
+  if (authError) {
+    return { ok: false, error: authError }
   }
   // Seed logins merge after the fetch so callers can include currently-visible
   // assignees even if the repo participant search is sparse.

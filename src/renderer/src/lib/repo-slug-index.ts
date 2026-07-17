@@ -18,10 +18,22 @@ import { useAppStore } from '@/store'
 import type { Repo } from '../../../shared/types'
 import type { GlobalSettings } from '../../../shared/types'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
-import { settingsForRepoOwner, slugByRepoId, slugCacheKey, type SlugIndex } from './repo-slug-cache'
+import {
+  clearRepoSlugCacheValues,
+  deleteRepoSlugCacheKey,
+  nextRepoSlugFailureRetryDelay,
+  readRepoSlugCache,
+  rememberRepoSlug,
+  settingsForRepoOwner,
+  slugByRepoId,
+  slugCacheKey,
+  type SlugIndex
+} from './repo-slug-cache'
 import { githubRepoIdentityKey } from '../../../shared/github-repository-identity-key'
 
 export { lookupReposBySlugFromCache } from './repo-slug-cache'
+
+const slugResolutionInFlight = new Map<string, Promise<string | null>>()
 
 /** Drop a repo's cached slug result. Call when a repo is removed or its
  *  remote URL is known to have changed (e.g. after `git remote set-url`),
@@ -29,14 +41,16 @@ export { lookupReposBySlugFromCache } from './repo-slug-cache'
 export function clearRepoSlugCacheEntry(repoId: string): void {
   for (const key of slugByRepoId.keys()) {
     if (key.endsWith(`:${repoId}`)) {
-      slugByRepoId.delete(key)
+      deleteRepoSlugCacheKey(key)
+      slugResolutionInFlight.delete(key)
     }
   }
 }
 
 /** Clear the entire slug cache. Useful for tests or full repo-list resets. */
 export function clearRepoSlugCache(): void {
-  slugByRepoId.clear()
+  clearRepoSlugCacheValues()
+  slugResolutionInFlight.clear()
 }
 
 async function resolveRepoSlug(
@@ -44,39 +58,54 @@ async function resolveRepoSlug(
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
 ): Promise<string | null> {
   const cacheKey = slugCacheKey(repo.id, settings)
-  if (slugByRepoId.has(cacheKey)) {
-    return slugByRepoId.get(cacheKey) ?? null
+  const cached = readRepoSlugCache(cacheKey)
+  if (cached.hit) {
+    return cached.value
   }
-  try {
-    const target = getActiveRuntimeTarget(settings)
-    const result =
-      target.kind === 'environment'
-        ? await callRuntimeRpc<{ owner: string; repo: string; host?: string } | null>(
-            target,
-            'github.repoSlug',
-            { repo: repo.id },
-            { timeoutMs: 30_000 }
-          )
-        : await window.api.gh.repoSlug({ repoPath: repo.path, repoId: repo.id })
-    if (!result) {
-      slugByRepoId.set(cacheKey, null)
+  const inFlight = slugResolutionInFlight.get(cacheKey)
+  if (inFlight) {
+    return inFlight
+  }
+  const resolution = (async () => {
+    try {
+      const target = getActiveRuntimeTarget(settings)
+      const result =
+        target.kind === 'environment'
+          ? await callRuntimeRpc<{ owner: string; repo: string; host?: string } | null>(
+              target,
+              'github.repoSlug',
+              { repo: repo.id },
+              { timeoutMs: 30_000 }
+            )
+          : await window.api.gh.repoSlug({ repoPath: repo.path, repoId: repo.id })
+      if (!result) {
+        rememberRepoSlug(cacheKey, null)
+        return null
+      }
+      const slug = githubRepoIdentityKey(result)
+      rememberRepoSlug(cacheKey, slug)
+      return slug
+    } catch {
+      // Why: GHES classification depends on auth that may change outside Orca;
+      // retry negative results after a bounded quiet period instead of forever.
+      rememberRepoSlug(cacheKey, null)
       return null
     }
-    const slug = githubRepoIdentityKey(result)
-    slugByRepoId.set(cacheKey, slug)
-    return slug
-  } catch {
-    // Why: treat any IPC failure as "not resolvable" rather than propagating —
-    // design doc §Row actions: "If gh:repoSlug fails for a repo, exclude it".
-    slugByRepoId.set(cacheKey, null)
-    return null
+  })()
+  slugResolutionInFlight.set(cacheKey, resolution)
+  try {
+    return await resolution
+  } finally {
+    if (slugResolutionInFlight.get(cacheKey) === resolution) {
+      slugResolutionInFlight.delete(cacheKey)
+    }
   }
 }
 
 async function buildIndex(
   repos: Repo[],
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
-): Promise<SlugIndex> {
+): Promise<{ index: SlugIndex; retryDelayMs: number | null }> {
   // Why: evict cached entries for repos that no longer exist in state so
   // the cache cannot grow unbounded across long sessions where users add
   // and remove repos. Without this, every removed repo's id (and its
@@ -84,7 +113,8 @@ async function buildIndex(
   const liveKeys = new Set(repos.map((r) => slugCacheKey(r.id, settingsForRepoOwner(r, settings))))
   for (const key of slugByRepoId.keys()) {
     if (!liveKeys.has(key)) {
-      slugByRepoId.delete(key)
+      deleteRepoSlugCacheKey(key)
+      slugResolutionInFlight.delete(key)
     }
   }
   const next: SlugIndex = new Map()
@@ -101,7 +131,7 @@ async function buildIndex(
       next.set(slug, [...(next.get(slug) ?? []), repo])
     }
   }
-  return next
+  return { index: next, retryDelayMs: nextRepoSlugFailureRetryDelay(liveKeys) }
 }
 
 export type RepoSlugIndexState = {
@@ -117,21 +147,32 @@ export function useRepoSlugIndex(): RepoSlugIndexState {
   const settings = useAppStore((s) => s.settings)
   const [index, setIndex] = useState<SlugIndex>(() => new Map())
   const [ready, setReady] = useState(false)
+  const [retryGeneration, setRetryGeneration] = useState(0)
   // Why: track the current repos snapshot so the effect can ignore stale
   // resolutions when repos change mid-flight.
   const generationRef = useRef(0)
 
   useEffect(() => {
     const gen = ++generationRef.current
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
     setReady(false)
-    void buildIndex(repos, settings).then((next) => {
+    void buildIndex(repos, settings).then(({ index: next, retryDelayMs }) => {
       if (gen !== generationRef.current) {
         return
       }
       setIndex(next)
       setReady(true)
+      if (retryDelayMs !== null) {
+        retryTimer = setTimeout(() => setRetryGeneration((value) => value + 1), retryDelayMs)
+      }
     })
-  }, [repos, settings])
+    return () => {
+      generationRef.current += 1
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+      }
+    }
+  }, [repos, retryGeneration, settings])
 
   return useMemo(
     () => ({

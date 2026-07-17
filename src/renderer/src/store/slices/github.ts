@@ -4022,7 +4022,12 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
           ? await callRuntimeRpc<boolean>(
               { kind: 'environment', environmentId: requestContext.target.environmentId },
               'github.resolveReviewThread',
-              { repo: requestContext.target.runtimeRepoId, threadId, resolve },
+              {
+                repo: requestContext.target.runtimeRepoId,
+                threadId,
+                resolve,
+                prRepo: options?.prRepo ?? null
+              },
               { timeoutMs: 30_000 }
             )
           : await window.api.gh.resolveReviewThread({
@@ -4030,6 +4035,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
               repoId,
               threadId,
               resolve,
+              prRepo: options?.prRepo ?? null,
               sourceContext: options?.sourceContext
             })
     } catch (err) {

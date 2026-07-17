@@ -176,6 +176,42 @@ describe('ghExecFileAsync WSL fallback', () => {
     )
   })
 
+  it('falls back for repo view with an explicit positional repository', async () => {
+    execFileMock.mockImplementation((binary, _args, options, callback) => {
+      if (typeof options === 'function') {
+        callback = options
+      }
+      if (binary === 'wsl.exe') {
+        callback(
+          Object.assign(new Error('Command failed: wsl.exe'), {
+            stdout: '',
+            stderr: 'bash: line 1: gh: command not found\n'
+          })
+        )
+        return
+      }
+      callback(null, { stdout: '{"isFork":false}', stderr: '' })
+    })
+
+    await expect(
+      ghExecFileAsync(
+        ['repo', 'view', 'github.acme-corp.com/stablyhq/noqa', '--json', 'isFork,parent'],
+        {
+          cwd: String.raw`\\wsl.localhost\Ubuntu\home\jinwoo\stably\noqa`,
+          host: 'github.acme-corp.com'
+        }
+      )
+    ).resolves.toEqual({ stdout: '{"isFork":false}', stderr: '' })
+
+    expect(execFileMock).toHaveBeenNthCalledWith(
+      2,
+      'gh',
+      ['repo', 'view', 'github.acme-corp.com/stablyhq/noqa', '--json', 'isFork,parent'],
+      expect.objectContaining({ cwd: undefined }),
+      expect.any(Function)
+    )
+  })
+
   it('does not fall back for gh api calls that depend on repo-context placeholders', async () => {
     execFileMock.mockImplementation((_binary, _args, _options, callback) => {
       callback(
