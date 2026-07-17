@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as GithubApiRepositoryModule from './github-api-repository'
+import type * as GithubEnterpriseRepositoryModule from './github-enterprise-repository'
 import type * as GhUtils from './gh-utils'
 
 const {
@@ -27,6 +28,11 @@ vi.mock('./gh-utils', async () => {
     release: releaseMock
   }
 })
+
+vi.mock('./github-enterprise-repository', async (importOriginal) => ({
+  ...(await importOriginal<typeof GithubEnterpriseRepositoryModule>()),
+  isGitHubHostAuthenticated: vi.fn().mockResolvedValue(true)
+}))
 
 vi.mock('./github-api-repository', async (importOriginal) => {
   const actual = await importOriginal<typeof GithubApiRepositoryModule>()

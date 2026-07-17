@@ -443,6 +443,9 @@ describe('GitHub PR local runtime routing', () => {
       getWorkItemByOwnerRepo('/remote/repo', enterpriseRepo, 7, 'pr', 'ssh-1')
     ).resolves.toMatchObject({ number: 7, title: 'Enterprise PR' })
     await expect(
+      getWorkItemByOwnerRepo('/remote/repo', { owner: 'team', repo: 'orca' }, 7, 'pr', 'ssh-1')
+    ).resolves.toMatchObject({ number: 7, title: 'Enterprise PR' })
+    await expect(
       getPRComments('/remote/repo', 7, { prRepo: enterpriseRepo }, 'ssh-1')
     ).resolves.toEqual([])
     await expect(

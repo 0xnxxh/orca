@@ -28,6 +28,20 @@ type GitHubApiRepositoryResolution =
   | undefined
   | (() => Promise<GitHubApiRepository | null>)
 
+// Why: renderer/RPC repository overrides are interpolated into REST paths.
+// Reject path syntax before an authenticated gh process can target it.
+const GITHUB_OWNER_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]*$/
+const GITHUB_REPO_SLUG_RE = /^[A-Za-z0-9._-]+$/
+
+function isValidGitHubApiRepository(repository: GitHubApiRepository): boolean {
+  return (
+    GITHUB_OWNER_SLUG_RE.test(repository.owner) &&
+    GITHUB_REPO_SLUG_RE.test(repository.repo) &&
+    repository.repo !== '.' &&
+    repository.repo !== '..'
+  )
+}
+
 // Why: the enterprise branch spawns an uncached `git remote get-url` (an SSH
 // round trip on connection-backed repos) — hot paths like per-file contents
 // and viewed-state toggles resolve per call, so cache like ownerRepoCache does.
@@ -241,6 +255,9 @@ export async function resolveGitHubApiRepository(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<GitHubApiRepository | null> {
+  if (repository && !isValidGitHubApiRepository(repository)) {
+    return null
+  }
   if (repository?.host) {
     const host = repository.host.trim().toLowerCase()
     if (!host) {
@@ -298,10 +315,18 @@ export async function resolveGitHubRepoExecution(
 ): Promise<GitHubRepoExecution> {
   // Why: issue-scoped paths retain their upstream-first resolver while sharing
   // the same repo-scoped and host-scoped gh execution option construction.
+  const requestedRepository = typeof repository === 'function' ? await repository() : repository
+  // Why: normalize host-less resolver results without replacing an
+  // authoritative null with the generic origin fallback.
   const ownerRepo =
-    typeof repository === 'function'
-      ? await repository()
-      : await resolveGitHubApiRepository(repoPath, repository, connectionId, localGitOptions)
+    typeof repository === 'function' && !requestedRepository
+      ? null
+      : await resolveGitHubApiRepository(
+          repoPath,
+          requestedRepository,
+          connectionId,
+          localGitOptions
+        )
   return {
     ownerRepo,
     ghOptions: {

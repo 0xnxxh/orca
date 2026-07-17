@@ -36,7 +36,7 @@ describe('PullRequestPage host boundaries', () => {
     )
     expect(section).toContain("'github.requestPRReviewers'")
     expect(section).toContain("'github.removePRReviewers'")
-    expect(section).toContain('{ repo: runtimeRepo, prNumber: item.number, reviewers: logins }')
+    expect(section.match(/prRepo: item\.prRepo \?\? reviewSlug/g)).toHaveLength(4)
     expect(section).toContain('notifyWorkItemDetailsMutation(')
     expect(section).toContain('{ local: false }')
   })
@@ -231,7 +231,9 @@ describe('PullRequestPage host boundaries', () => {
     expect(source).toContain('options.local !== false')
     expect(source).toContain('notifyWorkItemMutated({')
     expect(commentContextSection).toContain('sourceContext?: TaskSourceContext | null')
-    expect(commentContextSection).toContain('sourceContext, prNumber')
+    expect(commentContextSection).toMatch(
+      /loadPRFileContents\(\{\s*repoPath,\s*repoId,\s*sourceContext,\s*prNumber,\s*prRepo,/
+    )
   })
 
   it('routes check actions through the PR source context', () => {

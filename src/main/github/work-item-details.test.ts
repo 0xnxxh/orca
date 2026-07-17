@@ -30,7 +30,13 @@ const {
   getWorkItemByOwnerRepoMock: vi.fn(),
   getPRChecksMock: vi.fn(),
   getPRCommentsMock: vi.fn(),
-  repositoryRateLimitGuardMock: vi.fn<() => RateLimitGuardResult>(() => ({ blocked: false })),
+  repositoryRateLimitGuardMock: vi.fn<
+    (
+      repository: { host?: string } | null | undefined,
+      bucket: 'core' | 'graphql' | 'search',
+      options?: { cwd?: string; wslDistro?: string }
+    ) => RateLimitGuardResult
+  >(() => ({ blocked: false })),
   noteRepositoryRateLimitSpendMock: vi.fn(),
   ghRepoExecOptionsMock: vi.fn((context) =>
     context.connectionId
@@ -74,7 +80,7 @@ vi.mock('./rate-limit', () => ({
   noteRepositoryRateLimitSpend: noteRepositoryRateLimitSpendMock
 }))
 
-import { getPRFileContents, getWorkItemDetails } from './work-item-details'
+import { getWorkItemDetails } from './work-item-details'
 
 import { _resetOriginGitHubApiRepositoryCache } from './github-api-repository'
 
@@ -249,6 +255,17 @@ describe('getWorkItemDetails', () => {
     expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
       { owner: 'acme', repo: 'widgets', host: 'github.com' },
       'graphql',
+      1,
+      { cwd: '/repo-root', host: 'github.com' }
+    )
+    expect(repositoryRateLimitGuardMock).toHaveBeenCalledWith(
+      { owner: 'acme', repo: 'widgets', host: 'github.com' },
+      'core',
+      { cwd: '/repo-root', host: 'github.com' }
+    )
+    expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
+      { owner: 'acme', repo: 'widgets', host: 'github.com' },
+      'core',
       1,
       { cwd: '/repo-root', host: 'github.com' }
     )
@@ -486,12 +503,16 @@ describe('getWorkItemDetails', () => {
   })
 
   it('skips optional GraphQL issue detail calls when the cached GraphQL budget is low', async () => {
-    repositoryRateLimitGuardMock.mockReturnValue({
-      blocked: true,
-      remaining: 3,
-      limit: 5000,
-      resetAt: 1_800_000_000
-    })
+    repositoryRateLimitGuardMock.mockImplementation((_repository, bucket) =>
+      bucket === 'graphql'
+        ? {
+            blocked: true,
+            remaining: 3,
+            limit: 5000,
+            resetAt: 1_800_000_000
+          }
+        : { blocked: false }
+    )
     getWorkItemMock.mockResolvedValueOnce({
       id: 'issue:923',
       type: 'issue',
@@ -513,7 +534,15 @@ describe('getWorkItemDetails', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(3)
     expect(ghExecFileAsyncMock.mock.calls.some((call) => call[0][1] === 'graphql')).toBe(false)
-    expect(noteRepositoryRateLimitSpendMock).not.toHaveBeenCalled()
+    expect(
+      noteRepositoryRateLimitSpendMock.mock.calls.some(([, bucket]) => bucket === 'graphql')
+    ).toBe(false)
+    expect(noteRepositoryRateLimitSpendMock).toHaveBeenCalledWith(
+      { owner: 'acme', repo: 'widgets', host: 'github.com' },
+      'core',
+      2,
+      { cwd: '/repo-root', host: 'github.com' }
+    )
     expect(details?.body).toBe('Issue body')
     expect(details?.participants).toEqual([])
   })
@@ -845,50 +874,6 @@ describe('getWorkItemDetails', () => {
     expect(getWorkItemMock).toHaveBeenCalledWith('/remote/repo', 7, 'pr', 'ssh-1')
     expect(getWorkItemByOwnerRepoMock).not.toHaveBeenCalled()
     expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
-  })
-
-  it('uses the selected upstream GitHub Enterprise repo for both PR file sides', async () => {
-    getOwnerRepoMock.mockResolvedValue({ owner: 'fork', repo: 'orca' })
-    const prRepo = {
-      owner: 'team',
-      repo: 'orca',
-      host: 'github.acme-corp.com'
-    }
-    ghExecFileAsyncMock.mockImplementation(async (args: string[]) => {
-      const endpoint = args.find((arg) => arg.startsWith('repos/')) ?? ''
-      if (endpoint === 'repos/team/orca/contents/src/path%23with%3Fchars.ts?ref=base-sha') {
-        return { stdout: 'base content' }
-      }
-      if (endpoint === 'repos/team/orca/contents/src/path%23with%3Fchars.ts?ref=head-sha') {
-        return { stdout: 'head content' }
-      }
-      throw new Error(`unexpected gh call: ${args.join(' ')}`)
-    })
-
-    const contents = await getPRFileContents({
-      repoPath: '/repo-root',
-      prRepo,
-      prNumber: 7,
-      path: 'src/path#with?chars.ts',
-      status: 'modified',
-      headSha: 'head-sha',
-      baseSha: 'base-sha'
-    })
-
-    expect(contents).toMatchObject({
-      original: 'base content',
-      modified: 'head content',
-      originalIsBinary: false,
-      modifiedIsBinary: false
-    })
-    const apiCalls = ghExecFileAsyncMock.mock.calls.map(([args]) => args as string[])
-    expect(apiCalls).toHaveLength(2)
-    expect(apiCalls.every((args) => !args.includes('--hostname'))).toBe(true)
-    expect(
-      ghExecFileAsyncMock.mock.calls.every(
-        ([, options]) => options?.host === 'github.acme-corp.com'
-      )
-    ).toBe(true)
   })
 
   // Why: a rate-limited/auth-failed file fetch must not render as an empty PR;

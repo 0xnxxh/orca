@@ -1612,8 +1612,8 @@ export async function listAccessibleProjects(
 // ─── resolveProjectRef ─────────────────────────────────────────────────
 
 type ParsedPaste =
-  | { kind: 'org'; owner: string; number: number; viewNumber?: number }
-  | { kind: 'user'; owner: string; number: number; viewNumber?: number }
+  | { kind: 'org'; owner: string; number: number; host: string; viewNumber?: number }
+  | { kind: 'user'; owner: string; number: number; host: string; viewNumber?: number }
   | { kind: 'bare'; owner: string; number: number }
 
 export function parseProjectPaste(input: string, host?: string): ParsedPaste | null {
@@ -1656,6 +1656,7 @@ export function parseProjectPaste(input: string, host?: string): ParsedPaste | n
       kind: parts[0] === 'orgs' ? 'org' : 'user',
       owner: parts[1],
       number,
+      host: url.host.toLowerCase(),
       ...(viewNumber !== undefined ? { viewNumber } : {})
     }
   } catch {
@@ -1785,8 +1786,11 @@ export async function resolveProjectRef(
   }
   const preferred: GitHubProjectOwnerType | null =
     parsed.kind === 'org' ? 'organization' : parsed.kind === 'user' ? 'user' : null
+  // Why: a pasted URL is authoritative. The ambient host only applies to
+  // owner/number shorthand; otherwise same-number Projects can cross hosts.
+  const executionHost = parsed.kind === 'bare' ? githubProjectHost(args.host) : parsed.host
   // Verify by fetching project title.
-  const ownerRes = await resolveOwnerType(parsed.owner, preferred, args.host)
+  const ownerRes = await resolveOwnerType(parsed.owner, preferred, executionHost)
   if (!ownerRes.ok) {
     return { ok: false, error: ownerRes.error }
   }
@@ -1799,7 +1803,7 @@ export async function resolveProjectRef(
   `
   const res = await runGraphql<
     Record<string, { projectV2?: { id?: string; title?: string } | null } | null>
-  >(query, { owner: parsed.owner, num: parsed.number }, projectGhExecOptions(args.host))
+  >(query, { owner: parsed.owner, num: parsed.number }, projectGhExecOptions(executionHost))
   if (!res.ok) {
     return { ok: false, error: res.error }
   }
@@ -1813,7 +1817,7 @@ export async function resolveProjectRef(
     ownerType,
     number: parsed.number,
     title: p.title ?? '',
-    host: githubProjectHost(args.host),
+    host: executionHost,
     // Why: forward the parsed view number from /views/{n} URLs so the
     // renderer can skip the view-pick step. parsed.kind === 'bare' has no
     // viewNumber (owner/number shorthand carries no view).
