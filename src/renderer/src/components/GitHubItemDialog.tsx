@@ -309,6 +309,8 @@ function normalizeItemDialogTab(
 export type GitHubItemDialogProjectOrigin = {
   owner: string
   repo: string
+  /** GitHub host (e.g. GHES); absent means github.com. */
+  host?: string
   number: number
   type: 'issue' | 'pr'
   projectId: string

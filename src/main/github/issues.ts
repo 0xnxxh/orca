@@ -65,6 +65,11 @@ export async function getIssue(
     connectionId,
     localGitOptions
   )
+  // Why: a connection-backed request has no local cwd, so the non-GitHub
+  // fallback below would let gh target its default repository. Refuse instead.
+  if (connectionId && !ownerRepo) {
+    return null
+  }
   await acquire()
   try {
     if (ownerRepo) {
@@ -126,6 +131,17 @@ export async function listIssues(
     connectionId,
     localGitOptions
   )
+  // Why: a connection-backed request has no local cwd, so the non-GitHub
+  // fallback below would let gh list its default repository. Refuse instead.
+  if (connectionId && !ownerRepo) {
+    return {
+      items: [],
+      error: {
+        type: 'not_found',
+        message: 'Could not resolve GitHub owner/repo for this repository'
+      }
+    }
+  }
   await acquire()
   try {
     if (ownerRepo) {
