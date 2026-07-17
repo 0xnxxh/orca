@@ -41,7 +41,7 @@ describe('GitHubItemDialog source host boundaries', () => {
     )
     expect(section).toContain("'github.requestPRReviewers'")
     expect(section).toContain("'github.removePRReviewers'")
-    expect(section).toContain('{ repo: runtimeRepo, prNumber: item.number, reviewers: logins }')
+    expect(section.match(/prRepo: item\.prRepo \?\? reviewSlug/g)).toHaveLength(4)
     expect(section).toContain('notifyWorkItemDetailsMutation(')
     expect(section).toContain('{ local: false }')
   })

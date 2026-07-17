@@ -87,6 +87,7 @@ import {
   githubHostExecOptions,
   githubRepositorySlugArg,
   githubRepositoryWebHost,
+  resolveGitHubApiRepository,
   resolveGitHubApiRepositoryCandidates,
   resolveGitHubRepoExecution,
   resolveIssueGitHubApiRepositorySource,
@@ -2065,12 +2066,19 @@ export async function getWorkItemByOwnerRepo(
   connectionId?: string | null,
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<MainWorkItem | null> {
+  const requestedHost = ownerRepo.host?.trim().toLowerCase()
+  const requestedRepository = requestedHost
+    ? { ...ownerRepo, host: requestedHost }
+    : await resolveGitHubApiRepository(repoPath, ownerRepo, connectionId, localGitOptions)
+  if (!requestedRepository) {
+    return null
+  }
   const { candidates } = await resolveGitHubApiRepositoryCandidates(
     repoPath,
     connectionId,
     localGitOptions
   )
-  const requestedKey = githubRepoIdentityKey(ownerRepo)
+  const requestedKey = githubRepoIdentityKey(requestedRepository)
   const matchedRepository = candidates.find(
     (candidate) => githubRepoIdentityKey(candidate) === requestedKey
   )

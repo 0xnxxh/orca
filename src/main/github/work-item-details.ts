@@ -284,6 +284,10 @@ async function getIssueTimelineItems(
   try {
     const items: GitHubIssueTimelineItem[] = []
     for (let page = 1; items.length < MAX_ISSUE_TIMELINE_ITEMS; page += 1) {
+      if (repositoryRateLimitGuard(ownerRepo, 'core', ghOptions).blocked) {
+        return items
+      }
+      noteRepositoryRateLimitSpend(ownerRepo, 'core', 1, ghOptions)
       const { stdout } = await ghExecFileAsync(
         [
           'api',
@@ -703,6 +707,12 @@ async function getIssueBodyAndComments(
   }
   try {
     if (ownerRepo) {
+      if (repositoryRateLimitGuard(ownerRepo, 'core', ghOptions).blocked) {
+        return { body: '', comments: [], assignees: [], timelineItems: [] }
+      }
+      // Why: the fallback starts the issue and comments reads together; debit
+      // both before spawning so a failed response cannot leave quota overstated.
+      noteRepositoryRateLimitSpend(ownerRepo, 'core', 2, ghOptions)
       const [issueResult, commentsResult, timelineItems] = await Promise.all([
         ghExecFileAsync(
           [
@@ -1196,7 +1206,16 @@ async function fetchContentAtRef(args: {
   path: string
   ref: string
 }): Promise<{ content: string; isBinary: boolean; tooLarge?: boolean }> {
+  const ghOptions = {
+    ...ghRepoExecOptions(githubRepoContext(args.repoPath, args.connectionId, args.localGitOptions)),
+    ...githubHostExecOptions(args.ownerRepo),
+    maxBuffer: GITHUB_RAW_CONTENT_MAX_BUFFER_BYTES
+  }
+  if (repositoryRateLimitGuard(args.ownerRepo, 'core', ghOptions).blocked) {
+    return { content: '', isBinary: false }
+  }
   try {
+    noteRepositoryRateLimitSpend(args.ownerRepo, 'core', 1, ghOptions)
     const { stdout } = await ghExecFileAsync(
       [
         'api',
@@ -1206,13 +1225,7 @@ async function fetchContentAtRef(args: {
         'Accept: application/vnd.github.raw',
         `repos/${args.ownerRepo.owner}/${args.ownerRepo.repo}/contents/${encodeGitHubContentPath(args.path)}?ref=${encodeURIComponent(args.ref)}`
       ],
-      {
-        ...ghRepoExecOptions(
-          githubRepoContext(args.repoPath, args.connectionId, args.localGitOptions)
-        ),
-        ...githubHostExecOptions(args.ownerRepo),
-        maxBuffer: GITHUB_RAW_CONTENT_MAX_BUFFER_BYTES
-      }
+      ghOptions
     )
     // Heuristic: a NUL byte in the first 2KB means binary (execFile decodes as lossy utf-8).
     const sample = stdout.slice(0, 2048)
