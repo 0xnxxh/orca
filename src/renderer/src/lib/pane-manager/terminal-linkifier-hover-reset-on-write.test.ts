@@ -91,9 +91,9 @@ describe('installTerminalLinkifierHoverResetOnWrite', () => {
     const fake = createFakeTerminal()
     installTerminalLinkifierHoverResetOnWrite(fake.terminal)
 
-    // A chunk every 50ms for 500ms. A leading-edge throttle fires ~every 150ms;
-    // a debounce (clearTimeout + reschedule per chunk) would never fire while
-    // the stream continues — that regression is what this guards against.
+    // A chunk every 50ms for 500ms. The throttle fires ~every 150ms; a debounce
+    // (clearTimeout + reschedule per chunk) would never fire while the stream
+    // continues — that regression is what this guards against.
     for (let i = 0; i < 10; i += 1) {
       fake.emitWriteParsed()
       vi.advanceTimersByTime(50)
@@ -114,6 +114,25 @@ describe('installTerminalLinkifierHoverResetOnWrite', () => {
 
     fake.linkifier._currentLink = undefined
     fake.emitWriteParsed()
+    vi.advanceTimersByTime(150)
+    expect(resetSpy).toHaveBeenCalledTimes(1)
+    expect(fake.linkifier._lastBufferCell).toBeUndefined()
+  })
+
+  it('does not drop the reset when the stream goes quiet mid-hover', () => {
+    const fake = createFakeTerminal()
+    installTerminalLinkifierHoverResetOnWrite(fake.terminal)
+
+    // Last chunk of a burst lands while a link is hovered, then output stops.
+    fake.linkifier._currentLink = { link: 'https://example.com' }
+    fake.emitWriteParsed()
+    // Many windows pass with NO further writes — the pending reset must survive.
+    vi.advanceTimersByTime(600)
+    expect(resetSpy).not.toHaveBeenCalled()
+
+    // Once the pointer leaves the link, the retry finally resets — without any
+    // new output re-arming it.
+    fake.linkifier._currentLink = undefined
     vi.advanceTimersByTime(150)
     expect(resetSpy).toHaveBeenCalledTimes(1)
     expect(fake.linkifier._lastBufferCell).toBeUndefined()

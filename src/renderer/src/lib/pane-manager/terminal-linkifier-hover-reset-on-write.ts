@@ -34,15 +34,18 @@ export function installTerminalLinkifierHoverResetOnWrite(terminal: Terminal): I
   }
   let timer: ReturnType<typeof setTimeout> | null = null
   const flush = (): void => {
-    timer = null
     // Why: never invalidate the cache while the user is hovering a link — it
     // would clear+re-query the active link (async for file paths), flickering
-    // its underline/tooltip. A fresh link on another line still linkifies when
-    // the pointer crosses to it; the next write re-arms the reset once the hover
-    // ends.
+    // its underline/tooltip. Re-arm instead of dropping the pending reset: if
+    // this was the last chunk of a burst and it appended a link to the hovered
+    // line, dropping the reset would leave that link dead until a line change.
+    // The retry performs the reset once the hover ends. (timer stays non-null
+    // during the retry so a concurrent write does not stack a second timer.)
     if (isTerminalLinkifierHoverActive(terminal)) {
+      timer = setTimeout(flush, HOVER_RESET_THROTTLE_MS)
       return
     }
+    timer = null
     resetTerminalLinkifierHoverState(terminal)
   }
   const scheduleReset = (): void => {
