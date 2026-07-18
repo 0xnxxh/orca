@@ -11,6 +11,7 @@ import { mintPtySessionId, parsePtySessionId } from './pty-session-id'
 import { supportsPtyStartupBarrier } from './shell-ready'
 import { CODEX_SHELL_READY_TIMEOUT_MS } from './session'
 import {
+  CLEAN_DISCONNECT_PROTOCOL_VERSION,
   GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   type CreateOrAttachResult,
@@ -72,7 +73,7 @@ export type DaemonPtyAdapterOptions = {
   historyPath?: string
   /** Called when the daemon socket is unreachable (process died). Expected to
    *  fork a fresh daemon so the next connection attempt can succeed. */
-  respawn?: () => Promise<void>
+  respawn?: () => Promise<void | (() => void)>
 }
 
 const MAX_TOMBSTONES = 1000
@@ -92,7 +93,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private client: DaemonClient
   private historyManager: HistoryManager | null
   private historyReader: HistoryReader | null
-  private respawnFn: (() => Promise<void>) | null
+  private respawnFn: (() => Promise<void | (() => void)>) | null
+  private pendingRespawnAdoptionRelease: (() => void) | null = null
+  private respawnAdoptionClosed = false
   // Why: multiple pane mounts can call spawn() concurrently. If the daemon is
   // dead, all calls enter withDaemonRetry's catch block at once. Without a
   // lock, each would fork its own daemon process. This promise coalesces
@@ -958,6 +961,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   dispose(): void {
+    this.respawnAdoptionClosed = true
+    this.releasePendingRespawnAdoptionLease()
     this.stopCheckpointTimer()
     this.dirtySessionVersions.clear()
     this.lastFullCheckpointAt.clear()
@@ -978,6 +983,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.client.disconnect()
   }
 
+  async establishLifecycleLease(): Promise<void> {
+    if (this.protocolVersion < CLEAN_DISCONNECT_PROTOCOL_VERSION) {
+      return
+    }
+    // Why: an authenticated pair cancels a crash deadline and gives a never-used
+    // adapter enough authority to retire its empty daemon during clean quit.
+    await this.client.ensureConnected()
+  }
+
   // Why: for in-process daemon mode, disconnect without flushing history.
   // dispose() writes endedAt for all sessions, which would prevent cold
   // restore. disconnectOnly() leaves history files in unclean state so
@@ -985,6 +999,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // We write a final checkpoint before disconnecting so that if the daemon
   // later crashes while Orca is closed, checkpoint.json has recovery data.
   async disconnectOnly(): Promise<void> {
+    this.respawnAdoptionClosed = true
+    this.releasePendingRespawnAdoptionLease()
     this.stopCheckpointTimer()
     // Why: wait for any in-flight timer pass to finish before starting
     // the final checkpoint. Otherwise both passes race on the shared tmp
@@ -1011,11 +1027,30 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.producerResumesOwedOnReconnect.clear()
     this.removeEventListener?.()
     this.removeEventListener = null
+    if (this.protocolVersion >= CLEAN_DISCONNECT_PROTOCOL_VERSION) {
+      try {
+        // Why: only the authenticated daemon can atomically prove it is empty;
+        // one shared budget keeps a first connection plus retirement off quit's critical path.
+        const deadlineMs = Date.now() + 250
+        if (!this.client.isConnected()) {
+          await this.client.ensureConnectedWithin(Math.max(1, deadlineMs - Date.now()))
+        }
+        await this.client.request('shutdownIfIdle', undefined, Math.max(1, deadlineMs - Date.now()))
+      } catch {
+        // An unreachable daemon falls back to its unexpected-disconnect grace.
+      }
+    }
     this.client.disconnect()
   }
 
   private async ensureConnected(): Promise<void> {
-    await this.client.ensureConnected()
+    try {
+      await this.client.ensureConnected()
+    } finally {
+      // Why: a respawn launcher holds a temporary full pair until this adapter
+      // has attempted its permanent reconnect, preventing both gaps and leaks.
+      this.releasePendingRespawnAdoptionLease()
+    }
     // Why sampled before setupEventRouting: routing is (re)installed exactly
     // once per connection, so "no listener yet" identifies a fresh connect —
     // the only time the daemon-side backgrounded set needs a resync (it is
@@ -1298,7 +1333,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
     try {
       return await fn()
     } catch (err) {
-      if (!this.respawnFn || !isDaemonGoneError(err)) {
+      // Why: self-retirement removes the token only after an authenticated
+      // endpoint dropped; an initial missing token may still hide a live daemon.
+      const missingRetiredEndpointToken =
+        isMissingTokenFileError(err) && this.client.hasObservedAuthenticatedDisconnect()
+      if (
+        this.respawnAdoptionClosed ||
+        !this.respawnFn ||
+        (!isDaemonGoneError(err) && !missingRetiredEndpointToken)
+      ) {
         throw err
       }
       if (!this.respawnPromise) {
@@ -1307,7 +1350,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
         })
       }
       await this.respawnPromise
-      return await fn()
+      try {
+        return await fn()
+      } finally {
+        // Why: the retried operation may reject before it reaches a connection
+        // attempt (for example, a tombstone racing respawn).
+        this.releasePendingRespawnAdoptionLease()
+      }
     }
   }
 
@@ -1371,7 +1420,20 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.removeEventListener?.()
     this.removeEventListener = null
     this.client.disconnect()
-    await this.respawnFn!()
+    const releaseAdoptionLease = await this.respawnFn!()
+    if (this.respawnAdoptionClosed) {
+      // Why: app teardown may win while the launcher is still acquiring its
+      // temporary pair; a late result must not reinstall a lease nobody owns.
+      releaseAdoptionLease?.()
+      throw new Error('Daemon adapter closed during respawn')
+    }
+    this.pendingRespawnAdoptionRelease = releaseAdoptionLease ?? null
+  }
+
+  private releasePendingRespawnAdoptionLease(): void {
+    const release = this.pendingRespawnAdoptionRelease
+    this.pendingRespawnAdoptionRelease = null
+    release?.()
   }
 
   private setupEventRouting(): void {
@@ -1476,5 +1538,18 @@ function isDaemonGoneError(err: unknown): boolean {
     return true
   }
   const msg = err.message
-  return msg === 'Connection lost' || msg === 'Not connected' || msg === 'Hello response timed out'
+  return (
+    msg === 'Connection lost' ||
+    msg === 'Not connected' ||
+    msg === 'Hello response timed out' ||
+    msg === 'Daemon temporarily unavailable; reconnect'
+  )
+}
+
+function isMissingTokenFileError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false
+  }
+  const errno = err as NodeJS.ErrnoException
+  return errno.code === 'ENOENT' && errno.syscall === 'open'
 }
