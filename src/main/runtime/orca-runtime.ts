@@ -1063,6 +1063,7 @@ type RuntimeStore = {
   getWorkspaceSession?: Store['getWorkspaceSession']
   getWorkspaceSessionHostIds?: Store['getWorkspaceSessionHostIds']
   setWorkspaceSession?: Store['setWorkspaceSession']
+  removeWorkspaceSessionStateForWorktree?: Store['removeWorkspaceSessionStateForWorktree']
   flushOrThrow?: Store['flushOrThrow']
   persistPtyBinding?: Store['persistPtyBinding']
   getSshRemotePtyLeases?: Store['getSshRemotePtyLeases']
@@ -23076,7 +23077,10 @@ export class OrcaRuntimeService {
   private removeWorktreeMetadataAndHistory(store: RuntimeStore, worktreeId: string): void {
     // Why: worktree IDs are path-derived and can be recreated, so removal must
     // purge history and process-local caches before the ID points at new state.
+    const hostId = store.getWorktreeMeta(worktreeId)?.hostId
     store.removeWorktreeMeta(worktreeId)
+    store.removeWorkspaceSessionStateForWorktree?.(worktreeId, hostId)
+    this.mobileSessionTabsByWorktree.delete(worktreeId)
     advertisedUrlWatcher.forgetWorktree(worktreeId)
     deleteWorktreeHistoryDir(worktreeId)
     this.closeHeadlessBrowserPagesForWorktree(worktreeId)
@@ -23229,7 +23233,26 @@ export class OrcaRuntimeService {
       return withWorktreeSpan({ stage: 'remove', path: removalTarget.path }, async () => {
         const repo = store.getRepo(removalTarget.repoId)
         if (!repo) {
-          throw new Error('repo_not_found')
+          // The parent project is already gone, so no Git/filesystem target can be
+          // resolved. Stop any surviving session before forgetting orphaned Orca state.
+          const localProvider = this.getLocalProvider()
+          if (localProvider) {
+            await killAllProcessesForWorktree(removalTarget.id, {
+              runtime: this,
+              localProvider,
+              onPtyStopped: this.onPtyStopped ?? undefined
+            }).catch((error) => {
+              console.warn(
+                `[worktree-teardown] orphan cleanup failed for ${removalTarget.id}:`,
+                error
+              )
+            })
+          }
+          this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
+          this.preservedBranchCleanupByWorktreeId.delete(removalTarget.id)
+          this.invalidateResolvedWorktreeCache()
+          this.notifyWorktreesChanged(removalTarget.repoId)
+          return {}
         }
         if (isFolderRepo(repo)) {
           if (removalTarget.id === getRuntimeFolderWorkspaceRootId(repo)) {
