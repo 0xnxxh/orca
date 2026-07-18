@@ -18,6 +18,7 @@ import {
   clearWorktreeBaseDirectoryWatchTargetWarnings
 } from './worktree-base-directory-watch-targets'
 import { startWorktreeBaseDirectoryPoller } from './worktree-base-directory-poller'
+import { isMainWindowVisible, onMainWindowBecameVisible } from '../window/main-window-visibility'
 
 type ActiveWatch = WorktreeBaseWatchTarget & {
   mainWindow: BrowserWindow
@@ -196,6 +197,16 @@ async function subscribeTarget(
         return
       }
       handleLocalWatchEvents(currentWatch, null, events)
+    },
+    {
+      // Why: this poll only feeds visible UI; pause it while the window is
+      // hidden/minimized and catch up with one scan on reveal. Resolve the
+      // window through the live watch — replaceWatch swaps it on recreation.
+      visibility: {
+        isWindowVisible: () =>
+          isMainWindowVisible((activeWatches.get(target.key) ?? activeWatch)?.mainWindow ?? null),
+        onWindowBecameVisible: onMainWindowBecameVisible
+      }
     }
   )
   activeWatch = createActiveWatch(target, mainWindow, subscription)
