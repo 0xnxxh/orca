@@ -23248,9 +23248,12 @@ export class OrcaRuntimeService {
               )
             })
           }
+          this.clearOptimisticReconcileToken(removalTarget.id)
           this.removeWorktreeMetadataAndHistory(store, removalTarget.id)
           this.preservedBranchCleanupByWorktreeId.delete(removalTarget.id)
           this.invalidateResolvedWorktreeCache()
+          this.invalidateWorktreeScanCacheForRepo(removalTarget.repoId)
+          invalidateAuthorizedRootsCache()
           this.notifyWorktreesChanged(removalTarget.repoId)
           return {}
         }

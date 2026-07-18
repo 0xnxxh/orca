@@ -41638,6 +41638,7 @@ describe('OrcaRuntimeService', () => {
       'runtime:env-1'
     )
     expect(deleteWorktreeHistoryDirMock).toHaveBeenCalledWith(TEST_WORKTREE_ID)
+    expect(invalidateAuthorizedRootsCacheMock).toHaveBeenCalled()
     expect(removeWorktree).not.toHaveBeenCalled()
   })
 
