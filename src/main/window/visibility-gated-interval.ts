@@ -4,11 +4,24 @@
 // one immediate catch-up tick on reveal, so no external change is missed.
 // Occlusion is undetectable (BrowserWindow.isVisible() stays true when merely
 // covered), so this only helps the hidden/minimized case — that's expected.
+import { isMainWindowVisible, onMainWindowBecameVisible } from './main-window-visibility'
+
 export type WindowVisibilityGate = {
   /** Omitted means always-visible: the interval never pauses (test doubles, headless). */
   isWindowVisible?: () => boolean
   /** Process-global became-visible signal (survives window recreation); returns an unsubscribe. */
   onWindowBecameVisible?: (listener: () => void) => () => void
+}
+
+// Why: keeps the isMainWindowVisible/onMainWindowBecameVisible plumbing out of
+// callers; getWindow is re-resolved per check so a recreated window is honored.
+export function createMainWindowVisibilityGate(
+  getWindow: () => Parameters<typeof isMainWindowVisible>[0]
+): WindowVisibilityGate {
+  return {
+    isWindowVisible: () => isMainWindowVisible(getWindow()),
+    onWindowBecameVisible: onMainWindowBecameVisible
+  }
 }
 
 export function startVisibilityGatedInterval(
