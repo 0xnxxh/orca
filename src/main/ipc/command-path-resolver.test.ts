@@ -74,7 +74,12 @@ describe('isCommandOnLocalPath', () => {
     let dir = ''
     beforeAll(async () => {
       dir = await mkdtemp(path.join(tmpdir(), 'cmd-resolver-win32-'))
-      await writeFile(path.join(dir, 'tool.cmd'), '@echo off\n')
+      // Why: the fixture extension matches a PATHEXT entry's case exactly so these
+      // tests are filesystem-portable. Real Windows resolves `.CMD` vs `.cmd`
+      // case-insensitively via the FS itself (same as where.exe); we deliberately
+      // do NOT emulate that in the resolver, so we must not depend on a
+      // case-insensitive FS here — this suite also runs on case-sensitive Linux CI.
+      await writeFile(path.join(dir, 'tool.CMD'), '@echo off\n')
     })
     afterAll(async () => {
       await rm(dir, { recursive: true, force: true })
@@ -100,7 +105,7 @@ describe('isCommandOnLocalPath', () => {
 
     it('matches an exact name with extension already present', async () => {
       await expect(
-        isCommandOnLocalPath('tool.cmd', {
+        isCommandOnLocalPath('tool.CMD', {
           platform: 'win32',
           env: { Path: dir, PATHEXT: '.EXE' }
         })
