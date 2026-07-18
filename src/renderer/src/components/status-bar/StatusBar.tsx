@@ -58,6 +58,7 @@ import {
 import { ClaudeIcon, GeminiIcon, MiniMaxIcon, OpenAIIcon, OpenCodeGoIcon } from './icons'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { formatRateLimitWindowChipLabel } from '@/lib/window-label-formatter'
+import { useResetCountdownClock } from '@/hooks/useResetCountdownClock'
 import { markLiveCodexSessionsForRestart } from '@/lib/codex-session-restart'
 import { UpdateStatusSegment } from './UpdateStatusSegment'
 import { isStatusBarItemAvailable } from './status-bar-agent-gating'
@@ -979,6 +980,9 @@ export function InlineUsageBars({
   const display = normalizeUsagePercentageDisplay(
     useAppStore((state) => state.usagePercentageDisplay)
   )
+  // Why: tick the collapsed session countdown live (matches the popover) via one
+  // boundary-scheduled clock instead of only refreshing on the usage poll (#5399).
+  const now = useResetCountdownClock([limits.session?.resetsAt])
   const usageWindows = [
     limits.session
       ? {
@@ -986,7 +990,7 @@ export function InlineUsageBars({
           used: clampUsedPercent(limits.session.usedPercent),
           // Why: show the live reset countdown (matches the popover); '5h' window
           // length only when resetsAt is unknown (#5399).
-          label: formatRateLimitWindowChipLabel(limits.session)
+          label: formatRateLimitWindowChipLabel(limits.session, now)
         }
       : null,
     limits.weekly
