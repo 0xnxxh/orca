@@ -984,7 +984,9 @@ export function InlineUsageBars({
       ? {
           key: 'session',
           used: clampUsedPercent(limits.session.usedPercent),
-          label: translate('auto.components.status.bar.StatusBar.d79c3362c4', '5h')
+          // Why: show the live reset countdown (matches the popover); '5h' window
+          // length only when resetsAt is unknown (#5399).
+          label: formatRateLimitWindowChipLabel(limits.session)
         }
       : null,
     limits.weekly
