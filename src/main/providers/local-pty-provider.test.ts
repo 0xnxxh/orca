@@ -1462,11 +1462,39 @@ describe('LocalPtyProvider', () => {
         available: true,
         processName: 'claude'
       })
+      readWindowsConptyProcessIdsMock.mockResolvedValue(new Set([12345]))
+      const { id } = await provider.spawn({ cols: 80, rows: 24 })
+
+      await expect(provider.getForegroundProcess(id)).resolves.toBe('claude')
+      await expect(provider.getForegroundProcess(id)).resolves.toBe('claude')
+      expect(resolveAgentForegroundProcessMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('keeps the cached agent when both the console probe and process snapshot are inconclusive', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      mockProc.process = 'powershell.exe'
+      resolveAgentForegroundProcessMock
+        .mockResolvedValueOnce({ available: true, processName: 'claude' })
+        .mockResolvedValue({ available: true, processName: null })
       readWindowsConptyProcessIdsMock.mockResolvedValue(null)
       const { id } = await provider.spawn({ cols: 80, rows: 24 })
 
       await expect(provider.getForegroundProcess(id)).resolves.toBe('claude')
       await expect(provider.getForegroundProcess(id)).resolves.toBe('claude')
+      expect(resolveAgentForegroundProcessMock).toHaveBeenCalledTimes(2)
+    })
+
+    it('retires the cached agent after verified shell-only membership and a no-agent scan', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      mockProc.process = 'powershell.exe'
+      resolveAgentForegroundProcessMock
+        .mockResolvedValueOnce({ available: true, processName: 'claude' })
+        .mockResolvedValue({ available: true, processName: null })
+      readWindowsConptyProcessIdsMock.mockResolvedValue(new Set([12345]))
+      const { id } = await provider.spawn({ cols: 80, rows: 24 })
+
+      await expect(provider.getForegroundProcess(id)).resolves.toBe('claude')
+      await expect(provider.getForegroundProcess(id)).resolves.toBeNull()
       expect(resolveAgentForegroundProcessMock).toHaveBeenCalledTimes(2)
     })
   })

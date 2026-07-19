@@ -72,7 +72,7 @@ vi.mock('../providers/agent-foreground-process', () => ({
 // to its existing retirement logic (the degraded-scan behavior itself is
 // covered in pty-subprocess-foreground-degraded-scan.test.ts).
 vi.mock('../providers/windows-conpty-process-membership', () => ({
-  readWindowsConptyProcessIds: () => Promise.resolve(null)
+  readWindowsConptyProcessIds: () => Promise.resolve(new Set([12345]))
 }))
 
 import { createPtySubprocess, checkPtySpawnHealth } from './pty-subprocess'

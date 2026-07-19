@@ -983,10 +983,8 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     // Why: daemon foreground reads are sync and run on the IPC hot path.
     // Refresh derived identities (shell/wrapper/helper -> codex/claude/etc.)
     // in the background and serve them from a short cache on later reads.
-    // Why: retire the resolved identity only on authoritative "no agent"
-    // evidence. Kept as a helper so the Windows console-presence guard can run it
-    // after its async membership read without duplicating the shell/wrapper rules
-    // or moving that read onto the sync foreground path.
+    // Why: Windows may need an async membership check before this shared
+    // shell/wrapper retirement policy is safe to apply.
     const retireStaleForegroundIdentity = (): void => {
       const currentFallbackProcess = getFallbackForegroundProcess()
       if (
@@ -1012,29 +1010,21 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     void resolveAgentForegroundProcessWithAvailability(proc.pid, fallbackProcess, {
       contextPaths: agentForegroundContextPaths
     })
-      .then(({ processName, available }) => {
+      .then<string | void>(({ processName, available }) => {
         if (dead) {
           return
         }
-        // Why: a degraded/timed-out scan (Windows CIM timeout under load) is not
-        // authoritative evidence of an exit — leave the recognized agent in place
-        // rather than retiring it, which would make foreground reads fall back to
-        // the shell and fire a false "agent done" while the agent is still working.
-        // Only an authoritative scan may retire the identity.
+        // Why: a degraded scan is not exit evidence; retiring here fires false
+        // completion while an agent is still working under CIM load.
         if (!available) {
           return
         }
         if (!processName || !recognizeAgentProcess(processName)) {
-          // Why: an authoritative scan that resolves no agent can still be an
-          // incomplete Windows snapshot (the agent's row missing under load). A
-          // child still attached to this console proves the agent is working —
-          // keep it; only retire when the console is shell-only. Scoped to a shell
-          // fallback so the deliberate wrapper retirement is not held open by an
-          // unrelated wrapper's own console presence. The membership read stays
-          // off the sync foreground path.
+          // Why: a Windows snapshot can omit a live agent; only verified
+          // shell-only membership may retire its cached identity.
           if (process.platform === 'win32' && fallbackIsShell && cachedAgentForeground !== null) {
             return readWindowsConptyProcessIds(proc.pid).then((consoleProcessIds) => {
-              if (dead || consoleProcessIds !== null) {
+              if (dead || consoleProcessIds === null || consoleProcessIds.size > 1) {
                 return
               }
               retireStaleForegroundIdentity()
@@ -1045,6 +1035,7 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
         }
         cachedAgentForeground = { processName, refreshedAt: Date.now() }
         startupAgentForeground = null
+        return processName
       })
       .catch(() => {
         // Best-effort only: foreground enrichment must never affect PTY health.

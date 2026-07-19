@@ -1240,12 +1240,9 @@ export class LocalPtyProvider implements IPtyProvider {
       ptyShellName.get(id)
     )
     const cachedAgent = ptyLastRecognizedForeground.get(id) ?? null
-    // Why: while a recognized agent is still active in this ConPTY, a cheap
-    // console-membership read confirms it without the whole-table scan that,
-    // under load, times out or returns an incomplete snapshot and makes the
-    // completion coordinator fire a false "agent done". A child still attached
-    // to this console means the agent is working; fall through to the
-    // authoritative scan only when the console is shell-only (agent likely gone).
+    let consoleMembershipUnavailable = false
+    // Why: exact console membership can preserve a live cached agent without
+    // trusting the whole-table scan that becomes incomplete under Windows load.
     if (
       process.platform === 'win32' &&
       canConfirmAgentFromConsolePresence(cachedAgent, fallbackProcess)
@@ -1255,11 +1252,12 @@ export class LocalPtyProvider implements IPtyProvider {
         if (ptyProcesses.get(id) !== proc) {
           return null
         }
-        if (consoleProcessIds !== null && cachedAgent !== null) {
+        if (consoleProcessIds !== null && consoleProcessIds.size > 1 && cachedAgent !== null) {
           return cachedAgent
         }
+        consoleMembershipUnavailable = consoleProcessIds === null
       } catch {
-        // Fall through to the authoritative scan on any console-read failure.
+        consoleMembershipUnavailable = true
       }
     }
     try {
@@ -1279,9 +1277,17 @@ export class LocalPtyProvider implements IPtyProvider {
       // foreground — the completion coordinator reads that as an exit and fires
       // a false "agent done" while the agent is still working. Prefer the last
       // recognized agent across a transient failure (e.g. a Windows CIM timeout).
+      const lastRecognizedAgent = ptyLastRecognizedForeground.get(id) ?? null
+      const resolvedAgent = resolution.processName
+        ? recognizeAgentProcessFromCommandLine(resolution.processName)
+        : null
+      // Why: an incomplete global snapshot plus an unavailable console probe is
+      // not exit proof; only verified shell-only membership may clear the cache.
       const stable = resolveStableForegroundProcess(
-        resolution,
-        ptyLastRecognizedForeground.get(id) ?? null
+        consoleMembershipUnavailable && resolvedAgent === null
+          ? { ...resolution, available: false }
+          : resolution,
+        lastRecognizedAgent
       )
       if (stable.lastRecognizedAgent) {
         ptyLastRecognizedForeground.set(id, stable.lastRecognizedAgent)

@@ -12,6 +12,10 @@ describe('canConfirmAgentFromConsolePresence', () => {
     expect(canConfirmAgentFromConsolePresence('claude', 'claude')).toBe(false)
   })
 
+  it('is false for a generic wrapper that may outlive the cached agent', () => {
+    expect(canConfirmAgentFromConsolePresence('claude', 'node.exe')).toBe(false)
+  })
+
   it('is false when no agent has been recognized yet (identity must be established first)', () => {
     expect(canConfirmAgentFromConsolePresence(null, 'powershell.exe')).toBe(false)
   })

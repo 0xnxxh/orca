@@ -15,8 +15,8 @@ function resolveNodePtyConsoleListAgent(): string {
 }
 
 /**
- * Runs node-pty's fixed native console-list helper with bounded error/exit
- * handling. A root-only result is its failure fallback, not shell proof.
+ * Returns normalized console membership, or null when the probe is unavailable.
+ * A root-only set proves the shell is alone because successful raw results include the helper.
  */
 export function readWindowsConptyProcessIds(
   rootPid: number,
@@ -52,28 +52,21 @@ export function readWindowsConptyProcessIds(
     const onFailure = (): void => finish(null)
     const onMessage = (message: ProcessListMessage): void => {
       const value = message?.consoleProcessList
+      const helperPid = child.pid
       if (
         !Array.isArray(value) ||
+        helperPid === undefined ||
         !value.includes(rootPid) ||
+        !value.includes(helperPid) ||
         value.some((pid) => !Number.isSafeInteger(pid) || pid <= 0)
       ) {
         finish(null)
         return
       }
-      // Why: the helper attaches to the console to read it, so GetConsoleProcessList
-      // counts the helper's own forked process. Drop it before judging membership,
-      // or a bare shell (helper + shell) looks like it still has a child and a
-      // genuine shell-only console (an exited agent) is never detected. A remaining
-      // set of only the shell — or the helper's AttachConsole-failure fallback — is
-      // not child proof.
+      // Why: GetConsoleProcessList includes this helper; removing it makes a
+      // root-only set authoritative shell-only evidence instead of a false child.
       const consoleProcessIds = new Set(value)
-      if (child.pid !== undefined) {
-        consoleProcessIds.delete(child.pid)
-      }
-      if (consoleProcessIds.size <= 1) {
-        finish(null)
-        return
-      }
+      consoleProcessIds.delete(helperPid)
       finish(consoleProcessIds)
     }
     const timeout = setTimeout(() => {

@@ -26,7 +26,7 @@ function forkWith(event: 'message' | 'error' | 'none', value?: unknown, pid?: nu
 
 describe('readWindowsConptyProcessIds', () => {
   it('returns exact console membership from the fixed node-pty helper', async () => {
-    const { forkProcess } = forkWith('message', [101, 202, 303])
+    const { forkProcess } = forkWith('message', [999, 101, 202, 303], 999)
 
     await expect(
       readWindowsConptyProcessIds(101, {
@@ -42,19 +42,19 @@ describe('readWindowsConptyProcessIds', () => {
   })
 
   it.each([
-    ['root-only failure fallback', [101]],
-    ['malformed response', [101, '202']],
-    ['missing PTY root', [202, 303]]
-  ])('fails closed for %s', async (_label, processIds) => {
-    const { forkProcess } = forkWith('message', processIds)
+    ['root-only failure fallback', [101], 999],
+    ['malformed response', [999, 101, '202'], 999],
+    ['missing PTY root', [999, 202, 303], 999],
+    ['missing helper pid', [101, 202], 999],
+    ['unavailable helper pid', [101, 202], undefined]
+  ])('fails closed for %s', async (_label, processIds, helperPid) => {
+    const { forkProcess } = forkWith('message', processIds, helperPid)
     await expect(readWindowsConptyProcessIds(101, { forkProcess })).resolves.toBeNull()
   })
 
-  it('treats a console of only the helper and the shell as shell-only (no child)', async () => {
-    // The helper (pid 999) attaches itself, so a bare shell reads as [999, 101].
-    // Without excluding the helper this looks like a child is still running.
+  it('returns root-only membership when only the helper and shell are attached', async () => {
     const { forkProcess } = forkWith('message', [999, 101], 999)
-    await expect(readWindowsConptyProcessIds(101, { forkProcess })).resolves.toBeNull()
+    await expect(readWindowsConptyProcessIds(101, { forkProcess })).resolves.toEqual(new Set([101]))
   })
 
   it('reports membership excluding the helper when a real child is attached', async () => {

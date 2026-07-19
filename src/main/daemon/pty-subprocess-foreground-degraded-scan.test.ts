@@ -124,6 +124,7 @@ describe('daemon pty foreground degraded-scan handling', () => {
     expect(await readForegroundAt(handle, 1_000)).toBe('claude') // refresh returns degraded → keep
     // Past the 1s TTL with a shell fallback: pre-fix this returned the shell.
     expect(await readForegroundAt(handle, 2_500)).toBe('claude')
+    expect(readConptyMock).not.toHaveBeenCalled()
   })
 
   it('keeps a cached agent when a scan finds no agent but the console still has a child', async () => {
@@ -142,11 +143,25 @@ describe('daemon pty foreground degraded-scan handling', () => {
     resolveAgentForegroundProcessMock
       .mockResolvedValueOnce({ available: true, processName: 'claude' })
       .mockResolvedValue({ available: true, processName: null })
-    readConptyMock.mockResolvedValue(null) // console shows only the shell → agent gone
+    readConptyMock.mockResolvedValue(new Set([12345]))
     const { handle } = spawnWindowsShell()
 
     await readForegroundAt(handle, 0)
     await readForegroundAt(handle, 1_000) // refresh clears the cache
     expect(await readForegroundAt(handle, 1_100)).toBe('powershell.exe')
+    expect(readConptyMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a cached agent when the console-membership probe is unavailable', async () => {
+    resolveAgentForegroundProcessMock
+      .mockResolvedValueOnce({ available: true, processName: 'claude' })
+      .mockResolvedValue({ available: true, processName: null })
+    readConptyMock.mockResolvedValue(null)
+    const { handle } = spawnWindowsShell()
+
+    await readForegroundAt(handle, 0)
+    expect(await readForegroundAt(handle, 1_000)).toBe('claude')
+    expect(await readForegroundAt(handle, 2_500)).toBe('claude')
+    expect(readConptyMock).toHaveBeenCalledTimes(2)
   })
 })
