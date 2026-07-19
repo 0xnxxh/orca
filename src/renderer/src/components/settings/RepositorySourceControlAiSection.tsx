@@ -16,12 +16,6 @@ import {
 import { getSettingOwnershipSummary } from './setting-ownership'
 import { translate } from '@/i18n/i18n'
 
-export {
-  createRepoAiDraftState,
-  dropRepoLegacyInstructionForAction,
-  resolveRepoAiDraftState
-} from './repository-source-control-ai-draft'
-
 type RepositorySourceControlAiSectionProps = {
   repo: Repo
   updateRepo: (repoId: string, updates: SourceControlAiRepoUpdate) => void | Promise<boolean>
@@ -60,7 +54,8 @@ export function RepositorySourceControlAiSection({
     updateActionAgentArgs,
     appendVariable,
     saveActionRecipeText,
-    discardActionRecipeText
+    discardActionRecipeText,
+    commitCustomCommand
   } = useRepositorySourceControlAiGlobalUx({
     repoId: repo.id,
     persistedRepoAi,
@@ -95,6 +90,7 @@ export function RepositorySourceControlAiSection({
         value={displayRepoAi.customAgentCommand}
         source={source}
         onChange={updateCustomCommand}
+        onCommit={commitCustomCommand}
       />
       <RepositorySourceControlAiActionRows
         repoId={repo.id}

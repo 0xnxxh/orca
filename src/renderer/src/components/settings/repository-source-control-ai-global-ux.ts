@@ -6,16 +6,18 @@ import type {
   SourceControlAiSettings
 } from '../../../../shared/source-control-ai-types'
 import type { SourceControlAiRepoUpdate } from '../../../../shared/source-control-ai-recipe-save'
-import {
-  SOURCE_CONTROL_ACTION_IDS,
-  type SourceControlActionId
-} from '../../../../shared/source-control-ai-actions'
+import type { SourceControlActionId } from '../../../../shared/source-control-ai-actions'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import {
+  clearActionTextDraftIfUnchanged,
+  composeDisplayRepoAi,
+  computeActionDirtyById,
   hasOwnActionOverride,
-  normalizeRepoAiDraft,
+  patchActionTextDraft,
   readActionRecipeTextDraft,
   type ActionRecipeTextDraft,
+  retainCustomCommandDraft,
+  retainDivergentActionTextDrafts,
   withRepoAiActionAgent,
   withRepoAiActionMode,
   withRepoAiActionRecipeText,
@@ -29,6 +31,8 @@ import {
   readInheritedCommandTemplate
 } from './repository-source-control-ai-labels'
 import { createRepoAiPersistQueue } from './repository-source-control-ai-persist-queue'
+
+export { normalizeRepoAiDraft as normalizePersistedRepoAi } from './repository-source-control-ai-draft'
 
 type HostedReviewDefaultKey = keyof NonNullable<RepoSourceControlAiOverrides['prCreationDefaults']>
 
@@ -61,18 +65,22 @@ export function useRepositorySourceControlAiGlobalUx({
   updateRepoRef.current = updateRepo
 
   const [saveError, setSaveError] = useState<string | null>(null)
-  // Immediate fields: optimistic copy of persisted (selects write here, then queue).
   const [immediateRepoAi, setImmediateRepoAi] = useState(persistedRepoAi)
   const immediateRepoAiRef = useRef(immediateRepoAi)
   immediateRepoAiRef.current = immediateRepoAi
-  // Free-text draft for CLI args + template only (matches global recipe rows).
+  // Local baseline for dirty checks so Save clears before the store prop echo lands.
+  const [baselineRepoAi, setBaselineRepoAi] = useState(persistedRepoAi)
+  const setBaselineRepoAiRef = useRef(setBaselineRepoAi)
+  setBaselineRepoAiRef.current = setBaselineRepoAi
   const [actionTextDrafts, setActionTextDrafts] = useState<
     Partial<Record<SourceControlActionId, ActionRecipeTextDraft>>
   >({})
+  const [customCommandDraft, setCustomCommandDraft] = useState<string | null>(null)
   const [savingActionIds, setSavingActionIds] = useState<
     Partial<Record<SourceControlActionId, boolean>>
   >({})
   const lastSyncedRepoIdRef = useRef(repoId)
+  const pendingWritesRef = useRef(0)
 
   const queueRef = useRef(
     createRepoAiPersistQueue({
@@ -80,6 +88,9 @@ export function useRepositorySourceControlAiGlobalUx({
       getPersisted: () => persistedRef.current,
       setPersisted: (value) => {
         persistedRef.current = value
+        if (mountedRef.current) {
+          setBaselineRepoAiRef.current(value)
+        }
       },
       updateRepo: (id, updates) => updateRepoRef.current(id, updates),
       isMounted: () => mountedRef.current,
@@ -95,59 +106,91 @@ export function useRepositorySourceControlAiGlobalUx({
     const repoChanged = lastSyncedRepoIdRef.current !== repoId
     lastSyncedRepoIdRef.current = repoId
     persistedRef.current = persistedRepoAi
+    setBaselineRepoAi(persistedRepoAi)
     if (repoChanged) {
+      pendingWritesRef.current = 0
       setImmediateRepoAi(persistedRepoAi)
       setActionTextDrafts({})
+      setCustomCommandDraft(null)
+      setSavingActionIds({})
       setSaveError(null)
       return
     }
-    // Adopt persisted for clean immediate fields; keep in-flight text drafts.
-    setImmediateRepoAi(persistedRepoAi)
-    setActionTextDrafts((current) => {
-      const next: Partial<Record<SourceControlActionId, ActionRecipeTextDraft>> = {}
-      for (const actionId of SOURCE_CONTROL_ACTION_IDS) {
-        const draft = current[actionId]
-        if (!draft || !hasOwnActionOverride(persistedRepoAi.actionOverrides, actionId)) {
-          continue
-        }
-        const persistedText = readActionRecipeTextDraft(persistedRepoAi, actionId)
-        if (
-          draft.commandInputTemplate !== persistedText.commandInputTemplate ||
-          draft.agentArgs !== persistedText.agentArgs
-        ) {
-          next[actionId] = draft
-        }
-      }
-      return next
-    })
+    if (pendingWritesRef.current === 0) {
+      setImmediateRepoAi(persistedRepoAi)
+    }
+    setCustomCommandDraft((current) =>
+      retainCustomCommandDraft(current, persistedRepoAi.customAgentCommand)
+    )
+    setActionTextDrafts((current) => retainDivergentActionTextDrafts(current, persistedRepoAi))
   }, [persistedSerialized, persistedRepoAi, repoId])
+
+  const commitImmediate = (next: RepoSourceControlAiOverrides): void => {
+    immediateRepoAiRef.current = next
+    setImmediateRepoAi(next)
+  }
+
+  const beginWrite = (): string => {
+    setSaveError(null)
+    pendingWritesRef.current += 1
+    return repoIdRef.current
+  }
+
+  const endWrite = (repoIdForWrite: string): boolean => {
+    pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1)
+    return repoIdRef.current === repoIdForWrite && mountedRef.current
+  }
 
   const persist = (
     transform: (base: RepoSourceControlAiOverrides) => RepoSourceControlAiOverrides
   ): void => {
-    setSaveError(null)
-    void queueRef.current.persistTransform(transform)
+    const repoIdForWrite = beginWrite()
+    void queueRef.current.persistTransform(transform).then((ok) => {
+      if (!endWrite(repoIdForWrite)) {
+        return
+      }
+      // Only snap when no sibling write is in flight — a failed field must not wipe another.
+      if (!ok && pendingWritesRef.current === 0) {
+        commitImmediate(persistedRef.current)
+      }
+    })
   }
 
   const updateEnablement = (value: boolean | undefined): void => {
-    const next = withRepoAiEnabled(immediateRepoAiRef.current, value)
-    setImmediateRepoAi(next)
-    immediateRepoAiRef.current = next
+    commitImmediate(withRepoAiEnabled(immediateRepoAiRef.current, value))
     persist((base) => withRepoAiEnabled(base, value))
   }
 
   const updateCustomCommand = (value: string | undefined): void => {
-    const next = withRepoAiCustomCommand(immediateRepoAiRef.current, value)
-    setImmediateRepoAi(next)
-    immediateRepoAiRef.current = next
-    persist((base) => withRepoAiCustomCommand(base, value))
+    setCustomCommandDraft(value ?? '')
+  }
+
+  const commitCustomCommand = (value: string | undefined): void => {
+    setCustomCommandDraft(value ?? '')
+    // Blur fires even when unchanged — skip the queue for true no-ops.
+    const next = withRepoAiCustomCommand(persistedRef.current, value)
+    if (JSON.stringify(next) === JSON.stringify(persistedRef.current)) {
+      setCustomCommandDraft((latest) => (latest === (value ?? '') ? null : latest))
+      return
+    }
+    const repoIdForWrite = beginWrite()
+    void queueRef.current
+      .persistTransform((base) => withRepoAiCustomCommand(base, value))
+      .then((ok) => {
+        if (!endWrite(repoIdForWrite)) {
+          return
+        }
+        if (!ok) {
+          return
+        }
+        commitImmediate(withRepoAiCustomCommand(immediateRepoAiRef.current, value))
+        setCustomCommandDraft((latest) => (latest === (value ?? '') ? null : latest))
+      })
   }
 
   const updateHostedReviewDefault = (key: HostedReviewDefaultKey, value: string): void => {
     const tri = value === 'on' || value === 'off' || value === 'inherit' ? value : 'inherit'
-    const next = withRepoAiHostedReviewDefault(immediateRepoAiRef.current, key, tri)
-    setImmediateRepoAi(next)
-    immediateRepoAiRef.current = next
+    commitImmediate(withRepoAiHostedReviewDefault(immediateRepoAiRef.current, key, tri))
     persist((base) => withRepoAiHostedReviewDefault(base, key, tri))
   }
 
@@ -159,9 +202,7 @@ export function useRepositorySourceControlAiGlobalUx({
         return rest
       })
     }
-    const next = withRepoAiActionMode(immediateRepoAiRef.current, settings, actionId, nextMode)
-    setImmediateRepoAi(next)
-    immediateRepoAiRef.current = next
+    commitImmediate(withRepoAiActionMode(immediateRepoAiRef.current, settings, actionId, nextMode))
     persist((base) => withRepoAiActionMode(base, settings, actionId, nextMode))
   }
 
@@ -172,64 +213,43 @@ export function useRepositorySourceControlAiGlobalUx({
         : value === CUSTOM_AGENT_ID
           ? CUSTOM_AGENT_ID
           : (value as TuiAgent)
-    const next = withRepoAiActionAgent(immediateRepoAiRef.current, settings, actionId, agentId)
-    setImmediateRepoAi(next)
-    immediateRepoAiRef.current = next
+    commitImmediate(withRepoAiActionAgent(immediateRepoAiRef.current, settings, actionId, agentId))
     persist((base) => withRepoAiActionAgent(base, settings, actionId, agentId))
   }
 
   const updateActionTemplate = (actionId: SourceControlActionId, value: string): void => {
-    setActionTextDrafts((current) => ({
-      ...current,
-      [actionId]: {
-        ...(current[actionId] ?? readActionRecipeTextDraft(immediateRepoAiRef.current, actionId)),
+    setActionTextDrafts((current) =>
+      patchActionTextDraft(current, immediateRepoAiRef.current, actionId, {
         commandInputTemplate: value
-      }
-    }))
+      })
+    )
   }
 
   const updateActionAgentArgs = (actionId: SourceControlActionId, value: string): void => {
-    setActionTextDrafts((current) => ({
-      ...current,
-      [actionId]: {
-        ...(current[actionId] ?? readActionRecipeTextDraft(immediateRepoAiRef.current, actionId)),
-        agentArgs: value
-      }
-    }))
+    setActionTextDrafts((current) =>
+      patchActionTextDraft(current, immediateRepoAiRef.current, actionId, { agentArgs: value })
+    )
   }
 
   const appendVariable = (actionId: SourceControlActionId, variable: string): void => {
-    const draft =
-      actionTextDrafts[actionId] ?? readActionRecipeTextDraft(immediateRepoAiRef.current, actionId)
-    const currentTemplate =
-      draft.commandInputTemplate.length > 0
-        ? draft.commandInputTemplate
-        : readInheritedCommandTemplate(source, actionId)
-    const separator = currentTemplate.endsWith('\n') || currentTemplate.length === 0 ? '' : ' '
-    updateActionTemplate(actionId, `${currentTemplate}${separator}{${variable}}`)
+    setActionTextDrafts((current) => {
+      const draft =
+        current[actionId] ?? readActionRecipeTextDraft(immediateRepoAiRef.current, actionId)
+      const currentTemplate =
+        draft.commandInputTemplate.length > 0
+          ? draft.commandInputTemplate
+          : readInheritedCommandTemplate(source, actionId)
+      const separator = currentTemplate.endsWith('\n') || currentTemplate.length === 0 ? '' : ' '
+      return patchActionTextDraft(current, immediateRepoAiRef.current, actionId, {
+        commandInputTemplate: `${currentTemplate}${separator}{${variable}}`
+      })
+    })
   }
 
-  const actionDirtyById = useMemo(() => {
-    return Object.fromEntries(
-      SOURCE_CONTROL_ACTION_IDS.map((actionId) => {
-        if (!hasOwnActionOverride(immediateRepoAi.actionOverrides, actionId)) {
-          return [actionId, false]
-        }
-        const draft =
-          actionTextDrafts[actionId] ?? readActionRecipeTextDraft(immediateRepoAi, actionId)
-        const base = readActionRecipeTextDraft(persistedRepoAi, actionId)
-        // Prefer persisted text as base; if override is only optimistic, use immediate.
-        const compareBase = hasOwnActionOverride(persistedRepoAi.actionOverrides, actionId)
-          ? base
-          : readActionRecipeTextDraft(immediateRepoAi, actionId)
-        return [
-          actionId,
-          draft.commandInputTemplate !== compareBase.commandInputTemplate ||
-            draft.agentArgs !== compareBase.agentArgs
-        ]
-      })
-    ) as Record<SourceControlActionId, boolean>
-  }, [actionTextDrafts, immediateRepoAi, persistedRepoAi])
+  const actionDirtyById = useMemo(
+    () => computeActionDirtyById(immediateRepoAi, baselineRepoAi, actionTextDrafts),
+    [actionTextDrafts, baselineRepoAi, immediateRepoAi]
+  )
 
   const saveActionRecipeText = async (actionId: SourceControlActionId): Promise<void> => {
     if (!actionDirtyById[actionId] || savingActionIds[actionId]) {
@@ -238,25 +258,27 @@ export function useRepositorySourceControlAiGlobalUx({
     const draft =
       actionTextDrafts[actionId] ?? readActionRecipeTextDraft(immediateRepoAiRef.current, actionId)
     setSavingActionIds((current) => ({ ...current, [actionId]: true }))
-    setSaveError(null)
+    const repoIdForWrite = beginWrite()
     try {
-      await queueRef.current.persistTransform((base) => {
+      const ok = await queueRef.current.persistTransform((base) => {
         let next = base
         if (!hasOwnActionOverride(next.actionOverrides, actionId)) {
           next = withRepoAiActionMode(next, settings, actionId, 'override')
         }
         return withRepoAiActionRecipeText(next, settings, actionId, draft)
       })
-      // Layer saved text into immediate so UI stays consistent before prop refresh.
-      setImmediateRepoAi((current) =>
-        withRepoAiActionRecipeText(current, settings, actionId, draft)
-      )
-      setActionTextDrafts((current) => {
-        const { [actionId]: _removed, ...rest } = current
-        return rest
+      if (repoIdRef.current !== repoIdForWrite || !mountedRef.current || !ok) {
+        return
+      }
+      setImmediateRepoAi((current) => {
+        const next = withRepoAiActionRecipeText(current, settings, actionId, draft)
+        immediateRepoAiRef.current = next
+        return next
       })
+      setActionTextDrafts((current) => clearActionTextDraftIfUnchanged(current, actionId, draft))
     } finally {
-      if (mountedRef.current) {
+      pendingWritesRef.current = Math.max(0, pendingWritesRef.current - 1)
+      if (mountedRef.current && repoIdRef.current === repoIdForWrite) {
         setSavingActionIds((current) => ({ ...current, [actionId]: false }))
       }
     }
@@ -269,27 +291,10 @@ export function useRepositorySourceControlAiGlobalUx({
     })
   }
 
-  const displayRepoAi = useMemo(() => {
-    let next = immediateRepoAi
-    for (const actionId of SOURCE_CONTROL_ACTION_IDS) {
-      const draft = actionTextDrafts[actionId]
-      if (!draft || !hasOwnActionOverride(next.actionOverrides, actionId)) {
-        continue
-      }
-      next = {
-        ...next,
-        actionOverrides: {
-          ...next.actionOverrides,
-          [actionId]: {
-            agentId: next.actionOverrides?.[actionId]?.agentId ?? null,
-            commandInputTemplate: draft.commandInputTemplate,
-            agentArgs: draft.agentArgs
-          }
-        }
-      }
-    }
-    return next
-  }, [actionTextDrafts, immediateRepoAi])
+  const displayRepoAi = useMemo(
+    () => composeDisplayRepoAi(immediateRepoAi, customCommandDraft, actionTextDrafts),
+    [actionTextDrafts, customCommandDraft, immediateRepoAi]
+  )
 
   return {
     displayRepoAi,
@@ -298,6 +303,7 @@ export function useRepositorySourceControlAiGlobalUx({
     savingActionIds,
     updateEnablement,
     updateCustomCommand,
+    commitCustomCommand,
     updateHostedReviewDefault,
     updateActionMode,
     updateActionAgent,
@@ -307,10 +313,4 @@ export function useRepositorySourceControlAiGlobalUx({
     saveActionRecipeText,
     discardActionRecipeText
   }
-}
-
-export function normalizePersistedRepoAi(
-  value: RepoSourceControlAiOverrides | null | undefined
-): RepoSourceControlAiOverrides {
-  return normalizeRepoAiDraft(value)
 }
