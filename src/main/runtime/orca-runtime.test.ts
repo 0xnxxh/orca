@@ -193,6 +193,7 @@ const {
   getHostedReviewCreationEligibilityMock,
   getHostedReviewForBranchMock,
   getPRForBranchMock,
+  getPRForBranchOutcomeMock,
   getRepoSlugMock,
   getRepoUpstreamMock,
   getGitHubWorkItemMock,
@@ -298,6 +299,7 @@ const {
     getHostedReviewCreationEligibilityMock: vi.fn(),
     getHostedReviewForBranchMock: vi.fn(),
     getPRForBranchMock: vi.fn().mockResolvedValue(null),
+    getPRForBranchOutcomeMock: vi.fn().mockResolvedValue({ kind: 'no-pr', fetchedAt: 0 }),
     getRepoSlugMock: vi.fn().mockResolvedValue(null),
     getRepoUpstreamMock: vi.fn().mockResolvedValue(null),
     getGitHubWorkItemMock: vi.fn(),
@@ -463,6 +465,7 @@ vi.mock('../github/client', async (importOriginal) => {
   return {
     ...actual,
     getPRForBranch: getPRForBranchMock,
+    getPRForBranchOutcome: getPRForBranchOutcomeMock,
     getRepoSlug: getRepoSlugMock,
     getRepoUpstream: getRepoUpstreamMock,
     getWorkItem: getGitHubWorkItemMock,
@@ -671,6 +674,8 @@ function resetRuntimeTestMocks(): void {
   getHostedReviewForBranchMock.mockResolvedValue(null)
   getPRForBranchMock.mockReset()
   getPRForBranchMock.mockResolvedValue(null)
+  getPRForBranchOutcomeMock.mockReset()
+  getPRForBranchOutcomeMock.mockResolvedValue({ kind: 'no-pr', fetchedAt: 0 })
   getRepoSlugMock.mockReset()
   getRepoSlugMock.mockResolvedValue(null)
   getRepoUpstreamMock.mockReset()
@@ -5572,9 +5577,16 @@ describe('OrcaRuntimeService', () => {
       prRepo
     })
 
-    expect(getPRForBranchMock).toHaveBeenCalledWith(TEST_REPO_PATH, 'feature/wsl', 42, null, null, {
-      localGitExecOptions: localGitOptions
-    })
+    expect(getPRForBranchOutcomeMock).toHaveBeenCalledWith(
+      TEST_REPO_PATH,
+      'feature/wsl',
+      42,
+      null,
+      null,
+      {
+        localGitExecOptions: localGitOptions
+      }
+    )
     expect(getGitHubWorkItemMock).toHaveBeenCalledWith(
       TEST_REPO_PATH,
       42,

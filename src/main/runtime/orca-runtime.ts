@@ -378,6 +378,7 @@ import type { BrowserBackend } from '../browser/browser-backend'
 import { BrowserError } from '../browser/cdp-bridge'
 import {
   getPRForBranch,
+  getPRForBranchOutcome,
   getRepoSlug,
   getRepoUpstream,
   getWorkItem,
@@ -456,7 +457,8 @@ import type {
   GitLabProjectRef,
   GitLabWorkItem,
   ListWorkItemsResult,
-  MRListState
+  MRListState,
+  PRRefreshOutcome
 } from '../../shared/types'
 import { inspectSetupScriptImportCandidates } from '../../shared/setup-script-imports'
 import type {
@@ -13884,7 +13886,7 @@ export class OrcaRuntimeService {
     fallbackPRNumber?: number | null,
     acceptMergedFallbackPR?: boolean,
     currentHeadOid?: string | null
-  ): Promise<Awaited<ReturnType<typeof getPRForBranch>>> {
+  ): Promise<PRRefreshOutcome> {
     const repo = await this.resolveRepoSelector(repoSelector)
     const options: GitHubPRBranchLookupOptions = this.getHostedReviewExecutionOptions(repo) ?? {}
     const lookupOptions = { ...options }
@@ -13896,7 +13898,11 @@ export class OrcaRuntimeService {
     }
     const lookupOptionArgs: [] | [GitHubPRBranchLookupOptions] =
       Object.keys(lookupOptions).length > 0 ? [lookupOptions] : []
-    return getPRForBranch(
+    // Why: return the full classified outcome (not PRInfo|null) so a runtime gh
+    // auth/network failure crosses the RPC as `upstream-error` instead of
+    // collapsing to `null`, which the renderer would otherwise cache as a false
+    // accepted "no PR found" (design success criterion 1).
+    return getPRForBranchOutcome(
       repo.path,
       branch,
       linkedPRNumber ?? null,

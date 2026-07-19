@@ -3333,10 +3333,8 @@ function SourceControlInner(): React.JSX.Element {
         if (stale) {
           return
         }
-        // Why: a failed/timed-out remote probe must not leave an inert disabled
-        // button. When the local git status determines a blocker (dirty, no
-        // upstream, needs push/sync), surface the actionable preparation intent;
-        // otherwise fall back to the retryable failed state.
+        // Why: a failed remote probe can provide branch guidance, but it cannot
+        // authorize hosted-review creation.
         const localBlocker = buildLocalBlockerHostedReviewCreationEligibility(
           resolveCurrentHostedReviewCreationProvider(),
           {
