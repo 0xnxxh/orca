@@ -1,6 +1,7 @@
 import { app, autoUpdater as nativeUpdater } from 'electron'
 import type { UpdateStatus } from '../shared/types'
 import {
+  bypassMacInstallGuardForNextQuit,
   consumeMacInstallGuardBypass,
   deferMacQuitUntilInstallerReady,
   handleMacInstallerReady,
@@ -18,6 +19,8 @@ const AUTO_UPDATE_RETRY_INTERVAL_MS = 60 * 60 * 1000
 
 type UpdaterHandlerContext = {
   autoUpdater: ElectronAutoUpdater
+  armMacQuitInstallFence: () => Promise<void>
+  shouldFenceMacQuitInstall: () => boolean
   clearBackgroundCheckLaunchPending: () => void
   clearAvailableUpdateContext: () => void
   consumeMissingManifestPrereleaseFallbackResult: () => { userInitiated: boolean } | null
@@ -30,6 +33,7 @@ type UpdaterHandlerContext = {
   getUserInitiatedCheck: () => boolean
   handleQuitAndInstallFailure: () => boolean
   isQuitAndInstallHandoffActive: () => boolean
+  isQuitAndInstallPreparing: () => boolean
   hasNewerDownloadedVersion: () => boolean
   shouldHandleUpdaterErrorEvent: () => boolean
   clearUpdateAvailableEventPending: (attemptId: number | null) => void
@@ -57,6 +61,8 @@ type UpdaterHandlerContext = {
 
 export function registerAutoUpdaterHandlers({
   autoUpdater,
+  armMacQuitInstallFence,
+  shouldFenceMacQuitInstall,
   clearBackgroundCheckLaunchPending,
   clearAvailableUpdateContext,
   consumeMissingManifestPrereleaseFallbackResult,
@@ -69,6 +75,7 @@ export function registerAutoUpdaterHandlers({
   getUserInitiatedCheck,
   handleQuitAndInstallFailure,
   isQuitAndInstallHandoffActive,
+  isQuitAndInstallPreparing,
   hasNewerDownloadedVersion,
   shouldHandleUpdaterErrorEvent,
   clearUpdateAvailableEventPending,
@@ -107,9 +114,19 @@ export function registerAutoUpdaterHandlers({
     })
   }
 
+  let macQuitFenceArmInFlight = false
   app.on('before-quit', (event) => {
     if (consumeMacInstallGuardBypass()) {
       recordUpdaterLifecycle('macos_before_quit_guard_bypassed')
+      return
+    }
+    // Why: a quit during the pre-native handoff window (fence arming,
+    // quiescence, cleanup) would let autoInstallOnAppQuit install with the
+    // fence stuck un-committed — the staged update applies unfenced. The
+    // handoff issues its own quit after the native invoke.
+    if (isQuitAndInstallPreparing()) {
+      event.preventDefault()
+      recordUpdaterLifecycle('before_quit_blocked_during_install_handoff')
       return
     }
     if (isMacQuitAndInstallInFlight()) {
@@ -133,6 +150,29 @@ export function registerAutoUpdaterHandlers({
         version: getPendingInstallVersion()
       })
       event.preventDefault()
+      return
+    }
+
+    // A staged, Squirrel-ready update is applied by autoInstallOnAppQuit on
+    // this very quit — outside performQuitAndInstall — so the durable fence
+    // must be armed here or the whole ShipIt window runs unprotected and a
+    // relaunch mid-install silently aborts it.
+    if (shouldFenceMacQuitInstall()) {
+      event.preventDefault()
+      // Why: a second quit inside the async arming window must not spawn a
+      // second monitor or schedule a second resume-quit.
+      if (macQuitFenceArmInFlight) {
+        return
+      }
+      macQuitFenceArmInFlight = true
+      recordUpdaterLifecycle('macos_before_quit_fence_arming', {
+        version: getPendingInstallVersion()
+      })
+      void armMacQuitInstallFence().finally(() => {
+        macQuitFenceArmInFlight = false
+        bypassMacInstallGuardForNextQuit()
+        app.quit()
+      })
     }
   })
 

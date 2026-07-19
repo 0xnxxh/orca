@@ -7,7 +7,9 @@ const {
   autoUpdaterMock,
   shellMock,
   isMock,
-  killAllPtyMock
+  killAllPtyMock,
+  notificationShown,
+  NotificationMock
 } = vi.hoisted(() => {
   const appEventHandlers = new Map<string, ((...args: unknown[]) => void)[]>()
   const eventHandlers = new Map<string, ((...args: unknown[]) => void)[]>()
@@ -60,13 +62,30 @@ const {
     reset
   }
 
+  const notificationShown: Record<string, unknown>[] = []
+  class NotificationMock {
+    options: Record<string, unknown>
+    constructor(options: Record<string, unknown>) {
+      this.options = options
+    }
+    show(): void {
+      notificationShown.push(this.options)
+    }
+    static isSupported(): boolean {
+      return true
+    }
+  }
+
   return {
+    notificationShown,
+    NotificationMock,
     appMock: {
       isPackaged: true,
       getVersion: vi.fn(() => '1.0.51'),
       on: appOn,
       emit: appEmit,
-      quit: vi.fn()
+      quit: vi.fn(),
+      exit: vi.fn()
     },
     browserWindowMock: {
       getAllWindows: vi.fn(() => [])
@@ -86,6 +105,7 @@ const {
 vi.mock('electron', () => ({
   app: appMock,
   BrowserWindow: browserWindowMock,
+  Notification: NotificationMock,
   autoUpdater: nativeUpdaterMock,
   powerMonitor: { on: vi.fn() },
   shell: shellMock,
@@ -108,6 +128,19 @@ vi.mock('./ipc/pty', () => ({
   killAllPty: killAllPtyMock
 }))
 
+vi.mock('./mac-update-install-fence-controller', () => ({
+  abortMacUpdateInstallFence: vi.fn(),
+  armMacUpdateInstallFence: vi.fn().mockResolvedValue(null),
+  commitMacUpdateInstallFence: vi.fn(),
+  scanForMacUpdateBlocker: vi.fn().mockResolvedValue(null),
+  shouldUseMacUpdateInstallFence: vi.fn(() => false),
+  waitForMacUpdateFenceQuiescence: vi.fn().mockResolvedValue(null)
+}))
+
+vi.mock('./mac-update-install-fence-diagnostics', () => ({
+  writeMacUpdateFenceDiagnostic: vi.fn()
+}))
+
 vi.mock('./updater-changelog', () => ({
   fetchChangelog: vi.fn().mockResolvedValue(null)
 }))
@@ -116,6 +149,14 @@ vi.mock('./updater-nudge', () => ({
   fetchNudge: vi.fn().mockResolvedValue(null),
   shouldApplyNudge: vi.fn().mockReturnValue(false)
 }))
+
+import {
+  abortMacUpdateInstallFence,
+  armMacUpdateInstallFence,
+  commitMacUpdateInstallFence,
+  shouldUseMacUpdateInstallFence
+} from './mac-update-install-fence-controller'
+import { writeMacUpdateFenceDiagnostic } from './mac-update-install-fence-diagnostics'
 
 describe('updater mac install handoff', () => {
   beforeEach(() => {
@@ -128,9 +169,11 @@ describe('updater mac install handoff', () => {
     appMock.getVersion.mockReset()
     appMock.getVersion.mockReturnValue('1.0.51')
     appMock.quit.mockReset()
+    appMock.exit.mockReset()
     appMock.isPackaged = true
     isMock.dev = false
     killAllPtyMock.mockReset()
+    notificationShown.length = 0
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
@@ -176,6 +219,96 @@ describe('updater mac install handoff', () => {
         percent: 100,
         version: '1.0.61'
       })
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'arms the durable fence before a quit that applies a staged update',
+    async () => {
+      const mainWindow = { webContents: { send: vi.fn() } }
+      vi.mocked(shouldUseMacUpdateInstallFence).mockReturnValue(true)
+      vi.mocked(armMacUpdateInstallFence).mockResolvedValue({
+        attemptId: 'quit-attempt',
+        monitorPid: 42,
+        executablePath: '/Applications/Orca.app/Contents/MacOS/Orca',
+        targetBundlePath: '/Applications/Orca.app',
+        sourceVersion: '1.0.51',
+        targetVersion: '1.0.61',
+        monitor: { kill: vi.fn(), unref: vi.fn() },
+        committed: false
+      } as never)
+
+      try {
+        autoUpdaterMock.checkForUpdates.mockResolvedValue(undefined)
+        const { setupAutoUpdater } = await import('./updater')
+
+        setupAutoUpdater(mainWindow as never)
+        await vi.waitFor(() => {
+          expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+        })
+        autoUpdaterMock.emit('checking-for-update')
+        autoUpdaterMock.emit('update-available', { version: '1.0.61' })
+        await new Promise((r) => setTimeout(r, 0))
+        autoUpdaterMock.emit('update-downloaded', { version: '1.0.61' })
+
+        // Squirrel signals readiness with no quit pending → plain 'downloaded'.
+        const nativeDownloadedHandler = nativeUpdaterMock.on.mock.calls.find(
+          ([eventName]) => eventName === 'update-downloaded'
+        )?.[1] as (() => void) | undefined
+        expect(nativeDownloadedHandler).toBeTypeOf('function')
+        nativeDownloadedHandler?.()
+
+        // A plain quit now applies the staged update via autoInstallOnAppQuit,
+        // so the guard must hold it until the fence is armed and committed.
+        const preventDefault = vi.fn()
+        appMock.emit('before-quit', { preventDefault })
+        expect(preventDefault).toHaveBeenCalledTimes(1)
+
+        await vi.waitFor(() => {
+          expect(appMock.quit).toHaveBeenCalledTimes(1)
+        })
+        expect(commitMacUpdateInstallFence).toHaveBeenCalledTimes(1)
+        expect(
+          notificationShown.some(
+            (options) => typeof options.body === 'string' && options.body.includes('background')
+          )
+        ).toBe(true)
+
+        // The resumed quit passes the guard instead of being re-held.
+        const secondPreventDefault = vi.fn()
+        appMock.emit('before-quit', { preventDefault: secondPreventDefault })
+        expect(secondPreventDefault).not.toHaveBeenCalled()
+      } finally {
+        vi.mocked(shouldUseMacUpdateInstallFence).mockReturnValue(false)
+        vi.mocked(armMacUpdateInstallFence).mockResolvedValue(null)
+      }
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'holds user quits while the install handoff is still preparing',
+    async () => {
+      vi.useFakeTimers()
+      vi.mocked(shouldUseMacUpdateInstallFence).mockReturnValue(true)
+      // Why: a quit slipping through mid-arming would let autoInstallOnAppQuit
+      // apply the staged update with the fence stuck un-committed.
+      vi.mocked(armMacUpdateInstallFence).mockReturnValue(new Promise(() => {}))
+      try {
+        const { setupAutoUpdater, quitAndInstall } = await import('./updater')
+        setupAutoUpdater({ webContents: { send: vi.fn() } } as never)
+
+        quitAndInstall()
+        await vi.advanceTimersByTimeAsync(100)
+
+        const preventDefault = vi.fn()
+        appMock.emit('before-quit', { preventDefault })
+
+        expect(preventDefault).toHaveBeenCalledTimes(1)
+        expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
+      } finally {
+        vi.mocked(shouldUseMacUpdateInstallFence).mockReturnValue(false)
+        vi.mocked(armMacUpdateInstallFence).mockResolvedValue(null)
+      }
     }
   )
 
@@ -227,6 +360,77 @@ describe('updater mac install handoff', () => {
       expect(onBeforeQuit).toHaveBeenCalledTimes(1)
       expect(killAllPtyMock).toHaveBeenCalledTimes(1)
       expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'never recovers a committed install when post-commit cleanup throws; watchdog force-exits',
+    async () => {
+      vi.useFakeTimers()
+      const sendMock = vi.fn()
+      const mainWindow = { webContents: { send: sendMock } }
+
+      // Replays the 1.4.144-rc.2 stuck-update incident: an exception after the
+      // commit point must not reset quit state, disarm the watchdog, or show
+      // recovery UI — the installer is already waiting for this process to die.
+      vi.mocked(abortMacUpdateInstallFence).mockClear()
+      vi.mocked(writeMacUpdateFenceDiagnostic).mockClear()
+      vi.mocked(armMacUpdateInstallFence).mockResolvedValueOnce({
+        attemptId: 'attempt-1',
+        monitorPid: 4242,
+        executablePath: '/Applications/Orca.app/Contents/MacOS/Orca',
+        targetBundlePath: '/Applications/Orca.app',
+        sourceVersion: '1.0.51',
+        targetVersion: '1.0.61',
+        monitor: { kill: vi.fn() },
+        committed: false
+      } as never)
+      killAllPtyMock.mockImplementation(() => {
+        throw new Error('post-commit boom')
+      })
+
+      autoUpdaterMock.checkForUpdates.mockResolvedValue(undefined)
+      const { setupAutoUpdater, quitAndInstall, isQuittingForUpdate } = await import('./updater')
+
+      setupAutoUpdater(mainWindow as never)
+      await vi.waitFor(() => {
+        expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalledTimes(1)
+      })
+      autoUpdaterMock.emit('checking-for-update')
+      autoUpdaterMock.emit('update-available', { version: '1.0.61' })
+      await vi.advanceTimersByTimeAsync(0)
+      autoUpdaterMock.emit('update-downloaded', { version: '1.0.61' })
+
+      const nativeDownloadedHandler = nativeUpdaterMock.on.mock.calls.find(
+        ([eventName]) => eventName === 'update-downloaded'
+      )?.[1] as (() => void) | undefined
+      expect(nativeDownloadedHandler).toBeTypeOf('function')
+      nativeDownloadedHandler?.()
+      await vi.advanceTimersByTimeAsync(0)
+
+      quitAndInstall()
+      await vi.advanceTimersByTimeAsync(200)
+
+      expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledWith(false, true)
+      expect(killAllPtyMock).toHaveBeenCalledTimes(1)
+
+      // No silent un-quit: the quit latch holds, the fence survives, and no
+      // "could not restart" error card is shown for a committed install.
+      expect(isQuittingForUpdate()).toBe(true)
+      expect(vi.mocked(abortMacUpdateInstallFence)).not.toHaveBeenCalled()
+      expect(sendMock).not.toHaveBeenCalledWith(
+        'updater:status',
+        expect.objectContaining({ state: 'error' })
+      )
+      expect(vi.mocked(writeMacUpdateFenceDiagnostic)).toHaveBeenCalledWith(
+        'mac_update_fence_post_commit_failure',
+        expect.objectContaining({ errorType: 'Error', attemptId: 'attempt-1' })
+      )
+
+      // The exit watchdog stays armed and force-exits at its deadline.
+      expect(appMock.exit).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(appMock.exit).toHaveBeenCalledWith(0)
     }
   )
 

@@ -91,6 +91,15 @@ vi.mock('./ipc/pty', () => ({
   killAllPty: killAllPtyMock
 }))
 
+vi.mock('./mac-update-install-fence-controller', () => ({
+  abortMacUpdateInstallFence: vi.fn(),
+  armMacUpdateInstallFence: vi.fn().mockResolvedValue(null),
+  commitMacUpdateInstallFence: vi.fn(),
+  scanForMacUpdateBlocker: vi.fn().mockResolvedValue(null),
+  shouldUseMacUpdateInstallFence: vi.fn(() => false),
+  waitForMacUpdateFenceQuiescence: vi.fn().mockResolvedValue(null)
+}))
+
 vi.mock('./updater-nudge', () => ({
   fetchNudge: vi.fn().mockResolvedValue(null),
   shouldApplyNudge: vi.fn().mockReturnValue(false)

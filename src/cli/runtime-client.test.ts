@@ -293,6 +293,21 @@ describe.skipIf(process.platform === 'win32')('RuntimeClient', () => {
     expect(launchOrcaApp).not.toHaveBeenCalled()
   })
 
+  it('propagates an update-install launch error without entering status polling', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-client-'))
+    vi.mocked(launchOrcaApp).mockRejectedValueOnce(
+      Object.assign(new Error('Orca is installing 1.0.1.'), {
+        code: 'update_install_in_progress'
+      })
+    )
+
+    const client = new RuntimeClient(userDataPath, 100)
+    await expect(client.openOrca(5_000)).rejects.toMatchObject({
+      code: 'update_install_in_progress'
+    })
+    expect(launchOrcaApp).toHaveBeenCalledOnce()
+  })
+
   it('times out if the runtime never responds', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-client-'))
     const endpoint = join(userDataPath, 'runtime.sock')

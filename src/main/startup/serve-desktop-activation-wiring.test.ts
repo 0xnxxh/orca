@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 describe('serve desktop activation wiring', () => {
-  const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+  const source = readFileSync(join(process.cwd(), 'src/main/application-main.ts'), 'utf8')
 
   it('routes second-instance and app activation through one safety gate', () => {
     expect(source).toContain('createServeDesktopActivationGate({')

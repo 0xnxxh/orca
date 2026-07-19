@@ -135,6 +135,23 @@ const { armExitWatchdogMock, disarmExitWatchdogMock } = vi.hoisted(() => ({
   disarmExitWatchdogMock: vi.fn()
 }))
 
+const macFenceMocks = vi.hoisted(() => ({
+  abort: vi.fn(),
+  arm: vi.fn(),
+  commit: vi.fn(),
+  scan: vi.fn(),
+  waitForQuiescence: vi.fn()
+}))
+
+vi.mock('./mac-update-install-fence-controller', () => ({
+  abortMacUpdateInstallFence: macFenceMocks.abort,
+  armMacUpdateInstallFence: macFenceMocks.arm,
+  commitMacUpdateInstallFence: macFenceMocks.commit,
+  scanForMacUpdateBlocker: macFenceMocks.scan,
+  shouldUseMacUpdateInstallFence: vi.fn(() => false),
+  waitForMacUpdateFenceQuiescence: macFenceMocks.waitForQuiescence
+}))
+
 vi.mock('./update-install-exit-watchdog', () => ({
   armUpdateInstallExitWatchdog: armExitWatchdogMock,
   disarmUpdateInstallExitWatchdog: disarmExitWatchdogMock
@@ -170,6 +187,11 @@ describe('updater', () => {
     killAllPtyMock.mockReset()
     armExitWatchdogMock.mockReset()
     disarmExitWatchdogMock.mockReset()
+    macFenceMocks.abort.mockReset()
+    macFenceMocks.arm.mockReset().mockResolvedValue(null)
+    macFenceMocks.commit.mockReset()
+    macFenceMocks.scan.mockReset().mockResolvedValue(null)
+    macFenceMocks.waitForQuiescence.mockReset().mockResolvedValue(null)
     powerMonitorOnMock.mockReset()
     fetchNudgeMock.mockReset().mockResolvedValue(null)
     shouldApplyNudgeMock.mockReset().mockReturnValue(false)
@@ -1253,6 +1275,197 @@ describe('updater', () => {
     expect(killAllPtyMock).toHaveBeenCalledTimes(1)
     expect(onBeforeQuit.mock.invocationCallOrder[0]).toBeLessThan(
       killAllPtyMock.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('surfaces a previous failed install as a visible startup error status', async () => {
+    const { setupAutoUpdater, reportPreviousUpdateInstallFailure, getUpdateStatus } =
+      await import('./updater')
+    const send = vi.fn()
+    setupAutoUpdater({ webContents: { send } } as never)
+
+    reportPreviousUpdateInstallFailure('1.0.61')
+
+    expect(getUpdateStatus()).toMatchObject({
+      state: 'error',
+      message: 'Orca 1.0.61 could not be installed last time. Check for updates to try again.',
+      userInitiated: true
+    })
+    expect(send).toHaveBeenCalledWith(
+      'updater:status',
+      expect.objectContaining({ state: 'error', userInitiated: true })
+    )
+  })
+
+  it('keeps the previous-install-failure notice visible through a background check cycle', async () => {
+    const { setupAutoUpdater, reportPreviousUpdateInstallFailure, getUpdateStatus } =
+      await import('./updater')
+    const send = vi.fn()
+    autoUpdaterMock.checkForUpdates.mockResolvedValue(undefined)
+    // Why: mirror production ordering — the fence-diagnostics ingest reports
+    // the failure during whenReady, before setupAutoUpdater runs.
+    reportPreviousUpdateInstallFailure('1.0.61')
+    setupAutoUpdater({ webContents: { send } } as never, { getLastUpdateCheckAt: () => null })
+    await vi.waitFor(() => {
+      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalled()
+    })
+    send.mockClear()
+
+    autoUpdaterMock.emit('checking-for-update')
+    autoUpdaterMock.emit('update-not-available')
+
+    expect(getUpdateStatus()).toMatchObject({ state: 'error', userInitiated: true })
+    expect(send).not.toHaveBeenCalledWith(
+      'updater:status',
+      expect.objectContaining({ state: 'checking' })
+    )
+    expect(send).not.toHaveBeenCalledWith(
+      'updater:status',
+      expect.objectContaining({ state: 'not-available' })
+    )
+  })
+
+  it('keeps the notice armed when the renderer hydrates before the background check', async () => {
+    const { setupAutoUpdater, reportPreviousUpdateInstallFailure, getUpdateStatus } =
+      await import('./updater')
+    const send = vi.fn()
+    autoUpdaterMock.checkForUpdates.mockResolvedValue(undefined)
+    reportPreviousUpdateInstallFailure('1.0.61')
+    setupAutoUpdater({ webContents: { send } } as never, { getLastUpdateCheckAt: () => null })
+
+    // Production race: the renderer mounts and reads status BEFORE the startup
+    // background check. That read must not consume the overlay, or the check's
+    // checking → not-available cycle buries the failure card.
+    expect(getUpdateStatus()).toMatchObject({ state: 'error', userInitiated: true })
+
+    await vi.waitFor(() => {
+      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalled()
+    })
+    autoUpdaterMock.emit('checking-for-update')
+    autoUpdaterMock.emit('update-not-available')
+
+    expect(getUpdateStatus()).toMatchObject({
+      state: 'error',
+      message: 'Orca 1.0.61 could not be installed last time. Check for updates to try again.'
+    })
+  })
+
+  it('lets a newer error status replace the armed notice instead of masking it', async () => {
+    const { setupAutoUpdater, reportPreviousUpdateInstallFailure, getUpdateStatus } =
+      await import('./updater')
+    const send = vi.fn()
+    setupAutoUpdater({ webContents: { send } } as never)
+
+    reportPreviousUpdateInstallFailure('1.0.61')
+    reportPreviousUpdateInstallFailure('1.0.62')
+
+    // The newer error must win; the stale notice may not overlay live errors.
+    expect(getUpdateStatus()).toMatchObject({
+      state: 'error',
+      message: 'Orca 1.0.62 could not be installed last time. Check for updates to try again.'
+    })
+  })
+
+  it('clears the previous-install-failure notice when a check finds an update', async () => {
+    const { setupAutoUpdater, reportPreviousUpdateInstallFailure, getUpdateStatus } =
+      await import('./updater')
+    const send = vi.fn()
+    autoUpdaterMock.checkForUpdates.mockResolvedValue(undefined)
+    reportPreviousUpdateInstallFailure('1.0.61')
+    setupAutoUpdater({ webContents: { send } } as never, { getLastUpdateCheckAt: () => null })
+    await vi.waitFor(() => {
+      expect(autoUpdaterMock.checkForUpdates).toHaveBeenCalled()
+    })
+
+    autoUpdaterMock.emit('checking-for-update')
+    autoUpdaterMock.emit('update-available', { version: '1.0.62' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getUpdateStatus()).toMatchObject({ state: 'available', version: '1.0.62' })
+  })
+
+  it('arms, quiesces, cleans up, rescans, and commits the mac fence before native install', async () => {
+    vi.useFakeTimers()
+    const handle = {
+      attemptId: '65dc1fe7-b1a3-45c3-aa4d-4543f99e7084',
+      monitorPid: 901,
+      executablePath: '/Applications/Orca.app/Contents/MacOS/Orca',
+      targetBundlePath: '/Applications/Orca.app',
+      monitor: {},
+      committed: false
+    }
+    macFenceMocks.arm.mockResolvedValue(handle)
+    const onBeforeQuit = vi.fn()
+    const { setupAutoUpdater, quitAndInstall } = await import('./updater')
+
+    setupAutoUpdater({ webContents: { send: vi.fn() } } as never, { onBeforeQuit })
+    quitAndInstall()
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(macFenceMocks.arm).toHaveBeenCalledOnce()
+    expect(macFenceMocks.waitForQuiescence).toHaveBeenCalledWith(handle)
+    expect(macFenceMocks.scan).toHaveBeenCalledWith(handle)
+    expect(macFenceMocks.commit).toHaveBeenCalledWith(handle)
+    expect(macFenceMocks.arm.mock.invocationCallOrder[0]).toBeLessThan(
+      onBeforeQuit.mock.invocationCallOrder[0]
+    )
+    expect(onBeforeQuit.mock.invocationCallOrder[0]).toBeLessThan(
+      macFenceMocks.scan.mock.invocationCallOrder[0]
+    )
+    expect(macFenceMocks.commit.mock.invocationCallOrder[0]).toBeLessThan(
+      autoUpdaterMock.quitAndInstall.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('keeps the app open when another production process blocks the install', async () => {
+    vi.useFakeTimers()
+    const handle = {
+      attemptId: '4da77c72-1b96-4690-a787-e7761dc8422a',
+      monitorPid: 902,
+      executablePath: '/Applications/Orca.app/Contents/MacOS/Orca',
+      targetBundlePath: '/Applications/Orca.app',
+      monitor: {},
+      committed: false
+    }
+    macFenceMocks.arm.mockResolvedValue(handle)
+    macFenceMocks.waitForQuiescence.mockResolvedValue({ pid: 48609, mode: 'serve' })
+    const send = vi.fn()
+    const { setupAutoUpdater, quitAndInstall, isQuittingForUpdate } = await import('./updater')
+
+    setupAutoUpdater({ webContents: { send } } as never)
+    quitAndInstall()
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(autoUpdaterMock.quitAndInstall).not.toHaveBeenCalled()
+    expect(macFenceMocks.abort).toHaveBeenCalledWith(handle, { force: true })
+    expect(isQuittingForUpdate()).toBe(false)
+    expect(send).toHaveBeenCalledWith(
+      'updater:status',
+      expect.objectContaining({
+        state: 'error',
+        message:
+          'Another production Orca process is still using this app (serve, PID 48609). Quit it, then try the update again.'
+      })
+    )
+  })
+
+  it('proceeds with an unfenced install when fence arming fails', async () => {
+    // Why: a broken monitor must degrade to the pre-fence handoff, not block
+    // the user from updating at all.
+    vi.useFakeTimers()
+    macFenceMocks.arm.mockRejectedValue(new Error('monitor failed'))
+    const send = vi.fn()
+    const { setupAutoUpdater, quitAndInstall } = await import('./updater')
+
+    setupAutoUpdater({ webContents: { send } } as never)
+    quitAndInstall()
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(autoUpdaterMock.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(macFenceMocks.commit).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalledWith(
+      'updater:status',
+      expect.objectContaining({ state: 'error' })
     )
   })
 

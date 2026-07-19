@@ -81,7 +81,7 @@ inline src/main/gitlab/work-item-details.ts
 inline src/main/hermes/hook-service.ts
 inline src/main/hooks.test.ts
 inline src/main/hooks.ts
-inline src/main/index.ts
+inline src/main/application-main.ts
 inline src/main/ipc/browser.ts
 inline src/main/ipc/crash-reporting.ts
 inline src/main/ipc/filesystem-auth.ts

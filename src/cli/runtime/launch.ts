@@ -6,18 +6,27 @@ import {
   parseEphemeralVmRecipeResult
 } from '../../shared/ephemeral-vm-recipes'
 import { RuntimeClientError } from './types'
+import { assertMacUpdateInstallLaunchAllowed } from './mac-update-install-fence'
 
 const IGNORED_NON_RECIPE_STDOUT = '[serve] ignored non-recipe stdout'
 
-export function launchOrcaApp(): void {
+export async function launchOrcaApp(): Promise<void> {
   const overrideCommand = process.env.ORCA_OPEN_COMMAND
   if (typeof overrideCommand === 'string' && overrideCommand.trim().length > 0) {
+    await assertMacUpdateInstallLaunchAllowed({
+      targetBundlePath: getMacAppBundlePath(process.execPath),
+      allowArmedActivation: false
+    })
     spawnDetached(overrideCommand, [], { shell: true })
     return
   }
 
   const overrideExecutable = process.env.ORCA_APP_EXECUTABLE
   if (typeof overrideExecutable === 'string' && overrideExecutable.trim().length > 0) {
+    await assertMacUpdateInstallLaunchAllowed({
+      targetBundlePath: getMacAppBundlePath(overrideExecutable),
+      allowArmedActivation: false
+    })
     spawnDetached(overrideExecutable, getExecutableAppArgs(), {
       ...getExecutableSpawnOptions(overrideExecutable),
       env: stripElectronRunAsNode(process.env)
@@ -29,6 +38,10 @@ export function launchOrcaApp(): void {
     if (process.platform === 'darwin') {
       const appBundlePath = getMacAppBundlePath(process.execPath)
       if (appBundlePath) {
+        await assertMacUpdateInstallLaunchAllowed({
+          targetBundlePath: appBundlePath,
+          allowArmedActivation: true
+        })
         // Why: launching the inner MacOS binary directly can trigger macOS app
         // launch failures and bypass normal bundle lifecycle. The public
         // packaged CLI should re-open the .app the same way Finder does.
@@ -63,7 +76,7 @@ function spawnDetached(command: string, args: string[], options: SpawnOptions): 
   child.unref()
 }
 
-export function serveOrcaApp(
+export async function serveOrcaApp(
   args: {
     json?: boolean
     port?: string | null
@@ -75,6 +88,10 @@ export function serveOrcaApp(
   } = {}
 ): Promise<number> {
   const executable = resolveForegroundOrcaExecutable()
+  await assertMacUpdateInstallLaunchAllowed({
+    targetBundlePath: getMacAppBundlePath(executable),
+    allowArmedActivation: false
+  })
   const childArgs = [...getExecutableAppArgs(), '--serve']
   if (args.json) {
     childArgs.push('--serve-json')

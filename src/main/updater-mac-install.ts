@@ -44,6 +44,12 @@ export function markMacQuitAndInstallInFlight(): void {
   clearPendingInstallTimeout()
 }
 
+// Why: the before-quit fence-arming hold resumes by calling app.quit() again;
+// without this one-shot bypass the guard would re-hold that quit forever.
+export function bypassMacInstallGuardForNextQuit(): void {
+  bypassMacInstallGuardOnce = true
+}
+
 export function consumeMacInstallGuardBypass(): boolean {
   if (!bypassMacInstallGuardOnce) {
     return false

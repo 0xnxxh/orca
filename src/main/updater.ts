@@ -1,5 +1,5 @@
 /* eslint-disable max-lines */
-import { app, BrowserWindow, powerMonitor } from 'electron'
+import { app, BrowserWindow, Notification, powerMonitor } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import type { UpdateCheckOptions, UpdateStatus } from '../shared/types'
 import { isWindowsSignatureCheckUnavailableFailure } from '../shared/updater-windows-signature-check'
@@ -33,6 +33,18 @@ import {
   getReleaseDownloadUrl
 } from './updater-prerelease-feed'
 import { fetchNudge, shouldApplyNudge } from './updater-nudge'
+import {
+  abortMacUpdateInstallFence,
+  armMacUpdateInstallFence,
+  commitMacUpdateInstallFence,
+  scanForMacUpdateBlocker,
+  shouldUseMacUpdateInstallFence,
+  waitForMacUpdateFenceQuiescence,
+  type MacUpdateInstallFenceHandle
+} from './mac-update-install-fence-controller'
+import { trackMacUpdateFenceEvent } from './mac-update-install-fence-telemetry'
+import { writeMacUpdateFenceDiagnostic } from './mac-update-install-fence-diagnostics'
+import { recordDurableCrashBreadcrumb } from './crash-reporting/durable-crash-breadcrumb'
 
 type CheckFailureSource = 'event' | 'promise' | 'fallback-promise'
 type MissingManifestPrereleaseFallbackResult = { userInitiated: boolean }
@@ -125,6 +137,7 @@ let downloadInFlight = false
  *  while Squirrel's ShipIt is replacing the .app bundle. */
 let quittingForUpdate = false
 let autoUpdater: ElectronAutoUpdater | null = null
+let activeMacUpdateInstallFence: MacUpdateInstallFenceHandle | null = null
 
 function getAutoUpdater(): ElectronAutoUpdater {
   if (!autoUpdater) {
@@ -257,7 +270,44 @@ function sendStatus(status: UpdateStatus): void {
     return
   }
   currentStatus = decoratedStatus
-  mainWindowRef?.webContents.send('updater:status', decoratedStatus)
+  mainWindowRef?.webContents.send(
+    'updater:status',
+    applyPreviousInstallFailureNotice(decoratedStatus)
+  )
+}
+
+// Why: the startup "previous install failed" notice must survive the
+// background check cycle (checking → not-available would silently bury it).
+// It overlays only what the renderer sees; the check state machine keeps its
+// real states. Real progress or any user-initiated action supersedes it.
+let previousInstallFailureNotice: UpdateStatus | null = null
+
+function applyPreviousInstallFailureNotice(status: UpdateStatus): UpdateStatus {
+  const notice = previousInstallFailureNotice
+  if (!notice) {
+    return status
+  }
+  // Why: the seed status IS the notice. Reads and re-sends of it (renderer
+  // mount hydration calls getUpdateStatus before the startup background
+  // check) must not consume the overlay the seed exists to arm.
+  const noticeMessage = notice.state === 'error' ? notice.message : null
+  if (status.state === 'error' && status.message === noticeMessage) {
+    return status
+  }
+  const userInitiated = 'userInitiated' in status ? status.userInitiated : undefined
+  if (
+    userInitiated ||
+    // Why error clears: a NEW error is at least as urgent as the stale
+    // install-failure notice — overlaying it would mask live failures.
+    status.state === 'error' ||
+    status.state === 'available' ||
+    status.state === 'downloading' ||
+    status.state === 'downloaded'
+  ) {
+    previousInstallFailureNotice = null
+    return status
+  }
+  return notice
 }
 
 function getOptionsForUpdateCheckVariant(variant: UpdateCheckVariant): UpdateCheckOptions {
@@ -580,16 +630,6 @@ async function performQuitAndInstall(): Promise<void> {
     pendingQuitAndInstallTimer = null
   }
 
-  markMacQuitAndInstallInFlight()
-
-  // Set this BEFORE anything else so the `activate` handler in index.ts
-  // won't re-open the old version while Squirrel's ShipIt is replacing
-  // the .app bundle.  Without this guard the quit triggers window
-  // destruction → BrowserWindow.getAllWindows().length === 0 → activate
-  // fires → openMainWindow() resurrects the old process and ShipIt
-  // either can't replace it or the user ends up on the old version.
-  quittingForUpdate = true
-
   const pendingVersion = getPendingInstallVersion()
   try {
     await withUpdaterSpan({ stage: 'install' }, async (span) => {
@@ -603,9 +643,57 @@ async function performQuitAndInstall(): Promise<void> {
         version: pendingVersion || null,
         macInstallerReady: process.platform === 'darwin' ? isMacInstallerReady() : true
       })
+      // Why: fence arming fails open — a broken monitor or fence file must
+      // degrade to the pre-fence handoff, not block the user from updating.
+      try {
+        activeMacUpdateInstallFence = await armMacUpdateInstallFence(pendingVersion)
+      } catch (armError) {
+        activeMacUpdateInstallFence = null
+        const errorType = armError instanceof Error ? armError.name : typeof armError
+        recordUpdaterLifecycle(
+          'mac_update_fence_arm_failed',
+          { errorType, version: pendingVersion || null },
+          { level: 'warn', message: 'Proceeding with an unfenced install' }
+        )
+        writeMacUpdateFenceDiagnostic('mac_update_fence_arm_failed', {
+          errorType,
+          targetVersion: pendingVersion || null
+        })
+      }
+      if (activeMacUpdateInstallFence) {
+        recordUpdaterLifecycle('mac_update_fence_armed', {
+          attemptId: activeMacUpdateInstallFence.attemptId,
+          version: pendingVersion
+        })
+        const blocker = await waitForMacUpdateFenceQuiescence(activeMacUpdateInstallFence)
+        if (blocker) {
+          handleMacUpdatePreflightBlocker(blocker)
+          return
+        }
+      }
+
+      markMacQuitAndInstallInFlight()
+      // Why: this still protects activation within the updating process; the
+      // durable fence protects fresh processes after this one exits.
+      quittingForUpdate = true
       span.addEvent('pre_quit_cleanup_start')
       await runBeforeUpdateQuitCleanup()
       span.addEvent('pre_quit_cleanup_done')
+
+      if (activeMacUpdateInstallFence) {
+        const blocker = await scanForMacUpdateBlocker(activeMacUpdateInstallFence)
+        if (blocker) {
+          handleMacUpdatePreflightBlocker(blocker)
+          return
+        }
+        // Why: ShipIt may start as soon as native quit begins, so the durable
+        // phase must be visible before invoking electron-updater.
+        commitMacUpdateInstallFence(activeMacUpdateInstallFence)
+        postMacUpdateInstallNotification(
+          pendingVersion,
+          'Orca will close for a few minutes while the update installs, then reopen itself.'
+        )
+      }
 
       recordUpdaterLifecycle('quit_and_install_invoking_native', {
         version: pendingVersion || null
@@ -631,6 +719,21 @@ async function performQuitAndInstall(): Promise<void> {
         return
       }
 
+      // Why: committed installs must keep quittingForUpdate true so dock
+      // activate cannot reopen the old process mid-ShipIt/installer; commit
+      // before destructive cleanup so a cleanup throw cannot silently un-quit
+      // a handoff the installer is already waiting on (1.4.144-rc.2 incident).
+      // macOS without Squirrel ready stays uncommitted — fenced or not — so
+      // late native errors (nothing staged) can still recover in place instead
+      // of the watchdog force-exiting with no installer waiting.
+      if (process.platform !== 'darwin' || isMacInstallerReady()) {
+        updateInstallCommitted = true
+        // Why: past this point recovery is forbidden and the installer waits
+        // for this process to exit; a wedged async shutdown would otherwise
+        // strand the user with no app and no update (#4438).
+        armUpdateInstallExitWatchdog()
+      }
+
       killAllPty()
       span.addEvent('local_pty_kill_all')
 
@@ -640,24 +743,42 @@ async function performQuitAndInstall(): Promise<void> {
       span.addEvent('window_close_listeners_removed', {
         windowCount: BrowserWindow.getAllWindows().length
       })
-
-      // Why: committed installs must keep quittingForUpdate true so dock
-      // activate cannot reopen the old process mid-ShipIt/installer. macOS
-      // without Squirrel ready stays uncommitted so late native errors can
-      // still recover flags (PTYs may already be dead — residual OK).
-      if (process.platform !== 'darwin' || isMacInstallerReady()) {
-        updateInstallCommitted = true
-        // Why: past this point recovery is forbidden and the installer waits
-        // for this process to exit; a wedged async shutdown would otherwise
-        // strand the user with no app and no update (#4438).
-        armUpdateInstallExitWatchdog()
-      }
     })
   } catch (error) {
+    const errorType = error instanceof Error ? error.name : typeof error
+    if (updateInstallCommitted) {
+      // Why: past commit the installer is already waiting for this process to
+      // exit; resetting here disarms the exit watchdog and silently un-quits
+      // the app, deadlocking the update (1.4.144-rc.2 stuck-update incident).
+      // Record durably and let the watchdog force the exit instead.
+      armUpdateInstallExitWatchdog()
+      recordUpdaterLifecycle(
+        'quit_and_install_failed_post_commit',
+        { errorType },
+        {
+          level: 'warn',
+          message: 'Install handoff failed after commit; exit watchdog will force quit'
+        }
+      )
+      recordDurableCrashBreadcrumb('updater_quit_and_install_failed_post_commit', { errorType })
+      if (process.platform === 'darwin') {
+        writeMacUpdateFenceDiagnostic('mac_update_fence_post_commit_failure', {
+          errorType,
+          attemptId: activeMacUpdateInstallFence?.attemptId ?? null,
+          sourceVersion: activeMacUpdateInstallFence?.sourceVersion ?? app.getVersion(),
+          // Why the pendingVersion fallback: unfenced commits have no handle,
+          // and a null targetVersion defeats the startup ingest's
+          // "did-it-actually-install" version guard — the notice would then
+          // fire even after a successful install.
+          targetVersion: activeMacUpdateInstallFence?.targetVersion ?? (pendingVersion || null)
+        })
+      }
+      return
+    }
     resetQuitForUpdateState()
     recordUpdaterLifecycle(
       'quit_and_install_failed',
-      { errorType: error instanceof Error ? error.name : typeof error },
+      { errorType },
       {
         level: 'warn',
         message: 'Could not start update install'
@@ -670,12 +791,111 @@ async function performQuitAndInstall(): Promise<void> {
 }
 
 function resetQuitForUpdateState(): void {
+  const fence = activeMacUpdateInstallFence
+  const preserveCommittedFence = updateInstallCommitted
+  activeMacUpdateInstallFence = null
+  if (!preserveCommittedFence) {
+    abortMacUpdateInstallFence(fence, { force: true })
+  }
   quitAndInstallInProgress = false
   quittingForUpdate = false
   updateInstallCommitted = false
   quitAndInstallNativeInvoked = false
   disarmUpdateInstallExitWatchdog()
   resetMacInstallState()
+}
+
+function postMacUpdateInstallNotification(version: string, body: string): void {
+  if (process.platform !== 'darwin') {
+    return
+  }
+  try {
+    // Why: once the app quits, the multi-minute ShipIt window has no UI at
+    // all. A Notification Center entry posted by the app itself (correct
+    // attribution, persists after quit) is the only surface left to explain
+    // the silence.
+    if (Notification.isSupported()) {
+      new Notification({
+        title: version ? `Installing Orca ${version}` : 'Installing an Orca update',
+        body
+      }).show()
+    }
+  } catch {
+    // Best-effort; updater lifecycle diagnostics still record the install.
+  }
+}
+
+function shouldFenceMacQuitInstall(): boolean {
+  return shouldUseMacUpdateInstallFence() && isMacInstallerReady() && hasNewerDownloadedVersion()
+}
+
+// Why: autoInstallOnAppQuit applies a staged update during a plain quit,
+// entirely outside performQuitAndInstall. Without arming here that install
+// runs with no fence, no monitor, and no startup gate — the original
+// silent-abort bug through a different entrance.
+async function armMacQuitInstallFence(): Promise<void> {
+  if (activeMacUpdateInstallFence) {
+    return
+  }
+  const pendingVersion = getPendingInstallVersion()
+  try {
+    const handle = await armMacUpdateInstallFence(pendingVersion)
+    if (!handle) {
+      return
+    }
+    activeMacUpdateInstallFence = handle
+    // Why scan-and-record only: a plain quit cannot hold for quiescence, but a
+    // surviving production process makes this install likely to abort — record
+    // it so the eventual failure notice is explicable from diagnostics.
+    const blocker = await scanForMacUpdateBlocker(handle)
+    if (blocker) {
+      writeMacUpdateFenceDiagnostic('mac_update_fence_quit_install_blocker', {
+        attemptId: handle.attemptId,
+        blockerMode: blocker.mode,
+        blockerPid: blocker.pid,
+        sourceVersion: handle.sourceVersion,
+        targetVersion: handle.targetVersion
+      })
+    }
+    commitMacUpdateInstallFence(handle)
+    recordUpdaterLifecycle('mac_quit_install_fence_armed', {
+      attemptId: handle.attemptId,
+      version: pendingVersion || null
+    })
+    postMacUpdateInstallNotification(
+      pendingVersion,
+      'Orca is finishing the downloaded update in the background. It may take a few minutes before Orca can open again.'
+    )
+  } catch (error) {
+    recordUpdaterLifecycle(
+      'mac_quit_install_fence_arm_failed',
+      { errorType: error instanceof Error ? error.name : typeof error },
+      { level: 'warn', message: 'Could not arm the install fence for a quit-triggered update' }
+    )
+  }
+}
+
+function handleMacUpdatePreflightBlocker(blocker: {
+  pid: number
+  mode: 'gui' | 'serve' | 'unknown'
+}): void {
+  recordUpdaterLifecycle('mac_update_fence_preflight_blocked', {
+    attemptId: activeMacUpdateInstallFence?.attemptId ?? null,
+    blockerMode: blocker.mode,
+    blockerPid: blocker.pid
+  })
+  if (activeMacUpdateInstallFence) {
+    trackMacUpdateFenceEvent('mac_update_fence_preflight_blocked', {
+      attempt_id: activeMacUpdateInstallFence.attemptId,
+      source_version: activeMacUpdateInstallFence.sourceVersion,
+      target_version: activeMacUpdateInstallFence.targetVersion,
+      blocker_mode: blocker.mode
+    })
+  }
+  resetQuitForUpdateState()
+  sendErrorStatus(
+    `Another production Orca process is still using this app (${blocker.mode}, PID ${blocker.pid}). Quit it, then try the update again.`
+  )
 }
 
 // Why: electron-updater often reports quitAndInstall failures via the 'error'
@@ -701,6 +921,33 @@ function handleQuitAndInstallFailure(): boolean {
 // post-commit handoff), general check/download error UI must not run.
 function isQuitAndInstallHandoffActive(): boolean {
   return quitAndInstallInProgress
+}
+
+// Why: between starting the handoff and the native invoke (fence arming,
+// quiescence wait, cleanup) a user quit would let autoInstallOnAppQuit apply
+// the staged update with the fence stuck un-committed — the monitor then
+// deletes it on source death and the install runs unfenced. The update flow
+// issues its own quit after the native invoke, which this must not block.
+function isQuitAndInstallPreparing(): boolean {
+  return quitAndInstallInProgress && !quitAndInstallNativeInvoked
+}
+
+/** Surface an install failure that happened after the previous process exited.
+ * Called at startup from the fence-diagnostics ingest — the first moment any
+ * UI exists to tell the user. userInitiated makes the renderer show the error
+ * card even though no check ran in this session. */
+export function reportPreviousUpdateInstallFailure(targetVersion: string | null): void {
+  recordUpdaterLifecycle(
+    'previous_install_failure_surfaced',
+    { targetVersion },
+    { level: 'warn', message: 'Previous update install failed; showing startup notice' }
+  )
+  const message = targetVersion
+    ? `Orca ${targetVersion} could not be installed last time. Check for updates to try again.`
+    : 'The last Orca update could not be installed. Check for updates to try again.'
+  sendErrorStatus(message, true)
+  // Why: set after sending — the send itself must not consume the overlay.
+  previousInstallFailureNotice = { state: 'error', message, userInitiated: true }
 }
 
 async function runBeforeUpdateQuitCleanup(): Promise<void> {
@@ -832,7 +1079,7 @@ async function sendCheckFailureStatus(
 }
 
 export function getUpdateStatus(): UpdateStatus {
-  return currentStatus
+  return applyPreviousInstallFailureNotice(currentStatus)
 }
 
 let consecutiveAutomaticRetrySchedules = 0
@@ -1431,6 +1678,8 @@ export function setupAutoUpdater(
 
   registerAutoUpdaterHandlers({
     autoUpdater,
+    armMacQuitInstallFence,
+    shouldFenceMacQuitInstall,
     clearAvailableUpdateContext,
     consumeMissingManifestPrereleaseFallbackResult,
     getMissingManifestPrereleaseFallbackUserInitiated,
@@ -1442,6 +1691,7 @@ export function setupAutoUpdater(
     getUserInitiatedCheck: () => userInitiatedCheck,
     handleQuitAndInstallFailure,
     isQuitAndInstallHandoffActive,
+    isQuitAndInstallPreparing,
     hasNewerDownloadedVersion,
     shouldHandleUpdaterErrorEvent,
     performQuitAndInstall,

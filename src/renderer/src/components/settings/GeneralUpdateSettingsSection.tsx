@@ -203,7 +203,7 @@ export function GeneralUpdateSettingsSection(): React.JSX.Element {
               {updateStatus.version}{' '}
               {translate(
                 'auto.components.settings.GeneralUpdateSettingsSection.d89806cc89',
-                'is ready to install.'
+                'is ready to install. When you restart, Orca will close and reopen itself — this can take a few minutes.'
               )}{' '}
               <a
                 href={

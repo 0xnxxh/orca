@@ -3,12 +3,17 @@ import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodePairingOffer, PAIRING_OFFER_VERSION } from '../../shared/pairing'
 
-const { spawnMock } = vi.hoisted(() => ({
-  spawnMock: vi.fn()
+const { spawnMock, assertLaunchAllowedMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
+  assertLaunchAllowedMock: vi.fn()
 }))
 
 vi.mock('child_process', () => ({
   spawn: spawnMock
+}))
+
+vi.mock('./mac-update-install-fence', () => ({
+  assertMacUpdateInstallLaunchAllowed: assertLaunchAllowedMock
 }))
 
 import { launchOrcaApp, serveOrcaApp } from './launch'
@@ -73,6 +78,7 @@ function startRecipeJsonServer() {
 describe('serveOrcaApp', () => {
   beforeEach(() => {
     spawnMock.mockReset()
+    assertLaunchAllowedMock.mockReset().mockResolvedValue(undefined)
     process.env.ORCA_APP_EXECUTABLE = '/Applications/Orca.app/Contents/MacOS/Orca'
   })
 
@@ -329,6 +335,7 @@ describe('serveOrcaApp', () => {
 describe('launchOrcaApp', () => {
   beforeEach(() => {
     spawnMock.mockReset()
+    assertLaunchAllowedMock.mockReset().mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -342,10 +349,23 @@ describe('launchOrcaApp', () => {
     const child = new FakeChildProcess()
     spawnMock.mockReturnValue(child)
 
-    launchOrcaApp()
-    child.emit('error', new Error('ENOENT'))
+    const launch = launchOrcaApp()
     await Promise.resolve()
+    child.emit('error', new Error('ENOENT'))
+    await launch
 
     expect(child.unref).toHaveBeenCalled()
+  })
+
+  it('does not spawn when the update-install fence rejects the launch', async () => {
+    process.env.ORCA_APP_EXECUTABLE = '/Applications/Orca.app/Contents/MacOS/Orca'
+    assertLaunchAllowedMock.mockRejectedValue(
+      Object.assign(new Error('installing'), { code: 'update_install_in_progress' })
+    )
+
+    await expect(launchOrcaApp()).rejects.toMatchObject({
+      code: 'update_install_in_progress'
+    })
+    expect(spawnMock).not.toHaveBeenCalled()
   })
 })

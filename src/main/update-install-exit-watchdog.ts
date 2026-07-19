@@ -37,8 +37,9 @@ export function armUpdateInstallExitWatchdog(timeoutMs = UPDATE_INSTALL_EXIT_TIM
     // failed — a clean code keeps ShipIt/launchd on the normal relaunch path.
     app.exit(0)
   }, timeoutMs)
-  // Why unref: the watchdog must never be the thing keeping the process alive.
-  exitTimer.unref?.()
+  // Why ref'd: an unref'd main-process timer only fires when other work wakes
+  // the loop, and this timer must fire unconditionally. It is cleared on every
+  // recovered path, so it holds the loop for at most the 20s deadline.
 }
 
 /** Cancel the watchdog when install recovery re-opens the app (pre-commit

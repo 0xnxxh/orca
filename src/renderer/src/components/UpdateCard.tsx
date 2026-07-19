@@ -1121,7 +1121,7 @@ function ReadyToInstallContent({
       <p className="text-sm text-muted-foreground">
         {translate(
           'auto.components.UpdateCard.6714206e5a',
-          "Orca v{{value0}} is downloaded. Restart when you're ready.",
+          'Restart to install Orca v{{value0}}. Orca will close and reopen itself — this can take a few minutes.',
           { value0: version }
         )}
       </p>

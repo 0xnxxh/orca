@@ -18,6 +18,7 @@ const PLAIN_NODE_ENTRY_NAMES = [
   'daemon-entry',
   'parcel-watcher-process-entry',
   'computer-sidecar',
+  'mac-update-install-fence-monitor',
   'agent-hooks/managed-agent-hook-controls'
 ] as const
 

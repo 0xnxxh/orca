@@ -106,6 +106,12 @@ describe('electron-builder config', () => {
     )
   })
 
+  it('unpacks the plain-Node macOS update fence monitor', () => {
+    expect(electronBuilderConfig.asarUnpack).toEqual(
+      expect.arrayContaining(['out/main/mac-update-install-fence-monitor.js'])
+    )
+  })
+
   it('uses the multi-size icon source for Linux packages', () => {
     expect(electronBuilderConfig.linux.icon).toBe('resources/build/icon.icns')
   })

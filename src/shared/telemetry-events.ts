@@ -1389,6 +1389,63 @@ const editorExternalChangeConflictActionSchema = z
   })
   .strict()
 
+const macUpdateFenceAttemptTelemetryShape = {
+  attempt_id: z.string().uuid(),
+  source_version: z.string().min(1).max(128),
+  target_version: z.string().min(1).max(128)
+}
+const macUpdateFencePhaseSchema = z.enum(['armed', 'awaiting-shipit', 'installing'])
+const macUpdateFenceLaunchReasonSchema = z.enum([
+  'active_install',
+  'lease_recovered',
+  'monitor_alive',
+  'shipit_alive'
+])
+const macUpdateFenceRecoveryReasonSchema = z.enum([
+  'malformed',
+  'unknown_schema',
+  'stale_lease',
+  'source_died',
+  'shipit_not_seen',
+  'installer_exited_without_target',
+  'target_installed',
+  'superseded',
+  'incomparable_version',
+  'absolute_timeout'
+])
+const macUpdateFenceAttemptSchema = z.object(macUpdateFenceAttemptTelemetryShape).strict()
+const macUpdateFencePreflightBlockedSchema = z
+  .object({
+    ...macUpdateFenceAttemptTelemetryShape,
+    blocker_mode: z.enum(['gui', 'serve', 'unknown'])
+  })
+  .strict()
+const macUpdateFenceLaunchBlockedSchema = z
+  .object({
+    ...macUpdateFenceAttemptTelemetryShape,
+    phase: macUpdateFencePhaseSchema,
+    reason: macUpdateFenceLaunchReasonSchema
+  })
+  .strict()
+const macUpdateFenceRecoveredSchema = z
+  .object({
+    attempt_id: z.string().uuid().optional(),
+    source_version: z.string().min(1).max(128).optional(),
+    target_version: z.string().min(1).max(128).optional(),
+    reason: macUpdateFenceRecoveryReasonSchema
+  })
+  .strict()
+// Why: a post-commit install-handoff failure means the app relied on the exit
+// watchdog to complete the update; fleet-level spikes here need alerting.
+const macUpdateFencePostCommitFailureSchema = z
+  .object({
+    attempt_id: z.string().uuid().optional(),
+    source_version: z.string().min(1).max(128).optional(),
+    target_version: z.string().min(1).max(128).optional(),
+    error_type: z.string().min(1).max(128)
+  })
+  .strict()
+
 // ── Event registry: the one record the validator consumes ───────────────
 //
 // The validator does `eventSchemas[name].safeParse(props)`. `EventMap` is
@@ -1429,6 +1486,16 @@ export const eventSchemas = {
   daemon_start_failed: daemonStartFailedSchema,
 
   settings_changed: settingsChangedSchema,
+
+  mac_update_fence_armed: macUpdateFenceAttemptSchema,
+  mac_update_fence_monitor_ready: macUpdateFenceAttemptSchema,
+  mac_update_fence_preflight_blocked: macUpdateFencePreflightBlockedSchema,
+  mac_update_fence_awaiting_shipit: macUpdateFenceAttemptSchema,
+  mac_update_fence_shipit_seen: macUpdateFenceAttemptSchema,
+  mac_update_fence_target_observed: macUpdateFenceAttemptSchema,
+  mac_update_fence_launch_blocked: macUpdateFenceLaunchBlockedSchema,
+  mac_update_fence_recovered: macUpdateFenceRecoveredSchema,
+  mac_update_fence_post_commit_failure: macUpdateFencePostCommitFailureSchema,
 
   native_chat_toggled: nativeChatToggledSchema,
   native_chat_message_sent: nativeChatMessageSentSchema,

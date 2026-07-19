@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 describe('startup ordering', () => {
   it('passes the startup barrier into PTY handlers without blocking window creation', () => {
-    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const source = readFileSync(join(process.cwd(), 'src/main/application-main.ts'), 'utf8')
     const attachStart = source.indexOf('attachMainWindowServices(')
     const attachEnd = source.indexOf('rateLimits.attach(window)', attachStart)
     const attachBlock = source.slice(attachStart, attachEnd)
@@ -28,7 +28,7 @@ describe('startup ordering', () => {
   })
 
   it('bounds WSL reconciliation before serve RPC while leaving desktop startup independent', () => {
-    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const source = readFileSync(join(process.cwd(), 'src/main/application-main.ts'), 'utf8')
     const barrierStart = source.indexOf("ipcMain.handle('app:awaitFirstWindowStartupServices'")
     const barrierEnd = source.indexOf("ipcMain.handle(\n  'app:startupDiagnostic'", barrierStart)
     const barrier = source.slice(barrierStart, barrierEnd)
@@ -57,7 +57,7 @@ describe('startup ordering', () => {
   })
 
   it('exposes managed WSL reconciliation status to headless serve clients and diagnostics', () => {
-    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const source = readFileSync(join(process.cwd(), 'src/main/application-main.ts'), 'utf8')
 
     // Why: the barrier fails open, so the serve-ready payload must carry the
     // reconciliation state and the bounded wait must be traceable via a milestone.
@@ -73,7 +73,7 @@ describe('startup ordering', () => {
   })
 
   it('does not run the rate-limit quota fetch before the first window can show results', () => {
-    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const source = readFileSync(join(process.cwd(), 'src/main/application-main.ts'), 'utf8')
     const attachIndex = source.indexOf('rateLimits.attach(window)')
     const startIndex = source.indexOf('rateLimits.start({ fetchImmediately: false })')
 
@@ -82,7 +82,7 @@ describe('startup ordering', () => {
   })
 
   it('starts the automation scheduler before headless serve reports ready', () => {
-    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const source = readFileSync(join(process.cwd(), 'src/main/application-main.ts'), 'utf8')
     const serveStart = source.indexOf('if (serveOptions) {')
     const serveReady = source.indexOf('await printServeReady(serveOptions)', serveStart)
     const serveReturn = source.indexOf('return', serveReady)

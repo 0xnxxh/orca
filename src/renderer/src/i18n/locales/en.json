@@ -1836,7 +1836,7 @@
       },
       "UpdateCard": {
         "68b235d264": "Restart to Update",
-        "6714206e5a": "Orca v{{value0}} is downloaded. Restart when you're ready.",
+        "6714206e5a": "Restart to install Orca v{{value0}}. Orca will close and reopen itself — this can take a few minutes.",
         "93794ea932": "Orca v{{value0}} is downloading.",
         "8acbdd3961": "Minimize to status bar",
         "17412483da": "Ready to Install",
@@ -5574,7 +5574,7 @@
         },
         "GeneralUpdateSettingsSection": {
           "8a52ca1d02": "Release notes",
-          "d89806cc89": "is ready to install.",
+          "d89806cc89": "is ready to install. When you restart, Orca will close and reopen itself — this can take a few minutes.",
           "a6b37929dc": "Version",
           "8311da27ba": "is available. Click \"Install Update\" to download and install it.",
           "f44299636f": "Restart to Update (",

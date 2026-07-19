@@ -7,6 +7,10 @@ const {
   verifyPackagedDaemonEntryBoots
 } = require('./scripts/verify-packaged-daemon-entry.cjs')
 const {
+  assertPackagedMacUpdateMonitorExists,
+  verifyPackagedMacUpdateMonitorBoots
+} = require('./scripts/verify-packaged-mac-update-monitor.cjs')
+const {
   createPackagedRuntimeNodeModuleResources,
   prunePackagedRuntimeNodeModules,
   verifyPackagedMainRuntimeDeps
@@ -127,8 +131,13 @@ module.exports = {
     'out/main/hermes/**',
     'out/main/win32-utils.js',
     'out/main/daemon-entry.js',
+    'out/main/mac-update-install-fence-monitor.js',
     'out/main/computer-sidecar.js',
     'out/main/parcel-watcher-process-entry.js',
+    // Note: the bootstrap's dynamic import of application-main lands in
+    // chunks/**, so effectively the whole main process ships asar-unpacked.
+    // If the EnableEmbeddedAsarIntegrityValidation fuse is ever enabled, it
+    // would cover only the near-empty asar — revisit this rule then.
     'out/main/chunks/**',
     'resources/**',
     'node_modules/ws/**',
@@ -182,6 +191,18 @@ module.exports = {
       chmodSync(join(resourcesDir, filename), 0o755)
     }
     if (context.electronPlatformName === 'darwin') {
+      // Why the arch gate: the monitor graph is pure JS today, but booting it
+      // runs the TARGET slice's entry under the host Node — keep the same
+      // cross-arch posture as daemon-entry so a future native dep cannot make
+      // this check spuriously fail; existence is still asserted on all slices.
+      if (context.arch === hostArchEnum || context.arch === 4) {
+        verifyPackagedMacUpdateMonitorBoots(resourcesDir)
+      } else {
+        assertPackagedMacUpdateMonitorExists(resourcesDir)
+        console.log(
+          `[verify-packaged-mac-update-monitor] skipped boot on cross-arch slice (target ${context.arch}, host ${process.arch})`
+        )
+      }
       await signMacComputerUseHelper(join(resourcesDir, 'Orca Computer Use.app'), context.packager)
       await signMacNotificationStatusHelper(
         join(resourcesDir, '..', 'MacOS', 'orca-notification-status'),
