@@ -22,15 +22,27 @@ function clearDefaultViewWriteBarrier(barrier: Promise<void>): void {
   }
 }
 
-/** Global (per-device) default for how supported agent sessions open. */
-export async function loadDefaultSessionView(): Promise<MobileSessionView> {
+export type DefaultSessionViewPreference = {
+  readonly value: MobileSessionView | null
+  readonly loaded: boolean
+}
+
+/** Reads the raw per-device default. `value: null` distinguishes a device that
+ *  has never made the one-time onboarding choice from one that explicitly picked
+ *  terminal — the opt-in gate needs that to prompt exactly once. */
+export async function readDefaultSessionViewPreference(): Promise<DefaultSessionViewPreference> {
   await defaultViewWriteBarrier
   try {
     const raw = await AsyncStorage.getItem(DEFAULT_SESSION_VIEW_KEY)
-    return raw === 'chat' || raw === 'terminal' ? raw : DEFAULT_SESSION_VIEW
+    return { value: raw === 'chat' || raw === 'terminal' ? raw : null, loaded: true }
   } catch {
-    return DEFAULT_SESSION_VIEW
+    return { value: null, loaded: false }
   }
+}
+
+/** Global (per-device) default for how supported agent sessions open. */
+export async function loadDefaultSessionView(): Promise<MobileSessionView> {
+  return (await readDefaultSessionViewPreference()).value ?? DEFAULT_SESSION_VIEW
 }
 
 export function saveDefaultSessionView(view: MobileSessionView): Promise<void> {

@@ -182,6 +182,10 @@ export default function RootLayout() {
             name="notification-opt-in"
             options={{ headerShown: false, presentation: 'modal', gestureEnabled: false }}
           />
+          <Stack.Screen
+            name="session-view-opt-in"
+            options={{ headerShown: false, presentation: 'modal', gestureEnabled: false }}
+          />
           <Stack.Screen name="settings" options={{ headerShown: false }} />
           <Stack.Screen name="terminal-settings" options={{ headerShown: false }} />
           <Stack.Screen name="native-chat-settings" options={{ headerShown: false }} />

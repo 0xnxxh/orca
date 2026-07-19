@@ -37,6 +37,7 @@ import {
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import { shouldPresentNotificationOptIn } from '../src/notifications/notification-opt-in-gate'
+import { shouldPresentSessionViewOptIn } from '../src/session/session-view-opt-in-gate'
 import type { ConnectionState, HostProfile } from '../src/transport/types'
 import { triggerMediumImpact } from '../src/platform/haptics'
 import { OrcaLogo } from '../src/components/OrcaLogo'
@@ -316,7 +317,9 @@ export default function HomeScreen() {
   const [lastVisited, setLastVisited] = useState<{ hostId: string; worktreeId: string } | null>(
     null
   )
-  const notificationOptInCheckedRef = useRef(false)
+  // Gates both one-time onboarding prompts (notifications, then session view) so
+  // they run at most once per mount; a replace() back to '/' remounts and re-checks.
+  const onboardingOptInCheckedRef = useRef(false)
 
   // Why: read shared clients from the per-host store. Replaces the prior
   // pattern of opening N independent WebSockets here. See
@@ -400,13 +403,23 @@ export default function HomeScreen() {
           return
         }
         setHosts(h)
-        if (h.length === 0 || notificationOptInCheckedRef.current) {
+        if (h.length === 0 || onboardingOptInCheckedRef.current) {
           return
         }
-        notificationOptInCheckedRef.current = true
+        onboardingOptInCheckedRef.current = true
         const showNotificationOptIn = await shouldPresentNotificationOptIn()
-        if (!stale && showNotificationOptIn) {
+        if (stale) {
+          return
+        }
+        // Why: show one prompt at a time — the notification screen returns to '/'
+        // on completion, which remounts here and then falls through to session view.
+        if (showNotificationOptIn) {
           router.replace('/notification-opt-in')
+          return
+        }
+        const showSessionViewOptIn = await shouldPresentSessionViewOptIn()
+        if (!stale && showSessionViewOptIn) {
+          router.replace('/session-view-opt-in')
         }
       })
       void AsyncStorage.getItem('orca:last-visited-worktree').then((raw) => {
