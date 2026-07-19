@@ -667,6 +667,24 @@ describe('upsertPromotedSettingsInContent', () => {
     ).toBe('[tui.notifications]\nenabled = true\n\n[tui]\ntheme = "dark"\n')
   })
 
+  it('does not mistake a dotted tui key inside an array table for a root key', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '[[profiles]]\ntui.theme = "profile-theme"\n',
+        new Map([['tui.theme', '"root-theme"']])
+      )
+    ).toBe('[[profiles]]\ntui.theme = "profile-theme"\n\n[tui]\ntheme = "root-theme"\n')
+  })
+
+  it('does not append a table beside a root tui array-of-tables', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '[[tui]]\ntheme = "array-theme"\n',
+        new Map([['tui.theme', '"root-theme"']])
+      )
+    ).toBe('[[tui]]\ntheme = "array-theme"\n')
+  })
+
   it('creates one [tui] table for multiple keys reaching the new-table branch', () => {
     expect(
       upsertPromotedSettingsInContent(

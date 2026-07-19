@@ -103,7 +103,7 @@ type TuiPlacementScan = {
   dottedKeyIndexes: Map<string, number>
   hasBareTuiTable: boolean
   hasDottedTuiKey: boolean
-  hasTuiKeyAssignment: boolean
+  blocksNewTuiTable: boolean
   bareBodyInsertIndex: number
   lastDottedTuiIndex: number
 }
@@ -140,10 +140,9 @@ export function upsertTuiSettingsInContent(content: string, updates: Map<string,
       bareBodyInserts.push(`${key} = ${raw}`)
     } else if (scan.hasDottedTuiKey) {
       dottedPreambleInserts.push(`${tuiStructuredKey(key)} = ${raw}`)
-    } else if (!scan.hasTuiKeyAssignment) {
-      // Why: `tui = {...}` (inline table) already defines tui and cannot be
-      // edited line-wise; appending a [tui] table would be a duplicate-definition
-      // parse error, so the update is dropped and the config stays valid.
+    } else if (!scan.blocksNewTuiTable) {
+      // Why: inline/array tui definitions block this branch because adding a
+      // plain [tui] beside either would make the config invalid.
       newTableKeys.push(`${key} = ${raw}`)
     }
   }
@@ -173,13 +172,13 @@ export function upsertTuiSettingsInContent(content: string, updates: Map<string,
 
 function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPlacementScan {
   let state = createTomlLineScanState()
-  let currentTable: string | null = null
+  let inPreamble = true
   let tuiTableSeen = false
   let tuiBodyActive = false
   let tuiBodyHeaderIndex = -1
   let tuiBodyEndIndex = -1
   let hasDottedTuiKey = false
-  let hasTuiKeyAssignment = false
+  let blocksNewTuiTable = false
   let lastDottedTuiIndex = -1
   const bareKeyIndexes = new Map<string, number>()
   const dottedKeyIndexes = new Map<string, number>()
@@ -193,16 +192,22 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
           tuiBodyEndIndex = index
           tuiBodyActive = false
         }
-        if (getTomlTableName(header) === 'tui' && !tuiTableSeen) {
+        const tableName = getTomlTableName(header)
+        if (tableName === 'tui' && !tuiTableSeen) {
           tuiTableSeen = true
           tuiBodyActive = true
           tuiBodyHeaderIndex = index
         }
-        currentTable = getTomlTableName(header)
+        // Why: a root [[tui]] is already an array, so appending [tui] would
+        // redefine it and make an otherwise valid config unparseable.
+        if (isRootTuiArrayTableHeader(header)) {
+          blocksNewTuiTable = true
+        }
+        inPreamble = false
         state = updateTomlLineScanState(state, line)
         continue
       }
-      if (currentTable === null) {
+      if (inPreamble) {
         // Why: any dotted `tui.*` key (allowlisted or not) already defines the
         // implicit tui table, so a new `[tui]` table at EOF would duplicate it.
         const dotted = /^[ \t]*(tui\.[A-Za-z0-9_.-]+)[ \t]*=/.exec(line)
@@ -214,7 +219,7 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
             dottedKeyIndexes.set(promoted[1]!, index)
           }
         } else if (/^[ \t]*tui[ \t]*=/.test(line)) {
-          hasTuiKeyAssignment = true
+          blocksNewTuiTable = true
         }
       } else if (tuiBodyActive) {
         const bare = /^[ \t]*([A-Za-z0-9_-]+)[ \t]*=/.exec(line)
@@ -234,10 +239,15 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
     dottedKeyIndexes,
     hasBareTuiTable: tuiTableSeen,
     hasDottedTuiKey,
-    hasTuiKeyAssignment,
+    blocksNewTuiTable,
     bareBodyInsertIndex: computeBareBodyInsertIndex(lines, tuiBodyHeaderIndex, tuiBodyEndIndex),
     lastDottedTuiIndex
   }
+}
+
+function isRootTuiArrayTableHeader(header: string): boolean {
+  const match = /^\[\[(.+)\]\]$/.exec(header.trim())
+  return match?.[1]?.trim() === 'tui'
 }
 
 // Why: TOML forbids adding bare keys to `[tui]` after a `[tui.*]` subtable opens,
