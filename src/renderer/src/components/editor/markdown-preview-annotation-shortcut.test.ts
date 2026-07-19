@@ -110,12 +110,12 @@ describe('isMarkdownPreviewAddReviewNoteShortcut', () => {
 
 describe('resolveMarkdownPreviewAddReviewNoteKey', () => {
   const chord = {
-    key: 'n',
-    code: 'KeyN',
+    key: 'a',
+    code: 'KeyA',
     metaKey: true,
     ctrlKey: false,
-    altKey: true,
-    shiftKey: false,
+    altKey: false,
+    shiftKey: true,
     repeat: false
   }
 

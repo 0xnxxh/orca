@@ -653,7 +653,9 @@ export default function MarkdownPreview({
     // re-render this setState triggers; only the same-tick keydown paths need
     // an eager manual write, so this passive effect leaves the ref to that sync.
     setActiveAnnotationBlockKey(null)
-  }, [activeAnnotationBlockKey, content])
+    // Why: keyed on renderedContent (not content) — the DOM the block keys live
+    // in derives from it and can lag content during external-edit preservation.
+  }, [activeAnnotationBlockKey, renderedContent])
   const [reviewNotesCopied, setReviewNotesCopied] = useState(false)
   const [copiedReviewNoteId, setCopiedReviewNoteId] = useState<string | null>(null)
   const reviewNotesCopiedResetTimerRef = useRef<number | null>(null)

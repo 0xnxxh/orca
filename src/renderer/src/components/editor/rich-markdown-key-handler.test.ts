@@ -148,7 +148,7 @@ describe('rich markdown key handler', () => {
 
     try {
       const ctx = createContext(editor, false)
-      const event = keyEvent('n', { metaKey: true, altKey: true, code: 'KeyN', repeat: true })
+      const event = keyEvent('a', { metaKey: true, shiftKey: true, code: 'KeyA', repeat: true })
 
       // Why: leave the repeat unconsumed here; open drafts are consumed by the
       // mounted composer guard (product B) instead of this editor key path.
@@ -169,7 +169,7 @@ describe('rich markdown key handler', () => {
       // (which reads the selection), so the handler now only delegates the open
       // with requireLiveSelection and consumes the chord when it succeeds.
       ctx.openAnnotationPopoverRef.current = vi.fn(() => true)
-      const event = keyEvent('n', { metaKey: true, altKey: true, code: 'KeyN' })
+      const event = keyEvent('a', { metaKey: true, shiftKey: true, code: 'KeyA' })
 
       expect(createRichMarkdownKeyHandler(ctx)(null, event)).toBe(true)
       expect(event.preventDefault).toHaveBeenCalled()

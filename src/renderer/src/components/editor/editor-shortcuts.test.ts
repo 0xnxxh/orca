@@ -284,19 +284,19 @@ describe('installOpenDraftAddReviewNoteGuard', () => {
     const dispose = installOpenDraftAddReviewNoteGuard(container)
 
     const first = dispatchKeyDown(input, {
-      key: 'n',
-      code: 'KeyN',
+      key: 'a',
+      code: 'KeyA',
       metaKey: true,
-      altKey: true
+      shiftKey: true
     })
     const repeat = dispatchKeyDown(input, {
-      key: 'n',
-      code: 'KeyN',
+      key: 'a',
+      code: 'KeyA',
       metaKey: true,
-      altKey: true,
+      shiftKey: true,
       repeat: true
     })
-    const unrelated = dispatchKeyDown(input, { key: 'n', code: 'KeyN', metaKey: true })
+    const unrelated = dispatchKeyDown(input, { key: 'a', code: 'KeyA', metaKey: true })
 
     expect(first.defaultPrevented).toBe(true)
     expect(repeat.defaultPrevented).toBe(true)
@@ -306,10 +306,10 @@ describe('installOpenDraftAddReviewNoteGuard', () => {
 
     dispose()
     const afterDispose = dispatchKeyDown(input, {
-      key: 'n',
-      code: 'KeyN',
+      key: 'a',
+      code: 'KeyA',
       metaKey: true,
-      altKey: true
+      shiftKey: true
     })
     expect(afterDispose.defaultPrevented).toBe(false)
   })
