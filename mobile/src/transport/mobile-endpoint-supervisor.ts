@@ -108,13 +108,14 @@ export class MobileEndpointSupervisor {
   }
 
   private async recoverRelay(forceReplacement = false): Promise<void> {
+    // Why: connecting/handshaking is live direct progress; a relay dial would race it.
     if (
       this.stopped ||
       !this.foreground ||
       this.operationInFlight ||
       !this.bundle ||
       !this.host.relay ||
-      (!forceReplacement && this.logical.getState() === 'connected')
+      (!forceReplacement && !this.relayReconnect.needsRecovery(this.logical.getState()))
     ) {
       return
     }

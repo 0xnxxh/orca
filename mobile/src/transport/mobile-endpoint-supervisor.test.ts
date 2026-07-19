@@ -177,6 +177,10 @@ describe('mobile endpoint supervisor', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(deps.openRelay).not.toHaveBeenCalled()
 
+    supervisor.setForeground(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(deps.openRelay).not.toHaveBeenCalled()
+
     logical.publishState('reconnecting')
     await vi.waitFor(() => expect(logical.getActivePath()).toBe('relay'))
 
@@ -193,6 +197,27 @@ describe('mobile endpoint supervisor', () => {
 
     expect(logical.migrateTo).toHaveBeenCalledWith(expect.any(FakeRelaySession), 'relay')
     expect(logical.getActivePath()).toBe('relay')
+    supervisor.stop()
+  })
+
+  it('does not spend a queued relay retry while direct authentication is progressing', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new RelayOuterError(4408)))
+    const deps = dependencies({
+      openRelay,
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    expect(openRelay).toHaveBeenCalledOnce()
+
+    logical.publishState('handshaking')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(openRelay).toHaveBeenCalledOnce()
+
+    logical.publishState('disconnected')
+    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledTimes(2))
     supervisor.stop()
   })
 
