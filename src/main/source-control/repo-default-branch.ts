@@ -15,6 +15,7 @@ type RepoDefaultBranchCacheEntry = {
 }
 
 const repoDefaultBranchCache = new Map<string, RepoDefaultBranchCacheEntry>()
+const repoDefaultBranchInFlight = new Map<string, Promise<string | null>>()
 
 function getRepoDefaultBranchCacheKey(
   repoPath: string,
@@ -60,45 +61,63 @@ export async function getRepoDefaultBranchName(
   if (cached && cached.expiresAt > now) {
     return cached.branchName
   }
-  let branchName: string | null = null
-  try {
-    const provider = connectionId ? getSshGitProvider(connectionId) : null
-    if (connectionId && !provider) {
-      // Why: a dropped SSH provider must not fall back to local git — the
-      // repoPath is remote, so a local run could answer for the wrong repo.
-      return null
-    }
-    const resolutionDeadline = Date.now() + REPO_DEFAULT_BRANCH_RESOLUTION_BUDGET_MS
-    // Why: the resolver can try five refs; share one deadline so an unhealthy
-    // local/WSL/SSH host cannot multiply the refresh delay per fallback probe.
-    const baseRef = await resolveDefaultBaseRefViaExec((argv) => {
-      const timeoutMs = resolutionDeadline - Date.now()
-      if (timeoutMs <= 0) {
-        return Promise.reject(new Error('Default branch resolution timed out.'))
-      }
-      return provider
-        ? provider.exec(argv, repoPath, { timeoutMs })
-        : gitExecFileAsync(argv, {
-            cwd: repoPath,
-            ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {}),
-            timeout: timeoutMs
-          })
-    })
-    // Same base-ref → branch-name normalization as git/repo.ts getRemoteFileUrl.
-    branchName = baseRef ? baseRef.replace(/^origin\//, '') : null
-  } catch {
-    branchName = null
+  const pending = repoDefaultBranchInFlight.get(cacheKey)
+  if (pending) {
+    return pending
   }
-  // Why: null (failure or genuinely no default) is cached too — the resolver
-  // cannot tell them apart, and the short TTL bounds the fail-open window
-  // without re-probing git on every refresh tick.
-  pruneRepoDefaultBranchCache(now)
-  repoDefaultBranchCache.set(cacheKey, {
-    branchName,
-    expiresAt: now + REPO_DEFAULT_BRANCH_CACHE_TTL_MS
-  })
-  pruneRepoDefaultBranchCache(now)
-  return branchName
+
+  // Why: simultaneous refresh paths for one checkout should share the same
+  // Git/SSH subprocess chain instead of multiplying cold-cache probes.
+  const resolution = (async (): Promise<string | null> => {
+    let branchName: string | null = null
+    try {
+      const provider = connectionId ? getSshGitProvider(connectionId) : null
+      if (connectionId && !provider) {
+        // Why: a dropped SSH provider must not fall back to local git — the
+        // repoPath is remote, so a local run could answer for the wrong repo.
+        return null
+      }
+      const resolutionDeadline = Date.now() + REPO_DEFAULT_BRANCH_RESOLUTION_BUDGET_MS
+      // Why: the resolver can try five refs; share one deadline so an unhealthy
+      // local/WSL/SSH host cannot multiply the refresh delay per fallback probe.
+      const baseRef = await resolveDefaultBaseRefViaExec((argv) => {
+        const timeoutMs = resolutionDeadline - Date.now()
+        if (timeoutMs <= 0) {
+          return Promise.reject(new Error('Default branch resolution timed out.'))
+        }
+        return provider
+          ? provider.exec(argv, repoPath, { timeoutMs })
+          : gitExecFileAsync(argv, {
+              cwd: repoPath,
+              ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {}),
+              timeout: timeoutMs
+            })
+      })
+      // Same base-ref → branch-name normalization as git/repo.ts getRemoteFileUrl.
+      branchName = baseRef ? baseRef.replace(/^origin\//, '') : null
+    } catch {
+      branchName = null
+    }
+    const completedAt = Date.now()
+    // Why: null (failure or genuinely no default) is cached too — the resolver
+    // cannot tell them apart, and the short TTL bounds the fail-open window
+    // without re-probing git on every refresh tick.
+    pruneRepoDefaultBranchCache(completedAt)
+    repoDefaultBranchCache.set(cacheKey, {
+      branchName,
+      expiresAt: completedAt + REPO_DEFAULT_BRANCH_CACHE_TTL_MS
+    })
+    pruneRepoDefaultBranchCache(completedAt)
+    return branchName
+  })()
+  repoDefaultBranchInFlight.set(cacheKey, resolution)
+  try {
+    return await resolution
+  } finally {
+    if (repoDefaultBranchInFlight.get(cacheKey) === resolution) {
+      repoDefaultBranchInFlight.delete(cacheKey)
+    }
+  }
 }
 
 /**
@@ -142,4 +161,5 @@ export async function shouldHideNonOpenReviewOnDefaultBranch(input: {
 
 export function __resetRepoDefaultBranchCacheForTests(): void {
   repoDefaultBranchCache.clear()
+  repoDefaultBranchInFlight.clear()
 }

@@ -133,6 +133,31 @@ describe('getRepoDefaultBranchName', () => {
     expect(gitExecFileAsyncMock.mock.calls.length).toBeGreaterThan(callsAfterFirst)
   })
 
+  it('coalesces concurrent resolutions for the same repo and runtime', async () => {
+    let releaseSymbolicRef: (() => void) | undefined
+    const symbolicRefGate = new Promise<void>((resolve) => {
+      releaseSymbolicRef = resolve
+    })
+    gitExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'symbolic-ref') {
+        await symbolicRefGate
+        return { stdout: 'refs/remotes/origin/main\n', stderr: '' }
+      }
+      if (args[0] === 'rev-parse') {
+        return { stdout: 'default-oid\n', stderr: '' }
+      }
+      throw new Error(`unexpected git call: ${args.join(' ')}`)
+    })
+
+    const first = getRepoDefaultBranchName('/repo')
+    const second = getRepoDefaultBranchName('/repo')
+    await vi.waitFor(() => expect(gitExecFileAsyncMock).toHaveBeenCalledTimes(1))
+    releaseSymbolicRef?.()
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['main', 'main'])
+    expect(gitExecFileAsyncMock).toHaveBeenCalledTimes(2)
+  })
+
   it('scopes the cache per runtime so WSL and host resolutions do not collide', async () => {
     primeLocalGitExec('refs/remotes/origin/master')
     await expect(getRepoDefaultBranchName('/repo')).resolves.toBe('master')
