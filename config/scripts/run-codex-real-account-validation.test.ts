@@ -118,6 +118,52 @@ describe('Codex real-account validation harness', () => {
     expect(error).toContain('--temp-parent')
     expect(error).toContain('ORCA_CODEX_VALIDATION_TEMP_PARENT')
   })
+
+  it('builds via process.execPath and the repo-local electron-vite entry, not npx', () => {
+    // Why: raw `npx` resolves to a .cmd shim on Windows that execFileSync cannot
+    // launch (ENOENT), so the build command must use the current Node binary and
+    // the repository-local electron-vite JS entry to stay cross-platform.
+    const { command, args, entry } = runValidationModule<{
+      command: string
+      args: string[]
+      entry: string
+    }>(
+      `
+        import path from 'node:path'
+        const { resolveElectronViteBuildCommand } = await import(process.argv[1])
+        const repoRoot = process.argv[2]
+        const result = resolveElectronViteBuildCommand(repoRoot)
+        const entry = path.join(repoRoot, 'node_modules', 'electron-vite', 'bin', 'electron-vite.js')
+        console.log(JSON.stringify({ ...result, entry }))
+      `,
+      [path.resolve('.')]
+    )
+
+    expect(command).toBe(process.execPath)
+    expect(command).not.toBe('npx')
+    expect(args[0]).toBe(entry)
+    expect(args.slice(1)).toEqual(['build', '--mode', 'e2e'])
+    expect(args).not.toContain('npx')
+  })
+
+  it('fails clearly when the repo-local electron-vite entry is unavailable', async () => {
+    const emptyRoot = await mkdtemp(path.join(os.tmpdir(), 'orca-no-electron-vite-'))
+    cleanupPaths.push(emptyRoot)
+    const { error } = runValidationModule<{ error: string | null }>(
+      `
+        const { resolveElectronViteBuildCommand } = await import(process.argv[1])
+        try {
+          resolveElectronViteBuildCommand(process.argv[2])
+          console.log(JSON.stringify({ error: null }))
+        } catch (caught) {
+          console.log(JSON.stringify({ error: caught.message }))
+        }
+      `,
+      [emptyRoot]
+    )
+
+    expect(error).toContain('electron-vite entry not found')
+  })
 })
 
 function runValidationModule<T>(source: string, args: string[], env?: Record<string, string>): T {

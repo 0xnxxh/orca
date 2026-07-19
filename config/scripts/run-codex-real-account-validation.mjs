@@ -293,6 +293,28 @@ function parseArgs(argv) {
   return options
 }
 
+// Why: `npx` resolves to a .cmd shim on Windows that execFileSync cannot launch
+// (ENOENT), so the harness could not build its own app there. Run the
+// repository-local electron-vite JS entry with the current Node binary instead;
+// process.execPath + a resolved .js path behaves identically on macOS, Linux,
+// and Windows without a shell.
+export function resolveElectronViteBuildCommand(repoRoot) {
+  const electronViteEntry = path.join(
+    repoRoot,
+    'node_modules',
+    'electron-vite',
+    'bin',
+    'electron-vite.js'
+  )
+  if (!existsSync(electronViteEntry)) {
+    throw new Error(
+      `Cannot build the validation app: electron-vite entry not found at ${electronViteEntry}. ` +
+        'Install dependencies (pnpm install) or pass --skip-build with a prebuilt out/main/index.js.'
+    )
+  }
+  return { command: process.execPath, args: [electronViteEntry, 'build', '--mode', 'e2e'] }
+}
+
 function buildAppIfNeeded(repoRoot, skipBuild) {
   const mainPath = path.join(repoRoot, 'out', 'main', 'index.js')
   if (skipBuild) {
@@ -301,7 +323,8 @@ function buildAppIfNeeded(repoRoot, skipBuild) {
     }
     return mainPath
   }
-  execFileSync('npx', ['electron-vite', 'build', '--mode', 'e2e'], {
+  const { command, args } = resolveElectronViteBuildCommand(repoRoot)
+  execFileSync(command, args, {
     cwd: repoRoot,
     stdio: 'inherit',
     env: { ...process.env, VITE_EXPOSE_STORE: 'true' }
