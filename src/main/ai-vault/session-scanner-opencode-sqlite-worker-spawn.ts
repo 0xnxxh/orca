@@ -50,7 +50,7 @@ function getSharedClient(): OpenCodeSqliteWorkerClient {
  * @param args.dbPaths - Absolute paths to opencode.db files to scan.
  * @param args.limit - Maximum number of sessions to return per database.
  * @param args.issues - Collected scan issues to append errors to.
- * @returns Synthetic candidates sorted by `time_updated` DESC.
+ * @returns Synthetic candidates sorted by effective recency.
  */
 export function listOpenCodeSqliteSessionsViaWorker(args: {
   dbPaths: readonly string[]

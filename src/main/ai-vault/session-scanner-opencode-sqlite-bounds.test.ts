@@ -135,6 +135,23 @@ describe('listOpenCodeSqliteSessions — LIMIT-first discovery', () => {
     ])
   })
 
+  it('uses time_created recency when time_updated is not positive', async () => {
+    const { db, path } = createTempDb()
+    applySchema(db)
+    insertSession(db, 'ses_updated', 1_777_634_002_000)
+    db.prepare(
+      `INSERT INTO session (id, project_id, directory, title, time_created, time_updated, agent)
+       VALUES ('ses_created', 'proj', '/tmp/w', 'Created fallback', ?, 0, 'build')`
+    ).run(1_777_634_003_000)
+    db.close()
+
+    const candidates = await listOpenCodeSqliteSessions({ dbPaths: [path], limit: 1, issues: [] })
+    expect(candidates.map((candidate) => candidate.file.path)).toEqual([
+      buildOpenCodeSqliteCandidatePath(path, 'ses_created')
+    ])
+    expect(candidates[0].file.mtimeMs).toBe(1_777_634_003_000)
+  })
+
   it('does not read message payloads that discovery does not use', async () => {
     const { db, path } = createTempDb()
     applySchema(db)

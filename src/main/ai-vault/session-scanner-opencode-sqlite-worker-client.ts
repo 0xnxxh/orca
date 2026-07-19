@@ -74,7 +74,7 @@ export class OpenCodeSqliteWorkerClient {
    * @param args.dbPaths - Absolute paths to opencode.db files to scan.
    * @param args.limit - Maximum number of sessions to return per database.
    * @param args.issues - Collected scan issues (worker issues are merged in).
-   * @returns Synthetic candidates sorted by `time_updated` DESC; empty (with a
+   * @returns Synthetic candidates sorted by effective recency; empty (with a
    *   scan issue) when the worker is unavailable, times out, or crashes.
    */
   async list(args: {

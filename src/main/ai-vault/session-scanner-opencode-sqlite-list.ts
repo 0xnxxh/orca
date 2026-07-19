@@ -42,7 +42,7 @@ function buildSessionListQuery(db: SyncDatabase): string {
   return `SELECT id, time_created, time_updated
           FROM session
           WHERE 1=1 ${parentIdPredicate} ${archivedPredicate}
-          ORDER BY time_updated DESC
+          ORDER BY CASE WHEN time_updated > 0 THEN time_updated ELSE time_created END DESC
           LIMIT ?`
 }
 
@@ -88,7 +88,7 @@ function dedupeAndSortSqliteCandidates(candidates: SessionFileCandidate[]): Sess
  * @param args.dbPaths - Absolute paths to opencode.db files to scan.
  * @param args.limit - Maximum number of sessions to return per database.
  * @param args.issues - Collected scan issues to append errors to.
- * @returns Array of synthetic candidates sorted by `time_updated` DESC.
+ * @returns Array of synthetic candidates sorted by effective recency.
  */
 export async function listOpenCodeSqliteSessions(args: {
   dbPaths: readonly string[]
