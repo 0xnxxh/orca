@@ -19,6 +19,8 @@ describe('win-crash-survival-e2e proof contracts', () => {
     expect(workflow).toContain("- 'src/main/daemon/**'")
     expect(workflow).toContain('--expect "$env:EXPECT"')
     expect(workflow).toContain('exit $LASTEXITCODE')
+    expect(workflow).toContain("'!config/**/*.test.*'")
+    expect(workflow).toContain("'!config/reliability-gates.jsonc'")
   })
 
   it('requires the full survival oracle, including daemon identity and reattach', () => {
