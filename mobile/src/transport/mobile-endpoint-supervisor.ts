@@ -1,5 +1,5 @@
-import type { MobileRelayEndpoint } from '../../../src/shared/mobile-relay-credential-contract'
 import { openAuthenticatedDirectEndpoint } from './mobile-direct-endpoint-probe'
+import type { MobileEndpointSupervisorDependencies } from './mobile-endpoint-supervisor-contract'
 import { RelayReconnectController } from './mobile-relay-reconnect-controller'
 import { RelayLeaseRotationTimer } from './mobile-relay-lease-rotation-timer'
 import { MobileEndpointHysteresis } from './mobile-endpoint-hysteresis'
@@ -15,33 +15,15 @@ import {
   rotateMobileRelayCredential
 } from './mobile-relay-credential-rotation'
 import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
-import type { MobileRelayRpcSession } from './mobile-relay-rpc-session'
-import { resolveMobileRelayEndpoint } from './mobile-relay-resume-director'
-import type { RpcClient } from './rpc-client'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
 import type { HostProfile } from './types'
+
+export type { MobileEndpointSupervisorDependencies } from './mobile-endpoint-supervisor-contract'
 
 const DIRECT_PROBE_INTERVAL_MS = 15_000
 const DIRECT_OBSERVATION_MS = 30_000
 const MINIMUM_DWELL_MS = 60_000
 const FAILURE_COOLDOWN_MS = 60_000
-
-export type MobileEndpointSupervisorDependencies = {
-  openDirect: (endpoint: string) => RpcClient
-  openRelay: (
-    relay: MobileRelayEndpoint,
-    credential: { token: string; version: number },
-    confirmReqId: string
-  ) => MobileRelayRpcSession
-  resolveRelay: typeof resolveMobileRelayEndpoint
-  readBundle: (hostId: string) => Promise<MobileRelayCredentialBundle | null>
-  writeBundle: (bundle: MobileRelayCredentialBundle) => Promise<void>
-  saveHost: (host: HostProfile) => Promise<void>
-  now: () => number
-  randomBytes: (length: number) => Uint8Array
-  setTimer: typeof setTimeout
-  clearTimer: typeof clearTimeout
-}
 
 export class MobileEndpointSupervisor {
   private bundle: MobileRelayCredentialBundle | null = null
@@ -110,10 +92,7 @@ export class MobileEndpointSupervisor {
     } else {
       // Why: background phones must not hold billed relay data splices.
       this.relayReconnect.suspendActiveRelay(this.logical)
-      if (this.probeTimer) {
-        this.dependencies.clearTimer(this.probeTimer)
-        this.probeTimer = null
-      }
+      this.clearDirectProbeTimer()
       this.relayReconnect.clear()
     }
   }
@@ -122,10 +101,7 @@ export class MobileEndpointSupervisor {
     this.stopped = true
     this.unsubscribeState?.()
     this.unsubscribeState = null
-    if (this.probeTimer) {
-      this.dependencies.clearTimer(this.probeTimer)
-      this.probeTimer = null
-    }
+    this.clearDirectProbeTimer()
     this.relayReconnect.clear()
     this.leaseRotation.clear()
   }
@@ -167,6 +143,9 @@ export class MobileEndpointSupervisor {
           return
         }
         lastError = result.error
+        if (!this.relayReconnect.shouldTryGraceAfterRelayFailure(result.error)) {
+          break
+        }
       }
       if (credentials.length > 0) {
         // Why: cleanup may happen while a relay dial is awaiting the network;
@@ -232,7 +211,9 @@ export class MobileEndpointSupervisor {
       const confirmation = session.getResumeConfirmation()
       if (confirmation) {
         this.bundle = applyResumeConfirmation(this.bundle, credential.version, confirmation)
-        await this.dependencies.writeBundle(this.bundle)
+        // Why: the relay is already authenticated; a SecureStore failure must
+        // not open another socket or count against transport recovery backoff.
+        await this.dependencies.writeBundle(this.bundle).catch(() => {})
       }
       // Why: stop can race credential persistence after migration; never recreate its timer.
       this.leaseRotation.scheduleFromLease(this.stopped ? null : session.getLeaseExpiresAt())
@@ -324,6 +305,13 @@ export class MobileEndpointSupervisor {
       // opportunity must reconcile it before creating another install key.
     } finally {
       this.credentialRotationInFlight = false
+    }
+  }
+
+  private clearDirectProbeTimer(): void {
+    if (this.probeTimer) {
+      this.dependencies.clearTimer(this.probeTimer)
+      this.probeTimer = null
     }
   }
 }

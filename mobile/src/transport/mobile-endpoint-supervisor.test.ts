@@ -318,6 +318,52 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
+  it('does not try a grace credential for a capacity failure before backing off', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new RelayOuterError(4429)))
+    const deps = dependencies({
+      readBundle: vi.fn(async () => ({
+        ...bundle,
+        grace: { ...bundle.current, token: 'C'.repeat(43), hash: 'D'.repeat(43), version: 1 }
+      })),
+      openRelay,
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+
+    expect(openRelay).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(249)
+    expect(openRelay).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(openRelay).toHaveBeenCalledTimes(2)
+    supervisor.stop()
+  })
+
+  it('keeps an authenticated relay off the backoff path when persistence fails', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi.fn(() => new FakeRelaySession('connected'))
+    const deps = dependencies({
+      readBundle: vi.fn(async () => ({
+        ...bundle,
+        grace: { ...bundle.current, token: 'C'.repeat(43), hash: 'D'.repeat(43), version: 1 }
+      })),
+      openRelay,
+      writeBundle: vi.fn(async () => {
+        throw new Error('secure store unavailable')
+      })
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    expect(openRelay).toHaveBeenCalledOnce()
+
+    logical.publishState('disconnected')
+    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledTimes(2))
+    supervisor.stop()
+  })
+
   it('cancels a pending relay retry when the original direct path reconnects', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
     const deps = dependencies({

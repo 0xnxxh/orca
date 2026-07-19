@@ -53,6 +53,14 @@ describe('relay reconnect controller', () => {
     expect(reconnect.retryDelayMs(5000)).toBe(8000)
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('uses grace only when the outer relay credential was rejected', () => {
+    const reconnect = createController(vi.fn())
+
+    expect(reconnect.shouldTryGraceAfterRelayFailure(new RelayOuterError(4401))).toBe(true)
+    expect(reconnect.shouldTryGraceAfterRelayFailure(new RelayOuterError(4408))).toBe(false)
+    expect(reconnect.shouldTryGraceAfterRelayFailure(new RelayOuterError(4429))).toBe(false)
+  })
 })
 
 function createController(onRetry: () => void): RelayReconnectController {

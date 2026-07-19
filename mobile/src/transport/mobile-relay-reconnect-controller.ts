@@ -1,5 +1,6 @@
 import {
   isMobileRelayCloseCode,
+  MOBILE_RELAY_CLOSE_CODE,
   mobileRelayRecoveryFor
 } from '../../../src/shared/mobile-relay-close-codes'
 import type { MobileRelayRpcSession } from './mobile-relay-rpc-session'
@@ -141,6 +142,15 @@ export class RelayReconnectController {
       return
     }
     this.scheduleRetry(delay)
+  }
+
+  shouldTryGraceAfterRelayFailure(error: Error): boolean {
+    // Why: only a rejected outer credential can be repaired by the grace token;
+    // retrying session/capacity close codes immediately recreates relay churn.
+    return (
+      !(error instanceof RelayOuterError) ||
+      error.code === MOBILE_RELAY_CLOSE_CODE.BAD_OUTER_CREDENTIAL
+    )
   }
 
   retryDelayMs(minimumMs: number): number | null {
