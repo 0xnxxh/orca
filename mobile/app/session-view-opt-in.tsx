@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
@@ -22,6 +22,7 @@ export default function SessionViewOptInScreen() {
   const hostId = Array.isArray(params.hostId) ? params.hostId[0] : params.hostId
   const [busyChoice, setBusyChoice] = useState<MobileSessionView | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const choiceInFlightRef = useRef(false)
 
   // Why: this one-time screen requires an explicit terminal/chat choice; disabling
   // back gestures alone would still leave Android hardware back open.
@@ -38,9 +39,12 @@ export default function SessionViewOptInScreen() {
 
   const choose = useCallback(
     async (view: MobileSessionView) => {
-      if (busyChoice) {
+      // Why: state does not disable both buttons synchronously, so a ref prevents
+      // rapid taps from persisting two conflicting defaults and navigating twice.
+      if (choiceInFlightRef.current) {
         return
       }
+      choiceInFlightRef.current = true
       setBusyChoice(view)
       setError(null)
       try {
@@ -51,9 +55,10 @@ export default function SessionViewOptInScreen() {
       } catch {
         setError('Your choice could not be saved. Try again.')
         setBusyChoice(null)
+        choiceInFlightRef.current = false
       }
     },
-    [busyChoice, continueToApp]
+    [continueToApp]
   )
 
   return (

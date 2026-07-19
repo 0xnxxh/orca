@@ -36,8 +36,10 @@ import {
 } from '../src/transport/client-context'
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
-import { shouldPresentNotificationOptIn } from '../src/notifications/notification-opt-in-gate'
-import { shouldPresentSessionViewOptIn } from '../src/session/session-view-opt-in-gate'
+import {
+  mobileOnboardingDestination,
+  selectMobileOnboardingPrompt
+} from '../src/onboarding/mobile-onboarding-prompt'
 import type { ConnectionState, HostProfile } from '../src/transport/types'
 import { triggerMediumImpact } from '../src/platform/haptics'
 import { OrcaLogo } from '../src/components/OrcaLogo'
@@ -317,8 +319,8 @@ export default function HomeScreen() {
   const [lastVisited, setLastVisited] = useState<{ hostId: string; worktreeId: string } | null>(
     null
   )
-  // Gates both one-time onboarding prompts (notifications, then session view) so
-  // they run at most once per mount; a replace() back to '/' remounts and re-checks.
+  // Why: focus can fire repeatedly while an async gate is pending; one probe per
+  // mount avoids duplicate storage/permission reads and competing navigation.
   const onboardingOptInCheckedRef = useRef(false)
 
   // Why: read shared clients from the per-host store. Replaces the prior
@@ -407,19 +409,12 @@ export default function HomeScreen() {
           return
         }
         onboardingOptInCheckedRef.current = true
-        const showNotificationOptIn = await shouldPresentNotificationOptIn()
+        const onboardingPrompt = await selectMobileOnboardingPrompt()
         if (stale) {
           return
         }
-        // Why: show one prompt at a time — the notification screen returns to '/'
-        // on completion, which remounts here and then falls through to session view.
-        if (showNotificationOptIn) {
-          router.replace('/notification-opt-in')
-          return
-        }
-        const showSessionViewOptIn = await shouldPresentSessionViewOptIn()
-        if (!stale && showSessionViewOptIn) {
-          router.replace('/session-view-opt-in')
+        if (onboardingPrompt) {
+          router.replace(mobileOnboardingDestination(onboardingPrompt))
         }
       })
       void AsyncStorage.getItem('orca:last-visited-worktree').then((raw) => {

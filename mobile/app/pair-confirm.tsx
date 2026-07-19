@@ -12,7 +12,10 @@ import type { ConnectionLogEntry } from '../src/transport/types'
 import { useCloseHost } from '../src/transport/client-context'
 import { colors, spacing, radii, typography } from '../src/theme/mobile-theme'
 import { ConnectionLog } from '../src/components/ConnectionLog'
-import { shouldPresentNotificationOptIn } from '../src/notifications/notification-opt-in-gate'
+import {
+  mobileOnboardingDestination,
+  selectMobileOnboardingPrompt
+} from '../src/onboarding/mobile-onboarding-prompt'
 
 type Status = 'awaiting-confirm' | 'connecting' | 'error'
 
@@ -113,15 +116,11 @@ export default function PairConfirmScreen() {
       // profile — the removeHost() path already refreshes on re-pair, and a
       // brand-new host has no cached entry so this is a no-op.
       closeHost(hostId)
-      const showNotificationOptIn = await shouldPresentNotificationOptIn()
+      const onboardingPrompt = await selectMobileOnboardingPrompt()
       if (!mountedRef.current) {
         return
       }
-      router.replace(
-        showNotificationOptIn
-          ? { pathname: '/notification-opt-in', params: { hostId } }
-          : `/h/${hostId}`
-      )
+      router.replace(mobileOnboardingDestination(onboardingPrompt, hostId))
     } catch (err) {
       const timedOut = attempt.timedOut
       const attemptIsCurrent = activePairingAttemptRef.current === attempt

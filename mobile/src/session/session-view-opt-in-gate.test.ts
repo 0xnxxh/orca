@@ -12,17 +12,38 @@ describe('session view opt-in gate', () => {
   })
 
   it('presents when no default has ever been saved', async () => {
-    vi.mocked(readDefaultSessionViewPreference).mockResolvedValue({ value: null, loaded: true })
+    vi.mocked(readDefaultSessionViewPreference).mockResolvedValue({
+      value: null,
+      loaded: true,
+      hasStoredValue: false
+    })
     await expect(shouldPresentSessionViewOptIn()).resolves.toBe(true)
   })
 
   it.each(['terminal', 'chat'] as const)('preserves an existing %s choice', async (value) => {
-    vi.mocked(readDefaultSessionViewPreference).mockResolvedValue({ value, loaded: true })
+    vi.mocked(readDefaultSessionViewPreference).mockResolvedValue({
+      value,
+      loaded: true,
+      hasStoredValue: true
+    })
+    await expect(shouldPresentSessionViewOptIn()).resolves.toBe(false)
+  })
+
+  it('does not overwrite an unknown stored value', async () => {
+    vi.mocked(readDefaultSessionViewPreference).mockResolvedValue({
+      value: null,
+      loaded: true,
+      hasStoredValue: true
+    })
     await expect(shouldPresentSessionViewOptIn()).resolves.toBe(false)
   })
 
   it('does not block startup when storage is unreadable', async () => {
-    vi.mocked(readDefaultSessionViewPreference).mockResolvedValue({ value: null, loaded: false })
+    vi.mocked(readDefaultSessionViewPreference).mockResolvedValue({
+      value: null,
+      loaded: false,
+      hasStoredValue: false
+    })
     await expect(shouldPresentSessionViewOptIn()).resolves.toBe(false)
   })
 })

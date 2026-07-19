@@ -25,18 +25,21 @@ function clearDefaultViewWriteBarrier(barrier: Promise<void>): void {
 export type DefaultSessionViewPreference = {
   readonly value: MobileSessionView | null
   readonly loaded: boolean
+  readonly hasStoredValue: boolean
 }
 
-/** Reads the raw per-device default. `value: null` distinguishes a device that
- *  has never made the one-time onboarding choice from one that explicitly picked
- *  terminal — the opt-in gate needs that to prompt exactly once. */
+/** Reads the raw per-device default and whether its storage key exists. */
 export async function readDefaultSessionViewPreference(): Promise<DefaultSessionViewPreference> {
   await defaultViewWriteBarrier
   try {
     const raw = await AsyncStorage.getItem(DEFAULT_SESSION_VIEW_KEY)
-    return { value: raw === 'chat' || raw === 'terminal' ? raw : null, loaded: true }
+    return {
+      value: raw === 'chat' || raw === 'terminal' ? raw : null,
+      loaded: true,
+      hasStoredValue: raw !== null
+    }
   } catch {
-    return { value: null, loaded: false }
+    return { value: null, loaded: false, hasStoredValue: false }
   }
 }
 

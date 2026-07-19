@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
@@ -13,6 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { BellRing } from 'lucide-react-native'
 import { OrcaLogo } from '../src/components/OrcaLogo'
 import { ensureNotificationPermissions } from '../src/notifications/mobile-notifications'
+import { mobileOnboardingDestination } from '../src/onboarding/mobile-onboarding-prompt'
+import { shouldPresentSessionViewOptIn } from '../src/session/session-view-opt-in-gate'
 import { savePushNotificationsEnabled } from '../src/storage/preferences'
 import { colors, radii, spacing, typography } from '../src/theme/mobile-theme'
 
@@ -22,6 +24,7 @@ export default function NotificationOptInScreen() {
   const hostId = Array.isArray(params.hostId) ? params.hostId[0] : params.hostId
   const [busyChoice, setBusyChoice] = useState<'enable' | 'skip' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const choiceInFlightRef = useRef(false)
 
   // Why: this one-time screen requires an explicit Enable or Not now choice;
   // disabling back gestures alone would still leave Android hardware back open.
@@ -32,15 +35,19 @@ export default function NotificationOptInScreen() {
     }, [])
   )
 
-  const continueToApp = useCallback(() => {
-    router.replace(hostId ? `/h/${hostId}` : '/')
+  const continueToApp = useCallback(async () => {
+    const nextPrompt = (await shouldPresentSessionViewOptIn()) ? 'session-view' : null
+    router.replace(mobileOnboardingDestination(nextPrompt, hostId))
   }, [hostId, router])
 
   const choose = useCallback(
     async (choice: 'enable' | 'skip') => {
-      if (busyChoice) {
+      // Why: state does not disable both buttons synchronously, so a ref prevents
+      // rapid taps from issuing duplicate permission requests and preference writes.
+      if (choiceInFlightRef.current) {
         return
       }
+      choiceInFlightRef.current = true
       setBusyChoice(choice)
       setError(null)
       try {
@@ -50,9 +57,10 @@ export default function NotificationOptInScreen() {
       } catch {
         setError('Notification settings could not be updated. Try again.')
         setBusyChoice(null)
+        choiceInFlightRef.current = false
       }
     },
-    [busyChoice, continueToApp]
+    [continueToApp]
   )
 
   return (
