@@ -2,35 +2,90 @@ import {
   isMobileRelayCloseCode,
   mobileRelayRecoveryFor
 } from '../../../src/shared/mobile-relay-close-codes'
+import type { MobileRelayRpcSession } from './mobile-relay-rpc-session'
 import { RelayOuterError } from './mobile-relay-e2ee-link'
+import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
+import type { ConnectionState } from './types'
 
-// Why: relay resume closes (4408 peer-dropped / 4429 limit-exceeded) and silent
-// cellular NAT rebinds otherwise re-dial instantly; a flapping cellular link then
-// ping-pongs connect/disconnect. Space retries with the fullJitter backoff the
-// mobileRelayRecoveryFor contract prescribes, floored so retries never busy-loop.
+// Why: relay resume closes and silent cellular NAT rebinds otherwise cause
+// immediate re-dials that ping-pong the phone between connected and disconnected.
 const RELAY_BACKOFF_MIN_MS = 250
 const RELAY_BACKOFF_BASE_MS = 500
 const RELAY_BACKOFF_CEILING_MS = 30_000
 
-export type RelayReconnectBackoffDependencies = {
+export type RelayReconnectDependencies = {
   now: () => number
   randomBytes: (length: number) => Uint8Array
   setTimer: typeof setTimeout
   clearTimer: typeof clearTimeout
 }
 
-// Encapsulates the relay reconnect cooldown: how long to wait after each failed
-// resume before the supervisor may re-dial, and the self-scheduled retry that
-// fires when no external signal (foreground/probe) would otherwise drive it.
-export class RelayReconnectBackoff {
+export class RelayReconnectController {
   private consecutiveFailures = 0
   private nextAttemptAt = 0
   private timer: ReturnType<typeof setTimeout> | null = null
+  private activeSession: MobileRelayRpcSession | null = null
 
   constructor(
-    private readonly dependencies: RelayReconnectBackoffDependencies,
-    private readonly onRetry: () => void
+    private readonly dependencies: RelayReconnectDependencies,
+    private readonly onRetry: (forceReplacement?: boolean) => void
   ) {}
+
+  handleForeground(
+    logical: StableLogicalRpcClient,
+    wasForeground: boolean,
+    forceReplacement: boolean
+  ): void {
+    if (!wasForeground) {
+      // Why: an app resume is a fresh signal, unlike repeated network-flap nudges.
+      this.reset()
+    } else if (logical.getState() === 'connected') {
+      // Why: a network handoff can leave the relay half-open without publishing a close.
+      this.suspendActiveRelay(logical)
+    }
+    this.onRetry(forceReplacement)
+  }
+
+  handleStateFailure(logical: StableLogicalRpcClient, state: ConnectionState): void {
+    if (!this.needsRecovery(state)) {
+      return
+    }
+    this.registerActiveFailure(logical)
+    this.onRetry()
+  }
+
+  needsRecovery(state: ConnectionState): boolean {
+    return state !== 'connected' && state !== 'connecting'
+  }
+
+  suspendActiveRelay(logical: StableLogicalRpcClient): void {
+    if (logical.getActivePath() !== 'relay') {
+      return
+    }
+    this.activeSession = null
+    logical.suspendActiveSession()
+  }
+
+  setActiveSession(session: MobileRelayRpcSession): void {
+    this.activeSession = session
+  }
+
+  resetForDirectConnection(): void {
+    this.activeSession = null
+    this.reset()
+  }
+
+  registerActiveFailure(logical: StableLogicalRpcClient): void {
+    if (logical.getActivePath() !== 'relay') {
+      return
+    }
+    const failure = this.activeSession?.getFailure()
+    this.activeSession = null
+    if (failure) {
+      // Why: active relay closes need the same cooldown as failed replacement dials.
+      this.registerFailure(failure)
+    }
+  }
 
   // True when the caller is still inside the cooldown window and must not
   // re-dial. Arms the self-scheduled retry so recovery still happens on its own.
@@ -44,9 +99,6 @@ export class RelayReconnectBackoff {
 
   registerFailure(error: Error | null): void {
     this.consecutiveFailures += 1
-    // Why: honor the documented recovery contract (previously dead code). Every
-    // relay close code maps to a fullJitter/backoff recovery, so always debounce
-    // nudges by the backoff window.
     const code = error instanceof RelayOuterError ? error.code : null
     const recovery =
       code != null && isMobileRelayCloseCode(code)
@@ -54,13 +106,12 @@ export class RelayReconnectBackoff {
         : null
     const delay = this.delayMs()
     this.nextAttemptAt = this.dependencies.now() + delay
-    // Why: HOST_OFFLINE / BAD_OUTER_CREDENTIAL won't clear by retrying the same
-    // resume sooner; keep the debounce but let the next external signal
-    // (foreground, direct probe, or credential rotation) drive recovery instead.
+    // Why: these failures require host revival or fresh credentials, not a retry loop.
     if (
       recovery?.kind === 'wait-for-host-revival' ||
       recovery?.kind === 'disable-relay-credential'
     ) {
+      this.clearTimer()
       return
     }
     this.scheduleRetry(delay)
@@ -69,10 +120,15 @@ export class RelayReconnectBackoff {
   reset(): void {
     this.consecutiveFailures = 0
     this.nextAttemptAt = 0
-    this.clear()
+    this.clearTimer()
   }
 
   clear(): void {
+    this.clearTimer()
+    this.activeSession = null
+  }
+
+  private clearTimer(): void {
     if (this.timer) {
       this.dependencies.clearTimer(this.timer)
       this.timer = null

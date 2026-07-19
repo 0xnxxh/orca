@@ -251,11 +251,12 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
-  it('backs off instead of re-dialing the relay on every network-flap nudge', async () => {
+  it('replaces a half-open relay on a network nudge, then backs off failed resumes', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
-    // Relay cell keeps kicking the resume with PEER_DROPPED (4408) — the cellular
-    // churn signal. migrate fails because the session never reaches connected.
-    const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new RelayOuterError(4408)))
+    const openRelay = vi
+      .fn()
+      .mockReturnValueOnce(new FakeRelaySession('connected'))
+      .mockImplementation(() => new FakeRelaySession('disconnected', new RelayOuterError(4408)))
     const deps = dependencies({
       openRelay,
       // Keep direct unavailable so relay recovery stays the only path under test.
@@ -266,22 +267,93 @@ describe('mobile endpoint supervisor', () => {
     const supervisor = new MobileEndpointSupervisor(logical, host, deps)
 
     await supervisor.start()
-    const afterStart = openRelay.mock.calls.length
-    expect(afterStart).toBe(1)
+    expect(openRelay).toHaveBeenCalledOnce()
 
-    // A flapping cellular link fires repeated revival nudges (setForeground(true)).
-    // Backoff must suppress the re-dials while the window is open.
+    // The OS reports a network handoff, but the dead relay never published onclose.
+    supervisor.setForeground(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(logical.suspendActiveSession).toHaveBeenCalledOnce()
+    expect(openRelay).toHaveBeenCalledTimes(2)
+
+    // The relay cell rejects the replacement with PEER_DROPPED; more flap nudges
+    // must share the existing cooldown rather than opening more sockets.
     for (let i = 0; i < 5; i++) {
       supervisor.setForeground(true)
       await vi.advanceTimersByTimeAsync(0)
     }
-    expect(openRelay.mock.calls.length).toBe(afterStart)
+    expect(openRelay).toHaveBeenCalledTimes(2)
 
     // Exactly one retry fires at the 250 ms deterministic backoff boundary.
     await vi.advanceTimersByTimeAsync(249)
-    expect(openRelay.mock.calls.length).toBe(afterStart)
+    expect(openRelay).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(1)
-    expect(openRelay.mock.calls.length).toBe(afterStart + 1)
+    expect(openRelay).toHaveBeenCalledTimes(3)
+    supervisor.stop()
+  })
+
+  it('backs off a close from the active relay before opening its replacement', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi
+      .fn()
+      .mockReturnValueOnce(new FakeRelaySession('connected', new RelayOuterError(4429)))
+      .mockImplementation(() => new FakeRelaySession('connected'))
+    const deps = dependencies({
+      openRelay,
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    logical.publishState('disconnected')
+
+    expect(openRelay).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(249)
+    expect(openRelay).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(openRelay).toHaveBeenCalledTimes(2)
+    supervisor.stop()
+  })
+
+  it('recovers a relay drop while post-migration persistence owns the mutex', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    let finishWrite: (() => void) | undefined
+    const writePending = new Promise<void>((resolve) => {
+      finishWrite = resolve
+    })
+    const openRelay = vi
+      .fn()
+      .mockReturnValueOnce(new FakeRelaySession('connected', new RelayOuterError(4408)))
+      .mockImplementation(() => new FakeRelaySession('connected'))
+    const deps = dependencies({
+      openRelay,
+      writeBundle: vi.fn(() => writePending),
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    const starting = supervisor.start()
+    await vi.waitFor(() => expect(deps.writeBundle).toHaveBeenCalledOnce())
+    logical.publishState('disconnected')
+    finishWrite?.()
+    await starting
+
+    expect(openRelay).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(openRelay).toHaveBeenCalledTimes(2)
+    supervisor.stop()
+  })
+
+  it('waits for an external signal instead of polling a host-offline relay', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const deps = dependencies({
+      openRelay: vi.fn(() => new FakeRelaySession('disconnected', new RelayOuterError(4404)))
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+
+    expect(deps.openRelay).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
     supervisor.stop()
   })
 

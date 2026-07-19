@@ -1,6 +1,6 @@
 import type { MobileRelayEndpoint } from '../../../src/shared/mobile-relay-credential-contract'
 import { openAuthenticatedDirectEndpoint } from './mobile-direct-endpoint-probe'
-import { RelayReconnectBackoff } from './mobile-relay-reconnect-backoff'
+import { RelayReconnectController } from './mobile-relay-reconnect-controller'
 import { RelayLeaseRotationTimer } from './mobile-relay-lease-rotation-timer'
 import { MobileEndpointHysteresis } from './mobile-endpoint-hysteresis'
 import {
@@ -54,7 +54,7 @@ export class MobileEndpointSupervisor {
   private probeTimer: ReturnType<typeof setTimeout> | null = null
   private unsubscribeState: (() => void) | null = null
   private readonly hysteresis: MobileEndpointHysteresis
-  private readonly relayBackoff: RelayReconnectBackoff
+  private readonly relayReconnect: RelayReconnectController
   private readonly leaseRotation: RelayLeaseRotationTimer
 
   constructor(
@@ -69,7 +69,7 @@ export class MobileEndpointSupervisor {
       failureCooldownMs: FAILURE_COOLDOWN_MS,
       minimumDwellMs: MINIMUM_DWELL_MS
     })
-    this.relayBackoff = new RelayReconnectBackoff(dependencies, () => void this.recoverRelay())
+    this.relayReconnect = new RelayReconnectController(dependencies, this.recoverRelay.bind(this))
     this.leaseRotation = new RelayLeaseRotationTimer(dependencies, () => {
       this.relayRotationPending = true
       void this.recoverRelay(true)
@@ -87,18 +87,13 @@ export class MobileEndpointSupervisor {
           void this.rotateCredentialIfNeeded()
         }
         this.scheduleDirectProbe()
-      } else if (state === 'reconnecting' || state === 'disconnected' || state === 'auth-failed') {
+      } else {
         // Why: the direct client enters reconnecting after its first failed
         // dial and may never publish disconnected while its retry loop lives.
-        void this.recoverRelay()
+        this.relayReconnect.handleStateFailure(this.logical, state)
       }
     })
-    const initialState = this.logical.getState()
-    if (
-      initialState === 'reconnecting' ||
-      initialState === 'disconnected' ||
-      initialState === 'auth-failed'
-    ) {
+    if (this.relayReconnect.needsRecovery(this.logical.getState())) {
       // Why: the first direct dial can fail while encrypted relay credentials
       // are still loading, before the supervisor subscribes to state changes.
       await this.recoverRelay()
@@ -111,26 +106,16 @@ export class MobileEndpointSupervisor {
     const wasForeground = this.foreground
     this.foreground = foreground
     if (foreground) {
-      // Why: a real background→foreground transition is a fresh user signal;
-      // clear any relay backoff so the reconnect is immediate, not stuck waiting
-      // out a stale cellular-churn cooldown. Repeated network-flap nudges keep
-      // foreground true and so keep respecting the backoff window.
-      if (!wasForeground) {
-        this.relayBackoff.reset()
-      }
-      void this.recoverRelay(this.relayRotationPending)
+      this.relayReconnect.handleForeground(this.logical, wasForeground, this.relayRotationPending)
       this.scheduleDirectProbe(0)
     } else {
-      if (this.logical.getActivePath() === 'relay') {
-        // Why: background phones must not hold billed relay data splices; the
-        // stable client keeps subscriptions for authenticated foreground replay.
-        this.logical.suspendActiveSession()
-      }
+      // Why: background phones must not hold billed relay data splices.
+      this.relayReconnect.suspendActiveRelay(this.logical)
       if (this.probeTimer) {
         this.dependencies.clearTimer(this.probeTimer)
         this.probeTimer = null
       }
-      this.relayBackoff.clear()
+      this.relayReconnect.clear()
     }
   }
 
@@ -142,7 +127,7 @@ export class MobileEndpointSupervisor {
       this.dependencies.clearTimer(this.probeTimer)
       this.probeTimer = null
     }
-    this.relayBackoff.clear()
+    this.relayReconnect.clear()
     this.leaseRotation.clear()
   }
 
@@ -162,11 +147,12 @@ export class MobileEndpointSupervisor {
     // the backoff window keeps those nudges from re-dialing instantly and churning.
     // Lease rotation (forceReplacement) is a scheduled event, not a failure, so it
     // is exempt.
-    if (!forceReplacement && this.relayBackoff.shouldDefer()) {
+    if (!forceReplacement && this.relayReconnect.shouldDefer()) {
       return
     }
     this.operationInFlight = true
     let lastError: Error | null = null
+    let retryAfterOperation = false
     try {
       const credentials = [this.bundle.current, this.bundle.grace].filter(
         (credential): credential is NonNullable<typeof credential> =>
@@ -175,18 +161,25 @@ export class MobileEndpointSupervisor {
       for (const credential of credentials) {
         const result = await this.tryRelayCredential(credential)
         if (result.ok) {
-          this.relayBackoff.reset()
+          retryAfterOperation = this.logical.getState() !== 'connected'
+          if (!retryAfterOperation) {
+            this.relayReconnect.reset()
+          }
           return
         }
         lastError = result.error
       }
       if (credentials.length > 0) {
-        this.relayBackoff.registerFailure(lastError)
+        this.relayReconnect.registerFailure(lastError)
       }
     } finally {
       this.operationInFlight = false
       if (forceReplacement && this.relayRotationPending && !this.stopped) {
         this.leaseRotation.armRetry(5000)
+      }
+      // Why: the active relay can drop while migration follow-up still owns the mutex.
+      if (retryAfterOperation && !this.stopped && this.foreground) {
+        void this.recoverRelay()
       }
     }
   }
@@ -228,8 +221,9 @@ export class MobileEndpointSupervisor {
     )
     try {
       await this.logical.migrateTo(session, 'relay')
+      this.relayReconnect.setActiveSession(session)
       if (!this.foreground) {
-        this.logical.suspendActiveSession()
+        this.relayReconnect.suspendActiveRelay(this.logical)
       }
       this.relayRotationPending = false
       this.hysteresis.recordMigration(this.dependencies.now())
@@ -286,6 +280,7 @@ export class MobileEndpointSupervisor {
       }
       await this.logical.migrateTo(successful.client, successful.path)
       successful = null
+      this.relayReconnect.resetForDirectConnection()
       this.hysteresis.recordMigration(this.dependencies.now())
       this.leaseRotation.clear()
       this.relayRotationPending = false
