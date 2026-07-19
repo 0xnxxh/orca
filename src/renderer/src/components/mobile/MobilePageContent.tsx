@@ -12,7 +12,7 @@ type MobilePageContentProps = {
   closeMobilePage: () => void
   copyInstallUrl: () => void
   copyPairingCode: () => void
-  devices: PairedDevice[]
+  devices: readonly PairedDevice[]
   enterFlow: () => void
   generatePairing: (rotate: boolean) => void
   canGeneratePairing: boolean
@@ -34,7 +34,7 @@ type MobilePageContentProps = {
   platform: Platform
   refreshingNetworkInterfaces: boolean
   revokeDevice: (id: string) => void
-  revokingDeviceIds: string[]
+  revokingDeviceIds: readonly string[]
   selectedAddress: string | undefined
   setPlatform: (platform: Platform) => void
   showMobileButton: boolean

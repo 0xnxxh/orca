@@ -3928,10 +3928,9 @@
         "RemoveFolderDialog": {
           "4dc5b5065b": "移除",
           "d36883e046": "取消",
-          "8c097ef04e": "来自 Orca。它仍保留在您的磁盘上。",
-          "e62415c3d0": "这仅删除",
           "b79b39d865": "删除项目",
-          "fromOrcaSsh": "从 Orca 中移除。其文件保留在 {{value0}} 上 — 重新添加该 SSH 主机即可恢复。"
+          "removeDescriptionSsh": "此操作仅将 {{name}} 从 Orca 中移除。文件仍保留在 {{host}} 上 — 重新添加该 SSH 主机即可恢复。",
+          "removeDescriptionLocal": "此操作仅将 {{name}} 从 Orca 中移除。文件仍保留在您的磁盘上。"
         },
         "ScrollToCurrentWorkspaceToolbarButton": {
           "23989bb663": "显示活动工作区"
@@ -9319,14 +9318,17 @@
             "d6a25618aa": "折叠文件夹",
             "d87a4c42e1": "打开 Markdown 预览",
             "c2112579f6": "下载",
+            "7ac885bd2f": "下载文件夹",
             "dd112c81d2": "在 Orca 浏览器中打开",
             "1bb9be455c": "添加为项目...",
             "0fec99bfd7": "复制",
             "f61af83316": "新建文件夹",
             "37c875d827": "新文件",
             "b3e288bf41": "无法下载“{{value0}}”。",
+            "f729bcd97d": "无法下载文件夹“{{value0}}”。",
             "1a3df04ae1": "开放",
             "bce4d4e44f": "下载“{{value0}}”",
+            "a4029c996b": "已下载文件夹“{{value0}}”",
             "e26010014a": "被 .gitignore 忽略",
             "a06551beee": "进入",
             "128a99ed5e": "未分配",
@@ -9703,7 +9705,9 @@
               "a9bf7c171a": "推送失败",
               "834cb3f23d": "使用 AI 修复",
               "783a808870": "关闭"
-            }
+            },
+            "createPrIntentSyncConflicts": "同步遇到冲突。请解决后重试创建 PR。",
+            "createPrIntentSyncing": "正在同步分支…"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "无法启动选定的智能体。",
@@ -10072,6 +10076,13 @@
               "control": {
                 "ai": {
                   "cfafa92509": "没有未解决的冲突需要发送。"
+                }
+              }
+            },
+            "hosted": {
+              "review": {
+                "actions": {
+                  "e475c29b17": "This will merge the {{value0}}."
                 }
               }
             }
@@ -12006,7 +12017,9 @@
                 "2f9d6b4e10": "切换标题 3",
                 "8c1a3e7d52": "创建一个带有小标题摘要的可折叠部分。",
                 "5e0b9c2a71": "切换标题 4",
-                "d4f16a8b39": "创建一个带有嵌套标题摘要的可折叠部分。"
+                "d4f16a8b39": "创建一个带有嵌套标题摘要的可折叠部分。",
+                "21d8c463e5": "切换标题 5",
+                "dc239b41ad": "创建一个带有深层标题摘要的可折叠部分。"
               }
             }
           }

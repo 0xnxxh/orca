@@ -2,10 +2,24 @@
 
 import '@testing-library/jest-dom/vitest'
 
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  _resetPairedMobileDevicesCacheForTests,
+  type PairedMobileDevice
+} from '../mobile/paired-mobile-devices'
 import type { MobilePairingConnectionMode } from '../../../../shared/mobile-pairing-connection-mode'
+
+type PairedDevice = PairedMobileDevice
+
+type PairedDevicesProps = {
+  devices: readonly PairedDevice[]
+  hasQrCode: boolean
+  onRevokeDevice: (deviceId: string) => void
+}
 
 type StoreState = {
   orcaProfileAuthStatus: { state: 'connected' | 'local' }
@@ -23,14 +37,30 @@ const mocks = vi.hoisted(() => {
     (selector: (state: StoreState) => unknown) => selector(holder.state),
     { getState: () => holder.state }
   )
-  return { holder, useAppStore }
+  return {
+    holder,
+    useAppStore,
+    latestPairedDevicesProps: null as PairedDevicesProps | null,
+    getPairingQR: vi.fn(),
+    listDevices: vi.fn(),
+    listNetworkInterfaces: vi.fn(),
+    revokeDevice: vi.fn(),
+    toastError: vi.fn(),
+    toastSuccess: vi.fn(),
+    updateSettings: vi.fn()
+  }
 })
 
 vi.mock('@/store', () => ({ useAppStore: mocks.useAppStore }))
 vi.mock('../../store', () => ({ useAppStore: mocks.useAppStore }))
 
 vi.mock('@/i18n/i18n', () => ({ translate: (_key: string, fallback: string) => fallback }))
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
+vi.mock('sonner', () => ({
+  toast: {
+    error: mocks.toastError,
+    success: mocks.toastSuccess
+  }
+}))
 vi.mock('./mobile-pairing-device-polling', () => ({ useMobilePairingDevicePolling: vi.fn() }))
 
 // Stub the child sections so the test targets MobilePane's own connection-mode
@@ -79,24 +109,35 @@ vi.mock('./MobilePairingQrSection', () => ({
     <span data-testid="qr">{props.qrDataUrl ?? 'none'}</span>
   )
 }))
-vi.mock('./MobilePairedDevicesSection', () => ({ MobilePairedDevicesSection: () => <div /> }))
+vi.mock('./MobilePairedDevicesSection', () => ({
+  MobilePairedDevicesSection: (props: PairedDevicesProps) => {
+    mocks.latestPairedDevicesProps = props
+    return <div data-testid="paired-devices">{props.devices.map((d) => d.deviceId).join(',')}</div>
+  }
+}))
 vi.mock('./MobileAutoRestoreFitSection', () => ({ MobileAutoRestoreFitSection: () => <div /> }))
 vi.mock('../mobile/WindowsFirewallNotice', () => ({ WindowsFirewallNotice: () => <div /> }))
 
 import { MobilePane } from './MobilePane'
 
 describe('MobilePane pairing connection mode', () => {
-  const getPairingQR = vi.fn()
-  const updateSettings = vi.fn().mockResolvedValue(undefined)
+  const getPairingQR = mocks.getPairingQR
+  const updateSettings = mocks.updateSettings
 
   beforeEach(() => {
+    vi.clearAllMocks()
+    _resetPairedMobileDevicesCacheForTests()
+    mocks.latestPairedDevicesProps = null
     getPairingQR.mockReset().mockResolvedValue({
       available: true,
       qrDataUrl: 'data:image/png;base64,qr',
       pairingUrl: 'orca://pair',
       endpoint: 'ws://host'
     })
-    updateSettings.mockClear()
+    mocks.listDevices.mockReset().mockResolvedValue({ devices: [] })
+    mocks.listNetworkInterfaces.mockReset().mockResolvedValue({ interfaces: [] })
+    mocks.revokeDevice.mockReset().mockResolvedValue({ revoked: true })
+    updateSettings.mockReset().mockResolvedValue(undefined)
     mocks.holder.state = {
       orcaProfileAuthStatus: { state: 'connected' },
       settings: { mobileAutoRestoreFitMs: null },
@@ -108,15 +149,19 @@ describe('MobilePane pairing connection mode', () => {
       value: {
         mobile: {
           getPairingQR,
-          listDevices: vi.fn().mockResolvedValue({ devices: [] }),
-          listNetworkInterfaces: vi.fn().mockResolvedValue({ interfaces: [] }),
-          revokeDevice: vi.fn().mockResolvedValue(undefined)
+          listDevices: mocks.listDevices,
+          listNetworkInterfaces: mocks.listNetworkInterfaces,
+          revokeDevice: mocks.revokeDevice
         }
       }
     })
   })
 
-  afterEach(cleanup)
+  afterEach(() => {
+    cleanup()
+    _resetPairedMobileDevicesCacheForTests()
+    document.body.innerHTML = ''
+  })
 
   it('defaults to Anywhere and issues an automatic QR when signed in', async () => {
     const user = userEvent.setup()
@@ -283,5 +328,178 @@ describe('MobilePane pairing connection mode', () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(screen.getByTestId('qr')).toHaveTextContent('none')
     expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
+  })
+})
+
+const mountedRoots: Root[] = []
+
+function pairedDevice(deviceId: string): PairedDevice {
+  return {
+    deviceId,
+    name: deviceId,
+    pairedAt: 1,
+    lastSeenAt: 2
+  }
+}
+
+async function renderMobilePane(): Promise<void> {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  mountedRoots.push(root)
+  await act(async () => {
+    root.render(<MobilePane />)
+  })
+}
+
+async function unmountMobilePaneRoots(): Promise<void> {
+  await act(async () => {
+    for (const root of mountedRoots.splice(0)) {
+      root.unmount()
+    }
+  })
+}
+
+describe('MobilePane', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    _resetPairedMobileDevicesCacheForTests()
+    mocks.latestPairedDevicesProps = null
+    mocks.getPairingQR.mockReset().mockResolvedValue({
+      available: true,
+      qrDataUrl: 'data:image/png;base64,qr',
+      pairingUrl: 'orca://pair',
+      endpoint: 'ws://host'
+    })
+    mocks.listDevices.mockReset()
+    mocks.listNetworkInterfaces.mockReset().mockResolvedValue({ interfaces: [] })
+    mocks.revokeDevice.mockReset()
+    mocks.updateSettings.mockReset().mockResolvedValue(undefined)
+    mocks.holder.state = {
+      orcaProfileAuthStatus: { state: 'connected' },
+      settings: { mobileAutoRestoreFitMs: null },
+      updateSettings: mocks.updateSettings,
+      recordFeatureInteraction: vi.fn()
+    }
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        mobile: {
+          getPairingQR: mocks.getPairingQR,
+          listDevices: mocks.listDevices,
+          listNetworkInterfaces: mocks.listNetworkInterfaces,
+          revokeDevice: mocks.revokeDevice
+        }
+      }
+    })
+  })
+
+  afterEach(async () => {
+    await unmountMobilePaneRoots()
+    _resetPairedMobileDevicesCacheForTests()
+    document.body.innerHTML = ''
+  })
+
+  it('refreshes paired devices from the backend after revoking one', async () => {
+    mocks.listDevices
+      .mockResolvedValueOnce({ devices: [pairedDevice('phone-1')] })
+      .mockResolvedValueOnce({ devices: [pairedDevice('phone-2')] })
+    mocks.revokeDevice.mockResolvedValue({ revoked: true })
+
+    await renderMobilePane()
+
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-1'])
+    )
+
+    await act(async () => {
+      mocks.latestPairedDevicesProps?.onRevokeDevice('phone-1')
+    })
+
+    await vi.waitFor(() => expect(mocks.revokeDevice).toHaveBeenCalledWith({ deviceId: 'phone-1' }))
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-2'])
+    )
+    // Positive control so the unmount test below can't stay green if the
+    // success toast is ever dropped from the revoke path.
+    await vi.waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows an error and keeps the device when revoke returns revoked:false', async () => {
+    mocks.listDevices.mockResolvedValue({ devices: [pairedDevice('phone-1')] })
+    mocks.revokeDevice.mockResolvedValue({ revoked: false })
+
+    await renderMobilePane()
+
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-1'])
+    )
+
+    await act(async () => {
+      mocks.latestPairedDevicesProps?.onRevokeDevice('phone-1')
+    })
+
+    await vi.waitFor(() => expect(mocks.toastError).toHaveBeenCalledTimes(1))
+    expect(mocks.toastSuccess).not.toHaveBeenCalled()
+    // A revoke that did not happen must not fire a second (refresh) IPC call.
+    expect(mocks.listDevices).toHaveBeenCalledTimes(1)
+    expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-1'])
+  })
+
+  it('optimistically drops the revoked device when the post-revoke refresh fails', async () => {
+    mocks.listDevices
+      .mockResolvedValueOnce({ devices: [pairedDevice('phone-1'), pairedDevice('phone-2')] })
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    mocks.revokeDevice.mockResolvedValue({ revoked: true })
+
+    await renderMobilePane()
+
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual([
+        'phone-1',
+        'phone-2'
+      ])
+    )
+
+    await act(async () => {
+      mocks.latestPairedDevicesProps?.onRevokeDevice('phone-1')
+    })
+
+    // Refresh rejected, so the fallback republishes the optimistic list without
+    // the revoked device, and success is still reported.
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-2'])
+    )
+    await vi.waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not show revoke success after unmounting during the refresh', async () => {
+    let resolveRefreshAfterRevoke: (value: { devices: [] }) => void = () => {}
+    const refreshAfterRevoke = new Promise<{ devices: [] }>((resolve) => {
+      resolveRefreshAfterRevoke = resolve
+    })
+    mocks.listDevices
+      .mockResolvedValueOnce({ devices: [pairedDevice('phone-1')] })
+      .mockReturnValueOnce(refreshAfterRevoke)
+    mocks.revokeDevice.mockResolvedValue({ revoked: true })
+
+    await renderMobilePane()
+
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-1'])
+    )
+
+    await act(async () => {
+      mocks.latestPairedDevicesProps?.onRevokeDevice('phone-1')
+    })
+
+    await vi.waitFor(() => expect(mocks.listDevices).toHaveBeenCalledTimes(2))
+    await unmountMobilePaneRoots()
+
+    await act(async () => {
+      resolveRefreshAfterRevoke({ devices: [] })
+    })
+
+    expect(mocks.toastSuccess).not.toHaveBeenCalled()
   })
 })

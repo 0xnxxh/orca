@@ -3985,10 +3985,9 @@
         "RemoveFolderDialog": {
           "4dc5b5065b": "Remove",
           "d36883e046": "Cancel",
-          "8c097ef04e": "from Orca. It is still on your disk.",
-          "e62415c3d0": "This only removes",
           "b79b39d865": "Remove Project",
-          "fromOrcaSsh": "from Orca. Its files stay on {{value0}} — re-add that SSH host to recover it."
+          "removeDescriptionSsh": "This only removes {{name}} from Orca. Its files stay on {{host}} — re-add that SSH host to recover it.",
+          "removeDescriptionLocal": "This only removes {{name}} from Orca. It is still on your disk."
         },
         "ScrollToCurrentWorkspaceToolbarButton": {
           "23989bb663": "Reveal active workspace"
@@ -9342,14 +9341,17 @@
             "d6a25618aa": "Collapse Folder",
             "d87a4c42e1": "Open Markdown Preview",
             "c2112579f6": "Download",
+            "7ac885bd2f": "Download Folder",
             "dd112c81d2": "Open in Orca Browser",
             "1bb9be455c": "Add as Project...",
             "0fec99bfd7": "Duplicate",
             "f61af83316": "New Folder",
             "37c875d827": "New File",
             "b3e288bf41": "Failed to download '{{value0}}'.",
+            "f729bcd97d": "Failed to download folder '{{value0}}'.",
             "1a3df04ae1": "Open",
             "bce4d4e44f": "Downloaded '{{value0}}'",
+            "a4029c996b": "Downloaded folder '{{value0}}'",
             "e26010014a": "Ignored by .gitignore",
             "a06551beee": "Enter",
             "128a99ed5e": "Unassigned",
@@ -9726,7 +9728,9 @@
               "a9bf7c171a": "Push Failed",
               "834cb3f23d": "Fix with AI",
               "783a808870": "Close"
-            }
+            },
+            "createPrIntentSyncConflicts": "Sync hit conflicts. Resolve them, then retry Create PR.",
+            "createPrIntentSyncing": "Syncing branch…"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "Could not start the selected agent.",
@@ -10095,6 +10099,13 @@
               "control": {
                 "ai": {
                   "cfafa92509": "No unresolved conflicts to send."
+                }
+              }
+            },
+            "hosted": {
+              "review": {
+                "actions": {
+                  "e475c29b17": "This will merge the {{value0}}."
                 }
               }
             }
@@ -10799,7 +10810,7 @@
             "0bad5b07c8": "GitHub and Linear",
             "d047197480": "GitHub · Linear",
             "a4c3f7b7aa": "Tasks",
-            "d33d7a9c29": "orca&nbsp;&nbsp;·&nbsp;&nbsp;feat/mobile-page",
+            "d33d7a9c29": "orca  ·  feat/mobile-page",
             "25d6e8a491": "feat/mobile-page",
             "c791677f2f": "Resume",
             "cf3f98fa3f": "Disconnected",
@@ -12029,7 +12040,9 @@
                 "2f9d6b4e10": "Toggle H3",
                 "8c1a3e7d52": "Create a collapsible section with a small heading summary.",
                 "5e0b9c2a71": "Toggle H4",
-                "d4f16a8b39": "Create a collapsible section with a nested heading summary."
+                "d4f16a8b39": "Create a collapsible section with a nested heading summary.",
+                "21d8c463e5": "Toggle H5",
+                "dc239b41ad": "Create a collapsible section with a deep heading summary."
               }
             }
           }

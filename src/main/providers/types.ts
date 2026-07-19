@@ -266,6 +266,7 @@ export type IFilesystemProvider = {
     options: TerminalArtifactAccessOptions
   ): Promise<FileReadResult>
   downloadFile?(sourcePath: string, destinationPath: string): Promise<void>
+  downloadFolder?: (src: string, dest: string, options?: { signal?: AbortSignal }) => Promise<void>
   openFileUploadSession?(): Promise<FileUploadSession>
   getTempDir?(): Promise<string>
   writeFile(filePath: string, content: string): Promise<void>

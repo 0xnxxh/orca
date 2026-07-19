@@ -3947,10 +3947,9 @@
         "RemoveFolderDialog": {
           "4dc5b5065b": "Quitar",
           "d36883e046": "Cancelar",
-          "8c097ef04e": "de Orca. Sigue estando en tu disco.",
-          "e62415c3d0": "Esto solo quita",
           "b79b39d865": "Quitar proyecto",
-          "fromOrcaSsh": "de Orca. Sus archivos permanecen en {{value0}}; vuelve a añadir ese host SSH para recuperarlos."
+          "removeDescriptionSsh": "Esto solo elimina {{name}} de Orca. Sus archivos permanecen en {{host}}; vuelve a añadir ese host SSH para recuperarlo.",
+          "removeDescriptionLocal": "Esto solo elimina {{name}} de Orca. Sigue estando en tu disco."
         },
         "ScrollToCurrentWorkspaceToolbarButton": {
           "23989bb663": "Mostrar espacio de trabajo activo"
@@ -9319,14 +9318,17 @@
             "d6a25618aa": "Contraer carpeta",
             "d87a4c42e1": "Abrir vista previa de Markdown",
             "c2112579f6": "Descargar",
+            "7ac885bd2f": "Descargar carpeta",
             "dd112c81d2": "Abrir en Orca Browser",
             "1bb9be455c": "Agregar como proyecto…",
             "0fec99bfd7": "Duplicar",
             "f61af83316": "Nueva carpeta",
             "37c875d827": "Nuevo archivo",
             "b3e288bf41": "No se pudo descargar '{{value0}}'.",
+            "f729bcd97d": "No se pudo descargar la carpeta '{{value0}}'.",
             "1a3df04ae1": "Abrir",
             "bce4d4e44f": "Se descargó '{{value0}}'",
+            "a4029c996b": "Se descargó la carpeta '{{value0}}'",
             "e26010014a": "Ignorado por .gitignore",
             "a06551beee": "Intro",
             "128a99ed5e": "No asignado",
@@ -9703,7 +9705,9 @@
               "a9bf7c171a": "Push fallido",
               "834cb3f23d": "Corregir con AI",
               "783a808870": "Cerrar"
-            }
+            },
+            "createPrIntentSyncConflicts": "La sincronización encontró conflictos. Resuélvelos y vuelve a intentar Crear PR.",
+            "createPrIntentSyncing": "Sincronizando rama…"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "No se pudo iniciar el agente seleccionado.",
@@ -10072,6 +10076,13 @@
               "control": {
                 "ai": {
                   "cfafa92509": "No hay conflictos sin resolver para enviar."
+                }
+              }
+            },
+            "hosted": {
+              "review": {
+                "actions": {
+                  "e475c29b17": "This will merge the {{value0}}."
                 }
               }
             }
@@ -12006,7 +12017,9 @@
                 "2f9d6b4e10": "Alternar título 3",
                 "8c1a3e7d52": "Cree una sección plegable con un resumen de encabezado pequeño.",
                 "5e0b9c2a71": "Alternar título 4",
-                "d4f16a8b39": "Cree una sección plegable con un resumen de encabezado anidado."
+                "d4f16a8b39": "Cree una sección plegable con un resumen de encabezado anidado.",
+                "21d8c463e5": "Alternar título 5",
+                "dc239b41ad": "Cree una sección plegable con un resumen de encabezado profundo."
               }
             }
           }
