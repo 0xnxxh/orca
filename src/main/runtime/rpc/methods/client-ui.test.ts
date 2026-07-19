@@ -177,6 +177,41 @@ describe('client UI RPC methods', () => {
     })
   })
 
+  it('rejects malformed quick-command lists instead of clearing persisted commands', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      updateClientTerminalQuickCommands: vi.fn()
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
+
+    for (const terminalQuickCommands of [
+      null,
+      'not-a-list',
+      { id: 'not-a-list' },
+      [null],
+      [{ id: 'incomplete' }],
+      [
+        {
+          id: 'unsupported-agent',
+          label: 'Unsupported agent',
+          action: 'agent-prompt',
+          agent: 'aider',
+          prompt: 'Review this diff'
+        }
+      ]
+    ]) {
+      const response = await dispatcher.dispatch(
+        makeRequest('settings.updateTerminalQuickCommands', { terminalQuickCommands })
+      )
+
+      expect(response).toMatchObject({
+        ok: false,
+        error: { code: 'invalid_argument' }
+      })
+    }
+    expect(runtime.updateClientTerminalQuickCommands).not.toHaveBeenCalled()
+  })
+
   it('caps oversized bot-author override payloads', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',

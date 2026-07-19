@@ -4,9 +4,9 @@ import {
   FeatureInteractionIdParam,
   PRBotAuthorOverrideUpdate,
   SettingsUpdate,
-  TerminalQuickCommandsUpdate,
   UiUpdate
 } from './client-ui-schemas'
+import { TerminalQuickCommandsUpdate } from './terminal-quick-command-rpc-schema'
 
 export const CLIENT_UI_METHODS: RpcMethod[] = [
   defineMethod({
