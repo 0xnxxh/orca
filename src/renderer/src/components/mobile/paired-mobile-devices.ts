@@ -110,9 +110,9 @@ export function refreshPairedMobileDevices({
       if (requestId !== latestRequestId) {
         return supersededResult()
       }
-      // Why: keep loaded:true so the loaded-gated mount effect can't refire into
-      // a retry loop, but flag error so consumers can tell a failed load apart
-      // from "no devices" and recover (see usePairedMobileDevices focus/online).
+      // Why: keep loaded:true so the loaded-gated mount effect can't refire into a
+      // retry loop; flag error so consumers can distinguish a failed load from "no
+      // devices" and recover.
       publish({
         ...snapshot,
         loaded: true,
@@ -129,6 +129,33 @@ export function refreshPairedMobileDevices({
 
   activeRequest = { id: requestId, promise }
   return promise
+}
+
+// Why: recover a failed shared load on window focus/reconnect without a polling
+// timer. A single module-level listener (shared across every consumer) fires one
+// forced refresh, instead of each mounted consumer registering its own listener
+// and fanning out one forced listDevices IPC per consumer on every focus event.
+let enabledConsumerCount = 0
+
+function recoverPairedMobileDevicesOnReconnect(): void {
+  if (enabledConsumerCount > 0 && snapshot.error) {
+    void refreshPairedMobileDevices({ force: true }).catch(() => {})
+  }
+}
+
+function addRecoveryConsumer(): () => void {
+  if (enabledConsumerCount === 0) {
+    window.addEventListener('focus', recoverPairedMobileDevicesOnReconnect)
+    window.addEventListener('online', recoverPairedMobileDevicesOnReconnect)
+  }
+  enabledConsumerCount += 1
+  return () => {
+    enabledConsumerCount -= 1
+    if (enabledConsumerCount === 0) {
+      window.removeEventListener('focus', recoverPairedMobileDevicesOnReconnect)
+      window.removeEventListener('online', recoverPairedMobileDevicesOnReconnect)
+    }
+  }
 }
 
 export function usePairedMobileDevices({
@@ -158,23 +185,15 @@ export function usePairedMobileDevices({
   }, [currentSnapshot.loaded, currentSnapshot.loading, enabled, refreshOnMount])
 
   // Why: a failed load parks the shared cache in an error state the loaded-gated
-  // mount effect above can't retry (it would loop). Recover on window focus or
-  // reconnect — enough to un-wedge a persistent consumer like the sidebar after
-  // a transient startup IPC failure, without a polling timer.
+  // mount effect above can't retry (it would loop). While mounted, register as a
+  // recovery consumer so the shared focus/online listener can un-wedge a
+  // persistent consumer like the sidebar after a transient startup IPC failure.
   useEffect(() => {
-    if (!enabled || !currentSnapshot.error) {
+    if (!enabled) {
       return
     }
-    const retry = (): void => {
-      void refreshPairedMobileDevices({ force: true }).catch(() => {})
-    }
-    window.addEventListener('focus', retry)
-    window.addEventListener('online', retry)
-    return () => {
-      window.removeEventListener('focus', retry)
-      window.removeEventListener('online', retry)
-    }
-  }, [enabled, currentSnapshot.error])
+    return addRecoveryConsumer()
+  }, [enabled])
 
   return {
     ...currentSnapshot,
@@ -186,5 +205,10 @@ export function usePairedMobileDevices({
 export function _resetPairedMobileDevicesCacheForTests(): void {
   latestRequestId += 1
   activeRequest = null
+  if (enabledConsumerCount > 0) {
+    window.removeEventListener('focus', recoverPairedMobileDevicesOnReconnect)
+    window.removeEventListener('online', recoverPairedMobileDevicesOnReconnect)
+  }
+  enabledConsumerCount = 0
   publish(EMPTY_SNAPSHOT)
 }

@@ -7,7 +7,11 @@ import {
   shouldShowPairedAfterDeviceRefresh,
   type MobilePageStage as FlowStage
 } from './mobile-page-stage'
-import { usePairedMobileDevices } from './paired-mobile-devices'
+import {
+  getPairedMobileDevicesSnapshot,
+  replacePairedMobileDevices,
+  usePairedMobileDevices
+} from './paired-mobile-devices'
 import { translate } from '@/i18n/i18n'
 
 export function useMobilePagePairedDevices({
@@ -139,9 +143,19 @@ export function useMobilePagePairedDevices({
         if (!revoked) {
           throw new Error('mobile.revokeDevice returned revoked=false')
         }
-        // Why: use the raw refresh so a failed reload throws (error toast)
-        // instead of loadDevices' [] fallback wrongly routing to intro.
-        const remaining = await refreshDevices({ force: true })
+        // Why: revoke already succeeded server-side, so a failed post-revoke
+        // reload must not flash "Failed to revoke". Optimistically drop the
+        // revoked device from the last-known list (not loadDevices' bogus [] from
+        // a failed reload), keeping success + intro-routing correct. Mirrors
+        // MobilePane's revoke fallback.
+        let remaining: readonly PairedDevice[]
+        try {
+          remaining = await refreshDevices({ force: true })
+        } catch (err) {
+          console.error('mobile.listDevices failed after revoke', err)
+          remaining = getPairedMobileDevicesSnapshot().filter((d) => d.deviceId !== deviceId)
+          replacePairedMobileDevices(remaining)
+        }
         if (mountedRef.current) {
           toast.success(translate('auto.components.mobile.MobilePage.255372e6e8', 'Device revoked'))
         }
