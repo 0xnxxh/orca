@@ -27,6 +27,7 @@ import {
   validateWorkingDirectory,
   spawnShellWithFallback
 } from './local-pty-utils'
+import { prepareMacosTccLoginShell } from './macos-tcc-login-shell'
 import {
   getAttributionShellLaunchConfig,
   getShellReadyLaunchConfig,
@@ -52,6 +53,7 @@ import {
 } from '../git-bash'
 import { WINDOWS_GIT_BASH_SHELL } from '../../shared/windows-terminal-shell'
 import { resolveAgentForegroundProcessWithAvailability } from './agent-foreground-process'
+import { resolveStableForegroundProcess } from './stable-foreground-process'
 import { getAgentForegroundContextPaths } from './agent-foreground-context-paths'
 import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
 import {
@@ -59,6 +61,7 @@ import {
   terminateDescendantSnapshot
 } from '../pty-descendant-termination'
 import { readWindowsConptyProcessIds } from './windows-conpty-process-membership'
+import { canConfirmAgentFromConsolePresence } from './windows-console-foreground'
 import { forceKillPosixPtyProcessGroups } from '../pty/posix-pty-process-groups'
 import { shouldUseShellReadyStartupDelivery } from '../../shared/codex-startup-delivery'
 import { assertSafeAgentStartupCwd, resolveSafePtyDefaultCwd } from './pty-default-cwd'
@@ -89,10 +92,20 @@ type PtyShutdownOperation = {
   proc: pty.IPty
 }
 const ptyShutdownOperations = new Map<string, PtyShutdownOperation>()
+type PendingLocalPtySpawn = {
+  canceled: boolean
+}
+const pendingLocalPtySpawns = new Map<string, Set<PendingLocalPtySpawn>>()
 const ptyShellName = new Map<string, string>()
 const ptyAgentForegroundContextPaths = new Map<string, string[]>()
+// Why: remembers the last positively-recognized agent foreground per PTY so a
+// degraded/timed-out scan does not report the shell and look like an exit.
+const ptyLastRecognizedForeground = new Map<string, string>()
 const ptyTerminalHandle = new Map<string, string>()
 const ptyInitialCwd = new Map<string, string>()
+// Why: reattach requests carry current settings, not the live process's launch
+// context. Keep the first creator's WSL/native identity for the PTY incarnation.
+const ptyWslDistroById = new Map<string, string | null>()
 // Why: node-pty callbacks must be disposed before environment teardown, but
 // onExit separately owns physical process-exit proof during termination.
 const ptyDisposables = new Map<string, { dispose: () => void }[]>()
@@ -226,8 +239,10 @@ function clearPtyState(id: string): void {
   ptyAgentSessionIds.delete(id)
   ptyShellName.delete(id)
   ptyAgentForegroundContextPaths.delete(id)
+  ptyLastRecognizedForeground.delete(id)
   ptyTerminalHandle.delete(id)
   ptyInitialCwd.delete(id)
+  ptyWslDistroById.delete(id)
   ptyLoadGeneration.delete(id)
   ptyTerminationMode.delete(id)
   ptyPhysicalExits.delete(id)
@@ -306,6 +321,42 @@ function allocatePtyId(sessionId: string | undefined): string {
     id = String(++ptyCounter)
   } while (ptyProcesses.has(id))
   return id
+}
+
+async function prepareLocalPtySpawn(id: string): Promise<void> {
+  const pendingSpawn: PendingLocalPtySpawn = { canceled: false }
+  const pending = pendingLocalPtySpawns.get(id) ?? new Set()
+  pending.add(pendingSpawn)
+  pendingLocalPtySpawns.set(id, pending)
+  try {
+    // Why: shutdown must be able to cancel a stable session id while the
+    // asynchronous macOS capability probe runs and before node-pty exists.
+    await prepareMacosTccLoginShell()
+    if (pendingSpawn.canceled) {
+      throw new Error(`PTY spawn canceled: ${id}`)
+    }
+  } finally {
+    pending.delete(pendingSpawn)
+    if (pending.size === 0) {
+      pendingLocalPtySpawns.delete(id)
+    }
+  }
+}
+
+function cancelPendingLocalPtySpawns(id: string): void {
+  const pending = pendingLocalPtySpawns.get(id)
+  if (!pending) {
+    return
+  }
+  for (const pendingSpawn of pending) {
+    pendingSpawn.canceled = true
+  }
+}
+
+function cancelAllPendingLocalPtySpawns(): void {
+  for (const id of pendingLocalPtySpawns.keys()) {
+    cancelPendingLocalPtySpawns(id)
+  }
 }
 
 /**
@@ -471,12 +522,18 @@ export class LocalPtyProvider implements IPtyProvider {
       }
       const existing = ptyProcesses.get(reattachId)
       if (existing) {
+        const existingWslDistro = ptyWslDistroById.get(reattachId)
         try {
           existing.resize(args.cols, args.rows)
         } catch {
           /* Existing PTY may reject resize during teardown; still return the live handle. */
         }
-        return { id: reattachId, pid: existing.pid, isReattach: true }
+        return {
+          id: reattachId,
+          pid: existing.pid,
+          ...(ptyWslDistroById.has(reattachId) ? { wslDistro: existingWslDistro ?? null } : {}),
+          isReattach: true
+        }
       }
     }
     const id = allocatePtyId(reattachId ?? undefined)
@@ -790,6 +847,7 @@ export class LocalPtyProvider implements IPtyProvider {
       logHistoryInjection(worktreeId, historyResult)
     }
 
+    await prepareLocalPtySpawn(id)
     const spawnResult = spawnShellWithFallback({
       shellPath,
       shellArgs,
@@ -823,9 +881,15 @@ export class LocalPtyProvider implements IPtyProvider {
     }
 
     const proc = spawnResult.process
+    const spawnedShellIsWsl =
+      process.platform === 'win32' && pathWin32.basename(shellPath).toLowerCase() === 'wsl.exe'
+    const spawnedWslDistro = spawnedShellIsWsl ? (launchWslDistro ?? undefined) : null
     createPtyPhysicalExit(id)
     ptyProcesses.set(id, proc)
     ptyInitialCwd.set(id, cwd)
+    if (spawnedWslDistro !== undefined) {
+      ptyWslDistroById.set(id, spawnedWslDistro)
+    }
     // Why both signals: launchAgent is the caller's explicit intent and
     // survives command rewriting (e.g. auth env prefixes); recognition covers
     // callers that pass a bare agent command line without the flag.
@@ -983,7 +1047,11 @@ export class LocalPtyProvider implements IPtyProvider {
     // briefly 0/undefined if node-pty hasn't observed the forked child yet.
     const rawPid = proc.pid
     const pid = typeof rawPid === 'number' && Number.isFinite(rawPid) && rawPid > 0 ? rawPid : null
-    return { id, pid }
+    return {
+      id,
+      pid,
+      ...(spawnedWslDistro !== undefined ? { wslDistro: spawnedWslDistro } : {})
+    }
   }
 
   // Local PTYs are always attached -- no-op. Remote providers use this to resubscribe.
@@ -1032,6 +1100,7 @@ export class LocalPtyProvider implements IPtyProvider {
   }
 
   async shutdown(id: string, opts: { immediate?: boolean; keepHistory?: boolean }): Promise<void> {
+    cancelPendingLocalPtySpawns(id)
     const pending = ptyShutdownOperations.get(id)
     if (pending) {
       if (opts.immediate === true) {
@@ -1183,19 +1252,76 @@ export class LocalPtyProvider implements IPtyProvider {
   async getForegroundProcess(id: string): Promise<string | null> {
     const proc = ptyProcesses.get(id)
     if (!proc) {
+      ptyLastRecognizedForeground.delete(id)
       return null
+    }
+    const fallbackProcess = resolveForegroundFallbackProcess(
+      proc.process || null,
+      ptyShellName.get(id)
+    )
+    const cachedAgent = ptyLastRecognizedForeground.get(id) ?? null
+    let consoleMembershipUnavailable = false
+    // Why: exact console membership can preserve a live cached agent without
+    // trusting the whole-table scan that becomes incomplete under Windows load.
+    if (
+      process.platform === 'win32' &&
+      canConfirmAgentFromConsolePresence(cachedAgent, fallbackProcess)
+    ) {
+      try {
+        const consoleProcessIds = await readWindowsConptyProcessIds(proc.pid)
+        if (ptyProcesses.get(id) !== proc) {
+          return null
+        }
+        if (consoleProcessIds !== null && consoleProcessIds.size > 1 && cachedAgent !== null) {
+          return cachedAgent
+        }
+        consoleMembershipUnavailable = consoleProcessIds === null
+      } catch {
+        consoleMembershipUnavailable = true
+      }
     }
     try {
       const resolution = await resolveAgentForegroundProcessWithAvailability(
         proc.pid,
-        resolveForegroundFallbackProcess(proc.process || null, ptyShellName.get(id)),
+        fallbackProcess,
         {
           contextPaths: ptyAgentForegroundContextPaths.get(id)
         }
       )
-      return resolution.processName
+      // Why: the scan can outlive PTY teardown or id reuse; stale results must
+      // not resurrect cache state for a process that no longer owns this id.
+      if (ptyProcesses.get(id) !== proc) {
+        return null
+      }
+      // Why: a degraded/timed-out scan must not report the shell as the
+      // foreground — the completion coordinator reads that as an exit and fires
+      // a false "agent done" while the agent is still working. Prefer the last
+      // recognized agent across a transient failure (e.g. a Windows CIM timeout).
+      const lastRecognizedAgent = ptyLastRecognizedForeground.get(id) ?? null
+      const resolvedAgent = resolution.processName
+        ? recognizeAgentProcessFromCommandLine(resolution.processName)
+        : null
+      // Why: an incomplete global snapshot plus an unavailable console probe is
+      // not exit proof; only verified shell-only membership may clear the cache.
+      const stable = resolveStableForegroundProcess(
+        consoleMembershipUnavailable && resolvedAgent === null
+          ? { ...resolution, available: false }
+          : resolution,
+        lastRecognizedAgent
+      )
+      if (stable.lastRecognizedAgent) {
+        ptyLastRecognizedForeground.set(id, stable.lastRecognizedAgent)
+      } else {
+        ptyLastRecognizedForeground.delete(id)
+      }
+      return stable.processName
     } catch {
-      return null
+      if (ptyProcesses.get(id) !== proc) {
+        return null
+      }
+      // Why: an inspection error is itself a degraded read; fall back to the
+      // last recognized agent rather than null (which also reads as an exit).
+      return ptyLastRecognizedForeground.get(id) ?? null
     }
   }
 
@@ -1313,6 +1439,7 @@ export class LocalPtyProvider implements IPtyProvider {
 
   /** Kill all in-process local PTYs. Call on app quit. */
   killAll(): void {
+    cancelAllPendingLocalPtySpawns()
     for (const [id, proc] of ptyProcesses) {
       runPtyCleanup(id)
       disposePtyListeners(id)
@@ -1336,6 +1463,8 @@ export class LocalPtyProvider implements IPtyProvider {
 }
 
 export function _resetLocalPtyProviderStateForTest(): void {
+  cancelAllPendingLocalPtySpawns()
+  pendingLocalPtySpawns.clear()
   for (const id of ptyProcesses.keys()) {
     clearPtyState(id)
   }

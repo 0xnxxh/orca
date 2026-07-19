@@ -268,6 +268,7 @@ const gpuCrashFallbackTracker = new GpuCrashFallbackTracker({
 })
 let gpuFallbackActiveThisLaunch = false
 let localPtyStartupReady: Promise<void> = Promise.resolve()
+let localPtyProviderStartupReady: Promise<void> = Promise.resolve()
 const AGENT_STATE_CRASH_BREADCRUMB_MIN_INTERVAL_MS = 30_000
 const isServeMode = process.argv.includes('--serve')
 const desktopActivationGate = createServeDesktopActivationGate({
@@ -743,6 +744,7 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
   })
   firstWindowStartupServicesReady = startupServices.firstWindowReady
   localPtyStartupReady = startupServices.localPtyReady
+  localPtyProviderStartupReady = startupServices.localPtyProviderReady
   void firstWindowStartupServicesReady.then(() => {
     logStartupMilestone('first-window-startup-services-ready')
   })
@@ -851,6 +853,8 @@ function getSystemTrayOptions(): SystemTrayOptions | null {
   }
   return {
     appIcon: store.getSettings().appIcon,
+    isDevInstance: devInstanceIdentity.isDev,
+    devInstanceLabel: devInstanceIdentity.devLabel,
     onOpen: showMainWindowFromTray,
     onOpenSettings: openSettingsFromSystemMenu,
     onCheckForUpdates: () => {
@@ -1071,6 +1075,7 @@ function openMainWindow(): BrowserWindow {
     (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target),
     {
       awaitLocalPtyStartup: () => localPtyStartupReady,
+      awaitLocalPtyProviderStartup: () => localPtyProviderStartupReady,
       onBeforeRendererReload: ({ ignoreCache, webContentsId }) => {
         if (window.webContents.id === webContentsId) {
           markExpectedRendererReload(webContentsId)
@@ -1134,10 +1139,28 @@ function openMainWindow(): BrowserWindow {
       stateStartedAt,
       launchToken,
       providerSession,
+      providerSessionOnly,
       promptInteractionKey,
       isReplay
     }) => {
       if (mainWindow?.isDestroyed()) {
+        return
+      }
+      if (providerSessionOnly) {
+        // Why: session_start refreshes durable resume identity while Pi is
+        // idle; forward it without driving titles, telemetry, or status UI.
+        mainWindow?.webContents.send('agentStatus:set', {
+          ...payload,
+          paneKey,
+          ...(launchToken ? { launchToken } : {}),
+          tabId,
+          worktreeId,
+          connectionId,
+          receivedAt,
+          stateStartedAt,
+          ...(providerSession ? { providerSession } : {}),
+          providerSessionOnly: true
+        })
         return
       }
       maybeAutoRenameBranchOnFirstWorkFromHook({ paneKey, tabId, worktreeId, payload, isReplay })
@@ -1880,7 +1903,13 @@ app.whenReady().then(async () => {
   rateLimits.setNetworkProxySettingsResolver(() => store!.getSettings())
   keybindings = new KeybindingService({
     homePath: app.getPath('home'),
-    getLegacyOverrides: () => store!.getSettings().keybindings
+    getLegacyOverrides: () => store!.getSettings().keybindings,
+    legacyTabSwitchSeed: {
+      isPending: () => store!.getSettings().tabSwitchKeybindingSeed === 'pending',
+      markSeeded: () => {
+        store!.updateSettings({ tabSwitchKeybindingSeed: 'done' })
+      }
+    }
   })
   browserManager.setSettingsResolver(() => ({ keybindings: keybindings?.getOverrides() }))
   rateLimits.setInactiveClaudeAccountsResolver(() => {
@@ -1937,7 +1966,8 @@ app.whenReady().then(async () => {
     getDesktopWindowStatus: getDesktopWindowStatus,
     // Why: hook-reported agent status is the same source the desktop sidebar
     // reads. worktree.ps pulls it at query time so mobile shows the same agents.
-    getAgentStatusSnapshot: () => agentHookServer.getStatusSnapshot(),
+    getAgentStatusSnapshot: () =>
+      agentHookServer.getStatusSnapshot().filter((entry) => entry.providerSessionOnly !== true),
     // Why: source codex-home here (runs in BOTH window and serve modes) so the
     // aiVault.listSessions RPC includes managed-Codex sessions on remote/SSH
     // hosts; the window-only registerCoreHandlers path never runs under serve.

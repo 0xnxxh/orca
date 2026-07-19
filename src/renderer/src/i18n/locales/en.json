@@ -95,7 +95,8 @@
     "minimizeNotice": {
       "body": "Orca is still running in the system tray"
     },
-    "activityWaiting": "Orca - activity waiting"
+    "activityWaiting": "Orca - activity waiting",
+    "activityWaitingSuffix": "activity waiting"
   },
   "worktreeJumpPalette": {
     "matchLabel": {
@@ -762,13 +763,13 @@
     },
     "components": {
       "CodexRestartChip": {
-        "9132779820": "Dismiss",
         "a4c8e1b2f7": "Codex is still signed in as {{value0}}",
         "c72a5fb234": "Restart",
         "9263e75f49": "Codex is using the previous account",
         "d3e8a1f4b2": "Account switched",
-        "e9b2c7d1a5": "Restart this session to use {{value0}}. Collapse to keep working with the current account.",
-        "f1a6c8e3b4": "Collapse"
+        "9375620cc3": "Restart this session to use {{value0}}. It stays on the previous account until you do.",
+        "6133594b12": "Keep old account",
+        "b9000fe511": "Not now"
       },
       "FirstLaunchBanner": {
         "b9e1b966c7": "Dismiss notice",
@@ -1867,7 +1868,14 @@
         "a726967bd3": "Dismiss",
         "d5253b54af": "error",
         "7ffc08506e": "check",
-        "522df222b9": "spinner"
+        "522df222b9": "spinner",
+        "e944c2de43": "Update Verification Blocked",
+        "5b309b19f3": "Update Wasn't Installed",
+        "092f09fc14": "The installer's publisher doesn't match Orca, so we stopped the update. Don't install this download; check official releases for a corrected version.",
+        "c9ff9b9ec2": "Check official releases",
+        "a05992a26b": "The signature check couldn't run — usually because antivirus software blocked it. Retry the download, or get the installer from our official releases.",
+        "5194358929": "Hide details",
+        "8bc9e17d8f": "Show details"
       },
       "WorktreeJumpPalette": {
         "ac037cfac2": "Move",
@@ -3977,10 +3985,9 @@
         "RemoveFolderDialog": {
           "4dc5b5065b": "Remove",
           "d36883e046": "Cancel",
-          "8c097ef04e": "from Orca. It is still on your disk.",
-          "e62415c3d0": "This only removes",
           "b79b39d865": "Remove Project",
-          "fromOrcaSsh": "from Orca. Its files stay on {{value0}} — re-add that SSH host to recover it."
+          "removeDescriptionSsh": "This only removes {{name}} from Orca. Its files stay on {{host}} — re-add that SSH host to recover it.",
+          "removeDescriptionLocal": "This only removes {{name}} from Orca. It is still on your disk."
         },
         "ScrollToCurrentWorkspaceToolbarButton": {
           "23989bb663": "Reveal active workspace"
@@ -5948,12 +5955,16 @@
           "aa1263e881": "Keep at phone size (default)",
           "6436e56546": "QR Code for mobile pairing",
           "1b1b70279a": "No devices paired yet.",
-          "1592afcc7a": "No devices paired yet. Scan the QR code with the Orca mobile app."
+          "1592afcc7a": "No devices paired yet. Scan the QR code with the Orca mobile app.",
+          "relayDegradedNotice": "Relay couldn’t be reached — this code only works on your local network. Regenerate to try again."
         },
         "MobileSettingsPane": {
           "9a3c280e49": "GitHub Releases",
           "b0088412a1": "or the Android APK from",
           "b5a2ed83ff": "App Store",
+          "installIntro": "Install Orca Mobile from the",
+          "installOutro": ", then pair below.",
+          "androidApkLabel": "Android APK",
           "c8491c17ef": "Control Orca from your phone by scanning a QR code. Beta / early preview - expect bugs and breaking changes. Get the iOS app from the",
           "e7a3ae8c4e": "Mobile",
           "174f4a3c6d": "Control terminals and agents from your phone.",
@@ -8093,7 +8104,9 @@
               "671eb4173c": "Control terminals and agents from your phone.",
               "ffd52a96e4": "Mobile",
               "1de96ec8a6": "Show Orca Mobile Button",
-              "682293cadf": "Show the Orca Mobile button at the top of the left sidebar."
+              "682293cadf": "Show the Orca Mobile button at the top of the left sidebar.",
+              "e4f4daea0e": "relay",
+              "5d5af8e041": "iphone"
             }
           }
         },
@@ -9185,28 +9198,26 @@
           "available": "Available",
           "reconnecting": "Reconnecting",
           "unavailable": "Unavailable",
-          "title": "How should the new phone connect?",
-          "anywhere": "Connect with Orca Relay",
-          "recommended": "Recommended",
-          "automaticDescription": "Orca uses a direct connection when available and Relay otherwise.",
-          "signInDescription": "Sign in on this desktop to use Orca Relay.",
+          "pathGroup": "How the phone reaches this computer",
+          "anywhereTitle": "Orca Relay",
+          "anywhereDescription": "Phone can be on cellular or any Wi‑Fi. Sign-in required.",
+          "signInRequired": "Sign in to use Orca Mobile Relay.",
+          "relayUnavailable": "Orca Relay isn’t available in this build. Use Local network.",
           "signIn": "Sign in",
-          "localOnly": "Local network only",
-          "localShort": "LAN or Tailscale",
-          "localDescription": "Uses LAN or Tailscale without connecting this phone through Orca Relay."
+          "signInAgain": "Sign in again",
+          "localTitle": "Local network",
+          "localDescription": "Phone must be on this Wi‑Fi or your Tailscale. No sign-in."
         },
         "MobilePairingSetupSection": {
           "title": "Pair a phone",
-          "automaticDescription": "The pairing code includes direct access and encrypted Orca Relay fallback.",
-          "localDescription": "The pairing code connects only through the local network address below.",
-          "regenerate": "Regenerate",
-          "generate": "Generate QR Code",
-          "localSettings": "Local connection settings",
-          "localAddressDescription": "Choose the LAN or private-network address that Orca Mobile can use to reach this computer directly.",
-          "refresh": "Refresh network interfaces",
-          "tailnet": "Connect with your own tailnet",
-          "tailnetDescription": "Install Tailscale on this computer and your phone, sign in to the same tailnet, then select its 100.x.y.z address above.",
-          "getTailscale": "Get Tailscale"
+          "overview": "Generate a QR code, then scan it in Orca Mobile under Pair Desktop.",
+          "step1Title": "Connection",
+          "step2Title": "This computer’s address",
+          "step2RelayDescription": "Used for a faster direct path when nearby. Relay covers remote access.",
+          "step2LocalDescription": "The phone must be able to reach this address on Wi‑Fi or Tailscale.",
+          "regenerate": "Regenerate QR code",
+          "generate": "Generate QR code",
+          "refresh": "Refresh network interfaces"
         },
         "MobileRelayBetaAvailability": {
           "about": "About the Orca Relay beta",
@@ -9231,6 +9242,9 @@
           "howToUseDescription": "Ask an agent working a Linear-linked worktree to read context, post updates, move the ticket, or attach the PR.",
           "terminalTitle": "Linear skill setup",
           "terminalAriaLabel": "Linear skill install terminal"
+        },
+        "MobileRelayBetaNotice": {
+          "notice": "Orca Relay is in beta."
         }
       },
       "right": {
@@ -9331,14 +9345,17 @@
             "d6a25618aa": "Collapse Folder",
             "d87a4c42e1": "Open Markdown Preview",
             "c2112579f6": "Download",
+            "7ac885bd2f": "Download Folder",
             "dd112c81d2": "Open in Orca Browser",
             "1bb9be455c": "Add as Project...",
             "0fec99bfd7": "Duplicate",
             "f61af83316": "New Folder",
             "37c875d827": "New File",
             "b3e288bf41": "Failed to download '{{value0}}'.",
+            "f729bcd97d": "Failed to download folder '{{value0}}'.",
             "1a3df04ae1": "Open",
             "bce4d4e44f": "Downloaded '{{value0}}'",
+            "a4029c996b": "Downloaded folder '{{value0}}'",
             "e26010014a": "Ignored by .gitignore",
             "a06551beee": "Enter",
             "128a99ed5e": "Unassigned",
@@ -9715,7 +9732,9 @@
               "a9bf7c171a": "Push Failed",
               "834cb3f23d": "Fix with AI",
               "783a808870": "Close"
-            }
+            },
+            "createPrIntentSyncConflicts": "Sync hit conflicts. Resolve them, then retry Create PR.",
+            "createPrIntentSyncing": "Syncing branch…"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "Could not start the selected agent.",
@@ -10084,6 +10103,13 @@
               "control": {
                 "ai": {
                   "cfafa92509": "No unresolved conflicts to send."
+                }
+              }
+            },
+            "hosted": {
+              "review": {
+                "actions": {
+                  "e475c29b17": "This will merge the {{value0}}."
                 }
               }
             }
@@ -10682,7 +10708,8 @@
           },
           "ProjectCombobox": {
             "search": "Search projects...",
-            "empty": "No projects match your search."
+            "empty": "No projects match your search.",
+            "addProject": "Add a new project"
           }
         }
       },
@@ -10732,7 +10759,8 @@
             "group": "Release channel",
             "preview": "Preview",
             "stable": "Stable"
-          }
+          },
+          "relayDegradedNotice": "Relay couldn’t be reached — this code only works on your local network."
         },
         "MobilePage": {
           "e17393c6a3": "Phone preview",
@@ -10787,7 +10815,7 @@
             "0bad5b07c8": "GitHub and Linear",
             "d047197480": "GitHub · Linear",
             "a4c3f7b7aa": "Tasks",
-            "d33d7a9c29": "orca&nbsp;&nbsp;·&nbsp;&nbsp;feat/mobile-page",
+            "d33d7a9c29": "orca  ·  feat/mobile-page",
             "25d6e8a491": "feat/mobile-page",
             "c791677f2f": "Resume",
             "cf3f98fa3f": "Disconnected",
@@ -12017,7 +12045,9 @@
                 "2f9d6b4e10": "Toggle H3",
                 "8c1a3e7d52": "Create a collapsible section with a small heading summary.",
                 "5e0b9c2a71": "Toggle H4",
-                "d4f16a8b39": "Create a collapsible section with a nested heading summary."
+                "d4f16a8b39": "Create a collapsible section with a nested heading summary.",
+                "21d8c463e5": "Toggle H5",
+                "dc239b41ad": "Create a collapsible section with a deep heading summary."
               }
             }
           }
@@ -13290,15 +13320,15 @@
         "worktreeNotReady": "Worktree not ready — try again in a moment.",
         "uploadingAttachments": "Uploading {{value0}} file(s) to remote…",
         "model": "Model",
-        "modelWithValue": "Model: {{value0}}",
         "effort": "Effort",
-        "effortWithValue": "Effort: {{value0}}",
         "fastMode": "Fast mode",
         "thinking": "Thinking",
         "options": "Options",
         "sessionOptions": "Session options",
         "chooseInAgentPicker": "Choose in agent picker…",
         "toggleOption": "Toggle {{value0}}",
+        "pillAccessibleName": "{{value0}} {{value1}}",
+        "valueUnknown": "Current value unknown — pick On or Off",
         "sentNotConfirmed": "Sent to the agent — not confirmed",
         "setWhenSessionStarts": "Set when the session starts.",
         "availableAfterSessionStarts": "Available after the session starts.",
@@ -13310,7 +13340,9 @@
           "medium": "Medium",
           "high": "High",
           "xhigh": "Extra high",
-          "max": "Max"
+          "max": "Max",
+          "on": "On",
+          "off": "Off"
         }
       },
       "tool": {

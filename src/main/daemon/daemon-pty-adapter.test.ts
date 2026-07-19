@@ -1,6 +1,6 @@
 /* oxlint-disable max-lines */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { tmpdir } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { DaemonClient } from './client'
@@ -11,6 +11,7 @@ import { HeadlessEmulator } from './headless-emulator'
 import { getHistorySessionDirName } from './history-paths'
 import type { HistoryReader } from './history-reader'
 import type { SubprocessHandle } from './session'
+import type { DaemonFileLog } from './daemon-file-log'
 import type * as DaemonHealthModule from './daemon-health'
 import { getDaemonSocketPath } from './daemon-spawner'
 
@@ -97,6 +98,8 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     command?: string
   } | null
   let subprocessDataOnSubscribe: string | undefined
+  let daemonLog: DaemonFileLog
+  let daemonLogEvents: string[]
 
   beforeEach(async () => {
     subprocessDataOnSubscribe = undefined
@@ -104,9 +107,15 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     socketPath = getDaemonSocketPath(dir)
     tokenPath = join(dir, 'test.token')
 
+    daemonLogEvents = []
+    daemonLog = {
+      log: (event) => daemonLogEvents.push(event),
+      close() {}
+    }
     server = new DaemonServer({
       socketPath,
       tokenPath,
+      log: daemonLog,
       spawnSubprocess: (opts) => {
         lastSpawnOpts = opts
         lastSubprocess = createMockSubprocess(subprocessDataOnSubscribe)
@@ -138,6 +147,38 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     it('uses worktreeId as session prefix when provided', async () => {
       const result = await adapter.spawn({ cols: 80, rows: 24, worktreeId: 'wt-1' })
       expect(result.id).toContain('wt-1')
+    })
+
+    it('keeps a reattached native UNC session native despite a conflicting WSL preference', async () => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      try {
+        const sessionId = 'native-conflicting-wsl-attach'
+        const created = await adapter.spawn({
+          cols: 80,
+          rows: 24,
+          sessionId,
+          cwd: '\\\\server\\share\\repo',
+          shellOverride: 'powershell.exe'
+        })
+        const attached = await adapter.spawn({
+          cols: 80,
+          rows: 24,
+          sessionId,
+          cwd: 'C:\\repo',
+          shellOverride: 'wsl.exe',
+          terminalWindowsWslDistro: 'Ubuntu'
+        })
+
+        expect(created.wslDistro).toBeNull()
+        expect(attached.wslDistro).toBeNull()
+        expect(attached.isReattach).toBe(true)
+        expect(lastSpawnOpts?.cwd).toBe('\\\\server\\share\\repo')
+      } finally {
+        if (platform) {
+          Object.defineProperty(process, 'platform', platform)
+        }
+      }
     })
 
     itOnPosix('keeps plain Codex startup on the short daemon shell-ready timeout', async () => {
@@ -436,6 +477,42 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       await adapter.shutdown(id, { immediate: true })
       expect(lastSubprocess.kill).not.toHaveBeenCalled()
       expect(lastSubprocess.forceKill).toHaveBeenCalled()
+    })
+
+    // Why: shutdown can be the first lazy-client operation after restart; it
+    // must connect before killing so a healthy session is not orphaned (#7742).
+    it('kills a live session from a fresh adapter that has not connected yet', async () => {
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+
+      const freshAdapter = new DaemonPtyAdapter({ socketPath, tokenPath })
+      try {
+        await freshAdapter.shutdown(id, { immediate: true })
+      } finally {
+        freshAdapter.dispose()
+      }
+      expect(lastSubprocess.forceKill).toHaveBeenCalled()
+      await expect(adapter.listProcesses()).resolves.not.toContainEqual(
+        expect.objectContaining({ id })
+      )
+    })
+
+    it('coalesces the lazy connection when a fresh adapter shuts down concurrent sessions', async () => {
+      const ids = await Promise.all(
+        ['concurrent-kill-a', 'concurrent-kill-b'].map(async (sessionId) =>
+          adapter.spawn({ cols: 80, rows: 24, sessionId }).then((result) => result.id)
+        )
+      )
+      const freshAdapter = new DaemonPtyAdapter({ socketPath, tokenPath })
+      daemonLogEvents.length = 0
+
+      try {
+        await Promise.all(ids.map((id) => freshAdapter.shutdown(id, { immediate: true })))
+      } finally {
+        freshAdapter.dispose()
+      }
+
+      await expect(adapter.listProcesses()).resolves.toEqual([])
+      expect(daemonLogEvents.filter((event) => event === 'client-hello-accepted')).toHaveLength(2)
     })
   })
 
@@ -1296,12 +1373,53 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(result.coldRestore).toBeDefined()
       expect(result.coldRestore!.scrollback).toContain('Server running')
       expect(result.coldRestore!.cwd).toBe('/projects/myapp')
+      expect(result.coldRestore).toMatchObject({ cols: 120, rows: 40 })
       expect(lastSpawnOpts).toMatchObject({
         sessionId,
         cwd: '/projects/myapp',
         cols: 120,
         rows: 40
       })
+    })
+
+    it('repairs legacy hostname UNC cwd for WSL spawn and cold-restore metadata', async () => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      try {
+        const sessionId = 'wsl-legacy-cwd'
+        const sessionDir = join(historyDir, getHistorySessionDirName(sessionId))
+        mkdirSync(sessionDir, { recursive: true })
+        writeFileSync(
+          join(sessionDir, 'meta.json'),
+          JSON.stringify({
+            cwd: `\\\\${hostname()}\\home\\jin`,
+            cols: 80,
+            rows: 24,
+            startedAt: '2026-04-15T10:00:00Z',
+            endedAt: null,
+            exitCode: null
+          })
+        )
+        writeFileSync(join(sessionDir, 'scrollback.bin'), 'legacy WSL output\r\n')
+        historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+
+        const result = await historyAdapter.spawn({
+          cols: 80,
+          rows: 24,
+          cwd: '\\\\wsl.localhost\\Ubuntu\\home\\jin\\repo',
+          terminalWindowsWslDistro: 'Debian',
+          sessionId
+        })
+
+        const repaired = '\\\\wsl.localhost\\Ubuntu\\home\\jin'
+        expect(lastSpawnOpts?.cwd).toBe(repaired)
+        expect(result.coldRestore?.cwd).toBe(repaired)
+        expect(result.wslDistro).toBe('Ubuntu')
+      } finally {
+        if (platform) {
+          Object.defineProperty(process, 'platform', platform)
+        }
+      }
     })
 
     it('returns cold restore OSC link ranges from checkpoint history', async () => {

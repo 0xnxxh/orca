@@ -72,7 +72,8 @@
     "minimizeNotice": {
       "body": "Orcaはシステムトレイで実行中です"
     },
-    "activityWaiting": "Orca - アクティビティ待機中"
+    "activityWaiting": "Orca - アクティビティ待機中",
+    "activityWaitingSuffix": "activity waiting"
   },
   "worktreeJumpPalette": {
     "matchLabel": {
@@ -739,13 +740,13 @@
     },
     "components": {
       "CodexRestartChip": {
-        "9132779820": "閉じる",
         "c72a5fb234": "再起動",
         "9263e75f49": "Codex は前のアカウントを使用しています",
         "a4c8e1b2f7": "Codex はまだ {{value0}} としてサインインしています",
         "d3e8a1f4b2": "アカウントを切り替えました",
-        "e9b2c7d1a5": "{{value0}} を使用するにはこのセッションを再起動してください。現在のアカウントで作業を続けるには折りたたんでください。",
-        "f1a6c8e3b4": "折りたたむ"
+        "9375620cc3": "Restart this session to use {{value0}}. It stays on the previous account until you do.",
+        "6133594b12": "Keep old account",
+        "b9000fe511": "Not now"
       },
       "FirstLaunchBanner": {
         "b9e1b966c7": "通知を閉じる",
@@ -1844,7 +1845,14 @@
         "a726967bd3": "閉じる",
         "d5253b54af": "エラー",
         "7ffc08506e": "チェック",
-        "522df222b9": "スピナー"
+        "522df222b9": "スピナー",
+        "e944c2de43": "Update Verification Blocked",
+        "5b309b19f3": "Update Wasn't Installed",
+        "092f09fc14": "The installer's publisher doesn't match Orca, so we stopped the update. Don't install this download; check official releases for a corrected version.",
+        "c9ff9b9ec2": "Check official releases",
+        "a05992a26b": "The signature check couldn't run — usually because antivirus software blocked it. Retry the download, or get the installer from our official releases.",
+        "5194358929": "Hide details",
+        "8bc9e17d8f": "Show details"
       },
       "WorktreeJumpPalette": {
         "ac037cfac2": "移動",
@@ -3920,10 +3928,9 @@
         "RemoveFolderDialog": {
           "4dc5b5065b": "削除",
           "d36883e046": "キャンセル",
-          "8c097ef04e": "Orca から。それはまだディスク上にあります。",
-          "e62415c3d0": "これは削除するだけです",
           "b79b39d865": "プロジェクトの削除",
-          "fromOrcaSsh": "from Orca. Its files stay on {{value0}} — re-add that SSH host to recover it."
+          "removeDescriptionSsh": "この操作は {{name}} を Orca から削除するだけです。ファイルは {{host}} に残っており、その SSH ホストを再追加すれば復元できます。",
+          "removeDescriptionLocal": "この操作は {{name}} を Orca から削除するだけです。ファイルはディスクに残っています。"
         },
         "ScrollToCurrentWorkspaceToolbarButton": {
           "23989bb663": "アクティブなワークスペースを表示する"
@@ -5910,7 +5917,8 @@
           "aa1263e881": "スマートフォンサイズを維持（デフォルト）",
           "6436e56546": "モバイルペアリング用のQRコード",
           "1b1b70279a": "まだデバイスがペアリングされていません。",
-          "1592afcc7a": "まだデバイスがペアリングされていません。 Orca モバイル アプリで QR コードをスキャンします。"
+          "1592afcc7a": "まだデバイスがペアリングされていません。 Orca モバイル アプリで QR コードをスキャンします。",
+          "relayDegradedNotice": "Relay couldn’t be reached — this code only works on your local network. Regenerate to try again."
         },
         "MobileSettingsPane": {
           "9a3c280e49": "GitHub リリース",
@@ -5921,7 +5929,10 @@
           "174f4a3c6d": "スマートフォンから terminals と agents を操作",
           "1de96ec8a6": "Orca Mobile ボタンを表示",
           "682293cadf": "左サイドバー上部に Orca Mobile ボタンを表示します。",
-          "d4f2b65f30": "サイドバーに Orca Mobile ショートカットを表示します。"
+          "d4f2b65f30": "サイドバーに Orca Mobile ショートカットを表示します。",
+          "installIntro": "Orca Mobile は",
+          "installOutro": "からインストールし、以下でペアリングしてください。",
+          "androidApkLabel": "Android APK"
         },
         "NotificationsPane": {
           "906b4afebf": "テスト通知を送信する",
@@ -8055,7 +8066,9 @@
               "671eb4173c": "スマートフォンから terminals と agents を操作",
               "ffd52a96e4": "モバイル",
               "1de96ec8a6": "Orca Mobile ボタンを表示",
-              "682293cadf": "左サイドバー上部に Orca Mobile ボタンを表示します。"
+              "682293cadf": "左サイドバー上部に Orca Mobile ボタンを表示します。",
+              "e4f4daea0e": "リレー",
+              "5d5af8e041": "iPhone"
             }
           }
         },
@@ -9162,28 +9175,26 @@
           "available": "利用可能",
           "reconnecting": "再接続中",
           "unavailable": "利用不可",
-          "title": "新しいスマートフォンをどのように接続しますか？",
-          "anywhere": "Orca Relay で接続",
-          "recommended": "推奨",
-          "automaticDescription": "利用可能な場合は直接接続し、それ以外ではOrca Relayを使用します。",
-          "signInDescription": "Orca Relayを使用するには、このデスクトップでサインインしてください。",
           "signIn": "サインイン",
-          "localOnly": "ローカルネットワークのみ",
-          "localShort": "LAN または Tailscale",
-          "localDescription": "このスマートフォンをOrca Relayに接続せず、LANまたはTailscaleを使用します。"
+          "localDescription": "スマートフォンがこの Wi‑Fi または Tailscale に接続されている必要があります。サインインは不要です。",
+          "pathGroup": "スマートフォンがこのコンピューターに到達する方法",
+          "anywhereTitle": "Orca Relay",
+          "anywhereDescription": "スマートフォンはモバイル回線または Wi‑Fi から接続できます。サインインが必要です。",
+          "signInRequired": "Orca Mobile Relay を使用するにはサインインしてください。",
+          "relayUnavailable": "このビルドでは Orca Relay を利用できません。ローカルネットワークをご利用ください。",
+          "signInAgain": "再サインイン",
+          "localTitle": "ローカルネットワーク"
         },
         "MobilePairingSetupSection": {
           "title": "スマートフォンをペアリング",
-          "automaticDescription": "ペアリングコードには、直接接続と暗号化されたOrca Relayのフォールバックが含まれます。",
-          "localDescription": "ペアリングコードは、下のローカルネットワークアドレスだけを使用します。",
           "regenerate": "再生成",
           "generate": "QRコードを生成",
-          "localSettings": "ローカル接続設定",
-          "localAddressDescription": "Orca Mobileからこのコンピューターへ直接接続できるLANまたはプライベートネットワークのアドレスを選択します。",
           "refresh": "ネットワークインターフェースを更新",
-          "tailnet": "自分のtailnetで接続",
-          "tailnetDescription": "このコンピューターとスマートフォンにTailscaleをインストールし、同じtailnetにサインインして、上で100.x.y.zアドレスを選択します。",
-          "getTailscale": "Tailscaleを入手"
+          "overview": "QR コードを生成し、Orca Mobile の Pair Desktop でスキャンしてください。",
+          "step1Title": "接続方法",
+          "step2Title": "このコンピューターのアドレス",
+          "step2RelayDescription": "近くでは高速な直接接続に使用されます。Relay はリモートアクセスに対応します。",
+          "step2LocalDescription": "スマートフォンが Wi‑Fi または Tailscale でこのアドレスに到達できる必要があります。"
         },
         "MobileRelayBetaAvailability": {
           "about": "Orca Relay ベータについて",
@@ -9208,6 +9219,9 @@
           "howToUseDescription": "Ask an agent working a Linear-linked worktree to read context, post updates, move the ticket, or attach the PR.",
           "terminalTitle": "Linear skill setup",
           "terminalAriaLabel": "Linear skill install terminal"
+        },
+        "MobileRelayBetaNotice": {
+          "notice": "Orca Relay is in beta."
         }
       },
       "right": {
@@ -9308,14 +9322,17 @@
             "d6a25618aa": "フォルダを折りたたむ",
             "d87a4c42e1": "Markdown プレビューを開く",
             "c2112579f6": "ダウンロード",
+            "7ac885bd2f": "フォルダーをダウンロード",
             "dd112c81d2": "Orca ブラウザで開く",
             "1bb9be455c": "プロジェクトとして追加...",
             "0fec99bfd7": "重複",
             "f61af83316": "新規フォルダー",
             "37c875d827": "新規ファイル",
             "b3e288bf41": "「{{value0}}」のダウンロードに失敗しました。",
+            "f729bcd97d": "フォルダー「{{value0}}」のダウンロードに失敗しました。",
             "1a3df04ae1": "オープン",
             "bce4d4e44f": "「{{value0}}」をダウンロードしました",
+            "a4029c996b": "フォルダー「{{value0}}」をダウンロードしました",
             "e26010014a": ".gitignore によって無視される",
             "a06551beee": "入力",
             "128a99ed5e": "未割り当て",
@@ -9692,7 +9709,9 @@
               "a9bf7c171a": "プッシュ失敗",
               "834cb3f23d": "AIで修正",
               "783a808870": "閉じる"
-            }
+            },
+            "createPrIntentSyncConflicts": "同期で競合が発生しました。解決してから Create PR を再試行してください。",
+            "createPrIntentSyncing": "ブランチを同期中…"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "選択した agent を開始できませんでした。",
@@ -10061,6 +10080,13 @@
               "control": {
                 "ai": {
                   "cfafa92509": "送信する未解決の競合はありません。"
+                }
+              }
+            },
+            "hosted": {
+              "review": {
+                "actions": {
+                  "e475c29b17": "This will merge the {{value0}}."
                 }
               }
             }
@@ -10659,7 +10685,8 @@
           },
           "ProjectCombobox": {
             "search": "Search projects...",
-            "empty": "No projects match your search."
+            "empty": "No projects match your search.",
+            "addProject": "Add a new project"
           }
         }
       },
@@ -10709,7 +10736,8 @@
             "group": "リリースチャンネル",
             "preview": "プレビュー",
             "stable": "安定版"
-          }
+          },
+          "relayDegradedNotice": "Relay couldn’t be reached — this code only works on your local network."
         },
         "MobilePage": {
           "e17393c6a3": "スマートフォンプレビュー",
@@ -10764,7 +10792,7 @@
             "0bad5b07c8": "GitHub と Linear",
             "d047197480": "GitHub · Linear",
             "a4c3f7b7aa": "タスク",
-            "d33d7a9c29": "orca&nbsp;&nbsp;·&nbsp;&nbsp;feat/mobile-page",
+            "d33d7a9c29": "orca  ·  feat/mobile-page",
             "25d6e8a491": "feat/mobile-page",
             "c791677f2f": "再開する",
             "cf3f98fa3f": "切断されました",
@@ -11994,7 +12022,9 @@
                 "2f9d6b4e10": "見出し 3 を切り替えます",
                 "8c1a3e7d52": "小さな見出しの概要を含む折りたたみ可能なセクションを作成します。",
                 "5e0b9c2a71": "見出し 4 を切り替えます",
-                "d4f16a8b39": "入れ子の見出しの概要を含む折りたたみ可能なセクションを作成します。"
+                "d4f16a8b39": "入れ子の見出しの概要を含む折りたたみ可能なセクションを作成します。",
+                "21d8c463e5": "見出し 5 を切り替えます",
+                "dc239b41ad": "深い見出しの概要を含む折りたたみ可能なセクションを作成します。"
               }
             }
           }
@@ -13252,15 +13282,15 @@
         "worktreeNotReady": "Worktreeが準備できていません — しばらくしてから再試行してください。",
         "uploadingAttachments": "{{value0}}個のファイルをリモートにアップロード中…",
         "model": "モデル",
-        "modelWithValue": "モデル: {{value0}}",
         "effort": "推論レベル",
-        "effortWithValue": "推論レベル: {{value0}}",
         "fastMode": "高速モード",
         "thinking": "思考",
         "options": "オプション",
         "sessionOptions": "セッションオプション",
         "chooseInAgentPicker": "エージェントの選択画面で選ぶ…",
         "toggleOption": "{{value0}}を切り替える",
+        "pillAccessibleName": "{{value0}} {{value1}}",
+        "valueUnknown": "現在の値が不明です — オンまたはオフを選んでください",
         "sentNotConfirmed": "エージェントに送信済み — 未確認",
         "setWhenSessionStarts": "セッション開始時に設定してください。",
         "availableAfterSessionStarts": "セッション開始後に利用できます。",
@@ -13272,7 +13302,9 @@
           "medium": "中",
           "high": "高",
           "xhigh": "最高",
-          "max": "最大"
+          "max": "最大",
+          "on": "オン",
+          "off": "オフ"
         },
         "noCommandsOrSkills": "No matching commands or skills",
         "commands": "Commands",

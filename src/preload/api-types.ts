@@ -1333,7 +1333,7 @@ export type PreloadApi = {
       isAlternateScreen?: boolean
       replay?: string
       sessionExpired?: boolean
-      coldRestore?: { scrollback: string; cwd: string }
+      coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }
       startupCwdFallback?: { kind: 'worktree'; cwd: string }
     }>
     write: (id: string, data: string) => void
@@ -2478,6 +2478,10 @@ export type PreloadApi = {
       filePath: string
       connectionId: string
     }) => Promise<{ canceled: true } | { canceled: false; destinationPath: string }>
+    downloadFolder: (args: {
+      dirPath: string
+      connectionId: string
+    }) => Promise<{ canceled: true } | { canceled: false; destinationPath: string }>
     saveDownloadedFile: (args: {
       suggestedName: string
       content: string
@@ -3251,6 +3255,9 @@ export type PreloadApi = {
           pairingUrl: string
           endpoint: string
           deviceId: string
+          /** Mode the QR actually encodes; 'local-only' when an automatic
+           *  request degraded because Relay could not be attached. */
+          connectionMode: MobilePairingConnectionMode
         }
     >
     getWindowsFirewallStatus: (args?: { address?: string }) => Promise<

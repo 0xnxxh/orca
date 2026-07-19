@@ -245,7 +245,7 @@ import {
   normalizeRuntimePathForComparison
 } from '../../shared/cross-platform-path'
 import { resolveTerminalStartupCwd } from '../../shared/terminal-startup-cwd'
-import { isWslUncPath } from '../../shared/wsl-paths'
+import { isWslUncPath, parseWslUncPath } from '../../shared/wsl-paths'
 import {
   folderWorkspaceKey,
   isWorkspaceKey,
@@ -345,6 +345,7 @@ import type {
 import type { AutomationService } from '../automations/service'
 import { RuntimeBrowserCommands } from './orca-runtime-browser'
 import { buildHeadlessTerminalSplitLayout } from './headless-terminal-split-layout'
+import { RecentPtyOutputBuffer } from './recent-pty-output-buffer'
 import {
   buildHeadlessTabGroupMove,
   buildHeadlessTabGroupSplit
@@ -975,6 +976,8 @@ type RuntimeLeafRecord = RuntimeSyncedLeaf & {
   lastOutputAt: number | null
   lastExitCode: number | null
   tailBuffer: string[]
+  tailTranscriptBuffer: string[]
+  tailTranscriptChars: number
   tailPartialLine: string
   tailPendingAnsi: string
   tailRedrawCursor: RetainedTailRedrawCursor | null
@@ -1011,6 +1014,7 @@ type RuntimePtyWorktreeRecord = {
   // Why: a Windows host can own both native and WSL panes; preamble command
   // selection must follow the pane that executes it, not process.platform.
   isWsl: boolean | null
+  wslDistro: string | null
   // Why: background CLI PTYs can outlive a failed renderer reveal. Preserve the
   // spawn-time tab/pane identity so later reveals can adopt under the env key.
   tabId: string | null
@@ -1031,6 +1035,8 @@ type RuntimePtyWorktreeRecord = {
   titleUpdatedAt: number | null
   lastOutputAt: number | null
   tailBuffer: string[]
+  tailTranscriptBuffer: string[]
+  tailTranscriptChars: number
   tailPartialLine: string
   tailPendingAnsi: string
   tailRedrawCursor: RetainedTailRedrawCursor | null
@@ -1198,6 +1204,19 @@ type RuntimeHeadlessTerminal = {
   writeChain: Promise<void>
 }
 
+type RuntimeVisibleTerminalState = {
+  lines: string[]
+  isAlternateScreen: boolean
+  sequence: number
+  generation: number
+}
+
+type ProviderBufferAcquisition = {
+  generation: number
+  scrollbackRows: number
+  promise: Promise<PtyProviderBufferSnapshot | null>
+}
+
 type HeadlessSeedMetadata = {
   cwd?: string | null
   oscLinks?: TerminalOscLinkRange[]
@@ -1228,7 +1247,7 @@ type RuntimePtyController = {
     leafId?: string
     sessionId?: string
     persistHostSessionBinding?: boolean
-  }): Promise<{ id: string }>
+  }): Promise<{ id: string; wslDistro?: string }>
   write(ptyId: string, data: string): boolean
   kill(ptyId: string): boolean
   stopAndWait?(ptyId: string, opts?: { keepHistory?: boolean }): Promise<boolean>
@@ -1303,7 +1322,6 @@ const BRACKETED_PASTE_QUIET_MS = 1500
 const DRAFT_PASTE_READY_TIMEOUT_MS = 8000
 const MOBILE_TERMINAL_SURFACE_TIMEOUT_MS = 10_000
 const MOBILE_TERMINAL_READY_FALLBACK_MS = 1000
-const RECENT_PTY_OUTPUT_LIMIT = 64 * 1024
 const RECENT_PTY_PATH_CANDIDATE_LIMIT = 1024
 const RECENT_PTY_PATH_CANDIDATE_MAX_BYTES = 4 * 1024
 const RECENT_PTY_PATH_CANDIDATE_TOTAL_BYTES = 64 * 1024
@@ -2266,7 +2284,7 @@ export class OrcaRuntimeService {
   >()
   // Why: startup draft paste can subscribe after the agent already emitted its
   // ready marker. Keep a bounded raw buffer so fast startup output is replayed.
-  private recentPtyOutputById = new Map<string, string>()
+  private recentPtyOutputById = new Map<string, RecentPtyOutputBuffer>()
   // Why: mobile clients need to know when the desktop restores a terminal
   // from mobile-fit so they can update their UI. These listeners are
   // invoked from resizeForClient and onClientDisconnected/onPtyExit.
@@ -2306,6 +2324,7 @@ export class OrcaRuntimeService {
   // iterates them all. Listeners are cleaned up via subscriptionCleanups.
   private notificationListeners = new Set<(event: MobileNotificationEvent) => void>()
   private ptysById = new Map<string, RuntimePtyWorktreeRecord>()
+  private wslDistroByPtyId = new Map<string, string>()
   private titleObservationSequence = 0
   private headlessTerminals = new Map<string, RuntimeHeadlessTerminal>()
   private ptyOutputSequenceById = new Map<string, number>()
@@ -2317,6 +2336,12 @@ export class OrcaRuntimeService {
     string,
     Set<TerminalKittyKeyboardModeTracker>
   >()
+  private providerBufferAcquisitionsByPtyId = new Map<string, ProviderBufferAcquisition>()
+  private providerVisibleStateByPtyId = new Map<string, RuntimeVisibleTerminalState>()
+  private providerVisibleRetryAtByPtyId = new Map<string, number>()
+  private providerSnapshotsWithLiveModeTransition = new WeakSet<PtyProviderBufferSnapshot>()
+  private ptyLifecycleGenerationById = new Map<string, number>()
+  private nextPtyLifecycleGeneration = 1
   private recentPtyPathCandidatesById = new Map<string, string[]>()
   // Why: OSC 9999 status can span PTY chunks. Keeping parser state in the
   // runtime lets hidden/model-owned terminals observe agent state without a
@@ -3332,6 +3357,8 @@ export class OrcaRuntimeService {
         lastOutputAt: tailSource?.lastOutputAt ?? null,
         lastExitCode: tailSource?.lastExitCode ?? null,
         tailBuffer: tailSource?.tailBuffer ?? [],
+        tailTranscriptBuffer: tailSource?.tailTranscriptBuffer ?? [],
+        tailTranscriptChars: tailSource?.tailTranscriptChars ?? 0,
         tailPartialLine: tailSource?.tailPartialLine ?? '',
         tailPendingAnsi: tailSource?.tailPendingAnsi ?? '',
         tailRedrawCursor: tailSource?.tailRedrawCursor ?? null,
@@ -5982,6 +6009,45 @@ export class OrcaRuntimeService {
     }
   }
 
+  preparePtyExecutionContext(
+    ptyId: string,
+    wslDistro: string | null,
+    options: { resetIncarnation?: boolean; preserveExisting?: boolean } = {}
+  ): boolean {
+    const pty = this.ptysById.get(ptyId)
+    const hadExistingContext = this.wslDistroByPtyId.has(ptyId) || pty !== undefined
+    if (options.preserveExisting && hadExistingContext) {
+      // Why: attach-time settings are only a fallback; a live PTY's recorded
+      // execution namespace remains authoritative until its provider replies.
+      return false
+    }
+
+    if (options.resetIncarnation) {
+      this.disposeHeadlessTerminal(ptyId)
+      this.osc7ScanTailByPtyId.delete(ptyId)
+      this.terminalCwdByPtyId.delete(ptyId)
+      this.terminalFileUriHostnameByPtyId.delete(ptyId)
+      this.wslDistroByPtyId.delete(ptyId)
+    }
+
+    const previous = this.wslDistroByPtyId.get(ptyId) ?? null
+    if (wslDistro) {
+      this.wslDistroByPtyId.set(ptyId, wslDistro)
+    } else {
+      this.wslDistroByPtyId.delete(ptyId)
+    }
+    if (pty) {
+      pty.wslDistro = wslDistro
+    }
+    if (!options.resetIncarnation && previous !== wslDistro && this.headlessTerminals.has(ptyId)) {
+      // Why: bytes parsed with two distro namespaces would leave an internally
+      // inconsistent CWD; rebuild from the provider's authoritative snapshot.
+      this.terminalCwdByPtyId.delete(ptyId)
+      this.replaceHeadlessTerminalAfterExecutionContextChange(ptyId)
+    }
+    return options.resetIncarnation === true || !hadExistingContext || previous !== wslDistro
+  }
+
   /** Record the spawn launch command so the per-PTY Command Code detector can
    *  arm from it (renderer startupCommand parity). Best-effort: a chunk that
    *  beats this call falls back to the detector's banner arming. */
@@ -6040,6 +6106,7 @@ export class OrcaRuntimeService {
     const ptyTailBefore = pty
       ? {
           lines: pty.tailBuffer,
+          transcriptLines: pty.tailTranscriptBuffer,
           partialLine: pty.tailPartialLine,
           pendingAnsi: pty.tailPendingAnsi,
           redrawCursor: pty.tailRedrawCursor,
@@ -6061,10 +6128,18 @@ export class OrcaRuntimeService {
         pty.tailRedrawCursor
       )
       ptyTailAfter = nextTail
+      const nextTranscript = appendCompletedTerminalTranscript(
+        pty.tailTranscriptBuffer,
+        pty.tailTranscriptChars,
+        nextTail.newlyCompletedLines,
+        nextTail.newCompleteLines
+      )
       pty.tailBuffer = nextTail.lines
+      pty.tailTranscriptBuffer = nextTranscript.lines
+      pty.tailTranscriptChars = nextTranscript.characters
       pty.tailPartialLine = nextTail.partialLine
       pty.tailRedrawCursor = nextTail.redrawCursor
-      pty.tailTruncated = pty.tailTruncated || nextTail.truncated
+      pty.tailTruncated = pty.tailTruncated || nextTail.truncated || nextTranscript.truncated
       pty.tailLinesTotal += nextTail.newCompleteLines
       pty.preview = buildPreview(pty.tailBuffer, pty.tailPartialLine)
       this.scheduleWaitBlockedCheck(ptyId, normalized.text, at)
@@ -6087,6 +6162,7 @@ export class OrcaRuntimeService {
         ptyTailAfter &&
         tailStateMatches(
           leaf.tailBuffer,
+          leaf.tailTranscriptBuffer,
           leaf.tailPartialLine,
           leaf.tailPendingAnsi,
           leaf.tailRedrawCursor,
@@ -6098,6 +6174,8 @@ export class OrcaRuntimeService {
         // Why: the leaf and PTY record usually mirror the same terminal. Reuse
         // the PTY tail update instead of splitting large output twice.
         leaf.tailBuffer = pty.tailBuffer
+        leaf.tailTranscriptBuffer = pty.tailTranscriptBuffer
+        leaf.tailTranscriptChars = pty.tailTranscriptChars
         leaf.tailPartialLine = pty.tailPartialLine
         leaf.tailPendingAnsi = pty.tailPendingAnsi
         leaf.tailRedrawCursor = pty.tailRedrawCursor
@@ -6123,6 +6201,12 @@ export class OrcaRuntimeService {
           normalized.text,
           leaf.tailRedrawCursor
         )
+        const nextTranscript = appendCompletedTerminalTranscript(
+          leaf.tailTranscriptBuffer,
+          leaf.tailTranscriptChars,
+          nextTail.newlyCompletedLines,
+          nextTail.newCompleteLines
+        )
         const nextWaitState = computeTerminalTailWaitState(
           nextTail.lines,
           nextTail.partialLine,
@@ -6133,9 +6217,11 @@ export class OrcaRuntimeService {
         }
         leaf.tailWaitState = nextWaitState
         leaf.tailBuffer = nextTail.lines
+        leaf.tailTranscriptBuffer = nextTranscript.lines
+        leaf.tailTranscriptChars = nextTranscript.characters
         leaf.tailPartialLine = nextTail.partialLine
         leaf.tailRedrawCursor = nextTail.redrawCursor
-        leaf.tailTruncated = leaf.tailTruncated || nextTail.truncated
+        leaf.tailTruncated = leaf.tailTruncated || nextTail.truncated || nextTranscript.truncated
         leaf.tailLinesTotal += nextTail.newCompleteLines
         leaf.preview = buildPreview(leaf.tailBuffer, leaf.tailPartialLine)
       }
@@ -6783,7 +6869,10 @@ export class OrcaRuntimeService {
     return uri
       ? parseFileUriPathParts(uri, {
           pathFlavor,
-          remotePosixAuthority: !!pty?.connectionId && pathFlavor !== 'win32'
+          remotePosixAuthority: !!pty?.connectionId && pathFlavor !== 'win32',
+          wslDistro: pty?.connectionId
+            ? undefined
+            : (this.wslDistroByPtyId.get(ptyId) ?? pty?.wslDistro ?? undefined)
         })
       : null
   }
@@ -6939,6 +7028,25 @@ export class OrcaRuntimeService {
     return this.ptyOutputSequenceById.get(ptyId) ?? 0
   }
 
+  private getPtyLifecycleGeneration(ptyId: string): number {
+    const existing = this.ptyLifecycleGenerationById.get(ptyId)
+    if (existing !== undefined) {
+      return existing
+    }
+    const generation = this.nextPtyLifecycleGeneration++
+    this.ptyLifecycleGenerationById.set(ptyId, generation)
+    return generation
+  }
+
+  private advancePtyLifecycleGeneration(ptyId: string): void {
+    this.ptyLifecycleGenerationById.set(ptyId, this.nextPtyLifecycleGeneration++)
+    // Why: a provider response belongs to the process generation that issued
+    // it; a respawn must neither reuse its frame nor join its in-flight call.
+    this.providerBufferAcquisitionsByPtyId.delete(ptyId)
+    this.providerVisibleStateByPtyId.delete(ptyId)
+    this.providerVisibleRetryAtByPtyId.delete(ptyId)
+  }
+
   synchronizePtyOutputSequenceFromProvider(
     ptyId: string,
     providerSequence: { value: number; generation: 'continued' | 'reset' },
@@ -6965,12 +7073,20 @@ export class OrcaRuntimeService {
     const providerBaseline = providerOffset + baseline
 
     if (providerSequence.generation === 'reset') {
+      this.advancePtyLifecycleGeneration(ptyId)
       // Why: daemon respawn/cold restore starts a new absolute domain. Old
       // emulator state cannot remain authoritative over the replacement.
       if (replacesExistingRuntimeGeneration) {
         this.disposeHeadlessTerminal(ptyId)
       }
       this.providerModeTrackersByPtyId.delete(ptyId)
+      this.wslDistroByPtyId.delete(ptyId)
+      this.terminalCwdByPtyId.delete(ptyId)
+      this.terminalFileUriHostnameByPtyId.delete(ptyId)
+      const pty = this.ptysById.get(ptyId)
+      if (pty) {
+        pty.wslDistro = null
+      }
       if (replacesExistingRuntimeGeneration && postSpawnSequence === 0) {
         this.resetTrackedTerminalStateForProviderGeneration(ptyId)
       }
@@ -7456,6 +7572,9 @@ export class OrcaRuntimeService {
       pathFlavor,
       remotePosixFileUriAuthority:
         !!this.ptysById.get(ptyId)?.connectionId && pathFlavor !== 'win32',
+      wslDistro: this.ptysById.get(ptyId)?.connectionId
+        ? undefined
+        : (this.wslDistroByPtyId.get(ptyId) ?? this.ptysById.get(ptyId)?.wslDistro ?? undefined),
       // Why: replies take the provider input path (same entry as pty:write —
       // daemon shell-ready gating and the SSH relay write apply unchanged),
       // NOT writePtyInput, so renderer interactive-output metering never
@@ -7506,6 +7625,44 @@ export class OrcaRuntimeService {
     const state = this.createPtyHeadlessTerminalState(ptyId, size)
     this.headlessTerminals.set(ptyId, state)
     return state
+  }
+
+  private replaceHeadlessTerminalAfterExecutionContextChange(ptyId: string): void {
+    this.disposeHeadlessTerminal(ptyId)
+    this.providerSnapshotPreferredPtys.add(ptyId)
+    const dims = this.getTerminalSize(ptyId) ?? { cols: 80, rows: 24 }
+    const state = this.createPtyHeadlessTerminalState(ptyId, dims)
+    this.headlessTerminals.set(ptyId, state)
+    state.writeChain = state.writeChain
+      .then(async () => {
+        const snapshot = await this.serializeProviderTerminalBuffer(ptyId)
+        if (!snapshot) {
+          return
+        }
+        const data = `${snapshot.scrollbackAnsi ?? ''}${snapshot.data}`
+        // Why: a newer live OSC 7 can arrive while the snapshot is in flight;
+        // only seed metadata while no post-correction CWD has won the race.
+        if (!this.terminalCwdByPtyId.has(ptyId)) {
+          this.recordOsc7MetadataForPty(ptyId, data)
+        }
+        await state.emulator.write(data)
+        if (snapshot.cwd !== undefined) {
+          state.emulator.setCwd(snapshot.cwd)
+          if (!this.terminalCwdByPtyId.has(ptyId) && snapshot.cwd?.trim()) {
+            this.terminalCwdByPtyId.set(ptyId, snapshot.cwd)
+          }
+        }
+        if (snapshot.oscLinks !== undefined) {
+          state.emulator.setRestoredOscLinks(snapshot.oscLinks)
+        }
+        state.outputSequence = snapshot.seq
+      })
+      .catch(() => {
+        // Best-effort: live bytes already chain behind this replacement state.
+      })
+      .finally(() => {
+        this.providerSnapshotPreferredPtys.delete(ptyId)
+      })
   }
 
   private resizeHeadlessTerminal(ptyId: string, cols: number, rows: number): void {
@@ -7639,7 +7796,35 @@ export class OrcaRuntimeService {
 
   private async serializeProviderTerminalBuffer(
     ptyId: string,
-    opts: { scrollbackRows?: number } = {}
+    opts: { scrollbackRows?: number } = {},
+    wait: { timeoutMs?: number } = {}
+  ): Promise<PtyProviderBufferSnapshot | null> {
+    const generation = this.getPtyLifecycleGeneration(ptyId)
+    const scrollbackRows = Math.max(0, Math.floor(opts.scrollbackRows ?? 0))
+    let acquisition = this.providerBufferAcquisitionsByPtyId.get(ptyId)
+    if (
+      !acquisition ||
+      acquisition.generation !== generation ||
+      acquisition.scrollbackRows < scrollbackRows
+    ) {
+      const promise = this.captureProviderTerminalBuffer(ptyId, opts, generation)
+      acquisition = { generation, scrollbackRows, promise }
+      this.providerBufferAcquisitionsByPtyId.set(ptyId, acquisition)
+      void promise.finally(() => {
+        if (this.providerBufferAcquisitionsByPtyId.get(ptyId) === acquisition) {
+          this.providerBufferAcquisitionsByPtyId.delete(ptyId)
+        }
+      })
+    }
+    return typeof wait.timeoutMs === 'number'
+      ? withTimeout(acquisition.promise, wait.timeoutMs, null)
+      : acquisition.promise
+  }
+
+  private async captureProviderTerminalBuffer(
+    ptyId: string,
+    opts: { scrollbackRows?: number },
+    generation: number
   ): Promise<PtyProviderBufferSnapshot | null> {
     const liveModeTracker = new TerminalKittyKeyboardModeTracker()
     let liveModeTrackers = this.providerModeSnapshotScansByPtyId.get(ptyId)
@@ -7652,24 +7837,44 @@ export class OrcaRuntimeService {
       // Why: daemon PTYs survive an app relaunch before any renderer mounts.
       // Mobile still needs their retained history without navigating desktop.
       const snapshot = await this.ptyController?.serializeProviderBuffer?.(ptyId, opts)
-      if (typeof snapshot?.alternateScreen === 'boolean') {
+      if (!snapshot || this.getPtyLifecycleGeneration(ptyId) !== generation) {
+        return null
+      }
+      const snapshotModeTracker = new TerminalKittyKeyboardModeTracker()
+      if (typeof snapshot.alternateScreen === 'boolean') {
+        snapshotModeTracker.scan(snapshot.alternateScreen ? '\x1b[?1049h' : '\x1b[?1049l')
+      } else {
+        // Why: older providers omit mode metadata, but their ANSI snapshot
+        // still carries the DECSET/DECRST needed to classify the active screen.
+        snapshotModeTracker.scanReplay(snapshot.data)
+      }
+      const observedSnapshotMode = snapshotModeTracker.hasObservedAlternateScreenSwitch
+      let effectiveAlternateScreen: boolean | undefined
+      if (observedSnapshotMode || liveModeTracker.hasObservedAlternateScreenSwitch) {
         const modeTracker = new TerminalKittyKeyboardModeTracker()
-        if (snapshot.alternateScreen) {
-          modeTracker.scan('\x1b[?1049h')
+        if (observedSnapshotMode) {
+          modeTracker.scan(snapshotModeTracker.isAlternateScreen ? '\x1b[?1049h' : '\x1b[?1049l')
         }
+        // Why: stream bytes received after the request began can be newer
+        // than snapshot metadata, so an observed live transition wins.
         if (liveModeTracker.hasObservedAlternateScreenSwitch) {
           modeTracker.scan(liveModeTracker.isAlternateScreen ? '\x1b[?1049h' : '\x1b[?1049l')
         }
         this.providerModeTrackersByPtyId.set(ptyId, modeTracker)
-      }
-      if (!snapshot) {
-        return null
+        effectiveAlternateScreen = modeTracker.isAlternateScreen
       }
       const providerOffset = this.providerSequenceOffsetByPtyId.get(ptyId) ?? 0
-      return this.preferTrackedLastTitle(ptyId, {
+      const reconciledSnapshot = this.preferTrackedLastTitle(ptyId, {
         ...snapshot,
-        seq: providerOffset + snapshot.seq
+        seq: providerOffset + snapshot.seq,
+        ...(effectiveAlternateScreen !== undefined
+          ? { alternateScreen: effectiveAlternateScreen }
+          : {})
       })
+      if (liveModeTracker.hasObservedAlternateScreenSwitch) {
+        this.providerSnapshotsWithLiveModeTransition.add(reconciledSnapshot)
+      }
+      return reconciledSnapshot
     } catch {
       return null
     } finally {
@@ -7685,14 +7890,162 @@ export class OrcaRuntimeService {
     read: RuntimeTerminalRead,
     opts: { cursor?: number; limit?: number } = {}
   ): Promise<RuntimeTerminalRead> {
-    if (!shouldFallbackToVisibleTerminalSnapshot(read, opts)) {
+    if (typeof opts.cursor === 'number') {
       return read
     }
-    const lines = await this.readRendererVisibleSnapshotLines(ptyId)
+    const blankFallback = shouldFallbackToVisibleTerminalSnapshot(read, opts)
+    const knownAlternateScreen = this.isTerminalAlternateScreen(ptyId)
+    const providerModeUnknown =
+      this.providerSnapshotPreferredPtys.has(ptyId) && !this.providerModeTrackersByPtyId.has(ptyId)
+    if (
+      !blankFallback &&
+      !providerModeUnknown &&
+      !knownAlternateScreen &&
+      !this.headlessTerminals.has(ptyId)
+    ) {
+      return read
+    }
+    const visibleState = await this.readVisibleTerminalState(ptyId)
+    if (!blankFallback && !knownAlternateScreen && !visibleState?.isAlternateScreen) {
+      return read
+    }
+    let lines = visibleState?.lines ?? []
+    if (lines.length === 0) {
+      lines = await this.readRendererVisibleSnapshotLines(ptyId)
+    }
     if (lines.length === 0) {
       return read
     }
     return buildVisibleSnapshotReadFallback(read, lines, opts.limit)
+  }
+
+  private async visibleSnapshotPreview(ptyId: string, preview: string): Promise<string> {
+    const knownAlternateScreen = this.isTerminalAlternateScreen(ptyId)
+    const providerModeUnknown =
+      this.providerSnapshotPreferredPtys.has(ptyId) && !this.providerModeTrackersByPtyId.has(ptyId)
+    if (!providerModeUnknown && !knownAlternateScreen && !this.headlessTerminals.has(ptyId)) {
+      return preview
+    }
+    const visibleState = await this.readVisibleTerminalState(ptyId)
+    if (!knownAlternateScreen && !visibleState?.isAlternateScreen) {
+      return preview
+    }
+    let lines = visibleState?.lines ?? []
+    if (lines.length === 0) {
+      lines = await this.readRendererVisibleSnapshotLines(ptyId)
+    }
+    return lines.length > 0 ? buildPreview(lines, '') : preview
+  }
+
+  private async readVisibleTerminalState(
+    ptyId: string
+  ): Promise<RuntimeVisibleTerminalState | null> {
+    if (!this.providerSnapshotPreferredPtys.has(ptyId)) {
+      return this.readHeadlessVisibleTerminalState(ptyId)
+    }
+
+    const generation = this.getPtyLifecycleGeneration(ptyId)
+    const outputSequence = this.getPtyOutputSequence(ptyId)
+    const cached = this.providerVisibleStateByPtyId.get(ptyId)
+    const trackedMode = this.providerModeTrackersByPtyId.get(ptyId)
+    if (
+      cached?.generation === generation &&
+      outputSequence <= cached.sequence &&
+      (!trackedMode || trackedMode.isAlternateScreen === cached.isAlternateScreen)
+    ) {
+      return cached
+    }
+    if (trackedMode && !trackedMode.isAlternateScreen) {
+      const headlessState = await this.readHeadlessVisibleTerminalState(ptyId)
+      return headlessState
+        ? { ...headlessState, isAlternateScreen: false }
+        : {
+            lines: [],
+            isAlternateScreen: false,
+            sequence: outputSequence,
+            generation
+          }
+    }
+    if ((this.providerVisibleRetryAtByPtyId.get(ptyId) ?? 0) > Date.now()) {
+      return null
+    }
+
+    const snapshot = await this.serializeProviderTerminalBuffer(
+      ptyId,
+      { scrollbackRows: 0 },
+      { timeoutMs: VISIBLE_TERMINAL_SNAPSHOT_TIMEOUT_MS }
+    )
+    if (!snapshot || this.getPtyLifecycleGeneration(ptyId) !== generation) {
+      this.providerVisibleRetryAtByPtyId.set(ptyId, Date.now() + VISIBLE_TERMINAL_SNAPSHOT_RETRY_MS)
+      return null
+    }
+    this.providerVisibleRetryAtByPtyId.delete(ptyId)
+    if (this.providerSnapshotsWithLiveModeTransition.has(snapshot)) {
+      // Why: the provider frame can predate a mode switch observed while its
+      // RPC was pending; the ordered live emulator owns the post-switch grid.
+      const liveState = await this.readHeadlessVisibleTerminalState(ptyId)
+      if (liveState && liveState.isAlternateScreen === (snapshot.alternateScreen ?? false)) {
+        return liveState
+      }
+    }
+    const lines = await this.parseVisibleSnapshotLines(snapshot)
+    if (this.getPtyLifecycleGeneration(ptyId) !== generation) {
+      return null
+    }
+    const visibleState: RuntimeVisibleTerminalState = {
+      lines,
+      isAlternateScreen: snapshot.alternateScreen ?? false,
+      sequence: snapshot.seq,
+      generation
+    }
+    if (this.getPtyOutputSequence(ptyId) <= snapshot.seq) {
+      this.providerVisibleStateByPtyId.set(ptyId, visibleState)
+    }
+    return visibleState
+  }
+
+  private async readHeadlessVisibleTerminalState(
+    ptyId: string
+  ): Promise<RuntimeVisibleTerminalState | null> {
+    const state = this.headlessTerminals.get(ptyId)
+    if (!state) {
+      return null
+    }
+    const generation = this.getPtyLifecycleGeneration(ptyId)
+    await state.writeChain
+    if (
+      this.headlessTerminals.get(ptyId) !== state ||
+      this.getPtyLifecycleGeneration(ptyId) !== generation
+    ) {
+      return null
+    }
+    return {
+      lines: visibleNonBlankTerminalLines(state.emulator.getVisibleLines()),
+      isAlternateScreen: state.emulator.isAlternateScreen,
+      sequence: state.outputSequence,
+      generation
+    }
+  }
+
+  private async parseVisibleSnapshotLines(snapshot: {
+    data: string
+    cols: number
+    rows: number
+  }): Promise<string[]> {
+    if (snapshot.data.length === 0) {
+      return []
+    }
+    const emulator = new HeadlessEmulator({
+      cols: snapshot.cols,
+      rows: snapshot.rows,
+      scrollback: 0
+    })
+    try {
+      await emulator.write(`\x1b[2J\x1b[3J\x1b[H${snapshot.data}`)
+      return visibleNonBlankTerminalLines(emulator.getVisibleLines())
+    } finally {
+      emulator.dispose()
+    }
   }
 
   private async readRendererVisibleSnapshotLines(ptyId: string): Promise<string[]> {
@@ -7707,27 +8060,18 @@ export class OrcaRuntimeService {
       // Why: raw PTY tails can be whitespace-only while a full-screen TUI is
       // visibly nonblank in renderer xterm. Ask the renderer for the active
       // screen instead of reusing the headless transcript path.
-      const snapshot = await controller.serializeBuffer(ptyId, {
-        scrollbackRows: 0,
-        altScreenForcesZeroRows: false
-      })
+      const snapshot = await withTimeout(
+        controller.serializeBuffer(ptyId, {
+          scrollbackRows: 0,
+          altScreenForcesZeroRows: false
+        }),
+        VISIBLE_TERMINAL_SNAPSHOT_TIMEOUT_MS,
+        null
+      )
       if (!snapshot || snapshot.data.length === 0) {
         return []
       }
-      const emulator = new HeadlessEmulator({
-        cols: snapshot.cols,
-        rows: snapshot.rows,
-        scrollback: 0
-      })
-      try {
-        await emulator.write(snapshot.data)
-        return emulator
-          .getVisibleLines()
-          .map((line) => line.trimEnd())
-          .filter((line) => line.trim().length > 0)
-      } finally {
-        emulator.dispose()
-      }
+      return this.parseVisibleSnapshotLines(snapshot)
     } catch {
       return []
     }
@@ -7867,10 +8211,12 @@ export class OrcaRuntimeService {
   }
 
   private recordRecentPtyOutputForPathProvenance(ptyId: string, data: string): void {
-    this.recentPtyOutputById.set(
-      ptyId,
-      appendRecentPtyOutput(this.recentPtyOutputById.get(ptyId), data)
-    )
+    let recentOutputBuffer = this.recentPtyOutputById.get(ptyId)
+    if (!recentOutputBuffer) {
+      recentOutputBuffer = new RecentPtyOutputBuffer()
+      this.recentPtyOutputById.set(ptyId, recentOutputBuffer)
+    }
+    recentOutputBuffer.append(data)
     this.recentPtyPathCandidatesById.set(
       ptyId,
       appendRecentPtyPathCandidates(this.recentPtyPathCandidatesById.get(ptyId), data)
@@ -7918,7 +8264,7 @@ export class OrcaRuntimeService {
 
   hasRecentTerminalOutputPath(handle: string, pathText: string, absolutePath: string): boolean {
     const ptyId = this.resolveLeafForHandle(handle)?.ptyId
-    const recentOutput = ptyId ? this.recentPtyOutputById.get(ptyId) : null
+    const recentOutput = ptyId ? this.recentPtyOutputById.get(ptyId)?.read() : null
     if (recentOutput && recentTerminalOutputIncludesPath(recentOutput, pathText, absolutePath)) {
       return true
     }
@@ -8846,6 +9192,7 @@ export class OrcaRuntimeService {
   }
 
   onPtyExit(ptyId: string, exitCode: number): void {
+    this.advancePtyLifecycleGeneration(ptyId)
     advertisedUrlWatcher.unbindPty(ptyId)
     // Clean up new mobile state for this PTY
     this.mobileSubscribers.delete(ptyId)
@@ -8862,6 +9209,9 @@ export class OrcaRuntimeService {
     this.providerSnapshotPreferredPtys.delete(ptyId)
     this.providerModeTrackersByPtyId.delete(ptyId)
     this.providerModeSnapshotScansByPtyId.delete(ptyId)
+    this.providerBufferAcquisitionsByPtyId.delete(ptyId)
+    this.providerVisibleStateByPtyId.delete(ptyId)
+    this.providerVisibleRetryAtByPtyId.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
     this.terminalSpawnCommandsByPtyId.delete(ptyId)
     this.disposePtyTitleTracker(ptyId)
@@ -8869,6 +9219,7 @@ export class OrcaRuntimeService {
     this.osc7ScanTailByPtyId.delete(ptyId)
     this.terminalCwdByPtyId.delete(ptyId)
     this.terminalFileUriHostnameByPtyId.delete(ptyId)
+    this.wslDistroByPtyId.delete(ptyId)
     this.clearAgentRowSnapshotsForPty(ptyId)
     // Why: a Claude agent-team leader whose PTY exits naturally (agent finished,
     // process died, renderer reload) must release its team + nested panes map.
@@ -11011,8 +11362,12 @@ export class OrcaRuntimeService {
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {
       const worktreesById = await this.getResolvedWorktreeMap()
+      const summary = this.buildPtyTerminalSummary(pty.pty, worktreesById)
+      const preview = await this.visibleSnapshotPreview(pty.pty.ptyId, summary.preview)
+      this.assertLiveTerminalHandleTargetsPty(handle, pty.pty.ptyId)
       return {
-        ...this.buildPtyTerminalSummary(pty.pty, worktreesById),
+        ...summary,
+        preview,
         tabId: pty.pty.tabId ?? pty.record.tabId,
         leafId: parsePaneKey(pty.pty.paneKey ?? '')?.leafId ?? pty.record.leafId,
         paneRuntimeId: -1,
@@ -11025,8 +11380,16 @@ export class OrcaRuntimeService {
     this.assertStableReadyGraph(graphEpoch)
     const { leaf } = this.getLiveLeafForHandle(handle)
     const summary = this.buildTerminalSummary(leaf, worktreesById)
+    const preview = leaf.ptyId
+      ? await this.visibleSnapshotPreview(leaf.ptyId, summary.preview)
+      : summary.preview
+    this.assertStableReadyGraph(graphEpoch)
+    if (leaf.ptyId) {
+      this.assertLiveTerminalHandleTargetsPty(handle, leaf.ptyId)
+    }
     return {
       ...summary,
+      preview,
       paneRuntimeId: leaf.paneRuntimeId,
       ptyId: leaf.ptyId,
       rendererGraphEpoch: this.rendererGraphEpoch
@@ -11040,21 +11403,29 @@ export class OrcaRuntimeService {
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {
       const read = this.readPtyTerminal(handle, pty.pty, opts)
-      return this.withVisibleSnapshotFallback(pty.pty.ptyId, read, opts)
+      const visibleRead = await this.withVisibleSnapshotFallback(pty.pty.ptyId, read, opts)
+      this.assertLiveTerminalHandleTargetsPty(handle, pty.pty.ptyId)
+      return visibleRead
     }
 
     const { leaf } = this.getLiveLeafForHandle(handle)
     const read = readTerminalTail({
       handle,
       status: getTerminalState(leaf),
-      completedLines: leaf.tailBuffer,
+      previewLines: leaf.tailBuffer,
+      completedLines: leaf.tailTranscriptBuffer,
       partialLine: leaf.tailPartialLine,
       completedLineCount: leaf.tailLinesTotal,
       bufferTruncated: leaf.tailTruncated,
       cursor: opts.cursor,
       limit: opts.limit
     })
-    return leaf.ptyId ? this.withVisibleSnapshotFallback(leaf.ptyId, read, opts) : read
+    if (!leaf.ptyId) {
+      return read
+    }
+    const visibleRead = await this.withVisibleSnapshotFallback(leaf.ptyId, read, opts)
+    this.assertLiveTerminalHandleTargetsPty(handle, leaf.ptyId)
+    return visibleRead
   }
 
   async sendTerminal(
@@ -15519,7 +15890,7 @@ export class OrcaRuntimeService {
       }
 
       unsubscribe = this.subscribeToTerminalData(ptyId, observeData)
-      const replay = this.recentPtyOutputById.get(ptyId)
+      const replay = this.recentPtyOutputById.get(ptyId)?.read()
       if (replay) {
         observeData(replay)
       }
@@ -18650,6 +19021,9 @@ export class OrcaRuntimeService {
           : {})
       })
       this.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
+      if (result.wslDistro) {
+        this.preparePtyExecutionContext(result.id, result.wslDistro)
+      }
       this.registerPty(result.id, workspace.id, workspace.connectionId)
       const pty = this.getOrCreatePtyWorktreeRecord(result.id)
       if (pty) {
@@ -19823,6 +20197,9 @@ export class OrcaRuntimeService {
       preAllocatedHandle
     })
     this.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
+    if (result.wslDistro) {
+      this.preparePtyExecutionContext(result.id, result.wslDistro)
+    }
     this.registerPty(result.id, workspace.id, workspace.connectionId)
     const createdPty = this.getOrCreatePtyWorktreeRecord(result.id)
     if (createdPty) {
@@ -21314,17 +21691,29 @@ export class OrcaRuntimeService {
         | 'title'
         | 'connectionId'
         | 'isWsl'
+        | 'wslDistro'
       >
     > = {}
   ): RuntimePtyWorktreeRecord {
     let pty = this.ptysById.get(ptyId)
     if (!pty) {
       const titleObservedAt = state.title ? this.nextTitleObservationSequence() : null
+      const connectionId = state.connectionId ?? parseAppSshPtyId(ptyId)?.connectionId ?? null
+      const worktreePath = splitWorktreeIdForFilesystem(worktreeId)?.worktreePath
+      const fallbackWslDistro =
+        process.platform === 'win32' && connectionId === null && worktreePath
+          ? parseWslUncPath(worktreePath)?.distro
+          : undefined
+      const wslDistro =
+        connectionId === null
+          ? (state.wslDistro ?? this.wslDistroByPtyId.get(ptyId) ?? fallbackWslDistro ?? null)
+          : null
       pty = {
         ptyId,
         worktreeId,
-        connectionId: state.connectionId ?? parseAppSshPtyId(ptyId)?.connectionId ?? null,
+        connectionId,
         isWsl: state.isWsl ?? null,
+        wslDistro,
         tabId: state.tabId ?? null,
         paneKey: state.paneKey ?? null,
         launchConfig: null,
@@ -21343,6 +21732,8 @@ export class OrcaRuntimeService {
         titleUpdatedAt: titleObservedAt,
         lastOutputAt: state.lastOutputAt ?? null,
         tailBuffer: [],
+        tailTranscriptBuffer: [],
+        tailTranscriptChars: 0,
         tailPartialLine: '',
         tailPendingAnsi: '',
         tailRedrawCursor: null,
@@ -21355,6 +21746,13 @@ export class OrcaRuntimeService {
         this.setPtyManagementTitleFromObservedTitle(pty, state.title, titleObservedAt ?? 0)
       }
       this.ptysById.set(ptyId, pty)
+      if (wslDistro) {
+        this.wslDistroByPtyId.set(ptyId, wslDistro)
+      } else if (connectionId !== null) {
+        // Why: restored SSH IDs can collide with stale local parser state;
+        // connection ownership must win before their first output is parsed.
+        this.wslDistroByPtyId.delete(ptyId)
+      }
       // Why: restored/controller-discovered PTYs learn their worktree here
       // without registerPty(), so URL enrichment must bind at this source.
       advertisedUrlWatcher.bindPty(ptyId, worktreeId)
@@ -21364,9 +21762,21 @@ export class OrcaRuntimeService {
     pty.worktreeId = worktreeId
     if (state.connectionId !== undefined) {
       pty.connectionId = state.connectionId
+      if (state.connectionId !== null) {
+        pty.wslDistro = null
+        this.wslDistroByPtyId.delete(ptyId)
+      }
     }
     if (state.isWsl !== undefined) {
       pty.isWsl = state.isWsl
+    }
+    if (state.wslDistro !== undefined) {
+      pty.wslDistro = state.wslDistro
+      if (state.wslDistro) {
+        this.wslDistroByPtyId.set(ptyId, state.wslDistro)
+      } else {
+        this.wslDistroByPtyId.delete(ptyId)
+      }
     }
     if (state.tabId !== undefined) {
       pty.tabId = state.tabId
@@ -21480,6 +21890,8 @@ export class OrcaRuntimeService {
     // Why: disconnected PTY records can stay addressable for status/exit reads,
     // but their retained transcripts must not accumulate after the process dies.
     pty.tailBuffer = []
+    pty.tailTranscriptBuffer = []
+    pty.tailTranscriptChars = 0
     pty.tailPartialLine = ''
     pty.tailPendingAnsi = ''
     pty.tailRedrawCursor = null
@@ -21505,6 +21917,8 @@ export class OrcaRuntimeService {
   }
 
   private dropDisconnectedPtyRecord(ptyId: string): void {
+    // Why: pruning can remove a PTY without the normal exit callback.
+    this.advancePtyLifecycleGeneration(ptyId)
     this.ptysById.delete(ptyId)
     this.recentPtyOutputById.delete(ptyId)
     this.clearWaitBlockedCheckState(ptyId)
@@ -21515,6 +21929,9 @@ export class OrcaRuntimeService {
     this.providerSnapshotPreferredPtys.delete(ptyId)
     this.providerModeTrackersByPtyId.delete(ptyId)
     this.providerModeSnapshotScansByPtyId.delete(ptyId)
+    this.providerBufferAcquisitionsByPtyId.delete(ptyId)
+    this.providerVisibleStateByPtyId.delete(ptyId)
+    this.providerVisibleRetryAtByPtyId.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
     this.terminalSpawnCommandsByPtyId.delete(ptyId)
     this.disposePtyTitleTracker(ptyId)
@@ -21522,6 +21939,7 @@ export class OrcaRuntimeService {
     this.osc7ScanTailByPtyId.delete(ptyId)
     this.terminalCwdByPtyId.delete(ptyId)
     this.terminalFileUriHostnameByPtyId.delete(ptyId)
+    this.wslDistroByPtyId.delete(ptyId)
     this.clearAgentRowSnapshotsForPty(ptyId)
     const handle = this.handleByPtyId.get(ptyId)
     if (handle) {
@@ -22905,6 +23323,20 @@ export class OrcaRuntimeService {
     return { record, pty }
   }
 
+  private assertLiveTerminalHandleTargetsPty(handle: string, expectedPtyId: string): void {
+    const runtimePty = this.getLivePtyForHandle(handle)
+    if (runtimePty) {
+      if (runtimePty.pty.ptyId !== expectedPtyId) {
+        throw new Error('terminal_handle_stale')
+      }
+      return
+    }
+    const { leaf } = this.getLiveLeafForHandle(handle)
+    if (leaf.ptyId !== expectedPtyId) {
+      throw new Error('terminal_handle_stale')
+    }
+  }
+
   private readPtyTerminal(
     handle: string,
     pty: RuntimePtyWorktreeRecord,
@@ -22913,7 +23345,8 @@ export class OrcaRuntimeService {
     return readTerminalTail({
       handle,
       status: pty.connected ? 'running' : pty.lastExitCode !== null ? 'exited' : 'unknown',
-      completedLines: pty.tailBuffer,
+      previewLines: pty.tailBuffer,
+      completedLines: pty.tailTranscriptBuffer,
       partialLine: pty.tailPartialLine,
       completedLineCount: pty.tailLinesTotal,
       bufferTruncated: pty.tailTruncated,
@@ -26044,6 +26477,8 @@ const MAX_TAIL_PENDING_ANSI_CHARS = 4096
 const DEFAULT_TERMINAL_READ_LIMIT = 120
 const MAX_TERMINAL_READ_LIMIT = 2000
 const MAX_TERMINAL_PREVIEW_CHARS = 32 * 1024
+const VISIBLE_TERMINAL_SNAPSHOT_TIMEOUT_MS = 750
+const VISIBLE_TERMINAL_SNAPSHOT_RETRY_MS = 1_000
 const MAX_PREVIEW_LINES = 6
 const MAX_PREVIEW_CHARS = 300
 const WORKTREE_STATUS_PRIORITY: Record<RuntimeWorktreeStatus, number> = {
@@ -26123,13 +26558,6 @@ function withTimeoutResult<T>(
       ok: false
     }
   )
-}
-
-export function appendRecentPtyOutput(previous: string | undefined, data: string): string {
-  if (data.length >= RECENT_PTY_OUTPUT_LIMIT) {
-    return data.slice(-RECENT_PTY_OUTPUT_LIMIT)
-  }
-  return `${previous ?? ''}${data}`.slice(-RECENT_PTY_OUTPUT_LIMIT)
 }
 
 export function appendRecentPtyPathCandidates(
@@ -26542,6 +26970,7 @@ export function appendNormalizedToTailBuffer(
   redrawCursor: RetainedTailRedrawCursor | null
   truncated: boolean
   newCompleteLines: number
+  newlyCompletedLines: string[]
 } {
   if (normalizedChunk.length === 0) {
     return {
@@ -26549,7 +26978,8 @@ export function appendNormalizedToTailBuffer(
       partialLine: previousPartialLine,
       redrawCursor: previousRedrawCursor,
       truncated: false,
-      newCompleteLines: 0
+      newCompleteLines: 0,
+      newlyCompletedLines: []
     }
   }
 
@@ -26573,6 +27003,7 @@ export function appendNormalizedToTailBuffer(
   // visible redraw segment instead of appending every spinner frame.
   const segments = splitRetainedTerminalTailSegments(combinedChunk)
   const pieces = processTerminalTailCompleteSegments(segments.completeSegments)
+  const newlyCompletedLines = pieces.map((line) => trimTerminalLineRight(line))
   const partialResult = applyTerminalLineControls(segments.partialSegment)
   const nextPartialLine = trimTerminalLineRight(partialResult.text)
   const retainedPartialLine = nextPartialLine.slice(-MAX_TAIL_PARTIAL_CHARS)
@@ -26580,10 +27011,7 @@ export function appendNormalizedToTailBuffer(
   const omittedNewCompleteLines = newCompleteLines - pieces.length
   let nextLines =
     newCompleteLines > 0
-      ? [
-          ...(omittedNewCompleteLines > 0 ? [] : previousLines),
-          ...pieces.map((line) => line.replace(/[ \t]+$/g, ''))
-        ]
+      ? [...(omittedNewCompleteLines > 0 ? [] : previousLines), ...newlyCompletedLines]
       : previousLines
   let truncated =
     previousPartialWasCapped ||
@@ -26625,7 +27053,8 @@ export function appendNormalizedToTailBuffer(
     partialLine: retainedPartialLine,
     redrawCursor,
     truncated,
-    newCompleteLines
+    newCompleteLines,
+    newlyCompletedLines
   }
 }
 
@@ -26677,6 +27106,7 @@ function appendNormalizedToMultilineTailBuffer(
   redrawCursor: RetainedTailRedrawCursor | null
   truncated: boolean
   newCompleteLines: number
+  newlyCompletedLines: string[]
 } {
   const windowRows =
     maxUpwardCursorReach(normalizedChunk, previousRedrawCursor) + REDRAW_WINDOW_SAFETY_ROWS
@@ -26734,7 +27164,8 @@ function appendNormalizedToMultilineTailBuffer(
     partialLine: windowed.partialLine,
     redrawCursor: windowed.redrawCursor,
     truncated,
-    newCompleteLines: windowed.newCompleteLines
+    newCompleteLines: windowed.newCompleteLines,
+    newlyCompletedLines: windowed.newlyCompletedLines
   }
 }
 
@@ -26750,6 +27181,7 @@ export function appendNormalizedToMultilineTailBufferUnwindowed(
   redrawCursor: RetainedTailRedrawCursor | null
   truncated: boolean
   newCompleteLines: number
+  newlyCompletedLines: string[]
 } {
   const rows: RetainedTerminalRow[] = [
     ...previousLines.map((line) => ({ text: line, completed: true })),
@@ -26760,7 +27192,28 @@ export function appendNormalizedToMultilineTailBufferUnwindowed(
     : rows.length - 1
   let cursorColumn = previousRedrawCursor?.column ?? boundedPreviousPartialLine.length
   let newCompleteLines = 0
+  const newlyCompletedLines: string[] = []
+  let newlyCompletedLineCharacters = 0
+  let newlyCompletedLineStart = 0
   let truncated = previousPartialWasCapped
+
+  const retainNewlyCompletedLine = (line: string): void => {
+    newlyCompletedLines.push(line)
+    newlyCompletedLineCharacters += line.length
+    while (
+      newlyCompletedLines.length - newlyCompletedLineStart > MAX_TAIL_LINES ||
+      newlyCompletedLineCharacters > MAX_TAIL_CHARS
+    ) {
+      newlyCompletedLineCharacters -= newlyCompletedLines[newlyCompletedLineStart]!.length
+      newlyCompletedLineStart += 1
+    }
+    // Why: a single PTY chunk can contain unbounded newlines; compact in batches
+    // while retaining the suffix needed for stable transcript pagination.
+    if (newlyCompletedLineStart >= MAX_TAIL_LINES) {
+      newlyCompletedLines.splice(0, newlyCompletedLineStart)
+      newlyCompletedLineStart = 0
+    }
+  }
 
   const ensureCursorRow = (): void => {
     while (cursorRow >= rows.length) {
@@ -26817,6 +27270,7 @@ export function appendNormalizedToMultilineTailBufferUnwindowed(
       ensureCursorRow()
       rows[cursorRow]!.completed = true
       newCompleteLines += 1
+      retainNewlyCompletedLine(trimTerminalLineRight(rows[cursorRow]!.text))
       cursorRow += 1
       cursorColumn = 0
       ensureCursorRow()
@@ -26858,7 +27312,16 @@ export function appendNormalizedToMultilineTailBufferUnwindowed(
     writeChar(char)
   }
 
-  return finalizeRetainedTerminalRows(rows, cursorRow, cursorColumn, truncated, newCompleteLines)
+  return finalizeRetainedTerminalRows(
+    rows,
+    cursorRow,
+    cursorColumn,
+    truncated,
+    newCompleteLines,
+    newlyCompletedLineStart > 0
+      ? newlyCompletedLines.slice(newlyCompletedLineStart)
+      : newlyCompletedLines
+  )
 }
 
 type RetainedTailRedrawCursor = {
@@ -26876,13 +27339,15 @@ function finalizeRetainedTerminalRows(
   cursorRow: number,
   cursorColumn: number,
   initialTruncated: boolean,
-  newCompleteLines: number
+  newCompleteLines: number,
+  newlyCompletedLines: string[]
 ): {
   lines: string[]
   partialLine: string
   redrawCursor: RetainedTailRedrawCursor | null
   truncated: boolean
   newCompleteLines: number
+  newlyCompletedLines: string[]
 } {
   let truncated = initialTruncated
   let retainedRows = rows.map((row) => ({ ...row, text: row.text.replace(/[ \t]+$/g, '') }))
@@ -26944,7 +27409,8 @@ function finalizeRetainedTerminalRows(
     partialLine,
     redrawCursor,
     truncated,
-    newCompleteLines
+    newCompleteLines,
+    newlyCompletedLines
   }
 }
 
@@ -27171,8 +27637,43 @@ function containsTerminalVerticalLineControl(value: string): boolean {
   return false
 }
 
+function appendCompletedTerminalTranscript(
+  previousLines: string[],
+  previousCharacters: number,
+  newlyCompletedLines: string[],
+  newCompleteLineCount: number
+): { lines: string[]; characters: number; truncated: boolean } {
+  if (newCompleteLineCount === 0) {
+    return { lines: previousLines, characters: previousCharacters, truncated: false }
+  }
+
+  const omittedNewLineCount = Math.max(0, newCompleteLineCount - newlyCompletedLines.length)
+  const lines = omittedNewLineCount > 0 ? [] : [...previousLines]
+  let characters = omittedNewLineCount > 0 ? 0 : previousCharacters
+  for (const line of newlyCompletedLines) {
+    lines.push(line)
+    characters += line.length
+  }
+
+  let dropCount = Math.max(0, lines.length - MAX_TAIL_LINES)
+  for (let index = 0; index < dropCount; index += 1) {
+    characters -= lines[index]!.length
+  }
+  while (dropCount < lines.length && characters > MAX_TAIL_CHARS) {
+    characters -= lines[dropCount]!.length
+    dropCount += 1
+  }
+
+  return {
+    lines: dropCount > 0 ? lines.slice(dropCount) : lines,
+    characters,
+    truncated: omittedNewLineCount > 0 || dropCount > 0
+  }
+}
+
 function tailStateMatches(
   lines: string[],
+  transcriptLines: string[],
   partialLine: string,
   pendingAnsi: string,
   redrawCursor: RetainedTailRedrawCursor | null,
@@ -27180,6 +27681,7 @@ function tailStateMatches(
   linesTotal: number,
   snapshot: {
     lines: string[]
+    transcriptLines: string[]
     partialLine: string
     pendingAnsi: string
     redrawCursor: RetainedTailRedrawCursor | null
@@ -27193,7 +27695,8 @@ function tailStateMatches(
     !tailRedrawCursorsMatch(redrawCursor, snapshot.redrawCursor) ||
     truncated !== snapshot.truncated ||
     linesTotal !== snapshot.linesTotal ||
-    lines.length !== snapshot.lines.length
+    lines.length !== snapshot.lines.length ||
+    transcriptLines.length !== snapshot.transcriptLines.length
   ) {
     return false
   }
@@ -27203,6 +27706,13 @@ function tailStateMatches(
   for (let index = 0; index < lines.length; index++) {
     if (lines[index] !== snapshot.lines[index]) {
       return false
+    }
+  }
+  if (transcriptLines !== snapshot.transcriptLines) {
+    for (let index = 0; index < transcriptLines.length; index++) {
+      if (transcriptLines[index] !== snapshot.transcriptLines[index]) {
+        return false
+      }
     }
   }
   return true
@@ -27263,6 +27773,7 @@ function trimTerminalPreviewToCharacterBudget(
 function readTerminalTail(args: {
   handle: string
   status: RuntimeTerminalState
+  previewLines: string[]
   completedLines: string[]
   partialLine: string
   completedLineCount: number
@@ -27313,7 +27824,7 @@ function readTerminalTail(args: {
   // latest bounded view, while the larger retained buffer remains available
   // through cursor reads plus --limit.
   const limit = terminalReadLimit(args.limit, DEFAULT_TERMINAL_READ_LIMIT)
-  const allLines = buildTailLines(args.completedLines, args.partialLine)
+  const allLines = buildTailLines(args.previewLines, args.partialLine)
   const lineBoundedTail = allLines.slice(-limit)
   const charBoundedTail = trimTerminalPreviewToCharacterBudget(
     lineBoundedTail,
@@ -27354,6 +27865,10 @@ function shouldFallbackToVisibleTerminalSnapshot(
   const hasSubstantialBlankTail =
     read.limited === true || read.truncated || read.tail.length >= DEFAULT_TERMINAL_READ_LIMIT
   return hasSubstantialBlankTail && read.tail.every((line) => line.trim().length === 0)
+}
+
+function visibleNonBlankTerminalLines(lines: string[]): string[] {
+  return lines.map((line) => line.trimEnd()).filter((line) => line.trim().length > 0)
 }
 
 function buildVisibleSnapshotReadFallback(

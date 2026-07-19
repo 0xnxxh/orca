@@ -47,7 +47,6 @@ import type { OrchestrationDb } from './orchestration/db'
 import type { MessagePriority, MessageRow, MessageType } from './orchestration/types'
 import {
   appendNormalizedToTailBuffer,
-  appendRecentPtyOutput,
   appendRecentPtyPathCandidates,
   buildPreview,
   OrcaRuntimeService,
@@ -55,6 +54,7 @@ import {
   recentTerminalOutputIncludesPath,
   type RuntimeTerminalAgentStatusEvent
 } from './orca-runtime'
+import { RecentPtyOutputBuffer } from './recent-pty-output-buffer'
 import { HeadlessEmulator } from '../daemon/headless-emulator'
 import {
   HEADLESS_RUNTIME_WINDOW_ID,
@@ -8648,6 +8648,7 @@ describe('OrcaRuntimeService', () => {
   it('keeps SSH OSC7 cwd POSIX when the desktop runtime is on Windows', async () => {
     setPlatform('win32')
     const runtime = new OrcaRuntimeService(store)
+    runtime.preparePtyExecutionContext('pty-ssh', 'Ubuntu', { resetIncarnation: true })
     runtime.registerPty('pty-ssh', TEST_WORKTREE_ID, 'ssh-conn-1')
 
     runtime.onPtyData('pty-ssh', '\x1b]7;file://remote-host/home/me/repo/src\x07', 123)
@@ -8655,9 +8656,164 @@ describe('OrcaRuntimeService', () => {
     const internals = runtime as unknown as {
       terminalCwdByPtyId: Map<string, string>
       terminalFileUriHostnameByPtyId: Map<string, string>
+      wslDistroByPtyId: Map<string, string>
     }
     expect(internals.terminalCwdByPtyId.get('pty-ssh')).toBe('/home/me/repo/src')
     expect(internals.terminalFileUriHostnameByPtyId.get('pty-ssh')).toBe('remote-host')
+    expect(internals.wslDistroByPtyId.has('pty-ssh')).toBe(false)
+  })
+
+  it('uses per-incarnation WSL context before registration and across simultaneous distros', () => {
+    setPlatform('win32')
+    const runtime = new OrcaRuntimeService(store)
+    runtime.preparePtyExecutionContext('pty-ubuntu', 'Ubuntu', { resetIncarnation: true })
+    runtime.preparePtyExecutionContext('pty-debian', 'Debian', { resetIncarnation: true })
+    runtime.registerPty('pty-ubuntu', TEST_WORKTREE_ID)
+    runtime.registerPty('pty-debian', TEST_WORKTREE_ID)
+
+    runtime.onPtyData('pty-ubuntu', '\x1b]7;file://DESKTOP/home/me/repo\x07', 1)
+    runtime.onPtyData('pty-debian', '\x1b]7;file://DESKTOP/home/me/repo\x07', 1)
+
+    const cwds = (runtime as unknown as { terminalCwdByPtyId: Map<string, string> })
+      .terminalCwdByPtyId
+    expect(cwds.get('pty-ubuntu')).toBe('\\\\wsl.localhost\\Ubuntu\\home\\me\\repo')
+    expect(cwds.get('pty-debian')).toBe('\\\\wsl.localhost\\Debian\\home\\me\\repo')
+  })
+
+  it('does not retain WSL context when a PTY id is reused', () => {
+    setPlatform('win32')
+    const runtime = new OrcaRuntimeService(store)
+    runtime.preparePtyExecutionContext('pty-reused', 'Ubuntu', { resetIncarnation: true })
+    runtime.registerPty('pty-reused', TEST_WORKTREE_ID)
+    runtime.onPtyExit('pty-reused', 0)
+
+    runtime.preparePtyExecutionContext('pty-reused', null, { resetIncarnation: true })
+    runtime.registerPty('pty-reused', TEST_WORKTREE_ID)
+    runtime.onPtyData('pty-reused', '\x1b]7;file://server/share/repo\x07', 1)
+
+    const cwds = (runtime as unknown as { terminalCwdByPtyId: Map<string, string> })
+      .terminalCwdByPtyId
+    expect(cwds.get('pty-reused')).toBe('\\\\server\\share\\repo')
+  })
+
+  it('preserves immutable context while a live daemon attach is unresolved', () => {
+    setPlatform('win32')
+    const runtime = new OrcaRuntimeService(store)
+    runtime.preparePtyExecutionContext('pty-attached', 'Ubuntu', { resetIncarnation: true })
+    runtime.registerPty('pty-attached', TEST_WORKTREE_ID)
+
+    const changed = runtime.preparePtyExecutionContext('pty-attached', 'Debian', {
+      preserveExisting: true
+    })
+    runtime.onPtyData('pty-attached', '\x1b]7;file://DESKTOP/home/me/repo\x07', 1)
+
+    const cwd = (
+      runtime as unknown as { terminalCwdByPtyId: Map<string, string> }
+    ).terminalCwdByPtyId.get('pty-attached')
+    expect(changed).toBe(false)
+    expect(cwd).toBe('\\\\wsl.localhost\\Ubuntu\\home\\me\\repo')
+  })
+
+  it('replaces a cwd parsed before late WSL context with the provider cwd', async () => {
+    setPlatform('win32')
+    const runtime = new OrcaRuntimeService(store)
+    const ptyId = 'pty-late-wsl-context'
+    const providerCwd = '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo'
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      getSize: () => ({ cols: 80, rows: 24 }),
+      serializeProviderBuffer: vi.fn().mockResolvedValue({
+        data: 'restored screen',
+        cols: 80,
+        rows: 24,
+        cwd: providerCwd,
+        seq: 1,
+        source: 'headless'
+      })
+    })
+    runtime.registerPty(ptyId, TEST_WORKTREE_ID)
+    runtime.seedHeadlessTerminal(ptyId, '\x1b]7;file://DESKTOP/home/me/repo\x07')
+
+    const internals = runtime as unknown as {
+      headlessTerminals: Map<string, { writeChain: Promise<void> }>
+      terminalCwdByPtyId: Map<string, string>
+    }
+    await internals.headlessTerminals.get(ptyId)?.writeChain
+    expect(internals.terminalCwdByPtyId.get(ptyId)).toBe('\\\\desktop\\home\\me\\repo')
+
+    runtime.preparePtyExecutionContext(ptyId, 'Ubuntu')
+    await internals.headlessTerminals.get(ptyId)?.writeChain
+
+    expect(internals.terminalCwdByPtyId.get(ptyId)).toBe(providerCwd)
+  })
+
+  it('keeps a live WSL cwd that arrives during late-context snapshot recovery', async () => {
+    setPlatform('win32')
+    const runtime = new OrcaRuntimeService(store)
+    const ptyId = 'pty-late-wsl-context-race'
+    type ProviderSnapshot = {
+      data: string
+      cols: number
+      rows: number
+      cwd: string
+      seq: number
+      source: 'headless'
+    }
+    let resolveProviderSnapshot: ((snapshot: ProviderSnapshot) => void) | undefined
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      getSize: () => ({ cols: 80, rows: 24 }),
+      serializeProviderBuffer: vi.fn(
+        () =>
+          new Promise<ProviderSnapshot>((resolve) => {
+            resolveProviderSnapshot = resolve
+          })
+      )
+    })
+    runtime.registerPty(ptyId, TEST_WORKTREE_ID)
+    runtime.seedHeadlessTerminal(ptyId, '\x1b]7;file://DESKTOP/home/me/old\x07')
+    const internals = runtime as unknown as {
+      headlessTerminals: Map<string, { writeChain: Promise<void> }>
+      terminalCwdByPtyId: Map<string, string>
+    }
+    await internals.headlessTerminals.get(ptyId)?.writeChain
+
+    runtime.preparePtyExecutionContext(ptyId, 'Ubuntu')
+    await vi.waitFor(() => expect(resolveProviderSnapshot).toBeDefined())
+    runtime.onPtyData(ptyId, '\x1b]7;file://DESKTOP/home/me/live\x07', 1)
+    resolveProviderSnapshot?.({
+      data: 'older restored screen',
+      cols: 80,
+      rows: 24,
+      cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me\\old',
+      seq: 1,
+      source: 'headless'
+    })
+    await internals.headlessTerminals.get(ptyId)?.writeChain
+
+    expect(internals.terminalCwdByPtyId.get(ptyId)).toBe(
+      '\\\\wsl.localhost\\Ubuntu\\home\\me\\live'
+    )
+  })
+
+  it('infers local reconstructed WSL context from a WSL UNC worktree', () => {
+    setPlatform('win32')
+    const runtime = new OrcaRuntimeService(store)
+    runtime.registerPty(
+      'pty-reconstructed',
+      `${TEST_REPO_ID}::\\\\wsl.localhost\\Ubuntu\\home\\me\\repo`
+    )
+
+    runtime.onPtyData('pty-reconstructed', '\x1b]7;file://DESKTOP/home/me/repo/src\x07', 1)
+
+    const cwd = (
+      runtime as unknown as { terminalCwdByPtyId: Map<string, string> }
+    ).terminalCwdByPtyId.get('pty-reconstructed')
+    expect(cwd).toBe('\\\\wsl.localhost\\Ubuntu\\home\\me\\repo\\src')
   })
 
   it('clears stale terminal file URI hostnames after empty-host OSC7 cwd updates', () => {
@@ -12906,6 +13062,497 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('reads and shows the runtime-owned alternate-screen grid without serialization', async () => {
+    const serializeBuffer = vi.fn()
+    const serializeProviderBuffer = vi.fn()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeBuffer,
+      serializeProviderBuffer
+    })
+    syncSinglePty(runtime)
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    runtime.onPtyData(
+      'pty-1',
+      'shell history\r\n\x1b[?1049h\x1b[2J\x1b[HClaude Code\r\nWorking on fix\r\nTool: Read\r\n',
+      100
+    )
+
+    const read = await runtime.readTerminal(terminal.handle)
+    const shown = await runtime.showTerminal(terminal.handle)
+
+    expect(read.tail).toEqual(['Claude Code', 'Working on fix', 'Tool: Read'])
+    expect(shown.preview).toBe('Claude Code\nWorking on fix\nTool: Read')
+    expect(serializeBuffer).not.toHaveBeenCalled()
+    expect(serializeProviderBuffer).not.toHaveBeenCalled()
+  })
+
+  it('classifies older provider alternate-screen snapshots from ANSI', async () => {
+    const serializeProviderBuffer = vi.fn().mockResolvedValue({
+      data: '\x1b[?1049h\x1b[2J\x1b[HRemote Vim\r\nediting README.md\r\n',
+      cols: 80,
+      rows: 24,
+      seq: 900,
+      source: 'headless'
+    })
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    const read = await runtime.readTerminal(terminal.handle)
+
+    expect(read.tail).toEqual(['Remote Vim', 'editing README.md'])
+    expect(runtime.isTerminalAlternateScreen('pty-1')).toBe(true)
+    expect(serializeProviderBuffer).toHaveBeenCalledOnce()
+  })
+
+  it('honors the last ANSI screen transition when older provider metadata is absent', async () => {
+    const serializeProviderBuffer = vi.fn().mockResolvedValue({
+      data: '\x1b[?1049hOld TUI\r\n\x1b[?1049l',
+      cols: 80,
+      rows: 24,
+      seq: 900,
+      source: 'headless'
+    })
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.onPtyData('pty-1', 'shell history\r\n', 100)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    const read = await runtime.readTerminal(terminal.handle)
+
+    expect(read.tail).toEqual(['shell history'])
+    expect(runtime.isTerminalAlternateScreen('pty-1')).toBe(false)
+  })
+
+  it.each([
+    {
+      name: 'live exit wins over an alternate provider snapshot',
+      snapshotData: '\x1b[?1049h\x1b[2J\x1b[HStale TUI\r\n',
+      snapshotMode: true,
+      liveData: '\x1b[?1049lreturned shell\r\n',
+      expectedMode: false,
+      expectedLine: 'shell history'
+    },
+    {
+      name: 'live entry wins over a primary provider snapshot',
+      snapshotData: 'stale shell\r\n',
+      snapshotMode: false,
+      liveData: '\x1b[?1049h\x1b[2J\x1b[HLive TUI\r\nnew frame\r\n',
+      expectedMode: true,
+      expectedLine: 'Live TUI'
+    }
+  ])('$name', async ({ snapshotData, snapshotMode, liveData, expectedMode, expectedLine }) => {
+    type Snapshot = {
+      data: string
+      cols: number
+      rows: number
+      seq: number
+      source: 'headless'
+      alternateScreen: boolean
+    }
+    let resolveSnapshot!: (snapshot: Snapshot) => void
+    const serializeProviderBuffer = vi.fn(
+      () =>
+        new Promise<Snapshot>((resolve) => {
+          resolveSnapshot = resolve
+        })
+    )
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.onPtyData('pty-1', 'shell history\r\n', 100)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    const readPromise = runtime.readTerminal(terminal.handle)
+    await vi.waitFor(() => expect(serializeProviderBuffer).toHaveBeenCalledOnce())
+    runtime.onPtyData('pty-1', liveData, 101)
+    resolveSnapshot({
+      data: snapshotData,
+      cols: 80,
+      rows: 24,
+      seq: 900,
+      source: 'headless',
+      alternateScreen: snapshotMode
+    })
+
+    const read = await readPromise
+    expect(runtime.isTerminalAlternateScreen('pty-1')).toBe(expectedMode)
+    expect(read.tail.join('\n')).toContain(expectedLine)
+    expect(read.tail.join('\n')).not.toContain('Stale TUI')
+  })
+
+  it('shares one provider snapshot between concurrent read and show calls', async () => {
+    type Snapshot = {
+      data: string
+      cols: number
+      rows: number
+      seq: number
+      source: 'headless'
+      alternateScreen: boolean
+    }
+    let resolveSnapshot!: (snapshot: Snapshot) => void
+    const serializeProviderBuffer = vi.fn(
+      () =>
+        new Promise<Snapshot>((resolve) => {
+          resolveSnapshot = resolve
+        })
+    )
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    const readPromise = runtime.readTerminal(terminal.handle)
+    const showPromise = runtime.showTerminal(terminal.handle)
+    await vi.waitFor(() => expect(serializeProviderBuffer).toHaveBeenCalledOnce())
+    resolveSnapshot({
+      data: '\x1b[?1049h\x1b[2J\x1b[HShared TUI frame\r\n',
+      cols: 80,
+      rows: 24,
+      seq: 900,
+      source: 'headless',
+      alternateScreen: true
+    })
+
+    const [read, shown] = await Promise.all([readPromise, showPromise])
+    expect(read.tail).toEqual(['Shared TUI frame'])
+    expect(shown.preview).toBe('Shared TUI frame')
+    expect(serializeProviderBuffer).toHaveBeenCalledOnce()
+  })
+
+  it('keeps cursor reads provider-free on restored alternate-screen PTYs', async () => {
+    const serializeProviderBuffer = vi.fn()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.onPtyData('pty-1', 'shell history\r\n', 100)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    const read = await runtime.readTerminal(terminal.handle, { cursor: 0 })
+
+    expect(read.tail).toEqual(['shell history'])
+    expect(serializeProviderBuffer).not.toHaveBeenCalled()
+  })
+
+  it('backs off after a provider snapshot failure instead of retrying for show', async () => {
+    const serializeProviderBuffer = vi.fn().mockRejectedValue(new Error('provider unavailable'))
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.onPtyData('pty-1', 'shell history\r\n', 100)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    const read = await runtime.readTerminal(terminal.handle)
+    const shown = await runtime.showTerminal(terminal.handle)
+
+    expect(read.tail).toEqual(['shell history'])
+    expect(shown.preview).toBe('shell history')
+    expect(serializeProviderBuffer).toHaveBeenCalledOnce()
+  })
+
+  it('falls back once to a mounted renderer when a known alternate provider fails', async () => {
+    const serializeProviderBuffer = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: '\x1b[?1049h\x1b[2J\x1b[HProvider TUI\r\n',
+        cols: 80,
+        rows: 24,
+        seq: 900,
+        source: 'headless',
+        alternateScreen: true
+      })
+      .mockRejectedValue(new Error('provider unavailable'))
+    const serializeBuffer = vi.fn().mockResolvedValue({
+      data: '\x1b[?1049h\x1b[2J\x1b[HRenderer TUI\r\n',
+      cols: 80,
+      rows: 24
+    })
+    let rendererMounted = false
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeBuffer,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => rendererMounted
+    })
+    syncSinglePty(runtime)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+    await expect(runtime.readTerminal(terminal.handle)).resolves.toMatchObject({
+      tail: ['Provider TUI']
+    })
+    runtime.onPtyData('pty-1', 'new output', 100)
+    rendererMounted = true
+
+    const read = await runtime.readTerminal(terminal.handle)
+
+    expect(read.tail).toEqual(['Renderer TUI'])
+    expect(serializeProviderBuffer).toHaveBeenCalledTimes(2)
+    expect(serializeBuffer).toHaveBeenCalledOnce()
+  })
+
+  it('bounds a stuck provider snapshot and shares the timed-out request', async () => {
+    vi.useFakeTimers()
+    try {
+      const serializeProviderBuffer = vi.fn(() => new Promise<never>(() => undefined))
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null,
+        serializeProviderBuffer,
+        hasRendererSerializer: () => false
+      })
+      syncSinglePty(runtime)
+      runtime.onPtyData('pty-1', 'shell history\r\n', 100)
+      runtime.synchronizePtyOutputSequenceFromProvider(
+        'pty-1',
+        { value: 900, generation: 'continued' },
+        0
+      )
+      const [terminal] = (await runtime.listTerminals()).terminals
+
+      const reads = Promise.all([
+        runtime.readTerminal(terminal.handle),
+        runtime.showTerminal(terminal.handle)
+      ])
+      await vi.advanceTimersByTimeAsync(750)
+      const [read, shown] = await reads
+
+      expect(read.tail).toEqual(['shell history'])
+      expect(shown.preview).toBe('shell history')
+      expect(serializeProviderBuffer).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('discards a provider frame when the PTY generation resets during capture', async () => {
+    type Snapshot = {
+      data: string
+      cols: number
+      rows: number
+      seq: number
+      source: 'headless'
+      alternateScreen: boolean
+    }
+    let resolveSnapshot!: (snapshot: Snapshot) => void
+    const serializeProviderBuffer = vi.fn(
+      () =>
+        new Promise<Snapshot>((resolve) => {
+          resolveSnapshot = resolve
+        })
+    )
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.onPtyData('pty-1', 'old shell\r\n', 100)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    const readPromise = runtime.readTerminal(terminal.handle)
+    await vi.waitFor(() => expect(serializeProviderBuffer).toHaveBeenCalledOnce())
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 0, generation: 'reset' },
+      runtime.getPtyOutputSequence('pty-1')
+    )
+    resolveSnapshot({
+      data: '\x1b[?1049hStale generation TUI\r\n',
+      cols: 80,
+      rows: 24,
+      seq: 900,
+      source: 'headless',
+      alternateScreen: true
+    })
+
+    const read = await readPromise
+    expect(read.tail.join('\n')).not.toContain('Stale generation TUI')
+    expect(runtime.isTerminalAlternateScreen('pty-1')).toBe(false)
+  })
+
+  it('rejects a visible frame when its terminal handle changes during capture', async () => {
+    type Snapshot = {
+      data: string
+      cols: number
+      rows: number
+      seq: number
+      source: 'headless'
+      alternateScreen: boolean
+    }
+    let resolveSnapshot!: (snapshot: Snapshot) => void
+    const serializeProviderBuffer = vi.fn(
+      () =>
+        new Promise<Snapshot>((resolve) => {
+          resolveSnapshot = resolve
+        })
+    )
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    const readPromise = runtime.readTerminal(terminal.handle)
+    await vi.waitFor(() => expect(serializeProviderBuffer).toHaveBeenCalledOnce())
+    syncSinglePty(runtime, 'pty-2')
+    resolveSnapshot({
+      data: '\x1b[?1049hWrong terminal frame\r\n',
+      cols: 80,
+      rows: 24,
+      seq: 900,
+      source: 'headless',
+      alternateScreen: true
+    })
+
+    await expect(readPromise).rejects.toThrow('terminal_handle_stale')
+  })
+
+  it('bounds provider visible frames for read and show responses', async () => {
+    const visibleLines = [
+      'skip-1',
+      'skip-2',
+      'A'.repeat(49),
+      'B'.repeat(49),
+      'C'.repeat(49),
+      'D'.repeat(49),
+      'E'.repeat(49),
+      'F'.repeat(50)
+    ]
+    const expectedTail = visibleLines.slice(-6)
+    const serializeProviderBuffer = vi.fn().mockResolvedValue({
+      data: `\x1b[?1049h\x1b[2J\x1b[H${visibleLines.join('\r\n')}\r\n`,
+      cols: 80,
+      rows: 24,
+      seq: 900,
+      source: 'headless',
+      alternateScreen: true
+    })
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      serializeProviderBuffer,
+      hasRendererSerializer: () => false
+    })
+    syncSinglePty(runtime)
+    runtime.synchronizePtyOutputSequenceFromProvider(
+      'pty-1',
+      { value: 900, generation: 'continued' },
+      0
+    )
+    const [terminal] = (await runtime.listTerminals()).terminals
+
+    const read = await runtime.readTerminal(terminal.handle, { limit: 6 })
+    const shown = await runtime.showTerminal(terminal.handle)
+
+    expect(read.tail).toEqual(expectedTail)
+    expect(read.returnedLineCount).toBe(6)
+    expect(shown.preview).toBe(expectedTail.join('\n'))
+    expect(shown.preview.length).toBe(300)
+    expect(serializeProviderBuffer).toHaveBeenCalledOnce()
+  })
+
   it('returns renderer visible screen lines through terminal.read RPC JSON result', async () => {
     const serializeBuffer = vi.fn().mockResolvedValue({
       data: '\x1b[?1049hClaude Code\r\nChecking files\r\nWaiting for input\r\n',
@@ -13058,11 +13705,20 @@ describe('OrcaRuntimeService', () => {
     const previous = 'old-output'.repeat(1000)
     const data = 'new-output'.repeat(1000)
     const outputLimit = 64 * 1024
-    const expected = `${previous}${data}`.slice(-outputLimit)
 
-    expect(appendRecentPtyOutput(previous, 'tail')).toBe(`${previous}tail`.slice(-outputLimit))
-    expect(appendRecentPtyOutput(previous, data)).toBe(expected)
-    expect(appendRecentPtyOutput(undefined, data)).toBe(data.slice(-outputLimit))
+    const smallTail = new RecentPtyOutputBuffer()
+    smallTail.append(previous)
+    smallTail.append('tail')
+    expect(smallTail.read()).toBe(`${previous}tail`.slice(-outputLimit))
+
+    const combined = new RecentPtyOutputBuffer()
+    combined.append(previous)
+    combined.append(data)
+    expect(combined.read()).toBe(`${previous}${data}`.slice(-outputLimit))
+
+    const fresh = new RecentPtyOutputBuffer()
+    fresh.append(data)
+    expect(fresh.read()).toBe(data.slice(-outputLimit))
   })
 
   it('keeps mobile-visible artifact paths in bounded PTY path candidates', () => {
@@ -13435,7 +14091,7 @@ describe('OrcaRuntimeService', () => {
       cursor: Number(beforeRedraw.nextCursor)
     })
     expect(cursorRead.tail).toEqual(['• Working.', 'Tool call finished'])
-    expect(cursorRead.oldestCursor).toBe('2')
+    expect(cursorRead.oldestCursor).toBe('0')
     expect(cursorRead.nextCursor).toBe('4')
   })
 
@@ -13459,8 +14115,83 @@ describe('OrcaRuntimeService', () => {
       cursor: Number(beforeRedraw.nextCursor)
     })
     expect(cursorRead.tail).toEqual(['B2'])
-    expect(cursorRead.oldestCursor).toBe('2')
+    expect(cursorRead.oldestCursor).toBe('0')
     expect(cursorRead.nextCursor).toBe('4')
+  })
+
+  it('keeps cursor pagination stable across a CUU redraw of the live screen', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    const liveScreen = new HeadlessEmulator({ cols: 80, rows: 24 })
+    syncSinglePty(runtime)
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    const initialOutput = 'A\r\nB\r\nC\r\n'
+    const redraw = '\x1b[2A\x1b[2K\x1b[1GB2\r\n'
+    runtime.onPtyData('pty-1', initialOutput, 100)
+    await liveScreen.write(initialOutput)
+
+    const firstPage = await runtime.readTerminal(terminal.handle, { cursor: 0, limit: 2 })
+    expect(firstPage).toMatchObject({
+      tail: ['A', 'B'],
+      truncated: false,
+      limited: true,
+      oldestCursor: '0',
+      nextCursor: '2',
+      latestCursor: '3',
+      returnedLineCount: 2
+    })
+
+    runtime.onPtyData('pty-1', redraw, 101)
+    await liveScreen.write(redraw)
+
+    // Why: CUU changes the mutable screen, but completed-line pagination is a distinct contract.
+    expect(liveScreen.getVisibleLines().filter((line) => line.length > 0)).toEqual(['A', 'B2', 'C'])
+    await expect(runtime.readTerminal(terminal.handle, { cursor: 2 })).resolves.toMatchObject({
+      tail: ['C', 'B2'],
+      truncated: false,
+      limited: false,
+      oldestCursor: '0',
+      nextCursor: '4',
+      latestCursor: '4',
+      returnedLineCount: 2
+    })
+
+    liveScreen.dispose()
+  })
+
+  it('records completed transcript lines before later CUU redraws in the same PTY chunk', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    syncSinglePty(runtime)
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    runtime.onPtyData('pty-1', 'A\r\nB\r\nC\r\n\x1b[2A\x1b[2K\x1b[1GB2\r\n', 100)
+
+    await expect(runtime.readTerminal(terminal.handle, { cursor: 0 })).resolves.toMatchObject({
+      tail: ['A', 'B', 'C', 'B2'],
+      truncated: false,
+      oldestCursor: '0',
+      nextCursor: '4',
+      latestCursor: '4'
+    })
+  })
+
+  it('bounds completed transcript entries from a single multi-line redraw chunk', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    syncSinglePty(runtime)
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    const lines = Array.from({ length: 2100 }, (_, index) => `redraw-${index}`)
+    runtime.onPtyData('pty-1', `\x1b[1A${lines.join('\n')}\n`, 100)
+
+    await expect(
+      runtime.readTerminal(terminal.handle, { cursor: 0, limit: 3 })
+    ).resolves.toMatchObject({
+      tail: ['redraw-100', 'redraw-101', 'redraw-102'],
+      truncated: true,
+      oldestCursor: '100',
+      nextCursor: '103',
+      latestCursor: '2100'
+    })
   })
 
   it('retains multi-line ANSI redraws when the last footer row stays partial', async () => {
@@ -13486,7 +14217,7 @@ describe('OrcaRuntimeService', () => {
       cursor: Number(beforeRedraw.nextCursor)
     })
     expect(cursorRead.tail).toEqual(['• Working.'])
-    expect(cursorRead.oldestCursor).toBe('2')
+    expect(cursorRead.oldestCursor).toBe('0')
     expect(cursorRead.nextCursor).toBe('3')
 
     runtime.onPtyData('pty-1', '\n', 102)

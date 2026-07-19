@@ -2966,6 +2966,10 @@ export type GlobalSettings = {
    *  on read into [5_000ms, 60min] to defend against bad config.
    *  See docs/mobile-fit-hold.md. */
   mobileAutoRestoreFitMs: number | null
+  /** Preferred mobile pairing path for new QR codes: Anywhere (Orca Relay +
+   *  local) or same-network only. Missing/undefined defaults to Anywhere.
+   *  An explicit `local-only` means the user already chose that path. */
+  mobilePairingConnectionMode?: 'automatic' | 'local-only'
   /** Experimental: floating animated pet (claude.webp) in the bottom-right
    *  corner. Opt-in because it's a cosmetic joke feature; users who leave it
    *  off never mount the overlay. Toggling takes effect immediately in the
@@ -3042,6 +3046,12 @@ export type GlobalSettings = {
      *  false for fresh installs (no first-launch surface). */
     existedBeforeTelemetryRelease: boolean
   }
+  /** One-shot cohort marker for the tab-switch keybinding convention swap.
+   *  Absent before the migration runs. Set once on first boot after the swap:
+   *  `'pending'` for pre-existing installs (a seed then pins the old chords in
+   *  keybindings.json before flipping this to `'done'`), or `'done'` for fresh
+   *  installs, which adopt the new registry defaults with no seed. */
+  tabSwitchKeybindingSeed?: 'pending' | 'done'
   /** Local voice/dictation configuration (Phase 1 voice feature). Optional
    *  because profiles created before voice landed won't have the key;
    *  `getDefaultSettings()` hydrates `getDefaultVoiceSettings()` via the
