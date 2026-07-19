@@ -83,16 +83,30 @@ export async function launchInstalledApp({
 }
 
 /** Resolve the packaged Electron main, optionally falling back to Playwright's child PID. */
-export async function resolveElectronMainPid(app, { allowLauncherFallback = true } = {}) {
+export async function resolveElectronMainPid(
+  app,
+  { allowLauncherFallback = true, timeoutMs = 5_000 } = {}
+) {
+  let timeout
   try {
     // Why: packaged launchers can re-exec, leaving app.process() pointing at a
     // dead stub while evaluate runs in the authoritative Electron main.
-    const pid = await app.evaluate(() => process.pid)
+    const pid = await Promise.race([
+      app.evaluate(() => process.pid),
+      new Promise((_, reject) => {
+        // Why: a wedged main connection is common on cleanup paths; resolving
+        // its authoritative PID must not consume the entire CI job timeout.
+        timeout = setTimeout(() => reject(new Error('main PID resolution timed out')), timeoutMs)
+        timeout.unref?.()
+      })
+    ])
     if (Number.isInteger(pid) && pid > 0) {
       return pid
     }
   } catch {
     /* the main connection may already be unavailable */
+  } finally {
+    clearTimeout(timeout)
   }
   // Why: crash proofs must fail closed rather than kill a packaged launcher stub
   // and mistake its death for the authoritative Electron main crashing.
@@ -405,10 +419,14 @@ export async function closeApp(app, timeoutMs = 10_000) {
     return
   }
   const mainPid = await resolveElectronMainPid(app)
+  let closeTimeout
   try {
     await Promise.race([
       app.close(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('close timeout')), timeoutMs))
+      new Promise((_, reject) => {
+        closeTimeout = setTimeout(() => reject(new Error('close timeout')), timeoutMs)
+        closeTimeout.unref?.()
+      })
     ])
   } catch {
     if (mainPid) {
@@ -418,5 +436,9 @@ export async function closeApp(app, timeoutMs = 10_000) {
         /* already gone */
       }
     }
+  } finally {
+    // Why: successful closes must not retain a timeout closure or keep a shared
+    // harness process alive until the failure deadline expires.
+    clearTimeout(closeTimeout)
   }
 }

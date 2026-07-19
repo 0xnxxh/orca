@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { parseArgs } from '../../tools/win-crash-survival-e2e/cli-args.mjs'
 import { buildCrashAssertions } from '../../tools/win-crash-survival-e2e/crash-assertions.mjs'
 import { scanPwshFailFast } from '../../tools/win-crash-survival-e2e/crash-step.mjs'
@@ -9,7 +9,8 @@ import {
   selectCreatedTabId
 } from '../../tools/win-crash-survival-e2e/reattach-proof.mjs'
 import { quotePowerShellLiteral } from '../../tools/win-update-e2e/powershell-runner.mjs'
-import { resolveElectronMainPid } from '../../tools/win-update-e2e/app-driver.mjs'
+import { closeApp, resolveElectronMainPid } from '../../tools/win-update-e2e/app-driver.mjs'
+import { isPidAlive } from '../../tools/win-update-e2e/daemon-processes.mjs'
 
 describe('win-crash-survival-e2e proof contracts', () => {
   it('keeps the packaged proof wired as a targeted pull-request gate', () => {
@@ -99,6 +100,24 @@ describe('win-crash-survival-e2e proof contracts', () => {
     expect(() =>
       scanPwshFailFast(1234, () => ({ code: 0, stdout: '', stderr: '', error: null }))
     ).toThrow('pwsh-failfast scan returned no JSON output')
+    expect(() =>
+      scanPwshFailFast(1234, () => ({ code: 0, stdout: '{}', stderr: '', error: null }))
+    ).toThrow('without an events envelope')
+  })
+
+  it('fails closed when PID liveness evidence is unavailable', () => {
+    expect(isPidAlive(42, () => ({ code: 0, stdout: 'alive\n', stderr: '', error: null }))).toBe(
+      true
+    )
+    expect(isPidAlive(42, () => ({ code: 0, stdout: 'dead\n', stderr: '', error: null }))).toBe(
+      false
+    )
+    expect(() =>
+      isPidAlive(42, () => ({ code: 1, stdout: '', stderr: 'access denied', error: null }))
+    ).toThrow('PID liveness probe failed (exit 1): access denied')
+    expect(() => isPidAlive(42, () => ({ code: 0, stdout: '', stderr: '', error: null }))).toThrow(
+      'PID liveness probe returned an invalid state'
+    )
   })
 
   it('uses the scoped live process as daemon authority', () => {
@@ -173,5 +192,36 @@ describe('win-crash-survival-e2e proof contracts', () => {
       await resolveElectronMainPid(unavailableApp, { allowLauncherFallback: false })
     ).toBeNull()
     expect(await resolveElectronMainPid(unavailableApp)).toBe(111)
+  })
+
+  it('bounds main PID resolution when the Electron connection is wedged', async () => {
+    vi.useFakeTimers()
+    try {
+      const result = resolveElectronMainPid(
+        {
+          evaluate: () => new Promise(() => {}),
+          process: () => ({ pid: 333 })
+        },
+        { timeoutMs: 20 }
+      )
+      await vi.advanceTimersByTimeAsync(20)
+      await expect(result).resolves.toBe(333)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases the close deadline after a successful app close', async () => {
+    vi.useFakeTimers()
+    try {
+      await closeApp({
+        evaluate: async () => 444,
+        process: () => ({ pid: 333 }),
+        close: async () => {}
+      })
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

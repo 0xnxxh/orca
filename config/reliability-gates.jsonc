@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-07-18",
+  "updatedAt": "2026-07-19",
   "policy": {
     "maturityLevels": [
       "experimental",
@@ -1710,7 +1710,7 @@
       "providers": ["daemon"],
       "coveredPlatforms": ["windows"],
       "coveredProviders": ["daemon"],
-      "coverageNotes": "A packaged Windows CI run force-kills the launched instance's real Electron main without tree-killing, then proves the same scoped daemon and interactive PowerShell survive, no FailFast event is observed, and relaunch input reaches the same shell. Focused cross-platform unit tests fail closed on unavailable event-log evidence, stale or ambiguous daemon identity, and incomplete reattach assertions.",
+      "coverageNotes": "A packaged Windows CI run force-kills the launched instance's real Electron main without tree-killing, then proves the same scoped daemon and interactive PowerShell survive, no FailFast event is observed, and relaunch input reaches the same shell. Focused cross-platform unit tests fail closed on unavailable event-log or PID-liveness evidence, stale or ambiguous daemon identity, and incomplete reattach assertions.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/issues/7742",
         "https://github.com/stablyai/orca/pull/9311"
@@ -1731,6 +1731,7 @@
           "assertions": [
             "survival requires the crash antecedent, daemon and shell liveness, unchanged daemon identity, zero FailFast events, and same-shell reattach",
             "event-log query failure cannot be converted into zero FailFast events",
+            "malformed event-log and PID-liveness evidence fails closed",
             "stale, missing, or ambiguous userData-scoped daemon identity fails closed",
             "the packaged survival proof remains wired to targeted pull requests without a duplicate branch-push run"
           ]
@@ -1768,7 +1769,7 @@
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Production code is unchanged. The harness has bounded 500ms liveness polls, one 8-second crash soak, two scoped daemon identity scans plus teardown rediscovery, a 60-second cap on every synchronous PowerShell probe, a 50-minute job timeout, concurrency cancellation, and targeted production-path filtering that excludes source tests and benchmarks. The installer cache is keyed by every production build input; the job also restores the pnpm store and restores Electron/NSIS downloads only when an installer rebuild is required. The measured packaged harness completed in 61 seconds."
+        "evidence": "Production code is unchanged. The harness has bounded 500ms liveness polls, one 8-second crash soak, two scoped daemon identity scans plus teardown rediscovery, a 60-second cap on every synchronous PowerShell probe, a 5-second cap on Electron main-PID resolution, cleared and unreferenced close deadlines, a 50-minute job timeout, concurrency cancellation, and targeted production-path filtering that excludes source tests and benchmarks. The installer cache is keyed by every production build input; the job also restores the pnpm store and restores Electron/NSIS downloads only when an installer rebuild is required. The measured packaged harness completed in 61 seconds."
       },
       "promotionCriteria": [
         "Collect at least 100 consecutive targeted Windows PR or soak passes over 14 days with zero unexplained flakes.",

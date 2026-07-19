@@ -101,7 +101,21 @@ export function scanPwshFailFast(sinceMs, runCommand = runCommandSync) {
         `stdout:\n${trimmed}\nstderr:\n${stderr}`
     )
   }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    !Object.hasOwn(parsed, 'events') ||
+    parsed.events == null
+  ) {
+    // Why: only the explicit envelope proves the query completed; malformed
+    // JSON must not be indistinguishable from an authoritative zero-event result.
+    throw new Error('pwsh-failfast scan returned JSON without an events envelope')
+  }
   const raw = parsed.events
+  if (!Array.isArray(raw) && typeof raw !== 'object') {
+    throw new Error('pwsh-failfast scan returned an invalid events envelope')
+  }
   const events = Array.isArray(raw) ? raw : raw ? [raw] : []
   return { events }
 }
