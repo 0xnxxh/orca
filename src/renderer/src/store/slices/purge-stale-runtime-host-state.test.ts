@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { toRuntimeExecutionHostId } from '../../../../shared/execution-host'
+import { worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
 import type { ProjectHostSetup, DetectedWorktreeListResult } from '../../../../shared/types'
 
 vi.mock('sonner', () => ({
@@ -190,14 +191,14 @@ describe('purgeStaleRuntimeHostState', () => {
     expect(s.repos).toBe(reposRef)
   })
 
-  it('same-repoId-on-two-hosts: keeps the local row and the repo key after purge', () => {
+  it('same-repoId-on-two-hosts: keeps an ambiguous unhosted row and the repo key', () => {
     const store = createTestStore()
     // repoId 'shared' exists under both local and runtime:env-a in worktreesByRepo.
     seedStore(store, {
       repos: [
         { id: 'shared', path: '/shared', displayName: 'shared', badgeColor: '#000', addedAt: 0 },
         {
-          id: 'sharedRuntime',
+          id: 'shared',
           path: '/shared',
           displayName: 'shared',
           badgeColor: '#000',
@@ -207,7 +208,7 @@ describe('purgeStaleRuntimeHostState', () => {
       ],
       worktreesByRepo: {
         shared: [
-          makeWorktree({ id: 'shared::/wt-local', repoId: 'shared', hostId: 'local' }),
+          makeWorktree({ id: 'shared::/wt-local', repoId: 'shared', hostId: undefined }),
           makeWorktree({ id: 'shared::/wt-a', repoId: 'shared', hostId: RUNTIME_A })
         ]
       }
@@ -218,6 +219,79 @@ describe('purgeStaleRuntimeHostState', () => {
     const s = store.getState()
     expect(s.worktreesByRepo).toHaveProperty('shared')
     expect(s.worktreesByRepo.shared.map((w) => w.id)).toEqual(['shared::/wt-local'])
+    expect(s.worktreesByRepo.shared[0]?.hostId).toBeUndefined()
+  })
+
+  it('preserves worktree-scoped state when the exact same id survives on another host', () => {
+    const store = createTestStore()
+    const RUNTIME_B = toRuntimeExecutionHostId('env-b')
+    const worktreeId = 'shared::/same/path'
+    const tabs = [makeTab({ id: 'tab-surviving', worktreeId })]
+    seedStore(store, {
+      repos: [
+        {
+          id: 'shared',
+          path: '/shared',
+          displayName: 'shared',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: RUNTIME_A
+        },
+        {
+          id: 'shared',
+          path: '/shared',
+          displayName: 'shared',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: RUNTIME_B
+        }
+      ],
+      worktreesByRepo: {
+        shared: [
+          makeWorktree({ id: worktreeId, repoId: 'shared', hostId: RUNTIME_A }),
+          makeWorktree({ id: worktreeId, repoId: 'shared', hostId: RUNTIME_B })
+        ]
+      },
+      tabsByWorktree: { [worktreeId]: tabs },
+      activeWorktreeId: worktreeId,
+      activeWorkspaceKey: worktreeWorkspaceKey(worktreeId)
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a'])
+
+    const s = store.getState()
+    expect(s.worktreesByRepo.shared).toHaveLength(1)
+    expect(s.worktreesByRepo.shared[0]?.hostId).toBe(RUNTIME_B)
+    expect(s.tabsByWorktree[worktreeId]).toBe(tabs)
+    expect(s.activeWorktreeId).toBe(worktreeId)
+    expect(s.activeWorkspaceKey).toBe(worktreeWorkspaceKey(worktreeId))
+  })
+
+  it('purges a legacy unhosted row when its sole repo owner was removed', () => {
+    const store = createTestStore()
+    const worktreeId = 'repoA::/legacy'
+    seedStore(store, {
+      repos: [
+        {
+          id: 'repoA',
+          path: '/repoA',
+          displayName: 'A',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: RUNTIME_A
+        }
+      ],
+      worktreesByRepo: {
+        repoA: [makeWorktree({ id: worktreeId, repoId: 'repoA', hostId: undefined })]
+      },
+      tabsByWorktree: { [worktreeId]: [makeTab({ id: 'legacy-tab', worktreeId })] }
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a'])
+
+    const s = store.getState()
+    expect(s.worktreesByRepo.repoA).toEqual([])
+    expect(s.tabsByWorktree[worktreeId]).toBeUndefined()
   })
 
   it('clears activeRepoId and drops the purged id from filterRepoIds', () => {

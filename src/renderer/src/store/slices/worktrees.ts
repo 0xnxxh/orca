@@ -4983,6 +4983,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       return
     }
     set((s) => {
+      const removedSoleOwnerRepoIds = new Set<string>()
+      for (const [repoId, owner] of getRepoHostSummaries(s.repos)) {
+        if (owner.count === 1 && isRemovedRuntimeHostId(owner.onlyHostId, removed)) {
+          removedSoleOwnerRepoIds.add(repoId)
+        }
+      }
       const survivingRepos = s.repos.filter(
         (repo) => !isRemovedRuntimeHostId(getRepoExecutionHostId(repo), removed)
       )
@@ -4996,7 +5002,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       )
       const setupsChanged = survivingSetups.length !== s.projectHostSetups.length
 
-      const worktreeDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(s.worktreesByRepo, removed)
+      const worktreeDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
+        s.worktreesByRepo,
+        removed,
+        removedSoleOwnerRepoIds
+      )
       const detectedRows: Record<string, DetectedWorktreeListResult['worktrees']> =
         Object.fromEntries(
           Object.entries(s.detectedWorktreesByRepo).map(([repoId, result]) => [
@@ -5004,7 +5014,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             result.worktrees
           ])
         )
-      const detectedDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(detectedRows, removed)
+      const detectedDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
+        detectedRows,
+        removed,
+        removedSoleOwnerRepoIds
+      )
 
       const worktreesChanged = worktreeDrop.rowsByRepo !== s.worktreesByRepo
       const detectedChanged = detectedDrop.rowsByRepo !== detectedRows
@@ -5016,6 +5030,19 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ...worktreeDrop.removedWorktreeIds,
         ...detectedDrop.removedWorktreeIds
       ])
+      // Why: worktree-scoped UI state is keyed by bare worktree id, not host. If
+      // the same id survives on another host, it now belongs to that unambiguous
+      // survivor and must not lose its live tabs/editor/terminal state.
+      for (const rows of Object.values(worktreeDrop.rowsByRepo)) {
+        for (const row of rows) {
+          removedWorktreeIds.delete(row.id)
+        }
+      }
+      for (const rows of Object.values(detectedDrop.rowsByRepo)) {
+        for (const row of rows) {
+          removedWorktreeIds.delete(row.id)
+        }
+      }
       const purgeState =
         removedWorktreeIds.size > 0 ? buildWorktreePurgeState(s, [...removedWorktreeIds]) : {}
 
