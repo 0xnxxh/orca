@@ -83,6 +83,7 @@ class FakeLogicalClient extends FakeSession implements StableLogicalRpcClient {
     }
     this.path = path
     this.generation += 1
+    this.publishState('connected')
   })
   suspendActiveSession = vi.fn(() => this.publishState('disconnected'))
   getActivePath = () => this.path
@@ -228,6 +229,28 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
+  it('recovers the relay when it drops during an unavailable direct probe', async () => {
+    const logical = new FakeLogicalClient('connected', 'relay')
+    const direct = new FakeSession('connecting')
+    const openRelay = vi.fn(() => new FakeRelaySession('connected'))
+    const deps = dependencies({
+      openDirect: vi.fn(() => direct),
+      openRelay
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+    await supervisor.start()
+
+    // Start the probe, then drop the active relay while the probe owns the
+    // operation mutex. The failed probe must hand recovery back to the relay.
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(deps.openDirect).toHaveBeenCalledOnce()
+    logical.publishState('disconnected')
+    direct.publishState('disconnected')
+
+    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledOnce())
+    supervisor.stop()
+  })
+
   it('backs off instead of re-dialing the relay on every network-flap nudge', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
     // Relay cell keeps kicking the resume with PEER_DROPPED (4408) — the cellular
@@ -254,9 +277,11 @@ describe('mobile endpoint supervisor', () => {
     }
     expect(openRelay.mock.calls.length).toBe(afterStart)
 
-    // Once the backoff window elapses, a spaced retry fires on its own.
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(openRelay.mock.calls.length).toBeGreaterThan(afterStart)
+    // Exactly one retry fires at the 250 ms deterministic backoff boundary.
+    await vi.advanceTimersByTimeAsync(249)
+    expect(openRelay.mock.calls.length).toBe(afterStart)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(openRelay.mock.calls.length).toBe(afterStart + 1)
     supervisor.stop()
   })
 

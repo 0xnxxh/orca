@@ -293,8 +293,9 @@ export class MobileEndpointSupervisor {
     } finally {
       successful?.client.close()
       this.operationInFlight = false
-      if (this.relayRotationPending) {
-        void this.recoverRelay(true)
+      // Why: a relay drop or backoff timer can arrive while the direct probe owns the mutex.
+      if (this.relayRotationPending || this.logical.getState() !== 'connected') {
+        void this.recoverRelay(this.relayRotationPending)
       }
       this.scheduleDirectProbe()
     }
