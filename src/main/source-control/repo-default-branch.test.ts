@@ -76,8 +76,35 @@ describe('getRepoDefaultBranchName', () => {
 
     await expect(getRepoDefaultBranchName('/remote/repo', 'ssh-1')).resolves.toBe('trunk')
     expect(getSshGitProviderMock).toHaveBeenCalledWith('ssh-1')
-    expect(provider.exec).toHaveBeenCalled()
+    expect(provider.exec).toHaveBeenCalledWith(
+      ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'],
+      '/remote/repo',
+      { timeoutMs: expect.any(Number) }
+    )
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+  })
+
+  it('shares one wall-clock timeout budget across all fallback probes', async () => {
+    let now = 1_000
+    const dateNow = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    gitExecFileAsyncMock.mockImplementation(async (_args, options: { timeout: number }) => {
+      now += options.timeout
+      throw new Error('git timed out.')
+    })
+
+    try {
+      await expect(getRepoDefaultBranchName('/repo')).resolves.toBeNull()
+
+      // Once the first probe consumes the budget, fallback refs fail open
+      // without spawning four more equally slow git processes.
+      expect(gitExecFileAsyncMock).toHaveBeenCalledTimes(1)
+      expect(gitExecFileAsyncMock.mock.calls[0]?.[1]).toEqual({
+        cwd: '/repo',
+        timeout: 15_000
+      })
+    } finally {
+      dateNow.mockRestore()
+    }
   })
 
   it('returns null without running local git when the SSH provider is unavailable', async () => {

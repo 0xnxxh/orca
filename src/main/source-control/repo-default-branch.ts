@@ -1,4 +1,5 @@
-import { resolveDefaultBaseRefViaExec, resolveDefaultBaseRefWithLocalGit } from '../git/repo'
+import { resolveDefaultBaseRefViaExec } from '../git/repo'
+import { gitExecFileAsync } from '../git/runner'
 import { getSshGitProvider } from '../providers/ssh-git-dispatch'
 import type { HostedReviewLocalGitOptions } from './hosted-review-git-options'
 
@@ -6,6 +7,7 @@ import type { HostedReviewLocalGitOptions } from './hosted-review-git-options'
 // refresh ticks re-ask per repo, and worktree churn can mint unbounded keys.
 const REPO_DEFAULT_BRANCH_CACHE_TTL_MS = 30_000
 const REPO_DEFAULT_BRANCH_CACHE_MAX_ENTRIES = 512
+const REPO_DEFAULT_BRANCH_RESOLUTION_BUDGET_MS = 15_000
 
 type RepoDefaultBranchCacheEntry = {
   expiresAt: number
@@ -66,14 +68,22 @@ export async function getRepoDefaultBranchName(
       // repoPath is remote, so a local run could answer for the wrong repo.
       return null
     }
-    // Why: the local/WSL path must stay probe-time-bounded — an unbounded git
-    // exec here would wedge the serial PR refresh drain on a dead filesystem.
-    const baseRef = provider
-      ? await resolveDefaultBaseRefViaExec((argv) => provider.exec(argv, repoPath))
-      : await resolveDefaultBaseRefWithLocalGit({
-          cwd: repoPath,
-          ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {})
-        })
+    const resolutionDeadline = Date.now() + REPO_DEFAULT_BRANCH_RESOLUTION_BUDGET_MS
+    // Why: the resolver can try five refs; share one deadline so an unhealthy
+    // local/WSL/SSH host cannot multiply the refresh delay per fallback probe.
+    const baseRef = await resolveDefaultBaseRefViaExec((argv) => {
+      const timeoutMs = resolutionDeadline - Date.now()
+      if (timeoutMs <= 0) {
+        return Promise.reject(new Error('Default branch resolution timed out.'))
+      }
+      return provider
+        ? provider.exec(argv, repoPath, { timeoutMs })
+        : gitExecFileAsync(argv, {
+            cwd: repoPath,
+            ...(localGitOptions.wslDistro ? { wslDistro: localGitOptions.wslDistro } : {}),
+            timeout: timeoutMs
+          })
+    })
     // Same base-ref → branch-name normalization as git/repo.ts getRemoteFileUrl.
     branchName = baseRef ? baseRef.replace(/^origin\//, '') : null
   } catch {
