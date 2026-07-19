@@ -55,7 +55,7 @@ export class RelayReconnectController {
   }
 
   needsRecovery(state: ConnectionState): boolean {
-    return state !== 'connected' && state !== 'connecting'
+    return state !== 'connected' && state !== 'connecting' && state !== 'handshaking'
   }
 
   suspendActiveRelay(logical: StableLogicalRpcClient): void {
@@ -106,7 +106,7 @@ export class RelayReconnectController {
         : null
     const delay = this.delayMs()
     this.nextAttemptAt = this.dependencies.now() + delay
-    // Why: these failures require host revival or fresh credentials, not a retry loop.
+    // Why: wait for an OS/direct-probe signal before arming one debounced retry.
     if (
       recovery?.kind === 'wait-for-host-revival' ||
       recovery?.kind === 'disable-relay-credential'

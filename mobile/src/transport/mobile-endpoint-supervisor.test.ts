@@ -173,6 +173,10 @@ describe('mobile endpoint supervisor', () => {
     const supervisor = new MobileEndpointSupervisor(logical, host, deps)
     await supervisor.start()
 
+    logical.publishState('handshaking')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(deps.openRelay).not.toHaveBeenCalled()
+
     logical.publishState('reconnecting')
     await vi.waitFor(() => expect(logical.getActivePath()).toBe('relay'))
 

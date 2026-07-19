@@ -40,6 +40,20 @@ describe('relay reconnect controller', () => {
     vi.runAllTimers()
     expect(onRetry).not.toHaveBeenCalled()
   })
+
+  it('arms one debounced retry only after a host-revival signal', async () => {
+    const onRetry = vi.fn()
+    const reconnect = createController(onRetry)
+
+    reconnect.registerFailure(new RelayOuterError(4404))
+    expect(vi.getTimerCount()).toBe(0)
+
+    expect(reconnect.shouldDefer()).toBe(true)
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(250)
+    expect(onRetry).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
 })
 
 function createController(onRetry: () => void): RelayReconnectController {
