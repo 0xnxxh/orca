@@ -2,7 +2,7 @@
 account lifecycle, path safety, login, and identity parsing in one audited
 main-process module so the managed-account boundary stays explicit. */
 import { randomUUID } from 'node:crypto'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
@@ -49,6 +49,13 @@ import { assertOwnedHostCodexManagedHomePath } from './host-codex-managed-home-o
 
 const LOGIN_TIMEOUT_MS = 120_000
 const MAX_LOGIN_OUTPUT_CHARS = 4_000
+// Why: mirrors the Windows rm retry policy in local-worktree-filesystem — a
+// just-terminated codex login can briefly keep handles inside a managed home.
+const WINDOWS_RM_MAX_RETRIES = 8
+const WINDOWS_RM_RETRY_DELAY_MS = 150
+const WINDOWS_LOGIN_AUTH_POLL_INTERVAL_MS = 500
+const WINDOWS_LOGIN_POST_AUTH_EXIT_GRACE_MS = 5_000
+const WINDOWS_LOGIN_TREE_KILL_TIMEOUT_MS = 5_000
 
 type CodexOAuthCredentials = {
   idToken: string | null
@@ -84,6 +91,43 @@ type ManagedHomeLocation = {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+function removeManagedHomeTreeSync(targetPath: string): void {
+  // Why: codex login descendants can briefly keep Windows handles on files in
+  // the managed home (e.g. log/codex-login.log); bounded retries absorb the
+  // transient lock instead of failing with ENOTEMPTY and orphaning the home.
+  rmSync(targetPath, {
+    recursive: true,
+    force: true,
+    maxRetries: WINDOWS_RM_MAX_RETRIES,
+    retryDelay: WINDOWS_RM_RETRY_DELAY_MS
+  })
+}
+
+function killLoginProcessTree(child: ChildProcess): void {
+  if (
+    process.platform === 'win32' &&
+    typeof child.pid === 'number' &&
+    child.exitCode === null &&
+    child.signalCode === null
+  ) {
+    try {
+      // Why: child.kill() only reaches the direct child (cmd.exe for npm .cmd
+      // shims); taskkill /t also ends codex descendants whose open handles on
+      // the managed home make post-login file operations fail with ENOTEMPTY.
+      execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+        windowsHide: true,
+        timeout: WINDOWS_LOGIN_TREE_KILL_TIMEOUT_MS,
+        stdio: 'ignore'
+      })
+      return
+    } catch {
+      // Why: taskkill can race an already-exited tree; fall back to the plain
+      // signal so the direct child never outlives its deadline.
+    }
+  }
+  child.kill()
 }
 
 export class CodexAccountService {
@@ -926,11 +970,18 @@ export class CodexAccountService {
       return
     }
 
-    rmSync(managedHomePath, { recursive: true, force: true })
+    try {
+      removeManagedHomeTreeSync(managedHomePath)
+    } catch (error) {
+      // Why: this runs from error-cleanup paths; a still-held Windows handle
+      // must not mask the original failure with an ENOTEMPTY from rmSync.
+      console.warn('[codex-accounts] Failed to remove managed home:', error)
+      return
+    }
 
     if (parseWslUncPath(managedHomePath)) {
       try {
-        rmSync(dirname(managedHomePath), { recursive: true, force: true })
+        removeManagedHomeTreeSync(dirname(managedHomePath))
       } catch {
         // Best-effort cleanup
       }
@@ -946,7 +997,7 @@ export class CodexAccountService {
       // macOS where userData resolves through /private/var.
       const root = realpathSync(this.getManagedAccountsRoot())
       if (parentDir.startsWith(root + sep) && parentDir !== root) {
-        rmSync(parentDir, { recursive: true, force: true })
+        removeManagedHomeTreeSync(parentDir)
       }
     } catch {
       // Best-effort cleanup
@@ -1003,10 +1054,22 @@ export class CodexAccountService {
       }
 
       let timeout: ReturnType<typeof setTimeout> | null = null
+      let authWatchInterval: ReturnType<typeof setInterval> | null = null
+      let postAuthExitTimeout: ReturnType<typeof setTimeout> | null = null
+      let loginTreeKilledAfterAuth = false
+      const authJsonPath = join(managedHomePath, 'auth.json')
       const cleanupListeners = (): void => {
         if (timeout) {
           clearTimeout(timeout)
           timeout = null
+        }
+        if (authWatchInterval) {
+          clearInterval(authWatchInterval)
+          authWatchInterval = null
+        }
+        if (postAuthExitTimeout) {
+          clearTimeout(postAuthExitTimeout)
+          postAuthExitTimeout = null
         }
         child.stdout.off('data', appendOutput)
         child.stderr.off('data', appendOutput)
@@ -1025,11 +1088,31 @@ export class CodexAccountService {
 
       const timeoutError = new Error('Codex sign-in took too long to finish. Please try again.')
       timeout = setTimeout(() => {
-        child.kill()
+        killLoginProcessTree(child)
         settle(() => {
           rejectPromise(timeoutError)
         })
       }, LOGIN_TIMEOUT_MS)
+
+      // Why: on Windows the codex login CLI can linger after writing auth.json,
+      // and its open handles on the managed home (log/codex-login.log) make the
+      // post-login file operations fail with ENOTEMPTY. Once auth.json exists,
+      // give the tree a short grace period to exit, then force it down.
+      if (process.platform === 'win32' && !wslInfo) {
+        authWatchInterval = setInterval(() => {
+          if (!existsSync(authJsonPath)) {
+            return
+          }
+          if (authWatchInterval) {
+            clearInterval(authWatchInterval)
+            authWatchInterval = null
+          }
+          postAuthExitTimeout = setTimeout(() => {
+            loginTreeKilledAfterAuth = true
+            killLoginProcessTree(child)
+          }, WINDOWS_LOGIN_POST_AUTH_EXIT_GRACE_MS)
+        }, WINDOWS_LOGIN_AUTH_POLL_INTERVAL_MS)
+      }
 
       const onError = (error: Error): void => {
         settle(() => {
@@ -1049,7 +1132,10 @@ export class CodexAccountService {
 
       const onClose = (code: number | null): void => {
         settle(() => {
-          if (code === 0) {
+          // Why: the post-auth tree kill is a success path — auth.json already
+          // exists and codex only failed to exit on its own, so the forced
+          // non-zero exit must not surface as a login failure.
+          if (code === 0 || (loginTreeKilledAfterAuth && existsSync(authJsonPath))) {
             resolvePromise()
             return
           }

@@ -76,7 +76,18 @@ export function createValidationEnv(inheritedEnv, layout) {
 
 export async function createValidationLayout(options = {}) {
   const primaryHome = path.resolve(options.primaryHome ?? os.homedir())
-  const tempRoot = await mkdtemp(path.join(options.tempParent ?? os.tmpdir(), 'orca-codex-real-'))
+  const envTempParent = process.env.ORCA_CODEX_VALIDATION_TEMP_PARENT?.trim()
+  const tempParent = path.resolve(options.tempParent ?? (envTempParent || os.tmpdir()))
+  // Why: on Windows the default %TEMP% lives inside %USERPROFILE%, which the
+  // disposable-home guard below rightly refuses. Fail before creating anything
+  // and point at the overrides instead of aborting with an opaque guard error.
+  if (samePath(tempParent, primaryHome) || isWithin(tempParent, primaryHome)) {
+    throw new Error(
+      `Refusing to place the disposable validation root inside the primary home (${primaryHome}). ` +
+        'Pass --temp-parent <dir> or set ORCA_CODEX_VALIDATION_TEMP_PARENT to a directory outside it.'
+    )
+  }
+  const tempRoot = await mkdtemp(path.join(tempParent, 'orca-codex-real-'))
   const homeDir = path.join(tempRoot, 'home')
   const userDataDir = path.join(tempRoot, 'user-data')
   await Promise.all([
@@ -233,7 +244,8 @@ function parseArgs(argv) {
     keep: false,
     reportPath: null,
     primaryHome: os.homedir(),
-    configTemplate: null
+    configTemplate: null,
+    tempParent: null
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
@@ -253,6 +265,8 @@ function parseArgs(argv) {
       options.primaryHome = path.resolve(readValue())
     } else if (arg === '--config-template') {
       options.configTemplate = path.resolve(readValue())
+    } else if (arg === '--temp-parent') {
+      options.tempParent = path.resolve(readValue())
     } else if (arg === '--dry-run') {
       options.dryRun = true
     } else if (arg === '--close-after-launch') {
@@ -263,7 +277,7 @@ function parseArgs(argv) {
       options.keep = true
     } else if (arg === '--help') {
       console.log(
-        'Usage: node config/scripts/run-codex-real-account-validation.mjs [--scenario mixed|managed-only|codex-lb] [--config-template <path>] [--skip-build] [--dry-run] [--close-after-launch] [--keep] [--report <path>]'
+        'Usage: node config/scripts/run-codex-real-account-validation.mjs [--scenario mixed|managed-only|codex-lb] [--config-template <path>] [--temp-parent <dir>] [--skip-build] [--dry-run] [--close-after-launch] [--keep] [--report <path>]'
       )
       process.exit(0)
     } else {
@@ -399,7 +413,10 @@ async function runInteractiveSession(context) {
 async function main() {
   const options = parseArgs(process.argv.slice(2))
   const repoRoot = process.cwd()
-  const layout = await createValidationLayout({ primaryHome: options.primaryHome })
+  const layout = await createValidationLayout({
+    primaryHome: options.primaryHome,
+    tempParent: options.tempParent ?? undefined
+  })
   const reportPath =
     options.reportPath ??
     path.join(os.tmpdir(), `orca-codex-real-account-${options.scenario}-${Date.now()}.json`)

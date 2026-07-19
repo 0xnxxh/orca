@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -82,13 +82,53 @@ describe('Codex real-account validation harness', () => {
     expect(JSON.stringify(snapshot)).not.toContain('system-secret')
     expect(JSON.stringify(snapshot)).not.toContain('never-report-me')
   })
+
+  it('honors a disposable temp parent override outside the primary home', async () => {
+    const tempParent = await mkdtemp(path.join(os.tmpdir(), 'orca-temp-parent-'))
+    cleanupPaths.push(tempParent)
+    const { layout } = runValidationModule<{ layout: { tempRoot: string } }>(
+      `
+        const { createValidationLayout } = await import(process.argv[1])
+        const layout = await createValidationLayout({ primaryHome: process.argv[2] })
+        console.log(JSON.stringify({ layout }))
+      `,
+      [path.join(os.tmpdir(), 'orca-primary-home-sentinel')],
+      { ORCA_CODEX_VALIDATION_TEMP_PARENT: tempParent }
+    )
+
+    expect(path.dirname(layout.tempRoot)).toBe(tempParent)
+  })
+
+  it('refuses a temp parent inside the primary home and points at the overrides', () => {
+    // Why: matches Windows, where the default %TEMP% lives inside %USERPROFILE%.
+    const { error } = runValidationModule<{ error: string | null }>(
+      `
+        const { createValidationLayout } = await import(process.argv[1])
+        try {
+          const layout = await createValidationLayout({ primaryHome: process.argv[2] })
+          console.log(JSON.stringify({ error: null, layout }))
+        } catch (caught) {
+          console.log(JSON.stringify({ error: caught.message }))
+        }
+      `,
+      [os.tmpdir()]
+    )
+
+    expect(error).toContain('Refusing to place the disposable validation root')
+    expect(error).toContain('--temp-parent')
+    expect(error).toContain('ORCA_CODEX_VALIDATION_TEMP_PARENT')
+  })
 })
 
-function runValidationModule<T>(source: string, args: string[]): T {
+function runValidationModule<T>(source: string, args: string[], env?: Record<string, string>): T {
   const stdout = execFileSync(
     process.execPath,
     ['--input-type=module', '--eval', source, validationModuleUrl, ...args],
-    { encoding: 'utf8' }
+    {
+      encoding: 'utf8',
+      // Why: an ambient temp-parent override must not redirect unrelated cases.
+      env: { ...process.env, ORCA_CODEX_VALIDATION_TEMP_PARENT: '', ...env }
+    }
   )
   return JSON.parse(stdout.trim()) as T
 }
