@@ -891,7 +891,12 @@ export class OrcaRuntimeRpcServer {
             )
           },
           onBinary: (socket, bytes) => this.handleWebSocketBinaryMessage(bytes, socket.ws),
-          onReady: () => this.mobileRelayPairingProvider?.onDemandStateChanged?.(),
+          onReady: () => {
+            // Why: first authenticated mobile/remote client (direct WS and
+            // cloud relay both attach here) starts path-candidate tracking.
+            this.runtime.activateRecentPtyPathCandidateTracking()
+            this.mobileRelayPairingProvider?.onDemandStateChanged?.()
+          },
           onClose: (socket, hasOtherConnections) => {
             if (!socket) {
               return
