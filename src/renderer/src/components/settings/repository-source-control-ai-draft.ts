@@ -145,7 +145,7 @@ export function serializeActionOverride(
 
 /**
  * Layer only one action's draft override onto the last-saved repo settings, so a
- * per-action save persists that recipe without flushing other rows' edits.
+ * per-action Save persists that recipe without flushing other rows' edits.
  */
 export function buildActionScopedRepoAiSave(
   persisted: RepoSourceControlAiOverrides,
@@ -164,4 +164,125 @@ export function buildActionScopedRepoAiSave(
       actionId
     )
   )
+}
+
+export function withRepoAiEnabled(
+  base: RepoSourceControlAiOverrides,
+  enabled: boolean | undefined
+): RepoSourceControlAiOverrides {
+  const next = { ...base }
+  if (enabled === undefined) {
+    delete next.enabled
+  } else {
+    next.enabled = enabled
+  }
+  return normalizeRepoAiDraft(next)
+}
+
+export function withRepoAiCustomCommand(
+  base: RepoSourceControlAiOverrides,
+  customAgentCommand: string | undefined
+): RepoSourceControlAiOverrides {
+  const next = { ...base }
+  if (customAgentCommand === undefined || customAgentCommand.trim().length === 0) {
+    delete next.customAgentCommand
+  } else {
+    next.customAgentCommand = customAgentCommand
+  }
+  return normalizeRepoAiDraft(next)
+}
+
+export function withRepoAiHostedReviewDefault(
+  base: RepoSourceControlAiOverrides,
+  key: keyof NonNullable<RepoSourceControlAiOverrides['prCreationDefaults']>,
+  value: 'inherit' | 'on' | 'off'
+): RepoSourceControlAiOverrides {
+  const nextDefaults = { ...base.prCreationDefaults }
+  if (value === 'inherit') {
+    delete nextDefaults[key]
+  } else {
+    nextDefaults[key] = value === 'on'
+  }
+  return normalizeRepoAiDraft({
+    ...base,
+    prCreationDefaults: Object.keys(nextDefaults).length > 0 ? nextDefaults : undefined
+  })
+}
+
+export function withRepoAiActionMode(
+  base: RepoSourceControlAiOverrides,
+  settings: GlobalSettings | null,
+  actionId: SourceControlActionId,
+  mode: 'inherit' | 'override'
+): RepoSourceControlAiOverrides {
+  const nextActionOverrides = { ...base.actionOverrides }
+  if (mode === 'inherit') {
+    delete nextActionOverrides[actionId]
+    return normalizeRepoAiDraft(
+      dropRepoLegacyInstructionForAction(
+        {
+          ...base,
+          actionOverrides:
+            Object.keys(nextActionOverrides).length > 0 ? nextActionOverrides : undefined
+        },
+        actionId
+      )
+    )
+  }
+  if (!hasOwnActionOverride(nextActionOverrides, actionId)) {
+    nextActionOverrides[actionId] = readCompleteRecipeForDraft(base, settings, actionId)
+  }
+  return normalizeRepoAiDraft(
+    dropRepoLegacyInstructionForAction({ ...base, actionOverrides: nextActionOverrides }, actionId)
+  )
+}
+
+export function withRepoAiActionAgent(
+  base: RepoSourceControlAiOverrides,
+  settings: GlobalSettings | null,
+  actionId: SourceControlActionId,
+  agentId: RepoActionRecipe['agentId']
+): RepoSourceControlAiOverrides {
+  const currentRecipe =
+    base.actionOverrides?.[actionId] ?? readCompleteRecipeForDraft(base, settings, actionId)
+  return normalizeRepoAiDraft(
+    setActionOverride(base, actionId, {
+      ...currentRecipe,
+      agentId
+    })
+  )
+}
+
+export function withRepoAiActionRecipeText(
+  base: RepoSourceControlAiOverrides,
+  settings: GlobalSettings | null,
+  actionId: SourceControlActionId,
+  text: { commandInputTemplate: string; agentArgs: string }
+): RepoSourceControlAiOverrides {
+  const currentRecipe =
+    base.actionOverrides?.[actionId] ?? readCompleteRecipeForDraft(base, settings, actionId)
+  return normalizeRepoAiDraft(
+    setActionOverride(base, actionId, {
+      ...currentRecipe,
+      commandInputTemplate: text.commandInputTemplate,
+      agentArgs: text.agentArgs
+    })
+  )
+}
+
+export type ActionRecipeTextDraft = {
+  commandInputTemplate: string
+  agentArgs: string
+}
+
+export function readActionRecipeTextDraft(
+  value: RepoSourceControlAiOverrides,
+  actionId: SourceControlActionId
+): ActionRecipeTextDraft {
+  const recipe = value.actionOverrides?.[actionId]
+  return {
+    commandInputTemplate:
+      typeof recipe?.commandInputTemplate === 'string' ? recipe.commandInputTemplate : '',
+    agentArgs: typeof recipe?.agentArgs === 'string' ? recipe.agentArgs : ''
+  }
 }

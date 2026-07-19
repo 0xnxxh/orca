@@ -130,7 +130,7 @@ describe('RepositorySourceControlAiActionRows', () => {
         },
         source,
         defaultTuiAgent: 'codex',
-        isSaving: false,
+        savingActionIds: {},
         actionDirtyById,
         onActionModeChange: () => {},
         onActionAgentChange: () => {},
