@@ -4983,13 +4983,13 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       return
     }
     set((s) => {
-      const repoIdsWithoutSurvivingOwners = new Set<string>()
+      const repoIdsWithRemovedOwners = new Set<string>()
       const survivingRepoIds = new Set<string>()
       const repoIdsWithSurvivingOwners = new Set<string>()
       const survivingRepos: AppState['repos'] = []
       for (const repo of s.repos) {
         if (isRemovedRuntimeHostId(getRepoExecutionHostId(repo), removed)) {
-          repoIdsWithoutSurvivingOwners.add(repo.id)
+          repoIdsWithRemovedOwners.add(repo.id)
         } else {
           survivingRepos.push(repo)
           survivingRepoIds.add(repo.id)
@@ -5005,7 +5005,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       for (const setup of s.projectHostSetups) {
         if (isRemovedRuntimeHostId(setup.hostId, removed)) {
           if (setup.repoId) {
-            repoIdsWithoutSurvivingOwners.add(setup.repoId)
+            repoIdsWithRemovedOwners.add(setup.repoId)
           }
         } else {
           survivingSetups.push(setup)
@@ -5022,26 +5022,49 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             result.worktrees
           ])
         )
-      if (repoIdsWithoutSurvivingOwners.size > 0) {
-        // Why: repo/setup catalogs can lag session hydration; an explicitly hosted
-        // surviving worktree row is owner evidence during that loading gap too.
-        const recordSurvivingWorktreeOwners = (
-          rowsByRepo: Record<string, readonly { hostId?: ExecutionHostId }[]>
-        ): void => {
-          for (const [repoId, rows] of Object.entries(rowsByRepo)) {
-            if (rows.some((row) => row.hostId && !isRemovedRuntimeHostId(row.hostId, removed))) {
-              repoIdsWithSurvivingOwners.add(repoId)
+      // Why: repo/setup catalogs can lag session hydration; hosted worktree rows
+      // are ownership evidence during that loading gap too.
+      const recordWorktreeOwners = (
+        rowsByRepo: Record<string, readonly { hostId?: ExecutionHostId }[]>
+      ): void => {
+        for (const [repoId, rows] of Object.entries(rowsByRepo)) {
+          for (const row of rows) {
+            if (!row.hostId) {
+              continue
             }
+            const ownerSet = isRemovedRuntimeHostId(row.hostId, removed)
+              ? repoIdsWithRemovedOwners
+              : repoIdsWithSurvivingOwners
+            ownerSet.add(repoId)
           }
         }
-        recordSurvivingWorktreeOwners(s.worktreesByRepo)
-        recordSurvivingWorktreeOwners(detectedRows)
+      }
+      recordWorktreeOwners(s.worktreesByRepo)
+      recordWorktreeOwners(detectedRows)
 
-        // Why: legacy rows predate host stamps; every available owner record must
-        // agree that no other host survives before an unhosted row can be retired.
-        for (const repoId of repoIdsWithSurvivingOwners) {
-          repoIdsWithoutSurvivingOwners.delete(repoId)
+      const sessionWorktreeIdsOwnedByRemovedHosts = new Set<string>()
+      let survivingRestoredSessionOwners = s.restoredRuntimeHostIdByWorkspaceSessionKey
+      for (const [workspaceKey, hostId] of Object.entries(
+        s.restoredRuntimeHostIdByWorkspaceSessionKey
+      )) {
+        const scope = parseWorkspaceKey(workspaceKey)
+        if (scope?.type === 'folder' || !isRemovedRuntimeHostId(hostId, removed)) {
+          continue
         }
+        const worktreeId = scope?.type === 'worktree' ? scope.worktreeId : workspaceKey
+        sessionWorktreeIdsOwnedByRemovedHosts.add(worktreeId)
+        repoIdsWithRemovedOwners.add(getRepoIdFromWorktreeId(worktreeId))
+        if (survivingRestoredSessionOwners === s.restoredRuntimeHostIdByWorkspaceSessionKey) {
+          survivingRestoredSessionOwners = { ...survivingRestoredSessionOwners }
+        }
+        delete survivingRestoredSessionOwners[workspaceKey]
+      }
+
+      // Why: legacy rows predate host stamps; every available owner record must
+      // agree that no other host survives before an unhosted row can be retired.
+      const repoIdsWithoutSurvivingOwners = new Set(repoIdsWithRemovedOwners)
+      for (const repoId of repoIdsWithSurvivingOwners) {
+        repoIdsWithoutSurvivingOwners.delete(repoId)
       }
 
       const worktreeDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
@@ -5057,13 +5080,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
       const worktreesChanged = worktreeDrop.rowsByRepo !== s.worktreesByRepo
       const detectedChanged = detectedDrop.rowsByRepo !== detectedRows
-      if (!reposChanged && !setupsChanged && !worktreesChanged && !detectedChanged) {
-        return s
-      }
 
       const removedWorktreeIds = new Set([
         ...worktreeDrop.removedWorktreeIds,
-        ...detectedDrop.removedWorktreeIds
+        ...detectedDrop.removedWorktreeIds,
+        ...sessionWorktreeIdsOwnedByRemovedHosts
       ])
       // Why: terminal tabs hydrate before worktree metadata; session-only ids for
       // repos whose owners are all gone still need the full worktree-state purge.
@@ -5079,21 +5100,37 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           }
         }
       }
-      // Why: worktree-scoped UI state is keyed by bare worktree id, not host. If
-      // the same id survives on another host, it now belongs to that unambiguous
-      // survivor and must not lose its live tabs/editor/terminal state.
+      // Why: bare-id state follows an exact survivor unless the restored session
+      // partition proves that state belonged to the removed host.
       for (const rows of Object.values(worktreeDrop.rowsByRepo)) {
         for (const row of rows) {
-          removedWorktreeIds.delete(row.id)
+          if (!sessionWorktreeIdsOwnedByRemovedHosts.has(row.id)) {
+            removedWorktreeIds.delete(row.id)
+          }
         }
       }
       for (const rows of Object.values(detectedDrop.rowsByRepo)) {
         for (const row of rows) {
-          removedWorktreeIds.delete(row.id)
+          if (!sessionWorktreeIdsOwnedByRemovedHosts.has(row.id)) {
+            removedWorktreeIds.delete(row.id)
+          }
         }
       }
       const purgeState =
         removedWorktreeIds.size > 0 ? buildWorktreePurgeState(s, [...removedWorktreeIds]) : {}
+
+      const restoredSessionOwnersChanged =
+        survivingRestoredSessionOwners !== s.restoredRuntimeHostIdByWorkspaceSessionKey
+      if (
+        !reposChanged &&
+        !setupsChanged &&
+        !worktreesChanged &&
+        !detectedChanged &&
+        !restoredSessionOwnersChanged &&
+        removedWorktreeIds.size === 0
+      ) {
+        return s
+      }
 
       const detectedWorktreesByRepo = detectedChanged
         ? Object.fromEntries(
@@ -5111,6 +5148,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ...(setupsChanged ? { projectHostSetups: survivingSetups } : {}),
         ...(worktreesChanged ? { worktreesByRepo: worktreeDrop.rowsByRepo } : {}),
         ...(detectedChanged ? { detectedWorktreesByRepo } : {}),
+        ...(restoredSessionOwnersChanged
+          ? { restoredRuntimeHostIdByWorkspaceSessionKey: survivingRestoredSessionOwners }
+          : {}),
         ...(rowsChanged ? { sortEpoch: s.sortEpoch + 1 } : {}),
         // Why: mirror validateRepoScopedUi's repo-scoped UI subset so a filtered or
         // active sidebar can't be left referencing a purged repo id.

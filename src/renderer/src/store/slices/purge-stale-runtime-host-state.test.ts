@@ -256,9 +256,11 @@ describe('purgeStaleRuntimeHostState', () => {
         ]
       },
       tabsByWorktree: { [worktreeId]: tabs },
+      restoredRuntimeHostIdByWorkspaceSessionKey: { [worktreeId]: RUNTIME_B },
       activeWorktreeId: worktreeId,
       activeWorkspaceKey: worktreeWorkspaceKey(worktreeId)
     })
+    const restoredOwners = store.getState().restoredRuntimeHostIdByWorkspaceSessionKey
 
     store.getState().purgeStaleRuntimeHostState(['env-a'])
 
@@ -266,6 +268,8 @@ describe('purgeStaleRuntimeHostState', () => {
     expect(s.worktreesByRepo.shared).toHaveLength(1)
     expect(s.worktreesByRepo.shared[0]?.hostId).toBe(RUNTIME_B)
     expect(s.tabsByWorktree[worktreeId]).toBe(tabs)
+    expect(s.restoredRuntimeHostIdByWorkspaceSessionKey).toBe(restoredOwners)
+    expect(s.restoredRuntimeHostIdByWorkspaceSessionKey[worktreeId]).toBe(RUNTIME_B)
     expect(s.activeWorktreeId).toBe(worktreeId)
     expect(s.activeWorkspaceKey).toBe(worktreeWorkspaceKey(worktreeId))
   })
