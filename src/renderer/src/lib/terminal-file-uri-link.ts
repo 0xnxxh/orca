@@ -1,40 +1,51 @@
 import { resolveTerminalFileUrlTarget } from '../../../shared/terminal-file-url-target'
 import type { ParsedTerminalFileLink } from './terminal-links'
 
-// Plain-text `file://` URIs printed to a terminal (e.g. `ls --hyperlink` output
-// rendered literally, or a tool echoing a report path) are neither http links
-// nor bare filesystem paths, so the URL and local-path detectors both skip
-// them. This pass claims those spans and decodes them to a filesystem path via
-// the same resolver used for OSC 8 file hyperlinks, so a printed `file://` opens
-// identically whether or not the emitter wrapped it in an escape sequence.
+// Why: plain-text file URIs bypass both the HTTP and local-path detectors; use
+// the OSC 8 resolver so both terminal representations open identically.
 
-// A URI cannot contain raw whitespace; stop at the delimiters that never begin a
-// path segment. Mirrors the terminator set the http URL detector uses so the two
-// schemes trim consistently.
-const FILE_URI_REGEX = /\bfile:\/\/[^\s"'`<>|(){}[\]]+/gi
+const MAX_FILE_URI_LENGTH = 2048
+// Why: extraction runs on hover; cap before URL parsing and filesystem probes
+// so a file:// prefix in a huge dumped token cannot block the renderer.
+const FILE_URI_REGEX = /\bfile:\/\/[^\s"`<>|]{1,2049}/gi
 
-// Trailing punctuation that is prose, not part of the path. Line/column suffixes
-// end in a digit and extensions end in a letter, so trimming these is safe.
-const TRAILING_PROSE_CHARS = new Set([
-  '.',
-  ',',
-  ';',
-  ':',
-  '!',
-  '?',
-  ')',
-  ']',
-  '}',
-  '>',
-  '"',
-  "'",
-  '`'
-])
+const TRAILING_PROSE_CHARS = new Set(['.', ',', ';', ':', '!', '?', '>', '"', "'", '`'])
 
 function trimTrailingProse(uriText: string): string {
+  let parentheses = 0
+  let brackets = 0
+  let braces = 0
+  for (const char of uriText) {
+    parentheses += char === ')' ? 1 : char === '(' ? -1 : 0
+    brackets += char === ']' ? 1 : char === '[' ? -1 : 0
+    braces += char === '}' ? 1 : char === '{' ? -1 : 0
+  }
+
   let end = uriText.length
-  while (end > 0 && TRAILING_PROSE_CHARS.has(uriText[end - 1])) {
-    end -= 1
+  while (end > 0) {
+    const char = uriText[end - 1]
+    if (TRAILING_PROSE_CHARS.has(char)) {
+      end -= 1
+      continue
+    }
+    // Why: standard file URIs leave parentheses unescaped; trim only closing
+    // delimiters supplied by surrounding prose, not balanced filename text.
+    if (char === ')' && parentheses > 0) {
+      parentheses -= 1
+      end -= 1
+      continue
+    }
+    if (char === ']' && brackets > 0) {
+      brackets -= 1
+      end -= 1
+      continue
+    }
+    if (char === '}' && braces > 0) {
+      braces -= 1
+      end -= 1
+      continue
+    }
+    break
   }
   return uriText.slice(0, end)
 }
@@ -68,6 +79,9 @@ export function detectTerminalFileUriLinks(lineText: string): ParsedTerminalFile
   const links: ParsedTerminalFileLink[] = []
   for (const match of lineText.matchAll(FILE_URI_REGEX)) {
     const startIndex = match.index ?? 0
+    if (match[0].length > MAX_FILE_URI_LENGTH) {
+      continue
+    }
     const trimmed = trimTrailingProse(match[0])
     if (!trimmed) {
       continue

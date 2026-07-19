@@ -19,6 +19,13 @@ describe('detectTerminalFileUriLinks', () => {
     expect(link.pathText).toBe('/Users/dev/My Reports/out.html')
   })
 
+  it('keeps standard unescaped parentheses and apostrophes inside the path', () => {
+    const uri = "file:///tmp/Brennan's%20Report%20(final)"
+    const [link] = detectTerminalFileUriLinks(`open (${uri})`)
+    expect(link.pathText).toBe("/tmp/Brennan's Report (final)")
+    expect(link.displayText).toBe(uri)
+  })
+
   it('carries a :line:col suffix', () => {
     const [link] = detectTerminalFileUriLinks('file:///Users/dev/app.ts:12:3')
     expect(link).toMatchObject({ pathText: '/Users/dev/app.ts', line: 12, column: 3 })
@@ -52,5 +59,9 @@ describe('detectTerminalFileUriLinks', () => {
   it('finds multiple file URIs on one line', () => {
     const links = detectTerminalFileUriLinks('a file:///tmp/a.txt b file:///tmp/b.txt')
     expect(links.map((link) => link.pathText)).toEqual(['/tmp/a.txt', '/tmp/b.txt'])
+  })
+
+  it('does not expose oversized terminal tokens to filesystem probing', () => {
+    expect(detectTerminalFileUriLinks(`file:///tmp/${'a'.repeat(10_000)}`)).toEqual([])
   })
 })
