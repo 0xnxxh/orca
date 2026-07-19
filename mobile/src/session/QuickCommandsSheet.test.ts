@@ -3,9 +3,14 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { TerminalQuickCommand } from '../../../src/shared/types'
 import type { RpcClient } from '../transport/rpc-client'
+import { MAX_QUICK_COMMANDS } from '../terminal/quick-commands'
 import { QuickCommandsSheet } from './QuickCommandsSheet'
 
-const mocks = vi.hoisted(() => ({ alert: vi.fn(), persist: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  alert: vi.fn(),
+  commands: [] as TerminalQuickCommand[],
+  persist: vi.fn()
+}))
 const quickCommandEditorForm = 'QuickCommandEditorForm'
 const quickCommandsList = 'QuickCommandsList'
 const command: TerminalQuickCommand = {
@@ -42,7 +47,7 @@ vi.mock('./QuickCommandsList', () => ({
 
 vi.mock('./use-quick-commands', () => ({
   useQuickCommands: () => ({
-    commands: [],
+    commands: mocks.commands,
     loading: false,
     ready: true,
     error: null,
@@ -65,6 +70,7 @@ describe('QuickCommandsSheet', () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     mocks.alert.mockReset()
+    mocks.commands = []
     mocks.persist.mockReset()
     const originalConsoleError = console.error
     consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
@@ -136,6 +142,30 @@ describe('QuickCommandsSheet', () => {
       save.resolve(true)
       await save.promise
     })
+  })
+
+  it('keeps creation closed when the host command limit is reached', async () => {
+    mocks.commands = Array.from({ length: MAX_QUICK_COMMANDS }, (_, index) => ({
+      ...command,
+      id: `command-${index}`
+    }))
+    await act(async () => {
+      renderer = create(
+        createElement(QuickCommandsSheet, {
+          visible: true,
+          onClose: vi.fn(),
+          client: {} as RpcClient,
+          repoId: 'repo-1',
+          repoName: 'Repo',
+          onLaunch: () => true
+        })
+      )
+    })
+
+    const list = renderer!.root.findByType(quickCommandsList)
+    expect(list.props.canAdd).toBe(false)
+    act(() => list.props.onAdd())
+    expect(renderer!.root.findAllByType(quickCommandEditorForm)).toHaveLength(0)
   })
 
   it('does not delete a shared command until the destructive action is confirmed', async () => {

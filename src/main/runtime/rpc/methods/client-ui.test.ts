@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { getDefaultUIState } from '../../../../shared/constants'
+import {
+  MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH,
+  MAX_QUICK_COMMAND_ID_LENGTH,
+  MAX_QUICK_COMMAND_LABEL_LENGTH,
+  MAX_QUICK_COMMAND_REPO_ID_LENGTH,
+  MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH
+} from '../../../../shared/terminal-quick-commands'
 import type { PersistedUIState } from '../../../../shared/types'
 import type { OrcaRuntimeService } from '../../orca-runtime'
 import type { RpcRequest } from '../core'
@@ -197,6 +204,52 @@ describe('client UI RPC methods', () => {
           action: 'agent-prompt',
           agent: 'aider',
           prompt: 'Review this diff'
+        }
+      ],
+      [
+        {
+          id: 'oversized-command',
+          label: 'Oversized command',
+          action: 'terminal-command',
+          command: 'x'.repeat(MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH + 1),
+          appendEnter: true
+        }
+      ],
+      [
+        {
+          id: 'x'.repeat(MAX_QUICK_COMMAND_ID_LENGTH + 1),
+          label: 'Oversized id',
+          action: 'terminal-command',
+          command: 'true',
+          appendEnter: true
+        }
+      ],
+      [
+        {
+          id: 'oversized-label',
+          label: 'x'.repeat(MAX_QUICK_COMMAND_LABEL_LENGTH + 1),
+          action: 'terminal-command',
+          command: 'true',
+          appendEnter: true
+        }
+      ],
+      [
+        {
+          id: 'oversized-repo',
+          label: 'Oversized repo',
+          action: 'terminal-command',
+          command: 'true',
+          appendEnter: true,
+          scope: { type: 'repo', repoId: 'x'.repeat(MAX_QUICK_COMMAND_REPO_ID_LENGTH + 1) }
+        }
+      ],
+      [
+        {
+          id: 'oversized-prompt',
+          label: 'Oversized prompt',
+          action: 'agent-prompt',
+          agent: 'codex',
+          prompt: 'x'.repeat(MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH + 1)
         }
       ],
       Array.from({ length: 41 }, (_, index) => ({

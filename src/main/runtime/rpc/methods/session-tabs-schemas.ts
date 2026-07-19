@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH } from '../../../../shared/terminal-quick-commands'
 import { isTuiAgent } from '../../../../shared/tui-agent-config'
 import type { TuiAgent } from '../../../../shared/types'
 import { sleepingAgentLaunchConfigSchema } from '../../../../shared/workspace-session-sleeping-agents'
@@ -127,7 +128,7 @@ export const CreateTerminalTab = WorktreeTabSelector.extend({
   // WSL, or SSH) instead of pasted from the mobile client before the TUI is ready.
   agentPrompt: z
     .string()
-    .max(6000)
+    .max(MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH)
     .refine((value) => value.trim().length > 0, { message: 'Agent prompt cannot be empty' })
     .optional(),
   // Why: `agent` is the legacy preset field; `launchAgent` is the launch-plan

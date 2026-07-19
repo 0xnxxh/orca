@@ -2,6 +2,7 @@ import type { TerminalQuickCommand, TuiAgent } from '../../../src/shared/types'
 import {
   flattenTerminalQuickCommand,
   isTerminalAgentQuickCommand,
+  MAX_QUICK_COMMANDS,
   MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH,
   MAX_QUICK_COMMAND_LABEL_LENGTH,
   MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH,
@@ -18,6 +19,7 @@ export {
   isTerminalAgentQuickCommand as isAgentQuickCommand,
   terminalQuickCommandMatchesRepo as quickCommandMatchesRepo,
   supportsTerminalAgentQuickCommand,
+  MAX_QUICK_COMMANDS,
   MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH,
   MAX_QUICK_COMMAND_LABEL_LENGTH,
   MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH,

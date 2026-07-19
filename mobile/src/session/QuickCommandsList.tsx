@@ -21,6 +21,7 @@ type ListProps = {
   query: string
   loading: boolean
   disabled: boolean
+  canAdd: boolean
   error: string | null
   onQueryChange: (value: string) => void
   onLaunch: (command: TerminalQuickCommand) => void
@@ -36,6 +37,7 @@ export function QuickCommandsList({
   query,
   loading,
   disabled,
+  canAdd,
   error,
   onQueryChange,
   onLaunch,
@@ -44,6 +46,7 @@ export function QuickCommandsList({
   onAdd
 }: ListProps) {
   const hasVisible = repoCommands.length + globalCommands.length > 0
+  const addDisabled = disabled || !canAdd
   return (
     <View style={styles.listBody}>
       {totalCount > 1 ? (
@@ -100,15 +103,17 @@ export function QuickCommandsList({
       <Pressable
         style={({ pressed }) => [
           styles.addRow,
-          disabled && styles.disabled,
-          pressed && !disabled && styles.pressed
+          addDisabled && styles.disabled,
+          pressed && !addDisabled && styles.pressed
         ]}
-        disabled={disabled}
+        disabled={addDisabled}
         onPress={onAdd}
         accessibilityRole="button"
       >
         <Plus size={18} color={colors.textSecondary} />
-        <Text style={styles.addText}>New quick command</Text>
+        <Text style={styles.addText}>
+          {canAdd ? 'New quick command' : 'Quick command limit reached'}
+        </Text>
       </Pressable>
     </View>
   )

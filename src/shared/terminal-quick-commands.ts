@@ -8,8 +8,9 @@ import type {
 } from './types'
 
 export const MAX_QUICK_COMMANDS = 40
+export const MAX_QUICK_COMMAND_ID_LENGTH = 80
 export const MAX_QUICK_COMMAND_LABEL_LENGTH = 80
-const MAX_QUICK_COMMAND_REPO_ID_LENGTH = 200
+export const MAX_QUICK_COMMAND_REPO_ID_LENGTH = 200
 export const MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH = 4000
 // Why: agent prompt quick commands still launch through startup commands for
 // argv/flag agents, so this must stay within Orca's Windows shell safety cap.
@@ -111,10 +112,10 @@ export function normalizeTerminalQuickCommands(input: unknown): TerminalQuickCom
     const label = hasLabel ? String(record.label).trim() : ''
 
     const idBase = rawId || `quick-command-${normalized.length + 1}`
-    let id = idBase.slice(0, MAX_QUICK_COMMAND_LABEL_LENGTH)
+    let id = idBase.slice(0, MAX_QUICK_COMMAND_ID_LENGTH)
     let suffix = 2
     while (seenIds.has(id)) {
-      id = `${idBase.slice(0, MAX_QUICK_COMMAND_LABEL_LENGTH - 4)}-${suffix}`
+      id = `${idBase.slice(0, MAX_QUICK_COMMAND_ID_LENGTH - 4)}-${suffix}`
       suffix += 1
     }
     seenIds.add(id)
