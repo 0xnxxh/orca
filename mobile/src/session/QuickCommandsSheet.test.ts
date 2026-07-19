@@ -168,6 +168,35 @@ describe('QuickCommandsSheet', () => {
     expect(renderer!.root.findAllByType(quickCommandEditorForm)).toHaveLength(0)
   })
 
+  it('shows only global commands and defaults new commands to global without a repo', async () => {
+    const repoCommand: TerminalQuickCommand = {
+      ...command,
+      id: 'repo-command',
+      scope: { type: 'repo', repoId: 'repo-1' }
+    }
+    mocks.commands = [command, repoCommand]
+    await act(async () => {
+      renderer = create(
+        createElement(QuickCommandsSheet, {
+          visible: true,
+          onClose: vi.fn(),
+          client: {} as RpcClient,
+          repoId: null,
+          repoName: 'Folder workspace',
+          onLaunch: () => true
+        })
+      )
+    })
+
+    const list = renderer!.root.findByType(quickCommandsList)
+    expect(list.props.globalCommands).toEqual([command])
+    expect(list.props.repoCommands).toEqual([])
+    act(() => list.props.onAdd())
+    expect(renderer!.root.findByType(quickCommandEditorForm).props.draft.scope).toEqual({
+      type: 'global'
+    })
+  })
+
   it('does not delete a shared command until the destructive action is confirmed', async () => {
     await act(async () => {
       renderer = create(
@@ -191,9 +220,6 @@ describe('QuickCommandsSheet', () => {
     act(() => actions?.find((action) => action.style === 'destructive')?.onPress?.())
 
     expect(mocks.persist).toHaveBeenCalledTimes(1)
-    const update = mocks.persist.mock.calls[0]?.[0] as (
-      commands: TerminalQuickCommand[]
-    ) => TerminalQuickCommand[]
-    expect(update([command])).toEqual([])
+    expect(mocks.persist).toHaveBeenCalledWith({ type: 'delete', id: command.id })
   })
 })

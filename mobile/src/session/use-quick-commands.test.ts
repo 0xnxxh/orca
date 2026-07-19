@@ -94,18 +94,13 @@ describe('useQuickCommands', () => {
     } as unknown as RpcClient
     await mount(client)
 
-    let updateCalled = false
     await act(async () => {
-      const persisted = await state!.persist(() => {
-        updateCalled = true
-        return []
-      })
+      const persisted = await state!.persist({ type: 'delete', id: FIRST.id })
       expect(persisted).toBe(false)
     })
 
     expect(state?.ready).toBe(false)
     expect(state?.error).toBe('load failed')
-    expect(updateCalled).toBe(false)
     expect(client.sendRequest).toHaveBeenCalledTimes(1)
   })
 
@@ -115,22 +110,17 @@ describe('useQuickCommands', () => {
     } as unknown as RpcClient
     await mount(client)
 
-    let updateCalled = false
     await act(async () => {
-      const persisted = await state!.persist(() => {
-        updateCalled = true
-        return []
-      })
+      const persisted = await state!.persist({ type: 'delete', id: FIRST.id })
       expect(persisted).toBe(false)
     })
 
     expect(state?.ready).toBe(false)
     expect(state?.error).toBe('Failed to load quick commands')
-    expect(updateCalled).toBe(false)
     expect(client.sendRequest).toHaveBeenCalledTimes(1)
   })
 
-  it('rebases a later mutation after an earlier queued mutation fails', async () => {
+  it('keeps a later queued mutation after an earlier mutation fails', async () => {
     const firstUpdate = deferred<RpcResponse>()
     const secondUpdate = deferred<RpcResponse>()
     const updateParams: unknown[] = []
@@ -149,18 +139,14 @@ describe('useQuickCommands', () => {
     let firstPersist: Promise<boolean> = Promise.resolve(false)
     let secondPersist: Promise<boolean> = Promise.resolve(false)
     await act(async () => {
-      firstPersist = state!.persist((current) =>
-        current.filter((command) => command.id !== FIRST.id)
-      )
-      secondPersist = state!.persist((current) =>
-        current.filter((command) => command.id !== SECOND.id)
-      )
+      firstPersist = state!.persist({ type: 'delete', id: FIRST.id })
+      secondPersist = state!.persist({ type: 'delete', id: SECOND.id })
       await Promise.resolve()
     })
 
     expect(state?.commands).toEqual([])
     expect(updateParams).toHaveLength(1)
-    expect(updateParams[0]).toEqual({ terminalQuickCommands: [SECOND] })
+    expect(updateParams[0]).toEqual({ mutation: { type: 'delete', id: FIRST.id } })
 
     await act(async () => {
       firstUpdate.resolve(failure('first failed'))
@@ -168,8 +154,8 @@ describe('useQuickCommands', () => {
       await Promise.resolve()
     })
     expect(updateParams).toEqual([
-      { terminalQuickCommands: [SECOND] },
-      { terminalQuickCommands: [FIRST] }
+      { mutation: { type: 'delete', id: FIRST.id } },
+      { mutation: { type: 'delete', id: SECOND.id } }
     ])
     expect(state?.commands).toEqual([FIRST])
 
@@ -183,7 +169,7 @@ describe('useQuickCommands', () => {
     expect(state?.error).toBeNull()
   })
 
-  it('rebases queued mutations on the latest server-normalized list', async () => {
+  it('adopts the latest server-normalized list between queued mutations', async () => {
     const normalizedFirst = { ...FIRST, label: 'Server normalized' }
     const firstUpdate = deferred<RpcResponse>()
     const secondUpdate = deferred<RpcResponse>()
@@ -202,32 +188,50 @@ describe('useQuickCommands', () => {
     let firstPersist: Promise<boolean> = Promise.resolve(false)
     let secondPersist: Promise<boolean> = Promise.resolve(false)
     await act(async () => {
-      firstPersist = state!.persist((current) =>
-        current.map((command) =>
-          command.id === FIRST.id ? { ...command, label: 'Local label' } : command
-        )
-      )
-      secondPersist = state!.persist((current) =>
-        current.filter((command) => command.id !== SECOND.id)
-      )
+      firstPersist = state!.persist({
+        type: 'upsert',
+        command: { ...FIRST, label: 'Local label' }
+      })
+      secondPersist = state!.persist({ type: 'delete', id: SECOND.id })
       await Promise.resolve()
     })
 
     expect(updateParams[0]).toEqual({
-      terminalQuickCommands: [{ ...FIRST, label: 'Local label' }, SECOND]
+      mutation: { type: 'upsert', command: { ...FIRST, label: 'Local label' } }
     })
     await act(async () => {
       firstUpdate.resolve(success([normalizedFirst, SECOND]))
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(updateParams[1]).toEqual({ terminalQuickCommands: [normalizedFirst] })
+    expect(updateParams[1]).toEqual({ mutation: { type: 'delete', id: SECOND.id } })
 
     await act(async () => {
       secondUpdate.resolve(success([normalizedFirst]))
       await Promise.all([firstPersist, secondPersist])
     })
     expect(state?.commands).toEqual([normalizedFirst])
+  })
+
+  it('preserves unrelated commands added by another client while the sheet is open', async () => {
+    const edited = { ...FIRST, label: 'Edited on mobile' }
+    const client = {
+      sendRequest: vi
+        .fn()
+        .mockResolvedValueOnce(success([FIRST]))
+        // The host applies the targeted upsert to a list that desktop changed.
+        .mockResolvedValueOnce(success([edited, SECOND]))
+    } as unknown as RpcClient
+    await mount(client)
+
+    await act(async () => {
+      await state!.persist({ type: 'upsert', command: edited })
+    })
+
+    expect(client.sendRequest).toHaveBeenLastCalledWith('settings.updateTerminalQuickCommands', {
+      mutation: { type: 'upsert', command: edited }
+    })
+    expect(state?.commands).toEqual([edited, SECOND])
   })
 
   it('isolates an old client mutation from a replacement client', async () => {
@@ -252,7 +256,7 @@ describe('useQuickCommands', () => {
     })
     let persisted: Promise<boolean> = Promise.resolve(false)
     await act(async () => {
-      persisted = state!.persist(() => [])
+      persisted = state!.persist({ type: 'delete', id: FIRST.id })
       await Promise.resolve()
       renderer!.update(createElement(Harness, { client: newClient }))
       await Promise.resolve()
@@ -278,7 +282,7 @@ describe('useQuickCommands', () => {
     await mount(client)
 
     await act(async () => {
-      await state!.persist(() => [])
+      await state!.persist({ type: 'delete', id: FIRST.id })
     })
 
     expect(state?.commands).toEqual([FIRST])
@@ -296,7 +300,7 @@ describe('useQuickCommands', () => {
 
     let persisted = true
     await act(async () => {
-      persisted = await state!.persist(() => [])
+      persisted = await state!.persist({ type: 'delete', id: FIRST.id })
     })
 
     expect(persisted).toBe(false)
@@ -328,7 +332,7 @@ describe('useQuickCommands', () => {
 
     let persisted: Promise<boolean> = Promise.resolve(false)
     await act(async () => {
-      persisted = state!.persist(() => [])
+      persisted = state!.persist({ type: 'delete', id: FIRST.id })
       await Promise.resolve()
     })
     await act(async () => {
@@ -368,12 +372,8 @@ describe('useQuickCommands', () => {
     let firstPersist: Promise<boolean> = Promise.resolve(false)
     let secondPersist: Promise<boolean> = Promise.resolve(false)
     await act(async () => {
-      firstPersist = state!.persist((current) =>
-        current.filter((command) => command.id !== FIRST.id)
-      )
-      secondPersist = state!.persist((current) =>
-        current.filter((command) => command.id !== SECOND.id)
-      )
+      firstPersist = state!.persist({ type: 'delete', id: FIRST.id })
+      secondPersist = state!.persist({ type: 'delete', id: SECOND.id })
       await Promise.resolve()
     })
 

@@ -1,5 +1,6 @@
 import type { TerminalQuickCommand, TuiAgent } from '../../../src/shared/types'
 import {
+  applyTerminalQuickCommandMutation,
   flattenTerminalQuickCommand,
   isTerminalAgentQuickCommand,
   MAX_QUICK_COMMANDS,
@@ -8,7 +9,8 @@ import {
   MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH,
   parseNormalizedTerminalQuickCommands,
   supportsTerminalAgentQuickCommand,
-  terminalQuickCommandMatchesRepo
+  terminalQuickCommandMatchesRepo,
+  type TerminalQuickCommandMutation
 } from '../../../src/shared/terminal-quick-commands'
 import { MOBILE_TUI_AGENT_LABELS } from '../tasks/mobile-tui-agents'
 
@@ -23,7 +25,9 @@ export {
   MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH,
   MAX_QUICK_COMMAND_LABEL_LENGTH,
   MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH,
-  parseNormalizedTerminalQuickCommands
+  parseNormalizedTerminalQuickCommands,
+  applyTerminalQuickCommandMutation,
+  type TerminalQuickCommandMutation
 }
 
 const MAX_QUICK_COMMAND_DISPLAY_PREVIEW_LENGTH = 240
@@ -36,6 +40,7 @@ export type MobileQuickCommandLaunch = {
     startupCommandDelivery?: 'shell-ready'
     initialPrompt?: string
     enter?: boolean
+    successToast?: string
   }
 }
 
@@ -52,7 +57,13 @@ export function buildMobileQuickCommandLaunch(
     return null
   }
   return command.appendEnter === false
-    ? { options: { initialPrompt: command.command, enter: false } }
+    ? {
+        options: {
+          initialPrompt: command.command,
+          enter: false,
+          successToast: `${command.label.trim() || 'Quick command'} inserted`
+        }
+      }
     : {
         // Why: raw commands that resemble bare agent launches can otherwise
         // select the fast path and race slow native, WSL, or SSH shell startup.

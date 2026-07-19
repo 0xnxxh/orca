@@ -1,6 +1,6 @@
 import { z } from 'zod'
+import type { TerminalQuickCommand } from '../../../../shared/types'
 import {
-  MAX_QUICK_COMMANDS,
   MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH,
   MAX_QUICK_COMMAND_ID_LENGTH,
   MAX_QUICK_COMMAND_LABEL_LENGTH,
@@ -47,11 +47,27 @@ const TerminalQuickCommandUpdateItem = z.union([
 
 export const TerminalQuickCommandsUpdate = z
   .object({
-    // Why: normalization drops malformed entries, which would turn a protocol
-    // mismatch into destructive deletion of some or all saved commands.
-    terminalQuickCommands: z
-      .array(TerminalQuickCommandUpdateItem)
-      .max(MAX_QUICK_COMMANDS)
-      .transform((value) => normalizeTerminalQuickCommands(value))
+    // Why: a single host-side mutation preserves unrelated desktop/mobile edits
+    // and avoids retransmitting the full ~240 KB list for every small change.
+    mutation: z.union([
+      z
+        .object({
+          type: z.literal('upsert'),
+          command: TerminalQuickCommandUpdateItem.transform(
+            (value) => normalizeTerminalQuickCommands([value])[0]
+          ).pipe(
+            z.custom<TerminalQuickCommand>((value) => value !== undefined, {
+              message: 'Quick command cannot be normalized'
+            })
+          )
+        })
+        .strict(),
+      z
+        .object({
+          type: z.literal('delete'),
+          id: z.string().min(1).max(MAX_QUICK_COMMAND_ID_LENGTH)
+        })
+        .strict()
+    ])
   })
   .strict()

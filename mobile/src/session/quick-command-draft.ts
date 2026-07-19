@@ -89,7 +89,11 @@ export function draftToQuickCommand(draft: QuickCommandDraft): TerminalQuickComm
   if (!isQuickCommandDraftValid(draft)) {
     return null
   }
-  const id = draft.id ?? `quick-command-${Date.now().toString(36)}`
+  // Why: timestamps alone collide when desktop and mobile add commands in the
+  // same millisecond, which would turn an atomic upsert into an overwrite.
+  const id =
+    draft.id ??
+    `quick-command-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
   const label = draft.label.trim().slice(0, MAX_QUICK_COMMAND_LABEL_LENGTH)
   if (draft.action === 'agent-prompt' && draft.agent) {
     return {

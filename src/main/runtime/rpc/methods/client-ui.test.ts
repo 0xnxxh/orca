@@ -163,8 +163,9 @@ describe('client UI RPC methods', () => {
     const getResponse = await dispatcher.dispatch(makeRequest('settings.getTerminalQuickCommands'))
     const updateResponse = await dispatcher.dispatch(
       makeRequest('settings.updateTerminalQuickCommands', {
-        terminalQuickCommands: [
-          {
+        mutation: {
+          type: 'upsert',
+          command: {
             id: ' review ',
             label: ' Review ',
             action: 'agent-prompt',
@@ -172,69 +173,87 @@ describe('client UI RPC methods', () => {
             prompt: 'Review this diff\n',
             scope: { type: 'global' }
           }
-        ]
+        }
       })
     )
 
     expect(getResponse).toMatchObject({ ok: true, result: { terminalQuickCommands: commands } })
-    expect(runtime.updateClientTerminalQuickCommands).toHaveBeenCalledWith(commands)
+    expect(runtime.updateClientTerminalQuickCommands).toHaveBeenCalledWith({
+      type: 'upsert',
+      command: commands[0]
+    })
     expect(updateResponse).toMatchObject({
       ok: true,
       result: { terminalQuickCommands: commands }
     })
+
+    await dispatcher.dispatch(
+      makeRequest('settings.updateTerminalQuickCommands', {
+        mutation: { type: 'delete', id: 'review' }
+      })
+    )
+    expect(runtime.updateClientTerminalQuickCommands).toHaveBeenLastCalledWith({
+      type: 'delete',
+      id: 'review'
+    })
   })
 
-  it('rejects malformed quick-command lists instead of clearing persisted commands', async () => {
+  it('rejects malformed quick-command mutations instead of changing persisted commands', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
       updateClientTerminalQuickCommands: vi.fn()
     } as unknown as OrcaRuntimeService
     const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
 
-    for (const terminalQuickCommands of [
+    for (const mutation of [
       null,
-      'not-a-list',
-      { id: 'not-a-list' },
-      [null],
-      [{ id: 'incomplete' }],
-      [
-        {
+      'not-a-mutation',
+      { type: 'delete', id: '' },
+      { type: 'upsert', command: null },
+      { type: 'upsert', command: { id: 'incomplete' } },
+      {
+        type: 'upsert',
+        command: {
           id: 'unsupported-agent',
           label: 'Unsupported agent',
           action: 'agent-prompt',
           agent: 'aider',
           prompt: 'Review this diff'
         }
-      ],
-      [
-        {
+      },
+      {
+        type: 'upsert',
+        command: {
           id: 'oversized-command',
           label: 'Oversized command',
           action: 'terminal-command',
           command: 'x'.repeat(MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH + 1),
           appendEnter: true
         }
-      ],
-      [
-        {
+      },
+      {
+        type: 'upsert',
+        command: {
           id: 'x'.repeat(MAX_QUICK_COMMAND_ID_LENGTH + 1),
           label: 'Oversized id',
           action: 'terminal-command',
           command: 'true',
           appendEnter: true
         }
-      ],
-      [
-        {
+      },
+      {
+        type: 'upsert',
+        command: {
           id: 'oversized-label',
           label: 'x'.repeat(MAX_QUICK_COMMAND_LABEL_LENGTH + 1),
           action: 'terminal-command',
           command: 'true',
           appendEnter: true
         }
-      ],
-      [
-        {
+      },
+      {
+        type: 'upsert',
+        command: {
           id: 'oversized-repo',
           label: 'Oversized repo',
           action: 'terminal-command',
@@ -242,26 +261,21 @@ describe('client UI RPC methods', () => {
           appendEnter: true,
           scope: { type: 'repo', repoId: 'x'.repeat(MAX_QUICK_COMMAND_REPO_ID_LENGTH + 1) }
         }
-      ],
-      [
-        {
+      },
+      {
+        type: 'upsert',
+        command: {
           id: 'oversized-prompt',
           label: 'Oversized prompt',
           action: 'agent-prompt',
           agent: 'codex',
           prompt: 'x'.repeat(MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH + 1)
         }
-      ],
-      Array.from({ length: 41 }, (_, index) => ({
-        id: `command-${index}`,
-        label: `Command ${index}`,
-        action: 'terminal-command',
-        command: 'true',
-        appendEnter: true
-      }))
+      },
+      { type: 'upsert', command: { id: 'default-pwd', label: 'Removed', command: 'pwd' } }
     ]) {
       const response = await dispatcher.dispatch(
-        makeRequest('settings.updateTerminalQuickCommands', { terminalQuickCommands })
+        makeRequest('settings.updateTerminalQuickCommands', { mutation })
       )
 
       expect(response).toMatchObject({

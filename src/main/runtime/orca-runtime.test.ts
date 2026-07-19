@@ -66,6 +66,7 @@ import {
   TERMINAL_INPUT_MAX_BYTES,
   TERMINAL_INPUT_TOO_LARGE_ERROR
 } from '../../shared/terminal-input'
+import { MAX_QUICK_COMMANDS } from '../../shared/terminal-quick-commands'
 import {
   AGENT_PROMPT_BRACKETED_PASTE_END,
   AGENT_PROMPT_BRACKETED_PASTE_START,
@@ -1528,7 +1529,15 @@ describe('OrcaRuntimeService', () => {
   })
 
   it('updates quick commands without widening general paired settings payloads', () => {
-    let settings = { ...store.getSettings(), terminalQuickCommands: [] }
+    const existing = {
+      id: 'review',
+      label: 'Review',
+      action: 'terminal-command' as const,
+      command: 'pnpm review',
+      appendEnter: true,
+      scope: { type: 'global' as const }
+    }
+    let settings = { ...store.getSettings(), terminalQuickCommands: [existing] }
     const updateSettings = vi.fn((updates: Partial<typeof settings>) => {
       settings = { ...settings, ...updates }
     })
@@ -1537,23 +1546,54 @@ describe('OrcaRuntimeService', () => {
       getSettings: () => settings,
       updateSettings
     } as never)
-    const commands = [
-      {
-        id: 'status',
-        label: 'Status',
-        action: 'terminal-command' as const,
-        command: 'git status',
-        appendEnter: true,
-        scope: { type: 'global' as const }
-      }
-    ]
+    const command = {
+      id: 'status',
+      label: 'Status',
+      action: 'terminal-command' as const,
+      command: 'git status',
+      appendEnter: true,
+      scope: { type: 'global' as const }
+    }
+    const commands = [existing, command]
 
-    expect(runtime.updateClientTerminalQuickCommands(commands)).toEqual(commands)
+    expect(runtime.updateClientTerminalQuickCommands({ type: 'upsert', command })).toEqual(commands)
     expect(updateSettings).toHaveBeenCalledWith(
       { terminalQuickCommands: commands },
       { notifyListeners: true }
     )
     expect(runtime.getClientSettings()).not.toHaveProperty('terminalQuickCommands')
+  })
+
+  it('rejects a concurrent add after the quick command limit is reached', () => {
+    const terminalQuickCommands = Array.from({ length: MAX_QUICK_COMMANDS }, (_, index) => ({
+      id: `command-${index}`,
+      label: `Command ${index}`,
+      action: 'terminal-command' as const,
+      command: 'true',
+      appendEnter: true,
+      scope: { type: 'global' as const }
+    }))
+    const updateSettings = vi.fn()
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getSettings: () => ({ ...store.getSettings(), terminalQuickCommands }),
+      updateSettings
+    } as never)
+
+    expect(() =>
+      runtime.updateClientTerminalQuickCommands({
+        type: 'upsert',
+        command: {
+          id: 'one-too-many',
+          label: 'One too many',
+          action: 'terminal-command',
+          command: 'true',
+          appendEnter: true,
+          scope: { type: 'global' }
+        }
+      })
+    ).toThrow('Quick command limit reached')
+    expect(updateSettings).not.toHaveBeenCalled()
   })
 
   it('accepts runtime-backed setting updates from paired clients', () => {

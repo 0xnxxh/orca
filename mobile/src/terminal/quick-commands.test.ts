@@ -46,7 +46,7 @@ describe('mobile quick-command launch', () => {
     expect(
       buildMobileQuickCommandLaunch(command({ command: multiline, appendEnter: false }))
     ).toEqual({
-      options: { initialPrompt: multiline, enter: false }
+      options: { initialPrompt: multiline, enter: false, successToast: 'Command inserted' }
     })
   })
 

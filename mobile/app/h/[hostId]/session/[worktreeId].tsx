@@ -818,7 +818,7 @@ export default function SessionScreen() {
     created?: string
     warning?: string
   }>()
-  const isFolderWorkspaceRoute = worktreeId.startsWith('folder:')
+  const isFolderWorkspaceRoute = worktreeId.startsWith('folder:') // Synthetic ids have no repo scope.
   const router = useRouter()
   const insets = useSafeAreaInsets()
   // Why: shared client per host owned by RpcClientProvider. See
@@ -3948,7 +3948,6 @@ export default function SessionScreen() {
     agent?: MobileNewTabAgentOption['agent'],
     options?: MobileQuickCommandLaunch['options'] & {
       onPromptSent?: () => void
-      successToast?: string
       errorToast?: string
     }
   ) {
@@ -5344,7 +5343,7 @@ export default function SessionScreen() {
         visible={showQuickCommands}
         onClose={() => setShowQuickCommands(false)}
         client={client}
-        repoId={getRepoIdFromMobileWorktreeId(worktreeId) || null}
+        repoId={isFolderWorkspaceRoute ? null : getRepoIdFromMobileWorktreeId(worktreeId) || null}
         repoName={worktreeName || null}
         onLaunch={launchQuickCommand}
       />

@@ -19,6 +19,10 @@ const REMOVED_PRESET_IDS = new Set(['default-pwd', 'default-git-status'])
 
 const DEFAULT_TERMINAL_QUICK_COMMANDS: TerminalQuickCommand[] = []
 
+export type TerminalQuickCommandMutation =
+  | { type: 'upsert'; command: TerminalQuickCommand }
+  | { type: 'delete'; id: string }
+
 export function getDefaultTerminalQuickCommands(): TerminalQuickCommand[] {
   return DEFAULT_TERMINAL_QUICK_COMMANDS.map((command) => ({ ...command }))
 }
@@ -225,6 +229,22 @@ export function parseNormalizedTerminalQuickCommands(
     return null
   }
   return normalized
+}
+
+// Why: paired clients can edit settings concurrently. Applying one command at
+// the host boundary preserves unrelated commands added by another client.
+export function applyTerminalQuickCommandMutation(
+  commands: readonly TerminalQuickCommand[],
+  mutation: TerminalQuickCommandMutation
+): TerminalQuickCommand[] {
+  if (mutation.type === 'delete') {
+    return commands.filter((command) => command.id !== mutation.id)
+  }
+  const existingIndex = commands.findIndex((command) => command.id === mutation.command.id)
+  if (existingIndex === -1) {
+    return [...commands, mutation.command]
+  }
+  return commands.map((command, index) => (index === existingIndex ? mutation.command : command))
 }
 
 export function buildTerminalQuickCommandInput(command: TerminalCommandQuickCommand): string {

@@ -32,7 +32,7 @@ export const CLIENT_UI_METHODS: RpcMethod[] = [
     name: 'settings.updateTerminalQuickCommands',
     params: TerminalQuickCommandsUpdate,
     handler: (params, { runtime }) => ({
-      terminalQuickCommands: runtime.updateClientTerminalQuickCommands(params.terminalQuickCommands)
+      terminalQuickCommands: runtime.updateClientTerminalQuickCommands(params.mutation)
     })
   }),
   defineMethod({

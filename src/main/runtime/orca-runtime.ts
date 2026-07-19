@@ -213,6 +213,11 @@ import { FIRST_PANE_ID } from '../../shared/pane-key'
 import { isTerminalLeafId, makePaneKey, parsePaneKey } from '../../shared/stable-pane-id'
 import { parseAppSshPtyId } from '../../shared/ssh-pty-id'
 import { isValidHostTerminalTabId, isValidTerminalTabId } from '../../shared/terminal-tab-id'
+import {
+  applyTerminalQuickCommandMutation,
+  MAX_QUICK_COMMANDS,
+  type TerminalQuickCommandMutation
+} from '../../shared/terminal-quick-commands'
 import { buildAgentDraftLaunchPlan, buildAgentStartupPlan } from '../../shared/tui-agent-startup'
 import { repoIsRemote } from '../../shared/agent-launch-remote'
 import {
@@ -2858,11 +2863,22 @@ export class OrcaRuntimeService {
     return this.store.getSettings().terminalQuickCommands ?? []
   }
 
-  updateClientTerminalQuickCommands(commands: TerminalQuickCommand[]): TerminalQuickCommand[] {
+  updateClientTerminalQuickCommands(
+    mutation: TerminalQuickCommandMutation
+  ): TerminalQuickCommand[] {
     if (!this.store?.getSettings || !this.store.updateSettings) {
       throw new Error('runtime_unavailable')
     }
-    this.store.updateSettings({ terminalQuickCommands: commands }, { notifyListeners: true })
+    const current = this.getClientTerminalQuickCommands()
+    if (
+      mutation.type === 'upsert' &&
+      !current.some((command) => command.id === mutation.command.id) &&
+      current.length >= MAX_QUICK_COMMANDS
+    ) {
+      throw new Error('Quick command limit reached')
+    }
+    const next = applyTerminalQuickCommandMutation(current, mutation)
+    this.store.updateSettings({ terminalQuickCommands: next }, { notifyListeners: true })
     return this.getClientTerminalQuickCommands()
   }
 

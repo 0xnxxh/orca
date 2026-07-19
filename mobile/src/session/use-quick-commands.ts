@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcFailure, RpcSuccess } from '../transport/types'
 import type { TerminalQuickCommand } from '../../../src/shared/types'
-import { parseNormalizedTerminalQuickCommands } from '../terminal/quick-commands'
+import {
+  applyTerminalQuickCommandMutation,
+  parseNormalizedTerminalQuickCommands,
+  type TerminalQuickCommandMutation
+} from '../terminal/quick-commands'
 
 type Args = {
   client: RpcClient | null
@@ -18,14 +22,12 @@ type QuickCommandsState = {
   error: string | null
   // Optimistically apply against the latest local list, then serialize writes.
   // The server re-normalizes and returns the canonical list, which we adopt.
-  persist: (update: (current: TerminalQuickCommand[]) => TerminalQuickCommand[]) => Promise<boolean>
+  persist: (mutation: TerminalQuickCommandMutation) => Promise<boolean>
 }
-
-type QuickCommandsUpdate = (current: TerminalQuickCommand[]) => TerminalQuickCommand[]
 
 type PendingMutation = {
   id: number
-  update: QuickCommandsUpdate
+  mutation: TerminalQuickCommandMutation
 }
 
 type MutationContext = {
@@ -134,20 +136,20 @@ export function useQuickCommands({ client, enabled }: Args): QuickCommandsState 
   }, [client, enabled])
 
   const persist = useCallback(
-    async (update: QuickCommandsUpdate) => {
-      // Mutating before the latest remote read completes could overwrite
-      // commands created by desktop while this sheet was closed.
+    async (commandMutation: TerminalQuickCommandMutation) => {
+      // Why: the loaded list is the optimistic/rollback baseline; mutating
+      // before it arrives would make failure recovery show invented state.
       const mutationContext = mutationContextRef.current
       if (!client || loading || !ready || mutationContext?.client !== client) {
         return false
       }
       const mutation: PendingMutation = {
         id: mutationContext.nextMutationId + 1,
-        update
+        mutation: commandMutation
       }
       mutationContext.nextMutationId = mutation.id
       mutationContext.pending.push(mutation)
-      const optimistic = update(commandsRef.current)
+      const optimistic = applyTerminalQuickCommandMutation(commandsRef.current, commandMutation)
       commandsRef.current = optimistic
       setCommands(optimistic)
       setError(null)
@@ -156,11 +158,8 @@ export function useQuickCommands({ client, enabled }: Args): QuickCommandsState 
         let succeeded = false
         let failureMessage: string | null = null
         try {
-          // Why: an earlier queued save can fail or be normalized by the server.
-          // Rebase at send time so this caller's result matches what is persisted.
-          const rebased = update(mutationContext.confirmed)
           const response = await client.sendRequest('settings.updateTerminalQuickCommands', {
-            terminalQuickCommands: rebased
+            mutation: commandMutation
           })
           if (!response.ok) {
             throw new Error(
@@ -185,7 +184,7 @@ export function useQuickCommands({ client, enabled }: Args): QuickCommandsState 
           )
           if (mutationContextRef.current === mutationContext) {
             const next = mutationContext.pending.reduce(
-              (current, pending) => pending.update(current),
+              (current, pending) => applyTerminalQuickCommandMutation(current, pending.mutation),
               mutationContext.confirmed
             )
             commandsRef.current = next

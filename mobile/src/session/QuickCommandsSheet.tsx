@@ -112,7 +112,7 @@ export function QuickCommandsSheet({
           text: 'Delete',
           style: 'destructive',
           onPress: () => {
-            void persist((current) => current.filter((entry) => entry.id !== command.id))
+            void persist({ type: 'delete', id: command.id })
           }
         }
       ]
@@ -131,12 +131,7 @@ export function QuickCommandsSheet({
     savingRef.current = true
     setSaving(true)
     try {
-      const ok = await persist((current) => {
-        const exists = current.some((entry) => entry.id === built.id)
-        return exists
-          ? current.map((entry) => (entry.id === built.id ? built : entry))
-          : [...current, built]
-      })
+      const ok = await persist({ type: 'upsert', command: built })
       if (ok) {
         setView('list')
         setDraft(null)

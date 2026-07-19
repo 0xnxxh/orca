@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyTerminalQuickCommandMutation,
   buildTerminalQuickCommandInput,
   flattenTerminalQuickCommand,
   getTerminalQuickCommandAction,
@@ -225,6 +226,24 @@ describe('terminal quick commands', () => {
     expect(
       parseNormalizedTerminalQuickCommands([...canonical, ...canonical.slice(0, 1)])
     ).toBeNull()
+  })
+
+  it('applies targeted mutations without replacing unrelated commands', () => {
+    const [first, second] = normalizeTerminalQuickCommands([
+      { id: 'first', label: 'First', command: 'echo first', appendEnter: true },
+      { id: 'second', label: 'Second', command: 'echo second', appendEnter: true }
+    ])
+    const edited = { ...first!, label: 'Edited' }
+
+    expect(
+      applyTerminalQuickCommandMutation([first!, second!], {
+        type: 'upsert',
+        command: edited
+      })
+    ).toEqual([edited, second])
+    expect(
+      applyTerminalQuickCommandMutation([first!, second!], { type: 'delete', id: first!.id })
+    ).toEqual([second])
   })
 
   it('matches global commands everywhere and repo commands only in their repo', () => {
