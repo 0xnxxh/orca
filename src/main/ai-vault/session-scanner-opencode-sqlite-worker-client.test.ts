@@ -1,16 +1,12 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import type { Worker } from 'node:worker_threads'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import Database from '../sqlite/sync-database'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  IDLE_TEARDOWN_MS,
   LIST_TIMEOUT_MS,
   MAX_CONSECUTIVE_DEATHS,
   OpenCodeSqliteWorkerClient,
   PARSE_TIMEOUT_MS
 } from './session-scanner-opencode-sqlite-worker-client'
-import { buildOpenCodeSqliteCandidatePath } from './session-scanner-opencode-sqlite-paths'
 import type {
   OpenCodeSqliteWorkerRequest,
   OpenCodeSqliteWorkerResponse
@@ -76,32 +72,6 @@ function makeFactory(workers: FakeWorker[]): () => Worker {
     workers.push(worker)
     return worker as unknown as Worker
   }
-}
-
-let tempDirs: string[] = []
-
-afterEach(() => {
-  for (const dir of tempDirs) {
-    rmSync(dir, { recursive: true, force: true })
-  }
-  tempDirs = []
-})
-
-function createTempOpenCodeDb(sessionId: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'orca-opencode-worker-'))
-  tempDirs.push(dir)
-  const path = join(dir, 'opencode.db')
-  const db = new Database(path)
-  db.exec(`
-    CREATE TABLE session (
-      id TEXT PRIMARY KEY,
-      time_created INTEGER NOT NULL,
-      time_updated INTEGER NOT NULL
-    );
-  `)
-  db.prepare(`INSERT INTO session VALUES (?, 1777634000000, 1777634001000)`).run(sessionId)
-  db.close()
-  return path
 }
 
 describe('OpenCodeSqliteWorkerClient', () => {
@@ -201,8 +171,7 @@ describe('OpenCodeSqliteWorkerClient', () => {
     await expect(queued).resolves.toBe('B')
   })
 
-  it('falls back to the in-process reader when the worker cannot spawn', async () => {
-    const dbPath = createTempOpenCodeDb('ses_inline')
+  it('fails closed instead of running SQLite on the main thread when spawn fails', async () => {
     const client = new OpenCodeSqliteWorkerClient({
       workerFactory() {
         throw new Error('no worker bundle')
@@ -211,19 +180,15 @@ describe('OpenCodeSqliteWorkerClient', () => {
     })
 
     const listIssues: AiVaultScanIssue[] = []
-    const candidates = await client.list({ dbPaths: [dbPath], limit: 10, issues: listIssues })
-    expect(candidates.map((c) => c.file.path)).toEqual([
-      buildOpenCodeSqliteCandidatePath(dbPath, 'ses_inline')
-    ])
-    // Degraded mode surfaces as a scan issue, not only a log.
-    expect(listIssues.some((issue) => /degraded inline mode/.test(issue.message))).toBe(true)
-
-    const session = await client.parse({
-      dbPath,
-      sessionId: 'ses_inline',
-      platform: 'darwin'
-    })
-    expect(session?.sessionId).toBe('ses_inline')
+    await expect(
+      client.list({ dbPaths: ['/tmp/opencode.db'], limit: 10, issues: listIssues })
+    ).resolves.toEqual([])
+    expect(
+      listIssues.some((issue) => /background scanner could not start/.test(issue.message))
+    ).toBe(true)
+    await expect(
+      client.parse({ dbPath: '/tmp/opencode.db', sessionId: 'ses_skipped', platform: 'darwin' })
+    ).rejects.toThrow(/background scanner could not start/)
   })
 
   it('stops respawning after the consecutive-death cap and fails the rest to issues', async () => {
@@ -273,7 +238,7 @@ describe('OpenCodeSqliteWorkerClient', () => {
     }
   })
 
-  it('self-heals after repeated spawn failures instead of latching inline forever', async () => {
+  it('self-heals after repeated spawn failures instead of latching unavailable', async () => {
     const workers: FakeWorker[] = []
     let failSpawns = true
     const client = new OpenCodeSqliteWorkerClient({
@@ -287,25 +252,23 @@ describe('OpenCodeSqliteWorkerClient', () => {
       },
       log() {}
     })
-    const dbPath = createTempOpenCodeDb('ses_heal')
-
-    // Scan 1: both the list leg and a parse fail to spawn (two consecutive
-    // failures) → both fall back inline; no worker is ever created.
+    // Scan 1: both calls fail closed, keeping synchronous SQLite off the main
+    // thread. The failure is not latched, so a later scan can still recover.
     const firstIssues: AiVaultScanIssue[] = []
-    const first = await client.list({ dbPaths: [dbPath], limit: 10, issues: firstIssues })
-    expect(first.map((c) => c.file.path)).toEqual([
-      buildOpenCodeSqliteCandidatePath(dbPath, 'ses_heal')
-    ])
-    expect(firstIssues.some((issue) => /degraded inline mode/.test(issue.message))).toBe(true)
-    const parsed = await client.parse({ dbPath, sessionId: 'ses_heal', platform: 'darwin' })
-    expect(parsed?.sessionId).toBe('ses_heal')
+    const first = await client.list({ dbPaths: ['/db'], limit: 10, issues: firstIssues })
+    expect(first).toEqual([])
+    expect(
+      firstIssues.some((issue) => /background scanner could not start/.test(issue.message))
+    ).toBe(true)
+    await expect(
+      client.parse({ dbPath: '/db', sessionId: 'ses_heal', platform: 'darwin' })
+    ).rejects.toThrow(/background scanner could not start/)
     expect(workers).toHaveLength(0)
 
-    // Spawns recover; the next scan must re-probe and use the worker — proving no
-    // spawn failure ever latched the client into permanent main-thread inline mode.
+    // Spawns recover; the next scan must re-probe and use the worker.
     failSpawns = false
     const secondIssues: AiVaultScanIssue[] = []
-    const secondPromise = client.list({ dbPaths: [dbPath], limit: 10, issues: secondIssues })
+    const secondPromise = client.list({ dbPaths: ['/db'], limit: 10, issues: secondIssues })
     const worker = workers[0]
     expect(worker).toBeDefined()
     worker!.emit('message', {
@@ -315,6 +278,45 @@ describe('OpenCodeSqliteWorkerClient', () => {
     } satisfies OpenCodeSqliteWorkerResponse)
     await expect(secondPromise).resolves.toEqual([])
     expect(secondIssues).toHaveLength(0)
+  })
+
+  it('drops a cleanly exited idle worker and respawns on the next request', async () => {
+    const workers: FakeWorker[] = []
+    const client = new OpenCodeSqliteWorkerClient({ workerFactory: makeFactory(workers), log() {} })
+
+    const first = client.parse({ dbPath: '/db#a', sessionId: 'a', platform: 'darwin' })
+    workers[0]!.emit('message', { id: workers[0]!.lastId(), ok: true, value: 'A' })
+    await expect(first).resolves.toBe('A')
+    workers[0]!.emit('exit', 0)
+
+    const second = client.parse({ dbPath: '/db#b', sessionId: 'b', platform: 'darwin' })
+    expect(workers).toHaveLength(2)
+    workers[1]!.emit('message', { id: workers[1]!.lastId(), ok: true, value: 'B' })
+    await expect(second).resolves.toBe('B')
+  })
+
+  it('terminates an idle worker and respawns on later work', async () => {
+    vi.useFakeTimers()
+    try {
+      const workers: FakeWorker[] = []
+      const client = new OpenCodeSqliteWorkerClient({
+        workerFactory: makeFactory(workers),
+        log() {}
+      })
+
+      const first = client.parse({ dbPath: '/db#a', sessionId: 'a', platform: 'darwin' })
+      workers[0]!.emit('message', { id: workers[0]!.lastId(), ok: true, value: 'A' })
+      await expect(first).resolves.toBe('A')
+      await vi.advanceTimersByTimeAsync(IDLE_TEARDOWN_MS)
+      expect(workers[0]!.terminated).toBe(true)
+
+      const second = client.parse({ dbPath: '/db#b', sessionId: 'b', platform: 'darwin' })
+      expect(workers).toHaveLength(2)
+      workers[1]!.emit('message', { id: workers[1]!.lastId(), ok: true, value: 'B' })
+      await expect(second).resolves.toBe('B')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not carry a worker death from a prior burst into the next scan cap', async () => {

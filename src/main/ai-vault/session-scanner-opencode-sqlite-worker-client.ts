@@ -1,7 +1,5 @@
 import type { Worker } from 'node:worker_threads'
 import type { AiVaultScanIssue, AiVaultSession } from '../../shared/ai-vault-types'
-import { listOpenCodeSqliteSessions } from './session-scanner-opencode-sqlite-list'
-import { parseOpenCodeSqliteSession } from './session-scanner-opencode-sqlite'
 import type {
   OpenCodeSqliteListRequest,
   OpenCodeSqliteListValue,
@@ -15,9 +13,8 @@ import { errorMessage } from './session-scanner-values'
 // Why (#8864): a lazily-spawned, unref'd worker runs OpenCode SQLite reads off
 // the main-process event loop. Lifecycle (idle teardown, FIFO one-at-a-time
 // dispatch, per-call timeouts, respawn-on-fault) mirrors src/main/speech/
-// stt-service.ts; the inline fallback preserves today's behavior when no worker
-// bundle exists (tests, packaged-file regressions). The default spawn + shared
-// singleton live in session-scanner-opencode-sqlite-worker-spawn.ts.
+// stt-service.ts. The default spawn + shared singleton live in
+// session-scanner-opencode-sqlite-worker-spawn.ts.
 
 export const LIST_TIMEOUT_MS = 30_000
 export const PARSE_TIMEOUT_MS = 15_000
@@ -44,16 +41,16 @@ type PendingCall = {
   timer: NodeJS.Timeout | null
 }
 
-// Distinguishes "no worker available at all" (→ inline fallback) from a timeout
-// or crash (→ scan issue), so the routing callers pick the right degraded path.
+// Distinguishes "no worker available at all" from a timeout or crash so callers
+// can surface a precise issue while keeping synchronous SQLite off the main thread.
 class OpenCodeSqliteWorkerUnavailableError extends Error {}
 
 /**
  * Main-thread bridge that runs OpenCode SQLite reads on a persistent worker
  * thread. Dispatches one request at a time (FIFO), times each request out from
  * dispatch, respawns after faults (capped by `MAX_CONSECUTIVE_DEATHS`), tears
- * the worker down after `IDLE_TEARDOWN_MS` of inactivity, and transparently
- * falls back to the in-process readers when no worker can be spawned.
+ * the worker down after `IDLE_TEARDOWN_MS` of inactivity, and fails closed when
+ * no worker can be spawned rather than moving SQLite work onto the main thread.
  */
 export class OpenCodeSqliteWorkerClient {
   private worker: Worker | null = null
@@ -62,7 +59,7 @@ export class OpenCodeSqliteWorkerClient {
   private idleTimer: NodeJS.Timeout | null = null
   private consecutiveDeaths = 0
   private nextId = 1
-  private loggedInlineFallback = false
+  private loggedWorkerUnavailable = false
   private cleanupWorkerListeners: (() => void) | null = null
   private readonly workerFactory: WorkerFactory
   private readonly log: (message: string) => void
@@ -78,7 +75,7 @@ export class OpenCodeSqliteWorkerClient {
    * @param args.limit - Maximum number of sessions to return per database.
    * @param args.issues - Collected scan issues (worker issues are merged in).
    * @returns Synthetic candidates sorted by `time_updated` DESC; empty (with a
-   *   scan issue) when the worker times out or crashes.
+   *   scan issue) when the worker is unavailable, times out, or crashes.
    */
   async list(args: {
     dbPaths: readonly string[]
@@ -97,7 +94,13 @@ export class OpenCodeSqliteWorkerClient {
       return value.candidates
     } catch (err) {
       if (err instanceof OpenCodeSqliteWorkerUnavailableError) {
-        return this.runListInline(args)
+        args.issues.push({
+          agent: 'opencode',
+          path: args.dbPaths[0] ?? 'opencode.db',
+          message:
+            'OpenCode history was skipped because its background scanner could not start; the app remains responsive.'
+        })
+        return []
       }
       // Timeout/crash: this storage dir's SQLite DBs contribute no sessions this
       // scan, surfaced as one scan issue rather than an unbounded stall.
@@ -131,29 +134,11 @@ export class OpenCodeSqliteWorkerClient {
       return value as AiVaultSession | null
     } catch (err) {
       if (err instanceof OpenCodeSqliteWorkerUnavailableError) {
-        return parseOpenCodeSqliteSession(args)
+        throw new Error('OpenCode SQLite background scanner could not start.')
       }
       // Reject only this session; the scanner turns the throw into a scan issue.
       throw err instanceof Error ? err : new Error(String(err))
     }
-  }
-
-  private async runListInline(args: {
-    dbPaths: readonly string[]
-    limit: number
-    issues: AiVaultScanIssue[]
-  }): Promise<SessionFileCandidate[]> {
-    // Why: running the scan inline reintroduces the main-thread hang on very
-    // large DBs, so surface it through the same per-source scan-issue plumbing
-    // (not only a log) — visible in the panel every scan the worker is
-    // unavailable, instead of silently passing as a slow scan.
-    args.issues.push({
-      agent: 'opencode',
-      path: args.dbPaths[0] ?? 'opencode.db',
-      message:
-        'OpenCode history is running in degraded inline mode (background worker unavailable); very large databases may slow scanning.'
-    })
-    return listOpenCodeSqliteSessions(args)
   }
 
   private dispatch(request: OpenCodeSqliteRequestBody, timeoutMs: number): Promise<unknown> {
@@ -219,13 +204,12 @@ export class OpenCodeSqliteWorkerClient {
       this.worker = worker
       return worker
     } catch (err) {
-      // No worker (missing bundle / transient spawn failure): this call falls
-      // back inline via failQueuedAsUnavailable. Never latch — the next call
-      // re-probes, so a transient failure self-heals instead of pinning the app
-      // to the main-thread inline path for the session. Log once to avoid spam.
-      if (!this.loggedInlineFallback) {
-        this.loggedInlineFallback = true
-        this.log(`OpenCode SQLite worker unavailable; scanning inline. ${errorMessage(err)}`)
+      // Why (#8864): never fall back to synchronous SQLite reads here; a missing
+      // bundle or resource-exhausted spawn must omit OpenCode history rather than
+      // reintroduce the main-process hang this worker boundary prevents.
+      if (!this.loggedWorkerUnavailable) {
+        this.loggedWorkerUnavailable = true
+        this.log(`OpenCode SQLite worker unavailable; skipping its history. ${errorMessage(err)}`)
       }
       return null
     }

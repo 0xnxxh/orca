@@ -30,9 +30,8 @@ function resolveWorkerEntryPath(): string {
 
 function defaultWorkerFactory(): Worker {
   const workerPath = resolveWorkerEntryPath()
-  // Why: a missing built entry (vitest, packaged-file regression) must throw
-  // synchronously here so the client falls back to inline before it ever waits
-  // on a worker that can never post a result.
+  // Why: a missing built entry must throw synchronously so the client can fail
+  // closed before it waits on a worker that can never post a result.
   if (!existsSync(workerPath)) {
     throw new Error(`OpenCode SQLite worker entry not found: ${workerPath}`)
   }

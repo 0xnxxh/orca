@@ -2,14 +2,15 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { AiVaultScanIssue } from '../../shared/ai-vault-types'
 import Database from '../sqlite/sync-database'
 import { buildOpenCodeSqliteCandidatePath } from './session-scanner-opencode-sqlite-paths'
 import { listOpenCodeSqliteSessions } from './session-scanner-opencode-sqlite-list'
 import { parseOpenCodeSqliteSession } from './session-scanner-opencode-sqlite'
 
-// Part B (#8864) bounds: the discovery list LIMITs sessions before evaluating
-// the message-count subquery, and the preview join reads parts of only the
-// newest 100 messages of a session. These tests pin the observable effects.
+// Part B (#8864) bounds: discovery reads only the newest session identities and
+// recency fields, while the preview join reads parts of only the newest 100
+// messages of a session. These tests pin the observable effects.
 
 let tempDirs: string[] = []
 
@@ -132,6 +133,26 @@ describe('listOpenCodeSqliteSessions — LIMIT-first discovery', () => {
       buildOpenCodeSqliteCandidatePath(path, 'ses_4'),
       buildOpenCodeSqliteCandidatePath(path, 'ses_3')
     ])
+  })
+
+  it('does not read message payloads that discovery does not use', async () => {
+    const { db, path } = createTempDb()
+    applySchema(db)
+    insertSession(db, 'ses_candidate', 1_777_634_001_000)
+    db.prepare(`INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)`).run(
+      'msg_malformed',
+      'ses_candidate',
+      1_777_634_000_500,
+      'malformed JSON'
+    )
+    db.close()
+
+    const issues: AiVaultScanIssue[] = []
+    const candidates = await listOpenCodeSqliteSessions({ dbPaths: [path], limit: 10, issues })
+    expect(candidates.map((candidate) => candidate.file.path)).toEqual([
+      buildOpenCodeSqliteCandidatePath(path, 'ses_candidate')
+    ])
+    expect(issues).toEqual([])
   })
 })
 

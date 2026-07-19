@@ -12,18 +12,8 @@ import { columnExists, tableExists } from '../opencode-usage/schema-helpers'
 
 type SessionRow = {
   id: string
-  title: string | null
-  directory: string | null
   time_created: number
   time_updated: number
-  model_json: string | null
-  agent: string | null
-  tokens_input: number
-  tokens_output: number
-  tokens_reasoning: number
-  tokens_cache_read: number
-  cost: number
-  message_count: number
 }
 
 function openReadonlyDatabase(dbPath: string): SyncDatabase {
@@ -40,51 +30,20 @@ function canReadOpenCodeSessions(db: SyncDatabase): boolean {
   )
 }
 
-function sessionColumnSelect(db: SyncDatabase, columnName: string): string {
-  return columnExists(db, 'session', columnName) ? `s.${columnName}` : 'NULL'
-}
-
-function canCountOpenCodeMessages(db: SyncDatabase): boolean {
-  return (
-    tableExists(db, 'message') &&
-    columnExists(db, 'message', 'session_id') &&
-    columnExists(db, 'message', 'data')
-  )
-}
-
 function buildSessionListQuery(db: SyncDatabase): string {
-  const modelSelect = sessionColumnSelect(db, 'model')
-  const agentSelect = sessionColumnSelect(db, 'agent')
-  const tokenColumns = ['tokens_input', 'tokens_output', 'tokens_reasoning', 'tokens_cache_read']
-  const tokenSelects = tokenColumns
-    .map((col) => `${columnExists(db, 'session', col) ? `s.${col}` : '0'} AS ${col}`)
-    .join(', ')
-  const costSelect = columnExists(db, 'session', 'cost') ? 's.cost' : '0'
   const parentIdPredicate = columnExists(db, 'session', 'parent_id') ? 'AND parent_id IS NULL' : ''
   const archivedPredicate = columnExists(db, 'session', 'time_archived')
     ? 'AND time_archived IS NULL'
     : ''
-  const messageCountSubquery = canCountOpenCodeMessages(db)
-    ? `(SELECT COUNT(*) FROM message m
-        WHERE m.session_id = s.id
-          AND json_extract(m.data, '$.role') IN ('user','assistant'))`
-    : '0'
 
-  // Why (#8864): sort+LIMIT the session rows in an inner subselect first so the
-  // correlated message-count subquery is evaluated only for the returned rows,
-  // not for every session in a multi-GB DB.
-  return `SELECT s.id,
-                 ${sessionColumnSelect(db, 'title')} AS title,
-                 ${sessionColumnSelect(db, 'directory')} AS directory,
-                 s.time_created,
-                 s.time_updated,
-                 ${modelSelect} AS model_json, ${agentSelect} AS agent,
-                 ${tokenSelects}, ${costSelect} AS cost,
-                 ${messageCountSubquery} AS message_count
-          FROM (SELECT * FROM session
-                WHERE 1=1 ${parentIdPredicate} ${archivedPredicate}
-                ORDER BY time_updated DESC
-                LIMIT ?) s`
+  // Why (#8864): discovery needs only identity and recency. Reading message
+  // blobs or unused session metadata here repeats expensive work on every
+  // refresh; the parse path loads metadata only for candidates it actually uses.
+  return `SELECT id, time_created, time_updated
+          FROM session
+          WHERE 1=1 ${parentIdPredicate} ${archivedPredicate}
+          ORDER BY time_updated DESC
+          LIMIT ?`
 }
 
 function rowToCandidate(row: SessionRow, dbPath: string): SessionFileCandidate {
