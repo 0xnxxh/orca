@@ -741,7 +741,10 @@ describe('ClaudeAccountService credential capture', () => {
 
     expect(settings.claudeManagedAccounts).toHaveLength(1)
     expect(readFileSync(existingMarkerPath, 'utf-8')).toBe('existing-account\n')
-    expect(runtimeAuth.forceMaterializeCurrentSelectionForRollback).toHaveBeenCalled()
+    // The guard fires before credentials/settings change, so rollback I/O
+    // would only add latency and could mask the duplicate error.
+    expect(store.updateSettings).not.toHaveBeenCalled()
+    expect(runtimeAuth.forceMaterializeCurrentSelectionForRollback).not.toHaveBeenCalled()
     // The rejected add's throwaway managed-auth dir must be cleaned up, leaving
     // only the pre-existing account's dir behind.
     expect(readdirSync(join(tempDir, 'claude-accounts')).sort()).toEqual(['existing-account'])

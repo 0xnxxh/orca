@@ -140,15 +140,15 @@ export class ClaudeAccountService {
     const managedAuth = this.createManagedAuthDir(accountId, target)
     const { managedAuthPath } = managedAuth
     const previousSettings = this.store.getSettings()
+    let duplicateIdentityFound = false
 
     try {
       const captured = await this.runClaudeLoginAndCapture(managedAuth)
       if (!captured.identity.email) {
         throw new Error('Claude login completed, but Orca could not resolve the account email.')
       }
-      // Why: re-adding the same identity would create a duplicate row that
-      // confuses account selection and rate-limit tracking (#6616). The per-row
-      // Re-authenticate action already covers users who want to refresh creds.
+      // Why: duplicate rows confuse account selection and rate-limit tracking;
+      // the per-row Re-authenticate action already refreshes credentials.
       if (
         findDuplicateClaudeAccount(previousSettings.claudeManagedAccounts, {
           email: captured.identity.email,
@@ -157,6 +157,7 @@ export class ClaudeAccountService {
           wslDistro: managedAuth.wslDistro
         })
       ) {
+        duplicateIdentityFound = true
         throw new Error('This Claude account is already added.')
       }
       await this.writeManagedAuth(accountId, managedAuthPath, captured)
@@ -187,8 +188,12 @@ export class ClaudeAccountService {
       this.rateLimits.evictInactiveClaudeCache(accountId)
       return this.getSnapshot()
     } catch (error) {
-      this.restoreClaudeSettings(previousSettings)
-      await this.runtimeAuth.forceMaterializeCurrentSelectionForRollback()
+      // Duplicate detection precedes every credential/settings write, so only
+      // its throwaway auth directory needs cleanup.
+      if (!duplicateIdentityFound) {
+        this.restoreClaudeSettings(previousSettings)
+        await this.runtimeAuth.forceMaterializeCurrentSelectionForRollback()
+      }
       await this.safeRemoveManagedAuth(accountId, managedAuthPath)
       throw error
     }
