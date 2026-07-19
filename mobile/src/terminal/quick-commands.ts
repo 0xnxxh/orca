@@ -19,6 +19,7 @@ import {
 export const MAX_QUICK_COMMAND_LABEL_LENGTH = 80
 export const MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH = 4000
 export const MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH = 6000
+const MAX_QUICK_COMMAND_DISPLAY_PREVIEW_LENGTH = 240
 
 export function getQuickCommandAction(command: TerminalQuickCommand): TerminalQuickCommandAction {
   return command.action === 'agent-prompt' ? 'agent-prompt' : 'terminal-command'
@@ -65,6 +66,7 @@ export type MobileQuickCommandLaunch = {
   options: {
     agentPrompt?: string
     startupCommand?: string
+    startupCommandDelivery?: 'shell-ready'
     initialPrompt?: string
     enter?: boolean
   }
@@ -85,7 +87,11 @@ export function buildMobileQuickCommandLaunch(
   }
   return command.appendEnter === false
     ? { options: { initialPrompt: body, enter: false } }
-    : { options: { startupCommand: body } }
+    : {
+        // Why: raw commands that resemble bare agent launches can otherwise
+        // select the fast path and race slow native, WSL, or SSH shell startup.
+        options: { startupCommand: body, startupCommandDelivery: 'shell-ready' }
+      }
 }
 
 export function getQuickCommandAgentLabel(agent: TuiAgent): string {
@@ -99,6 +105,16 @@ export function getQuickCommandPreview(command: TerminalQuickCommand): string {
     return `${getQuickCommandAgentLabel(command.agent)}: ${command.prompt}`
   }
   return command.command
+}
+
+export function getQuickCommandDisplayPreview(command: TerminalQuickCommand): string {
+  const preview = getQuickCommandPreview(command)
+  if (preview.length <= MAX_QUICK_COMMAND_DISPLAY_PREVIEW_LENGTH) {
+    return preview
+  }
+  // Why: one-line rows should not send up to 6 KB each through native text
+  // layout; full command bodies remain available to search, edit, and launch.
+  return `${preview.slice(0, MAX_QUICK_COMMAND_DISPLAY_PREVIEW_LENGTH - 1)}…`
 }
 
 export function getQuickCommandAgentLaunchName(agent: TuiAgent): string {

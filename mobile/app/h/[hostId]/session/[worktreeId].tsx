@@ -77,7 +77,10 @@ import { SessionDockColumn } from '../../../../src/session/SessionDockColumn'
 import { MobileSessionHeaderIconButton } from '../../../../src/session/MobileSessionHeaderIconButton'
 import { MobileSessionHeaderMoreActionsSheet } from '../../../../src/session/MobileSessionHeaderMoreActionsSheet'
 import { QuickCommandsSheet } from '../../../../src/session/QuickCommandsSheet'
-import { buildMobileQuickCommandLaunch } from '../../../../src/terminal/quick-commands'
+import {
+  buildMobileQuickCommandLaunch,
+  type MobileQuickCommandLaunch
+} from '../../../../src/terminal/quick-commands'
 import { MOBILE_AI_VAULT_CAPABILITY } from '../../../../src/agent-history/agent-history-capability'
 import type { ConnectionState, RpcFailure, RpcSuccess } from '../../../../src/transport/types'
 import { headlessActivationNeedsHostRenderer } from '../../../../src/worktree/worktree-activation-result'
@@ -3943,14 +3946,8 @@ export default function SessionScreen() {
 
   async function handleCreateTerminal(
     agent?: MobileNewTabAgentOption['agent'],
-    options?: {
-      initialPrompt?: string
+    options?: MobileQuickCommandLaunch['options'] & {
       onPromptSent?: () => void
-      startupCommand?: string
-      agentPrompt?: string
-      // Whether post-create text is submitted (Enter) or only inserted.
-      // Defaults to true for diff-note delivery.
-      enter?: boolean
       successToast?: string
       errorToast?: string
     }
@@ -3977,6 +3974,9 @@ export default function SessionScreen() {
         afterTabId: activeSessionTabId ?? undefined,
         clientMutationId,
         ...(options?.startupCommand ? { command: options.startupCommand } : {}),
+        ...(options?.startupCommandDelivery
+          ? { startupCommandDelivery: options.startupCommandDelivery }
+          : {}),
         ...(options?.agentPrompt ? { agentPrompt: options.agentPrompt } : {}),
         ...(agent ? { agent } : {})
       })

@@ -5,7 +5,7 @@ import { MobileAgentIcon } from '../components/MobileAgentIcon'
 import { MOBILE_AGENT_CATALOG } from '../tasks/mobile-agent-catalog'
 import { mobileTuiAgentSupportsPromptCommand } from '../tasks/mobile-tui-agents'
 import type { TerminalQuickCommand, TuiAgent } from '../../../src/shared/types'
-import { getQuickCommandPreview, isAgentQuickCommand } from '../terminal/quick-commands'
+import { getQuickCommandDisplayPreview, isAgentQuickCommand } from '../terminal/quick-commands'
 
 export const QUICK_COMMAND_SUPPORTED_AGENTS = MOBILE_AGENT_CATALOG.filter((entry) =>
   mobileTuiAgentSupportsPromptCommand(entry.id)
@@ -183,7 +183,7 @@ function QuickCommandRow({
             {command.label}
           </Text>
           <Text style={[styles.rowPreview, !isAgent && styles.mono]} numberOfLines={1}>
-            {getQuickCommandPreview(command)}
+            {getQuickCommandDisplayPreview(command)}
           </Text>
         </View>
       </Pressable>
