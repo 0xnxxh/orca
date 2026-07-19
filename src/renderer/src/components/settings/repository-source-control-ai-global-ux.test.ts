@@ -87,6 +87,24 @@ describe('useRepositorySourceControlAiGlobalUx', () => {
     ).toBe('edited')
   })
 
+  it('reverts a typed action draft to the persisted template when discarded', async () => {
+    const updateRepo = vi.fn().mockResolvedValue(true)
+    const { result } = setup(withRecipe('orig'), updateRepo)
+    act(() => {
+      result.current.updateActionTemplate('fixCommitFailure', 'edited')
+    })
+    expect(result.current.actionDirtyById.fixCommitFailure).toBe(true)
+    act(() => {
+      result.current.discardActionRecipeText('fixCommitFailure')
+    })
+    // Discard drops the draft: dirty clears and the template reverts to the persisted value.
+    expect(result.current.actionDirtyById.fixCommitFailure).toBe(false)
+    expect(
+      result.current.displayRepoAi.actionOverrides?.fixCommitFailure?.commandInputTemplate
+    ).toBe('orig')
+    expect(updateRepo).not.toHaveBeenCalled()
+  })
+
   it('keeps the custom command draft shown when the commit fails', async () => {
     const updateRepo = vi.fn().mockResolvedValue(false)
     const { result } = setup({}, updateRepo)

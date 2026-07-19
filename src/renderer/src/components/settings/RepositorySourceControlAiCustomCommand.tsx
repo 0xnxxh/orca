@@ -96,9 +96,9 @@ export function RepositorySourceControlAiCustomCommand({
         value={value ?? ''}
         onChange={(event) => {
           const nextValue = event.target.value
-          if (isRepoCommand(nextValue)) {
-            setForceRepoMode(false)
-          }
+          // Why: an empty field while typing keeps local REPO intent so the Select doesn't snap to
+          // inherit mid-edit; blur is what commits the clear. A non-empty value exits the intent.
+          setForceRepoMode(!isRepoCommand(nextValue))
           onChange(nextValue === '' ? undefined : nextValue)
         }}
         onBlur={(event) => {
