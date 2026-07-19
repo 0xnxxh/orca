@@ -203,9 +203,12 @@ export default function MonacoEditor({
   const [selectionAnnotationTarget, setSelectionAnnotationTarget] =
     useState<MonacoMarkdownSelectionAnnotationTarget | null>(null)
   // Why: claim open drafts synchronously so a same-tick second chord cannot
-  // remount the composer before React commits commentPopover state.
+  // remount the composer before React commits commentPopover state. Mirrored
+  // in an effect so a discarded render pass cannot leak into the ref.
   const commentPopoverRef = useRef<MarkdownCommentPopoverState | null>(null)
-  commentPopoverRef.current = commentPopover
+  useEffect(() => {
+    commentPopoverRef.current = commentPopover
+  }, [commentPopover])
   const isDark =
     settings?.theme === 'dark' ||
     (settings?.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -231,7 +234,9 @@ export default function MonacoEditor({
   // Why: the Monaco mount closure installs its keydown listeners once, so the
   // add-review-note shortcut reads the current enablement through a ref.
   const shouldShowMarkdownAnnotationsRef = useRef(shouldShowMarkdownAnnotations)
-  shouldShowMarkdownAnnotationsRef.current = shouldShowMarkdownAnnotations
+  useEffect(() => {
+    shouldShowMarkdownAnnotationsRef.current = shouldShowMarkdownAnnotations
+  }, [shouldShowMarkdownAnnotations])
 
   const pendingScrollForThisEditor = useMemo(() => {
     if (!shouldShowMarkdownAnnotations || !scrollToDiffCommentId) {

@@ -638,7 +638,11 @@ export default function MarkdownPreview({
     : true
   const [activeAnnotationBlockKey, setActiveAnnotationBlockKey] = useState<string | null>(null)
   const activeAnnotationBlockKeyRef = useRef(activeAnnotationBlockKey)
-  activeAnnotationBlockKeyRef.current = activeAnnotationBlockKey
+  // Why: mirrored in an effect (not the render body) so a discarded render
+  // pass cannot leak into the ref; keydown paths still write it eagerly.
+  useEffect(() => {
+    activeAnnotationBlockKeyRef.current = activeAnnotationBlockKey
+  }, [activeAnnotationBlockKey])
   // Why: line-derived block keys can go stale after content renumbers; drop them
   // when the block no longer mounts so the shortcut cannot lock out forever.
   useEffect(() => {
@@ -649,9 +653,8 @@ export default function MarkdownPreview({
     if (!root || previewHasAnnotationBlockKey(root, activeAnnotationBlockKey)) {
       return
     }
-    // Why: the render-time sync above re-mirrors the ref from state on the
-    // re-render this setState triggers; only the same-tick keydown paths need
-    // an eager manual write, so this passive effect leaves the ref to that sync.
+    // Why: the mirror effect above re-syncs the ref once this setState commits;
+    // only the same-tick keydown paths need an eager manual write.
     setActiveAnnotationBlockKey(null)
     // Why: keyed on renderedContent (not content) — the DOM the block keys live
     // in derives from it and can lag content during external-edit preservation.
