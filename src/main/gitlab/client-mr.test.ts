@@ -474,6 +474,23 @@ describe('gitlab client — MR operations', () => {
       await expect(getMergeRequestForBranch('/repo', 'main')).resolves.toBeNull()
     })
 
+    it('hides a stuck-locked MR whose source branch is the repo default branch (#9171)', async () => {
+      getProjectRefMock.mockResolvedValueOnce({ host: 'gitlab.com', path: 'g/p' })
+      glabExecFileAsyncMock.mockResolvedValueOnce({
+        stdout: JSON.stringify([
+          {
+            iid: 9,
+            title: 'Wedged mid-merge MR from main',
+            state: 'locked',
+            sha: 'locked-main-oid',
+            head_pipeline: { status: 'success' }
+          }
+        ])
+      })
+
+      await expect(getMergeRequestForBranch('/repo', 'main')).resolves.toBeNull()
+    })
+
     it('keeps an open MR whose source branch is the repo default branch', async () => {
       getProjectRefMock.mockResolvedValueOnce({ host: 'gitlab.com', path: 'g/p' })
       glabExecFileAsyncMock.mockResolvedValueOnce({

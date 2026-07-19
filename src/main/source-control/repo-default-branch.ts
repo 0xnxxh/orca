@@ -99,7 +99,7 @@ export async function getRepoDefaultBranchName(
  * so the common refresh path adds zero git calls.
  */
 export async function shouldHideNonOpenReviewOnDefaultBranch(input: {
-  /** Provider-normalized review state ('closed' / 'merged' are the non-open terminal states). */
+  /** Provider-normalized review state; 'closed' / 'merged' / 'locked' count as non-open. */
   state: string
   reviewNumber: number | null
   linkedReviewNumber?: number | null
@@ -108,7 +108,9 @@ export async function shouldHideNonOpenReviewOnDefaultBranch(input: {
   connectionId?: string | null
   localGitOptions?: HostedReviewLocalGitOptions
 }): Promise<boolean> {
-  if (input.state !== 'closed' && input.state !== 'merged') {
+  // Why: GitLab 'locked' is non-open too — normally a seconds-long merge
+  // transition, but a stuck-locked trunk MR would otherwise attach forever.
+  if (input.state !== 'closed' && input.state !== 'merged' && input.state !== 'locked') {
     return false
   }
   if (

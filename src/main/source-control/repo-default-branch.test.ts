@@ -126,7 +126,7 @@ describe('shouldHideNonOpenReviewOnDefaultBranch', () => {
   })
 
   it('never resolves the default branch for open or draft reviews (lazy)', async () => {
-    for (const state of ['open', 'opened', 'draft', 'locked']) {
+    for (const state of ['open', 'opened', 'draft']) {
       await expect(
         shouldHideNonOpenReviewOnDefaultBranch({
           state,
@@ -145,6 +145,19 @@ describe('shouldHideNonOpenReviewOnDefaultBranch', () => {
     await expect(
       shouldHideNonOpenReviewOnDefaultBranch({
         state: 'closed',
+        reviewNumber: 7,
+        branchName: 'master',
+        repoPath: '/repo'
+      })
+    ).resolves.toBe(true)
+  })
+
+  it('hides a stuck-locked review whose branch is the repo default branch', async () => {
+    primeLocalGitExec('refs/remotes/origin/master')
+
+    await expect(
+      shouldHideNonOpenReviewOnDefaultBranch({
+        state: 'locked',
         reviewNumber: 7,
         branchName: 'master',
         repoPath: '/repo'
