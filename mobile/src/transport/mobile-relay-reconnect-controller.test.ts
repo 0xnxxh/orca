@@ -24,6 +24,8 @@ describe('relay reconnect controller', () => {
 
     reconnect.registerFailure(new RelayOuterError(4404))
     expect(vi.getTimerCount()).toBe(0)
+    expect(reconnect.shouldDefer()).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
     vi.runAllTimers()
     expect(onRetry).not.toHaveBeenCalled()
   })
@@ -41,17 +43,14 @@ describe('relay reconnect controller', () => {
     expect(onRetry).not.toHaveBeenCalled()
   })
 
-  it('arms one debounced retry only after a host-revival signal', async () => {
-    const onRetry = vi.fn()
-    const reconnect = createController(onRetry)
+  it('extends forced-rotation retries to the exponential cooldown', () => {
+    const reconnect = createController(vi.fn())
 
-    reconnect.registerFailure(new RelayOuterError(4404))
-    expect(vi.getTimerCount()).toBe(0)
+    for (let failure = 0; failure < 6; failure++) {
+      reconnect.registerFailure(new RelayOuterError(4429), false)
+    }
 
-    expect(reconnect.shouldDefer()).toBe(true)
-    expect(vi.getTimerCount()).toBe(1)
-    await vi.advanceTimersByTimeAsync(250)
-    expect(onRetry).toHaveBeenCalledOnce()
+    expect(reconnect.retryDelayMs(5000)).toBe(8000)
     expect(vi.getTimerCount()).toBe(0)
   })
 })

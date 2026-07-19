@@ -20,30 +20,39 @@ export type RelayReconnectDependencies = {
   clearTimer: typeof clearTimeout
 }
 
+type RecoveryGate = 'host-revival' | 'fresh-credential'
+
 export class RelayReconnectController {
   private consecutiveFailures = 0
   private nextAttemptAt = 0
   private timer: ReturnType<typeof setTimeout> | null = null
   private activeSession: MobileRelayRpcSession | null = null
+  private recoveryGate: RecoveryGate | null = null
 
   constructor(
     private readonly dependencies: RelayReconnectDependencies,
     private readonly onRetry: (forceReplacement?: boolean) => void
   ) {}
 
-  handleForeground(
-    logical: StableLogicalRpcClient,
-    wasForeground: boolean,
-    forceReplacement: boolean
-  ): void {
+  handleForeground(logical: StableLogicalRpcClient, wasForeground: boolean): void {
     if (!wasForeground) {
       // Why: an app resume is a fresh signal, unlike repeated network-flap nudges.
-      this.reset()
-    } else if (logical.getState() === 'connected') {
+      if (this.recoveryGate !== 'fresh-credential') {
+        this.reset()
+      }
+    } else if (this.recoveryGate === 'host-revival') {
+      this.recoveryGate = null
+    }
+    if (
+      wasForeground &&
+      this.recoveryGate !== 'fresh-credential' &&
+      logical.getState() === 'connected'
+    ) {
       // Why: a network handoff can leave the relay half-open without publishing a close.
       this.suspendActiveRelay(logical)
     }
-    this.onRetry(forceReplacement)
+    // Why: revival nudges must honor failure cooldowns even when lease rotation is pending.
+    this.onRetry()
   }
 
   handleStateFailure(logical: StableLogicalRpcClient, state: ConnectionState): void {
@@ -70,9 +79,11 @@ export class RelayReconnectController {
     this.activeSession = session
   }
 
-  resetForDirectConnection(): void {
+  resetForDirectConnection(): boolean {
+    const needsCredentialRefresh = this.recoveryGate === 'fresh-credential'
     this.activeSession = null
     this.reset()
+    return needsCredentialRefresh
   }
 
   registerActiveFailure(logical: StableLogicalRpcClient): void {
@@ -89,7 +100,13 @@ export class RelayReconnectController {
 
   // True when the caller is still inside the cooldown window and must not
   // re-dial. Arms the self-scheduled retry so recovery still happens on its own.
-  shouldDefer(): boolean {
+  shouldDefer(ignoreCooldown = false): boolean {
+    if (this.recoveryGate) {
+      return true
+    }
+    if (ignoreCooldown) {
+      return false
+    }
     if (this.dependencies.now() < this.nextAttemptAt) {
       this.scheduleRetry()
       return true
@@ -97,7 +114,7 @@ export class RelayReconnectController {
     return false
   }
 
-  registerFailure(error: Error | null): void {
+  registerFailure(error: Error | null, scheduleRetry = true): void {
     this.consecutiveFailures += 1
     const code = error instanceof RelayOuterError ? error.code : null
     const recovery =
@@ -106,20 +123,37 @@ export class RelayReconnectController {
         : null
     const delay = this.delayMs()
     this.nextAttemptAt = this.dependencies.now() + delay
-    // Why: wait for an OS/direct-probe signal before arming one debounced retry.
-    if (
-      recovery?.kind === 'wait-for-host-revival' ||
-      recovery?.kind === 'disable-relay-credential'
-    ) {
+    if (recovery?.kind === 'wait-for-host-revival') {
+      // Why: retrying HOST_OFFLINE without a revival signal is polling a known-negative state.
+      this.recoveryGate = 'host-revival'
+      this.clearTimer()
+      return
+    }
+    if (recovery?.kind === 'disable-relay-credential') {
+      // Why: a rejected outer credential cannot recover until direct connectivity refreshes it.
+      this.recoveryGate = 'fresh-credential'
+      this.clearTimer()
+      return
+    }
+    this.recoveryGate = null
+    if (!scheduleRetry) {
       this.clearTimer()
       return
     }
     this.scheduleRetry(delay)
   }
 
+  retryDelayMs(minimumMs: number): number | null {
+    if (this.recoveryGate) {
+      return null
+    }
+    return Math.max(minimumMs, this.nextAttemptAt - this.dependencies.now())
+  }
+
   reset(): void {
     this.consecutiveFailures = 0
     this.nextAttemptAt = 0
+    this.recoveryGate = null
     this.clearTimer()
   }
 

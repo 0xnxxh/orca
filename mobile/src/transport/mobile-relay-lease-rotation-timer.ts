@@ -32,8 +32,8 @@ export class RelayLeaseRotationTimer {
 
   // Re-arm a short retry when a forced rotation's recovery did not complete.
   // Ignored while a timer is already pending so retries never stack.
-  armRetry(delayMs: number): void {
-    if (this.timer) {
+  armRetry(delayMs: number | null): void {
+    if (delayMs == null || this.timer) {
       return
     }
     this.arm(delayMs)
