@@ -151,9 +151,8 @@ export function getWindowsCmdPath(env: NodeJS.ProcessEnv = process.env): string 
 /**
  * Resolve a PowerShell family name to a real absolute executable path.
  *
- * Returns null when no real executable can be found for the family (e.g. pwsh.exe
- * is only present as a Store App Execution Alias stub). Callers fall back to the
- * next link in the Windows shell chain when this returns null.
+ * Returns null when no real executable or safely resolvable Store alias target
+ * can be found for the family. Callers then try the next Windows shell fallback.
  */
 export function resolveWindowsPowerShellExecutablePath(
   family: 'pwsh.exe' | 'powershell.exe',
