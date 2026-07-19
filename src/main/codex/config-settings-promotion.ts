@@ -15,9 +15,11 @@ import { getOrcaManagedCodexHomePath, getSystemCodexHomePath } from './codex-hom
 import {
   createTomlLineScanState,
   getTomlTableHeader,
+  getTomlTableName,
   isTomlStructuralLine,
   updateTomlLineScanState
 } from './config-toml-line-scan'
+import { tuiStructuredKey, upsertPromotedSettingsInContent } from './codex-config-settings-upsert'
 
 // Why: the config mirror rewrites the runtime config.toml from ~/.codex on
 // every launch (and on background rate-limit fetches), so settings the user
@@ -35,6 +37,44 @@ export const PROMOTED_CODEX_SETTING_KEYS = [
   'approval_policy',
   'sandbox_mode'
 ] as const
+
+// Why: the [tui] keys the Codex TUI's user-facing pickers persist (status line,
+// terminal title, theme). Like the top-level list, every key here gets written
+// into the user's real ~/.codex/config.toml on promotion — grow it deliberately.
+export const PROMOTED_CODEX_TUI_SETTING_KEYS = [
+  'status_line',
+  'status_line_use_colors',
+  'terminal_title',
+  'theme'
+] as const
+
+// Why: promotion diffs and upserts operate on structured keys — top-level keys
+// keep their bare name, [tui] keys are namespaced tui.<key> so their baseline
+// entries cannot collide with a top-level key of the same name.
+const PROMOTED_STRUCTURED_KEYS: readonly string[] = [
+  ...PROMOTED_CODEX_SETTING_KEYS,
+  ...PROMOTED_CODEX_TUI_SETTING_KEYS.map(tuiStructuredKey)
+]
+
+function isPromotedTuiKey(key: string): boolean {
+  return (PROMOTED_CODEX_TUI_SETTING_KEYS as readonly string[]).includes(key)
+}
+
+// Returns the structured tui key a scanned line's key represents, or null. In
+// the preamble it recognizes the dotted `tui.<key>` form a user may hand-author;
+// inside the first `[tui]` table body it recognizes the bare `<key>` form Codex
+// writes. Both map to the same structured key so either config shape promotes.
+function matchTuiStructuredKey(
+  key: string,
+  inPreamble: boolean,
+  tuiBodyActive: boolean
+): string | null {
+  if (inPreamble) {
+    const dotted = /^tui\.([A-Za-z0-9_-]+)$/.exec(key)
+    return dotted && isPromotedTuiKey(dotted[1]!) ? tuiStructuredKey(dotted[1]!) : null
+  }
+  return tuiBodyActive && isPromotedTuiKey(key) ? tuiStructuredKey(key) : null
+}
 
 type TopLevelSettingValue = {
   raw: string
@@ -78,26 +118,57 @@ function readSettingsBaseline(runtimeHomePath: string): Map<string, string> | nu
   }
 }
 
-// Why: only keys in the top-level preamble are scanned — Codex writes profile
-// overrides into [profiles.*] tables, and rewriting nested tables surgically
-// is not worth the risk for stage-1 promotion.
-function readTopLevelSettingValues(configPath: string): Map<string, TopLevelSettingValue> {
+function matchPromotedStructuredKey(
+  line: string,
+  inPreamble: boolean,
+  tuiBodyActive: boolean
+): { structuredKey: string; raw: string } | null {
+  const match = /^[ \t]*([A-Za-z0-9_.-]+)[ \t]*=[ \t]*(.*?)[ \t\r]*$/.exec(line)
+  if (!match) {
+    return null
+  }
+  const key = match[1]!
+  const raw = match[2] ?? ''
+  if (inPreamble && (PROMOTED_CODEX_SETTING_KEYS as readonly string[]).includes(key)) {
+    return { structuredKey: key, raw }
+  }
+  const tuiKey = matchTuiStructuredKey(key, inPreamble, tuiBodyActive)
+  return tuiKey ? { structuredKey: tuiKey, raw } : null
+}
+
+// Why: top-level preamble scalars keep the historical behavior; [tui] keys are
+// collected from the first bare [tui] table body or the dotted preamble form,
+// keyed by structured path. Any table header (including [tui.*] subtables) ends
+// the [tui] body, and [profiles.*]/other tables are still ignored.
+function readPromotedSettingValues(configPath: string): Map<string, TopLevelSettingValue> {
   const result = new Map<string, TopLevelSettingValue>()
   if (!existsSync(configPath)) {
     return result
   }
   const lines = readFileSync(configPath, 'utf-8').split('\n')
   let state = createTomlLineScanState()
+  let inPreamble = true
+  let tuiTableSeen = false
+  let tuiBodyActive = false
   for (const line of lines) {
     if (isTomlStructuralLine(state)) {
-      if (getTomlTableHeader(line)) {
-        break
+      const header = getTomlTableHeader(line)
+      if (header) {
+        tuiBodyActive = getTomlTableName(header) === 'tui' && !tuiTableSeen
+        if (tuiBodyActive) {
+          tuiTableSeen = true
+        }
+        inPreamble = false
+        state = updateTomlLineScanState(state, line)
+        continue
       }
-      const match = /^[ \t]*([A-Za-z0-9_-]+)[ \t]*=[ \t]*(.*?)[ \t\r]*$/.exec(line)
-      const key = match?.[1]
-      if (key && (PROMOTED_CODEX_SETTING_KEYS as readonly string[]).includes(key)) {
+      const matched = matchPromotedStructuredKey(line, inPreamble, tuiBodyActive)
+      if (matched) {
         const nextState = updateTomlLineScanState(state, line)
-        result.set(key, { raw: match?.[2] ?? '', multiline: !isTomlStructuralLine(nextState) })
+        result.set(matched.structuredKey, {
+          raw: matched.raw,
+          multiline: !isTomlStructuralLine(nextState)
+        })
         state = nextState
         continue
       }
@@ -122,7 +193,7 @@ export function snapshotCodexRuntimeSettingsBaseline(
     // Codex later creates the file for a user with no ~/.codex/config.toml,
     // that first change must diff against "Orca left nothing" and promote.
     const settings: Record<string, string> = {}
-    for (const [key, value] of readTopLevelSettingValues(runtimeTomlPath)) {
+    for (const [key, value] of readPromotedSettingValues(runtimeTomlPath)) {
       if (!value.multiline) {
         settings[key] = value.raw
       }
@@ -194,10 +265,10 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
   if (!baseline) {
     return
   }
-  const runtimeValues = readTopLevelSettingValues(runtimeTomlPath)
-  const systemValues = readTopLevelSettingValues(systemTomlPath)
+  const runtimeValues = readPromotedSettingValues(runtimeTomlPath)
+  const systemValues = readPromotedSettingValues(systemTomlPath)
   const updates = new Map<string, string>()
-  for (const key of PROMOTED_CODEX_SETTING_KEYS) {
+  for (const key of PROMOTED_STRUCTURED_KEYS) {
     const runtime = runtimeValues.get(key)
     if (!runtime || runtime.multiline) {
       continue
@@ -231,7 +302,7 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
   mkdirSync(dirname(writeTarget.path), { recursive: true, mode: 0o700 })
   const targetExists = existsSync(writeTarget.path)
   const systemContent = targetExists ? readFileSync(writeTarget.path, 'utf-8') : ''
-  const nextContent = upsertTopLevelSettingsInContent(systemContent, updates)
+  const nextContent = upsertPromotedSettingsInContent(systemContent, updates)
   if (targetExists && parseWslUncPath(writeTarget.path)) {
     // Why: symlink metadata through the \\wsl$ 9P provider is not reliable
     // enough for realpath/lstat detection, and an atomic rename would replace
@@ -285,57 +356,4 @@ function resolveDanglingSymlinkTarget(linkPath: string): string {
   // Why: replacing any link in a cycle would destroy dotfile-manager state;
   // abort promotion and leave the runtime/baseline intact for manual repair.
   throw new Error(`Codex config symlink cycle at ${linkPath}`)
-}
-
-export function upsertTopLevelSettingsInContent(
-  content: string,
-  updates: Map<string, string>
-): string {
-  const lines = content.split('\n')
-  let state = createTomlLineScanState()
-  let preambleEnd = lines.length
-  const keyLineIndexes = new Map<string, number>()
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? ''
-    if (isTomlStructuralLine(state)) {
-      if (getTomlTableHeader(line)) {
-        preambleEnd = index
-        break
-      }
-      const match = /^[ \t]*([A-Za-z0-9_-]+)[ \t]*=/.exec(line)
-      if (match?.[1] && updates.has(match[1])) {
-        keyLineIndexes.set(match[1], index)
-      }
-    }
-    state = updateTomlLineScanState(state, line)
-  }
-
-  // Why: CRLF configs keep a trailing \r after the split; new lines must use
-  // the file's existing endings or a Windows-owned config becomes mixed-EOL.
-  const usesCrlf = content.includes('\r\n')
-  const insertions: string[] = []
-  for (const [key, raw] of updates) {
-    const existingIndex = keyLineIndexes.get(key)
-    const rendered = `${key} = ${raw}`
-    if (existingIndex !== undefined) {
-      lines[existingIndex] = lines[existingIndex]?.endsWith('\r') ? `${rendered}\r` : rendered
-    } else {
-      insertions.push(usesCrlf ? `${rendered}\r` : rendered)
-    }
-  }
-  if (insertions.length > 0) {
-    let insertAt = preambleEnd
-    while (insertAt > 0 && (lines[insertAt - 1] ?? '').trim() === '') {
-      insertAt -= 1
-    }
-    if (insertAt === preambleEnd && preambleEnd < lines.length) {
-      insertions.push(usesCrlf ? '\r' : '')
-    }
-    lines.splice(insertAt, 0, ...insertions)
-  }
-  const result = lines.join('\n')
-  if (result.endsWith('\n') || result.length === 0) {
-    return result
-  }
-  return result.endsWith('\r') ? `${result}\n` : `${result}${usesCrlf ? '\r\n' : '\n'}`
 }

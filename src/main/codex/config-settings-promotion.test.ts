@@ -44,7 +44,15 @@ vi.mock('../codex-accounts/fs-utils', async (importOriginal) => {
 })
 
 import { syncSystemConfigIntoManagedCodexHome } from './codex-config-mirror'
-import { upsertTopLevelSettingsInContent } from './config-settings-promotion'
+import {
+  upsertPromotedSettingsInContent,
+  upsertTopLevelSettingsInContent
+} from './codex-config-settings-upsert'
+
+// The exact [tui] block codex 0.144.6 writes via config/batchWrite (all four
+// promoted keys single-line, theme a string).
+const CODEX_TUI_BLOCK =
+  '[tui]\nstatus_line = ["model-with-reasoning", "task-progress"]\nstatus_line_use_colors = true\nterminal_title = ["model"]\ntheme = "dark-photon"\n'
 
 let tmpHome: string
 let userDataDir: string
@@ -115,6 +123,13 @@ function simulateCodexSettingWrite(key: string, rawValue: string): void {
     ? existing.replace(linePattern, rendered)
     : `${rendered}\n${existing}`
   writeFileSync(runtimeConfigPath(), next, 'utf-8')
+}
+
+// Codex reads then rewrites the whole runtime config; simulate that by writing
+// a known runtime config directly (its EOL is normalized by the mirror anyway).
+function setRuntimeConfig(content: string): void {
+  mkdirSync(runtimeHomeDir(), { recursive: true })
+  writeFileSync(runtimeConfigPath(), content, 'utf-8')
 }
 
 function simulateCodexSettingRemoval(key: string): void {
@@ -399,6 +414,290 @@ describe('codex settings write-back promotion', () => {
     promotionTestState.failAtomicWrite = false
     syncSystemConfigIntoManagedCodexHome()
     expect(readSystemConfig()).toBe('model = "o4"\n')
+  })
+})
+
+describe('codex [tui] settings write-back promotion', () => {
+  it('promotes a runtime [tui] block (codex 0.144.6 shape) into ~/.codex and survives the remirror', () => {
+    writeSystemConfig('model = "gpt-5"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    // The user customizes the status line/theme inside Orca-launched Codex.
+    writeFileSync(runtimeConfigPath(), `${readRuntimeConfig()}\n${CODEX_TUI_BLOCK}`, 'utf-8')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe(`model = "gpt-5"\n\n${CODEX_TUI_BLOCK}`)
+    const runtime = readRuntimeConfig()
+    expect(runtime).toContain('status_line = ["model-with-reasoning", "task-progress"]')
+    expect(runtime).toContain('status_line_use_colors = true')
+    expect(runtime).toContain('terminal_title = ["model"]')
+    expect(runtime).toContain('theme = "dark-photon"')
+
+    const settledSystem = readSystemConfig()
+    const settledRuntime = readRuntimeConfig()
+    syncSystemConfigIntoManagedCodexHome()
+    expect(readSystemConfig()).toBe(settledSystem)
+    expect(readRuntimeConfig()).toBe(settledRuntime)
+  })
+
+  it('replaces a promoted key in an existing [tui] table, leaving non-promoted neighbors untouched', () => {
+    writeSystemConfig('model = "gpt-5"\n\n[tui]\nanimations = true\ntheme = "dark"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\n\n[tui]\nanimations = true\ntheme = "light"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe(
+      'model = "gpt-5"\n\n[tui]\nanimations = true\ntheme = "light"\n'
+    )
+  })
+
+  it('promotes a changed status_line array value', () => {
+    writeSystemConfig('model = "gpt-5"\n\n[tui]\nstatus_line = ["model"]\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig(
+      'model = "gpt-5"\n\n[tui]\nstatus_line = ["model-with-reasoning", "task-progress"]\n'
+    )
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe(
+      'model = "gpt-5"\n\n[tui]\nstatus_line = ["model-with-reasoning", "task-progress"]\n'
+    )
+  })
+
+  it('promotes a model change and a status-line change in one pass into their regions', () => {
+    writeSystemConfig('model = "gpt-5"\n\n[tui]\ntheme = "dark-photon"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "o4"\n\n[tui]\ntheme = "dark-photon"\nstatus_line = ["model"]\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe(
+      'model = "o4"\n\n[tui]\ntheme = "dark-photon"\nstatus_line = ["model"]\n'
+    )
+  })
+
+  it('detects and replaces a dotted-form system tui key without creating a [tui] table', () => {
+    writeSystemConfig('model = "gpt-5"\ntui.theme = "dark"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    // toml_edit preserves the dotted form when codex rewrites the value.
+    setRuntimeConfig('model = "gpt-5"\ntui.theme = "light"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe('model = "gpt-5"\ntui.theme = "light"\n')
+    expect(readSystemConfig()).not.toContain('[tui]')
+  })
+
+  it('inserts a second dotted tui key beside an existing dotted-only tui config', () => {
+    writeSystemConfig('model = "gpt-5"\ntui.theme = "dark"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\ntui.theme = "dark"\ntui.status_line = ["model"]\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe(
+      'model = "gpt-5"\ntui.theme = "dark"\ntui.status_line = ["model"]\n'
+    )
+    expect(readSystemConfig()).not.toContain('[tui]')
+  })
+
+  it('inserts dotted beside a non-promoted dotted tui key instead of creating a [tui] table', () => {
+    // Why: any dotted tui.* key already defines the implicit tui table, so a
+    // fresh [tui] table at EOF would be a duplicate-definition parse error.
+    writeSystemConfig('model = "gpt-5"\ntui.pet = "cat"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\ntui.pet = "cat"\ntui.theme = "dark-photon"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe('model = "gpt-5"\ntui.pet = "cat"\ntui.theme = "dark-photon"\n')
+    expect(readSystemConfig()).not.toContain('[tui]')
+  })
+
+  it('creates a [tui] table at EOF when the only tui presence is a subtable', () => {
+    writeSystemConfig('model = "gpt-5"\n\n[tui.notifications]\nenabled = true\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig(
+      'model = "gpt-5"\n\n[tui.notifications]\nenabled = true\n\n[tui]\nstatus_line = ["model"]\n'
+    )
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe(
+      'model = "gpt-5"\n\n[tui.notifications]\nenabled = true\n\n[tui]\nstatus_line = ["model"]\n'
+    )
+  })
+
+  it('creates exactly one [tui] table for two keys promoted in one pass', () => {
+    writeSystemConfig('model = "gpt-5"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\n\n[tui]\ntheme = "dark-photon"\nstatus_line = ["model"]\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    const system = readSystemConfig()
+    expect(system.match(/^\[tui\]$/gm)?.length).toBe(1)
+    expect(system).toBe(
+      'model = "gpt-5"\n\n[tui]\nstatus_line = ["model"]\ntheme = "dark-photon"\n'
+    )
+  })
+
+  it('lets an outside ~/.codex [tui] edit win over a conflicting in-Codex tui change', () => {
+    writeSystemConfig('model = "gpt-5"\n\n[tui]\ntheme = "dark"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\n\n[tui]\ntheme = "in-codex"\n')
+    writeSystemConfig('model = "gpt-5"\n\n[tui]\ntheme = "outside-edit"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe('model = "gpt-5"\n\n[tui]\ntheme = "outside-edit"\n')
+    expect(readRuntimeConfig()).toContain('theme = "outside-edit"')
+  })
+
+  it('does not promote a [tui] key deletion', () => {
+    writeSystemConfig('model = "gpt-5"\n\n[tui]\ntheme = "dark"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\n\n[tui]\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toContain('theme = "dark"')
+  })
+
+  it('inserts a promoted key into a CRLF system [tui] table preserving CRLF', () => {
+    writeSystemConfig('model = "gpt-5"\r\n\r\n[tui]\r\ntheme = "dark"\r\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\n\n[tui]\ntheme = "dark"\nstatus_line = ["model"]\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    const system = readSystemConfig()
+    expect(system).toContain('status_line = ["model"]\r\n')
+    expect(system).toBe(
+      'model = "gpt-5"\r\n\r\n[tui]\r\ntheme = "dark"\r\nstatus_line = ["model"]\r\n'
+    )
+  })
+
+  it('never appends a [tui] table when the system config defines tui inline', () => {
+    writeSystemConfig('model = "gpt-5"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    // In-Codex tui change racing an outside edit that adds an inline tui table:
+    // appending [tui] would make the system config unparseable, so the change
+    // is dropped instead.
+    setRuntimeConfig('model = "gpt-5"\n\n[tui]\ntheme = "dark-photon"\n')
+    writeSystemConfig('model = "gpt-5"\ntui = { animations = false }\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe('model = "gpt-5"\ntui = { animations = false }\n')
+  })
+
+  it('ignores an allowlisted key nested under a [tui.*] subtable', () => {
+    writeSystemConfig('model = "gpt-5"\n\n[tui.notifications]\ntheme = "should-not-promote"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\n\n[tui.notifications]\ntheme = "changed-in-subtable"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe(
+      'model = "gpt-5"\n\n[tui.notifications]\ntheme = "should-not-promote"\n'
+    )
+  })
+})
+
+describe('upsertPromotedSettingsInContent', () => {
+  it('replaces a bare key in place inside the [tui] table', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '[tui]\ntheme = "dark"\n',
+        new Map([['tui.theme', '"light"']])
+      )
+    ).toBe('[tui]\ntheme = "light"\n')
+  })
+
+  it('inserts a bare key at the end of the [tui] body, before a subtable', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '[tui]\ntheme = "dark"\n\n[tui.notifications]\nenabled = true\n',
+        new Map([['tui.status_line', '["model"]']])
+      )
+    ).toBe(
+      '[tui]\ntheme = "dark"\nstatus_line = ["model"]\n\n[tui.notifications]\nenabled = true\n'
+    )
+  })
+
+  it('replaces a dotted preamble tui key in place, keeping the dotted form', () => {
+    expect(
+      upsertPromotedSettingsInContent('tui.theme = "dark"\n', new Map([['tui.theme', '"light"']]))
+    ).toBe('tui.theme = "light"\n')
+  })
+
+  it('inserts a dotted tui key beside an existing dotted tui key', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        'tui.theme = "dark"\n\n[features]\nx = 1\n',
+        new Map([['tui.status_line', '["model"]']])
+      )
+    ).toBe('tui.theme = "dark"\ntui.status_line = ["model"]\n\n[features]\nx = 1\n')
+  })
+
+  it('creates a [tui] table from empty content', () => {
+    expect(upsertPromotedSettingsInContent('', new Map([['tui.theme', '"dark"']]))).toBe(
+      '[tui]\ntheme = "dark"\n'
+    )
+  })
+
+  it('drops an absent key instead of appending [tui] beside an inline tui table', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        'tui = { animations = false }\n',
+        new Map([['tui.theme', '"dark"']])
+      )
+    ).toBe('tui = { animations = false }\n')
+  })
+
+  it('creates a [tui] super-table at EOF after a [tui.*] subtable', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '[tui.notifications]\nenabled = true\n',
+        new Map([['tui.theme', '"dark"']])
+      )
+    ).toBe('[tui.notifications]\nenabled = true\n\n[tui]\ntheme = "dark"\n')
+  })
+
+  it('creates one [tui] table for multiple keys reaching the new-table branch', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '',
+        new Map([
+          ['tui.status_line', '["model"]'],
+          ['tui.theme', '"dark"']
+        ])
+      )
+    ).toBe('[tui]\nstatus_line = ["model"]\ntheme = "dark"\n')
+  })
+
+  it('routes a mixed top-level + tui batch to its two regions in one rewrite', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        'model = "gpt-5"\n\n[tui]\ntheme = "dark"\n',
+        new Map([
+          ['model', '"o4"'],
+          ['tui.theme', '"light"']
+        ])
+      )
+    ).toBe('model = "o4"\n\n[tui]\ntheme = "light"\n')
+  })
+
+  it('inserts into a CRLF [tui] table with CRLF endings', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '[tui]\r\ntheme = "dark"\r\n',
+        new Map([['tui.status_line', '["model"]']])
+      )
+    ).toBe('[tui]\r\ntheme = "dark"\r\nstatus_line = ["model"]\r\n')
   })
 })
 
