@@ -1019,7 +1019,7 @@ export function connectPanePty(
   // foreground frame opened, so a split end marker that lands after the redraw
   // window still drains on the fast path instead of the 1s coalesce fallback.
   let synchronizedForegroundFrameInteractive = false
-  let suppressSnapshotReplayPtyResize = false
+  let suppressStructuralReplayPtyResize = false
   // Why: hidden-delivery gate sync is wired up alongside the deferred PTY
   // output plumbing inside the connect frame; lifecycle hooks (visibility
   // flips, exit, dispose) run before/after it exists, so start with no-ops.
@@ -3154,6 +3154,16 @@ export function connectPanePty(
   let unsubscribeWindowsDoneTerminalModeReset: (() => void) | null = null
   if (isNativeWindowsConpty) {
     const initialAgentStatus = state.agentStatusByPaneKey[cacheKey]
+    if (
+      !initialAgentStatus &&
+      paneStartup?.telemetry?.launch_source === 'sidebar' &&
+      paneStartup.telemetry.request_kind === 'resume' &&
+      (paneStartup.launchAgent === 'codex' || paneStartup.telemetry.agent_kind === 'codex')
+    ) {
+      // Why: history resumes open on a completed Codex composer without a done
+      // row, so arm the same Windows stale-focus guard until work starts again.
+      suppressNativeWindowsIdleCodexFocusReports = true
+    }
     if (initialAgentStatus?.state === 'done') {
       setFocusReportSuppressionForAgentCompletion(undefined, initialAgentStatus.agentType)
     }
@@ -3677,7 +3687,7 @@ export function connectPanePty(
   pane.container.addEventListener(PANE_PTY_RESIZE_HOLD_FLUSH_EVENT, onHeldPtyResizeFlush)
 
   const onResizeDisposable = pane.terminal.onResize(({ cols, rows }) => {
-    if (suppressSnapshotReplayPtyResize || suppressViewportClaimTerminalResize) {
+    if (suppressStructuralReplayPtyResize || suppressViewportClaimTerminalResize) {
       return
     }
     forwardPtyResize(cols, rows)
@@ -4906,8 +4916,8 @@ export function connectPanePty(
       return deps.restoredViewportBlankingPanesRef?.current.delete(pane.id) ?? false
     }
 
-    const writeFreshShellViewportBlanking = (): void => {
-      writeReplayData(buildFreshShellViewportBlankingSequence(pane.terminal.rows))
+    const writeFreshShellViewportBlanking = (rows = pane.terminal.rows): void => {
+      writeReplayData(buildFreshShellViewportBlankingSequence(rows))
     }
 
     const prepareFreshShellViewportForSpawn = (options: FreshSpawnOptions): void => {
@@ -6500,11 +6510,11 @@ export function connectPanePty(
             ) {
               // Why: xterm parses writes later. Keep snapshot dimensions until
               // the FIFO sentinel completes so serialized wraps stay exact.
-              suppressSnapshotReplayPtyResize = true
+              suppressStructuralReplayPtyResize = true
               try {
                 pane.terminal.resize(snapshot.cols, snapshot.rows)
               } finally {
-                suppressSnapshotReplayPtyResize = false
+                suppressStructuralReplayPtyResize = false
               }
             }
             if (!snapshot.alternateScreen) {
@@ -7286,11 +7296,11 @@ export function connectPanePty(
             hasSnapshotDimensions &&
             (pane.terminal.cols !== snapshotCols || pane.terminal.rows !== snapshotRows)
           ) {
-            suppressSnapshotReplayPtyResize = true
+            suppressStructuralReplayPtyResize = true
             try {
               pane.terminal.resize(snapshotCols, snapshotRows)
             } finally {
-              suppressSnapshotReplayPtyResize = false
+              suppressStructuralReplayPtyResize = false
             }
           }
           writeReplayData('\x1b[2J\x1b[3J\x1b[H')
@@ -7337,6 +7347,48 @@ export function connectPanePty(
             }
           }
         } else if (connectResult?.coldRestore) {
+          let destinationRows = pane.terminal.rows
+          try {
+            const proposedDestination = pane.fitAddon.proposeDimensions()
+            if (
+              proposedDestination &&
+              Number.isFinite(proposedDestination.rows) &&
+              proposedDestination.rows > 0
+            ) {
+              destinationRows = Math.max(destinationRows, proposedDestination.rows)
+            }
+          } catch {
+            // The current xterm grid remains a safe lower bound for blanking.
+          }
+          // Why: shrinking first would promote clipped stale viewport rows into
+          // scrollback, beyond the reach of a later viewport-only clear.
+          writeReplayData('\x1b[2J\x1b[H')
+          await waitForTerminalReplayWritesParsed(pane.terminal)
+          if (!isCurrentReattachPayload()) {
+            return
+          }
+          const coldRestoreCols = connectResult.coldRestore.cols
+          const coldRestoreRows = connectResult.coldRestore.rows
+          const hasColdRestoreDimensions =
+            typeof coldRestoreCols === 'number' &&
+            typeof coldRestoreRows === 'number' &&
+            Number.isFinite(coldRestoreCols) &&
+            Number.isFinite(coldRestoreRows) &&
+            coldRestoreCols > 0 &&
+            coldRestoreRows > 0
+          if (
+            hasColdRestoreDimensions &&
+            (pane.terminal.cols !== coldRestoreCols || pane.terminal.rows !== coldRestoreRows)
+          ) {
+            // Why: recovered ANSI cursor positions belong to the checkpoint's
+            // grid. Keep this layout-only resize from reaching the fresh PTY.
+            suppressStructuralReplayPtyResize = true
+            try {
+              pane.terminal.resize(coldRestoreCols, coldRestoreRows)
+            } finally {
+              suppressStructuralReplayPtyResize = false
+            }
+          }
           // replayIntoTerminal: the recorded scrollback is raw PTY output that
           // may contain query sequences the previous agent CLI emitted;
           // writing them through xterm.write would trigger auto-replies that
@@ -7359,7 +7411,9 @@ export function connectPanePty(
           // flags it pushed died with it — the fresh shell starts at zero.
           kittyKeyboardModes.reset()
           consumeRestoredViewportBlankingMarker()
-          writeFreshShellViewportBlanking()
+          // Why: a taller destination fit must not pull recovered rows back
+          // into the fresh shell's viewport after source-grid replay.
+          writeFreshShellViewportBlanking(Math.max(destinationRows, pane.terminal.rows))
           if (!isRemoteRuntimePtyId(ptyId)) {
             window.api.pty.ackColdRestore(ptyId)
           }
@@ -7763,18 +7817,29 @@ export function connectPanePty(
     )?.ptyId
     const hasSleepingAgentSession = Boolean(getSleepingRecordForPane(storeSnapshot))
 
+    // Why: a setup sibling can publish its PTY while the main pane waits for split geometry;
+    // the tab-level fallback must not steal a PTY already owned by that sibling transport.
+    const tabFallbackPtyId =
+      existingPtyId &&
+      !Array.from(deps.paneTransportsRef.current.entries()).some(
+        ([candidatePaneId, candidateTransport]) =>
+          candidatePaneId !== pane.id && candidateTransport.getPtyId() === existingPtyId
+      )
+        ? existingPtyId
+        : null
+
     const restoredSessionId = restoredPtyId ?? null
     const sleptRemoteRuntimeSessionId =
       restoredSessionId && isRemoteRuntimePtyId(restoredSessionId) && hasSleepingAgentSession
         ? restoredSessionId
         : null
     const detachedLivePtyId =
-      existingPtyId && !hadExistingPaneTransportAtConnect && !sleptRemoteRuntimeSessionId
+      tabFallbackPtyId && !hadExistingPaneTransportAtConnect && !sleptRemoteRuntimeSessionId
         ? restoredSessionId
-          ? restoredSessionId === existingPtyId
+          ? restoredSessionId === tabFallbackPtyId
             ? restoredSessionId
             : null
-          : existingPtyId
+          : tabFallbackPtyId
         : null
     const detachedRemoteLeafPtyId =
       restoredSessionId && isRemoteRuntimePtyId(restoredSessionId) && !hasSleepingAgentSession

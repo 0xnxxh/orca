@@ -1093,7 +1093,9 @@ async function resolvePrWorkItemSource(
   localGitOptions: LocalGitExecOptions = {}
 ): Promise<ResolvedPrWorkItemSource> {
   const [originCandidate, upstreamCandidate] = await Promise.all([
-    getOwnerRepo(repoPath, connectionId, localGitOptions),
+    // Why: this caller combines both remotes itself, so it needs origin
+    // specifically (getOwnerRepo is upstream-first since #7331).
+    getOwnerRepoForRemote(repoPath, 'origin', connectionId, localGitOptions),
     getOwnerRepoForRemote(repoPath, 'upstream', connectionId, localGitOptions)
   ])
   const source =
@@ -1647,7 +1649,15 @@ export async function getRepoSlug(
   connectionId?: string | null,
   options: HostedReviewExecutionOptions = {}
 ): Promise<{ owner: string; repo: string } | null> {
-  return getOwnerRepo(repoPath, connectionId, ...hostedReviewLocalGitOptionArgs(options))
+  // Why: the slug is the checkout's own identity (renderer display, icon
+  // autodetect), so it must stay origin-based — getOwnerRepo became
+  // upstream-first for PR reads in #7331.
+  return getOwnerRepoForRemote(
+    repoPath,
+    'origin',
+    connectionId,
+    ...hostedReviewLocalGitOptionArgs(options)
+  )
 }
 
 /**
@@ -1665,7 +1675,9 @@ export async function getRepoUpstream(
 ): Promise<OwnerRepo | null> {
   const localGitArgs = hostedReviewLocalGitOptionArgs(options)
   const localGitOptions = localGitArgs[0] ?? {}
-  const origin = await getOwnerRepo(repoPath, connectionId, ...localGitArgs)
+  // Why: must be origin specifically — the fork-parent fast-path below compares
+  // it against the upstream remote (getOwnerRepo is upstream-first since #7331).
+  const origin = await getOwnerRepoForRemote(repoPath, 'origin', connectionId, ...localGitArgs)
   if (!origin) {
     return null
   }
@@ -1877,9 +1889,16 @@ export async function createGitHubPullRequest(
 
   // Why: github.com-only slug parsing returns null for GHES, so fall back to the
   // enterprise resolver (gh-authenticated custom host) before giving up (#8312).
+  // Creation targets origin: the head branch is unqualified, so `gh pr create`
+  // must run against the repo the branch was pushed to, not the fork parent
+  // (getOwnerRepo became upstream-first for PR reads in #7331).
   const ownerRepo =
-    (await getOwnerRepo(repoPath, connectionId, ...hostedReviewLocalGitOptionArgs(options))) ??
-    (await getEnterpriseGitHubRepoSlug(repoPath, connectionId, options))
+    (await getOwnerRepoForRemote(
+      repoPath,
+      'origin',
+      connectionId,
+      ...hostedReviewLocalGitOptionArgs(options)
+    )) ?? (await getEnterpriseGitHubRepoSlug(repoPath, connectionId, options))
   if (!ownerRepo) {
     return {
       ok: false,
@@ -2037,9 +2056,8 @@ export async function getWorkItem(
         return issue
       }
     } catch (err) {
-      // Why: the issue lookup now targets `upstream` while the PR lookup targets `origin`,
-      // so a transient upstream failure (5xx, rate limit, network flake) on issue #N would
-      // silently fall through to origin's PR #N — potentially a completely unrelated item.
+      // Why: a transient failure (5xx, rate limit, network flake) on issue #N would
+      // silently fall through to PR #N — potentially a completely unrelated item.
       // Only fall through when the issue genuinely doesn't exist (404); re-throw everything
       // else so the outer catch returns null and the caller sees a real failure instead of
       // a wrong item. classifyGhError centralizes the 404/"not found" pattern-matching.
