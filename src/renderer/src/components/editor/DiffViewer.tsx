@@ -65,10 +65,8 @@ export default function DiffViewer({
     () => (allDiffComments ?? []).filter((c) => c.filePath === relativePath && isDiffComment(c)),
     [allDiffComments, relativePath]
   )
-  const diffEditorFontSize = computeDiffEditorFontSize(
-    settings?.terminalFontSize ?? 13,
-    editorFontZoomLevel
-  )
+  const terminalFontSize = settings?.terminalFontSize ?? 13
+  const diffEditorFontSize = computeDiffEditorFontSize(terminalFontSize, editorFontZoomLevel)
   const isDark =
     settings?.theme === 'dark' ||
     (settings?.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -311,6 +309,7 @@ export default function DiffViewer({
     modelKey,
     originalModelKey,
     modifiedModelKey,
+    diffEditorRef,
     onEnterFallback: handleEnterLargeDiffFallback
   })
 

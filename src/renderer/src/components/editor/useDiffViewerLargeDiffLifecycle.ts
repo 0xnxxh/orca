@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
+import type { editor } from 'monaco-editor'
 import { monaco } from '@/lib/monaco-setup'
 import {
   disposeUnattachedDiffViewerMonacoModels,
@@ -11,6 +13,7 @@ type DiffViewerLargeDiffLifecycleInput = {
   modelKey: string
   originalModelKey?: string
   modifiedModelKey?: string
+  diffEditorRef: RefObject<editor.IStandaloneDiffEditor | null>
   onEnterFallback: () => void
 }
 
@@ -19,6 +22,7 @@ export function useDiffViewerLargeDiffLifecycle({
   modelKey,
   originalModelKey,
   modifiedModelKey,
+  diffEditorRef,
   onEnterFallback
 }: DiffViewerLargeDiffLifecycleInput): {
   originalModelPath: string
@@ -55,12 +59,26 @@ export function useDiffViewerLargeDiffLifecycle({
     if (supersededModelPaths.length === 0) {
       return
     }
-    // Why: keepCurrent*Model retains path-rotated blobs; defer until Monaco
-    // attaches the replacement, then release only detached superseded versions.
-    queueMicrotask(() => {
-      disposeUnattachedMonacoModelPaths(monaco, supersededModelPaths)
-    })
-  }, [currentDiffModelPaths])
+    const diffEditor = diffEditorRef.current
+    if (diffEditor) {
+      const originalModel = monaco.editor.getModel(
+        monaco.Uri.parse(currentDiffModelPaths.originalModelPath)
+      )
+      const modifiedModel = monaco.editor.getModel(
+        monaco.Uri.parse(currentDiffModelPaths.modifiedModelPath)
+      )
+      if (!originalModel || !modifiedModel) {
+        return
+      }
+      const activeModels = diffEditor.getModel()
+      if (activeModels?.original !== originalModel || activeModels.modified !== modifiedModel) {
+        // Why: @monaco-editor/react swaps the two child models separately, but
+        // Monaco's diff widget must release its old pair before either is disposed.
+        diffEditor.setModel({ original: originalModel, modified: modifiedModel })
+      }
+    }
+    disposeUnattachedMonacoModelPaths(monaco, supersededModelPaths)
+  }, [currentDiffModelPaths, diffEditorRef])
 
   useEffect(() => {
     if (!limited) {
