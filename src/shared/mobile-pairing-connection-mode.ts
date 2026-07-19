@@ -26,3 +26,16 @@ export function effectiveMobilePairingConnectionMode(args: {
   }
   return args.preferred
 }
+
+/**
+ * Whether a scannable pairing offer may be minted for the selected path. Anywhere
+ * (Relay) needs a signed-in desktop; minting a local-only QR under the Relay
+ * label would misrepresent what the code encodes, so both surfaces gate
+ * generation on this rather than silently degrading to local-only.
+ */
+export function canMintMobilePairingOffer(args: {
+  connectionMode: MobilePairingConnectionMode
+  signedIn: boolean
+}): boolean {
+  return !(args.connectionMode === 'automatic' && !args.signedIn)
+}

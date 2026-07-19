@@ -9181,7 +9181,7 @@
           "anywhereTitle": "Orca Relay",
           "anywhereDescription": "手机可通过蜂窝网络或任意 Wi‑Fi 连接。需要登录。",
           "signInRequired": "请登录以使用 Orca Mobile Relay。",
-          "relayUnavailable": "Orca Relay isn’t available in this build. Use Local network.",
+          "relayUnavailable": "此版本不支持 Orca Relay。请使用本地网络。",
           "signInAgain": "重新登录",
           "localTitle": "本地网络"
         },

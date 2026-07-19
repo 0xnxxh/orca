@@ -15,6 +15,7 @@ import { MobilePairingSetupSection } from './MobilePairingSetupSection'
 import { WindowsFirewallNotice } from '../mobile/WindowsFirewallNotice'
 import { translate } from '@/i18n/i18n'
 import {
+  canMintMobilePairingOffer,
   effectiveMobilePairingConnectionMode,
   type MobilePairingConnectionMode
 } from '../../../../shared/mobile-pairing-connection-mode'
@@ -78,6 +79,11 @@ export function MobilePane(): React.JSX.Element {
     setQrDataUrl(null)
     setPairingUrl(null)
     setEndpoint(null)
+    // Why: a superseded in-flight generate no longer clears loading in its
+    // finally (the epoch bump skips it), so drop the spinner here or Generate
+    // stays disabled forever after a mid-flight path/sign-out/address change.
+    loadingRef.current = false
+    setLoading(false)
     if (hadPending) {
       setRotateNextQr(true)
     }
@@ -287,7 +293,7 @@ export function MobilePane(): React.JSX.Element {
     <div className="space-y-6">
       <MobilePairingSetupSection
         connectionMode={connectionMode}
-        canGenerate={!(connectionMode === 'automatic' && !signedIn)}
+        canGenerate={canMintMobilePairingOffer({ connectionMode, signedIn })}
         connectionPathControl={
           <MobilePairingConnectionOptions value={connectionMode} onChange={changeConnectionMode} />
         }

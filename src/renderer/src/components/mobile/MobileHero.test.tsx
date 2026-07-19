@@ -75,6 +75,7 @@ describe('HeroFlow height', () => {
         connectionMode="automatic"
         onConnectionModeChange={vi.fn()}
         onRegeneratePairing={vi.fn()}
+        canGeneratePairing
         onCopyPairingCode={vi.fn()}
         networkInterfaces={[]}
         selectedAddress={undefined}
@@ -110,6 +111,7 @@ describe('HeroFlow height', () => {
         connectionMode="automatic"
         onConnectionModeChange={vi.fn()}
         onRegeneratePairing={vi.fn()}
+        canGeneratePairing
         onCopyPairingCode={vi.fn()}
         networkInterfaces={[]}
         selectedAddress={undefined}

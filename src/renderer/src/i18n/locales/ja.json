@@ -9181,7 +9181,7 @@
           "anywhereTitle": "Orca Relay",
           "anywhereDescription": "スマートフォンはモバイル回線または Wi‑Fi から接続できます。サインインが必要です。",
           "signInRequired": "Orca Mobile Relay を使用するにはサインインしてください。",
-          "relayUnavailable": "Orca Relay isn’t available in this build. Use Local network.",
+          "relayUnavailable": "このビルドでは Orca Relay を利用できません。ローカルネットワークをご利用ください。",
           "signInAgain": "再サインイン",
           "localTitle": "ローカルネットワーク"
         },

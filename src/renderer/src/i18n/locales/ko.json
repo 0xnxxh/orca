@@ -9181,7 +9181,7 @@
           "anywhereTitle": "Orca Relay",
           "anywhereDescription": "휴대폰이 모바일 네트워크 또는 모든 Wi‑Fi에서 연결 가능합니다. 로그인이 필요합니다.",
           "signInRequired": "Orca Mobile Relay를 사용하려면 로그인하세요.",
-          "relayUnavailable": "Orca Relay isn’t available in this build. Use Local network.",
+          "relayUnavailable": "이 빌드에서는 Orca Relay를 사용할 수 없습니다. 로컬 네트워크를 사용하세요.",
           "signInAgain": "다시 로그인",
           "localTitle": "로컬 네트워크"
         },

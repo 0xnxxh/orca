@@ -200,7 +200,7 @@ export function MobilePairingConnectionOptions({
           )}
           trailing={
             signedIn && value === 'automatic' ? (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-[11px]">
                 {relayStatusLabel(relayStatus)}
               </Badge>
             ) : null

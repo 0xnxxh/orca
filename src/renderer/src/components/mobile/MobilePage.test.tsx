@@ -39,6 +39,7 @@ vi.mock('../settings/mobile-pairing-device-polling', () => ({
 vi.mock('./MobilePageContent', () => ({
   MobilePageContent: (props: {
     connectionMode: MobilePairingConnectionMode
+    canGeneratePairing: boolean
     enterFlow: () => void
     handleConnectionModeChange: (mode: MobilePairingConnectionMode) => void
     handleContinue: () => void
@@ -51,6 +52,7 @@ vi.mock('./MobilePageContent', () => ({
       <span data-testid="stage">{props.stage ?? 'loading'}</span>
       <span data-testid="step">{props.stepIdx}</span>
       <span data-testid="mode">{props.connectionMode}</span>
+      <span data-testid="can-generate">{String(props.canGeneratePairing)}</span>
       <span data-testid="pairing-qr">{props.pairQrDataUrl ?? 'none'}</span>
       <span data-testid="pairing-url">{props.pairingUrl ?? 'none'}</span>
       <button type="button" onClick={props.enterFlow}>
@@ -133,7 +135,9 @@ describe('MobilePage pairing connection mode', () => {
       })
     )
     expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
-    expect(screen.getByTestId('pairing-qr')).toHaveTextContent('base64,qr')
+    // The prior Relay QR clears immediately so the old policy's code is never
+    // shown while the rotated local-only mint is still pending.
+    expect(screen.getByTestId('pairing-qr')).toHaveTextContent('none')
     expect(screen.getByTestId('pairing-url')).toHaveTextContent('none')
     expect(mocks.storeState.updateSettings).toHaveBeenCalledWith({
       mobilePairingConnectionMode: 'local-only'
@@ -158,15 +162,34 @@ describe('MobilePage pairing connection mode', () => {
     expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
   })
 
-  it('defaults signed-out UI to Orca Relay but only issues a local-only QR', async () => {
+  it('does not auto-mint any QR when signed out with Anywhere selected', async () => {
     mocks.storeState.orcaProfileAuthStatus = { state: 'local' }
     await openPairingStep()
 
-    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
+    // Aligned with Settings: signed-out Anywhere cannot serve Relay, so we mint
+    // nothing rather than a scannable local-only QR under the Relay label.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getPairingQR).not.toHaveBeenCalled()
     expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
+    expect(screen.getByTestId('pairing-qr')).toHaveTextContent('none')
+    expect(screen.getByTestId('can-generate')).toHaveTextContent('false')
   })
 
-  it('re-mints with Relay when signing in upgrades a local-only fallback QR', async () => {
+  it('mints a local-only QR when switching to Local network while signed out', async () => {
+    mocks.storeState.orcaProfileAuthStatus = { state: 'local' }
+    const user = userEvent.setup()
+    await openPairingStep()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getPairingQR).not.toHaveBeenCalled()
+
+    // Picking Local network is an honest local-only path, so a QR mints.
+    await user.click(screen.getByRole('button', { name: 'Local network' }))
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
+    await waitFor(() => expect(screen.getByTestId('pairing-qr')).toHaveTextContent('base64,qr'))
+    expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
+  })
+
+  it('mints a Relay QR when signing in with Anywhere selected', async () => {
     mocks.storeState.orcaProfileAuthStatus = { state: 'local' }
     const user = userEvent.setup()
     const { rerender } = render(<MobilePage />)
@@ -174,18 +197,16 @@ describe('MobilePage pairing connection mode', () => {
     await user.click(screen.getByRole('button', { name: 'Enter flow' }))
     await user.click(screen.getByRole('button', { name: 'Continue' }))
 
-    // Signed-out Step 2 auto-mints local-only while Orca Relay stays selected.
-    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
-    expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
-    getPairingQR.mockClear()
+    // Signed-out Anywhere shows no QR at all.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getPairingQR).not.toHaveBeenCalled()
+    expect(screen.getByTestId('pairing-qr')).toHaveTextContent('none')
 
-    // Signing in must upgrade the displayed code from local-only to Relay.
+    // Signing in unlocks Relay, so Step 2 mints an honest Relay QR.
     mocks.storeState.orcaProfileAuthStatus = { state: 'connected' }
     rerender(<MobilePage />)
-
-    await waitFor(() =>
-      expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic', rotate: true })
-    )
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic' }))
+    await waitFor(() => expect(screen.getByTestId('pairing-qr')).toHaveTextContent('base64,qr'))
     expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
   })
 

@@ -39,14 +39,22 @@ vi.mock('./MobilePairingSetupSection', () => ({
   MobilePairingSetupSection: (props: {
     connectionMode: MobilePairingConnectionMode
     canGenerate?: boolean
+    loading: boolean
     connectionPathControl: React.ReactNode
     onGenerateQr: () => void
   }) => (
     <div>
       <span data-testid="mode">{props.connectionMode}</span>
       <span data-testid="can-generate">{String(props.canGenerate)}</span>
+      <span data-testid="loading">{String(props.loading)}</span>
       {props.connectionPathControl}
-      <button type="button" onClick={props.onGenerateQr}>
+      {/* Mirror the real Generate gate (loading/canGenerate) so a stuck
+          loading flag surfaces as a disabled control the tests can catch. */}
+      <button
+        type="button"
+        onClick={props.onGenerateQr}
+        disabled={props.loading || props.canGenerate === false}
+      >
         Generate
       </button>
     </div>
@@ -120,16 +128,19 @@ describe('MobilePane pairing connection mode', () => {
     await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic' }))
   })
 
-  it('keeps Anywhere selected but issues a local-only QR and blocks generation when signed out', async () => {
+  it('keeps Anywhere selected but blocks generation when signed out', async () => {
     mocks.holder.state.orcaProfileAuthStatus = { state: 'local' }
     const user = userEvent.setup()
     render(<MobilePane />)
     expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
-    // Why: the signed-out desktop cannot serve Relay, so Generate is gated off.
+    // Why: the signed-out desktop cannot serve Relay, so Generate is gated off
+    // and no misleading local-only QR is minted under the Relay label.
     expect(screen.getByTestId('can-generate')).toHaveTextContent('false')
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeDisabled()
 
     await user.click(screen.getByRole('button', { name: 'Generate' }))
-    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(getPairingQR).not.toHaveBeenCalled()
   })
 
   it('persists the chosen path when the mode changes', async () => {
@@ -176,6 +187,57 @@ describe('MobilePane pairing connection mode', () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(screen.getByTestId('qr')).toHaveTextContent('none')
+  })
+
+  it('drops loading and re-enables Generate after signing out mid-generate', async () => {
+    const user = userEvent.setup()
+    let resolveQr: ((value: Record<string, unknown>) => void) | undefined
+    getPairingQR.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveQr = resolve
+        })
+    )
+    const { rerender } = render(<MobilePane />)
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic' }))
+    // The hung generate holds the spinner up.
+    expect(screen.getByTestId('loading')).toHaveTextContent('true')
+
+    // Sign out while the Relay mint is still in flight; the superseded request
+    // must drop loading so Generate isn't wedged disabled forever.
+    mocks.holder.state.orcaProfileAuthStatus = { state: 'local' }
+    rerender(<MobilePane />)
+    await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+
+    // The late response resolves but must not resurrect the spinner.
+    resolveQr?.({
+      available: true,
+      qrDataUrl: 'data:image/png;base64,relay',
+      pairingUrl: 'orca://relay',
+      endpoint: 'ws://relay'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(screen.getByTestId('loading')).toHaveTextContent('false')
+
+    // Switching to Local network re-enables Generate (no signed-in gate).
+    await user.click(screen.getByRole('button', { name: 'choose-local' }))
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled()
+  })
+
+  it('drops loading after switching path mid-generate', async () => {
+    const user = userEvent.setup()
+    getPairingQR.mockImplementationOnce(() => new Promise(() => {}))
+    render(<MobilePane />)
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic' }))
+    expect(screen.getByTestId('loading')).toHaveTextContent('true')
+
+    // Switch to Local network before the mint resolves; loading must clear so
+    // Generate can be used again for the new path.
+    await user.click(screen.getByRole('button', { name: 'choose-local' }))
+    await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+    expect(screen.getByRole('button', { name: 'Generate' })).toBeEnabled()
   })
 
   it('clears a shown QR when another window changes the saved path', async () => {

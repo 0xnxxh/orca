@@ -9181,7 +9181,7 @@
           "anywhereTitle": "Orca Relay",
           "anywhereDescription": "El teléfono puede estar en datos móviles o cualquier Wi‑Fi. Se requiere inicio de sesión.",
           "signInRequired": "Inicia sesión para usar Orca Mobile Relay.",
-          "relayUnavailable": "Orca Relay isn’t available in this build. Use Local network.",
+          "relayUnavailable": "Orca Relay no está disponible en esta compilación. Usa Red local.",
           "signInAgain": "Iniciar sesión de nuevo",
           "localTitle": "Red local"
         },

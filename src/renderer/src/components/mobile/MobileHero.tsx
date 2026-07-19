@@ -43,6 +43,7 @@ type HeroFlowProps = {
   connectionMode: MobilePairingConnectionMode
   onConnectionModeChange: (mode: MobilePairingConnectionMode) => void
   onRegeneratePairing: () => void
+  canGeneratePairing: boolean
   onCopyPairingCode: () => void
   networkInterfaces: readonly MobileNetworkInterface[]
   selectedAddress: string | undefined
@@ -70,6 +71,7 @@ export function HeroFlow({
   connectionMode,
   onConnectionModeChange,
   onRegeneratePairing,
+  canGeneratePairing,
   onCopyPairingCode,
   networkInterfaces,
   selectedAddress,
@@ -270,7 +272,10 @@ export function HeroFlow({
                 type="button"
                 className="mp-link-under"
                 onClick={onRegeneratePairing}
-                disabled={pairLoading}
+                // Why: signed-out Anywhere can't serve Relay; disabling avoids
+                // minting a local-only QR under the Relay label. Sign in or pick
+                // Local network (shown in the path options above) to enable it.
+                disabled={pairLoading || !canGeneratePairing}
               >
                 {pairLoading
                   ? translate('auto.components.mobile.MobileHero.65b3f2e8bc', 'Generating…')

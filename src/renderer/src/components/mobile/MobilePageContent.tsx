@@ -15,6 +15,7 @@ type MobilePageContentProps = {
   devices: PairedDevice[]
   enterFlow: () => void
   generatePairing: (rotate: boolean) => void
+  canGeneratePairing: boolean
   handleAddressChange: (address: string) => void
   handleBack: () => void
   handleContinue: () => void
@@ -50,6 +51,7 @@ export function MobilePageContent({
   devices,
   enterFlow,
   generatePairing,
+  canGeneratePairing,
   handleAddressChange,
   handleBack,
   handleContinue,
@@ -112,6 +114,7 @@ export function MobilePageContent({
               connectionMode={connectionMode}
               onConnectionModeChange={handleConnectionModeChange}
               onRegeneratePairing={() => generatePairing(true)}
+              canGeneratePairing={canGeneratePairing}
               onCopyPairingCode={copyPairingCode}
               networkInterfaces={networkInterfaces}
               selectedAddress={selectedAddress}

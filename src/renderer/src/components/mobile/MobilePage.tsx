@@ -18,6 +18,7 @@ import { useMobilePageEscape } from './use-mobile-page-escape'
 import { MobilePageContent } from './MobilePageContent'
 import { useMobileInstallQr } from './use-mobile-install-qr'
 import {
+  canMintMobilePairingOffer,
   effectiveMobilePairingConnectionMode,
   type MobilePairingConnectionMode
 } from '../../../../shared/mobile-pairing-connection-mode'
@@ -262,6 +263,7 @@ export default function MobilePage(): React.JSX.Element {
     pairingRequestIdRef,
     setPairQrDataUrl,
     setPairingUrl,
+    setPairLoading,
     regenerate: (mode) => void generatePairing(true, undefined, mode)
   })
 
@@ -351,12 +353,19 @@ export default function MobilePage(): React.JSX.Element {
   // Why: when Step 2 first becomes visible, mint a pairing offer so the
   // user sees a real QR immediately. Subsequent visits keep the existing
   // token unless they hit Regenerate.
+  const canGenerate = canMintMobilePairingOffer({ connectionMode, signedIn })
   useEffect(() => {
     if (stage !== 'flow' || stepIdx !== 1 || hasGeneratedRef.current) {
       return
     }
+    // Why: signed-out Anywhere cannot serve Relay; auto-minting here would show a
+    // scannable local-only QR under the Relay label. Wait for sign-in or a switch
+    // to Local network (both flip canGenerate and re-run this effect) instead.
+    if (!canGenerate) {
+      return
+    }
     void generatePairing(false)
-  }, [stage, stepIdx, generatePairing])
+  }, [stage, stepIdx, canGenerate, generatePairing])
 
   // Why: poll for new pairings while the user is on Step 2 so we can
   // auto-transition to the paired summary the moment their phone connects.
@@ -426,6 +435,7 @@ export default function MobilePage(): React.JSX.Element {
       devices={devices}
       enterFlow={enterFlow}
       generatePairing={(rotate) => void generatePairing(rotate)}
+      canGeneratePairing={canGenerate}
       handleAddressChange={handleAddressChange}
       handleBack={handleBack}
       handleContinue={handleContinue}
