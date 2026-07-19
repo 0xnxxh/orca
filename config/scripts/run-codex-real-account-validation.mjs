@@ -57,6 +57,15 @@ function isWithin(candidate, parent) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
 }
 
+async function resolveRealPath(candidate) {
+  try {
+    return await realpath(candidate)
+  } catch {
+    // Why: containment guards must still run for paths that do not exist yet.
+    return candidate
+  }
+}
+
 export function createValidationEnv(inheritedEnv, layout) {
   const env = { ...inheritedEnv }
   for (const key of RESTRICTED_ENV_KEYS) {
@@ -78,10 +87,16 @@ export async function createValidationLayout(options = {}) {
   const primaryHome = path.resolve(options.primaryHome ?? os.homedir())
   const envTempParent = process.env.ORCA_CODEX_VALIDATION_TEMP_PARENT?.trim()
   const tempParent = path.resolve(options.tempParent ?? (envTempParent || os.tmpdir()))
+  // Why: guards must compare canonical paths — a symlinked temp parent must
+  // not smuggle the disposable root inside the primary home.
+  const [primaryHomeReal, tempParentReal] = await Promise.all([
+    resolveRealPath(primaryHome),
+    resolveRealPath(tempParent)
+  ])
   // Why: on Windows the default %TEMP% lives inside %USERPROFILE%, which the
   // disposable-home guard below rightly refuses. Fail before creating anything
   // and point at the overrides instead of aborting with an opaque guard error.
-  if (samePath(tempParent, primaryHome) || isWithin(tempParent, primaryHome)) {
+  if (samePath(tempParentReal, primaryHomeReal) || isWithin(tempParentReal, primaryHomeReal)) {
     throw new Error(
       `Refusing to place the disposable validation root inside the primary home (${primaryHome}). ` +
         'Pass --temp-parent <dir> or set ORCA_CODEX_VALIDATION_TEMP_PARENT to a directory outside it.'
@@ -94,7 +109,8 @@ export async function createValidationLayout(options = {}) {
     mkdir(homeDir, { recursive: true, mode: 0o700 }),
     mkdir(userDataDir, { recursive: true, mode: 0o700 })
   ])
-  if (samePath(primaryHome, homeDir) || isWithin(homeDir, primaryHome)) {
+  const homeDirReal = await resolveRealPath(homeDir)
+  if (samePath(primaryHomeReal, homeDirReal) || isWithin(homeDirReal, primaryHomeReal)) {
     throw new Error('Refusing to place the disposable validation home inside the primary home')
   }
   return { primaryHome, tempRoot, homeDir, userDataDir }
@@ -528,7 +544,14 @@ async function main() {
         if (options.keep) {
           console.warn(`Credential-bearing disposable root kept at ${layout.tempRoot}`)
         } else {
-          await rm(layout.tempRoot, { recursive: true })
+          // Why: a detached codex descendant can briefly hold a Windows handle
+          // in the disposable home; retry so cleanup never strands credentials.
+          await rm(layout.tempRoot, {
+            recursive: true,
+            force: true,
+            maxRetries: 10,
+            retryDelay: 250
+          })
           console.log('Removed the credential-bearing disposable root.')
         }
       } finally {

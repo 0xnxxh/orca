@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -98,6 +98,35 @@ describe('Codex real-account validation harness', () => {
 
     expect(path.dirname(layout.tempRoot)).toBe(tempParent)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a symlinked temp parent that resolves inside the primary home',
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'orca-symlink-guard-'))
+      cleanupPaths.push(root)
+      const primaryHome = path.join(root, 'primary-home')
+      const insidePrimary = path.join(primaryHome, 'nested-temp')
+      const link = path.join(root, 'temp-link')
+      await mkdir(insidePrimary, { recursive: true })
+      await symlink(insidePrimary, link)
+
+      const { error } = runValidationModule<{ error: string | null }>(
+        `
+        const { createValidationLayout } = await import(process.argv[1])
+        try {
+          const layout = await createValidationLayout({ primaryHome: process.argv[2] })
+          console.log(JSON.stringify({ error: null, layout }))
+        } catch (caught) {
+          console.log(JSON.stringify({ error: caught.message }))
+        }
+      `,
+        [primaryHome],
+        { ORCA_CODEX_VALIDATION_TEMP_PARENT: link }
+      )
+
+      expect(error).toContain('Refusing to place the disposable validation root')
+    }
+  )
 
   it('refuses a temp parent inside the primary home and points at the overrides', () => {
     // Why: matches Windows, where the default %TEMP% lives inside %USERPROFILE%.
