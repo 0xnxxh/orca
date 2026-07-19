@@ -1768,7 +1768,7 @@
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Production code is unchanged. The harness has bounded 500ms liveness polls, one 8-second crash soak, two scoped daemon identity scans plus teardown rediscovery, a 60-second cap on every synchronous PowerShell probe, a 50-minute job timeout, concurrency cancellation, path filtering, and an installer cache keyed by every build input. The measured packaged harness completed in 61 seconds."
+        "evidence": "Production code is unchanged. The harness has bounded 500ms liveness polls, one 8-second crash soak, two scoped daemon identity scans plus teardown rediscovery, a 60-second cap on every synchronous PowerShell probe, a 50-minute job timeout, concurrency cancellation, and targeted production-path filtering that excludes source tests and benchmarks. The installer cache is keyed by every production build input; the job also restores the pnpm store and restores Electron/NSIS downloads only when an installer rebuild is required. The measured packaged harness completed in 61 seconds."
       },
       "promotionCriteria": [
         "Collect at least 100 consecutive targeted Windows PR or soak passes over 14 days with zero unexplained flakes.",

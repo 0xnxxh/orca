@@ -30,10 +30,25 @@ on:
       - 'native/**'
       - 'resources/win32/**'
       - 'src/main/daemon/**'
+      - 'src/main/ipc/pty*.ts'
+      - 'src/main/persistence.ts'
       - 'src/main/providers/**'
       - 'src/main/pty/**'
+      - 'src/preload/**'
+      - 'src/renderer/src/App.tsx'
+      - 'src/renderer/src/components/terminal-pane/**'
+      - 'src/renderer/src/hooks/useIpcEvents.ts'
+      - 'src/renderer/src/lib/pane-manager/**'
+      - 'src/renderer/src/lib/session-write-subscriber.ts'
+      - 'src/renderer/src/lib/workspace-session-host-persistence.ts'
+      - 'src/renderer/src/store/slices/terminals.ts'
+      - 'src/shared/pty-session-id-format.ts'
       - 'tools/win-crash-survival-e2e/**'
       - 'tools/win-update-e2e/**'
+      # Why: source tests and benchmarks do not change the packaged artifact;
+      # their own verify jobs cover them without spending a Windows build slot.
+      - '!src/**/*.test.*'
+      - '!src/**/*.bench.*'
   workflow_dispatch:
     inputs:
       expect:
@@ -67,15 +82,18 @@ jobs:
           # This job only builds and runs the harness locally; it never pushes.
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: package.json
-
+      # Why: setup-node can restore pnpm's content-addressed store only after
+      # the pnpm binary exists, avoiding repeat dependency downloads per run.
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
           run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -91,6 +109,8 @@ jobs:
           key: >-
             crash-survival-installer-${{ hashFiles(
               'src/**',
+              '!src/**/*.test.*',
+              '!src/**/*.bench.*',
               'config/**',
               '!config/**/*.test.*',
               '!config/reliability-gates.jsonc',
@@ -98,12 +118,28 @@ jobs:
               '!config/vitest.config.ts',
               'build-plugins/**',
               'native/**',
-              'resources/win32/**',
+              'resources/**',
               'electron.vite.config.ts',
+              'tsconfig.json',
+              'vite.web.config.ts',
+              '.npmrc',
               'package.json',
               'pnpm-lock.yaml',
               'pnpm-workspace.yaml'
             ) }}
+
+      # Why: production edits miss the installer cache by design, but Electron
+      # and NSIS downloads are lockfile-owned and need not be fetched again.
+      - name: Cache electron-builder downloads
+        if: steps.cache-installer.outputs.cache-hit != 'true'
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~\AppData\Local\electron\Cache
+            ~\AppData\Local\electron-builder\Cache
+          key: crash-survival-electron-builder-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            crash-survival-electron-builder-
 
       - name: Build Windows installer (unsigned)
         if: steps.cache-installer.outputs.cache-hit != 'true'

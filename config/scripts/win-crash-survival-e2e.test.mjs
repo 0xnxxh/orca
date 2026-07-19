@@ -17,10 +17,25 @@ describe('win-crash-survival-e2e proof contracts', () => {
     expect(workflow).toMatch(/^  pull_request:/m)
     expect(workflow).not.toMatch(/^  push:/m)
     expect(workflow).toContain("- 'src/main/daemon/**'")
+    expect(workflow).toContain("- 'src/main/ipc/pty*.ts'")
+    expect(workflow).toContain("- 'src/preload/**'")
+    expect(workflow).toContain("- 'src/renderer/src/components/terminal-pane/**'")
+    expect(workflow).toContain("- 'src/renderer/src/store/slices/terminals.ts'")
+    expect(workflow).toContain("- '!src/**/*.test.*'")
+    expect(workflow).toContain("- '!src/**/*.bench.*'")
     expect(workflow).toContain('--expect "$env:EXPECT"')
     expect(workflow).toContain('exit $LASTEXITCODE')
     expect(workflow).toContain("'!config/**/*.test.*'")
+    expect(workflow).toContain("'!src/**/*.test.*'")
+    expect(workflow).toContain("'!src/**/*.bench.*'")
     expect(workflow).toContain("'!config/reliability-gates.jsonc'")
+    expect(workflow).toContain("'resources/**'")
+    expect(workflow).toContain('cache: pnpm')
+    expect(workflow.indexOf('- name: Setup Node.js')).toBeGreaterThan(
+      workflow.indexOf('- name: Setup pnpm')
+    )
+    expect(workflow).toContain("if: steps.cache-installer.outputs.cache-hit != 'true'")
+    expect(workflow).toContain('crash-survival-electron-builder-')
   })
 
   it('requires the full survival oracle, including daemon identity and reattach', () => {
@@ -50,9 +65,11 @@ describe('win-crash-survival-e2e proof contracts', () => {
 
   it('scans for FailFast only after the post-crash input probe', () => {
     const harness = readFileSync('tools/win-crash-survival-e2e/run.mjs', 'utf8')
-    expect(harness.indexOf('const { events: failFastEvents }')).toBeGreaterThan(
-      harness.indexOf('reattachProven = await proveReattachedShell')
-    )
+    const scanIndex = harness.indexOf('const { events: failFastEvents }')
+    const probeIndex = harness.indexOf('reattachProven = await proveReattachedShell')
+    expect(scanIndex).not.toBe(-1)
+    expect(probeIndex).not.toBe(-1)
+    expect(scanIndex).toBeGreaterThan(probeIndex)
   })
 
   it('fails closed when the Windows event log query fails', () => {
@@ -67,10 +84,18 @@ describe('win-crash-survival-e2e proof contracts', () => {
     expect(command).toContain('NoMatchingEventsFound*')
   })
 
-  it('accepts an empty event result only after a successful query', () => {
+  it('accepts an empty event result only from the serialized evidence envelope', () => {
     expect(
-      scanPwshFailFast(1234, () => ({ code: 0, stdout: '', stderr: '', error: null }))
+      scanPwshFailFast(1234, () => ({
+        code: 0,
+        stdout: '{"events":[]}',
+        stderr: '',
+        error: null
+      }))
     ).toEqual({ events: [] })
+    expect(() =>
+      scanPwshFailFast(1234, () => ({ code: 0, stdout: '', stderr: '', error: null }))
+    ).toThrow('pwsh-failfast scan returned no JSON output')
   })
 
   it('uses the scoped live process as daemon authority', () => {

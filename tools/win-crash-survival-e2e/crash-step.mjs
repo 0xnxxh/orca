@@ -88,8 +88,9 @@ export function scanPwshFailFast(sinceMs, runCommand = runCommandSync) {
   }
   const trimmed = stdout.trim()
   if (!trimmed) {
-    // A window with no matching Application events serializes to nothing.
-    return { events: [] }
+    // Why: the script always serializes an events envelope, including for zero
+    // matches; empty stdout means the load-bearing evidence never arrived.
+    throw new Error('pwsh-failfast scan returned no JSON output')
   }
   let parsed
   try {
