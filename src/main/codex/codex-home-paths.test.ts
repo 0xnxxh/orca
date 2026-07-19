@@ -70,6 +70,10 @@ import {
   syncCodexGlobalInstructionsIntoManagedHome,
   syncSystemCodexResourcesIntoManagedHome
 } from './codex-home-paths'
+import {
+  readCodexOverlayStaleEntries,
+  syncSystemCodexOverlayResourcesIntoManagedHome
+} from './codex-overlay-home-paths'
 
 let fakeHomeDir: string
 let userDataDir: string
@@ -453,4 +457,118 @@ describe('syncSystemCodexResourcesIntoManagedHome', () => {
       expect(readlinkSync(runtimeAgentsPath)).toBe(missingTargetPath)
     }
   )
+})
+
+describe('syncSystemCodexOverlayResourcesIntoManagedHome', () => {
+  function createOverlayHomePath(): string {
+    return join(userDataDir, 'codex-accounts', 'account-1', 'home')
+  }
+
+  function seedSystemHome(): void {
+    const systemHome = getSystemCodexHomePath()
+    mkdirSync(join(systemHome, 'skills', 'review'), { recursive: true })
+    writeFileSync(join(systemHome, 'skills', 'review', 'SKILL.md'), 'skill\n')
+    writeFileSync(join(systemHome, 'config.toml'), 'approval_policy = "never"\n')
+    writeFileSync(join(systemHome, 'hooks.json'), '{"hooks":{}}\n')
+    writeFileSync(join(systemHome, 'AGENTS.md'), '# instructions\n')
+  }
+
+  it('symlinks config.toml, hooks.json, and resources but never sessions/auth', () => {
+    seedSystemHome()
+    const systemHome = getSystemCodexHomePath()
+    mkdirSync(join(systemHome, 'sessions'), { recursive: true })
+    writeFileSync(join(systemHome, 'auth.json'), '{"account":"system"}\n')
+    const overlayHome = createOverlayHomePath()
+
+    const { staleEntries } = syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+
+    expect(staleEntries).toEqual([])
+    expect(lstatSync(join(overlayHome, 'config.toml')).isSymbolicLink()).toBe(true)
+    expect(lstatSync(join(overlayHome, 'hooks.json')).isSymbolicLink()).toBe(true)
+    expect(lstatSync(join(overlayHome, 'skills')).isSymbolicLink()).toBe(true)
+    expect(readFileSync(join(overlayHome, 'config.toml'), 'utf-8')).toBe(
+      'approval_policy = "never"\n'
+    )
+    // sessions/ and auth.json stay real + per-account — never symlinked here.
+    expect(existsSync(join(overlayHome, 'sessions'))).toBe(false)
+    expect(existsSync(join(overlayHome, 'auth.json'))).toBe(false)
+  })
+
+  it('writes through a symlinked config.toml into the real home and keeps the symlink', () => {
+    seedSystemHome()
+    const overlayHome = createOverlayHomePath()
+    syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+
+    // Why: an in-place write (as codex performs) follows the symlink to the real
+    // home; the overlay config must land in ~/.codex and stay a symlink (no fork).
+    writeFileSync(join(overlayHome, 'config.toml'), 'approval_policy = "on-request"\n')
+
+    expect(lstatSync(join(overlayHome, 'config.toml')).isSymbolicLink()).toBe(true)
+    expect(readFileSync(join(getSystemCodexHomePath(), 'config.toml'), 'utf-8')).toBe(
+      'approval_policy = "on-request"\n'
+    )
+  })
+
+  it('self-heals a config.toml that regressed to a regular file back into a symlink', () => {
+    seedSystemHome()
+    const overlayHome = createOverlayHomePath()
+    mkdirSync(overlayHome, { recursive: true })
+    // Simulate a copied/drifted config left by the pre-overlay design.
+    writeFileSync(join(overlayHome, 'config.toml'), 'approval_policy = "stale-copy"\n')
+
+    const { staleEntries } = syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+
+    expect(staleEntries).toEqual([])
+    expect(lstatSync(join(overlayHome, 'config.toml')).isSymbolicLink()).toBe(true)
+    expect(readFileSync(join(overlayHome, 'config.toml'), 'utf-8')).toBe(
+      'approval_policy = "never"\n'
+    )
+  })
+
+  it('warns and marks entries stale (no silent copy, no write-back) when symlinks fail', () => {
+    seedSystemHome()
+    const overlayHome = createOverlayHomePath()
+    fsMockState.failSymlink = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    let result: { staleEntries: string[] }
+    try {
+      result = syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+    } finally {
+      warn.mockRestore()
+    }
+
+    // config.toml fell back to a warned copy and is recorded as stale.
+    expect(result.staleEntries).toContain('config.toml')
+    expect(readCodexOverlayStaleEntries(overlayHome)).toContain('config.toml')
+    expect(lstatSync(join(overlayHome, 'config.toml')).isSymbolicLink()).toBe(false)
+    expect(readFileSync(join(overlayHome, 'config.toml'), 'utf-8')).toBe(
+      'approval_policy = "never"\n'
+    )
+
+    // NO write-back: editing the warned copy must not touch the real ~/.codex.
+    writeFileSync(join(overlayHome, 'config.toml'), 'approval_policy = "local-edit"\n')
+    expect(readFileSync(join(getSystemCodexHomePath(), 'config.toml'), 'utf-8')).toBe(
+      'approval_policy = "never"\n'
+    )
+  })
+
+  it('clears the stale marker once symlinks become available again', () => {
+    seedSystemHome()
+    const overlayHome = createOverlayHomePath()
+    fsMockState.failSymlink = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+    } finally {
+      warn.mockRestore()
+    }
+    expect(readCodexOverlayStaleEntries(overlayHome).length).toBeGreaterThan(0)
+
+    fsMockState.failSymlink = false
+    syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+
+    expect(readCodexOverlayStaleEntries(overlayHome)).toEqual([])
+    expect(lstatSync(join(overlayHome, 'config.toml')).isSymbolicLink()).toBe(true)
+  })
 })

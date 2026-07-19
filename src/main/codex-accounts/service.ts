@@ -20,8 +20,12 @@ import { rewriteRelativePathConfigValues } from '../codex/codex-config-path-refe
 import { stripCodexManagedHookTrustEntriesFromConfig } from '../codex/codex-managed-trust-reconciliation'
 import { isCodexSystemDefaultRealHomeEnabled } from '../codex/codex-real-home-flag'
 import { getCodexManagedHookInstallMaterial } from '../codex/hook-service'
-import { syncSystemConfigIntoManagedCodexHome } from '../codex/codex-config-mirror'
 import { getSystemCodexHomePath } from '../codex/codex-home-paths'
+import { syncSystemCodexOverlayResourcesIntoManagedHome } from '../codex/codex-overlay-home-paths'
+import {
+  grantManagedCodexOverlayHookTrust,
+  sweepManagedCodexOverlayHookTrust
+} from './overlay-hook-trust'
 import { MANAGED_HOOK_TIMEOUT_SECONDS } from '../agent-hooks/installer-utils'
 import { readCodexTopLevelModelProvider } from '../codex/codex-model-provider-config'
 import { resolveCodexCommand } from '../codex-cli/command'
@@ -225,6 +229,9 @@ export class CodexAccountService {
       this.safeSyncCanonicalConfigToManagedHomes()
       this.runtimeHome.clearLastWrittenAuthJson(account.id)
       this.runtimeHome.syncForCurrentSelection()
+      // Why: trust the Orca status hook this overlay inherits from the shared
+      // hooks.json, keyed to this overlay CODEX_HOME (lands in the real config).
+      this.safeGrantOverlayHookTrust(account)
 
       // Why: the new account becomes active, so the previous active account is
       // now inactive and its last-known usage should be cached for the switcher.
@@ -270,6 +277,7 @@ export class CodexAccountService {
     this.safeSyncCanonicalConfigToManagedHomes()
     this.runtimeHome.clearLastWrittenAuthJson(accountId)
     this.runtimeHome.syncForCurrentSelection(getCodexSelectionTargetForAccount(account))
+    this.safeGrantOverlayHookTrust(account)
 
     // Why: re-auth can change which actual Codex identity the managed home
     // points at. Force a fresh read immediately so the status bar cannot keep
@@ -299,6 +307,13 @@ export class CodexAccountService {
     })
     this.runtimeHome.syncForCurrentSelection()
 
+    // Why: sweep this overlay's Orca-managed [hooks.state] entry out of the shared
+    // real config.toml BEFORE the home is deleted, so its explicit-home trust key
+    // can still be canonicalized. Ownership is hash/ledger-proven; user trust at a
+    // colliding key is left intact. No-op for WSL/flag-OFF homes (no overlay grant).
+    if (this.isSelfContainedHostManagedHome(account.managedHomePath)) {
+      sweepManagedCodexOverlayHookTrust(account.managedHomePath)
+    }
     this.safeRemoveManagedHome(account.managedHomePath, account.id)
     // Why: a removed account can no longer appear in the switcher dropdown,
     // so purge its cached usage to avoid stale entries.
@@ -345,6 +360,9 @@ export class CodexAccountService {
     })
     this.safeSyncCanonicalConfigToManagedHomes()
     this.runtimeHome.syncForCurrentSelection(effectiveTarget)
+    if (accountId !== null) {
+      this.safeGrantOverlayHookTrust(this.requireAccount(accountId))
+    }
 
     await this.rateLimits.refreshForCodexAccountChange(outgoingAccountId, effectiveTarget)
     return this.getSnapshot()
@@ -576,6 +594,22 @@ export class CodexAccountService {
     }
   }
 
+  private safeGrantOverlayHookTrust(account: CodexManagedAccount): void {
+    // Why: only flag-ON host overlays symlink hooks.json and need a per-overlay
+    // grant; WSL homes and the flag-OFF shared mirror keep their own hook lanes.
+    if (!this.isSelfContainedHostManagedHome(account.managedHomePath)) {
+      return
+    }
+    let trustedHome: string
+    try {
+      trustedHome = this.assertManagedHomePath(account.managedHomePath, account.id)
+    } catch (error) {
+      console.warn('[codex-accounts] Refusing overlay hook grant for untrusted home:', error)
+      return
+    }
+    grantManagedCodexOverlayHookTrust(trustedHome)
+  }
+
   private safeSyncCanonicalConfigToManagedHomes(): void {
     try {
       this.syncCanonicalConfigToManagedHomes()
@@ -627,14 +661,12 @@ export class CodexAccountService {
 
     const trustedManagedHomePath = this.assertManagedHomePath(managedHomePath, expectedAccountId)
     if (this.isSelfContainedHostManagedHome(trustedManagedHomePath)) {
-      // Why: this home is codex's live CODEX_HOME, so mirror config with the
-      // trust-preserving merge — the plain overwrite below would wipe the
-      // hook/project trust codex granted in this home, forcing a re-approval and
-      // an app-server re-grant on every account switch.
-      syncSystemConfigIntoManagedCodexHome({
-        runtimeHomePath: trustedManagedHomePath,
-        systemHomePath: getSystemCodexHomePath()
-      })
+      // Why: this home is codex's live CODEX_HOME as a thin symlink OVERLAY —
+      // config.toml + hooks.json + resources point at the user's real ~/.codex, so
+      // there is no config to copy or merge and nothing can drift. Codex reads
+      // shared settings and writes hook/project trust straight through to ~/.codex.
+      // Just build/repair the overlay links (auth.json/sessions stay real here).
+      syncSystemCodexOverlayResourcesIntoManagedHome(trustedManagedHomePath)
       return
     }
     // Why: Orca account switching is meant to swap Codex credentials and quota

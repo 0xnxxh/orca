@@ -141,6 +141,7 @@ import {
   isRealHomeCodexHookLaneUsable
 } from './codex/codex-real-home-hook-install'
 import { setCodexTrustGrantTelemetry } from './codex/codex-hook-trust-grant'
+import { grantManagedCodexOverlayHookTrust } from './codex-accounts/overlay-hook-trust'
 import { startCodexSessionBackfillInBackground } from './codex/codex-session-backfill'
 import { startCodexSessionIndexHealInBackground } from './codex/codex-session-index-heal'
 import { resolveHostCodexSessionSourceHome } from './codex/codex-session-source-home'
@@ -801,6 +802,19 @@ function prepareCodexRuntimeHomeForLaunch(
         }
       : target
   const hooksEnabled = isAgentStatusHooksEnabled(store?.getSettings())
+  const overlayHomePath = codexRuntimeHome!.getActiveManagedOverlayHomePath()
+  if (overlayHomePath !== null && runtimeHomePath === overlayHomePath) {
+    // Why: the overlay home symlinks config.toml + hooks.json to the user's real
+    // ~/.codex. Orca must NOT run its per-home hook installer here — an atomic
+    // temp+rename would replace those symlinks with copies and reintroduce config
+    // drift. The shared hooks.json holds the managed hook (installed by the
+    // real-home lane); codex grants THIS overlay's trust through its own
+    // app-server, which preserves the symlink. Best-effort and ledger-cached.
+    if (hooksEnabled) {
+      grantManagedCodexOverlayHookTrust(runtimeHomePath)
+    }
+    return runtimeHomePath
+  }
   try {
     // Why: launch prep is reachable after startup via PTY/runtime paths; honor
     // the persisted off switch so those launches cannot reinstall removed hooks.

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import {
   existsSync,
+  lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -344,7 +345,7 @@ describe('CodexAccountService config sync', () => {
     )
   })
 
-  it('does not seed source-home hook trust into a self-contained account home', async () => {
+  it('symlinks config.toml to the shared ~/.codex for a self-contained overlay home instead of copying', async () => {
     const fixture = await createCanonicalHookTrustFixture()
     const canonicalConfigPath = join(testState.fakeHomeDir, '.codex', 'config.toml')
     writeFileSync(canonicalConfigPath, fixture.config, 'utf-8')
@@ -372,8 +373,6 @@ describe('CodexAccountService config sync', () => {
     const store = createStore(settings)
     const rateLimits = createRateLimits()
     const runtimeHome = createRuntimeHome()
-    const { readHookTrustEntries } = await import('../codex/config-toml-trust')
-    const { readCodexTrustGrantLedgerHome } = await import('../codex/codex-trust-grant-ledger')
 
     const { CodexAccountService } = await import('./service')
     const service = new CodexAccountService(
@@ -381,23 +380,22 @@ describe('CodexAccountService config sync', () => {
       rateLimits as never,
       runtimeHome as never
     )
-    const expectSanitizedManagedConfig = (): void => {
-      const entries = readHookTrustEntries(join(managedHomePath, 'config.toml'))
-      for (const key of fixture.orcaKeys) {
-        expect(entries.has(key)).toBe(false)
-      }
-      // The launch-time hook mirror remaps user trust to this home's hooks.json.
-      expect(entries.has(fixture.userKey)).toBe(false)
+    const managedConfigPath = join(managedHomePath, 'config.toml')
+    const expectOverlayConfigSymlink = (): void => {
+      // Why: the overlay symlinks config.toml to the real ~/.codex, so it reads
+      // the shared config verbatim (no sanitized copy) and never forks/drifts.
+      expect(lstatSync(managedConfigPath).isSymbolicLink()).toBe(true)
+      expect(readFileSync(managedConfigPath, 'utf-8')).toBe(fixture.config)
     }
 
-    expectSanitizedManagedConfig()
+    expectOverlayConfigSymlink()
+    // ~/.codex stays the single source of truth; no separate copy was written.
     expect(readFileSync(canonicalConfigPath, 'utf-8')).toBe(fixture.config)
-    expect(readCodexTrustGrantLedgerHome(join(testState.fakeHomeDir, '.codex'))).not.toBeNull()
 
-    writeFileSync(join(managedHomePath, 'config.toml'), 'approval_policy = "untrusted"\n', 'utf-8')
     await service.selectAccount('account-1')
 
-    expectSanitizedManagedConfig()
+    // Re-selecting keeps the symlink; it does not fork the config into the home.
+    expectOverlayConfigSymlink()
   })
 
   it('keeps flag-off config mirroring byte-identical', async () => {
@@ -730,7 +728,7 @@ describe('CodexAccountService config sync', () => {
     expect(runtimeHome.syncForCurrentSelection).toHaveBeenCalledTimes(1)
   })
 
-  it('does not seed source-home hook trust when adding a self-contained account', async () => {
+  it('symlinks config.toml to the shared ~/.codex when adding a self-contained overlay account', async () => {
     vi.resetModules()
     let fixture: Awaited<ReturnType<typeof createCanonicalHookTrustFixture>>
     let readHookTrustEntries: typeof ReadHookTrustEntries
@@ -747,11 +745,14 @@ describe('CodexAccountService config sync', () => {
 
         const loginHome = options.env.CODEX_HOME
         expect(loginHome).toBeTruthy()
+        // Why: the overlay symlinks config.toml to the real ~/.codex before login,
+        // so codex reads the shared config (all its trust entries) verbatim.
+        expect(lstatSync(join(loginHome!, 'config.toml')).isSymbolicLink()).toBe(true)
         const entries = readHookTrustEntries(join(loginHome!, 'config.toml'))
         for (const key of fixture.orcaKeys) {
-          expect(entries.has(key)).toBe(false)
+          expect(entries.has(key)).toBe(true)
         }
-        expect(entries.has(fixture.userKey)).toBe(false)
+        expect(entries.has(fixture.userKey)).toBe(true)
         writeFileSync(
           join(loginHome!, 'auth.json'),
           createCodexAuthJson('user@example.com', 'provider-account-1', 'refresh-token'),
@@ -2059,9 +2060,7 @@ describe('CodexAccountService config sync', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     try {
-      managedHomePath = actualFs.realpathSync(
-        createManagedHome(testState.userDataDir, 'account-1')
-      )
+      managedHomePath = actualFs.realpathSync(createManagedHome(testState.userDataDir, 'account-1'))
       const store = createStore(createSettings())
       const rateLimits = createRateLimits()
       const runtimeHome = createRuntimeHome()

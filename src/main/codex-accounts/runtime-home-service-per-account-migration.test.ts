@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CodexManagedAccount, GlobalSettings } from '../../shared/types'
 import type * as NodeOs from 'node:os'
-import { readHookTrustEntries } from '../codex/config-toml-trust'
 
 const testState = { userData: '', home: '' }
 const previousEnv: Record<string, string | undefined> = {}
@@ -73,9 +80,7 @@ describe('CodexRuntimeHomeService per-account takeover composition', () => {
     writeFileSync(sharedAuthPath(), accountOneMigrated)
     const { settings, store } = createStore([accountOne, accountTwo], accountOne.id)
     const { CodexRuntimeHomeService } = await import('./runtime-home-service')
-    const { CodexHookService } = await import('../codex/hook-service')
     const service = new CodexRuntimeHomeService(store as never)
-    const hookService = new CodexHookService()
 
     expect(readFileSync(join(accountOne.managedHomePath, 'auth.json'), 'utf8')).toBe(
       accountOneMigrated
@@ -86,22 +91,21 @@ describe('CodexRuntimeHomeService per-account takeover composition', () => {
       selectManagedAccount(settings, account.id)
       service.syncForCurrentSelection()
       expect(service.prepareForCodexLaunch()).toBe(account.managedHomePath)
+      // Why: the overlay symlinks shared resources + config to the real ~/.codex,
+      // so they read through verbatim with no per-home copy that could drift.
       expect(
         readFileSync(join(account.managedHomePath, 'skills', 'fixture-skill', 'SKILL.md'), 'utf8')
       ).toBe('fixture skill\n')
       expect(readFileSync(join(account.managedHomePath, 'hooks', 'user-hook.sh'), 'utf8')).toBe(
         '#!/bin/sh\n'
       )
+      expect(lstatSync(join(account.managedHomePath, 'config.toml')).isSymbolicLink()).toBe(true)
       const config = readFileSync(join(account.managedHomePath, 'config.toml'), 'utf8')
       expect(config).toContain('model = "fixture-model"')
-      expect(config).not.toContain('[hooks.state')
-      expect(hookService.install(account.managedHomePath).state).toBe('installed')
-      expect(readFileSync(join(account.managedHomePath, 'hooks.json'), 'utf8')).toContain(
-        process.platform === 'win32' ? 'codex-hook.cmd' : 'codex-hook.sh'
-      )
-      expect(
-        readHookTrustEntries(join(account.managedHomePath, 'config.toml')).size
-      ).toBeGreaterThan(0)
+      // The overlay shares the real config verbatim, including its [hooks.state].
+      expect(config).toContain('[hooks.state."stale-fixture"]')
+      // auth.json stays real and per-account (never symlinked), so it is isolated.
+      expect(lstatSync(join(account.managedHomePath, 'auth.json')).isSymbolicLink()).toBe(false)
     }
 
     const discoveryHomes = service.getHostCodexHomePathsForSessionDiscovery()

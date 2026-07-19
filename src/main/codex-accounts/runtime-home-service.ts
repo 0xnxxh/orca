@@ -42,6 +42,7 @@ import {
   syncCodexGlobalInstructionsIntoManagedHome,
   syncSystemCodexResourcesIntoManagedHome
 } from '../codex/codex-home-paths'
+import { syncSystemCodexOverlayResourcesIntoManagedHome } from '../codex/codex-overlay-home-paths'
 import { startSystemCodexSessionBridgeInBackground } from '../codex/codex-session-bridge'
 import {
   resolveHostCodexSessionSourceHome,
@@ -72,6 +73,7 @@ import {
   codexAuthMatchesSystemDefaultIdentity
 } from './codex-auth-identity'
 import { migrateLegacySharedAuthToPerAccountHome } from './legacy-shared-auth-migration'
+import { migrateCopiedManagedHomesToOverlay } from './migrate-copied-home-to-overlay'
 
 type CodexSystemDefaultSnapshot = {
   authJson: string | null
@@ -136,6 +138,7 @@ export class CodexRuntimeHomeService {
 
   constructor(private readonly store: Store) {
     this.safeMigrateLegacySharedAuth()
+    this.safeMigrateCopiedManagedHomesToOverlay()
     this.safeMigrateLegacyManagedState()
     this.safeMigrateLegacyActiveHomePointer()
     this.initializeLastSyncedState()
@@ -247,6 +250,16 @@ export class CodexRuntimeHomeService {
     return homes
   }
 
+  // Why: the launch caller must know when the prepared home is a symlink OVERLAY
+  // so it skips Orca's per-home hook/config writes — an atomic write there would
+  // replace the config.toml/hooks.json symlinks with copies and reintroduce the
+  // drift the overlay eliminates. Codex grants overlay hook trust through its own
+  // app-server (symlink-preserving), so Orca never writes into the overlay home.
+  getActiveManagedOverlayHomePath(): string | null {
+    const account = this.getSelfContainedManagedHostAccount()
+    return account ? this.getTrustedSelfContainedManagedHomePath(account) : null
+  }
+
   private prepareSelfContainedManagedHomeForLaunch(account: CodexManagedAccount): string | null {
     const perAccountHome = this.getTrustedSelfContainedManagedHomePath(account)
     if (!perAccountHome || !existsSync(join(perAccountHome, 'auth.json'))) {
@@ -255,16 +268,15 @@ export class CodexRuntimeHomeService {
       this.clearSelfContainedManagedSelection(account)
       return null
     }
-    // Why: link the user's real ~/.codex resources and mirror config into THIS
-    // home (never symlinking into or mutating ~/.codex), so the per-account home
-    // is a complete CODEX_HOME. Hooks/trust are installed by the launch caller.
+    // Why: build the thin symlink OVERLAY — config.toml + hooks.json + resources
+    // point at the user's real ~/.codex (never symlinking into or mutating it),
+    // so this per-account home is a complete CODEX_HOME whose config reads/writes
+    // pass straight through to ~/.codex with no copy to drift. auth.json,
+    // sessions/, and the sqlite index stay real and per-account. Hooks/trust were
+    // RPC-granted per overlay at account creation.
     this.lastSyncedAccountId = account.id
     this.lastHostAccountUsedSelfContainedHome = true
-    syncSystemCodexResourcesIntoManagedHome(perAccountHome)
-    syncSystemConfigIntoManagedCodexHome({
-      runtimeHomePath: perAccountHome,
-      systemHomePath: getSystemCodexHomePath()
-    })
+    syncSystemCodexOverlayResourcesIntoManagedHome(perAccountHome)
     return perAccountHome
   }
 
@@ -1164,6 +1176,29 @@ export class CodexRuntimeHomeService {
       // Why: an inconclusive identity, ownership, or filesystem result must
       // leave the marker absent so the next startup can retry safely.
       console.warn('[codex-runtime-home] Failed to migrate legacy shared Codex auth:', error)
+    }
+  }
+
+  private safeMigrateCopiedManagedHomesToOverlay(): void {
+    const settings = this.store.getSettings()
+    // Why: the overlay only governs the flag-ON self-contained host lane. Leave
+    // flag-OFF shared-mirror homes and WSL homes on their existing config lanes.
+    if (!isCodexSystemDefaultRealHomeEnabled(settings)) {
+      return
+    }
+    try {
+      migrateCopiedManagedHomesToOverlay({
+        hostAccounts: settings.codexManagedAccounts.filter(
+          (account) => !this.getWslManagedHomePath(account)
+        ),
+        managedAccountsRoot: this.getManagedAccountsRoot(),
+        metadataDir: this.getRuntimeMetadataDir(),
+        systemCodexHome: getSystemCodexHomePath()
+      })
+    } catch (error) {
+      // Why: leave the marker absent on an inconclusive result so the next
+      // startup can retry the conversion safely.
+      console.warn('[codex-runtime-home] Failed to migrate copied Codex homes to overlay:', error)
     }
   }
 
