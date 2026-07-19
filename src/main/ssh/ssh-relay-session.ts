@@ -1020,6 +1020,10 @@ export class SshRelaySession {
 
     if (reason === 'shutdown') {
       clearPtyOwnershipForConnection(this.targetId)
+    } else {
+      // Why: handlers are detached above, so no late event can recreate a
+      // stamped status between this clear and reconnect replay.
+      agentHookServer.clearStatusEntriesForConnection(this.targetId)
     }
 
     const ptyProvider = getSshPtyProvider(this.targetId)

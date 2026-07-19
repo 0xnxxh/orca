@@ -1210,11 +1210,11 @@ function openMainWindow(): BrowserWindow {
       }
     }
   )
-  agentHookServer.setPaneStatusClearListener((paneKey) => {
+  agentHookServer.setPaneStatusClearListener((clear) => {
     if (mainWindow?.isDestroyed()) {
       return
     }
-    mainWindow?.webContents.send('agentStatus:clear', { paneKey })
+    mainWindow?.webContents.send('agentStatus:clear', clear)
   })
   setMigrationUnsupportedPtyListener((event) => {
     if (mainWindow?.isDestroyed()) {

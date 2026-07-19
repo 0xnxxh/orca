@@ -304,6 +304,7 @@ import type { CliInstallStatus } from '../shared/cli-install-types'
 import type { E2EConfig } from '../shared/e2e-config'
 import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
 import type {
+  AgentStatusClearIpcPayload,
   AgentStatusIpcPayload,
   MigrationUnsupportedPtyEntry
 } from '../shared/agent-status-types'
@@ -3211,8 +3212,8 @@ export type PreloadApi = {
   agentStatus: {
     /** Listen for agent status updates forwarded from native hook receivers. */
     onSet: (callback: (data: AgentStatusIpcPayload) => void) => () => void
-    /** Listen for main-process pane teardown that evicted a cached hook status. */
-    onClear: (callback: (data: { paneKey: string }) => void) => () => void
+    /** Listen for main-process cleanup that evicted cached hook status. */
+    onClear: (callback: (data: AgentStatusClearIpcPayload) => void) => () => void
     /** Return the current main-process hook cache after renderer hydration. */
     getSnapshot: () => Promise<AgentStatusIpcPayload[]>
     inferInterrupt: (request: AgentInterruptInferenceRequest) => Promise<boolean>
