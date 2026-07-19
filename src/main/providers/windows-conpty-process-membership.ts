@@ -54,14 +54,27 @@ export function readWindowsConptyProcessIds(
       const value = message?.consoleProcessList
       if (
         !Array.isArray(value) ||
-        value.length <= 1 ||
         !value.includes(rootPid) ||
         value.some((pid) => !Number.isSafeInteger(pid) || pid <= 0)
       ) {
         finish(null)
         return
       }
-      finish(new Set(value))
+      // Why: the helper attaches to the console to read it, so GetConsoleProcessList
+      // counts the helper's own forked process. Drop it before judging membership,
+      // or a bare shell (helper + shell) looks like it still has a child and a
+      // genuine shell-only console (an exited agent) is never detected. A remaining
+      // set of only the shell — or the helper's AttachConsole-failure fallback — is
+      // not child proof.
+      const consoleProcessIds = new Set(value)
+      if (child.pid !== undefined) {
+        consoleProcessIds.delete(child.pid)
+      }
+      if (consoleProcessIds.size <= 1) {
+        finish(null)
+        return
+      }
+      finish(consoleProcessIds)
     }
     const timeout = setTimeout(() => {
       child.kill()

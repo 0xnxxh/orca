@@ -2,9 +2,15 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { readWindowsConptyProcessIds } from './windows-conpty-process-membership'
 
-function forkWith(event: 'message' | 'error' | 'none', value?: unknown) {
-  const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> }
+function forkWith(event: 'message' | 'error' | 'none', value?: unknown, pid?: number) {
+  const child = new EventEmitter() as EventEmitter & {
+    kill: ReturnType<typeof vi.fn>
+    pid?: number
+  }
   child.kill = vi.fn()
+  if (pid !== undefined) {
+    child.pid = pid
+  }
   const forkProcess = vi.fn(() => {
     queueMicrotask(() => {
       if (event === 'message') {
@@ -42,6 +48,20 @@ describe('readWindowsConptyProcessIds', () => {
   ])('fails closed for %s', async (_label, processIds) => {
     const { forkProcess } = forkWith('message', processIds)
     await expect(readWindowsConptyProcessIds(101, { forkProcess })).resolves.toBeNull()
+  })
+
+  it('treats a console of only the helper and the shell as shell-only (no child)', async () => {
+    // The helper (pid 999) attaches itself, so a bare shell reads as [999, 101].
+    // Without excluding the helper this looks like a child is still running.
+    const { forkProcess } = forkWith('message', [999, 101], 999)
+    await expect(readWindowsConptyProcessIds(101, { forkProcess })).resolves.toBeNull()
+  })
+
+  it('reports membership excluding the helper when a real child is attached', async () => {
+    const { forkProcess } = forkWith('message', [999, 101, 202], 999)
+    await expect(readWindowsConptyProcessIds(101, { forkProcess })).resolves.toEqual(
+      new Set([101, 202])
+    )
   })
 
   it('handles helper spawn errors without an unhandled child error', async () => {
