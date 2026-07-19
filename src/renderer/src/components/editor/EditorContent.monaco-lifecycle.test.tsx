@@ -14,6 +14,19 @@ vi.mock('@/lib/lazy-with-retry', async () => {
   const { syncContentOnMount } = await import('./monaco-content-sync')
   return {
     lazyWithRetry: (factory: () => Promise<unknown>) => {
+      if (factory.toString().includes('/DiffViewer.tsx')) {
+        return function MockDiffViewer(props: { filePath: string }) {
+          /* oxlint-disable react-hooks/exhaustive-deps -- Mount-only by design: a prop-effect would hide a missing outer React remount. */
+          React.useEffect(() => {
+            lifecycle.events.push(`mount-diff:${props.filePath}`)
+            return () => {
+              lifecycle.events.push(`unmount-diff:${props.filePath}`)
+            }
+          }, [])
+          /* oxlint-enable react-hooks/exhaustive-deps */
+          return null
+        }
+      }
       if (!factory.toString().includes('/MonacoEditor.tsx')) {
         return () => null
       }
@@ -144,6 +157,21 @@ function props(activeFile: OpenFile, content: string) {
   }
 }
 
+function diffProps(activeFile: OpenFile, modifiedContent: string) {
+  return {
+    ...props(activeFile, ''),
+    diffContents: {
+      [activeFile.id]: {
+        kind: 'text' as const,
+        originalContent: '',
+        modifiedContent,
+        originalIsBinary: false as const,
+        modifiedIsBinary: false as const
+      }
+    }
+  }
+}
+
 afterEach(() => {
   cleanup()
   lifecycle.events.length = 0
@@ -174,6 +202,18 @@ describe('EditorContent Monaco lifecycle boundary', () => {
       content: 'first with edits',
       undo: ['first undo']
     })
+  })
+
+  it('keeps the diff editor mounted when a save updates the modified content', () => {
+    // Why: the DiffViewer key must not embed the modified-content signature, or
+    // every save remounts Monaco (blank "Loading…" flash + lost scroll/undo).
+    // The in-place model rotation handles content refresh without a remount.
+    const diff = file('/repo/notes.ts', { mode: 'diff', diffSource: 'unstaged' })
+
+    const view = render(<EditorContent {...diffProps(diff, 'first save')} />)
+    view.rerender(<EditorContent {...diffProps(diff, 'second save')} />)
+
+    expect(lifecycle.events).toEqual(['mount-diff:/repo/notes.ts'])
   })
 
   it('passes live-tail ownership only for a read-only live log', () => {
