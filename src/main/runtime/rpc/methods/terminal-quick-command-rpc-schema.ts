@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  MAX_QUICK_COMMANDS,
   normalizeTerminalQuickCommands,
   supportsTerminalAgentQuickCommand
 } from '../../../../shared/terminal-quick-commands'
@@ -40,6 +41,7 @@ export const TerminalQuickCommandsUpdate = z
     // mismatch into destructive deletion of some or all saved commands.
     terminalQuickCommands: z
       .array(TerminalQuickCommandUpdateItem)
+      .max(MAX_QUICK_COMMANDS)
       .transform((value) => normalizeTerminalQuickCommands(value))
   })
   .strict()

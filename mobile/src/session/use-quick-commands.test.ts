@@ -109,6 +109,27 @@ describe('useQuickCommands', () => {
     expect(client.sendRequest).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps mutations disabled when a successful load has a malformed list', async () => {
+    const client = {
+      sendRequest: vi.fn().mockResolvedValue({ ok: true, result: {} } as RpcResponse)
+    } as unknown as RpcClient
+    await mount(client)
+
+    let updateCalled = false
+    await act(async () => {
+      const persisted = await state!.persist(() => {
+        updateCalled = true
+        return []
+      })
+      expect(persisted).toBe(false)
+    })
+
+    expect(state?.ready).toBe(false)
+    expect(state?.error).toBe('Failed to load quick commands')
+    expect(updateCalled).toBe(false)
+    expect(client.sendRequest).toHaveBeenCalledTimes(1)
+  })
+
   it('rebases a later mutation after an earlier queued mutation fails', async () => {
     const firstUpdate = deferred<RpcResponse>()
     const secondUpdate = deferred<RpcResponse>()
@@ -262,6 +283,25 @@ describe('useQuickCommands', () => {
 
     expect(state?.commands).toEqual([FIRST])
     expect(state?.error).toBe('save failed')
+  })
+
+  it('rolls back when a successful update has a malformed authoritative list', async () => {
+    const client = {
+      sendRequest: vi
+        .fn()
+        .mockResolvedValueOnce(success([FIRST]))
+        .mockResolvedValueOnce({ ok: true, result: {} } as RpcResponse)
+    } as unknown as RpcClient
+    await mount(client)
+
+    let persisted = true
+    await act(async () => {
+      persisted = await state!.persist(() => [])
+    })
+
+    expect(persisted).toBe(false)
+    expect(state?.commands).toEqual([FIRST])
+    expect(state?.error).toBe('Failed to save quick command')
   })
 
   it('waits for an in-flight save before reloading after reopen', async () => {

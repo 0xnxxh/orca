@@ -198,7 +198,14 @@ describe('client UI RPC methods', () => {
           agent: 'aider',
           prompt: 'Review this diff'
         }
-      ]
+      ],
+      Array.from({ length: 41 }, (_, index) => ({
+        id: `command-${index}`,
+        label: `Command ${index}`,
+        action: 'terminal-command',
+        command: 'true',
+        appendEnter: true
+      }))
     ]) {
       const response = await dispatcher.dispatch(
         makeRequest('settings.updateTerminalQuickCommands', { terminalQuickCommands })

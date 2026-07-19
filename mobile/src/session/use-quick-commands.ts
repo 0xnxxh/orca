@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcFailure, RpcSuccess } from '../transport/types'
 import type { TerminalQuickCommand } from '../../../src/shared/types'
+import { parseNormalizedTerminalQuickCommands } from '../terminal/quick-commands'
 
 type Args = {
   client: RpcClient | null
@@ -35,9 +36,9 @@ type MutationContext = {
   nextMutationId: number
 }
 
-function readQuickCommands(result: unknown): TerminalQuickCommand[] {
+function readQuickCommands(result: unknown): TerminalQuickCommand[] | null {
   const list = (result as { terminalQuickCommands?: unknown } | null)?.terminalQuickCommands
-  return Array.isArray(list) ? (list as TerminalQuickCommand[]) : []
+  return parseNormalizedTerminalQuickCommands(list)
 }
 
 export function useQuickCommands({ client, enabled }: Args): QuickCommandsState {
@@ -100,6 +101,10 @@ export function useQuickCommands({ client, enabled }: Args): QuickCommandsState 
           return
         }
         const next = readQuickCommands((response as RpcSuccess).result)
+        if (!next) {
+          setError('Failed to load quick commands')
+          return
+        }
         mutationContext.confirmed = next
         commandsRef.current = next
         setCommands(next)
@@ -162,7 +167,13 @@ export function useQuickCommands({ client, enabled }: Args): QuickCommandsState 
               (response as RpcFailure).error.message || 'Failed to save quick command'
             )
           }
-          mutationContext.confirmed = readQuickCommands((response as RpcSuccess).result)
+          const confirmed = readQuickCommands((response as RpcSuccess).result)
+          if (!confirmed) {
+            // Why: treating an invalid success payload as [] would let the next
+            // full-list mutation erase commands that still exist on the host.
+            throw new Error('Failed to save quick command')
+          }
+          mutationContext.confirmed = confirmed
           succeeded = true
           return true
         } catch (err) {

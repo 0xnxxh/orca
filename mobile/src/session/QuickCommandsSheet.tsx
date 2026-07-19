@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { View, Text, Pressable, StyleSheet } from 'react-native'
+import { Alert, View, Text, Pressable, StyleSheet } from 'react-native'
 import { ChevronLeft } from 'lucide-react-native'
 import { colors, spacing } from '../theme/mobile-theme'
 import { BottomDrawer } from '../components/BottomDrawer'
@@ -92,7 +92,22 @@ export function QuickCommandsSheet({
   }
 
   const handleDelete = (command: TerminalQuickCommand) => {
-    void persist((current) => current.filter((entry) => entry.id !== command.id))
+    // Why: quick commands sync with desktop, so an accidental one-tap delete
+    // removes shared data rather than only dismissing a local row.
+    Alert.alert(
+      `Delete "${command.label || 'Untitled'}"?`,
+      'This quick command will be removed from your saved list.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void persist((current) => current.filter((entry) => entry.id !== command.id))
+          }
+        }
+      ]
+    )
   }
 
   const handleSave = async () => {

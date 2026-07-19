@@ -7,6 +7,7 @@ import {
   getDefaultTerminalQuickCommands,
   isTerminalQuickCommandComplete,
   normalizeTerminalQuickCommands,
+  parseNormalizedTerminalQuickCommands,
   supportsTerminalAgentQuickCommand,
   terminalQuickCommandMatchesRepo
 } from './terminal-quick-commands'
@@ -212,6 +213,18 @@ describe('terminal quick commands', () => {
         scope: { type: 'global' }
       }
     ])
+  })
+
+  it('accepts only complete canonical command lists at protocol boundaries', () => {
+    const canonical = normalizeTerminalQuickCommands([
+      { id: 'status', label: 'Status', command: 'git status', appendEnter: true }
+    ])
+
+    expect(parseNormalizedTerminalQuickCommands(canonical)).toEqual(canonical)
+    expect(parseNormalizedTerminalQuickCommands([{ ...canonical[0], command: 42 }])).toBeNull()
+    expect(
+      parseNormalizedTerminalQuickCommands([...canonical, ...canonical.slice(0, 1)])
+    ).toBeNull()
   })
 
   it('matches global commands everywhere and repo commands only in their repo', () => {

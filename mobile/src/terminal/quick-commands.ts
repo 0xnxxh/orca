@@ -5,6 +5,7 @@ import {
   MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH,
   MAX_QUICK_COMMAND_LABEL_LENGTH,
   MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH,
+  parseNormalizedTerminalQuickCommands,
   supportsTerminalAgentQuickCommand,
   terminalQuickCommandMatchesRepo
 } from '../../../src/shared/terminal-quick-commands'
@@ -19,7 +20,8 @@ export {
   supportsTerminalAgentQuickCommand,
   MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH,
   MAX_QUICK_COMMAND_LABEL_LENGTH,
-  MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH
+  MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH,
+  parseNormalizedTerminalQuickCommands
 }
 
 const MAX_QUICK_COMMAND_DISPLAY_PREVIEW_LENGTH = 240

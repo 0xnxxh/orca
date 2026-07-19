@@ -5,7 +5,7 @@ import type { TerminalQuickCommand } from '../../../src/shared/types'
 import type { RpcClient } from '../transport/rpc-client'
 import { QuickCommandsSheet } from './QuickCommandsSheet'
 
-const mocks = vi.hoisted(() => ({ persist: vi.fn() }))
+const mocks = vi.hoisted(() => ({ alert: vi.fn(), persist: vi.fn() }))
 const quickCommandEditorForm = 'QuickCommandEditorForm'
 const quickCommandsList = 'QuickCommandsList'
 const command: TerminalQuickCommand = {
@@ -18,6 +18,7 @@ const command: TerminalQuickCommand = {
 }
 
 vi.mock('react-native', () => ({
+  Alert: { alert: mocks.alert },
   Pressable: 'Pressable',
   StyleSheet: { create: <T>(styles: T) => styles },
   Text: 'Text',
@@ -63,6 +64,7 @@ describe('QuickCommandsSheet', () => {
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    mocks.alert.mockReset()
     mocks.persist.mockReset()
     const originalConsoleError = console.error
     consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
@@ -134,5 +136,34 @@ describe('QuickCommandsSheet', () => {
       save.resolve(true)
       await save.promise
     })
+  })
+
+  it('does not delete a shared command until the destructive action is confirmed', async () => {
+    await act(async () => {
+      renderer = create(
+        createElement(QuickCommandsSheet, {
+          visible: true,
+          onClose: vi.fn(),
+          client: {} as RpcClient,
+          repoId: 'repo-1',
+          repoName: 'Repo',
+          onLaunch: () => true
+        })
+      )
+    })
+
+    act(() => renderer!.root.findByType(quickCommandsList).props.onDelete(command))
+    expect(mocks.persist).not.toHaveBeenCalled()
+
+    const actions = mocks.alert.mock.calls[0]?.[2] as
+      | Array<{ style?: string; onPress?: () => void }>
+      | undefined
+    act(() => actions?.find((action) => action.style === 'destructive')?.onPress?.())
+
+    expect(mocks.persist).toHaveBeenCalledTimes(1)
+    const update = mocks.persist.mock.calls[0]?.[0] as (
+      commands: TerminalQuickCommand[]
+    ) => TerminalQuickCommand[]
+    expect(update([command])).toEqual([])
   })
 })
