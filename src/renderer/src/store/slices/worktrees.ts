@@ -4983,15 +4983,22 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       return
     }
     set((s) => {
-      const removedSoleOwnerRepoIds = new Set<string>()
-      for (const [repoId, owner] of getRepoHostSummaries(s.repos)) {
-        if (owner.count === 1 && isRemovedRuntimeHostId(owner.onlyHostId, removed)) {
-          removedSoleOwnerRepoIds.add(repoId)
+      const repoIdsWithoutSurvivingOwners = new Set<string>()
+      const survivingRepoIds = new Set<string>()
+      const survivingRepos: AppState['repos'] = []
+      for (const repo of s.repos) {
+        if (isRemovedRuntimeHostId(getRepoExecutionHostId(repo), removed)) {
+          repoIdsWithoutSurvivingOwners.add(repo.id)
+        } else {
+          survivingRepos.push(repo)
+          survivingRepoIds.add(repo.id)
         }
       }
-      const survivingRepos = s.repos.filter(
-        (repo) => !isRemovedRuntimeHostId(getRepoExecutionHostId(repo), removed)
-      )
+      // Why: an unhosted legacy row is safe to retire whenever every known repo
+      // owner was removed together, including duplicate or multi-host catalog rows.
+      for (const repoId of survivingRepoIds) {
+        repoIdsWithoutSurvivingOwners.delete(repoId)
+      }
       const reposChanged = survivingRepos.length !== s.repos.length
 
       // Why: broader than filterSetupsForPrunedRepoRows — a repoId-less setup on
@@ -5005,7 +5012,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       const worktreeDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
         s.worktreesByRepo,
         removed,
-        removedSoleOwnerRepoIds
+        repoIdsWithoutSurvivingOwners
       )
       const detectedRows: Record<string, DetectedWorktreeListResult['worktrees']> =
         Object.fromEntries(
@@ -5017,7 +5024,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       const detectedDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
         detectedRows,
         removed,
-        removedSoleOwnerRepoIds
+        repoIdsWithoutSurvivingOwners
       )
 
       const worktreesChanged = worktreeDrop.rowsByRepo !== s.worktreesByRepo
@@ -5056,7 +5063,6 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         : s.detectedWorktreesByRepo
 
       const rowsChanged = worktreesChanged || detectedChanged
-      const survivingRepoIds = new Set(survivingRepos.map((repo) => repo.id))
       return {
         ...purgeState,
         ...(reposChanged ? { repos: survivingRepos } : {}),

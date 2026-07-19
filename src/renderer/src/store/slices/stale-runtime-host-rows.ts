@@ -22,8 +22,8 @@ export type DropRuntimeRowsResult<T> = {
 
 /**
  * Drops rows owned by a removed-env runtime host from a `worktreesByRepo`-shaped
- * map. Legacy unhosted rows are dropped only when their repo had one unambiguous
- * removed owner. Returns the SAME reference when nothing changed (render-churn
+ * map. Legacy unhosted rows are dropped only when their repo had removed owners
+ * and none survive. Returns the SAME reference when nothing changed (render-churn
  * guard). Repo keys are kept even when their row list empties. Generic so it serves
  * both `Worktree[]` and the detected worktrees' `.worktrees` arrays.
  */
@@ -32,7 +32,7 @@ export function dropWorktreeRowsForRemovedRuntimeEnvironments<
 >(
   rowsByRepo: Record<string, T[]>,
   removedEnvironmentIds: ReadonlySet<string>,
-  removedSoleOwnerRepoIds?: ReadonlySet<string>
+  repoIdsWithoutSurvivingOwners?: ReadonlySet<string>
 ): DropRuntimeRowsResult<T> {
   if (removedEnvironmentIds.size === 0) {
     return { rowsByRepo, removedWorktreeIds: [] }
@@ -44,7 +44,7 @@ export function dropWorktreeRowsForRemovedRuntimeEnvironments<
     const survivors = rows.filter((row) => {
       if (
         isRemovedRuntimeHostId(row.hostId, removedEnvironmentIds) ||
-        (row.hostId === undefined && removedSoleOwnerRepoIds?.has(repoId) === true)
+        (row.hostId === undefined && repoIdsWithoutSurvivingOwners?.has(repoId) === true)
       ) {
         removedWorktreeIds.push(row.id)
         return false

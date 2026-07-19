@@ -54,7 +54,7 @@ function detectedResult(
 function detected(
   id: string,
   repoId: string,
-  hostId: ReturnType<typeof toRuntimeExecutionHostId> | 'local'
+  hostId: ReturnType<typeof toRuntimeExecutionHostId> | 'local' | undefined
 ): DetectedWorktreeListResult['worktrees'][number] {
   return {
     ...makeWorktree({ id, repoId, hostId }),
@@ -291,6 +291,47 @@ describe('purgeStaleRuntimeHostState', () => {
 
     const s = store.getState()
     expect(s.worktreesByRepo.repoA).toEqual([])
+    expect(s.tabsByWorktree[worktreeId]).toBeUndefined()
+  })
+
+  it('purges a legacy unhosted row when every repo owner is removed together', () => {
+    const store = createTestStore()
+    const RUNTIME_B = toRuntimeExecutionHostId('env-b')
+    const worktreeId = 'shared::/legacy'
+    seedStore(store, {
+      repos: [
+        {
+          id: 'shared',
+          path: '/shared-a',
+          displayName: 'A',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: RUNTIME_A
+        },
+        {
+          id: 'shared',
+          path: '/shared-b',
+          displayName: 'B',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: RUNTIME_B
+        }
+      ],
+      worktreesByRepo: {
+        shared: [makeWorktree({ id: worktreeId, repoId: 'shared', hostId: undefined })]
+      },
+      detectedWorktreesByRepo: {
+        shared: detectedResult('shared', [detected(worktreeId, 'shared', undefined)])
+      },
+      tabsByWorktree: { [worktreeId]: [makeTab({ id: 'legacy-tab', worktreeId })] }
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a', 'env-b'])
+
+    const s = store.getState()
+    expect(s.repos).toEqual([])
+    expect(s.worktreesByRepo.shared).toEqual([])
+    expect(s.detectedWorktreesByRepo.shared.worktrees).toEqual([])
     expect(s.tabsByWorktree[worktreeId]).toBeUndefined()
   })
 
