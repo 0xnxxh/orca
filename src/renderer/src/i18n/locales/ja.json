@@ -5929,7 +5929,10 @@
           "174f4a3c6d": "スマートフォンから terminals と agents を操作",
           "1de96ec8a6": "Orca Mobile ボタンを表示",
           "682293cadf": "左サイドバー上部に Orca Mobile ボタンを表示します。",
-          "d4f2b65f30": "サイドバーに Orca Mobile ショートカットを表示します。"
+          "d4f2b65f30": "サイドバーに Orca Mobile ショートカットを表示します。",
+          "installIntro": "Install Orca Mobile from the",
+          "installOutro": ", then pair below.",
+          "androidApkLabel": "Android APK"
         },
         "NotificationsPane": {
           "906b4afebf": "テスト通知を送信する",
@@ -9173,27 +9176,27 @@
           "reconnecting": "再接続中",
           "unavailable": "利用不可",
           "title": "新しいスマートフォンをどのように接続しますか？",
-          "anywhere": "Orca Relay で接続",
           "recommended": "推奨",
-          "automaticDescription": "利用可能な場合は直接接続し、それ以外ではOrca Relayを使用します。",
-          "signInDescription": "Orca Relayを使用するには、このデスクトップでサインインしてください。",
           "signIn": "サインイン",
-          "localOnly": "ローカルネットワークのみ",
-          "localShort": "LAN または Tailscale",
-          "localDescription": "このスマートフォンをOrca Relayに接続せず、LANまたはTailscaleを使用します。"
+          "localDescription": "このスマートフォンをOrca Relayに接続せず、LANまたはTailscaleを使用します。",
+          "pathGroup": "How the phone reaches this computer",
+          "anywhereTitle": "Orca Relay",
+          "anywhereDescription": "Phone can be on cellular or any Wi‑Fi. Sign-in required.",
+          "signInRequired": "Sign in to use Orca Mobile Relay.",
+          "signInAgain": "Sign in again",
+          "localTitle": "Local network"
         },
         "MobilePairingSetupSection": {
           "title": "スマートフォンをペアリング",
-          "automaticDescription": "ペアリングコードには、直接接続と暗号化されたOrca Relayのフォールバックが含まれます。",
-          "localDescription": "ペアリングコードは、下のローカルネットワークアドレスだけを使用します。",
           "regenerate": "再生成",
           "generate": "QRコードを生成",
-          "localSettings": "ローカル接続設定",
-          "localAddressDescription": "Orca Mobileからこのコンピューターへ直接接続できるLANまたはプライベートネットワークのアドレスを選択します。",
           "refresh": "ネットワークインターフェースを更新",
-          "tailnet": "自分のtailnetで接続",
-          "tailnetDescription": "このコンピューターとスマートフォンにTailscaleをインストールし、同じtailnetにサインインして、上で100.x.y.zアドレスを選択します。",
-          "getTailscale": "Tailscaleを入手"
+          "overview": "Generate a QR code, then scan it in Orca Mobile under Pair Desktop.",
+          "step1Title": "Connection",
+          "step2Title": "This computer’s address",
+          "step2RelayDescription": "Used for a faster direct path when nearby. Relay covers remote access.",
+          "step2LocalDescription": "The phone must be able to reach this address on Wi‑Fi or Tailscale.",
+          "signInToGenerate": "Sign in above first, or switch to Local network."
         },
         "MobileRelayBetaAvailability": {
           "about": "Orca Relay ベータについて",

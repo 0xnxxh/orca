@@ -19,9 +19,9 @@ import { MobilePageContent } from './MobilePageContent'
 import { useMobileInstallQr } from './use-mobile-install-qr'
 import {
   effectiveMobilePairingConnectionMode,
-  resolveMobilePairingConnectionMode,
   type MobilePairingConnectionMode
 } from '../../../../shared/mobile-pairing-connection-mode'
+import { useMobilePairingConnectionMode } from './use-mobile-pairing-connection-mode'
 import { useMobileInstallActions } from './use-mobile-install-actions'
 
 export default function MobilePage(): React.JSX.Element {
@@ -37,12 +37,7 @@ export default function MobilePage(): React.JSX.Element {
   const [pairingUrl, setPairingUrl] = useState<string | null>(null)
   const [pairLoading, setPairLoading] = useState(false)
   const signedIn = useAppStore((state) => state.orcaProfileAuthStatus?.state === 'connected')
-  const savedConnectionMode = useAppStore((s) => s.settings?.mobilePairingConnectionMode)
-  // Why: Anywhere is the default; an explicit saved `local-only` is the
-  // "user already set it up otherwise" signal.
-  const [connectionMode, setConnectionMode] = useState<MobilePairingConnectionMode>(() =>
-    resolveMobilePairingConnectionMode(savedConnectionMode)
-  )
+  const [connectionMode, setConnectionMode] = useMobilePairingConnectionMode()
   const [networkInterfaces, setNetworkInterfaces] = useState<MobileNetworkInterface[]>([])
   const [selectedAddress, setSelectedAddress] = useState<string | undefined>(undefined)
   // Why: tracks whether `selectedAddress` came from the user typing a
@@ -55,6 +50,7 @@ export default function MobilePage(): React.JSX.Element {
   const [deviceCountAtPairStart, setDeviceCountAtPairStart] = useState<number | null>(null)
   const hasGeneratedRef = useRef(false)
   const pairingRequestIdRef = useRef(0)
+  const wasSignedInRef = useRef(signedIn)
   const mountedRef = useMountedRef()
   const stageRef = useRef<FlowStage | null>(null)
   const deviceCountAtPairStartRef = useRef<number | null>(null)
@@ -261,12 +257,23 @@ export default function MobilePage(): React.JSX.Element {
         void generatePairing(true, undefined, nextMode)
       }
     },
-    [connectionMode, generatePairing, pairLoading, updateSettings]
+    [connectionMode, generatePairing, pairLoading, updateSettings, setConnectionMode]
   )
 
+  // Why: a Relay QR minted while signed in must not linger on a now-signed-out
+  // desktop — that desktop can no longer service it. On the signed-in->signed-out
+  // edge, invalidate the pending request and drop the displayed QR; the Step 2
+  // auto-generate effect re-mints it as local-only. Anywhere stays selected.
   useEffect(() => {
-    setConnectionMode(resolveMobilePairingConnectionMode(savedConnectionMode))
-  }, [savedConnectionMode])
+    const wasSignedIn = wasSignedInRef.current
+    wasSignedInRef.current = signedIn
+    if (wasSignedIn && !signedIn && connectionMode === 'automatic' && hasGeneratedRef.current) {
+      pairingRequestIdRef.current += 1
+      hasGeneratedRef.current = false
+      setPairQrDataUrl(null)
+      setPairingUrl(null)
+    }
+  }, [signedIn, connectionMode])
 
   const loadNetworkInterfaces = useCallback(async () => {
     if (mountedRef.current) {
@@ -377,29 +384,20 @@ export default function MobilePage(): React.JSX.Element {
     loadDevices: polledLoadDevices
   })
 
-  const enterFlow = (): void => {
-    setStepIdx(0)
+  // Why: entering the flow must mint a fresh pairing token — clear stale QR
+  // state so we never flash an expired code from a previous session. Step 0 is
+  // the full flow; Step 1 is "Pair another device" (app already installed).
+  const startPairingFlow = (nextStep: StepIndex): void => {
+    setStepIdx(nextStep)
     setPairingDeviceBaseline(devices.length)
-    // Force the auto-generate effect to mint a fresh pairing token on next
-    // entry into Step 2, and clear stale QR state so we never flash an
-    // expired code from a previous session.
     hasGeneratedRef.current = false
     setPairQrDataUrl(null)
     setPairingUrl(null)
     showStage('flow')
   }
 
-  // Why: from the paired summary, "Pair another device" jumps straight to
-  // Step 2 since the app is presumably already installed on the user's phone.
-  const pairAnotherDevice = (): void => {
-    setStepIdx(1)
-    setPairingDeviceBaseline(devices.length)
-    // Same reset as enterFlow — re-entering must mint a fresh pairing offer.
-    hasGeneratedRef.current = false
-    setPairQrDataUrl(null)
-    setPairingUrl(null)
-    showStage('flow')
-  }
+  const enterFlow = (): void => startPairingFlow(0)
+  const pairAnotherDevice = (): void => startPairingFlow(1)
 
   const handleBack = (): void => {
     if (stepIdx === 1) {

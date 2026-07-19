@@ -16,14 +16,13 @@ import { WindowsFirewallNotice } from '../mobile/WindowsFirewallNotice'
 import { translate } from '@/i18n/i18n'
 import {
   effectiveMobilePairingConnectionMode,
-  resolveMobilePairingConnectionMode,
   type MobilePairingConnectionMode
 } from '../../../../shared/mobile-pairing-connection-mode'
+import { useMobilePairingConnectionMode } from '../mobile/use-mobile-pairing-connection-mode'
 export { getMobilePaneSearchEntries } from './mobile-pane-search'
 
 export function MobilePane(): React.JSX.Element {
   const autoRestoreFitMs = useAppStore((s) => s.settings?.mobileAutoRestoreFitMs ?? null)
-  const savedConnectionMode = useAppStore((s) => s.settings?.mobilePairingConnectionMode)
   const updateSettings = useAppStore((s) => s.updateSettings)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [pairingUrl, setPairingUrl] = useState<string | null>(null)
@@ -37,12 +36,7 @@ export function MobilePane(): React.JSX.Element {
   const [codeCopied, setCodeCopied] = useState(false)
   const [deviceCountAtQr, setDeviceCountAtQr] = useState<number | null>(null)
   const signedIn = useAppStore((state) => state.orcaProfileAuthStatus?.state === 'connected')
-  // Why: Anywhere is the default; an explicit saved `local-only` means the
-  // user already chose same-network only. Local state tracks the UI immediately;
-  // settings persist the choice across reopen.
-  const [connectionMode, setConnectionMode] = useState<MobilePairingConnectionMode>(() =>
-    resolveMobilePairingConnectionMode(savedConnectionMode)
-  )
+  const [connectionMode, setConnectionMode] = useMobilePairingConnectionMode()
   const qrConnectionMode = effectiveMobilePairingConnectionMode({
     preferred: connectionMode,
     signedIn
@@ -50,11 +44,23 @@ export function MobilePane(): React.JSX.Element {
   const [rotateNextQr, setRotateNextQr] = useState(false)
   const devicesRef = useRef<PairedDevice[]>([])
   const codeCopiedResetTimerRef = useRef<number | null>(null)
+  const wasSignedInRef = useRef(signedIn)
   const mountedRef = useMountedRef()
 
+  // Why: a Relay QR minted while signed in must not linger on a now-signed-out
+  // desktop — Generate is disabled in that state, so clear the stale code (and
+  // arm rotation for the next mint) instead of leaving it on screen. Anywhere
+  // stays selected.
   useEffect(() => {
-    setConnectionMode(resolveMobilePairingConnectionMode(savedConnectionMode))
-  }, [savedConnectionMode])
+    const wasSignedIn = wasSignedInRef.current
+    wasSignedInRef.current = signedIn
+    if (wasSignedIn && !signedIn && connectionMode === 'automatic' && qrDataUrl) {
+      setQrDataUrl(null)
+      setPairingUrl(null)
+      setEndpoint(null)
+      setRotateNextQr(true)
+    }
+  }, [signedIn, connectionMode, qrDataUrl])
 
   const clearCodeCopiedResetTimer = useCallback((): void => {
     if (codeCopiedResetTimerRef.current !== null) {
@@ -178,7 +184,7 @@ export function MobilePane(): React.JSX.Element {
         setRotateNextQr(true)
       }
     },
-    [connectionMode, qrDataUrl, updateSettings]
+    [connectionMode, qrDataUrl, updateSettings, setConnectionMode]
   )
 
   useEffect(() => {

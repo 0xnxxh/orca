@@ -10,7 +10,7 @@ import type { MobilePairingConnectionMode } from '../../../../shared/mobile-pair
 type StoreState = {
   closeMobilePage: () => void
   orcaProfileAuthStatus: { state: 'connected' | 'local' }
-  settings: { showMobileButton: boolean }
+  settings: { showMobileButton: boolean; mobilePairingConnectionMode?: MobilePairingConnectionMode }
   updateSettings: () => Promise<void>
 }
 
@@ -145,6 +145,17 @@ describe('MobilePage pairing connection mode', () => {
       pairingUrl: 'orca://pair#local'
     })
     await waitFor(() => expect(screen.getByTestId('pairing-qr')).toHaveTextContent('local-qr'))
+  })
+
+  it('restores a saved local-only preference without user interaction', async () => {
+    mocks.storeState.settings = {
+      showMobileButton: true,
+      mobilePairingConnectionMode: 'local-only'
+    }
+    await openPairingStep()
+
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
+    expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
   })
 
   it('defaults signed-out UI to Orca Relay but only issues a local-only QR', async () => {

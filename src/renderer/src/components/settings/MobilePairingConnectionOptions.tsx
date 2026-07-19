@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
@@ -42,19 +42,29 @@ type PathOptionProps = {
   title: string
   description: string
   trailing?: ReactNode
+  tabIndex: number
+  optionRef?: (el: HTMLDivElement | null) => void
 }
 
+// Why: this is a bespoke radio row rather than the canonical SettingsSegmentedControl
+// because each option needs a two-line title + description plus a trailing status
+// badge, which the single-line segmented pill cannot carry (STYLEGUIDE.md's
+// "real difference in role" carve-out). Arrow-key nav and roving tabindex below
+// keep it a conformant ARIA radiogroup.
 function PathOption({
   selected,
   onSelect,
   title,
   description,
-  trailing
+  trailing,
+  tabIndex,
+  optionRef
 }: PathOptionProps): React.JSX.Element {
   return (
     <div
+      ref={optionRef}
       role="radio"
-      tabIndex={0}
+      tabIndex={tabIndex}
       aria-checked={selected}
       onClick={onSelect}
       onKeyDown={(event) => {
@@ -106,6 +116,22 @@ export function MobilePairingConnectionOptions({
   const signedIn = authStatus?.state === 'connected'
   const reconnectRequired = authStatus?.state === 'reconnect-required'
   const needsSignIn = value === 'automatic' && !signedIn
+  const optionRefs = useRef<Record<MobilePairingConnectionMode, HTMLDivElement | null>>({
+    automatic: null,
+    'local-only': null
+  })
+
+  // Why: ARIA radiogroups move selection with the arrow keys; wrap between the
+  // two options and move focus so keyboard users get standard behavior.
+  const handleArrowKeys = (event: React.KeyboardEvent): void => {
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      return
+    }
+    event.preventDefault()
+    const next: MobilePairingConnectionMode = value === 'automatic' ? 'local-only' : 'automatic'
+    onChange(next)
+    optionRefs.current[next]?.focus()
+  }
 
   useEffect(() => {
     if (!authStatus) {
@@ -144,10 +170,15 @@ export function MobilePairingConnectionOptions({
           'auto.components.settings.MobilePairingConnectionOptions.pathGroup',
           'How the phone reaches this computer'
         )}
+        onKeyDown={handleArrowKeys}
         className="overflow-hidden rounded-md border border-border"
       >
         <PathOption
           selected={value === 'automatic'}
+          tabIndex={value === 'automatic' ? 0 : -1}
+          optionRef={(el) => {
+            optionRefs.current.automatic = el
+          }}
           onSelect={() => onChange('automatic')}
           title={translate(
             'auto.components.settings.MobilePairingConnectionOptions.anywhereTitle',
@@ -168,6 +199,10 @@ export function MobilePairingConnectionOptions({
         <div className="border-t border-border" />
         <PathOption
           selected={value === 'local-only'}
+          tabIndex={value === 'local-only' ? 0 : -1}
+          optionRef={(el) => {
+            optionRefs.current['local-only'] = el
+          }}
           onSelect={() => onChange('local-only')}
           title={translate(
             'auto.components.settings.MobilePairingConnectionOptions.localTitle',
