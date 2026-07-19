@@ -106,4 +106,42 @@ describe('purgeStaleRuntimeHostState ownership evidence', () => {
     expect(state.tabsByWorktree[worktreeId]).toBeUndefined()
     expect(state.restoredRuntimeHostIdByWorkspaceSessionKey[worktreeId]).toBeUndefined()
   })
+
+  it('preserves a surviving restored session before its catalog rows load', () => {
+    const store = createTestStore()
+    const removedWorktreeId = 'shared::/removed-host'
+    const survivingWorktreeId = 'shared::/surviving-host'
+    const survivingTabs = [
+      makeTab({
+        id: 'surviving-host-tab',
+        worktreeId: survivingWorktreeId,
+        ptyId: 'remote:env-b@@terminal-b'
+      })
+    ]
+    seedStore(store, {
+      repos: [],
+      worktreesByRepo: {},
+      tabsByWorktree: {
+        [removedWorktreeId]: [makeTab({ id: 'removed-host-tab', worktreeId: removedWorktreeId })],
+        [survivingWorktreeId]: survivingTabs
+      },
+      restoredRuntimeHostIdByWorkspaceSessionKey: {
+        [removedWorktreeId]: RUNTIME_A,
+        [survivingWorktreeId]: RUNTIME_B
+      },
+      activeWorktreeId: survivingWorktreeId,
+      activeWorkspaceKey: worktreeWorkspaceKey(survivingWorktreeId)
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a'])
+
+    const state = store.getState()
+    expect(state.tabsByWorktree[removedWorktreeId]).toBeUndefined()
+    expect(state.tabsByWorktree[survivingWorktreeId]).toBe(survivingTabs)
+    expect(state.restoredRuntimeHostIdByWorkspaceSessionKey).toEqual({
+      [survivingWorktreeId]: RUNTIME_B
+    })
+    expect(state.activeWorktreeId).toBe(survivingWorktreeId)
+    expect(state.activeWorkspaceKey).toBe(worktreeWorkspaceKey(survivingWorktreeId))
+  })
 })

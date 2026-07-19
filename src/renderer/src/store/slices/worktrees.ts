@@ -5048,12 +5048,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         s.restoredRuntimeHostIdByWorkspaceSessionKey
       )) {
         const scope = parseWorkspaceKey(workspaceKey)
-        if (scope?.type === 'folder' || !isRemovedRuntimeHostId(hostId, removed)) {
+        if (scope?.type === 'folder') {
           continue
         }
         const worktreeId = scope?.type === 'worktree' ? scope.worktreeId : workspaceKey
+        const repoId = getRepoIdFromWorktreeId(worktreeId)
+        if (!isRemovedRuntimeHostId(hostId, removed)) {
+          // Why: restored sessions can be the only surviving-owner evidence before catalogs load.
+          repoIdsWithSurvivingOwners.add(repoId)
+          continue
+        }
         sessionWorktreeIdsOwnedByRemovedHosts.add(worktreeId)
-        repoIdsWithRemovedOwners.add(getRepoIdFromWorktreeId(worktreeId))
+        repoIdsWithRemovedOwners.add(repoId)
         if (survivingRestoredSessionOwners === s.restoredRuntimeHostIdByWorkspaceSessionKey) {
           survivingRestoredSessionOwners = { ...survivingRestoredSessionOwners }
         }
