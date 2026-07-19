@@ -1,5 +1,7 @@
 import type { MobileRelayEndpoint } from '../../../src/shared/mobile-relay-credential-contract'
 import { openAuthenticatedDirectEndpoint } from './mobile-direct-endpoint-probe'
+import { RelayReconnectBackoff } from './mobile-relay-reconnect-backoff'
+import { RelayLeaseRotationTimer } from './mobile-relay-lease-rotation-timer'
 import { MobileEndpointHysteresis } from './mobile-endpoint-hysteresis'
 import {
   encodeBase64Url,
@@ -23,7 +25,6 @@ const DIRECT_PROBE_INTERVAL_MS = 15_000
 const DIRECT_OBSERVATION_MS = 30_000
 const MINIMUM_DWELL_MS = 60_000
 const FAILURE_COOLDOWN_MS = 60_000
-const LEASE_ROTATION_MARGIN_MS = 30_000
 
 export type MobileEndpointSupervisorDependencies = {
   openDirect: (endpoint: string) => RpcClient
@@ -51,9 +52,10 @@ export class MobileEndpointSupervisor {
   private credentialRotationInFlight = false
   private relayRotationPending = false
   private probeTimer: ReturnType<typeof setTimeout> | null = null
-  private leaseTimer: ReturnType<typeof setTimeout> | null = null
   private unsubscribeState: (() => void) | null = null
   private readonly hysteresis: MobileEndpointHysteresis
+  private readonly relayBackoff: RelayReconnectBackoff
+  private readonly leaseRotation: RelayLeaseRotationTimer
 
   constructor(
     private readonly logical: StableLogicalRpcClient,
@@ -66,6 +68,11 @@ export class MobileEndpointSupervisor {
       directObservationMs: DIRECT_OBSERVATION_MS,
       failureCooldownMs: FAILURE_COOLDOWN_MS,
       minimumDwellMs: MINIMUM_DWELL_MS
+    })
+    this.relayBackoff = new RelayReconnectBackoff(dependencies, () => void this.recoverRelay())
+    this.leaseRotation = new RelayLeaseRotationTimer(dependencies, () => {
+      this.relayRotationPending = true
+      void this.recoverRelay(true)
     })
   }
 
@@ -101,8 +108,16 @@ export class MobileEndpointSupervisor {
   }
 
   setForeground(foreground: boolean): void {
+    const wasForeground = this.foreground
     this.foreground = foreground
     if (foreground) {
+      // Why: a real background→foreground transition is a fresh user signal;
+      // clear any relay backoff so the reconnect is immediate, not stuck waiting
+      // out a stale cellular-churn cooldown. Repeated network-flap nudges keep
+      // foreground true and so keep respecting the backoff window.
+      if (!wasForeground) {
+        this.relayBackoff.reset()
+      }
       void this.recoverRelay(this.relayRotationPending)
       this.scheduleDirectProbe(0)
     } else {
@@ -115,6 +130,7 @@ export class MobileEndpointSupervisor {
         this.dependencies.clearTimer(this.probeTimer)
         this.probeTimer = null
       }
+      this.relayBackoff.clear()
     }
   }
 
@@ -126,7 +142,8 @@ export class MobileEndpointSupervisor {
       this.dependencies.clearTimer(this.probeTimer)
       this.probeTimer = null
     }
-    this.clearLeaseTimer()
+    this.relayBackoff.clear()
+    this.leaseRotation.clear()
   }
 
   private async recoverRelay(forceReplacement = false): Promise<void> {
@@ -140,24 +157,36 @@ export class MobileEndpointSupervisor {
     ) {
       return
     }
+    // Why: a flapping cellular link fires repeated revival nudges while the relay
+    // cell answers overlapping resumes with PEER_DROPPED/LIMIT_EXCEEDED; honoring
+    // the backoff window keeps those nudges from re-dialing instantly and churning.
+    // Lease rotation (forceReplacement) is a scheduled event, not a failure, so it
+    // is exempt.
+    if (!forceReplacement && this.relayBackoff.shouldDefer()) {
+      return
+    }
     this.operationInFlight = true
+    let lastError: Error | null = null
     try {
       const credentials = [this.bundle.current, this.bundle.grace].filter(
         (credential): credential is NonNullable<typeof credential> =>
           Boolean(credential && credential.expiresAt > this.dependencies.now())
       )
       for (const credential of credentials) {
-        if (await this.tryRelayCredential(credential)) {
+        const result = await this.tryRelayCredential(credential)
+        if (result.ok) {
+          this.relayBackoff.reset()
           return
         }
+        lastError = result.error
+      }
+      if (credentials.length > 0) {
+        this.relayBackoff.registerFailure(lastError)
       }
     } finally {
       this.operationInFlight = false
-      if (forceReplacement && this.relayRotationPending && !this.stopped && !this.leaseTimer) {
-        this.leaseTimer = this.dependencies.setTimer(() => {
-          this.leaseTimer = null
-          void this.recoverRelay(true)
-        }, 5000)
+      if (forceReplacement && this.relayRotationPending && !this.stopped) {
+        this.leaseRotation.armRetry(5000)
       }
     }
   }
@@ -165,13 +194,13 @@ export class MobileEndpointSupervisor {
   private async tryRelayCredential(credential: {
     token: string
     version: number
-  }): Promise<boolean> {
+  }): Promise<{ ok: true } | { ok: false; error: Error }> {
     const first = await this.openAndMigrateRelay(credential)
     if (first.ok) {
-      return true
+      return first
     }
     if (!isDirectorResolutionFailure(first.error) || !this.host.relay) {
-      return false
+      return first
     }
     try {
       const resolved = await this.dependencies.resolveRelay({
@@ -179,9 +208,9 @@ export class MobileEndpointSupervisor {
         resumeToken: credential.token
       })
       this.host = await persistRelayHost(this.host, resolved, this.dependencies.saveHost)
-      return (await this.openAndMigrateRelay(credential)).ok
-    } catch {
-      return false
+      return await this.openAndMigrateRelay(credential)
+    } catch (error) {
+      return { ok: false, error: toError(error) }
     }
   }
 
@@ -209,7 +238,7 @@ export class MobileEndpointSupervisor {
         this.bundle = applyResumeConfirmation(this.bundle, credential.version, confirmation)
         await this.dependencies.writeBundle(this.bundle)
       }
-      this.scheduleLeaseRotation(session)
+      this.leaseRotation.scheduleFromLease(session.getLeaseExpiresAt())
       this.scheduleDirectProbe()
       return { ok: true }
     } catch (error) {
@@ -258,7 +287,7 @@ export class MobileEndpointSupervisor {
       await this.logical.migrateTo(successful.client, successful.path)
       successful = null
       this.hysteresis.recordMigration(this.dependencies.now())
-      this.clearLeaseTimer()
+      this.leaseRotation.clear()
       this.relayRotationPending = false
       await this.rotateCredentialIfNeeded()
     } finally {
@@ -296,27 +325,6 @@ export class MobileEndpointSupervisor {
       // opportunity must reconcile it before creating another install key.
     } finally {
       this.credentialRotationInFlight = false
-    }
-  }
-
-  private scheduleLeaseRotation(session: MobileRelayRpcSession): void {
-    this.clearLeaseTimer()
-    const deadline = session.getLeaseExpiresAt()
-    if (!deadline) {
-      return
-    }
-    const delay = Math.max(1000, deadline - this.dependencies.now() - LEASE_ROTATION_MARGIN_MS)
-    this.leaseTimer = this.dependencies.setTimer(() => {
-      this.leaseTimer = null
-      this.relayRotationPending = true
-      void this.recoverRelay(true)
-    }, delay)
-  }
-
-  private clearLeaseTimer(): void {
-    if (this.leaseTimer) {
-      this.dependencies.clearTimer(this.leaseTimer)
-      this.leaseTimer = null
     }
   }
 }

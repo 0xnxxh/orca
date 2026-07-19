@@ -228,6 +228,59 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
+  it('backs off instead of re-dialing the relay on every network-flap nudge', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    // Relay cell keeps kicking the resume with PEER_DROPPED (4408) — the cellular
+    // churn signal. migrate fails because the session never reaches connected.
+    const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new RelayOuterError(4408)))
+    const deps = dependencies({
+      openRelay,
+      // Keep direct unavailable so relay recovery stays the only path under test.
+      openDirect: vi.fn(() => new FakeSession('disconnected')),
+      // Deterministic full jitter: fraction 0.5 → half the backoff window.
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    const afterStart = openRelay.mock.calls.length
+    expect(afterStart).toBe(1)
+
+    // A flapping cellular link fires repeated revival nudges (setForeground(true)).
+    // Backoff must suppress the re-dials while the window is open.
+    for (let i = 0; i < 5; i++) {
+      supervisor.setForeground(true)
+      await vi.advanceTimersByTimeAsync(0)
+    }
+    expect(openRelay.mock.calls.length).toBe(afterStart)
+
+    // Once the backoff window elapses, a spaced retry fires on its own.
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(openRelay.mock.calls.length).toBeGreaterThan(afterStart)
+    supervisor.stop()
+  })
+
+  it('clears relay backoff on a genuine foreground so the retry is immediate', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new RelayOuterError(4408)))
+    const deps = dependencies({
+      openRelay,
+      openDirect: vi.fn(() => new FakeSession('disconnected')),
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    const afterStart = openRelay.mock.calls.length
+
+    // Background → foreground is a fresh signal: dial now, not after the cooldown.
+    supervisor.setForeground(false)
+    supervisor.setForeground(true)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(openRelay.mock.calls.length).toBeGreaterThan(afterStart)
+    supervisor.stop()
+  })
+
   it('releases a background relay session and reconnects it on foreground', async () => {
     const logical = new FakeLogicalClient('connected', 'relay')
     const deps = dependencies()
