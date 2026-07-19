@@ -31,6 +31,7 @@ import {
   createTerminalTab,
   listTabIds,
   typeLine,
+  sendCtrlC,
   waitForTerminalReady,
   closeApp,
   captureFailureDiagnostics,
@@ -48,6 +49,7 @@ import { parseArgs } from './cli-args.mjs'
 import { crashMainProcess, scanPwshFailFast } from './crash-step.mjs'
 import { buildCrashAssertions } from './crash-assertions.mjs'
 import { selectScopedDaemon } from './daemon-identity.mjs'
+import { reattachSentinelMatches, selectCreatedTabId } from './reattach-proof.mjs'
 
 const SORTABLE_TAB = '[data-testid="sortable-tab"]'
 // The per-shell env var stamped into the interactive shell; reading it back after
@@ -87,6 +89,10 @@ async function main() {
   let passed = false
   try {
     passed = await runProof(ctx, { opts, canary, runDir, userDataDir, shellPidFile, reattachFile })
+    if (!passed && ctx.session?.page) {
+      const diag = await captureFailureDiagnostics(ctx.session.page, diagDir, 'assertion-failure')
+      log('diag', `captured -> ${diagDir} (store=${diag.info?.hasStore ?? 'n/a'})`)
+    }
   } catch (err) {
     console.error(`[win-crash-survival-e2e] FATAL: ${err.stack || err.message}`)
     if (ctx.session?.page) {
@@ -122,10 +128,13 @@ async function runProof(ctx, args) {
   // Opening the seeded workspace lands on its default tab (an agent, not a bare
   // shell). Add an explicit plain-terminal tab so the sentinel commands run in a
   // real pwsh prompt — typing shell commands into an agent TUI would never run.
+  const initialTabIds = await listTabIds(session.page)
   await createTerminalTab(session.page)
   await dismissOverlays(session.page)
   const tabIds = await listTabIds(session.page)
-  log('sessions', `terminal ready; tab ids: ${tabIds.join(', ')}`)
+  const terminalTabId = selectCreatedTabId(initialTabIds, tabIds)
+  await waitForTerminalReady(session.page, 60_000, terminalTabId)
+  log('sessions', `terminal ready; created=${terminalTabId}; tab ids: ${tabIds.join(', ')}`)
 
   // Type DIRECTLY into the interactive shell (not a nested powershell) so $env and
   // $PID belong to THIS shell: stamp the env sentinel and record the shell's own
@@ -134,7 +143,8 @@ async function runProof(ctx, args) {
   // file appearing also proves keystrokes reached and ran in the shell.
   await typeLine(
     session.page,
-    `$env:${SENTINEL_ENV}='${canary}'; Set-Content -LiteralPath ${quotePowerShellLiteral(shellPidFile)} -Value $PID`
+    `$env:${SENTINEL_ENV}='${canary}'; Set-Content -LiteralPath ${quotePowerShellLiteral(shellPidFile)} -Value $PID`,
+    terminalTabId
   )
   const shellPid = await waitForIntFile(shellPidFile, 15_000)
   log('shell', `interactive shell pid=${shellPid} (sentinel ${SENTINEL_ENV}=${canary})`)
@@ -174,12 +184,6 @@ async function runProof(ctx, args) {
     `after crash: daemonAlive=${daemonAliveAfterCrash} shellAlive=${shellAliveAfterCrash}`
   )
 
-  const { events: failFastEvents } = scanPwshFailFast(crashStartMs)
-  log('event-log', `pwsh FailFast/0xE9 events in crash window: ${failFastEvents.length}`)
-  for (const e of failFastEvents.slice(0, 3)) {
-    log('event-log', `  ${e.provider}#${e.id}@${e.timeCreated}`)
-  }
-
   // --- Relaunch: adopt the surviving daemon and prove the reattached UI is the
   //     same survivor shell (env sentinel reads back) ---
   clearSingletonLocks(userDataDir)
@@ -193,7 +197,8 @@ async function runProof(ctx, args) {
     reattachProven = await proveReattachedShell(session.page, {
       file: reattachFile,
       expectedCanary: canary,
-      expectedShellPid: shellPid
+      expectedShellPid: shellPid,
+      terminalTabId
     })
   } catch (err) {
     log('relaunch', `reattach proof did not complete: ${err.message}`)
@@ -203,6 +208,14 @@ async function runProof(ctx, args) {
   const postDaemon = resolveScopedDaemon(userDataDir)
   const postDaemonAlive = postDaemon.pid != null && isPidAlive(postDaemon.pid)
   log('daemon', `post-relaunch daemon pid=${postDaemon.pid} alive=${postDaemonAlive}`)
+
+  // Why: PowerShell can stay alive on a severed ConPTY until the next console
+  // read. Scan after the reattach keystroke so the user-visible 0xE9 is covered.
+  const { events: failFastEvents } = scanPwshFailFast(crashStartMs)
+  log('event-log', `pwsh FailFast/0xE9 events since crash: ${failFastEvents.length}`)
+  for (const e of failFastEvents.slice(0, 3)) {
+    log('event-log', `  ${e.provider}#${e.id}@${e.timeCreated}`)
+  }
 
   const assertions = buildCrashAssertions({
     profile: opts.expect,
@@ -226,43 +239,57 @@ async function runProof(ctx, args) {
  * Prove the reattached UI is bound to the SAME survivor shell: type a command that
  * writes the shell's own $PID plus the persisted env sentinel to a file, then
  * confirm the sentinel (and PID) match. A freshly re-spawned shell would not carry
- * the env var. Tries each terminal tab because the restored active tab may be the
- * agent tab, not the plain terminal — self-validating, so a wrong tab fails the
- * read rather than passing falsely.
+ * the env var. Targets the exact pre-crash tab id so the probe cannot type shell
+ * commands into an unrelated agent tab. Repeats the idempotent command while the
+ * restored pane transport converges; a filesystem match, not elapsed time, wins.
  */
-async function proveReattachedShell(page, { file, expectedCanary, expectedShellPid }) {
-  const tabs = page.locator(SORTABLE_TAB)
-  const count = await tabs.count().catch(() => 0)
-  for (let i = 0; i < Math.max(count, 1); i++) {
-    if (count > 0) {
-      await tabs
-        .nth(i)
-        .click({ force: true })
-        .catch(() => {})
-      await waitForTerminalReady(page).catch(() => {})
-    }
+async function proveReattachedShell(
+  page,
+  { file, expectedCanary, expectedShellPid, terminalTabId }
+) {
+  const restoredTabIds = await listTabIds(page)
+  log('relaunch', `restored tab ids: ${restoredTabIds.join(', ')}; target=${terminalTabId}`)
+  const targetTab = page.locator(`${SORTABLE_TAB}[data-tab-id="${terminalTabId}"]`).first()
+  await targetTab.waitFor({ state: 'attached', timeout: 15_000 })
+
+  const deadline = Date.now() + 30_000
+  let attempt = 0
+  while (Date.now() < deadline) {
+    attempt++
+    const readinessBudgetMs = Math.max(deadline - Date.now(), 1)
+    await targetTab.click({ force: true, timeout: readinessBudgetMs })
+    await waitForTerminalReady(page, readinessBudgetMs, terminalTabId)
+    // Why: a partially forwarded earlier attempt can leave text at PSReadLine;
+    // clear it before replaying the complete idempotent proof command.
+    await sendCtrlC(page, terminalTabId)
     await typeLine(
       page,
-      `Set-Content -LiteralPath ${quotePowerShellLiteral(file)} -Value "$($PID)|$($env:${SENTINEL_ENV})"`
+      `Set-Content -LiteralPath ${quotePowerShellLiteral(file)} -Value "$($PID)|$($env:${SENTINEL_ENV})"`,
+      terminalTabId
     )
-    const hit = await waitForSentinel(file, expectedCanary, expectedShellPid, 8_000)
+    const remainingMs = deadline - Date.now()
+    const hit = await waitForSentinel(
+      file,
+      expectedCanary,
+      expectedShellPid,
+      Math.min(3_000, Math.max(remainingMs, 0))
+    )
     if (hit) {
+      log('relaunch', `same-shell sentinel read back on attempt ${attempt}`)
       return true
     }
+    log('relaunch', `same-shell probe attempt ${attempt} produced no matching sentinel`)
   }
   return false
 }
 
-/** Poll for the reattach file and return true once it carries the expected env
- *  sentinel. PID match is logged as corroboration; the env sentinel is decisive. */
+/** Poll for the reattach file and require both the per-shell canary and exact
+ *  survivor PID. Either check alone is weaker than the asserted shell identity. */
 async function waitForSentinel(file, expectedCanary, expectedShellPid, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
-      const [pidPart, canaryPart] = readFileSync(file, 'utf8').trim().split('|')
-      if (canaryPart === expectedCanary) {
-        const pidMatch = Number(pidPart) === expectedShellPid
-        log('relaunch', `sentinel read back (pidMatch=${pidMatch})`)
+      if (reattachSentinelMatches(readFileSync(file, 'utf8'), expectedCanary, expectedShellPid)) {
         return true
       }
     } catch {

@@ -44,16 +44,19 @@ and adds only the crash step + its assertions.
    launched, never a scanned or image-named process, and never the process tree —
    a real crash does not tree-kill the detached daemon. Then **prove the crash
    landed** (poll the main PID until dead).
-5. **Assert survival**: the daemon PID is still alive, the same interactive shell
-   PID is still alive, and the Windows **Application event log** has **zero** pwsh
-   `FailFast` / `0xE9` events (matched by crash-reporter provider+id, not fragile
-   Message text) in the crash window.
+5. **Assert survival**: the daemon PID and the same interactive shell PID are
+   still alive after the crash soak.
 6. **Relaunch** (same `userData`, no reseed) and assert the daemon PID is
    **unchanged** (the new main **adopts** the surviving daemon instead of forking
    a new one) and that the reattached UI is bound to the **same survivor shell** —
-   a typed command reads back `ORCA_CRASH_SENTINEL` (and the shell's `$PID`), which
-   a freshly re-spawned shell would not carry.
-7. **Teardown** — close the relaunched app, then kill this run's scoped daemon
+   a bounded, readiness-aware command on the exact restored tab reads back both
+   `ORCA_CRASH_SENTINEL` and the shell's `$PID`, which a freshly re-spawned shell
+   would not carry.
+7. **Scan the full crash-to-input window** and require the Windows **Application
+   event log** to contain **zero** pwsh `FailFast` / `0xE9` events (matched by
+   crash-reporter provider+id, not fragile Message text). Scanning after the
+   reattach keystroke catches shells that fail only on their next console read.
+8. **Teardown** — close the relaunched app, then kill this run's scoped daemon
    **tree** (re-discovered fresh via `findDaemonProcesses(userData)`, which the
    surviving shell is a descendant of) and remove the temp profile. It never kills
    a PID captured earlier in the run (a recycled PID could hit an innocent

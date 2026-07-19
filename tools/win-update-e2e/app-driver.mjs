@@ -134,7 +134,22 @@ export async function captureFailureDiagnostics(page, dir, label) {
       buttons: Array.from(document.querySelectorAll('button,[role="button"]'))
         .map((el) => (el.getAttribute('aria-label') || el.textContent || '').trim())
         .filter((v, i, a) => v && a.indexOf(v) === i)
-        .slice(0, 60)
+        .slice(0, 60),
+      tabs: Array.from(document.querySelectorAll('[data-testid="sortable-tab"]'))
+        .map((el) => ({
+          id: el.getAttribute('data-tab-id'),
+          title: el.getAttribute('data-tab-title'),
+          ariaLabel: el.getAttribute('aria-label'),
+          selected: el.getAttribute('aria-selected')
+        }))
+        .slice(0, 40),
+      activeElement: document.activeElement
+        ? {
+            tag: document.activeElement.tagName,
+            className: document.activeElement.getAttribute('class'),
+            ariaLabel: document.activeElement.getAttribute('aria-label')
+          }
+        : null
     }))
     writeFileSync(path.join(dir, `${label}.json`), JSON.stringify(info, null, 2))
     out.info = info
@@ -144,16 +159,18 @@ export async function captureFailureDiagnostics(page, dir, label) {
   return out
 }
 
-/** Wait until the visible terminal surface and its xterm container are mounted. */
-export async function waitForTerminalReady(page, timeoutMs = 60_000) {
-  await page
-    .locator(TERMINAL_SURFACE_VISIBLE)
-    .first()
-    .waitFor({ state: 'visible', timeout: timeoutMs })
-  await page
-    .locator(XTERM_CONTAINER_VISIBLE)
-    .first()
-    .waitFor({ state: 'visible', timeout: timeoutMs })
+/** Wait until the visible terminal surface and its xterm container are mounted.
+ *  An expected tab id prevents post-restore probes from accepting another tab. */
+export async function waitForTerminalReady(page, timeoutMs = 60_000, terminalTabId = null) {
+  const selector = terminalTabId
+    ? `[data-terminal-tab-id="${terminalTabId}"]:visible`
+    : TERMINAL_SURFACE_VISIBLE
+  const surface = page.locator(selector).first()
+  await surface.waitFor({ state: 'visible', timeout: timeoutMs })
+  await surface.locator(XTERM_CONTAINER_VISIBLE).first().waitFor({
+    state: 'visible',
+    timeout: timeoutMs
+  })
 }
 
 /**
@@ -277,7 +294,7 @@ export async function listTabIds(page) {
  * off-screen helper textarea alone does not, which is why typed input was being
  * dropped. Click the pane, then focus the helper textarea as a belt-and-braces.
  */
-export async function focusActiveTerminal(page) {
+export async function focusActiveTerminal(page, terminalTabId = null) {
   // A feature-tip modal can appear late and swallow keystrokes; clear any before
   // focusing so typed commands actually reach the shell.
   for (const name of OVERLAY_DISMISS_LABELS) {
@@ -286,25 +303,32 @@ export async function focusActiveTerminal(page) {
       await btn.click({ timeout: 2_000 }).catch(() => {})
     }
   }
-  const surface = page.locator(TERMINAL_SURFACE_VISIBLE).first()
-  await surface.click({ position: { x: 24, y: 24 }, timeout: 15_000 }).catch(() => {})
+  const selector = terminalTabId
+    ? `[data-terminal-tab-id="${terminalTabId}"]:visible`
+    : TERMINAL_SURFACE_VISIBLE
+  const surface = page.locator(selector).first()
+  const click = surface.click({ position: { x: 24, y: 24 }, timeout: 15_000 })
+  // Why: an exact-tab proof must fail closed if that restored surface vanishes;
+  // typing into whichever element retained focus could falsely target another tab.
+  await (terminalTabId ? click : click.catch(() => {}))
   // Scope the helper textarea to the visible surface so focus can't land on a
   // hidden duplicate pane's textarea (which would silently swallow keystrokes).
   const input = surface.locator(XTERM_INPUT).last()
-  await input.focus().catch(() => {})
+  const focus = input.focus()
+  await (terminalTabId ? focus : focus.catch(() => {}))
   return input
 }
 
 /** Type a line and submit it (Enter → \r submits in the shell). */
-export async function typeLine(page, text) {
-  await focusActiveTerminal(page)
+export async function typeLine(page, text, terminalTabId = null) {
+  await focusActiveTerminal(page, terminalTabId)
   await page.keyboard.type(text)
   await page.keyboard.press('Enter')
 }
 
 /** Send Ctrl+C to the active terminal. */
-export async function sendCtrlC(page) {
-  await focusActiveTerminal(page)
+export async function sendCtrlC(page, terminalTabId = null) {
+  await focusActiveTerminal(page, terminalTabId)
   await page.keyboard.press('Control+C')
 }
 

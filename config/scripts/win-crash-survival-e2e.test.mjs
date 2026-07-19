@@ -4,6 +4,10 @@ import { parseArgs } from '../../tools/win-crash-survival-e2e/cli-args.mjs'
 import { buildCrashAssertions } from '../../tools/win-crash-survival-e2e/crash-assertions.mjs'
 import { scanPwshFailFast } from '../../tools/win-crash-survival-e2e/crash-step.mjs'
 import { selectScopedDaemon } from '../../tools/win-crash-survival-e2e/daemon-identity.mjs'
+import {
+  reattachSentinelMatches,
+  selectCreatedTabId
+} from '../../tools/win-crash-survival-e2e/reattach-proof.mjs'
 import { quotePowerShellLiteral } from '../../tools/win-update-e2e/powershell-runner.mjs'
 import { resolveElectronMainPid } from '../../tools/win-update-e2e/app-driver.mjs'
 
@@ -40,6 +44,13 @@ describe('win-crash-survival-e2e proof contracts', () => {
         entry.name.startsWith('reattached UI')
       )?.pass
     ).toBe(false)
+  })
+
+  it('scans for FailFast only after the post-crash input probe', () => {
+    const harness = readFileSync('tools/win-crash-survival-e2e/run.mjs', 'utf8')
+    expect(harness.indexOf('const { events: failFastEvents }')).toBeGreaterThan(
+      harness.indexOf('reattachProven = await proveReattachedShell')
+    )
   })
 
   it('fails closed when the Windows event log query fails', () => {
@@ -92,6 +103,23 @@ describe('win-crash-survival-e2e proof contracts', () => {
     expect(quotePowerShellLiteral("C:\\Users\\O'Brien\\shell.pid")).toBe(
       "'C:\\Users\\O''Brien\\shell.pid'"
     )
+  })
+
+  it('targets exactly the terminal tab created before the crash', () => {
+    expect(selectCreatedTabId(['agent-tab'], ['agent-tab', 'terminal-tab'])).toBe('terminal-tab')
+    expect(() => selectCreatedTabId(['agent-tab'], ['agent-tab'])).toThrow(
+      'expected exactly one created terminal tab, found 0'
+    )
+    expect(() => selectCreatedTabId([], ['first', 'second'])).toThrow(
+      'expected exactly one created terminal tab, found 2'
+    )
+  })
+
+  it('requires both the per-shell canary and exact survivor pid', () => {
+    expect(reattachSentinelMatches('1660|canary\r\n', 'canary', 1660)).toBe(true)
+    expect(reattachSentinelMatches('1770|canary', 'canary', 1660)).toBe(false)
+    expect(reattachSentinelMatches('1660|other', 'canary', 1660)).toBe(false)
+    expect(reattachSentinelMatches('1660|canary|extra', 'canary', 1660)).toBe(false)
   })
 
   it('resolves the real packaged main before falling back to the launcher child', async () => {

@@ -4,10 +4,10 @@ name: Windows Crash-Survival E2E
 # a CRASH of Orca's main process (GitHub #7742), the companion guarantee to the
 # update-survival harness. Builds an (unsigned) installer FROM THIS BRANCH,
 # silent-installs it, opens a terminal, force-kills ONLY the app main (no
-# tree-kill), and asserts the daemon + shell stay alive with no pwsh FailFast and
-# that a relaunch adopts the same daemon. Targeted pull requests keep it as a
-# durable regression gate. A CI runner is the only safe place to install — see
-# the relocation post-mortem.
+# tree-kill), and asserts the daemon + shell stay alive, a relaunch adopts the
+# same daemon and shell, and post-crash input causes no pwsh FailFast. Targeted
+# pull requests keep it as a durable regression gate. A CI runner is the only
+# safe place to install — see the relocation post-mortem.
 
 on:
   pull_request:
@@ -114,7 +114,7 @@ jobs:
           "ORCA_EXE=$installed" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # Why: crash ONLY the app main and assert the relocated daemon + its shell
-      # survive with no pwsh FailFast, then that relaunch adopts the same daemon.
+      # survive, then that relaunch adopts them and input causes no pwsh FailFast.
       - name: Run crash-survival harness
         id: harness
         shell: pwsh
