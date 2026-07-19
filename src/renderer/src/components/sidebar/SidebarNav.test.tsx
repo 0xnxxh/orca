@@ -261,9 +261,12 @@ describe('SidebarNav', () => {
     expect(queryButtonByText(container, '[Orca Mobile]')).not.toBeNull()
   })
 
-  it('keeps Mobile visible after pairing and offers an inline hide control', async () => {
-    mocks.hasPairedMobileDevice = true
+  it('shows the inline hide control only once a device is paired', async () => {
+    const beforePairing = await renderSidebarNav()
+    expect(queryButtonByText(beforePairing, 'Orca Mobile')).not.toBeNull()
+    expect(beforePairing.querySelector('button[aria-label="Hide from sidebar"]')).toBeNull()
 
+    mocks.hasPairedMobileDevice = true
     const container = await renderSidebarNav()
     const hideButton = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Hide from sidebar"]'

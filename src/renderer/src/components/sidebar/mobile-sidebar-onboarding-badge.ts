@@ -45,6 +45,9 @@ export function useMobileSidebarOnboardingBadge(enabled = true): {
     visible:
       shouldShowMobileSidebarOnboardingBadge(enabled, dismissed) &&
       mobileDevices.loaded &&
+      // Why: a failed load also lands loaded:true with no devices; don't show
+      // the onboarding badge until we actually know the device list is empty.
+      !mobileDevices.error &&
       !mobileDevices.hasPairedDevice,
     hasPairedDevice: mobileDevices.hasPairedDevice,
     dismiss

@@ -3,14 +3,12 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { _resetPairedMobileDevicesCacheForTests } from '../mobile/paired-mobile-devices'
+import {
+  _resetPairedMobileDevicesCacheForTests,
+  type PairedMobileDevice
+} from '../mobile/paired-mobile-devices'
 
-type PairedDevice = {
-  deviceId: string
-  name: string
-  pairedAt: number
-  lastSeenAt: number
-}
+type PairedDevice = PairedMobileDevice
 
 type PairedDevicesProps = {
   devices: readonly PairedDevice[]
@@ -131,7 +129,7 @@ describe('MobilePane', () => {
     mocks.listDevices
       .mockResolvedValueOnce({ devices: [pairedDevice('phone-1')] })
       .mockResolvedValueOnce({ devices: [pairedDevice('phone-2')] })
-    mocks.revokeDevice.mockResolvedValue(undefined)
+    mocks.revokeDevice.mockResolvedValue({ revoked: true })
 
     await renderMobilePane()
 
@@ -147,6 +145,57 @@ describe('MobilePane', () => {
     await vi.waitFor(() =>
       expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-2'])
     )
+    // Positive control so the unmount test below can't stay green if the
+    // success toast is ever dropped from the revoke path.
+    await vi.waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows an error and keeps the device when revoke returns revoked:false', async () => {
+    mocks.listDevices.mockResolvedValue({ devices: [pairedDevice('phone-1')] })
+    mocks.revokeDevice.mockResolvedValue({ revoked: false })
+
+    await renderMobilePane()
+
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-1'])
+    )
+
+    await act(async () => {
+      mocks.latestPairedDevicesProps?.onRevokeDevice('phone-1')
+    })
+
+    await vi.waitFor(() => expect(mocks.toastError).toHaveBeenCalledTimes(1))
+    expect(mocks.toastSuccess).not.toHaveBeenCalled()
+    // A revoke that did not happen must not fire a second (refresh) IPC call.
+    expect(mocks.listDevices).toHaveBeenCalledTimes(1)
+    expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-1'])
+  })
+
+  it('optimistically drops the revoked device when the post-revoke refresh fails', async () => {
+    mocks.listDevices
+      .mockResolvedValueOnce({ devices: [pairedDevice('phone-1'), pairedDevice('phone-2')] })
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    mocks.revokeDevice.mockResolvedValue({ revoked: true })
+
+    await renderMobilePane()
+
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual([
+        'phone-1',
+        'phone-2'
+      ])
+    )
+
+    await act(async () => {
+      mocks.latestPairedDevicesProps?.onRevokeDevice('phone-1')
+    })
+
+    // Refresh rejected, so the fallback republishes the optimistic list without
+    // the revoked device, and success is still reported.
+    await vi.waitFor(() =>
+      expect(mocks.latestPairedDevicesProps?.devices.map((d) => d.deviceId)).toEqual(['phone-2'])
+    )
+    await vi.waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledTimes(1))
   })
 
   it('does not show revoke success after unmounting during the refresh', async () => {
@@ -157,7 +206,7 @@ describe('MobilePane', () => {
     mocks.listDevices
       .mockResolvedValueOnce({ devices: [pairedDevice('phone-1')] })
       .mockReturnValueOnce(refreshAfterRevoke)
-    mocks.revokeDevice.mockResolvedValue(undefined)
+    mocks.revokeDevice.mockResolvedValue({ revoked: true })
 
     await renderMobilePane()
 

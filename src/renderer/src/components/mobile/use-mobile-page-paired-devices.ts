@@ -132,8 +132,16 @@ export function useMobilePagePairedDevices({
         return
       }
       try {
-        await window.api.mobile.revokeDevice({ deviceId })
-        const remaining = await loadDevices({ force: true })
+        const { revoked } = await window.api.mobile.revokeDevice({ deviceId })
+        // Why: the backend can resolve revoked=false without removing anything;
+        // treat it as a failure BEFORE refreshing or routing, so a revoke that
+        // didn't happen can't flash a success toast or drop the user to intro.
+        if (!revoked) {
+          throw new Error('mobile.revokeDevice returned revoked=false')
+        }
+        // Why: use the raw refresh so a failed reload throws (error toast)
+        // instead of loadDevices' [] fallback wrongly routing to intro.
+        const remaining = await refreshDevices({ force: true })
         if (mountedRef.current) {
           toast.success(translate('auto.components.mobile.MobilePage.255372e6e8', 'Device revoked'))
         }
@@ -152,7 +160,7 @@ export function useMobilePagePairedDevices({
         }
       }
     },
-    [loadDevices, mountedRef, showStage]
+    [mountedRef, refreshDevices, showStage]
   )
 
   const polledLoadDevices = useCallback(async () => {
@@ -184,6 +192,10 @@ export function useMobilePagePairedDevices({
   const handleBack = (): void => {
     if (stepIdx === 1) {
       setStepIdx(0)
+    } else if (devices.length > 0) {
+      // Why: "Pair another device" can start from the paired summary; Back on
+      // step 0 should return there rather than the intro while devices exist.
+      showPairedDevices(devices.length)
     } else {
       showStage('intro')
     }
