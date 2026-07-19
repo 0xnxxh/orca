@@ -130,6 +130,30 @@ function killLoginProcessTree(child: ChildProcess): void {
   child.kill()
 }
 
+function readLoginAuthSnapshot(authJsonPath: string): string | null | undefined {
+  try {
+    return readFileSync(authJsonPath, 'utf-8')
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      return null
+    }
+    // Why: codex can atomically replace auth.json while the poll runs; a later
+    // poll will observe the stable credential. An unreadable initial file must
+    // disable the shortcut rather than look like a fresh login.
+    return undefined
+  }
+}
+
+function loginAuthChanged(
+  initial: string | null | undefined,
+  current: string | null | undefined
+): boolean {
+  // Why: metadata-only touches can happen before OAuth finishes. Requiring new
+  // credential bytes prevents reauthentication from being killed prematurely.
+  return initial !== undefined && current !== undefined && current !== null && current !== initial
+}
+
 export class CodexAccountService {
   // Why: account mutations read settings, do async work (login, rate-limit
   // refresh), then write settings. Without serialization, overlapping calls
@@ -1009,6 +1033,12 @@ export class CodexAccountService {
     if (wslInfo) {
       this.assertWslCodexCliAvailable(wslInfo)
     }
+    // Why: reauthentication starts with an existing auth.json. Only new auth
+    // bytes prove this login completed; existence alone would kill the
+    // Windows OAuth flow five seconds after it opened.
+    const initialAuthSnapshot = wslInfo
+      ? null
+      : readLoginAuthSnapshot(join(managedHomePath, 'auth.json'))
 
     await new Promise<void>((resolvePromise, rejectPromise) => {
       const spawnConfig = wslInfo
@@ -1100,7 +1130,7 @@ export class CodexAccountService {
       // give the tree a short grace period to exit, then force it down.
       if (process.platform === 'win32' && !wslInfo) {
         authWatchInterval = setInterval(() => {
-          if (!existsSync(authJsonPath)) {
+          if (!loginAuthChanged(initialAuthSnapshot, readLoginAuthSnapshot(authJsonPath))) {
             return
           }
           if (authWatchInterval) {
