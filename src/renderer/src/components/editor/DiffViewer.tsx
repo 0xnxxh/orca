@@ -25,6 +25,7 @@ import { getDiffViewerLargeDiffSaveAction } from './diff-viewer-large-diff-save-
 import type { DiffViewerProps } from './diff-viewer-props'
 import { buildDiffEditorWordWrapOptions } from './diff-editor-word-wrap-options'
 import { useDiffEditorRegistration } from './diff-navigation-context'
+import { preserveDiffViewStateAcrossModelSwaps } from './diff-model-swap-view-state'
 
 export default function DiffViewer({
   modelKey,
@@ -322,6 +323,7 @@ export default function DiffViewer({
 
       const originalEditor = diffEditor.getOriginalEditor()
       const modifiedEditor = diffEditor.getModifiedEditor()
+      diffEditor.onDidDispose(preserveDiffViewStateAcrossModelSwaps(diffEditor).dispose)
 
       setupCopy(originalEditor, monaco, filePath, propsRef)
       setupCopy(modifiedEditor, monaco, filePath, propsRef)
