@@ -16,7 +16,6 @@ import { WindowsFirewallNotice } from '../mobile/WindowsFirewallNotice'
 import { translate } from '@/i18n/i18n'
 import {
   canMintMobilePairingOffer,
-  effectiveMobilePairingConnectionMode,
   type MobilePairingConnectionMode
 } from '../../../../shared/mobile-pairing-connection-mode'
 import { useMobilePairingConnectionMode } from '../mobile/use-mobile-pairing-connection-mode'
@@ -38,10 +37,6 @@ export function MobilePane(): React.JSX.Element {
   const [deviceCountAtQr, setDeviceCountAtQr] = useState<number | null>(null)
   const signedIn = useAppStore((state) => state.orcaProfileAuthStatus?.state === 'connected')
   const [connectionMode, setConnectionMode] = useMobilePairingConnectionMode()
-  const qrConnectionMode = effectiveMobilePairingConnectionMode({
-    preferred: connectionMode,
-    signedIn
-  })
   const [rotateNextQr, setRotateNextQr] = useState(false)
   const devicesRef = useRef<PairedDevice[]>([])
   const codeCopiedResetTimerRef = useRef<number | null>(null)
@@ -159,12 +154,19 @@ export function MobilePane(): React.JSX.Element {
 
   const generateQR = useCallback(
     async (opts: { rotate?: boolean } = {}) => {
+      // Why: refuse signed-out Anywhere rather than degrading to a local-only QR
+      // under the Relay label (canMint is the shared honesty gate).
+      if (!canMintMobilePairingOffer({ connectionMode, signedIn })) {
+        return
+      }
       const requestId = ++pairingRequestIdRef.current
       setLoading(true)
       try {
         const result = await window.api.mobile.getPairingQR({
           ...(selectedAddress ? { address: selectedAddress } : {}),
-          connectionMode: qrConnectionMode,
+          // canMint already requires sign-in for Anywhere, so the preferred path
+          // is the honest encoded mode.
+          connectionMode,
           ...(opts.rotate || rotateNextQr ? { rotate: true } : {})
         })
         // Why: sign-out, a mode switch, or an address change bump the epoch.
@@ -212,11 +214,12 @@ export function MobilePane(): React.JSX.Element {
     },
     [
       clearCodeCopiedResetTimer,
+      connectionMode,
       loadDevices,
       mountedRef,
-      qrConnectionMode,
       rotateNextQr,
-      selectedAddress
+      selectedAddress,
+      signedIn
     ]
   )
 

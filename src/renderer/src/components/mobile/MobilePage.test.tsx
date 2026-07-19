@@ -42,6 +42,7 @@ vi.mock('./MobilePageContent', () => ({
     canGeneratePairing: boolean
     enterFlow: () => void
     handleConnectionModeChange: (mode: MobilePairingConnectionMode) => void
+    handleAddressChange: (address: string) => void
     handleContinue: () => void
     pairQrDataUrl: string | null
     pairingUrl: string | null
@@ -66,6 +67,9 @@ vi.mock('./MobilePageContent', () => ({
       </button>
       <button type="button" onClick={() => props.handleConnectionModeChange('local-only')}>
         Local network
+      </button>
+      <button type="button" onClick={() => props.handleAddressChange('10.0.0.2')}>
+        Change address
       </button>
     </div>
   )
@@ -187,6 +191,38 @@ describe('MobilePage pairing connection mode', () => {
     await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
     await waitFor(() => expect(screen.getByTestId('pairing-qr')).toHaveTextContent('base64,qr'))
     expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
+  })
+
+  it('does not remint when switching from Local to Anywhere while signed out', async () => {
+    mocks.storeState.orcaProfileAuthStatus = { state: 'local' }
+    const user = userEvent.setup()
+    await openPairingStep()
+
+    await user.click(screen.getByRole('button', { name: 'Local network' }))
+    await waitFor(() => expect(screen.getByTestId('pairing-qr')).toHaveTextContent('base64,qr'))
+    getPairingQR.mockClear()
+
+    // Switching back to Orca Relay must clear the local QR, not remint a
+    // local-only code under the Relay label.
+    await user.click(screen.getByRole('button', { name: 'Orca Relay' }))
+    await waitFor(() => expect(screen.getByTestId('mode')).toHaveTextContent('automatic'))
+    await waitFor(() => expect(screen.getByTestId('pairing-qr')).toHaveTextContent('none'))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getPairingQR).not.toHaveBeenCalled()
+    expect(screen.getByTestId('can-generate')).toHaveTextContent('false')
+  })
+
+  it('does not mint on address change while signed out with Anywhere selected', async () => {
+    mocks.storeState.orcaProfileAuthStatus = { state: 'local' }
+    const user = userEvent.setup()
+    await openPairingStep()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getPairingQR).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Change address' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(getPairingQR).not.toHaveBeenCalled()
+    expect(screen.getByTestId('pairing-qr')).toHaveTextContent('none')
   })
 
   it('mints a Relay QR when signing in with Anywhere selected', async () => {

@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react'
-import type { MobilePairingConnectionMode } from '../../../../shared/mobile-pairing-connection-mode'
+import {
+  canMintMobilePairingOffer,
+  type MobilePairingConnectionMode
+} from '../../../../shared/mobile-pairing-connection-mode'
 
 type MutableRef<T> = { current: T }
 
@@ -51,7 +54,7 @@ export function useMobilePairingQrInvalidation(params: {
     hasGeneratedRef.current = false
     setPairingUrl(null)
     setPairQrDataUrl(null)
-    if (signedIn) {
+    if (signedIn && canMintMobilePairingOffer({ connectionMode, signedIn })) {
       regenerate(connectionMode)
     } else {
       setPairLoading(false)
@@ -71,6 +74,8 @@ export function useMobilePairingQrInvalidation(params: {
   // invalidates the prior request before rotating so a late response cannot
   // restore a QR for the old policy. No updateSettings here (the caller/other
   // window already wrote it) so there is no cross-window loop.
+  // Why: remint only when the new path may honestly encode a QR. Switching into
+  // signed-out Anywhere must clear, not mint a local-only code under Relay.
   useEffect(() => {
     if (connectionMode === handledModeRef.current) {
       return
@@ -81,14 +86,15 @@ export function useMobilePairingQrInvalidation(params: {
     hasGeneratedRef.current = false
     setPairingUrl(null)
     setPairQrDataUrl(null)
-    if (shouldRegenerate) {
+    if (shouldRegenerate && canMintMobilePairingOffer({ connectionMode, signedIn })) {
       regenerate(connectionMode)
     } else {
-      // No re-mint pending; drop any stray spinner so the new path starts clean.
+      // No honest re-mint (blocked path or nothing pending); drop spinner.
       setPairLoading(false)
     }
   }, [
     connectionMode,
+    signedIn,
     pairLoading,
     hasGeneratedRef,
     pairingRequestIdRef,

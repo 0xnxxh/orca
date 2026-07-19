@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canMintMobilePairingOffer,
   effectiveMobilePairingConnectionMode,
   resolveMobilePairingConnectionMode
 } from './mobile-pairing-connection-mode'
@@ -28,5 +29,14 @@ describe('mobile pairing connection mode defaults', () => {
     expect(effectiveMobilePairingConnectionMode({ preferred: 'local-only', signedIn: false })).toBe(
       'local-only'
     )
+  })
+
+  it('refuses to mint under signed-out Anywhere and allows honest paths', () => {
+    // Why: mint refusal is the UI honesty gate that replaces silent degradation
+    // for renderer mint paths (signed-out Anywhere must not show a local QR).
+    expect(canMintMobilePairingOffer({ connectionMode: 'automatic', signedIn: false })).toBe(false)
+    expect(canMintMobilePairingOffer({ connectionMode: 'automatic', signedIn: true })).toBe(true)
+    expect(canMintMobilePairingOffer({ connectionMode: 'local-only', signedIn: false })).toBe(true)
+    expect(canMintMobilePairingOffer({ connectionMode: 'local-only', signedIn: true })).toBe(true)
   })
 })

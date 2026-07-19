@@ -19,10 +19,10 @@ import { MobilePageContent } from './MobilePageContent'
 import { useMobileInstallQr } from './use-mobile-install-qr'
 import {
   canMintMobilePairingOffer,
-  effectiveMobilePairingConnectionMode,
   type MobilePairingConnectionMode
 } from '../../../../shared/mobile-pairing-connection-mode'
 import { useMobilePairingConnectionMode } from './use-mobile-pairing-connection-mode'
+import { useMobilePairingGeneration } from './use-mobile-pairing-generation'
 import { useMobilePairingQrInvalidation } from './use-mobile-pairing-qr-invalidation'
 import { useMobileInstallActions } from './use-mobile-install-actions'
 
@@ -174,72 +174,17 @@ export default function MobilePage(): React.JSX.Element {
     [loadDevices, mountedRef, showStage]
   )
 
-  const generatePairing = useCallback(
-    async (
-      rotate: boolean,
-      addressOverride?: string,
-      connectionModeOverride?: MobilePairingConnectionMode
-    ) => {
-      const requestId = ++pairingRequestIdRef.current
-      // Mark the request synchronously so state changes cannot make the
-      // Step 2 auto-generate effect start a second offer in parallel.
-      hasGeneratedRef.current = true
-      if (mountedRef.current) {
-        setPairLoading(true)
-      }
-      try {
-        const address = addressOverride ?? selectedAddress
-        const preferredMode = connectionModeOverride ?? connectionMode
-        const nextConnectionMode = effectiveMobilePairingConnectionMode({
-          preferred: preferredMode,
-          signedIn
-        })
-        const result = await window.api.mobile.getPairingQR({
-          ...(address ? { address } : {}),
-          connectionMode: nextConnectionMode,
-          ...(rotate ? { rotate: true } : {})
-        })
-        if (requestId !== pairingRequestIdRef.current) {
-          return
-        }
-        if (result.available) {
-          if (mountedRef.current) {
-            setPairQrDataUrl(result.qrDataUrl)
-            setPairingUrl(result.pairingUrl)
-          }
-        } else {
-          hasGeneratedRef.current = false
-          if (mountedRef.current) {
-            setPairQrDataUrl(null)
-            setPairingUrl(null)
-            toast.error(
-              translate(
-                'auto.components.mobile.MobilePage.b353e18de1',
-                'WebSocket transport is not running'
-              )
-            )
-          }
-        }
-      } catch {
-        if (mountedRef.current && requestId === pairingRequestIdRef.current) {
-          hasGeneratedRef.current = false
-          setPairQrDataUrl(null)
-          setPairingUrl(null)
-          toast.error(
-            translate(
-              'auto.components.mobile.MobilePage.4c8bd11c1a',
-              'Failed to generate pairing code'
-            )
-          )
-        }
-      } finally {
-        if (mountedRef.current && requestId === pairingRequestIdRef.current) {
-          setPairLoading(false)
-        }
-      }
-    },
-    [connectionMode, mountedRef, selectedAddress, signedIn]
-  )
+  const { generatePairing } = useMobilePairingGeneration({
+    connectionMode,
+    signedIn,
+    selectedAddress,
+    mountedRef,
+    hasGeneratedRef,
+    pairingRequestIdRef,
+    setPairQrDataUrl,
+    setPairingUrl,
+    setPairLoading
+  })
 
   const handleConnectionModeChange = useCallback(
     (nextMode: MobilePairingConnectionMode): void => {
@@ -296,7 +241,12 @@ export default function MobilePage(): React.JSX.Element {
           !result.interfaces.some((iface) => iface.address === newAddress)
         setAddressIsManual(nextIsManual)
       }
-      if (newAddress !== selectedAddress && hasGeneratedRef.current && mountedRef.current) {
+      if (
+        newAddress !== selectedAddress &&
+        hasGeneratedRef.current &&
+        canMintMobilePairingOffer({ connectionMode, signedIn }) &&
+        mountedRef.current
+      ) {
         void generatePairing(true, newAddress)
       }
     } catch {
@@ -306,7 +256,7 @@ export default function MobilePage(): React.JSX.Element {
         setRefreshingNetworkInterfaces(false)
       }
     }
-  }, [selectedAddress, generatePairing, mountedRef, addressIsManual])
+  }, [selectedAddress, generatePairing, mountedRef, addressIsManual, connectionMode, signedIn])
 
   useEffect(() => {
     if (stage !== 'flow') {
@@ -323,10 +273,13 @@ export default function MobilePage(): React.JSX.Element {
       // not snap it back to a tailnet/LAN fallback.
       const isManual = !networkInterfaces.some((iface) => iface.address === address)
       setAddressIsManual(isManual)
-      // Switching network must remint so the QR encodes the new endpoint.
-      void generatePairing(true, address)
+      // Switching network must remint so the QR encodes the new endpoint —
+      // but only when the selected path may honestly mint (not signed-out Anywhere).
+      if (canMintMobilePairingOffer({ connectionMode, signedIn })) {
+        void generatePairing(true, address)
+      }
     },
-    [generatePairing, networkInterfaces]
+    [generatePairing, networkInterfaces, connectionMode, signedIn]
   )
 
   const copyPairingCode = useCallback(async () => {

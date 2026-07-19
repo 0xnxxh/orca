@@ -75,7 +75,9 @@ function PathOption({
       }}
       className={cn(
         'flex cursor-pointer items-start gap-3 px-3 py-2.5 outline-none transition-colors',
-        'focus-visible:bg-accent/50',
+        // Why: match SettingsFormControls focus ring so keyboard focus is visible
+        // even when the selected row already uses bg-accent/40.
+        'focus-visible:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/50',
         selected ? 'bg-accent/40' : 'hover:bg-accent/20'
       )}
     >
