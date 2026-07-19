@@ -172,6 +172,7 @@ describe('purgeStaleRuntimeHostState', () => {
     const store = createTestStore()
     seedStore(store, {
       repos: [TEST_REPO],
+      projectHostSetups: [setup({ id: 's-local', repoId: 'repo1', hostId: 'local' })],
       worktreesByRepo: {
         repo1: [makeWorktree({ id: 'repo1::/wt', repoId: 'repo1', hostId: 'local' })]
       }
@@ -180,6 +181,7 @@ describe('purgeStaleRuntimeHostState', () => {
     const epochBefore = before.sortEpoch
     const worktreesRef = before.worktreesByRepo
     const reposRef = before.repos
+    const setupsRef = before.projectHostSetups
 
     store.getState().purgeStaleRuntimeHostState([])
     store.getState().purgeStaleRuntimeHostState(['env-does-not-exist'])
@@ -189,6 +191,7 @@ describe('purgeStaleRuntimeHostState', () => {
     // Nothing stale => the reducer returns state untouched (same references).
     expect(s.worktreesByRepo).toBe(worktreesRef)
     expect(s.repos).toBe(reposRef)
+    expect(s.projectHostSetups).toBe(setupsRef)
   })
 
   it('same-repoId-on-two-hosts: keeps an ambiguous unhosted row and the repo key', () => {
@@ -292,6 +295,58 @@ describe('purgeStaleRuntimeHostState', () => {
     const s = store.getState()
     expect(s.worktreesByRepo.repoA).toEqual([])
     expect(s.tabsByWorktree[worktreeId]).toBeUndefined()
+  })
+
+  it('uses a removed host setup to purge an unhosted row before its repo loads', () => {
+    const store = createTestStore()
+    const worktreeId = 'repoA::/legacy'
+    seedStore(store, {
+      repos: [],
+      projectHostSetups: [setup({ id: 's-a', repoId: 'repoA', hostId: RUNTIME_A })],
+      worktreesByRepo: {
+        repoA: [makeWorktree({ id: worktreeId, repoId: 'repoA', hostId: undefined })]
+      },
+      tabsByWorktree: { [worktreeId]: [makeTab({ id: 'legacy-tab', worktreeId })] }
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a'])
+
+    const s = store.getState()
+    expect(s.projectHostSetups).toEqual([])
+    expect(s.worktreesByRepo.repoA).toEqual([])
+    expect(s.tabsByWorktree[worktreeId]).toBeUndefined()
+  })
+
+  it('preserves an unhosted row when a setup proves another host still owns it', () => {
+    const store = createTestStore()
+    const RUNTIME_B = toRuntimeExecutionHostId('env-b')
+    const worktreeId = 'shared::/legacy'
+    const tabs = [makeTab({ id: 'surviving-tab', worktreeId })]
+    seedStore(store, {
+      repos: [
+        {
+          id: 'shared',
+          path: '/shared-a',
+          displayName: 'A',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: RUNTIME_A
+        }
+      ],
+      projectHostSetups: [setup({ id: 's-b', repoId: 'shared', hostId: RUNTIME_B })],
+      worktreesByRepo: {
+        shared: [makeWorktree({ id: worktreeId, repoId: 'shared', hostId: undefined })]
+      },
+      tabsByWorktree: { [worktreeId]: tabs }
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a'])
+
+    const s = store.getState()
+    expect(s.repos).toEqual([])
+    expect(s.projectHostSetups).toHaveLength(1)
+    expect(s.worktreesByRepo.shared).toHaveLength(1)
+    expect(s.tabsByWorktree[worktreeId]).toBe(tabs)
   })
 
   it('purges a legacy unhosted row when every repo owner is removed together', () => {

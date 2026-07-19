@@ -4985,6 +4985,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     set((s) => {
       const repoIdsWithoutSurvivingOwners = new Set<string>()
       const survivingRepoIds = new Set<string>()
+      const repoIdsWithSurvivingOwners = new Set<string>()
       const survivingRepos: AppState['repos'] = []
       for (const repo of s.repos) {
         if (isRemovedRuntimeHostId(getRepoExecutionHostId(repo), removed)) {
@@ -4992,22 +4993,33 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         } else {
           survivingRepos.push(repo)
           survivingRepoIds.add(repo.id)
+          repoIdsWithSurvivingOwners.add(repo.id)
         }
-      }
-      // Why: an unhosted legacy row is safe to retire whenever every known repo
-      // owner was removed together, including duplicate or multi-host catalog rows.
-      for (const repoId of survivingRepoIds) {
-        repoIdsWithoutSurvivingOwners.delete(repoId)
       }
       const reposChanged = survivingRepos.length !== s.repos.length
 
       // Why: broader than filterSetupsForPrunedRepoRows — a repoId-less setup on
       // the removed host can still flip projectIdsRequiringSetupGroups and split a
       // surviving project group, so drop every setup owned by the removed host.
-      const survivingSetups = s.projectHostSetups.filter(
-        (setup) => !isRemovedRuntimeHostId(setup.hostId, removed)
-      )
+      const survivingSetups: AppState['projectHostSetups'] = []
+      for (const setup of s.projectHostSetups) {
+        if (isRemovedRuntimeHostId(setup.hostId, removed)) {
+          if (setup.repoId) {
+            repoIdsWithoutSurvivingOwners.add(setup.repoId)
+          }
+        } else {
+          survivingSetups.push(setup)
+          if (setup.repoId) {
+            repoIdsWithSurvivingOwners.add(setup.repoId)
+          }
+        }
+      }
       const setupsChanged = survivingSetups.length !== s.projectHostSetups.length
+      // Why: legacy rows predate host stamps; repo rows and host setups are the
+      // persisted owner records that prove whether another host still owns them.
+      for (const repoId of repoIdsWithSurvivingOwners) {
+        repoIdsWithoutSurvivingOwners.delete(repoId)
+      }
 
       const worktreeDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
         s.worktreesByRepo,
