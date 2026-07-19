@@ -6,6 +6,7 @@ import type {
   SessionOptionDescriptor,
   SessionOptionsSurface
 } from '../../../../shared/native-chat-session-options'
+import type * as nativeChatAgentProfiles from '../../../../shared/native-chat-agent-profiles'
 import { clearNativeChatSessionOptionCacheForTests } from './native-chat-session-option-cache'
 
 const mocks = vi.hoisted(() => ({
@@ -62,11 +63,15 @@ vi.mock('./claude-model-switch-confirmation', () => ({
   createClaudeModelSwitchConfirmationObserver: (...args: unknown[]) =>
     mocks.createClaudeModelSwitchConfirmationObserver(...args)
 }))
-vi.mock('./native-chat-agent-commands', () => ({
-  getAgentSlashCommands: () => []
+vi.mock('../../../../shared/native-chat-agent-profiles', async (importOriginal) => ({
+  ...(await importOriginal<typeof nativeChatAgentProfiles>()),
+  getVerifiedNativeChatCommands: () => []
 }))
 vi.mock('@/lib/native-chat-telemetry', () => ({
-  emitNativeChatMessageSent: vi.fn()
+  emitNativeChatMessageSent: vi.fn(),
+  emitNativeChatPickerItemAccepted: vi.fn(),
+  emitNativeChatPickerOpened: vi.fn(),
+  emitNativeChatSendClassified: vi.fn()
 }))
 vi.mock('./use-native-chat-draft', () => ({
   useNativeChatDraft: () => ({ draft: 'hello', setDraft: mocks.setDraft })
@@ -80,7 +85,9 @@ vi.mock('./NativeChatComposerField', () => ({
     return null
   }
 }))
-vi.mock('./use-native-chat-skills', () => ({ useNativeChatSkills: () => [] }))
+vi.mock('./use-native-chat-skills', () => ({
+  useNativeChatSkills: () => ({ status: 'ready', skills: [], error: null, retry: () => {} })
+}))
 vi.mock('./use-native-chat-composer-attachments', () => ({
   useNativeChatComposerAttachments: () => ({
     imageAttachments: [],

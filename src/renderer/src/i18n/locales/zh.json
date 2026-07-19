@@ -13273,7 +13273,22 @@
           "high": "高",
           "xhigh": "极高",
           "max": "最大"
-        }
+        },
+        "noCommandsOrSkills": "No matching commands or skills",
+        "commands": "Commands",
+        "skills": "Skills",
+        "loadingSkills": "Loading skills...",
+        "skillsUnavailableHost": "Skills are unavailable for this host",
+        "skillsLoadFailed": "Could not load skills from this host",
+        "retrySkills": "Retry",
+        "skillCommandCollision": "Also a skill name - agent decides",
+        "skillMultipleSources": "{{count}} sources - agent resolves",
+        "skillScopeProject": "Project",
+        "skillScopePersonal": "Personal",
+        "skillScopeBuiltIn": "Built-in",
+        "skillScopePlugin": "Plugin",
+        "skillsLoaded": "Skills loaded",
+        "noCommands": "No matching commands"
       },
       "tool": {
         "running": "正在运行…",

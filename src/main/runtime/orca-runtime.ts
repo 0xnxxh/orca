@@ -7885,6 +7885,16 @@ export class OrcaRuntimeService {
     return pty ? { worktreeId: pty.worktreeId, connectionId: pty.connectionId } : null
   }
 
+  // Why: remote clients cannot resolve this runtime's WSL project preference,
+  // so host-affecting RPCs (skill discovery) resolve it from the owning store.
+  resolveProjectRuntimeForWorktree(
+    worktreeId: string | null | undefined
+  ): ProjectExecutionRuntimeResolution | undefined {
+    return this.store && worktreeId
+      ? resolveLocalProjectRuntimeForWorktreeId(this.requireStore(), worktreeId)
+      : undefined
+  }
+
   getTerminalOrchestrationCliCommand(handle: string): 'orca' | 'orca-ide' {
     let pty: RuntimePtyWorktreeRecord | null = null
     try {

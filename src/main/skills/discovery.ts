@@ -1,5 +1,6 @@
 import type { Dirent } from 'node:fs'
 import { open, readdir, realpath, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { summarizeSkillMarkdown } from '../../shared/skill-metadata'
 import type { Repo } from '../../shared/types'
@@ -14,6 +15,7 @@ import {
   stablePathId,
   type SkillScanRoot
 } from './skill-discovery-sources'
+import { discoverClaudePluginSkillSources } from './claude-plugin-skill-sources'
 
 export { buildSkillDiscoverySources } from './skill-discovery-sources'
 
@@ -182,7 +184,7 @@ async function readSkillSummary(skillFilePath: string): Promise<{
   name: string | null
   description: string | null
   updatedAt: number | null
-}> {
+} | null> {
   try {
     const fileStat = await stat(skillFilePath)
     const file = await open(skillFilePath, 'r')
@@ -199,20 +201,28 @@ async function readSkillSummary(skillFilePath: string): Promise<{
       updatedAt: fileStat.mtimeMs
     }
   } catch {
-    return { name: null, description: null, updatedAt: null }
+    return null
   }
 }
 
-async function scanRoot(root: SkillScanRoot): Promise<DiscoveredSkill[]> {
+type ScannedSkill = DiscoveredSkill & { canonicalSkillFilePath: string }
+
+async function scanRoot(root: SkillScanRoot): Promise<ScannedSkill[]> {
   const maxDepth = root.sourceKind === 'plugin' ? 9 : 4
   const skillFiles = await findSkillFiles(root.path, maxDepth)
   const skills = await Promise.all(
-    skillFiles.map(async (skillFilePath) => {
+    skillFiles.map(async (skillFilePath): Promise<ScannedSkill | null> => {
+      // Why: path identity belongs to the scanning host; canonicalizing before
+      // returning prevents symlinked roots from becoming duplicate picker rows.
+      const canonicalSkillFilePath = await realpath(skillFilePath).catch(() => skillFilePath)
       const directoryPath = dirname(skillFilePath)
       const summary = await readSkillSummary(skillFilePath)
+      if (!summary) {
+        return null
+      }
       const sourceKind = sourceKindForSkill(root, skillFilePath)
       return {
-        id: stablePathId(skillFilePath),
+        id: stablePathId(canonicalSkillFilePath),
         name: summary.name ?? basename(directoryPath),
         description: summary.description,
         providers: root.providers,
@@ -223,11 +233,12 @@ async function scanRoot(root: SkillScanRoot): Promise<DiscoveredSkill[]> {
         skillFilePath,
         installed: true,
         fileCount: await countFiles(directoryPath),
-        updatedAt: summary.updatedAt
-      } satisfies DiscoveredSkill
+        updatedAt: summary.updatedAt,
+        canonicalSkillFilePath
+      } satisfies ScannedSkill
     })
   )
-  return skills
+  return skills.filter((skill): skill is ScannedSkill => skill !== null)
 }
 
 export async function discoverSkills(args: {
@@ -236,7 +247,13 @@ export async function discoverSkills(args: {
   cwd?: string
   includeCwd?: boolean
 }): Promise<SkillDiscoveryResult> {
-  const roots = buildSkillDiscoverySources(args)
+  const homeDir = args.homeDir ?? homedir()
+  const roots = [
+    ...buildSkillDiscoverySources({ ...args, homeDir }),
+    // Why: plugin discovery is native-chat data keyed to an explicit workspace.
+    // Untargeted scans (Settings) keep their pre-picker inventory and cost.
+    ...(args.cwd ? await discoverClaudePluginSkillSources({ homeDir, cwd: args.cwd }) : [])
+  ]
   const sources: SkillDiscoverySource[] = []
   const skillGroups = await Promise.all(
     roots.map(async (root) => {
@@ -250,11 +267,30 @@ export async function discoverSkills(args: {
   )
   const seen = new Map<string, DiscoveredSkill>()
   for (const skill of skillGroups.flat()) {
-    // Why: WSL discovery sets cwd to the WSL home, so home skills can also be
-    // reached through the synthetic repo root. Keep the global home identity.
-    if (!seen.has(skill.skillFilePath)) {
-      seen.set(skill.skillFilePath, skill)
+    // Why: overlapping repo/cwd roots and symlinked provider homes can reach
+    // the same file. Keep the first source's higher-level scope identity, but
+    // record every contributing root so per-agent visibility survives dedup.
+    const existing = seen.get(skill.canonicalSkillFilePath)
+    if (existing) {
+      if (existing.rootPaths && !existing.rootPaths.includes(skill.rootPath)) {
+        existing.rootPaths.push(skill.rootPath)
+      }
+      // Why: providers is per-agent visibility just like rootPaths; keeping only
+      // the first root's tags makes a shared/symlinked skill under-report which
+      // agents can see it on the Settings provider badges/filter. Reassign a
+      // fresh array — `providers` aliases the scan root's array, so pushing in
+      // place would mutate the root and every sibling skill/source sharing it.
+      const mergedProviders = [...existing.providers]
+      for (const provider of skill.providers) {
+        if (!mergedProviders.includes(provider)) {
+          mergedProviders.push(provider)
+        }
+      }
+      existing.providers = mergedProviders
+      continue
     }
+    const { canonicalSkillFilePath, ...publicSkill } = skill
+    seen.set(canonicalSkillFilePath, { ...publicSkill, rootPaths: [skill.rootPath] })
   }
   return {
     skills: Array.from(seen.values()).sort(compareSkills),
