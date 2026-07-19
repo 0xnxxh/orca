@@ -239,10 +239,29 @@ describe('MobilePage pairing connection mode', () => {
     expect(getPairingQR).not.toHaveBeenCalled()
     expect(screen.getByTestId('pairing-qr')).toHaveTextContent('none')
 
+    // Hold the sign-in mint pending so we can inspect the upgrade window.
+    let resolveRelayQr: ((value: Record<string, unknown>) => void) | undefined
+    getPairingQR.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRelayQr = resolve
+        })
+    )
+
     // Signing in unlocks Relay, so Step 2 mints an honest Relay QR.
     mocks.storeState.orcaProfileAuthStatus = { state: 'connected' }
     rerender(<MobilePage />)
     await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic' }))
+    // Between the auth flip and the mint resolving, no code may be shown — the
+    // QR must not flash a stale/optimistic value while the Relay offer is pending.
+    expect(screen.getByTestId('pairing-qr')).toHaveTextContent('none')
+    expect(screen.getByTestId('pairing-url')).toHaveTextContent('none')
+
+    resolveRelayQr?.({
+      available: true,
+      qrDataUrl: 'data:image/png;base64,qr',
+      pairingUrl: 'orca://pair#automatic'
+    })
     await waitFor(() => expect(screen.getByTestId('pairing-qr')).toHaveTextContent('base64,qr'))
     expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
   })
