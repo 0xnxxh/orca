@@ -1731,7 +1731,8 @@
           "assertions": [
             "survival requires the crash antecedent, daemon and shell liveness, unchanged daemon identity, zero FailFast events, and same-shell reattach",
             "event-log query failure cannot be converted into zero FailFast events",
-            "stale, missing, or ambiguous userData-scoped daemon identity fails closed"
+            "stale, missing, or ambiguous userData-scoped daemon identity fails closed",
+            "the packaged survival proof remains wired to targeted pull requests without a duplicate branch-push run"
           ]
         },
         {

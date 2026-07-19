@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { parseArgs } from '../../tools/win-crash-survival-e2e/cli-args.mjs'
 import { buildCrashAssertions } from '../../tools/win-crash-survival-e2e/crash-assertions.mjs'
@@ -7,6 +8,15 @@ import { quotePowerShellLiteral } from '../../tools/win-update-e2e/powershell-ru
 import { resolveElectronMainPid } from '../../tools/win-update-e2e/app-driver.mjs'
 
 describe('win-crash-survival-e2e proof contracts', () => {
+  it('keeps the packaged proof wired as a targeted pull-request gate', () => {
+    const workflow = readFileSync('.github/workflows/win-crash-survival-e2e.yml', 'utf8')
+    expect(workflow).toMatch(/^  pull_request:/m)
+    expect(workflow).not.toMatch(/^  push:/m)
+    expect(workflow).toContain("- 'src/main/daemon/**'")
+    expect(workflow).toContain('--expect "$env:EXPECT"')
+    expect(workflow).toContain('exit $LASTEXITCODE')
+  })
+
   it('requires the full survival oracle, including daemon identity and reattach', () => {
     const base = {
       profile: 'survival',
