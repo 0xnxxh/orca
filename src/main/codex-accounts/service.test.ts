@@ -1732,6 +1732,81 @@ describe('CodexAccountService config sync', () => {
     expect(runtimeHome.syncForCurrentSelection).toHaveBeenCalled()
   })
 
+  it('sweeps the overlay hook trust from the real config on removal even with the flag off', async () => {
+    // Why: the grant landed in ~/.codex/config.toml while the real-home flag was
+    // ON; removing the account after an opt-out must still sweep it, or the
+    // user's real config keeps an orphan [hooks.state] block forever.
+    // Why doUnmock: earlier WSL tests doMock node:crypto without restoring it,
+    // and computeTrustedHash below needs the real createHash.
+    vi.doUnmock('node:crypto')
+    const managedHomePath = createManagedHome(
+      testState.userDataDir,
+      'account-1',
+      '',
+      '{"account":"managed"}\n'
+    )
+    const { getCodexManagedHookInstallMaterial } = await import('../codex/hook-service')
+    const { MANAGED_HOOK_TIMEOUT_SECONDS } = await import('../agent-hooks/installer-utils')
+    const {
+      computeTrustKey,
+      computeTrustedHash,
+      escapeTomlString,
+      getCodexExplicitHomeHookSourcePath
+    } = await import('../codex/config-toml-trust')
+    const material = getCodexManagedHookInstallMaterial()
+    const managedEntry = {
+      sourcePath: getCodexExplicitHomeHookSourcePath(join(managedHomePath, 'hooks.json')),
+      eventLabel: material.eventLabel[material.events[0]!]!,
+      groupIndex: 0,
+      handlerIndex: 0,
+      command: material.command,
+      timeoutSec: MANAGED_HOOK_TIMEOUT_SECONDS
+    }
+    const realConfigPath = join(testState.fakeHomeDir, '.codex', 'config.toml')
+    mkdirSync(join(testState.fakeHomeDir, '.codex'), { recursive: true })
+    writeFileSync(
+      realConfigPath,
+      [
+        'approval_policy = "never"',
+        '',
+        `[hooks.state."${escapeTomlString(computeTrustKey(managedEntry))}"]`,
+        'enabled = true',
+        `trusted_hash = "${computeTrustedHash(managedEntry)}"`
+      ].join('\n'),
+      'utf-8'
+    )
+    const settings = createSettings({
+      codexSystemDefaultRealHomeEnabled: false,
+      codexManagedAccounts: [
+        {
+          id: 'account-1',
+          email: 'user@example.com',
+          managedHomePath,
+          providerAccountId: null,
+          workspaceLabel: null,
+          workspaceAccountId: null,
+          createdAt: 1,
+          updatedAt: 1,
+          lastAuthenticatedAt: 1
+        }
+      ],
+      activeCodexManagedAccountId: 'account-1'
+    })
+
+    const { CodexAccountService } = await import('./service')
+    const service = new CodexAccountService(
+      createStore(settings) as never,
+      createRateLimits() as never,
+      createRuntimeHome() as never
+    )
+
+    await service.removeAccount('account-1')
+
+    const realConfig = readFileSync(realConfigPath, 'utf-8')
+    expect(realConfig).not.toContain('[hooks.state')
+    expect(realConfig).toContain('approval_policy = "never"')
+  })
+
   it('refuses to remove a managed home owned by a different account', async () => {
     const otherAccountHome = createManagedHome(
       testState.userDataDir,

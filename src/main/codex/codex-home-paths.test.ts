@@ -553,6 +553,34 @@ describe('syncSystemCodexOverlayResourcesIntoManagedHome', () => {
     )
   })
 
+  it('keeps a stale config.toml copy one-time — codex-written trust survives re-syncs', () => {
+    seedSystemHome()
+    const overlayHome = createOverlayHomePath()
+    fsMockState.failSymlink = true
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+
+      // Simulate codex granting hook/project trust INTO the warned copy.
+      const grantedConfig =
+        'approval_policy = "never"\n\n[hooks.state."key"]\ntrusted_hash = "sha256:granted"\n'
+      writeFileSync(join(overlayHome, 'config.toml'), grantedConfig)
+
+      const { staleEntries } = syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+
+      // Still stale, but the copy is never refreshed over the granted trust.
+      expect(staleEntries).toContain('config.toml')
+      expect(readFileSync(join(overlayHome, 'config.toml'), 'utf-8')).toBe(grantedConfig)
+
+      // Non-codex-written entries (AGENTS.md) still refresh from the source.
+      writeFileSync(join(getSystemCodexHomePath(), 'AGENTS.md'), '# updated\n')
+      syncSystemCodexOverlayResourcesIntoManagedHome(overlayHome)
+      expect(readFileSync(join(overlayHome, 'AGENTS.md'), 'utf-8')).toBe('# updated\n')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('clears the stale marker once symlinks become available again', () => {
     seedSystemHome()
     const overlayHome = createOverlayHomePath()

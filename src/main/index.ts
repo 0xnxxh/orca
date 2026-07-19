@@ -142,6 +142,7 @@ import {
 } from './codex/codex-real-home-hook-install'
 import { setCodexTrustGrantTelemetry } from './codex/codex-hook-trust-grant'
 import { grantManagedCodexOverlayHookTrust } from './codex-accounts/overlay-hook-trust'
+import { syncSystemCodexOverlayResourcesIntoManagedHome } from './codex/codex-overlay-home-paths'
 import { startCodexSessionBackfillInBackground } from './codex/codex-session-backfill'
 import { startCodexSessionIndexHealInBackground } from './codex/codex-session-index-heal'
 import { resolveHostCodexSessionSourceHome } from './codex/codex-session-source-home'
@@ -810,7 +811,20 @@ function prepareCodexRuntimeHomeForLaunch(
     // drift. The shared hooks.json holds the managed hook (installed by the
     // real-home lane); codex grants THIS overlay's trust through its own
     // app-server, which preserves the symlink. Best-effort and ledger-cached.
+    //
+    // Why ensure here too: the real-home lane otherwise only runs for the
+    // system-default selection, so a host that always launches a managed account
+    // (e.g. multi-account users upgrading from the copy era) would inherit a
+    // shared hooks.json without the managed hook and ship status-blind panes.
+    // Idempotent: unchanged hooks.json writes no-op and the grant is ledger-cached.
+    ensureRealHomeCodexHookState({
+      hooksEnabled,
+      userDataPath: app.getPath('userData')
+    })
     if (hooksEnabled) {
+      // Why: the ensure above may have just created ~/.codex/hooks.json; rebuild
+      // the overlay links so THIS launch's grant already sees the shared hook.
+      syncSystemCodexOverlayResourcesIntoManagedHome(runtimeHomePath)
       grantManagedCodexOverlayHookTrust(runtimeHomePath)
     }
     return runtimeHomePath

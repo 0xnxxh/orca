@@ -16,6 +16,7 @@ import {
   normalizeCodexProjectPathForLookup,
   parseCodexProjectHeaderPath,
   upsertProjectTrustLevelInContent,
+  writeConfigAtomically,
   type CodexProjectTrustLevel
 } from '../codex/config-toml-trust'
 
@@ -144,7 +145,10 @@ function promoteCopiedProjectTrustToRealConfig(copiedConfig: string, realConfigP
     changed = true
   }
   if (changed) {
-    writeFileAtomically(realConfigPath, realConfig)
+    // Why: the real config.toml can be a dotfiles-managed symlink; this writer
+    // renames at its resolved target (preserving mode), so promotion never
+    // replaces the user's link with a plain file the way a lexical rename would.
+    writeConfigAtomically(realConfigPath, realConfig)
   }
 }
 

@@ -175,14 +175,22 @@ function warnOnceCopyOverlayResource(
   if (!staleEntries.includes(entryName)) {
     staleEntries.push(entryName)
   }
-  // Why: refreshing an unchanged owned copy every launch is wasteful churn on a
-  // host where symlinks keep failing; skip when the file copy already matches.
-  if (
-    targetIsOwnedFallbackCopy(targetPath, overlayHomePath, entryName, sourcePath) &&
-    systemResourceIsRegularFile(sourcePath) &&
-    copiedFileContentsMatch(sourcePath, targetPath)
-  ) {
-    return
+  if (targetIsOwnedFallbackCopy(targetPath, overlayHomePath, entryName, sourcePath)) {
+    // Why: codex writes this overlay's hook/project trust INTO the warned
+    // config.toml copy, so a divergence-triggered refresh would wipe that trust
+    // and force an app-server re-grant plus project re-approval on every
+    // launch. Keep the copy truly one-time; the stale marker covers the drift.
+    if (entryName === 'config.toml') {
+      return
+    }
+    // Why: refreshing an unchanged owned copy every launch is wasteful churn on
+    // a host where symlinks keep failing; skip when the file copy already matches.
+    if (
+      systemResourceIsRegularFile(sourcePath) &&
+      copiedFileContentsMatch(sourcePath, targetPath)
+    ) {
+      return
+    }
   }
   console.warn(
     `[codex-home] Symlink unavailable for overlay Codex resource "${entryName}"; kept a one-time copy. ` +

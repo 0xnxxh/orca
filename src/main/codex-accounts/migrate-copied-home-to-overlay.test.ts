@@ -173,6 +173,23 @@ describe('migrateCopiedManagedHomesToOverlay', () => {
     expect(realConfig).not.toContain('trust_level = "trusted"')
   })
 
+  it('promotes through a dotfiles-managed real config symlink without replacing the link', async () => {
+    const { symlinkSync } = await import('node:fs')
+    const dotfilesConfigPath = join(testState.home, 'dotfiles-config.toml')
+    writeFileSync(dotfilesConfigPath, 'approval_policy = "never"\n', 'utf-8')
+    symlinkSync(dotfilesConfigPath, join(systemHome(), 'config.toml'))
+    const projectPath = join(testState.userData, 'workspace', 'repo')
+    mkdirSync(projectPath, { recursive: true })
+    const copiedConfig = [`[projects."${projectPath}"]`, 'trust_level = "trusted"'].join('\n')
+    const home = createCopiedManagedHome('account-1', copiedConfig)
+
+    await runMigration([managedAccountRecord('account-1', home)])
+
+    // The user's dotfiles link survives; the promotion landed in its target.
+    expect(lstatSync(join(systemHome(), 'config.toml')).isSymbolicLink()).toBe(true)
+    expect(readFileSync(dotfilesConfigPath, 'utf-8')).toContain('trust_level = "trusted"')
+  })
+
   it('is one-shot — a second run does not re-promote or re-archive', async () => {
     writeFileSync(join(systemHome(), 'config.toml'), 'approval_policy = "never"\n', 'utf-8')
     const home = createCopiedManagedHome('account-1', 'approval_policy = "on-request"\n')

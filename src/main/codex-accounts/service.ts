@@ -310,8 +310,10 @@ export class CodexAccountService {
     // Why: sweep this overlay's Orca-managed [hooks.state] entry out of the shared
     // real config.toml BEFORE the home is deleted, so its explicit-home trust key
     // can still be canonicalized. Ownership is hash/ledger-proven; user trust at a
-    // colliding key is left intact. No-op for WSL/flag-OFF homes (no overlay grant).
-    if (this.isSelfContainedHostManagedHome(account.managedHomePath)) {
+    // colliding key is left intact. Gate on host-local only (not the CURRENT flag
+    // state): a grant that landed while the flag was ON must still be swept after
+    // an opt-out, and the sweep no-ops for homes that never had an overlay grant.
+    if (!parseWslUncPath(account.managedHomePath)) {
       sweepManagedCodexOverlayHookTrust(account.managedHomePath)
     }
     this.safeRemoveManagedHome(account.managedHomePath, account.id)
