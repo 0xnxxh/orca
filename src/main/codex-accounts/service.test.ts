@@ -2253,6 +2253,32 @@ describe('CodexAccountService config sync', () => {
       }
     })
 
+    it('fails a corrupt managed auth.json without echoing credential bytes', async () => {
+      const secret = 'sk-managed-secret-never-log'
+      const managedHomePath = createManagedHome(
+        testState.userDataDir,
+        'account-1',
+        '',
+        `{"tokens": {"refresh_token": "${secret}"`
+      )
+      const service = await newService()
+
+      let thrown: Error | null = null
+      try {
+        ;(
+          service as unknown as {
+            readIdentityFromHome(managedHomePath: string, expectedAccountId: string): unknown
+          }
+        ).readIdentityFromHome(managedHomePath, 'account-1')
+      } catch (error) {
+        thrown = error as Error
+      }
+
+      expect(thrown).not.toBeNull()
+      expect(thrown!.message).toBe('Codex auth.json is corrupt or not valid JSON')
+      expect(thrown!.message).not.toContain(secret)
+    })
+
     it('does not log auth contents when auth.json is malformed', async () => {
       const secret = 'sk-secret-review-never-log'
       writeFileSync(systemAuthPath(), secret, 'utf-8')

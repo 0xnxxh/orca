@@ -1246,9 +1246,17 @@ export class CodexAccountService {
       this.assertManagedHomePath(managedHomePath, expectedAccountId),
       'auth.json'
     )
-    return this.extractOAuthCredentials(
-      JSON.parse(readFileSync(authFilePath, 'utf-8')) as Record<string, unknown>
-    )
+    const authFileContents = readFileSync(authFilePath, 'utf-8')
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(authFileContents) as Record<string, unknown>
+    } catch {
+      // Why: a raw SyntaxError echoes credential bytes into logs/error UI; a
+      // corrupt auth.json must fail loudly but without them (same sanitization
+      // intent as the system-default identity path, which degrades instead).
+      throw new Error('Codex auth.json is corrupt or not valid JSON')
+    }
+    return this.extractOAuthCredentials(parsed)
   }
 
   private extractOAuthCredentials(raw: Record<string, unknown>): CodexOAuthCredentials {
