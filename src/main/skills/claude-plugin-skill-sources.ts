@@ -1,6 +1,7 @@
 import { open, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, sep, type posix } from 'node:path'
 import { stablePathId, type SkillScanRoot } from './skill-discovery-sources'
+import { stripUnsafeDisplayCharacters } from '../../shared/skill-display-text'
 
 const MAX_PLUGIN_METADATA_BYTES = 4 * 1024 * 1024
 
@@ -145,18 +146,7 @@ function selectActiveInstall(
 
 function safePluginLabel(pluginId: string, pathApi: SkillDiscoveryPathApi): string {
   const packageName = pluginId.split('@')[0] || pathApi.basename(pluginId)
-  const safeLabel = [...packageName]
-    .filter((character) => {
-      const code = character.codePointAt(0) ?? 0
-      return !(
-        code <= 0x1f ||
-        (code >= 0x7f && code <= 0x9f) ||
-        (code >= 0x202a && code <= 0x202e) ||
-        (code >= 0x2066 && code <= 0x2069)
-      )
-    })
-    .join('')
-    .slice(0, 80)
+  const safeLabel = stripUnsafeDisplayCharacters(packageName).slice(0, 80)
   return safeLabel || 'plugin'
 }
 

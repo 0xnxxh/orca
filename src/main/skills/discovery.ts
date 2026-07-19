@@ -7,11 +7,13 @@ import type { Repo } from '../../shared/types'
 import type {
   DiscoveredSkill,
   SkillDiscoveryResult,
-  SkillDiscoverySource,
-  SkillSourceKind
+  SkillDiscoverySource
 } from '../../shared/skills'
 import {
   buildSkillDiscoverySources,
+  compareSkills,
+  sourceKindForSkill,
+  sourceLabelForSkill,
   stablePathId,
   type SkillScanRoot
 } from './skill-discovery-sources'
@@ -32,14 +34,6 @@ async function pathExists(pathValue: string): Promise<boolean> {
   }
 }
 
-function compareSkills(a: DiscoveredSkill, b: DiscoveredSkill): number {
-  return (
-    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
-    a.sourceLabel.localeCompare(b.sourceLabel, undefined, { sensitivity: 'base' }) ||
-    a.skillFilePath.localeCompare(b.skillFilePath)
-  )
-}
-
 function isWithinDepth(rootPath: string, childPath: string, maxDepth: number): boolean {
   const rel = relative(rootPath, childPath)
   if (!rel) {
@@ -50,23 +44,6 @@ function isWithinDepth(rootPath: string, childPath: string, maxDepth: number): b
     return false
   }
   return rel.split(sep).length <= maxDepth
-}
-
-function sourceKindForSkill(root: SkillScanRoot, skillFilePath: string): SkillSourceKind {
-  if (
-    root.sourceKind === 'home' &&
-    relative(root.path, skillFilePath).split(sep)[0] === '.system'
-  ) {
-    return 'bundled'
-  }
-  return root.sourceKind
-}
-
-function sourceLabelForSkill(root: SkillScanRoot, sourceKind: SkillSourceKind): string {
-  if (sourceKind === 'bundled') {
-    return `${root.label} bundled`
-  }
-  return root.label
 }
 
 async function findSkillFiles(rootPath: string, maxDepth: number): Promise<string[]> {
@@ -220,7 +197,7 @@ async function scanRoot(root: SkillScanRoot): Promise<ScannedSkill[]> {
       if (!summary) {
         return null
       }
-      const sourceKind = sourceKindForSkill(root, skillFilePath)
+      const sourceKind = sourceKindForSkill(root, skillFilePath, { relative, sep })
       return {
         id: stablePathId(canonicalSkillFilePath),
         name: summary.name ?? basename(directoryPath),

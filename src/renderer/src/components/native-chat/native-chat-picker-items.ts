@@ -1,5 +1,9 @@
 import type { DiscoveredSkill, SkillSourceKind } from '../../../../shared/skills'
 import type { SlashCommandSuggestion } from '../../../../shared/native-chat-slash-commands'
+import {
+  isSafeDisplayCharacter,
+  stripUnsafeDisplayCharacters
+} from '../../../../shared/skill-display-text'
 
 export type NativeChatPickerItem =
   | {
@@ -174,25 +178,7 @@ function isTokenSafe(value: string): boolean {
 }
 
 function sanitizePickerText(value: string, maxLength: number): string {
-  return [...value].filter(isSafeDisplayCharacter).join('').slice(0, maxLength)
-}
-
-function isSafeDisplayCharacter(character: string): boolean {
-  const code = character.codePointAt(0) ?? 0
-  return !(
-    code <= 0x1f ||
-    (code >= 0x7f && code <= 0x9f) ||
-    // Zero-width and directional marks spoof names invisibly and, unlike
-    // whitespace, survive the token check; strip them with the overrides.
-    code === 0x200b ||
-    code === 0x200e ||
-    code === 0x200f ||
-    code === 0x061c ||
-    code === 0x2060 ||
-    code === 0xfeff ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069)
-  )
+  return stripUnsafeDisplayCharacters(value).slice(0, maxLength)
 }
 
 function compareDiscoveredSkills(a: DiscoveredSkill, b: DiscoveredSkill): number {

@@ -17,7 +17,13 @@ export {
   resolveNativeChatSkillDiscoveryCwd
 } from './native-chat-skill-discovery-context'
 
+// The host scan budget honored by runtime targets that respect timeoutMs.
 const DISCOVERY_TIMEOUT_MS = 10_000
+// Renderer wall-clock backstop for the local branch (which ignores timeoutMs).
+// It must exceed the host's summed worst case — a WSL scan runs a metadata read
+// (5s) then the tree walk (10s) in sequence — so the host's own precise timeout
+// wins and a WSL cold boot does not surface a healthy scan as a spurious timeout.
+const DISCOVERY_BACKSTOP_TIMEOUT_MS = 18_000
 
 export type NativeChatSkillDiscovery = {
   status: 'idle' | 'loading' | 'ready' | 'error'
@@ -212,7 +218,7 @@ function getOrStartDiscovery(
         timeoutMs: DISCOVERY_TIMEOUT_MS
       }
     ),
-    DISCOVERY_TIMEOUT_MS
+    DISCOVERY_BACKSTOP_TIMEOUT_MS
   ).finally(() => {
     if (inFlightDiscovery.get(context.key) === request) {
       inFlightDiscovery.delete(context.key)

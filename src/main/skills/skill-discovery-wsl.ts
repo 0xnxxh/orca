@@ -4,12 +4,14 @@ import { summarizeSkillMarkdown } from '../../shared/skill-metadata'
 import type {
   DiscoveredSkill,
   SkillDiscoveryResult,
-  SkillDiscoverySource,
-  SkillSourceKind
+  SkillDiscoverySource
 } from '../../shared/skills'
 import { buildEncodedWslBashCommand } from '../wsl-bash-command'
 import {
   buildSkillDiscoverySources,
+  compareSkills,
+  sourceKindForSkill,
+  sourceLabelForSkill,
   stablePathId,
   type SkillScanRoot
 } from './skill-discovery-sources'
@@ -82,28 +84,6 @@ function executeWslSkillDiscovery(distro: string, command: string): Promise<stri
   })
 }
 
-function sourceKindForSkill(root: SkillScanRoot, skillFilePath: string): SkillSourceKind {
-  if (
-    root.sourceKind === 'home' &&
-    pathPosix.relative(root.path, skillFilePath).split('/')[0] === '.system'
-  ) {
-    return 'bundled'
-  }
-  return root.sourceKind
-}
-
-function sourceLabelForSkill(root: SkillScanRoot, sourceKind: SkillSourceKind): string {
-  return sourceKind === 'bundled' ? `${root.label} bundled` : root.label
-}
-
-function compareSkills(a: DiscoveredSkill, b: DiscoveredSkill): number {
-  return (
-    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
-    a.sourceLabel.localeCompare(b.sourceLabel, undefined, { sensitivity: 'base' }) ||
-    a.skillFilePath.localeCompare(b.skillFilePath)
-  )
-}
-
 function readProtocolField(fields: string[], index: number): string {
   const value = fields[index]
   if (value === undefined) {
@@ -162,7 +142,7 @@ export function parseWslSkillDiscoveryOutput(
     }
     const directoryPath = pathPosix.dirname(skillFilePath)
     const summary = summarizeSkillMarkdown(markdown)
-    const sourceKind = sourceKindForSkill(root, skillFilePath)
+    const sourceKind = sourceKindForSkill(root, skillFilePath, pathPosix)
     skillsByCanonicalPath.set(canonicalSkillFilePath, {
       id: stablePathId(canonicalSkillFilePath),
       name: summary.name ?? pathPosix.basename(directoryPath),
@@ -198,6 +178,12 @@ export async function discoverSkillsInWsl(args: {
   homeDir: string
   cwd: string
 }): Promise<SkillDiscoveryResult> {
+  // Plugin roots are resolved (in JS) from metadata this first wsl.exe call
+  // reads, then fed to the scan's own wsl.exe call below — two sequential
+  // process boots. That is a deliberate one-time-per-pane cost (the renderer
+  // caches per pane); folding both into one invocation would require porting
+  // the plugin-install resolution into bash, which is not worth the risk.
+  //
   // Why: plugin-metadata enrichment is optional. A failed/timed-out read must
   // degrade to zero plugin roots (matching the native readMetadataFile path),
   // not abort the mandatory native/home/repo/bundled scan.
