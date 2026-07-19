@@ -45,22 +45,55 @@ export function MobilePane(): React.JSX.Element {
   const devicesRef = useRef<PairedDevice[]>([])
   const codeCopiedResetTimerRef = useRef<number | null>(null)
   const wasSignedInRef = useRef(signedIn)
+  // Why: monotonically bumped per pairing request so a late getPairingQR
+  // response cannot paint a stale QR after sign-out, a mode switch, or an
+  // address change invalidated the request that produced it.
+  const pairingRequestIdRef = useRef(0)
+  // Tracks the mode we last acted on so the connectionMode effect can tell a
+  // cross-window preference sync apart from our own path change.
+  const handledModeRef = useRef(connectionMode)
+  // Latest address without stale-closure risk inside loadNetworkInterfaces.
+  const selectedAddressRef = useRef<string | undefined>(selectedAddress)
+  // Ref mirrors of QR-visible / loading so invalidatePairing stays stable and
+  // cannot make loadNetworkInterfaces re-fetch on every generate.
+  const qrDisplayedRef = useRef(false)
+  const loadingRef = useRef(false)
   const mountedRef = useMountedRef()
 
+  useEffect(() => {
+    qrDisplayedRef.current = qrDataUrl != null
+  }, [qrDataUrl])
+
+  useEffect(() => {
+    loadingRef.current = loading
+  }, [loading])
+
+  // Why: an offer encodes a specific policy + endpoint. When the selection that
+  // produced it changes, drop any displayed QR and invalidate the in-flight
+  // request so a late response can't restore it; arm rotation so the next mint
+  // issues a fresh credential rather than the discarded pending one.
+  const invalidatePairing = useCallback((): void => {
+    pairingRequestIdRef.current += 1
+    const hadPending = qrDisplayedRef.current || loadingRef.current
+    setQrDataUrl(null)
+    setPairingUrl(null)
+    setEndpoint(null)
+    if (hadPending) {
+      setRotateNextQr(true)
+    }
+  }, [])
+
   // Why: a Relay QR minted while signed in must not linger on a now-signed-out
-  // desktop — Generate is disabled in that state, so clear the stale code (and
-  // arm rotation for the next mint) instead of leaving it on screen. Anywhere
-  // stays selected.
+  // desktop — Generate is disabled in that state. Invalidate any pending relay
+  // mint too, not just a displayed QR, so a late response can't paint a Relay
+  // code after sign-out. Anywhere stays selected.
   useEffect(() => {
     const wasSignedIn = wasSignedInRef.current
     wasSignedInRef.current = signedIn
-    if (wasSignedIn && !signedIn && connectionMode === 'automatic' && qrDataUrl) {
-      setQrDataUrl(null)
-      setPairingUrl(null)
-      setEndpoint(null)
-      setRotateNextQr(true)
+    if (wasSignedIn && !signedIn && connectionMode === 'automatic') {
+      invalidatePairing()
     }
-  }, [signedIn, connectionMode, qrDataUrl])
+  }, [signedIn, connectionMode, invalidatePairing])
 
   const clearCodeCopiedResetTimer = useCallback((): void => {
     if (codeCopiedResetTimerRef.current !== null) {
@@ -88,9 +121,17 @@ export function MobilePane(): React.JSX.Element {
         const result = await window.api.mobile.listNetworkInterfaces()
         if (mountedRef.current) {
           setNetworkInterfaces(result.interfaces)
-          setSelectedAddress((currentAddress) =>
-            selectRefreshedNetworkAddress(currentAddress, result.interfaces)
+          const nextAddress = selectRefreshedNetworkAddress(
+            selectedAddressRef.current,
+            result.interfaces
           )
+          if (nextAddress !== selectedAddressRef.current) {
+            selectedAddressRef.current = nextAddress
+            setSelectedAddress(nextAddress)
+            // A refresh moved the active interface; invalidate so a shown QR
+            // can't keep encoding the previous endpoint.
+            invalidatePairing()
+          }
         }
       } catch {
         if (opts.notifyOnError && mountedRef.current) {
@@ -107,11 +148,12 @@ export function MobilePane(): React.JSX.Element {
         }
       }
     },
-    [mountedRef]
+    [mountedRef, invalidatePairing]
   )
 
   const generateQR = useCallback(
     async (opts: { rotate?: boolean } = {}) => {
+      const requestId = ++pairingRequestIdRef.current
       setLoading(true)
       try {
         const result = await window.api.mobile.getPairingQR({
@@ -119,6 +161,12 @@ export function MobilePane(): React.JSX.Element {
           connectionMode: qrConnectionMode,
           ...(opts.rotate || rotateNextQr ? { rotate: true } : {})
         })
+        // Why: sign-out, a mode switch, or an address change bump the epoch.
+        // A response for a superseded request must not paint a QR that no
+        // longer matches the current selection.
+        if (requestId !== pairingRequestIdRef.current) {
+          return
+        }
         if (result.available) {
           useAppStore.getState().recordFeatureInteraction('mobile-pairing')
           if (mountedRef.current) {
@@ -142,7 +190,7 @@ export function MobilePane(): React.JSX.Element {
           }
         }
       } catch {
-        if (mountedRef.current) {
+        if (mountedRef.current && requestId === pairingRequestIdRef.current) {
           toast.error(
             translate(
               'auto.components.settings.MobilePane.e3c427e020',
@@ -151,7 +199,7 @@ export function MobilePane(): React.JSX.Element {
           )
         }
       } finally {
-        if (mountedRef.current) {
+        if (mountedRef.current && requestId === pairingRequestIdRef.current) {
           setLoading(false)
         }
       }
@@ -173,19 +221,36 @@ export function MobilePane(): React.JSX.Element {
       }
       // Why: remember the path so reopening Settings keeps the user's choice
       // instead of snapping back to the default.
+      handledModeRef.current = nextMode
       setConnectionMode(nextMode)
       void updateSettings({ mobilePairingConnectionMode: nextMode })
-      if (qrDataUrl) {
-        // Why: a displayed code encodes the old connection policy. Hide it and
-        // rotate its pending credential before showing a code for the new mode.
-        setQrDataUrl(null)
-        setPairingUrl(null)
-        setEndpoint(null)
-        setRotateNextQr(true)
-      }
+      // A displayed or in-flight code encodes the old connection policy.
+      invalidatePairing()
     },
-    [connectionMode, qrDataUrl, updateSettings, setConnectionMode]
+    [connectionMode, invalidatePairing, updateSettings, setConnectionMode]
   )
+
+  const handleSelectedAddressChange = useCallback(
+    (address: string): void => {
+      setSelectedAddress(address)
+      selectedAddressRef.current = address
+      // Switching endpoints: a shown QR now encodes the old address.
+      invalidatePairing()
+    },
+    [invalidatePairing]
+  )
+
+  // Why: another window can persist a different path; the shared hook syncs
+  // connectionMode here without routing through changeConnectionMode. Treat
+  // that external change like a user path change so a QR for the old policy
+  // can't linger. No updateSettings call here — avoids a cross-window loop.
+  useEffect(() => {
+    if (connectionMode === handledModeRef.current) {
+      return
+    }
+    handledModeRef.current = connectionMode
+    invalidatePairing()
+  }, [connectionMode, invalidatePairing])
 
   useEffect(() => {
     void loadDevices()
@@ -228,7 +293,7 @@ export function MobilePane(): React.JSX.Element {
         }
         networkInterfaces={networkInterfaces}
         selectedAddress={selectedAddress}
-        onSelectedAddressChange={setSelectedAddress}
+        onSelectedAddressChange={handleSelectedAddressChange}
         refreshingNetworkInterfaces={refreshingNetworkInterfaces}
         onRefreshNetworkInterfaces={() => void loadNetworkInterfaces({ notifyOnError: true })}
         loading={loading}

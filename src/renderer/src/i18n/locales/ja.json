@@ -3931,7 +3931,7 @@
           "8c097ef04e": "Orca から。それはまだディスク上にあります。",
           "e62415c3d0": "これは削除するだけです",
           "b79b39d865": "プロジェクトの削除",
-          "fromOrcaSsh": "from Orca. Its files stay on {{value0}} — re-add that SSH host to recover it."
+          "fromOrcaSsh": "Orca からの削除のみで、ファイルは {{value0}} に残ったままです。SSH ホストを再追加すれば復元できます。"
         },
         "ScrollToCurrentWorkspaceToolbarButton": {
           "23989bb663": "アクティブなワークスペースを表示する"
@@ -5930,8 +5930,8 @@
           "1de96ec8a6": "Orca Mobile ボタンを表示",
           "682293cadf": "左サイドバー上部に Orca Mobile ボタンを表示します。",
           "d4f2b65f30": "サイドバーに Orca Mobile ショートカットを表示します。",
-          "installIntro": "Install Orca Mobile from the",
-          "installOutro": ", then pair below.",
+          "installIntro": "Orca Mobile は",
+          "installOutro": "からインストールし、以下でペアリングしてください。",
           "androidApkLabel": "Android APK"
         },
         "NotificationsPane": {
@@ -9175,28 +9175,26 @@
           "available": "利用可能",
           "reconnecting": "再接続中",
           "unavailable": "利用不可",
-          "title": "新しいスマートフォンをどのように接続しますか？",
-          "recommended": "推奨",
           "signIn": "サインイン",
-          "localDescription": "このスマートフォンをOrca Relayに接続せず、LANまたはTailscaleを使用します。",
-          "pathGroup": "How the phone reaches this computer",
+          "localDescription": "スマートフォンがこの Wi‑Fi または Tailscale に接続されている必要があります。サインインは不要です。",
+          "pathGroup": "スマートフォンがこのコンピューターに到達する方法",
           "anywhereTitle": "Orca Relay",
-          "anywhereDescription": "Phone can be on cellular or any Wi‑Fi. Sign-in required.",
-          "signInRequired": "Sign in to use Orca Mobile Relay.",
-          "signInAgain": "Sign in again",
-          "localTitle": "Local network"
+          "anywhereDescription": "スマートフォンはモバイル回線または Wi‑Fi から接続できます。サインインが必要です。",
+          "signInRequired": "Orca Mobile Relay を使用するにはサインインしてください。",
+          "relayUnavailable": "Orca Relay isn’t available in this build. Use Local network.",
+          "signInAgain": "再サインイン",
+          "localTitle": "ローカルネットワーク"
         },
         "MobilePairingSetupSection": {
           "title": "スマートフォンをペアリング",
           "regenerate": "再生成",
           "generate": "QRコードを生成",
           "refresh": "ネットワークインターフェースを更新",
-          "overview": "Generate a QR code, then scan it in Orca Mobile under Pair Desktop.",
-          "step1Title": "Connection",
-          "step2Title": "This computer’s address",
-          "step2RelayDescription": "Used for a faster direct path when nearby. Relay covers remote access.",
-          "step2LocalDescription": "The phone must be able to reach this address on Wi‑Fi or Tailscale.",
-          "signInToGenerate": "Sign in above first, or switch to Local network."
+          "overview": "QR コードを生成し、Orca Mobile の Pair Desktop でスキャンしてください。",
+          "step1Title": "接続方法",
+          "step2Title": "このコンピューターのアドレス",
+          "step2RelayDescription": "近くでは高速な直接接続に使用されます。Relay はリモートアクセスに対応します。",
+          "step2LocalDescription": "スマートフォンが Wi‑Fi または Tailscale でこのアドレスに到達できる必要があります。"
         },
         "MobileRelayBetaAvailability": {
           "about": "Orca Relay ベータについて",

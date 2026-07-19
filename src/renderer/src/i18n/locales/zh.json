@@ -5893,8 +5893,8 @@
           "1de96ec8a6": "显示 Orca 手机端按钮",
           "682293cadf": "在左侧边栏顶部显示 Orca 手机端按钮。",
           "d4f2b65f30": "在边栏中显示 Orca 手机端 快捷入口。",
-          "installIntro": "Install Orca Mobile from the",
-          "installOutro": ", then pair below.",
+          "installIntro": "从以下应用商店安装 Orca Mobile",
+          "installOutro": "，然后在下方配对。",
           "androidApkLabel": "Android APK"
         },
         "NotificationsPane": {
@@ -9175,28 +9175,26 @@
           "available": "可用",
           "reconnecting": "正在重新连接",
           "unavailable": "不可用",
-          "title": "新手机应如何连接？",
-          "recommended": "推荐",
           "signIn": "登录",
-          "localDescription": "使用局域网或 Tailscale，不通过 Orca Relay 连接这部手机。",
-          "pathGroup": "How the phone reaches this computer",
+          "localDescription": "手机必须连接此 Wi‑Fi 或您的 Tailscale。无需登录。",
+          "pathGroup": "手机访问此电脑的方式",
           "anywhereTitle": "Orca Relay",
-          "anywhereDescription": "Phone can be on cellular or any Wi‑Fi. Sign-in required.",
-          "signInRequired": "Sign in to use Orca Mobile Relay.",
-          "signInAgain": "Sign in again",
-          "localTitle": "Local network"
+          "anywhereDescription": "手机可通过蜂窝网络或任意 Wi‑Fi 连接。需要登录。",
+          "signInRequired": "请登录以使用 Orca Mobile Relay。",
+          "relayUnavailable": "Orca Relay isn’t available in this build. Use Local network.",
+          "signInAgain": "重新登录",
+          "localTitle": "本地网络"
         },
         "MobilePairingSetupSection": {
           "title": "配对手机",
           "regenerate": "重新生成",
           "generate": "生成二维码",
           "refresh": "刷新网络接口",
-          "overview": "Generate a QR code, then scan it in Orca Mobile under Pair Desktop.",
-          "step1Title": "Connection",
-          "step2Title": "This computer’s address",
-          "step2RelayDescription": "Used for a faster direct path when nearby. Relay covers remote access.",
-          "step2LocalDescription": "The phone must be able to reach this address on Wi‑Fi or Tailscale.",
-          "signInToGenerate": "Sign in above first, or switch to Local network."
+          "overview": "生成二维码，然后在 Orca Mobile 的 Pair Desktop 中扫描。",
+          "step1Title": "连接方式",
+          "step2Title": "此电脑的地址",
+          "step2RelayDescription": "距离较近时用于快速直接连接。Relay 覆盖远程访问。",
+          "step2LocalDescription": "手机必须能通过 Wi‑Fi 或 Tailscale 访问此地址。"
         },
         "MobileRelayBetaAvailability": {
           "about": "关于 Orca Relay 测试版",

@@ -130,14 +130,6 @@ export function MobilePairingSetupSection({
                 'Generate QR code'
               )}
         </Button>
-        {!canGenerate ? (
-          <p className="text-xs text-muted-foreground">
-            {translate(
-              'auto.components.settings.MobilePairingSetupSection.signInToGenerate',
-              'Sign in above first, or switch to Local network.'
-            )}
-          </p>
-        ) : null}
       </div>
     </section>
   )

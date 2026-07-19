@@ -69,10 +69,12 @@ describe('MobilePairingSetupSection', () => {
     expect(screen.getByText(/faster direct path when nearby/i)).toBeVisible()
   })
 
-  it('disables generate when sign-in is required and explains why', () => {
+  it('disables generate when sign-in is required', () => {
+    // The sign-in explanation lives in the connection panel above, not here, so
+    // this section only gates the button rather than repeating the copy.
     renderSection({ canGenerate: false })
     expect(screen.getByRole('button', { name: 'Generate QR code' })).toBeDisabled()
-    expect(screen.getByText(/Sign in above first, or switch to Local network/i)).toBeVisible()
+    expect(screen.queryByText(/Sign in above first/i)).toBeNull()
   })
 
   it('commits an OS interface picked from the list', async () => {

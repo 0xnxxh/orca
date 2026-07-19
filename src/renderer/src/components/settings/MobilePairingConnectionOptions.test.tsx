@@ -85,6 +85,35 @@ describe('MobilePairingConnectionOptions', () => {
     expect(screen.queryByTestId('anywhere-sign-in-panel')).toBeNull()
   })
 
+  it('shows Unavailable instead of a dead Sign in on unconfigured builds', () => {
+    mocks.state = {
+      ...mocks.state,
+      orcaProfileAuthStatus: {
+        activeProfileId: 'profile-1',
+        configured: false,
+        state: 'unconfigured',
+        persistence: 'none'
+      }
+    }
+    render(<MobilePairingConnectionOptions value="automatic" onChange={vi.fn()} />)
+
+    // No Relay endpoint to sign into — the Sign in CTA must not appear.
+    expect(screen.queryByTestId('anywhere-sign-in-panel')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Sign in/i })).toBeNull()
+    expect(screen.getByTestId('anywhere-unavailable-panel')).toBeVisible()
+    expect(screen.getByText('Unavailable')).toBeVisible()
+  })
+
+  it('moves selection with the arrow keys as a radiogroup', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<MobilePairingConnectionOptions value="automatic" onChange={onChange} />)
+
+    screen.getByRole('radio', { name: /Orca Relay/i }).focus()
+    await user.keyboard('{ArrowDown}')
+    expect(onChange).toHaveBeenCalledWith('local-only')
+  })
+
   it('selects a path from the compact list', async () => {
     const user = userEvent.setup()
     const onChange = vi.fn()

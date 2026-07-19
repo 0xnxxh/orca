@@ -115,7 +115,12 @@ export function MobilePairingConnectionOptions({
   const [relayStatus, setRelayStatus] = useState<MobileRelayStatus>('offline')
   const signedIn = authStatus?.state === 'connected'
   const reconnectRequired = authStatus?.state === 'reconnect-required'
-  const needsSignIn = value === 'automatic' && !signedIn
+  // Why: an unconfigured build has no Relay endpoint to sign into, so a Sign in
+  // CTA would be dead. Treat that case as unavailable (matching the prior UI)
+  // and only offer Sign in when the build can actually reach Relay.
+  const configured = authStatus?.configured !== false
+  const needsSignIn = value === 'automatic' && !signedIn && configured
+  const relayUnavailable = value === 'automatic' && !signedIn && !configured
   const optionRefs = useRef<Record<MobilePairingConnectionMode, HTMLDivElement | null>>({
     automatic: null,
     'local-only': null
@@ -184,6 +189,11 @@ export function MobilePairingConnectionOptions({
             'auto.components.settings.MobilePairingConnectionOptions.anywhereTitle',
             'Orca Relay'
           )}
+          // TODO(#relay-label-honesty): createMobilePairingOffer silently
+          // degrades an automatic offer to the local-only pairingUrl when relay
+          // provisioning fails, but the offer result doesn't expose the encoded
+          // mode. When getPairingQR returns the actual mode, surface a mismatch
+          // here instead of always claiming cellular Relay.
           description={translate(
             'auto.components.settings.MobilePairingConnectionOptions.anywhereDescription',
             'Phone can be on cellular or any Wi‑Fi. Sign-in required.'
@@ -246,6 +256,26 @@ export function MobilePairingConnectionOptions({
                   'Sign in'
                 )}
           </Button>
+        </div>
+      ) : null}
+
+      {relayUnavailable ? (
+        <div
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+          data-testid="anywhere-unavailable-panel"
+        >
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+            {translate(
+              'auto.components.settings.MobilePairingConnectionOptions.relayUnavailable',
+              'Orca Relay isn’t available in this build. Use Local network.'
+            )}
+          </p>
+          <Badge variant="outline" className="shrink-0">
+            {translate(
+              'auto.components.settings.MobilePairingConnectionOptions.unavailable',
+              'Unavailable'
+            )}
+          </Badge>
         </div>
       ) : null}
     </div>

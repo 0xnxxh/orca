@@ -3950,7 +3950,7 @@
           "8c097ef04e": "de Orca. Sigue estando en tu disco.",
           "e62415c3d0": "Esto solo quita",
           "b79b39d865": "Quitar proyecto",
-          "fromOrcaSsh": "from Orca. Its files stay on {{value0}} — re-add that SSH host to recover it."
+          "fromOrcaSsh": "de Orca. Sus archivos permanecen en {{value0}}; vuelve a añadir ese host SSH para recuperarlos."
         },
         "ScrollToCurrentWorkspaceToolbarButton": {
           "23989bb663": "Mostrar espacio de trabajo activo"
@@ -5908,8 +5908,8 @@
           "1de96ec8a6": "Mostrar botón de Orca Mobile",
           "682293cadf": "Mostrar el botón de Orca Mobile en la parte superior de la barra lateral izquierda.",
           "d4f2b65f30": "Mostrar el acceso directo de Orca Mobile en la barra lateral.",
-          "installIntro": "Install Orca Mobile from the",
-          "installOutro": ", then pair below.",
+          "installIntro": "Instala Orca Mobile desde la",
+          "installOutro": ", luego empareja a continuación.",
           "androidApkLabel": "Android APK"
         },
         "NotificationsPane": {
@@ -8045,7 +8045,7 @@
               "ffd52a96e4": "Móvil",
               "1de96ec8a6": "Mostrar botón de Orca Mobile",
               "682293cadf": "Mostrar el botón de Orca Mobile en la parte superior de la barra lateral izquierda.",
-              "e4f4daea0e": "relay",
+              "e4f4daea0e": "relé",
               "5d5af8e041": "iPhone"
             }
           }
@@ -9175,28 +9175,26 @@
           "available": "Disponible",
           "reconnecting": "Reconectando",
           "unavailable": "No disponible",
-          "title": "¿Cómo debe conectarse el teléfono nuevo?",
-          "recommended": "Recomendado",
           "signIn": "Iniciar sesión",
-          "localDescription": "Usa LAN o Tailscale sin conectar este teléfono mediante Orca Relay.",
-          "pathGroup": "How the phone reaches this computer",
+          "localDescription": "El teléfono debe estar en esta Wi‑Fi o en tu Tailscale. No requiere inicio de sesión.",
+          "pathGroup": "Cómo llega el teléfono a este ordenador",
           "anywhereTitle": "Orca Relay",
-          "anywhereDescription": "Phone can be on cellular or any Wi‑Fi. Sign-in required.",
-          "signInRequired": "Sign in to use Orca Mobile Relay.",
-          "signInAgain": "Sign in again",
-          "localTitle": "Local network"
+          "anywhereDescription": "El teléfono puede estar en datos móviles o cualquier Wi‑Fi. Se requiere inicio de sesión.",
+          "signInRequired": "Inicia sesión para usar Orca Mobile Relay.",
+          "relayUnavailable": "Orca Relay isn’t available in this build. Use Local network.",
+          "signInAgain": "Iniciar sesión de nuevo",
+          "localTitle": "Red local"
         },
         "MobilePairingSetupSection": {
           "title": "Vincular un teléfono",
           "regenerate": "Regenerar",
           "generate": "Generar código QR",
           "refresh": "Actualizar interfaces de red",
-          "overview": "Generate a QR code, then scan it in Orca Mobile under Pair Desktop.",
-          "step1Title": "Connection",
-          "step2Title": "This computer’s address",
-          "step2RelayDescription": "Used for a faster direct path when nearby. Relay covers remote access.",
-          "step2LocalDescription": "The phone must be able to reach this address on Wi‑Fi or Tailscale.",
-          "signInToGenerate": "Sign in above first, or switch to Local network."
+          "overview": "Genera un código QR, luego escanéalo en Orca Mobile en Pair Desktop.",
+          "step1Title": "Método de conexión",
+          "step2Title": "Dirección de este ordenador",
+          "step2RelayDescription": "Se usa para una ruta directa más rápida cuando está cerca. Relay cubre el acceso remoto.",
+          "step2LocalDescription": "El teléfono debe poder alcanzar esta dirección por Wi‑Fi o Tailscale."
         },
         "MobileRelayBetaAvailability": {
           "about": "Acerca de la beta de Orca Relay",

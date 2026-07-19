@@ -66,7 +66,11 @@ vi.mock('./MobilePairingConnectionOptions', () => ({
     </div>
   )
 }))
-vi.mock('./MobilePairingQrSection', () => ({ MobilePairingQrSection: () => <div /> }))
+vi.mock('./MobilePairingQrSection', () => ({
+  MobilePairingQrSection: (props: { qrDataUrl: string | null }) => (
+    <span data-testid="qr">{props.qrDataUrl ?? 'none'}</span>
+  )
+}))
 vi.mock('./MobilePairedDevicesSection', () => ({ MobilePairedDevicesSection: () => <div /> }))
 vi.mock('./MobileAutoRestoreFitSection', () => ({ MobileAutoRestoreFitSection: () => <div /> }))
 vi.mock('../mobile/WindowsFirewallNotice', () => ({ WindowsFirewallNotice: () => <div /> }))
@@ -142,6 +146,80 @@ describe('MobilePane pairing connection mode', () => {
       mobilePairingConnectionMode: 'local-only'
     }
     render(<MobilePane />)
+    expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
+  })
+
+  it('discards a Relay QR that resolves after signing out mid-generate', async () => {
+    const user = userEvent.setup()
+    let resolveQr: ((value: Record<string, unknown>) => void) | undefined
+    getPairingQR.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveQr = resolve
+        })
+    )
+    const { rerender } = render(<MobilePane />)
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic' }))
+
+    // Sign out while the Relay mint is still in flight.
+    mocks.holder.state.orcaProfileAuthStatus = { state: 'local' }
+    rerender(<MobilePane />)
+
+    // The superseded response arrives; it must not paint a QR on a desktop that
+    // can no longer serve Relay.
+    resolveQr?.({
+      available: true,
+      qrDataUrl: 'data:image/png;base64,relay',
+      pairingUrl: 'orca://relay',
+      endpoint: 'ws://relay'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(screen.getByTestId('qr')).toHaveTextContent('none')
+  })
+
+  it('clears a shown QR when another window changes the saved path', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<MobilePane />)
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() => expect(screen.getByTestId('qr')).toHaveTextContent('base64,qr'))
+
+    // Another window persists a new path; the shared hook syncs it in without
+    // routing through changeConnectionMode.
+    mocks.holder.state.settings = {
+      mobileAutoRestoreFitMs: null,
+      mobilePairingConnectionMode: 'local-only'
+    }
+    rerender(<MobilePane />)
+
+    await waitFor(() => expect(screen.getByTestId('mode')).toHaveTextContent('local-only'))
+    expect(screen.getByTestId('qr')).toHaveTextContent('none')
+  })
+
+  it('discards a QR that resolves after switching path mid-generate', async () => {
+    const user = userEvent.setup()
+    let resolveQr: ((value: Record<string, unknown>) => void) | undefined
+    getPairingQR.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveQr = resolve
+        })
+    )
+    render(<MobilePane />)
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic' }))
+
+    // Switch to Local network before the Relay mint resolves.
+    await user.click(screen.getByRole('button', { name: 'choose-local' }))
+
+    resolveQr?.({
+      available: true,
+      qrDataUrl: 'data:image/png;base64,relay',
+      pairingUrl: 'orca://relay',
+      endpoint: 'ws://relay'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(screen.getByTestId('qr')).toHaveTextContent('none')
     expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
   })
 })

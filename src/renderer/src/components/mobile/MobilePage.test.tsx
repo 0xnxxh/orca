@@ -118,11 +118,11 @@ describe('MobilePage pairing connection mode', () => {
     await waitFor(() => expect(screen.getByTestId('pairing-qr')).toHaveTextContent('base64,qr'))
     expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
 
-    let resolveLocalQr: ((value: Record<string, unknown>) => void) | undefined
+    let resolveRotatedLocalQr: ((value: Record<string, unknown>) => void) | undefined
     getPairingQR.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          resolveLocalQr = resolve
+          resolveRotatedLocalQr = resolve
         })
     )
     await user.click(screen.getByRole('button', { name: 'Local network' }))
@@ -139,7 +139,7 @@ describe('MobilePage pairing connection mode', () => {
       mobilePairingConnectionMode: 'local-only'
     })
 
-    resolveLocalQr?.({
+    resolveRotatedLocalQr?.({
       available: true,
       qrDataUrl: 'data:image/png;base64,local-qr',
       pairingUrl: 'orca://pair#local'
@@ -163,6 +163,29 @@ describe('MobilePage pairing connection mode', () => {
     await openPairingStep()
 
     await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
+    expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
+  })
+
+  it('re-mints with Relay when signing in upgrades a local-only fallback QR', async () => {
+    mocks.storeState.orcaProfileAuthStatus = { state: 'local' }
+    const user = userEvent.setup()
+    const { rerender } = render(<MobilePage />)
+    await waitFor(() => expect(screen.getByTestId('stage')).toHaveTextContent('intro'))
+    await user.click(screen.getByRole('button', { name: 'Enter flow' }))
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+    // Signed-out Step 2 auto-mints local-only while Orca Relay stays selected.
+    await waitFor(() => expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'local-only' }))
+    expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
+    getPairingQR.mockClear()
+
+    // Signing in must upgrade the displayed code from local-only to Relay.
+    mocks.storeState.orcaProfileAuthStatus = { state: 'connected' }
+    rerender(<MobilePage />)
+
+    await waitFor(() =>
+      expect(getPairingQR).toHaveBeenCalledWith({ connectionMode: 'automatic', rotate: true })
+    )
     expect(screen.getByTestId('mode')).toHaveTextContent('automatic')
   })
 

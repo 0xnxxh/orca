@@ -22,6 +22,7 @@ import {
   type MobilePairingConnectionMode
 } from '../../../../shared/mobile-pairing-connection-mode'
 import { useMobilePairingConnectionMode } from './use-mobile-pairing-connection-mode'
+import { useMobilePairingQrInvalidation } from './use-mobile-pairing-qr-invalidation'
 import { useMobileInstallActions } from './use-mobile-install-actions'
 
 export default function MobilePage(): React.JSX.Element {
@@ -50,7 +51,6 @@ export default function MobilePage(): React.JSX.Element {
   const [deviceCountAtPairStart, setDeviceCountAtPairStart] = useState<number | null>(null)
   const hasGeneratedRef = useRef(false)
   const pairingRequestIdRef = useRef(0)
-  const wasSignedInRef = useRef(signedIn)
   const mountedRef = useMountedRef()
   const stageRef = useRef<FlowStage | null>(null)
   const deviceCountAtPairStartRef = useRef<number | null>(null)
@@ -245,35 +245,25 @@ export default function MobilePage(): React.JSX.Element {
       if (nextMode === connectionMode) {
         return
       }
+      // Why: persist the pick and update local state. The QR invalidation +
+      // rotate-regenerate is handled centrally by useMobilePairingQrInvalidation
+      // (below), which also covers cross-window preference syncs.
       setConnectionMode(nextMode)
       void updateSettings({ mobilePairingConnectionMode: nextMode })
-      // Why: an offer encodes its connection policy. Invalidate the prior
-      // request before rotating so a late response cannot restore a stale QR.
-      pairingRequestIdRef.current += 1
-      const shouldRegenerate = hasGeneratedRef.current || pairLoading
-      hasGeneratedRef.current = false
-      setPairingUrl(null)
-      if (shouldRegenerate) {
-        void generatePairing(true, undefined, nextMode)
-      }
     },
-    [connectionMode, generatePairing, pairLoading, updateSettings, setConnectionMode]
+    [connectionMode, updateSettings, setConnectionMode]
   )
 
-  // Why: a Relay QR minted while signed in must not linger on a now-signed-out
-  // desktop — that desktop can no longer service it. On the signed-in->signed-out
-  // edge, invalidate the pending request and drop the displayed QR; the Step 2
-  // auto-generate effect re-mints it as local-only. Anywhere stays selected.
-  useEffect(() => {
-    const wasSignedIn = wasSignedInRef.current
-    wasSignedInRef.current = signedIn
-    if (wasSignedIn && !signedIn && connectionMode === 'automatic' && hasGeneratedRef.current) {
-      pairingRequestIdRef.current += 1
-      hasGeneratedRef.current = false
-      setPairQrDataUrl(null)
-      setPairingUrl(null)
-    }
-  }, [signedIn, connectionMode])
+  useMobilePairingQrInvalidation({
+    connectionMode,
+    signedIn,
+    pairLoading,
+    hasGeneratedRef,
+    pairingRequestIdRef,
+    setPairQrDataUrl,
+    setPairingUrl,
+    regenerate: (mode) => void generatePairing(true, undefined, mode)
+  })
 
   const loadNetworkInterfaces = useCallback(async () => {
     if (mountedRef.current) {
