@@ -158,7 +158,7 @@ async function runProof(ctx, args) {
   // its single-instance lock) alive and make survival vacuously true. app.evaluate
   // runs in the main process, so process.pid there is the exact main of the
   // instance this harness launched — authoritative, not a machine-wide scan.
-  const mainPid = await resolveElectronMainPid(session.app)
+  const mainPid = await resolveElectronMainPid(session.app, { allowLauncherFallback: false })
   if (!Number.isInteger(mainPid) || mainPid <= 0) {
     throw new Error(`could not resolve app main pid (got ${mainPid})`)
   }

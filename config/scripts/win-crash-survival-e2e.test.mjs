@@ -17,7 +17,10 @@ describe('win-crash-survival-e2e proof contracts', () => {
     expect(workflow).toMatch(/^  pull_request:/m)
     expect(workflow).not.toMatch(/^  push:/m)
     expect(workflow).toContain("- 'src/main/daemon/**'")
+    expect(workflow).toContain("- 'src/main/index.ts'")
     expect(workflow).toContain("- 'src/main/ipc/pty*.ts'")
+    expect(workflow).toContain("- 'src/main/startup/first-window-startup-services.ts'")
+    expect(workflow).toContain("- 'src/main/window/attach-main-window-services.ts'")
     expect(workflow).toContain("- 'src/preload/**'")
     expect(workflow).toContain("- 'src/renderer/src/components/terminal-pane/**'")
     expect(workflow).toContain("- 'src/renderer/src/store/slices/terminals.ts'")
@@ -149,20 +152,26 @@ describe('win-crash-survival-e2e proof contracts', () => {
     expect(reattachSentinelMatches('1660|canary|extra', 'canary', 1660)).toBe(false)
   })
 
-  it('resolves the real packaged main before falling back to the launcher child', async () => {
+  it('requires the real packaged main for the crash proof but permits fallback cleanup', async () => {
+    const harness = readFileSync('tools/win-crash-survival-e2e/run.mjs', 'utf8')
+    expect(harness).toContain(
+      'resolveElectronMainPid(session.app, { allowLauncherFallback: false })'
+    )
     expect(
       await resolveElectronMainPid({
         evaluate: async () => 222,
         process: () => ({ pid: 111 })
       })
     ).toBe(222)
+    const unavailableApp = {
+      evaluate: async () => {
+        throw new Error('main unavailable')
+      },
+      process: () => ({ pid: 111 })
+    }
     expect(
-      await resolveElectronMainPid({
-        evaluate: async () => {
-          throw new Error('main unavailable')
-        },
-        process: () => ({ pid: 111 })
-      })
-    ).toBe(111)
+      await resolveElectronMainPid(unavailableApp, { allowLauncherFallback: false })
+    ).toBeNull()
+    expect(await resolveElectronMainPid(unavailableApp)).toBe(111)
   })
 })

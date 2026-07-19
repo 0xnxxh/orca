@@ -1776,6 +1776,7 @@
         "Keep the live oracle fail-closed for crash delivery, event-log access, daemon identity, and same-shell reattach."
       ],
       "knownGaps": [
+        "The packaged journey proves one terminal end to end; concurrent restoration across the user's multi-terminal, multi-worktree layout is not exercised live.",
         "The gate covers a Windows local daemon-backed PowerShell terminal; WSL-backed shells are not exercised.",
         "SSH, remote-runtime, relay, mobile, macOS, and Linux paths are unaffected by the Windows relocated ConPTY host contract and are not exercised here.",
         "The Application event-log query is machine-wide, so an unrelated PowerShell crash on a non-isolated runner can false-fail the gate.",

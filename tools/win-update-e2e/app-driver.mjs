@@ -82,8 +82,8 @@ export async function launchInstalledApp({
   return { app, page }
 }
 
-/** Resolve the packaged Electron main, falling back to Playwright's child PID. */
-export async function resolveElectronMainPid(app) {
+/** Resolve the packaged Electron main, optionally falling back to Playwright's child PID. */
+export async function resolveElectronMainPid(app, { allowLauncherFallback = true } = {}) {
   try {
     // Why: packaged launchers can re-exec, leaving app.process() pointing at a
     // dead stub while evaluate runs in the authoritative Electron main.
@@ -93,6 +93,11 @@ export async function resolveElectronMainPid(app) {
     }
   } catch {
     /* the main connection may already be unavailable */
+  }
+  // Why: crash proofs must fail closed rather than kill a packaged launcher stub
+  // and mistake its death for the authoritative Electron main crashing.
+  if (!allowLauncherFallback) {
+    return null
   }
   const fallbackPid = app.process()?.pid
   return Number.isInteger(fallbackPid) && fallbackPid > 0 ? fallbackPid : null
