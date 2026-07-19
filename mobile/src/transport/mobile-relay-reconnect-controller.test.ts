@@ -58,6 +58,9 @@ describe('relay reconnect controller', () => {
     const reconnect = createController(vi.fn())
 
     expect(reconnect.shouldTryGraceAfterRelayFailure(new RelayOuterError(4401))).toBe(true)
+    expect(reconnect.shouldTryGraceAfterRelayFailure(new Error('relay transport error'))).toBe(
+      false
+    )
     expect(reconnect.shouldTryGraceAfterRelayFailure(new RelayOuterError(4408))).toBe(false)
     expect(reconnect.shouldTryGraceAfterRelayFailure(new RelayOuterError(4429))).toBe(false)
   })

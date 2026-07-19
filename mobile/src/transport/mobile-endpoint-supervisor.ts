@@ -117,12 +117,9 @@ export class MobileEndpointSupervisor {
     ) {
       return
     }
-    // Why: a flapping cellular link fires repeated revival nudges while the relay
-    // cell answers overlapping resumes with PEER_DROPPED/LIMIT_EXCEEDED; honoring
-    // the backoff window keeps those nudges from re-dialing instantly and churning.
-    // An initial lease rotation is scheduled work rather than a failure, so it may
-    // bypass the cooldown but never a policy gate requiring an external signal.
-    if (this.relayReconnect.shouldDefer(forceReplacement)) {
+    // Why: revival and lease timers can overlap resume failures; one shared cooldown
+    // prevents PEER_DROPPED/LIMIT_EXCEEDED reconnect churn.
+    if (this.relayReconnect.shouldDefer()) {
       return
     }
     this.operationInFlight = true

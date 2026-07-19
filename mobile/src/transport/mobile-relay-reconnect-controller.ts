@@ -101,12 +101,9 @@ export class RelayReconnectController {
 
   // True when the caller is still inside the cooldown window and must not
   // re-dial. Arms the self-scheduled retry so recovery still happens on its own.
-  shouldDefer(ignoreCooldown = false): boolean {
+  shouldDefer(): boolean {
     if (this.recoveryGate) {
       return true
-    }
-    if (ignoreCooldown) {
-      return false
     }
     if (this.dependencies.now() < this.nextAttemptAt) {
       this.scheduleRetry()
@@ -148,7 +145,7 @@ export class RelayReconnectController {
     // Why: only a rejected outer credential can be repaired by the grace token;
     // retrying session/capacity close codes immediately recreates relay churn.
     return (
-      !(error instanceof RelayOuterError) ||
+      error instanceof RelayOuterError &&
       error.code === MOBILE_RELAY_CLOSE_CODE.BAD_OUTER_CREDENTIAL
     )
   }

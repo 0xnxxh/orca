@@ -341,6 +341,29 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
+  it('does not duplicate transport failures across current and grace credentials', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new Error('network down')))
+    const resolveRelay = vi.fn(async () => {
+      throw new Error('director unreachable')
+    })
+    const deps = dependencies({
+      readBundle: vi.fn(async () => ({
+        ...bundle,
+        grace: { ...bundle.current, token: 'C'.repeat(43), hash: 'D'.repeat(43), version: 1 }
+      })),
+      openRelay,
+      resolveRelay
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+
+    expect(openRelay).toHaveBeenCalledOnce()
+    expect(resolveRelay).toHaveBeenCalledOnce()
+    supervisor.stop()
+  })
+
   it('keeps an authenticated relay off the backoff path when persistence fails', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
     const openRelay = vi.fn(() => new FakeRelaySession('connected'))
@@ -535,6 +558,31 @@ describe('mobile endpoint supervisor', () => {
     expect(openRelay).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(1)
     expect(openRelay).toHaveBeenCalledTimes(3)
+    supervisor.stop()
+  })
+
+  it('keeps lease rotation inside an active relay failure cooldown', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi
+      .fn()
+      .mockReturnValueOnce(
+        new FakeRelaySession('connected', new RelayOuterError(4429), Date.now() + 31_000)
+      )
+      .mockImplementation(() => new FakeRelaySession('connected'))
+    const deps = dependencies({
+      openRelay,
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    await vi.advanceTimersByTimeAsync(900)
+    logical.publishState('disconnected')
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(openRelay).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(150)
+    expect(openRelay).toHaveBeenCalledTimes(2)
     supervisor.stop()
   })
 
