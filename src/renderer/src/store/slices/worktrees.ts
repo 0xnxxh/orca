@@ -5015,17 +5015,6 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         }
       }
       const setupsChanged = survivingSetups.length !== s.projectHostSetups.length
-      // Why: legacy rows predate host stamps; repo rows and host setups are the
-      // persisted owner records that prove whether another host still owns them.
-      for (const repoId of repoIdsWithSurvivingOwners) {
-        repoIdsWithoutSurvivingOwners.delete(repoId)
-      }
-
-      const worktreeDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
-        s.worktreesByRepo,
-        removed,
-        repoIdsWithoutSurvivingOwners
-      )
       const detectedRows: Record<string, DetectedWorktreeListResult['worktrees']> =
         Object.fromEntries(
           Object.entries(s.detectedWorktreesByRepo).map(([repoId, result]) => [
@@ -5033,6 +5022,33 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             result.worktrees
           ])
         )
+      if (repoIdsWithoutSurvivingOwners.size > 0) {
+        // Why: repo/setup catalogs can lag session hydration; an explicitly hosted
+        // surviving worktree row is owner evidence during that loading gap too.
+        const recordSurvivingWorktreeOwners = (
+          rowsByRepo: Record<string, readonly { hostId?: ExecutionHostId }[]>
+        ): void => {
+          for (const [repoId, rows] of Object.entries(rowsByRepo)) {
+            if (rows.some((row) => row.hostId && !isRemovedRuntimeHostId(row.hostId, removed))) {
+              repoIdsWithSurvivingOwners.add(repoId)
+            }
+          }
+        }
+        recordSurvivingWorktreeOwners(s.worktreesByRepo)
+        recordSurvivingWorktreeOwners(detectedRows)
+
+        // Why: legacy rows predate host stamps; every available owner record must
+        // agree that no other host survives before an unhosted row can be retired.
+        for (const repoId of repoIdsWithSurvivingOwners) {
+          repoIdsWithoutSurvivingOwners.delete(repoId)
+        }
+      }
+
+      const worktreeDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
+        s.worktreesByRepo,
+        removed,
+        repoIdsWithoutSurvivingOwners
+      )
       const detectedDrop = dropWorktreeRowsForRemovedRuntimeEnvironments(
         detectedRows,
         removed,
@@ -5049,6 +5065,20 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ...worktreeDrop.removedWorktreeIds,
         ...detectedDrop.removedWorktreeIds
       ])
+      // Why: terminal tabs hydrate before worktree metadata; session-only ids for
+      // repos whose owners are all gone still need the full worktree-state purge.
+      if (repoIdsWithoutSurvivingOwners.size > 0) {
+        for (const worktreeId of Object.keys(s.tabsByWorktree)) {
+          const scope = parseWorkspaceKey(worktreeId)
+          const rawWorktreeId = scope?.type === 'worktree' ? scope.worktreeId : worktreeId
+          if (
+            scope?.type !== 'folder' &&
+            repoIdsWithoutSurvivingOwners.has(getRepoIdFromWorktreeId(rawWorktreeId))
+          ) {
+            removedWorktreeIds.add(rawWorktreeId)
+          }
+        }
+      }
       // Why: worktree-scoped UI state is keyed by bare worktree id, not host. If
       // the same id survives on another host, it now belongs to that unambiguous
       // survivor and must not lose its live tabs/editor/terminal state.

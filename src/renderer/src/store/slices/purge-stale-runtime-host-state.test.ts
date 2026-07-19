@@ -317,6 +317,71 @@ describe('purgeStaleRuntimeHostState', () => {
     expect(s.tabsByWorktree[worktreeId]).toBeUndefined()
   })
 
+  it('purges hydrated worktree state before its worktree row loads', () => {
+    const store = createTestStore()
+    const worktreeId = 'repoA::/session-only'
+    seedStore(store, {
+      repos: [
+        {
+          id: 'repoA',
+          path: '/repoA',
+          displayName: 'A',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: RUNTIME_A
+        }
+      ],
+      worktreesByRepo: {},
+      tabsByWorktree: { [worktreeId]: [makeTab({ id: 'hydrated-tab', worktreeId })] },
+      activeWorktreeId: worktreeId,
+      activeWorkspaceKey: worktreeWorkspaceKey(worktreeId)
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a'])
+
+    const s = store.getState()
+    expect(s.tabsByWorktree[worktreeId]).toBeUndefined()
+    expect(s.activeWorktreeId).toBeNull()
+    expect(s.activeWorkspaceKey).toBeNull()
+  })
+
+  it('uses an explicit surviving worktree row as owner evidence during catalog loading', () => {
+    const store = createTestStore()
+    const RUNTIME_B = toRuntimeExecutionHostId('env-b')
+    const legacyWorktreeId = 'shared::/legacy'
+    const survivingWorktreeId = 'shared::/host-b'
+    const tabs = [makeTab({ id: 'surviving-tab', worktreeId: legacyWorktreeId })]
+    seedStore(store, {
+      repos: [
+        {
+          id: 'shared',
+          path: '/shared-a',
+          displayName: 'A',
+          badgeColor: '#000',
+          addedAt: 0,
+          executionHostId: RUNTIME_A
+        }
+      ],
+      worktreesByRepo: {
+        shared: [makeWorktree({ id: legacyWorktreeId, repoId: 'shared', hostId: undefined })]
+      },
+      detectedWorktreesByRepo: {
+        shared: detectedResult('shared', [detected(survivingWorktreeId, 'shared', RUNTIME_B)])
+      },
+      tabsByWorktree: { [legacyWorktreeId]: tabs }
+    })
+
+    store.getState().purgeStaleRuntimeHostState(['env-a'])
+
+    const s = store.getState()
+    expect(s.repos).toEqual([])
+    expect(s.worktreesByRepo.shared.map((worktree) => worktree.id)).toEqual([legacyWorktreeId])
+    expect(s.detectedWorktreesByRepo.shared.worktrees.map((worktree) => worktree.id)).toEqual([
+      survivingWorktreeId
+    ])
+    expect(s.tabsByWorktree[legacyWorktreeId]).toBe(tabs)
+  })
+
   it('preserves an unhosted row when a setup proves another host still owns it', () => {
     const store = createTestStore()
     const RUNTIME_B = toRuntimeExecutionHostId('env-b')
