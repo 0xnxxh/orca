@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { monaco } from '@/lib/monaco-setup'
 import {
   disposeUnattachedDiffViewerMonacoModels,
+  disposeUnattachedMonacoModelPaths,
   getDiffViewerMonacoModelPaths
 } from './diff-monaco-model-disposal'
 
@@ -38,6 +39,28 @@ export function useDiffViewerLargeDiffLifecycle({
   )
   const currentDiffModelPathsRef = useRef(currentDiffModelPaths)
   currentDiffModelPathsRef.current = currentDiffModelPaths
+  const previousDiffModelPathsRef = useRef(currentDiffModelPaths)
+
+  useEffect(() => {
+    const previousModelPaths = previousDiffModelPathsRef.current
+    previousDiffModelPathsRef.current = currentDiffModelPaths
+    const supersededModelPaths = [
+      previousModelPaths.originalModelPath !== currentDiffModelPaths.originalModelPath
+        ? previousModelPaths.originalModelPath
+        : null,
+      previousModelPaths.modifiedModelPath !== currentDiffModelPaths.modifiedModelPath
+        ? previousModelPaths.modifiedModelPath
+        : null
+    ].filter((modelPath): modelPath is string => modelPath !== null)
+    if (supersededModelPaths.length === 0) {
+      return
+    }
+    // Why: keepCurrent*Model retains path-rotated blobs; defer until Monaco
+    // attaches the replacement, then release only detached superseded versions.
+    queueMicrotask(() => {
+      disposeUnattachedMonacoModelPaths(monaco, supersededModelPaths)
+    })
+  }, [currentDiffModelPaths])
 
   useEffect(() => {
     if (!limited) {

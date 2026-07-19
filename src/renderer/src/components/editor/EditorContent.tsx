@@ -964,7 +964,7 @@ export function EditorContent({
   const diffViewer = (
     <DiffViewer
       // Why: content already refreshes in place via modifiedModelKey below, so
-      // keying the component off content too remounts Monaco every save (flash + lost undo).
+      // keying the component off content too remounts Monaco and flashes on every save.
       key={`${viewStateScopeId}:${diffReloadNonce}`}
       modelKey={diffViewStateKey}
       originalModelKey={originalModelKey}

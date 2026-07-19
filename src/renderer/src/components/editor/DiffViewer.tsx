@@ -106,6 +106,7 @@ export default function DiffViewer({
   // updateDiffComment is only wired for local diffs (worktreeId present).
   useDiffCommentDecorator({
     editor: hasLineCommentAction ? modifiedEditor : null,
+    monacoModelIdentity: modifiedModelKey ?? modelKey,
     filePath: relativePath,
     worktreeId: worktreeId ?? '',
     comments: worktreeId ? diffComments : [],
