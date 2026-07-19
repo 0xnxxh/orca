@@ -94,6 +94,7 @@ export class MobileEndpointSupervisor {
       this.relayReconnect.suspendActiveRelay(this.logical)
       this.clearDirectProbeTimer()
       this.relayReconnect.clear()
+      this.leaseRotation.clear()
     }
   }
 
@@ -152,7 +153,7 @@ export class MobileEndpointSupervisor {
       }
     } finally {
       this.operationInFlight = false
-      if (forceReplacement && this.relayRotationPending && !this.stopped) {
+      if (forceReplacement && this.relayRotationPending && !this.stopped && this.foreground) {
         this.leaseRotation.armRetry(this.relayReconnect.retryDelayMs(5000))
       }
       // Why: the active relay can drop while migration follow-up still owns the mutex.
@@ -212,8 +213,10 @@ export class MobileEndpointSupervisor {
         // not open another socket or count against transport recovery backoff.
         await this.dependencies.writeBundle(this.bundle).catch(() => {})
       }
-      // Why: stop can race credential persistence after migration; never recreate its timer.
-      this.leaseRotation.scheduleFromLease(this.stopped ? null : session.getLeaseExpiresAt())
+      // Why: async persistence can finish after stop/background; never recreate a stale timer.
+      this.leaseRotation.scheduleFromLease(
+        this.stopped || !this.foreground ? null : session.getLeaseExpiresAt()
+      )
       this.scheduleDirectProbe()
       return { ok: true }
     } catch (error) {
@@ -288,6 +291,7 @@ export class MobileEndpointSupervisor {
       return
     }
     this.credentialRotationInFlight = true
+    let credentialRefreshed = false
     try {
       const result = await rotateMobileRelayCredential({
         client: this.logical,
@@ -296,12 +300,24 @@ export class MobileEndpointSupervisor {
         randomBytes: this.dependencies.randomBytes
       })
       this.bundle = result.bundle
+      credentialRefreshed = force
       this.host = await persistRelayHost(this.host, result.relay, this.dependencies.saveHost)
     } catch {
       // Why: pending material remains durable; the next authenticated direct
       // opportunity must reconcile it before creating another install key.
     } finally {
+      if (credentialRefreshed) {
+        this.relayReconnect.completeCredentialRefresh()
+      }
       this.credentialRotationInFlight = false
+      if (
+        credentialRefreshed &&
+        !this.stopped &&
+        this.foreground &&
+        this.relayReconnect.needsRecovery(this.logical.getState())
+      ) {
+        void this.recoverRelay()
+      }
     }
   }
 

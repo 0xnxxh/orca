@@ -16,7 +16,7 @@ vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Arr
 
 class FakeSession implements RpcClient {
   readonly sendRequest = vi.fn(
-    async (): Promise<RpcResponse> => ({
+    async (_method: string, _params?: unknown): Promise<RpcResponse> => ({
       id: 'rpc-1',
       ok: true,
       result: {},
@@ -473,6 +473,71 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
+  it('keeps rejected relay credentials gated until their replacement is durable', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi
+      .fn()
+      .mockReturnValueOnce(new FakeRelaySession('disconnected', new RelayOuterError(4401)))
+      .mockImplementation(() => new FakeRelaySession('connected'))
+    let finishCredentialWrite: (() => void) | undefined
+    const credentialWritePending = new Promise<void>((resolve) => {
+      finishCredentialWrite = resolve
+    })
+    const writeBundle = vi
+      .fn<(value: MobileRelayCredentialBundle) => Promise<void>>()
+      .mockResolvedValue()
+      .mockResolvedValueOnce()
+      .mockReturnValueOnce(credentialWritePending)
+    let installResult: Record<string, unknown> | null = null
+    logical.sendRequest.mockImplementation(async (method, params) => {
+      const request = params as { installReqId?: string; reqId?: string }
+      if (method === 'pairing.provisionRelay') {
+        installResult = {
+          v: 1,
+          reqId: request.reqId,
+          authorizationMode: 'authenticated-direct',
+          currentVersion: 3,
+          resumeExpiresAt: Date.now() + 300_000,
+          graceExpiresAt: Date.now() + 60_000
+        }
+        return { id: 'rpc-2', ok: true, result: installResult, _meta: { runtimeId: 'runtime-1' } }
+      }
+      return {
+        id: 'rpc-1',
+        ok: true,
+        result: {
+          v: 1,
+          relay,
+          installStatus: installResult
+            ? { v: 1, reqId: request.installReqId, state: 'committed', result: installResult }
+            : { v: 1, reqId: request.installReqId, state: 'not-found' }
+        },
+        _meta: { runtimeId: 'runtime-1' }
+      }
+    })
+    const deps = dependencies({ openRelay, writeBundle })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    logical.publishState('connected')
+    await vi.waitFor(() => expect(writeBundle).toHaveBeenCalledTimes(2))
+
+    // The direct socket can disappear after the server commits but before the
+    // replacement credential finishes its durable write.
+    logical.publishState('disconnected')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(openRelay).toHaveBeenCalledOnce()
+
+    finishCredentialWrite?.()
+    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledTimes(2))
+    expect(openRelay).toHaveBeenLastCalledWith(
+      relay,
+      expect.objectContaining({ version: 3 }),
+      expect.any(String)
+    )
+    supervisor.stop()
+  })
+
   it('does not recreate a relay retry after an in-flight dial is backgrounded', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
     let finishResolve: ((value: typeof relay) => void) | undefined
@@ -496,6 +561,34 @@ describe('mobile endpoint supervisor', () => {
     await starting
 
     expect(openRelay).toHaveBeenCalledTimes(2)
+    expect(vi.getTimerCount()).toBe(0)
+    supervisor.stop()
+  })
+
+  it('does not recreate a lease retry after forced replacement is backgrounded', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    let finishResolve: ((value: typeof relay) => void) | undefined
+    const resolvePending = new Promise<typeof relay>((resolve) => {
+      finishResolve = resolve
+    })
+    const openRelay = vi
+      .fn()
+      .mockReturnValueOnce(new FakeRelaySession('connected', null, Date.now() + 31_000))
+      .mockReturnValueOnce(new FakeRelaySession('disconnected', new RelayOuterError(4409)))
+      .mockReturnValueOnce(new FakeRelaySession('disconnected', new RelayOuterError(4408)))
+    const deps = dependencies({
+      openRelay,
+      resolveRelay: vi.fn(() => resolvePending)
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    await vi.advanceTimersByTimeAsync(1000)
+    await vi.waitFor(() => expect(deps.resolveRelay).toHaveBeenCalledOnce())
+    supervisor.setForeground(false)
+    finishResolve?.(relay)
+    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledTimes(3))
+
     expect(vi.getTimerCount()).toBe(0)
     supervisor.stop()
   })
@@ -616,6 +709,7 @@ describe('mobile endpoint supervisor', () => {
     supervisor.setForeground(false)
     expect(logical.suspendActiveSession).toHaveBeenCalledOnce()
     expect(logical.getState()).toBe('disconnected')
+    expect(vi.getTimerCount()).toBe(0)
 
     supervisor.setForeground(true)
     await vi.waitFor(() => expect(logical.migrateTo).toHaveBeenCalled())

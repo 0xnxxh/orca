@@ -83,8 +83,21 @@ export class RelayReconnectController {
   resetForDirectConnection(): boolean {
     const needsCredentialRefresh = this.recoveryGate === 'fresh-credential'
     this.activeSession = null
-    this.reset()
+    if (needsCredentialRefresh) {
+      // Why: the rejected credential stays unusable until its replacement is durable.
+      this.consecutiveFailures = 0
+      this.nextAttemptAt = 0
+      this.clearTimer()
+    } else {
+      this.reset()
+    }
     return needsCredentialRefresh
+  }
+
+  completeCredentialRefresh(): void {
+    if (this.recoveryGate === 'fresh-credential') {
+      this.reset()
+    }
   }
 
   registerActiveFailure(logical: StableLogicalRpcClient): void {
