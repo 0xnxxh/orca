@@ -14,6 +14,8 @@ export const QUICK_COMMAND_SUPPORTED_AGENTS = MOBILE_AGENT_CATALOG.filter((entry
   supportsTerminalAgentQuickCommand(entry.id)
 )
 
+export const QUICK_COMMAND_SEARCH_QUERY_MAX_LENGTH = 2048
+
 type ListProps = {
   repoCommands: TerminalQuickCommand[]
   globalCommands: TerminalQuickCommand[]
@@ -47,9 +49,12 @@ export function QuickCommandsList({
 }: ListProps) {
   const hasVisible = repoCommands.length + globalCommands.length > 0
   const addDisabled = disabled || !canAdd
+  // Why: keep an active filter clearable if a delete or paired desktop edit
+  // leaves only one command while the sheet is open.
+  const showSearch = totalCount > 1 || query.length > 0
   return (
     <View style={styles.listBody}>
-      {totalCount > 1 ? (
+      {showSearch ? (
         <View style={styles.search}>
           <Search size={16} color={colors.textMuted} />
           <TextInput
@@ -60,6 +65,9 @@ export function QuickCommandsList({
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
+            // Why: bound pasted text before it reaches the per-keystroke JS
+            // search path; useful queries are far smaller than this budget.
+            maxLength={QUICK_COMMAND_SEARCH_QUERY_MAX_LENGTH}
           />
         </View>
       ) : null}
