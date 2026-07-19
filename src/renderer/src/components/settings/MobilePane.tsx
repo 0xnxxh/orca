@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { CircleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppStore } from '../../store'
 import { useMountedRef } from '@/hooks/useMountedRef'
@@ -31,6 +32,9 @@ export function MobilePane(): React.JSX.Element {
   const updateSettings = useAppStore((s) => s.updateSettings)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [pairingUrl, setPairingUrl] = useState<string | null>(null)
+  // Mode the displayed QR actually encodes; can be 'local-only' under an
+  // Anywhere selection when Relay provisioning degraded server-side.
+  const [qrEncodedMode, setQrEncodedMode] = useState<MobilePairingConnectionMode | null>(null)
   const [endpoint, setEndpoint] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [qrEnlarged, setQrEnlarged] = useState(false)
@@ -76,18 +80,22 @@ export function MobilePane(): React.JSX.Element {
   // produced it changes, drop any displayed QR and invalidate the in-flight
   // request so a late response can't restore it; arm rotation so the next mint
   // issues a fresh credential rather than the discarded pending one.
-  const invalidatePairing = useCallback((): void => {
+  const invalidatePairing = useCallback((opts: { armRotate?: boolean } = {}): void => {
     pairingRequestIdRef.current += 1
     const hadPending = qrDisplayedRef.current || loadingRef.current
     setQrDataUrl(null)
     setPairingUrl(null)
+    setQrEncodedMode(null)
     setEndpoint(null)
     // Why: a superseded in-flight generate no longer clears loading in its
     // finally (the epoch bump skips it), so drop the spinner here or Generate
     // stays disabled forever after a mid-flight path/sign-out/address change.
     loadingRef.current = false
     setLoading(false)
-    if (hadPending) {
+    // armRotate:false for path changes — the main process rotates exactly once
+    // when the requested mode differs from the pending token's minted mode, so
+    // an extra renderer rotate would only race other windows off the new token.
+    if (hadPending && opts.armRotate !== false) {
       setRotateNextQr(true)
     }
   }, [])
@@ -184,6 +192,7 @@ export function MobilePane(): React.JSX.Element {
           if (mountedRef.current) {
             setQrDataUrl(result.qrDataUrl)
             setPairingUrl(result.pairingUrl)
+            setQrEncodedMode(result.connectionMode)
             setEndpoint(result.endpoint)
             setDeviceCountAtQr(getPairedMobileDevicesSnapshot().length)
             clearCodeCopiedResetTimer()
@@ -237,8 +246,9 @@ export function MobilePane(): React.JSX.Element {
       handledModeRef.current = nextMode
       setConnectionMode(nextMode)
       void updateSettings({ mobilePairingConnectionMode: nextMode })
-      // A displayed or in-flight code encodes the old connection policy.
-      invalidatePairing()
+      // A displayed or in-flight code encodes the old connection policy. The
+      // main process rotates on the mode mismatch, so don't arm a second rotate.
+      invalidatePairing({ armRotate: false })
     },
     [connectionMode, invalidatePairing, updateSettings, setConnectionMode]
   )
@@ -262,7 +272,7 @@ export function MobilePane(): React.JSX.Element {
       return
     }
     handledModeRef.current = connectionMode
-    invalidatePairing()
+    invalidatePairing({ armRotate: false })
   }, [connectionMode, invalidatePairing])
 
   useEffect(() => {
@@ -329,6 +339,23 @@ export function MobilePane(): React.JSX.Element {
         hasQrCode={qrDataUrl != null}
         onGenerateQr={() => void generateQR({ rotate: qrDataUrl != null })}
       />
+
+      {qrDataUrl != null && connectionMode === 'automatic' && qrEncodedMode === 'local-only' ? (
+        // Why: an Anywhere mint can degrade server-side when Relay provisioning
+        // fails; say so instead of letting the Relay label overclaim the code.
+        <div
+          className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 p-3"
+          data-testid="relay-degraded-notice"
+        >
+          <CircleAlert className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <p className="text-xs text-muted-foreground">
+            {translate(
+              'auto.components.settings.MobilePane.relayDegradedNotice',
+              'Relay couldn’t be reached — this code only works on your local network. Regenerate to try again.'
+            )}
+          </p>
+        </div>
+      ) : null}
 
       <MobilePairingQrSection
         qrDataUrl={qrDataUrl}

@@ -191,11 +191,6 @@ export function MobilePairingConnectionOptions({
             'auto.components.settings.MobilePairingConnectionOptions.anywhereTitle',
             'Orca Relay'
           )}
-          // TODO(#relay-label-honesty): createMobilePairingOffer silently
-          // degrades an automatic offer to the local-only pairingUrl when relay
-          // provisioning fails, but the offer result doesn't expose the encoded
-          // mode. When getPairingQR returns the actual mode, surface a mismatch
-          // here instead of always claiming cellular Relay.
           description={translate(
             'auto.components.settings.MobilePairingConnectionOptions.anywhereDescription',
             'Phone can be on cellular or any Wi‑Fi. Sign-in required.'

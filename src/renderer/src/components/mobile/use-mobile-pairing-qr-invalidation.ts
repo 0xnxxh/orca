@@ -22,7 +22,7 @@ export function useMobilePairingQrInvalidation(params: {
   setPairQrDataUrl: (value: string | null) => void
   setPairingUrl: (value: string | null) => void
   setPairLoading: (value: boolean) => void
-  regenerate: (mode: MobilePairingConnectionMode) => void
+  regenerate: (mode: MobilePairingConnectionMode, opts: { rotate: boolean }) => void
 }): void {
   const {
     connectionMode,
@@ -55,7 +55,9 @@ export function useMobilePairingQrInvalidation(params: {
     setPairingUrl(null)
     setPairQrDataUrl(null)
     if (signedIn && canMintMobilePairingOffer({ connectionMode, signedIn })) {
-      regenerate(connectionMode)
+      // Why: rotate on the sign-in edge — the token behind the QR cleared at
+      // sign-out may have been exposed, so the fresh session mints fresh.
+      regenerate(connectionMode, { rotate: true })
     } else {
       setPairLoading(false)
     }
@@ -87,7 +89,11 @@ export function useMobilePairingQrInvalidation(params: {
     setPairingUrl(null)
     setPairQrDataUrl(null)
     if (shouldRegenerate && canMintMobilePairingOffer({ connectionMode, signedIn })) {
-      regenerate(connectionMode)
+      // Why: no rotate here — the main process rotates exactly once when the
+      // requested mode differs from the pending token's minted mode, so the
+      // initiating window and windows reacting to a cross-window preference
+      // sync converge on the same fresh token instead of racing rotations.
+      regenerate(connectionMode, { rotate: false })
     } else {
       // No honest re-mint (blocked path or nothing pending); drop spinner.
       setPairLoading(false)

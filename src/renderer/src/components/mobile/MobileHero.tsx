@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Copy, RefreshCw } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CircleAlert, Copy, RefreshCw } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { MobileNetworkInterface } from '../settings/mobile-network-interface-selection'
 import { AndroidLogo, IosBrandIcon } from './MobileBrandIcons'
 import { NetworkInterfacePicker } from './NetworkInterfacePicker'
 import { MobilePairingConnectionOptions } from '../settings/MobilePairingConnectionOptions'
+import { MobileRelayBetaNotice } from '../settings/MobileRelayBetaNotice'
 import { getChannelTagline, type InstallCopy, type IosChannel } from './mobile-platform-copy'
 import { WindowsFirewallNotice } from './WindowsFirewallNotice'
 import type { MobilePairingConnectionMode } from '../../../../shared/mobile-pairing-connection-mode'
@@ -39,6 +40,8 @@ type HeroFlowProps = {
   onCopyInstallUrl: () => void
   pairQrDataUrl: string | null
   pairingUrl: string | null
+  /** True when the shown QR degraded to local-only under an Anywhere selection. */
+  relayDegraded: boolean
   pairLoading: boolean
   connectionMode: MobilePairingConnectionMode
   onConnectionModeChange: (mode: MobilePairingConnectionMode) => void
@@ -67,6 +70,7 @@ export function HeroFlow({
   onCopyInstallUrl,
   pairQrDataUrl,
   pairingUrl,
+  relayDegraded,
   pairLoading,
   connectionMode,
   onConnectionModeChange,
@@ -245,6 +249,7 @@ export function HeroFlow({
                 onChange={onConnectionModeChange}
                 compact
               />
+              <MobileRelayBetaNotice className="mt-1.5" />
             </div>
             <div className="mp-qr-stack mp-pairing-qr">
               <div
@@ -283,6 +288,18 @@ export function HeroFlow({
                     ? translate('auto.components.mobile.MobileHero.e59a252eca', 'Regenerate code')
                     : translate('auto.components.mobile.MobileHero.a6cffbbb0b', 'Generate code')}
               </button>
+              {relayDegraded ? (
+                <p
+                  className="flex items-start gap-1.5 text-xs text-muted-foreground"
+                  data-testid="relay-degraded-notice"
+                >
+                  <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  {translate(
+                    'auto.components.mobile.MobileHero.relayDegradedNotice',
+                    'Relay couldn’t be reached — this code only works on your local network.'
+                  )}
+                </p>
+              ) : null}
             </div>
             <div className="mp-pairing-controls">
               <div className="mp-network-row">

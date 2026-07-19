@@ -132,7 +132,8 @@ describe('MobilePane pairing connection mode', () => {
       available: true,
       qrDataUrl: 'data:image/png;base64,qr',
       pairingUrl: 'orca://pair',
-      endpoint: 'ws://host'
+      endpoint: 'ws://host',
+      connectionMode: 'automatic'
     })
     mocks.listDevices.mockReset().mockResolvedValue({ devices: [] })
     mocks.listNetworkInterfaces.mockReset().mockResolvedValue({ interfaces: [] })
@@ -186,6 +187,41 @@ describe('MobilePane pairing connection mode', () => {
     await user.click(screen.getByRole('button', { name: 'Generate' }))
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(getPairingQR).not.toHaveBeenCalled()
+  })
+
+  it('flags an Anywhere mint that degraded to a local-only code', async () => {
+    getPairingQR.mockResolvedValue({
+      available: true,
+      qrDataUrl: 'data:image/png;base64,qr',
+      pairingUrl: 'orca://pair#degraded',
+      endpoint: 'ws://host',
+      // Relay provisioning failed server-side; the offer encodes local-only.
+      connectionMode: 'local-only'
+    })
+    const user = userEvent.setup()
+    render(<MobilePane />)
+
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('relay-degraded-notice')).toHaveTextContent(
+        'only works on your local network'
+      )
+    )
+
+    // Switching to Local network clears the mismatch along with the QR.
+    await user.click(screen.getByRole('button', { name: 'choose-local' }))
+    await waitFor(() =>
+      expect(screen.queryByTestId('relay-degraded-notice')).not.toBeInTheDocument()
+    )
+  })
+
+  it('does not flag an honest Relay mint', async () => {
+    const user = userEvent.setup()
+    render(<MobilePane />)
+
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await waitFor(() => expect(screen.getByTestId('qr')).toHaveTextContent('base64,qr'))
+    expect(screen.queryByTestId('relay-degraded-notice')).not.toBeInTheDocument()
   })
 
   it('persists the chosen path when the mode changes', async () => {

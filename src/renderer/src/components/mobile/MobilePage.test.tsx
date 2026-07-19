@@ -116,7 +116,7 @@ describe('MobilePage pairing connection mode', () => {
     await user.click(screen.getByRole('button', { name: 'Continue' }))
   }
 
-  it('defaults signed-in pairing to Anywhere and rotates when same-network is selected', async () => {
+  it('defaults signed-in pairing to Anywhere and remints when same-network is selected', async () => {
     const user = userEvent.setup()
     await openPairingStep()
 
@@ -132,15 +132,16 @@ describe('MobilePage pairing connection mode', () => {
         })
     )
     await user.click(screen.getByRole('button', { name: 'Local network' }))
+    // No rotate flag: the main process rotates exactly once on the policy
+    // mismatch, so concurrent windows converge on the same fresh token.
     await waitFor(() =>
       expect(getPairingQR).toHaveBeenLastCalledWith({
-        connectionMode: 'local-only',
-        rotate: true
+        connectionMode: 'local-only'
       })
     )
     expect(screen.getByTestId('mode')).toHaveTextContent('local-only')
     // The prior Relay QR clears immediately so the old policy's code is never
-    // shown while the rotated local-only mint is still pending.
+    // shown while the reminted local-only offer is still pending.
     expect(screen.getByTestId('pairing-qr')).toHaveTextContent('none')
     expect(screen.getByTestId('pairing-url')).toHaveTextContent('none')
     expect(mocks.storeState.updateSettings).toHaveBeenCalledWith({

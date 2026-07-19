@@ -32,6 +32,10 @@ export default function MobilePage(): React.JSX.Element {
 
   const [pairQrDataUrl, setPairQrDataUrl] = useState<string | null>(null)
   const [pairingUrl, setPairingUrl] = useState<string | null>(null)
+  // Mode the displayed QR actually encodes; can be 'local-only' under an
+  // Anywhere selection when Relay provisioning degraded server-side.
+  const [encodedConnectionMode, setEncodedConnectionMode] =
+    useState<MobilePairingConnectionMode | null>(null)
   const [pairLoading, setPairLoading] = useState(false)
   const signedIn = useAppStore((state) => state.orcaProfileAuthStatus?.state === 'connected')
   const [connectionMode, setConnectionMode] = useMobilePairingConnectionMode()
@@ -70,7 +74,8 @@ export default function MobilePage(): React.JSX.Element {
     pairingRequestIdRef,
     setPairQrDataUrl,
     setPairingUrl,
-    setPairLoading
+    setPairLoading,
+    setEncodedConnectionMode
   })
 
   const handleConnectionModeChange = useCallback(
@@ -96,7 +101,7 @@ export default function MobilePage(): React.JSX.Element {
     setPairQrDataUrl,
     setPairingUrl,
     setPairLoading,
-    regenerate: (mode) => void generatePairing(true, undefined, mode)
+    regenerate: (mode, opts) => void generatePairing(opts.rotate, undefined, mode)
   })
 
   const loadNetworkInterfaces = useCallback(async () => {
@@ -213,6 +218,7 @@ export default function MobilePage(): React.JSX.Element {
     hasGeneratedRef.current = false
     setPairQrDataUrl(null)
     setPairingUrl(null)
+    setEncodedConnectionMode(null)
     showFirstPairingFlow()
   }
 
@@ -222,6 +228,7 @@ export default function MobilePage(): React.JSX.Element {
     hasGeneratedRef.current = false
     setPairQrDataUrl(null)
     setPairingUrl(null)
+    setEncodedConnectionMode(null)
     showPairAnotherDeviceFlow()
   }
 
@@ -270,6 +277,11 @@ export default function MobilePage(): React.JSX.Element {
       handleConnectionModeChange={handleConnectionModeChange}
       pairQrDataUrl={pairQrDataUrl}
       pairingUrl={pairingUrl}
+      relayDegraded={
+        pairQrDataUrl != null &&
+        connectionMode === 'automatic' &&
+        encodedConnectionMode === 'local-only'
+      }
       platform={platform}
       refreshingNetworkInterfaces={refreshingNetworkInterfaces}
       revokeDevice={(id) => void revokeDevice(id)}
