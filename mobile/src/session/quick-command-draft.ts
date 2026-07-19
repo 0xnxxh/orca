@@ -8,9 +8,9 @@ import {
   isAgentQuickCommand,
   MAX_QUICK_COMMAND_AGENT_PROMPT_LENGTH,
   MAX_QUICK_COMMAND_LABEL_LENGTH,
-  MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH
+  MAX_QUICK_COMMAND_TERMINAL_TEXT_LENGTH,
+  supportsTerminalAgentQuickCommand
 } from '../terminal/quick-commands'
-import { mobileTuiAgentSupportsPromptCommand } from '../tasks/mobile-tui-agents'
 
 // A single mutable draft covering both quick-command actions. Both the command
 // text and the agent/prompt are kept while editing so toggling Action back and
@@ -75,7 +75,7 @@ export function isQuickCommandDraftValid(draft: QuickCommandDraft): boolean {
   if (draft.action === 'agent-prompt') {
     return Boolean(
       draft.agent &&
-      mobileTuiAgentSupportsPromptCommand(draft.agent) &&
+      supportsTerminalAgentQuickCommand(draft.agent) &&
       draft.prompt.trim().length > 0
     )
   }

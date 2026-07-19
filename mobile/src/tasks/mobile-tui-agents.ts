@@ -147,37 +147,6 @@ export const MOBILE_TUI_AGENT_LAUNCH_COMMANDS: Record<TuiAgent, string> = {
   openclaw: 'openclaw'
 }
 
-// Why: agent-prompt quick commands inject the prompt through the agent's launch
-// argv/flags, so agents that only accept a prompt over stdin after start
-// ('stdin-after-start' promptInjectionMode in desktop tui-agent-config) can't be
-// targeted. Mirrored here (with a parity test) so mobile avoids runtime-importing
-// the desktop config, matching desktop supportsTerminalAgentQuickCommand.
-export const MOBILE_TUI_AGENT_PROMPT_COMMAND_UNSUPPORTED: ReadonlySet<TuiAgent> = new Set([
-  'claude-agent-teams',
-  'autohand',
-  'ante',
-  'aider',
-  'goose',
-  'amp',
-  'kilo',
-  'kiro',
-  'crush',
-  'aug',
-  'cline',
-  'codebuff',
-  'continue',
-  'kimi',
-  'mistral-vibe',
-  'qwen-code',
-  'rovo',
-  'openclaw',
-  'devin'
-])
-
-export function mobileTuiAgentSupportsPromptCommand(value: unknown): value is TuiAgent {
-  return isMobileTuiAgent(value) && !MOBILE_TUI_AGENT_PROMPT_COMMAND_UNSUPPORTED.has(value)
-}
-
 export function isMobileTuiAgent(value: unknown): value is TuiAgent {
   return MOBILE_TUI_AGENT_AUTO_PICK_ORDER.includes(value as TuiAgent)
 }

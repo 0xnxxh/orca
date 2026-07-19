@@ -3,10 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { MOBILE_AGENT_CATALOG } from './mobile-agent-catalog'
-import {
-  MOBILE_TUI_AGENT_AUTO_PICK_ORDER,
-  MOBILE_TUI_AGENT_PROMPT_COMMAND_UNSUPPORTED
-} from './mobile-tui-agents'
+import { MOBILE_TUI_AGENT_AUTO_PICK_ORDER } from './mobile-tui-agents'
 
 const currentDir = import.meta.dirname
 
@@ -31,25 +28,6 @@ function parseDesktopConfiguredAgents(): string[] {
   )
 }
 
-function parseDesktopStdinAfterStartAgents(): Set<string> {
-  const source = readDesktopSharedFile('tui-agent-config.ts')
-  const match = source.match(/TUI_AGENT_CONFIG: Record<TuiAgent, TuiAgentConfig> = {([\s\S]*?)^}/m)
-  expect(match).not.toBeNull()
-  const body = match?.[1] ?? ''
-  const entries = Array.from(body.matchAll(/^  (?:'([^']+)'|([a-z][a-z0-9-]*)): {/gm), (entry) => ({
-    id: entry[1] ?? entry[2],
-    index: entry.index ?? 0
-  }))
-  const unsupported = new Set<string>()
-  for (let i = 0; i < entries.length; i += 1) {
-    const segment = body.slice(entries[i].index, entries[i + 1]?.index ?? body.length)
-    if (/promptInjectionMode:\s*'stdin-after-start'/.test(segment)) {
-      unsupported.add(entries[i].id)
-    }
-  }
-  return unsupported
-}
-
 describe('mobile agent catalog', () => {
   it('stays in the same order as desktop auto-pick and covers every configured TUI agent', () => {
     const desktopAutoPickOrder = parseDesktopAutoPickOrder()
@@ -57,12 +35,6 @@ describe('mobile agent catalog', () => {
     expect(MOBILE_AGENT_CATALOG.map((agent) => agent.id)).toEqual(desktopAutoPickOrder)
     expect(new Set(MOBILE_AGENT_CATALOG.map((agent) => agent.id))).toEqual(
       new Set(parseDesktopConfiguredAgents())
-    )
-  })
-
-  it('mirrors desktop stdin-after-start agents as prompt-command-unsupported', () => {
-    expect(new Set(MOBILE_TUI_AGENT_PROMPT_COMMAND_UNSUPPORTED)).toEqual(
-      parseDesktopStdinAfterStartAgents()
     )
   })
 

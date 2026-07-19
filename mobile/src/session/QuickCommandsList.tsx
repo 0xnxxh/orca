@@ -3,12 +3,15 @@ import { Pencil, Plus, Search, Trash2, Check, Play } from 'lucide-react-native'
 import { colors, spacing, typography } from '../theme/mobile-theme'
 import { MobileAgentIcon } from '../components/MobileAgentIcon'
 import { MOBILE_AGENT_CATALOG } from '../tasks/mobile-agent-catalog'
-import { mobileTuiAgentSupportsPromptCommand } from '../tasks/mobile-tui-agents'
 import type { TerminalQuickCommand, TuiAgent } from '../../../src/shared/types'
-import { getQuickCommandDisplayPreview, isAgentQuickCommand } from '../terminal/quick-commands'
+import {
+  getQuickCommandDisplayPreview,
+  isAgentQuickCommand,
+  supportsTerminalAgentQuickCommand
+} from '../terminal/quick-commands'
 
 export const QUICK_COMMAND_SUPPORTED_AGENTS = MOBILE_AGENT_CATALOG.filter((entry) =>
-  mobileTuiAgentSupportsPromptCommand(entry.id)
+  supportsTerminalAgentQuickCommand(entry.id)
 )
 
 type ListProps = {

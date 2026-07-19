@@ -19,10 +19,16 @@ function command(overrides: Partial<TerminalQuickCommand> = {}): TerminalQuickCo
 }
 
 describe('mobile quick-command launch', () => {
-  it('preserves multiline shell syntax in runnable startup commands', () => {
-    const multiline = "cat <<'EOF'\nhello world\nEOF\nprintf '%s\\n' done"
-    expect(buildMobileQuickCommandLaunch(command({ command: multiline }))).toEqual({
-      options: { startupCommand: multiline, startupCommandDelivery: 'shell-ready' }
+  it('joins multiline runnable commands with "; " to match desktop', () => {
+    // Parity with desktop flattenTerminalQuickCommand: the same saved command
+    // must run identically on desktop and mobile.
+    expect(
+      buildMobileQuickCommandLaunch(command({ command: 'cd app\nnpm install\nnpm test' }))
+    ).toEqual({
+      options: {
+        startupCommand: 'cd app; npm install; npm test',
+        startupCommandDelivery: 'shell-ready'
+      }
     })
   })
 
