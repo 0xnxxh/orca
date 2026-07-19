@@ -37,11 +37,11 @@ import {
   MessageSquare,
   Monitor,
   MoreHorizontal,
-  Play,
   Plus,
   RefreshCw,
   Send,
   Smartphone,
+  SquareChevronRight,
   SquareTerminal,
   X
 } from 'lucide-react-native'
@@ -4791,7 +4791,7 @@ export default function SessionScreen() {
                 onPress={() => setShowQuickCommands(true)}
                 accessibilityLabel="Quick commands"
               >
-                <Play size={16} fill={colors.textSecondary} strokeWidth={0} />
+                <SquareChevronRight size={16} color={colors.textSecondary} strokeWidth={2.2} />
               </Pressable>
             </View>
           )}
