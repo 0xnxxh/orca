@@ -45,11 +45,15 @@ export function readWindowsConptyProcessIds(
       settled = true
       clearTimeout(timeout)
       child.removeListener('message', onMessage)
-      child.removeListener('error', onFailure)
-      child.removeListener('exit', onFailure)
+      // Why: kill failures can emit asynchronously after timeout settlement;
+      // teardown listeners stay until exit so they cannot crash the daemon.
       resolve(value)
     }
     const onFailure = (): void => finish(null)
+    const onExit = (): void => {
+      child.removeListener('error', onFailure)
+      finish(null)
+    }
     const onMessage = (message: ProcessListMessage): void => {
       const value = message?.consoleProcessList
       const helperPid = child.pid
@@ -75,6 +79,6 @@ export function readWindowsConptyProcessIds(
     }, deps.timeoutMs ?? CONPTY_PROCESS_LIST_TIMEOUT_MS)
     child.once('message', onMessage)
     child.once('error', onFailure)
-    child.once('exit', onFailure)
+    child.once('exit', onExit)
   })
 }

@@ -81,4 +81,20 @@ describe('readWindowsConptyProcessIds', () => {
       vi.useRealTimers()
     }
   })
+
+  it('absorbs an asynchronous kill error after timeout settlement', async () => {
+    vi.useFakeTimers()
+    try {
+      const { child, forkProcess } = forkWith('none')
+      child.kill.mockImplementation(() => {
+        queueMicrotask(() => child.emit('error', new Error('kill failed')))
+      })
+      const result = readWindowsConptyProcessIds(101, { forkProcess, timeoutMs: 10 })
+      await vi.advanceTimersByTimeAsync(10)
+      await expect(result).resolves.toBeNull()
+      expect(child.listenerCount('error')).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
