@@ -331,9 +331,9 @@ function Terminal(): React.JSX.Element | null {
   // activeTabId here used to flash the wrong terminal — selectThread updates
   // the store in multiple steps and intermediate renders briefly pointed the
   // portal at the new worktree's stale last-active tab.
-  const activityTerminalPortals: ActivityTerminalPortalTarget[] = useActivityTerminalPortals(
-    activeView === 'activity'
-  )
+  // Why: Agents is a companion overlay, so portals are active whenever the
+  // panel publishes targets — not only when activeView was 'activity'.
+  const activityTerminalPortals: ActivityTerminalPortalTarget[] = useActivityTerminalPortals(true)
   const foregroundTerminalTabIds = useMemo(() => {
     const ids = new Set<string>()
     if (activeView === 'terminal' && activeTabType === 'terminal' && activeTabId) {

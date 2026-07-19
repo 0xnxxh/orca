@@ -6,12 +6,25 @@ import { useShallow } from 'zustand/react/shallow'
 import {
   Bell,
   BellDot,
+  ChevronRight,
   ExternalLink,
+  ListFilter,
   MessageSquareText,
   MoreVertical,
   Search,
-  TerminalSquare
+  TerminalSquare,
+  X
 } from 'lucide-react'
+import {
+  ActivityAgentsCanvas,
+  ActivityViewModeToggle,
+  type ActivityViewMode
+} from './ActivityAgentsCanvas'
+import type { ActivityCanvasThreadInput } from './activity-canvas-layout'
+import {
+  buildActivityThreadLineageItems,
+  type ActivityThreadLineageMeta
+} from './activity-thread-lineage'
 
 import { AgentStateDot, agentStateLabel } from '@/components/AgentStateDot'
 import { AgentIcon } from '@/lib/agent-catalog'
@@ -36,7 +49,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -78,7 +90,7 @@ type ThreadReadFilter = 'all' | 'unread'
 type ActivityGroupBy = 'status' | 'project' | 'worktree' | 'agent'
 type ActivityEventState = Extract<AgentStatusState, 'done' | 'blocked' | 'waiting'>
 type ActivityLiveAgentState = Extract<AgentStatusState, 'working' | 'blocked' | 'waiting'>
-type ActivityStatusGroupId = 'working' | 'blocked' | 'waiting' | 'done' | 'interrupted'
+export type ActivityStatusGroupId = 'working' | 'blocked' | 'waiting' | 'done' | 'interrupted'
 
 type ActivityEvent = {
   id: string
@@ -148,13 +160,16 @@ type ActivityTerminalPortalSlotId = 'primary' | 'secondary'
 
 const ACTIVITY_TERMINAL_LOADING_LABEL_DELAY_MS = 180
 const ACTIVITY_THREAD_RESPONSE_RENDER_PREVIEW_MAX_LENGTH = 320
-const ACTIVITY_STATUS_GROUP_ORDER: ActivityStatusGroupId[] = [
+export const ACTIVITY_STATUS_GROUP_ORDER: readonly ActivityStatusGroupId[] = [
   'working',
   'blocked',
   'waiting',
   'done',
   'interrupted'
-]
+] as const
+
+// Why: Done/Interrupted usually dominate the feed and push live agents off-screen.
+const DEFAULT_COLLAPSED_ACTIVITY_GROUP_KEYS: readonly string[] = ['done', 'interrupted']
 const STANDALONE_ACTIVITY_WORKTREE_REPO_ID = '__activity_standalone__'
 
 const absoluteDateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -978,6 +993,55 @@ function threadAgentStateLabel(thread: AgentPaneThread): string {
   return agentStateLabel(state)
 }
 
+function threadStatusEntry(thread: AgentPaneThread): AgentStatusEntry | null {
+  return thread.currentAgentEntry ?? thread.latestEvent?.entry ?? null
+}
+
+function threadOrchestrationContext(thread: AgentPaneThread) {
+  return threadStatusEntry(thread)?.orchestration
+}
+
+function toActivityLineageThread(thread: AgentPaneThread) {
+  const orchestration = threadOrchestrationContext(thread)
+  const entry = threadStatusEntry(thread)
+  return {
+    paneKey: thread.paneKey,
+    paneTitle: thread.paneTitle,
+    terminalHandle: entry?.terminalHandle ?? null,
+    parentPaneKey: orchestration?.parentPaneKey ?? null,
+    parentTerminalHandle: orchestration?.parentTerminalHandle ?? null,
+    coordinatorHandle: orchestration?.coordinatorHandle ?? null,
+    thread
+  }
+}
+
+function toActivityCanvasThreadInput(
+  thread: AgentPaneThread,
+  parentPaneKey: string | null
+): ActivityCanvasThreadInput {
+  const state = threadAgentState(thread)
+  const interrupted =
+    !thread.currentAgentState && state === 'done' && thread.latestEvent?.entry.interrupted === true
+  const agentState = interrupted
+    ? 'interrupted'
+    : state === 'working' || state === 'blocked' || state === 'waiting' || state === 'done'
+      ? state
+      : 'done'
+  return {
+    paneKey: thread.paneKey,
+    paneTitle: thread.paneTitle,
+    workspaceTitle: getActivityThreadWorkspaceTitle(thread.worktree),
+    projectLabel: thread.repo?.displayName ?? 'Unknown project',
+    agentType: thread.agentType,
+    agentState,
+    agentStateLabel: threadAgentStateLabel(thread),
+    responsePreview: thread.responsePreview,
+    latestTimestamp: thread.latestTimestamp,
+    unread: thread.unread,
+    parentPaneKey
+  }
+}
+
 export function getActivityThreadGroup(
   thread: AgentPaneThread,
   groupBy: ActivityGroupBy
@@ -1065,6 +1129,57 @@ export function groupActivityThreadsByStatus(threads: AgentPaneThread[]): Activi
       }
     ]
   })
+}
+
+export function activityStatusGroupLabel(id: ActivityStatusGroupId): string {
+  return threadStatusGroupLabel(id)
+}
+
+export function activityStatusGroupState(id: ActivityStatusGroupId): AgentStatusState {
+  return threadStatusGroupState(id)
+}
+
+export function createDefaultActivityStatusFilter(): Set<ActivityStatusGroupId> {
+  return new Set(ACTIVITY_STATUS_GROUP_ORDER)
+}
+
+export function createDefaultCollapsedActivityGroups(): Set<string> {
+  return new Set(DEFAULT_COLLAPSED_ACTIVITY_GROUP_KEYS)
+}
+
+export function activityThreadMatchesStatusFilter(
+  thread: AgentPaneThread,
+  enabledStatuses: ReadonlySet<ActivityStatusGroupId>
+): boolean {
+  // Why: empty selection means "no statuses" (show nothing), not "all".
+  return enabledStatuses.has(threadStatusGroupId(thread))
+}
+
+export function toggleActivityStatusFilter(
+  enabledStatuses: ReadonlySet<ActivityStatusGroupId>,
+  status: ActivityStatusGroupId,
+  checked: boolean
+): Set<ActivityStatusGroupId> {
+  const next = new Set(enabledStatuses)
+  if (checked) {
+    next.add(status)
+  } else {
+    next.delete(status)
+  }
+  return next
+}
+
+export function toggleActivityGroupCollapsed(
+  collapsedGroupKeys: ReadonlySet<string>,
+  groupKey: string
+): Set<string> {
+  const next = new Set(collapsedGroupKeys)
+  if (next.has(groupKey)) {
+    next.delete(groupKey)
+  } else {
+    next.add(groupKey)
+  }
+  return next
 }
 
 function threadSearchText(thread: AgentPaneThread): string {
@@ -1188,12 +1303,34 @@ function ThreadAgentStateIndicator({ thread }: { thread: AgentPaneThread }): Rea
   )
 }
 
-function ActivityStatusGroupHeader({ group }: { group: ActivityThreadGroup }): React.JSX.Element {
+function ActivityStatusGroupHeader({
+  group,
+  collapsed,
+  onToggle
+}: {
+  group: ActivityThreadGroup
+  collapsed: boolean
+  onToggle: () => void
+}): React.JSX.Element {
   return (
-    <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-background/95 px-3 py-1.5 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      className="sticky top-0 z-10 flex w-full items-center gap-2 border-b border-border bg-background/95 px-3 py-1.5 text-left backdrop-blur transition-colors hover:bg-accent/40 supports-[backdrop-filter]:bg-background/80"
+    >
+      <ChevronRight
+        className={cn(
+          'size-3.5 shrink-0 text-muted-foreground transition-transform',
+          !collapsed && 'rotate-90'
+        )}
+      />
       {group.state ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center">
-          <AgentStateDot state={group.state} size="sm" />
+          <AgentStateDot
+            state={group.id === 'interrupted' ? 'interrupted' : group.state}
+            size="sm"
+          />
         </span>
       ) : null}
       <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
@@ -1202,7 +1339,7 @@ function ActivityStatusGroupHeader({ group }: { group: ActivityThreadGroup }): R
       <span className="rounded-full border border-border bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-muted-foreground">
         {group.threads.length}
       </span>
-    </div>
+    </button>
   )
 }
 
@@ -1225,6 +1362,7 @@ function isEventFromNestedInteractiveElement(
 
 function ThreadRow({
   thread,
+  lineage,
   selected,
   onSelect,
   onJump,
@@ -1233,6 +1371,7 @@ function ThreadRow({
   compactMode
 }: {
   thread: AgentPaneThread
+  lineage: ActivityThreadLineageMeta
   selected: boolean
   onSelect: () => void
   onJump: () => void
@@ -1245,7 +1384,24 @@ function ThreadRow({
   })
   const workspaceTitle = getActivityThreadWorkspaceTitle(thread.worktree)
   const taskTitle = thread.paneTitle
-  const agentLabel = formatAgentTypeLabel(thread.agentType)
+  const isLineageChild = lineage.depth > 0
+  const relationshipLabel =
+    lineage.childCount > 0
+      ? translate(
+          'auto.components.activity.ActivityPrototypePage.dispatchedAgents',
+          'dispatched {{count}} {{unit}}',
+          {
+            count: lineage.childCount,
+            unit: lineage.childCount === 1 ? 'agent' : 'agents'
+          }
+        )
+      : lineage.parentTitle
+        ? translate(
+            'auto.components.activity.ActivityPrototypePage.fromParentAgent',
+            'from {{parent}}',
+            { parent: lineage.parentTitle }
+          )
+        : null
   const showStatusPreview =
     !compactMode &&
     renderedResponsePreview.length > 0 &&
@@ -1254,8 +1410,12 @@ function ThreadRow({
   return (
     <div
       data-current={selected ? 'true' : undefined}
+      data-lineage-depth={lineage.depth}
+      data-lineage-child={isLineageChild ? 'true' : undefined}
+      data-lineage-child-count={lineage.childCount > 0 ? lineage.childCount : undefined}
       onClick={onSelect}
-      role="button"
+      role={isLineageChild || lineage.childCount > 0 ? 'treeitem' : 'button'}
+      aria-level={isLineageChild || lineage.childCount > 0 ? lineage.depth + 1 : undefined}
       tabIndex={0}
       onKeyDown={(event) => {
         // Why: response markdown can contain links; keyboard activation on a
@@ -1282,14 +1442,44 @@ function ThreadRow({
         // ~3px of internal space above the cap-height that isn't present
         // below the secondary badge row. Symmetric py made the top read
         // heavier; the smaller top pad visually evens the row.
-        'group relative flex w-full cursor-pointer flex-col gap-1 border-b border-border px-3 pt-2.5 pb-3 text-left transition-colors',
+        'group relative flex w-full cursor-pointer flex-col gap-1 border-b border-border pt-2.5 pb-3 text-left transition-colors',
+        isLineageChild ? 'pr-3 pl-8' : 'px-3',
         selected
           ? 'bg-black/[0.08] shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-white/[0.10] dark:shadow-[0_1px_2px_rgba(0,0,0,0.03)]'
           : 'hover:bg-accent/40'
       )}
     >
       {thread.unread ? (
-        <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-primary" />
+        <span
+          className={cn(
+            'absolute top-1.5 bottom-1.5 w-0.5 rounded-r-full bg-primary',
+            isLineageChild ? 'left-5' : 'left-0'
+          )}
+        />
+      ) : null}
+      {/* Orchestration tree connector — child under parent (dashboard lineage pattern). */}
+      {isLineageChild ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-0 bottom-0 left-[18px] w-3"
+          data-activity-lineage-connector={lineage.isLastSibling ? 'last' : 'branch'}
+        >
+          <span
+            className={cn(
+              'absolute left-0 border-l border-muted-foreground/40',
+              lineage.isFirstSibling ? 'top-0' : 'top-0',
+              lineage.isLastSibling ? 'h-[1.35rem]' : 'bottom-0'
+            )}
+          />
+          <span className="absolute top-[1.3rem] left-0 w-2.5 border-t border-muted-foreground/40" />
+        </span>
+      ) : null}
+      {lineage.childCount > 0 ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-[1.35rem] bottom-0 left-[18px] border-l border-muted-foreground/40"
+          data-activity-lineage-parent-connector
+        />
       ) : null}
       <div className="flex min-w-0 items-start gap-2">
         <span className="inline-flex shrink-0 items-start gap-1">
@@ -1333,47 +1523,53 @@ function ThreadRow({
                   title={thread.responsePreview}
                 />
               ) : null}
-              <div className="flex min-w-0 items-center gap-1.5 pt-0.5">
-                <span className="shrink-0 text-[10px] text-muted-foreground/80">{agentLabel}</span>
-                {canJump ? (
-                  <span
-                    className={cn(
-                      'ml-auto inline-flex shrink-0 items-center transition-opacity',
-                      'can-hover:pointer-events-none can-hover:invisible can-hover:opacity-0',
-                      'group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100'
-                    )}
-                  >
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon-xs"
-                          aria-label={translate(
-                            'auto.components.activity.ActivityPrototypePage.4616ea39fd',
-                            'Jump to workspace'
-                          )}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            onJump()
-                          }}
-                          onMouseDown={(event) => event.stopPropagation()}
-                        >
-                          <ExternalLink className="size-3" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="left">
-                        {translate(
+              {relationshipLabel ? (
+                <div
+                  className="min-w-0 truncate pt-0.5 text-[10px] text-muted-foreground/80"
+                  title={relationshipLabel}
+                  data-testid="activity-orchestration-relationship"
+                >
+                  {relationshipLabel}
+                </div>
+              ) : null}
+            </div>
+            <span className="inline-flex shrink-0 items-center gap-1.5 pt-px">
+              {canJump ? (
+                <span
+                  className={cn(
+                    'inline-flex shrink-0 items-center transition-opacity',
+                    'can-hover:pointer-events-none can-hover:invisible can-hover:opacity-0',
+                    'group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100'
+                  )}
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-xs"
+                        aria-label={translate(
                           'auto.components.activity.ActivityPrototypePage.4616ea39fd',
                           'Jump to workspace'
                         )}
-                      </TooltipContent>
-                    </Tooltip>
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            <span className="inline-flex shrink-0 items-center gap-1.5 pt-px">
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onJump()
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                      >
+                        <ExternalLink className="size-3" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      {translate(
+                        'auto.components.activity.ActivityPrototypePage.4616ea39fd',
+                        'Jump to workspace'
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                </span>
+              ) : null}
               <span className="inline-flex size-4 shrink-0 items-center justify-center">
                 {thread.unread ? (
                   <FilledBellIcon
@@ -1427,9 +1623,19 @@ function ThreadRow({
 export default function ActivityPrototypePage(): React.JSX.Element {
   const [readFilter, setReadFilter] = useState<ThreadReadFilter>('all')
   const [groupBy, setGroupBy] = useState<ActivityGroupBy>('status')
+  const [enabledStatuses, setEnabledStatuses] = useState<Set<ActivityStatusGroupId>>(
+    createDefaultActivityStatusFilter
+  )
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(
+    createDefaultCollapsedActivityGroups
+  )
   const [query, setQuery] = useState('')
-  const activityFilterInputRef = useRef<HTMLInputElement | null>(null)
+  const activitySearchInputRef = useRef<HTMLInputElement | null>(null)
   const [compactMode, setCompactMode] = useState(false)
+  // Why (prototype): List is the current production-shaped agents feed; Canvas
+  // is the orca-viz-inspired spatial alternative. Local state only until the
+  // next refinement pass decides whether view mode is a setting.
+  const [viewMode, setViewMode] = useState<ActivityViewMode>('list')
   const [selectedPaneKey, setSelectedPaneKey] = useState<string | null>(null)
   const [displayedPaneKey, setDisplayedPaneKey] = useState<string | null>(null)
   const [activePortalSlotId, setActivePortalSlotId] =
@@ -1525,15 +1731,42 @@ export default function ActivityPrototypePage(): React.JSX.Element {
       ) {
         return false
       }
+      if (
+        !activityThreadMatchesStatusFilter(thread, enabledStatuses) &&
+        thread.paneKey !== effectiveSelectedPaneKey
+      ) {
+        return false
+      }
       if (normalizedQuery === null) {
         return false
       }
       return activityThreadMatchesSearchQuery({ thread, searchQuery: normalizedQuery })
     })
-  }, [allThreads, readFilter, query, effectiveSelectedPaneKey])
+  }, [allThreads, enabledStatuses, readFilter, query, effectiveSelectedPaneKey])
   const visibleThreadGroups = useMemo(
     () => buildActivityThreadGroups(visibleThreads, groupBy),
     [visibleThreads, groupBy]
+  )
+  const statusFilterActive = enabledStatuses.size < ACTIVITY_STATUS_GROUP_ORDER.length
+  // Why: one lineage pass over the filtered feed so list nesting and canvas
+  // edges share parent resolution (pane key + terminal handles).
+  const visibleLineageItems = useMemo(
+    () => buildActivityThreadLineageItems(visibleThreads.map(toActivityLineageThread)),
+    [visibleThreads]
+  )
+  const lineageByPaneKey = useMemo(
+    () =>
+      new Map(
+        visibleLineageItems.map((item) => [item.thread.thread.paneKey, item.lineage] as const)
+      ),
+    [visibleLineageItems]
+  )
+  const canvasThreads = useMemo(
+    () =>
+      visibleLineageItems.map(({ thread: wrapped, lineage }) =>
+        toActivityCanvasThreadInput(wrapped.thread, lineage.parentPaneKey)
+      ),
+    [visibleLineageItems]
   )
 
   const selectedThread = effectiveSelectedPaneKey
@@ -1708,17 +1941,17 @@ export default function ActivityPrototypePage(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const focusActivityFilter = (event: KeyboardEvent): void => {
+    const focusActivitySearch = (event: KeyboardEvent): void => {
       handleActivityFilterFocusShortcut({
         activeElement: document.activeElement,
         event,
-        input: activityFilterInputRef.current,
+        input: activitySearchInputRef.current,
         terminalPortalTargets: [activePortalTargetEl, inactivePortalTargetEl]
       })
     }
 
-    window.addEventListener('keydown', focusActivityFilter, { capture: true })
-    return () => window.removeEventListener('keydown', focusActivityFilter, { capture: true })
+    window.addEventListener('keydown', focusActivitySearch, { capture: true })
+    return () => window.removeEventListener('keydown', focusActivitySearch, { capture: true })
   }, [activePortalTargetEl, inactivePortalTargetEl])
 
   const markThreadRead = (thread: AgentPaneThread): void => {
@@ -1808,305 +2041,431 @@ export default function ActivityPrototypePage(): React.JSX.Element {
     storeData.acknowledgeAgents(unreadKeys)
   }
 
-  // Why (page padding): drop top + horizontal padding so the page extends to
-  // the window's left and right edges (matching how sidebars abut the chrome
-  // elsewhere). The titlebar (ActivityTitlebarControls) already provides the
-  // breathing-room band above; the right pane's title row supplies its own
-  // top padding (pt-2) so the heading isn't pinned to the titlebar.
-  return (
-    <div ref={setActivityPageRef} className="flex h-full min-h-0 flex-col bg-background pb-3">
-      <main className="flex min-h-0 flex-1 overflow-hidden">
-        <aside
-          ref={threadListRef}
-          className="relative flex min-h-0 shrink-0 flex-col border-r border-border"
-          style={{ width: threadListWidth }}
-        >
-          <div className="shrink-0 border-b border-border px-2 pt-2 pb-2">
-            <div className="flex items-center gap-2">
-              <div className="relative min-w-0 flex-1">
-                <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  ref={activityFilterInputRef}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder={translate(
-                    'auto.components.activity.ActivityPrototypePage.795cbf26e2',
-                    'Filter...'
-                  )}
-                  className="h-8 w-full pl-7 text-xs"
-                />
-              </div>
-              <Select
-                value={groupBy}
-                onValueChange={(value) => setGroupBy(value as ActivityGroupBy)}
-              >
-                <SelectTrigger
+  // Why: content fills the Agents companion sheet; sheet header owns the title
+  // chrome, so this toolbar stays a dense session search + filter strip only.
+  const listToolbar = (
+    <div className="space-y-2">
+      {/* Why: match Agent Vault's "Search sessions" wording — users confused
+          "Filter..." with group/status controls rather than free-text search. */}
+      <div className="flex h-8 items-center gap-1.5 rounded-md border border-border bg-input/50 px-2 focus-within:border-ring focus-within:ring-[2px] focus-within:ring-ring/30">
+        <Search className="size-3.5 shrink-0 text-muted-foreground" />
+        <input
+          ref={activitySearchInputRef}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={translate(
+            'auto.components.activity.ActivityPrototypePage.searchSessions',
+            'Search sessions'
+          )}
+          className="min-w-0 flex-1 bg-transparent py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
+          spellCheck={false}
+        />
+        {query ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="size-5 rounded-sm text-muted-foreground hover:text-foreground"
+            onClick={() => setQuery('')}
+            aria-label={translate(
+              'auto.components.activity.ActivityPrototypePage.clearSearch',
+              'Clear search'
+            )}
+          >
+            <X className="size-3" />
+          </Button>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-2">
+        <ActivityViewModeToggle value={viewMode} onChange={setViewMode} />
+        {viewMode === 'list' ? (
+          <Select value={groupBy} onValueChange={(value) => setGroupBy(value as ActivityGroupBy)}>
+            <SelectTrigger
+              size="sm"
+              className="h-8 min-w-0 flex-1 px-2 text-xs"
+              aria-label={translate(
+                'auto.components.activity.ActivityPrototypePage.770d458144',
+                'Group agent activity by'
+              )}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              <SelectItem value="status">
+                {translate('auto.components.activity.ActivityPrototypePage.4a3986b200', 'Status')}
+              </SelectItem>
+              <SelectItem value="project">
+                {translate('auto.components.activity.ActivityPrototypePage.8c3b621ddf', 'Project')}
+              </SelectItem>
+              <SelectItem value="worktree">
+                {translate('auto.components.activity.ActivityPrototypePage.b29191b3e0', 'Worktree')}
+              </SelectItem>
+              <SelectItem value="agent">
+                {translate('auto.components.activity.ActivityPrototypePage.f6396e1f85', 'Agent')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        ) : (
+          <div className="min-w-0 flex-1" />
+        )}
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
                   size="sm"
-                  className="h-8 w-[128px] shrink-0 px-2 text-xs"
+                  className={cn(
+                    'h-8 shrink-0 gap-1.5 px-2 text-xs',
+                    statusFilterActive &&
+                      '!border-primary !bg-primary !text-primary-foreground shadow-xs ring-2 ring-primary/35 hover:!bg-primary/90 hover:!text-primary-foreground'
+                  )}
                   aria-label={translate(
-                    'auto.components.activity.ActivityPrototypePage.770d458144',
-                    'Group agent activity by'
+                    'auto.components.activity.ActivityPrototypePage.filterByStatus',
+                    'Filter by status'
                   )}
                 >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectItem value="status">
-                    {translate(
-                      'auto.components.activity.ActivityPrototypePage.4a3986b200',
-                      'Status'
-                    )}
-                  </SelectItem>
-                  <SelectItem value="project">
-                    {translate(
-                      'auto.components.activity.ActivityPrototypePage.8c3b621ddf',
-                      'Project'
-                    )}
-                  </SelectItem>
-                  <SelectItem value="worktree">
-                    {translate(
-                      'auto.components.activity.ActivityPrototypePage.b29191b3e0',
-                      'Worktree'
-                    )}
-                  </SelectItem>
-                  <SelectItem value="agent">
-                    {translate(
-                      'auto.components.activity.ActivityPrototypePage.f6396e1f85',
-                      'Agent'
-                    )}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Toggle
-                    pressed={readFilter === 'unread'}
-                    onPressedChange={(pressed) => setReadFilter(pressed ? 'unread' : 'all')}
-                    variant="outline"
-                    size="sm"
-                    className={cn(
-                      'size-8 shrink-0 p-0',
-                      readFilter === 'unread'
-                        ? '!border-primary !bg-primary !text-primary-foreground shadow-xs ring-2 ring-primary/35 hover:!bg-primary/90 hover:!text-primary-foreground'
-                        : 'text-muted-foreground hover:text-foreground'
-                    )}
-                    aria-label={translate(
-                      'auto.components.activity.ActivityPrototypePage.d1a88df9a8',
-                      'Show unread threads only'
-                    )}
-                  >
-                    <BellDot className="size-3.5" />
-                  </Toggle>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  {translate(
-                    'auto.components.activity.ActivityPrototypePage.d1a88df9a8',
-                    'Show unread threads only'
-                  )}
-                </TooltipContent>
-              </Tooltip>
-              {/* Why (overflow menu): "Mark all read" is a low-frequency,
-                  destructive-feeling action — parking it behind a `…` keeps
-                  the toolbar focused on the high-frequency Filter + unread
-                  toggle while still giving the action a stable home next to
-                  the list it acts on (rather than the titlebar). */}
-              <ActivityThreadOptionsMenu
-                compactMode={compactMode}
-                hasUnreadThreads={hasUnreadThreads}
-                onCompactModeChange={setCompactMode}
-                onMarkAllThreadsRead={markAllThreadsRead}
-              />
-            </div>
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto scrollbar-sleek">
-            {visibleThreadGroups.map((group) => (
-              <section
-                key={group.key}
-                aria-label={translate(
-                  'auto.components.activity.ActivityPrototypePage.a2b4437bfb',
-                  '{{value0}} activity',
-                  { value0: group.label }
-                )}
+                  <ListFilter className="size-3.5" />
+                  {statusFilterActive ? (
+                    <span className="tabular-nums">{enabledStatuses.size}</span>
+                  ) : null}
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {translate(
+                'auto.components.activity.ActivityPrototypePage.filterByStatus',
+                'Filter by status'
+              )}
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="end" className="w-52">
+            {ACTIVITY_STATUS_GROUP_ORDER.map((statusId) => (
+              <DropdownMenuCheckboxItem
+                key={statusId}
+                checked={enabledStatuses.has(statusId)}
+                onCheckedChange={(checked) =>
+                  setEnabledStatuses((current) =>
+                    toggleActivityStatusFilter(current, statusId, checked === true)
+                  )
+                }
+                onSelect={(event) => event.preventDefault()}
               >
-                <ActivityStatusGroupHeader group={group} />
-                {group.threads.map((thread) => (
-                  <ThreadRow
-                    key={thread.paneKey}
-                    thread={thread}
-                    selected={thread.paneKey === selectedThread?.paneKey}
-                    onSelect={() => selectThread(thread)}
-                    onJump={() => jumpToWorkspace(thread)}
-                    onMarkUnread={() => markThreadUnread(thread)}
-                    canJump={storeData.worktreeMap.has(thread.worktree.id)}
-                    compactMode={compactMode}
+                <span className="inline-flex items-center gap-2">
+                  <AgentStateDot
+                    state={
+                      statusId === 'interrupted'
+                        ? 'interrupted'
+                        : activityStatusGroupState(statusId)
+                    }
+                    size="sm"
                   />
-                ))}
-              </section>
+                  {activityStatusGroupLabel(statusId)}
+                </span>
+              </DropdownMenuCheckboxItem>
             ))}
-            {visibleThreads.length === 0 ? (
-              <div className="px-3 py-8 text-sm text-muted-foreground">
-                {translate(
-                  'auto.components.activity.ActivityPrototypePage.7cd632006b',
-                  'No agent activity matches these filters.'
-                )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Toggle
+              pressed={readFilter === 'unread'}
+              onPressedChange={(pressed) => setReadFilter(pressed ? 'unread' : 'all')}
+              variant="outline"
+              size="sm"
+              className={cn(
+                'size-8 shrink-0 p-0',
+                readFilter === 'unread'
+                  ? '!border-primary !bg-primary !text-primary-foreground shadow-xs ring-2 ring-primary/35 hover:!bg-primary/90 hover:!text-primary-foreground'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+              aria-label={translate(
+                'auto.components.activity.ActivityPrototypePage.d1a88df9a8',
+                'Show unread threads only'
+              )}
+            >
+              <BellDot className="size-3.5" />
+            </Toggle>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {translate(
+              'auto.components.activity.ActivityPrototypePage.d1a88df9a8',
+              'Show unread threads only'
+            )}
+          </TooltipContent>
+        </Tooltip>
+        {/* Why (overflow menu): "Mark all read" is a low-frequency,
+            destructive-feeling action — parking it behind a `…` keeps
+            the toolbar focused on search + status filters while still
+            giving the action a stable home next to the list it acts on. */}
+        <ActivityThreadOptionsMenu
+          compactMode={compactMode}
+          hasUnreadThreads={hasUnreadThreads}
+          onCompactModeChange={setCompactMode}
+          onMarkAllThreadsRead={markAllThreadsRead}
+        />
+      </div>
+    </div>
+  )
+
+  const detailPanel = selectedThread ? (
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Why (no header action button): per-card hover actions on the
+                  thread list (Mark unread, Open) are the primary controls now,
+                  so the header keeps just the thread identity. */}
+      <div className="flex shrink-0 items-start gap-4 border-b border-border px-4 pt-2 pb-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-start gap-2">
+            <span className="inline-flex shrink-0 items-start gap-1">
+              <ThreadAgentStateIndicator thread={selectedThread} />
+              <span className="inline-flex shrink-0 pt-[3px]">
+                <AgentIcon agent={agentTypeToIconAgent(selectedThread.agentType)} size={16} />
+              </span>
+            </span>
+            <h2 className="line-clamp-3 break-words text-sm font-semibold leading-snug">
+              {selectedThread.paneTitle}
+            </h2>
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-11">
+            <EventRepoBadge repo={selectedThread.repo} />
+            <span className="truncate text-xs text-muted-foreground">
+              {selectedThread.worktree.displayName}
+            </span>
+          </div>
+        </div>
+      </div>
+      {/* Why: Terminal stays mounted in the hidden workspace tree while
+                  Activity is open. This target lets that existing TerminalPane
+                  move here instead of creating a second PTY/xterm owner. */}
+      {(() => {
+        // Why: retained threads can outlive their tab; portal needs a live TerminalPane to render into.
+        if (!selectedHasLiveTab) {
+          return (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+              <TerminalSquare className="size-7" />
+              {storeData.worktreeMap.has(selectedThread.worktree.id)
+                ? translate(
+                    'auto.components.activity.ActivityPrototypePage.afdc2139a8',
+                    'Agent terminal closed. Open a new terminal in this workspace to continue.'
+                  )
+                : translate(
+                    'auto.components.activity.ActivityPrototypePage.22b22034bc',
+                    'Standalone terminal unavailable in Activity.'
+                  )}
+            </div>
+          )
+        }
+        return (
+          <div className="relative min-h-0 flex-1 overflow-hidden bg-editor-surface">
+            <div
+              ref={setPrimaryPortalTarget}
+              className={cn(
+                'absolute inset-0 min-h-0 min-w-0',
+                activePortalSlotId === 'primary'
+                  ? 'z-10 opacity-100'
+                  : 'pointer-events-none z-0 opacity-0'
+              )}
+              aria-hidden={activePortalSlotId !== 'primary'}
+              data-activity-terminal-slot-id="primary"
+            />
+            <div
+              ref={setSecondaryPortalTarget}
+              className={cn(
+                'absolute inset-0 min-h-0 min-w-0',
+                activePortalSlotId === 'secondary'
+                  ? 'z-10 opacity-100'
+                  : 'pointer-events-none z-0 opacity-0'
+              )}
+              aria-hidden={activePortalSlotId !== 'secondary'}
+              data-activity-terminal-slot-id="secondary"
+            />
+            {visibleThread && !stagedThread && !visiblePortalReady ? (
+              <div
+                className="pointer-events-none absolute inset-0 z-20 bg-editor-surface"
+                aria-hidden="true"
+              >
+                {visiblePortalUnavailable ? (
+                  <div className="ml-3 mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-background/85 px-2 py-1 text-xs text-muted-foreground shadow-xs">
+                    <span className="h-3 w-1.5 rounded-sm bg-muted-foreground/70" />
+                    <span>
+                      {translate(
+                        'auto.components.activity.ActivityPrototypePage.8de7c5beaa',
+                        'Terminal unavailable'
+                      )}
+                    </span>
+                  </div>
+                ) : showTerminalLoadingLabel ? (
+                  <div className="ml-3 mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-background/85 px-2 py-1 text-xs text-muted-foreground shadow-xs">
+                    <span className="h-3 w-1.5 animate-pulse rounded-sm bg-muted-foreground/70" />
+                    <span>
+                      {translate(
+                        'auto.components.activity.ActivityPrototypePage.1b633f5c1e',
+                        'Connecting terminal...'
+                      )}
+                    </span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
-          <div
-            aria-label={translate(
-              'auto.components.activity.ActivityPrototypePage.443690186e',
-              'Resize activity thread list'
-            )}
-            title={translate(
-              'auto.components.activity.ActivityPrototypePage.866083500b',
-              'Drag to resize'
-            )}
-            className={cn(
-              'group absolute -right-1.5 top-0 z-20 flex h-full w-3 cursor-col-resize items-stretch justify-center',
-              isThreadListResizing && 'bg-ring/10'
-            )}
-            onMouseDown={onResizeStart}
-            role="separator"
-          >
-            <div
-              className={cn(
-                'h-full w-px bg-border transition-colors group-hover:bg-ring/50',
-                isThreadListResizing && 'bg-ring'
-              )}
-            />
-          </div>
-        </aside>
-
-        <section className="min-w-0 flex-1 overflow-hidden">
-          {selectedThread ? (
-            <div className="flex h-full min-h-0 flex-col">
-              {/* Why (no header action button): per-card hover actions on the
-                  thread list (Mark unread, Open) are the primary controls now,
-                  so the header keeps just the thread identity. */}
-              <div className="flex shrink-0 items-start gap-4 border-b border-border px-4 pt-2 pb-3">
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-start gap-2">
-                    <span className="inline-flex shrink-0 items-start gap-1">
-                      <ThreadAgentStateIndicator thread={selectedThread} />
-                      <span className="inline-flex shrink-0 pt-[3px]">
-                        <AgentIcon
-                          agent={agentTypeToIconAgent(selectedThread.agentType)}
-                          size={16}
-                        />
-                      </span>
-                    </span>
-                    <h2 className="line-clamp-3 break-words text-sm font-semibold leading-snug">
-                      {selectedThread.paneTitle}
-                    </h2>
-                  </div>
-                  <div className="mt-1 flex min-w-0 items-center gap-1.5 pl-11">
-                    <EventRepoBadge repo={selectedThread.repo} />
-                    <span className="truncate text-xs text-muted-foreground">
-                      {selectedThread.worktree.displayName}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              {/* Why: Terminal stays mounted in the hidden workspace tree while
-                  Activity is open. This target lets that existing TerminalPane
-                  move here instead of creating a second PTY/xterm owner. */}
-              {(() => {
-                // Why: retained threads can outlive their tab; portal needs a live TerminalPane to render into.
-                if (!selectedHasLiveTab) {
-                  return (
-                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
-                      <TerminalSquare className="size-7" />
-                      {storeData.worktreeMap.has(selectedThread.worktree.id)
-                        ? translate(
-                            'auto.components.activity.ActivityPrototypePage.afdc2139a8',
-                            'Agent terminal closed. Open a new terminal in this workspace to continue.'
-                          )
-                        : translate(
-                            'auto.components.activity.ActivityPrototypePage.22b22034bc',
-                            'Standalone terminal unavailable in Activity.'
-                          )}
-                    </div>
-                  )
-                }
-                return (
-                  <div className="relative min-h-0 flex-1 overflow-hidden bg-editor-surface">
-                    <div
-                      ref={setPrimaryPortalTarget}
-                      className={cn(
-                        'absolute inset-0 min-h-0 min-w-0',
-                        activePortalSlotId === 'primary'
-                          ? 'z-10 opacity-100'
-                          : 'pointer-events-none z-0 opacity-0'
-                      )}
-                      aria-hidden={activePortalSlotId !== 'primary'}
-                      data-activity-terminal-slot-id="primary"
-                    />
-                    <div
-                      ref={setSecondaryPortalTarget}
-                      className={cn(
-                        'absolute inset-0 min-h-0 min-w-0',
-                        activePortalSlotId === 'secondary'
-                          ? 'z-10 opacity-100'
-                          : 'pointer-events-none z-0 opacity-0'
-                      )}
-                      aria-hidden={activePortalSlotId !== 'secondary'}
-                      data-activity-terminal-slot-id="secondary"
-                    />
-                    {visibleThread && !stagedThread && !visiblePortalReady ? (
-                      <div
-                        className="pointer-events-none absolute inset-0 z-20 bg-editor-surface"
-                        aria-hidden="true"
-                      >
-                        {visiblePortalUnavailable ? (
-                          <div className="ml-3 mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-background/85 px-2 py-1 text-xs text-muted-foreground shadow-xs">
-                            <span className="h-3 w-1.5 rounded-sm bg-muted-foreground/70" />
-                            <span>
-                              {translate(
-                                'auto.components.activity.ActivityPrototypePage.8de7c5beaa',
-                                'Terminal unavailable'
-                              )}
-                            </span>
-                          </div>
-                        ) : showTerminalLoadingLabel ? (
-                          <div className="ml-3 mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-background/85 px-2 py-1 text-xs text-muted-foreground shadow-xs">
-                            <span className="h-3 w-1.5 animate-pulse rounded-sm bg-muted-foreground/70" />
-                            <span>
-                              {translate(
-                                'auto.components.activity.ActivityPrototypePage.1b633f5c1e',
-                                'Connecting terminal...'
-                              )}
-                            </span>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })()}
-            </div>
-          ) : (
-            <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
-              {visibleThreads.length === 0 ? (
-                <>
-                  <MessageSquareText className="size-7" />
-                  {translate(
-                    'auto.components.activity.ActivityPrototypePage.e3db9892f6',
-                    'No activity yet.'
-                  )}
-                </>
-              ) : (
-                <>
-                  <TerminalSquare className="size-7" />
-                  {translate(
-                    'auto.components.activity.ActivityPrototypePage.cf780197a1',
-                    'Select an agent to view its activity'
-                  )}
-                </>
-              )}
-            </div>
+        )
+      })()}
+    </div>
+  ) : (
+    <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+      {visibleThreads.length === 0 ? (
+        <>
+          <MessageSquareText className="size-7" />
+          {translate(
+            'auto.components.activity.ActivityPrototypePage.e3db9892f6',
+            'No activity yet.'
           )}
-        </section>
-      </main>
+        </>
+      ) : (
+        <>
+          <TerminalSquare className="size-7" />
+          {translate(
+            'auto.components.activity.ActivityPrototypePage.cf780197a1',
+            'Select an agent to view its activity'
+          )}
+        </>
+      )}
+    </div>
+  )
+
+  return (
+    <div ref={setActivityPageRef} className="flex h-full min-h-0 flex-col bg-background">
+      {viewMode === 'canvas' ? (
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="shrink-0 border-b border-border px-2 pt-2 pb-2">{listToolbar}</div>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <ActivityAgentsCanvas
+              threads={canvasThreads}
+              selectedPaneKey={
+                // Demo node ids are not real panes — keep them out of terminal selection.
+                selectedThread?.paneKey ?? null
+              }
+              onSelectPaneKey={(paneKey) => {
+                if (!paneKey) {
+                  setSelectedPaneKey(null)
+                  return
+                }
+                const thread = allThreads.find((candidate) => candidate.paneKey === paneKey)
+                if (thread) {
+                  selectThread(thread)
+                }
+              }}
+            />
+            {selectedThread ? (
+              <section className="min-w-0 max-w-[520px] flex-1 overflow-hidden border-l border-border">
+                {detailPanel}
+              </section>
+            ) : null}
+          </div>
+        </main>
+      ) : (
+        <main className="flex min-h-0 flex-1 overflow-hidden">
+          <aside
+            ref={threadListRef}
+            className="relative flex min-h-0 shrink-0 flex-col border-r border-border"
+            style={{ width: threadListWidth }}
+          >
+            <div className="shrink-0 border-b border-border px-2 pt-2 pb-2">{listToolbar}</div>
+            <div className="min-h-0 flex-1 overflow-auto scrollbar-sleek">
+              {visibleThreadGroups.map((group) => {
+                const collapsed = collapsedGroupKeys.has(group.key)
+                return (
+                  <section
+                    key={group.key}
+                    aria-label={translate(
+                      'auto.components.activity.ActivityPrototypePage.a2b4437bfb',
+                      '{{value0}} activity',
+                      { value0: group.label }
+                    )}
+                  >
+                    <ActivityStatusGroupHeader
+                      group={group}
+                      collapsed={collapsed}
+                      onToggle={() =>
+                        setCollapsedGroupKeys((current) =>
+                          toggleActivityGroupCollapsed(current, group.key)
+                        )
+                      }
+                    />
+                    {collapsed
+                      ? null
+                      : buildActivityThreadLineageItems(
+                          group.threads.map(toActivityLineageThread)
+                        ).map(({ thread: wrapped, lineage: localLineage }) => {
+                          const thread = wrapped.thread
+                          const globalLineage = lineageByPaneKey.get(thread.paneKey)
+                          // Nest/indent from the in-group tree; relationship copy
+                          // prefers the full-feed lineage so "from parent" still
+                          // shows when the parent sits in another status group.
+                          const lineage: ActivityThreadLineageMeta = {
+                            depth: localLineage.depth,
+                            parentPaneKey:
+                              globalLineage?.parentPaneKey ?? localLineage.parentPaneKey,
+                            parentTitle: globalLineage?.parentTitle ?? localLineage.parentTitle,
+                            childCount: globalLineage?.childCount ?? localLineage.childCount,
+                            isFirstSibling: localLineage.isFirstSibling,
+                            isLastSibling: localLineage.isLastSibling
+                          }
+                          return (
+                            <ThreadRow
+                              key={thread.paneKey}
+                              thread={thread}
+                              lineage={lineage}
+                              selected={thread.paneKey === selectedThread?.paneKey}
+                              onSelect={() => selectThread(thread)}
+                              onJump={() => jumpToWorkspace(thread)}
+                              onMarkUnread={() => markThreadUnread(thread)}
+                              canJump={storeData.worktreeMap.has(thread.worktree.id)}
+                              compactMode={compactMode}
+                            />
+                          )
+                        })}
+                  </section>
+                )
+              })}
+              {visibleThreads.length === 0 ? (
+                <div className="px-3 py-8 text-sm text-muted-foreground">
+                  {translate(
+                    'auto.components.activity.ActivityPrototypePage.noMatchingSessions',
+                    'No agent sessions match.'
+                  )}
+                </div>
+              ) : null}
+            </div>
+            <div
+              aria-label={translate(
+                'auto.components.activity.ActivityPrototypePage.443690186e',
+                'Resize activity thread list'
+              )}
+              title={translate(
+                'auto.components.activity.ActivityPrototypePage.866083500b',
+                'Drag to resize'
+              )}
+              className={cn(
+                'group absolute -right-1.5 top-0 z-20 flex h-full w-3 cursor-col-resize items-stretch justify-center',
+                isThreadListResizing && 'bg-ring/10'
+              )}
+              onMouseDown={onResizeStart}
+              role="separator"
+            >
+              <div
+                className={cn(
+                  'h-full w-px bg-border transition-colors group-hover:bg-ring/50',
+                  isThreadListResizing && 'bg-ring'
+                )}
+              />
+            </div>
+          </aside>
+
+          <section className="min-w-0 flex-1 overflow-hidden">{detailPanel}</section>
+        </main>
+      )}
     </div>
   )
 }

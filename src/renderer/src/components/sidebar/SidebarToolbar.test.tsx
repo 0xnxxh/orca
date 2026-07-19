@@ -18,6 +18,10 @@ vi.mock('@/store', () => ({
   useAppStore: (selector: (state: Partial<AppState>) => unknown) => selector(mocks.state)
 }))
 
+vi.mock('@/components/activity/useActivityUnreadCount', () => ({
+  useActivityUnreadCount: () => 0
+}))
+
 vi.mock('@/components/ui/tooltip', () => ({
   Tooltip: ({ children, open }: { children: ReactNode; open?: boolean }) => {
     mocks.activeTooltipOpen = open === true
@@ -46,10 +50,15 @@ vi.mock('../orca-profiles/OrcaProfileSwitcher', () => ({
 
 const roots: Root[] = []
 
-async function renderToolbar(onWorkspaceBoardToggle = vi.fn()): Promise<{
+async function renderToolbar(
+  onWorkspaceBoardToggle = vi.fn(),
+  onAgentsPanelToggle = vi.fn(),
+  agentsPanelOpen = false
+): Promise<{
   container: HTMLDivElement
   rerender: () => Promise<void>
   onWorkspaceBoardToggle: ReturnType<typeof vi.fn>
+  onAgentsPanelToggle: ReturnType<typeof vi.fn>
 }> {
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -62,13 +71,15 @@ async function renderToolbar(onWorkspaceBoardToggle = vi.fn()): Promise<{
         <SidebarToolbar
           workspaceBoardOpen={false}
           onWorkspaceBoardToggle={onWorkspaceBoardToggle}
+          agentsPanelOpen={agentsPanelOpen}
+          onAgentsPanelToggle={onAgentsPanelToggle}
         />
       )
     })
   }
   await render()
 
-  return { container, rerender: render, onWorkspaceBoardToggle }
+  return { container, rerender: render, onWorkspaceBoardToggle, onAgentsPanelToggle }
 }
 
 describe('SidebarToolbar moved workspace board hint', () => {
@@ -137,5 +148,41 @@ describe('SidebarToolbar moved workspace board hint', () => {
 
     expect(html).toContain('data-placement="sidebar"')
     expect(html.indexOf('Profile')).toBeLessThan(html.indexOf('Settings'))
+  })
+
+  it('renders an always-on Agents button next to the workspace board button', async () => {
+    const { container } = await renderToolbar()
+    const agentsButton = container.querySelector<HTMLButtonElement>('button[aria-label="Agents"]')
+    const boardButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Workspace board"]'
+    )
+
+    expect(agentsButton).not.toBeNull()
+    expect(boardButton).not.toBeNull()
+    expect(container.innerHTML.indexOf('aria-label="Agents"')).toBeLessThan(
+      container.innerHTML.indexOf('aria-label="Workspace board"')
+    )
+  })
+
+  it('toggles the agents companion panel from the toolbar button', async () => {
+    const onAgentsPanelToggle = vi.fn()
+    const { container } = await renderToolbar(vi.fn(), onAgentsPanelToggle, false)
+    const agentsButton = container.querySelector<HTMLButtonElement>('button[aria-label="Agents"]')
+
+    expect(agentsButton?.getAttribute('aria-pressed')).toBe('false')
+    expect(agentsButton?.hasAttribute('data-agents-panel-trigger')).toBe(true)
+
+    await act(async () => {
+      agentsButton?.click()
+    })
+
+    expect(onAgentsPanelToggle).toHaveBeenCalledOnce()
+  })
+
+  it('marks the agents toolbar button pressed while the panel is open', async () => {
+    const { container } = await renderToolbar(vi.fn(), vi.fn(), true)
+    const agentsButton = container.querySelector<HTMLButtonElement>('button[aria-label="Agents"]')
+
+    expect(agentsButton?.getAttribute('aria-pressed')).toBe('true')
   })
 })

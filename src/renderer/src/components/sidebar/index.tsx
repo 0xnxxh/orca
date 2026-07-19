@@ -8,11 +8,13 @@ import SetupScriptPromptCard from './SetupScriptPromptCard'
 import WorktreeList from './WorktreeList'
 import SidebarToolbar from './SidebarToolbar'
 import WorkspaceKanbanDrawer from './WorkspaceKanbanDrawer'
+import AgentsDrawer from '@/components/activity/AgentsDrawer'
 import type { VirtualizedScrollAnchor } from '@/hooks/useVirtualizedScrollAnchor'
 import { cn } from '@/lib/utils'
 import { FolderPlus, Loader2 } from 'lucide-react'
 import { useSidebarProjectDrop } from './useSidebarProjectDrop'
 import { useWorkspaceBoardPanel } from './useWorkspaceBoardPanel'
+import { useAgentsPanel } from '@/components/activity/useAgentsPanel'
 import { resolveLeftSidebarStyleVariables } from '@/lib/left-sidebar-appearance'
 import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import { lazyWithRetry } from '@/lib/lazy-with-retry'
@@ -68,6 +70,29 @@ function Sidebar({
     solidifyWorkspaceBoardFromDrag,
     cancelWorkspaceBoardDragPreview
   } = useWorkspaceBoardPanel()
+  const {
+    agentsPanelOpen,
+    toggleAgentsPanel,
+    handleAgentsPanelOpenChange,
+    closeAgentsPanel,
+    openAgentsPanel
+  } = useAgentsPanel()
+
+  // Why: both are left-edge companion sheets; stacking them is noisy and
+  // fights for the same viewport band next to the sidebar.
+  const handleWorkspaceBoardToggle = React.useCallback(() => {
+    if (!workspaceBoardOpen) {
+      closeAgentsPanel()
+    }
+    toggleWorkspaceBoard()
+  }, [closeAgentsPanel, toggleWorkspaceBoard, workspaceBoardOpen])
+
+  const handleAgentsPanelToggle = React.useCallback(() => {
+    if (!agentsPanelOpen) {
+      closeWorkspaceBoard()
+    }
+    toggleAgentsPanel()
+  }, [agentsPanelOpen, closeWorkspaceBoard, toggleAgentsPanel])
 
   const setLiveSidebarWidth = React.useCallback((width: number) => {
     document.documentElement.style.setProperty('--workspace-sidebar-live-width', `${width}px`)
@@ -120,6 +145,12 @@ function Sidebar({
     }
   }, [closeWorkspaceBoard, sidebarOpen, workspaceBoardRenderedOpen])
 
+  useEffect(() => {
+    if (!sidebarOpen && agentsPanelOpen) {
+      closeAgentsPanel()
+    }
+  }, [agentsPanelOpen, closeAgentsPanel, sidebarOpen])
+
   const { containerRef, onResizeStart, isResizing } = useSidebarResize<HTMLDivElement>({
     isOpen: sidebarOpen,
     width: sidebarWidth,
@@ -160,7 +191,9 @@ function Sidebar({
             <SidebarToolbar
               workspaceBoardOpen={workspaceBoardOpen}
               workspaceBoardDragPreviewOpen={workspaceBoardDragPreviewOpen}
-              onWorkspaceBoardToggle={toggleWorkspaceBoard}
+              onWorkspaceBoardToggle={handleWorkspaceBoardToggle}
+              agentsPanelOpen={agentsPanelOpen}
+              onAgentsPanelToggle={handleAgentsPanelToggle}
             />
           </>
         )}
@@ -211,15 +244,35 @@ function Sidebar({
         {activeModal === 'forget-ssh-workspace' ? <ForgetSshWorkspaceDialog /> : null}
       </React.Suspense>
       {sidebarOpen ? (
-        <WorkspaceKanbanDrawer
-          leftSidebarStyle={leftSidebarStyle}
-          open={workspaceBoardRenderedOpen}
-          statusBarVisible={statusBarVisible}
-          dragPreview={workspaceBoardDragPreviewOpen}
-          preserveOpenForMenu={workspaceBoardMenuOpen}
-          onOpenChange={handleWorkspaceBoardOpenChange}
-          onMenuOpenChange={setWorkspaceBoardMenuOpen}
-        />
+        <>
+          <WorkspaceKanbanDrawer
+            leftSidebarStyle={leftSidebarStyle}
+            open={workspaceBoardRenderedOpen}
+            statusBarVisible={statusBarVisible}
+            dragPreview={workspaceBoardDragPreviewOpen}
+            preserveOpenForMenu={workspaceBoardMenuOpen}
+            onOpenChange={(open) => {
+              if (open) {
+                closeAgentsPanel()
+              }
+              handleWorkspaceBoardOpenChange(open)
+            }}
+            onMenuOpenChange={setWorkspaceBoardMenuOpen}
+          />
+          <AgentsDrawer
+            leftSidebarStyle={leftSidebarStyle}
+            open={agentsPanelOpen}
+            statusBarVisible={statusBarVisible}
+            onOpenChange={(open) => {
+              if (open) {
+                closeWorkspaceBoard()
+                openAgentsPanel()
+                return
+              }
+              handleAgentsPanelOpenChange(false)
+            }}
+          />
+        </>
       ) : null}
     </TooltipProvider>
   )

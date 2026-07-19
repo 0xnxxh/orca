@@ -1,6 +1,10 @@
 /* eslint-disable max-lines */
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
+import {
+  requestCloseAgentsPanel,
+  requestOpenAgentsPanel
+} from '../../components/activity/agents-panel-events'
 import { normalizeRightSidebarRoute } from '../right-sidebar-route'
 import {
   findPrevLiveNonTaskStackHistoryIndex,
@@ -516,19 +520,16 @@ const TOP_LEVEL_VIEW_LOOKUP: Record<TopLevelView, true> = {
 }
 const KNOWN_TOP_LEVEL_VIEWS = new Set<string>(Object.keys(TOP_LEVEL_VIEW_LOOKUP))
 
-function sanitizeHydratedActiveView(
-  value: PersistedUIState['activeView'],
-  experimentalActivityEnabled: boolean
-): TopLevelView {
+function sanitizeHydratedActiveView(value: PersistedUIState['activeView']): TopLevelView {
   // Why: older data (pre-activeView) or a view a different build doesn't have
   // falls back to terminal rather than rendering nothing.
   if (typeof value !== 'string' || !KNOWN_TOP_LEVEL_VIEWS.has(value)) {
     return 'terminal'
   }
-  // Why: activity is hidden when its setting is off, so restoring it lands on a
-  // hidden page (same guard as closeSettingsPage). mobile/automations stay
-  // functional when hidden, so only activity is gated here.
-  if (value === 'activity' && !experimentalActivityEnabled) {
+  // Why: Agents is a companion overlay (like the workspace board), not a
+  // full-page activeView. Restore terminal so hydration never lands on a
+  // removed navigation surface.
+  if (value === 'activity') {
     return 'terminal'
   }
   return value as TopLevelView
@@ -1447,19 +1448,13 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       }
     }),
   openActivityPage: () => {
-    if (get().settings?.experimentalActivity !== true) {
-      return
-    }
-    set((state) => ({
-      activeView: 'activity',
-      previousViewBeforeActivity:
-        state.activeView === 'activity' ? state.previousViewBeforeActivity : state.activeView
-    }))
+    // Why: Agents is a non-modal companion sheet next to the sidebar (same
+    // shape as the workspace board), not a full-page activeView swap.
+    requestOpenAgentsPanel()
   },
-  closeActivityPage: () =>
-    set((state) => ({
-      activeView: state.previousViewBeforeActivity
-    })),
+  closeActivityPage: () => {
+    requestCloseAgentsPanel()
+  },
   selectedAutomationId: null,
   setSelectedAutomationId: (id) => set({ selectedAutomationId: id }),
   pendingAutomationRunNavigation: null,
@@ -1537,14 +1532,9 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     }))
   },
   closeSettingsPage: () =>
-    set((state) => {
-      const previousView =
-        state.previousViewBeforeSettings === 'activity' &&
-        state.settings?.experimentalActivity !== true
-          ? 'terminal'
-          : state.previousViewBeforeSettings
-      return { activeView: previousView }
-    }),
+    set((state) => ({
+      activeView: state.previousViewBeforeSettings
+    })),
   settingsNavigationTarget: null,
   openSettingsTarget: (target) => set({ settingsNavigationTarget: target }),
   clearSettingsTarget: () => set({ settingsNavigationTarget: null }),
@@ -2587,10 +2577,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         // runs on every cross-window ui:stateChanged broadcast (source 'sync', the
         // default); re-applying activeView there would yank the user's current
         // per-window view (navigation state, not a synced preference).
-        activeView:
-          source === 'startup'
-            ? sanitizeHydratedActiveView(ui.activeView, s.settings?.experimentalActivity === true)
-            : s.activeView,
+        activeView: source === 'startup' ? sanitizeHydratedActiveView(ui.activeView) : s.activeView,
         persistedUIReady: true
       }
       // Why: main rebroadcasts UI written by any client. Identical hydration must

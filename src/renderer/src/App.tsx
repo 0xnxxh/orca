@@ -47,7 +47,6 @@ import { isRemoteWorkspaceSnapshotApplyInProgress, useIpcEvents } from './hooks/
 import { useAutomationDispatchEvents } from './hooks/useAutomationDispatchEvents'
 import RetainedAgentsSyncGate from './components/dashboard/RetainedAgentsSyncGate'
 import { AgentHibernationGate } from './components/AgentHibernationGate'
-import { ActivityTitlebarControls } from './components/activity/ActivityTitlebarControls'
 import Sidebar from './components/Sidebar'
 import { shutdownBufferCaptures } from './components/terminal-pane/shutdown-buffer-captures'
 import { dispatchWindowCloseRequest } from './components/window-close-request-coordinator'
@@ -312,7 +311,6 @@ const WorktreeCreationPanel = lazy(
 )
 const TaskPage = lazy(() => import('./components/TaskPage'))
 const AutomationsPage = lazy(() => import('./components/automations/AutomationsPage'))
-const ActivityPrototypePage = lazy(() => import('./components/activity/ActivityPrototypePage'))
 const Settings = lazy(() => import('./components/settings/Settings'))
 const SkillsPage = lazy(() => import('./components/skills/SkillsPage'))
 const WorkspaceSpacePage = lazy(() => import('./components/workspace-space/WorkspaceSpacePage'))
@@ -1532,13 +1530,10 @@ function App(): React.JSX.Element {
 
   const hasTabBar = tabCount >= 2
   const showTitlebarExpandButton = workspaceChromeActive && !hasTabBar && effectiveActiveTabExpanded
-  // Why: Activity and Space are full-page navigation surfaces — same
-  // treatment as Settings — so the worktree sidebar is removed for those views.
-  const showSidebar =
-    activeView !== 'settings' &&
-    activeView !== 'activity' &&
-    activeView !== 'space' &&
-    activeView !== 'skills'
+  // Why: Space is a full-page navigation surface — same treatment as Settings —
+  // so the worktree sidebar is removed for those views. Agents is a companion
+  // overlay and keeps the sidebar (like the workspace board).
+  const showSidebar = activeView !== 'settings' && activeView !== 'space' && activeView !== 'skills'
   // Why: Tasks/Landing keep the full titlebar only when the sidebar is
   // collapsed; with it open, mirror workspace view so titlebar-left sits flush
   // above nav. Creation layout suppresses the full-width titlebar.
@@ -2173,9 +2168,7 @@ function App(): React.JSX.Element {
 
   const titlebarMainStrip = (
     <>
-      {activeView === 'activity' ? (
-        <ActivityTitlebarControls />
-      ) : creationLayoutActive ? null : (
+      {creationLayoutActive ? null : (
         <div
           id="titlebar-tabs"
           className={`flex flex-1 min-w-0 self-stretch${!workspaceChromeActive ? ' invisible pointer-events-none' : ''}`}
@@ -2448,7 +2441,6 @@ function App(): React.JSX.Element {
                               {activeView === 'skills' ? <SkillsPage /> : null}
                               {activeView === 'tasks' ? <TaskPage /> : null}
                               {activeView === 'automations' ? <AutomationsPage /> : null}
-                              {activeView === 'activity' ? <ActivityPrototypePage /> : null}
                               {activeView === 'space' ? <WorkspaceSpacePage /> : null}
                               {activeView === 'mobile' ? <MobilePage /> : null}
                               {activeView === 'terminal' &&

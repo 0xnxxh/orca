@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
   state: {} as Record<string, unknown>,
   openTaskPage: vi.fn(),
   openAutomationsPage: vi.fn(),
-  openActivityPage: vi.fn(),
   openMobilePage: vi.fn(),
   openModal: vi.fn(),
   updateSettings: vi.fn(),
@@ -33,10 +32,6 @@ vi.mock('@/store/selectors', () => ({
     new Map(
       ((mocks.state.repos as Repo[] | undefined) ?? []).map((repo) => [repo.id, repo] as const)
     )
-}))
-
-vi.mock('@/components/activity/useActivityUnreadCount', () => ({
-  useActivityUnreadCount: () => 0
 }))
 
 vi.mock('@/hooks/useShortcutLabel', () => ({
@@ -77,7 +72,6 @@ vi.mock('@/components/ui/context-menu', () => ({
 
 import {
   getSetupGuideSidebarEntryReady,
-  shouldShowAgentsButton,
   shouldShowAutomationsButton,
   shouldShowMobileButton,
   shouldShowSetupGuideEntry
@@ -119,7 +113,6 @@ function setSidebarState({
     activeView: 'worktrees',
     openTaskPage: mocks.openTaskPage,
     openAutomationsPage: mocks.openAutomationsPage,
-    openActivityPage: mocks.openActivityPage,
     openMobilePage: mocks.openMobilePage,
     openModal: mocks.openModal,
     updateSettings: mocks.updateSettings,
@@ -203,28 +196,6 @@ describe('SidebarNav', () => {
     await i18n.changeLanguage('en')
     mocks.hasPairedMobileDevice = false
     setSidebarState()
-  })
-
-  it('hides the Agents entry while settings are loading', () => {
-    expect(shouldShowAgentsButton(null)).toBe(false)
-  })
-
-  it('hides the Agents entry while the experimental Agents view is off', () => {
-    expect(
-      shouldShowAgentsButton({
-        ...getDefaultSettings('/tmp'),
-        experimentalActivity: false
-      })
-    ).toBe(false)
-  })
-
-  it('shows the Agents entry when the experimental Agents view is on', () => {
-    expect(
-      shouldShowAgentsButton({
-        ...getDefaultSettings('/tmp'),
-        experimentalActivity: true
-      })
-    ).toBe(true)
   })
 
   it('shows the Mobile entry by default for older settings', () => {

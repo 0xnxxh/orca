@@ -4059,7 +4059,9 @@
           "abc62b6328": "プロジェクトを追加",
           "87d0064026": "ワークスペースボードは下部バーに移動しました",
           "a30e34eb5c": "ワークスペースボードを閉じる",
-          "49f62c5665": "ワークスペースボード"
+          "49f62c5665": "ワークスペースボード",
+          "agents": "Agents",
+          "closeAgents": "Close agents"
         },
         "SidebarWorkspaceFilterSection": {
           "c3fa13dc2e": "デフォルトのブランチを非表示にする",
@@ -12813,12 +12815,30 @@
           "beb2c19173": "未読",
           "5651b216c6": "不明なプロジェクト",
           "22b22034bc": "スタンドアロン terminal はアクティビティでは使用できません。",
-          "afdc2139a8": "Agent terminal が閉じられました。続行するには、このワークスペースで新規 terminal を開いてください。"
+          "afdc2139a8": "Agent terminal が閉じられました。続行するには、このワークスペースで新規 terminal を開いてください。",
+          "searchSessions": "Search sessions",
+          "clearSearch": "Clear search",
+          "filterByStatus": "Filter by status",
+          "noMatchingSessions": "No agent sessions match."
         },
         "ActivityTitlebarControls": {
           "f915168c8e": "未読",
           "d6a8de3934": "エージェント",
           "dc708f3eff": "agents を閉じる"
+        },
+        "ActivityAgentsCanvas": {
+          "demoTitle": "Canvas preview (sample data)",
+          "liveTitle": "Agents canvas",
+          "demoHint": "No live agents match filters — showing a sample orchestration graph. Start agents to replace this with real data.",
+          "liveHint": "{{linked}} linked · {{isolated}} isolated · fill = status · stripe = agent",
+          "empty": "No agent activity to place on the canvas.",
+          "viewMode": "Agents view mode"
+        },
+        "AgentsDrawer": {
+          "title": "Agents",
+          "unread": "unread",
+          "description": "Browse agent sessions by status and open their terminals.",
+          "close": "Close"
         }
       },
       "confirmation": {

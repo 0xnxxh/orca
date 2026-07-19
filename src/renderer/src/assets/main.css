@@ -1689,6 +1689,53 @@
   }
 }
 
+/* Why: Agents is a companion overlay, not a drawer. The generic left-sheet
+   slide translates the full width (and from far left once offset to the
+   sidebar edge), which feels wrong for a quick panel toggle. */
+.agents-panel-sheet-content[data-state='open'] {
+  animation-name: agents-panel-sheet-in;
+  animation-duration: 80ms;
+  animation-timing-function: ease-out;
+}
+
+.agents-panel-sheet-content[data-state='closed'] {
+  animation-name: agents-panel-sheet-out;
+  animation-duration: 60ms;
+  animation-timing-function: ease-in;
+}
+
+.agents-panel-sheet-content {
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border) 80%, transparent);
+  backdrop-filter: none;
+}
+
+@keyframes agents-panel-sheet-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes agents-panel-sheet-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents-panel-sheet-content[data-state='open'],
+  .agents-panel-sheet-content[data-state='closed'] {
+    animation: none;
+  }
+}
+
 /* Why: board-origin cards use pointer drag so Shift+scroll can keep firing;
    these replace the native drag cursor and ghost affordance. */
 [data-workspace-board-pointer-draggable='true'] {

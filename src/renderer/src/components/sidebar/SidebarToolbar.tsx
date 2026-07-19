@@ -1,7 +1,8 @@
 import React from 'react'
-import { Kanban } from 'lucide-react'
+import { Bot, Kanban } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { useActivityUnreadCount } from '@/components/activity/useActivityUnreadCount'
 import { ScrollToCurrentWorkspaceToolbarButton } from './ScrollToCurrentWorkspaceToolbarButton'
 import { SidebarSettingsHelpMenu } from './SidebarSettingsHelpMenu'
 import { OrcaProfileSwitcher } from '../orca-profiles/OrcaProfileSwitcher'
@@ -16,12 +17,16 @@ type SidebarToolbarProps = {
   workspaceBoardOpen: boolean
   workspaceBoardDragPreviewOpen?: boolean
   onWorkspaceBoardToggle: () => void
+  agentsPanelOpen: boolean
+  onAgentsPanelToggle: () => void
 }
 
 const SidebarToolbar = React.memo(function SidebarToolbar({
   workspaceBoardOpen,
   workspaceBoardDragPreviewOpen = false,
-  onWorkspaceBoardToggle
+  onWorkspaceBoardToggle,
+  agentsPanelOpen,
+  onAgentsPanelToggle
 }: SidebarToolbarProps) {
   const [workspaceBoardMovedHintOpen, setWorkspaceBoardMovedHintOpen] = React.useState(false)
   const movedHintEligibleRef = React.useRef<boolean | null>(null)
@@ -29,6 +34,7 @@ const SidebarToolbar = React.memo(function SidebarToolbar({
   const hasUsedWorkspaceBoard = useAppStore((state) =>
     hasFeatureInteraction(state.featureInteractions, 'workspace-board')
   )
+  const activityUnreadCount = useActivityUnreadCount(true, 'sidebar-badge')
 
   React.useEffect(() => {
     if (!persistedUIReady) {
@@ -72,6 +78,32 @@ const SidebarToolbar = React.memo(function SidebarToolbar({
         </div>
         <div className="flex items-center gap-1">
           <ScrollToCurrentWorkspaceToolbarButton />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant={agentsPanelOpen ? 'secondary' : 'ghost'}
+                size="icon-xs"
+                type="button"
+                aria-label={translate('auto.components.sidebar.SidebarToolbar.agents', 'Agents')}
+                aria-pressed={agentsPanelOpen}
+                data-agents-panel-trigger=""
+                onClick={onAgentsPanelToggle}
+                className="relative text-muted-foreground"
+              >
+                <Bot className="size-3.5" />
+                {activityUnreadCount > 0 ? (
+                  <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-semibold leading-none text-primary-foreground">
+                    {activityUnreadCount > 99 ? '99+' : activityUnreadCount}
+                  </span>
+                ) : null}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4}>
+              {agentsPanelOpen
+                ? translate('auto.components.sidebar.SidebarToolbar.closeAgents', 'Close agents')
+                : translate('auto.components.sidebar.SidebarToolbar.agents', 'Agents')}
+            </TooltipContent>
+          </Tooltip>
           <Tooltip open={workspaceBoardMovedHintOpen ? true : undefined}>
             <TooltipTrigger asChild>
               <Button

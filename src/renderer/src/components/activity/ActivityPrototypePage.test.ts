@@ -11,8 +11,12 @@ import { formatAgentTypeLabel } from '@/lib/agent-status'
 import type { RetainedAgentEntry } from '@/store/slices/agent-status'
 import {
   ACTIVITY_SEARCH_QUERY_MAX_BYTES,
+  ACTIVITY_STATUS_GROUP_ORDER,
   activityThreadResponseRenderPreview,
   activityThreadMatchesSearchQuery,
+  activityThreadMatchesStatusFilter,
+  createDefaultActivityStatusFilter,
+  createDefaultCollapsedActivityGroups,
   handleActivityFilterFocusShortcut,
   isActivityFilterFocusShortcut,
   shouldIgnoreActivityFilterFocusShortcutTarget,
@@ -21,7 +25,9 @@ import {
   buildAgentPaneThreads,
   getActivityThreadGroup,
   groupActivityThreadsByStatus,
-  isActivitySearchQueryTooLarge
+  isActivitySearchQueryTooLarge,
+  toggleActivityGroupCollapsed,
+  toggleActivityStatusFilter
 } from './ActivityPrototypePage'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 
@@ -910,5 +916,75 @@ describe('activity filter focus shortcut', () => {
     expect(
       shouldIgnoreActivityFilterFocusShortcutTarget(hiddenWorkbenchTerminal, [portalTarget])
     ).toBe(false)
+  })
+})
+
+describe('activity status filter and collapse helpers', () => {
+  it('defaults to every status enabled and collapses done/interrupted groups', () => {
+    expect([...createDefaultActivityStatusFilter()]).toEqual([...ACTIVITY_STATUS_GROUP_ORDER])
+    expect([...createDefaultCollapsedActivityGroups()].sort()).toEqual(['done', 'interrupted'])
+  })
+
+  it('filters threads by enabled agent status groups', () => {
+    const workingEntry: AgentStatusEntry = {
+      state: 'working',
+      updatedAt: 2_000,
+      stateStartedAt: 2_000,
+      paneKey: PANE_KEY,
+      terminalTitle: 'Claude',
+      stateHistory: [],
+      agentType: 'claude',
+      prompt: 'ship it'
+    }
+    const doneEntry: AgentStatusEntry = {
+      state: 'done',
+      updatedAt: 1_000,
+      stateStartedAt: 1_000,
+      paneKey: PANE_KEY_2,
+      terminalTitle: 'Codex',
+      stateHistory: [],
+      agentType: 'codex',
+      prompt: 'done work'
+    }
+    const { events, liveAgentByPaneKey } = buildActivityEvents({
+      agentStatusByPaneKey: {
+        [PANE_KEY]: workingEntry,
+        [PANE_KEY_2]: doneEntry
+      },
+      retainedAgentsByPaneKey: {},
+      tabsByWorktree: { 'wt-1': [makeTab(), { ...makeTab(), id: 'tab-2', ptyId: 'pty-2' }] },
+      worktreeMap: new Map([['wt-1', makeWorktree()]]),
+      repoMap: new Map([['repo-1', makeRepo()]]),
+      acknowledgedAgentsByPaneKey: {},
+      now: 3_000
+    })
+    const threads = buildAgentPaneThreads({ events, liveAgentByPaneKey })
+    const workingOnly = new Set(['working'] as const)
+
+    expect(
+      threads
+        .filter((thread) => activityThreadMatchesStatusFilter(thread, workingOnly))
+        .map((t) => t.paneKey)
+    ).toEqual([PANE_KEY])
+    expect(
+      threads.filter((thread) =>
+        activityThreadMatchesStatusFilter(thread, createDefaultActivityStatusFilter())
+      )
+    ).toHaveLength(threads.length)
+  })
+
+  it('toggles status filter membership and collapsed group keys', () => {
+    const withoutDone = toggleActivityStatusFilter(
+      createDefaultActivityStatusFilter(),
+      'done',
+      false
+    )
+    expect(withoutDone.has('done')).toBe(false)
+    expect(toggleActivityStatusFilter(withoutDone, 'done', true).has('done')).toBe(true)
+
+    const collapsed = createDefaultCollapsedActivityGroups()
+    const expandedDone = toggleActivityGroupCollapsed(collapsed, 'done')
+    expect(expandedDone.has('done')).toBe(false)
+    expect(toggleActivityGroupCollapsed(expandedDone, 'done').has('done')).toBe(true)
   })
 })

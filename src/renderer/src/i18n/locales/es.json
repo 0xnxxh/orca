@@ -4078,7 +4078,9 @@
           "abc62b6328": "Agregar proyecto",
           "87d0064026": "El tablero de espacios de trabajo se movió a la barra inferior",
           "a30e34eb5c": "Cerrar tablero de espacios de trabajo",
-          "49f62c5665": "Tablero de espacios de trabajo"
+          "49f62c5665": "Tablero de espacios de trabajo",
+          "agents": "Agents",
+          "closeAgents": "Close agents"
         },
         "SidebarWorkspaceFilterSection": {
           "c3fa13dc2e": "Ocultar rama predeterminada",
@@ -12813,12 +12815,30 @@
           "beb2c19173": "No leído",
           "5651b216c6": "Proyecto desconocido",
           "22b22034bc": "Terminal independiente no disponible en Actividad.",
-          "afdc2139a8": "Terminal de Agent cerrada. Abre una nueva terminal en este workspace para continuar."
+          "afdc2139a8": "Terminal de Agent cerrada. Abre una nueva terminal en este workspace para continuar.",
+          "searchSessions": "Search sessions",
+          "clearSearch": "Clear search",
+          "filterByStatus": "Filter by status",
+          "noMatchingSessions": "No agent sessions match."
         },
         "ActivityTitlebarControls": {
           "f915168c8e": "no leído",
           "d6a8de3934": "agentes",
           "dc708f3eff": "Agents cercanos"
+        },
+        "ActivityAgentsCanvas": {
+          "demoTitle": "Canvas preview (sample data)",
+          "liveTitle": "Agents canvas",
+          "demoHint": "No live agents match filters — showing a sample orchestration graph. Start agents to replace this with real data.",
+          "liveHint": "{{linked}} linked · {{isolated}} isolated · fill = status · stripe = agent",
+          "empty": "No agent activity to place on the canvas.",
+          "viewMode": "Agents view mode"
+        },
+        "AgentsDrawer": {
+          "title": "Agents",
+          "unread": "unread",
+          "description": "Browse agent sessions by status and open their terminals.",
+          "close": "Close"
         }
       },
       "confirmation": {

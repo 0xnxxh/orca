@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell } from 'lucide-react'
+import { ArrowLeft, Bot } from 'lucide-react'
 
 import { useAppStore } from '@/store'
 import { Badge } from '@/components/ui/badge'
@@ -42,7 +42,7 @@ export function ActivityTitlebarControls(): React.JSX.Element {
             )}
           </TooltipContent>
         </Tooltip>
-        <Bell className="size-3.5 shrink-0 text-muted-foreground" />
+        <Bot className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate text-xs font-medium">
           {translate('auto.components.activity.ActivityTitlebarControls.d6a8de3934', 'agents')}
         </span>

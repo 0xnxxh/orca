@@ -4059,7 +4059,9 @@
           "abc62b6328": "프로젝트 추가",
           "87d0064026": "워크스페이스 보드가 하단 바로 옮겨졌습니다",
           "a30e34eb5c": "워크스페이스 보드 닫기",
-          "49f62c5665": "워크스페이스 보드"
+          "49f62c5665": "워크스페이스 보드",
+          "agents": "Agents",
+          "closeAgents": "Close agents"
         },
         "SidebarWorkspaceFilterSection": {
           "c3fa13dc2e": "기본 브랜치 숨기기",
@@ -12813,12 +12815,30 @@
           "beb2c19173": "읽지 않음",
           "5651b216c6": "알 수 없는 프로젝트",
           "22b22034bc": "활동에서는 독립형 terminal을 사용할 수 없습니다.",
-          "afdc2139a8": "Agent terminal이 닫혔습니다. 계속하려면 이 워크스페이스에서 새 terminal을 여세요."
+          "afdc2139a8": "Agent terminal이 닫혔습니다. 계속하려면 이 워크스페이스에서 새 terminal을 여세요.",
+          "searchSessions": "Search sessions",
+          "clearSearch": "Clear search",
+          "filterByStatus": "Filter by status",
+          "noMatchingSessions": "No agent sessions match."
         },
         "ActivityTitlebarControls": {
           "f915168c8e": "읽지 않음",
           "d6a8de3934": "에이전트",
           "dc708f3eff": "agents 닫기"
+        },
+        "ActivityAgentsCanvas": {
+          "demoTitle": "Canvas preview (sample data)",
+          "liveTitle": "Agents canvas",
+          "demoHint": "No live agents match filters — showing a sample orchestration graph. Start agents to replace this with real data.",
+          "liveHint": "{{linked}} linked · {{isolated}} isolated · fill = status · stripe = agent",
+          "empty": "No agent activity to place on the canvas.",
+          "viewMode": "Agents view mode"
+        },
+        "AgentsDrawer": {
+          "title": "Agents",
+          "unread": "unread",
+          "description": "Browse agent sessions by status and open their terminals.",
+          "close": "Close"
         }
       },
       "confirmation": {

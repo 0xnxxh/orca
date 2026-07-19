@@ -771,26 +771,12 @@ describe('createUISlice hydratePersistedUI', () => {
     expect(store.getState().activeView).toBe('terminal')
   })
 
-  it('drops a persisted activity view when experimental activity is disabled', () => {
+  it('maps a legacy persisted activity view to terminal (agents is an overlay now)', () => {
     const store = createUIStore()
-    store.setState({
-      settings: { experimentalActivity: false } as AppState['settings']
-    })
 
     store.getState().hydratePersistedUI(makePersistedUI({ activeView: 'activity' }), 'startup')
 
     expect(store.getState().activeView).toBe('terminal')
-  })
-
-  it('restores a persisted activity view when experimental activity is enabled', () => {
-    const store = createUIStore()
-    store.setState({
-      settings: { experimentalActivity: true } as AppState['settings']
-    })
-
-    store.getState().hydratePersistedUI(makePersistedUI({ activeView: 'activity' }), 'startup')
-
-    expect(store.getState().activeView).toBe('activity')
   })
 
   it('restores a default-on view (mobile) even when its nav button is hidden', () => {

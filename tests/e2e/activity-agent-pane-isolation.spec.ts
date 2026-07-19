@@ -163,11 +163,9 @@ async function enableInlineAgentCards(page: Page): Promise<void> {
 }
 
 async function enableActivityAgentsView(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const settings = await window.api.settings.set({ experimentalActivity: true })
-    // Why: these specs exercise the experimental Agents page. E2E profiles use
-    // production defaults, where the sidebar entry is hidden unless enabled.
-    window.__store?.setState({ settings })
+  // Why: Agents is always available as a companion overlay (no experimental gate).
+  await page.evaluate(() => {
+    window.__store?.getState().closeActivityPage()
   })
 }
 

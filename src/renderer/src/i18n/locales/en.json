@@ -4116,7 +4116,9 @@
           "a30e34eb5c": "Close workspace board",
           "49f62c5665": "Workspace board",
           "19e32d0e5f": "Open folder picker to add a project",
-          "abc62b6328": "Add Project"
+          "abc62b6328": "Add Project",
+          "agents": "Agents",
+          "closeAgents": "Close agents"
         },
         "SidebarWorkspaceFilterSection": {
           "c3fa13dc2e": "Hide default branch",
@@ -12836,12 +12838,30 @@
           "beb2c19173": "Unread",
           "5651b216c6": "Unknown project",
           "22b22034bc": "Standalone terminal unavailable in Activity.",
-          "afdc2139a8": "Agent terminal closed. Open a new terminal in this workspace to continue."
+          "afdc2139a8": "Agent terminal closed. Open a new terminal in this workspace to continue.",
+          "searchSessions": "Search sessions",
+          "clearSearch": "Clear search",
+          "filterByStatus": "Filter by status",
+          "noMatchingSessions": "No agent sessions match."
         },
         "ActivityTitlebarControls": {
           "f915168c8e": "unread",
           "d6a8de3934": "agents",
           "dc708f3eff": "Close agents"
+        },
+        "ActivityAgentsCanvas": {
+          "demoTitle": "Canvas preview (sample data)",
+          "liveTitle": "Agents canvas",
+          "demoHint": "No live agents match filters — showing a sample orchestration graph. Start agents to replace this with real data.",
+          "liveHint": "{{linked}} linked · {{isolated}} isolated · fill = status · stripe = agent",
+          "empty": "No agent activity to place on the canvas.",
+          "viewMode": "Agents view mode"
+        },
+        "AgentsDrawer": {
+          "title": "Agents",
+          "unread": "unread",
+          "description": "Browse agent sessions by status and open their terminals.",
+          "close": "Close"
         }
       },
       "confirmation": {
