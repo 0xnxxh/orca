@@ -142,6 +142,93 @@ describe('legacy shared Codex auth migration', () => {
   })
 })
 
+describe('legacy shared Codex MCP credentials migration (#8440)', () => {
+  it('carries the shared MCP .credentials.json into the identity-proven home with 0600 perms', () => {
+    const stale = createAuth('one@example.com', 'acct-1', 'stale', 1_000)
+    const fresh = createAuth('one@example.com', 'acct-1', 'fresh', 2_000)
+    const account = fixture.createAccount('account-1', 'acct-1', stale)
+    fixture.writeSharedAuth(fresh)
+    const mcpStore = JSON.stringify({ MCP_OAUTH: { 'server-a': { access_token: 'tok-a' } } })
+    fixture.writeSharedCredentials(mcpStore)
+
+    fixture.migrate([account], account.id)
+
+    const credentialsPath = fixture.accountCredentialsPath(account)
+    expect(readFileSync(credentialsPath, 'utf-8')).toBe(mcpStore)
+    if (process.platform !== 'win32') {
+      expect(statSync(credentialsPath).mode & 0o777).toBe(0o600)
+    }
+    expect(fixture.marker()).toMatchObject({ outcome: 'migrated', accountId: account.id })
+  })
+
+  it('carries the shared MCP store even when auth.json is already current', () => {
+    const fresh = createAuth('one@example.com', 'acct-1', 'fresh', 2_000)
+    const account = fixture.createAccount('account-1', 'acct-1', fresh)
+    fixture.writeSharedAuth(fresh)
+    const mcpStore = JSON.stringify({ MCP_OAUTH: { 'server-a': { access_token: 'tok-a' } } })
+    fixture.writeSharedCredentials(mcpStore)
+
+    fixture.migrate([account], account.id)
+
+    expect(readFileSync(fixture.accountCredentialsPath(account), 'utf-8')).toBe(mcpStore)
+    expect(fixture.marker()).toMatchObject({ outcome: 'already-current' })
+  })
+
+  it('is a no-op when the shared mirror has no MCP .credentials.json', () => {
+    const stale = createAuth('one@example.com', 'acct-1', 'stale', 1_000)
+    const fresh = createAuth('one@example.com', 'acct-1', 'fresh', 2_000)
+    const account = fixture.createAccount('account-1', 'acct-1', stale)
+    fixture.writeSharedAuth(fresh)
+
+    fixture.migrate([account], account.id)
+
+    expect(existsSync(fixture.accountCredentialsPath(account))).toBe(false)
+    expect(fixture.marker()).toMatchObject({ outcome: 'migrated' })
+  })
+
+  it('never clobbers a newer per-account .credentials.json', () => {
+    const stale = createAuth('one@example.com', 'acct-1', 'stale', 1_000)
+    const fresh = createAuth('one@example.com', 'acct-1', 'fresh', 2_000)
+    const account = fixture.createAccount('account-1', 'acct-1', stale)
+    fixture.writeSharedAuth(fresh)
+    fixture.writeSharedCredentials(
+      JSON.stringify({ MCP_OAUTH: { 'server-a': { access_token: 'shared-stale' } } })
+    )
+    const perAccountStore = JSON.stringify({
+      MCP_OAUTH: { 'server-a': { access_token: 'per-account-fresh' } }
+    })
+    writeFileSync(fixture.accountCredentialsPath(account), perAccountStore, 'utf-8')
+
+    fixture.migrate([account], account.id)
+
+    expect(readFileSync(fixture.accountCredentialsPath(account), 'utf-8')).toBe(perAccountStore)
+  })
+
+  it('never leaks the shared MCP store to a non-matching account', () => {
+    const account1 = fixture.createAccount(
+      'account-1',
+      'acct-duplicate',
+      createAuth('same@example.com', 'acct-duplicate', 'one', 1_000)
+    )
+    const account2 = fixture.createAccount(
+      'account-2',
+      'acct-duplicate',
+      createAuth('same@example.com', 'acct-duplicate', 'two', 1_000)
+    )
+    fixture.writeSharedAuth(createAuth('same@example.com', 'acct-duplicate', 'shared', 2_000))
+    fixture.writeSharedCredentials(
+      JSON.stringify({ MCP_OAUTH: { 'server-a': { access_token: 'tok-a' } } })
+    )
+
+    // Ambiguous identity: neither account is a unique match, so nothing is carried.
+    fixture.migrate([account1, account2], account1.id)
+
+    expect(existsSync(fixture.accountCredentialsPath(account1))).toBe(false)
+    expect(existsSync(fixture.accountCredentialsPath(account2))).toBe(false)
+    expect(existsSync(fixture.markerPath)).toBe(false)
+  })
+})
+
 function createFixture() {
   const root = mkdtempSync(join(tmpdir(), 'orca-codex-auth-migration-'))
   const managedAccountsRoot = join(root, 'codex-accounts')
@@ -174,6 +261,12 @@ function createFixture() {
     },
     writeSharedAuth(auth: string) {
       writeFileSync(join(sharedRuntimeHome, 'auth.json'), auth, 'utf-8')
+    },
+    writeSharedCredentials(credentials: string) {
+      writeFileSync(join(sharedRuntimeHome, '.credentials.json'), credentials, 'utf-8')
+    },
+    accountCredentialsPath(account: CodexManagedAccount) {
+      return join(account.managedHomePath, '.credentials.json')
     },
     migrate(hostAccounts: readonly CodexManagedAccount[], activeHostAccountId: string | null) {
       migrateLegacySharedAuthToPerAccountHome({

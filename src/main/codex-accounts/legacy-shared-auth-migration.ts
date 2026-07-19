@@ -20,6 +20,7 @@ type TrustedAccountAuth = {
   account: CodexManagedAccount
   authContents: string | null
   authPath: string
+  homePath: string
 }
 
 type CompletedOutcome = 'already-current' | 'migrated' | 'no-shared-auth' | 'not-newer'
@@ -62,6 +63,14 @@ export function migrateLegacySharedAuthToPerAccountHome({
   if (match.authContents === null) {
     return
   }
+
+  // Why: Codex file-mode MCP OAuth tokens live in $CODEX_HOME/.credentials.json
+  // (issue #8440), keyed by MCP server URL with no account identity of their
+  // own. The uniquely-matched auth.json is the only proof this shared mirror is
+  // the active account's, so carry its co-located MCP store into the same
+  // per-account home or those servers silently need re-auth after upgrade.
+  migrateSharedMcpCredentials(sharedRuntimeHome, match.homePath)
+
   if (match.authContents === sharedAuthContents) {
     writeCompletedMarker(markerPath, 'already-current', match.account.id)
     return
@@ -93,7 +102,30 @@ function readTrustedAccountAuth(
     expectedAccountId: account.id
   })
   const authPath = join(trustedHome, 'auth.json')
-  return { account, authContents: readRegularFile(authPath), authPath }
+  return {
+    account,
+    authContents: readRegularFile(authPath),
+    authPath,
+    homePath: trustedHome
+  }
+}
+
+// Why: MCP OAuth tokens have no identity claim to match on, so we only ever
+// write the shared store into the one identity-proven account's home, and never
+// clobber a newer .credentials.json that account authed in its own home going
+// forward. Absent source is a plain no-op.
+function migrateSharedMcpCredentials(sharedRuntimeHome: string, perAccountHome: string): void {
+  const sharedCredentials = readRegularFile(join(sharedRuntimeHome, '.credentials.json'))
+  if (sharedCredentials === null) {
+    return
+  }
+  const perAccountCredentialsPath = join(perAccountHome, '.credentials.json')
+  if (regularFileState(perAccountCredentialsPath) === 'present') {
+    return
+  }
+  // Why: atomic 0600 write mirrors auth.json so a crash cannot leave a partial
+  // MCP store or widen permissions on sensitive tokens.
+  writeFileAtomically(perAccountCredentialsPath, sharedCredentials, { mode: 0o600 })
 }
 
 function readRegularFile(filePath: string): string | null {
