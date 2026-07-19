@@ -14,11 +14,16 @@ import { MobilePairingConnectionOptions } from './MobilePairingConnectionOptions
 import { MobilePairingSetupSection } from './MobilePairingSetupSection'
 import { WindowsFirewallNotice } from '../mobile/WindowsFirewallNotice'
 import { translate } from '@/i18n/i18n'
-import type { MobilePairingConnectionMode } from '../../../../shared/mobile-pairing-connection-mode'
+import {
+  effectiveMobilePairingConnectionMode,
+  resolveMobilePairingConnectionMode,
+  type MobilePairingConnectionMode
+} from '../../../../shared/mobile-pairing-connection-mode'
 export { getMobilePaneSearchEntries } from './mobile-pane-search'
 
 export function MobilePane(): React.JSX.Element {
   const autoRestoreFitMs = useAppStore((s) => s.settings?.mobileAutoRestoreFitMs ?? null)
+  const savedConnectionMode = useAppStore((s) => s.settings?.mobilePairingConnectionMode)
   const updateSettings = useAppStore((s) => s.updateSettings)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [pairingUrl, setPairingUrl] = useState<string | null>(null)
@@ -32,14 +37,24 @@ export function MobilePane(): React.JSX.Element {
   const [codeCopied, setCodeCopied] = useState(false)
   const [deviceCountAtQr, setDeviceCountAtQr] = useState<number | null>(null)
   const signedIn = useAppStore((state) => state.orcaProfileAuthStatus?.state === 'connected')
-  // Why: Relay is opt-in while compatible mobile builds are limited to the
-  // TestFlight preview and Android APK.
-  const [connectionMode, setConnectionMode] = useState<MobilePairingConnectionMode>('local-only')
+  // Why: Anywhere is the default; an explicit saved `local-only` means the
+  // user already chose same-network only. Local state tracks the UI immediately;
+  // settings persist the choice across reopen.
+  const [connectionMode, setConnectionMode] = useState<MobilePairingConnectionMode>(() =>
+    resolveMobilePairingConnectionMode(savedConnectionMode)
+  )
+  const qrConnectionMode = effectiveMobilePairingConnectionMode({
+    preferred: connectionMode,
+    signedIn
+  })
   const [rotateNextQr, setRotateNextQr] = useState(false)
   const devicesRef = useRef<PairedDevice[]>([])
-  const wasSignedInRef = useRef(signedIn)
   const codeCopiedResetTimerRef = useRef<number | null>(null)
   const mountedRef = useMountedRef()
+
+  useEffect(() => {
+    setConnectionMode(resolveMobilePairingConnectionMode(savedConnectionMode))
+  }, [savedConnectionMode])
 
   const clearCodeCopiedResetTimer = useCallback((): void => {
     if (codeCopiedResetTimerRef.current !== null) {
@@ -95,7 +110,7 @@ export function MobilePane(): React.JSX.Element {
       try {
         const result = await window.api.mobile.getPairingQR({
           ...(selectedAddress ? { address: selectedAddress } : {}),
-          connectionMode,
+          connectionMode: qrConnectionMode,
           ...(opts.rotate || rotateNextQr ? { rotate: true } : {})
         })
         if (result.available) {
@@ -137,9 +152,9 @@ export function MobilePane(): React.JSX.Element {
     },
     [
       clearCodeCopiedResetTimer,
-      connectionMode,
       loadDevices,
       mountedRef,
+      qrConnectionMode,
       rotateNextQr,
       selectedAddress
     ]
@@ -150,7 +165,10 @@ export function MobilePane(): React.JSX.Element {
       if (nextMode === connectionMode) {
         return
       }
+      // Why: remember the path so reopening Settings keeps the user's choice
+      // instead of snapping back to the default.
       setConnectionMode(nextMode)
+      void updateSettings({ mobilePairingConnectionMode: nextMode })
       if (qrDataUrl) {
         // Why: a displayed code encodes the old connection policy. Hide it and
         // rotate its pending credential before showing a code for the new mode.
@@ -160,21 +178,13 @@ export function MobilePane(): React.JSX.Element {
         setRotateNextQr(true)
       }
     },
-    [connectionMode, qrDataUrl]
+    [connectionMode, qrDataUrl, updateSettings]
   )
 
   useEffect(() => {
     void loadDevices()
     void loadNetworkInterfaces()
   }, [loadDevices, loadNetworkInterfaces])
-
-  useEffect(() => {
-    const wasSignedIn = wasSignedInRef.current
-    wasSignedInRef.current = signedIn
-    if (wasSignedIn && !signedIn) {
-      changeConnectionMode('local-only')
-    }
-  }, [changeConnectionMode, signedIn])
 
   useMobilePairingDevicePolling({
     deviceCountAtQr,
@@ -206,7 +216,8 @@ export function MobilePane(): React.JSX.Element {
     <div className="space-y-6">
       <MobilePairingSetupSection
         connectionMode={connectionMode}
-        relayConnectionControl={
+        canGenerate={!(connectionMode === 'automatic' && !signedIn)}
+        connectionPathControl={
           <MobilePairingConnectionOptions value={connectionMode} onChange={changeConnectionMode} />
         }
         networkInterfaces={networkInterfaces}

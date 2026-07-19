@@ -23,7 +23,7 @@ function renderSection(
   const onGenerateQr = vi.fn()
   const props: React.ComponentProps<typeof MobilePairingSetupSection> = {
     connectionMode: 'local-only',
-    relayConnectionControl: <div data-testid="relay-control">relay</div>,
+    connectionPathControl: <div data-testid="path-control">path</div>,
     networkInterfaces: [LAN, TAILNET],
     selectedAddress: TAILNET.address,
     onSelectedAddressChange,
@@ -53,22 +53,26 @@ describe('MobilePairingSetupSection', () => {
     })
   })
 
-  it('explains the direct path, Relay fallback, and generate steps in order', () => {
+  it('shows connection, address, and generate in a compact flow', () => {
     renderSection()
-    expect(screen.getByText('1. Direct address')).toBeVisible()
-    expect(screen.getByText('2. Optional Relay fallback')).toBeVisible()
-    expect(screen.getByText('3. Generate pairing code')).toBeVisible()
-    expect(screen.getByTestId('relay-control')).toBeVisible()
+    expect(screen.getByText('Pair a phone')).toBeVisible()
+    expect(screen.getByText('Connection')).toBeVisible()
+    expect(screen.getByText('This computer’s address')).toBeVisible()
+    expect(screen.getByTestId('path-control')).toBeVisible()
     expect(screen.getByRole('combobox')).toHaveTextContent('100.64.1.20 (tailscale0)')
-    expect(screen.getByText(/connects only through the direct address above/i)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Generate QR code' })).toBeVisible()
+    expect(screen.getByText(/must be able to reach this address/i)).toBeVisible()
   })
 
-  it('describes automatic pairing as direct-first with Relay fallback', () => {
+  it('describes address role when Anywhere is selected', () => {
     renderSection({ connectionMode: 'automatic' })
-    expect(screen.getByRole('combobox')).toBeVisible()
-    expect(
-      screen.getByText(/includes the direct address above, plus encrypted Orca Relay/i)
-    ).toBeVisible()
+    expect(screen.getByText(/faster direct path when nearby/i)).toBeVisible()
+  })
+
+  it('disables generate when sign-in is required and explains why', () => {
+    renderSection({ canGenerate: false })
+    expect(screen.getByRole('button', { name: 'Generate QR code' })).toBeDisabled()
+    expect(screen.getByText(/Sign in above first, or switch to Local network/i)).toBeVisible()
   })
 
   it('commits an OS interface picked from the list', async () => {
@@ -78,15 +82,9 @@ describe('MobilePairingSetupSection', () => {
     expect(onSelectedAddressChange).toHaveBeenCalledWith('192.168.1.24')
   })
 
-  it('opens Tailscale download from the direct-address hint', async () => {
-    const { user } = renderSection()
-    await user.click(screen.getByRole('button', { name: /Get Tailscale/i }))
-    expect(window.api.shell.openUrl).toHaveBeenCalledWith('https://tailscale.com/download')
-  })
-
-  it('generates a pairing code with the selected mode', async () => {
+  it('generates a pairing code', async () => {
     const { user, onGenerateQr } = renderSection()
-    await user.click(screen.getByRole('button', { name: 'Generate QR Code' }))
+    await user.click(screen.getByRole('button', { name: 'Generate QR code' }))
     expect(onGenerateQr).toHaveBeenCalledOnce()
   })
 })

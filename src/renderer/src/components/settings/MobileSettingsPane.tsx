@@ -8,6 +8,7 @@ import {
 } from './mobile-settings-search'
 import { translate } from '@/i18n/i18n'
 import { useAppStore } from '@/store'
+import { MobileRelayBetaAvailability } from './MobileRelayBetaAvailability'
 export { getMobileSettingsPaneSearchEntries }
 
 const ORCA_IOS_APP_STORE_URL = 'https://apps.apple.com/app/orca-ide/id6766130217'
@@ -33,7 +34,7 @@ export function MobileSettingsPane(): React.JSX.Element {
           <p>
             {translate(
               'auto.components.settings.MobileSettingsPane.installIntro',
-              'Install Orca Mobile, then pair this computer with a QR code below. Get iOS from the'
+              'Install Orca Mobile from the'
             )}{' '}
             <button
               type="button"
@@ -41,11 +42,8 @@ export function MobileSettingsPane(): React.JSX.Element {
               className="cursor-pointer underline underline-offset-2 hover:text-foreground"
             >
               {translate('auto.components.settings.MobileSettingsPane.b5a2ed83ff', 'App Store')}
-            </button>{' '}
-            {translate(
-              'auto.components.settings.MobileSettingsPane.b0088412a1',
-              'or the Android APK from'
-            )}{' '}
+            </button>
+            {' · '}
             <button
               type="button"
               // Why: Android is moving to Google Play soon, but until then
@@ -54,18 +52,16 @@ export function MobileSettingsPane(): React.JSX.Element {
               className="cursor-pointer underline underline-offset-2 hover:text-foreground"
             >
               {translate(
-                'auto.components.settings.MobileSettingsPane.9a3c280e49',
-                'GitHub Releases'
+                'auto.components.settings.MobileSettingsPane.androidApkLabel',
+                'Android APK'
               )}
             </button>
-            .
-          </p>
-          <p>
             {translate(
-              'auto.components.settings.MobileSettingsPane.connectionPaths',
-              'Connection options: same Wi‑Fi (LAN), your own Tailscale network, or Orca Relay as a remote fallback (beta — TestFlight / Android APK).'
+              'auto.components.settings.MobileSettingsPane.installOutro',
+              ', then pair below.'
             )}
           </p>
+          <MobileRelayBetaAvailability />
         </div>
       </SearchableSetting>
 

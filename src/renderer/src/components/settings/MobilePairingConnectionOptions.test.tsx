@@ -13,6 +13,7 @@ type MobileRelayStoreState = {
   orcaProfileAuthStatus: OrcaProfileAuthStatus | null
   orcaProfileConnecting: boolean
   connectCurrentOrcaProfile: () => Promise<null>
+  fetchOrcaProfileAuthStatus: () => Promise<OrcaProfileAuthStatus | null>
 }
 
 const mocks = vi.hoisted(() => ({
@@ -30,10 +31,12 @@ vi.mock('../../i18n/i18n', () => ({
 describe('MobilePairingConnectionOptions', () => {
   let statusListener: ((status: MobileRelayStatus) => void) | null
   const connect = vi.fn().mockResolvedValue(null)
+  const fetchAuthStatus = vi.fn().mockResolvedValue(null)
 
   beforeEach(() => {
     statusListener = null
     connect.mockClear()
+    fetchAuthStatus.mockClear()
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
@@ -55,26 +58,60 @@ describe('MobilePairingConnectionOptions', () => {
         persistence: 'none'
       },
       orcaProfileConnecting: false,
-      connectCurrentOrcaProfile: connect
+      connectCurrentOrcaProfile: connect,
+      fetchOrcaProfileAuthStatus: fetchAuthStatus
     }
   })
 
   afterEach(() => cleanup())
 
-  it('offers local-only pairing while Relay requires sign-in', async () => {
+  it('shows a compact Sign in row when Orca Relay is selected and signed out', async () => {
     const user = userEvent.setup()
-    render(<MobilePairingConnectionOptions value="local-only" onChange={vi.fn()} />)
+    const onChange = vi.fn()
+    render(<MobilePairingConnectionOptions value="automatic" onChange={onChange} />)
 
-    expect(screen.getByRole('switch', { name: /include orca relay/i })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: /include orca relay/i })).not.toBeChecked()
-    expect(
-      screen.getByText(/sign in on this desktop to include relay as a fallback/i)
-    ).toBeVisible()
+    expect(screen.getByTestId('anywhere-sign-in-panel')).toBeVisible()
+    expect(screen.getByText('Sign in to use Orca Mobile Relay.')).toBeVisible()
+    // Why: do not surface build-setup diagnostics in the pairing flow.
+    expect(screen.queryByText(/not configured for this build/i)).toBeNull()
+
     await user.click(screen.getByRole('button', { name: 'Sign in' }))
+    expect(onChange).toHaveBeenCalledWith('automatic')
     expect(connect).toHaveBeenCalledOnce()
   })
 
-  it('selects either automatic fallback or local-only pairing when signed in', async () => {
+  it('hides Sign in when local network is selected', () => {
+    render(<MobilePairingConnectionOptions value="local-only" onChange={vi.fn()} />)
+    expect(screen.queryByTestId('anywhere-sign-in-panel')).toBeNull()
+  })
+
+  it('selects a path from the compact list', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<MobilePairingConnectionOptions value="local-only" onChange={onChange} />)
+
+    expect(
+      screen.getByText('Phone can be on cellular or any Wi‑Fi. Sign-in required.')
+    ).toBeVisible()
+    expect(
+      screen.getByText('Phone must be on this Wi‑Fi or your Tailscale. No sign-in.')
+    ).toBeVisible()
+
+    await user.click(screen.getByRole('radio', { name: /Orca Relay/i }))
+    expect(onChange).toHaveBeenCalledWith('automatic')
+  })
+
+  it('refreshes auth status when it is missing on mount', () => {
+    mocks.state = {
+      ...mocks.state,
+      orcaProfileAuthStatus: null
+    }
+    render(<MobilePairingConnectionOptions value="automatic" onChange={vi.fn()} />)
+    expect(fetchAuthStatus).toHaveBeenCalledOnce()
+    expect(screen.getByTestId('anywhere-sign-in-panel')).toBeVisible()
+  })
+
+  it('shows relay status when signed in on Orca Relay', async () => {
     mocks.state = {
       orcaProfileAuthStatus: {
         activeProfileId: 'profile-1',
@@ -83,59 +120,18 @@ describe('MobilePairingConnectionOptions', () => {
         persistence: 'encrypted'
       },
       orcaProfileConnecting: false,
-      connectCurrentOrcaProfile: connect
+      connectCurrentOrcaProfile: connect,
+      fetchOrcaProfileAuthStatus: fetchAuthStatus
     }
     const onChange = vi.fn()
     const user = userEvent.setup()
     render(<MobilePairingConnectionOptions value="automatic" onChange={onChange} />)
 
     await waitFor(() => expect(screen.getByText('Ready')).toBeVisible())
-    expect(screen.getByRole('switch', { name: /include orca relay/i })).toBeChecked()
-    await user.click(screen.getByRole('switch', { name: /include orca relay/i }))
+    expect(screen.queryByTestId('anywhere-sign-in-panel')).toBeNull()
+
+    await user.click(screen.getByRole('radio', { name: /Local network/i }))
     expect(onChange).toHaveBeenCalledWith('local-only')
     statusListener?.('standby')
-    await waitFor(() => expect(screen.getByText('Available')).toBeVisible())
-  })
-
-  it('shows the Relay beta availability inline and opens both compatible mobile builds', async () => {
-    const user = userEvent.setup()
-    render(<MobilePairingConnectionOptions value="local-only" onChange={vi.fn()} />)
-
-    expect(screen.getByText('Beta')).toBeVisible()
-    expect(screen.getByText('Available on')).toBeVisible()
-
-    await user.click(screen.getByRole('button', { name: 'TestFlight' }))
-    expect(window.api.shell.openUrl).toHaveBeenCalledWith(
-      'https://testflight.apple.com/join/YjeGMQBA'
-    )
-
-    await user.click(screen.getByRole('button', { name: 'Android APK' }))
-    expect(window.api.shell.openUrl).toHaveBeenCalledWith(
-      'https://github.com/stablyai/orca/releases/download/mobile-android-v0.0.31/app-release.apk'
-    )
-  })
-
-  it('keeps the compact onboarding choices structurally stable across modes', async () => {
-    mocks.state = {
-      orcaProfileAuthStatus: {
-        activeProfileId: 'profile-1',
-        configured: true,
-        state: 'connected',
-        persistence: 'encrypted'
-      },
-      orcaProfileConnecting: false,
-      connectCurrentOrcaProfile: connect
-    }
-    const props = { compact: true, onChange: vi.fn() }
-    const { rerender } = render(<MobilePairingConnectionOptions {...props} value="automatic" />)
-
-    expect(screen.getByRole('switch', { name: /include orca relay/i })).toBeChecked()
-    expect(screen.getByText(/fall back through encrypted relay/i)).toBeVisible()
-    expect(screen.queryByText('Ready')).toBeNull()
-
-    rerender(<MobilePairingConnectionOptions {...props} value="local-only" />)
-    expect(screen.getByRole('switch', { name: /include orca relay/i })).not.toBeChecked()
-    expect(screen.getByText(/fall back through encrypted relay/i)).toBeVisible()
-    expect(screen.queryByText(/without connecting this phone through Orca Relay/i)).toBeNull()
   })
 })

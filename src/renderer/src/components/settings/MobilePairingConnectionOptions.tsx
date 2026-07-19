@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react'
-import { Cloud, Loader2 } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Loader2 } from 'lucide-react'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { translate } from '../../i18n/i18n'
 import { useAppStore } from '../../store'
+import { cn } from '@/lib/utils'
 import type { MobileRelayStatus } from '../../../../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../../../../shared/mobile-pairing-connection-mode'
-import { MobileRelayBetaAvailability } from './MobileRelayBetaAvailability'
-import { SettingsRow, SettingsSwitch } from './SettingsFormControls'
 
 function relayStatusLabel(status: MobileRelayStatus): string {
   if (status === 'registered') {
@@ -37,122 +36,56 @@ function relayStatusLabel(status: MobileRelayStatus): string {
   )
 }
 
-type CompactConnectionOptionsProps = {
-  value: MobilePairingConnectionMode
-  onChange: (value: MobilePairingConnectionMode) => void
-  signedIn: boolean
-  configured: boolean
-  connecting: boolean
-  connect: () => Promise<unknown>
-  relayStatus: MobileRelayStatus
+type PathOptionProps = {
+  selected: boolean
+  onSelect: () => void
+  title: string
+  description: string
+  trailing?: ReactNode
 }
 
-function ConnectionModeSwitch({
-  value,
-  onChange,
-  signedIn,
-  relayStatus,
-  showStatus = true
-}: Pick<CompactConnectionOptionsProps, 'value' | 'onChange' | 'signedIn' | 'relayStatus'> & {
-  showStatus?: boolean
-}): React.JSX.Element {
+function PathOption({
+  selected,
+  onSelect,
+  title,
+  description,
+  trailing
+}: PathOptionProps): React.JSX.Element {
   return (
-    <SettingsRow
-      label={
-        <span className="inline-flex items-center gap-2">
-          <Cloud className="size-4 text-muted-foreground" />
-          <span>
-            {translate(
-              'auto.components.settings.MobilePairingConnectionOptions.anywhere',
-              'Include Orca Relay'
-            )}
-          </span>
-        </span>
-      }
-      description={
-        <span className="block space-y-0.5">
-          <span className="block">
-            {signedIn
-              ? translate(
-                  'auto.components.settings.MobilePairingConnectionOptions.automaticDescription',
-                  'If the phone cannot reach the direct address, fall back through encrypted Relay from any network.'
-                )
-              : translate(
-                  'auto.components.settings.MobilePairingConnectionOptions.signInDescription',
-                  'Sign in on this desktop to include Relay as a fallback.'
-                )}
-          </span>
-          <MobileRelayBetaAvailability />
-        </span>
-      }
-      alignTop
-      control={
-        <div className="flex items-center gap-2">
-          {showStatus && signedIn && value === 'automatic' ? (
-            <Badge variant="outline" className="shrink-0">
-              {relayStatusLabel(relayStatus)}
-            </Badge>
-          ) : null}
-          <SettingsSwitch
-            checked={value === 'automatic'}
-            disabled={!signedIn}
-            ariaLabel={translate(
-              'auto.components.settings.MobilePairingConnectionOptions.anywhere',
-              'Include Orca Relay'
-            )}
-            onChange={() => onChange(value === 'automatic' ? 'local-only' : 'automatic')}
-          />
+    <div
+      role="radio"
+      tabIndex={0}
+      aria-checked={selected}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === ' ' || event.key === 'Enter') {
+          event.preventDefault()
+          onSelect()
+        }
+      }}
+      className={cn(
+        'flex cursor-pointer items-start gap-3 px-3 py-2.5 outline-none transition-colors',
+        'focus-visible:bg-accent/50',
+        selected ? 'bg-accent/40' : 'hover:bg-accent/20'
+      )}
+    >
+      <span
+        className={cn(
+          'mt-0.5 flex size-3.5 shrink-0 items-center justify-center rounded-full border',
+          selected ? 'border-foreground bg-foreground' : 'border-muted-foreground/40'
+        )}
+        aria-hidden
+      >
+        {selected ? <span className="size-1.5 rounded-full bg-background" /> : null}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium leading-none">{title}</span>
+          {trailing}
         </div>
-      }
-    />
-  )
-}
-
-function CompactConnectionOptions({
-  value,
-  onChange,
-  signedIn,
-  configured,
-  connecting,
-  connect,
-  relayStatus
-}: CompactConnectionOptionsProps): React.JSX.Element {
-  return (
-    <section className="w-full">
-      <ConnectionModeSwitch
-        value={value}
-        onChange={onChange}
-        signedIn={signedIn}
-        relayStatus={relayStatus}
-        showStatus={false}
-      />
-      {!signedIn ? (
-        <div className="flex justify-start">
-          {configured ? (
-            <Button
-              type="button"
-              size="xs"
-              className="shrink-0"
-              disabled={connecting}
-              onClick={() => void connect()}
-            >
-              {connecting ? <Loader2 className="animate-spin" /> : null}
-              {translate(
-                'auto.components.settings.MobilePairingConnectionOptions.signIn',
-                'Sign in'
-              )}
-            </Button>
-          ) : (
-            <Badge variant="outline" className="shrink-0">
-              {translate(
-                'auto.components.settings.MobilePairingConnectionOptions.unavailable',
-                'Unavailable'
-              )}
-            </Badge>
-          )}
-        </div>
-      ) : null}
-    </section>
+        <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+      </div>
+    </div>
   )
 }
 
@@ -168,9 +101,17 @@ export function MobilePairingConnectionOptions({
   const authStatus = useAppStore((state) => state.orcaProfileAuthStatus)
   const connecting = useAppStore((state) => state.orcaProfileConnecting)
   const connect = useAppStore((state) => state.connectCurrentOrcaProfile)
+  const fetchAuthStatus = useAppStore((state) => state.fetchOrcaProfileAuthStatus)
   const [relayStatus, setRelayStatus] = useState<MobileRelayStatus>('offline')
   const signedIn = authStatus?.state === 'connected'
-  const configured = authStatus?.configured !== false
+  const reconnectRequired = authStatus?.state === 'reconnect-required'
+  const needsSignIn = value === 'automatic' && !signedIn
+
+  useEffect(() => {
+    if (!authStatus) {
+      void fetchAuthStatus()
+    }
+  }, [authStatus, fetchAuthStatus])
 
   useEffect(() => {
     let receivedEvent = false
@@ -195,54 +136,83 @@ export function MobilePairingConnectionOptions({
     }
   }, [])
 
-  if (compact) {
-    return (
-      <CompactConnectionOptions
-        value={value}
-        onChange={onChange}
-        signedIn={signedIn}
-        configured={configured}
-        connecting={connecting}
-        connect={connect}
-        relayStatus={relayStatus}
-      />
-    )
-  }
-
   return (
-    <section>
-      <ConnectionModeSwitch
-        value={value}
-        onChange={onChange}
-        signedIn={signedIn}
-        relayStatus={relayStatus}
-      />
-      {!signedIn ? (
-        <div className="flex justify-end">
-          {configured ? (
-            <Button
-              type="button"
-              size="sm"
-              className="w-24 shrink-0"
-              disabled={connecting}
-              onClick={() => void connect()}
-            >
-              {connecting ? <Loader2 className="animate-spin" /> : null}
-              {translate(
-                'auto.components.settings.MobilePairingConnectionOptions.signIn',
-                'Sign in'
-              )}
-            </Button>
-          ) : (
-            <Badge variant="outline" className="shrink-0">
-              {translate(
-                'auto.components.settings.MobilePairingConnectionOptions.unavailable',
-                'Unavailable'
-              )}
-            </Badge>
+    <div className={cn('space-y-2', compact && 'space-y-1.5')}>
+      <div
+        role="radiogroup"
+        aria-label={translate(
+          'auto.components.settings.MobilePairingConnectionOptions.pathGroup',
+          'How the phone reaches this computer'
+        )}
+        className="overflow-hidden rounded-md border border-border"
+      >
+        <PathOption
+          selected={value === 'automatic'}
+          onSelect={() => onChange('automatic')}
+          title={translate(
+            'auto.components.settings.MobilePairingConnectionOptions.anywhereTitle',
+            'Orca Relay'
           )}
+          description={translate(
+            'auto.components.settings.MobilePairingConnectionOptions.anywhereDescription',
+            'Phone can be on cellular or any Wi‑Fi. Sign-in required.'
+          )}
+          trailing={
+            signedIn && value === 'automatic' ? (
+              <Badge variant="outline" className="text-[10px]">
+                {relayStatusLabel(relayStatus)}
+              </Badge>
+            ) : null
+          }
+        />
+        <div className="border-t border-border" />
+        <PathOption
+          selected={value === 'local-only'}
+          onSelect={() => onChange('local-only')}
+          title={translate(
+            'auto.components.settings.MobilePairingConnectionOptions.localTitle',
+            'Local network'
+          )}
+          description={translate(
+            'auto.components.settings.MobilePairingConnectionOptions.localDescription',
+            'Phone must be on this Wi‑Fi or your Tailscale. No sign-in.'
+          )}
+        />
+      </div>
+
+      {needsSignIn ? (
+        <div
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+          data-testid="anywhere-sign-in-panel"
+        >
+          <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+            {translate(
+              'auto.components.settings.MobilePairingConnectionOptions.signInRequired',
+              'Sign in to use Orca Mobile Relay.'
+            )}
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            disabled={connecting}
+            onClick={() => {
+              onChange('automatic')
+              void connect()
+            }}
+          >
+            {connecting ? <Loader2 className="animate-spin" /> : null}
+            {reconnectRequired
+              ? translate(
+                  'auto.components.settings.MobilePairingConnectionOptions.signInAgain',
+                  'Sign in again'
+                )
+              : translate(
+                  'auto.components.settings.MobilePairingConnectionOptions.signIn',
+                  'Sign in'
+                )}
+          </Button>
         </div>
       ) : null}
-    </section>
+    </div>
   )
 }

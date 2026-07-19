@@ -17,7 +17,11 @@ import { translate } from '@/i18n/i18n'
 import { useMobilePageEscape } from './use-mobile-page-escape'
 import { MobilePageContent } from './MobilePageContent'
 import { useMobileInstallQr } from './use-mobile-install-qr'
-import type { MobilePairingConnectionMode } from '../../../../shared/mobile-pairing-connection-mode'
+import {
+  effectiveMobilePairingConnectionMode,
+  resolveMobilePairingConnectionMode,
+  type MobilePairingConnectionMode
+} from '../../../../shared/mobile-pairing-connection-mode'
 import { useMobileInstallActions } from './use-mobile-install-actions'
 
 export default function MobilePage(): React.JSX.Element {
@@ -33,9 +37,12 @@ export default function MobilePage(): React.JSX.Element {
   const [pairingUrl, setPairingUrl] = useState<string | null>(null)
   const [pairLoading, setPairLoading] = useState(false)
   const signedIn = useAppStore((state) => state.orcaProfileAuthStatus?.state === 'connected')
-  // Why: Relay is opt-in while compatible mobile builds are limited to the
-  // TestFlight preview and Android APK.
-  const [connectionMode, setConnectionMode] = useState<MobilePairingConnectionMode>('local-only')
+  const savedConnectionMode = useAppStore((s) => s.settings?.mobilePairingConnectionMode)
+  // Why: Anywhere is the default; an explicit saved `local-only` is the
+  // "user already set it up otherwise" signal.
+  const [connectionMode, setConnectionMode] = useState<MobilePairingConnectionMode>(() =>
+    resolveMobilePairingConnectionMode(savedConnectionMode)
+  )
   const [networkInterfaces, setNetworkInterfaces] = useState<MobileNetworkInterface[]>([])
   const [selectedAddress, setSelectedAddress] = useState<string | undefined>(undefined)
   // Why: tracks whether `selectedAddress` came from the user typing a
@@ -48,7 +55,6 @@ export default function MobilePage(): React.JSX.Element {
   const [deviceCountAtPairStart, setDeviceCountAtPairStart] = useState<number | null>(null)
   const hasGeneratedRef = useRef(false)
   const pairingRequestIdRef = useRef(0)
-  const wasSignedInRef = useRef(signedIn)
   const mountedRef = useMountedRef()
   const stageRef = useRef<FlowStage | null>(null)
   const deviceCountAtPairStartRef = useRef<number | null>(null)
@@ -186,7 +192,11 @@ export default function MobilePage(): React.JSX.Element {
       }
       try {
         const address = addressOverride ?? selectedAddress
-        const nextConnectionMode = connectionModeOverride ?? connectionMode
+        const preferredMode = connectionModeOverride ?? connectionMode
+        const nextConnectionMode = effectiveMobilePairingConnectionMode({
+          preferred: preferredMode,
+          signedIn
+        })
         const result = await window.api.mobile.getPairingQR({
           ...(address ? { address } : {}),
           connectionMode: nextConnectionMode,
@@ -231,7 +241,7 @@ export default function MobilePage(): React.JSX.Element {
         }
       }
     },
-    [connectionMode, mountedRef, selectedAddress]
+    [connectionMode, mountedRef, selectedAddress, signedIn]
   )
 
   const handleConnectionModeChange = useCallback(
@@ -240,6 +250,7 @@ export default function MobilePage(): React.JSX.Element {
         return
       }
       setConnectionMode(nextMode)
+      void updateSettings({ mobilePairingConnectionMode: nextMode })
       // Why: an offer encodes its connection policy. Invalidate the prior
       // request before rotating so a late response cannot restore a stale QR.
       pairingRequestIdRef.current += 1
@@ -250,16 +261,12 @@ export default function MobilePage(): React.JSX.Element {
         void generatePairing(true, undefined, nextMode)
       }
     },
-    [connectionMode, generatePairing, pairLoading]
+    [connectionMode, generatePairing, pairLoading, updateSettings]
   )
 
   useEffect(() => {
-    const wasSignedIn = wasSignedInRef.current
-    wasSignedInRef.current = signedIn
-    if (wasSignedIn && !signedIn) {
-      handleConnectionModeChange('local-only')
-    }
-  }, [handleConnectionModeChange, signedIn])
+    setConnectionMode(resolveMobilePairingConnectionMode(savedConnectionMode))
+  }, [savedConnectionMode])
 
   const loadNetworkInterfaces = useCallback(async () => {
     if (mountedRef.current) {
