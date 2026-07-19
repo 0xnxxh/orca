@@ -45,7 +45,7 @@ export function crashMainProcess(pid) {
  * proof the ConPTY pipe was NOT severed. Returns
  * { events: [{ id, provider, timeCreated, message }] }.
  */
-export function scanPwshFailFast(sinceMs) {
+export function scanPwshFailFast(sinceMs, runCommand = runCommandSync) {
   // Build the start boundary from Unix ms directly (no locale-dependent string
   // parse) and back it off 5s for clock skew between Node's Date.now() and the
   // event-log timestamps.
@@ -57,7 +57,14 @@ export function scanPwshFailFast(sinceMs) {
     `$sig = '0xe9|other end of the pipe|FailFast|0xc0000409|Faulting application name: pwsh|Faulting application name: powershell'`,
     // @() guards the PS 5.1 single-item unwrap: one match must still serialize as
     // an array, or the JS side sees an object and .length explodes.
-    `$events = @(Get-WinEvent -FilterHashtable @{ LogName='Application'; StartTime=$start } -ErrorAction SilentlyContinue |`,
+    `try {`,
+    `  $sourceEvents = @(Get-WinEvent -FilterHashtable @{ LogName='Application'; StartTime=$start } -ErrorAction Stop)`,
+    `} catch {`,
+    // Get-WinEvent reports an empty window as an error; that is valid zero-event
+    // evidence, while permissions/service/query failures must still fail closed.
+    `  if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $sourceEvents = @() } else { throw }`,
+    `}`,
+    `$events = @($sourceEvents |`,
     `  Where-Object {`,
     // A crash-reporter event referencing pwsh/powershell (or whose Message failed
     // to render at all) counts; otherwise fall back to explicit signature text.
@@ -70,9 +77,14 @@ export function scanPwshFailFast(sinceMs) {
     `ConvertTo-Json -InputObject @{ events = $out } -Depth 4 -Compress`
   ].join('\n')
 
-  const { stdout, stderr, code, error } = runCommandSync(command)
+  const { stdout, stderr, code, error } = runCommand(command)
   if (error) {
     throw new Error(`pwsh-failfast scan spawn failed: ${error.message}`)
+  }
+  // Why: unavailable event-log evidence cannot count as proof that no FailFast
+  // occurred; fail the harness instead of converting an empty error into zero.
+  if (code !== 0) {
+    throw new Error(`pwsh-failfast scan failed (exit ${code}): ${stderr.trim()}`)
   }
   const trimmed = stdout.trim()
   if (!trimmed) {

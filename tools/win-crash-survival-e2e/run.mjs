@@ -33,7 +33,8 @@ import {
   typeLine,
   waitForTerminalReady,
   closeApp,
-  captureFailureDiagnostics
+  captureFailureDiagnostics,
+  resolveElectronMainPid
 } from '../win-update-e2e/app-driver.mjs'
 import {
   findDaemonProcesses,
@@ -42,9 +43,11 @@ import {
 } from '../win-update-e2e/daemon-processes.mjs'
 import { createSeededRepo, buildFreshProfile } from '../win-update-e2e/onboarding-profile.mjs'
 import { renderTable, allPassed } from '../win-update-e2e/assertions.mjs'
+import { quotePowerShellLiteral } from '../win-update-e2e/powershell-runner.mjs'
 import { parseArgs } from './cli-args.mjs'
 import { crashMainProcess, scanPwshFailFast } from './crash-step.mjs'
 import { buildCrashAssertions } from './crash-assertions.mjs'
+import { selectScopedDaemon } from './daemon-identity.mjs'
 
 const SORTABLE_TAB = '[data-testid="sortable-tab"]'
 // The per-shell env var stamped into the interactive shell; reading it back after
@@ -131,7 +134,7 @@ async function runProof(ctx, args) {
   // file appearing also proves keystrokes reached and ran in the shell.
   await typeLine(
     session.page,
-    `$env:${SENTINEL_ENV}='${canary}'; Set-Content -LiteralPath '${shellPidFile}' -Value $PID`
+    `$env:${SENTINEL_ENV}='${canary}'; Set-Content -LiteralPath ${quotePowerShellLiteral(shellPidFile)} -Value $PID`
   )
   const shellPid = await waitForIntFile(shellPidFile, 15_000)
   log('shell', `interactive shell pid=${shellPid} (sentinel ${SENTINEL_ENV}=${canary})`)
@@ -145,7 +148,7 @@ async function runProof(ctx, args) {
   // its single-instance lock) alive and make survival vacuously true. app.evaluate
   // runs in the main process, so process.pid there is the exact main of the
   // instance this harness launched — authoritative, not a machine-wide scan.
-  const mainPid = await session.app.evaluate(() => process.pid)
+  const mainPid = await resolveElectronMainPid(session.app)
   if (!Number.isInteger(mainPid) || mainPid <= 0) {
     throw new Error(`could not resolve app main pid (got ${mainPid})`)
   }
@@ -240,7 +243,7 @@ async function proveReattachedShell(page, { file, expectedCanary, expectedShellP
     }
     await typeLine(
       page,
-      `Set-Content -LiteralPath '${file}' -Value "$($PID)|$($env:${SENTINEL_ENV})"`
+      `Set-Content -LiteralPath ${quotePowerShellLiteral(file)} -Value "$($PID)|$($env:${SENTINEL_ENV})"`
     )
     const hit = await waitForSentinel(file, expectedCanary, expectedShellPid, 8_000)
     if (hit) {
@@ -273,15 +276,13 @@ async function waitForSentinel(file, expectedCanary, expectedShellPid, timeoutMs
 /**
  * Resolve THIS run's daemon, scoped to its isolated userData dir so unrelated
  * daemons on the machine (including the developer's live Orca) are ignored.
- * Prefers the pid file (authoritative, carries appVersion); cross-checks the
- * live process scan.
+ * The scoped live process scan is authoritative; PID files only contribute
+ * metadata after their PID matches that process.
  */
 function resolveScopedDaemon(userDataDir) {
   const pidFiles = readDaemonPidFiles(userDataDir)
   const scan = findDaemonProcesses(userDataDir)
-  const primary = pidFiles.find((r) => typeof r.pid === 'number')
-  const pid = primary?.pid ?? scan[0]?.pid ?? null
-  return { pid, appVersion: primary?.appVersion ?? null }
+  return selectScopedDaemon(pidFiles, scan)
 }
 
 /**

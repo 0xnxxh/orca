@@ -69,7 +69,7 @@ export async function launchInstalledApp({
     page = await app.firstWindow({ timeout: 120_000 })
     await page.waitForLoadState('domcontentloaded')
   } catch (err) {
-    const pid = app.process()?.pid
+    const pid = await resolveElectronMainPid(app)
     if (pid) {
       try {
         execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
@@ -80,6 +80,22 @@ export async function launchInstalledApp({
     throw err
   }
   return { app, page }
+}
+
+/** Resolve the packaged Electron main, falling back to Playwright's child PID. */
+export async function resolveElectronMainPid(app) {
+  try {
+    // Why: packaged launchers can re-exec, leaving app.process() pointing at a
+    // dead stub while evaluate runs in the authoritative Electron main.
+    const pid = await app.evaluate(() => process.pid)
+    if (Number.isInteger(pid) && pid > 0) {
+      return pid
+    }
+  } catch {
+    /* the main connection may already be unavailable */
+  }
+  const fallbackPid = app.process()?.pid
+  return Number.isInteger(fallbackPid) && fallbackPid > 0 ? fallbackPid : null
 }
 
 /**
@@ -359,16 +375,16 @@ export async function closeApp(app, timeoutMs = 10_000) {
   if (!app) {
     return
   }
-  const proc = app.process()
+  const mainPid = await resolveElectronMainPid(app)
   try {
     await Promise.race([
       app.close(),
       new Promise((_, reject) => setTimeout(() => reject(new Error('close timeout')), timeoutMs))
     ])
   } catch {
-    if (proc?.pid) {
+    if (mainPid) {
       try {
-        execFileSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' })
+        execFileSync('taskkill', ['/pid', String(mainPid), '/T', '/F'], { stdio: 'ignore' })
       } catch {
         /* already gone */
       }

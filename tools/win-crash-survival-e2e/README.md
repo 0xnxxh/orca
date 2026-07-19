@@ -1,7 +1,8 @@
 # win-crash-survival-e2e — packaged crash-survival proof harness
 
 **Windows only.** Proves that a **crash of Orca's main process** does not orphan
-open terminal PTYs — the regression behind [GitHub #7742](https://github.com/) —
+open terminal PTYs — the regression behind
+[GitHub #7742](https://github.com/stablyai/orca/issues/7742) —
 with machine-checkable assertions against an **already-installed, packaged**
 `Orca.exe`.
 
@@ -63,7 +64,7 @@ a CLI usage error).
 
 ## Usage
 
-```
+```powershell
 pnpm win-crash-survival-e2e --expect survival
 # or explicitly point at an installed exe:
 node tools/win-crash-survival-e2e/run.mjs --expect survival --exe-path "C:\Users\<you>\AppData\Local\Programs\orca\Orca.exe"

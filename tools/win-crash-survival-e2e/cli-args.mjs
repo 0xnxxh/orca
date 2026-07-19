@@ -9,6 +9,8 @@ import path from 'node:path'
 import { locateInstalledExe } from '../win-update-e2e/installer-steps.mjs'
 
 const VALID_PROFILES = new Set(['survival', 'orphaned'])
+const VALUE_FLAGS = new Set(['--expect', '--exe-path', '--soak-seconds'])
+const BOOLEAN_FLAGS = new Set(['--keep-profile'])
 
 const USAGE = `
 win-crash-survival-e2e — packaged crash-survival proof harness (Windows only)
@@ -67,6 +69,7 @@ export function parseArgs(argv) {
 
 function validate(opts, exePathFlagPresent, argv) {
   const errors = []
+  errors.push(...validateArgShape(argv))
   if (!opts.expect) {
     errors.push('Missing --expect <survival|orphaned>')
   } else if (!VALID_PROFILES.has(opts.expect)) {
@@ -87,6 +90,29 @@ function validate(opts, exePathFlagPresent, argv) {
   }
   if (!Number.isFinite(opts.soakSeconds) || opts.soakSeconds < 0) {
     errors.push('--soak-seconds must be a non-negative number')
+  }
+  return errors
+}
+
+function validateArgShape(argv) {
+  const errors = []
+  const seen = new Set()
+  for (let index = 0; index < argv.length; index++) {
+    const arg = argv[index]
+    if (!VALUE_FLAGS.has(arg) && !BOOLEAN_FLAGS.has(arg)) {
+      errors.push(`Unknown argument: ${arg}`)
+      continue
+    }
+    if (seen.has(arg)) {
+      errors.push(`Duplicate argument: ${arg}`)
+    }
+    seen.add(arg)
+    if (VALUE_FLAGS.has(arg)) {
+      const value = argv[index + 1]
+      if (value !== undefined && !value.startsWith('--')) {
+        index++
+      }
+    }
   }
   return errors
 }
