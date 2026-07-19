@@ -4,6 +4,7 @@ import {
   parseExplicitFileLinkTarget,
   resolveExplicitFileLinkTarget
 } from './explicit-file-link-target'
+import { detectTerminalFileUriLinks } from './terminal-file-uri-link'
 
 export type ParsedTerminalFileLink = {
   pathText: string
@@ -452,28 +453,32 @@ function detectBareFilenameLinks(
   return links
 }
 
-export function extractTerminalFileLinks(lineText: string): ParsedTerminalFileLink[] {
-  const pathLinks = detectLocalPathLinks(lineText)
+// Runs the file-uri, local-path, and bare-filename passes in that precedence.
+// `file://` and separator paths claim their ranges first so the bare-filename
+// pass never re-links a token already covered by a longer explicit link.
+function assembleFileLinks(
+  lineText: string,
+  includeLineEndingPrefixCandidates: boolean
+): ParsedTerminalFileLink[] {
+  const uriLinks = detectTerminalFileUriLinks(lineText)
+  const pathLinks = detectLocalPathLinks(lineText, includeLineEndingPrefixCandidates)
+  const explicitLinks = uriLinks.length > 0 ? [...uriLinks, ...pathLinks] : pathLinks
   const claimed = mergeRanges(
-    pathLinks.map(({ startIndex, endIndex }): [number, number] => [startIndex, endIndex])
+    explicitLinks.map(({ startIndex, endIndex }): [number, number] => [startIndex, endIndex])
   )
   const wordLinks = detectBareFilenameLinks(lineText, claimed)
   for (const link of wordLinks) {
-    pathLinks.push(link)
+    explicitLinks.push(link)
   }
-  return pathLinks
+  return explicitLinks
+}
+
+export function extractTerminalFileLinks(lineText: string): ParsedTerminalFileLink[] {
+  return assembleFileLinks(lineText, false)
 }
 
 export function extractTerminalFileLinkCandidates(lineText: string): ParsedTerminalFileLink[] {
-  const pathLinks = detectLocalPathLinks(lineText, true)
-  const claimed = mergeRanges(
-    pathLinks.map(({ startIndex, endIndex }): [number, number] => [startIndex, endIndex])
-  )
-  const wordLinks = detectBareFilenameLinks(lineText, claimed)
-  for (const link of wordLinks) {
-    pathLinks.push(link)
-  }
-  return pathLinks
+  return assembleFileLinks(lineText, true)
 }
 
 export function resolveTerminalFileLink(
