@@ -2376,9 +2376,10 @@
         "macos"
       ],
       "coveredProviders": [
-        "ssh"
+        "ssh",
+        "remote-runtime"
       ],
-      "coverageNotes": "Deterministic renderer coverage proves startup publishes the state returned by ssh.connect, remote or unresolved hosts cannot enter local-daemon cold activation deferral, and stale cleanup cannot unregister a replacement runtime terminal. A macOS Electron journey connects to a real Linux SSH relay in Docker, persists six terminals, reloads the renderer, and verifies all six original relay PTYs remount eagerly and still execute remote input. Linux and Windows desktop clients, WSL, and remote-runtime restore remain gaps.",
+      "coverageNotes": "Deterministic renderer coverage proves startup publishes the state returned by ssh.connect, remote or unresolved hosts cannot enter local-daemon cold activation deferral, stale cleanup cannot unregister a replacement runtime terminal, and a mounted remote-runtime web mirror replaces a stale handle without retiring its pane or accumulating obsolete PTY identities. Bounded polling falls back to accepted host snapshots without a global store subscription, and concurrent panes share each in-flight inventory request. A macOS Electron journey connects to a real Linux SSH relay in Docker, persists six terminals, reloads the renderer, and verifies all six original relay PTYs remount eagerly and still execute remote input. Linux and Windows desktop clients, WSL, and live remote-runtime restore remain gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6951",
         "https://github.com/stablyai/orca/pull/6955",
@@ -2386,10 +2387,10 @@
         "https://github.com/stablyai/orca/pull/7009",
         "https://github.com/stablyai/orca/pull/8597"
       ],
-      "invariant": "SSH, WSL, and remote-runtime restore paths must treat provider listing failures and unknown liveness as unknown, not dead, while still avoiding duplicate spawn and clearing expired relay leases exactly once. Snapshot-backed cold activation deferral is local-daemon-only; every restored remote terminal must mount a manager eagerly and preserve its provider PTY identity.",
-      "oracle": "Deterministic tests assert startup publishes ssh.connect's authoritative state before terminal reconnect, only an explicit local execution host can defer cold activation, host ownership changes clear old restrictions, and replacement runtime registrations survive stale cleanup. The live Docker SSH journey commits six terminal records to the relay, reloads Electron, requires the exact six manager ids with no parked tabs, compares all restored PTY ids to their pre-reload identities, and sends a marker through the restored terminal to a proof file on the Linux host.",
+      "invariant": "SSH, WSL, and remote-runtime restore paths must treat provider listing failures and unknown liveness as unknown, not dead, while still avoiding duplicate spawn and clearing expired relay leases exactly once. Snapshot-backed cold activation deferral is local-daemon-only; every restored remote terminal must mount a manager eagerly and preserve its provider PTY identity. A stale remote-runtime mirror handle must keep its pane mounted until a replacement or explicit terminal-removal fact arrives, and each replacement must atomically supersede rather than accumulate PTY identity.",
+      "oracle": "Deterministic tests assert startup publishes ssh.connect's authoritative state before terminal reconnect, only an explicit local execution host can defer cold activation, host ownership changes clear old restrictions, replacement runtime registrations survive stale cleanup, stale mirror polling is bounded, and replacement handles resubscribe without exit/disconnect callbacks or stale PTY index growth. Count tests prove concurrent panes share one in-flight inventory request per runtime/worktree and accepted-snapshot listeners are identity-scoped and released after rebind. The live Docker SSH journey commits six terminal records to the relay, reloads Electron, requires the exact six manager ids with no parked tabs, compares all restored PTY ids to their pre-reload identities, and sends a marker through the restored terminal to a proof file on the Linux host.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/startup/ssh-startup-reconnect.test.ts src/renderer/src/lib/resolved-worktree-execution-host.test.ts src/renderer/src/components/terminal/background-terminal-worktree-mount.test.ts src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-lifecycle.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/startup/ssh-startup-reconnect.test.ts src/renderer/src/lib/resolved-worktree-execution-host.test.ts src/renderer/src/components/terminal/background-terminal-worktree-mount.test.ts src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-lifecycle.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/runtime/remote-runtime-session-tabs-inflight.test.ts src/renderer/src/runtime/web-session-terminal-handle-events.test.ts src/renderer/src/store/slices/terminal-pty-identity-replacement.test.ts",
         "pnpm exec electron-vite build --mode e2e",
         "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/terminal-cold-activation-deferral.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-cold-activation-restore.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
@@ -2401,6 +2402,10 @@
         "src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts",
         "src/renderer/src/components/terminal-pane/use-terminal-pane-lifecycle.test.ts",
         "src/renderer/src/components/terminal-pane/pty-connection.test.ts",
+        "src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
+        "src/renderer/src/runtime/remote-runtime-session-tabs-inflight.test.ts",
+        "src/renderer/src/runtime/web-session-terminal-handle-events.test.ts",
+        "src/renderer/src/store/slices/terminal-pty-identity-replacement.test.ts",
         "tests/e2e/terminal-cold-activation-deferral.spec.ts",
         "tests/e2e/ssh-cold-activation-restore.spec.ts"
       ],
@@ -2416,6 +2421,34 @@
           "assertions": [
             "only an explicit local execution host can defer cold activation",
             "SSH, remote-runtime, and unresolved owners remain eager"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts",
+          "assertions": [
+            "a stale web-mirror handle polls until a different ready handle is published without resubscribing the stale handle",
+            "replacement does not emit pane exit or disconnect callbacks and explicit terminal exit still retires the mirror",
+            "replacement polling and each in-flight request share a 15-second deadline, then accepted snapshots own recovery without input re-arming polling"
+          ]
+        },
+        {
+          "file": "src/renderer/src/runtime/remote-runtime-session-tabs-inflight.test.ts",
+          "assertions": [
+            "concurrent panes share one in-flight inventory request within a runtime/worktree and do not share across ownership boundaries"
+          ]
+        },
+        {
+          "file": "src/renderer/src/runtime/web-session-terminal-handle-events.test.ts",
+          "assertions": [
+            "accepted host snapshot listeners are scoped by runtime, worktree, and pane and distinguish pending handles from removed surfaces",
+            "listeners are released after the waiting transport settles"
+          ]
+        },
+        {
+          "file": "src/renderer/src/store/slices/terminal-pty-identity-replacement.test.ts",
+          "assertions": [
+            "repeated handle rotations retain exactly one live PTY identity and update the tab fallback atomically",
+            "snapshot-first replacement still migrates stale PTY-indexed state"
           ]
         },
         {
@@ -2436,6 +2469,15 @@
           "result": "passed",
           "durationSeconds": 128,
           "summary": "Six focused files and 475 tests passed; the local cold-activation journey passed; the Docker/Linux SSH journey restored six of six original relay PTYs, mounted six of six managers without parking, and executed remote input through the restored terminal."
+        },
+        {
+          "date": "2026-07-17",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/startup/ssh-startup-reconnect.test.ts src/renderer/src/lib/resolved-worktree-execution-host.test.ts src/renderer/src/components/terminal/background-terminal-worktree-mount.test.ts src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-lifecycle.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/runtime/remote-runtime-session-tabs-inflight.test.ts src/renderer/src/runtime/web-session-terminal-handle-events.test.ts src/renderer/src/store/slices/terminal-pty-identity-replacement.test.ts",
+          "result": "passed",
+          "durationSeconds": 15,
+          "summary": "Ten provider-contract files and 566 tests passed, including a shared 15-second polling/RPC deadline, no input-triggered re-polling after the bound, post-timeout snapshot recovery, listener cleanup, in-flight inventory deduplication, and replacement-state migration."
         }
       ],
       "runtimeBudget": {
@@ -2448,11 +2490,11 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "Tests assert SSH attach uses relay pty.attach for saved sessions, expired relay attach does not fresh-spawn in the provider, a failed SSH listProcesses observation does not clear previously learned ownership, a rejected SSH hasPty probe resolves as unknown liveness, deferred SSH passphrase cancellation does not auto-reconnect, deferred attach uses saved leaf/tab session ids once connected, transient deferred reattach failure preserves the saved session id without clearing pane/tab bindings or fresh-spawning, deferred SSH no-result cleanup clears the pending serializer without clearing pane/tab bindings or consuming the saved restore id, disconnected SSH relay ids are retained as deferred reconnect metadata and sidebar wake hints rather than attached PTY proof, and expired deferred relay state clears stale pane/tab bindings before one fresh replacement spawn. Needs WSL, remote-runtime mirror polling, live SSH, and saved intentional-break artifacts before promotion."
+        "evidence": "Tests assert SSH attach uses relay pty.attach for saved sessions, expired relay attach does not fresh-spawn in the provider, a failed SSH listProcesses observation does not clear previously learned ownership, a rejected SSH hasPty probe resolves as unknown liveness, deferred SSH passphrase cancellation does not auto-reconnect, deferred attach uses saved leaf/tab session ids once connected, transient deferred reattach failure preserves the saved session id without clearing pane/tab bindings or fresh-spawning, deferred SSH no-result cleanup clears the pending serializer without clearing pane/tab bindings or consuming the saved restore id, disconnected SSH relay ids are retained as deferred reconnect metadata and sidebar wake hints rather than attached PTY proof, expired deferred relay state clears stale pane/tab bindings before one fresh replacement spawn, and remote-runtime stale handles rotate in place without stale resubscription, pane retirement, or PTY index growth. Needs WSL, live remote-runtime/SSH, and saved intentional-break artifacts before promotion."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Host eligibility is resolved from existing store metadata during activation and adds no provider listing or polling. The local journey preserves cold deferral, while SSH eagerly mounts six managers as required; no work is added to typing or terminal-output hot paths."
+        "evidence": "Host eligibility is resolved from existing store metadata during activation. Remote-runtime resubscribe polling runs only after a transport close, reserves replacement-only matching for typed stale-handle evidence, backs off from 150 ms to 1 s, caps each request to the remaining 15-second reconnect deadline, and shares each in-flight inventory request across panes in the same runtime/worktree. Accepted host snapshots use an identity-scoped listener only while recovery is pending; after the bound there is no timer or global store subscriber, and stale input cannot re-arm polling. The listener is released on rebind, removal, detach, or destroy, and PTY state is atomically replaced instead of growing. The local journey preserves cold deferral, while SSH eagerly mounts six managers as required; no work is added to typing or terminal-output hot paths."
       },
       "promotionCriteria": [
         "Use deterministic fake providers for failure and unknown-liveness cases.",
@@ -2462,8 +2504,8 @@
       "knownGaps": [
         "Current command covers store wake-hint metadata, main-process SSH provider failure semantics, provider attach/expired-attach behavior, and renderer deferred SSH reconnect/transient-failure/expired-relay fallback with mocked transports.",
         "The live SSH journey is environment-dependent and currently runs from a macOS Electron client against a Linux Docker host.",
-        "WSL and remote-runtime mirror polling contracts are not wired yet.",
-        "Linux and Windows desktop-client journeys are not yet collected."
+        "WSL restore remains inferred rather than directly covered.",
+        "Linux and Windows desktop-client journeys and a live remote-runtime reconnect soak are not yet collected."
       ],
       "demotionRule": "Cannot promote if provider failure can close panes or if the oracle is screenshot-only."
     },

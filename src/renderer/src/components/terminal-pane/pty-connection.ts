@@ -2734,6 +2734,7 @@ export function connectPanePty(
     options: {
       seedInitialAgentStatus?: boolean
       updateTabPtyId?: 'always' | 'if-missing'
+      replacePtyId?: string
       sampleVisibleForegroundAgent?: boolean
     } = {}
   ): void => {
@@ -2751,7 +2752,11 @@ export function connectPanePty(
     deps.syncPanePtyLayoutBinding(pane.id, ptyId)
     const tabPtyIds = useAppStore.getState().ptyIdsByTabId?.[deps.tabId] ?? []
     if (options.updateTabPtyId !== 'if-missing' || !tabPtyIds.includes(ptyId)) {
-      deps.updateTabPtyId(deps.tabId, ptyId)
+      if (options.replacePtyId) {
+        deps.updateTabPtyId(deps.tabId, ptyId, options.replacePtyId)
+      } else {
+        deps.updateTabPtyId(deps.tabId, ptyId)
+      }
     }
     if (options.seedInitialAgentStatus) {
       applyInitialAgentStatus()
@@ -2791,6 +2796,11 @@ export function connectPanePty(
     // Why: Command Code has no prompt-start hook. Seed the visible working row
     // once the PTY exists, then let real hook events refine or complete it.
     bindActivePanePty(ptyId, { seedInitialAgentStatus: true })
+  }
+  const onPtyRebind = (ptyId: string, replacedPtyId: string): void => {
+    // Why: provider handle rotation keeps the existing pane/session generation;
+    // replace its stale store identity without fresh-spawn exit semantics.
+    bindActivePanePty(ptyId, { replacePtyId: replacedPtyId })
   }
   // ─── Attention signal: BEL ────────────────────────────────────────────
   //
@@ -3080,6 +3090,9 @@ export function connectPanePty(
     }
   }
   const onAgentExited = (): void => {
+    // Why: eligibility can disappear transiently during reconnect, but a
+    // confirmed shell-title transition is authoritative for native-chat exit.
+    deps.onAgentExitedRef.current(pane.leafId)
     clearSuppressedTitleSideEffects()
     clearCommandInferredPaneAgent()
     requestKnownDroidReconfirmation()
@@ -3305,6 +3318,7 @@ export function connectPanePty(
     ...(paneStartup?.telemetry ? { telemetry: paneStartup.telemetry } : {}),
     onPtyExit: onExit,
     onPtySpawn,
+    onPtyRebind,
     ...(mainSideEffectAuthority
       ? {}
       : {

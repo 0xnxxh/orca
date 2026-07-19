@@ -539,6 +539,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     isActiveRef: { current: true },
     isVisibleRef: { current: true },
     onPtyExitRef: { current: vi.fn() },
+    onAgentExitedRef: { current: vi.fn() },
     onPtyErrorRef: { current: vi.fn() },
     clearTabPtyId: vi.fn(),
     consumeSuppressedPtyExit: vi.fn(() => false),
@@ -2538,6 +2539,34 @@ describe('connectPanePty', () => {
     onPtyExit?.('tab-pty')
 
     expect(deps.onPtyExitRef.current).toHaveBeenCalledWith('tab-pty')
+    expect(manager.closePane).not.toHaveBeenCalled()
+  })
+
+  it('rebinds a provider replacement without granting fresh-spawn exit protection', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('terminal-old')
+    transportFactoryQueue.push(transport)
+    const manager = createManager(1)
+    const deps = createDeps()
+
+    connectPanePty(createPane(1) as never, manager as never, deps as never)
+    const onPtyRebind = createdTransportOptions[0]?.onPtyRebind as
+      | ((ptyId: string, replacedPtyId: string) => void)
+      | undefined
+    const onPtyExit = createdTransportOptions[0]?.onPtyExit as ((ptyId: string) => void) | undefined
+    expect(onPtyRebind).toBeTypeOf('function')
+    expect(onPtyExit).toBeTypeOf('function')
+
+    onPtyRebind?.('terminal-reconnected', 'terminal-old')
+    onPtyExit?.('terminal-reconnected')
+
+    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(1, 'terminal-reconnected')
+    expect(deps.updateTabPtyId).toHaveBeenCalledWith(
+      'tab-1',
+      'terminal-reconnected',
+      'terminal-old'
+    )
+    expect(deps.onPtyExitRef.current).toHaveBeenCalledWith('terminal-reconnected')
     expect(manager.closePane).not.toHaveBeenCalled()
   })
 
@@ -18549,6 +18578,7 @@ describe('connectPanePty', () => {
     agentExitedHandler()
 
     expect(deps.setCacheTimerStartedAt).toHaveBeenCalledWith(makePaneKey('tab-1', LEAF_1), null)
+    expect(deps.onAgentExitedRef.current).toHaveBeenCalledWith(LEAF_1)
     expect(mockStoreState.removeAgentStatus).not.toHaveBeenCalled()
   })
 
