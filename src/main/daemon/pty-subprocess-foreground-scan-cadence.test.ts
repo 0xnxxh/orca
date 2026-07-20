@@ -185,4 +185,29 @@ describe('daemon pty foreground scan cadence', () => {
     // Scans at t=0s, 6s, 12s, 18s, 24s, 30s — the cheap `ps` path is unchanged.
     expect(resolveAgentForegroundProcessMock).toHaveBeenCalledTimes(6)
   })
+
+  it.each(['darwin', 'win32'] as const)(
+    'keeps wrapped pi reads on the cached omp owner between bounded %s scans',
+    async (targetPlatform) => {
+      resolveAgentForegroundProcessMock.mockResolvedValue('omp')
+      const { handle } = spawnShellSubprocess('pi', targetPlatform)
+
+      const reads: (string | null)[] = []
+      for (let atMs = 0; atMs <= 3_000; atMs += 250) {
+        reads.push(await readForegroundAt(handle, atMs))
+      }
+
+      // The first synchronous read precedes enrichment; every later read stays on
+      // OMP even when its 1s cache entry expires while the next scan is in flight.
+      expect(reads).toEqual(['pi', ...Array.from({ length: 12 }, () => 'omp')])
+      expect(resolveAgentForegroundProcessMock).toHaveBeenCalledTimes(4)
+
+      await expect(handle.confirmForegroundProcess!()).resolves.toBe('omp')
+      expect(resolveAgentForegroundProcessMock).toHaveBeenLastCalledWith(
+        12345,
+        'pi',
+        expect.objectContaining({ fresh: true })
+      )
+    }
+  )
 })
