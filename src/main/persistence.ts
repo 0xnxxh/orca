@@ -103,6 +103,7 @@ import {
 } from '../shared/constants'
 import { parseWorkspaceSession } from '../shared/workspace-session-schema'
 import { normalizeUsagePercentageDisplay } from '../shared/usage-percentage-display'
+import { normalizeStatusBarUsageMode } from '../shared/status-bar-usage-mode'
 import { isExistingPersistedProfile } from '../shared/project-order-manual-default-notice'
 import { resolveUsagePercentageDisplayChangeNoticeDismissed } from '../shared/usage-percentage-display-change-notice'
 import { normalizePRBotAuthorOverrides } from '../shared/pr-bot-author-overrides'
@@ -5181,6 +5182,7 @@ export class Store {
       usagePercentageDisplay: normalizeUsagePercentageDisplay(
         this.state.ui?.usagePercentageDisplay
       ),
+      statusBarUsageMode: normalizeStatusBarUsageMode(this.state.ui?.statusBarUsageMode),
       // Why: strict boolean coercion so a missing/legacy value reads as false (first-run notice still fires).
       trayMinimizeNoticeShown: this.state.ui?.trayMinimizeNoticeShown === true,
       markdownTocPanelWidth: clampMarkdownTocPanelWidth(this.state.ui?.markdownTocPanelWidth),
@@ -5277,6 +5279,9 @@ export class Store {
           : this.state.ui?.syncTaskStatusFromWorkspaceBoard === true,
       usagePercentageDisplay: normalizeUsagePercentageDisplay(
         sanitizedUpdates.usagePercentageDisplay ?? this.state.ui?.usagePercentageDisplay
+      ),
+      statusBarUsageMode: normalizeStatusBarUsageMode(
+        sanitizedUpdates.statusBarUsageMode ?? this.state.ui?.statusBarUsageMode
       ),
       markdownTocPanelWidth: clampMarkdownTocPanelWidth(
         sanitizedUpdates.markdownTocPanelWidth ?? this.state.ui?.markdownTocPanelWidth

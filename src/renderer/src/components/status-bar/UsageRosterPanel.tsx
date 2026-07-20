@@ -1,6 +1,6 @@
 import React from 'react'
 import { ChevronRight, RefreshCw } from 'lucide-react'
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { DropdownMenuCheckboxItem, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { useResetCountdownClock } from '@/hooks/useResetCountdownClock'
 import { translate } from '@/i18n/i18n'
 import { formatRateLimitWindowChipLabel, formatWindowLabel } from '@/lib/window-label-formatter'
@@ -14,6 +14,7 @@ import { barColor, formatResetCountdown, getWindowSections, ProviderIcon } from 
 import { getProviderDisplayName } from './usage-error-copy'
 import { formatPlanLabel, usageTextColorClass } from './usage-roster-formatting'
 import { getUsageRosterRowState, type UsageRosterRowState } from './usage-roster-row-state'
+import type { StatusBarUsageMode } from '../../../../shared/status-bar-usage-mode'
 
 type ProviderId = ProviderRateLimits['provider']
 export type UsageSection = { label: string; window: RateLimitWindow }
@@ -156,6 +157,8 @@ export function UsageRow({
 export function UsageRosterPanel({
   providers,
   display,
+  statusBarUsageMode,
+  onStatusBarUsageModeChange,
   isRefreshing,
   onRefresh,
   onOpenProvider,
@@ -167,6 +170,8 @@ export function UsageRosterPanel({
 }: {
   providers: ProviderRateLimits[]
   display: UsagePercentageDisplay
+  statusBarUsageMode: StatusBarUsageMode
+  onStatusBarUsageModeChange: (mode: StatusBarUsageMode) => void
   isRefreshing: boolean
   onRefresh: () => void
   onOpenProvider: (provider: ProviderId) => void
@@ -253,6 +258,30 @@ export function UsageRosterPanel({
           </DropdownMenuItem>
         )
       })}
+      <div className="border-t border-border/70" />
+      <DropdownMenuCheckboxItem
+        checked={statusBarUsageMode === 'verbose'}
+        onCheckedChange={(checked) => {
+          onStatusBarUsageModeChange(checked ? 'verbose' : 'compact')
+        }}
+        onSelect={(event) => event.preventDefault()}
+        className="w-full cursor-pointer rounded-none py-2 pl-8 pr-3.5"
+      >
+        <span className="flex flex-col">
+          <span className="text-[13px] text-foreground">
+            {translate(
+              'auto.components.status.bar.UsageRosterPanel.verboseFooter',
+              'Verbose footer'
+            )}
+          </span>
+          <span className="text-[11px] font-normal text-muted-foreground">
+            {translate(
+              'auto.components.status.bar.UsageRosterPanel.verboseFooterDescription',
+              'Show every usage window'
+            )}
+          </span>
+        </span>
+      </DropdownMenuCheckboxItem>
       <div className="border-t border-border/70" />
       <DropdownMenuItem
         onSelect={onUsageDetails}

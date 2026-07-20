@@ -17,6 +17,21 @@ vi.mock('@/hooks/useResetCountdownClock', () => ({
   useResetCountdownClock: mocks.useResetCountdownClock
 }))
 vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenuCheckboxItem: ({
+    children,
+    checked,
+    onCheckedChange: _onCheckedChange,
+    onSelect: _onSelect,
+    ...props
+  }: React.PropsWithChildren<{
+    checked?: boolean
+    onCheckedChange?: (checked: boolean) => void
+    onSelect?: () => void
+  }>) => (
+    <div data-checked={checked} {...props}>
+      {children}
+    </div>
+  ),
   DropdownMenuItem: ({
     children,
     onSelect: _onSelect,
@@ -107,6 +122,8 @@ describe('UsageRow', () => {
           }
         ]}
         display="used"
+        statusBarUsageMode="verbose"
+        onStatusBarUsageModeChange={() => {}}
         isRefreshing={false}
         onRefresh={() => {}}
         onOpenProvider={() => {}}
@@ -120,5 +137,7 @@ describe('UsageRow', () => {
     expect(mocks.useResetCountdownClock).toHaveBeenCalledOnce()
     expect(mocks.useResetCountdownClock).toHaveBeenCalledWith([sessionReset, weeklyReset])
     expect(markup).toContain('Resets in 2m')
+    expect(markup).toContain('Verbose footer')
+    expect(markup).toContain('data-checked="true"')
   })
 })

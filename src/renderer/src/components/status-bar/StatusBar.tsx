@@ -94,6 +94,10 @@ import {
   type UsagePercentageDisplay
 } from '../../../../shared/usage-percentage-display'
 import { formatUsagePercentageLabel } from './usage-percentage-label'
+import {
+  normalizeStatusBarUsageMode,
+  type StatusBarUsageMode
+} from '../../../../shared/status-bar-usage-mode'
 
 type StatusBarProps = {
   floatingTerminalOpen: boolean
@@ -1155,14 +1159,100 @@ function getProviderLetter(provider: ProviderRateLimits['provider']): string {
 // Provider segment
 // ---------------------------------------------------------------------------
 
-export function ProviderSegment({
+// Why: Gemini exposes extra experimental buckets that made the pre-existing verbose footer noisy.
+const STATUS_BAR_BUCKET_NAMES = new Set(['Flash', 'Pro', '1.5 Pro'])
+
+function VerboseProviderUsage({
   p,
   compact,
   display
 }: {
+  p: ProviderRateLimits
+  compact: boolean
+  display: UsagePercentageDisplay
+}): React.JSX.Element {
+  if (p.buckets && p.buckets.length > 0) {
+    const visibleBuckets = p.buckets.filter((bucket) => STATUS_BAR_BUCKET_NAMES.has(bucket.name))
+    return (
+      <>
+        {visibleBuckets.map((bucket, index) => (
+          <React.Fragment key={bucket.name}>
+            {index > 0 ? <span className="text-muted-foreground">·</span> : null}
+            <span className="tabular-nums">
+              {bucket.name} {formatUsagePercentageLabel(bucket.usedPercent, display)}
+            </span>
+          </React.Fragment>
+        ))}
+        {visibleBuckets.length === 0 && p.session ? (
+          <WindowLabel
+            w={p.session}
+            label={formatRateLimitWindowChipLabel(p.session)}
+            display={display}
+          />
+        ) : null}
+      </>
+    )
+  }
+
+  const visibleWindows = [
+    p.session
+      ? {
+          key: 'session',
+          window: p.session,
+          label: formatRateLimitWindowChipLabel(p.session)
+        }
+      : null,
+    p.weekly
+      ? {
+          key: 'weekly',
+          window: p.weekly,
+          label: formatRateLimitWindowChipLabel(p.weekly)
+        }
+      : null,
+    p.fableWeekly
+      ? {
+          key: 'fableWeekly',
+          window: p.fableWeekly,
+          label: translate('auto.components.status.bar.StatusBar.a79c64f87e', 'Fable')
+        }
+      : null,
+    // Why: monthly stays inline for monthly-only providers; otherwise the detail panel carries it.
+    p.monthly && !p.session && !p.weekly
+      ? {
+          key: 'monthly',
+          window: p.monthly,
+          label: formatRateLimitWindowChipLabel(p.monthly)
+        }
+      : null
+  ].filter((window): window is { key: string; window: RateLimitWindow; label: string } => {
+    return window !== null
+  })
+
+  return (
+    <>
+      {p.session && !compact ? (
+        <MiniBar usedPct={clampUsedPercent(p.session.usedPercent)} display={display} />
+      ) : null}
+      {visibleWindows.map((window, index) => (
+        <React.Fragment key={window.key}>
+          {index > 0 ? <span className="text-muted-foreground">·</span> : null}
+          <WindowLabel w={window.window} label={window.label} display={display} />
+        </React.Fragment>
+      ))}
+    </>
+  )
+}
+
+export function ProviderSegment({
+  p,
+  compact,
+  display,
+  mode = 'verbose'
+}: {
   p: ProviderRateLimits | null
   compact: boolean
   display: UsagePercentageDisplay
+  mode?: StatusBarUsageMode
 }): React.JSX.Element {
   const provider = p?.provider ?? 'claude'
   const statusLabel = p ? getProviderUsageStatusLabel(p) : ''
@@ -1215,17 +1305,23 @@ export function ProviderSegment({
   return (
     <span className="inline-flex items-center gap-1.5">
       <ProviderIcon provider={provider} />
-      {tightest && !compact ? (
-        <MiniBar usedPct={clampUsedPercent(tightest.window.usedPercent)} display={display} />
-      ) : null}
-      {tightest ? (
-        <WindowLabel
-          w={tightest.window}
-          label={tightest.label}
-          display={display}
-          showLabel={!compact}
-        />
-      ) : null}
+      {mode === 'verbose' ? (
+        <VerboseProviderUsage p={p} compact={compact} display={display} />
+      ) : (
+        <>
+          {tightest && !compact ? (
+            <MiniBar usedPct={clampUsedPercent(tightest.window.usedPercent)} display={display} />
+          ) : null}
+          {tightest ? (
+            <WindowLabel
+              w={tightest.window}
+              label={tightest.label}
+              display={display}
+              showLabel={!compact}
+            />
+          ) : null}
+        </>
+      )}
       {isStale && <AlertTriangle size={11} className="text-muted-foreground/80" />}
     </span>
   )
@@ -1870,6 +1966,8 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
   const usagePercentageDisplay = normalizeUsagePercentageDisplay(
     useAppStore((s) => s.usagePercentageDisplay)
   )
+  const statusBarUsageMode = normalizeStatusBarUsageMode(useAppStore((s) => s.statusBarUsageMode))
+  const setStatusBarUsageMode = useAppStore((s) => s.setStatusBarUsageMode)
   const [usageMenuOpen, setUsageMenuOpen] = useState(false)
   const usageMenuFocusHandoff = useStatusBarMenuFocusHandoff()
   const statusBarVisible = useAppStore((s) => s.statusBarVisible)
@@ -2133,6 +2231,7 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
                         p={p}
                         compact={compact}
                         display={usagePercentageDisplay}
+                        mode={statusBarUsageMode}
                       />
                     )
                   )}
@@ -2153,6 +2252,8 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
                 <UsageRosterPanel
                   providers={rosterProviders}
                   display={usagePercentageDisplay}
+                  statusBarUsageMode={statusBarUsageMode}
+                  onStatusBarUsageModeChange={setStatusBarUsageMode}
                   isRefreshing={isRefreshing || anyFetching}
                   onRefresh={handleRefresh}
                   onOpenProvider={handleOpenProviderAccounts}

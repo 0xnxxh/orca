@@ -75,6 +75,7 @@ import { normalizeTerminalCursorStyleDefault } from '../../../shared/terminal-cu
 import { normalizeTerminalCustomThemes } from '../../../shared/terminal-custom-themes'
 import { normalizeUiLanguage } from '../../../shared/ui-language'
 import { normalizeUsagePercentageDisplay } from '../../../shared/usage-percentage-display'
+import { normalizeStatusBarUsageMode } from '../../../shared/status-bar-usage-mode'
 import type { RateLimitState } from '../../../shared/rate-limit-types'
 import type { RuntimeStatus, RuntimeSyncWindowGraph } from '../../../shared/runtime-types'
 import {
@@ -3449,6 +3450,9 @@ function mergeWebUIState(
     ),
     usagePercentageDisplay: normalizeUsagePercentageDisplay(
       safeUpdates.usagePercentageDisplay ?? base.usagePercentageDisplay
+    ),
+    statusBarUsageMode: normalizeStatusBarUsageMode(
+      safeUpdates.statusBarUsageMode ?? base.statusBarUsageMode
     )
   }
 }

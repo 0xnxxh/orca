@@ -41,6 +41,7 @@ import type {
   LocalWindowsRuntimePreference
 } from './project-execution-runtime'
 import type { UsagePercentageDisplay } from './usage-percentage-display'
+import type { StatusBarUsageMode } from './status-bar-usage-mode'
 import type { PersistedNativeChatSessionOptions } from './native-chat-session-options'
 
 // Re-exported for backward compat with renderer call sites that import
@@ -3213,6 +3214,8 @@ export type PersistedUIState = {
   statusBarVisible: boolean
   /** Why: this is client-side presentation, not a provider/account or execution-host setting. */
   usagePercentageDisplay?: UsagePercentageDisplay
+  /** Client-side footer presentation; verbose preserves the pre-roster all-window default. */
+  statusBarUsageMode?: StatusBarUsageMode
   dismissedUpdateVersion: string | null
   lastUpdateCheckAt: number | null
   pendingUpdateNudgeId?: string | null
