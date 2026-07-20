@@ -34,7 +34,31 @@ vi.mock('@/lib/activate-tab-and-focus-pane', () => ({
   activateTabAndFocusPane: vi.fn()
 }))
 
-import { useDashboardPopoutBridge } from './useDashboardPopoutBridge'
+import {
+  dashboardSnapshotInputsChanged,
+  useDashboardPopoutBridge
+} from './useDashboardPopoutBridge'
+import type { DashboardSnapshotState } from './build-dashboard-snapshot'
+import type { AppState } from '@/store/types'
+
+type DashboardSnapshotWatchState = DashboardSnapshotState & Pick<AppState, 'agentStatusEpoch'>
+
+function makeSnapshotWatchState(): DashboardSnapshotWatchState {
+  return {
+    repos: [],
+    worktreesByRepo: {},
+    tabsByWorktree: {},
+    agentStatusByPaneKey: {},
+    retainedAgentsByPaneKey: {},
+    migrationUnsupportedByPtyId: {},
+    runtimeAgentOrchestrationByPaneKey: {},
+    terminalLayoutsByTabId: {},
+    ptyIdsByTabId: {},
+    runtimePaneTitlesByTabId: {},
+    acknowledgedAgentsByPaneKey: {},
+    agentStatusEpoch: 0
+  }
+}
 
 function Harness({ enabled }: { enabled: boolean }): null {
   useDashboardPopoutBridge(enabled)
@@ -78,6 +102,34 @@ describe('useDashboardPopoutBridge', () => {
     expect(mocks.onSnapshotRequested).not.toHaveBeenCalled()
     expect(mocks.getPopoutOpen).not.toHaveBeenCalled()
     expect(mocks.subscribeStore).not.toHaveBeenCalled()
+  })
+
+  it('ignores unrelated store writes while retaining every snapshot input', () => {
+    const previousState = makeSnapshotWatchState()
+    expect(dashboardSnapshotInputsChanged({ ...previousState }, previousState)).toBe(false)
+
+    const referenceInputs = [
+      'repos',
+      'worktreesByRepo',
+      'tabsByWorktree',
+      'agentStatusByPaneKey',
+      'retainedAgentsByPaneKey',
+      'migrationUnsupportedByPtyId',
+      'runtimeAgentOrchestrationByPaneKey',
+      'terminalLayoutsByTabId',
+      'ptyIdsByTabId',
+      'runtimePaneTitlesByTabId',
+      'acknowledgedAgentsByPaneKey'
+    ] as const
+    for (const key of referenceInputs) {
+      expect(
+        dashboardSnapshotInputsChanged({ ...previousState, [key]: {} }, previousState),
+        key
+      ).toBe(true)
+    }
+    expect(
+      dashboardSnapshotInputsChanged({ ...previousState, agentStatusEpoch: 1 }, previousState)
+    ).toBe(true)
   })
 
   it('releases every dashboard listener when the experiment is disabled', async () => {

@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useAppStore } from '@/store'
+import { useShallow } from 'zustand/react/shallow'
 import type { DashboardBucket } from '../../../../shared/dashboard-snapshot'
 import { buildDashboardSnapshot } from './build-dashboard-snapshot'
 
@@ -13,19 +14,33 @@ const EMPTY_COUNTS: AgentBucketCounts = { attention: 0, working: 0, idle: 0 }
  * only when an input slice changes (mirrors useDashboardData's cost profile).
  */
 export function useAgentBucketCounts(): AgentBucketCounts {
-  const repos = useAppStore((s) => s.repos)
-  const worktreesByRepo = useAppStore((s) => s.worktreesByRepo)
-  const tabsByWorktree = useAppStore((s) => s.tabsByWorktree)
-  const agentStatusByPaneKey = useAppStore((s) => s.agentStatusByPaneKey)
-  const retainedAgentsByPaneKey = useAppStore((s) => s.retainedAgentsByPaneKey)
-  const migrationUnsupportedByPtyId = useAppStore((s) => s.migrationUnsupportedByPtyId)
-  const runtimeAgentOrchestrationByPaneKey = useAppStore(
-    (s) => s.runtimeAgentOrchestrationByPaneKey
+  const {
+    repos,
+    worktreesByRepo,
+    tabsByWorktree,
+    agentStatusByPaneKey,
+    retainedAgentsByPaneKey,
+    migrationUnsupportedByPtyId,
+    runtimeAgentOrchestrationByPaneKey,
+    terminalLayoutsByTabId,
+    ptyIdsByTabId,
+    runtimePaneTitlesByTabId,
+    agentStatusEpoch
+  } = useAppStore(
+    useShallow((s) => ({
+      repos: s.repos,
+      worktreesByRepo: s.worktreesByRepo,
+      tabsByWorktree: s.tabsByWorktree,
+      agentStatusByPaneKey: s.agentStatusByPaneKey,
+      retainedAgentsByPaneKey: s.retainedAgentsByPaneKey,
+      migrationUnsupportedByPtyId: s.migrationUnsupportedByPtyId,
+      runtimeAgentOrchestrationByPaneKey: s.runtimeAgentOrchestrationByPaneKey,
+      terminalLayoutsByTabId: s.terminalLayoutsByTabId,
+      ptyIdsByTabId: s.ptyIdsByTabId,
+      runtimePaneTitlesByTabId: s.runtimePaneTitlesByTabId,
+      agentStatusEpoch: s.agentStatusEpoch
+    }))
   )
-  const terminalLayoutsByTabId = useAppStore((s) => s.terminalLayoutsByTabId)
-  const ptyIdsByTabId = useAppStore((s) => s.ptyIdsByTabId)
-  const runtimePaneTitlesByTabId = useAppStore((s) => s.runtimePaneTitlesByTabId)
-  const agentStatusEpoch = useAppStore((s) => s.agentStatusEpoch)
 
   return useMemo(() => {
     const snapshot = buildDashboardSnapshot(

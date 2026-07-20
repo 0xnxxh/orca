@@ -1,12 +1,35 @@
 import { useEffect } from 'react'
-import { useAppStore } from '@/store'
+import { useAppStore, type AppState } from '@/store'
 import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
-import { buildDashboardSnapshot } from './build-dashboard-snapshot'
+import { buildDashboardSnapshot, type DashboardSnapshotState } from './build-dashboard-snapshot'
 
 // Why: cap snapshot rebuilds during bursts of agent-status pings. The board is a
 // glanceable surface, so ~4 updates/sec is plenty and keeps the cross-worktree
 // rebuild off the hot path.
 const PUBLISH_THROTTLE_MS = 250
+
+type DashboardSnapshotWatchState = DashboardSnapshotState & Pick<AppState, 'agentStatusEpoch'>
+
+export function dashboardSnapshotInputsChanged(
+  state: DashboardSnapshotWatchState,
+  previousState: DashboardSnapshotWatchState
+): boolean {
+  return (
+    state.repos !== previousState.repos ||
+    state.worktreesByRepo !== previousState.worktreesByRepo ||
+    state.tabsByWorktree !== previousState.tabsByWorktree ||
+    state.agentStatusByPaneKey !== previousState.agentStatusByPaneKey ||
+    state.retainedAgentsByPaneKey !== previousState.retainedAgentsByPaneKey ||
+    state.migrationUnsupportedByPtyId !== previousState.migrationUnsupportedByPtyId ||
+    state.runtimeAgentOrchestrationByPaneKey !== previousState.runtimeAgentOrchestrationByPaneKey ||
+    state.terminalLayoutsByTabId !== previousState.terminalLayoutsByTabId ||
+    state.ptyIdsByTabId !== previousState.ptyIdsByTabId ||
+    state.runtimePaneTitlesByTabId !== previousState.runtimePaneTitlesByTabId ||
+    state.acknowledgedAgentsByPaneKey !== previousState.acknowledgedAgentsByPaneKey ||
+    // Why: freshness can change a bucket without replacing any backing map.
+    state.agentStatusEpoch !== previousState.agentStatusEpoch
+  )
+}
 
 /**
  * Runs in the MAIN window (mount once in App). Two responsibilities:
@@ -88,7 +111,12 @@ export function useDashboardPopoutBridge(enabled: boolean): void {
       open = next
       if (open) {
         if (!unsubscribeStore) {
-          unsubscribeStore = useAppStore.subscribe(publishThrottled)
+          unsubscribeStore = useAppStore.subscribe((state, previousState) => {
+            // Why: unrelated high-frequency store writes must not rebuild a cross-worktree snapshot.
+            if (dashboardSnapshotInputsChanged(state, previousState)) {
+              publishThrottled()
+            }
+          })
         }
         publishNow()
       } else {
