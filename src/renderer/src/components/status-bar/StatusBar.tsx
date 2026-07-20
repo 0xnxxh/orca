@@ -45,6 +45,7 @@ import type {
   RateLimitRuntimeTarget,
   RateLimitWindow
 } from '../../../../shared/rate-limit-types'
+import { resolveLocalAccountRuntimeTarget } from '../../../../shared/local-account-runtime'
 import {
   ProviderIcon,
   ProviderPanel,
@@ -205,7 +206,14 @@ export function getStatusBarPreferredWslDistro(
 }
 
 function shouldIncludeSettingsWslRuntime(settings: GlobalSettings | null | undefined): boolean {
-  return settings?.localAccountRuntime === 'wsl'
+  // Why: 'auto' (the default) surfaces the WSL group when the global project
+  // runtime is WSL, matching where account detection now reads from. The renderer
+  // is sandboxed without process.platform, so derive it from the user agent.
+  if (!settings) {
+    return false
+  }
+  const platform = navigator.userAgent.includes('Windows') ? 'win32' : 'linux'
+  return resolveLocalAccountRuntimeTarget(settings, platform).runtime === 'wsl'
 }
 
 function getSingleConcreteCodexWslDistro(state: CodexRateLimitAccountsState): string | null {

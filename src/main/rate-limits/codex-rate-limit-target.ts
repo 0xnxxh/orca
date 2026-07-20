@@ -37,6 +37,8 @@ export function getInitialCodexRateLimitTarget(
     }
   }
 
+  // 'auto' (the default) and legacy-unset settings fall through here so account
+  // detection follows the global WSL project runtime instead of pinning host.
   const projectRuntimeTarget = getProjectRuntimeRateLimitTarget(settings, platform)
   if (projectRuntimeTarget) {
     return projectRuntimeTarget

@@ -103,6 +103,32 @@ describe('getInitialClaudeRateLimitTarget', () => {
     ).toEqual({ runtime: 'wsl', wslDistro: 'Ubuntu' })
   })
 
+  it("auto follows the global WSL project runtime default", () => {
+    expect(
+      getInitialClaudeRateLimitTarget(
+        {
+          ...getDefaultSettings('/tmp'),
+          localAccountRuntime: 'auto',
+          localWindowsRuntimeDefault: { kind: 'wsl', distro: 'Ubuntu' }
+        },
+        'win32'
+      )
+    ).toEqual({ runtime: 'wsl', wslDistro: 'Ubuntu' })
+  })
+
+  it('auto resolves to host when the global project runtime is windows-host', () => {
+    expect(
+      getInitialClaudeRateLimitTarget(
+        {
+          ...getDefaultSettings('/tmp'),
+          localAccountRuntime: 'auto',
+          localWindowsRuntimeDefault: { kind: 'windows-host' }
+        },
+        'win32'
+      )
+    ).toEqual({ runtime: 'host' })
+  })
+
   it('keeps explicit host runtime on host', () => {
     expect(
       getInitialClaudeRateLimitTarget(
