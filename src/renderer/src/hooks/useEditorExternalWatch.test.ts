@@ -266,6 +266,22 @@ describe('createExternalWatchEventHandler tombstone coalescing', () => {
     dispose()
   })
 
+  it('does not tombstone a tab still at the old path when its delete is a self-move echo', () => {
+    // Pre-remap ordering: the watcher's delete(old) can arrive while the tab is
+    // still at the old path (remap hasn't run yet). Because the stamp is
+    // recorded before the rename, the source guard must still suppress the
+    // tombstone — the tab is about to be re-homed, not deleted.
+    recordSelfMove('/repo/notes.md', '/repo/subdir/notes.md')
+    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
+
+    handleFsChanged(payload([{ kind: 'delete', absolutePath: '/repo/notes.md' }]))
+    vi.advanceTimersByTime(200)
+
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'deleted')
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'renamed')
+    dispose()
+  })
+
   it('resolves batched delete+create in a single payload synchronously as renamed', () => {
     const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
     handleFsChanged(
