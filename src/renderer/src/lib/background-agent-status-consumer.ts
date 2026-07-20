@@ -2,9 +2,7 @@ import { useAppStore } from '@/store'
 import { createAgentStatusOscProcessor } from '../../../shared/agent-status-osc'
 import type { ParsedAgentStatusPayload } from '../../../shared/agent-status-types'
 import {
-  isAgentStatusPanePtyBindingCurrent,
-  isAgentStatusPtyLiveForPane,
-  resolveAgentStatusConnectionRouting,
+  resolveLiveAgentStatusConnectionRouting,
   type AgentStatusConnectionRouting
 } from './agent-status-connection-ownership'
 
@@ -24,16 +22,13 @@ export function createBackgroundAgentStatusConsumer(args: {
   const resolveRouting = (): AgentStatusConnectionRouting | undefined => {
     const ptyId = args.getPtyId()
     const state = useAppStore.getState()
-    const routing = resolveAgentStatusConnectionRouting({
+    return resolveLiveAgentStatusConnectionRouting({
+      state,
+      paneKey: args.paneKey,
       ptyId,
       expectedConnectionId: args.expectedConnectionId,
       runtimeEnvironmentId: args.runtimeEnvironmentId
     })
-    return routing &&
-      isAgentStatusPanePtyBindingCurrent(state.terminalLayoutsByTabId, args.paneKey, ptyId) &&
-      isAgentStatusPtyLiveForPane(state.ptyIdsByTabId, args.paneKey, ptyId)
-      ? routing
-      : undefined
   }
   const consume = (data: string): void => {
     const processed = processAgentStatus(data)

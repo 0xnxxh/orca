@@ -1,10 +1,7 @@
 import { useAppStore } from '@/store'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import { getConnectionIdFromState } from './connection-owner-resolution'
-import {
-  isAgentStatusPtyLiveForPane,
-  resolveAgentStatusConnectionRouting
-} from './agent-status-connection-ownership'
+import { resolveLiveAgentStatusConnectionRouting } from './agent-status-connection-ownership'
 
 /**
  * Why: Command Code has no prompt-submit hook, so when Orca submits a generated
@@ -23,10 +20,12 @@ export function seedCommandCodeSubmittedPromptStatus(
   }
   const paneKey = makePaneKey(tabId, leafId)
   const ptyId = state.terminalLayoutsByTabId[tabId]?.ptyIdsByLeafId?.[leafId]
-  if (!ptyId || !isAgentStatusPtyLiveForPane(state.ptyIdsByTabId, paneKey, ptyId)) {
+  if (!ptyId) {
     return
   }
-  const routing = resolveAgentStatusConnectionRouting({
+  const routing = resolveLiveAgentStatusConnectionRouting({
+    state,
+    paneKey,
     ptyId,
     expectedConnectionId: getConnectionIdFromState(state, worktreeId)
   })

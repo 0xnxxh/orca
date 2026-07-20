@@ -3,9 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { toAppSshPtyId } from '../../../shared/ssh-pty-id'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import {
-  isAgentStatusPanePtyBindingCurrent,
-  isAgentStatusPtyLiveForPane,
-  resolveAgentStatusConnectionRouting
+  resolveAgentStatusConnectionRouting,
+  resolveLiveAgentStatusConnectionRouting
 } from './agent-status-connection-ownership'
 
 const LEAF = '11111111-1111-4111-8111-111111111111'
@@ -62,24 +61,34 @@ describe('agent status connection ownership', () => {
     ).toBeUndefined()
   })
 
-  it('requires the exact pane-to-PTY binding', () => {
-    const layouts = {
-      'tab-1': { ptyIdsByLeafId: { [LEAF]: toAppSshPtyId('ssh-a', 'pty-1') } }
+  it('requires one exact live pane binding', () => {
+    const ptyId = toAppSshPtyId('ssh-a', 'pty-1')
+    const state = {
+      terminalLayoutsByTabId: { 'tab-1': { ptyIdsByLeafId: { [LEAF]: ptyId } } },
+      ptyIdsByTabId: { 'tab-1': [ptyId] },
+      sshConnectionStates: new Map([['ssh-a', { status: 'connected' }]]),
+      transientClearedAgentStatusConnectionIds: {}
     }
 
-    expect(
-      isAgentStatusPanePtyBindingCurrent(layouts, PANE, layouts['tab-1'].ptyIdsByLeafId[LEAF])
-    ).toBe(true)
-    expect(isAgentStatusPanePtyBindingCurrent(layouts, PANE, toAppSshPtyId('ssh-b', 'pty-1'))).toBe(
-      false
-    )
+    expect(resolveLiveAgentStatusConnectionRouting({ state, paneKey: PANE, ptyId })).toEqual({
+      connectionId: 'ssh-a'
+    })
+    state.terminalLayoutsByTabId['tab-1'].ptyIdsByLeafId[LEAF] = toAppSshPtyId('ssh-b', 'pty-1')
+    expect(resolveLiveAgentStatusConnectionRouting({ state, paneKey: PANE, ptyId })).toBeUndefined()
   })
 
-  it('requires the exact PTY to remain live for the pane tab', () => {
+  it('rejects stale SSH routing after clear and throughout transient reconnect', () => {
     const ptyId = toAppSshPtyId('ssh-a', 'pty-1')
+    const state = {
+      terminalLayoutsByTabId: { 'tab-1': { ptyIdsByLeafId: { [LEAF]: ptyId } } },
+      ptyIdsByTabId: { 'tab-1': [ptyId] },
+      sshConnectionStates: new Map([['ssh-a', { status: 'connected' }]]),
+      transientClearedAgentStatusConnectionIds: { 'ssh-a': true } as Record<string, true>
+    }
 
-    expect(isAgentStatusPtyLiveForPane({ 'tab-1': [ptyId] }, PANE, ptyId)).toBe(true)
-    expect(isAgentStatusPtyLiveForPane({ 'tab-1': [] }, PANE, ptyId)).toBe(false)
-    expect(isAgentStatusPtyLiveForPane({ 'tab-2': [ptyId] }, PANE, ptyId)).toBe(false)
+    expect(resolveLiveAgentStatusConnectionRouting({ state, paneKey: PANE, ptyId })).toBeUndefined()
+    state.transientClearedAgentStatusConnectionIds = {}
+    state.sshConnectionStates = new Map([['ssh-a', { status: 'reconnecting' }]])
+    expect(resolveLiveAgentStatusConnectionRouting({ state, paneKey: PANE, ptyId })).toBeUndefined()
   })
 })

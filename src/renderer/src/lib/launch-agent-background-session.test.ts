@@ -75,6 +75,8 @@ const state = {
     { ptyIdsByLeafId?: Record<string, string | undefined> }
   >,
   ptyIdsByTabId: {} as Record<string, string[]>,
+  sshConnectionStates: new Map<string, { status: string }>(),
+  transientClearedAgentStatusConnectionIds: {} as Record<string, true>,
   allWorktrees: vi.fn(() => state.worktreesByRepo['repo-1']),
   createTab: mockCreateTab,
   setTabCustomTitle: mockSetTabCustomTitle,
@@ -153,6 +155,8 @@ describe('launchAgentBackgroundSession', () => {
     state.tabsByWorktree = { 'wt-1': [] }
     state.terminalLayoutsByTabId = {}
     state.ptyIdsByTabId = {}
+    state.sshConnectionStates = new Map()
+    state.transientClearedAgentStatusConnectionIds = {}
     mockCreateTab.mockImplementation(() => {
       const tab = { id: 'tab-1', title: 'Terminal 1' }
       state.tabsByWorktree['wt-1'].push(tab)
@@ -459,6 +463,7 @@ describe('launchAgentBackgroundSession', () => {
     // OSC 9999 → store path for hidden SSH sessions.
     state.settings.terminalMainSideEffectAuthority = false
     state.repos = [{ id: 'repo-1', connectionId: 'ssh-a', path: '/repo' }]
+    state.sshConnectionStates = new Map([['ssh-a', { status: 'connected' }]])
     mockSpawn.mockResolvedValue({ id: toAppSshPtyId('ssh-a', 'pty-1') })
     const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
 
@@ -503,6 +508,7 @@ describe('launchAgentBackgroundSession', () => {
 
   it('stamps a working status for SSH Command Code prompt launches', async () => {
     state.repos = [{ id: 'repo-1', connectionId: 'ssh-a', path: '/repo' }]
+    state.sshConnectionStates = new Map([['ssh-a', { status: 'connected' }]])
     mockSpawn.mockResolvedValue({ id: toAppSshPtyId('ssh-a', 'pty-1') })
     const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
 

@@ -4,6 +4,15 @@ import { parseRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
 
 export type AgentStatusConnectionRouting = { connectionId: string | null }
 
+type AgentStatusRoutingState = {
+  terminalLayoutsByTabId:
+    | Record<string, { ptyIdsByLeafId?: Record<string, string | undefined> } | undefined>
+    | undefined
+  ptyIdsByTabId: Record<string, string[] | undefined> | undefined
+  sshConnectionStates: ReadonlyMap<string, { status: string }>
+  transientClearedAgentStatusConnectionIds: Record<string, true>
+}
+
 export function resolveAgentStatusConnectionRouting(args: {
   ptyId: string | null | undefined
   expectedConnectionId?: string | null
@@ -54,24 +63,33 @@ export function resolveAgentStatusConnectionRouting(args: {
   return { connectionId: null }
 }
 
-export function isAgentStatusPanePtyBindingCurrent(
-  terminalLayoutsByTabId:
-    | Record<string, { ptyIdsByLeafId?: Record<string, string | undefined> } | undefined>
-    | undefined,
-  paneKey: string,
+export function resolveLiveAgentStatusConnectionRouting(args: {
+  state: AgentStatusRoutingState
+  paneKey: string
   ptyId: string
-): boolean {
-  const pane = parsePaneKey(paneKey)
-  return pane
-    ? terminalLayoutsByTabId?.[pane.tabId]?.ptyIdsByLeafId?.[pane.leafId] === ptyId
-    : false
-}
-
-export function isAgentStatusPtyLiveForPane(
-  ptyIdsByTabId: Record<string, string[] | undefined> | undefined,
-  paneKey: string,
-  ptyId: string
-): boolean {
-  const pane = parsePaneKey(paneKey)
-  return pane ? Boolean(ptyIdsByTabId?.[pane.tabId]?.includes(ptyId)) : false
+  expectedConnectionId?: string | null
+  runtimeEnvironmentId?: string | null
+}): AgentStatusConnectionRouting | undefined {
+  const pane = parsePaneKey(args.paneKey)
+  if (
+    !pane ||
+    !args.state.ptyIdsByTabId?.[pane.tabId]?.includes(args.ptyId) ||
+    args.state.terminalLayoutsByTabId?.[pane.tabId]?.ptyIdsByLeafId?.[pane.leafId] !== args.ptyId
+  ) {
+    return undefined
+  }
+  const routing = resolveAgentStatusConnectionRouting(args)
+  if (!routing) {
+    return undefined
+  }
+  // Why: transient relay reconnect clears statuses without dropping durable
+  // PTY bindings; old renderer callbacks must stay blocked until reconnect.
+  if (
+    routing.connectionId !== null &&
+    (args.state.sshConnectionStates.get(routing.connectionId)?.status !== 'connected' ||
+      routing.connectionId in args.state.transientClearedAgentStatusConnectionIds)
+  ) {
+    return undefined
+  }
+  return routing
 }

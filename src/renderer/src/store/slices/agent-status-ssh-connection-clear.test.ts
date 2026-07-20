@@ -106,6 +106,29 @@ describe('agent status cleanup for a lost SSH connection', () => {
     expect(store.getState().agentStatusByPaneKey[paneKey]?.connectionId).toBe('ssh-a')
   })
 
+  it('blocks renderer callbacks at clear time until a later reconnect', () => {
+    const store = createTestStore()
+
+    store.getState().clearTransientAgentStatuses('ssh-a', 10)
+
+    expect(store.getState().transientClearedAgentStatusConnectionIds['ssh-a']).toBe(true)
+    store.getState().setSshConnectionState('ssh-a', {
+      targetId: 'ssh-a',
+      status: 'disconnected',
+      error: null,
+      reconnectAttempt: 0
+    })
+    expect(store.getState().transientClearedAgentStatusConnectionIds['ssh-a']).toBe(true)
+
+    store.getState().setSshConnectionState('ssh-a', {
+      targetId: 'ssh-a',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+    expect(store.getState().transientClearedAgentStatusConnectionIds['ssh-a']).toBeUndefined()
+  })
+
   it('moves a colliding pane to newer authoritative ownership', () => {
     const store = createTestStore()
     const paneKey = 'tab-a:11111111-1111-4111-8111-111111111111'

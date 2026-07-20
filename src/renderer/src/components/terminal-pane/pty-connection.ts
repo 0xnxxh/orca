@@ -5,11 +5,7 @@ import type { IBuffer, IDisposable } from '@xterm/xterm'
 import { resolveCursorAgentImeAnchor } from '@/lib/pane-manager/terminal-ime-anchor'
 import { detectAgentStatusFromTitle, agentTypeToIconAgent, isClaudeAgent } from '@/lib/agent-status'
 import { resolvePaneTitleDecision } from './terminal-title-evidence'
-import {
-  isAgentStatusPanePtyBindingCurrent,
-  isAgentStatusPtyLiveForPane,
-  resolveAgentStatusConnectionRouting
-} from '@/lib/agent-status-connection-ownership'
+import { resolveLiveAgentStatusConnectionRouting } from '@/lib/agent-status-connection-ownership'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
 import { getWorktreeMapFromState } from '@/store/selectors'
@@ -2573,17 +2569,12 @@ export function connectPanePty(
   const resolveCurrentAgentStatusRouting = () => {
     const ptyId = activePanePtyBinding ?? transport.getPtyId()
     const state = useAppStore.getState()
-    // Why: durable pane bindings survive SSH disconnect; the live PTY index
-    // prevents a queued renderer callback from recreating a cleared row.
-    if (
-      disposed ||
-      !ptyId ||
-      !isAgentStatusPtyLiveForPane(state.ptyIdsByTabId, cacheKey, ptyId) ||
-      !isAgentStatusPanePtyBindingCurrent(state.terminalLayoutsByTabId, cacheKey, ptyId)
-    ) {
+    if (disposed || !ptyId) {
       return undefined
     }
-    return resolveAgentStatusConnectionRouting({
+    return resolveLiveAgentStatusConnectionRouting({
+      state,
+      paneKey: cacheKey,
       ptyId,
       expectedConnectionId: worktreeConnectionId,
       runtimeEnvironmentId: transport.getRuntimeEnvironmentId?.() ?? runtimeEnvironmentId

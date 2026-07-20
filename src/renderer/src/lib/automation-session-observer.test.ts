@@ -16,6 +16,8 @@ const state = {
     { ptyIdsByLeafId?: Record<string, string | undefined> }
   >,
   ptyIdsByTabId: {} as Record<string, string[]>,
+  sshConnectionStates: new Map<string, { status: string }>(),
+  transientClearedAgentStatusConnectionIds: {} as Record<string, true>,
   setAgentStatus: vi.fn()
 }
 
@@ -55,6 +57,8 @@ describe('observeExistingAutomationSession', () => {
     }
     state.terminalLayoutsByTabId = {}
     state.ptyIdsByTabId = {}
+    state.sshConnectionStates = new Map()
+    state.transientClearedAgentStatusConnectionIds = {}
     mockSubscribeToPtyData.mockReturnValue(vi.fn())
     mockSubscribeToPtyExit.mockReturnValue(vi.fn())
     mockCallRuntimeRpc.mockReturnValue(new Promise(() => {}))
@@ -152,6 +156,7 @@ describe('observeExistingAutomationSession', () => {
   it('stamps the exact SSH PTY in the legacy renderer fallback', async () => {
     state.settings.terminalMainSideEffectAuthority = false
     const ptyId = toAppSshPtyId('ssh-a', 'pty-1')
+    state.sshConnectionStates = new Map([['ssh-a', { status: 'connected' }]])
     state.terminalLayoutsByTabId = {
       'tab-1': { ptyIdsByLeafId: { [LEAF_ID]: ptyId } }
     }

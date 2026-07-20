@@ -44,6 +44,8 @@ const store = {
       | { kind: 'wsl'; distro: string | null }
   }[],
   repos: [{ id: 'repo-1', connectionId: null as string | null, path: '/repo' }],
+  sshConnectionStates: new Map([['ssh-a', { status: 'connected' }]]),
+  transientClearedAgentStatusConnectionIds: {} as Record<string, true>,
   worktreesByRepo: {
     'repo-1': [
       {
@@ -137,6 +139,8 @@ describe('launchAgentInNewTab', () => {
       }
     ]
     store.repos = [{ id: 'repo-1', connectionId: null, path: '/repo' }]
+    store.sshConnectionStates = new Map([['ssh-a', { status: 'connected' }]])
+    store.transientClearedAgentStatusConnectionIds = {}
     store.worktreesByRepo = {
       'repo-1': [
         {
@@ -736,7 +740,7 @@ describe('launchAgentInNewTab', () => {
     expect(mockTrack).not.toHaveBeenCalledWith('agent_prompt_sent', expect.anything())
   })
 
-  it('does not recreate SSH status when disconnect wins a pending prompt delivery', async () => {
+  it('does not recreate SSH status when clear arrives before disconnect state', async () => {
     let finishDelivery: ((delivered: boolean) => void) | undefined
     mockPasteDraftWhenAgentReady.mockReturnValue(
       new Promise<boolean>((resolve) => {
@@ -758,7 +762,9 @@ describe('launchAgentInNewTab', () => {
     }
     store.ptyIdsByTabId = { 'tab-1': [ptyId] }
 
-    store.ptyIdsByTabId = { 'tab-1': [] }
+    // Why: explicit disconnect sends the transient clear before its state
+    // event, while the old connection can still appear connected and bound.
+    store.transientClearedAgentStatusConnectionIds = { 'ssh-a': true }
     finishDelivery?.(true)
     await expect(result?.promptDeliveryResult).resolves.toEqual({
       delivered: true,
