@@ -16,6 +16,7 @@ export type { TerminalModes } from './terminal-modes'
 import type { TerminalSnapshot } from './terminal-snapshot'
 export type { TerminalSnapshot } from './terminal-snapshot'
 export {
+  CLEAN_DISCONNECT_PROTOCOL_VERSION,
   GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION,
   PREVIOUS_DAEMON_PROTOCOL_VERSIONS,
   PROTOCOL_VERSION,
@@ -36,19 +37,7 @@ export type { TerminalCheckpointFile } from './daemon-checkpoint-file'
 // ─── NDJSON Protocol Messages ───────────────────────────────────────
 
 // Hello handshake (first message on each socket)
-export type HelloMessage = {
-  type: 'hello'
-  version: number
-  token: string
-  clientId: string
-  role: 'control' | 'stream'
-}
-
-export type HelloResponse = {
-  type: 'hello'
-  ok: boolean
-  error?: string
-}
+export type { DaemonEndpointIdentity, HelloMessage, HelloResponse } from './daemon-hello-protocol'
 
 // ─── RPC Requests (Client → Daemon, on control socket) ─────────────
 
@@ -174,6 +163,11 @@ export type ListSessionsRequest = {
   type: 'listSessions'
 }
 
+export type ShutdownIfIdleRequest = {
+  id: string
+  type: 'shutdownIfIdle'
+}
+
 export type DetachRequest = {
   id: string
   type: 'detach'
@@ -293,6 +287,7 @@ export type DaemonRequest =
   | KillRequest
   | SignalRequest
   | ListSessionsRequest
+  | ShutdownIfIdleRequest
   | DetachRequest
   | GetCwdRequest
   | GetForegroundProcessRequest
@@ -330,6 +325,10 @@ export type GetSnapshotResult = {
 
 export type ListSessionsResult = {
   sessions: SessionInfo[]
+}
+
+export type ShutdownIfIdleResult = {
+  retiring: boolean
 }
 
 export type SystemResolverHealth = 'healthy' | 'unhealthy' | 'unknown'
