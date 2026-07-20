@@ -73,12 +73,11 @@ export default function SessionViewOptInScreen() {
           <View style={styles.iconSurface}>
             <MessageSquare size={30} color={colors.textPrimary} />
           </View>
-          <Text style={styles.eyebrow}>Native chat</Text>
-          <Text style={styles.title}>Pick your session view</Text>
+          <Text style={styles.title}>How should sessions open?</Text>
           <Text style={styles.body}>
-            Choose how Claude, Codex, and other chat-capable agents open on this device. Native chat
-            shows a chat interface like the desktop app; terminal shows the raw CLI. You can switch
-            any session from its long-press menu.
+            Choose whether supported agent sessions open in the terminal or native chat on this
+            device. Press and hold a session tab to switch its view, or change the default later in
+            Settings.
           </Text>
         </View>
 
@@ -122,7 +121,6 @@ export default function SessionViewOptInScreen() {
               <Text style={styles.secondaryButtonText}>Keep terminal</Text>
             )}
           </Pressable>
-          <Text style={styles.footerNote}>You can change this any time in Settings.</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -165,14 +163,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.bgRaised,
     marginBottom: spacing.xl
-  },
-  eyebrow: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.55,
-    textTransform: 'uppercase',
-    marginBottom: spacing.sm
   },
   title: {
     maxWidth: 420,
@@ -227,13 +217,6 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.58
-  },
-  footerNote: {
-    color: colors.textMuted,
-    fontSize: typography.metaSize,
-    lineHeight: 18,
-    textAlign: 'center',
-    marginTop: spacing.sm
   },
   error: {
     color: colors.statusRed,
