@@ -859,8 +859,8 @@
           "platform": "windows",
           "command": "gh workflow run windows-terminal-restart-e2e.yml --ref OrcaWin/issue-9045-worktree-deletion-fails",
           "result": "passed",
-          "durationSeconds": 471,
-          "summary": "Workflow run 29731617563 checked out dea7375dd, installed dependencies, built Electron, and ran the three registered specs with the workflow's five-test grep under SKIP_BUILD=1. All five Windows E2Es passed; the issue #9045 test completed in 25.2 seconds and proved its PTY, root, agent, reparented native lock-holder, worktree directory, Git registration, and worktree list entry were absent, while the plain-terminal regression test proved its detached child survived close."
+          "durationSeconds": 444,
+          "summary": "Workflow run https://github.com/stablyai/orca/actions/runs/29733816749 checked out ecb8652d6, rebuilt patched node-pty with upstream Spectre mitigation preserved, built Electron, and ran the three registered specs with the workflow's five-test grep under SKIP_BUILD=1. All five Windows E2Es passed; the strengthened issue #9045 test completed in 25.1 seconds, proved its worktree was Git-registered before deletion, then proved its PTY, root, agent, reparented native lock-holder, directory, Git registration, and worktree list entry were absent. The plain-terminal regression test proved its detached child survived close."
         }
       ],
       "runtimeBudget": {
@@ -869,11 +869,11 @@
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "The macOS Electron gate passed three times locally, and the final Windows implementation passed all five selected Electron E2Es once on GitHub Actions; required-platform soak history is not yet available."
+        "evidence": "The macOS Electron gate passed three times locally, and two Windows implementation heads passed all five selected Electron E2Es on GitHub Actions, including the strengthened final oracle at ecb8652d6; required-platform soak history is not yet available."
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The Windows issue #9045 test failed at test-only e5a67d121 in Actions run https://github.com/stablyai/orca/actions/runs/29731005277: production worktree removal returned 'Failed to physically stop every PTY', while the root, agent, and reparented lock-holder remained alive. The same test passed at implementation dea7375dd in run https://github.com/stablyai/orca/actions/runs/29731617563, with removal ok and all recorded processes, the worktree directory, Git registration, and list entry absent."
+        "evidence": "The Windows issue #9045 test failed at test-only e5a67d121 in Actions run https://github.com/stablyai/orca/actions/runs/29731005277: production worktree removal returned 'Failed to physically stop every PTY', while the root, agent, and reparented lock-holder remained alive. The strengthened test passed at implementation ecb8652d6 in run https://github.com/stablyai/orca/actions/runs/29733816749, proving registration before removal, removal ok, and all recorded processes, the worktree directory, Git registration, and list entry absent."
       },
       "performanceBudget": {
         "required": true,
