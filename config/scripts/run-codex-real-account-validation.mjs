@@ -84,8 +84,8 @@ export function createValidationEnv(inheritedEnv, layout, options = {}) {
     ORCA_USER_DATA_PATH: layout.userDataDir,
     // Why: flag OFF pins every codex spawn to an explicit managed CODEX_HOME,
     // so native codex never resolves the OS profile — the only Windows
-    // configuration where strict zero-event containment is reachable. It is
-    // also the shipping default for the stable rollout.
+    // configuration where strict zero-event containment is reachable. It also
+    // exercises the emergency kill-switch lane users fall back to.
     ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME: options.systemDefaultRealHome === 'off' ? '0' : '1'
   }
 }
