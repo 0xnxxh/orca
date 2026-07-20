@@ -72,6 +72,7 @@ import {
   panelRouteDescriptor
 } from '../../../../src/session/session-panel-host'
 import { useMobilePrBranchContext } from '../../../../src/session/use-mobile-pr-branch-context'
+import { isFloatingWorkspaceWorktreeId } from '../../../../src/session/floating-workspace'
 import { SessionDockColumn } from '../../../../src/session/SessionDockColumn'
 import { MobileSessionHeaderIconButton } from '../../../../src/session/MobileSessionHeaderIconButton'
 import { MobileSessionHeaderMoreActionsSheet } from '../../../../src/session/MobileSessionHeaderMoreActionsSheet'
@@ -813,6 +814,9 @@ export default function SessionScreen() {
     warning?: string
   }>()
   const isFolderWorkspaceRoute = worktreeId.startsWith('folder:')
+  // Why: the desktop Floating Workspace sentinel has no backing repo/worktree,
+  // so repo-backed surfaces (files, source control, PR, agent history) hide.
+  const isFloatingWorkspaceRoute = isFloatingWorkspaceWorktreeId(worktreeId)
   const router = useRouter()
   const insets = useSafeAreaInsets()
   // Why: shared client per host owned by RpcClientProvider. See
@@ -850,7 +854,9 @@ export default function SessionScreen() {
   // hub are loaded inside MobileSourceControlPanel — skip the unused identity RPCs.
   const { isGithubRepo: prIsGithubRepo, repoLoaded: prRepoContextLoaded } =
     useMobilePrBranchContext({
-      client,
+      // Why: a null client parks the hook in its not-ready state — the floating
+      // sentinel has no repo to probe.
+      client: isFloatingWorkspaceRoute ? null : client,
       connState,
       worktreeId,
       includeBranchIdentity: false
@@ -2070,7 +2076,7 @@ export default function SessionScreen() {
   )
 
   const loadDiffComments = useCallback(async (): Promise<void> => {
-    if (!client || connState !== 'connected' || !worktreeId) {
+    if (!client || connState !== 'connected' || !worktreeId || isFloatingWorkspaceRoute) {
       setDiffComments([])
       return
     }
@@ -2084,7 +2090,7 @@ export default function SessionScreen() {
       worktree?: { diffComments?: unknown }
     }
     setDiffComments(normalizeMobileDiffComments(result.worktree?.diffComments, worktreeId))
-  }, [client, connState, worktreeId])
+  }, [client, connState, worktreeId, isFloatingWorkspaceRoute])
 
   const persistDiffComments = useCallback(
     async (comments: readonly DiffComment[]): Promise<void> => {
@@ -3415,13 +3421,15 @@ export default function SessionScreen() {
       if (handle !== activeHandleRef.current) {
         return
       }
-      if (terminalLinkOpenMode === 'phone-browser') {
+      // Why: browser.tabCreate resolves a real worktree, which the floating
+      // sentinel doesn't have — open taps in the phone browser instead.
+      if (terminalLinkOpenMode === 'phone-browser' || isFloatingWorkspaceRoute) {
         void Linking.openURL(url).catch(() => {})
         return
       }
       void handleCreateBrowserRef.current?.(url)
     },
-    [terminalLinkOpenMode]
+    [terminalLinkOpenMode, isFloatingWorkspaceRoute]
   )
 
   const toggleLiveInput = useCallback(() => {
@@ -4556,9 +4564,9 @@ export default function SessionScreen() {
     router.push(`/h/${hostId}/agent-history/${encodeURIComponent(worktreeId)}?${params.toString()}`)
   }
   const showAgentSessionHistoryAction =
-    !isFolderWorkspaceRoute && agentSessionHistorySupported === true
+    !isFolderWorkspaceRoute && !isFloatingWorkspaceRoute && agentSessionHistorySupported === true
   const showChecksAction = shouldShowSessionHeaderChecksAction({
-    isFolderWorkspaceRoute,
+    isFolderWorkspaceRoute: isFolderWorkspaceRoute || isFloatingWorkspaceRoute,
     repoContextLoaded: prRepoContextLoaded,
     hostedChecksSupported: prIsGithubRepo
   })
@@ -4599,13 +4607,15 @@ export default function SessionScreen() {
                 </Text>
               </Pressable>
             </View>
-            <MobileSessionHeaderIconButton
-              active={activePanel === 'files'}
-              accessibilityLabel="Open file explorer"
-              icon={Folder}
-              onPress={() => handlePanelTap('files')}
-            />
-            {!isFolderWorkspaceRoute && (
+            {!isFloatingWorkspaceRoute && (
+              <MobileSessionHeaderIconButton
+                active={activePanel === 'files'}
+                accessibilityLabel="Open file explorer"
+                icon={Folder}
+                onPress={() => handlePanelTap('files')}
+              />
+            )}
+            {!isFolderWorkspaceRoute && !isFloatingWorkspaceRoute && (
               <MobileSessionHeaderIconButton
                 active={activePanel === 'sourceControl'}
                 accessibilityLabel="Open source control"
@@ -5274,26 +5284,33 @@ export default function SessionScreen() {
               void handleCreateTerminal()
             }
           },
-          {
-            label: 'Browser',
-            icon: Globe,
-            onPress: () => {
-              setShowCreateTabDrawer(false)
-              if (browserScreencastSupported !== true) {
-                showToast('Desktop update required for mobile browser streaming', 1600)
-                return
-              }
-              setShowCreateBrowserModal(true)
-            }
-          },
-          {
-            label: 'Markdown Note',
-            icon: FileText,
-            onPress: () => {
-              setShowCreateTabDrawer(false)
-              void handleCreateMarkdownNote()
-            }
-          }
+          // Why: browser/markdown creation resolve a real worktree on the host
+          // (browser.tabCreate, files.createFile); the floating sentinel is
+          // terminal-only over RPC, so those options hide there.
+          ...(isFloatingWorkspaceRoute
+            ? []
+            : [
+                {
+                  label: 'Browser',
+                  icon: Globe,
+                  onPress: () => {
+                    setShowCreateTabDrawer(false)
+                    if (browserScreencastSupported !== true) {
+                      showToast('Desktop update required for mobile browser streaming', 1600)
+                      return
+                    }
+                    setShowCreateBrowserModal(true)
+                  }
+                },
+                {
+                  label: 'Markdown Note',
+                  icon: FileText,
+                  onPress: () => {
+                    setShowCreateTabDrawer(false)
+                    void handleCreateMarkdownNote()
+                  }
+                }
+              ])
         ]}
         onClose={() => setShowCreateTabDrawer(false)}
       />

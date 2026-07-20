@@ -5,6 +5,7 @@ import { getRepoIdFromWorktreeId } from '../../../src/shared/worktree-id'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState, RpcSuccess } from '../transport/types'
 import { getLiveWorktreeDisplayName, type WorktreeDisplayNameSource } from './worktree-display-name'
+import { FLOATING_WORKSPACE_TITLE, isFloatingWorkspaceWorktreeId } from './floating-workspace'
 
 const WORKTREE_NAME_FALLBACK_POLL_MS = 3000
 
@@ -16,6 +17,9 @@ type Params = {
 }
 
 export function useLiveWorktreeName({ client, connState, routeName, worktreeId }: Params): string {
+  // Why: the floating sentinel has no worktree record, so worktree.show would
+  // fail forever and keep the 3s fallback poll alive; its title is fixed.
+  const isFloatingWorkspace = isFloatingWorkspaceWorktreeId(worktreeId)
   const [worktreeName, setWorktreeName] = useState(() => routeName?.trim() ?? '')
 
   useEffect(() => {
@@ -24,7 +28,7 @@ export function useLiveWorktreeName({ client, connState, routeName, worktreeId }
 
   useFocusEffect(
     useCallback(() => {
-      if (!client || connState !== 'connected') {
+      if (isFloatingWorkspace || !client || connState !== 'connected') {
         return
       }
       let stale = false
@@ -128,8 +132,11 @@ export function useLiveWorktreeName({ client, connState, routeName, worktreeId }
         stopFallbackPoll()
         unsubscribe()
       }
-    }, [client, connState, worktreeId])
+    }, [client, connState, worktreeId, isFloatingWorkspace])
   )
 
+  if (isFloatingWorkspace) {
+    return worktreeName || FLOATING_WORKSPACE_TITLE
+  }
   return worktreeName
 }

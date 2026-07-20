@@ -166,4 +166,34 @@ describe('useLiveWorktreeName request volume', () => {
 
     expect(unsubscribeStream).toHaveBeenCalledTimes(1)
   })
+
+  it('never calls worktree.show for the floating workspace sentinel', async () => {
+    let name = ''
+    function FloatingHarness(): null {
+      name = useLiveWorktreeName({
+        client,
+        connState: 'connected',
+        routeName: undefined,
+        worktreeId: 'global-floating-terminal'
+      })
+      return null
+    }
+
+    const restoreConsoleError = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(FloatingHarness))
+        await Promise.resolve()
+      })
+    } finally {
+      restoreConsoleError()
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
+
+    expect(sendRequest).not.toHaveBeenCalled()
+    expect(subscribe).not.toHaveBeenCalled()
+    expect(name).toBe('Floating Workspace')
+  })
 })
