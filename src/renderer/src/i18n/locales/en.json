@@ -3309,8 +3309,7 @@
             "loadingUsage": "Loading usage…",
             "usageUnavailable": "Usage unavailable",
             "noUsageData": "No usage data",
-            "verboseFooter": "Verbose footer",
-            "verboseFooterDescription": "Show every usage window"
+            "verboseFooter": "Verbose footer"
           }
         }
       },

@@ -265,24 +265,23 @@ export function UsageRosterPanel({
           onStatusBarUsageModeChange(checked ? 'verbose' : 'compact')
         }}
         onSelect={(event) => event.preventDefault()}
-        className="w-full cursor-pointer rounded-none py-2 pl-8 pr-3.5"
+        className="w-full cursor-pointer justify-between rounded-none px-3.5 py-2.5 text-[13px] text-foreground [&>span:first-child]:hidden"
       >
-        <span className="flex flex-col">
-          <span className="text-[13px] text-foreground">
-            {translate(
-              'auto.components.status.bar.UsageRosterPanel.verboseFooter',
-              'Verbose footer'
-            )}
-          </span>
-          <span className="text-[11px] font-normal text-muted-foreground">
-            {translate(
-              'auto.components.status.bar.UsageRosterPanel.verboseFooterDescription',
-              'Show every usage window'
-            )}
-          </span>
+        {translate('auto.components.status.bar.UsageRosterPanel.verboseFooter', 'Verbose footer')}
+        {/* Why: one menu control avoids nesting the SettingsSwitch button inside an interactive item. */}
+        <span
+          aria-hidden
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors ${
+            statusBarUsageMode === 'verbose' ? 'bg-foreground' : 'bg-muted-foreground/30'
+          }`}
+        >
+          <span
+            className={`block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
+              statusBarUsageMode === 'verbose' ? 'translate-x-4' : 'translate-x-0.5'
+            }`}
+          />
         </span>
       </DropdownMenuCheckboxItem>
-      <div className="border-t border-border/70" />
       <DropdownMenuItem
         onSelect={onUsageDetails}
         className="w-full cursor-pointer justify-between rounded-none px-3.5 py-2.5 text-[13px] text-foreground"
