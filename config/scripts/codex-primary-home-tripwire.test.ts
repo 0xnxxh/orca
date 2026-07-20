@@ -132,3 +132,47 @@ function waitForStdout(child: ReturnType<typeof spawn>, expectedText: string): P
     })
   })
 }
+
+describe('lane-aware tripwire event classification', () => {
+  it('separates designed system-default churn from containment violations', () => {
+    const verdicts = runTripwireModule<string[]>(
+      `
+        const { classifyCodexHomeTripwireEvent } = await import(process.argv[1])
+        const cases = [
+          { changedPaths: ['.', 'goals_1.sqlite', 'logs_2.sqlite-wal', 'state_5.sqlite-shm', 'memories_1.sqlite-journal', 'tmp', 'tmp/arg0', 'tmp\\\\arg0', 'log', 'log/codex-tui.log'] },
+          { changedPaths: ['.'] },
+          { changedPaths: ['.', 'auth.json'] },
+          { changedPaths: ['auth.json'] },
+          { changedPaths: ['config.toml'] },
+          { changedPaths: ['.credentials.json'] },
+          { changedPaths: ['hooks.json'] },
+          { changedPaths: ['sessions/2026/07/rollout-x.jsonl'] },
+          { changedPaths: ['skills/SKILL.md'] },
+          { changedPaths: ['unknown-file.bin'] },
+          { changedPaths: ['goals_1.sqlite', 'auth.json'] },
+          { changedPaths: ['sessions/index.sqlite-wal'] },
+          { scanError: 'boom', changedPaths: [] },
+          {}
+        ]
+        console.log(JSON.stringify(cases.map((tripwireEvent) => classifyCodexHomeTripwireEvent(tripwireEvent))))
+      `,
+      []
+    )
+    expect(verdicts).toEqual([
+      'designed-system-default',
+      'designed-system-default',
+      'violation',
+      'violation',
+      'violation',
+      'violation',
+      'violation',
+      'violation',
+      'violation',
+      'violation',
+      'violation',
+      'violation',
+      'violation',
+      'violation'
+    ])
+  })
+})

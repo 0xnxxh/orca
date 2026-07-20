@@ -86,6 +86,32 @@ export function describeCodexHomeChange(before, after) {
   }
 }
 
+// Why: with the real-home flag ON, system-default spawn sites deliberately
+// delete CODEX_HOME so native codex resolves the user's real ~/.codex — and on
+// Windows the binary ignores the USERPROFILE sandbox, so its own volatile
+// runtime churn (root sqlite/WAL/SHM, tmp/, log/) is designed behavior no env
+// sandbox can contain. Everything else — auth.json, config.toml,
+// .credentials.json, hooks.json, sessions/, any unknown path — stays a hard
+// containment violation.
+const DESIGNED_SYSTEM_DEFAULT_VOLATILE_PATTERN =
+  /^(?:[^\\/]+\.sqlite(?:-wal|-shm|-journal)?|tmp(?:[\\/].*)?|log(?:[\\/].*)?)$/i
+
+export function classifyCodexHomeTripwireEvent(event) {
+  if (event.scanError || !Array.isArray(event.changedPaths)) {
+    return 'violation'
+  }
+  // Why: the root directory's own mtime churns whenever codex adds/removes a
+  // direct child (e.g. a WAL file); it carries no information beyond the
+  // substantive paths, so it never decides the classification by itself.
+  const substantive = event.changedPaths.filter((entryPath) => entryPath !== '.')
+  if (substantive.length === 0) {
+    return 'designed-system-default'
+  }
+  return substantive.every((entryPath) => DESIGNED_SYSTEM_DEFAULT_VOLATILE_PATTERN.test(entryPath))
+    ? 'designed-system-default'
+    : 'violation'
+}
+
 export async function startCodexPrimaryHomeTripwire(options = {}) {
   const primaryHome = path.resolve(options.primaryHome ?? os.homedir())
   const codexHome = path.join(primaryHome, '.codex')

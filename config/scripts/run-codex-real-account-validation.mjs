@@ -19,7 +19,10 @@ import path from 'node:path'
 import process from 'node:process'
 import readline from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
-import { startCodexPrimaryHomeTripwire } from './codex-primary-home-tripwire.mjs'
+import {
+  classifyCodexHomeTripwireEvent,
+  startCodexPrimaryHomeTripwire
+} from './codex-primary-home-tripwire.mjs'
 import {
   cleanupValidationDaemons,
   closeValidationElectronApp
@@ -261,7 +264,8 @@ function parseArgs(argv) {
     reportPath: null,
     primaryHome: os.homedir(),
     configTemplate: null,
-    tempParent: null
+    tempParent: null,
+    laneAwareContainment: false
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
@@ -291,9 +295,16 @@ function parseArgs(argv) {
       options.skipBuild = true
     } else if (arg === '--keep') {
       options.keep = true
+    } else if (arg === '--lane-aware-containment') {
+      // Why: on Windows the flag-ON system-default lane cannot be env-sandboxed
+      // (native codex ignores USERPROFILE), so strict zero-event containment is
+      // structurally unreachable there. This mode records codex's designed
+      // volatile churn without aborting while every other real-home write stays
+      // a hard failure. The absolute zero-event claim is carried by macOS runs.
+      options.laneAwareContainment = true
     } else if (arg === '--help') {
       console.log(
-        'Usage: node config/scripts/run-codex-real-account-validation.mjs [--scenario mixed|managed-only|codex-lb] [--config-template <path>] [--temp-parent <dir>] [--skip-build] [--dry-run] [--close-after-launch] [--keep] [--report <path>]'
+        'Usage: node config/scripts/run-codex-real-account-validation.mjs [--scenario mixed|managed-only|codex-lb] [--config-template <path>] [--temp-parent <dir>] [--skip-build] [--dry-run] [--close-after-launch] [--keep] [--lane-aware-containment] [--report <path>]'
       )
       process.exit(0)
     } else {
@@ -485,6 +496,16 @@ async function main() {
     tripwire = await startCodexPrimaryHomeTripwire({
       primaryHome: layout.primaryHome,
       onChange: (event) => {
+        if (
+          options.laneAwareContainment &&
+          classifyCodexHomeTripwireEvent(event) === 'designed-system-default'
+        ) {
+          console.warn(
+            '[LANE-DESIGNED] Real ~/.codex volatile churn from the system-default codex lane (recorded, not a violation)'
+          )
+          console.warn(JSON.stringify(event, null, 2))
+          return
+        }
         console.error('\u001b[31;1m[VALIDATION ABORTED] Primary ~/.codex changed\u001b[0m')
         console.error(JSON.stringify(event, null, 2))
         abortController.abort()
@@ -534,7 +555,10 @@ async function main() {
       await closeValidationElectronApp(app)
       await cleanupValidationDaemons(layout.userDataDir)
       if (tripwire) {
-        report.tripwire = await tripwire.stop()
+        const tripwireStatus = await tripwire.stop()
+        report.tripwire = options.laneAwareContainment
+          ? { ...tripwireStatus, laneAware: summarizeLaneAwareTripwire(tripwireStatus.events) }
+          : tripwireStatus
       }
       report.checkpoints.push({ label: 'shutdown', ...(await snapshotValidationState(layout)) })
       report.completedAt = new Date().toISOString()
@@ -561,11 +585,34 @@ async function main() {
     }
   }
 
-  if (report.tripwire && !report.tripwire.clean) {
+  const tripwireFailed = report.tripwire
+    ? options.laneAwareContainment
+      ? report.tripwire.laneAware.violations.length > 0
+      : !report.tripwire.clean
+    : false
+  if (tripwireFailed) {
     process.exitCode = 2
   } else {
+    if (options.laneAwareContainment && report.tripwire?.events.length) {
+      console.warn(
+        `Lane-aware containment: ${report.tripwire.laneAware.designedLaneEvents.length} designed system-default event(s) recorded, 0 violations. Review them in the report.`
+      )
+    }
     console.log(`Validation harness complete. Report: ${reportPath}`)
   }
+}
+
+function summarizeLaneAwareTripwire(events) {
+  const designedLaneEvents = []
+  const violations = []
+  for (const event of events) {
+    if (classifyCodexHomeTripwireEvent(event) === 'designed-system-default') {
+      designedLaneEvents.push(event)
+    } else {
+      violations.push(event)
+    }
+  }
+  return { designedLaneEvents, violations }
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null
