@@ -100,11 +100,13 @@ export async function prepareLocalCommitMessageAgentEnv(
       const wslCodexHome = codexHomePath ? parseWslUncPath(codexHomePath) : null
       if (target?.runtime === 'wsl') {
         const codexHomeForTarget = wslCodexHome?.linuxPath ?? null
+        // Why: the fallback must still strip Orca-owned overrides, or a
+        // system-default WSL run inherits the managed CODEX_HOME.
         return {
           ok: true,
           env: codexHomeForTarget
-            ? { ...cloneProcessEnv(), CODEX_HOME: codexHomeForTarget }
-            : undefined
+            ? { ...cloneProcessEnvWithoutOrcaCodexHomeOverride(), CODEX_HOME: codexHomeForTarget }
+            : cloneProcessEnvWithoutOrcaCodexHomeOverride()
         }
       }
       if (codexHomePath && wslCodexHome) {

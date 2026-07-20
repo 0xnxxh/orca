@@ -1764,9 +1764,7 @@ app.whenReady().then(async () => {
   codexRuntimeHome = new CodexRuntimeHomeService(store)
   // Why: an incapable trust-grant host must fall back to the managed home for
   // every consumer (PTY env, rate limits, commit messages) in one place.
-  codexRuntimeHome.setRealHomeLaneGate(() =>
-    isRealHomeCodexHookLaneUsable(isAgentStatusHooksEnabled(store?.getSettings()))
-  )
+  codexRuntimeHome.setRealHomeLaneGate(() => isRealHomeCodexHookLaneUsable())
   // Why: while the real-home lane owns ~/.codex/hooks.json, the legacy
   // system-home sweep inside managed installs would delete the entry the
   // real-home installer just appended. Flag OFF, hooks off, or an incapable

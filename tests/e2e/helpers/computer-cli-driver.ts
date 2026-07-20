@@ -166,8 +166,12 @@ async function ensureOrcaRuntimeServed(): Promise<void> {
 async function createComputerE2ERuntimeEnv(): Promise<NodeJS.ProcessEnv> {
   const userDataDir =
     process.env.ORCA_DEV_USER_DATA_PATH ?? (await getComputerE2eOrcaDevUserDataPath())
+  // Why: agent runtimes export ELECTRON_RUN_AS_NODE, which would make the
+  // spawned Electron behave as plain Node; strip it like every other caller.
+  const { ELECTRON_RUN_AS_NODE: _electronRunAsNode, ...inheritedEnv } = process.env
+  void _electronRunAsNode
   const isolation = createElectronHomeIsolation({
-    inheritedEnv: process.env,
+    inheritedEnv,
     launchEnv: {},
     extraEnv: {},
     userDataDir,

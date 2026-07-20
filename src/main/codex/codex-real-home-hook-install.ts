@@ -52,7 +52,7 @@ export function getRealHomeCodexHookLane(): RealHomeCodexHookLane {
  * a failed opt-out cleanup use the managed lane so no half-mutated hook state
  * can diverge from PTY, rate-limit, or commit-message routing.
  */
-export function isRealHomeCodexHookLaneUsable(_hooksEnabled: boolean): boolean {
+export function isRealHomeCodexHookLaneUsable(): boolean {
   return currentLane !== 'unavailable'
 }
 
