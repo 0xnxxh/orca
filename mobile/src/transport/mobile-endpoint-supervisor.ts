@@ -64,8 +64,7 @@ export class MobileEndpointSupervisor {
     this.unsubscribeState = this.logical.onStateChange((state) => {
       if (state === 'connected') {
         if (this.logical.getActivePath() !== 'relay') {
-          const forceCredentialRotation = this.relayReconnect.resetForDirectConnection()
-          void this.rotateCredentialIfNeeded(forceCredentialRotation)
+          void this.rotateCredentialIfNeeded(this.relayReconnect.resetForDirectConnection())
         }
         this.scheduleDirectProbe()
       } else {
@@ -128,9 +127,9 @@ export class MobileEndpointSupervisor {
     let lastError: Error | null = null
     let retryAfterOperation = false
     try {
-      const credentials = [this.bundle.current, this.bundle.grace].filter(
-        (credential): credential is NonNullable<typeof credential> =>
-          Boolean(credential && credential.expiresAt > this.dependencies.now())
+      const credentials = this.relayReconnect.eligibleCredentials(
+        this.bundle.current,
+        this.bundle.grace
       )
       for (const credential of credentials) {
         const result = await this.tryRelayCredential(credential)
@@ -142,7 +141,10 @@ export class MobileEndpointSupervisor {
           return
         }
         lastError = result.error
-        if (!this.relayReconnect.shouldTryGraceAfterRelayFailure(result.error)) {
+        if (this.relayReconnect.shouldTryGraceAfterRelayFailure(result.error)) {
+          // Why: a rejected version stays invalid; retry only the grace credential.
+          this.relayReconnect.recordRejectedCredential(credential.version)
+        } else {
           break
         }
       }
@@ -265,11 +267,10 @@ export class MobileEndpointSupervisor {
       }
       await this.logical.migrateTo(successful.client, successful.path)
       successful = null
-      const forceCredentialRotation = this.relayReconnect.resetForDirectConnection()
       this.hysteresis.recordMigration(this.dependencies.now())
       this.leaseRotation.clear()
       this.relayRotationPending = false
-      await this.rotateCredentialIfNeeded(forceCredentialRotation)
+      await this.rotateCredentialIfNeeded(this.relayReconnect.resetForDirectConnection())
     } finally {
       successful?.client.close()
       this.operationInFlight = false

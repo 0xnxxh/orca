@@ -43,6 +43,17 @@ describe('relay reconnect controller', () => {
     expect(onRetry).not.toHaveBeenCalled()
   })
 
+  it('upgrades host-revival gating to fresh credentials without later downgrading it', () => {
+    const reconnect = createController(vi.fn())
+
+    reconnect.registerFailure(new RelayOuterError(4404))
+    reconnect.registerFailure(new RelayOuterError(4401))
+    reconnect.registerFailure(new RelayOuterError(4408))
+
+    expect(reconnect.resetForDirectConnection()).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('extends forced-rotation retries to the exponential cooldown', () => {
     const reconnect = createController(vi.fn())
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MobileRelayCredentialBundle } from './mobile-relay-credential-bundle'
+import { hashMobileRelayCredential } from './mobile-relay-credential-hash'
 import { RelayOuterError } from './mobile-relay-e2ee-link'
 import type { MobileRelayRpcSession } from './mobile-relay-rpc-session'
 import {
@@ -366,6 +367,68 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
+  it('does not redial a rejected current credential on grace cooldown retries', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi.fn(
+      (_relay, credential: { version: number }) =>
+        new FakeRelaySession(
+          'disconnected',
+          new RelayOuterError(credential.version === bundle.current.version ? 4401 : 4429)
+        )
+    )
+    const deps = dependencies({
+      readBundle: vi.fn(async () => ({
+        ...bundle,
+        grace: { ...bundle.current, token: 'C'.repeat(43), hash: 'D'.repeat(43), version: 1 }
+      })),
+      openRelay,
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    expect(openRelay).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(250)
+    expect(openRelay).toHaveBeenCalledTimes(3)
+    expect(openRelay.mock.calls[2]?.[1]).toEqual(expect.objectContaining({ version: 1 }))
+    supervisor.stop()
+  })
+
+  it('rotates a rejected current credential after grace keeps relay recovery alive', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const current = {
+      ...bundle.current,
+      hash: hashMobileRelayCredential(bundle.current.token)
+    }
+    const writeBundle = vi.fn(async () => {})
+    const deps = dependencies({
+      readBundle: vi.fn(async () => ({
+        ...bundle,
+        current,
+        grace: { ...current, token: 'C'.repeat(43), hash: 'D'.repeat(43), version: 1 }
+      })),
+      openRelay: vi.fn(
+        (_relay, credential: { version: number }) =>
+          new FakeRelaySession(
+            credential.version === current.version ? 'disconnected' : 'connected',
+            credential.version === current.version ? new RelayOuterError(4401) : null
+          )
+      ),
+      writeBundle
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    writeBundle.mockClear()
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(writeBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ pending: expect.any(Object) })
+    )
+    supervisor.stop()
+  })
+
   it('does not duplicate transport failures across current and grace credentials', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
     const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new Error('network down')))
@@ -650,6 +713,33 @@ describe('mobile endpoint supervisor', () => {
     expect(openRelay).toHaveBeenCalledTimes(2)
 
     await vi.advanceTimersByTimeAsync(5000)
+    expect(openRelay).toHaveBeenCalledTimes(2)
+    supervisor.stop()
+  })
+
+  it('keeps a fatal lease-replacement gate after the active relay later drops', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi
+      .fn()
+      .mockReturnValueOnce(
+        new FakeRelaySession('connected', new RelayOuterError(4408), Date.now() + 31_000)
+      )
+      .mockReturnValueOnce(new FakeRelaySession('disconnected', new RelayOuterError(4401)))
+      .mockImplementation(() => new FakeRelaySession('connected'))
+    const deps = dependencies({
+      openRelay,
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(openRelay).toHaveBeenCalledTimes(2)
+
+    // The old relay can outlive its rejected lease replacement, then close separately.
+    logical.publishState('disconnected')
+    await vi.advanceTimersByTimeAsync(30_000)
+
     expect(openRelay).toHaveBeenCalledTimes(2)
     supervisor.stop()
   })

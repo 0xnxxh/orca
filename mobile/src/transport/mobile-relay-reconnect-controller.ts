@@ -29,6 +29,7 @@ export class RelayReconnectController {
   private timer: ReturnType<typeof setTimeout> | null = null
   private activeSession: MobileRelayRpcSession | null = null
   private recoveryGate: RecoveryGate | null = null
+  private readonly rejectedCredentialVersions = new Set<number>()
 
   constructor(
     private readonly dependencies: RelayReconnectDependencies,
@@ -81,12 +82,14 @@ export class RelayReconnectController {
   }
 
   resetForDirectConnection(): boolean {
-    const needsCredentialRefresh = this.recoveryGate === 'fresh-credential'
+    const needsCredentialRefresh =
+      this.recoveryGate === 'fresh-credential' || this.rejectedCredentialVersions.size > 0
     this.activeSession = null
     if (needsCredentialRefresh) {
       // Why: the rejected credential stays unusable until its replacement is durable.
       this.consecutiveFailures = 0
       this.nextAttemptAt = 0
+      this.recoveryGate = 'fresh-credential'
       this.clearTimer()
     } else {
       this.reset()
@@ -96,8 +99,30 @@ export class RelayReconnectController {
 
   completeCredentialRefresh(): void {
     if (this.recoveryGate === 'fresh-credential') {
+      this.rejectedCredentialVersions.clear()
       this.reset()
     }
+  }
+
+  eligibleCredentials<T extends { expiresAt: number; version: number }>(
+    ...credentials: Array<T | null | undefined>
+  ): T[] {
+    const eligible = credentials.filter((credential): credential is T =>
+      Boolean(
+        credential &&
+        credential.expiresAt > this.dependencies.now() &&
+        !this.rejectedCredentialVersions.has(credential.version)
+      )
+    )
+    if (eligible.length === 0 && this.rejectedCredentialVersions.size > 0) {
+      this.recoveryGate = 'fresh-credential'
+      this.clearTimer()
+    }
+    return eligible
+  }
+
+  recordRejectedCredential(version: number): void {
+    this.rejectedCredentialVersions.add(version)
   }
 
   registerActiveFailure(logical: StableLogicalRpcClient): void {
@@ -126,12 +151,20 @@ export class RelayReconnectController {
   }
 
   registerFailure(error: Error | null, scheduleRetry = true): void {
-    this.consecutiveFailures += 1
     const code = error instanceof RelayOuterError ? error.code : null
     const recovery =
       code != null && isMobileRelayCloseCode(code)
         ? mobileRelayRecoveryFor(code, 'phone-resume')
         : null
+    if (
+      this.recoveryGate === 'fresh-credential' ||
+      (this.recoveryGate === 'host-revival' && recovery?.kind !== 'disable-relay-credential')
+    ) {
+      // Why: only the gate's external signal can make a known-fatal recovery retryable.
+      this.clearTimer()
+      return
+    }
+    this.consecutiveFailures += 1
     const delay = this.delayMs()
     this.nextAttemptAt = this.dependencies.now() + delay
     if (recovery?.kind === 'wait-for-host-revival') {
