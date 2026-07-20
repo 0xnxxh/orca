@@ -9,7 +9,8 @@ describe('formatPlanLabel', () => {
   })
 
   it('title-cases multi-token plans across separators', () => {
-    expect(formatPlanLabel('chatgpt_business')).toBe('Chatgpt Business')
+    expect(formatPlanLabel('chatgpt_business')).toBe('ChatGPT Business')
+    expect(formatPlanLabel('CHATGPT_PLUS')).toBe('ChatGPT Plus')
     expect(formatPlanLabel('team-plus')).toBe('Team Plus')
     expect(formatPlanLabel('pro trial')).toBe('Pro Trial')
   })

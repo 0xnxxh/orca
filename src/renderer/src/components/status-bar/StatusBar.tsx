@@ -1757,11 +1757,11 @@ export function ProviderDetailsMenu({
   const usagePercentageDisplay = normalizeUsagePercentageDisplay(
     useAppStore((s) => s.usagePercentageDisplay)
   )
-  const skipCloseAutoFocusRef = useRef(false)
+  const menuFocusHandoff = useStatusBarMenuFocusHandoff()
 
   const handleOpenChange = (nextOpen: boolean): void => {
     if (nextOpen) {
-      skipCloseAutoFocusRef.current = false
+      menuFocusHandoff.reset()
       recordFeatureInteraction('usage-tracking')
     }
     onOpenChange?.(nextOpen)
@@ -1825,17 +1825,8 @@ export function ProviderDetailsMenu({
         align="start"
         sideOffset={8}
         className="w-[260px]"
-        onPointerDownOutside={() => {
-          skipCloseAutoFocusRef.current = true
-        }}
-        onCloseAutoFocus={(event) => {
-          if (!skipCloseAutoFocusRef.current) {
-            return
-          }
-          skipCloseAutoFocusRef.current = false
-          // Why: focus the clicked surface (esp. xterm) — Radix's default trigger restore steals that first click.
-          event.preventDefault()
-        }}
+        onPointerDownOutside={menuFocusHandoff.onPointerDownOutside}
+        onCloseAutoFocus={menuFocusHandoff.onCloseAutoFocus}
       >
         {panelBody}
       </DropdownMenuContent>
@@ -1844,6 +1835,30 @@ export function ProviderDetailsMenu({
 }
 
 const CLOSE_ALL_CONTEXT_MENUS_EVENT = 'orca-close-all-context-menus'
+
+function useStatusBarMenuFocusHandoff(): {
+  reset: () => void
+  onPointerDownOutside: () => void
+  onCloseAutoFocus: (event: Event) => void
+} {
+  const skipCloseAutoFocusRef = useRef(false)
+  return {
+    reset: () => {
+      skipCloseAutoFocusRef.current = false
+    },
+    onPointerDownOutside: () => {
+      skipCloseAutoFocusRef.current = true
+    },
+    onCloseAutoFocus: (event) => {
+      if (!skipCloseAutoFocusRef.current) {
+        return
+      }
+      skipCloseAutoFocusRef.current = false
+      // Why: Radix trigger restoration steals the first click from surfaces such as xterm.
+      event.preventDefault()
+    }
+  }
+}
 
 function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Element | null {
   const floatingTerminalShortcut = useShortcutLabel('floatingTerminal.toggle')
@@ -1856,6 +1871,7 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
     useAppStore((s) => s.usagePercentageDisplay)
   )
   const [usageMenuOpen, setUsageMenuOpen] = useState(false)
+  const usageMenuFocusHandoff = useStatusBarMenuFocusHandoff()
   const statusBarVisible = useAppStore((s) => s.statusBarVisible)
   const statusBarItems = useAppStore((s) => s.statusBarItems)
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
@@ -2059,6 +2075,13 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
     openSettingsTarget({ pane: 'accounts', repoId: null, sectionId })
     openSettingsPage()
   }
+  const handleUsageMenuOpenChange = (nextOpen: boolean): void => {
+    if (nextOpen) {
+      usageMenuFocusHandoff.reset()
+      recordFeatureInteraction('usage-tracking')
+    }
+    setUsageMenuOpen(nextOpen)
+  }
 
   return (
     <div
@@ -2084,7 +2107,11 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
         ) : hasVisibleUsageMeters ? (
           // Consolidated roster pill → opens the all-agents Usage popover (mock parity).
           <UsagePercentageDisplayChangeNotice hasVisibleUsageMeters={hasVisibleUsageMeters}>
-            <DropdownMenu open={usageMenuOpen} onOpenChange={setUsageMenuOpen} modal={false}>
+            <DropdownMenu
+              open={usageMenuOpen}
+              onOpenChange={handleUsageMenuOpenChange}
+              modal={false}
+            >
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
@@ -2120,6 +2147,8 @@ function StatusBarInner({ floatingTerminalOpen }: StatusBarProps): React.JSX.Ele
                 // bar instead of overlapping it — bottom padding ≈ footer height.
                 collisionPadding={{ top: 8, bottom: 32, left: 8, right: 8 }}
                 className="w-[360px] p-0"
+                onPointerDownOutside={usageMenuFocusHandoff.onPointerDownOutside}
+                onCloseAutoFocus={usageMenuFocusHandoff.onCloseAutoFocus}
               >
                 <UsageRosterPanel
                   providers={rosterProviders}
