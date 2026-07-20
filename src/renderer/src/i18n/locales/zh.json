@@ -5440,6 +5440,12 @@
             "defaultViewLabel": "默认原生聊天视图",
             "defaultViewTerminal": "终端聊天",
             "defaultViewNative": "原生聊天"
+          },
+          "agentDashboard": {
+            "title": "Agent Dashboard",
+            "description": "Pop-out Kanban board for monitoring agents across worktrees.",
+            "copy": "Adds an Agent Dashboard entry to the left sidebar. Open it to monitor attention, working, and idle agents in a separate window and jump into their live terminals.",
+            "toggleLabel": "Toggle Agent Dashboard"
           }
         },
         "FloatingWorkspacePane": {
@@ -7613,6 +7619,10 @@
               "title": "原生聊天",
               "description": "预览受支持的智能体终端会话的桌面聊天界面。",
               "grok": "grok"
+            },
+            "agentDashboard": {
+              "title": "Agent Dashboard",
+              "description": "Pop-out Kanban board for monitoring agents across worktrees."
             }
           }
         },
@@ -13546,6 +13556,22 @@
     "recoverableError": {
       "title": "Orca dashboard hit an error.",
       "description": "The dashboard could not finish rendering. Retry to remount it, or reopen it."
+    },
+    "bucket": {
+      "attention": "Needs You",
+      "working": "Working",
+      "idle": "Idle",
+      "empty": "None"
+    },
+    "title": "Agents",
+    "total": "{{count}} total",
+    "card": {
+      "you": "You"
+    },
+    "terminal": {
+      "closed": "No live terminal — this agent's pane has closed.",
+      "close": "Close",
+      "focusWorktree": "Focus worktree"
     }
   },
   "dashboard": {

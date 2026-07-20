@@ -34,7 +34,12 @@ vi.mock('./AgentTerminalDialog', () => ({
     card: DashboardCard | null
     onOpenChange: (open: boolean) => void
   }) => (
-    <div data-testid="terminal-dialog" data-open={card !== null} data-bucket={card?.bucket}>
+    <div
+      data-testid="terminal-dialog"
+      data-open={card !== null}
+      data-bucket={card?.bucket}
+      data-pty-id={card?.ptyId ?? undefined}
+    >
       <button data-testid="terminal-dialog-close" onClick={() => onOpenChange(false)} />
     </div>
   )
@@ -131,9 +136,10 @@ describe('AgentKanbanBoard', () => {
     expect(screen.getByTestId('terminal-dialog').dataset.bucket).toBe('working')
 
     // Even a vanished card (pane closed) keeps the dialog up — the user
-    // dismisses it explicitly.
+    // dismisses it explicitly, but stale live routing is cleared.
     rerender(<AgentKanbanBoard snapshot={{ generatedAt: 3, cards: [] }} />)
     expect(screen.getByTestId('terminal-dialog').dataset.open).toBe('true')
+    expect(screen.getByTestId('terminal-dialog').dataset.ptyId).toBeUndefined()
   })
 
   it('relays a seen-ack when a dialog opens and when the open agent changes state', () => {

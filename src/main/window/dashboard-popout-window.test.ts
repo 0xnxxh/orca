@@ -9,6 +9,8 @@ const {
   appOnMock,
   appRemoveListenerMock,
   getAllDisplaysMock,
+  installNavigationPolicyMock,
+  sendToTrustedUIRendererMock,
   isMock
 } = vi.hoisted(() => {
   const created: FakeWindow[] = []
@@ -20,7 +22,7 @@ const {
     destroyed = false
     minimized = false
     fullscreen = false
-    webContents = { id: created.length + 1, send: vi.fn() }
+    webContents = { id: created.length + 1, send: vi.fn(), isDestroyed: () => this.destroyed }
     bounds = { x: 100, y: 100, width: 960, height: 720 }
     focus = vi.fn()
     show = vi.fn()
@@ -82,6 +84,8 @@ const {
     getAllDisplaysMock: vi.fn((): Display[] => [
       { workArea: { x: 0, y: 0, width: 1920, height: 1080 } }
     ]),
+    installNavigationPolicyMock: vi.fn(),
+    sendToTrustedUIRendererMock: vi.fn(),
     isMock: { dev: false } as { dev: boolean }
   }
 })
@@ -99,8 +103,16 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('@electron-toolkit/utils', () => ({ is: isMock }))
+vi.mock('../ipc/ui', () => ({ sendToTrustedUIRenderer: sendToTrustedUIRendererMock }))
+vi.mock('./privileged-window-navigation', () => ({
+  installPrivilegedWindowNavigationPolicy: installNavigationPolicyMock
+}))
 
-import { createOrFocusDashboardPopout, closeDashboardPopout } from './dashboard-popout-window'
+import {
+  createOrFocusDashboardPopout,
+  closeDashboardPopout,
+  isDashboardPopoutRenderer
+} from './dashboard-popout-window'
 
 type FakeWindow = InstanceType<typeof BrowserWindowMock>
 
@@ -143,6 +155,8 @@ describe('createOrFocusDashboardPopout', () => {
     expect(opts.webPreferences?.sandbox).toBe(true)
     expect(opts.webPreferences?.webviewTag).toBe(false)
     expect(opts.webPreferences?.preload).toMatch(/preload[\\/]index\.js$/)
+    expect(installNavigationPolicyMock).toHaveBeenCalledWith(instances[0].webContents)
+    expect(sendToTrustedUIRendererMock).toHaveBeenCalledWith('dashboard:popoutOpenChanged', true)
   })
 
   it('shows the window on ready-to-show', () => {
@@ -179,6 +193,14 @@ describe('createOrFocusDashboardPopout', () => {
     expect(instances).toHaveLength(1)
     expect(second).toBe(first)
     expect(instances[0].focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('trusts only the live popout webContents', () => {
+    const win = createOrFocusDashboardPopout(makeStore() as never) as unknown as FakeWindow
+    expect(isDashboardPopoutRenderer(win.webContents as never)).toBe(true)
+    expect(isDashboardPopoutRenderer({ id: win.webContents.id } as never)).toBe(false)
+    win.destroyed = true
+    expect(isDashboardPopoutRenderer(win.webContents as never)).toBe(false)
   })
 
   it('restores a minimized window when re-requested', () => {

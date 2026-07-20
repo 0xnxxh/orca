@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  DASHBOARD_BUCKET_LABEL,
   DASHBOARD_BUCKET_ORDER,
   type DashboardBucket,
   type DashboardCard,
@@ -10,6 +9,18 @@ import { cn } from '@/lib/utils'
 import { AgentKanbanCard } from './AgentKanbanCard'
 import { AgentTerminalDialog } from './AgentTerminalDialog'
 import './agent-board-transitions.css'
+import { translate } from '@/i18n/i18n'
+
+function bucketLabel(bucket: DashboardBucket): string {
+  switch (bucket) {
+    case 'attention':
+      return translate('dashboardPopout.bucket.attention', 'Needs You')
+    case 'working':
+      return translate('dashboardPopout.bucket.working', 'Working')
+    case 'idle':
+      return translate('dashboardPopout.bucket.idle', 'Idle')
+  }
+}
 
 function groupByBucket(cards: DashboardCard[]): Record<DashboardBucket, DashboardCard[]> {
   const grouped: Record<DashboardBucket, DashboardCard[]> = {
@@ -49,7 +60,7 @@ function KanbanColumn({
     >
       <header className="flex items-center gap-2 px-3 py-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-          {DASHBOARD_BUCKET_LABEL[bucket]}
+          {bucketLabel(bucket)}
         </span>
         <span className="ml-auto rounded-full bg-background px-1.5 text-[11px] tabular-nums text-muted-foreground">
           {cards.length}
@@ -57,7 +68,9 @@ function KanbanColumn({
       </header>
       <div className="scrollbar-sleek flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
         {cards.length === 0 ? (
-          <p className="px-1 py-2 text-[11px] text-muted-foreground">None</p>
+          <p className="px-1 py-2 text-[11px] text-muted-foreground">
+            {translate('dashboardPopout.bucket.empty', 'None')}
+          </p>
         ) : (
           cards.map((card) => (
             <AgentKanbanCard
@@ -76,17 +89,30 @@ function KanbanColumn({
 /** The pop-out agent board: status columns fed by the relayed snapshot. */
 export function AgentKanbanBoard({ snapshot }: { snapshot: DashboardSnapshot }): React.JSX.Element {
   const grouped = useMemo(() => groupByBucket(snapshot.cards), [snapshot.cards])
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [])
 
   // The open terminal dialog survives bucket moves: only the paneKey is
   // remembered, and the card data is re-resolved from each fresh snapshot.
   // The opened card is kept as a fallback so the dialog also survives the
   // card vanishing entirely (pane closed) — the user dismisses it explicitly.
+  // Its live routing is cleared because daemon PTY ids can be reused.
   const [openedCard, setOpenedCard] = useState<DashboardCard | null>(null)
   const dialogCard = useMemo(() => {
     if (!openedCard) {
       return null
     }
-    return snapshot.cards.find((c) => c.paneKey === openedCard.paneKey) ?? openedCard
+    return (
+      snapshot.cards.find((c) => c.paneKey === openedCard.paneKey) ?? {
+        ...openedCard,
+        ptyId: null,
+        leafId: null
+      }
+    )
   }, [snapshot.cards, openedCard])
   const handleDialogOpenChange = useCallback((open: boolean) => {
     if (!open) {
@@ -114,8 +140,14 @@ export function AgentKanbanBoard({ snapshot }: { snapshot: DashboardSnapshot }):
   return (
     <div className="flex h-screen w-screen flex-col bg-background text-foreground">
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
-        <h1 className="text-[13px] font-semibold">Agents</h1>
-        <span className="text-[11px] text-muted-foreground">{snapshot.cards.length} total</span>
+        <h1 className="text-[13px] font-semibold">
+          {translate('dashboardPopout.title', 'Agents')}
+        </h1>
+        <span className="text-[11px] text-muted-foreground">
+          {translate('dashboardPopout.total', '{{count}} total', {
+            count: snapshot.cards.length
+          })}
+        </span>
       </div>
       <div className="scrollbar-sleek flex min-h-0 flex-1 overflow-x-auto p-3">
         {/* Why: columns share the window width up to a readable cap; mx-auto
@@ -128,7 +160,7 @@ export function AgentKanbanBoard({ snapshot }: { snapshot: DashboardSnapshot }):
               key={bucket}
               bucket={bucket}
               cards={grouped[bucket]}
-              now={snapshot.generatedAt}
+              now={now}
               onOpenTerminal={handleOpenTerminal}
             />
           ))}

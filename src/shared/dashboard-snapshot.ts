@@ -13,14 +13,8 @@ import type { AgentType } from './agent-status-types'
  *  rather than split into a separate, inconsistently-populated column. */
 export type DashboardBucket = 'attention' | 'working' | 'idle'
 
-/** Column order + labels, shared by producer and pop-out so they never drift. */
+/** Column order shared by producer and pop-out so they never drift. */
 export const DASHBOARD_BUCKET_ORDER: readonly DashboardBucket[] = ['attention', 'working', 'idle']
-
-export const DASHBOARD_BUCKET_LABEL: Record<DashboardBucket, string> = {
-  attention: 'Needs You',
-  working: 'Working',
-  idle: 'Idle'
-}
 
 /** Precise per-card state marker (drives AgentStateDot). Kept distinct from
  *  `bucket` so the "Needs You" column can still show amber (waiting/permission)

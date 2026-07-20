@@ -1,110 +1,183 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { handlers, ipcMainMock, appMock, getAllWindowsMock, getPopoutMock, safelyRevealMock } =
-  vi.hoisted(() => {
-    const map = new Map<string, (...args: unknown[]) => unknown>()
-    return {
-      handlers: map,
-      ipcMainMock: {
-        removeHandler: vi.fn(),
-        handle: (channel: string, fn: (...args: unknown[]) => unknown) => map.set(channel, fn)
-      },
-      appMock: { focus: vi.fn() },
-      getAllWindowsMock: vi.fn((): unknown[] => []),
-      getPopoutMock: vi.fn((): unknown => null),
-      safelyRevealMock: vi.fn()
-    }
-  })
+const {
+  handlers,
+  ipcMainMock,
+  appMock,
+  createPopoutMock,
+  closePopoutMock,
+  getPopoutMock,
+  isPopoutRendererMock,
+  isTrustedUIRendererMock,
+  getTrustedWindowMock,
+  sendToTrustedMock,
+  safelyRevealMock
+} = vi.hoisted(() => {
+  const map = new Map<string, (...args: unknown[]) => unknown>()
+  return {
+    handlers: map,
+    ipcMainMock: {
+      removeHandler: vi.fn(),
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => map.set(channel, fn)
+    },
+    appMock: { focus: vi.fn() },
+    createPopoutMock: vi.fn(),
+    closePopoutMock: vi.fn(),
+    getPopoutMock: vi.fn((): unknown => null),
+    isPopoutRendererMock: vi.fn((_sender: unknown) => false),
+    isTrustedUIRendererMock: vi.fn((_sender: unknown) => false),
+    getTrustedWindowMock: vi.fn((): unknown => null),
+    sendToTrustedMock: vi.fn(),
+    safelyRevealMock: vi.fn()
+  }
+})
 
-vi.mock('electron', () => ({
-  app: appMock,
-  BrowserWindow: { getAllWindows: getAllWindowsMock },
-  ipcMain: ipcMainMock
-}))
+vi.mock('electron', () => ({ app: appMock, ipcMain: ipcMainMock }))
 vi.mock('../window/dashboard-popout-window', () => ({
-  createOrFocusDashboardPopout: vi.fn(),
+  createOrFocusDashboardPopout: createPopoutMock,
+  closeDashboardPopout: closePopoutMock,
   getDashboardPopoutWindow: getPopoutMock,
+  isDashboardPopoutRenderer: isPopoutRendererMock,
   onDashboardPopoutOpenChanged: vi.fn()
 }))
 vi.mock('../window/focus-existing-window', () => ({ safelyRevealWindow: safelyRevealMock }))
+vi.mock('./ui', () => ({
+  getTrustedUIRendererWindow: getTrustedWindowMock,
+  isTrustedUIRenderer: isTrustedUIRendererMock,
+  sendToTrustedUIRenderer: sendToTrustedMock
+}))
 
 import { registerDashboardPopoutHandlers } from './dashboard-popout'
 
-function makeWindow() {
-  return { isDestroyed: () => false, webContents: { send: vi.fn() } }
-}
-
+const mainSender = { id: 1, send: vi.fn() }
+const popoutSender = { id: 2, send: vi.fn() }
+const untrustedSender = { id: 3, send: vi.fn() }
 const SNAPSHOT = { generatedAt: 1, cards: [] }
 
+function makeWindow(sender: typeof mainSender) {
+  return {
+    isDestroyed: () => false,
+    webContents: sender
+  }
+}
+
+function makeStore(enabled = true) {
+  let settingsListener:
+    | ((updates: Record<string, unknown>, settings: Record<string, unknown>) => void)
+    | null = null
+  return {
+    getSettings: vi.fn(() => ({ experimentalAgentDashboardPopout: enabled })),
+    onSettingsChanged: vi.fn((listener) => {
+      settingsListener = listener
+      return vi.fn()
+    }),
+    fireSettingsChanged: (nextEnabled: boolean) =>
+      settingsListener?.(
+        { experimentalAgentDashboardPopout: nextEnabled },
+        { experimentalAgentDashboardPopout: nextEnabled }
+      )
+  }
+}
+
 describe('registerDashboardPopoutHandlers', () => {
+  let store: ReturnType<typeof makeStore>
+
   beforeEach(() => {
     handlers.clear()
-    registerDashboardPopoutHandlers({} as never)
+    store = makeStore()
+    isTrustedUIRendererMock.mockImplementation((sender) => sender === mainSender)
+    isPopoutRendererMock.mockImplementation((sender) => sender === popoutSender)
+    registerDashboardPopoutHandlers(store as never)
   })
+
   afterEach(() => {
     vi.clearAllMocks()
     getPopoutMock.mockReturnValue(null)
-    getAllWindowsMock.mockReturnValue([])
+    getTrustedWindowMock.mockReturnValue(null)
   })
 
-  it('caches and forwards a published snapshot to the popout', () => {
-    const popout = makeWindow()
+  it('opens only for the trusted main renderer while the feature is enabled', () => {
+    handlers.get('dashboardPopout:open')!({ sender: untrustedSender } as never)
+    expect(createPopoutMock).not.toHaveBeenCalled()
+
+    store.getSettings.mockReturnValue({ experimentalAgentDashboardPopout: false })
+    handlers.get('dashboardPopout:open')!({ sender: mainSender } as never)
+    expect(createPopoutMock).not.toHaveBeenCalled()
+
+    store.getSettings.mockReturnValue({ experimentalAgentDashboardPopout: true })
+    handlers.get('dashboardPopout:open')!({ sender: mainSender } as never)
+    expect(createPopoutMock).toHaveBeenCalledWith(store)
+  })
+
+  it('auto-closes the popout when the feature is disabled', () => {
+    store.fireSettingsChanged(false)
+    expect(closePopoutMock).toHaveBeenCalledOnce()
+  })
+
+  it('caches and forwards only valid trusted snapshots', () => {
+    const popout = makeWindow(popoutSender)
     getPopoutMock.mockReturnValue(popout)
-    handlers.get('dashboard:publishSnapshot')!({} as never, SNAPSHOT)
-    expect(popout.webContents.send).toHaveBeenCalledWith('dashboard:snapshot', SNAPSHOT)
+
+    handlers.get('dashboard:publishSnapshot')!({ sender: untrustedSender } as never, SNAPSHOT)
+    handlers.get('dashboard:publishSnapshot')!({ sender: mainSender } as never, {
+      generatedAt: Number.NaN,
+      cards: []
+    })
+    expect(popoutSender.send).not.toHaveBeenCalled()
+
+    handlers.get('dashboard:publishSnapshot')!({ sender: mainSender } as never, SNAPSHOT)
+    expect(popoutSender.send).toHaveBeenCalledWith('dashboard:snapshot', SNAPSHOT)
   })
 
-  it('replays the cached snapshot and nudges the main renderer on request', () => {
-    const popout = makeWindow()
-    const main = makeWindow()
+  it('replays the cached snapshot only to the popout and nudges only the trusted main renderer', () => {
+    const popout = makeWindow(popoutSender)
     getPopoutMock.mockReturnValue(popout)
-    getAllWindowsMock.mockReturnValue([main, popout])
-    handlers.get('dashboard:publishSnapshot')!({} as never, SNAPSHOT)
+    handlers.get('dashboard:publishSnapshot')!({ sender: mainSender } as never, SNAPSHOT)
 
-    const sender = { send: vi.fn() }
-    handlers.get('dashboard:requestSnapshot')!({ sender } as never)
-    expect(sender.send).toHaveBeenCalledWith('dashboard:snapshot', SNAPSHOT)
-    // The main (non-popout) window is asked to publish fresh; the popout is not.
-    expect(main.webContents.send).toHaveBeenCalledWith('dashboard:snapshotRequested')
-    expect(popout.webContents.send).not.toHaveBeenCalledWith('dashboard:snapshotRequested')
+    handlers.get('dashboard:requestSnapshot')!({ sender: untrustedSender } as never)
+    expect(untrustedSender.send).not.toHaveBeenCalled()
+
+    handlers.get('dashboard:requestSnapshot')!({ sender: popoutSender } as never)
+    expect(popoutSender.send).toHaveBeenCalledWith('dashboard:snapshot', SNAPSHOT)
+    expect(sendToTrustedMock).toHaveBeenCalledWith('dashboard:snapshotRequested', null)
   })
 
-  it('reports popout open state', () => {
-    expect(handlers.get('dashboard:getPopoutOpen')!({} as never)).toBe(false)
-    getPopoutMock.mockReturnValue(makeWindow())
-    expect(handlers.get('dashboard:getPopoutOpen')!({} as never)).toBe(true)
+  it('reports open state only to the trusted main renderer', () => {
+    getPopoutMock.mockReturnValue(makeWindow(popoutSender))
+    expect(handlers.get('dashboard:getPopoutOpen')!({ sender: untrustedSender } as never)).toBe(
+      false
+    )
+    expect(handlers.get('dashboard:getPopoutOpen')!({ sender: mainSender } as never)).toBe(true)
   })
 
-  it('relays seen-acks to the main window, never the popout', () => {
-    const popout = makeWindow()
-    const main = makeWindow()
-    getPopoutMock.mockReturnValue(popout)
-    getAllWindowsMock.mockReturnValue([main, popout])
+  it('relays valid seen acknowledgements from only the popout', () => {
+    handlers.get('dashboardPopout:ackAgent')!({ sender: untrustedSender } as never, {
+      paneKey: 'tab1:leaf1'
+    })
+    handlers.get('dashboardPopout:ackAgent')!({ sender: popoutSender } as never, { paneKey: '' })
+    expect(sendToTrustedMock).not.toHaveBeenCalled()
 
-    handlers.get('dashboardPopout:ackAgent')!({} as never, { paneKey: 'tab1:leaf1' })
-    expect(main.webContents.send).toHaveBeenCalledWith('ui:ackDashboardAgent', 'tab1:leaf1')
-    expect(popout.webContents.send).not.toHaveBeenCalled()
-
-    // Malformed payloads are dropped.
-    main.webContents.send.mockClear()
-    handlers.get('dashboardPopout:ackAgent')!({} as never, { paneKey: '' })
-    handlers.get('dashboardPopout:ackAgent')!({} as never, null)
-    expect(main.webContents.send).not.toHaveBeenCalled()
+    handlers.get('dashboardPopout:ackAgent')!({ sender: popoutSender } as never, {
+      paneKey: 'tab1:leaf1'
+    })
+    expect(sendToTrustedMock).toHaveBeenCalledWith('ui:ackDashboardAgent', 'tab1:leaf1')
   })
 
-  it('reveals the agent in the main window, never the popout', () => {
-    const popout = makeWindow()
-    const main = makeWindow()
-    getPopoutMock.mockReturnValue(popout)
-    getAllWindowsMock.mockReturnValue([main, popout])
-
+  it('reveals an agent in only the trusted main window', () => {
+    const main = makeWindow(mainSender)
+    getTrustedWindowMock.mockReturnValue(main)
     const args = { repoId: 'r1', worktreeId: 'w1', tabId: 't1', leafId: 'l1' }
-    handlers.get('dashboardPopout:revealAgent')!({} as never, args)
 
+    handlers.get('dashboardPopout:revealAgent')!({ sender: untrustedSender } as never, args)
+    handlers.get('dashboardPopout:revealAgent')!({ sender: popoutSender } as never, {
+      ...args,
+      tabId: ''
+    })
+    expect(safelyRevealMock).not.toHaveBeenCalled()
+
+    handlers.get('dashboardPopout:revealAgent')!({ sender: popoutSender } as never, args)
     expect(safelyRevealMock).toHaveBeenCalledWith(main)
-    expect(safelyRevealMock).not.toHaveBeenCalledWith(popout)
-    expect(main.webContents.send).toHaveBeenCalledWith('ui:revealDashboardAgent', args)
-    expect(popout.webContents.send).not.toHaveBeenCalledWith('ui:revealDashboardAgent', args)
-    expect(appMock.focus).toHaveBeenCalled()
+    expect(mainSender.send).toHaveBeenCalledWith('ui:revealDashboardAgent', args)
+    expect(appMock.focus).toHaveBeenCalledOnce()
   })
 })

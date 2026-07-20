@@ -1,77 +1,155 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type WebContents } from 'electron'
+import type {
+  TerminalPreviewConnectResult,
+  TerminalPreviewSnapshot
+} from '../../shared/terminal-preview'
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
+import { isDashboardPopoutRenderer } from '../window/dashboard-popout-window'
+import {
+  TERMINAL_PREVIEW_OUTPUT_BATCH_MAX_BYTES,
+  TerminalPreviewOutputStream
+} from './terminal-preview-output-stream'
 
-/**
- * Terminal preview for the pop-out dashboard's per-card dialog. Reuses the
- * runtime's per-PTY headless emulator: `serializeTerminalBuffer` paints the
- * current screen instantly, then `subscribeToTerminalData` streams live chunks
- * to the requesting window. It never registers a remote view subscriber, so it
- * can't suppress the model-query responder; keystrokes pass through via
- * `terminalPreview:input`, which honors the mobile-presence lock.
- */
+const PREVIEW_ID_MAX_LENGTH = 4096
+
+function isValidPtyId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= PREVIEW_ID_MAX_LENGTH
+}
+
+/** Pop-out terminal transport with an atomic snapshot/live boundary. */
 export function registerTerminalPreviewHandlers(runtime: OrcaRuntimeService): void {
-  ipcMain.removeHandler('terminalPreview:snapshot')
-  ipcMain.removeHandler('terminalPreview:subscribe')
+  ipcMain.removeHandler('terminalPreview:connect')
   ipcMain.removeHandler('terminalPreview:unsubscribe')
   ipcMain.removeHandler('terminalPreview:input')
+  ipcMain.removeHandler('terminalPreview:ack')
 
-  // webContents.id -> (ptyId -> unsubscribe). Lets us tear a window's streams
-  // down when it goes away.
-  const subscriptionsByContents = new Map<number, Map<string, () => void>>()
+  const subscriptionsByContents = new Map<number, Map<string, TerminalPreviewOutputStream>>()
+
+  const removeSubscription = (subscription: TerminalPreviewOutputStream): void => {
+    const perPty = subscriptionsByContents.get(subscription.contents.id)
+    if (perPty?.get(subscription.ptyId) === subscription) {
+      perPty.delete(subscription.ptyId)
+    }
+  }
 
   const disposeContents = (contentsId: number): void => {
     const perPty = subscriptionsByContents.get(contentsId)
     if (!perPty) {
       return
     }
-    for (const unsubscribe of perPty.values()) {
-      unsubscribe()
+    for (const subscription of perPty.values()) {
+      subscription.dispose()
     }
     subscriptionsByContents.delete(contentsId)
   }
 
-  ipcMain.handle(
-    'terminalPreview:snapshot',
-    (_event, args: { ptyId: string; opts?: { scrollbackRows?: number } }) =>
-      runtime.serializeTerminalBuffer(args.ptyId, args.opts ?? {})
-  )
-
-  ipcMain.handle('terminalPreview:subscribe', (event, args: { ptyId: string }): void => {
-    const contents = event.sender
-    const contentsId = contents.id
-    let perPty = subscriptionsByContents.get(contentsId)
+  const subscriptionsFor = (contents: WebContents): Map<string, TerminalPreviewOutputStream> => {
+    let perPty = subscriptionsByContents.get(contents.id)
     if (!perPty) {
       perPty = new Map()
-      subscriptionsByContents.set(contentsId, perPty)
-      contents.once('destroyed', () => disposeContents(contentsId))
+      subscriptionsByContents.set(contents.id, perPty)
+      contents.once('destroyed', () => disposeContents(contents.id))
     }
-    if (perPty.has(args.ptyId)) {
-      return
-    }
-    const unsubscribe = runtime.subscribeToTerminalData(args.ptyId, (data) => {
-      if (!contents.isDestroyed()) {
-        contents.send('terminalPreview:data', { ptyId: args.ptyId, data })
+    return perPty
+  }
+
+  ipcMain.handle(
+    'terminalPreview:connect',
+    async (
+      event,
+      args: { ptyId?: unknown; opts?: { scrollbackRows?: unknown } }
+    ): Promise<TerminalPreviewConnectResult> => {
+      if (!isDashboardPopoutRenderer(event.sender) || !isValidPtyId(args?.ptyId)) {
+        return { snapshot: null, replay: [] }
       }
-    })
-    perPty.set(args.ptyId, unsubscribe)
-  })
+      const ptyId = args.ptyId
+      const perPty = subscriptionsFor(event.sender)
+      perPty.get(ptyId)?.dispose()
+
+      const subscription = new TerminalPreviewOutputStream(
+        event.sender,
+        ptyId,
+        runtime.registerRawTerminalViewSubscriber(ptyId),
+        removeSubscription
+      )
+      subscription.setDataSubscription(
+        runtime.subscribeToTerminalData(ptyId, (data, meta) => subscription.append(data, meta))
+      )
+      perPty.set(ptyId, subscription)
+
+      const requestedRows = args.opts?.scrollbackRows
+      const scrollbackRows =
+        typeof requestedRows === 'number' && Number.isFinite(requestedRows)
+          ? Math.max(0, Math.min(1000, Math.floor(requestedRows)))
+          : undefined
+      let snapshot: TerminalPreviewSnapshot | null
+      let resyncRequired = false
+      try {
+        snapshot = await runtime.serializeTerminalBuffer(ptyId, { scrollbackRows })
+        if (subscription.consumeInitialOverflow() && !subscription.disposed) {
+          snapshot = await runtime.serializeTerminalBuffer(ptyId, { scrollbackRows })
+          if (subscription.consumeInitialOverflow()) {
+            // Why: never replay a tail with a silently missing middle; the renderer keeps its old frame while reconnecting.
+            resyncRequired = true
+          }
+        }
+      } catch {
+        subscription.dispose()
+        return { snapshot: null, replay: [] }
+      }
+      if (subscription.disposed) {
+        return { snapshot: null, replay: [] }
+      }
+      if (!snapshot) {
+        // Why: a failed lookup has no future live boundary; release raw presence even if the renderer never invokes unsubscribe.
+        subscription.dispose()
+        return { snapshot: null, replay: [] }
+      }
+
+      const replay = subscription.completeSnapshot(snapshot.seq)
+      if (resyncRequired) {
+        // Why: no live writes may outlive this stream and acknowledge bytes against its replacement.
+        subscription.pauseForReconnect()
+      }
+      return { snapshot, replay, ...(resyncRequired ? { resyncRequired: true } : {}) }
+    }
+  )
 
   ipcMain.handle(
     'terminalPreview:input',
-    (_event, args: { ptyId: string; data: string }): Promise<boolean> => {
-      if (typeof args?.ptyId !== 'string' || !args.ptyId || typeof args.data !== 'string') {
+    (event, args: { ptyId?: unknown; data?: unknown }): Promise<boolean> => {
+      if (
+        !isDashboardPopoutRenderer(event.sender) ||
+        !isValidPtyId(args?.ptyId) ||
+        typeof args.data !== 'string'
+      ) {
         return Promise.resolve(false)
       }
       return runtime.writeTerminalPreviewInput(args.ptyId, args.data)
     }
   )
 
-  ipcMain.handle('terminalPreview:unsubscribe', (event, args: { ptyId: string }): void => {
-    const perPty = subscriptionsByContents.get(event.sender.id)
-    const unsubscribe = perPty?.get(args.ptyId)
-    if (unsubscribe) {
-      unsubscribe()
-      perPty?.delete(args.ptyId)
+  ipcMain.handle(
+    'terminalPreview:ack',
+    (event, args: { ptyId?: unknown; bytes?: unknown }): void => {
+      if (
+        !isDashboardPopoutRenderer(event.sender) ||
+        !isValidPtyId(args?.ptyId) ||
+        typeof args.bytes !== 'number' ||
+        !Number.isFinite(args.bytes) ||
+        args.bytes <= 0 ||
+        args.bytes > TERMINAL_PREVIEW_OUTPUT_BATCH_MAX_BYTES
+      ) {
+        return
+      }
+      subscriptionsByContents.get(event.sender.id)?.get(args.ptyId)?.acknowledge(args.bytes)
     }
+  )
+
+  ipcMain.handle('terminalPreview:unsubscribe', (event, args: { ptyId?: unknown }): void => {
+    if (!isDashboardPopoutRenderer(event.sender) || !isValidPtyId(args?.ptyId)) {
+      return
+    }
+    subscriptionsByContents.get(event.sender.id)?.get(args.ptyId)?.dispose()
   })
 }

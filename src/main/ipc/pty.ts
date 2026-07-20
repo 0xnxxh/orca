@@ -460,9 +460,9 @@ async function isProviderPtyLive(
 ): Promise<boolean> {
   // Why: bound the liveness list RPC by the teardown deadline so a wedged daemon
   // fails fast; undefined keeps the provider default for all other callers.
-  return (
-    await provider.listProcesses(deadlineMs !== undefined ? { deadlineMs } : undefined)
-  ).some((session) => session.id === ptyId)
+  return (await provider.listProcesses(deadlineMs !== undefined ? { deadlineMs } : undefined)).some(
+    (session) => session.id === ptyId
+  )
 }
 
 async function verifyPtyStopped(
@@ -1543,7 +1543,7 @@ export function registerPtyHandlers(
   const backgroundedDeliverySyncByPty = new Map<string, boolean>()
   function syncPtyBackgroundedDelivery(id: string, caller: string): void {
     const background =
-      rendererPtyIsKnownHidden(id) && !(runtime?.hasRemoteTerminalViewSubscriber(id) ?? false)
+      rendererPtyIsKnownHidden(id) && !(runtime?.hasRawTerminalViewSubscriber?.(id) ?? false)
     if ((backgroundedDeliverySyncByPty.get(id) ?? false) === background) {
       return
     }

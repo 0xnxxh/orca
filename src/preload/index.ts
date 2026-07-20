@@ -5,6 +5,10 @@ import { preloadE2EConfig } from './e2e-config'
 import { glApi } from './gitlab'
 import type { AppIdentity } from '../shared/app-identity'
 import type { DashboardSnapshot, DashboardRevealAgentArgs } from '../shared/dashboard-snapshot'
+import type {
+  TerminalPreviewConnectResult,
+  TerminalPreviewDataPayload
+} from '../shared/terminal-preview'
 import type { CliInstallStatus } from '../shared/cli-install-types'
 import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
 import type { TerminalPaneSplitSource } from '../shared/feature-education-telemetry'
@@ -2114,27 +2118,21 @@ const api = {
   },
 
   terminalPreview: {
-    // Immediate current-screen paint for the hover preview.
-    snapshot: (
+    connect: (
       ptyId: string,
       opts?: { scrollbackRows?: number }
-    ): Promise<{
-      data?: string
-      scrollbackAnsi?: string
-      pendingEscapeTailAnsi?: string
-      cols?: number
-      rows?: number
-    } | null> => ipcRenderer.invoke('terminalPreview:snapshot', { ptyId, opts }),
-    subscribe: (ptyId: string): Promise<void> =>
-      ipcRenderer.invoke('terminalPreview:subscribe', { ptyId }),
+    ): Promise<TerminalPreviewConnectResult> =>
+      ipcRenderer.invoke('terminalPreview:connect', { ptyId, opts }),
     input: (ptyId: string, data: string): Promise<boolean> =>
       ipcRenderer.invoke('terminalPreview:input', { ptyId, data }),
+    ack: (ptyId: string, bytes: number): Promise<void> =>
+      ipcRenderer.invoke('terminalPreview:ack', { ptyId, bytes }),
     unsubscribe: (ptyId: string): Promise<void> =>
       ipcRenderer.invoke('terminalPreview:unsubscribe', { ptyId }),
-    onData: (callback: (payload: { ptyId: string; data: string }) => void): (() => void) => {
+    onData: (callback: (payload: TerminalPreviewDataPayload) => void): (() => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
-        payload: { ptyId: string; data: string }
+        payload: TerminalPreviewDataPayload
       ): void => callback(payload)
       ipcRenderer.on('terminalPreview:data', listener)
       return () => ipcRenderer.removeListener('terminalPreview:data', listener)

@@ -16,29 +16,34 @@ const PUBLISH_THROTTLE_MS = 250
  *  2. Handle click-to-focus reveal requests forwarded from the popout: activate
  *     the agent's worktree and focus its pane in this (main) window.
  */
-export function useDashboardPopoutBridge(): void {
-  useEffect(
-    () =>
-      window.api.dashboard.onRevealAgent((args) => {
-        useAppStore.getState().setActiveWorktree(args.worktreeId)
-        activateTabAndFocusPane(args.tabId, args.leafId, { flashFocusedPane: true })
-      }),
-    []
-  )
+export function useDashboardPopoutBridge(enabled: boolean): void {
+  useEffect(() => {
+    if (!enabled) {
+      return
+    }
+    return window.api.dashboard.onRevealAgent((args) => {
+      useAppStore.getState().setActiveWorktree(args.worktreeId)
+      activateTabAndFocusPane(args.tabId, args.leafId, { flashFocusedPane: true })
+    })
+  }, [enabled])
 
   // Opening a card's terminal dialog in the popout acks the agent here — the
   // same ack the sidebar's bold/mute treatment reads, keeping both in lockstep.
   // ?. shields App mount from dev-HMR preload skew (preload updates only on
   // app restart).
-  useEffect(
-    () =>
-      window.api.dashboard.onAckAgent?.((paneKey) => {
-        useAppStore.getState().acknowledgeAgents([paneKey])
-      }),
-    []
-  )
+  useEffect(() => {
+    if (!enabled) {
+      return
+    }
+    return window.api.dashboard.onAckAgent?.((paneKey) => {
+      useAppStore.getState().acknowledgeAgents([paneKey])
+    })
+  }, [enabled])
 
   useEffect(() => {
+    if (!enabled) {
+      return
+    }
     let open = false
     let disposed = false
     let unsubscribeStore: (() => void) | null = null
@@ -120,5 +125,5 @@ export function useDashboardPopoutBridge(): void {
         clearTimeout(trailingTimer)
       }
     }
-  }, [])
+  }, [enabled])
 }

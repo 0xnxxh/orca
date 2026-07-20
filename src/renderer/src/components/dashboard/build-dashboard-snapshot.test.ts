@@ -50,7 +50,11 @@ function baseState(overrides: Partial<DashboardSnapshotState>): DashboardSnapsho
     migrationUnsupportedByPtyId: {},
     runtimeAgentOrchestrationByPaneKey: {},
     terminalLayoutsByTabId: {
-      [TAB_ID]: { activeLeafId: LEAF_ID, ptyIdsByLeafId: { [LEAF_ID]: 'pty1' } }
+      [TAB_ID]: {
+        root: { type: 'leaf', leafId: LEAF_ID },
+        activeLeafId: LEAF_ID,
+        ptyIdsByLeafId: { [LEAF_ID]: 'pty1' }
+      }
     },
     ptyIdsByTabId: { [TAB_ID]: ['pty1'] },
     runtimePaneTitlesByTabId: {},
@@ -116,6 +120,22 @@ describe('buildDashboardSnapshot', () => {
       NOW
     )
     // ack (NOW-1000) is after stateStartedAt (NOW-5000) → seen.
+    expect(snapshot.cards[0].unseen).toBe(false)
+  })
+
+  it('does not mark title-derived rows unseen from synthetic timestamps', () => {
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        agentStatusByPaneKey: {},
+        runtimePaneTitlesByTabId: {
+          [TAB_ID]: { 1: '⠋ Claude Code' }
+        }
+      }),
+      NOW
+    )
+
+    expect(snapshot.cards).toHaveLength(1)
+    expect(snapshot.cards[0].startedAt).toBe(0)
     expect(snapshot.cards[0].unseen).toBe(false)
   })
 

@@ -1,26 +1,28 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import type { Store } from '../persistence'
-import type { DashboardRevealAgentArgs, DashboardSnapshot } from '../../shared/dashboard-snapshot'
+import type { DashboardSnapshot } from '../../shared/dashboard-snapshot'
 import {
   createOrFocusDashboardPopout,
+  closeDashboardPopout,
   getDashboardPopoutWindow,
+  isDashboardPopoutRenderer,
   onDashboardPopoutOpenChanged
 } from '../window/dashboard-popout-window'
 import { safelyRevealWindow } from '../window/focus-existing-window'
+import { getTrustedUIRendererWindow, isTrustedUIRenderer, sendToTrustedUIRenderer } from './ui'
+import {
+  isDashboardPaneKey,
+  isDashboardRevealAgentArgs,
+  isDashboardSnapshot
+} from './dashboard-payload-validation'
 
 // The most recent snapshot the main renderer published, replayed to the popout
 // the instant it mounts so the board paints without waiting for the next tick.
 // Cleared on close so a reopened popout never flashes a previous session.
 let lastSnapshot: DashboardSnapshot | null = null
 
-function sendToNonPopoutWindows(channel: string, ...args: unknown[]): void {
-  const popout = getDashboardPopoutWindow()
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (win.isDestroyed() || win === popout) {
-      continue
-    }
-    win.webContents.send(channel, ...args)
-  }
+function isDashboardEnabled(store: Store): boolean {
+  return store.getSettings().experimentalAgentDashboardPopout === true
 }
 
 export function registerDashboardPopoutHandlers(store: Store): void {
@@ -36,15 +38,32 @@ export function registerDashboardPopoutHandlers(store: Store): void {
       lastSnapshot = null
     }
   })
+  store.onSettingsChanged((updates, settings) => {
+    if (
+      'experimentalAgentDashboardPopout' in updates &&
+      settings.experimentalAgentDashboardPopout !== true
+    ) {
+      lastSnapshot = null
+      closeDashboardPopout()
+    }
+  })
 
-  // Opening the pop-out is a privilege-free, idempotent action (create or focus
-  // the singleton), so no sender trust check is needed here.
-  ipcMain.handle('dashboardPopout:open', (): void => {
+  ipcMain.handle('dashboardPopout:open', (event): void => {
+    if (!isTrustedUIRenderer(event.sender) || !isDashboardEnabled(store)) {
+      return
+    }
     createOrFocusDashboardPopout(store)
   })
 
   // Relay: the main renderer publishes derived snapshots; forward to the popout.
-  ipcMain.handle('dashboard:publishSnapshot', (_event, snapshot: DashboardSnapshot): void => {
+  ipcMain.handle('dashboard:publishSnapshot', (event, snapshot: unknown): void => {
+    if (
+      !isTrustedUIRenderer(event.sender) ||
+      !isDashboardEnabled(store) ||
+      !isDashboardSnapshot(snapshot)
+    ) {
+      return
+    }
     lastSnapshot = snapshot
     getDashboardPopoutWindow()?.webContents.send('dashboard:snapshot', snapshot)
   })
@@ -52,33 +71,51 @@ export function registerDashboardPopoutHandlers(store: Store): void {
   // The popout asks for a snapshot on mount: replay the cache immediately, then
   // nudge the main renderer to publish a fresh one.
   ipcMain.handle('dashboard:requestSnapshot', (event): void => {
+    if (!isDashboardPopoutRenderer(event.sender) || !isDashboardEnabled(store)) {
+      return
+    }
     if (lastSnapshot) {
       event.sender.send('dashboard:snapshot', lastSnapshot)
     }
-    sendToNonPopoutWindows('dashboard:snapshotRequested')
+    sendToTrustedUIRenderer('dashboard:snapshotRequested', null)
   })
 
-  ipcMain.handle('dashboard:getPopoutOpen', (): boolean => getDashboardPopoutWindow() !== null)
+  ipcMain.handle('dashboard:getPopoutOpen', (event): boolean =>
+    isTrustedUIRenderer(event.sender) && isDashboardEnabled(store)
+      ? getDashboardPopoutWindow() !== null
+      : false
+  )
 
   // Seen-sync: opening a card's terminal dialog acknowledges the agent in the
   // main renderer's store — the same ack that mutes its sidebar row.
-  ipcMain.handle('dashboardPopout:ackAgent', (_event, args: { paneKey: string }): void => {
-    if (typeof args?.paneKey !== 'string' || args.paneKey.length === 0) {
+  ipcMain.handle('dashboardPopout:ackAgent', (event, args: unknown): void => {
+    if (
+      !isDashboardPopoutRenderer(event.sender) ||
+      !isDashboardEnabled(store) ||
+      !args ||
+      typeof args !== 'object' ||
+      !isDashboardPaneKey((args as { paneKey?: unknown }).paneKey)
+    ) {
       return
     }
-    sendToNonPopoutWindows('ui:ackDashboardAgent', args.paneKey)
+    sendToTrustedUIRenderer('ui:ackDashboardAgent', (args as { paneKey: string }).paneKey)
   })
 
   // Click-to-focus: raise the main window and route it to the agent's pane.
-  ipcMain.handle('dashboardPopout:revealAgent', (_event, args: DashboardRevealAgentArgs): void => {
-    const popout = getDashboardPopoutWindow()
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (win.isDestroyed() || win === popout) {
-        continue
-      }
-      safelyRevealWindow(win)
-      win.webContents.send('ui:revealDashboardAgent', args)
+  ipcMain.handle('dashboardPopout:revealAgent', (event, args: unknown): void => {
+    if (
+      !isDashboardPopoutRenderer(event.sender) ||
+      !isDashboardEnabled(store) ||
+      !isDashboardRevealAgentArgs(args)
+    ) {
+      return
     }
+    const mainWindow = getTrustedUIRendererWindow()
+    if (!mainWindow) {
+      return
+    }
+    safelyRevealWindow(mainWindow)
+    mainWindow.webContents.send('ui:revealDashboardAgent', args)
     try {
       app.focus({ steal: true })
     } catch {

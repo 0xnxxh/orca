@@ -175,6 +175,7 @@ export function buildDashboardSnapshot(
           // Same derivation as WorktreeCardAgents' unvisitedByPaneKey, so the
           // board and the sidebar bold/mute the same agents at the same time.
           unseen:
+            !isTitleDerived &&
             (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt,
           additions: diff.additions,
           deletions: diff.deletions,

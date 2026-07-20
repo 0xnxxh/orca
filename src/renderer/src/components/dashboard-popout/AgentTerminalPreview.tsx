@@ -1,11 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { buildDefaultTerminalOptions } from '@/lib/pane-manager/pane-terminal-options'
+import { subscribeToTerminalUserInput } from '@/components/terminal-pane/terminal-user-input-signal'
+import { composeActiveTerminalTheme } from '@/components/terminal-pane/terminal-appearance'
+import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
+import { translate } from '@/i18n/i18n'
+import { getBuiltinTheme, resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
+import { useAppStore } from '@/store'
+import type { TerminalPreviewDataPayload } from '../../../../shared/terminal-preview'
 
 const PREVIEW_SCROLLBACK_ROWS = 24
 const FALLBACK_COLS = 80
 const FALLBACK_ROWS = 24
+const RESYNC_RETRY_DELAY_MS = 150
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -22,6 +30,18 @@ function clamp(value: number, min: number, max: number): number {
  */
 export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
+  const settings = useAppStore((state) => state.settings)
+  const systemPrefersDark = useSystemPrefersDark()
+  const terminalTheme = useMemo(() => {
+    if (!settings) {
+      return null
+    }
+    const appearance = resolveEffectiveTerminalAppearance(settings, systemPrefersDark)
+    return composeActiveTerminalTheme(
+      appearance.theme ?? getBuiltinTheme(appearance.themeName),
+      settings
+    )
+  }, [settings, systemPrefersDark])
   // A null snapshot means no serializer knows this pty (it died or was never
   // spawned this session) — say so instead of painting a silent blank terminal.
   const [ptyGone, setPtyGone] = useState(false)
@@ -35,12 +55,12 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
     let disposed = false
     let terminal: Terminal | null = null
     let offData: (() => void) | null = null
+    let userInputDisposable: { dispose: () => void } | null = null
+    let refreshInFlight = false
+    let refreshAgain = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const pendingLivePayloads: Extract<TerminalPreviewDataPayload, { type: 'data' }>[] = []
 
-    // Why: xterm auto-replies to query sequences embedded in written bytes
-    // (CPR, DA1, OSC color queries). Everything this preview writes is a
-    // replay — the headless emulator in main is the authoritative responder —
-    // so forwarding those replies would inject stray input into the real PTY.
-    // Mirror pty-connection's replay guard: drop onData while writes parse.
     const fitToBox = (): void => {
       const screen = container.querySelector<HTMLElement>('.xterm-screen')
       const box = container.parentElement
@@ -82,86 +102,170 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
       })
     }
 
-    const setup = async (): Promise<void> => {
-      const snap = await window.api.terminalPreview.snapshot(ptyId, {
+    const writeLive = (payload: Extract<TerminalPreviewDataPayload, { type: 'data' }>): void => {
+      if (!terminal) {
+        pendingLivePayloads.push(payload)
+        return
+      }
+      writeReplayed(payload.data, () => {
+        if (!disposed) {
+          void window.api.terminalPreview.ack(ptyId, payload.bytes)
+        }
+      })
+    }
+
+    const installInputRouting = (): void => {
+      if (!terminal) {
+        return
+      }
+      let pendingUserInputSignals = 0
+      userInputDisposable = subscribeToTerminalUserInput(terminal, () => {
+        pendingUserInputSignals = Math.min(32, pendingUserInputSignals + 1)
+      })
+      terminal.onData((data) => {
+        const signaledUserInput = pendingUserInputSignals > 0
+        if (signaledUserInput) {
+          pendingUserInputSignals--
+        }
+        // Why: core's signal distinguishes real input from parser replies, so typing survives live replay without forwarding synthetic CPR/DA bytes.
+        if (userInputDisposable ? !signaledUserInput : replayDepth > 0) {
+          return
+        }
+        void window.api.terminalPreview.input(ptyId, data)
+      })
+    }
+
+    const replayConnection = (
+      connection: Awaited<ReturnType<typeof window.api.terminalPreview.connect>>,
+      replaceExisting: boolean,
+      requestRefresh: () => void
+    ): void => {
+      const snap = connection.snapshot!
+      if (!terminal) {
+        terminal = new Terminal({
+          ...buildDefaultTerminalOptions(),
+          cols: clamp(snap.cols ?? FALLBACK_COLS, 2, 500),
+          rows: clamp(snap.rows ?? FALLBACK_ROWS, 2, 200),
+          theme: terminalTheme ?? undefined,
+          scrollback: 1000
+        })
+        try {
+          terminal.open(container)
+        } catch {
+          terminal.dispose()
+          terminal = null
+          return
+        }
+        installInputRouting()
+      } else if (replaceExisting) {
+        // Why: keep the old frame visible during capture, then atomically replace it once the authoritative snapshot arrives.
+        terminal.resize(
+          clamp(snap.cols ?? FALLBACK_COLS, 2, 500),
+          clamp(snap.rows ?? FALLBACK_ROWS, 2, 200)
+        )
+        terminal.reset()
+      }
+      if (snap.scrollbackAnsi) {
+        writeReplayed(snap.scrollbackAnsi)
+      }
+      if (snap.data) {
+        writeReplayed(snap.data)
+      }
+      if (snap.pendingEscapeTailAnsi) {
+        writeReplayed(snap.pendingEscapeTailAnsi)
+      }
+      for (const data of connection.replay) {
+        writeReplayed(data)
+      }
+      for (const payload of pendingLivePayloads.splice(0)) {
+        writeLive(payload)
+      }
+      if (connection.resyncRequired) {
+        refreshAgain = false
+        // Why: sustained output can overflow every capture; delay retries so recovery cannot spin two serializations per event-loop turn.
+        writeReplayed('', () => {
+          if (disposed || retryTimer) {
+            return
+          }
+          retryTimer = setTimeout(() => {
+            retryTimer = null
+            requestRefresh()
+          }, RESYNC_RETRY_DELAY_MS)
+        })
+      } else if (refreshAgain) {
+        refreshAgain = false
+        // Queue behind every replay write so replacement never clears a half-parsed frame.
+        writeReplayed('', requestRefresh)
+      }
+      scheduleFit()
+      terminal.focus()
+    }
+
+    const setup = async (replaceExisting = false): Promise<void> => {
+      if (refreshInFlight) {
+        refreshAgain = true
+        return
+      }
+      refreshInFlight = true
+      const connection = await window.api.terminalPreview.connect(ptyId, {
         scrollbackRows: PREVIEW_SCROLLBACK_ROWS
       })
       if (disposed) {
         return
       }
+      const snap = connection.snapshot
       if (!snap) {
+        refreshInFlight = false
         setPtyGone(true)
-        return
-      }
-      terminal = new Terminal({
-        ...buildDefaultTerminalOptions(),
-        fontSize: 12,
-        cols: clamp(snap?.cols ?? FALLBACK_COLS, 2, 500),
-        rows: clamp(snap?.rows ?? FALLBACK_ROWS, 2, 200),
-        // Why: scrollbar.width (from the default options) enables xterm's
-        // overview ruler, whose border defaults to the foreground color and
-        // paints a bright vertical line down the terminal's right edge — same
-        // fix as composeActiveTerminalTheme.
-        theme: {
-          background: '#08090b',
-          foreground: '#d6d6d6',
-          overviewRulerBorder: 'transparent',
-          scrollbarSliderBackground: 'rgba(180, 180, 185, 0.4)',
-          scrollbarSliderHoverBackground: 'rgba(180, 180, 185, 0.6)',
-          scrollbarSliderActiveBackground: 'rgba(180, 180, 185, 0.8)'
-        },
-        scrollback: 1000
-      })
-      try {
-        terminal.open(container)
-      } catch {
-        terminal.dispose()
+        offData?.()
+        offData = null
+        userInputDisposable?.dispose()
+        userInputDisposable = null
+        terminal?.dispose()
         terminal = null
+        void window.api.terminalPreview.unsubscribe(ptyId)
         return
       }
-      if (snap?.scrollbackAnsi) {
-        writeReplayed(snap.scrollbackAnsi)
+      refreshInFlight = false
+      if (!connection.resyncRequired && retryTimer) {
+        clearTimeout(retryTimer)
+        retryTimer = null
       }
-      if (snap?.data) {
-        writeReplayed(snap.data)
-      }
-      // Why: the withheld incomplete-escape tail must precede streamed chunks
-      // or the continuation bytes parse as literal text.
-      if (snap?.pendingEscapeTailAnsi) {
-        writeReplayed(snap.pendingEscapeTailAnsi)
-      }
-      scheduleFit()
-      // Why: the dialog suppresses Radix auto-focus so keystrokes can flow to
-      // the agent immediately after opening.
-      terminal.focus()
-      terminal.onData((data) => {
-        if (replayDepth > 0) {
-          return
-        }
-        void window.api.terminalPreview.input(ptyId, data)
-      })
-      offData = window.api.terminalPreview.onData((payload) => {
-        if (payload.ptyId === ptyId) {
-          writeReplayed(payload.data)
-        }
-      })
-      await window.api.terminalPreview.subscribe(ptyId)
+      replayConnection(connection, replaceExisting, () => void setup(true))
     }
+
+    offData = window.api.terminalPreview.onData((payload) => {
+      if (payload.ptyId !== ptyId) {
+        return
+      }
+      if (payload.type === 'resync') {
+        void setup(true)
+        return
+      }
+      writeLive(payload)
+    })
 
     void setup()
 
     return () => {
       disposed = true
+      if (retryTimer) {
+        clearTimeout(retryTimer)
+      }
       offData?.()
+      userInputDisposable?.dispose()
       void window.api.terminalPreview.unsubscribe(ptyId)
       terminal?.dispose()
     }
-  }, [ptyId])
+  }, [ptyId, terminalTheme])
 
   if (ptyGone) {
     return (
       <div className="px-2.5 py-8 text-center text-[11px] text-muted-foreground">
-        No live terminal — this agent&apos;s pane isn&apos;t running. Focus the worktree to wake it.
+        {translate(
+          'dashboardPopout.terminal.closed',
+          "No live terminal — this agent's pane has closed."
+        )}
       </div>
     )
   }
@@ -171,7 +275,10 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
     // keeps the dialog stable no matter how wide/tall the pane's serialized
     // buffer is. The terminal keeps the pane's true dimensions and is scaled/
     // clipped to fit; fitToBox anchors whichever end keeps the cursor in view.
-    <div className="h-[calc(100vh-140px)] w-full overflow-hidden bg-[#08090b] p-1.5">
+    <div
+      className="h-[calc(100vh-140px)] w-full overflow-hidden bg-background p-1.5"
+      style={terminalTheme?.background ? { backgroundColor: terminalTheme.background } : undefined}
+    >
       <div className="flex h-full w-full items-end overflow-hidden">
         <div ref={containerRef} className="origin-bottom-left" />
       </div>

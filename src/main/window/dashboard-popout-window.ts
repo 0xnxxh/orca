@@ -1,8 +1,10 @@
-import { app, BrowserWindow, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeTheme, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { is } from '@electron-toolkit/utils'
 import type { Store } from '../persistence'
 import { rectHasVisibleAreaOnAnyDisplay } from './window-bounds-validation'
+import { sendToTrustedUIRenderer } from '../ipc/ui'
+import { installPrivilegedWindowNavigationPolicy } from './privileged-window-navigation'
 
 const MIN_WIDTH = 480
 const MIN_HEIGHT = 360
@@ -17,9 +19,15 @@ let dashboardPopoutWindow: BrowserWindow | null = null
 /** The live pop-out window, or null when closed. Used by the dashboard relay to
  *  forward snapshots to the popout's webContents. */
 export function getDashboardPopoutWindow(): BrowserWindow | null {
-  return dashboardPopoutWindow && !dashboardPopoutWindow.isDestroyed()
+  return dashboardPopoutWindow &&
+    !dashboardPopoutWindow.isDestroyed() &&
+    !dashboardPopoutWindow.webContents.isDestroyed()
     ? dashboardPopoutWindow
     : null
+}
+
+export function isDashboardPopoutRenderer(sender: WebContents): boolean {
+  return getDashboardPopoutWindow()?.webContents === sender
 }
 
 // In-process listeners (the dashboard relay clears its cached snapshot on close).
@@ -32,16 +40,9 @@ export function onDashboardPopoutOpenChanged(listener: (open: boolean) => void):
 }
 
 // Why: the main renderer's snapshot publisher only runs while the pop-out is
-// open. Tell every other window (i.e. the main window) when that flips, and
-// notify in-process listeners.
+// open. Tell that exact window when the state flips, then notify listeners.
 function broadcastPopoutOpenChanged(open: boolean): void {
-  const popoutId = dashboardPopoutWindow?.webContents.id
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (win.isDestroyed() || win.webContents.id === popoutId) {
-      continue
-    }
-    win.webContents.send('dashboard:popoutOpenChanged', open)
-  }
+  sendToTrustedUIRenderer('dashboard:popoutOpenChanged', open)
   for (const listener of popoutOpenListeners) {
     listener(open)
   }
@@ -122,6 +123,7 @@ export function createOrFocusDashboardPopout(
       webviewTag: false
     }
   })
+  installPrivilegedWindowNavigationPolicy(window.webContents)
   dashboardPopoutWindow = window
   broadcastPopoutOpenChanged(true)
 

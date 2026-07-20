@@ -716,7 +716,7 @@ function App(): React.JSX.Element {
   useEditorExternalWatch()
   useGlobalFileDrop()
   useAutoAckViewedAgent()
-  useDashboardPopoutBridge()
+  useDashboardPopoutBridge(settings?.experimentalAgentDashboardPopout === true)
 
   useEffect(() => {
     return onOnboardingReopened(setOnboarding)

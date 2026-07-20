@@ -2856,6 +2856,8 @@ export type GlobalSettings = {
   experimentalSidekick?: boolean
   /** Experimental: left-sidebar Agents view — threaded feed of agent completions, blocking/unread state, worktree creation. */
   experimentalActivity: boolean
+  /** Experimental: pop-out Kanban dashboard for monitoring and opening agent terminals across worktrees. */
+  experimentalAgentDashboardPopout?: boolean
   /** One-shot migration guard for defaulting the Agents view off; later explicit opt-ins persist normally. */
   experimentalActivityDefaultedOffForAllUsers?: boolean
   /** Experimental: persistent terminal-pane attention ring for bell + agent-completion events. Opt-in while tuning signal/noise. */

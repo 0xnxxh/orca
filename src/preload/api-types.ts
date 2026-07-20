@@ -11,6 +11,10 @@ import type {
 import type { NativeFileDropPayload } from '../shared/native-file-drop'
 import type { DashboardSnapshot, DashboardRevealAgentArgs } from '../shared/dashboard-snapshot'
 import type {
+  TerminalPreviewConnectResult,
+  TerminalPreviewDataPayload
+} from '../shared/terminal-preview'
+import type {
   TerminalTabCloseRequest,
   TerminalTabCloseResponse
 } from '../shared/terminal-tab-close'
@@ -2219,20 +2223,14 @@ export type PreloadApi = {
     ackAgent: (paneKey: string) => Promise<void>
   }
   terminalPreview: {
-    snapshot: (
+    connect: (
       ptyId: string,
       opts?: { scrollbackRows?: number }
-    ) => Promise<{
-      data?: string
-      scrollbackAnsi?: string
-      pendingEscapeTailAnsi?: string
-      cols?: number
-      rows?: number
-    } | null>
-    subscribe: (ptyId: string) => Promise<void>
+    ) => Promise<TerminalPreviewConnectResult>
     input: (ptyId: string, data: string) => Promise<boolean>
+    ack: (ptyId: string, bytes: number) => Promise<void>
     unsubscribe: (ptyId: string) => Promise<void>
-    onData: (callback: (payload: { ptyId: string; data: string }) => void) => () => void
+    onData: (callback: (payload: TerminalPreviewDataPayload) => void) => () => void
   }
   developerPermissions: {
     getStatus: () => Promise<DeveloperPermissionState[]>
