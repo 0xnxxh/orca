@@ -494,6 +494,9 @@ export function createExternalWatchEventHandler(
       // Why: if this delete is the source side of an Orca-initiated move, the
       // tab has already been (or is about to be) re-homed to the new path — do
       // not tombstone it 'deleted'/'renamed' from the move's own watcher echo.
+      // (Bounded by the TTL: if the rename then fails and something else really
+      // deleted the source in that window, the tombstone is missed until a later
+      // event — a save simply recreates the file, so no data is lost.)
       const file = openFilesAtStart.find((f) => f.id === fileId)
       return !file || !isRecentSelfMoveSource(file.filePath, target.runtimeEnvironmentId)
     })
@@ -664,7 +667,13 @@ export function createExternalWatchEventHandler(
       // by the self-move TTL instead — a genuine external write landing on this
       // exact path within that short window is the accepted trade-off (the
       // in-memory draft is preserved either way; only an unheralded save could
-      // overwrite it, the same limit as any missed write on a dirty tab).
+      // overwrite it, the same limit as any missed write on a dirty tab). A move
+      // whose rename ultimately fails retracts its stamp, but an event consumed
+      // during that pre-failure window is already swallowed; it only matters for
+      // the rare case of an unrelated dirty tab already open at the move's
+      // destination (the common non-overlapping move has no dirty tab there yet).
+      // A move changes no bytes, so there is nothing to echo-verify the way
+      // self-writes do.
       const isSelfMoveTargetPath = isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)
       if (dirtyMatches.length > 0 && !isSelfMoveTargetPath) {
         // Why: an external write landing on a dirty tab must not vanish
