@@ -1,39 +1,18 @@
 import { normalizeAbsolutePathForComparison } from '@/components/right-sidebar/file-explorer-paths'
 
-// Why: an Orca-initiated move (explorer drag-drop, inline/tab rename) physically
-// relocates a file, which the worktree watcher reports as delete(old) +
-// create(new) a few ms later. The move also re-homes the open tab to the new
-// path (remapOpenEditorTabsForPathChange) carrying its unsaved draft. Once the
-// tab already lives at the new path, that create(new) echo looks — to
-// useEditorExternalWatch — like an external write landing on a dirty tab, so it
-// raises a false "changed on disk" banner whose Reload discards the draft.
-// Stamping both endpoints of an Orca move (see recordSelfMoveForOpenTabs, called
-// BEFORE the on-disk rename) lets the watch hook recognize the echo as
-// self-initiated and skip the false conflict. This is the move analog of
-// editor-self-write-registry (which covers content writes); matching is
-// path-only because a move changes no content.
+// Records recent Orca-initiated moves so the watch hook knows a create/delete
+// echo at a moved path may be the move's own, not an external write. Scopes WHEN
+// to verify a target echo (see useEditorExternalWatch); source deletes are
+// suppressed outright since a deletion can't be content-verified.
 const SELF_MOVE_TTL_MS = 750
-// Why: SSH/runtime watcher echoes travel a poll-plus-network path and can land
-// seconds after the move. A local-sized TTL would expire before the remote echo
-// arrives, re-opening the false-banner window on runtime-backed tabs.
+// SSH/runtime watcher echoes travel a poll-plus-network path and land later.
 export const SELF_MOVE_REMOTE_TTL_MS = 3000
-// Why: sized well above any realistic count of simultaneously-open dirty tabs in
-// one directory move (each moved tab stamps two distinct path keys), so a single
-// bulk move never self-evicts its own not-yet-echoed stamps. Purely a safety
-// valve — TTL pruning is the real bound, since stamps self-expire within seconds.
+// Safety valve above any realistic bulk-move tab count; TTL pruning is the real bound.
 const SELF_MOVE_MAX_STAMPS = 1024
 
-// Why: each stamp is one independent registration carrying its own expiry, held
-// as a list per role. This keeps concurrent registrations of the same path+role
-// (drag two files named report.md into one dir → both stamp that dir's
-// report.md as a target) fully separate, so:
-//  - a role is live while ANY of its registrations is unexpired,
-//  - `clearSelfMove` retracts EXACTLY the registration a failed move added (by
-//    its ticket's expiry), never a concurrent move's,
-//  - an expired registration can't be "resurrected" by a later stamp on the
-//    same key, because liveness is computed per registration, not from a shared
-//    scalar. (A single shared expiry would over-extend the suppression window
-//    when the max-contributing registration is cleared.)
+// Each stamp is an independent registration with its own expiry (a list per
+// role), so concurrent moves on the same path, precise ticket retraction, and
+// expiry never interfere — a shared scalar expiry would over-extend or resurrect.
 type SelfMoveStamp = {
   source: number[]
   target: number[]
@@ -115,12 +94,8 @@ function removeRegistration(
 }
 
 /**
- * Records an Orca-initiated move so the worktree-watch hook can recognize the
- * delete(old)+create(new) echo as self-initiated instead of an external change.
- * Both endpoints are stamped: the source so the delete does not tombstone the
- * tab, the target so the create does not raise a changed-on-disk banner on the
- * (re-homed, still-dirty) tab. Returns a ticket to retract this exact stamp with
- * {@link clearSelfMove} if the move turns out not to happen.
+ * Stamps both endpoints of an Orca-initiated move. Returns a ticket to retract
+ * this exact stamp with {@link clearSelfMove} if the move doesn't happen.
  */
 export function recordSelfMove(
   fromPath: string,
@@ -137,12 +112,8 @@ export function recordSelfMove(
   return { fromPath, toPath, runtimeEnvironmentId: runtimeEnvironmentId ?? null, expiresAt }
 }
 
-/**
- * Retracts exactly the registration a {@link recordSelfMove} added, so a rename
- * that FAILED after stamping does not keep suppressing genuine watcher events
- * for the paths it never moved. A concurrent move's registration on the same
- * path+role is untouched.
- */
+/** Retracts exactly the registration {@link recordSelfMove} added; leaves a
+ * concurrent move's registration on the same path untouched. */
 export function clearSelfMove(ticket: SelfMoveTicket): void {
   removeRegistration(ticket.fromPath, 'source', ticket.runtimeEnvironmentId, ticket.expiresAt)
   removeRegistration(ticket.toPath, 'target', ticket.runtimeEnvironmentId, ticket.expiresAt)

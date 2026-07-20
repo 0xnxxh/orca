@@ -16,10 +16,6 @@ type OpenTabMove = {
   ttlMs: number | undefined
 }
 
-// Why: runtime-backed AND SSH-connected tabs both take a watcher echo on a
-// poll-plus-network path that lands later than a local one, so both need the
-// longer remote TTL. An SSH tab can carry runtimeEnvironmentId=null yet still be
-// remote via its worktree connection, so key remoteness off either signal.
 function collectOpenTabMoves(fromPath: string, toPath: string): OpenTabMove[] {
   const moves: OpenTabMove[] = []
   for (const file of useAppStore.getState().openFiles) {
@@ -27,12 +23,13 @@ function collectOpenTabMoves(fromPath: string, toPath: string): OpenTabMove[] {
       continue
     }
     const runtimeOwner = file.runtimeEnvironmentId?.trim() || null
+    // Remote via runtime owner OR an SSH worktree connection (an SSH tab can have
+    // a null runtime owner); both take a later poll-plus-network watcher echo.
     const isRemote =
       runtimeOwner !== null || !!getConnectionIdForFile(file.worktreeId, file.filePath)
     moves.push({
       file,
-      // Mirror remap's absolute-path suffix swap so a directory move stamps each
-      // contained tab's real new path.
+      // Mirror remap's suffix swap so a directory move stamps each tab's new path.
       newFilePath: toPath + file.filePath.slice(fromPath.length),
       runtimeOwner,
       ttlMs: isRemote ? SELF_MOVE_REMOTE_TTL_MS : undefined
@@ -41,26 +38,15 @@ function collectOpenTabMoves(fromPath: string, toPath: string): OpenTabMove[] {
   return moves
 }
 
-/**
- * Stamps every open editor tab affected by an Orca-initiated move so the
- * worktree watcher's delete(old)+create(new) echo is recognized as
- * self-initiated (see editor-self-move-registry).
- *
- * Prefer `renameOpenTabsPathOnDisk`, which brackets the on-disk rename with the
- * before/after stamps and the failure clear. This is exported for that wrapper
- * (and tests); call it directly only when you own the rename lifecycle.
- */
+/** Stamps every open tab a move affects. Prefer `renameOpenTabsPathOnDisk`,
+ * which brackets the rename with the stamps; exported for it and tests. */
 export function recordSelfMoveForOpenTabs(fromPath: string, toPath: string): SelfMoveTicket[] {
   return collectOpenTabMoves(fromPath, toPath).map((move) =>
     recordSelfMove(move.file.filePath, move.newFilePath, move.runtimeOwner, move.ttlMs)
   )
 }
 
-/**
- * Retracts the exact registrations from {@link recordSelfMoveForOpenTabs} for a
- * move that did not happen. Takes the tickets that call returned so a concurrent
- * move's stamp on a shared path is never dropped.
- */
+/** Retracts the exact registrations {@link recordSelfMoveForOpenTabs} returned. */
 export function clearSelfMoveForOpenTabs(tickets: SelfMoveTicket[]): void {
   for (const ticket of tickets) {
     clearSelfMove(ticket)

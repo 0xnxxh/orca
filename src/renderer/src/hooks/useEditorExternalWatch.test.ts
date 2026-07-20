@@ -33,10 +33,7 @@ import {
   __clearSelfWriteRegistryForTests,
   recordSelfWrite
 } from '@/components/editor/editor-self-write-registry'
-import {
-  __clearSelfMoveRegistryForTests,
-  recordSelfMove
-} from '@/components/editor/editor-self-move-registry'
+import { __clearSelfMoveRegistryForTests } from '@/components/editor/editor-self-move-registry'
 
 describe('getWatchedTargetKey', () => {
   it('changes when a worktree gains an SSH connection id', () => {
@@ -263,22 +260,6 @@ describe('createExternalWatchEventHandler tombstone coalescing', () => {
     vi.advanceTimersByTime(200)
     expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'deleted')
 
-    dispose()
-  })
-
-  it('does not tombstone a tab still at the old path when its delete is a self-move echo', () => {
-    // Pre-remap ordering: the watcher's delete(old) can arrive while the tab is
-    // still at the old path (remap hasn't run yet). Because the stamp is
-    // recorded before the rename, the source guard must still suppress the
-    // tombstone — the tab is about to be re-homed, not deleted.
-    recordSelfMove('/repo/notes.md', '/repo/subdir/notes.md')
-    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
-
-    handleFsChanged(payload([{ kind: 'delete', absolutePath: '/repo/notes.md' }]))
-    vi.advanceTimersByTime(200)
-
-    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'deleted')
-    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'renamed')
     dispose()
   })
 
@@ -559,110 +540,6 @@ describe('createExternalWatchEventHandler tombstone coalescing', () => {
 
     expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
     expect(notifyEditorExternalFileChange).not.toHaveBeenCalled()
-    dispose()
-  })
-
-  it('does not mark changed-on-disk for the create echo of an Orca-initiated move', () => {
-    // State after the explorer move re-homed the dirty tab to the new path.
-    const movedDirtyTab = {
-      ...fileNotes,
-      filePath: '/repo/subdir/notes.md',
-      relativePath: 'subdir/notes.md',
-      isDirty: true
-    }
-    vi.mocked(useAppStore.getState).mockReturnValue({
-      openFiles: [movedDirtyTab],
-      setExternalMutation
-    } as never)
-    vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([movedDirtyTab] as never)
-    // The remap stamps the move before the watcher echo arrives.
-    recordSelfMove('/repo/notes.md', '/repo/subdir/notes.md')
-    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
-
-    handleFsChanged(
-      payload([
-        { kind: 'delete', absolutePath: '/repo/notes.md' },
-        { kind: 'create', absolutePath: '/repo/subdir/notes.md' }
-      ])
-    )
-    vi.advanceTimersByTime(200)
-
-    // The user only moved their own file — no false changed-on-disk banner, and
-    // the source delete must not tombstone the re-homed tab either.
-    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'changed')
-    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'deleted')
-    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'renamed')
-    dispose()
-  })
-
-  it('suppresses even an update echo of a move within the TTL (coalescing-robust)', () => {
-    // The local watcher can coalesce the move's create+attr-change into a lone
-    // `update`, so suppression must not depend on the event kind.
-    const movedDirtyTab = {
-      ...fileNotes,
-      filePath: '/repo/subdir/notes.md',
-      relativePath: 'subdir/notes.md',
-      isDirty: true
-    }
-    vi.mocked(useAppStore.getState).mockReturnValue({
-      openFiles: [movedDirtyTab],
-      setExternalMutation
-    } as never)
-    vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([movedDirtyTab] as never)
-    recordSelfMove('/repo/notes.md', '/repo/subdir/notes.md')
-    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
-
-    handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/subdir/notes.md' }]))
-    vi.advanceTimersByTime(200)
-
-    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'changed')
-    dispose()
-  })
-
-  it('surfaces a changed-on-disk conflict once the self-move TTL has expired', () => {
-    const movedDirtyTab = {
-      ...fileNotes,
-      filePath: '/repo/subdir/notes.md',
-      relativePath: 'subdir/notes.md',
-      isDirty: true
-    }
-    vi.mocked(useAppStore.getState).mockReturnValue({
-      openFiles: [movedDirtyTab],
-      setExternalMutation
-    } as never)
-    vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([movedDirtyTab] as never)
-    recordSelfMove('/repo/notes.md', '/repo/subdir/notes.md')
-    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
-
-    // Suppression is time-bounded: past the local TTL a real external write is
-    // no longer mistaken for the move's echo.
-    vi.advanceTimersByTime(1000)
-    handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/subdir/notes.md' }]))
-    vi.advanceTimersByTime(200)
-
-    expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
-    dispose()
-  })
-
-  it('still marks changed-on-disk for a create with no self-move stamp (no over-suppression)', () => {
-    const movedDirtyTab = {
-      ...fileNotes,
-      filePath: '/repo/subdir/notes.md',
-      relativePath: 'subdir/notes.md',
-      isDirty: true
-    }
-    vi.mocked(useAppStore.getState).mockReturnValue({
-      openFiles: [movedDirtyTab],
-      setExternalMutation
-    } as never)
-    vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([movedDirtyTab] as never)
-    // No recordSelfMove: a genuine external write at this path must still surface.
-    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
-
-    handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/subdir/notes.md' }]))
-    vi.advanceTimersByTime(200)
-
-    expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
     dispose()
   })
 

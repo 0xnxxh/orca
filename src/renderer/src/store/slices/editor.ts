@@ -527,6 +527,7 @@ export type EditorSlice = {
   setExternalMutation: (fileId: string, mutation: 'deleted' | 'renamed' | 'changed' | null) => void
   setLastKnownDiskSignature: (fileId: string, signature: string) => void
   clearPendingDiskBaselineVerification: (fileId: string) => void
+  setPendingDiskBaselineVerification: (fileId: string, value: boolean) => void
   clearUntitled: (fileId: string) => void
   openDiff: (
     worktreeId: string,
@@ -2551,6 +2552,20 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       return {
         openFiles: s.openFiles.map((f) =>
           f.id === fileId ? { ...f, pendingDiskBaselineVerification: undefined } : f
+        )
+      }
+    }),
+
+  setPendingDiskBaselineVerification: (fileId, value) =>
+    set((s) => {
+      const file = s.openFiles.find((f) => f.id === fileId)
+      const next = value || undefined
+      if (!file || file.pendingDiskBaselineVerification === next) {
+        return s
+      }
+      return {
+        openFiles: s.openFiles.map((f) =>
+          f.id === fileId ? { ...f, pendingDiskBaselineVerification: next } : f
         )
       }
     }),

@@ -34,6 +34,7 @@ import {
 } from './worktree-file-change-event'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import { markFileChangedOnDisk } from '@/components/editor/editor-changed-on-disk-mark'
+import { getDiskBaselineSignature } from '@/components/editor/diff-content-signature'
 
 // Why: atomic-write patterns (Claude Code's Edit tool, editors like vim,
 // VSCode) land as a short burst of `update` events — or `delete + create` on
@@ -491,12 +492,9 @@ export function createExternalWatchEventHandler(
       target.runtimeEnvironmentId,
       openFilesAtStart
     ).filter((fileId) => {
-      // Why: if this delete is the source side of an Orca-initiated move, the
-      // tab has already been (or is about to be) re-homed to the new path — do
-      // not tombstone it 'deleted'/'renamed' from the move's own watcher echo.
-      // (Bounded by the TTL: if the rename then fails and something else really
-      // deleted the source in that window, the tombstone is missed until a later
-      // event — a save simply recreates the file, so no data is lost.)
+      // Don't tombstone the source side of an Orca move (the tab is being
+      // re-homed). A deletion has nothing to content-verify, so this stays a
+      // bounded suppression; a real concurrent delete is recoverable on save.
       const file = openFilesAtStart.find((f) => f.id === fileId)
       return !file || !isRecentSelfMoveSource(file.filePath, target.runtimeEnvironmentId)
     })
@@ -657,36 +655,21 @@ export function createExternalWatchEventHandler(
       }
       const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
       const dirtyMatches = matching.filter((f) => f.isDirty)
-      // Why: an Orca-initiated move re-homes the dirty tab to this path and
-      // carries its draft. The move's own watcher echo is not an external edit,
-      // so suppress the changed-on-disk mark for it — otherwise the false
-      // banner's Reload discards the just-carried draft. We can't gate on the
-      // event kind: the main-process watcher coalesces a create+attr-change
-      // burst down to a lone `update`, so a create-only gate would let the
-      // move's own echo through on some hosts. Suppression is therefore bounded
-      // by the self-move TTL instead — a genuine external write landing on this
-      // exact path within that short window is the accepted trade-off (the
-      // in-memory draft is preserved either way; only an unheralded save could
-      // overwrite it, the same limit as any missed write on a dirty tab). A move
-      // whose rename ultimately fails retracts its stamp, but an event consumed
-      // during that pre-failure window is already swallowed; it only matters for
-      // the rare case of an unrelated dirty tab already open at the move's
-      // destination (the common non-overlapping move has no dirty tab there yet).
-      // A move changes no bytes, so there is nothing to echo-verify the way
-      // self-writes do.
-      const isSelfMoveTargetPath = isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)
-      if (dirtyMatches.length > 0 && !isSelfMoveTargetPath) {
-        // Why: an external write landing on a dirty tab must not vanish
-        // silently (issue #7265) — the user was left with a stale tab and a
-        // save that clobbered the newer disk content. Mark the tab so the
-        // editor shows a changed-on-disk banner with an explicit reload path.
-        scheduleChangedOnDiskMark(
-          target,
-          notification,
-          // Why: canAutoSaveOpenFile is exactly the set of tabs that can hold
-          // unsaved edits (edit + unstaged diff) — the tabs the banner serves.
-          dirtyMatches.filter((dirtyFile) => canAutoSaveOpenFile(dirtyFile)).map((f) => f.id)
-        )
+      if (dirtyMatches.length > 0) {
+        // canAutoSaveOpenFile is the set of tabs that can hold unsaved edits —
+        // the tabs the changed-on-disk banner serves.
+        const dirtyIds = dirtyMatches.filter((f) => canAutoSaveOpenFile(f)).map((f) => f.id)
+        if (isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)) {
+          // This path is a live self-move destination, so the event may be the
+          // move's own echo. Distinguish it from a real external write by disk
+          // identity, not by trusting the stamp: an echo leaves disk == the
+          // tab's baseline, a genuine write does not.
+          scheduleSelfMoveEchoVerification(target, notification, dirtyIds)
+        } else {
+          // An external write on a dirty tab must not vanish silently (issue
+          // #7265); mark it so the editor shows the reload banner.
+          scheduleChangedOnDiskMark(target, notification, dirtyIds)
+        }
         if (dirtyMatches.length === matching.length) {
           if (hasCombinedDiffConsumer) {
             scheduleDebouncedExternalReload(notification)
@@ -798,6 +781,98 @@ function scheduleChangedOnDiskMark(
       // Why: unreadable disk state can't disprove an external change — keep
       // the conflict visible rather than risk a silent overwrite.
       markTabsChangedOnDisk(fileIds, target.connectionId)
+    })
+}
+
+// Per-file generation for live self-move echo verification: a newer event's
+// read supersedes an older one so overlapping reads can't clear each other's
+// autosave gate or apply a stale verdict.
+const liveMoveVerifyGeneration = new Map<string, number>()
+let liveMoveVerifyCounter = 0
+
+type LiveMoveVerifyCandidate = {
+  fileId: string
+  baseline: string | undefined
+  generation: number
+}
+
+// Resolves one candidate against the disk read. `diskSignature` is null for a
+// binary/unreadable target. Fails CLOSED — anything but a proven baseline match
+// surfaces the conflict, so a real external write is never silently swallowed.
+function resolveLiveMoveVerification(
+  candidate: LiveMoveVerifyCandidate,
+  diskSignature: string | null,
+  connectionId: string | undefined
+): void {
+  const { fileId, baseline, generation } = candidate
+  if (liveMoveVerifyGeneration.get(fileId) !== generation) {
+    return // a newer verification owns this tab and its autosave gate
+  }
+  liveMoveVerifyGeneration.delete(fileId)
+  const state = useAppStore.getState()
+  state.setPendingDiskBaselineVerification(fileId, false)
+  const file = state.openFiles.find((f) => f.id === fileId)
+  // A save/reload/dismissal in the interim owns the newer state: skip if the tab
+  // resolved, or its baseline advanced past the one we captured.
+  if (
+    !file ||
+    !file.isDirty ||
+    file.externalMutation === 'changed' ||
+    file.lastKnownDiskSignature !== baseline
+  ) {
+    return
+  }
+  const isMoveEcho = baseline !== undefined && diskSignature === baseline
+  if (!isMoveEcho) {
+    markFileChangedOnDisk(state, file, { connectionId, origin: 'live' })
+  }
+}
+
+// The move's own watcher echo leaves disk == the tab's disk baseline; a genuine
+// external write does not. Read the destination once and settle each dirty tab
+// by content identity. Autosave is suspended synchronously first so a write
+// landing mid-read can't be overwritten before we decide.
+function scheduleSelfMoveEchoVerification(
+  target: WatchedTarget,
+  notification: ExternalWatchNotification,
+  fileIds: string[]
+): void {
+  if (fileIds.length === 0) {
+    return
+  }
+  const state = useAppStore.getState()
+  const candidates: LiveMoveVerifyCandidate[] = []
+  for (const fileId of fileIds) {
+    const file = state.openFiles.find((f) => f.id === fileId)
+    if (!file || !file.isDirty || file.externalMutation === 'changed') {
+      continue
+    }
+    const generation = ++liveMoveVerifyCounter
+    liveMoveVerifyGeneration.set(fileId, generation)
+    state.setPendingDiskBaselineVerification(fileId, true)
+    candidates.push({ fileId, baseline: file.lastKnownDiskSignature, generation })
+  }
+  if (candidates.length === 0) {
+    return
+  }
+  const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
+  void readFileForEchoVerification({
+    runtimeEnvironmentId: target.runtimeEnvironmentId,
+    filePath: absolutePath,
+    relativePath: notification.relativePath,
+    worktreeId: notification.worktreeId,
+    connectionId: target.connectionId
+  })
+    .then((result) => {
+      const diskSignature = result.isBinary ? null : getDiskBaselineSignature(result.content)
+      for (const candidate of candidates) {
+        resolveLiveMoveVerification(candidate, diskSignature, target.connectionId)
+      }
+    })
+    .catch(() => {
+      for (const candidate of candidates) {
+        resolveLiveMoveVerification(candidate, null, target.connectionId)
+      }
     })
 }
 

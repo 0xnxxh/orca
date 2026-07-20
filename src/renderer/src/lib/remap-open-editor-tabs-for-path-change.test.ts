@@ -192,4 +192,36 @@ describe('remapOpenEditorTabsForPathChange', () => {
     })
     expect(useAppStore.getState().openFiles[0].isUntitled).toBeUndefined()
   })
+
+  it('carries the disk baseline and live conflict state onto the re-homed tab', () => {
+    const state = useAppStore.getState()
+    const oldPath = '/repo/notes.md'
+    const newPath = '/repo/archive/notes.md'
+    state.openFile(
+      {
+        filePath: oldPath,
+        relativePath: 'notes.md',
+        worktreeId: 'wt-1',
+        runtimeEnvironmentId: null,
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+    const oldId = useAppStore.getState().openFiles[0]!.id
+    state.setEditorDraft(oldId, 'unsaved work')
+    state.markFileDirty(oldId, true)
+    state.setLastKnownDiskSignature(oldId, 'sig-abc')
+    state.setExternalMutation(oldId, 'changed')
+
+    remapOpenEditorTabsForPathChange({ fromPath: oldPath, toPath: newPath, worktreePath: '/repo' })
+
+    const moved = useAppStore.getState().openFiles.find((f) => f.filePath === newPath)
+    expect(moved).toBeTruthy()
+    // The re-homed tab must keep the identity that lets the watcher distinguish
+    // the move echo from a real external write, and any pre-existing conflict.
+    expect(moved?.lastKnownDiskSignature).toBe('sig-abc')
+    expect(moved?.externalMutation).toBe('changed')
+    expect(moved?.isDirty).toBe(true)
+  })
 })

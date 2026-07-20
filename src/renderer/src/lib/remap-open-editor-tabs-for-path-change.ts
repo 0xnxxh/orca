@@ -157,12 +157,14 @@ export function remapOpenEditorTabsForPathChange({
       initiatingWorktreeId: worktreeId,
       initiatingWorktreePath: worktreePath
     })
-    // Why: the self-move stamp that suppresses the watcher echo is recorded at
-    // the call site BEFORE the on-disk rename (recordSelfMoveForOpenTabs), not
-    // here — the watcher can observe the physical move before this remap runs,
-    // so stamping after re-home would lose the race for the source-side delete.
     const draft = state.editorDrafts[file.id]
     const wasDirty = file.isDirty
+    // Carry the edit-session identity forward: the disk baseline lets the
+    // re-homed tab tell an external write from the move's own watcher echo, and
+    // any live conflict/verification state must not be dropped by the re-home.
+    const carriedSignature = file.lastKnownDiskSignature
+    const carriedMutation = file.externalMutation
+    const carriedPendingVerification = file.pendingDiskBaselineVerification
 
     // Why: renameRuntimePath already moved the file. Clear the untitled marker
     // before closeFile so its cleanup path does not try to delete the old path.
@@ -224,6 +226,15 @@ export function remapOpenEditorTabsForPathChange({
     }
     if (wasDirty) {
       freshState.markFileDirty(reopenedFileId, true)
+    }
+    if (carriedSignature !== undefined) {
+      freshState.setLastKnownDiskSignature(reopenedFileId, carriedSignature)
+    }
+    if (carriedMutation) {
+      freshState.setExternalMutation(reopenedFileId, carriedMutation)
+    }
+    if (carriedPendingVerification) {
+      freshState.setPendingDiskBaselineVerification(reopenedFileId, true)
     }
   }
 }

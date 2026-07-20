@@ -5,18 +5,10 @@ import {
 } from './record-self-move-for-open-tabs'
 
 /**
- * Renames a path on disk that may back open editor tabs, keeping the editor's
- * move-tracking correct so the watcher echo isn't mistaken for an external edit.
- *
- * Why the stamp is recorded both BEFORE and AFTER the rename:
- * - Before: the main-process watcher detects the physical move independently and
- *   can push its `fs:changed` event before this `await` resumes — the pre-stamp
- *   closes that race structurally instead of hoping to win it.
- * - After: the rename is an awaited round-trip that on a slow SSH/runtime host
- *   can outlive the stamp's TTL; re-stamping on success gives a fresh window
- *   that covers watcher latency measured from when the file actually moved.
- * On failure the stamps are cleared so a rename that never happened can't
- * suppress genuine events for the untouched paths.
+ * Renames an on-disk path that may back open editor tabs, stamping the move so
+ * the watcher echo isn't mistaken for an external edit. Stamp BEFORE the rename
+ * (the watcher can fire before this `await` resumes), re-stamp on success (a slow
+ * remote rename can outlive the first TTL), and retract on failure.
  */
 export async function renameOpenTabsPathOnDisk(
   context: RuntimeFileOperationArgs,
