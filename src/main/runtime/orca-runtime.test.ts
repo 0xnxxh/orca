@@ -1725,6 +1725,27 @@ describe('OrcaRuntimeService', () => {
     expect(disabledRuntime.getStatus().floatingWorkspaceEnabled).toBe(false)
   })
 
+  it('lists floating session tabs without resolving repo worktrees', async () => {
+    const getRepos = vi.fn(store.getRepos)
+    const listProcesses = vi.fn().mockResolvedValue([])
+    const runtime = new OrcaRuntimeService({
+      ...store,
+      getRepo: () => undefined,
+      getRepos
+    } as never)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses
+    })
+
+    await runtime.listMobileSessionTabs(`id:${FLOATING_TERMINAL_WORKTREE_ID}`)
+
+    expect(listProcesses).toHaveBeenCalledOnce()
+    expect(getRepos).not.toHaveBeenCalled()
+  })
+
   it('advertises browser screencast only when a renderer window is available', () => {
     const runtime = createRuntime()
     electronMocks.BrowserWindow.fromId.mockReturnValue({ isDestroyed: () => false } as never)

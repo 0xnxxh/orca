@@ -27,8 +27,10 @@ export function useHostStatusGates(args: {
     clientRef.current = client
   }, [client])
 
-  // Why: clear the prior host's verdict on switch so a stale block screen can't linger.
+  // Why: Expo can render the next host once with the prior client, so hide every host-scoped gate until its client answers.
   useEffect(() => {
+    setHostCapabilities([])
+    setFloatingWorkspaceEnabled(false)
     setCompatVerdict({ kind: 'ok' })
   }, [hostId])
 

@@ -172,11 +172,8 @@ import {
   getMobileSessionTabTitle,
   resolveMobileTerminalTabAgentId
 } from '../../../../src/session/mobile-terminal-tab-agent'
-import {
-  buildMobileNewTabAgentOptions,
-  type MobileNewTabAgentOption,
-  type MobileNewTabAgentSettings
-} from '../../../../src/session/mobile-new-tab-agent-options'
+import type { MobileNewTabAgentOption } from '../../../../src/session/mobile-new-tab-agent-options'
+import { loadMobileNewTabAgentOptions } from '../../../../src/session/mobile-new-tab-agent-loader'
 import { useMobileImageAttachment } from '../../../../src/session/use-mobile-image-attachment'
 import { useMobileAttachmentInputLeaseGate } from '../../../../src/session/use-mobile-attachment-input-lease-gate'
 import { useMobileTerminalPaste } from '../../../../src/session/use-mobile-terminal-paste'
@@ -836,11 +833,13 @@ export default function SessionScreen() {
   const { isWideLayout } = useResponsiveLayout()
   const [activePanel, setActivePanel] = useState<ActivePanel>(null)
   const [sessionContentRowWidth, setSessionContentRowWidth] = useState(0)
-  const canDockPanel = canDockSessionPanel({
-    isWideLayout,
-    availableWidth: sessionContentRowWidth,
-    dockWidth: HOST_DOCK_MIN_WIDTH
-  })
+  const canDockPanel =
+    !isFloatingWorkspaceRoute &&
+    canDockSessionPanel({
+      isWideLayout,
+      availableWidth: sessionContentRowWidth,
+      dockWidth: HOST_DOCK_MIN_WIDTH
+    })
   // Why: if rotation/split-screen makes the docked row too narrow, clear activePanel so it doesn't survive into overlay/push mode.
   useEffect(() => {
     if (!canDockPanel && activePanel !== null) {
@@ -2626,7 +2625,7 @@ export default function SessionScreen() {
           showToast('Open Orca on the host to wake sleeping agents.', 3000)
         }
       }
-      if (client && created !== '1') {
+      if (client && created !== '1' && !isFloatingWorkspaceRoute) {
         // Why: hydrate host-owned tabs without pulling other paired clients (esp. desktop) into this worktree.
         void client
           .sendRequest('worktree.activate', {
@@ -2649,7 +2648,7 @@ export default function SessionScreen() {
       }
       addTimer(() => void fetchTerminals({ allowEmptyLoaded: false }), 750)
       addTimer(() => void fetchTerminals({ allowEmptyLoaded: true }), 1500)
-      if (client && created === '1') {
+      if (client && created === '1' && !isFloatingWorkspaceRoute) {
         addTimer(() => {
           if (activeHandleRef.current) {
             return
@@ -2677,7 +2676,16 @@ export default function SessionScreen() {
         clearTimeout(t)
       }
     }
-  }, [client, connState, created, fetchSessionTabs, fetchTerminals, showToast, worktreeId])
+  }, [
+    client,
+    connState,
+    created,
+    fetchSessionTabs,
+    fetchTerminals,
+    isFloatingWorkspaceRoute,
+    showToast,
+    worktreeId
+  ])
 
   useEffect(() => {
     if (!client || connState !== 'connected') {
@@ -3582,7 +3590,8 @@ export default function SessionScreen() {
   }, [])
 
   const getActiveWorktreeConnectionId = useCallback(async (): Promise<string | null> => {
-    if (!client) {
+    // Why: the floating workspace always runs on the paired host itself, never an SSH repo target.
+    if (!client || isFloatingWorkspaceRoute) {
       return null
     }
     const repoId = getRepoIdFromMobileWorktreeId(worktreeId)
@@ -3593,7 +3602,7 @@ export default function SessionScreen() {
     const repos =
       ((repoResponse as RpcSuccess).result as { repos?: RuntimeRepoSummary[] }).repos ?? []
     return repos.find((repo) => repo.id === repoId)?.connectionId?.trim() || null
-  }, [client, worktreeId])
+  }, [client, isFloatingWorkspaceRoute, worktreeId])
 
   const refreshCanPaste = useCallback(() => {
     void Promise.all([
@@ -3690,43 +3699,14 @@ export default function SessionScreen() {
     setCreateTabAgentOptions([])
 
     void (async () => {
-      const [settingsResponse, repoResponse] = await Promise.all([
-        client.sendRequest('settings.get'),
-        client.sendRequest('repo.list')
-      ])
-      if (!settingsResponse.ok) {
-        throw new Error((settingsResponse as RpcFailure).error.message)
-      }
-      const settings = (
-        (settingsResponse as RpcSuccess).result as {
-          settings?: MobileNewTabAgentSettings
-        }
-      ).settings
-      if (!repoResponse.ok) {
-        throw new Error((repoResponse as RpcFailure).error.message)
-      }
-      const repoId = getRepoIdFromMobileWorktreeId(worktreeId)
-      if (!repoId) {
-        throw new Error('worktree_repo_missing')
-      }
-      const repos =
-        ((repoResponse as RpcSuccess).result as { repos?: RuntimeRepoSummary[] }).repos ?? []
-      const repo = repos.find((candidate) => candidate.id === repoId)
-      if (!repo) {
-        throw new Error('worktree_repo_not_found')
-      }
-      const connectionId = repo.connectionId?.trim() || null
-      const detectedResponse = connectionId
-        ? await client.sendRequest('preflight.detectRemoteAgents', { connectionId })
-        : await client.sendRequest('preflight.detectAgents')
-      if (!detectedResponse.ok) {
-        throw new Error((detectedResponse as RpcFailure).error.message)
-      }
+      const options = await loadMobileNewTabAgentOptions({
+        client,
+        worktreeId
+      })
       if (stale) {
         return
       }
-      const detectedAgentIds = (detectedResponse as RpcSuccess).result as unknown[]
-      setCreateTabAgentOptions(buildMobileNewTabAgentOptions(settings, detectedAgentIds))
+      setCreateTabAgentOptions(options)
       setCreateTabAgentLoadState('loaded')
     })().catch(() => {
       if (!stale) {
@@ -5084,7 +5064,11 @@ export default function SessionScreen() {
         visible={showQuickCommands && quickCommandsSupported === true}
         onClose={() => setShowQuickCommands(false)}
         client={client}
-        repoId={isFolderWorkspaceRoute ? null : getRepoIdFromMobileWorktreeId(worktreeId) || null}
+        repoId={
+          isFolderWorkspaceRoute || isFloatingWorkspaceRoute
+            ? null
+            : getRepoIdFromMobileWorktreeId(worktreeId) || null
+        }
         repoName={worktreeName || null}
         onLaunch={launchQuickCommand}
       />
