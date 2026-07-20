@@ -462,6 +462,8 @@ export class DaemonServer {
       this.clients.set(hello.clientId, client)
       this.setupControlSocket(socket, hello.clientId)
       if (previous) {
+        // Why: reconnect reuses clientId before stale close fires; cancel the old owner's preflight at handoff.
+        this.cancelPendingPtySpawnPreparationsForClient(hello.clientId)
         this.recordFullyAuthenticatedDisconnect(previous.authenticatedPairEstablished)
         // Why: tear down the old sockets after installing the new owner so a stale close can't delete the replacement.
         previous.streamSocket?.destroy()

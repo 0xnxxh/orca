@@ -51,6 +51,7 @@ describe('wrapShellSpawnForMacosTccAttribution', () => {
     } else {
       process.env.ORCA_DISABLE_MACOS_LOGIN_SHELL = origDisable
     }
+    vi.restoreAllMocks()
     vi.clearAllMocks()
   })
 
@@ -115,8 +116,10 @@ describe('wrapShellSpawnForMacosTccAttribution', () => {
     expect(console.warn).toHaveBeenCalledTimes(1)
   })
 
-  it('re-probes after a transient timeout instead of caching the degrade (F1)', async () => {
+  it('backs off repeated transient timeouts instead of delaying every terminal spawn (F1)', async () => {
     setPlatform('darwin')
+    let now = 1_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
     // A probe our own SIGKILL cap killed proves nothing about PAM; it must retry.
     execFileMock.mockImplementation(
       (_file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
@@ -131,13 +134,27 @@ describe('wrapShellSpawnForMacosTccAttribution', () => {
     // Degraded probe fails open to a direct shell for this spawn...
     expect(wrapShellSpawnForMacosTccAttribution('/bin/zsh', ['-l']).file).toBe('/bin/zsh')
 
-    // ...but a later spawn re-runs the probe rather than reusing the timeout.
+    // ...without making every subsequent terminal pay the same 500 ms timeout.
+    await prepareMacosTccLoginShell()
+    expect(execFileMock).toHaveBeenCalledOnce()
+
+    now += 5_000
     await prepareMacosTccLoginShell()
     expect(execFileMock).toHaveBeenCalledTimes(2)
+
+    // Repeated failures back off further rather than spawning login(1) every 5 seconds.
+    now += 5_000
+    await prepareMacosTccLoginShell()
+    expect(execFileMock).toHaveBeenCalledTimes(2)
+    now += 5_000
+    await prepareMacosTccLoginShell()
+    expect(execFileMock).toHaveBeenCalledTimes(3)
   })
 
   it('self-heals to the login wrapper once a re-probe succeeds (F1)', async () => {
     setPlatform('darwin')
+    let now = 1_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
     let attempt = 0
     execFileMock.mockImplementation(
       (_file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
@@ -154,6 +171,10 @@ describe('wrapShellSpawnForMacosTccAttribution', () => {
 
     await prepareMacosTccLoginShell()
     await prepareMacosTccLoginShell()
+    expect(execFileMock).toHaveBeenCalledOnce()
+    now += 5_000
+    await prepareMacosTccLoginShell()
+    expect(execFileMock).toHaveBeenCalledTimes(2)
     expect(wrapShellSpawnForMacosTccAttribution('/bin/zsh', ['-l']).file).toBe('/usr/bin/login')
   })
 

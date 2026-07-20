@@ -49,6 +49,7 @@ function createMockSubprocess(): SubprocessHandle & {
 
 type DaemonServerPrivate = {
   server: Server | null
+  pendingPtySpawnPreparations: Map<string, Set<unknown>>
   host: {
     kill: (sessionId: string, opts?: { immediate?: boolean }) => void | Promise<void>
   }
@@ -346,9 +347,9 @@ describe('DaemonServer', () => {
         expect((server as unknown as DaemonServerPrivate).clients.size).toBe(0)
       )
       finishPreparation()
-      await vi.waitFor(() => expect(preparePtySpawn).toHaveBeenCalledOnce())
-      // Give the resumed preparation a beat to (not) spawn.
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      await vi.waitFor(() =>
+        expect((server as unknown as DaemonServerPrivate).pendingPtySpawnPreparations.size).toBe(0)
+      )
       expect(spawnSubprocess).not.toHaveBeenCalled()
     })
 

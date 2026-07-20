@@ -8,6 +8,8 @@ const MACOS_PRINTF_PATH = '/usr/bin/printf'
 const LOGIN_PREFLIGHT_TIMEOUT_MS = 500
 const LOGIN_PREFLIGHT_MARKER = 'ORCA_LOGIN_PREFLIGHT_OK'
 const LOGIN_PREFLIGHT_MAX_BUFFER_BYTES = 1024
+const LOGIN_PREFLIGHT_RETRY_BASE_MS = 5_000
+const LOGIN_PREFLIGHT_RETRY_MAX_MS = 5 * 60_000
 
 /**
  * Env escape hatch to force the plain (unwrapped) spawn. Set to `1`/`true` if a
@@ -29,10 +31,18 @@ export type LoginPreflightOutcome = {
 
 let cachedLoginPreflightResult: boolean | null = null
 let loginPreflightInFlight: Promise<LoginPreflightOutcome> | null = null
+let transientLoginPreflightFailure: { failureCount: number; retryAtMs: number } | null = null
 
 function isDisabledByEnv(): boolean {
   const value = process.env[DISABLE_ENV_VAR]
   return value === '1' || value === 'true'
+}
+
+function loginPreflightRetryDelayMs(failureCount: number): number {
+  return Math.min(
+    LOGIN_PREFLIGHT_RETRY_MAX_MS,
+    LOGIN_PREFLIGHT_RETRY_BASE_MS * 2 ** Math.max(0, failureCount - 1)
+  )
 }
 
 function classifyPreflightError(error: ExecFileException): LoginPreflightOutcome {
@@ -118,6 +128,13 @@ function loginPreflightSucceeds(
       // environmental and must be retried next spawn, not stuck forever (F1).
       if (outcome.conclusive) {
         cachedLoginPreflightResult = outcome.ok
+        transientLoginPreflightFailure = null
+      } else {
+        const failureCount = (transientLoginPreflightFailure?.failureCount ?? 0) + 1
+        transientLoginPreflightFailure = {
+          failureCount,
+          retryAtMs: Date.now() + loginPreflightRetryDelayMs(failureCount)
+        }
       }
       if (!outcome.ok) {
         console.warn('[pty] macOS login(1) preflight failed; spawning shells directly')
@@ -148,6 +165,10 @@ export async function prepareMacosTccLoginShell(): Promise<LoginPreflightOutcome
   if (cachedLoginPreflightResult !== null) {
     return null
   }
+  // Why: a persistently hung probe must not add 500 ms and a subprocess to every terminal spawn.
+  if (transientLoginPreflightFailure && Date.now() < transientLoginPreflightFailure.retryAtMs) {
+    return null
+  }
   if (!existsSync(MACOS_LOGIN_PATH)) {
     return null
   }
@@ -170,6 +191,7 @@ export async function prepareMacosTccLoginShell(): Promise<LoginPreflightOutcome
 export function resetMacosLoginShellPreflightForTests(): void {
   cachedLoginPreflightResult = null
   loginPreflightInFlight = null
+  transientLoginPreflightFailure = null
 }
 
 /**

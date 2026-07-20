@@ -327,15 +327,10 @@ describe('LocalPtyProvider', () => {
       expect(spawnMock).toHaveBeenCalledOnce()
     })
 
-    it('coalesces a concurrent same-session-id spawn onto the winner instead of orphaning it (F3)', async () => {
+    it('coalesces a concurrent same-session-id spawn before launching a redundant shell (F3)', async () => {
       spawnMock.mockClear()
-      // Distinct procs so we can prove the redundant shell is torn down, not tracked.
       const procA = { ...mockProc, pid: 1001 }
-      // Hold the kill spy separately: destroyPtyProcess neutralizes proc.kill after
-      // calling it, so the reference on procB is swapped out post-teardown.
-      const killB = vi.fn()
-      const procB = { ...mockProc, pid: 2002, kill: killB }
-      spawnMock.mockReturnValueOnce(procA).mockReturnValueOnce(procB)
+      spawnMock.mockReturnValueOnce(procA)
 
       // Hold both spawns past the existence check and inside the preflight so they
       // race to register the same id; release only after both are parked.
@@ -347,7 +342,7 @@ describe('LocalPtyProvider', () => {
       )
 
       const spawnA = provider.spawn({ cols: 80, rows: 24, sessionId: 'race-session' })
-      const spawnB = provider.spawn({ cols: 80, rows: 24, sessionId: 'race-session' })
+      const spawnB = provider.spawn({ cols: 132, rows: 44, sessionId: 'race-session' })
       await vi.waitFor(() => expect(prepareMacosTccLoginShellMock).toHaveBeenCalledTimes(2))
       releasePreflight()
 
@@ -357,7 +352,8 @@ describe('LocalPtyProvider', () => {
       expect(b.isReattach).toBe(true)
       expect(b.pid).toBe(procA.pid)
       expect(provider.getPtyProcess('race-session')).toBe(procA)
-      expect(killB).toHaveBeenCalledOnce()
+      expect(spawnMock).toHaveBeenCalledOnce()
+      expect(procA.resize).toHaveBeenCalledWith(132, 44)
     })
 
     it('calls node-pty spawn with correct args', async () => {
