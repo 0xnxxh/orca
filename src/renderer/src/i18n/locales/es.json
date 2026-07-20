@@ -13569,7 +13569,13 @@
     "title": "Agents",
     "total": "{{count}} total",
     "card": {
-      "you": "You"
+      "you": "You",
+      "time": {
+        "justNow": "ahora mismo",
+        "minutes": "{{count}} min",
+        "hours": "{{count}} h",
+        "days": "{{count}} d"
+      }
     },
     "terminal": {
       "closed": "No live terminal — this agent's pane has closed.",

@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DashboardCard } from '../../../../shared/dashboard-snapshot'
+import { i18n } from '@/i18n/i18n'
 import { AgentKanbanCard } from './AgentKanbanCard'
 
 const agentIconRender = vi.fn()
@@ -41,6 +42,10 @@ function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
 }
 
 describe('AgentKanbanCard', () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en')
+  })
+
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
@@ -71,5 +76,18 @@ describe('AgentKanbanCard', () => {
     )
     expect(agentIconRender).toHaveBeenCalledTimes(2)
     expect(screen.getByText('2m')).toBeInTheDocument()
+  })
+
+  it('updates the relative age when the UI language changes', async () => {
+    render(
+      <AgentKanbanCard card={card({ startedAt: 1_000 })} now={121_500} onOpenTerminal={vi.fn()} />
+    )
+    expect(screen.getByText('2m')).toBeInTheDocument()
+
+    await act(async () => {
+      await i18n.changeLanguage('ja')
+    })
+
+    expect(screen.getByText('2分')).toBeInTheDocument()
   })
 })

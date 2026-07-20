@@ -13569,7 +13569,13 @@
     "title": "Agents",
     "total": "{{count}} total",
     "card": {
-      "you": "You"
+      "you": "You",
+      "time": {
+        "justNow": "방금",
+        "minutes": "{{count}}분",
+        "hours": "{{count}}시간",
+        "days": "{{count}}일"
+      }
     },
     "terminal": {
       "closed": "No live terminal — this agent's pane has closed.",

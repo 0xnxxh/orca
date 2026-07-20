@@ -179,6 +179,21 @@ describe('AgentTerminalPreview', () => {
     expect(unsubscribe).toHaveBeenCalledWith('pty-1')
   })
 
+  it('connects a replacement pty after the previous pty was gone', async () => {
+    connect.mockResolvedValueOnce({ snapshot: null, replay: [] }).mockResolvedValueOnce({
+      snapshot: { data: 'replacement', cols: 80, rows: 24, seq: 1 },
+      replay: []
+    })
+    const view = render(<AgentTerminalPreview ptyId="pty-gone" />)
+    await waitFor(() => expect(view.getByText(/No live terminal/)).toBeInTheDocument())
+
+    view.rerender(<AgentTerminalPreview ptyId="pty-live" />)
+
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    expect(connect).toHaveBeenLastCalledWith('pty-live', { scrollbackRows: 24 })
+    expect(view.queryByText(/No live terminal/)).not.toBeInTheDocument()
+  })
+
   it('delays repeated capture after an overflow and cancels the retry on unmount', async () => {
     vi.useFakeTimers()
     connect.mockResolvedValue({

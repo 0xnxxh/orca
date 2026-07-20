@@ -7,6 +7,7 @@ import { composeActiveTerminalTheme } from '@/components/terminal-pane/terminal-
 import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import { translate } from '@/i18n/i18n'
 import { getBuiltinTheme, resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import type { TerminalPreviewDataPayload } from '../../../../shared/terminal-preview'
 
@@ -259,27 +260,27 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
     }
   }, [ptyId, terminalTheme])
 
-  if (ptyGone) {
-    return (
-      <div className="px-2.5 py-8 text-center text-[11px] text-muted-foreground">
-        {translate(
-          'dashboardPopout.terminal.closed',
-          "No live terminal — this agent's pane has closed."
-        )}
-      </div>
-    )
-  }
-
   return (
     // Why: a size FIXED by the viewport (not shrink-to-fit) + overflow-hidden
     // keeps the dialog stable no matter how wide/tall the pane's serialized
     // buffer is. The terminal keeps the pane's true dimensions and is scaled/
     // clipped to fit; fitToBox anchors whichever end keeps the cursor in view.
     <div
-      className="h-[calc(100vh-140px)] w-full overflow-hidden bg-background p-1.5"
+      className="relative h-[calc(100vh-140px)] w-full overflow-hidden bg-background p-1.5"
       style={terminalTheme?.background ? { backgroundColor: terminalTheme.background } : undefined}
     >
-      <div className="flex h-full w-full items-end overflow-hidden">
+      {ptyGone ? (
+        <div className="absolute inset-0 flex items-center justify-center px-2.5 py-8 text-center text-[11px] text-muted-foreground">
+          {translate(
+            'dashboardPopout.terminal.closed',
+            "No live terminal — this agent's pane has closed."
+          )}
+        </div>
+      ) : null}
+      <div
+        aria-hidden={ptyGone || undefined}
+        className={cn('flex h-full w-full items-end overflow-hidden', ptyGone && 'invisible')}
+      >
         <div ref={containerRef} className="origin-bottom-left" />
       </div>
     </div>
