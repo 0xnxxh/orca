@@ -18,27 +18,21 @@ import type {
   SearchResult
 } from '../../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
+import type { PtyStartupIngressIntent } from '../../shared/pty-startup-ingress'
 import type { CommitMessageDraftContext } from '../../shared/commit-message-generation'
 import type { WorkspaceSpaceDirectoryScanResult } from '../../shared/workspace-space-types'
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
-import type { TerminalGitHubPRLink } from '../../shared/terminal-github-pr-link-detector'
 import type { GitProviderStatusOptions } from './git-provider-status-options'
+import type { PtyBackgroundStreamEvent, PtyDataEvent } from './pty-provider-events'
+
+export type {
+  PtyBackgroundStreamEvent,
+  PtyDataEvent,
+  PtyTransientFact
+} from './pty-provider-events'
 
 // ─── PTY Provider ───────────────────────────────────────────────────
-
-/** Notification-bearing fact a thinning transport detected while it held
- *  scan authority for a backgrounded PTY (see onBackgroundStreamEvent). */
-export type PtyTransientFact =
-  | { kind: 'bell' }
-  | { kind: 'command-finished'; exitCode: number | null }
-  | { kind: 'pr-link'; link: TerminalGitHubPRLink }
-  | { kind: '2031-subscribe' }
-
-export type PtyBackgroundStreamEvent =
-  | { id: string; kind: 'backgroundMarker'; background: boolean; scanSeedAnsi?: string }
-  | { id: string; kind: 'dataGap'; droppedChars: number; sequenceChars?: number }
-  | { id: string; kind: 'transientFact'; fact: PtyTransientFact }
 
 export type PtyProviderBufferSnapshot = {
   data: string
@@ -97,6 +91,8 @@ export type PtySpawnOptions = {
    *  through spawn options keeps local PTY and daemon PTY semantics aligned
    *  without promoting pwsh into a separate shell family. */
   terminalWindowsPowerShellImplementation?: 'auto' | 'powershell.exe' | 'pwsh.exe'
+  /** Fresh-spawn-only source authority installed before any PTY output is released. */
+  startupIngress?: PtyStartupIngressIntent
 }
 
 export type PtySpawnResult = {
@@ -222,6 +218,8 @@ export type IPtyProvider = {
   getCwd(id: string): Promise<string>
   getInitialCwd(id: string): Promise<string>
   clearBuffer(id: string): Promise<void>
+  /** Ordered handoff from startup source authority to the live/hidden view authority. */
+  closeStartupQueryAuthority?: (id: string) => Promise<number> | number
   acknowledgeDataEvent(id: string, charCount: number): void
   hasChildProcesses(id: string): Promise<boolean>
   getForegroundProcess(id: string): Promise<string | null>
@@ -232,9 +230,7 @@ export type IPtyProvider = {
   listProcesses(): Promise<PtyProcessInfo[]>
   getDefaultShell(): Promise<string>
   getProfiles(): Promise<{ name: string; path: string }[]>
-  onData(
-    callback: (payload: { id: string; data: string; sequenceChars?: number }) => void
-  ): () => void
+  onData(callback: (payload: PtyDataEvent) => void): () => void
   onReplay(callback: (payload: { id: string; data: string }) => void): () => void
   onExit(callback: (payload: { id: string; code: number }) => void): () => void
 }

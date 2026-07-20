@@ -7049,6 +7049,7 @@ export function connectPanePty(
         return
       }
       if (!foreground && orderedRendererData.length === 0) {
+        recordRendererOrderedSeq(rendererMeta)
         schedulePendingStartupCommandDelivery()
         return
       }

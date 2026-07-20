@@ -15,6 +15,8 @@ Status](#architecture-status) for the shipped phases.
 
 - **PTY stream:** Ordered bytes read from a local PTY, daemon PTY, SSH relay PTY,
   or remote runtime PTY.
+- **Raw span:** A half-open post-shell-ready provider sequence range carried
+  beside its classified output. Its length can differ from the visible string.
 - **Terminal model:** Main/runtime-owned state derived from PTY bytes. Today this
   is mostly the headless emulator plus retained read transcript state.
 - **Terminal view:** A renderer xterm, mobile subscriber, remote desktop
@@ -45,35 +47,42 @@ Status](#architecture-status) for the shipped phases.
    after it. Main buffer snapshots report the pending-delivery start sequence
    (`pendingDeliveryStartSeq`) so the renderer reconciles live chunks racing a
    restore without misreading foreign sequence domains as duplicates.
-6. Terminal query authority is singular and structural: the party that
-   writes a chunk into a live terminal answers its queries. Visible renderer
-   and remote views keep xterm authority. Chunks dropped by the
-   hidden-delivery gate are answered exactly once by the main model
-   responder, from runtime-emulator state plus renderer-pushed view
-   attributes. Replayed, seeded, or snapshot bytes are answered by no one.
-   The daemon emulator never answers. (Amended by Phase 5 — see
-   [`terminal-query-authority.md`](./terminal-query-authority.md).)
+6. Terminal query authority is singular and structural: the owner of a live
+   query answers it. A bounded fresh-session source ingress may consume startup
+   OSC 10/11 queries before any model or view and then hands authority off in
+   source order. After that handoff, visible renderer and remote views keep
+   xterm authority; chunks dropped by the hidden-delivery gate are answered
+   exactly once by the main model responder. Replayed, seeded, or snapshot
+   bytes are answered by no one. The daemon emulator never answers. See
+   [`terminal-query-authority.md`](./terminal-query-authority.md).
 7. The transcript contract stays separate from screen restore. `orca terminal
-   read` must preserve bounded previews, cursor pagination, partial-line rules,
+read` must preserve bounded previews, cursor pagination, partial-line rules,
    truncation flags, and total counts even if view snapshots change shape.
 8. Local, daemon, SSH, remote runtime, mobile, and CLI paths must either satisfy
    the same model/view contract or explicitly report that model recovery is
    unavailable.
+9. Classification precedes every authoritative consumer. Local providers,
+   daemon sessions, and SSH relays emit ordered raw spans after shell-ready
+   preprocessing and before model, persistence, replay, or fanout. Empty
+   transformed spans advance raw sequence and flow-control accounting without
+   writing bytes into an emulator or view. Transformed spans are never sliced;
+   overlap recovery requests a fresh authoritative snapshot.
 
 ## Current Owners
 
-| Responsibility | Current owner |
-| --- | --- |
-| PTY byte source and local/SSH delivery | `src/main/ipc/pty.ts` |
-| Hidden-delivery gate (hidden marks, delivery interest, drop accounting, restore markers) | `src/main/ipc/pty-hidden-delivery-gate.ts`, drop sites in `src/main/ipc/pty.ts` and `src/main/ssh/ssh-relay-session.ts` |
-| Side-effect parsing and the `pty:sideEffect` facts channel | `src/shared/terminal-output-side-effects.ts` driven from `OrcaRuntimeService.onPtyData`; renderer policy in `src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.ts` |
-| Model query responder and view-attribute bridge | `src/main/runtime/terminal-model-query-authority.ts`, `src/main/daemon/terminal-view-attribute-responder.ts`, `src/main/runtime/terminal-view-attribute-store.ts` |
-| Hidden view parking policy and parked watcher | `src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.ts`, `parked-terminal-byte-watcher.ts` |
-| Daemon PTY state and headless snapshots | `src/main/daemon/headless-emulator.ts` |
-| Runtime headless state, retained reads, mobile/session tabs | `src/main/runtime/orca-runtime.ts` |
-| Remote terminal subscribe/multiplex/ACK semantics | `src/main/runtime/rpc/methods/terminal.ts` |
-| Renderer xterm view and hidden restore behavior | `src/renderer/src/components/terminal-pane/pty-connection.ts` |
-| Remote desktop runtime xterm transport | `src/renderer/src/runtime/remote-runtime-terminal-multiplexer.ts` |
+| Responsibility                                                                           | Current owner                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fresh-session startup OSC classification and raw-span emission                           | `src/shared/pty-startup-ingress.ts`, installed by `LocalPtyProvider`, daemon `Session`, and relay `PtyHandler`                                                                                |
+| PTY byte source and local/SSH delivery                                                   | `src/main/ipc/pty.ts`                                                                                                                                                                         |
+| Hidden-delivery gate (hidden marks, delivery interest, drop accounting, restore markers) | `src/main/ipc/pty-hidden-delivery-gate.ts`, drop sites in `src/main/ipc/pty.ts` and `src/main/ssh/ssh-relay-session.ts`                                                                       |
+| Side-effect parsing and the `pty:sideEffect` facts channel                               | `src/shared/terminal-output-side-effects.ts` driven from `OrcaRuntimeService.onPtyData`; renderer policy in `src/renderer/src/components/terminal-pane/terminal-side-effect-facts-handler.ts` |
+| Model query responder and view-attribute bridge                                          | `src/main/runtime/terminal-model-query-authority.ts`, `src/main/daemon/terminal-view-attribute-responder.ts`, `src/main/runtime/terminal-view-attribute-store.ts`                             |
+| Hidden view parking policy and parked watcher                                            | `src/renderer/src/components/terminal-pane/terminal-hidden-view-parking.ts`, `parked-terminal-byte-watcher.ts`                                                                                |
+| Daemon PTY state and headless snapshots                                                  | `src/main/daemon/headless-emulator.ts`                                                                                                                                                        |
+| Runtime headless state, retained reads, mobile/session tabs                              | `src/main/runtime/orca-runtime.ts`                                                                                                                                                            |
+| Remote terminal subscribe/multiplex/ACK semantics                                        | `src/main/runtime/rpc/methods/terminal.ts`                                                                                                                                                    |
+| Renderer xterm view and hidden restore behavior                                          | `src/renderer/src/components/terminal-pane/pty-connection.ts`                                                                                                                                 |
+| Remote desktop runtime xterm transport                                                   | `src/renderer/src/runtime/remote-runtime-terminal-multiplexer.ts`                                                                                                                             |
 
 ## Snapshot Contract
 
@@ -93,6 +102,8 @@ A snapshot must not:
 - answer terminal queries while replaying into the model;
 - overwrite newer live view output with older model output;
 - hide that recovery was unavailable for a PTY surface.
+- retain a held ingress prefix: shell-ready preprocessing and source ingress
+  drain in order before the snapshot sequence is captured.
 
 ## View Contract
 
@@ -145,6 +156,11 @@ extend tests that prove:
 - SSH-backed PTYs follow the same snapshot and ordering semantics as local PTYs;
 - remote runtime multiplex output remains ACK bounded and can request recovery
   snapshots;
+- source ingress consumes a capable fresh-spawn query exactly once, keeps
+  reattach/legacy/WSL paths passive, and removes matched native-Windows cooked
+  projections before model, persistence, relay replay, and fanout;
+- empty transformed spans retain their raw length through daemon/relay batching,
+  main-to-renderer ACK accounting, and remote/mobile multiplex frames;
 - mobile subscribers receive bounded snapshots without unbounded pending live
   output;
 - retained terminal reads remain pageable and bounded after large output.

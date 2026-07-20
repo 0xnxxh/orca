@@ -1,8 +1,7 @@
-import { Session, type SubprocessHandle } from './session'
+import { Session } from './session'
 import { normalizePtySize } from './daemon-pty-size'
 import { shellPathSupportsPtyStartupBarrier } from './shell-ready'
 import { resolveProcessCwd } from '../providers/process-cwd'
-import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 import { buildStartupCommandSubmission } from '../../shared/startup-command-submission'
 import {
   SessionNotFoundError,
@@ -11,39 +10,14 @@ import {
   type TerminalSnapshot
 } from './types'
 import type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
+import type { TerminalHostOptions } from './terminal-host-options'
 import { shutdownTerminalHostSessions } from './terminal-host-session-shutdown'
 import { TerminalSessionTeardown } from './terminal-session-teardown'
 
 export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
+export type { TerminalHostOptions } from './terminal-host-options'
 
 const DEFAULT_MAX_TOMBSTONES = 1000
-
-export type TerminalHostOptions = {
-  spawnSubprocess: (opts: {
-    sessionId: string
-    cols: number
-    rows: number
-    cwd?: string
-    env?: Record<string, string>
-    envToDelete?: string[]
-    command?: string
-    startupCommandDelivery?: StartupCommandDelivery
-    shellOverride?: string
-    terminalWindowsWslDistro?: string | null
-    terminalWindowsPowerShellImplementation?: 'auto' | 'powershell.exe' | 'pwsh.exe'
-  }) => SubprocessHandle
-  // Why: on graceful shutdown, the host writes final checkpoints for all live
-  // sessions before killing them. This bypasses the RPC round-trip — the daemon
-  // writes checkpoints in-process, guaranteeing completion before teardown.
-  onFinalCheckpoint?: (
-    sessionId: string,
-    snapshot: TerminalSnapshot,
-    records: TakePendingOutputResult['records']
-  ) => void
-  // Why: production keeps a large cap, but tests need a small deterministic cap
-  // without spawning thousands of full terminal sessions.
-  maxTombstones?: number
-}
 
 export class TerminalHost {
   private sessions = new Map<string, Session>()
@@ -145,6 +119,7 @@ export class TerminalHost {
       subprocess,
       shellReadySupported,
       historySeed: opts.historySeed,
+      ...(opts.startupIngress ? { startupIngress: opts.startupIngress } : {}),
       // Why: reap the dead session (dispose emulator + drop from the map) the
       // moment its subprocess exits, instead of retaining it for the daemon's
       // lifetime. Nothing reads a dead session's emulator (getSnapshot/
@@ -193,6 +168,10 @@ export class TerminalHost {
 
   write(sessionId: string, data: string): void {
     this.getAliveSession(sessionId).write(data)
+  }
+
+  closeStartupQueryAuthority(sessionId: string): number {
+    return this.getAliveSession(sessionId).closeStartupQueryAuthority()
   }
 
   resize(sessionId: string, cols: number, rows: number): void {

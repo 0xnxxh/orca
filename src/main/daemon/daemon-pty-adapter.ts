@@ -13,6 +13,7 @@ import { CODEX_SHELL_READY_TIMEOUT_MS } from './session'
 import {
   GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
+  supportsPtyStartupIngress,
   type CreateOrAttachResult,
   type DaemonEvent,
   type GetSnapshotResult,
@@ -99,6 +100,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     id: string
     data: string
     sequenceChars?: number
+    transformed?: boolean
+    seq?: number
   }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
   private backgroundStreamListeners: ((payload: PtyBackgroundStreamEvent) => void)[] = []
@@ -135,6 +138,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // must never see them, so gating makes them silent no-ops there.
   private supportsProducerFlowControl: boolean
   private supportsAuthoritativeBufferSnapshots: boolean
+  private supportsStartupIngress: boolean
   private pausedProducerSessionIds = new Set<string>()
   // Why tracked here: the daemon's background set (keep-tail stream thinning
   // + transient-fact scan authority) dies with the daemon process/socket;
@@ -178,6 +182,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.supportsIncrementalCheckpoints = this.protocolVersion >= 13
     this.supportsProducerFlowControl = this.protocolVersion >= 19
     this.supportsAuthoritativeBufferSnapshots = this.protocolVersion >= 20
+    this.supportsStartupIngress = supportsPtyStartupIngress(this.protocolVersion)
     this.client.onDisconnected(() => {
       for (const id of this.pausedProducerSessionIds) {
         this.producerResumesOwedOnReconnect.add(id)
@@ -270,7 +275,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
         terminalWindowsPowerShellImplementation: opts.terminalWindowsPowerShellImplementation,
         shellReadySupported,
         ...(shellReadyTimeoutMs !== undefined ? { shellReadyTimeoutMs } : {}),
-        ...(historySeed ? { historySeed } : {})
+        ...(historySeed ? { historySeed } : {}),
+        ...(this.supportsStartupIngress && opts.startupIngress
+          ? { startupIngress: opts.startupIngress }
+          : {})
       })
 
     let scrollback = restoreInfo ? getRecoveredHistorySeed(restoreInfo) : null
@@ -863,7 +871,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   onData(
-    callback: (payload: { id: string; data: string; sequenceChars?: number }) => void
+    callback: (payload: {
+      id: string
+      data: string
+      sequenceChars?: number
+      transformed?: boolean
+      seq?: number
+    }) => void
   ): () => void {
     this.dataListeners.push(callback)
     return () => {
@@ -1331,9 +1345,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
           listener({
             id: event.sessionId,
             data: event.payload.data,
-            ...(event.payload.sequenceChars === undefined
+            ...((event.payload.rawLength ?? event.payload.sequenceChars) === undefined
               ? {}
-              : { sequenceChars: event.payload.sequenceChars })
+              : { sequenceChars: event.payload.rawLength ?? event.payload.sequenceChars }),
+            ...(event.payload.transformed ? { transformed: true } : {}),
+            ...(event.payload.seq === undefined ? {} : { seq: event.payload.seq })
           })
         }
       } else if (event.event === 'sessionBackgroundMarker') {
@@ -1392,6 +1408,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
         }
       }
     })
+  }
+
+  async closeStartupQueryAuthority(id: string): Promise<number> {
+    if (!this.supportsStartupIngress) {
+      return 0
+    }
+    const result = await this.client.request<{ appliedSeq: number }>('closeStartupQueryAuthority', {
+      sessionId: id
+    })
+    return result.appliedSeq
   }
 }
 

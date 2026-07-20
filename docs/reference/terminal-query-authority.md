@@ -29,6 +29,25 @@ values.
 
 ## Decision: the delivery decision is the reply decision
 
+For a capable fresh agent spawn there is one earlier, bounded authority: the
+PTY source owner's startup ingress transaction. After shell-ready marker
+preprocessing and before model, persistence, or replay, it may consume exact
+OSC 10/11 queries and write canonical 16-bit, ST-terminated replies from
+validated renderer-pushed colors. It records each reply candidate before the
+provider write so synchronous output callbacks remain ordered. Consumed query
+spans still advance the raw provider sequence but emit an empty transformed
+span, so no renderer or model sees and answers them again.
+
+This startup authority opens only when fresh creation atomically installs a
+versioned intent before buffered subprocess output can be released. Local
+reattach, daemon `createOrAttach` reattach, relay `pty.attach`, unsupported
+daemon/relay versions, WSL, and legacy sessions never arm it. It closes after
+both slots are answered, its deadline expires, the process ends, or main sends
+an ordered close after a consuming view or hidden-runtime owner is established.
+Closing query interception preserves already-written echo candidates until
+they match, expire, or drain. Transport attachment by itself is not a view
+handoff.
+
 Main answers a query **iff main dropped the chunk that carried it**. The same
 per-chunk hidden-gate predicate (`shouldDropHiddenRendererPtyData`) that
 decides renderer delivery decides reply ownership, evaluated once,
@@ -42,6 +61,9 @@ synchronously, at ingestion:
   write apply unchanged).
 - Replayed/seeded/snapshot bytes → answered by no one (replay guards on both
   sides).
+
+The source ingress is the only exception before this delivery decision exists.
+Queries emitted after its ordered close follow the three rules above.
 
 This is structurally exactly-one-responder: a chunk is delivered or dropped,
 never both, and each side only answers bytes it actually parsed live. The
@@ -194,6 +216,8 @@ closed by the slice-3 `initiallyHidden` spawn flag (races section).
 
 ## Suppression: when main never replies
 
+- A startup query consumed by the capable source owner; it never enters the
+  main runtime model.
 - Visible or unmarked PTY (chunk was delivered).
 - Renderer delivery interest registered (chunk was delivered to a sidecar).
 - Remote-runtime (`remote:`) PTYs — never markable
@@ -242,10 +266,11 @@ any spawn-window drops).
 
 ## Invariants
 
-1. Exactly one party may answer any query, chosen by the chunk's delivery
-   decision: delivered → the consuming live view's xterm; dropped → main's
-   model responder; replayed/seeded → no one. The decision is captured once,
-   synchronously, at ingestion.
+1. Exactly one party may answer any query. Before normal ownership is known, a
+   capable fresh-session source ingress may consume OSC 10/11. After its
+   ordered close, the chunk's delivery decision chooses: delivered → the
+   consuming live view's xterm; dropped → main's model responder;
+   replayed/seeded → no one. Each decision is captured once at ingestion.
 2. Main answers only from live PTY bytes parsed by the runtime emulator —
    never from snapshot, seed, hydration, or option-push writes.
 3. View-attribute answers are renderer-true or absent: no reply is ever
