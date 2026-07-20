@@ -23,8 +23,6 @@ const SNAPSHOT = {
       startedAt: 1_699_999_000_000,
       stateChangedAt: 1_699_999_500_000,
       unseen: true,
-      additions: 12,
-      deletions: 3,
       askSummary: '{"question":"Proceed?"}'
     }
   ]

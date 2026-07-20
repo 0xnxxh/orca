@@ -43,8 +43,6 @@ function sameCard(a: DashboardCard, b: DashboardCard): boolean {
     a.startedAt === b.startedAt &&
     a.stateChangedAt === b.stateChangedAt &&
     a.unseen === b.unseen &&
-    a.additions === b.additions &&
-    a.deletions === b.deletions &&
     a.askSummary === b.askSummary
   )
 }
@@ -58,13 +56,10 @@ type AgentKanbanCardProps = {
   onOpenTerminal: (card: DashboardCard) => void
 }
 
-/** One agent on the kanban board. Clicking opens the board's live terminal
- *  dialog. Colors follow AgentStateDot / git-decoration tokens — no bespoke
- *  palette. */
+/** One agent on the kanban board. Clicking opens the board's live terminal dialog. */
 export const AgentKanbanCard = memo(
   function AgentKanbanCard({ card, now, onOpenTerminal }: AgentKanbanCardProps): React.JSX.Element {
     useTranslation()
-    const hasDiff = card.additions > 0 || card.deletions > 0
 
     return (
       <button
@@ -128,12 +123,7 @@ export const AgentKanbanCard = memo(
 
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <span className="truncate font-mono">{card.repoName}</span>
-          {hasDiff ? (
-            <span className="ml-auto shrink-0 font-mono tabular-nums">
-              <span style={{ color: 'var(--git-decoration-added)' }}>+{card.additions}</span>{' '}
-              <span style={{ color: 'var(--git-decoration-deleted)' }}>−{card.deletions}</span>
-            </span>
-          ) : card.startedAt > 0 ? (
+          {card.startedAt > 0 ? (
             <span className="ml-auto shrink-0 tabular-nums">
               {formatStartedAgo(card.startedAt, now)}
             </span>

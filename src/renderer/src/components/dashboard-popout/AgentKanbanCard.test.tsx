@@ -36,8 +36,6 @@ function card(overrides: Partial<DashboardCard> = {}): DashboardCard {
     startedAt: 1_000,
     stateChangedAt: 1_000,
     unseen: false,
-    additions: 0,
-    deletions: 0,
     ...overrides
   }
 }

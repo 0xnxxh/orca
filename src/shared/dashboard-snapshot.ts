@@ -52,9 +52,6 @@ export type DashboardCard = {
    *  user last acknowledged it (visited its tab / opened its dashboard dialog).
    *  Derived from the app-wide ack map so both surfaces mute in lockstep. */
   unseen: boolean
-  /** Worktree-scoped uncommitted diff totals (all agents in a worktree share). */
-  additions: number
-  deletions: number
   /** Short summary of the pending question when bucket === 'attention'. */
   askSummary?: string
 }

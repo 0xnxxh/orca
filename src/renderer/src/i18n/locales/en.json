@@ -769,8 +769,7 @@
         "9263e75f49": "Codex is using the previous account",
         "d3e8a1f4b2": "Account switched",
         "9375620cc3": "Restart this session to use {{value0}}. It stays on the previous account until you do.",
-        "6133594b12": "Keep old account",
-        "b9000fe511": "Not now"
+        "6133594b12": "Keep old account"
       },
       "FirstLaunchBanner": {
         "b9e1b966c7": "Dismiss notice",
@@ -4989,7 +4988,9 @@
           "remoteScopeAccounts": "Showing accounts managed by {{value0}}. Add or re-authenticate accounts on that server.",
           "remoteScopeAuthContext": "Each account keeps its own sign-in context on {{value0}}.",
           "remoteEmptyClaudeAccounts": "No managed Claude accounts on {{value0}}. It uses its system default Claude login; add accounts on that server.",
-          "remoteEmptyCodexAccounts": "No managed Codex accounts on {{value0}}. It uses its system default Codex login; add accounts on that server."
+          "remoteEmptyCodexAccounts": "No managed Codex accounts on {{value0}}. It uses its system default Codex login; add accounts on that server.",
+          "codexSystemDefaultCustomProvider": "Custom provider — no usage tracked.",
+          "codexSystemDefaultNeedsSignIn": "No Codex sign-in was found for {{value0}}."
         },
         "AdvancedPane": {
           "40b29e0bf3": "Restart",
@@ -9699,6 +9700,7 @@
             "hugeRepoIgnorePrompt": "This repository has too many active changes. Add \"{{value0}}\" to .gitignore?",
             "hugeRepoIgnoreAction": "Add to .gitignore",
             "tooManyChanges": "Too many changes detected. Only the first {{value0}} changes are shown.",
+            "submoduleTruncated": "More submodule changes were omitted",
             "bf5082de46": "{{value0}} copied",
             "c06193ef57": "Failed to copy {{value0}}",
             "d172a4f068": "Commit hash",
@@ -9754,7 +9756,8 @@
               "a9bf7c171a": "Push Failed",
               "834cb3f23d": "Fix with AI",
               "783a808870": "Close"
-            }
+            },
+            "97e7124eac": "Could not refresh Source Control. Try again."
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "Could not start the selected agent.",

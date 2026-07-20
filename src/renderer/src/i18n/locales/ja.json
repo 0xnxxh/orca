@@ -746,8 +746,7 @@
         "a4c8e1b2f7": "Codex はまだ {{value0}} としてサインインしています",
         "d3e8a1f4b2": "アカウントを切り替えました",
         "9375620cc3": "Restart this session to use {{value0}}. It stays on the previous account until you do.",
-        "6133594b12": "Keep old account",
-        "b9000fe511": "Not now"
+        "6133594b12": "Keep old account"
       },
       "FirstLaunchBanner": {
         "b9e1b966c7": "通知を閉じる",
@@ -4951,7 +4950,9 @@
           "remoteScopeAccounts": "{{value0}} が管理するアカウントを表示しています。アカウントの追加や再認証はそのサーバー上で行ってください。",
           "remoteScopeAuthContext": "各アカウントは {{value0}} 上に独自のサインインコンテキストを保持します。",
           "remoteEmptyClaudeAccounts": "{{value0}} に管理対象の Claude アカウントはありません。システム既定の Claude ログインを使用します。アカウントの追加はそのサーバー上で行ってください。",
-          "remoteEmptyCodexAccounts": "{{value0}} に管理対象の Codex アカウントはありません。システム既定の Codex ログインを使用します。アカウントの追加はそのサーバー上で行ってください。"
+          "remoteEmptyCodexAccounts": "{{value0}} に管理対象の Codex アカウントはありません。システム既定の Codex ログインを使用します。アカウントの追加はそのサーバー上で行ってください。",
+          "codexSystemDefaultCustomProvider": "カスタムプロバイダー — 使用量は追跡されません。",
+          "codexSystemDefaultNeedsSignIn": "{{value0}} の Codex サインインが見つかりません。"
         },
         "AdvancedPane": {
           "40b29e0bf3": "再起動",
@@ -9676,6 +9677,7 @@
             "hugeRepoIgnorePrompt": "この repos にはアクティブな変更が多すぎます。「{{value0}}」を .gitignore に追加しますか？",
             "hugeRepoIgnoreAction": ".gitignore に追加",
             "tooManyChanges": "検出された変更が多すぎます。最初の {{value0}} 件のみ表示しています。",
+            "submoduleTruncated": "その他のサブモジュールの変更は省略されました",
             "bf5082de46": "{{value0}}をコピーしました",
             "c06193ef57": "{{value0}}をコピーできませんでした",
             "d172a4f068": "Commit ハッシュ",
@@ -9731,7 +9733,8 @@
               "a9bf7c171a": "プッシュ失敗",
               "834cb3f23d": "AIで修正",
               "783a808870": "閉じる"
-            }
+            },
+            "97e7124eac": "Source Control を更新できませんでした。もう一度お試しください。"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "選択した agent を開始できませんでした。",

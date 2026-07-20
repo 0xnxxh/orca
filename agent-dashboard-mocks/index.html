@@ -161,9 +161,6 @@ button { font-family: inherit; }
 .prov.gemini { background: linear-gradient(135deg,#4f86f7,#9b6cf5); }
 .prov.opencode { background: #0ea5a4; }
 
-.diff { font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
-.diff .add { color: var(--st-done); }
-.diff .del { color: var(--st-error); }
 .meta { color: var(--muted-foreground); font-size: 11.5px; }
 .mono { font-family: var(--font-mono); }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -468,7 +465,7 @@ function renderPop(a){
       <div class="prov ${a.prov}">${initials(a.prov)}</div>
       <div>
         <div class="name">${a.name} · <span class="wt">${escapeHTML(a.worktree)}</span></div>
-        <div class="meta">${a.project} · ${a.elapsed} · Δ<span class="diff"><span class="add">+${a.add}</span> <span class="del">−${a.del}</span></span> · ${a.files} files</div>
+        <div class="meta">${a.project} · ${a.elapsed}</div>
       </div>
       <div style="margin-left:auto"><span class="badge ${a.state}">${STATE_LABEL[a.state]}</span></div>
     </div>
@@ -555,7 +552,7 @@ function vKanban(stage){
         <div class="row1"><div class="prov ${a.prov}">${initials(a.prov)}</div><span class="name">${a.name}</span>
           <span style="margin-left:auto" class="dot s-${s} ${s==='attention'?'pulse':''}"></span></div>
         <div class="task">${a.task}</div>
-        <div class="row2"><span class="wt">${a.project}/${a.worktree}</span><span style="margin-left:auto" class="diff"><span class="add">+${a.add}</span> <span class="del">−${a.del}</span></span></div>
+        <div class="row2"><span class="wt">${a.project}/${a.worktree}</span></div>
       </div>`).join('') || `<div class="meta" style="padding:6px 4px">None</div>`;
     return `<div class="kcol ${s==='attention'?'attn':''}"><h3><span class="dot s-${s}"></span>${STATE_LABEL[s]}<span class="count">${list.length}</span></h3>${cards}</div>`;
   }).join('') + `</div>`;
@@ -576,8 +573,7 @@ function vGallery(stage){
           <div style="margin-left:auto"><span class="badge ${a.state}">${STATE_LABEL[a.state]}</span></div></div>
         <div class="task">${a.task}</div>
         ${ask}
-        <div class="foot"><span class="diff"><span class="add">+${a.add}</span> <span class="del">−${a.del}</span></span>
-          <span class="meta">${a.last}</span>
+        <div class="foot"><span class="meta">${a.last}</span>
           <span style="margin-left:auto">${a.state==='working'?spark:`<span class="meta">${a.elapsed}</span>`}</span></div>
       </div>`;
     }).join('');
@@ -594,12 +590,11 @@ function vMissionControl(stage){
       <td><div class="cell-name"><span class="dot s-${a.state} ${a.state==='attention'?'pulse':''}"></span><div class="prov ${a.prov}" style="width:18px;height:18px;font-size:9px;border-radius:5px">${initials(a.prov)}</div><b>${a.name}</b></div></td>
       <td><span class="wt">${a.project}/${a.worktree}</span></td>
       <td class="tasktext truncate">${a.ask ? '✋ '+escapeHTML(a.ask) : a.task}</td>
-      <td class="num diff"><span class="add">+${a.add}</span> <span class="del">−${a.del}</span></td>
       <td class="num meta">${a.elapsed}</td>
       <td class="num meta">${a.last}</td>
     </tr>`).join('');
   stage.innerHTML = `<table class="mc"><thead><tr>
-    <th>Agent</th><th>Project / Worktree</th><th>Task</th><th class="num">Δ</th><th class="num">Elapsed</th><th class="num">Last activity</th>
+    <th>Agent</th><th>Project / Worktree</th><th>Task</th><th class="num">Elapsed</th><th class="num">Last activity</th>
     </tr></thead><tbody>${rows}</tbody></table>`;
   wireHovers(stage);
 }
@@ -669,7 +664,6 @@ function vNested(stage){
       .sort((a,b) => URG[a.roll]-URG[b.roll] || a.w.localeCompare(b.w));
 
     const wtHTML = wtEntries.map(({w,list,roll}) => {
-      const add = list.reduce((s,a)=>s+a.add,0), del = list.reduce((s,a)=>s+a.del,0);
       const agents = list.slice().sort(byUrg(a=>a.state)).map(a => `
         <div class="acard ${a.state}" data-agent="${a.id}">
           <div class="aacc"></div>
@@ -678,13 +672,12 @@ function vNested(stage){
             <div class="arow"><span class="an">${a.name}</span>
               <span style="margin-left:auto" class="badge ${a.state}">${STATE_LABEL[a.state]}</span></div>
             <div class="at truncate">${a.ask ? '✋ '+escapeHTML(a.ask) : a.task}</div>
-            <div class="am">${a.last} · Δ<span class="diff"><span class="add">+${a.add}</span> <span class="del">−${a.del}</span></span></div>
+            <div class="am">${a.last}</div>
           </div>
         </div>`).join('');
       return `<div class="wtpanel">
         <div class="wthead"><span class="dot s-${roll} ${roll==='attention'?'pulse':''}"></span>
-          <span class="wn">${w}</span>${list.length>1?`<span class="wc">${list.length} agents</span>`:''}
-          <span class="wd diff"><span class="add">+${add}</span> <span class="del">−${del}</span></span></div>
+          <span class="wn">${w}</span>${list.length>1?`<span class="wc">${list.length} agents</span>`:''}</div>
         ${agents}</div>`;
     }).join('');
 
@@ -749,7 +742,6 @@ function vFocus(stage){
           <div class="k">Task</div><div class="v">${a.task}</div>
           ${a.ask?`<div class="k">Waiting on you</div><div class="v" style="color:var(--st-attention)">${escapeHTML(a.ask)}</div>`:''}
           <div class="k">Branch</div><div class="v mono" style="font-size:11px">${a.branch}</div>
-          <div class="k">Changes</div><div class="v diff"><span class="add">+${a.add}</span> <span class="del">−${a.del}</span> · ${a.files} files</div>
           <div class="k">Elapsed</div><div class="v">${a.elapsed} · ${a.last}</div>
           <div style="margin-top:14px;display:flex;gap:8px"><button class="btn">Focus worktree</button><button class="btn primary">Open</button></div>
         </div></div>`;

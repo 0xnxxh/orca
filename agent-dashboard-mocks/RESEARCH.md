@@ -11,7 +11,7 @@ Grounded in shipping tools (Warp Agent Panel, herdr, Claude Code Agent View, Cla
 3. **Motion = "needs you or is changing," never decoration.** Only *working* (subtle) and *waiting* (pulse) animate; done/idle/error are static. Respects `prefers-reduced-motion`.
 4. **Density adapts to count.** Cards (≤8) → table (8–20) → tiles/grid (20+). The switcher lets you feel each.
 5. **Group by project with roll-up, but let urgency flatten it.** Gallery/tree group by repo; the inbox is the flat, urgency-sorted triage view.
-6. **Per-agent info priority:** state → reason (when blocked) → what it's working on → last activity → elapsed → diff size → provider badge → branch. Shown progressively (1–4 always, 5–8 on hover/detail).
+6. **Per-agent info priority:** state → reason (when blocked) → what it's working on → last activity → elapsed → provider badge → branch. Shown progressively (1–4 always, 5–7 on hover/detail).
 7. **Live preview on hover, dots at rest.** Don't mount 30 live xterms (perf) — rest = status; **hover → terminal tail popover** with a jump-in affordance. This is the shared popover in every variant.
 8. **Notify on transitions, tiered.** waiting/error = interruptive (toast + unread badge, and Orca's mobile push); done = ambient; working/idle = silent.
 

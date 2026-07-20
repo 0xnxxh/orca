@@ -39,6 +39,7 @@ import {
   normalizeCompatibleAgentStatusEntryForOwner,
   normalizeCompatibleAgentTitleForOwner
 } from '../../shared/agent-title-owner'
+import { resolvePaneAgentOwner } from '../../shared/pane-agent-owner'
 import {
   createAgentStatusOscProcessor,
   type ProcessedAgentStatusChunk
@@ -1067,6 +1068,7 @@ type TerminalCreateOptions = {
   claudeAgentTeamsSourceCommand?: string
   cwd?: string
   env?: Record<string, string>
+  envToDelete?: string[]
   launchConfig?: WorktreeStartupLaunch['launchConfig']
   launchToken?: string
   launchAgent?: TuiAgent
@@ -1087,6 +1089,14 @@ type TerminalCreateOptions = {
   // intermediate pty-backed publish so the new tab doesn't briefly flash in
   // the wrong (active) group before the corrected snapshot lands.
   deferMobileSessionPublish?: boolean
+}
+
+function mergeTerminalEnvDeletionKeys(
+  first: readonly string[] | undefined,
+  second: readonly string[] | undefined
+): string[] | undefined {
+  const merged = [...new Set([...(first ?? []), ...(second ?? [])])]
+  return merged.length > 0 ? merged : undefined
 }
 
 type PtyForegroundAgentRefresh = {
@@ -19152,7 +19162,10 @@ export class OrcaRuntimeService {
         commandDelivery: 'provider',
         startupCommandDelivery: launchOpts.startupCommandDelivery,
         env,
-        envToDelete: agentTeamsPlan?.envToDelete,
+        envToDelete: mergeTerminalEnvDeletionKeys(
+          launchOpts.envToDelete,
+          agentTeamsPlan?.envToDelete
+        ),
         telemetry: launchOpts.telemetry,
         connectionId: workspace.connectionId,
         worktreeId: workspace.id,
@@ -19385,6 +19398,7 @@ export class OrcaRuntimeService {
       command?: string
       cwd?: string
       env?: Record<string, string>
+      envToDelete?: string[]
       startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
       agent?: TuiAgent
       agentPrompt?: string
@@ -19431,6 +19445,7 @@ export class OrcaRuntimeService {
       command?: string
       cwd?: string
       env?: Record<string, string>
+      envToDelete?: string[]
       startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
       agent?: TuiAgent
       agentPrompt?: string
@@ -19468,6 +19483,7 @@ export class OrcaRuntimeService {
           command: startupCommand.command,
           cwd,
           env: startupCommand.env,
+          envToDelete: startupCommand.envToDelete,
           startupCommandDelivery: startupCommand.startupCommandDelivery,
           launchAgent: startupCommand.launchAgent,
           viewMode: opts.viewMode,
@@ -19517,6 +19533,7 @@ export class OrcaRuntimeService {
         command: startupCommand.command,
         cwd,
         ...(startupCommand.env ? { env: startupCommand.env } : {}),
+        ...(startupCommand.envToDelete ? { envToDelete: startupCommand.envToDelete } : {}),
         ...(startupCommand.launchConfig ? { launchConfig: startupCommand.launchConfig } : {}),
         ...(startupCommand.launchAgent ? { launchAgent: startupCommand.launchAgent } : {}),
         ...(opts.viewMode ? { viewMode: opts.viewMode } : {}),
@@ -19578,6 +19595,7 @@ export class OrcaRuntimeService {
           command: startupCommand.command,
           cwd,
           env: startupCommand.env,
+          envToDelete: startupCommand.envToDelete,
           startupCommandDelivery: startupCommand.startupCommandDelivery,
           identity: { tabId: pendingSurface.tab.parentTabId, leafId: pendingSurface.tab.leafId },
           launchAgent: startupCommand.launchAgent,
@@ -19614,6 +19632,7 @@ export class OrcaRuntimeService {
     opts: {
       command?: string
       env?: Record<string, string>
+      envToDelete?: string[]
       startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
       agent?: TuiAgent
       agentPrompt?: string
@@ -19623,6 +19642,7 @@ export class OrcaRuntimeService {
   ): Promise<{
     command?: string
     env?: Record<string, string>
+    envToDelete?: string[]
     startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
     launchConfig?: SleepingAgentLaunchConfig
     launchAgent?: TuiAgent
@@ -19631,6 +19651,7 @@ export class OrcaRuntimeService {
       return {
         command: opts.command,
         env: opts.env,
+        envToDelete: opts.envToDelete,
         launchConfig: opts.launchConfig,
         launchAgent: opts.launchAgent,
         startupCommandDelivery: opts.startupCommandDelivery
@@ -19681,6 +19702,9 @@ export class OrcaRuntimeService {
     return {
       command: startupPlan.launchCommand,
       env: startupPlan.env,
+      // Why: a real-home Codex resume strips inherited CODEX_HOME via
+      // envToDelete; dropping it here would resume against the wrong home.
+      envToDelete: opts.envToDelete,
       launchConfig: startupPlan.launchConfig,
       launchAgent: opts.agent,
       startupCommandDelivery: startupPlan.startupCommandDelivery
@@ -19695,6 +19719,7 @@ export class OrcaRuntimeService {
       command?: string
       cwd?: string
       env?: Record<string, string>
+      envToDelete?: string[]
       startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
       identity?: { tabId: string; leafId: string; sessionId?: string }
       launchAgent?: TuiAgent
@@ -19713,6 +19738,7 @@ export class OrcaRuntimeService {
       command: opts.command,
       cwd,
       env: opts.env,
+      envToDelete: opts.envToDelete,
       ...(opts.launchConfig ? { launchConfig: opts.launchConfig } : {}),
       ...(opts.launchAgent ? { launchAgent: opts.launchAgent } : {}),
       ...(opts.viewMode ? { viewMode: opts.viewMode } : {}),
@@ -22503,6 +22529,12 @@ export class OrcaRuntimeService {
       const paneKey = isTerminalLeafId(tab.leafId)
         ? makePaneKey(tab.parentTabId, tab.leafId)
         : `${tab.parentTabId}:${legacyPaneId ?? tab.leafId}`
+      const mobileStatusPty = livePty ?? pty
+      // Why: headless hooks live only in main's retained rows; reuse this lookup
+      // for both title ownership and status publication so the two cannot diverge.
+      const retainedAgentStatus = tab.agentStatus
+        ? null
+        : this.getFreshRetainedAgentStatusForMobileTab(paneKey, liveLeafPty ?? mobileStatusPty, tab)
       const leafTitle = leaf
         ? getLatestAgentCandidateTitle(
             { title: leaf.paneTitle, updatedAt: leaf.paneTitleUpdatedAt },
@@ -22516,7 +22548,15 @@ export class OrcaRuntimeService {
           )
         : null
       const launchAgent = tab.launchAgent ?? liveLeafPty?.launchAgent ?? pty?.launchAgent ?? null
-      const ownerAgent = launchAgent ?? liveLeafPty?.foregroundAgent ?? pty?.foregroundAgent ?? null
+      // Why: a retained OMP hook stays stable while wrapper foreground reads can report Pi.
+      const ownerAgent =
+        resolvePaneAgentOwner({
+          launchAgent,
+          hookAgent: tab.agentStatus?.agentType ?? retainedAgentStatus?.payload.agentType ?? null
+        }) ??
+        liveLeafPty?.foregroundAgent ??
+        pty?.foregroundAgent ??
+        null
       const title = normalizeCompatibleAgentTitleForOwner(
         leafTitle ?? ptyTitle ?? syncedTab?.title ?? tab.title,
         ownerAgent
@@ -22575,7 +22615,13 @@ export class OrcaRuntimeService {
         ...(tab.ptyId ? { ptyId: tab.ptyId } : {}),
         ...(tab.terminalTheme ? { terminalTheme: tab.terminalTheme } : {}),
         ...(launchAgent ? { launchAgent } : {}),
-        ...(agentStatus ?? this.buildPtyMobileAgentStatus(livePty ?? pty, tab, terminalHandle)),
+        ...(agentStatus ??
+          this.buildPtyMobileAgentStatus(
+            mobileStatusPty,
+            tab,
+            terminalHandle,
+            retainedAgentStatus
+          )),
         ...(tab.parentLayout ? { parentLayout: tab.parentLayout } : {}),
         ...(tab.startupCwd ? { startupCwd: tab.startupCwd } : {}),
         ...(tab.color != null ? { color: tab.color } : {}),
@@ -22630,10 +22676,10 @@ export class OrcaRuntimeService {
   private buildPtyMobileAgentStatus(
     pty: RuntimePtyWorktreeRecord | null,
     tab: RuntimeMobileSessionTerminalTab,
-    terminalHandle: string | null
+    terminalHandle: string | null,
+    retained: RuntimeAgentRowSnapshot | null
   ): { agentStatus: AgentStatusEntry } | Record<string, never> {
     const paneKey = this.getMobileTerminalPaneKey(tab)
-    const retained = this.getFreshRetainedAgentStatusForMobileTab(paneKey, pty, tab)
     if (!pty?.lastAgentStatus && !retained) {
       return {}
     }
@@ -22658,7 +22704,14 @@ export class OrcaRuntimeService {
         return {}
       }
     }
-    const ownerAgent = tab.launchAgent ?? pty?.launchAgent ?? pty?.foregroundAgent ?? null
+    // Why: a retained OMP hook stays stable while wrapper foreground reads can report Pi.
+    const ownerAgent =
+      resolvePaneAgentOwner({
+        launchAgent: tab.launchAgent ?? pty?.launchAgent ?? null,
+        hookAgent: retained?.payload.agentType ?? null
+      }) ??
+      pty?.foregroundAgent ??
+      null
     const terminalTitle = normalizeCompatibleAgentTitleForOwner(
       (pty ? getLatestPtyTitle(pty) : null) ?? tab.title,
       ownerAgent

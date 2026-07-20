@@ -36,7 +36,6 @@ export type DashboardSnapshotState = Pick<
   | 'terminalLayoutsByTabId'
   | 'ptyIdsByTabId'
   | 'runtimePaneTitlesByTabId'
-  | 'gitStatusByWorktree'
   | 'acknowledgedAgentsByPaneKey'
 >
 
@@ -54,19 +53,6 @@ function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
     case 'waiting':
       return 'attention'
   }
-}
-
-function worktreeDiffTotals(
-  gitStatusByWorktree: DashboardSnapshotState['gitStatusByWorktree'] | undefined,
-  worktreeId: string
-): { additions: number; deletions: number } {
-  let additions = 0
-  let deletions = 0
-  for (const entry of gitStatusByWorktree?.[worktreeId] ?? []) {
-    additions += entry.added ?? 0
-    deletions += entry.removed ?? 0
-  }
-  return { additions, deletions }
 }
 
 function rowTask(row: DashboardAgentRow): string {
@@ -127,8 +113,6 @@ export function buildDashboardSnapshot(
         })
       )
 
-      const diff = worktreeDiffTotals(state.gitStatusByWorktree, worktreeId)
-
       for (const row of rows) {
         // Child rows have no pane of their own; the board lists top-level agents.
         if (row.rowSource === 'subagent') {
@@ -177,8 +161,6 @@ export function buildDashboardSnapshot(
           unseen:
             !isTitleDerived &&
             (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt,
-          additions: diff.additions,
-          deletions: diff.deletions,
           askSummary:
             bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined
         })

@@ -58,7 +58,6 @@ function baseState(overrides: Partial<DashboardSnapshotState>): DashboardSnapsho
     },
     ptyIdsByTabId: { [TAB_ID]: ['pty1'] },
     runtimePaneTitlesByTabId: {},
-    gitStatusByWorktree: {},
     acknowledgedAgentsByPaneKey: {},
     ...overrides
   } as unknown as DashboardSnapshotState
@@ -70,12 +69,6 @@ describe('buildDashboardSnapshot', () => {
       baseState({
         agentStatusByPaneKey: {
           [PANE_KEY]: entry({ state: 'working', lastAssistantMessage: 'Working on it now' })
-        },
-        gitStatusByWorktree: {
-          w1: [
-            { path: 'a', status: 'M', area: 'unstaged', added: 5, removed: 2 },
-            { path: 'b', status: 'M', area: 'unstaged', added: 3, removed: 0 }
-          ] as never
         }
       }),
       NOW
@@ -87,8 +80,6 @@ describe('buildDashboardSnapshot', () => {
     expect(card.ptyId).toBe('pty1')
     expect(card.worktreeName).toBe('wt-one')
     expect(card.repoName).toBe('Repo One')
-    expect(card.additions).toBe(8)
-    expect(card.deletions).toBe(2)
     expect(card.leafId).toBe(LEAF_ID)
     expect(card.lastUserMessage).toBe('do the thing')
     expect(card.lastAgentMessage).toBe('Working on it now')

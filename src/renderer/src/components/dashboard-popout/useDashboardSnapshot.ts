@@ -6,7 +6,7 @@ import {
 } from '../../../../shared/dashboard-snapshot'
 
 /** Which column each card sits in — the only thing a view transition should
- *  animate on. Content-only updates (new messages, diff counts) must not. */
+ *  animate on. Content-only updates (such as new messages) must not. */
 function columnSignature(snapshot: DashboardSnapshot): string {
   return snapshot.cards
     .map((card) => `${card.paneKey}:${card.bucket}`)

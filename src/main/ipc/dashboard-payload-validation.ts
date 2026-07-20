@@ -79,10 +79,6 @@ function isDashboardCard(value: unknown): boolean {
     isFiniteNumber(card.startedAt) &&
     isFiniteNumber(card.stateChangedAt) &&
     typeof card.unseen === 'boolean' &&
-    isFiniteNumber(card.additions) &&
-    card.additions >= 0 &&
-    isFiniteNumber(card.deletions) &&
-    card.deletions >= 0 &&
     isOptionalBoundedString(card.askSummary, AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH)
   )
 }
