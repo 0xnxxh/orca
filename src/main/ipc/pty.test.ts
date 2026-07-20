@@ -743,7 +743,8 @@ describe('registerPtyHandlers', () => {
     processEnvOverrides?: Record<string, string | undefined>,
     getSelectedCodexHomePath?: (
       target?: { runtime?: 'host' | 'wsl'; wslDistro?: string | null },
-      launchEnv?: NodeJS.ProcessEnv
+      launchEnv?: NodeJS.ProcessEnv,
+      launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
     ) => string | null,
     getSettings?: () => {
       enableGitHubAttribution?: boolean
@@ -753,7 +754,9 @@ describe('registerPtyHandlers', () => {
     },
     // Why: PR #2662 finding 2 — accept an optional `command` so callers can exercise OMP target resolution (was untested).
     command?: string,
-    launchAgent?: TuiAgent
+    launchAgent?: TuiAgent,
+    cwd?: string,
+    worktreeId?: string
   ): Promise<Record<string, string>> {
     const savedEnv: Record<string, string | undefined> = {}
     if (processEnvOverrides) {
@@ -781,7 +784,9 @@ describe('registerPtyHandlers', () => {
         rows: 24,
         ...(argsEnv ? { env: argsEnv } : {}),
         ...(command ? { command } : {}),
-        ...(launchAgent ? { launchAgent } : {})
+        ...(launchAgent ? { launchAgent } : {}),
+        ...(cwd ? { cwd } : {}),
+        ...(worktreeId ? { worktreeId } : {})
       })
       const spawnCall = spawnMock.mock.calls.at(-1)!
       return spawnCall[2].env as Record<string, string>
@@ -924,6 +929,34 @@ describe('registerPtyHandlers', () => {
       const env = await spawnAndGetEnv(undefined, undefined, () => TEST_CODEX_HOME)
       expect(env.CODEX_HOME).toBe(TEST_CODEX_HOME)
       expect(env.ORCA_CODEX_HOME).toBe(TEST_CODEX_HOME)
+    })
+
+    it('prepares Codex launch state for the workspace before spawning an interactive tab', async () => {
+      const workspacePath = '/repo/worktrees/new-feature'
+      const resolveHome = vi.fn(
+        (
+          _target?: { runtime?: 'host' | 'wsl'; wslDistro?: string | null },
+          _launchEnv?: NodeJS.ProcessEnv,
+          _launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
+        ) => null
+      )
+
+      await spawnAndGetEnv(
+        undefined,
+        undefined,
+        resolveHome,
+        undefined,
+        'codex',
+        'codex',
+        workspacePath,
+        `repo-id::${workspacePath}`
+      )
+
+      expect(resolveHome.mock.calls[0]?.[0]).toEqual({ runtime: 'host' })
+      expect(resolveHome.mock.calls[0]?.[2]).toEqual({ workspacePath, launchAgent: 'codex' })
+      expect(resolveHome.mock.invocationCallOrder[0]).toBeLessThan(
+        spawnMock.mock.invocationCallOrder[0]!
+      )
     })
 
     it('injects the OpenCode hook env into Orca terminal PTYs', async () => {
@@ -1504,7 +1537,11 @@ describe('registerPtyHandlers', () => {
 
       async function daemonSpawnAndGetOptions(
         argsEnv?: Record<string, string>,
-        getSelectedCodexHomePath?: () => string | null,
+        getSelectedCodexHomePath?: (
+          target?: { runtime?: 'host' | 'wsl'; wslDistro?: string | null },
+          launchEnv?: NodeJS.ProcessEnv,
+          launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
+        ) => string | null,
         getSettings?: () => {
           enableGitHubAttribution?: boolean
           httpProxyUrl?: string
@@ -1517,6 +1554,7 @@ describe('registerPtyHandlers', () => {
           worktreeId?: string
           shellOverride?: string
           command?: string
+          launchAgent?: TuiAgent
           envToDelete?: string[]
         },
         supportsGitCredentialGuardHost = true
@@ -1561,14 +1599,23 @@ describe('registerPtyHandlers', () => {
 
       async function daemonSpawnAndGetEnv(
         argsEnv?: Record<string, string>,
-        getSelectedCodexHomePath?: () => string | null,
+        getSelectedCodexHomePath?: (
+          target?: { runtime?: 'host' | 'wsl'; wslDistro?: string | null },
+          launchEnv?: NodeJS.ProcessEnv,
+          launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
+        ) => string | null,
         getSettings?: () => {
           enableGitHubAttribution?: boolean
           httpProxyUrl?: string
           httpProxyBypassRules?: string
         },
         processEnvOverrides?: Record<string, string | undefined>,
-        spawnArgs?: { cwd?: string; shellOverride?: string; command?: string },
+        spawnArgs?: {
+          cwd?: string
+          shellOverride?: string
+          command?: string
+          launchAgent?: TuiAgent
+        },
         supportsGitCredentialGuardHost = true
       ): Promise<Record<string, string>> {
         return (
@@ -1680,6 +1727,27 @@ describe('registerPtyHandlers', () => {
         const env = await daemonSpawnAndGetEnv({}, () => TEST_CODEX_HOME)
         expect(env.CODEX_HOME).toBe(TEST_CODEX_HOME)
         expect(env.ORCA_CODEX_HOME).toBe(TEST_CODEX_HOME)
+      })
+
+      it('prepares Codex project trust before a daemon-backed interactive launch', async () => {
+        const workspacePath = '/repo/worktrees/new-feature'
+        const resolveHome = vi.fn(
+          (
+            _target?: { runtime?: 'host' | 'wsl'; wslDistro?: string | null },
+            _launchEnv?: NodeJS.ProcessEnv,
+            _launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
+          ) => null
+        )
+
+        await daemonSpawnAndGetOptions({}, resolveHome, undefined, undefined, {
+          cwd: workspacePath,
+          worktreeId: `repo-id::${workspacePath}`,
+          command: 'codex',
+          launchAgent: 'codex'
+        })
+
+        expect(resolveHome.mock.calls[0]?.[0]).toEqual({ runtime: 'host' })
+        expect(resolveHome.mock.calls[0]?.[2]).toEqual({ workspacePath, launchAgent: 'codex' })
       })
 
       it('injects explicit proxy settings on the daemon path', async () => {

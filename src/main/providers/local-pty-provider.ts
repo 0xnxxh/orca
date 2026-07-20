@@ -471,6 +471,7 @@ export type LocalPtyProviderOptions = {
     ctx?: {
       command?: string
       launchAgent?: PtySpawnOptions['launchAgent']
+      cwd?: string
       shellPath?: string
       isWsl?: boolean
       wslDistro?: string | null
@@ -672,6 +673,7 @@ export class LocalPtyProvider implements IPtyProvider {
       ? this.opts.buildSpawnEnv(id, spawnEnv, {
           command: args.command,
           launchAgent: args.launchAgent,
+          cwd,
           shellPath,
           isWsl: isWslShell,
           wslDistro: launchWslDistro

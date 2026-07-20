@@ -621,7 +621,8 @@ function getLocalOrcaCodexHomeEnvKeysToDelete(env: Record<string, string>): stri
 
 type GetSelectedCodexHomePath = (
   target?: CodexAccountSelectionTarget,
-  launchEnv?: NodeJS.ProcessEnv
+  launchEnv?: NodeJS.ProcessEnv,
+  launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
 ) => string | null
 type PrepareClaudeAuth = (
   target?: ClaudeAccountSelectionTarget
@@ -1452,7 +1453,10 @@ export function registerPtyHandlers(
             : { runtime: 'host' }
         const selectedCodexHomePath = getCompatibleSelectedCodexHomePath(
           codexSelectionTarget,
-          getSelectedCodexHomePath?.(codexSelectionTarget, baseEnv) ?? null
+          getSelectedCodexHomePath?.(codexSelectionTarget, baseEnv, {
+            workspacePath: ctx?.cwd,
+            launchAgent: ctx?.launchAgent
+          }) ?? null
         )
         const skipCodexHomeEnv = ctx?.isWsl === true && !selectedCodexHomePath
         const env = buildPtyHostEnv(id, baseEnv, {
@@ -2794,7 +2798,10 @@ export function registerPtyHandlers(
       const selectedCodexHomePath = isDaemonHostSpawn
         ? getCompatibleSelectedCodexHomePath(
             codexSelectionTarget,
-            getSelectedCodexHomePath?.(codexSelectionTarget, env) ?? null
+            getSelectedCodexHomePath?.(codexSelectionTarget, env, {
+              workspacePath: cwd,
+              launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined
+            }) ?? null
           )
         : null
       const skipCodexHomeEnv =
@@ -3682,7 +3689,10 @@ export function registerPtyHandlers(
       const selectedCodexHomePath = isDaemonHostSpawn
         ? getCompatibleSelectedCodexHomePath(
             codexSelectionTarget,
-            getSelectedCodexHomePath?.(codexSelectionTarget, baseEnv) ?? null
+            getSelectedCodexHomePath?.(codexSelectionTarget, baseEnv, {
+              workspacePath: cwd,
+              launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined
+            }) ?? null
           )
         : null
       const skipCodexHomeEnv =

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { writeFileAtomically } from './codex-accounts/fs-utils'
 import { getOrcaManagedCodexHomePath } from './codex/codex-home-paths'
 import { upsertProjectTrustLevel } from './codex/config-toml-trust'
@@ -109,12 +109,32 @@ export function markCopilotFolderTrusted(workspacePath: string): void {
  * codex-rs/core/src/config/config_tests.rs in the Codex CLI source.
  */
 export function markCodexProjectTrusted(workspacePath: string): void {
-  const absPath = canonicalize(workspacePath)
+  const absPath = resolveCodexProjectTrustRoot(workspacePath)
   const configPath = join(homedir(), '.codex', 'config.toml')
   upsertProjectTrustLevel(configPath, absPath, 'trusted')
   // Why: Orca-launched Codex runs with an Orca-owned CODEX_HOME, so the trust
   // preset must also update the runtime config Codex will actually read.
   upsertProjectTrustLevel(join(getOrcaManagedCodexHomePath(), 'config.toml'), absPath, 'trusted')
+}
+
+function resolveCodexProjectTrustRoot(workspacePath: string): string {
+  const absPath = canonicalize(workspacePath)
+  try {
+    const gitDirReference = readFileSync(join(absPath, '.git'), 'utf-8')
+    const gitDirMatch = /^gitdir:\s*(.+?)\s*$/im.exec(gitDirReference)
+    if (!gitDirMatch?.[1]) {
+      return absPath
+    }
+    const gitDir = resolve(absPath, gitDirMatch[1])
+    const commonDirReference = readFileSync(join(gitDir, 'commondir'), 'utf-8').trim()
+    if (!commonDirReference) {
+      return absPath
+    }
+    // Why: Codex resolves linked-worktree trust through commondir to the main repo root.
+    return canonicalize(dirname(resolve(gitDir, commonDirReference)))
+  } catch {
+    return absPath
+  }
 }
 
 function canonicalize(p: string): string {

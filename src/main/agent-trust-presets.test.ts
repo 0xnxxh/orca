@@ -137,6 +137,40 @@ describe('markCopilotFolderTrusted', () => {
 })
 
 describe('markCodexProjectTrusted', () => {
+  it('trusts the main repository root for a linked worktree', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'orca-codex-linked-ws-'))
+    const repository = join(fixtureRoot, 'repo')
+    const workspace = join(fixtureRoot, 'worktrees', 'feature')
+    const worktreeGitDir = join(repository, '.git', 'worktrees', 'feature')
+    try {
+      mkdirSync(worktreeGitDir, { recursive: true })
+      mkdirSync(workspace, { recursive: true })
+      writeFileSync(join(workspace, '.git'), `gitdir: ${worktreeGitDir}\n`, 'utf-8')
+      writeFileSync(join(worktreeGitDir, 'commondir'), '../..\n', 'utf-8')
+
+      markCodexProjectTrusted(workspace)
+
+      const repositoryRoot = realpathSync.native(repository)
+      const workspaceRoot = realpathSync.native(workspace)
+      const configPath = join(testState.fakeHomeDir, '.codex', 'config.toml')
+      const runtimeConfigPath = join(
+        testState.userDataDir,
+        'codex-runtime-home',
+        'home',
+        'config.toml'
+      )
+      for (const written of [
+        readFileSync(configPath, 'utf-8'),
+        readFileSync(runtimeConfigPath, 'utf-8')
+      ]) {
+        expect(written).toContain(`[projects."${escapeTomlBasicString(repositoryRoot)}"]`)
+        expect(written).not.toContain(`[projects."${escapeTomlBasicString(workspaceRoot)}"]`)
+      }
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
   it('writes ~/.codex/config.toml with the project marked trusted', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'orca-codex-ws-'))
     try {

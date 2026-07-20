@@ -53,7 +53,7 @@ import {
   rebuildAppMenu
 } from './menu/register-app-menu'
 import { checkForUpdatesFromMenu, isQuittingForUpdate } from './updater'
-import type { UpdateCheckOptions } from '../shared/types'
+import type { TuiAgent, UpdateCheckOptions } from '../shared/types'
 import { recordUpdaterLifecycle } from './updater-lifecycle-diagnostics'
 import {
   configureElectronNetworkCompatibility,
@@ -129,6 +129,7 @@ import { focusExistingMainWindow } from './window/focus-existing-window'
 import { notifyMainWindowBecameVisible } from './window/main-window-visibility'
 import { CodexAccountService } from './codex-accounts/service'
 import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
+import { markCodexProjectTrusted } from './agent-trust-presets'
 import {
   normalizeCodexRuntimeSelection,
   type CodexAccountSelectionTarget
@@ -695,8 +696,21 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
 
 function prepareCodexRuntimeHomeForLaunch(
   target?: CodexAccountSelectionTarget,
-  launchEnv?: NodeJS.ProcessEnv
+  launchEnv?: NodeJS.ProcessEnv,
+  launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
 ): string | null {
+  if (
+    target?.runtime !== 'wsl' &&
+    launchContext?.launchAgent === 'codex' &&
+    launchContext.workspacePath
+  ) {
+    try {
+      // Why: renderer quick-launch cannot await trust IPC before its PTY mounts; launch prep runs synchronously before every recognized Codex spawn.
+      markCodexProjectTrusted(launchContext.workspacePath)
+    } catch (error) {
+      console.warn('[codex-project-trust] failed to pre-mark launch workspace:', error)
+    }
+  }
   const ensureRealHomeHooksIfSelected = (): boolean => {
     if (
       target?.runtime === 'wsl' ||
