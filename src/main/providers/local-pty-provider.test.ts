@@ -14,7 +14,8 @@ const {
   resolveAgentForegroundProcessMock,
   readWindowsConptyProcessIdsMock,
   captureDescendantSnapshotMock,
-  terminateDescendantSnapshotMock
+  terminateDescendantSnapshotMock,
+  requestWindowsDescendantTreeTerminationMock
 } = vi.hoisted(() => ({
   existsSyncMock: vi.fn(),
   statSyncMock: vi.fn(),
@@ -26,7 +27,8 @@ const {
   resolveAgentForegroundProcessMock: vi.fn(),
   readWindowsConptyProcessIdsMock: vi.fn(),
   captureDescendantSnapshotMock: vi.fn(),
-  terminateDescendantSnapshotMock: vi.fn()
+  terminateDescendantSnapshotMock: vi.fn(),
+  requestWindowsDescendantTreeTerminationMock: vi.fn()
 }))
 
 vi.mock('fs', () => ({
@@ -57,6 +59,11 @@ vi.mock('./macos-tcc-login-shell', async (importOriginal) => ({
 vi.mock('../pty-descendant-termination', () => ({
   captureDescendantSnapshot: captureDescendantSnapshotMock,
   terminateDescendantSnapshot: terminateDescendantSnapshotMock
+}))
+
+vi.mock('../windows-pty-descendant-termination', () => ({
+  requestWindowsDescendantTreeTermination: requestWindowsDescendantTreeTerminationMock,
+  WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS: 8_000
 }))
 
 // Resolve PowerShell family names to deterministic absolute paths (the fs mock
@@ -125,6 +132,7 @@ describe('LocalPtyProvider', () => {
     pause: ReturnType<typeof vi.fn>
     resume: ReturnType<typeof vi.fn>
     kill: ReturnType<typeof vi.fn>
+    terminateJobTree: ReturnType<typeof vi.fn>
     process: string
     pid: number
   }
@@ -155,6 +163,8 @@ describe('LocalPtyProvider', () => {
     terminateDescendantSnapshotMock.mockReset()
     prepareMacosTccLoginShellMock.mockReset()
     prepareMacosTccLoginShellMock.mockResolvedValue(undefined)
+    requestWindowsDescendantTreeTerminationMock.mockReset()
+    requestWindowsDescendantTreeTerminationMock.mockResolvedValue(undefined)
     resolveAgentForegroundProcessMock.mockReset()
     resolveAgentForegroundProcessMock.mockImplementation(
       async (_pid: number, fallbackProcess: string | null) => ({
@@ -185,6 +195,7 @@ describe('LocalPtyProvider', () => {
       kill: vi.fn(() => {
         exitCb?.({ exitCode: -1 })
       }),
+      terminateJobTree: vi.fn(async () => true),
       process: 'zsh',
       pid: 12345
     }
@@ -1143,6 +1154,104 @@ describe('LocalPtyProvider', () => {
 
       expect(killSpy).toHaveBeenCalledTimes(1)
       expect(destroySpy).not.toHaveBeenCalled()
+    })
+
+    it('terminates an agent Job before closing its Windows ConPTY', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const order: string[] = []
+      mockProc.terminateJobTree.mockImplementation(async () => {
+        order.push('job')
+        return true
+      })
+      mockProc.kill.mockImplementation(() => {
+        order.push('conpty')
+        exitCb?.({ exitCode: 1 })
+      })
+      const { id } = await provider.spawn({ cols: 80, rows: 24, launchAgent: 'claude' })
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({ windowsAgentJob: true })
+      )
+
+      await provider.shutdown(id, { immediate: true })
+
+      expect(order).toEqual(['job', 'conpty'])
+      expect(requestWindowsDescendantTreeTerminationMock).not.toHaveBeenCalled()
+    })
+
+    it('rejects fail-closed after closing ConPTY when the agent Job does not drain', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      mockProc.terminateJobTree.mockResolvedValue(false)
+      const { id } = await provider.spawn({ cols: 80, rows: 24, launchAgent: 'claude' })
+
+      await expect(provider.shutdown(id, { immediate: true })).rejects.toThrow(
+        'Windows PTY Job did not drain'
+      )
+
+      expect(mockProc.kill).toHaveBeenCalledOnce()
+      expect(provider.hasPty(id)).toBe(false)
+    })
+
+    it('closes ConPTY and rejects when native agent Job termination throws', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      mockProc.terminateJobTree.mockRejectedValue(new Error('native Job failure'))
+      const { id } = await provider.spawn({ cols: 80, rows: 24, launchAgent: 'claude' })
+
+      await expect(provider.shutdown(id, { immediate: true })).rejects.toThrow('native Job failure')
+
+      expect(mockProc.kill).toHaveBeenCalledOnce()
+      expect(provider.hasPty(id)).toBe(false)
+    })
+
+    it('preserves plain detached-child semantics for normal Windows tab close', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const { id } = await provider.spawn({ cols: 80, rows: 24 })
+
+      await provider.shutdown(id, { immediate: true })
+
+      expect(mockProc.terminateJobTree).not.toHaveBeenCalled()
+      expect(requestWindowsDescendantTreeTerminationMock).not.toHaveBeenCalled()
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.not.objectContaining({ windowsAgentJob: true })
+      )
+    })
+
+    it('falls back to taskkill when the Windows PTY has no Job Object', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      mockProc.terminateJobTree.mockReturnValue(undefined)
+      const { id } = await provider.spawn({ cols: 80, rows: 24, launchAgent: 'codex' })
+
+      await expect(provider.shutdown(id, { immediate: true })).rejects.toThrow(
+        'Windows PTY Job ownership unavailable'
+      )
+
+      expect(requestWindowsDescendantTreeTerminationMock).toHaveBeenCalledWith(mockProc.pid)
+      expect(requestWindowsDescendantTreeTerminationMock.mock.invocationCallOrder[0]).toBeLessThan(
+        mockProc.kill.mock.invocationCallOrder[0]!
+      )
+    })
+
+    it('never runs native Windows tree termination for a WSL terminal', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const { id } = await provider.spawn({
+        cols: 80,
+        rows: 24,
+        shellOverride: 'wsl.exe',
+        launchAgent: 'claude'
+      })
+
+      await provider.shutdown(id, { immediate: true })
+
+      expect(mockProc.terminateJobTree).not.toHaveBeenCalled()
+      expect(requestWindowsDescendantTreeTerminationMock).not.toHaveBeenCalled()
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.not.objectContaining({ windowsAgentJob: true })
+      )
     })
 
     it('keeps shutdown and ownership pending until node-pty reports physical exit', async () => {

@@ -50,6 +50,10 @@ export const PRODUCER_PAUSE_FAILSAFE_MS = 5_000
 
 export type SubprocessHandle = {
   pid: number
+  /** True only when pid belongs to this Windows host, never wsl.exe/remote. */
+  nativeWindowsPty?: boolean
+  /** Terminates the spawn-time Job and resolves true only after every member exits. */
+  terminateJobTree?(timeoutMs: number): Promise<boolean> | undefined
   /** Live foreground process name of the PTY (node-pty's `.process`), e.g.
    *  'claude' / 'codex' / 'zsh'. Null once the child has exited. */
   getForegroundProcess(): string | null
@@ -225,6 +229,14 @@ export class Session {
 
   get pid(): number {
     return this.subprocess.pid
+  }
+
+  get ownsNativeWindowsPty(): boolean {
+    return this.subprocess.nativeWindowsPty === true
+  }
+
+  terminateJobTree(timeoutMs: number): Promise<boolean> | undefined {
+    return this.subprocess.terminateJobTree?.(timeoutMs)
   }
 
   write(data: string): void {

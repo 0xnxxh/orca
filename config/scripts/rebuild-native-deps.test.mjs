@@ -10,7 +10,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -179,94 +179,91 @@ describe('rebuild-native-deps patched node-pty rebuild', () => {
     }
   })
 
-  it.skipIf(process.platform === 'win32')(
-    'rebuilds when Electron can load node-pty but patched build artifacts are missing',
-    () => {
-      const projectDir = mkTempProject()
+  it('rebuilds when Electron can load node-pty but patched build artifacts are missing', () => {
+    const projectDir = mkTempProject()
 
-      try {
-        const rebuildLogPath = join(projectDir, 'electron-rebuild.log')
-        writeFakeUsableElectronPackage(projectDir)
-        writeFakeElectronRebuild(projectDir, { logPathEnv: 'ORCA_REBUILD_TEST_LOG' })
-        writeFakeLoadableNodePty(projectDir)
-        writeNodePtyPatchFile(projectDir)
+    try {
+      const rebuildLogPath = join(projectDir, 'electron-rebuild.log')
+      writeFakeUsableElectronPackage(projectDir)
+      writeFakeElectronRebuild(projectDir, { logPathEnv: 'ORCA_REBUILD_TEST_LOG' })
+      writeFakeLoadableNodePty(projectDir)
+      writeNodePtyPatchFile(projectDir)
 
-        const result = runRebuildScript(projectDir, {
-          ORCA_REBUILD_TEST_LOG: rebuildLogPath
-        })
+      const result = runRebuildScript(projectDir, {
+        ORCA_REBUILD_TEST_LOG: rebuildLogPath
+      })
 
-        expect(result.status, result.stderr).toBe(0)
-        expect(result.stdout).toContain(
-          'Patched node-pty build artifacts are missing; rebuilding from source.'
-        )
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.stdout).toContain(
+        'Patched node-pty build artifacts are missing; rebuilding from source.'
+      )
 
-        const rebuildCall = JSON.parse(readFileSync(rebuildLogPath, 'utf8').trim())
-        expect(rebuildCall.onlyModules).toEqual(['node-pty'])
-        expect(rebuildCall.ignoreModules).toEqual(['cpu-features'])
-        expect(rebuildCall.force).toBe(true)
-      } finally {
-        rmSync(projectDir, { recursive: true, force: true })
-      }
+      const rebuildCall = JSON.parse(readFileSync(rebuildLogPath, 'utf8').trim())
+      expect(rebuildCall.onlyModules).toEqual(
+        process.platform === 'win32' ? ['node-pty', 'windows-native-registry'] : ['node-pty']
+      )
+      expect(rebuildCall.ignoreModules).toEqual(['cpu-features'])
+      expect(rebuildCall.force).toBe(true)
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true })
     }
-  )
+  })
 
-  it.skipIf(process.platform === 'win32')(
-    'keeps the Electron load-probe fast path once patched node-pty artifacts exist',
-    () => {
-      const projectDir = mkTempProject()
+  it('keeps the Electron load-probe fast path once patched node-pty artifacts exist', () => {
+    const projectDir = mkTempProject()
 
-      try {
-        const rebuildLogPath = join(projectDir, 'electron-rebuild.log')
-        writeFakeUsableElectronPackage(projectDir)
-        writeFakeElectronRebuild(projectDir, { logPathEnv: 'ORCA_REBUILD_TEST_LOG' })
-        writeFakeLoadableNodePty(projectDir, { nativeDir: '../build/Release/' })
-        writeNodePtyPatchFile(projectDir)
-        writePatchedNodePtyBuildArtifacts(projectDir)
+    try {
+      const rebuildLogPath = join(projectDir, 'electron-rebuild.log')
+      writeFakeUsableElectronPackage(projectDir)
+      writeFakeElectronRebuild(projectDir, { logPathEnv: 'ORCA_REBUILD_TEST_LOG' })
+      writeFakeLoadableNodePty(projectDir, { nativeDir: '../build/Release/' })
+      writeFakeWindowsRegistry(projectDir)
+      writeNodePtyPatchFile(projectDir)
+      writePatchedNodePtyBuildArtifacts(projectDir)
 
-        const result = runRebuildScript(projectDir, {
-          ORCA_REBUILD_TEST_LOG: rebuildLogPath
-        })
+      const result = runRebuildScript(projectDir, {
+        ORCA_REBUILD_TEST_LOG: rebuildLogPath
+      })
 
-        expect(result.status, result.stderr).toBe(0)
-        expect(result.stdout).toContain(
-          'Native modules already load in Electron; skipping rebuild.'
-        )
-        expect(existsSync(rebuildLogPath)).toBe(false)
-      } finally {
-        rmSync(projectDir, { recursive: true, force: true })
-      }
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.stdout).toContain('Native modules already load in Electron; skipping rebuild.')
+      expect(existsSync(rebuildLogPath)).toBe(false)
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true })
     }
-  )
+  })
 
-  it.skipIf(process.platform === 'win32')(
-    'rebuilds when patched artifacts exist but Electron falls back to node-pty prebuilds',
-    () => {
-      const projectDir = mkTempProject()
+  it('rebuilds when patched artifacts exist but Electron falls back to node-pty prebuilds', () => {
+    const projectDir = mkTempProject()
 
-      try {
-        const rebuildLogPath = join(projectDir, 'electron-rebuild.log')
-        writeFakeUsableElectronPackage(projectDir)
-        writeFakeElectronRebuild(projectDir, { logPathEnv: 'ORCA_REBUILD_TEST_LOG' })
-        writeFakeLoadableNodePty(projectDir, { nativeDir: '../prebuilds/darwin-arm64/' })
-        writeNodePtyPatchFile(projectDir)
-        writePatchedNodePtyBuildArtifacts(projectDir)
+    try {
+      const rebuildLogPath = join(projectDir, 'electron-rebuild.log')
+      writeFakeUsableElectronPackage(projectDir)
+      writeFakeElectronRebuild(projectDir, { logPathEnv: 'ORCA_REBUILD_TEST_LOG' })
+      writeFakeLoadableNodePty(projectDir, {
+        nativeDir: `../prebuilds/${process.platform}-${process.arch}/`
+      })
+      writeFakeWindowsRegistry(projectDir)
+      writeNodePtyPatchFile(projectDir)
+      writePatchedNodePtyBuildArtifacts(projectDir)
 
-        const result = runRebuildScript(projectDir, {
-          ORCA_REBUILD_TEST_LOG: rebuildLogPath
-        })
+      const result = runRebuildScript(projectDir, {
+        ORCA_REBUILD_TEST_LOG: rebuildLogPath
+      })
 
-        expect(result.status, result.stderr).toBe(0)
-        expect(result.stdout).toContain('Native modules do not load in Electron; rebuilding.')
-        expect(result.stdout).toContain("expected build/Release so Orca's node-pty patch is active")
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.stdout).toContain('Native modules do not load in Electron; rebuilding.')
+      expect(result.stdout).toContain("expected build/Release so Orca's node-pty patch is active")
 
-        const rebuildCall = JSON.parse(readFileSync(rebuildLogPath, 'utf8').trim())
-        expect(rebuildCall.onlyModules).toEqual(['node-pty'])
-        expect(rebuildCall.force).toBe(true)
-      } finally {
-        rmSync(projectDir, { recursive: true, force: true })
-      }
+      const rebuildCall = JSON.parse(readFileSync(rebuildLogPath, 'utf8').trim())
+      expect(rebuildCall.onlyModules).toEqual(
+        process.platform === 'win32' ? ['node-pty', 'windows-native-registry'] : ['node-pty']
+      )
+      expect(rebuildCall.force).toBe(true)
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true })
     }
-  )
+  })
 })
 
 function mkTempProject() {
@@ -283,8 +280,8 @@ function mkTempProject() {
 function runRebuildScript(projectDir, extraEnv = {}, args = []) {
   const env = {
     ...process.env,
-    npm_config_platform: 'linux',
-    npm_config_arch: 'x64'
+    npm_config_platform: process.platform,
+    npm_config_arch: process.arch
   }
   for (const key of Object.keys(env)) {
     if (
@@ -415,20 +412,26 @@ export async function rebuild(options) {
   )
 }
 
-function writeFakeUsableElectronPackage(projectDir, { platform = 'linux' } = {}) {
+function writeFakeUsableElectronPackage(projectDir, { platform = process.platform } = {}) {
   writeFakeElectronPackage(projectDir)
   const electronDir = join(projectDir, 'node_modules', 'electron')
-  const platformExecutable = platform === 'win32' ? 'electron.exe' : 'electron'
-  const electronPath = join(electronDir, 'dist', platformExecutable)
-  mkdirSync(join(electronDir, 'dist'), { recursive: true })
-  writeFileSync(join(electronDir, 'path.txt'), platformExecutable)
+  const executablePath =
+    platform === 'darwin'
+      ? 'Electron.app/Contents/MacOS/Electron'
+      : platform === 'win32'
+        ? 'electron.exe'
+        : 'electron'
+  const electronPath = join(electronDir, 'dist', executablePath)
+  mkdirSync(dirname(electronPath), { recursive: true })
+  writeFileSync(join(electronDir, 'path.txt'), executablePath)
   writeFileSync(join(electronDir, 'dist', 'version'), 'v41.5.0')
   if (platform === 'win32') {
     copyFileSync(process.execPath, electronPath)
-  } else {
-    writeFileSync(
-      electronPath,
-      `#!/usr/bin/env node
+    return
+  }
+  writeFileSync(
+    electronPath,
+    `#!/usr/bin/env node
 const { spawnSync } = require('node:child_process')
 
 const result = spawnSync(process.execPath, process.argv.slice(2), {
@@ -444,9 +447,8 @@ if (result.error) {
 
 process.exit(result.status ?? 0)
 `
-    )
-    chmodSync(electronPath, 0o755)
-  }
+  )
+  chmodSync(electronPath, 0o755)
 }
 
 function writeFakeNodePtyConptyPayload(projectDir, arch) {
@@ -475,7 +477,13 @@ function writeFakeLoadableNodePty(projectDir, { nativeDir = 'prebuilds/pty' } = 
     join(nodePtyDir, 'lib', 'utils.js'),
     `
 exports.loadNativeModule = function loadNativeModule(nativeName) {
-  return { dir: ${JSON.stringify(nativeDir)}, module: { nativeName } }
+  const dir = ${JSON.stringify(nativeDir)}
+  return {
+    dir,
+    module: dir.replace(/\\\\/g, '/').includes('build/Release/')
+      ? { terminateJobTree() {} }
+      : { nativeName }
+  }
 }
 `
   )
@@ -496,6 +504,10 @@ function writeNodePtyPatchFile(projectDir) {
 }
 
 function writePatchedNodePtyBuildArtifacts(projectDir) {
+  if (process.platform === 'win32') {
+    writeFakeNodePtyConptyPayload(projectDir, process.arch)
+    return
+  }
   const buildDir = join(projectDir, 'node_modules', 'node-pty', 'build', 'Release')
   mkdirSync(buildDir, { recursive: true })
   writeFileSync(join(buildDir, 'pty.node'), '')

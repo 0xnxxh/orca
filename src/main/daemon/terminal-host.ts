@@ -357,7 +357,7 @@ export class TerminalHost {
   }
 
   private async disposeSessions(): Promise<void> {
-    await shutdownTerminalHostSessions(this.sessions, this.onFinalCheckpoint)
+    await shutdownTerminalHostSessions(this.sessions, this.sessionTeardown, this.onFinalCheckpoint)
     this.killedTombstones.clear()
   }
 

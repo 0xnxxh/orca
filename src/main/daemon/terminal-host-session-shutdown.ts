@@ -1,4 +1,5 @@
 import type { Session } from './session'
+import type { TerminalSessionTeardown } from './terminal-session-teardown'
 import type { TakePendingOutputResult, TerminalSnapshot } from './types'
 
 function checkpointTerminalHostSessions(
@@ -28,17 +29,19 @@ function checkpointTerminalHostSessions(
   }
 }
 
-async function disposeTerminalHostSessions(sessions: Iterable<Session>): Promise<void> {
+async function disposeTerminalHostSessions(
+  sessions: ReadonlyMap<string, Session>,
+  sessionTeardown: TerminalSessionTeardown
+): Promise<void> {
   const results = await Promise.allSettled(
-    [...sessions].map(async (session) => {
+    [...sessions].map(async ([sessionId, session]) => {
       session.detachAllClients()
       // Why: live children retain native ownership until physical exit, while
       // exited children must release handles without signalling a recycled pid.
       if (session.isAlive) {
-        await session.forceKillAndDisposeSubprocess()
-      } else {
-        session.disposeSubprocess()
+        await sessionTeardown.killSession(sessionId, session, true)
       }
+      session.disposeSubprocess()
     })
   )
   const rejected = results.find(
@@ -51,6 +54,7 @@ async function disposeTerminalHostSessions(sessions: Iterable<Session>): Promise
 
 export async function shutdownTerminalHostSessions(
   sessions: Map<string, Session>,
+  sessionTeardown: TerminalSessionTeardown,
   onFinalCheckpoint?: (
     sessionId: string,
     snapshot: TerminalSnapshot,
@@ -58,6 +62,6 @@ export async function shutdownTerminalHostSessions(
   ) => void
 ): Promise<void> {
   checkpointTerminalHostSessions(sessions, onFinalCheckpoint)
-  await disposeTerminalHostSessions(sessions.values())
+  await disposeTerminalHostSessions(sessions, sessionTeardown)
   sessions.clear()
 }

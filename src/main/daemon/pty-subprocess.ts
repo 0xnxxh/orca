@@ -496,6 +496,7 @@ function spawnDaemonPtyWithWindowsFallback(args: {
   cols: number
   rows: number
   windowsFallbackAttempts: WindowsShellSpawnAttempt[]
+  windowsAgentJob: boolean
 }): {
   process: pty.IPty
   shellPath: string
@@ -512,7 +513,8 @@ function spawnDaemonPtyWithWindowsFallback(args: {
       env: args.env,
       // Why: bundled ConPTY has the modern wrap-marker behavior xterm expects;
       // legacy system ConPTY can corrupt full-width TUI rows in scrollback.
-      ...(process.platform === 'win32' ? { useConptyDll: true } : {})
+      ...(process.platform === 'win32' ? { useConptyDll: true } : {}),
+      ...(args.windowsAgentJob ? { windowsAgentJob: true } : {})
     })
   }
 
@@ -821,7 +823,13 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
       env,
       cols: size.cols,
       rows: size.rows,
-      windowsFallbackAttempts
+      windowsFallbackAttempts,
+      // Why: WSL owns a Linux process tree, while only explicit native agent
+      // sessions should change Windows process-launch semantics.
+      windowsAgentJob:
+        process.platform === 'win32' &&
+        pathWin32.basename(shellPath).toLowerCase() !== 'wsl.exe' &&
+        Boolean(opts.launchAgent)
     })
     proc = spawned.process
     // Why: a Windows fallback (e.g. cmd.exe) carries its own argv-embedded
@@ -1044,9 +1052,22 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     }
   })
 
+  const nativeWindowsPty =
+    process.platform === 'win32' && pathWin32.basename(shellPath).toLowerCase() !== 'wsl.exe'
+  const windowsJobControl = proc as pty.IPty & {
+    terminateJobTree?(timeoutMs: number): Promise<boolean> | undefined
+  }
+
   return {
     pid: proc.pid,
     shellPath,
+    ...(nativeWindowsPty
+      ? {
+          nativeWindowsPty: true,
+          terminateJobTree: (timeoutMs: number) =>
+            windowsJobControl.terminateJobTree?.call(proc, timeoutMs)
+        }
+      : {}),
     ...(startupCommandDeliveredInShellArgs ? { startupCommandDeliveredInShellArgs: true } : {}),
     getForegroundProcess: () => {
       // Why: node-pty's `.process` getter reports the PTY's live foreground

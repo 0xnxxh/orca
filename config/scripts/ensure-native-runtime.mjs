@@ -64,7 +64,7 @@ function ensureNodeRuntime() {
     if (!initial.ok) {
       printCheckError(initial)
     }
-    runPnpm(['rebuild', 'node-pty'])
+    runPnpm(['rebuild', 'node-pty'], { npm_config_build_from_source: 'true' })
     verifyNodeRuntimeAfterRebuild()
     return
   }
@@ -74,7 +74,12 @@ function ensureNodeRuntime() {
     `[native-runtime] ${formatRuntimeLabel('node')} cannot load native modules; rebuilding ${failedModules.join(', ')} for Node.`
   )
   printCheckError(initial)
-  runPnpm(['rebuild', ...failedModules])
+  runPnpm(
+    ['rebuild', ...failedModules],
+    failedModules.includes('node-pty') && requiresPatchedNodePtySourceBuild()
+      ? { npm_config_build_from_source: 'true' }
+      : {}
+  )
   verifyNodeRuntimeAfterRebuild()
 }
 
@@ -272,6 +277,13 @@ function loadNodePtyNativeModule() {
       `node-pty resolved to ${native.dir}; expected build/Release so Orca's node-pty patch is active`
     )
   }
+  if (
+    requiresPatchedNodePtySourceBuild() &&
+    nativeName === 'conpty' &&
+    typeof native.module.terminateJobTree !== 'function'
+  ) {
+    throw new Error('patched node-pty conpty.node is missing Windows Job teardown methods')
+  }
 }
 
 function assertNodePtyWindowsConptyRuntime(nativeDir) {
@@ -300,10 +312,11 @@ function getPatchedNodePtyRebuildReason() {
     return null
   }
 
-  // Why: a loadable upstream node-pty prebuild is not enough; Orca's Unix
-  // patch only lands in the source-built build/Release artifacts.
+  // Why: upstream prebuilds can load while omitting Orca's patched Unix spawn
+  // handling or Windows Job Object teardown surface.
   const nodePtyDir = resolve(projectDir, 'node_modules', 'node-pty')
-  const artifactPaths = [resolve(nodePtyDir, 'build', 'Release', 'pty.node')]
+  const nativeArtifact = process.platform === 'win32' ? 'conpty.node' : 'pty.node'
+  const artifactPaths = [resolve(nodePtyDir, 'build', 'Release', nativeArtifact)]
   // Why: node-pty only builds spawn-helper on macOS; Linux builds only pty.node.
   if (process.platform === 'darwin') {
     artifactPaths.push(resolve(nodePtyDir, 'build', 'Release', 'spawn-helper'))
@@ -318,10 +331,6 @@ function getPatchedNodePtyRebuildReason() {
 }
 
 function requiresPatchedNodePtySourceBuild() {
-  if (process.platform === 'win32') {
-    return false
-  }
-
   const nodePtyPatchPath = resolve(projectDir, 'config', 'patches', 'node-pty@1.1.0.patch')
   if (!existsSync(nodePtyPatchPath)) {
     return false
@@ -339,10 +348,11 @@ function getWindowsBuildNumber() {
   return match && match.length === 4 ? Number.parseInt(match[3], 10) : 0
 }
 
-function runPnpm(args) {
+function runPnpm(args, extraEnv = {}) {
   const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
   const result = spawnSync(command, args, {
     cwd: projectDir,
+    env: { ...process.env, ...extraEnv },
     stdio: 'inherit',
     shell: process.platform === 'win32'
   })

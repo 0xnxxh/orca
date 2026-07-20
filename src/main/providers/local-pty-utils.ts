@@ -163,6 +163,8 @@ export type ShellSpawnParams = {
    *  fails to spawn, the next real absolute executable is tried with its own
    *  recomputed args/cwd. */
   windowsFallbackAttempts?: WindowsShellSpawnAttempt[]
+  /** Assign native Windows agent shells to Orca's descendant-owning Job. */
+  windowsAgentJob?: boolean
 }
 
 export type ShellSpawnResult = {
@@ -186,8 +188,12 @@ export type ShellSpawnResult = {
 // has the modern wrap-marker behavior xterm expects; legacy system ConPTY can
 // corrupt full-width TUI rows in scrollback. Without this, degraded-mode and
 // fresh-local spawns silently behave differently from daemon terminals.
-function windowsConptyDllOptions(): { useConptyDll: true } | Record<string, never> {
-  return process.platform === 'win32' ? { useConptyDll: true } : {}
+function windowsConptyDllOptions(
+  windowsAgentJob?: boolean
+): { useConptyDll: true; windowsAgentJob?: true } | Record<string, never> {
+  return process.platform === 'win32'
+    ? { useConptyDll: true, ...(windowsAgentJob ? { windowsAgentJob: true } : {}) }
+    : {}
 }
 
 function spawnWindowsFallbackChain(
@@ -205,7 +211,7 @@ function spawnWindowsFallbackChain(
         rows,
         cwd: attempt.effectiveCwd,
         env,
-        ...windowsConptyDllOptions()
+        ...windowsConptyDllOptions(params.windowsAgentJob)
       })
       console.warn(
         `[pty] Primary shell "${params.shellPath}" failed (${primaryError}), fell back to "${attempt.shellPath}"`
@@ -255,7 +261,7 @@ export function spawnShellWithFallback(params: ShellSpawnParams): ShellSpawnResu
           rows,
           cwd,
           env,
-          ...windowsConptyDllOptions()
+          ...windowsConptyDllOptions(params.windowsAgentJob)
         }),
         shellPath
       }

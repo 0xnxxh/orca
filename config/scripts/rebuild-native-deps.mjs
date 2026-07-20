@@ -393,12 +393,13 @@ function getPatchedNodePtyRebuildReason() {
     return null
   }
 
-  // Why: Orca patches node-pty's native Unix spawn path; upstream prebuilds can
-  // load successfully in Electron while missing the patched fd/error handling.
+  // Why: upstream prebuilds can load while omitting Orca's patched Unix spawn
+  // handling or Windows Job Object teardown surface.
   const nodePtyDir = resolve(projectDir, 'node_modules', 'node-pty')
-  const artifactPaths = [resolve(nodePtyDir, 'build', 'Release', 'pty.node')]
+  const nativeArtifact = rebuildPlatform === 'win32' ? 'conpty.node' : 'pty.node'
+  const artifactPaths = [resolve(nodePtyDir, 'build', 'Release', nativeArtifact)]
   // Why: node-pty only builds spawn-helper on macOS; Linux builds only pty.node.
-  if (process.platform === 'darwin') {
+  if (rebuildPlatform === 'darwin') {
     artifactPaths.push(resolve(nodePtyDir, 'build', 'Release', 'spawn-helper'))
   }
   const missingArtifact = artifactPaths.find((artifactPath) => !existsSync(artifactPath))
@@ -412,9 +413,6 @@ function getPatchedNodePtyRebuildReason() {
 
 function requiresPatchedNodePtySourceBuild() {
   if (!onlyModules.includes('node-pty')) {
-    return false
-  }
-  if (rebuildPlatform === 'win32') {
     return false
   }
   if (rebuildPlatform !== osPlatform() || rebuildArch !== process.arch) {
@@ -468,7 +466,8 @@ function loadNativeModule(moduleName) {
   if (moduleName === 'node-pty') {
     projectRequire('node-pty')
     const { loadNativeModule } = projectRequire('node-pty/lib/utils')
-    const native = loadNativeModule(getNodePtyNativeModuleName())
+    const nativeName = getNodePtyNativeModuleName()
+    const native = loadNativeModule(nativeName)
     assertNodePtyWindowsConptyRuntime(native.dir)
     if (requirePatchedNodePtySourceBuild && !isNodePtyReleaseBuildDir(native.dir)) {
       throw new Error(
@@ -476,6 +475,13 @@ function loadNativeModule(moduleName) {
           native.dir +
           '; expected build/Release so Orca\\'s node-pty patch is active'
       )
+    }
+    if (
+      requirePatchedNodePtySourceBuild &&
+      nativeName === 'conpty' &&
+      typeof native.module.terminateJobTree !== 'function'
+    ) {
+      throw new Error('patched node-pty conpty.node is missing Windows Job teardown methods')
     }
     return
   }

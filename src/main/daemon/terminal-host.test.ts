@@ -630,6 +630,9 @@ describe('TerminalHost', () => {
       await killing
       expect(retiredSubprocess.forceKill).not.toHaveBeenCalled()
 
+      killWithDescendantSweepMock.mockImplementation(async (_pid: number, finish: () => void) =>
+        finish()
+      )
       await expect(
         host.createOrAttach({
           sessionId: 'agent-natural-exit',

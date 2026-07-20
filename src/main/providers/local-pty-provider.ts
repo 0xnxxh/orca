@@ -60,6 +60,10 @@ import {
   captureDescendantSnapshot,
   terminateDescendantSnapshot
 } from '../pty-descendant-termination'
+import {
+  requestWindowsDescendantTreeTermination,
+  WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS
+} from '../windows-pty-descendant-termination'
 import { readWindowsConptyProcessIds } from './windows-conpty-process-membership'
 import { canConfirmAgentFromConsolePresence } from './windows-console-foreground'
 import { forceKillPosixPtyProcessGroups } from '../pty/posix-pty-process-groups'
@@ -280,6 +284,35 @@ function killLocalPtyProcess(proc: pty.IPty, immediate: boolean): void {
     return
   }
   forceKillPosixPtyProcessGroups(proc.pid, () => proc.kill('SIGKILL'))
+}
+
+type WindowsPtyJobControl = pty.IPty & {
+  terminateJobTree?(timeoutMs: number): Promise<boolean> | undefined
+}
+
+async function terminateWindowsPtyTree(proc: pty.IPty, closeRoot: () => void): Promise<void> {
+  const nativeCompletion = (proc as WindowsPtyJobControl).terminateJobTree?.call(
+    proc,
+    WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS
+  )
+  if (nativeCompletion) {
+    closeRoot()
+    if (!(await nativeCompletion)) {
+      throw new Error(`Windows PTY Job did not drain for process ${proc.pid}`)
+    }
+    return
+  }
+
+  try {
+    await requestWindowsDescendantTreeTermination(proc.pid)
+    // taskkill cannot identify a descendant after its launcher exits, so a
+    // successful request is cleanup only and never authorizes deletion.
+    throw new Error(`Windows PTY Job ownership unavailable for process ${proc.pid}`)
+  } finally {
+    // Why: fallback failure must not leave the agent root alive, but callers
+    // still receive the failure instead of treating worktree handles as free.
+    closeRoot()
+  }
 }
 
 function armLocalPtyForceKill(
@@ -878,7 +911,13 @@ export class LocalPtyProvider implements IPtyProvider {
       onBeforeFallbackSpawn: historyResult?.histFile
         ? (env, fallbackShell) => updateHistFileForFallback(env, fallbackShell)
         : undefined,
-      windowsFallbackAttempts
+      windowsFallbackAttempts,
+      // Why: only recognized native agents need descendant ownership. WSL
+      // belongs to a separate execution host and plain terminals stay unchanged.
+      windowsAgentJob:
+        process.platform === 'win32' &&
+        !isWslTerminal &&
+        Boolean(args.launchAgent || startupAgentRecognition)
     })
     shellPath = spawnResult.shellPath
     // Why: a Windows fallback (e.g. cmd.exe) embeds its own startup command in
@@ -1176,12 +1215,16 @@ export class LocalPtyProvider implements IPtyProvider {
     const physicalExit = ptyPhysicalExits.get(id)
     // Why: the snapshot must precede any signal — once the shell dies,
     // surviving descendants reparent to pid 1 and a ppid walk can't find them.
-    const descendants = ptyAgentSessionIds.has(id)
-      ? await captureDescendantSnapshot(proc.pid)
-      : null
-    // Why: a natural exit can race the snapshot. Never signal descendants or
-    // a root PID after this exact PTY has lost ownership.
-    if (ptyProcesses.get(id) === proc) {
+    const descendants =
+      process.platform !== 'win32' && ptyAgentSessionIds.has(id)
+        ? await captureDescendantSnapshot(proc.pid)
+        : null
+    const closeRoot = (): void => {
+      // Why: a natural exit can race teardown preparation. Never signal a
+      // numeric PID after this exact PTY loses ownership.
+      if (ptyProcesses.get(id) !== proc) {
+        return
+      }
       if (descendants) {
         terminateDescendantSnapshot(descendants)
       }
@@ -1190,6 +1233,17 @@ export class LocalPtyProvider implements IPtyProvider {
       runPtyCleanup(id)
       operation.rootSignalled = true
       this.requestTrackedPtyShutdown(id, proc, operation.immediate)
+    }
+    if (
+      process.platform === 'win32' &&
+      // Why: wsl.exe only launches a Linux tree; Windows Job/taskkill cannot
+      // prove teardown of descendants owned by that separate execution host.
+      ptyWslDistroById.get(id) === null &&
+      ptyAgentSessionIds.has(id)
+    ) {
+      await terminateWindowsPtyTree(proc, closeRoot)
+    } else {
+      closeRoot()
     }
     await waitForPtyPhysicalExit(id, physicalExit)
   }

@@ -1,5 +1,5 @@
 diff --git a/binding.gyp b/binding.gyp
-index 5f63978b07ab50aaf7523219a2170ec737a6b5db..b3309a07ef99dea7967d7bdd04b9fc3500acacae 100644
+index 5f63978b07ab50aaf7523219a2170ec737a6b5db..c73569f8bac0a79023d26123e10db8a074089cf1 100644
 --- a/binding.gyp
 +++ b/binding.gyp
 @@ -5,9 +5,6 @@
@@ -18,7 +18,7 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..e619813759c6f14694838bdfbd0ea5f8
 +++ b/deps/winpty/src/winpty.gyp
 @@ -10,7 +10,7 @@
      #    make -j4 CXX=i686-w64-mingw32-g++ LDFLAGS="-static -static-libgcc -static-libstdc++"
-
+ 
      'variables': {
 -        'WINPTY_COMMIT_HASH%': '<!(cmd /c "cd shared && GetCommitHash.bat")',
 +        'WINPTY_COMMIT_HASH%': '<!(cmd /c "cd shared && .\\GetCommitHash.bat")',
@@ -54,8 +54,29 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..e619813759c6f14694838bdfbd0ea5f8
              'msvs_settings': {
                  # Specify this setting here to override a setting from somewhere
                  # else, such as node's common.gypi.
+diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
+index 8c4fca9022a6d6f015bca87f61625cde2278f428..201fc1d70a907e31b5a2b33b19a9db20803bc652 100644
+--- a/lib/conpty_console_list_agent.js
++++ b/lib/conpty_console_list_agent.js
+@@ -10,7 +10,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
+ var utils_1 = require("./utils");
+ var getConsoleProcessList = utils_1.loadNativeModule('conpty_console_list').module.getConsoleProcessList;
+ var shellPid = parseInt(process.argv[2], 10);
+-var consoleProcessList = getConsoleProcessList(shellPid);
++var consoleProcessList;
++try {
++    consoleProcessList = getConsoleProcessList(shellPid);
++}
++catch (_a) {
++    // Why: AttachConsole can fail after the shell exits; parent already has this fallback.
++    consoleProcessList = [shellPid];
++}
+ process.send({ consoleProcessList: consoleProcessList });
+ process.exit(0);
+ //# sourceMappingURL=conpty_console_list_agent.js.map
+\ No newline at end of file
 diff --git a/lib/unixTerminal.js b/lib/unixTerminal.js
-index 1ec12f796a822c78fba9ad7f6448c3987e325c23..cec8b67aef02f8199e5606a0d257088bf1865877 100644
+index 1ec12f796a822c78fba9ad7f6448c3987e325c23..3c4ae8e7818379a4f6f09ee740959292a2c3515f 100644
 --- a/lib/unixTerminal.js
 +++ b/lib/unixTerminal.js
 @@ -28,8 +28,12 @@ var native = utils_1.loadNativeModule('pty');
@@ -73,31 +94,75 @@ index 1ec12f796a822c78fba9ad7f6448c3987e325c23..cec8b67aef02f8199e5606a0d257088b
  var DEFAULT_FILE = 'sh';
  var DEFAULT_NAME = 'xterm';
  var DESTROY_SOCKET_TIMEOUT_MS = 200;
-diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
-index ccc111c9e03a4a661ccfd5d8e8f0ee699571b5dd..f92c6bef7d46dc35c941c87ef186aa46d8ed9c44 100644
---- a/lib/conpty_console_list_agent.js
-+++ b/lib/conpty_console_list_agent.js
-@@ -9,7 +9,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
- var utils_1 = require("./utils");
- var getConsoleProcessList = utils_1.loadNativeModule('conpty_console_list').module.getConsoleProcessList;
- var shellPid = parseInt(process.argv[2], 10);
--var consoleProcessList = getConsoleProcessList(shellPid);
-+var consoleProcessList;
-+try {
-+    consoleProcessList = getConsoleProcessList(shellPid);
-+}
-+catch (_a) {
-+    // Why: AttachConsole can fail after the shell exits; parent already has this fallback.
-+    consoleProcessList = [shellPid];
-+}
- process.send({ consoleProcessList: consoleProcessList });
- process.exit(0);
- //# sourceMappingURL=conpty_console_list_agent.js.map
+diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
+index a358ffb177357e177661033c1b092f9c9d0e5f5a..acc4f5ac94f38db2184ba7d3da382c720ca7807a 100644
+--- a/lib/windowsPtyAgent.js
++++ b/lib/windowsPtyAgent.js
+@@ -26,10 +26,11 @@ var FLUSH_DATA_INTERVAL = 1000;
+  * and winpty.
+  */
+ var WindowsPtyAgent = /** @class */ (function () {
+-    function WindowsPtyAgent(file, args, env, cwd, cols, rows, debug, _useConpty, _useConptyDll, conptyInheritCursor) {
++    function WindowsPtyAgent(file, args, env, cwd, cols, rows, debug, _useConpty, _useConptyDll, conptyInheritCursor, windowsAgentJob) {
+         var _this = this;
+         if (_useConptyDll === void 0) { _useConptyDll = false; }
+         if (conptyInheritCursor === void 0) { conptyInheritCursor = false; }
++        if (windowsAgentJob === void 0) { windowsAgentJob = false; }
+         this._useConpty = _useConpty;
+         this._useConptyDll = _useConptyDll;
+         this._pid = 0;
+@@ -86,7 +87,7 @@ var WindowsPtyAgent = /** @class */ (function () {
+         });
+         this._inSocket.setEncoding('utf8');
+         if (this._useConpty) {
+-            var connect = this._ptyNative.connect(this._pty, commandLine, cwd, env, this._useConptyDll, function (c) { return _this._$onProcessExit(c); });
++            var connect = this._ptyNative.connect(this._pty, commandLine, cwd, env, this._useConptyDll, windowsAgentJob, function (c) { return _this._$onProcessExit(c); });
+             this._innerPid = connect.pid;
+         }
+     }
+@@ -130,6 +131,13 @@ var WindowsPtyAgent = /** @class */ (function () {
+             this._ptyNative.clear(this._pty, this._useConptyDll);
+         }
+     };
++    WindowsPtyAgent.prototype.terminateJobTree = function (timeoutMs) {
++        if (!this._useConpty) {
++            return undefined;
++        }
++        var _a;
++        return (_a = this._ptyNative.terminateJobTree) === null || _a === void 0 ? void 0 : _a.call(this._ptyNative, this._pty, timeoutMs);
++    };
+     WindowsPtyAgent.prototype.kill = function () {
+         var _this = this;
+         // Tell the agent to kill the pty, this releases handles to the process
+diff --git a/lib/windowsTerminal.js b/lib/windowsTerminal.js
+index 3c38f89d14cece8081782a9600ebc582b7c2a62a..5790166246b1cbe6d33e0563b6498901dd80b1a9 100644
+--- a/lib/windowsTerminal.js
++++ b/lib/windowsTerminal.js
+@@ -48,7 +48,7 @@ var WindowsTerminal = /** @class */ (function (_super) {
+         // Functions that need to run after `ready` event is emitted.
+         _this._deferreds = [];
+         // Create new termal.
+-        _this._agent = new windowsPtyAgent_1.WindowsPtyAgent(file, args, parsedEnv, cwd, _this._cols, _this._rows, false, opt.useConpty, opt.useConptyDll, opt.conptyInheritCursor);
++        _this._agent = new windowsPtyAgent_1.WindowsPtyAgent(file, args, parsedEnv, cwd, _this._cols, _this._rows, false, opt.useConpty, opt.useConptyDll, opt.conptyInheritCursor, opt.windowsAgentJob);
+         _this._socket = _this._agent.outSocket;
+         // Not available until `ready` event emitted.
+         _this._pid = _this._agent.innerPid;
+@@ -144,6 +144,9 @@ var WindowsTerminal = /** @class */ (function (_super) {
+             _this.kill();
+         });
+     };
++    WindowsTerminal.prototype.terminateJobTree = function (timeoutMs) {
++        return this._agent.terminateJobTree(timeoutMs);
++    };
+     WindowsTerminal.prototype.kill = function (signal) {
+         var _this = this;
+         this._deferNoArgs(function () {
 diff --git a/src/conpty_console_list_agent.ts b/src/conpty_console_list_agent.ts
-index f6a653893e0b9b548c514db29d75599538ee1acb..1d5400489f200ef0161ca687e672e1cc02d29c95 100644
+index 181ccabbbe9c4948a9725fb1db907a68e9de01fc..24519545c34e0f9a4438a814dd1feb9fd18517d1 100644
 --- a/src/conpty_console_list_agent.ts
 +++ b/src/conpty_console_list_agent.ts
-@@ -11,5 +11,11 @@ import { loadNativeModule } from './utils';
+@@ -10,6 +10,12 @@ import { loadNativeModule } from './utils';
+ 
  const getConsoleProcessList = loadNativeModule('conpty_console_list').module.getConsoleProcessList;
  const shellPid = parseInt(process.argv[2], 10);
 -const consoleProcessList = getConsoleProcessList(shellPid);
@@ -110,8 +175,38 @@ index f6a653893e0b9b548c514db29d75599538ee1acb..1d5400489f200ef0161ca687e672e1cc
 +}
  process.send!({ consoleProcessList });
  process.exit(0);
+diff --git a/src/interfaces.ts b/src/interfaces.ts
+index a269e77bd2acf31c762b0fd8e13e6bf435fd7d07..adc2e8d10190de6bbeea1f2b53320ef92e0b2935 100644
+--- a/src/interfaces.ts
++++ b/src/interfaces.ts
+@@ -121,6 +121,8 @@ export interface IWindowsPtyForkOptions extends IBasePtyForkOptions {
+   useConpty?: boolean;
+   useConptyDll?: boolean;
+   conptyInheritCursor?: boolean;
++  /** Orca-specific: own this ConPTY and all descendants in a kill-on-close Job. */
++  windowsAgentJob?: boolean;
+ }
+ 
+ export interface IPtyOpenOptions {
+diff --git a/src/native.d.ts b/src/native.d.ts
+index c53e086b4968d6fb0bf601ace3a813809433fedb..7d7ae975dabe17e5b9dadc3c8d09364fc438c421 100644
+--- a/src/native.d.ts
++++ b/src/native.d.ts
+@@ -4,10 +4,11 @@
+ 
+ interface IConptyNative {
+   startProcess(file: string, cols: number, rows: number, debug: boolean, pipeName: string, conptyInheritCursor: boolean, useConptyDll: boolean): IConptyProcess;
+-  connect(ptyId: number, commandLine: string, cwd: string, env: string[], useConptyDll: boolean, onExitCallback: (exitCode: number) => void): { pid: number };
++  connect(ptyId: number, commandLine: string, cwd: string, env: string[], useConptyDll: boolean, windowsAgentJob: boolean, onExitCallback: (exitCode: number) => void): { pid: number };
+   resize(ptyId: number, cols: number, rows: number, useConptyDll: boolean): void;
+   clear(ptyId: number, useConptyDll: boolean): void;
+   kill(ptyId: number, useConptyDll: boolean): void;
++  terminateJobTree?(ptyId: number, timeoutMs: number): Promise<boolean> | undefined;
+ }
+ 
+ interface IWinptyNative {
 diff --git a/src/unix/pty.cc b/src/unix/pty.cc
-index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca850564e6368d9 100644
+index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..5c28e6465a6fd506cbc6b548b6d9cb918d3be0da 100644
 --- a/src/unix/pty.cc
 +++ b/src/unix/pty.cc
 @@ -23,7 +23,9 @@
@@ -122,11 +217,11 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
  #include <unistd.h>
 +#include <string>
  #include <thread>
-
+ 
  #include <sys/types.h>
 @@ -237,13 +239,23 @@ pty_getproc(int, char *);
  #endif
-
+ 
  #if defined(__APPLE__) || defined(__OpenBSD__)
 +struct pty_spawn_error {
 +  const char* step;
@@ -147,12 +242,12 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 -                int* err);
 +                pty_spawn_error* err);
  #endif
-
+ 
  struct DelBuf {
 @@ -367,10 +379,11 @@ Napi::Value PtyFork(const Napi::CallbackInfo& info) {
      argv[i + 3] = strdup(arg.c_str());
    }
-
+ 
 -  int err = -1;
 -  pty_posix_spawn(argv, env, term, &winp, &master, &pid, &err);
 -  if (err != 0) {
@@ -167,7 +262,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
      throw Napi::Error::New(napiEnv, "Could not set master fd to nonblocking.");
 @@ -684,15 +697,73 @@ pty_getproc(int fd, char *tty) {
  #endif
-
+ 
  #if defined(__APPLE__)
 +static const char*
 +pty_errno_name(int errnum) {
@@ -238,7 +333,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +  bool acts_initialized = false;
 +  posix_spawnattr_t attrs;
 +  bool attrs_initialized = false;
-
+ 
    for (; count < 3; count++) {
      low_fds[count] = posix_openpt(O_RDWR);
 @@ -706,80 +777,118 @@ pty_posix_spawn(char** argv, char** env,
@@ -255,7 +350,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +    pty_set_spawn_error(err, "grantpt", errno);
 +    goto done;
    }
-
+ 
 -  int res = grantpt(*master) || unlockpt(*master);
 +  res = unlockpt(*master);
    if (res == -1) {
@@ -263,7 +358,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +    pty_set_spawn_error(err, "unlockpt", errno);
 +    goto done;
    }
-
+ 
    // Use TIOCPTYGNAME instead of ptsname() to avoid threading problems.
 -  int slave;
    char slave_pty_name[128];
@@ -273,14 +368,14 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +    pty_set_spawn_error(err, "ioctl_TIOCPTYGNAME", errno);
 +    goto done;
    }
-
+ 
    slave = open(slave_pty_name, O_RDWR | O_NOCTTY);
    if (slave == -1) {
 -    return;
 +    pty_set_spawn_error(err, "open_slave", errno, "slave", slave_pty_name);
 +    goto done;
    }
-
+ 
    if (termp) {
      res = tcsetattr(slave, TCSANOW, termp);
      if (res == -1) {
@@ -289,7 +384,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +      goto done;
      };
    }
-
+ 
    if (winp) {
      res = ioctl(slave, TIOCSWINSZ, winp);
      if (res == -1) {
@@ -298,7 +393,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +      goto done;
      }
    }
-
+ 
 -  posix_spawn_file_actions_t acts;
 -  posix_spawn_file_actions_init(&acts);
 +  res = posix_spawn_file_actions_init(&acts);
@@ -312,7 +407,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
    posix_spawn_file_actions_adddup2(&acts, slave, STDERR_FILENO);
    posix_spawn_file_actions_addclose(&acts, slave);
    posix_spawn_file_actions_addclose(&acts, *master);
-
+ 
 -  posix_spawnattr_t attrs;
 -  posix_spawnattr_init(&attrs);
 -  *err = posix_spawnattr_setflags(&attrs, flags);
@@ -328,7 +423,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +    pty_set_spawn_error(err, "posix_spawnattr_setflags", res);
      goto done;
    }
-
+ 
    sigset_t signal_set;
    /* Reset all signal the child to their default behavior */
    sigfillset(&signal_set);
@@ -339,7 +434,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +    pty_set_spawn_error(err, "posix_spawnattr_setsigdefault", res);
      goto done;
    }
-
+ 
    /* Reset the signal mask for all signals */
    sigemptyset(&signal_set);
 -  *err = posix_spawnattr_setsigmask(&attrs, &signal_set);
@@ -349,7 +444,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +    pty_set_spawn_error(err, "posix_spawnattr_setsigmask", res);
      goto done;
    }
-
+ 
    do
 -    *err = posix_spawn(pid, argv[0], &acts, &attrs, argv, env);
 -  while (*err == EINTR);
@@ -374,7 +469,7 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
 +    close(*master);
 +    *master = -1;
 +  }
-
+ 
 -  for (; count > 0; count--) {
 -    close(low_fds[count]);
 +  for (size_t i = 0; i <= count && i < 3; i++) {
@@ -384,3 +479,364 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
    }
  }
  #endif
+diff --git a/src/win/conpty.cc b/src/win/conpty.cc
+index 7b286d3d644c26141df516929703aa6e129df4b2..dc8dd58bf6138d3b3cc2bede3efb6fdf7dbeb28f 100644
+--- a/src/win/conpty.cc
++++ b/src/win/conpty.cc
+@@ -45,6 +45,7 @@ struct pty_baton {
+   HPCON hpc;
+ 
+   HANDLE hShell;
++  HANDLE hJob = nullptr;
+ 
+   pty_baton(int _id, HANDLE _hIn, HANDLE _hOut, HPCON _hpc) : id(_id), hIn(_hIn), hOut(_hOut), hpc(_hpc) {};
+ };
+@@ -91,7 +92,18 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+         delete th;
+       });
+   *th = std::thread([tsfn = std::move(tsfn), baton] {
+-    auto callback = [](Napi::Env env, Napi::Function cb, ExitEvent *exit_event) {
++    auto callback = [baton](Napi::Env env, Napi::Function cb, ExitEvent *exit_event) {
++      if (baton->hShell != nullptr) {
++        GetExitCodeProcess(baton->hShell, (LPDWORD)(&exit_event->exit_code));
++        CloseHandle(baton->hShell);
++        baton->hShell = nullptr;
++      }
++      HANDLE hJob = baton->hJob;
++      baton->hJob = nullptr;
++      assert(remove_pty_baton(baton->id));
++      if (hJob != nullptr) {
++        CloseHandle(hJob);
++      }
+       cb.Call({Napi::Number::New(env, exit_event->exit_code)});
+       delete exit_event;
+     };
+@@ -99,15 +111,41 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+     ExitEvent *exit_event = new ExitEvent;
+     // Wait for process to complete.
+     WaitForSingleObject(baton->hShell, INFINITE);
+-    // Get process exit code.
+-    GetExitCodeProcess(baton->hShell, (LPDWORD)(&exit_event->exit_code));
+-    // Clean up handles
+-    CloseHandle(baton->hShell);
+-    assert(remove_pty_baton(baton->id));
++
++    if (baton->hJob != nullptr) {
++      // Why: an agent root can exit before its detached tools. Do not publish
++      // PTY exit until Windows proves every member has released its handles.
++      TerminateJobObject(baton->hJob, 1);
++      while (true) {
++        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
++        if (QueryInformationJobObject(
++            baton->hJob,
++            JobObjectBasicAccountingInformation,
++            &accounting,
++            sizeof(accounting),
++            nullptr) && accounting.ActiveProcesses == 0) {
++          break;
++        }
++        // A permanent query/termination failure deliberately keeps the PTY
++        // owned and un-reaped so destructive callers cannot race deletion.
++        Sleep(25);
++      }
++    }
+ 
+     auto status = tsfn.BlockingCall(exit_event, callback); // In main thread
+     switch (status) {
+       case napi_closing:
++        // The environment no longer accepts JS calls, so no native method can
++        // race these per-baton handles during finalization.
++        if (baton->hShell != nullptr) {
++          CloseHandle(baton->hShell);
++          baton->hShell = nullptr;
++        }
++        if (baton->hJob != nullptr) {
++          CloseHandle(baton->hJob);
++          baton->hJob = nullptr;
++        }
++        delete exit_event;
+         break;
+ 
+       case napi_queue_full:
+@@ -333,14 +371,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+   std::stringstream errorText;
+   BOOL fSuccess = FALSE;
+ 
+-  if (info.Length() != 6 ||
++  if (info.Length() != 7 ||
+       !info[0].IsNumber() ||
+       !info[1].IsString() ||
+       !info[2].IsString() ||
+       !info[3].IsArray() ||
+       !info[4].IsBoolean() ||
+-      !info[5].IsFunction()) {
+-    throw Napi::Error::New(env, "Usage: pty.connect(id, cmdline, cwd, env, useConptyDll, exitCallback)");
++      !info[5].IsBoolean() ||
++      !info[6].IsFunction()) {
++    throw Napi::Error::New(env, "Usage: pty.connect(id, cmdline, cwd, env, useConptyDll, windowsAgentJob, exitCallback)");
+   }
+ 
+   const int id = info[0].As<Napi::Number>().Int32Value();
+@@ -348,7 +387,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+   const std::wstring cwd(path_util::to_wstring(info[2].As<Napi::String>()));
+   const Napi::Array envValues = info[3].As<Napi::Array>();
+   const bool useConptyDll = info[4].As<Napi::Boolean>().Value();
+-  Napi::Function exitCallback = info[5].As<Napi::Function>();
++  const bool windowsAgentJob = info[5].As<Napi::Boolean>().Value();
++  Napi::Function exitCallback = info[6].As<Napi::Function>();
+ 
+   // Fetch pty handle from ID and start process
+   pty_baton* handle = get_pty_baton(id);
+@@ -416,7 +456,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+       nullptr,                      // lpProcessAttributes
+       nullptr,                      // lpThreadAttributes
+       false,                        // bInheritHandles VERY IMPORTANT that this is false
+-      EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, // dwCreationFlags
++      EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT |
++        (windowsAgentJob ? CREATE_SUSPENDED : 0), // dwCreationFlags
+       envArg,                       // lpEnvironment
+       mutableCwd.get(),             // lpCurrentDirectory
+       &siEx.StartupInfo,            // lpStartupInfo
+@@ -426,6 +467,39 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+     throw errorWithCode(info, "Cannot create process");
+   }
+ 
++  if (windowsAgentJob) {
++    // Job setup is atomic while the shell is suspended; partial ownership is unsafe.
++    HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
++    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
++    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
++    if (hJob == nullptr ||
++        !SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) ||
++        !AssignProcessToJobObject(hJob, piClient.hProcess)) {
++      const DWORD jobError = GetLastError();
++      TerminateProcess(piClient.hProcess, 1);
++      WaitForSingleObject(piClient.hProcess, INFINITE);
++      CloseHandle(piClient.hThread); CloseHandle(piClient.hProcess);
++      if (hJob != nullptr) CloseHandle(hJob);
++      SetLastError(jobError);
++      throw errorWithCode(info, "Cannot assign process to Job");
++    }
++    handle->hJob = hJob;
++
++    if (ResumeThread(piClient.hThread) == static_cast<DWORD>(-1)) {
++      const DWORD resumeError = GetLastError();
++      TerminateProcess(piClient.hProcess, 1);
++      WaitForSingleObject(piClient.hProcess, INFINITE);
++      CloseHandle(piClient.hThread);
++      CloseHandle(piClient.hProcess);
++      if (handle->hJob != nullptr) {
++        CloseHandle(handle->hJob);
++        handle->hJob = nullptr;
++      }
++      SetLastError(resumeError);
++      throw errorWithCode(info, "Cannot resume process");
++    }
++  }
++
+   HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
+   bool fLoadedDll = hLibrary != nullptr;
+   if (useConptyDll && fLoadedDll)
+@@ -567,6 +641,109 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+   return env.Undefined();
+ }
+ 
++struct JobTerminationResult {
++  bool drained = false;
++};
++
++static Napi::Value PtyTerminateJobTree(const Napi::CallbackInfo& info) {
++  Napi::Env env(info.Env());
++  Napi::HandleScope scope(env);
++
++  if (info.Length() != 2 || !info[0].IsNumber() || !info[1].IsNumber()) {
++    throw Napi::Error::New(env, "Usage: pty.terminateJobTree(id, timeoutMs)");
++  }
++
++  const int id = info[0].As<Napi::Number>().Int32Value();
++  const pty_baton* handle = get_pty_baton(id);
++  if (handle == nullptr || handle->hJob == nullptr) {
++    return env.Undefined();
++  }
++
++  const double timeoutValue = info[1].As<Napi::Number>().DoubleValue();
++  if (timeoutValue < 1 || timeoutValue > 60000) {
++    throw Napi::RangeError::New(env, "timeoutMs must be between 1 and 60000");
++  }
++
++  HANDLE hJob = nullptr;
++  if (!DuplicateHandle(
++      GetCurrentProcess(),
++      handle->hJob,
++      GetCurrentProcess(),
++      &hJob,
++      0,
++      FALSE,
++      DUPLICATE_SAME_ACCESS)) {
++    return env.Undefined();
++  }
++  if (!TerminateJobObject(hJob, 1)) {
++    CloseHandle(hJob);
++    return env.Undefined();
++  }
++
++  // Why: termination is asynchronous. Keep a duplicate Job handle until the
++  // OS reports no members instead of treating the root process exit as proof.
++  auto deferred = Napi::Promise::Deferred::New(env);
++  std::thread *th = new std::thread;
++  auto tsfn = Napi::ThreadSafeFunction::New(
++      env,
++      Napi::Function::New(env, [](const Napi::CallbackInfo&) {}),
++      "PtyTerminateJobTree_resource",
++      0,
++      1,
++      [th](Napi::Env) {
++        th->join();
++        delete th;
++      });
++  const DWORD timeoutMs = static_cast<DWORD>(timeoutValue);
++  *th = std::thread([tsfn = std::move(tsfn), deferred, hJob, timeoutMs] {
++    auto *result = new JobTerminationResult;
++    const ULONGLONG startedAt = GetTickCount64();
++    while (true) {
++      JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
++      if (!QueryInformationJobObject(
++          hJob,
++          JobObjectBasicAccountingInformation,
++          &accounting,
++          sizeof(accounting),
++          nullptr)) {
++        break;
++      }
++      if (accounting.ActiveProcesses == 0) {
++        result->drained = true;
++        break;
++      }
++      if (GetTickCount64() - startedAt >= timeoutMs) {
++        break;
++      }
++      Sleep(25);
++    }
++    CloseHandle(hJob);
++
++    const auto status = tsfn.BlockingCall(
++        result,
++        [deferred](Napi::Env env, Napi::Function, JobTerminationResult *result) {
++          deferred.Resolve(Napi::Boolean::New(env, result->drained));
++          delete result;
++        });
++    switch (status) {
++      case napi_closing:
++        delete result;
++        break;
++      case napi_queue_full:
++        Napi::Error::Fatal("PtyTerminateJobTree", "Queue was full");
++      case napi_ok:
++        if (tsfn.Release() != napi_ok) {
++          Napi::Error::Fatal("PtyTerminateJobTree", "ThreadSafeFunction.Release() failed");
++        }
++        break;
++      default:
++        Napi::Error::Fatal("PtyTerminateJobTree", "ThreadSafeFunction.BlockingCall() failed");
++    }
++  });
++
++  return deferred.Promise();
++}
++
+ /**
+ * Init
+ */
+@@ -577,6 +754,7 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+   exports.Set("resize", Napi::Function::New(env, PtyResize));
+   exports.Set("clear", Napi::Function::New(env, PtyClear));
+   exports.Set("kill", Napi::Function::New(env, PtyKill));
++  exports.Set("terminateJobTree", Napi::Function::New(env, PtyTerminateJobTree));
+   return exports;
+ };
+ 
+diff --git a/src/windowsPtyAgent.ts b/src/windowsPtyAgent.ts
+index d7054449516f0c9a62af351c2caa17331206d530..43e44678826d5883691931875a91cdf7ae141dd0 100644
+--- a/src/windowsPtyAgent.ts
++++ b/src/windowsPtyAgent.ts
+@@ -56,7 +56,8 @@ export class WindowsPtyAgent {
+     debug: boolean,
+     private _useConpty: boolean | undefined,
+     private _useConptyDll: boolean = false,
+-    conptyInheritCursor: boolean = false
++    conptyInheritCursor: boolean = false,
++    windowsAgentJob: boolean = false
+   ) {
+     if (this._useConpty === undefined || this._useConpty === true) {
+       this._useConpty = this._getWindowsBuildNumber() >= 18309;
+@@ -116,7 +117,7 @@ export class WindowsPtyAgent {
+     this._inSocket.setEncoding('utf8');
+ 
+     if (this._useConpty) {
+-      const connect = (this._ptyNative as IConptyNative).connect(this._pty, commandLine, cwd, env, this._useConptyDll, c => this._$onProcessExit(c));
++      const connect = (this._ptyNative as IConptyNative).connect(this._pty, commandLine, cwd, env, this._useConptyDll, windowsAgentJob, c => this._$onProcessExit(c));
+       this._innerPid = connect.pid;
+     }
+   }
+@@ -138,6 +139,13 @@ export class WindowsPtyAgent {
+     }
+   }
+ 
++  public terminateJobTree(timeoutMs: number): Promise<boolean> | undefined {
++    if (!this._useConpty) {
++      return undefined;
++    }
++    return (this._ptyNative as IConptyNative).terminateJobTree?.(this._pty, timeoutMs);
++  }
++
+   public kill(): void {
+     // Tell the agent to kill the pty, this releases handles to the process
+     if (this._useConpty) {
+diff --git a/src/windowsTerminal.ts b/src/windowsTerminal.ts
+index 13f6c6dbb3d7965c4699568f4704be3b6a33d947..a1189c0fd9d2bc4d9cb31271c9924b60acc04585 100644
+--- a/src/windowsTerminal.ts
++++ b/src/windowsTerminal.ts
+@@ -48,7 +48,7 @@ export class WindowsTerminal extends Terminal {
+     this._deferreds = [];
+ 
+     // Create new termal.
+-    this._agent = new WindowsPtyAgent(file, args, parsedEnv, cwd, this._cols, this._rows, false, opt.useConpty, opt.useConptyDll, opt.conptyInheritCursor);
++    this._agent = new WindowsPtyAgent(file, args, parsedEnv, cwd, this._cols, this._rows, false, opt.useConpty, opt.useConptyDll, opt.conptyInheritCursor, opt.windowsAgentJob);
+     this._socket = this._agent.outSocket;
+ 
+     // Not available until `ready` event emitted.
+@@ -161,6 +161,10 @@ export class WindowsTerminal extends Terminal {
+     });
+   }
+ 
++  public terminateJobTree(timeoutMs: number): Promise<boolean> | undefined {
++    return this._agent.terminateJobTree(timeoutMs);
++  }
++
+   public kill(signal?: string): void {
+     this._deferNoArgs(() => {
+       if (signal) {
+diff --git a/typings/node-pty.d.ts b/typings/node-pty.d.ts
+index 6f050ff1d97b8d3477be7ee95d2af516bd9517b7..4387cafd16596dd0f4674549ff2deecb884f30a7 100644
+--- a/typings/node-pty.d.ts
++++ b/typings/node-pty.d.ts
+@@ -108,6 +108,9 @@ declare module 'node-pty' {
+      * @see https://docs.microsoft.com/en-us/windows/console/createpseudoconsole
+      */
+     conptyInheritCursor?: boolean;
++
++    /** Orca-specific: own this ConPTY and all descendants in a kill-on-close Job. */
++    windowsAgentJob?: boolean;
+   }
+ 
+   /**
+@@ -183,6 +186,9 @@ declare module 'node-pty' {
+      */
+     kill(signal?: string): void;
+ 
++    /** Terminates and waits for the Windows ConPTY Job Object to drain. */
++    terminateJobTree?(timeoutMs: number): Promise<boolean> | undefined;
++
+     /**
+      * Pauses the pty for customizable flow control.
+      */

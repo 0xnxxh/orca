@@ -101,6 +101,7 @@ function mockPtyProcess(pid = 12345) {
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
+    terminateJobTree: vi.fn(async () => true),
     process: 'zsh',
     onData: vi.fn((cb: (data: string) => void) => {
       onDataListeners.push(cb)
@@ -194,6 +195,54 @@ describe('createPtySubprocess', () => {
         name: 'xterm-256color'
       })
     )
+  })
+
+  it('requests and exposes spawn-time Windows Job teardown for an agent ConPTY', async () => {
+    const proc = mockPtyProcess()
+    spawnMock.mockReturnValue(proc)
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+
+    try {
+      const handle = createPtySubprocess({
+        sessionId: 'windows-agent-job',
+        cols: 80,
+        rows: 24,
+        launchAgent: 'claude',
+        env: {}
+      })
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({ windowsAgentJob: true })
+      )
+      await expect(handle.terminateJobTree?.(1234)).resolves.toBe(true)
+      expect(proc.terminateJobTree).toHaveBeenCalledWith(1234)
+    } finally {
+      if (platform) {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    }
+  })
+
+  it('does not request a Windows Job for a plain ConPTY', () => {
+    spawnMock.mockReturnValue(mockPtyProcess())
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+
+    try {
+      createPtySubprocess({ sessionId: 'windows-plain', cols: 80, rows: 24, env: {} })
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.not.objectContaining({ windowsAgentJob: true })
+      )
+    } finally {
+      if (platform) {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    }
   })
 
   it('appends Git prompt guards after the detached daemon inherited config', () => {

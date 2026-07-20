@@ -1,4 +1,8 @@
 import { killWithDescendantSweep } from '../pty-descendant-termination'
+import {
+  requestWindowsDescendantTreeTermination,
+  WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS
+} from '../windows-pty-descendant-termination'
 import type { Session } from './session'
 
 type AgentTeardownOperation = {
@@ -9,8 +13,8 @@ type AgentTeardownOperation = {
   session: Session
 }
 
-/** Owns agent teardown by session id until descendant capture and root
- * signalling finish, even when the root exits and its Session is reaped. */
+/** Owns agent teardown by session id until descendant termination and root
+ * signalling finish, even if the Session is reaped. */
 export class TerminalSessionTeardown {
   private operations = new Map<string, AgentTeardownOperation>()
 
@@ -49,6 +53,20 @@ export class TerminalSessionTeardown {
     session: Session,
     immediate: boolean
   ): void | Promise<void> {
+    return this.killCoordinatedSession(sessionId, session, immediate, (killRoot, ownsRoot) => {
+      if (process.platform === 'win32' && session.ownsNativeWindowsPty) {
+        return this.terminateWindowsTree(session, killRoot, ownsRoot)
+      }
+      return killWithDescendantSweep(session.pid, killRoot, { ownsRoot })
+    })
+  }
+
+  private killCoordinatedSession(
+    sessionId: string,
+    session: Session,
+    immediate: boolean,
+    prepareRootKill: (killRoot: () => void, ownsRoot: () => boolean) => Promise<void>
+  ): void | Promise<void> {
     const pending = this.operations.get(sessionId)
     if (pending) {
       // Why: an immediate caller is a stronger teardown request and must not
@@ -76,32 +94,39 @@ export class TerminalSessionTeardown {
       rootCompletion: Promise.resolve(),
       session
     }
-    const sweep = Promise.resolve(
-      killWithDescendantSweep(
-        session.pid,
-        () => {
-          // Why: natural exit reaps the PID while ps is running. Never signal that
-          // stale numeric PID after the Session no longer represents a live root.
-          if (!session.isAlive) {
-            return
-          }
-          entry.rootSignalled = true
-          if (entry.immediate) {
-            entry.rootCompletion = session.forceKillAndWaitForExit()
-          } else {
-            session.signalTerminationRoot()
-          }
-        },
-        {
-          // Why: the descendant rows are only authoritative while this exact
-          // Session still owns the root PID captured by ps.
-          ownsRoot: () => this.sessions.get(sessionId) === session && session.isAlive
-        }
-      )
-    )
+    const ownsRoot = (): boolean => this.sessions.get(sessionId) === session && session.isAlive
+    const killRoot = (): void => {
+      // Why: natural exit reaps the PID while preparation is running. Never
+      // signal that stale numeric PID after this Session loses the live root.
+      if (!ownsRoot()) {
+        return
+      }
+      entry.rootSignalled = true
+      if (entry.immediate) {
+        entry.rootCompletion = session.forceKillAndWaitForExit()
+      } else {
+        session.signalTerminationRoot()
+      }
+    }
+    const sweep = Promise.resolve(prepareRootKill(killRoot, ownsRoot))
     // Why: descendant capture completion only proves signals were requested;
-    // destructive callers must retain the native owner until OS-confirmed exit.
-    const operation = sweep.then(() => entry.rootCompletion)
+    // callers must retain the native owner until OS-confirmed exit.
+    const operation = sweep.then(
+      () => entry.rootCompletion,
+      async (preparationError: unknown) => {
+        try {
+          // Why: Windows failure paths still signal the root. Observe that
+          // completion before rejecting so its timeout cannot escape unhandled.
+          await entry.rootCompletion
+        } catch (rootError) {
+          throw new AggregateError(
+            [preparationError, rootError],
+            'Agent descendant teardown and root exit both failed'
+          )
+        }
+        throw preparationError
+      }
+    )
     entry.promise = operation
     this.operations.set(sessionId, entry)
     const clearOperation = (): void => {
@@ -111,5 +136,34 @@ export class TerminalSessionTeardown {
     }
     void operation.then(clearOperation, clearOperation)
     return operation
+  }
+
+  private async terminateWindowsTree(
+    session: Session,
+    killRoot: () => void,
+    ownsRoot: () => boolean
+  ): Promise<void> {
+    const nativeCompletion = session.terminateJobTree(WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS)
+    if (nativeCompletion) {
+      killRoot()
+      if (!(await nativeCompletion)) {
+        throw new Error(`Windows PTY Job did not drain for process ${session.pid}`)
+      }
+      return
+    }
+    if (!ownsRoot()) {
+      throw new Error(`Windows PTY root exited without Job ownership for process ${session.pid}`)
+    }
+
+    try {
+      await requestWindowsDescendantTreeTermination(session.pid)
+      // taskkill cannot identify a descendant after its launcher exits, so a
+      // successful request is cleanup only and never authorizes deletion.
+      throw new Error(`Windows PTY Job ownership unavailable for process ${session.pid}`)
+    } finally {
+      // Why: fallback failure must not leave the agent root running, while the
+      // rejected operation still keeps destructive callers fail-closed.
+      killRoot()
+    }
   }
 }
