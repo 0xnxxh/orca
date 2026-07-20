@@ -128,7 +128,7 @@ function resolveAgentForegroundProcessFromPs(
     if (recognized) {
       // Why: return the outer wrapper (omp) rather than the deeper wrapped child
       // (pi) of a shell→omp→pi tree — see resolveOuterWrapperForegroundProcess.
-      return resolveOuterWrapperForegroundProcess(recognized, candidate.depth, candidates)
+      return resolveOuterWrapperForegroundProcess(recognized, candidate, candidates)
     }
   }
   return null

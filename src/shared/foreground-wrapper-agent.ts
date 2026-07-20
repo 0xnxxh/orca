@@ -4,42 +4,53 @@ import {
 } from './agent-process-recognition'
 import { getSyntheticAgentTitleProfile } from './synthetic-agent-title'
 
-export type ForegroundAgentCandidate = { command: string; depth: number }
+export type ForegroundAgentCandidate = {
+  pid: number
+  ppid: number
+  command: string
+  name?: string
+}
+
+export function shouldInspectOuterWrapperForegroundProcess(
+  process: RecognizedAgentProcess
+): boolean {
+  // Why: only Pi is currently embedded by a same-group wrapper; scanning OMP would add a subprocess to every relay poll.
+  return process.agent === 'pi'
+}
 
 /**
- * Collapse a foreground read onto the OUTER wrapper when one agent embeds
- * another of the same title-identity group. OMP runs as `shell → omp → pi` and
- * both are recognized agents, so the deepest-foreground scan otherwise returns
- * the wrapped `pi` child — but `omp` is the agent the user launched and sees.
- * Given the reader's recognized winner plus every descendant, return the
- * shallowest same-group agent (the wrapper). Un-nested or cross-group reads
- * (bare Pi, Codex, etc.) are returned unchanged, and the result is stable
- * regardless of which of omp/pi holds the terminal foreground at the sampled
- * instant — which is what stops the OMP↔Pi tab-icon flicker at its source.
+ * Collapse a foreground read onto its outermost same-title-group ancestor.
+ * Why: OMP embeds Pi, while depth alone cannot distinguish wrappers from sibling jobs.
  */
 export function resolveOuterWrapperForegroundProcess(
   winner: RecognizedAgentProcess,
-  winnerDepth: number,
+  winnerCandidate: ForegroundAgentCandidate,
   descendants: readonly ForegroundAgentCandidate[]
 ): string {
   const winnerGroup = getSyntheticAgentTitleProfile(winner.agent)?.titleIdentityGroup
   if (!winnerGroup) {
     return winner.processName
   }
+  const candidatesByPid = new Map(descendants.map((candidate) => [candidate.pid, candidate]))
+  const seen = new Set<number>([winnerCandidate.pid])
   let outerProcessName = winner.processName
-  let outerDepth = winnerDepth
-  for (const candidate of descendants) {
-    if (candidate.depth >= outerDepth) {
-      continue
+  let parentPid = winnerCandidate.ppid
+  while (!seen.has(parentPid)) {
+    seen.add(parentPid)
+    const candidate = candidatesByPid.get(parentPid)
+    if (!candidate) {
+      break
     }
-    const recognized = recognizeAgentProcessFromCommandLine(candidate.command)
-    if (!recognized) {
-      continue
-    }
-    if (getSyntheticAgentTitleProfile(recognized.agent)?.titleIdentityGroup === winnerGroup) {
+    const recognized =
+      recognizeAgentProcessFromCommandLine(candidate.command) ??
+      recognizeAgentProcessFromCommandLine(candidate.name)
+    if (
+      recognized &&
+      getSyntheticAgentTitleProfile(recognized.agent)?.titleIdentityGroup === winnerGroup
+    ) {
       outerProcessName = recognized.processName
-      outerDepth = candidate.depth
     }
+    parentPid = candidate.ppid
   }
   return outerProcessName
 }

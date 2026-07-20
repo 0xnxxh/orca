@@ -8,33 +8,48 @@ describe('resolveOuterWrapperForegroundProcess', () => {
   it('collapses a wrapped pi read onto the shallower omp wrapper', () => {
     // Winner is the deeper pi (depth 2); omp is its wrapper at depth 1.
     expect(
-      resolveOuterWrapperForegroundProcess(pi, 2, [
-        { command: 'pi', depth: 2 },
-        { command: 'omp', depth: 1 }
+      resolveOuterWrapperForegroundProcess(pi, { pid: 102, ppid: 101, command: 'pi' }, [
+        { pid: 102, ppid: 101, command: 'pi' },
+        { pid: 101, ppid: 100, command: 'omp' }
       ])
     ).toBe('omp')
   })
 
   it('keeps bare pi when no same-group wrapper is present', () => {
-    expect(resolveOuterWrapperForegroundProcess(pi, 1, [{ command: 'pi', depth: 1 }])).toBe('pi')
+    const barePi = { pid: 101, ppid: 100, command: 'pi' }
+    expect(resolveOuterWrapperForegroundProcess(pi, barePi, [barePi])).toBe('pi')
   })
 
   it('leaves a cross-group agent (codex) untouched even under a deeper same-name child', () => {
     const codex = { agent: 'codex' as const, processName: 'codex' }
     expect(
-      resolveOuterWrapperForegroundProcess(codex, 2, [
-        { command: 'node /usr/bin/codex', depth: 2 },
-        { command: 'bash -l', depth: 1 }
-      ])
+      resolveOuterWrapperForegroundProcess(
+        codex,
+        { pid: 102, ppid: 101, command: 'node /usr/bin/codex' },
+        [
+          { pid: 102, ppid: 101, command: 'node /usr/bin/codex' },
+          { pid: 101, ppid: 100, command: 'bash -l' }
+        ]
+      )
     ).toBe('codex')
   })
 
   it('does not promote a deeper pi over an already-outer omp winner', () => {
     expect(
-      resolveOuterWrapperForegroundProcess(omp, 1, [
-        { command: 'omp', depth: 1 },
-        { command: 'pi', depth: 2 }
+      resolveOuterWrapperForegroundProcess(omp, { pid: 101, ppid: 100, command: 'omp' }, [
+        { pid: 101, ppid: 100, command: 'omp' },
+        { pid: 102, ppid: 101, command: 'pi' }
       ])
     ).toBe('omp')
+  })
+
+  it('does not treat an unrelated shallower omp sibling as the pi wrapper', () => {
+    expect(
+      resolveOuterWrapperForegroundProcess(pi, { pid: 103, ppid: 102, command: 'pi' }, [
+        { pid: 101, ppid: 100, command: 'omp' },
+        { pid: 102, ppid: 100, command: 'node server.js' },
+        { pid: 103, ppid: 102, command: 'pi' }
+      ])
+    ).toBe('pi')
   })
 })

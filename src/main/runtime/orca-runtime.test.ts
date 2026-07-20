@@ -14611,11 +14611,7 @@ describe('OrcaRuntimeService', () => {
     unsubscribe()
   })
 
-  // STA-944 / #6364: OMP runs as shell→omp→pi, and its status extension posts
-  // /hook/omp so the hook durably carries `omp`. On a restored/mirrored pane the
-  // omp launchAgent is dropped, and the foreground reader returns the deeper `pi`
-  // child. The host must keep publishing `omp` from the hook, not normalize it
-  // onto the (oscillating) pi foreground — otherwise the mirrored tab flips OMP↔Pi.
+  // Why: restored OMP panes can retain the hook while the wrapped Pi owns foreground (#6364).
   it('keeps an OMP hook labeled OMP when the wrapped pi child owns the foreground', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'omp-flicker-pty' })
     const runtime = new OrcaRuntimeService(store)
@@ -14645,7 +14641,8 @@ describe('OrcaRuntimeService', () => {
 
     runtime.onPtyData(
       'omp-flicker-pty',
-      '\x1b]9999;{"state":"working","prompt":"fix the bug","agentType":"omp"}\x07',
+      '\x1b]0;⠋ Pi\x07' +
+        '\x1b]9999;{"state":"working","prompt":"fix the bug","agentType":"omp"}\x07',
       100
     )
 
@@ -14653,7 +14650,12 @@ describe('OrcaRuntimeService', () => {
     expect(events[0]?.tabs[0]).toEqual(
       expect.objectContaining({
         type: 'terminal',
-        agentStatus: expect.objectContaining({ state: 'working', agentType: 'omp' })
+        title: '⠋ OMP',
+        agentStatus: expect.objectContaining({
+          state: 'working',
+          agentType: 'omp',
+          terminalTitle: '⠋ OMP'
+        })
       })
     )
 

@@ -109,9 +109,7 @@ describe('resolveAgentForegroundProcess', () => {
     await expect(resolveAgentForegroundProcess(100, 'node')).resolves.toBe('codex')
   })
 
-  // #6364 / STA-944: OMP runs as shell→omp→pi and both are recognized agents.
-  // The deepest-foreground scan must not surface the wrapped `pi` engine — the
-  // user launched `omp`, so the outer wrapper is the identity.
+  // Why: OMP embeds Pi, but the outer process is the user-visible identity (#6364).
   it('reports the outer omp wrapper, not the wrapped pi child', async () => {
     mockPs(['101 100 S+   omp', '102 101 S+   pi'].join('\n'))
 
@@ -130,6 +128,76 @@ describe('resolveAgentForegroundProcess', () => {
     mockPs(['101 100 S+   pi'].join('\n'))
 
     await expect(resolveAgentForegroundProcess(100, 'pi')).resolves.toBe('pi')
+  })
+
+  it('reports the outer omp wrapper on Windows', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    execFileMock.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, cb: unknown) => {
+        const callback = cb as (err: unknown, result: { stdout: string; stderr: string }) => void
+        callback(null, {
+          stdout: windowsProcessJsonRows([
+            {
+              CommandLine: 'powershell.exe',
+              Name: 'powershell.exe',
+              ParentProcessId: 99,
+              ProcessId: 100
+            },
+            {
+              CommandLine: 'omp.exe',
+              Name: 'omp.exe',
+              ParentProcessId: 100,
+              ProcessId: 101
+            },
+            {
+              CommandLine: 'pi.exe',
+              Name: 'pi.exe',
+              ParentProcessId: 101,
+              ProcessId: 102
+            }
+          ]),
+          stderr: ''
+        })
+      }
+    )
+
+    await expect(resolveAgentForegroundProcess(100, 'pi.exe')).resolves.toBe('omp')
+  })
+
+  it('keeps the Windows omp ancestor when context selects one of multiple pi descendants', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    mockPs(
+      windowsProcessJsonRows([
+        {
+          CommandLine: 'powershell.exe',
+          Name: 'powershell.exe',
+          ParentProcessId: 99,
+          ProcessId: 100
+        },
+        {
+          CommandLine: 'omp.exe',
+          Name: 'omp.exe',
+          ParentProcessId: 100,
+          ProcessId: 101
+        },
+        {
+          CommandLine: 'pi.exe --cwd C:\\repo\\orca',
+          Name: 'pi.exe',
+          ParentProcessId: 101,
+          ProcessId: 102
+        },
+        {
+          CommandLine: 'pi.exe --cwd C:\\repo\\other',
+          Name: 'pi.exe',
+          ParentProcessId: 100,
+          ProcessId: 103
+        }
+      ])
+    )
+
+    await expect(
+      resolveAgentForegroundProcess(100, 'pi.exe', { contextPaths: ['C:\\repo\\orca'] })
+    ).resolves.toBe('omp')
   })
 
   it('treats a fresh POSIX snapshot missing the PTY root as unavailable', async () => {

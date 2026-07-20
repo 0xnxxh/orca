@@ -22412,6 +22412,12 @@ export class OrcaRuntimeService {
       const paneKey = isTerminalLeafId(tab.leafId)
         ? makePaneKey(tab.parentTabId, tab.leafId)
         : `${tab.parentTabId}:${legacyPaneId ?? tab.leafId}`
+      const mobileStatusPty = livePty ?? pty
+      // Why: headless hooks live only in main's retained rows; reuse this lookup
+      // for both title ownership and status publication so the two cannot diverge.
+      const retainedAgentStatus = tab.agentStatus
+        ? null
+        : this.getFreshRetainedAgentStatusForMobileTab(paneKey, liveLeafPty ?? mobileStatusPty, tab)
       const leafTitle = leaf
         ? getLatestAgentCandidateTitle(
             { title: leaf.paneTitle, updatedAt: leaf.paneTitleUpdatedAt },
@@ -22425,13 +22431,12 @@ export class OrcaRuntimeService {
           )
         : null
       const launchAgent = tab.launchAgent ?? liveLeafPty?.launchAgent ?? pty?.launchAgent ?? null
-      // Why: rank the pane's own hook identity above foregroundAgent. OMP's hook
-      // posts /hook/omp (runtime exec detection) so it durably carries `omp`, while
-      // foregroundAgent reads the deeper wrapped `pi` of a shell→omp→pi tree and
-      // oscillates — normalizing the hook onto it flipped OMP tabs to Pi once
-      // launchAgent was dropped (restored/mirrored pane). Unify on the shared owner.
+      // Why: a retained OMP hook stays stable while wrapper foreground reads can report Pi.
       const ownerAgent =
-        resolvePaneAgentOwner({ launchAgent, hookAgent: tab.agentStatus?.agentType ?? null }) ??
+        resolvePaneAgentOwner({
+          launchAgent,
+          hookAgent: tab.agentStatus?.agentType ?? retainedAgentStatus?.payload.agentType ?? null
+        }) ??
         liveLeafPty?.foregroundAgent ??
         pty?.foregroundAgent ??
         null
@@ -22493,7 +22498,13 @@ export class OrcaRuntimeService {
         ...(tab.ptyId ? { ptyId: tab.ptyId } : {}),
         ...(tab.terminalTheme ? { terminalTheme: tab.terminalTheme } : {}),
         ...(launchAgent ? { launchAgent } : {}),
-        ...(agentStatus ?? this.buildPtyMobileAgentStatus(livePty ?? pty, tab, terminalHandle)),
+        ...(agentStatus ??
+          this.buildPtyMobileAgentStatus(
+            mobileStatusPty,
+            tab,
+            terminalHandle,
+            retainedAgentStatus
+          )),
         ...(tab.parentLayout ? { parentLayout: tab.parentLayout } : {}),
         ...(tab.startupCwd ? { startupCwd: tab.startupCwd } : {}),
         ...(tab.color != null ? { color: tab.color } : {}),
@@ -22548,10 +22559,10 @@ export class OrcaRuntimeService {
   private buildPtyMobileAgentStatus(
     pty: RuntimePtyWorktreeRecord | null,
     tab: RuntimeMobileSessionTerminalTab,
-    terminalHandle: string | null
+    terminalHandle: string | null,
+    retained: RuntimeAgentRowSnapshot | null
   ): { agentStatus: AgentStatusEntry } | Record<string, never> {
     const paneKey = this.getMobileTerminalPaneKey(tab)
-    const retained = this.getFreshRetainedAgentStatusForMobileTab(paneKey, pty, tab)
     if (!pty?.lastAgentStatus && !retained) {
       return {}
     }
@@ -22576,9 +22587,7 @@ export class OrcaRuntimeService {
         return {}
       }
     }
-    // Why: the retained hook identity outranks foregroundAgent — OMP's hook posts
-    // /hook/omp so it durably carries `omp`, while foregroundAgent reads the wrapped
-    // `pi` of a shell→omp→pi tree and oscillates. See buildMobileSessionSnapshot.
+    // Why: a retained OMP hook stays stable while wrapper foreground reads can report Pi.
     const ownerAgent =
       resolvePaneAgentOwner({
         launchAgent: tab.launchAgent ?? pty?.launchAgent ?? null,

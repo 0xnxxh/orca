@@ -11,8 +11,10 @@ import {
 } from '../shared/agent-process-recognition'
 import { getFirstCommandToken } from '../shared/command-token-scanner'
 import { getProcessTableSnapshot, type ProcessTableRow } from '../shared/process-table-snapshot'
-import { resolveOuterWrapperForegroundProcess } from '../shared/foreground-wrapper-agent'
-import { getSyntheticAgentTitleProfile } from '../shared/synthetic-agent-title'
+import {
+  resolveOuterWrapperForegroundProcess,
+  shouldInspectOuterWrapperForegroundProcess
+} from '../shared/foreground-wrapper-agent'
 import { isShellProcess } from '../shared/shell-process-detection'
 import {
   resolveWindowsAgentForegroundProcess,
@@ -236,7 +238,7 @@ async function getRecognizedForegroundDescendant(
       if (recognized) {
         // Why: return the outer wrapper (omp) rather than the deeper wrapped child
         // (pi) of a shell→omp→pi tree — see resolveOuterWrapperForegroundProcess.
-        return resolveOuterWrapperForegroundProcess(recognized, candidate.depth, candidates)
+        return resolveOuterWrapperForegroundProcess(recognized, candidate, candidates)
       }
     }
   } catch {
@@ -255,10 +257,15 @@ export async function getForegroundProcessName(
   if (fallbackProcess) {
     const fallbackRecognition = recognizeAgentProcess(fallbackProcess)
     if (fallbackRecognition) {
-      // Why: node-pty may report the wrapped `pi` of a shell→omp→pi tree as the
-      // foreground. A pi-compatible fallback still needs the descendant scan to
-      // surface the outer `omp` wrapper; never downgrade below the fallback.
-      if (getSyntheticAgentTitleProfile(fallbackRecognition.agent)?.titleIdentityGroup) {
+      // Why: node-pty can report OMP's wrapped Pi; enrich only that ambiguous
+      // fallback so authoritative OMP reads keep the zero-subprocess fast path.
+      if (shouldInspectOuterWrapperForegroundProcess(fallbackRecognition)) {
+        if (process.platform === 'win32') {
+          return (
+            (await resolveWindowsAgentForegroundProcess(pid, fallbackProcess, {})) ??
+            fallbackRecognition.processName
+          )
+        }
         return (
           (await getRecognizedForegroundDescendant(pid, fallbackProcess)) ??
           fallbackRecognition.processName
