@@ -5,11 +5,17 @@ import type { PRCheckDetail, PRCheckRunDetails } from './types'
 const GITLAB_TRACE_TAIL_LINES = 200
 
 function sliceTraceTail(trace: string): string {
-  const lines = trace.split(/\r?\n/)
-  if (lines.length <= GITLAB_TRACE_TAIL_LINES) {
-    return trace
+  // Walk back from the end over N newlines instead of splitting the whole
+  // (possibly multi-MB) trace into an array we'd immediately discard all but the tail of.
+  let cut = trace.length
+  for (let remaining = GITLAB_TRACE_TAIL_LINES; remaining > 0; remaining--) {
+    const newline = trace.lastIndexOf('\n', cut - 1)
+    if (newline === -1) {
+      return trace
+    }
+    cut = newline
   }
-  return lines.slice(-GITLAB_TRACE_TAIL_LINES).join('\n')
+  return trace.slice(cut + 1)
 }
 
 /**
