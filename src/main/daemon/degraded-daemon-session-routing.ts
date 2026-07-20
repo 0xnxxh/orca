@@ -1,5 +1,8 @@
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
-import { DaemonPtySessionRouting } from './daemon-pty-session-routing'
+import {
+  DaemonPtySessionRouting,
+  type DaemonPtyInventoryRefresh
+} from './daemon-pty-session-routing'
 import type { IPtyProvider, PtyProcessInfo } from '../providers/types'
 
 export type DegradedManagedPtyProvider = IPtyProvider & {
@@ -30,11 +33,28 @@ export class DegradedDaemonSessionRouting {
     )
   }
 
+  beginInventoryRefresh(): DaemonPtyInventoryRefresh {
+    return this.daemonRouting.beginInventoryRefresh()
+  }
+
+  finishInventoryRefresh(refresh: DaemonPtyInventoryRefresh): void {
+    this.daemonRouting.finishInventoryRefresh(refresh)
+  }
+
+  addDaemonInventorySession(
+    sessionId: string,
+    adapter: DaemonPtyAdapter,
+    refresh: DaemonPtyInventoryRefresh
+  ): void {
+    this.daemonRouting.addInventorySession(sessionId, adapter, refresh)
+  }
+
   add(sessionId: string, provider: DegradedManagedPtyProvider): void {
     if (this.isDaemonAdapter(provider)) {
       this.daemonRouting.add(sessionId, provider)
       return
     }
+    this.daemonRouting.recordExternalMutation(sessionId)
     this.providers.set(sessionId, provider)
   }
 
@@ -43,16 +63,25 @@ export class DegradedDaemonSessionRouting {
       this.daemonRouting.remove(sessionId, provider)
       return
     }
+    this.daemonRouting.recordExternalMutation(sessionId)
     if (this.providers.get(sessionId) === provider) {
       this.providers.delete(sessionId)
     }
   }
 
-  refreshSessions(fallbackSessions: PtyProcessInfo[], daemonResults: PtyProcessInfo[][]): string[] {
+  refreshSessions(
+    fallbackSessions: PtyProcessInfo[],
+    daemonResults: PtyProcessInfo[][],
+    refresh: DaemonPtyInventoryRefresh
+  ): string[] {
     for (const session of fallbackSessions) {
-      this.providers.set(session.id, this.fallback)
+      this.daemonRouting.applyInventoryMutation(session.id, refresh, () => {
+        this.providers.set(session.id, this.fallback)
+      })
     }
-    const ambiguousIds = new Set(this.daemonRouting.refreshLive(this.daemonAdapters, daemonResults))
+    const ambiguousIds = new Set(
+      this.daemonRouting.refreshLive(this.daemonAdapters, daemonResults, refresh)
+    )
     for (const sessionId of this.providers.keys()) {
       if (
         this.daemonRouting.get(sessionId) !== undefined ||

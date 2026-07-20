@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DaemonPtyRouter } from './daemon-pty-router'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
-import type { PtyBackgroundStreamEvent, PtySpawnOptions, PtySpawnResult } from '../providers/types'
+import type {
+  PtyBackgroundStreamEvent,
+  PtyProcessInfo,
+  PtySpawnOptions,
+  PtySpawnResult
+} from '../providers/types'
 import { GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION } from './types'
 
 type AdapterMock = DaemonPtyAdapter & {
@@ -182,6 +187,31 @@ describe('DaemonPtyRouter', () => {
     expect(current.write).toHaveBeenCalledWith(fresh.id, 'new\n')
   })
 
+  it('does not discover a session from an inventory response older than exit', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['exited-session'])
+    let resolveLegacy!: (sessions: PtyProcessInfo[]) => void
+    vi.mocked(legacy.listProcesses).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLegacy = resolve
+      })
+    )
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    const discovery = router.discoverLegacySessions()
+    legacy.emitExit('exited-session', 0)
+    resolveLegacy([{ id: 'exited-session', cwd: '', title: 'stale legacy' }])
+    await discovery
+    await router.spawn({ sessionId: 'exited-session', cols: 80, rows: 24 })
+
+    expect(current.spawn).toHaveBeenCalledWith({
+      sessionId: 'exited-session',
+      cols: 80,
+      rows: 24
+    })
+    expect(legacy.spawn).not.toHaveBeenCalled()
+  })
+
   it('routes background hints and authoritative snapshots to the session owner', async () => {
     const current = createAdapter('current')
     const legacy = createAdapter('legacy', ['legacy-session'])
@@ -289,7 +319,61 @@ describe('DaemonPtyRouter', () => {
     expect(legacy.write).toHaveBeenCalledWith('legacy-session', 'after recovery\n')
   })
 
-  it('rejects destructive teardown when recovered daemons report a duplicate session id', async () => {
+  it('does not restore a route from an inventory response older than exit', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['exited-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    await router.discoverLegacySessions()
+    let resolveLegacy!: (sessions: PtyProcessInfo[]) => void
+    vi.mocked(legacy.listProcesses).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveLegacy = resolve
+      })
+    )
+
+    const listing = router.listProcesses()
+    legacy.emitExit('exited-session', 0)
+    resolveLegacy([{ id: 'exited-session', cwd: '', title: 'stale legacy' }])
+    await listing
+    await router.spawn({ sessionId: 'exited-session', cols: 80, rows: 24 })
+
+    expect(current.spawn).toHaveBeenCalledWith({
+      sessionId: 'exited-session',
+      cols: 80,
+      rows: 24
+    })
+    expect(legacy.spawn).not.toHaveBeenCalled()
+  })
+
+  it('keeps a later overlapping inventory result over an earlier response', async () => {
+    const current = createAdapter('current', ['migrated-session'])
+    const legacy = createAdapter('legacy')
+    let resolveOldCurrent!: (sessions: PtyProcessInfo[]) => void
+    let resolveOldLegacy!: (sessions: PtyProcessInfo[]) => void
+    vi.mocked(current.listProcesses).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOldCurrent = resolve
+      })
+    )
+    vi.mocked(legacy.listProcesses).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOldLegacy = resolve
+      })
+    )
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    const olderListing = router.listProcesses()
+    await router.listProcesses()
+    resolveOldCurrent([])
+    resolveOldLegacy([{ id: 'migrated-session', cwd: '', title: 'stale legacy' }])
+    await olderListing
+    router.write('migrated-session', 'new owner\n')
+
+    expect(current.write).toHaveBeenCalledWith('migrated-session', 'new owner\n')
+    expect(legacy.write).not.toHaveBeenCalled()
+  })
+
+  it('rejects shutdown when recovered daemons report a duplicate session id', async () => {
     const current = createAdapter('current', ['duplicate-session'])
     const legacy = createAdapter('legacy', ['duplicate-session'])
     vi.mocked(legacy.listProcesses).mockRejectedValueOnce(new Error('legacy unavailable'))
@@ -301,8 +385,7 @@ describe('DaemonPtyRouter', () => {
     )
     await expect(
       router.shutdown('duplicate-session', {
-        immediate: true,
-        deadlineMs: Date.now() + 5_000
+        immediate: true
       })
     ).rejects.toThrow('Ambiguous PTY session ownership')
     expect(current.shutdown).not.toHaveBeenCalled()
@@ -320,8 +403,7 @@ describe('DaemonPtyRouter', () => {
 
     await expect(
       router.shutdown('duplicate-session', {
-        immediate: true,
-        deadlineMs: Date.now() + 5_000
+        immediate: true
       })
     ).rejects.toThrow('Ambiguous PTY session ownership')
     expect(firstLegacy.shutdown).not.toHaveBeenCalled()

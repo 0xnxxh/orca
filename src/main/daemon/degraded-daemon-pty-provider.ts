@@ -58,13 +58,16 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
 
   async discoverDaemonSessions(): Promise<void> {
     for (const adapter of this.allDaemonAdapters()) {
+      const refresh = this.sessionRouting.beginInventoryRefresh()
       try {
         const sessions = await adapter.listProcesses()
         for (const session of sessions) {
-          this.sessionRouting.add(session.id, adapter)
+          this.sessionRouting.addDaemonInventorySession(session.id, adapter, refresh)
         }
       } catch (error) {
         console.warn('[daemon] Failed to discover degraded daemon sessions', error)
+      } finally {
+        this.sessionRouting.finishInventoryRefresh(refresh)
       }
     }
   }
@@ -109,7 +112,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
-    if (opts.deadlineMs !== undefined && this.sessionRouting.isAmbiguous(id)) {
+    if (this.sessionRouting.isAmbiguous(id)) {
       throw this.ambiguousOwnershipError([id])
     }
     const target = this.providerFor(id)
@@ -178,8 +181,15 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
 
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
     const providers = this.allProviders()
-    const results = await Promise.all(providers.map((provider) => provider.listProcesses(opts)))
-    const ambiguousIds = this.sessionRouting.refreshSessions(results[0], results.slice(1))
+    const refresh = this.sessionRouting.beginInventoryRefresh()
+    let results: PtyProcessInfo[][]
+    try {
+      results = await Promise.all(providers.map((provider) => provider.listProcesses(opts)))
+    } catch (error) {
+      this.sessionRouting.finishInventoryRefresh(refresh)
+      throw error
+    }
+    const ambiguousIds = this.sessionRouting.refreshSessions(results[0], results.slice(1), refresh)
     if (ambiguousIds.length > 0) {
       throw this.ambiguousOwnershipError(ambiguousIds)
     }
@@ -246,11 +256,11 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   ackColdRestore(sessionId: string): void {
-    this.daemonAdapterFor(sessionId)?.ackColdRestore(sessionId)
+    this.sessionRouting.daemonFor(sessionId)?.ackColdRestore(sessionId)
   }
 
   clearTombstone(sessionId: string): void {
-    this.daemonAdapterFor(sessionId)?.clearTombstone(sessionId)
+    this.sessionRouting.daemonFor(sessionId)?.clearTombstone(sessionId)
   }
 
   async reconcileOnStartup(validWorktreeIds: Set<string>): Promise<{
@@ -325,10 +335,6 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
 
   private providerFor(sessionId: string): DegradedManagedPtyProvider {
     return this.sessionRouting.providerFor(sessionId, this.current)
-  }
-
-  private daemonAdapterFor(sessionId: string): DaemonPtyAdapter | null {
-    return this.sessionRouting.daemonFor(sessionId)
   }
 
   private ambiguousOwnershipError(sessionIds: string[]): Error {

@@ -46,13 +46,16 @@ export class DaemonPtyRouter implements IPtyProvider {
 
   async discoverLegacySessions(): Promise<void> {
     for (const adapter of this.legacy) {
+      const refresh = this.sessionRouting.beginInventoryRefresh()
       try {
         const sessions = await adapter.listProcesses()
         for (const session of sessions) {
-          this.sessionRouting.add(session.id, adapter)
+          this.sessionRouting.addInventorySession(session.id, adapter, refresh)
         }
       } catch (error) {
         console.warn('[daemon] Failed to discover legacy daemon sessions', error)
+      } finally {
+        this.sessionRouting.finishInventoryRefresh(refresh)
       }
     }
   }
@@ -106,7 +109,7 @@ export class DaemonPtyRouter implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
-    if (opts.deadlineMs !== undefined && this.sessionRouting.isAmbiguous(id)) {
+    if (this.sessionRouting.isAmbiguous(id)) {
       throw this.ambiguousOwnershipError([id])
     }
     const adapter = this.adapterFor(id)
@@ -185,8 +188,15 @@ export class DaemonPtyRouter implements IPtyProvider {
     // Why: runtime exact-stop/liveness flows must fail closed if any adapter
     // cannot provide a trustworthy process list.
     const adapters = this.allAdapters()
-    const results = await Promise.all(adapters.map((adapter) => adapter.listProcesses(opts)))
-    const ambiguousIds = this.sessionRouting.refreshLive(adapters, results)
+    const refresh = this.sessionRouting.beginInventoryRefresh()
+    let results: PtyProcessInfo[][]
+    try {
+      results = await Promise.all(adapters.map((adapter) => adapter.listProcesses(opts)))
+    } catch (error) {
+      this.sessionRouting.finishInventoryRefresh(refresh)
+      throw error
+    }
+    const ambiguousIds = this.sessionRouting.refreshLive(adapters, results, refresh)
     if (ambiguousIds.length > 0) {
       throw this.ambiguousOwnershipError(ambiguousIds)
     }

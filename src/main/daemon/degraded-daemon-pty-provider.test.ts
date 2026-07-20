@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DegradedDaemonPtyProvider } from './degraded-daemon-pty-provider'
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
-import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
+import type {
+  IPtyProvider,
+  PtyProcessInfo,
+  PtySpawnOptions,
+  PtySpawnResult
+} from '../providers/types'
 
 type ProviderMock = IPtyProvider & {
   emitData: (id: string, data: string, sequenceChars?: number) => void
@@ -190,7 +195,33 @@ describe('DegradedDaemonPtyProvider', () => {
     warn.mockRestore()
   })
 
-  it('fails deadline teardown closed for duplicate ownership across degraded daemons', async () => {
+  it('does not restore a daemon route from an inventory response older than exit', async () => {
+    const current = createDaemonAdapter('daemon', ['exited-session'])
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    await provider.discoverDaemonSessions()
+    let resolveDaemon!: (sessions: PtyProcessInfo[]) => void
+    vi.mocked(current.listProcesses).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDaemon = resolve
+      })
+    )
+
+    const listing = provider.listProcesses()
+    current.emitExit('exited-session', 0)
+    resolveDaemon([{ id: 'exited-session', cwd: '', title: 'stale daemon' }])
+    await listing
+    await provider.spawn({ sessionId: 'exited-session', cols: 80, rows: 24 })
+
+    expect(fallback.spawn).toHaveBeenCalledWith({
+      sessionId: 'exited-session',
+      cols: 80,
+      rows: 24
+    })
+    expect(current.spawn).not.toHaveBeenCalled()
+  })
+
+  it('fails shutdown closed for duplicate ownership across degraded daemons', async () => {
     const current = createDaemonAdapter('current', ['duplicate-session'])
     const legacy = createDaemonAdapter('legacy', ['duplicate-session'])
     const fallback = createProvider('fallback')
@@ -200,8 +231,7 @@ describe('DegradedDaemonPtyProvider', () => {
 
     await expect(
       provider.shutdown('duplicate-session', {
-        immediate: true,
-        deadlineMs: Date.now() + 1000
+        immediate: true
       })
     ).rejects.toThrow(
       'Ambiguous PTY session ownership across degraded providers: duplicate-session'
@@ -229,8 +259,7 @@ describe('DegradedDaemonPtyProvider', () => {
     )
     await expect(
       provider.shutdown('duplicate-session', {
-        immediate: true,
-        deadlineMs: Date.now() + 1000
+        immediate: true
       })
     ).rejects.toThrow(
       'Ambiguous PTY session ownership across degraded providers: duplicate-session'
