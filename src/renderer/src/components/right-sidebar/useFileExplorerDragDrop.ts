@@ -16,6 +16,7 @@ import { remapOpenEditorTabsForPathChange } from '@/lib/remap-open-editor-tabs-f
 import { requestEditorSaveQuiesce } from '@/components/editor/editor-autosave'
 import { commitFileExplorerOp } from './fileExplorerUndoRedo'
 import { renameRuntimePath } from '@/runtime/runtime-file-client'
+import { recordSelfMoveForOpenTabs } from '@/lib/record-self-move-for-open-tabs'
 import { getRightSidebarWorktreeRuntimeSettings } from './file-explorer-runtime-owner'
 
 function extractIpcErrorMessage(err: unknown, fallback: string): string {
@@ -243,15 +244,21 @@ export function useFileExplorerDragDrop({
             worktreePath,
             connectionId
           }
+          // Why: stamp the self-move before the on-disk rename so the watcher
+          // echo is recognized as self-initiated even if it arrives before the
+          // remap (which here trails two refreshDir round-trips) runs.
+          recordSelfMoveForOpenTabs(sourcePath, newPath)
           await renameRuntimePath(fileContext, sourcePath, newPath)
 
           commitFileExplorerOp({
             undo: async () => {
+              recordSelfMoveForOpenTabs(newPath, sourcePath)
               await renameRuntimePath(fileContext, newPath, sourcePath)
               await Promise.all([refreshDir(destDir), refreshDir(sourceDir)])
               remapOpenTabsForMovedPath(newPath, sourcePath)
             },
             redo: async () => {
+              recordSelfMoveForOpenTabs(sourcePath, newPath)
               await renameRuntimePath(fileContext, sourcePath, newPath)
               await Promise.all([refreshDir(sourceDir), refreshDir(destDir)])
               remapOpenTabsForMovedPath(sourcePath, newPath)

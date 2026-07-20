@@ -55,11 +55,25 @@ describe('editor-self-move-registry', () => {
     expect(isRecentSelfMoveTarget('/repo/new.md')).toBe(false)
   })
 
+  it('keeps both roles of a path when a move is immediately undone', () => {
+    // Move A → B, then undo B → A. A must remain a live source (of the first
+    // move, whose delayed watcher echo may still be in flight) AND a live target
+    // (of the undo); likewise B. A single mutable direction per path would let
+    // the undo clobber the first move's source stamp.
+    recordSelfMove('/repo/A.md', '/repo/B.md')
+    recordSelfMove('/repo/B.md', '/repo/A.md')
+
+    expect(isRecentSelfMoveSource('/repo/A.md')).toBe(true)
+    expect(isRecentSelfMoveTarget('/repo/A.md')).toBe(true)
+    expect(isRecentSelfMoveSource('/repo/B.md')).toBe(true)
+    expect(isRecentSelfMoveTarget('/repo/B.md')).toBe(true)
+  })
+
   it('caps the number of stamps', () => {
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 700; i++) {
       recordSelfMove(`/repo/from-${i}.md`, `/repo/to-${i}.md`)
     }
-    // Two endpoints per move, bounded by the 256 cap.
-    expect(__getSelfMoveRegistrySizeForTests()).toBeLessThanOrEqual(256)
+    // Two distinct endpoints per move (1400 keys) bounded by the 1024 cap.
+    expect(__getSelfMoveRegistrySizeForTests()).toBeLessThanOrEqual(1024)
   })
 })

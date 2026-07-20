@@ -459,12 +459,20 @@ export function createExternalWatchEventHandler(
     // same-path delete before scheduling a new one. This is what absorbs
     // the macOS atomic-write delete→create split across two payloads.
     const createOrUpdatePaths = new Set<string>()
+    // Why: a move's target echo is a `create` (the file newly appears at the new
+    // path); a genuine external EDIT to that path is an `update`. Tracking
+    // creates separately lets self-move suppression ignore only the move's own
+    // creation while a later real update still raises the changed-on-disk banner.
+    const createdPaths = new Set<string>()
     for (const evt of payload.events) {
       if (evt.isDirectory === true) {
         continue
       }
       if (evt.kind === 'create' || evt.kind === 'update') {
         createOrUpdatePaths.add(normalizeRuntimePathForComparison(evt.absolutePath))
+      }
+      if (evt.kind === 'create') {
+        createdPaths.add(normalizeRuntimePathForComparison(evt.absolutePath))
       }
     }
     for (const createdPath of createOrUpdatePaths) {
@@ -657,10 +665,15 @@ export function createExternalWatchEventHandler(
       // Why: an Orca-initiated move re-homes the dirty tab to this path and
       // carries its draft. The move's own create(new) watcher echo is not an
       // external edit, so suppress the changed-on-disk mark for it — otherwise
-      // the false banner's Reload discards the just-carried draft. Reload of a
-      // clean moved tab (below) is harmless, so only the dirty mark is gated.
-      const isSelfMoveTargetPath = isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)
-      if (dirtyMatches.length > 0 && !isSelfMoveTargetPath) {
+      // the false banner's Reload discards the just-carried draft. Gate on the
+      // create kind so a genuine later `update` to the same path (e.g. an agent
+      // rewriting the moved file within the TTL) still surfaces the banner.
+      // Reload of a clean moved tab (below) is harmless, so only the dirty mark
+      // is gated.
+      const isSelfMoveCreateEcho =
+        createdPaths.has(normalizeRuntimePathForComparison(absolutePath)) &&
+        isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)
+      if (dirtyMatches.length > 0 && !isSelfMoveCreateEcho) {
         // Why: an external write landing on a dirty tab must not vanish
         // silently (issue #7265) — the user was left with a stale tab and a
         // save that clobbered the newer disk content. Mark the tab so the
