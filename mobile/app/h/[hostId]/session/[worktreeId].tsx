@@ -41,7 +41,6 @@ import {
   RefreshCw,
   Send,
   Smartphone,
-  SquareChevronRight,
   SquareTerminal,
   X
 } from 'lucide-react-native'
@@ -79,6 +78,7 @@ import { MobileSessionHeaderMoreActionsSheet } from '../../../../src/session/Mob
 import { QuickCommandsSheet } from '../../../../src/session/QuickCommandsSheet'
 import {
   buildMobileQuickCommandLaunch,
+  supportsMobileQuickCommands,
   type MobileQuickCommandLaunch
 } from '../../../../src/terminal/quick-commands'
 import { MOBILE_AI_VAULT_CAPABILITY } from '../../../../src/agent-history/agent-history-capability'
@@ -239,6 +239,7 @@ import {
 } from '../../../../src/session/mobile-session-create-warning-state'
 import { colors, spacing } from '../../../../src/theme/mobile-theme'
 import { styles } from './mobile-session-styles'
+import { QuickCommandsTabButton } from './QuickCommandsTabButton'
 import type { DiffComment, TerminalQuickCommand } from '../../../../../src/shared/types'
 import type {
   DiffCommentActions,
@@ -1103,6 +1104,7 @@ export default function SessionScreen() {
   const [agentSessionHistorySupported, setAgentSessionHistorySupported] = useState<boolean | null>(
     null
   )
+  const [quickCommandsSupported, setQuickCommandsSupported] = useState<boolean | null>(null)
   // Why: stable callbacks (handleFileTap) read the live value via this ref, since
   // the capability probe resolves after the callbacks are created.
   const browserScreencastSupportedRef = useRef(browserScreencastSupported)
@@ -2455,9 +2457,15 @@ export default function SessionScreen() {
     if (!client || connState !== 'connected') {
       setBrowserScreencastSupported(null)
       setAgentSessionHistorySupported(null)
+      setQuickCommandsSupported(null)
+      setShowQuickCommands(false)
       hostQueryReplyInputSupportedRef.current = false
       return
     }
+    // Why: a client swap can keep the route connected while moving to an older
+    // host; clear the prior capability before exposing host-specific actions.
+    setQuickCommandsSupported(null)
+    setShowQuickCommands(false)
     let stale = false
     void client
       .sendRequest('status.get')
@@ -2472,6 +2480,7 @@ export default function SessionScreen() {
         setAgentSessionHistorySupported(
           status.capabilities?.includes(MOBILE_AI_VAULT_CAPABILITY) === true
         )
+        setQuickCommandsSupported(supportsMobileQuickCommands(status.capabilities))
         // Why: hosts without this capability strip inputKind from terminal.send,
         // so a forwarded xterm reply would become floor-stealing shell input.
         hostQueryReplyInputSupportedRef.current =
@@ -2481,6 +2490,8 @@ export default function SessionScreen() {
         if (!stale) {
           setBrowserScreencastSupported(false)
           setAgentSessionHistorySupported(false)
+          setQuickCommandsSupported(false)
+          setShowQuickCommands(false)
           hostQueryReplyInputSupportedRef.current = false
         }
       })
@@ -4774,25 +4785,14 @@ export default function SessionScreen() {
               >
                 <Plus size={16} color={colors.textSecondary} strokeWidth={2.2} />
               </Pressable>
-              {/* Quick Commands launcher: sits with the new-tab button because,
-                  like +, it spawns a new terminal tab (running a saved command
-                  or launching an agent with a prompt). */}
-              <View style={styles.tabActionDivider} />
-              <Pressable
-                style={({ pressed }) => [
-                  styles.newTerminalButton,
-                  pressed && styles.newTerminalButtonPressed,
-                  (creating || creatingBrowser || creatingMarkdown || connState !== 'connected') &&
-                    styles.newTerminalButtonDisabled
-                ]}
-                disabled={
-                  creating || creatingBrowser || creatingMarkdown || connState !== 'connected'
-                }
-                onPress={() => setShowQuickCommands(true)}
-                accessibilityLabel="Quick commands"
-              >
-                <SquareChevronRight size={16} color={colors.textSecondary} strokeWidth={2.2} />
-              </Pressable>
+              {quickCommandsSupported === true ? (
+                <QuickCommandsTabButton
+                  disabled={
+                    creating || creatingBrowser || creatingMarkdown || connState !== 'connected'
+                  }
+                  onPress={() => setShowQuickCommands(true)}
+                />
+              ) : null}
             </View>
           )}
         </SafeAreaView>
@@ -5340,7 +5340,7 @@ export default function SessionScreen() {
       />
 
       <QuickCommandsSheet
-        visible={showQuickCommands}
+        visible={showQuickCommands && quickCommandsSupported === true}
         onClose={() => setShowQuickCommands(false)}
         client={client}
         repoId={isFolderWorkspaceRoute ? null : getRepoIdFromMobileWorktreeId(worktreeId) || null}

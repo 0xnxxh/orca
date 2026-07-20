@@ -12,6 +12,7 @@ import {
   terminalQuickCommandMatchesRepo,
   type TerminalQuickCommandMutation
 } from '../../../src/shared/terminal-quick-commands'
+import { TERMINAL_QUICK_COMMANDS_RUNTIME_CAPABILITY } from '../../../src/shared/protocol-version'
 import { MOBILE_TUI_AGENT_LABELS } from '../tasks/mobile-tui-agents'
 
 // Reuse the canonical desktop quick-command logic (pure, no heavy deps) so
@@ -31,6 +32,10 @@ export {
 }
 
 const MAX_QUICK_COMMAND_DISPLAY_PREVIEW_LENGTH = 240
+
+export function supportsMobileQuickCommands(capabilities: readonly string[] | undefined): boolean {
+  return capabilities?.includes(TERMINAL_QUICK_COMMANDS_RUNTIME_CAPABILITY) === true
+}
 
 export type MobileQuickCommandLaunch = {
   agent?: TuiAgent

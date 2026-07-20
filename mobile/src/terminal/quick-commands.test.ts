@@ -3,7 +3,8 @@ import type { TerminalQuickCommand } from '../../../src/shared/types'
 import {
   buildMobileQuickCommandLaunch,
   getQuickCommandDisplayPreview,
-  getQuickCommandPreview
+  getQuickCommandPreview,
+  supportsMobileQuickCommands
 } from './quick-commands'
 
 function command(overrides: Partial<TerminalQuickCommand> = {}): TerminalQuickCommand {
@@ -19,6 +20,13 @@ function command(overrides: Partial<TerminalQuickCommand> = {}): TerminalQuickCo
 }
 
 describe('mobile quick-command launch', () => {
+  it('only exposes quick commands when the host advertises the complete contract', () => {
+    expect(supportsMobileQuickCommands(undefined)).toBe(false)
+    expect(supportsMobileQuickCommands([])).toBe(false)
+    expect(supportsMobileQuickCommands(['terminal.binary-stream.v1'])).toBe(false)
+    expect(supportsMobileQuickCommands(['terminal.quick-commands.v1'])).toBe(true)
+  })
+
   it('joins multiline runnable commands with "; " to match desktop', () => {
     // Parity with desktop flattenTerminalQuickCommand: the same saved command
     // must run identically on desktop and mobile.
