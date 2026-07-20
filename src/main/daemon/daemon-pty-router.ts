@@ -1,4 +1,5 @@
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
+import { DaemonPtySessionRouting } from './daemon-pty-session-routing'
 import type {
   IPtyProvider,
   PtyBackgroundStreamEvent,
@@ -11,7 +12,7 @@ import type {
 export class DaemonPtyRouter implements IPtyProvider {
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
-  private sessionAdapters = new Map<string, DaemonPtyAdapter>()
+  private sessionRouting = new DaemonPtySessionRouting()
   private unsubscribers: (() => void)[] = []
   private dataListeners: ((payload: {
     id: string
@@ -34,7 +35,7 @@ export class DaemonPtyRouter implements IPtyProvider {
           }
         }),
         adapter.onExit((payload) => {
-          this.sessionAdapters.delete(payload.id)
+          this.sessionRouting.remove(payload.id, adapter)
           for (const listener of this.exitListeners) {
             listener(payload)
           }
@@ -48,7 +49,7 @@ export class DaemonPtyRouter implements IPtyProvider {
       try {
         const sessions = await adapter.listProcesses()
         for (const session of sessions) {
-          this.sessionAdapters.set(session.id, adapter)
+          this.sessionRouting.add(session.id, adapter)
         }
       } catch (error) {
         console.warn('[daemon] Failed to discover legacy daemon sessions', error)
@@ -57,10 +58,10 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   async spawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
-    const adapter = opts.sessionId ? this.sessionAdapters.get(opts.sessionId) : undefined
+    const adapter = opts.sessionId ? this.sessionRouting.get(opts.sessionId) : undefined
     const target = adapter ?? this.current
     const result = await target.spawn(opts)
-    this.sessionAdapters.set(result.id, target)
+    this.sessionRouting.add(result.id, target)
     return result
   }
 
@@ -74,7 +75,7 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   hasPty(id: string): boolean {
-    const routed = this.sessionAdapters.get(id)
+    const routed = this.sessionRouting.get(id)
     if (routed) {
       return routed.hasPty(id)
     }
@@ -105,7 +106,11 @@ export class DaemonPtyRouter implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
-    await this.adapterFor(id).shutdown(id, opts)
+    if (opts.deadlineMs !== undefined && this.sessionRouting.isAmbiguous(id)) {
+      throw this.ambiguousOwnershipError([id])
+    }
+    const adapter = this.adapterFor(id)
+    await adapter.shutdown(id, opts)
     // Why: sleep passes keepHistory=true and re-spawns against the same
     // sessionId on wake. If we delete the routing entry here, adapterFor()
     // falls back to `this.current` on wake — for a session that originally
@@ -113,7 +118,7 @@ export class DaemonPtyRouter implements IPtyProvider {
     // createOrAttach lands on the wrong adapter and creates a fresh session,
     // losing the cold-restore from the legacy adapter's history dir.
     if (!opts.keepHistory) {
-      this.sessionAdapters.delete(id)
+      this.sessionRouting.remove(id, adapter)
     }
   }
 
@@ -179,9 +184,12 @@ export class DaemonPtyRouter implements IPtyProvider {
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
     // Why: runtime exact-stop/liveness flows must fail closed if any adapter
     // cannot provide a trustworthy process list.
-    const results = await Promise.all(
-      this.allAdapters().map((adapter) => adapter.listProcesses(opts))
-    )
+    const adapters = this.allAdapters()
+    const results = await Promise.all(adapters.map((adapter) => adapter.listProcesses(opts)))
+    const ambiguousIds = this.sessionRouting.refreshLive(adapters, results)
+    if (ambiguousIds.length > 0) {
+      throw this.ambiguousOwnershipError(ambiguousIds)
+    }
     return results.flat()
   }
 
@@ -261,10 +269,10 @@ export class DaemonPtyRouter implements IPtyProvider {
         killed.push(id)
       }
       for (const id of result.alive) {
-        this.sessionAdapters.set(id, adapter)
+        this.sessionRouting.add(id, adapter)
       }
       for (const id of result.killed) {
-        this.sessionAdapters.delete(id)
+        this.sessionRouting.remove(id, adapter)
       }
     }
     return { alive, killed }
@@ -318,7 +326,11 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   private adapterFor(sessionId: string): DaemonPtyAdapter {
-    return this.sessionAdapters.get(sessionId) ?? this.current
+    return this.sessionRouting.get(sessionId) ?? this.current
+  }
+
+  private ambiguousOwnershipError(sessionIds: string[]): Error {
+    return new Error(`Ambiguous PTY session ownership across daemons: ${sessionIds.join(', ')}`)
   }
 
   private allAdapters(): DaemonPtyAdapter[] {

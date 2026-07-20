@@ -532,7 +532,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
   })
 
   describe('shutdown', () => {
-    it('fails closed for destructive shutdown routed to an adopted Windows v24 daemon', async () => {
+    it('blocks every adopted Windows v24 session kind from deadline teardown but keeps ordinary close', async () => {
       const ensureConnectedSpy = vi
         .spyOn(DaemonClient.prototype, 'ensureConnected')
         .mockResolvedValue()
@@ -542,21 +542,23 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 24 })
 
       try {
-        await expect(
-          legacy.shutdown('legacy-session', {
-            immediate: true,
-            deadlineMs: Date.now() + 5_000
-          })
-        ).rejects.toThrow('requires daemon protocol 25 or newer')
+        // Why: v24 did not record whether a session was agent, plain, or WSL,
+        // so migration safety must reject deadline teardown for all three.
+        for (const id of ['legacy-agent', 'legacy-plain', 'legacy-wsl']) {
+          await expect(
+            legacy.shutdown(id, {
+              immediate: true,
+              deadlineMs: Date.now() + 5_000
+            })
+          ).rejects.toThrow('requires daemon protocol 25 or newer')
+        }
         expect(ensureConnectedSpy).not.toHaveBeenCalled()
         expect(requestSpy).not.toHaveBeenCalled()
 
-        await expect(
-          legacy.shutdown('legacy-session', { immediate: true })
-        ).resolves.toBeUndefined()
+        await expect(legacy.shutdown('legacy-plain', { immediate: true })).resolves.toBeUndefined()
         expect(requestSpy).toHaveBeenCalledWith(
           'kill',
-          { sessionId: 'legacy-session', immediate: true },
+          { sessionId: 'legacy-plain', immediate: true },
           undefined
         )
       } finally {

@@ -21,7 +21,7 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..6047590bc9558dabacd3ece5114ed41c
      },
      'targets' : [
 diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
-index 8c4fca9022a6d6f015bca87f61625cde2278f428..0a01730616488119aa21ef441cf3c441e02a974c 100644
+index 8c4fca9022a6d6f015bca87f61625cde2278f428..0b71eba1d0fdb312bd46e5f47c218bd5330f023a 100644
 --- a/lib/conpty_console_list_agent.js
 +++ b/lib/conpty_console_list_agent.js
 @@ -10,7 +10,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
@@ -42,7 +42,7 @@ index 8c4fca9022a6d6f015bca87f61625cde2278f428..0a01730616488119aa21ef441cf3c441
  //# sourceMappingURL=conpty_console_list_agent.js.map
 \ No newline at end of file
 diff --git a/lib/unixTerminal.js b/lib/unixTerminal.js
-index 1ec12f796a822c78fba9ad7f6448c3987e325c23..cec8b67aef02f8199e5606a0d257088bf1865877 100644
+index 1ec12f796a822c78fba9ad7f6448c3987e325c23..24cbb71bce12f8e6ec617918df1e16bafd6adff1 100644
 --- a/lib/unixTerminal.js
 +++ b/lib/unixTerminal.js
 @@ -28,8 +28,12 @@ var native = utils_1.loadNativeModule('pty');
@@ -61,10 +61,10 @@ index 1ec12f796a822c78fba9ad7f6448c3987e325c23..cec8b67aef02f8199e5606a0d257088b
  var DEFAULT_NAME = 'xterm';
  var DESTROY_SOCKET_TIMEOUT_MS = 200;
 diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
-index a358ffb177357e177661033c1b092f9c9d0e5f5a..b34cfef73fcdcf7897b6f4646ec464f348311330 100644
+index a358ffb177357e177661033c1b092f9c9d0e5f5a..187d72f22bb9ee8dbf444465d0febb302be4aa54 100644
 --- a/lib/windowsPtyAgent.js
 +++ b/lib/windowsPtyAgent.js
-@@ -26,14 +26,17 @@ var FLUSH_DATA_INTERVAL = 1000;
+@@ -26,17 +26,23 @@ var FLUSH_DATA_INTERVAL = 1000;
   * and winpty.
   */
  var WindowsPtyAgent = /** @class */ (function () {
@@ -79,29 +79,50 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..b34cfef73fcdcf7897b6f4646ec464f3
          this._pid = 0;
          this._innerPid = 0;
 +        this._processExited = false;
++        this._windowsAgentJob = false;
 +        this._processExitListeners = [];
          if (this._useConpty === undefined || this._useConpty === true) {
              this._useConpty = this._getWindowsBuildNumber() >= 18309;
          }
-@@ -86,7 +89,7 @@ var WindowsPtyAgent = /** @class */ (function () {
++        // Why: a requested Job is effective only when runtime detection actually selects ConPTY.
++        this._windowsAgentJob = Boolean(this._useConpty && windowsAgentJob);
+         if (this._useConpty) {
+             if (!conptyNative) {
+                 conptyNative = utils_1.loadNativeModule('conpty').module;
+@@ -86,7 +92,7 @@ var WindowsPtyAgent = /** @class */ (function () {
          });
          this._inSocket.setEncoding('utf8');
          if (this._useConpty) {
 -            var connect = this._ptyNative.connect(this._pty, commandLine, cwd, env, this._useConptyDll, function (c) { return _this._$onProcessExit(c); });
-+            var connect = this._ptyNative.connect(this._pty, commandLine, cwd, env, this._useConptyDll, windowsAgentJob, function (c) { return _this._$onProcessExit(c); });
++            var connect = this._ptyNative.connect(this._pty, commandLine, cwd, env, this._useConptyDll, this._windowsAgentJob, function (c) { return _this._$onProcessExit(c); });
              this._innerPid = connect.pid;
          }
      }
-@@ -130,6 +133,20 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -115,6 +121,11 @@ var WindowsPtyAgent = /** @class */ (function () {
+         enumerable: false,
+         configurable: true
+     });
++    Object.defineProperty(WindowsPtyAgent.prototype, "windowsAgentJob", {
++        get: function () { return this._windowsAgentJob; },
++        enumerable: false,
++        configurable: true
++    });
+     WindowsPtyAgent.prototype.resize = function (cols, rows) {
+         if (this._useConpty) {
+             if (this._exitCode !== undefined) {
+@@ -130,6 +141,23 @@ var WindowsPtyAgent = /** @class */ (function () {
              this._ptyNative.clear(this._pty, this._useConptyDll);
          }
      };
 +    WindowsPtyAgent.prototype.terminateJobTree = function (timeoutMs) {
-+        if (!this._useConpty) {
++        var _a, _b;
++        if (!this._windowsAgentJob) {
 +            return undefined;
 +        }
-+        var _a;
-+        return (_a = this._ptyNative.terminateJobTree) === null || _a === void 0 ? void 0 : _a.call(this._ptyNative, this._pty, timeoutMs);
++        if (this._processExited) {
++            return Promise.resolve(true);
++        }
++        return (_b = (_a = this._ptyNative).terminateJobTree) === null || _b === void 0 ? void 0 : _b.call(_a, this._pty, timeoutMs);
 +    };
 +    WindowsPtyAgent.prototype.onProcessExit = function (listener) {
 +        if (this._processExited) {
@@ -113,7 +134,7 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..b34cfef73fcdcf7897b6f4646ec464f3
      WindowsPtyAgent.prototype.kill = function () {
          var _this = this;
          // Tell the agent to kill the pty, this releases handles to the process
-@@ -221,6 +238,10 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -221,6 +249,10 @@ var WindowsPtyAgent = /** @class */ (function () {
      WindowsPtyAgent.prototype._$onProcessExit = function (exitCode) {
          var _this = this;
          this._exitCode = exitCode;
@@ -124,8 +145,39 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..b34cfef73fcdcf7897b6f4646ec464f3
          if (!this._useConptyDll) {
              this._flushDataAndCleanUp();
              this._outSocket.on('data', function () { return _this._flushDataAndCleanUp(); });
+diff --git a/lib/windowsPtyAgent.test.js b/lib/windowsPtyAgent.test.js
+index 15bbf5ba397ab02a5ec6a11b1c0c6f6ffd137be0..d9a0cf1af2da1cdd56ff6edae0bfa41580b51c60 100644
+--- a/lib/windowsPtyAgent.test.js
++++ b/lib/windowsPtyAgent.test.js
+@@ -10,6 +10,26 @@ function check(file, args, expected) {
+     assert.equal(windowsPtyAgent_1.argsToCommandLine(file, args), expected);
+ }
+ if (process.platform === 'win32') {
++    describe('Windows agent Job control', function () {
++        it('reports an already-exited owned Job as drained without another native lookup', function () {
++            var terminateJobTree = function () { return Promise.resolve(false); };
++            var agent = Object.create(windowsPtyAgent_1.WindowsPtyAgent.prototype);
++            agent._windowsAgentJob = true;
++            agent._processExited = true;
++            agent._pty = 1;
++            agent._ptyNative = { terminateJobTree: terminateJobTree };
++            assert.strictEqual(agent.windowsAgentJob, true);
++            return agent.terminateJobTree(1000).then(function (drained) {
++                assert.strictEqual(drained, true);
++            });
++        });
++        it('does not expose teardown when Job ownership was not established', function () {
++            var agent = Object.create(windowsPtyAgent_1.WindowsPtyAgent.prototype);
++            agent._windowsAgentJob = false;
++            assert.strictEqual(agent.windowsAgentJob, false);
++            assert.strictEqual(agent.terminateJobTree(1000), undefined);
++        });
++    });
+     describe('argsToCommandLine', function () {
+         describe('Plain strings', function () {
+             it('doesn\'t quote plain string', function () {
 diff --git a/lib/windowsTerminal.js b/lib/windowsTerminal.js
-index 3c38f89d14cece8081782a9600ebc582b7c2a62a..7a488cbd891e0227b367857af894b4818a7a6031 100644
+index 3c38f89d14cece8081782a9600ebc582b7c2a62a..52e47c98194daf6f64b22fcaa647077acf989371 100644
 --- a/lib/windowsTerminal.js
 +++ b/lib/windowsTerminal.js
 @@ -48,8 +48,23 @@ var WindowsTerminal = /** @class */ (function (_super) {
@@ -139,7 +191,7 @@ index 3c38f89d14cece8081782a9600ebc582b7c2a62a..7a488cbd891e0227b367857af894b481
 +        var agentProcessExited = false;
 +        var exitEmitted = false;
 +        var emitExitWhenSafe = function () {
-+            if (exitEmitted || !socketClosed || (opt.windowsAgentJob && !agentProcessExited)) {
++            if (exitEmitted || !socketClosed || (_this._agent.windowsAgentJob && !agentProcessExited)) {
 +                return;
 +            }
 +            exitEmitted = true;
@@ -176,6 +228,30 @@ index 3c38f89d14cece8081782a9600ebc582b7c2a62a..7a488cbd891e0227b367857af894b481
      WindowsTerminal.prototype.kill = function (signal) {
          var _this = this;
          this._deferNoArgs(function () {
+diff --git a/lib/windowsTerminal.test.js b/lib/windowsTerminal.test.js
+index af5f343d17f012f330fe2292083f297768ff3b5e..6b558c789fc77b58c20cd9564d03e93e54164f54 100644
+--- a/lib/windowsTerminal.test.js
++++ b/lib/windowsTerminal.test.js
+@@ -88,6 +88,19 @@ function pollForProcessTreeSize(pid, size, intervalMs, timeoutMs) {
+     });
+ }
+ if (process.platform === 'win32') {
++    describe('WindowsTerminal Job capability fallback', function () {
++        it('does not wait for a Job callback when a requested Job falls back to winpty', function (done) {
++            this.timeout(10000);
++            var term = new windowsTerminal_1.WindowsTerminal('cmd.exe', '/C exit', {
++                useConpty: false,
++                windowsAgentJob: true
++            });
++            term.on('exit', function (code) {
++                assert.strictEqual(code, 0);
++                done();
++            });
++        });
++    });
+     [[false, false], [true, false], [true, true]].forEach(function (_a) {
+         var useConpty = _a[0], useConptyDll = _a[1];
+         describe("WindowsTerminal (useConpty = " + useConpty + ", useConptyDll = " + useConptyDll + ")", function () {
 diff --git a/src/conpty_console_list_agent.ts b/src/conpty_console_list_agent.ts
 index 181ccabbbe9c4948a9725fb1db907a68e9de01fc..67f31facf85562b67adbfbd04ce28ddd8eeb4a79 100644
 --- a/src/conpty_console_list_agent.ts
@@ -774,20 +850,72 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..16f8d99c627159a35cb643a2752ded30
    return exports;
  };
  
+diff --git a/src/windowsPtyAgent.test.ts b/src/windowsPtyAgent.test.ts
+index dc2104b34fd396722a9e30821ff0b7dea18b4295..23510c3d7c85ecc911b94719832abe5f2b90c1e3 100644
+--- a/src/windowsPtyAgent.test.ts
++++ b/src/windowsPtyAgent.test.ts
+@@ -4,13 +4,37 @@
+  */
+ 
+ import * as assert from 'assert';
+-import { argsToCommandLine } from './windowsPtyAgent';
++import { argsToCommandLine, WindowsPtyAgent } from './windowsPtyAgent';
+ 
+ function check(file: string, args: string | string[], expected: string): void {
+   assert.equal(argsToCommandLine(file, args), expected);
+ }
+ 
+ if (process.platform === 'win32') {
++  describe('Windows agent Job control', () => {
++    it('reports an already-exited owned Job as drained without another native lookup', () => {
++      const terminateJobTree = () => Promise.resolve(false);
++      const agent = Object.create(WindowsPtyAgent.prototype) as any;
++      agent._windowsAgentJob = true;
++      agent._processExited = true;
++      agent._pty = 1;
++      agent._ptyNative = { terminateJobTree };
++
++      assert.strictEqual(agent.windowsAgentJob, true);
++      return agent.terminateJobTree(1000).then((drained: boolean) => {
++        assert.strictEqual(drained, true);
++      });
++    });
++
++    it('does not expose teardown when Job ownership was not established', () => {
++      const agent = Object.create(WindowsPtyAgent.prototype) as any;
++      agent._windowsAgentJob = false;
++
++      assert.strictEqual(agent.windowsAgentJob, false);
++      assert.strictEqual(agent.terminateJobTree(1000), undefined);
++    });
++  });
++
+   describe('argsToCommandLine', () => {
+     describe('Plain strings', () => {
+       it('doesn\'t quote plain string', () => {
 diff --git a/src/windowsPtyAgent.ts b/src/windowsPtyAgent.ts
-index d7054449516f0c9a62af351c2caa17331206d530..5cc9914ee1f1b8b40dadfb8164763357f5549300 100644
+index d7054449516f0c9a62af351c2caa17331206d530..5cc174373171329f36860103edab95323da89ed7 100644
 --- a/src/windowsPtyAgent.ts
 +++ b/src/windowsPtyAgent.ts
-@@ -34,6 +34,8 @@ export class WindowsPtyAgent {
+@@ -34,6 +34,9 @@ export class WindowsPtyAgent {
    private _innerPid: number = 0;
    private _closeTimeout: NodeJS.Timer | undefined;
    private _exitCode: number | undefined;
 +  private _processExited: boolean = false;
++  private _windowsAgentJob: boolean = false;
 +  private _processExitListeners: (() => void)[] = [];
    private _conoutSocketWorker: ConoutConnection;
  
    private _fd: any;
-@@ -56,7 +58,8 @@ export class WindowsPtyAgent {
+@@ -45,6 +48,7 @@ export class WindowsPtyAgent {
+   public get fd(): any { return this._fd; }
+   public get innerPid(): number { return this._innerPid; }
+   public get pty(): number { return this._pty; }
++  public get windowsAgentJob(): boolean { return this._windowsAgentJob; }
+ 
+   constructor(
+     file: string,
+@@ -56,11 +60,14 @@ export class WindowsPtyAgent {
      debug: boolean,
      private _useConpty: boolean | undefined,
      private _useConptyDll: boolean = false,
@@ -797,22 +925,31 @@ index d7054449516f0c9a62af351c2caa17331206d530..5cc9914ee1f1b8b40dadfb8164763357
    ) {
      if (this._useConpty === undefined || this._useConpty === true) {
        this._useConpty = this._getWindowsBuildNumber() >= 18309;
-@@ -116,7 +119,7 @@ export class WindowsPtyAgent {
+     }
++    // Why: a requested Job is effective only when runtime detection actually selects ConPTY.
++    this._windowsAgentJob = Boolean(this._useConpty && windowsAgentJob);
+     if (this._useConpty) {
+       if (!conptyNative) {
+         conptyNative = loadNativeModule('conpty').module;
+@@ -116,7 +123,7 @@ export class WindowsPtyAgent {
      this._inSocket.setEncoding('utf8');
  
      if (this._useConpty) {
 -      const connect = (this._ptyNative as IConptyNative).connect(this._pty, commandLine, cwd, env, this._useConptyDll, c => this._$onProcessExit(c));
-+      const connect = (this._ptyNative as IConptyNative).connect(this._pty, commandLine, cwd, env, this._useConptyDll, windowsAgentJob, c => this._$onProcessExit(c));
++      const connect = (this._ptyNative as IConptyNative).connect(this._pty, commandLine, cwd, env, this._useConptyDll, this._windowsAgentJob, c => this._$onProcessExit(c));
        this._innerPid = connect.pid;
      }
    }
-@@ -138,6 +141,21 @@ export class WindowsPtyAgent {
+@@ -138,6 +145,24 @@ export class WindowsPtyAgent {
      }
    }
  
 +  public terminateJobTree(timeoutMs: number): Promise<boolean> | undefined {
-+    if (!this._useConpty) {
++    if (!this._windowsAgentJob) {
 +      return undefined;
++    }
++    if (this._processExited) {
++      return Promise.resolve(true);
 +    }
 +    return (this._ptyNative as IConptyNative).terminateJobTree?.(this._pty, timeoutMs);
 +  }
@@ -828,7 +965,7 @@ index d7054449516f0c9a62af351c2caa17331206d530..5cc9914ee1f1b8b40dadfb8164763357
    public kill(): void {
      // Tell the agent to kill the pty, this releases handles to the process
      if (this._useConpty) {
-@@ -223,6 +241,10 @@ export class WindowsPtyAgent {
+@@ -223,6 +248,10 @@ export class WindowsPtyAgent {
     */
    private _$onProcessExit(exitCode: number): void {
      this._exitCode = exitCode;
@@ -839,8 +976,33 @@ index d7054449516f0c9a62af351c2caa17331206d530..5cc9914ee1f1b8b40dadfb8164763357
      if (!this._useConptyDll) {
        this._flushDataAndCleanUp();
        this._outSocket.on('data', () => this._flushDataAndCleanUp());
+diff --git a/src/windowsTerminal.test.ts b/src/windowsTerminal.test.ts
+index 8f1274edf6dcf6e9257ba9d711099791391ec778..afc5813d26ce0027b826d326fffdbc3c242753aa 100644
+--- a/src/windowsTerminal.test.ts
++++ b/src/windowsTerminal.test.ts
+@@ -92,6 +92,20 @@ function pollForProcessTreeSize(pid: number, size: number, intervalMs: number =
+ }
+ 
+ if (process.platform === 'win32') {
++  describe('WindowsTerminal Job capability fallback', () => {
++    it('does not wait for a Job callback when a requested Job falls back to winpty', function(done) {
++      this.timeout(10000);
++      const term = new WindowsTerminal('cmd.exe', '/C exit', {
++        useConpty: false,
++        windowsAgentJob: true
++      });
++      term.on('exit', code => {
++        assert.strictEqual(code, 0);
++        done();
++      });
++    });
++  });
++
+   [[false, false], [true, false], [true, true]].forEach(([useConpty, useConptyDll]) => {
+     describe(`WindowsTerminal (useConpty = ${useConpty}, useConptyDll = ${useConptyDll})`, () => {
+       describe('kill', () => {
 diff --git a/src/windowsTerminal.ts b/src/windowsTerminal.ts
-index 13f6c6dbb3d7965c4699568f4704be3b6a33d947..23f2f2d5b7f95df60a22adad9c4d7cbdc1a3dd5f 100644
+index 13f6c6dbb3d7965c4699568f4704be3b6a33d947..db6ddd94a35b034c0fb998003e4332c28512809d 100644
 --- a/src/windowsTerminal.ts
 +++ b/src/windowsTerminal.ts
 @@ -48,8 +48,23 @@ export class WindowsTerminal extends Terminal {
@@ -854,7 +1016,7 @@ index 13f6c6dbb3d7965c4699568f4704be3b6a33d947..23f2f2d5b7f95df60a22adad9c4d7cbd
 +    let agentProcessExited = false;
 +    let exitEmitted = false;
 +    const emitExitWhenSafe = (): void => {
-+      if (exitEmitted || !socketClosed || (opt.windowsAgentJob && !agentProcessExited)) {
++      if (exitEmitted || !socketClosed || (this._agent.windowsAgentJob && !agentProcessExited)) {
 +        return;
 +      }
 +      exitEmitted = true;

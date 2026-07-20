@@ -274,6 +274,60 @@ describe('DaemonPtyRouter', () => {
     await expect(router.listProcesses()).rejects.toThrow('legacy unavailable')
   })
 
+  it('refreshes legacy routing after a successful listProcesses recovery', async () => {
+    const current = createAdapter('current', ['current-session'])
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    vi.mocked(legacy.listProcesses).mockRejectedValueOnce(new Error('legacy unavailable'))
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    await router.discoverLegacySessions()
+    router.write('legacy-session', 'before recovery\n')
+    expect(current.write).toHaveBeenCalledWith('legacy-session', 'before recovery\n')
+
+    await expect(router.listProcesses()).resolves.toHaveLength(2)
+    router.write('legacy-session', 'after recovery\n')
+    expect(legacy.write).toHaveBeenCalledWith('legacy-session', 'after recovery\n')
+  })
+
+  it('rejects destructive teardown when recovered daemons report a duplicate session id', async () => {
+    const current = createAdapter('current', ['duplicate-session'])
+    const legacy = createAdapter('legacy', ['duplicate-session'])
+    vi.mocked(legacy.listProcesses).mockRejectedValueOnce(new Error('legacy unavailable'))
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    await router.discoverLegacySessions()
+    await expect(router.listProcesses()).rejects.toThrow(
+      'Ambiguous PTY session ownership across daemons: duplicate-session'
+    )
+    await expect(
+      router.shutdown('duplicate-session', {
+        immediate: true,
+        deadlineMs: Date.now() + 5_000
+      })
+    ).rejects.toThrow('Ambiguous PTY session ownership')
+    expect(current.shutdown).not.toHaveBeenCalled()
+    expect(legacy.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('keeps duplicate ownership ambiguous when one of three owners exits', async () => {
+    const current = createAdapter('current', ['duplicate-session'])
+    const firstLegacy = createAdapter('legacy-a', ['duplicate-session'])
+    const secondLegacy = createAdapter('legacy-b', ['duplicate-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [firstLegacy, secondLegacy] })
+
+    await expect(router.listProcesses()).rejects.toThrow('Ambiguous PTY session ownership')
+    current.emitExit('duplicate-session', 0)
+
+    await expect(
+      router.shutdown('duplicate-session', {
+        immediate: true,
+        deadlineMs: Date.now() + 5_000
+      })
+    ).rejects.toThrow('Ambiguous PTY session ownership')
+    expect(firstLegacy.shutdown).not.toHaveBeenCalled()
+    expect(secondLegacy.shutdown).not.toHaveBeenCalled()
+  })
+
   it('merges startup reconciliation and updates route mappings', async () => {
     const current = createAdapter('current', [], {
       alive: ['current-alive'],
