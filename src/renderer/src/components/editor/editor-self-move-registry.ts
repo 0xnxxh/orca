@@ -24,13 +24,21 @@ export const SELF_MOVE_REMOTE_TTL_MS = 3000
 const SELF_MOVE_MAX_STAMPS = 1024
 
 // Why: a path can hold BOTH roles at once — e.g. move A→B then immediately undo
-// B→A leaves A as a live source (of the first move, whose delayed watcher echo
-// may still be in flight) and a live target (of the undo). Storing one mutable
-// direction per path would let the undo clobber the first move's source stamp
-// and re-expose the original echo. Track the two roles' expiries independently.
+// B→A leaves A a live source (of the first move, whose delayed watcher echo may
+// still be in flight) and a live target (of the undo) — and it can hold the SAME
+// role from two concurrent moves (drag two files named report.md into one dir →
+// both stamp that dir's report.md as a target). So each role is reference
+// counted: a role is live while any un-cleared registration remains and its
+// expiry is in the future. Refcounting lets a FAILED move's clear drop only its
+// own registration instead of erasing a concurrent successful move's stamp.
+type RoleState = {
+  refs: number
+  expiresAt: number
+}
+
 type SelfMoveStamp = {
-  sourceExpiresAt: number
-  targetExpiresAt: number
+  source: RoleState
+  target: RoleState
 }
 
 const stamps = new Map<string, SelfMoveStamp>()
@@ -39,9 +47,13 @@ function selfMoveKey(absolutePath: string, runtimeEnvironmentId?: string | null)
   return `${runtimeEnvironmentId?.trim() || 'client'}::${normalizeAbsolutePathForComparison(absolutePath)}`
 }
 
+function isRoleLive(state: RoleState, now: number): boolean {
+  return state.refs > 0 && now <= state.expiresAt
+}
+
 function pruneExpiredSelfMoves(now: number): void {
   for (const [key, stamp] of stamps) {
-    if (now > stamp.sourceExpiresAt && now > stamp.targetExpiresAt) {
+    if (!isRoleLive(stamp.source, now) && !isRoleLive(stamp.target, now)) {
       stamps.delete(key)
     }
   }
@@ -57,6 +69,10 @@ function enforceSelfMoveStampLimit(): void {
   }
 }
 
+function emptyStamp(): SelfMoveStamp {
+  return { source: { refs: 0, expiresAt: 0 }, target: { refs: 0, expiresAt: 0 } }
+}
+
 function stampRole(
   absolutePath: string,
   role: 'source' | 'target',
@@ -64,18 +80,12 @@ function stampRole(
   expiresAt: number
 ): void {
   const key = selfMoveKey(absolutePath, runtimeEnvironmentId)
-  const existing = stamps.get(key)
-  // Why: keep insertion recency fresh (delete+set) so the cap evicts genuinely
-  // old stamps first, and merge rather than overwrite so the untouched role of a
-  // concurrent move on the same path survives.
-  const next: SelfMoveStamp = existing
-    ? { ...existing }
-    : { sourceExpiresAt: 0, targetExpiresAt: 0 }
-  if (role === 'source') {
-    next.sourceExpiresAt = Math.max(next.sourceExpiresAt, expiresAt)
-  } else {
-    next.targetExpiresAt = Math.max(next.targetExpiresAt, expiresAt)
-  }
+  const next = stamps.get(key) ?? emptyStamp()
+  const state = next[role]
+  state.refs += 1
+  state.expiresAt = Math.max(state.expiresAt, expiresAt)
+  // Why: delete+set keeps insertion recency fresh so the cap evicts genuinely
+  // old stamps first.
   stamps.delete(key)
   stamps.set(key, next)
 }
@@ -112,15 +122,13 @@ function hasLiveRole(
     return false
   }
   const now = Date.now()
-  const expiresAt = role === 'source' ? stamp.sourceExpiresAt : stamp.targetExpiresAt
-  if (now > expiresAt) {
-    // Why: drop the whole entry only once both roles have expired.
-    if (now > stamp.sourceExpiresAt && now > stamp.targetExpiresAt) {
-      stamps.delete(key)
-    }
-    return false
+  const live = isRoleLive(stamp[role], now)
+  // Why: drop the whole entry once neither role is live so expired stamps don't
+  // linger until the next write's prune.
+  if (!isRoleLive(stamp.source, now) && !isRoleLive(stamp.target, now)) {
+    stamps.delete(key)
   }
-  return true
+  return live
 }
 
 /** True when `path` is the destination of a recent Orca-initiated move. */
@@ -145,24 +153,28 @@ function clearRole(
   runtimeEnvironmentId: string | null | undefined
 ): void {
   const key = selfMoveKey(absolutePath, runtimeEnvironmentId)
-  const existing = stamps.get(key)
-  if (!existing) {
+  const stamp = stamps.get(key)
+  if (!stamp) {
     return
   }
-  const next: SelfMoveStamp =
-    role === 'source' ? { ...existing, sourceExpiresAt: 0 } : { ...existing, targetExpiresAt: 0 }
-  if (next.sourceExpiresAt === 0 && next.targetExpiresAt === 0) {
+  const state = stamp[role]
+  // Why: drop only THIS move's registration (one ref). A concurrent move that
+  // stamped the same role keeps the role live via its own ref.
+  state.refs = Math.max(0, state.refs - 1)
+  if (state.refs === 0) {
+    state.expiresAt = 0
+  }
+  const now = Date.now()
+  if (!isRoleLive(stamp.source, now) && !isRoleLive(stamp.target, now)) {
     stamps.delete(key)
-  } else {
-    stamps.set(key, next)
   }
 }
 
 /**
- * Drops the source/target roles a move stamped, so a rename that FAILED after
- * stamping does not keep suppressing genuine watcher events for the paths it
- * never actually moved. Only the two roles this move added are cleared, so a
- * concurrent move touching the same path keeps its own role.
+ * Drops one registration of the roles a move stamped, so a rename that FAILED
+ * after stamping does not keep suppressing genuine watcher events for the paths
+ * it never actually moved. Reference counted, so a concurrent move that stamped
+ * the same role keeps that role live.
  */
 export function clearSelfMove(
   fromPath: string,

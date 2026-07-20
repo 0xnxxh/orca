@@ -78,6 +78,32 @@ describe('editor-self-move-registry', () => {
     expect(isRecentSelfMoveTarget('/repo/new.md')).toBe(false)
   })
 
+  it('clear keeps a concurrent move’s SAME-role stamp on a shared destination', () => {
+    // Drag /one/report.md and /two/report.md into /dest in quick succession:
+    // both stamp /dest/report.md as a target. The first move succeeds; the
+    // second fails (destination now exists) and clears. The successful move's
+    // target stamp must survive so its delayed echo is still recognized.
+    recordSelfMove('/one/report.md', '/dest/report.md') // move A
+    recordSelfMove('/two/report.md', '/dest/report.md') // move B (will fail)
+
+    clearSelfMove('/two/report.md', '/dest/report.md') // B's failure clear
+
+    expect(isRecentSelfMoveTarget('/dest/report.md')).toBe(true)
+    // B's own source is gone; A's source is untouched.
+    expect(isRecentSelfMoveSource('/two/report.md')).toBe(false)
+    expect(isRecentSelfMoveSource('/one/report.md')).toBe(true)
+  })
+
+  it('clear fully releases a target once every registration is cleared', () => {
+    recordSelfMove('/one/report.md', '/dest/report.md')
+    recordSelfMove('/two/report.md', '/dest/report.md')
+
+    clearSelfMove('/one/report.md', '/dest/report.md')
+    clearSelfMove('/two/report.md', '/dest/report.md')
+
+    expect(isRecentSelfMoveTarget('/dest/report.md')).toBe(false)
+  })
+
   it('clear leaves a concurrent move’s role on the same path intact', () => {
     // Move A → B, then C → A. Clearing the failed C → A must not drop A's source
     // role from the successful A → B move.
