@@ -50,6 +50,25 @@ describe('Codex real-account validation harness', () => {
     expect(env.SAFE_VALUE).toBe('preserved')
   })
 
+  it('pins the real-home flag off when the system-default lane is disabled', async () => {
+    const primaryHome = path.join(os.tmpdir(), 'orca-primary-home-sentinel')
+    const { layout, env } = runValidationModule<{
+      layout: { tempRoot: string }
+      env: Record<string, string | undefined>
+    }>(
+      `
+        const { createValidationEnv, createValidationLayout } = await import(process.argv[1])
+        const layout = await createValidationLayout({ primaryHome: process.argv[2] })
+        const env = createValidationEnv({}, layout, { systemDefaultRealHome: 'off' })
+        console.log(JSON.stringify({ layout, env }))
+      `,
+      [primaryHome]
+    )
+    cleanupPaths.push(layout.tempRoot)
+
+    expect(env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME).toBe('0')
+  })
+
   it('records only fingerprints for system-default and managed auth', async () => {
     const { layout, snapshot } = runValidationModule<{
       layout: { tempRoot: string }

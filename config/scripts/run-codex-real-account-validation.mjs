@@ -69,7 +69,7 @@ async function resolveRealPath(candidate) {
   }
 }
 
-export function createValidationEnv(inheritedEnv, layout) {
+export function createValidationEnv(inheritedEnv, layout, options = {}) {
   const env = { ...inheritedEnv }
   for (const key of RESTRICTED_ENV_KEYS) {
     delete env[key]
@@ -82,7 +82,11 @@ export function createValidationEnv(inheritedEnv, layout) {
     ORCA_E2E_HOME_DIR: layout.homeDir,
     ORCA_E2E_USER_DATA_DIR: layout.userDataDir,
     ORCA_USER_DATA_PATH: layout.userDataDir,
-    ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME: '1'
+    // Why: flag OFF pins every codex spawn to an explicit managed CODEX_HOME,
+    // so native codex never resolves the OS profile — the only Windows
+    // configuration where strict zero-event containment is reachable. It is
+    // also the shipping default for the stable rollout.
+    ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME: options.systemDefaultRealHome === 'off' ? '0' : '1'
   }
 }
 
@@ -119,12 +123,12 @@ export async function createValidationLayout(options = {}) {
   return { primaryHome, tempRoot, homeDir, userDataDir }
 }
 
-async function seedCompletedProfile(layout) {
+async function seedCompletedProfile(layout, options = {}) {
   // Why: the validation is about account routing, so first-run education and
   // telemetry overlays must not obscure the account controls under test.
   const profile = {
     settings: {
-      codexSystemDefaultRealHomeEnabled: true,
+      codexSystemDefaultRealHomeEnabled: options.systemDefaultRealHome !== 'off',
       telemetry: {
         optedIn: true,
         installId: '00000000-0000-4000-8000-000000000000',
@@ -265,7 +269,8 @@ function parseArgs(argv) {
     primaryHome: os.homedir(),
     configTemplate: null,
     tempParent: null,
-    laneAwareContainment: false
+    laneAwareContainment: false,
+    systemDefaultRealHome: 'on'
   }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
@@ -295,6 +300,12 @@ function parseArgs(argv) {
       options.skipBuild = true
     } else if (arg === '--keep') {
       options.keep = true
+    } else if (arg === '--system-default-real-home') {
+      const value = readValue()
+      if (value !== 'on' && value !== 'off') {
+        throw new Error('--system-default-real-home must be "on" or "off"')
+      }
+      options.systemDefaultRealHome = value
     } else if (arg === '--lane-aware-containment') {
       // Why: on Windows the flag-ON system-default lane cannot be env-sandboxed
       // (native codex ignores USERPROFILE), so strict zero-event containment is
@@ -304,7 +315,7 @@ function parseArgs(argv) {
       options.laneAwareContainment = true
     } else if (arg === '--help') {
       console.log(
-        'Usage: node config/scripts/run-codex-real-account-validation.mjs [--scenario mixed|managed-only|codex-lb] [--config-template <path>] [--temp-parent <dir>] [--skip-build] [--dry-run] [--close-after-launch] [--keep] [--lane-aware-containment] [--report <path>]'
+        'Usage: node config/scripts/run-codex-real-account-validation.mjs [--scenario mixed|managed-only|codex-lb] [--config-template <path>] [--temp-parent <dir>] [--skip-build] [--dry-run] [--close-after-launch] [--keep] [--lane-aware-containment] [--system-default-real-home on|off] [--report <path>]'
       )
       process.exit(0)
     } else {
@@ -470,7 +481,7 @@ async function main() {
   const reportPath =
     options.reportPath ??
     path.join(os.tmpdir(), `orca-codex-real-account-${options.scenario}-${Date.now()}.json`)
-  const launchEnv = createValidationEnv(process.env, layout)
+  const launchEnv = createValidationEnv(process.env, layout, options)
   let app = null
   let tripwire = null
   const abortController = new AbortController()
@@ -491,7 +502,7 @@ async function main() {
   }
 
   try {
-    await seedCompletedProfile(layout)
+    await seedCompletedProfile(layout, options)
     await installCodexConfigTemplate(layout, options.configTemplate)
     tripwire = await startCodexPrimaryHomeTripwire({
       primaryHome: layout.primaryHome,
