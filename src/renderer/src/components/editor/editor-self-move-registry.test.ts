@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   __clearSelfMoveRegistryForTests,
   __getSelfMoveRegistrySizeForTests,
+  clearSelfMove,
   isRecentSelfMoveSource,
   isRecentSelfMoveTarget,
   recordSelfMove,
@@ -67,6 +68,27 @@ describe('editor-self-move-registry', () => {
     expect(isRecentSelfMoveTarget('/repo/A.md')).toBe(true)
     expect(isRecentSelfMoveSource('/repo/B.md')).toBe(true)
     expect(isRecentSelfMoveTarget('/repo/B.md')).toBe(true)
+  })
+
+  it('clears the roles a move stamped when the rename fails', () => {
+    recordSelfMove('/repo/old.md', '/repo/new.md')
+    clearSelfMove('/repo/old.md', '/repo/new.md')
+
+    expect(isRecentSelfMoveSource('/repo/old.md')).toBe(false)
+    expect(isRecentSelfMoveTarget('/repo/new.md')).toBe(false)
+  })
+
+  it('clear leaves a concurrent move’s role on the same path intact', () => {
+    // Move A → B, then C → A. Clearing the failed C → A must not drop A's source
+    // role from the successful A → B move.
+    recordSelfMove('/repo/A.md', '/repo/B.md')
+    recordSelfMove('/repo/C.md', '/repo/A.md')
+
+    clearSelfMove('/repo/C.md', '/repo/A.md')
+
+    expect(isRecentSelfMoveSource('/repo/A.md')).toBe(true)
+    expect(isRecentSelfMoveTarget('/repo/A.md')).toBe(false)
+    expect(isRecentSelfMoveSource('/repo/C.md')).toBe(false)
   })
 
   it('caps the number of stamps', () => {

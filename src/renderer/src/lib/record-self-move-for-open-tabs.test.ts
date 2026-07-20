@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useAppStore } from '@/store'
-import { recordSelfMoveForOpenTabs } from './record-self-move-for-open-tabs'
+import {
+  clearSelfMoveForOpenTabs,
+  recordSelfMoveForOpenTabs
+} from './record-self-move-for-open-tabs'
 import {
   __clearSelfMoveRegistryForTests,
   isRecentSelfMoveSource,
@@ -56,6 +59,27 @@ describe('recordSelfMoveForOpenTabs', () => {
 
     expect(isRecentSelfMoveSource('/repo/docs/guide/intro.md')).toBe(true)
     expect(isRecentSelfMoveTarget('/repo/archive/guide/intro.md')).toBe(true)
+  })
+
+  it('clears the stamps it recorded for the affected tabs', () => {
+    const state = useAppStore.getState()
+    state.openFile(
+      {
+        filePath: '/repo/docs/readme.md',
+        relativePath: 'docs/readme.md',
+        worktreeId: 'wt-1',
+        runtimeEnvironmentId: null,
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+
+    recordSelfMoveForOpenTabs('/repo/docs/readme.md', '/repo/notes/readme.md')
+    clearSelfMoveForOpenTabs('/repo/docs/readme.md', '/repo/notes/readme.md')
+
+    expect(isRecentSelfMoveSource('/repo/docs/readme.md')).toBe(false)
+    expect(isRecentSelfMoveTarget('/repo/notes/readme.md')).toBe(false)
   })
 
   it('ignores tabs outside the moved path', () => {

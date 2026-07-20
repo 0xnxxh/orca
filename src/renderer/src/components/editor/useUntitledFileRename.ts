@@ -4,11 +4,8 @@ import { detectLanguage } from '@/lib/language-detect'
 import { dirname, joinPath } from '@/lib/path'
 import { useAppStore } from '@/store'
 import type { OpenFile } from '@/store/slices/editor'
-import {
-  createRuntimePath,
-  renameRuntimePath,
-  runtimePathExists
-} from '@/runtime/runtime-file-client'
+import { createRuntimePath, runtimePathExists } from '@/runtime/runtime-file-client'
+import { renameOpenTabsPathOnDisk } from '@/lib/rename-open-editor-tabs-path'
 import { settingsForRuntimeOwner } from '@/runtime/runtime-rpc-client'
 import { requestEditorFileSave, requestEditorSaveQuiesce } from './editor-autosave'
 import { getUntitledFileRoot } from './untitled-file-rename-path'
@@ -100,7 +97,7 @@ export function useUntitledFileRename({
       }
 
       try {
-        await renameRuntimePath(fileContext, oldPath, newPath)
+        await renameOpenTabsPathOnDisk(fileContext, oldPath, newPath)
       } catch (err) {
         setRenameError(err instanceof Error ? err.message : 'Failed to rename file')
         return

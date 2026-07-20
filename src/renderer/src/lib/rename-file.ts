@@ -4,9 +4,8 @@ import { basename, dirname, joinPath } from '@/lib/path'
 import { getConnectionId } from '@/lib/connection-context'
 import { requestEditorSaveQuiesce } from '@/components/editor/editor-autosave'
 import { commitFileExplorerOp } from '@/components/right-sidebar/fileExplorerUndoRedo'
-import { renameRuntimePath } from '@/runtime/runtime-file-client'
 import { remapOpenEditorTabsForPathChange } from '@/lib/remap-open-editor-tabs-for-path-change'
-import { recordSelfMoveForOpenTabs } from '@/lib/record-self-move-for-open-tabs'
+import { renameOpenTabsPathOnDisk } from '@/lib/rename-open-editor-tabs-path'
 
 /**
  * Electron's ipcRenderer.invoke wraps errors as:
@@ -76,23 +75,18 @@ export async function renameFileOnDisk(args: RenameFileArgs): Promise<void> {
   }
 
   try {
-    // Why: stamp the self-move before the on-disk rename so the watcher echo is
-    // recognized as self-initiated even if it arrives before the remap runs.
-    recordSelfMoveForOpenTabs(oldPath, newPath)
-    await renameRuntimePath(fileContext, oldPath, newPath)
+    await renameOpenTabsPathOnDisk(fileContext, oldPath, newPath)
     remapOpenEditorTabsForPathChange({ fromPath: oldPath, toPath: newPath, worktreePath })
     commitFileExplorerOp({
       undo: async () => {
-        recordSelfMoveForOpenTabs(newPath, oldPath)
-        await renameRuntimePath(fileContext, newPath, oldPath)
+        await renameOpenTabsPathOnDisk(fileContext, newPath, oldPath)
         if (refreshDir) {
           await refreshDir(parentDir)
         }
         remapOpenEditorTabsForPathChange({ fromPath: newPath, toPath: oldPath, worktreePath })
       },
       redo: async () => {
-        recordSelfMoveForOpenTabs(oldPath, newPath)
-        await renameRuntimePath(fileContext, oldPath, newPath)
+        await renameOpenTabsPathOnDisk(fileContext, oldPath, newPath)
         if (refreshDir) {
           await refreshDir(parentDir)
         }

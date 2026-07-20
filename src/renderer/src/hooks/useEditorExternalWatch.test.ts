@@ -579,7 +579,9 @@ describe('createExternalWatchEventHandler tombstone coalescing', () => {
     dispose()
   })
 
-  it('still marks changed-on-disk for a real update to a self-move target within the TTL', () => {
+  it('suppresses even an update echo of a move within the TTL (coalescing-robust)', () => {
+    // The local watcher can coalesce the move's create+attr-change into a lone
+    // `update`, so suppression must not depend on the event kind.
     const movedDirtyTab = {
       ...fileNotes,
       filePath: '/repo/subdir/notes.md',
@@ -594,8 +596,31 @@ describe('createExternalWatchEventHandler tombstone coalescing', () => {
     recordSelfMove('/repo/notes.md', '/repo/subdir/notes.md')
     const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
 
-    // A later `update` (an agent rewriting the moved file) is NOT the move's own
-    // create echo, so the conflict must still surface even inside the TTL.
+    handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/subdir/notes.md' }]))
+    vi.advanceTimersByTime(200)
+
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'changed')
+    dispose()
+  })
+
+  it('surfaces a changed-on-disk conflict once the self-move TTL has expired', () => {
+    const movedDirtyTab = {
+      ...fileNotes,
+      filePath: '/repo/subdir/notes.md',
+      relativePath: 'subdir/notes.md',
+      isDirty: true
+    }
+    vi.mocked(useAppStore.getState).mockReturnValue({
+      openFiles: [movedDirtyTab],
+      setExternalMutation
+    } as never)
+    vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([movedDirtyTab] as never)
+    recordSelfMove('/repo/notes.md', '/repo/subdir/notes.md')
+    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
+
+    // Suppression is time-bounded: past the local TTL a real external write is
+    // no longer mistaken for the move's echo.
+    vi.advanceTimersByTime(1000)
     handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/subdir/notes.md' }]))
     vi.advanceTimersByTime(200)
 

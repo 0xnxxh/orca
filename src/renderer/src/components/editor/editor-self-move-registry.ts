@@ -139,6 +139,40 @@ export function isRecentSelfMoveSource(
   return hasLiveRole(absolutePath, 'source', runtimeEnvironmentId)
 }
 
+function clearRole(
+  absolutePath: string,
+  role: 'source' | 'target',
+  runtimeEnvironmentId: string | null | undefined
+): void {
+  const key = selfMoveKey(absolutePath, runtimeEnvironmentId)
+  const existing = stamps.get(key)
+  if (!existing) {
+    return
+  }
+  const next: SelfMoveStamp =
+    role === 'source' ? { ...existing, sourceExpiresAt: 0 } : { ...existing, targetExpiresAt: 0 }
+  if (next.sourceExpiresAt === 0 && next.targetExpiresAt === 0) {
+    stamps.delete(key)
+  } else {
+    stamps.set(key, next)
+  }
+}
+
+/**
+ * Drops the source/target roles a move stamped, so a rename that FAILED after
+ * stamping does not keep suppressing genuine watcher events for the paths it
+ * never actually moved. Only the two roles this move added are cleared, so a
+ * concurrent move touching the same path keeps its own role.
+ */
+export function clearSelfMove(
+  fromPath: string,
+  toPath: string,
+  runtimeEnvironmentId?: string | null
+): void {
+  clearRole(fromPath, 'source', runtimeEnvironmentId)
+  clearRole(toPath, 'target', runtimeEnvironmentId)
+}
+
 export function __clearSelfMoveRegistryForTests(): void {
   stamps.clear()
 }
