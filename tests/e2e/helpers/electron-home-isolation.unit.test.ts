@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -41,12 +41,16 @@ describe('createElectronHomeIsolation', () => {
       realHome: '/real/home'
     })
 
+    // Why: the disposable home must be the canonical spelling (no tmpdir
+    // symlink/8.3 alias) or git-canonicalized worktree paths stop matching.
+    const canonicalHome = realpathSync.native(path.join(userDataDir, 'home'))
+    expect(isolation.isolatedHome).toBe(canonicalHome)
     expect(isolation.env).toMatchObject({
       PATH: '/bin',
       TEST_TOKEN: 'safe',
       EXTRA_TEST_FLAG: '1',
-      HOME: path.join(userDataDir, 'home'),
-      USERPROFILE: path.join(userDataDir, 'home'),
+      HOME: canonicalHome,
+      USERPROFILE: canonicalHome,
       ORCA_E2E_USER_DATA_DIR: userDataDir,
       ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME: '0'
     })

@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, realpathSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -73,13 +73,17 @@ export function createElectronHomeIsolation({
   assertOverlayDoesNotReplaceIsolation(launchEnv, 'launchEnv')
   assertOverlayDoesNotReplaceIsolation(extraEnv, 'orcaAppExtraEnv')
 
-  const isolatedHome = path.join(userDataDir, 'home')
+  const requestedIsolatedHome = path.join(userDataDir, 'home')
+  mkdirSync(requestedIsolatedHome, { recursive: true, mode: 0o700 })
+  // Why: tmpdir-rooted paths are aliases (macOS /var symlink, Windows 8.3
+  // short names). Git canonicalizes worktree paths, so a non-canonical HOME
+  // makes freshly created worktrees invisible to Orca's listing comparisons.
+  const isolatedHome = realpathSync.native(requestedIsolatedHome)
   // Why: a bad fixture path must fail before Electron can resolve a real Codex
   // home; userData isolation alone does not change app.getPath('home').
   if (areSameHomePath(isolatedHome, realHome)) {
     throw new Error('Refusing to launch E2E with the developer home as its isolated HOME')
   }
-  mkdirSync(isolatedHome, { recursive: true, mode: 0o700 })
 
   return {
     isolatedHome,

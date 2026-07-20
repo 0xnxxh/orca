@@ -17,7 +17,7 @@
 
 import { _electron as electron } from '@stablyai/playwright-test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { seedFreshProfile } from './onboarding-profile.mjs'
 
@@ -75,8 +75,12 @@ export async function launchInstalledApp({
   }
   // Why: userData relocation does not change Node's home; the packaged E2E
   // must not resolve the default Codex account against the runner's profile.
-  const isolatedHome = path.join(userDataDir, 'home')
-  mkdirSync(isolatedHome, { recursive: true })
+  const requestedIsolatedHome = path.join(userDataDir, 'home')
+  mkdirSync(requestedIsolatedHome, { recursive: true })
+  // Why: temp paths on runners use 8.3 aliases (RUNNER~1). Git canonicalizes
+  // worktree paths, so a non-canonical HOME makes created worktrees invisible
+  // to the app's listing comparisons.
+  const isolatedHome = realpathSync.native(requestedIsolatedHome)
   const app = await electron.launch({
     executablePath: exePath,
     args: [],
