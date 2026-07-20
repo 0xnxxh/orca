@@ -28,7 +28,9 @@ export class TerminalSessionTeardown {
       if (pending.rootSignalled && pending.session.isAlive) {
         // Why: the snapshot callback may have already sent the graceful root
         // signal in this turn; an immediate join must still escalate and wait.
-        pending.rootCompletion = pending.session.forceKillAndWaitForExit()
+        pending.rootCompletion = this.observeRootCompletion(
+          pending.session.forceKillAndWaitForExit()
+        )
       }
     }
     return pending?.promise
@@ -100,7 +102,7 @@ export class TerminalSessionTeardown {
       }
       entry.rootSignalled = true
       if (entry.immediate) {
-        entry.rootCompletion = session.forceKillAndWaitForExit()
+        entry.rootCompletion = this.observeRootCompletion(session.forceKillAndWaitForExit())
       } else {
         session.signalTerminationRoot()
       }
@@ -133,6 +135,13 @@ export class TerminalSessionTeardown {
     }
     void operation.then(clearOperation, clearOperation)
     return operation
+  }
+
+  private observeRootCompletion(completion: Promise<void>): Promise<void> {
+    // Why: Job/descendant preparation can outlive an already-rejected root
+    // wait. Observe it now while retaining the rejection for later aggregation.
+    void completion.catch(() => {})
+    return completion
   }
 
   private async terminateWindowsTree(session: Session, killRoot: () => void): Promise<void> {

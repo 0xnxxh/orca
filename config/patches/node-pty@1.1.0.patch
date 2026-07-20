@@ -48,7 +48,7 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..6047590bc9558dabacd3ece5114ed41c
      'targets' : [
 diff --git a/lib/conptyConnectFailure.test.js b/lib/conptyConnectFailure.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..e3d4bab402845ec10647b8e2d8a2d85e1a96c295
+index 0000000000000000000000000000000000000000..11c92221f60565ddf28c96dacd5e1c6b70a13a8d
 --- /dev/null
 +++ b/lib/conptyConnectFailure.test.js
 @@ -0,0 +1,67 @@
@@ -78,7 +78,7 @@ index 0000000000000000000000000000000000000000..e3d4bab402845ec10647b8e2d8a2d85e
 +        native_1.setTestConnectFailure(failure);
 +        try {
 +            for (var attempt = 1; attempt <= 3; attempt++) {
-+                assert.throws(function () { return new windowsPtyAgent_1.WindowsPtyAgent(process.env.ComSpec || 'cmd.exe', '/C exit', environment_1, process.cwd(), 80, 30, false, true, false, false, true); }, new RegExp(expectedError));
++                assert.throws(function () { return new windowsPtyAgent_1.WindowsPtyAgent(process.env.ComSpec || 'cmd.exe', '/C exit', environment_1, process.cwd(), 80, 30, false, true, true, false, true); }, new RegExp(expectedError));
 +                var resourceState = native_1.getTestResourceState();
 +                assert.strictEqual(resourceState.ptyCount, before.ptyCount);
 +                assert.strictEqual(resourceState.closedPseudoConsoleCount, before.closedPseudoConsoleCount + attempt);
@@ -353,7 +353,7 @@ index af5f343d17f012f330fe2292083f297768ff3b5e..6b558c789fc77b58c20cd9564d03e93e
          describe("WindowsTerminal (useConpty = " + useConpty + ", useConptyDll = " + useConptyDll + ")", function () {
 diff --git a/src/conptyConnectFailure.test.ts b/src/conptyConnectFailure.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..e41b702d342590ae39baec24b479c24d392e74b5
+index 0000000000000000000000000000000000000000..d4e50e2ba2c6abccf6aabdc242082a879e066427
 --- /dev/null
 +++ b/src/conptyConnectFailure.test.ts
 @@ -0,0 +1,112 @@
@@ -409,7 +409,7 @@ index 0000000000000000000000000000000000000000..e41b702d342590ae39baec24b479c24d
 +            30,
 +            false,
 +            true,
-+            false,
++            true,
 +            false,
 +            true
 +          ),

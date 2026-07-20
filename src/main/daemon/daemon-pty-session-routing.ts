@@ -13,6 +13,16 @@ export class DaemonPtySessionRouting {
     return this.ambiguousAdapters.has(sessionId)
   }
 
+  idsFor(adapter: DaemonPtyAdapter): string[] {
+    const ids = [...this.adapters].filter(([, owner]) => owner === adapter).map(([id]) => id)
+    for (const [id, owners] of this.ambiguousAdapters) {
+      if (owners.has(adapter)) {
+        ids.push(id)
+      }
+    }
+    return ids.sort()
+  }
+
   add(sessionId: string, adapter: DaemonPtyAdapter): void {
     const ambiguous = this.ambiguousAdapters.get(sessionId)
     if (ambiguous) {

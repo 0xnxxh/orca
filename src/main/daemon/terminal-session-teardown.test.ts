@@ -99,6 +99,34 @@ describe('TerminalSessionTeardown Windows descendant termination', () => {
     expect(teardown.get('agent')).toBeUndefined()
   })
 
+  it('observes an early root rejection while Job drain is still pending', async () => {
+    const session = createSession({ agent: true, nativeWindows: true })
+    const rootError = new Error('root exit timed out before Job drain')
+    let resolveJobDrain!: (drained: boolean) => void
+    session.terminateJobTree.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        resolveJobDrain = resolve
+      })
+    )
+    session.forceKillAndWaitForExit.mockRejectedValue(rootError)
+    sessions.set('agent', session)
+    const unhandledRejection = vi.fn()
+    process.on('unhandledRejection', unhandledRejection)
+
+    try {
+      const killing = teardown.killSession('agent', session, true)
+      const rejection = expect(killing).rejects.toBe(rootError)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(unhandledRejection).not.toHaveBeenCalled()
+
+      resolveJobDrain(true)
+      await rejection
+      expect(unhandledRejection).not.toHaveBeenCalled()
+    } finally {
+      process.off('unhandledRejection', unhandledRejection)
+    }
+  })
+
   it('closes the root and fails closed when Job assignment was unavailable', async () => {
     const session = createSession({ agent: true, nativeWindows: true, hasJob: false })
     sessions.set('agent', session)

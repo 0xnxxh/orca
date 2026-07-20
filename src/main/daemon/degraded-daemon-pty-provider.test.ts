@@ -168,6 +168,50 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(fallback.write).not.toHaveBeenCalled()
   })
 
+  it('refreshes recovered daemon routing after startup discovery transiently fails', async () => {
+    const current = createDaemonAdapter('daemon', ['recovered-session'])
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(current.listProcesses).mockRejectedValueOnce(new Error('daemon still starting'))
+
+    await provider.discoverDaemonSessions()
+    await provider.listProcesses({ deadlineMs: Date.now() + 1000 })
+    await provider.shutdown('recovered-session', {
+      immediate: true,
+      deadlineMs: Date.now() + 1000
+    })
+
+    expect(current.shutdown).toHaveBeenCalledWith('recovered-session', {
+      immediate: true,
+      deadlineMs: expect.any(Number)
+    })
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('fails deadline teardown closed for duplicate ownership across degraded daemons', async () => {
+    const current = createDaemonAdapter('current', ['duplicate-session'])
+    const legacy = createDaemonAdapter('legacy', ['duplicate-session'])
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [legacy], fallback })
+
+    await provider.discoverDaemonSessions()
+
+    await expect(
+      provider.shutdown('duplicate-session', {
+        immediate: true,
+        deadlineMs: Date.now() + 1000
+      })
+    ).rejects.toThrow('Ambiguous PTY session ownership across daemons: duplicate-session')
+    await expect(provider.listProcesses({ deadlineMs: Date.now() + 1000 })).rejects.toThrow(
+      'Ambiguous PTY session ownership across daemons: duplicate-session'
+    )
+    expect(current.shutdown).not.toHaveBeenCalled()
+    expect(legacy.shutdown).not.toHaveBeenCalled()
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+  })
+
   it('routes authoritative recovery snapshots to the owning daemon', async () => {
     const current = createDaemonAdapter('daemon', ['daemon-session'])
     const fallback = createProvider('fallback')

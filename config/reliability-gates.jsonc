@@ -938,7 +938,7 @@
         "Live process proof covers macOS local PTYs and native Windows agent/plain PTYs, but not Linux, WSL, SSH, or remote-runtime PTYs.",
         "Disconnected SSH relay death still requires reconnect-aware provider ownership.",
         "Daemon owner leases and durable retry inventory remain follow-up hardening.",
-        "Existing adopted Windows v24 sessions (agent, plain, or WSL) lack spawn-time Job capability metadata, so deadline-bearing worktree deletion fails closed until those sessions are closed or restarted under v25; fresh v25 plain and WSL behavior is unchanged.",
+        "Existing adopted Windows v24 sessions (agent, plain, or WSL) lack spawn-time Job capability metadata, so deadline-bearing worktree deletion fails closed. Closing or restarting the tracked session under v25 cannot retroactively adopt descendants that detached before v25; those older orphans may still require manual termination or an OS restart. Fresh v25 plain and WSL behavior is unchanged.",
         "SSH-hosted, WSL, and remote-runtime PTYs retain their host-specific teardown paths and are not placed in the local Windows Job.",
         "A process born in the capture second is SIGTERMed but not SIGKILLed because ps cannot prove its recycled-PID identity.",
         "A descendant orphaned before or during root ownership loss requires the separate crash-orphan sweep and is not recovered from a stale kill-time snapshot."
