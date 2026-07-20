@@ -13,9 +13,9 @@ import { useCloseHost } from '../src/transport/client-context'
 import { colors, spacing, radii, typography } from '../src/theme/mobile-theme'
 import { ConnectionLog } from '../src/components/ConnectionLog'
 import {
-  mobileOnboardingDestination,
-  selectMobileOnboardingPrompt
-} from '../src/onboarding/mobile-onboarding-prompt'
+  loadMobileOnboardingSteps,
+  mobileOnboardingDestination
+} from '../src/onboarding/mobile-onboarding-plan'
 
 type Status = 'awaiting-confirm' | 'connecting' | 'error'
 
@@ -116,11 +116,11 @@ export default function PairConfirmScreen() {
       // profile — the removeHost() path already refreshes on re-pair, and a
       // brand-new host has no cached entry so this is a no-op.
       closeHost(hostId)
-      const onboardingPrompt = await selectMobileOnboardingPrompt()
+      const onboardingSteps = await loadMobileOnboardingSteps()
       if (!mountedRef.current) {
         return
       }
-      router.replace(mobileOnboardingDestination(onboardingPrompt, hostId))
+      router.replace(mobileOnboardingDestination(onboardingSteps, hostId))
     } catch (err) {
       const timedOut = attempt.timedOut
       const attemptIsCurrent = activePairingAttemptRef.current === attempt

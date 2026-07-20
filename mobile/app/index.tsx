@@ -37,9 +37,9 @@ import {
 import { classifyConnection } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import {
-  mobileOnboardingDestination,
-  selectMobileOnboardingPrompt
-} from '../src/onboarding/mobile-onboarding-prompt'
+  loadMobileOnboardingSteps,
+  mobileOnboardingDestination
+} from '../src/onboarding/mobile-onboarding-plan'
 import type { ConnectionState, HostProfile } from '../src/transport/types'
 import { triggerMediumImpact } from '../src/platform/haptics'
 import { OrcaLogo } from '../src/components/OrcaLogo'
@@ -409,12 +409,12 @@ export default function HomeScreen() {
           return
         }
         onboardingOptInCheckedRef.current = true
-        const onboardingPrompt = await selectMobileOnboardingPrompt()
+        const onboardingSteps = await loadMobileOnboardingSteps()
         if (stale) {
           return
         }
-        if (onboardingPrompt) {
-          router.replace(mobileOnboardingDestination(onboardingPrompt))
+        if (onboardingSteps.length > 0) {
+          router.replace(mobileOnboardingDestination(onboardingSteps))
         }
       })
       void AsyncStorage.getItem('orca:last-visited-worktree').then((raw) => {
