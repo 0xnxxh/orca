@@ -58,9 +58,11 @@ read-only bootstrap to orient. Do not dead-end and do not invent commands:
 
 ```text
 ORCA status --json
-ORCA worktree ps --json
-ORCA terminal list --json
+ORCA vm recipe doctor <recipe-id> --repo-path <repo> --json
 ```
+
+The doctor command above is the free static check. Never add `--provision` without the
+user's explicit approval because it creates provider resources and may spend money.
 
 Then tell the user that updating Orca restores the full, version-matched guide via
 `ORCA skills get orca-per-workspace-env`. Beyond these commands, ask the user rather than

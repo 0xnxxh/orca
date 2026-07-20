@@ -253,6 +253,13 @@ describe('orchestration install stub', () => {
     expect(stub).not.toMatch(/^orca /mu)
   })
 
+  it('does not tell agents to mutate orchestration state before loading the guide', () => {
+    const preGuide = readFileSync(stubPath, 'utf8').split('## Load the full guide')[0]
+
+    expect(preGuide).not.toContain('orca orchestration task-create')
+    expect(preGuide).not.toContain('orca orchestration dispatch')
+  })
+
   it('gives older binaries a bounded fallback instead of a dead end', () => {
     const stub = readFileSync(stubPath, 'utf8').replace(/\s+/gu, ' ')
 

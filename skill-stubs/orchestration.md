@@ -11,8 +11,7 @@ instead for full ownership handoffs ("hand off", "handoff", "handover", "give th
 another agent", "another worktree") when the user did not ask to supervise, monitor, wait
 for results, or coordinate a DAG — and for ordinary terminal control, shell commands,
 worktree management, and the built-in browser. Coordination requires real Orca runtime
-state: create it with `orca orchestration task-create` and `orca orchestration dispatch`,
-never a non-Orca subagent tool.
+state; never substitute a non-Orca subagent tool.
 
 ## Resolve the CLI for this session
 
@@ -58,7 +57,7 @@ read-only bootstrap to orient. Do not dead-end and do not invent commands:
 
 ```text
 ORCA status --json
-ORCA worktree ps --json
+ORCA orchestration task-list --json
 ORCA terminal list --json
 ```
 

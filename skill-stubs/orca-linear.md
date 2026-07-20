@@ -55,8 +55,8 @@ read-only bootstrap to orient. Do not dead-end and do not invent commands:
 
 ```text
 ORCA status --json
-ORCA worktree ps --json
-ORCA terminal list --json
+ORCA linear --help
+ORCA linear issue --current --full --json
 ```
 
 Then tell the user that updating Orca restores the full, version-matched guide via
