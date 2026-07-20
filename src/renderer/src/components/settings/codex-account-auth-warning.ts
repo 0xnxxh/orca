@@ -31,13 +31,16 @@ export function getCodexAccountAuthWarning(args: {
   accountId: string | null
   authKind?: CodexSystemDefaultIdentity['authKind']
 }): string | null {
+  if (args.accountId !== args.activeAccountId) {
+    return null
+  }
   // Why: app-server reports API-key homes as a ChatGPT-auth error because
   // usage is unsupported; that is not a stale sign-in the user can re-auth.
   if (args.accountId === null && args.authKind === 'api-key') {
     return null
   }
-  if (args.accountId !== args.activeAccountId) {
-    return null
+  if (args.accountId === null && args.authKind === 'none') {
+    return 'No Codex sign-in was found.'
   }
   if (!codexRateLimitTargetMatchesAccountRuntime(args.target, args.runtime)) {
     return null

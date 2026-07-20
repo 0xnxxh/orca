@@ -427,8 +427,7 @@ export function AccountsPane({
           authKind: activeCodexAccountId === null ? systemCodexIdentity?.authKind : undefined
         })
       : null
-  const systemCodexNeedsReauthentication =
-    activeCodexAccountId === null && Boolean(activeCodexAuthWarning)
+  const systemCodexNeedsSignIn = activeCodexAccountId === null && Boolean(activeCodexAuthWarning)
   const accountRuntimeUnavailable =
     accountRuntime.runtime === 'wsl' && !wslAvailable && !wslCapabilitiesLoading
 
@@ -1156,7 +1155,7 @@ export function AccountsPane({
               }
               disabled={codexAction !== 'idle' || accountRuntimeUnavailable}
               className={`flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-left transition-colors ${
-                systemCodexNeedsReauthentication
+                systemCodexNeedsSignIn
                   ? 'border-destructive/50 bg-destructive/5'
                   : systemCodexActive
                     ? 'border-foreground/20 bg-accent/15'
@@ -1179,7 +1178,7 @@ export function AccountsPane({
                       {translate('auto.components.settings.AccountsPane.e74831fb6b', 'Active')}
                     </Badge>
                   ) : null}
-                  {systemCodexNeedsReauthentication ? (
+                  {systemCodexNeedsSignIn ? (
                     <Badge
                       variant="destructive"
                       className="h-4 shrink-0 rounded px-1.5 text-[10px] font-medium leading-none"
@@ -1193,15 +1192,21 @@ export function AccountsPane({
                 </div>
                 <span
                   className={`truncate text-[11px] ${
-                    systemCodexNeedsReauthentication ? 'text-destructive' : 'text-muted-foreground'
+                    systemCodexNeedsSignIn ? 'text-destructive' : 'text-muted-foreground'
                   }`}
                 >
-                  {systemCodexNeedsReauthentication
-                    ? translate(
-                        'auto.components.settings.AccountsPane.fd62f37c24',
-                        'Codex reported this {{value0}} login is out of date.',
-                        { value0: accountRuntimeSentenceLabel }
-                      )
+                  {systemCodexNeedsSignIn
+                    ? systemCodexIdentity?.authKind === 'none'
+                      ? translate(
+                          'auto.components.settings.AccountsPane.codexSystemDefaultNeedsSignIn',
+                          'No Codex sign-in was found for {{value0}}.',
+                          { value0: accountRuntimeSentenceLabel }
+                        )
+                      : translate(
+                          'auto.components.settings.AccountsPane.fd62f37c24',
+                          'Codex reported this {{value0}} login is out of date.',
+                          { value0: accountRuntimeSentenceLabel }
+                        )
                     : getCodexSystemDefaultSubtitle(
                         systemCodexIdentity,
                         accountRuntimeSentenceLabel

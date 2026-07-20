@@ -90,6 +90,22 @@ describe('codex account auth warning', () => {
     ).toBeNull()
   })
 
+  it('warns only when the active system default has no usable login', () => {
+    const getWarning = (authKind: 'none' | 'api-key' | 'oauth') =>
+      getCodexAccountAuthWarning({
+        limits: null,
+        target: { runtime: 'host', wslDistro: null },
+        runtime: { runtime: 'host' },
+        activeAccountId: null,
+        accountId: null,
+        authKind
+      })
+
+    expect(getWarning('none')).not.toBeNull()
+    expect(getWarning('api-key')).toBeNull()
+    expect(getWarning('oauth')).toBeNull()
+  })
+
   it('allows a WSL default account location to receive the active WSL target warning', () => {
     expect(
       codexRateLimitTargetMatchesAccountRuntime(

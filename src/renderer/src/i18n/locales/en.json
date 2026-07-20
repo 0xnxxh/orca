@@ -4989,7 +4989,8 @@
           "remoteScopeAuthContext": "Each account keeps its own sign-in context on {{value0}}.",
           "remoteEmptyClaudeAccounts": "No managed Claude accounts on {{value0}}. It uses its system default Claude login; add accounts on that server.",
           "remoteEmptyCodexAccounts": "No managed Codex accounts on {{value0}}. It uses its system default Codex login; add accounts on that server.",
-          "codexSystemDefaultCustomProvider": "Custom provider — no usage tracked."
+          "codexSystemDefaultCustomProvider": "Custom provider — no usage tracked.",
+          "codexSystemDefaultNeedsSignIn": "No Codex sign-in was found for {{value0}}."
         },
         "AdvancedPane": {
           "40b29e0bf3": "Restart",
