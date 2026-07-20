@@ -120,8 +120,62 @@ index 0000000000000000000000000000000000000000..b149dd006735ddf64ea3f2b167c0271f
 +        console.log('ConPTY failed-connect cleanup: 2 passed');
 +    }
 +}
+diff --git a/lib/conptyJobTerminationFailure.test.js b/lib/conptyJobTerminationFailure.test.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..70f0d5757db2aafe117adf3f5ca053031f56020e
+--- /dev/null
++++ b/lib/conptyJobTerminationFailure.test.js
+@@ -0,0 +1,48 @@
++"use strict";
++/**
++ * Copyright (c) 2026, Stably AI (MIT License).
++ */
++Object.defineProperty(exports, "__esModule", { value: true });
++var assert = require("assert");
++var utils_1 = require("./utils");
++var windowsPtyAgent_1 = require("./windowsPtyAgent");
++if (process.platform === 'win32') {
++    var native_1 = utils_1.loadNativeModule('conpty').module;
++    var environment_1 = Object.keys(process.env)
++        .filter(function (key) { return typeof process.env[key] === 'string'; })
++        .map(function (key) { return key + "=" + process.env[key]; });
++    var createAgent_1 = function () { return new windowsPtyAgent_1.WindowsPtyAgent(process.env.ComSpec || 'cmd.exe', '/D /S /C "ping -n 30 127.0.0.1 > nul"', environment_1, process.cwd(), 80, 30, false, true, true, false, true); };
++    var runFailureCase_1 = function (failure, expectedError) {
++        assert.ok(native_1.setTestTerminateJobFailure && native_1.getTestResourceState);
++        var agent = createAgent_1();
++        var before = native_1.getTestResourceState();
++        native_1.setTestTerminateJobFailure(failure);
++        try {
++            assert.throws(function () { return agent.terminateJobTree(1000); }, expectedError);
++            var after = native_1.getTestResourceState();
++            assert.strictEqual(after.closedTerminationJobHandleCount, before.closedTerminationJobHandleCount + 1);
++            assert.strictEqual(after.liveTerminationThreadCount, before.liveTerminationThreadCount);
++        }
++        finally {
++            native_1.setTestTerminateJobFailure('none');
++            agent.kill();
++        }
++    };
++    var runAssertions_1 = function () {
++        assert.ok(native_1.setTestTerminateJobFailure && native_1.getTestResourceState, 'ConPTY termination test fault injection was required but is unavailable');
++        assert.throws(function () { return new windowsPtyAgent_1.WindowsPtyAgent(process.env.ComSpec || 'cmd.exe', '/C exit', environment_1, process.cwd(), 80, 30, false, false, false, false, true); }, /Windows agent Job ownership requires ConPTY/);
++        runFailureCase_1('thread-allocation', /Injected termination thread allocation failure/);
++        runFailureCase_1('threadsafe-function', /Injected termination ThreadSafeFunction failure/);
++    };
++    if (typeof describe === 'function') {
++        describe('ConPTY Job capability and termination cleanup', function () {
++            it('fails closed without ConPTY and releases allocation-failure resources', function () {
++                runAssertions_1();
++            });
++        });
++    }
++    else {
++        runAssertions_1();
++        console.log('ConPTY Job capability and termination cleanup: 3 passed');
++    }
++}
 diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
-index 8c4fca9022a6d6f015bca87f61625cde2278f428..0b71eba1d0fdb312bd46e5f47c218bd5330f023a 100644
+index 8c4fca9022a6d6f015bca87f61625cde2278f428..201fc1d70a907e31b5a2b33b19a9db20803bc652 100644
 --- a/lib/conpty_console_list_agent.js
 +++ b/lib/conpty_console_list_agent.js
 @@ -10,7 +10,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
@@ -142,7 +196,7 @@ index 8c4fca9022a6d6f015bca87f61625cde2278f428..0b71eba1d0fdb312bd46e5f47c218bd5
  //# sourceMappingURL=conpty_console_list_agent.js.map
 \ No newline at end of file
 diff --git a/lib/unixTerminal.js b/lib/unixTerminal.js
-index 1ec12f796a822c78fba9ad7f6448c3987e325c23..24cbb71bce12f8e6ec617918df1e16bafd6adff1 100644
+index 1ec12f796a822c78fba9ad7f6448c3987e325c23..cec8b67aef02f8199e5606a0d257088bf1865877 100644
 --- a/lib/unixTerminal.js
 +++ b/lib/unixTerminal.js
 @@ -28,8 +28,12 @@ var native = utils_1.loadNativeModule('pty');
@@ -161,10 +215,10 @@ index 1ec12f796a822c78fba9ad7f6448c3987e325c23..24cbb71bce12f8e6ec617918df1e16ba
  var DEFAULT_NAME = 'xterm';
  var DESTROY_SOCKET_TIMEOUT_MS = 200;
 diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
-index a358ffb177357e177661033c1b092f9c9d0e5f5a..530171dc8000f3acdd6d5a82fcdc00fce65cbb2c 100644
+index a358ffb177357e177661033c1b092f9c9d0e5f5a..6d5a00662763c377371603fbb8e5119a097cea3f 100644
 --- a/lib/windowsPtyAgent.js
 +++ b/lib/windowsPtyAgent.js
-@@ -26,17 +26,23 @@ var FLUSH_DATA_INTERVAL = 1000;
+@@ -26,17 +26,26 @@ var FLUSH_DATA_INTERVAL = 1000;
   * and winpty.
   */
  var WindowsPtyAgent = /** @class */ (function () {
@@ -184,12 +238,15 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..530171dc8000f3acdd6d5a82fcdc00fc
          if (this._useConpty === undefined || this._useConpty === true) {
              this._useConpty = this._getWindowsBuildNumber() >= 18309;
          }
-+        // Why: a requested Job is effective only when runtime detection actually selects ConPTY.
-+        this._windowsAgentJob = Boolean(this._useConpty && windowsAgentJob);
++        // Why: winpty cannot provide spawn-time Job ownership; launching anyway can orphan agents.
++        if (windowsAgentJob && !this._useConpty) {
++            throw new Error('Windows agent Job ownership requires ConPTY');
++        }
++        this._windowsAgentJob = windowsAgentJob;
          if (this._useConpty) {
              if (!conptyNative) {
                  conptyNative = utils_1.loadNativeModule('conpty').module;
-@@ -72,7 +78,7 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -72,7 +81,7 @@ var WindowsPtyAgent = /** @class */ (function () {
          this._outSocket.setEncoding('utf8');
          // The conout socket must be ready out on another thread to avoid deadlocks
          this._conoutSocketWorker = new windowsConoutConnection_1.ConoutConnection(term.conout, this._useConptyDll);
@@ -198,7 +255,7 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..530171dc8000f3acdd6d5a82fcdc00fc
              _this._conoutSocketWorker.connectSocket(_this._outSocket);
          });
          this._outSocket.on('connect', function () {
-@@ -86,8 +92,19 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -86,8 +95,19 @@ var WindowsPtyAgent = /** @class */ (function () {
          });
          this._inSocket.setEncoding('utf8');
          if (this._useConpty) {
@@ -220,7 +277,7 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..530171dc8000f3acdd6d5a82fcdc00fc
          }
      }
      Object.defineProperty(WindowsPtyAgent.prototype, "inSocket", {
-@@ -115,6 +132,11 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -115,6 +135,11 @@ var WindowsPtyAgent = /** @class */ (function () {
          enumerable: false,
          configurable: true
      });
@@ -232,7 +289,7 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..530171dc8000f3acdd6d5a82fcdc00fc
      WindowsPtyAgent.prototype.resize = function (cols, rows) {
          if (this._useConpty) {
              if (this._exitCode !== undefined) {
-@@ -130,6 +152,23 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -130,6 +155,23 @@ var WindowsPtyAgent = /** @class */ (function () {
              this._ptyNative.clear(this._pty, this._useConptyDll);
          }
      };
@@ -256,7 +313,7 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..530171dc8000f3acdd6d5a82fcdc00fc
      WindowsPtyAgent.prototype.kill = function () {
          var _this = this;
          // Tell the agent to kill the pty, this releases handles to the process
-@@ -221,6 +260,10 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -221,6 +263,10 @@ var WindowsPtyAgent = /** @class */ (function () {
      WindowsPtyAgent.prototype._$onProcessExit = function (exitCode) {
          var _this = this;
          this._exitCode = exitCode;
@@ -268,7 +325,7 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..530171dc8000f3acdd6d5a82fcdc00fc
              this._flushDataAndCleanUp();
              this._outSocket.on('data', function () { return _this._flushDataAndCleanUp(); });
 diff --git a/lib/windowsPtyAgent.test.js b/lib/windowsPtyAgent.test.js
-index 15bbf5ba397ab02a5ec6a11b1c0c6f6ffd137be0..d9a0cf1af2da1cdd56ff6edae0bfa41580b51c60 100644
+index 15bbf5ba397ab02a5ec6a11b1c0c6f6ffd137be0..b8c2a60ca5e021e3fe2a73762f0000da35a7fc1d 100644
 --- a/lib/windowsPtyAgent.test.js
 +++ b/lib/windowsPtyAgent.test.js
 @@ -10,6 +10,26 @@ function check(file, args, expected) {
@@ -299,7 +356,7 @@ index 15bbf5ba397ab02a5ec6a11b1c0c6f6ffd137be0..d9a0cf1af2da1cdd56ff6edae0bfa415
          describe('Plain strings', function () {
              it('doesn\'t quote plain string', function () {
 diff --git a/lib/windowsTerminal.js b/lib/windowsTerminal.js
-index 3c38f89d14cece8081782a9600ebc582b7c2a62a..52e47c98194daf6f64b22fcaa647077acf989371 100644
+index 3c38f89d14cece8081782a9600ebc582b7c2a62a..1cb42dc5d6a78e502673ff84982e8904555c1486 100644
 --- a/lib/windowsTerminal.js
 +++ b/lib/windowsTerminal.js
 @@ -48,8 +48,23 @@ var WindowsTerminal = /** @class */ (function (_super) {
@@ -351,24 +408,19 @@ index 3c38f89d14cece8081782a9600ebc582b7c2a62a..52e47c98194daf6f64b22fcaa647077a
          var _this = this;
          this._deferNoArgs(function () {
 diff --git a/lib/windowsTerminal.test.js b/lib/windowsTerminal.test.js
-index af5f343d17f012f330fe2292083f297768ff3b5e..6b558c789fc77b58c20cd9564d03e93e54164f54 100644
+index af5f343d17f012f330fe2292083f297768ff3b5e..a52859c445de83e033e69d880115051f010ff097 100644
 --- a/lib/windowsTerminal.test.js
 +++ b/lib/windowsTerminal.test.js
-@@ -88,6 +88,19 @@ function pollForProcessTreeSize(pid, size, intervalMs, timeoutMs) {
+@@ -88,6 +88,14 @@ function pollForProcessTreeSize(pid, size, intervalMs, timeoutMs) {
      });
  }
  if (process.platform === 'win32') {
 +    describe('WindowsTerminal Job capability fallback', function () {
-+        it('does not wait for a Job callback when a requested Job falls back to winpty', function (done) {
-+            this.timeout(10000);
-+            var term = new windowsTerminal_1.WindowsTerminal('cmd.exe', '/C exit', {
++        it('fails closed before a requested Job can fall back to winpty', function () {
++            assert.throws(function () { return new windowsTerminal_1.WindowsTerminal('cmd.exe', '/C exit', {
 +                useConpty: false,
 +                windowsAgentJob: true
-+            });
-+            term.on('exit', function (code) {
-+                assert.strictEqual(code, 0);
-+                done();
-+            });
++            }); }, /Windows agent Job ownership requires ConPTY/);
 +        });
 +    });
      [[false, false], [true, false], [true, true]].forEach(function (_a) {
@@ -491,6 +543,105 @@ index 0000000000000000000000000000000000000000..c9a657fbcae63e66b5930b7b52aaa98e
 +    leakedResourceWatchdog.unref();
 +    failureCases.forEach(([failure, expectedError]) => runFailureCase(failure, expectedError));
 +    console.log('ConPTY failed-connect cleanup: 2 passed');
++  }
++}
+diff --git a/src/conptyJobTerminationFailure.test.ts b/src/conptyJobTerminationFailure.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d8af2df3cfa9d6d51ff35b0d9f67c40c15d26a55
+--- /dev/null
++++ b/src/conptyJobTerminationFailure.test.ts
+@@ -0,0 +1,93 @@
++/**
++ * Copyright (c) 2026, Stably AI (MIT License).
++ */
++
++import assert = require('assert');
++import { loadNativeModule } from './utils';
++import { WindowsPtyAgent } from './windowsPtyAgent';
++
++interface ITestConptyNative {
++  setTestTerminateJobFailure?(failure: string): void;
++  getTestResourceState?(): ITestResourceState;
++}
++
++interface ITestResourceState {
++  closedTerminationJobHandleCount: number;
++  liveTerminationThreadCount: number;
++}
++
++if (process.platform === 'win32') {
++  const native = loadNativeModule('conpty').module as ITestConptyNative;
++  const environment = Object.keys(process.env)
++    .filter(key => typeof process.env[key] === 'string')
++    .map(key => `${key}=${process.env[key]}`);
++
++  const createAgent = (): WindowsPtyAgent => new WindowsPtyAgent(
++    process.env.ComSpec || 'cmd.exe',
++    '/D /S /C "ping -n 30 127.0.0.1 > nul"',
++    environment,
++    process.cwd(),
++    80,
++    30,
++    false,
++    true,
++    true,
++    false,
++    true
++  );
++
++  const runFailureCase = (failure: string, expectedError: RegExp): void => {
++    assert.ok(native.setTestTerminateJobFailure && native.getTestResourceState);
++    const agent = createAgent();
++    const before = native.getTestResourceState();
++    native.setTestTerminateJobFailure(failure);
++    try {
++      assert.throws(() => agent.terminateJobTree(1000), expectedError);
++      const after = native.getTestResourceState();
++      assert.strictEqual(
++        after.closedTerminationJobHandleCount,
++        before.closedTerminationJobHandleCount + 1
++      );
++      assert.strictEqual(after.liveTerminationThreadCount, before.liveTerminationThreadCount);
++    } finally {
++      native.setTestTerminateJobFailure('none');
++      agent.kill();
++    }
++  };
++
++  const runAssertions = (): void => {
++    assert.ok(
++      native.setTestTerminateJobFailure && native.getTestResourceState,
++      'ConPTY termination test fault injection was required but is unavailable'
++    );
++    assert.throws(
++      () => new WindowsPtyAgent(
++        process.env.ComSpec || 'cmd.exe',
++        '/C exit',
++        environment,
++        process.cwd(),
++        80,
++        30,
++        false,
++        false,
++        false,
++        false,
++        true
++      ),
++      /Windows agent Job ownership requires ConPTY/
++    );
++    runFailureCase('thread-allocation', /Injected termination thread allocation failure/);
++    runFailureCase('threadsafe-function', /Injected termination ThreadSafeFunction failure/);
++  };
++
++  if (typeof describe === 'function') {
++    describe('ConPTY Job capability and termination cleanup', () => {
++      it('fails closed without ConPTY and releases allocation-failure resources', () => {
++        runAssertions();
++      });
++    });
++  } else {
++    runAssertions();
++    console.log('ConPTY Job capability and termination cleanup: 3 passed');
 +  }
 +}
 diff --git a/src/conpty_console_list_agent.ts b/src/conpty_console_list_agent.ts
@@ -816,10 +967,10 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f231875265 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d4486e92ff89 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
-@@ -45,12 +45,37 @@ struct pty_baton {
+@@ -45,12 +45,40 @@ struct pty_baton {
    HPCON hpc;
  
    HANDLE hShell;
@@ -855,11 +1006,14 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
 +static LONG closedThreadHandleCount = 0;
 +static LONG closedJobHandleCount = 0;
 +static LONG drainedFailedProcessCount = 0;
++static LONG closedTerminationJobHandleCount = 0;
++static LONG allocatedTerminationThreadCount = 0;
++static LONG releasedTerminationThreadCount = 0;
 +#endif
  
  static pty_baton* get_pty_baton(int id) {
    auto it = std::find_if(ptyHandles.begin(), ptyHandles.end(), [id](const auto& ptyHandle) {
-@@ -73,6 +98,117 @@ static bool remove_pty_baton(int id) {
+@@ -73,6 +101,147 @@ static bool remove_pty_baton(int id) {
    return false;
  }
  
@@ -936,7 +1090,14 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
 +  ResumeThread
 +};
 +
++enum class TerminateJobFailurePoint {
++  None,
++  ThreadAllocation,
++  ThreadSafeFunctionCreation
++};
++
 +static ConnectFailurePoint connectFailurePoint = ConnectFailurePoint::None;
++static TerminateJobFailurePoint terminateJobFailurePoint = TerminateJobFailurePoint::None;
 +
 +static Napi::Value PtySetTestConnectFailure(const Napi::CallbackInfo& info) {
 +  if (info.Length() != 1 || !info[0].IsString()) {
@@ -949,6 +1110,21 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
 +    connectFailurePoint = ConnectFailurePoint::ResumeThread;
 +  } else {
 +    connectFailurePoint = ConnectFailurePoint::None;
++  }
++  return info.Env().Undefined();
++}
++
++static Napi::Value PtySetTestTerminateJobFailure(const Napi::CallbackInfo& info) {
++  if (info.Length() != 1 || !info[0].IsString()) {
++    throw Napi::Error::New(info.Env(), "Usage: pty.setTestTerminateJobFailure(failure)");
++  }
++  const std::string failure = info[0].As<Napi::String>().Utf8Value();
++  if (failure == "thread-allocation") {
++    terminateJobFailurePoint = TerminateJobFailurePoint::ThreadAllocation;
++  } else if (failure == "threadsafe-function") {
++    terminateJobFailurePoint = TerminateJobFailurePoint::ThreadSafeFunctionCreation;
++  } else {
++    terminateJobFailurePoint = TerminateJobFailurePoint::None;
 +  }
 +  return info.Env().Undefined();
 +}
@@ -970,6 +1146,14 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
 +  result.Set(
 +      "drainedFailedProcessCount",
 +      Napi::Number::New(info.Env(), drainedFailedProcessCount));
++  result.Set(
++      "closedTerminationJobHandleCount",
++      Napi::Number::New(info.Env(), closedTerminationJobHandleCount));
++  result.Set(
++      "liveTerminationThreadCount",
++      Napi::Number::New(
++          info.Env(),
++          allocatedTerminationThreadCount - releasedTerminationThreadCount));
 +  return result;
 +}
 +#endif
@@ -977,7 +1161,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
  struct ExitEvent {
    int exit_code = 0;
  };
-@@ -91,7 +227,18 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+@@ -91,7 +260,18 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
          delete th;
        });
    *th = std::thread([tsfn = std::move(tsfn), baton] {
@@ -997,7 +1181,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
        cb.Call({Napi::Number::New(env, exit_event->exit_code)});
        delete exit_event;
      };
-@@ -99,15 +246,41 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+@@ -99,15 +279,41 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
      ExitEvent *exit_event = new ExitEvent;
      // Wait for process to complete.
      WaitForSingleObject(baton->hShell, INFINITE);
@@ -1044,7 +1228,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
          break;
  
        case napi_queue_full:
-@@ -194,6 +367,8 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
+@@ -194,6 +400,8 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
                                           HANDLE *phInput,
                                           HANDLE *phOutput,
                                           HPCON* phPC,
@@ -1053,7 +1237,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
                                           std::wstring& inName,
                                           std::wstring& outName,
                                           const std::wstring& pipeName,
-@@ -214,6 +389,18 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
+@@ -214,6 +422,18 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
          return E_INVALIDARG;
        }
  
@@ -1072,7 +1256,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
        bool success = createDataServerPipe(true, L"in", phInput, inName, pipeName);
        if (!success)
        {
-@@ -289,7 +476,21 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
+@@ -289,7 +509,21 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
  
    HANDLE hIn, hOut;
    HPCON hpc;
@@ -1095,7 +1279,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
  
    // Restore default handling of ctrl+c
    SetConsoleCtrlHandler(NULL, FALSE);
-@@ -302,7 +503,13 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
+@@ -302,7 +536,13 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
      const int ptyId = InterlockedIncrement(&ptyCounter);
      marshal.Set("pty", Napi::Number::New(env, ptyId));
      ptyHandles.emplace_back(
@@ -1110,7 +1294,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
    } else {
      throw Napi::Error::New(env, "Cannot launch conpty");
    }
-@@ -333,14 +540,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -333,14 +573,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
    std::stringstream errorText;
    BOOL fSuccess = FALSE;
  
@@ -1129,7 +1313,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
    }
  
    const int id = info[0].As<Napi::Number>().Int32Value();
-@@ -348,7 +556,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -348,7 +589,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
    const std::wstring cwd(path_util::to_wstring(info[2].As<Napi::String>()));
    const Napi::Array envValues = info[3].As<Napi::Array>();
    const bool useConptyDll = info[4].As<Napi::Boolean>().Value();
@@ -1139,7 +1323,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
  
    // Fetch pty handle from ID and start process
    pty_baton* handle = get_pty_baton(id);
-@@ -391,11 +600,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -391,11 +633,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
  
    SIZE_T size = 0;
    InitializeProcThreadAttributeList(NULL, 1, 0, &size);
@@ -1157,7 +1341,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
      throw errorWithCode(info, "InitializeProcThreadAttributeList failed");
    }
    fSuccess = UpdateProcThreadAttribute(siEx.lpAttributeList,
-@@ -406,36 +619,80 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -406,38 +652,82 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
                                         NULL,
                                         NULL);
    if (!fSuccess) {
@@ -1220,7 +1404,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
 +      cleanup_failed_connect(handle, &piClient, siEx.lpAttributeList);
 +      SetLastError(jobError);
 +      throw errorWithCode(info, "Cannot assign process to Job");
-     }
++    }
 +    handle->hJob = hJob;
 +
 +    DWORD resumeResult;
@@ -1239,17 +1423,19 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
 +      cleanup_failed_connect(handle, &piClient, siEx.lpAttributeList);
 +      SetLastError(resumeError);
 +      throw errorWithCode(info, "Cannot resume process");
-+    }
-+  }
-+
+     }
+   }
+ 
 +  DeleteProcThreadAttributeList(siEx.lpAttributeList);
 +
 +  if (handle->releasePseudoConsole != nullptr) {
 +    handle->releasePseudoConsole(handle->hpc);
-   }
- 
++  }
++
    // Update handle
-@@ -445,7 +702,9 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+   handle->hShell = piClient.hProcess;
+ 
+@@ -445,7 +735,9 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
    CloseHandle(piClient.hThread);
    // Close the input read and output write handle of the pseudoconsole
    CloseHandle(handle->hIn);
@@ -1259,7 +1445,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
  
    SetupExitCallback(env, exitCallback, handle);
  
-@@ -544,21 +803,10 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+@@ -544,21 +836,10 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    int id = info[0].As<Napi::Number>().Int32Value();
    const bool useConptyDll = info[1].As<Napi::Boolean>().Value();
  
@@ -1283,13 +1469,57 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
      if (useConptyDll) {
        TerminateProcess(handle->hShell, 1);
      }
-@@ -567,6 +815,109 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+@@ -567,6 +848,178 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    return env.Undefined();
  }
  
 +struct JobTerminationResult {
 +  bool drained = false;
 +};
++
++struct JobTerminationWorker {
++  std::thread thread;
++  JobTerminationResult result;
++};
++
++static void close_termination_job_handle(HANDLE handle) {
++  if (handle == nullptr) {
++    return;
++  }
++  CloseHandle(handle);
++#ifdef NODE_PTY_TEST_FAULTS
++  InterlockedIncrement(&closedTerminationJobHandleCount);
++#endif
++}
++
++class ScopedTerminationJobHandle {
++ public:
++  explicit ScopedTerminationJobHandle(HANDLE handle) : handle(handle) {}
++  ~ScopedTerminationJobHandle() {
++    close_termination_job_handle(handle);
++  }
++  ScopedTerminationJobHandle(const ScopedTerminationJobHandle&) = delete;
++  ScopedTerminationJobHandle& operator=(const ScopedTerminationJobHandle&) = delete;
++  HANDLE get() const { return handle; }
++  HANDLE release() {
++    const HANDLE released = handle;
++    handle = nullptr;
++    return released;
++  }
++
++ private:
++  HANDLE handle;
++};
++
++static void release_termination_worker(JobTerminationWorker* worker) {
++  if (worker->thread.joinable()) {
++    worker->thread.join();
++  }
++  delete worker;
++#ifdef NODE_PTY_TEST_FAULTS
++  InterlockedIncrement(&releasedTerminationThreadCount);
++#endif
++}
 +
 +static Napi::Value PtyTerminateJobTree(const Napi::CallbackInfo& info) {
 +  Napi::Env env(info.Env());
@@ -1321,71 +1551,96 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
 +      DUPLICATE_SAME_ACCESS)) {
 +    return env.Undefined();
 +  }
-+  if (!TerminateJobObject(hJob, 1)) {
-+    CloseHandle(hJob);
++  ScopedTerminationJobHandle jobHandle(hJob);
++  if (!TerminateJobObject(jobHandle.get(), 1)) {
 +    return env.Undefined();
 +  }
 +
 +  // Why: termination is asynchronous. Keep a duplicate Job handle until the
 +  // OS reports no members instead of treating the root process exit as proof.
 +  auto deferred = Napi::Promise::Deferred::New(env);
-+  std::thread *th = new std::thread;
++#ifdef NODE_PTY_TEST_FAULTS
++  if (terminateJobFailurePoint == TerminateJobFailurePoint::ThreadAllocation) {
++    throw Napi::Error::New(env, "Injected termination thread allocation failure");
++  }
++#endif
++  auto worker = std::unique_ptr<JobTerminationWorker, decltype(&release_termination_worker)>(
++      new JobTerminationWorker,
++      release_termination_worker);
++#ifdef NODE_PTY_TEST_FAULTS
++  InterlockedIncrement(&allocatedTerminationThreadCount);
++  if (terminateJobFailurePoint == TerminateJobFailurePoint::ThreadSafeFunctionCreation) {
++    throw Napi::Error::New(env, "Injected termination ThreadSafeFunction failure");
++  }
++#endif
++  JobTerminationWorker *workerContext = worker.get();
 +  auto tsfn = Napi::ThreadSafeFunction::New(
 +      env,
 +      Napi::Function::New(env, [](const Napi::CallbackInfo&) {}),
 +      "PtyTerminateJobTree_resource",
 +      0,
 +      1,
-+      [th](Napi::Env) {
-+        th->join();
-+        delete th;
-+      });
++      [workerContext](Napi::Env) { release_termination_worker(workerContext); });
++  const napi_threadsafe_function rawTsfn = tsfn;
 +  const DWORD timeoutMs = static_cast<DWORD>(timeoutValue);
-+  *th = std::thread([tsfn = std::move(tsfn), deferred, hJob, timeoutMs] {
-+    auto *result = new JobTerminationResult;
-+    const ULONGLONG startedAt = GetTickCount64();
-+    while (true) {
-+      JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
-+      if (!QueryInformationJobObject(
-+          hJob,
-+          JobObjectBasicAccountingInformation,
-+          &accounting,
-+          sizeof(accounting),
-+          nullptr)) {
-+        break;
-+      }
-+      if (accounting.ActiveProcesses == 0) {
-+        result->drained = true;
-+        break;
-+      }
-+      if (GetTickCount64() - startedAt >= timeoutMs) {
-+        break;
-+      }
-+      Sleep(25);
-+    }
-+    CloseHandle(hJob);
-+
-+    const auto status = tsfn.BlockingCall(
-+        result,
-+        [deferred](Napi::Env env, Napi::Function, JobTerminationResult *result) {
-+          deferred.Resolve(Napi::Boolean::New(env, result->drained));
-+          delete result;
-+        });
-+    switch (status) {
-+      case napi_closing:
-+        delete result;
-+        break;
-+      case napi_queue_full:
-+        Napi::Error::Fatal("PtyTerminateJobTree", "Queue was full");
-+      case napi_ok:
-+        if (tsfn.Release() != napi_ok) {
-+          Napi::Error::Fatal("PtyTerminateJobTree", "ThreadSafeFunction.Release() failed");
++  try {
++    workerContext->thread = std::thread([
++        rawTsfn,
++        deferred,
++        workerJob = jobHandle.get(),
++        workerContext,
++        timeoutMs] {
++      Napi::ThreadSafeFunction workerTsfn(rawTsfn);
++      ScopedTerminationJobHandle workerJobHandle(workerJob);
++      const ULONGLONG startedAt = GetTickCount64();
++      while (true) {
++        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
++        if (!QueryInformationJobObject(
++            workerJobHandle.get(),
++            JobObjectBasicAccountingInformation,
++            &accounting,
++            sizeof(accounting),
++            nullptr)) {
++          break;
 +        }
-+        break;
-+      default:
-+        Napi::Error::Fatal("PtyTerminateJobTree", "ThreadSafeFunction.BlockingCall() failed");
++        if (accounting.ActiveProcesses == 0) {
++          workerContext->result.drained = true;
++          break;
++        }
++        if (GetTickCount64() - startedAt >= timeoutMs) {
++          break;
++        }
++        Sleep(25);
++      }
++      const auto status = workerTsfn.BlockingCall(
++          &workerContext->result,
++          [deferred](Napi::Env env, Napi::Function, JobTerminationResult *result) {
++            deferred.Resolve(Napi::Boolean::New(env, result->drained));
++          });
++      switch (status) {
++        case napi_closing:
++          break;
++        case napi_queue_full:
++          Napi::Error::Fatal("PtyTerminateJobTree", "Queue was full");
++        case napi_ok:
++          if (workerTsfn.Release() != napi_ok) {
++            Napi::Error::Fatal("PtyTerminateJobTree", "ThreadSafeFunction.Release() failed");
++          }
++          break;
++        default:
++          Napi::Error::Fatal("PtyTerminateJobTree", "ThreadSafeFunction.BlockingCall() failed");
++      }
++    });
++  } catch (...) {
++    // Why: once TSFN creation succeeds, its finalizer owns the thread allocation.
++    worker.release();
++    if (tsfn.Release() != napi_ok) {
++      Napi::Error::Fatal("PtyTerminateJobTree", "ThreadSafeFunction.Release() failed");
 +    }
-+  });
++    throw;
++  }
++  jobHandle.release();
++  worker.release();
 +
 +  return deferred.Promise();
 +}
@@ -1393,13 +1648,16 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f2
  /**
  * Init
  */
-@@ -577,6 +928,11 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+@@ -577,6 +1030,14 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
    exports.Set("resize", Napi::Function::New(env, PtyResize));
    exports.Set("clear", Napi::Function::New(env, PtyClear));
    exports.Set("kill", Napi::Function::New(env, PtyKill));
 +  exports.Set("terminateJobTree", Napi::Function::New(env, PtyTerminateJobTree));
 +#ifdef NODE_PTY_TEST_FAULTS
 +  exports.Set("setTestConnectFailure", Napi::Function::New(env, PtySetTestConnectFailure));
++  exports.Set(
++      "setTestTerminateJobFailure",
++      Napi::Function::New(env, PtySetTestTerminateJobFailure));
 +  exports.Set("getTestResourceState", Napi::Function::New(env, PtyGetTestResourceState));
 +#endif
    return exports;
@@ -1449,7 +1707,7 @@ index dc2104b34fd396722a9e30821ff0b7dea18b4295..23510c3d7c85ecc911b94719832abe5f
      describe('Plain strings', () => {
        it('doesn\'t quote plain string', () => {
 diff --git a/src/windowsPtyAgent.ts b/src/windowsPtyAgent.ts
-index d7054449516f0c9a62af351c2caa17331206d530..9742be105e477384855daa2f7d9a1483478bd331 100644
+index d7054449516f0c9a62af351c2caa17331206d530..96deaf4fe037a983a80dfa8d9e6149aab5ea6a27 100644
 --- a/src/windowsPtyAgent.ts
 +++ b/src/windowsPtyAgent.ts
 @@ -34,6 +34,9 @@ export class WindowsPtyAgent {
@@ -1470,7 +1728,7 @@ index d7054449516f0c9a62af351c2caa17331206d530..9742be105e477384855daa2f7d9a1483
  
    constructor(
      file: string,
-@@ -56,11 +60,14 @@ export class WindowsPtyAgent {
+@@ -56,11 +60,17 @@ export class WindowsPtyAgent {
      debug: boolean,
      private _useConpty: boolean | undefined,
      private _useConptyDll: boolean = false,
@@ -1481,12 +1739,15 @@ index d7054449516f0c9a62af351c2caa17331206d530..9742be105e477384855daa2f7d9a1483
      if (this._useConpty === undefined || this._useConpty === true) {
        this._useConpty = this._getWindowsBuildNumber() >= 18309;
      }
-+    // Why: a requested Job is effective only when runtime detection actually selects ConPTY.
-+    this._windowsAgentJob = Boolean(this._useConpty && windowsAgentJob);
++    // Why: winpty cannot provide spawn-time Job ownership; launching anyway can orphan agents.
++    if (windowsAgentJob && !this._useConpty) {
++      throw new Error('Windows agent Job ownership requires ConPTY');
++    }
++    this._windowsAgentJob = windowsAgentJob;
      if (this._useConpty) {
        if (!conptyNative) {
          conptyNative = loadNativeModule('conpty').module;
-@@ -100,7 +107,7 @@ export class WindowsPtyAgent {
+@@ -100,7 +110,7 @@ export class WindowsPtyAgent {
      this._outSocket.setEncoding('utf8');
      // The conout socket must be ready out on another thread to avoid deadlocks
      this._conoutSocketWorker = new ConoutConnection(term.conout, this._useConptyDll);
@@ -1495,7 +1756,7 @@ index d7054449516f0c9a62af351c2caa17331206d530..9742be105e477384855daa2f7d9a1483
        this._conoutSocketWorker.connectSocket(this._outSocket);
      });
      this._outSocket.on('connect', () => {
-@@ -116,8 +123,18 @@ export class WindowsPtyAgent {
+@@ -116,8 +126,18 @@ export class WindowsPtyAgent {
      this._inSocket.setEncoding('utf8');
  
      if (this._useConpty) {
@@ -1516,7 +1777,7 @@ index d7054449516f0c9a62af351c2caa17331206d530..9742be105e477384855daa2f7d9a1483
      }
    }
  
-@@ -138,6 +155,24 @@ export class WindowsPtyAgent {
+@@ -138,6 +158,24 @@ export class WindowsPtyAgent {
      }
    }
  
@@ -1541,7 +1802,7 @@ index d7054449516f0c9a62af351c2caa17331206d530..9742be105e477384855daa2f7d9a1483
    public kill(): void {
      // Tell the agent to kill the pty, this releases handles to the process
      if (this._useConpty) {
-@@ -223,6 +258,10 @@ export class WindowsPtyAgent {
+@@ -223,6 +261,10 @@ export class WindowsPtyAgent {
     */
    private _$onProcessExit(exitCode: number): void {
      this._exitCode = exitCode;
@@ -1553,24 +1814,22 @@ index d7054449516f0c9a62af351c2caa17331206d530..9742be105e477384855daa2f7d9a1483
        this._flushDataAndCleanUp();
        this._outSocket.on('data', () => this._flushDataAndCleanUp());
 diff --git a/src/windowsTerminal.test.ts b/src/windowsTerminal.test.ts
-index 8f1274edf6dcf6e9257ba9d711099791391ec778..afc5813d26ce0027b826d326fffdbc3c242753aa 100644
+index 8f1274edf6dcf6e9257ba9d711099791391ec778..8c256e56c8c344584fc5b9ef8e670691a7feba25 100644
 --- a/src/windowsTerminal.test.ts
 +++ b/src/windowsTerminal.test.ts
-@@ -92,6 +92,20 @@ function pollForProcessTreeSize(pid: number, size: number, intervalMs: number =
+@@ -92,6 +92,18 @@ function pollForProcessTreeSize(pid: number, size: number, intervalMs: number =
  }
  
  if (process.platform === 'win32') {
 +  describe('WindowsTerminal Job capability fallback', () => {
-+    it('does not wait for a Job callback when a requested Job falls back to winpty', function(done) {
-+      this.timeout(10000);
-+      const term = new WindowsTerminal('cmd.exe', '/C exit', {
-+        useConpty: false,
-+        windowsAgentJob: true
-+      });
-+      term.on('exit', code => {
-+        assert.strictEqual(code, 0);
-+        done();
-+      });
++    it('fails closed before a requested Job can fall back to winpty', () => {
++      assert.throws(
++        () => new WindowsTerminal('cmd.exe', '/C exit', {
++          useConpty: false,
++          windowsAgentJob: true
++        }),
++        /Windows agent Job ownership requires ConPTY/
++      );
 +    });
 +  });
 +

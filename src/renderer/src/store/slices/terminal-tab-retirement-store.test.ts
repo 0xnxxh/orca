@@ -49,6 +49,14 @@ function sleepingRecord(paneKey: string, tabId: string): SleepingAgentSessionRec
   }
 }
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('terminal tab retirement store boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -288,6 +296,42 @@ describe('terminal tab retirement store boundary', () => {
     expect(mockKill).not.toHaveBeenCalled()
     expect(store.getState().tabsByWorktree['wt-1']).toHaveLength(1)
     expect(store.getState().ptyIdsByTabId['tab-1']).toEqual(['pty-v24'])
+  })
+
+  it('replans after async safety inventory before retiring current PTY ownership', async () => {
+    const store = createTestStore()
+    const firstPreflight = deferred<null>()
+    mockGetShutdownBlockReason.mockImplementationOnce(() => firstPreflight.promise)
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [
+          makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'pty-before' }),
+          makeTab({ id: 'survivor', worktreeId: 'wt-1', ptyId: null })
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-before'], survivor: [] }
+    })
+
+    store.getState().closeTab('tab-1')
+    expect(mockGetShutdownBlockReason).toHaveBeenCalledWith('pty-before')
+
+    store.setState({
+      tabsByWorktree: {
+        'wt-1': [
+          makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'pty-after' }),
+          makeTab({ id: 'survivor', worktreeId: 'wt-1', ptyId: 'pty-before' })
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-after'], survivor: ['pty-before'] }
+    })
+    firstPreflight.resolve(null)
+
+    await vi.waitFor(() => expect(mockGetShutdownBlockReason).toHaveBeenCalledWith('pty-after'))
+    await vi.waitFor(() => expect(mockKill).toHaveBeenCalledWith('pty-after'))
+
+    expect(mockKill).not.toHaveBeenCalledWith('pty-before')
+    expect(store.getState().tabsByWorktree['wt-1'].map((tab) => tab.id)).toEqual(['survivor'])
+    expect(store.getState().ptyIdsByTabId.survivor).toEqual(['pty-before'])
   })
 
   it('keeps sleep state and PTY ownership intact when legacy shutdown is unsafe', async () => {

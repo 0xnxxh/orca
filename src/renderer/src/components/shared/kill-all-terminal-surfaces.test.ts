@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
+import { WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON } from '../../../../shared/pty-shutdown-safety'
 import { useAppStore, type AppState } from '@/store'
 import { closeTerminalTab } from '../terminal/terminal-tab-actions'
 import {
@@ -100,6 +101,81 @@ describe('snapshotKillAllTerminalSurfaceIds', () => {
 })
 
 describe('runKillAllTerminalSurfaces', () => {
+  it('preserves unsafe legacy tabs and mappings before daemon kill-all starts', async () => {
+    const current = state({
+      tabsByWorktree: {
+        wt: [{ ...terminal('legacy-target', 'wt'), ptyId: 'pty-v24' }]
+      },
+      ptyIdsByTabId: { 'legacy-target': ['pty-v24'] }
+    })
+    const getShutdownBlockReason = vi
+      .fn()
+      .mockResolvedValue(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+    const killDaemonSessions = vi.fn()
+    const closeSurface = vi.fn()
+    const killPty = vi.fn()
+    vi.stubGlobal('window', { api: { pty: { getShutdownBlockReason } } })
+
+    try {
+      await expect(
+        runKillAllTerminalSurfaces(['legacy-target'], {
+          getState: () => current,
+          killDaemonSessions,
+          closeSurface,
+          killPty,
+          reportSummary: vi.fn()
+        })
+      ).rejects.toThrow(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+
+      expect(killDaemonSessions).not.toHaveBeenCalled()
+      expect(closeSurface).not.toHaveBeenCalled()
+      expect(killPty).not.toHaveBeenCalled()
+      expect(snapshotKillAllTerminalSurfaceIds(current)).toEqual(['legacy-target'])
+      expect(current.ptyIdsByTabId['legacy-target']).toEqual(['pty-v24'])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('rechecks ownership after daemon management before retiring a surface', async () => {
+    const current = state({
+      tabsByWorktree: {
+        wt: [{ ...terminal('target', 'wt'), ptyId: 'pty-safe' }]
+      },
+      ptyIdsByTabId: { target: ['pty-safe'] }
+    })
+    const getShutdownBlockReason = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+    const closeSurface = vi.fn()
+    vi.stubGlobal('window', { api: { pty: { getShutdownBlockReason } } })
+
+    try {
+      await expect(
+        runKillAllTerminalSurfaces(['target'], {
+          getState: () => current,
+          killDaemonSessions: vi.fn(async () => {
+            current.tabsByWorktree.wt = [{ ...terminal('target', 'wt'), ptyId: 'pty-v24' }]
+            current.ptyIdsByTabId.target = ['pty-v24']
+            return { killedCount: 0, remainingCount: 1 }
+          }),
+          closeSurface,
+          killPty: vi.fn(),
+          reportSummary: vi.fn()
+        })
+      ).rejects.toThrow(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+
+      expect(getShutdownBlockReason).toHaveBeenNthCalledWith(1, 'pty-safe')
+      expect(getShutdownBlockReason).toHaveBeenNthCalledWith(2, 'pty-v24')
+      expect(closeSurface).not.toHaveBeenCalled()
+      expect(snapshotKillAllTerminalSurfaceIds(current)).toEqual(['target'])
+      expect(current.ptyIdsByTabId.target).toEqual(['pty-v24'])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('resolves current bindings and ownership after management settles, then closes active last', async () => {
     const management = deferred<{ killedCount: number; remainingCount: number }>()
     const lastExactKill = deferred<void>()

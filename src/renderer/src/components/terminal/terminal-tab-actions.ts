@@ -103,11 +103,8 @@ export function closeTerminalTab(
     !options?.localPtyTeardownOwnedExternally &&
     !options?.shutdownSafetyChecked &&
     deferTerminalTabCloseForShutdownSafety({
-      state,
+      getState: useAppStore.getState,
       tabId: terminalTabId,
-      ...(options?.precomputedRetirementPlan
-        ? { precomputedRetirementPlan: options.precomputedRetirementPlan }
-        : {}),
       onAllowed: (retirementPlan) =>
         closeTerminalTab(tabId, {
           ...options,

@@ -9,6 +9,10 @@ import {
   type TerminalTabRetirementState
 } from '@/store/slices/terminal-tab-retirement'
 import { reserveTerminalRetirementTeardowns } from '@/store/slices/terminal-retirement-teardown-reservation'
+import {
+  assertStableTerminalShutdownSafety,
+  hasTerminalShutdownSafetyPreflight
+} from '@/store/slices/terminal-shutdown-safety'
 
 const CLOSE_BATCH_SIZE = 2
 
@@ -32,11 +36,7 @@ export type KillAllTerminalSurfacesSummary = {
   maxCloseBatchDurationMs: number
   closeYieldCount: number
   closePhaseExceededLongTaskBudget: boolean
-  daemon:
-    | ({ status: 'fulfilled' } & DaemonKillAllResult)
-    | {
-        status: 'rejected'
-      }
+  daemon: ({ status: 'fulfilled' } & DaemonKillAllResult) | { status: 'rejected' }
 }
 
 type KillAllTerminalSurfaceDependencies = {
@@ -58,7 +58,7 @@ type KillAllTerminalSurfaceDependencies = {
 }
 
 export function snapshotKillAllTerminalSurfaceIds(
-  state: KillAllTerminalSurfaceState = useAppStore.getState()
+  state: TerminalTabRetirementState = useAppStore.getState()
 ): string[] {
   const targetIds = new Set<string>()
   for (const tabs of Object.values(state.tabsByWorktree)) {
@@ -151,11 +151,32 @@ export async function runKillAllTerminalSurfaces(
   const deps = { ...createDefaultDependencies(), ...dependencies }
   const targetIds = [...new Set(snapshotTargetIds)]
 
+  const shouldPreflightTargets = targetIds.length > 0 && hasTerminalShutdownSafetyPreflight()
+  const assertTargetsSafe = (): Promise<unknown> =>
+    assertStableTerminalShutdownSafety({
+      surfaceId: 'kill-all-terminal-surfaces',
+      getState: deps.getState,
+      selectTabIds: (state) => {
+        const presentIds = new Set(snapshotKillAllTerminalSurfaceIds(state))
+        return targetIds.filter((targetId) => presentIds.has(targetId))
+      }
+    })
+
+  // Why: management failure is recoverable only while every unsafe session remains visible.
+  if (shouldPreflightTargets) {
+    await assertTargetsSafe()
+  }
+
   let daemon: KillAllTerminalSurfacesSummary['daemon']
   try {
     daemon = { status: 'fulfilled', ...(await deps.killDaemonSessions()) }
   } catch {
     daemon = { status: 'rejected' }
+  }
+
+  // Why: management is asynchronous; do not retire a legacy owner attached during its request.
+  if (shouldPreflightTargets) {
+    await assertTargetsSafe()
   }
 
   const cleanupState = deps.getState()
@@ -172,8 +193,7 @@ export async function runKillAllTerminalSurfaces(
       }
     }
     const activeWorktreeId = state.activeWorktreeId
-    // Why: keeping the active worktree until its targets close lets the existing
-    // tab action choose editor/browser/deactivation without spawning a replacement.
+    // Why: closing active-worktree targets last avoids spawning a replacement surface.
     const closeOrder = [
       ...presentTargetIds.filter((targetId) => ownerByTargetId.get(targetId) !== activeWorktreeId),
       ...presentTargetIds.filter((targetId) => ownerByTargetId.get(targetId) === activeWorktreeId)
@@ -233,8 +253,7 @@ export async function runKillAllTerminalSurfaces(
       const failedTargetSurvived =
         closeFailed && snapshotKillAllTerminalSurfaceIds(deps.getState()).includes(targetId)
       if (failedTargetSurvived) {
-        // Why: a pre-mutation failure leaves the tab as a live non-target owner.
-        // Replan before touching siblings so it still protects counts and PTYs.
+        // Why: a surviving failed tab must keep protecting its counts and PTYs.
         for (const owner of newlyScheduledPtyOwners) {
           scheduledPtyOwners.delete(owner)
         }
@@ -255,8 +274,7 @@ export async function runKillAllTerminalSurfaces(
     }
     maxCloseBatchDurationMs = Math.max(maxCloseBatchDurationMs, deps.now() - closeBatchStartedAt)
     if (remainingTargetIds.size > 0) {
-      // Why: closeTab cascades clone several store maps, so large confirmed
-      // snapshots yield between bounded batches instead of monopolizing a frame.
+      // Why: bounded batches keep large close snapshots from monopolizing a frame.
       const stateAfterBatch = deps.getState()
       try {
         await deps.yieldToRenderer()
@@ -267,16 +285,14 @@ export async function runKillAllTerminalSurfaces(
       closeBatchStartedAt = deps.now()
       const stateAfterYield = deps.getState()
       if (mustReplanAfterYield || stateAfterYield !== stateAfterBatch) {
-        // Why: a yield lets tabs move, detach, or appear. Replanning the
-        // remaining snapshot prevents stale ownership from killing a survivor.
+        // Why: replanning after a mutable yield prevents killing a new PTY owner.
         closeWave = createCloseWave(stateAfterYield)
       }
     }
   }
   const closeDurationMs = Math.max(0, deps.now() - closeStartedAt)
 
-  // Why: the management sweep already settled daemon-owned IDs; awaiting only
-  // reserved exact kills keeps each provider at one request per ownership identity.
+  // Why: daemon-owned IDs were settled, so only reserved exact kills remain.
   const exactKillResults = await Promise.allSettled(exactKillTasks)
   const exactKillAcceptedCount = exactKillResults.filter(
     (result) => result.status === 'fulfilled'

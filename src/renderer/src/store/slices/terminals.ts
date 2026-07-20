@@ -78,8 +78,9 @@ import {
 } from '@/components/terminal-pane/terminal-layout-leaf-ids'
 import { shutdownBufferCaptures } from '@/components/terminal-pane/shutdown-buffer-captures'
 import {
-  assertTerminalShutdownSafety,
-  deferTerminalCloseForShutdownSafety
+  assertStableTerminalShutdownSafety,
+  deferTerminalTabCloseForShutdownSafety,
+  selectTerminalTabIdsForWorktrees
 } from './terminal-shutdown-safety'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { parseRemoteRuntimePtyId, toRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
@@ -1234,13 +1235,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       retiresSession &&
       !opts?.localPtyTeardownOwnedExternally &&
       !opts?.shutdownSafetyChecked &&
-      deferTerminalCloseForShutdownSafety({
+      deferTerminalTabCloseForShutdownSafety({
+        getState: get,
         tabId,
-        ptyIds: retirementPlan.localOrSshPtyIds,
-        onAllowed: () =>
+        onAllowed: (currentRetirementPlan) =>
           get().closeTab(tabId, {
             ...opts,
-            precomputedRetirementPlan: retirementPlan,
+            precomputedRetirementPlan: currentRetirementPlan,
             shutdownSafetyChecked: true
           })
       })
@@ -2511,15 +2512,17 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     const keepIdentifiers = opts?.keepIdentifiers ?? false
     const shutdownReason: AgentStatusWorktreeShutdownReason =
       opts?.shutdownReason ?? (keepIdentifiers ? 'manual-sleep' : 'remove-worktree')
+    const worktreeIds = new Set([worktreeId])
+    await assertStableTerminalShutdownSafety({
+      surfaceId: worktreeId,
+      getState: get,
+      selectTabIds: (state) => selectTerminalTabIdsForWorktrees(state, worktreeIds)
+    })
     const tabs = get().tabsByWorktree[worktreeId] ?? []
     const ptyIds = tabs.flatMap((tab) => get().ptyIdsByTabId[tab.id] ?? [])
     const rendererShutdownPtyIds = sortedUniquePtyIds(ptyIds)
     const expectedRuntimePtyIds = sortedUniquePtyIds(opts?.expectedRuntimePtyIds)
     const runtimeEnvironmentId = resolveTerminalStopRuntimeEnvironmentId(get(), worktreeId)
-    await assertTerminalShutdownSafety({
-      surfaceId: worktreeId,
-      ptyIds: rendererShutdownPtyIds.filter((ptyId) => !ptyId.startsWith('remote:'))
-    })
     // Why: expectedRuntimePtyIds are raw RPC handles. Only renderer-bound ids
     // can emit pane exit callbacks, so they are the complete guard identity set.
     const exitGuardPtyIds = rendererShutdownPtyIds

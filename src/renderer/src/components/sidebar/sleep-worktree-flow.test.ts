@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON } from '../../../../shared/pty-shutdown-safety'
 
 const mocks = vi.hoisted(() => {
   const state = {
@@ -9,7 +10,12 @@ const mocks = vi.hoisted(() => {
     suppressPtyExit: vi.fn(),
     consumeSuppressedPtyExit: vi.fn(),
     tabsByWorktree: {} as Record<string, { id: string }[]>,
-    ptyIdsByTabId: {} as Record<string, string[]>
+    unifiedTabsByWorktree: {},
+    ptyIdsByTabId: {} as Record<string, string[]>,
+    terminalLayoutsByTabId: {},
+    lastKnownRelayPtyIdByTabId: {},
+    deferredSshSessionIdsByTabId: {},
+    pendingReconnectPtyIdByTabId: {}
   }
   const suspendWorkspace = vi.fn().mockResolvedValue(null)
   const toastError = vi.fn()
@@ -60,7 +66,12 @@ describe('runSleepWorktree', () => {
     mocks.toastError.mockClear()
     mocks.state.activeWorktreeId = null
     mocks.state.tabsByWorktree = {}
+    mocks.state.unifiedTabsByWorktree = {}
     mocks.state.ptyIdsByTabId = {}
+    mocks.state.terminalLayoutsByTabId = {}
+    mocks.state.lastKnownRelayPtyIdByTabId = {}
+    mocks.state.deferredSshSessionIdsByTabId = {}
+    mocks.state.pendingReconnectPtyIdByTabId = {}
   })
 
   it('tears down browsers before terminals on the sleep path', async () => {
@@ -108,6 +119,43 @@ describe('runSleepWorktree', () => {
     const clearCall = mocks.clearWorktreeSleepIntent.mock.invocationCallOrder[0]
     expect(markCall).toBeLessThan(activeClear)
     expect(terminalShutdown).toBeLessThan(clearCall)
+  })
+
+  it('preserves active and browser state until legacy terminal safety is known', async () => {
+    let resolvePreflight!: (reason: string | null) => void
+    const getShutdownBlockReason = vi.fn(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolvePreflight = resolve
+        })
+    )
+    vi.stubGlobal('window', {
+      api: {
+        pty: { getShutdownBlockReason },
+        ephemeralVm: { suspendWorkspace: mocks.suspendWorkspace }
+      },
+      requestAnimationFrame: vi.fn()
+    })
+    mocks.state.activeWorktreeId = 'wt-1'
+    mocks.state.tabsByWorktree = { 'wt-1': [{ id: 'tab-1' }] }
+    mocks.state.ptyIdsByTabId = { 'tab-1': ['pty-v24'] }
+
+    const completion = runSleepWorktree('wt-1')
+    await vi.waitFor(() => expect(getShutdownBlockReason).toHaveBeenCalledWith('pty-v24'))
+
+    expect(mocks.markWorktreeSleepIntent).not.toHaveBeenCalled()
+    expect(mocks.state.setActiveWorktree).not.toHaveBeenCalled()
+    expect(mocks.state.shutdownWorktreeBrowsers).not.toHaveBeenCalled()
+    expect(mocks.state.shutdownWorktreeTerminals).not.toHaveBeenCalled()
+
+    resolvePreflight(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+    await completion
+
+    expect(mocks.markWorktreeSleepIntent).not.toHaveBeenCalled()
+    expect(mocks.state.setActiveWorktree).not.toHaveBeenCalled()
+    expect(mocks.state.shutdownWorktreeBrowsers).not.toHaveBeenCalled()
+    expect(mocks.state.shutdownWorktreeTerminals).not.toHaveBeenCalled()
+    expect(mocks.clearWorktreeSleepIntent).not.toHaveBeenCalled()
   })
 
   it('preserves active row position through section-scoped sidebar row ids', async () => {

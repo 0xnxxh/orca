@@ -712,19 +712,17 @@
         "ssh",
         "runtime"
       ],
-      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Windows 2022 Actions red/green runs prove production store.removeWorktree(id, true) retires an agent PTY and its reparented native lock-holder before deleting the worktree, plain terminal close preserves an intentionally detached child, and natural agent-root exit publishes PTY exit only after its detached Job child is absent. Deterministic tests cover explicit and spawn-recognized native Windows agent Job selection, daemon session identity propagation, fail-closed Job teardown and bridge errors, safe failure when Job ownership is unavailable, adopted-v24 unclassified-shutdown refusal with known-WSL compatibility and renderer-state preservation, provider-scoped recovered routing, coalesced authoritative shutdown inventory and cached fallback/daemon duplicate refusal, duplicate-exit suppression, sleeping legacy ownership, daemon WSL exclusion, daemon-wide shutdown, remote-host Windows SSH relay Job selection/drain with WSL exclusion, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, WSL, end-to-end SSH transport, and remote-runtime process evidence remains pending.",
+      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Windows 2022 Actions red/green runs prove production store.removeWorktree(id, true) retires an agent PTY and its reparented native lock-holder before deleting the worktree, plain terminal close preserves an intentionally detached child, and natural agent-root exit publishes PTY exit only after its detached Job child is absent. Deterministic tests cover explicit and spawn-recognized native Windows agent Job selection, daemon session identity propagation, fail-closed Job teardown and bridge errors, safe failure when Job ownership is unavailable, adopted-v24 unclassified-shutdown refusal with known-WSL compatibility and renderer-state preservation, provider-scoped recovered routing, coalesced authoritative shutdown inventory and cached fallback/daemon duplicate refusal, duplicate-exit suppression, sleeping legacy ownership, daemon WSL exclusion, daemon-wide shutdown, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, WSL, Windows SSH, other end-to-end SSH transport, and remote-runtime process evidence remains pending.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/8628",
         "https://github.com/stablyai/orca/pull/8706",
         "https://github.com/stablyai/orca/issues/9045"
       ],
-      "invariant": "Close permanently removes the owned provider session, agent descendants, and resume authority even when no TerminalPane is mounted; a native Windows agent PTY owns its spawn-time process family in a kill-on-close Job that must drain before destructive worktree deletion succeeds, including agents hosted by a Windows SSH relay, while plain terminals, WSL, POSIX SSH, and remote runtimes retain their existing semantics; a terminating id remains reserved through natural exit, duplicate callers await the same completion, and immediate teardown upgrades any graceful request without signalling a recycled PID or a descendant tree after root ownership is lost; process-table work is locale-stable, bounded, fresh for each post-start request, same-turn coalesced, and begins within the requesting caller's deadline, including bulk worktree cleanup; detach and park preserve ownership; aliases prevent a detached agent's immutable physical pane key from being retired with its former tab.",
-      "oracle": "Capture the exact PTY before parking, prove it remains listed while the view is absent, close through the product state boundary, and poll the provider inventory until that exact ID disappears; an agent-marked PTY's detached-pgid child is alive before close and absent afterward. On Windows, prove the fixture is Git-registered, launch PowerShell shell -> agent Node process -> exited launcher -> reparented native lock-holder, invoke production store.removeWorktree(id, true), and prove the exact PTY, root, agent, lock-holder, worktree directory, Git registration, and worktree list entry are absent; separately prove a plain terminal's intentionally detached child survives close. A natural-root-exit journey records the public PTY exit callback and requires the detached Job child to be absent at that exact callback. A real Windows relay/node-pty integration holds a delete-denying file handle in a detached PowerShell child and requires remote-host Job drain before worktree deletion. Unit tests require agent-only spawn-time Job selection, handle-scoped local and Windows-relay Job termination before ConPTY close, daemon root signalling before Job termination and drain, fail-closed timeout/rejection/synchronous-throw behavior, adopted-v24 destructive-shutdown refusal without renderer-state loss, provider-scoped legacy/fallback route refresh, duplicate ownership refusal and exit suppression, local and relay WSL exclusion, safe failure without PID-only fallback when Job ownership is unavailable, daemon-wide routing through the same teardown, naturally exited id reservation, bounded locale-stable process-table reads, duplicate completion sharing, canonical owner dedupe, exact pane tombstones, chained detach transfer, and restart alias restoration.",
+      "invariant": "Close permanently removes the owned provider session, agent descendants, and resume authority even when no TerminalPane is mounted; a native local Windows agent PTY owns its spawn-time process family in a kill-on-close Job that must drain before destructive worktree deletion succeeds, while plain terminals, WSL, SSH, and remote runtimes retain their existing semantics; a terminating id remains reserved through natural exit, duplicate callers await the same completion, and immediate teardown upgrades any graceful request without signalling a recycled PID or a descendant tree after root ownership is lost; process-table work is locale-stable, bounded, fresh for each post-start request, same-turn coalesced, and begins within the requesting caller's deadline, including bulk worktree cleanup; detach and park preserve ownership; aliases prevent a detached agent's immutable physical pane key from being retired with its former tab.",
+      "oracle": "Capture the exact PTY before parking, prove it remains listed while the view is absent, close through the product state boundary, and poll the provider inventory until that exact ID disappears; an agent-marked PTY's detached-pgid child is alive before close and absent afterward. On Windows, prove the fixture is Git-registered, launch PowerShell shell -> agent Node process -> exited launcher -> reparented native lock-holder, invoke production store.removeWorktree(id, true), and prove the exact PTY, root, agent, lock-holder, worktree directory, Git registration, and worktree list entry are absent; separately prove a plain terminal's intentionally detached child survives close. A natural-root-exit journey records the public PTY exit callback and requires the detached Job child to be absent at that exact callback. Unit tests require agent-only spawn-time Job selection, handle-scoped local Job termination before ConPTY close, daemon root signalling before Job termination and drain, fail-closed timeout/rejection/synchronous-throw behavior, adopted-v24 destructive-shutdown refusal without renderer-state loss, provider-scoped legacy/fallback route refresh, duplicate ownership refusal and exit suppression, local WSL exclusion, safe failure without PID-only fallback when Job ownership is unavailable, daemon-wide routing through the same teardown, naturally exited id reservation, bounded locale-stable process-table reads, duplicate completion sharing, canonical owner dedupe, exact pane tombstones, chained detach transfer, and restart alias restoration.",
       "commands": [
-        "pnpm dlx node@24 ./node_modules/vitest/vitest.mjs run --config config/vitest.config.ts src/main/agent-hooks/server-pane-authority.test.ts src/main/ipc/agent-hooks.test.ts src/main/ipc/agent-pane-authority-ownership.test.ts src/main/ipc/pty-management.test.ts src/main/persistence.test.ts src/renderer/src/store/slices/agent-pane-authority.test.ts src/renderer/src/store/slices/terminal-pane-detach-agent-identity.test.ts src/renderer/src/store/slices/terminal-tab-retirement.test.ts src/renderer/src/store/slices/terminal-tab-retirement-store.test.ts src/renderer/src/components/shared/kill-all-terminal-surfaces.test.ts",
+        "pnpm dlx node@24 ./node_modules/vitest/vitest.mjs run --config config/vitest.config.ts src/main/agent-hooks/server-pane-authority.test.ts src/main/ipc/agent-hooks.test.ts src/main/ipc/agent-pane-authority-ownership.test.ts src/main/ipc/pty-management.test.ts src/main/persistence.test.ts src/renderer/src/store/slices/agent-pane-authority.test.ts src/renderer/src/store/slices/terminal-pane-detach-agent-identity.test.ts src/renderer/src/store/slices/terminal-tab-retirement.test.ts src/renderer/src/store/slices/terminal-tab-retirement-store.test.ts src/renderer/src/components/shared/kill-all-terminal-surfaces.test.ts src/renderer/src/components/sidebar/sleep-worktree-flow.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/pty-descendant-termination.test.ts src/main/daemon/daemon-pty-adapter.test.ts src/main/daemon/daemon-pty-router.test.ts src/main/daemon/daemon-pty-session-routing.test.ts src/main/daemon/degraded-daemon-pty-provider.test.ts src/main/daemon/session.test.ts src/main/daemon/terminal-host.test.ts src/main/daemon/terminal-session-teardown.test.ts src/main/daemon/pty-subprocess.test.ts src/main/providers/local-pty-provider.test.ts src/main/runtime/worktree-teardown.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/relay/pty-handler.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/relay/windows-agent-job.integration.test.ts",
         "pnpm run test:e2e -- tests/e2e/terminal-parked-close-retirement.spec.ts --workers=1",
         "pnpm run test:e2e -- tests/e2e/agent-descendant-process-kill.spec.ts --workers=1",
         "pnpm run test:e2e -- tests/e2e/windows-agent-job-natural-exit.spec.ts --workers=1",
@@ -747,13 +745,12 @@
         "src/main/daemon/pty-subprocess.test.ts",
         "src/main/providers/local-pty-provider.test.ts",
         "src/main/runtime/worktree-teardown.test.ts",
-        "src/relay/pty-handler.test.ts",
-        "src/relay/windows-agent-job.integration.test.ts",
         "src/renderer/src/store/slices/agent-pane-authority.test.ts",
         "src/renderer/src/store/slices/terminal-pane-detach-agent-identity.test.ts",
         "src/renderer/src/store/slices/terminal-tab-retirement.test.ts",
         "src/renderer/src/store/slices/terminal-tab-retirement-store.test.ts",
         "src/renderer/src/components/shared/kill-all-terminal-surfaces.test.ts",
+        "src/renderer/src/components/sidebar/sleep-worktree-flow.test.ts",
         "tests/e2e/terminal-parked-close-retirement.spec.ts",
         "tests/e2e/agent-descendant-process-kill.spec.ts",
         "tests/e2e/windows-agent-job-natural-exit.spec.ts"
@@ -855,22 +852,22 @@
           ]
         },
         {
-          "file": "src/relay/pty-handler.test.ts",
-          "assertions": [
-            "native Windows SSH relay agents request remote-host Job ownership, drain before acknowledgement, and retain PTY ownership when drain fails",
-            "Windows SSH relay WSL agents do not request native Job ownership"
-          ]
-        },
-        {
-          "file": "src/relay/windows-agent-job.integration.test.ts",
-          "assertions": [
-            "real Windows relay/node-pty shutdown kills a detached PowerShell lock-holder and releases its delete-denying handle before acknowledgement"
-          ]
-        },
-        {
           "file": "src/renderer/src/store/slices/terminal-tab-retirement-store.test.ts",
           "assertions": [
-            "unsafe adopted-v24 close and sleep keep the renderer tab and exact PTY mapping intact without issuing root-only kill"
+            "unsafe adopted-v24 close and sleep keep the renderer tab and exact PTY mapping intact without issuing root-only kill",
+            "async close safety replans transferred and replacement PTY ownership before retiring the current session"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/shared/kill-all-terminal-surfaces.test.ts",
+          "assertions": [
+            "kill-all preflights unsafe legacy sessions before daemon shutdown and preserves their tabs and PTY mappings"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/sidebar/sleep-worktree-flow.test.ts",
+          "assertions": [
+            "sleep leaves active-worktree, browser, and sleep-intent state untouched until terminal shutdown safety succeeds"
           ]
         },
         {
@@ -959,7 +956,7 @@
           "command": "gh workflow run windows-terminal-restart-e2e.yml --ref OrcaWin/issue-9045-worktree-deletion-fails",
           "result": "passed",
           "durationSeconds": 555,
-          "summary": "Exact-head workflow run https://github.com/stablyai/orca/actions/runs/29766056882 checked out 1d04fbbc5, completed frozen install, passed the real Windows SSH relay/node-pty lock-holder teardown, verified generated conpty, conpty_console_list, winpty-agent, and winpty projects retained Spectre mitigation, rebuilt Electron, passed native failed-connect cleanup, and passed all six selected Electron regressions including production issue #9045 deletion, plain-terminal descendant preservation, and natural Job-drain exit ordering."
+          "summary": "Exact-head workflow run https://github.com/stablyai/orca/actions/runs/29766056882 checked out 1d04fbbc5, completed frozen install, verified generated conpty, conpty_console_list, winpty-agent, and winpty projects retained Spectre mitigation, rebuilt Electron, passed native failed-connect cleanup, and passed all six selected Electron regressions including production issue #9045 deletion, plain-terminal descendant preservation, and natural Job-drain exit ordering. The run's in-process relay check used the checkout dependency rather than the deployed SSH package and is not counted as production SSH evidence."
         }
       ],
       "runtimeBudget": {
@@ -968,7 +965,7 @@
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "The macOS Electron gate passed three times locally. Five recorded Windows implementation heads passed the selected Electron gate on GitHub Actions; exact head 1d04fbbc5 also passed frozen install, the real Windows relay lock-holder integration, generated-project Spectre assertions, both native failed-connect cleanup cases, and all six Electron tests including the strengthened deletion and natural-exit oracles. Required-platform soak history is not yet available."
+        "evidence": "The macOS Electron gate passed three times locally. Five recorded Windows implementation heads passed the selected Electron gate on GitHub Actions; exact head 1d04fbbc5 also passed frozen install, generated-project Spectre assertions, both native failed-connect cleanup cases, and all six Electron tests including the strengthened deletion and natural-exit oracles. Required-platform soak history is not yet available."
       },
       "redGreenEvidence": {
         "status": "complete",
@@ -984,12 +981,13 @@
         "Add restart/no-resurrection and repeated park-close soak coverage."
       ],
       "knownGaps": [
-        "Live process proof covers macOS local PTYs, native Windows agent/plain PTYs, and the Windows relay with a real node-pty child, but not Linux, WSL, end-to-end SSH transport, or remote-runtime PTYs.",
+        "Live process proof covers macOS local PTYs and native Windows agent/plain PTYs, but not Linux, WSL, end-to-end SSH transport, or remote-runtime PTYs.",
         "Disconnected SSH relay death still requires reconnect-aware provider ownership.",
         "Daemon owner leases and durable retry inventory remain follow-up hardening.",
         "Existing adopted Windows v24 native or unclassified sessions lack spawn-time Job capability metadata, so ordinary close, sleep, and deadline-bearing worktree deletion fail closed while the renderer keeps the tab and PTY ownership visible. Exiting the agent or shell may release them; otherwise users may need Task Manager or a Windows restart. A v24 reattach is treated as WSL only when the daemon reports WSL metadata; attached known-WSL sessions remain compatible. Fresh v25 plain and WSL behavior is unchanged.",
+        "Windows builds below the ConPTY capability boundary reject Orca-launched native agent sessions instead of silently falling back to an unowned winpty process tree; plain terminals retain their existing fallback.",
         "An agent started manually after an ordinary native Windows terminal has spawned remains a plain terminal: it is not retroactively placed in Orca's agent Job, so detached descendants are preserved and may still block deletion. The Job-backed guarantee applies to Orca-launched or spawn-recognized native Windows agent sessions.",
-        "Fresh native Windows SSH relay agents use a Job on the remote Windows host; POSIX SSH, WSL, and remote-runtime PTYs retain their host-specific teardown paths and are not placed in the desktop's local Windows Job.",
+        "Windows SSH relays install stock node-pty on the remote host, so this local native-Job fix does not change their prior descendant-teardown behavior. Shipping a patched remote native artifact needs separate production packaging and end-to-end evidence.",
         "A process born in the capture second is SIGTERMed but not SIGKILLed because ps cannot prove its recycled-PID identity.",
         "A descendant orphaned before or during root ownership loss requires the separate crash-orphan sweep and is not recovered from a stale kill-time snapshot."
       ],

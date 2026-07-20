@@ -3,6 +3,10 @@ import { useAppStore } from '@/store'
 import { clearWorktreeSleepIntent, markWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
 import { VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT } from '@/hooks/useVirtualizedScrollAnchor'
 import { translate } from '@/i18n/i18n'
+import {
+  assertStableTerminalShutdownSafety,
+  selectTerminalTabIdsForWorktrees
+} from '@/store/slices/terminal-shutdown-safety'
 
 /**
  * Shared "sleep worktree" flow (close all panels to free memory / CPU)
@@ -108,6 +112,18 @@ function preserveSidebarWorktreePosition(worktreeId: string): () => void {
 
 export async function runSleepWorktrees(worktreeIds: readonly string[]): Promise<void> {
   if (worktreeIds.length === 0) {
+    return
+  }
+  const worktreeIdSet = new Set(worktreeIds)
+  try {
+    // Why: a legacy refusal must leave activation, browsers, and sleep intent untouched.
+    await assertStableTerminalShutdownSafety({
+      surfaceId: worktreeIds.join(':'),
+      getState: useAppStore.getState,
+      selectTabIds: (state) => selectTerminalTabIdsForWorktrees(state, worktreeIdSet)
+    })
+  } catch {
+    // The safety preflight already explains why the workspace stayed awake.
     return
   }
   const {
