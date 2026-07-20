@@ -581,7 +581,13 @@ describe('current daemon lifecycle retirement', () => {
 
     await current.disconnectOnly()
 
-    expect(currentRequest).toHaveBeenCalledWith('shutdownIfIdle', undefined, 250)
+    expect(currentRequest).toHaveBeenCalledOnce()
+    expect(currentRequest.mock.calls[0]?.slice(0, 2)).toEqual(['shutdownIfIdle', undefined])
+    const timeoutMs = currentRequest.mock.calls[0]?.[2]
+    // Why: connection and RPC share a wall-clock budget, so elapsed setup time is expected.
+    expect(timeoutMs).toEqual(expect.any(Number))
+    expect(timeoutMs).toBeGreaterThan(0)
+    expect(timeoutMs).toBeLessThanOrEqual(250)
   })
 
   it('does not send the v24 clean-disconnect RPC to a legacy daemon', async () => {
