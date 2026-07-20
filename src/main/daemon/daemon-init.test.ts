@@ -639,9 +639,14 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     resolveDiscovery([])
     await started
 
-    expect(adapterInstances).toHaveLength(2)
-    expect(adapterInstances[0].disconnectOnly).toHaveBeenCalledOnce()
-    expect(adapterInstances[1].disconnectOnly).toHaveBeenCalledOnce()
+    expect(adapterInstances.some((instance) => instance.protocolVersion === 9)).toBe(true)
+    // Why: Windows named-pipe probing ignores the filesystem mock, so this
+    // fixture may discover every legacy version. Every uninstalled lease must
+    // still be disconnected when startup loses the race with abort.
+    expect(adapterInstances.length).toBeGreaterThanOrEqual(2)
+    for (const instance of adapterInstances) {
+      expect(instance.disconnectOnly).toHaveBeenCalledOnce()
+    }
     expect(setLocalPtyProviderMock).not.toHaveBeenCalled()
     expect(mod.getDaemonProvider()).toBeNull()
   })
