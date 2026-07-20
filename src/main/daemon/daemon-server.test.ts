@@ -58,6 +58,7 @@ type DaemonServerPrivate = {
       clientId: string
       controlSocket: Socket
       streamSocket: Socket | null
+      authenticatedPairEstablished: boolean
     }
   >
   routeRequest(clientId: string, request: DaemonRequest): Promise<unknown>
@@ -293,12 +294,12 @@ describe('DaemonServer', () => {
         spawnSubprocess
       })
       await server.start()
-      const daemon = server as unknown as DaemonServerPrivate
+      const c = await connectClient()
 
-      const create = daemon.routeRequest('shutdown-client', {
-        id: 'shutdown-create',
-        type: 'createOrAttach',
-        payload: { sessionId: 'shutdown-pending', cols: 80, rows: 24 }
+      const create = c.request('createOrAttach', {
+        sessionId: 'shutdown-pending',
+        cols: 80,
+        rows: 24
       })
       const canceledCreate = expect(create).rejects.toThrow(
         'Attach canceled for session shutdown-pending'
@@ -538,7 +539,8 @@ describe('DaemonServer', () => {
         daemon.clients.set('client-1', {
           clientId: 'client-1',
           controlSocket,
-          streamSocket
+          streamSocket,
+          authenticatedPairEstablished: true
         })
 
         await daemon.routeRequest('client-1', {
@@ -594,7 +596,8 @@ describe('DaemonServer', () => {
         daemon.clients.set('client-1', {
           clientId: 'client-1',
           controlSocket,
-          streamSocket
+          streamSocket,
+          authenticatedPairEstablished: true
         })
 
         await daemon.routeRequest('client-1', {
@@ -651,7 +654,8 @@ describe('DaemonServer', () => {
         daemon.clients.set('client-1', {
           clientId: 'client-1',
           controlSocket,
-          streamSocket
+          streamSocket,
+          authenticatedPairEstablished: true
         })
         await daemon.routeRequest('client-1', {
           id: 'req-1',

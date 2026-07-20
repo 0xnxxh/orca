@@ -140,7 +140,7 @@ async function stopFixture(fixture: FixtureDaemon): Promise<void> {
   await stopChild(fixture.child, `fixture v${fixture.protocolVersion}`)
 }
 
-test('v22 stays reattachable while an empty v24 retires its exact process and artifacts', async () => {
+test('v22 stays reattachable while v24 retires after its last empty client disconnects', async () => {
   const rootDir = mkdtempSync(path.join(tmpdir(), 'orca-daemon-lifecycle-'))
   const daemonDir = path.join(rootDir, 'daemon')
   mkdirSync(daemonDir, { recursive: true })
@@ -208,12 +208,6 @@ test('v22 stays reattachable while an empty v24 retires its exact process and ar
       sessions: []
     })
     secondCurrentClient.disconnect()
-
-    const finalCurrentAdapter = new DaemonPtyAdapter({
-      socketPath: current.socketPath,
-      tokenPath: current.tokenPath
-    })
-    await finalCurrentAdapter.disconnectOnly()
 
     await waitFor('v24 process exit', () => current.child.exitCode !== null)
     expect(existsSync(current.tokenPath)).toBe(false)

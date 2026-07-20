@@ -13,7 +13,7 @@ export type DaemonStartOptions = {
   preparePtySpawn?: DaemonServerOptions['preparePtySpawn']
   log?: DaemonFileLog
   onIdleShutdown?: () => void
-  idleShutdownTestConfig?: DaemonServerOptions['idleShutdownTestConfig']
+  initialAdoptionTestConfig?: DaemonServerOptions['initialAdoptionTestConfig']
 }
 
 export type DaemonHandle = {
@@ -32,7 +32,9 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<DaemonHandl
     ...(opts.preparePtySpawn ? { preparePtySpawn: opts.preparePtySpawn } : {}),
     ...(opts.log ? { log: opts.log } : {}),
     ...(opts.onIdleShutdown ? { onIdleShutdown: opts.onIdleShutdown } : {}),
-    ...(opts.idleShutdownTestConfig ? { idleShutdownTestConfig: opts.idleShutdownTestConfig } : {})
+    ...(opts.initialAdoptionTestConfig
+      ? { initialAdoptionTestConfig: opts.initialAdoptionTestConfig }
+      : {})
   })
 
   await server.start()

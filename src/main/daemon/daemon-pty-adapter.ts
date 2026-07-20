@@ -987,8 +987,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (this.protocolVersion < CLEAN_DISCONNECT_PROTOCOL_VERSION) {
       return
     }
-    // Why: an authenticated pair cancels a crash deadline and gives a never-used
-    // adapter enough authority to retire its empty daemon during clean quit.
+    // Why: an authenticated pair cancels the launch-adoption watchdog and gives
+    // a never-used adapter authority to retire its empty daemon during clean quit.
     await this.client.ensureConnected()
   }
 
@@ -1037,7 +1037,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
         }
         await this.client.request('shutdownIfIdle', undefined, Math.max(1, deadlineMs - Date.now()))
       } catch {
-        // An unreachable daemon falls back to its unexpected-disconnect grace.
+        // An unreachable daemon falls back to event-driven retirement when its
+        // authenticated sockets close and it can prove itself empty.
       }
     }
     this.client.disconnect()

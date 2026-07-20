@@ -89,6 +89,42 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   }
 }
 
+async function requestOnRawSocket(
+  socket: Socket,
+  request: { id: string; type: string; payload: unknown }
+): Promise<{ error?: string }> {
+  return new Promise((resolve, reject) => {
+    let buffer = ''
+    const cleanup = (): void => {
+      clearTimeout(timeout)
+      socket.off('data', onData)
+    }
+    const onData = (chunk: Buffer): void => {
+      buffer += chunk.toString('utf8')
+      for (;;) {
+        const newlineIndex = buffer.indexOf('\n')
+        if (newlineIndex === -1) {
+          return
+        }
+        const line = buffer.slice(0, newlineIndex)
+        buffer = buffer.slice(newlineIndex + 1)
+        const message = JSON.parse(line) as { id?: string; error?: string }
+        if (message.id === request.id) {
+          cleanup()
+          resolve(message)
+          return
+        }
+      }
+    }
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error(`Timed out waiting for raw response ${request.id}`))
+    }, 2_000)
+    socket.on('data', onData)
+    socket.write(`${JSON.stringify(request)}\n`)
+  })
+}
+
 describe('current daemon lifecycle retirement', () => {
   let dir: string
   let socketPath: string
@@ -128,14 +164,14 @@ describe('current daemon lifecycle retirement', () => {
       ...(options.protocolVersion !== undefined
         ? { protocolVersion: options.protocolVersion }
         : {}),
-      idleShutdownTestConfig: { durationMs: 100, clock },
+      initialAdoptionTestConfig: { timeoutMs: 100, clock },
       onIdleShutdown,
       spawnSubprocess: () => subprocess
     })
     await server.start()
   }
 
-  it('uses the unexpected-disconnect grace and removes its owned artifacts', async () => {
+  it('retires immediately after an unexpected empty disconnect and removes owned artifacts', async () => {
     const launchNonce = 'launch-a'
     writeFileSync(
       pidPath,
@@ -145,15 +181,9 @@ describe('current daemon lifecycle retirement', () => {
     const client = new DaemonClient({ socketPath, tokenPath })
     await client.ensureConnected()
     client.disconnect()
-    await waitFor(() => clock.pendingCount === 1)
-
-    clock.advanceBy(99)
-    expect(onIdleShutdown).not.toHaveBeenCalled()
-    expect(existsSync(tokenPath)).toBe(true)
-
-    clock.advanceBy(1)
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)
 
+    expect(clock.pendingCount).toBe(0)
     expect(existsSync(tokenPath)).toBe(false)
     expect(existsSync(pidPath)).toBe(false)
     if (process.platform !== 'win32') {
@@ -246,7 +276,7 @@ describe('current daemon lifecycle retirement', () => {
     expect(clock.pendingCount).toBe(0)
   })
 
-  it('preserves a live session after clean detach and uses grace after that session exits', async () => {
+  it('preserves a live session after clean detach and retires when that session exits', async () => {
     await startServer()
     const client = new DaemonClient({ socketPath, tokenPath })
     await client.ensureConnected()
@@ -256,12 +286,11 @@ describe('current daemon lifecycle retirement', () => {
       retiring: false
     })
     client.disconnect()
+    expect(onIdleShutdown).not.toHaveBeenCalled()
     subprocess.exit(0)
 
-    await waitFor(() => clock.pendingCount === 1)
-    expect(onIdleShutdown).not.toHaveBeenCalled()
-    clock.advanceBy(100)
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)
+    expect(clock.pendingCount).toBe(0)
   })
 
   it('rejects clean retirement while create or attach is in flight', async () => {
@@ -326,67 +355,58 @@ describe('current daemon lifecycle retirement', () => {
     await expect(liveOwner.request('listSessions', undefined)).resolves.toMatchObject({
       sessions: [expect.objectContaining({ sessionId: 'owned-by-second-client', isAlive: true })]
     })
+    subprocess.exit(0)
     liveOwner.disconnect()
   })
 
-  it('pauses but does not reset the disconnect deadline for a raw socket', async () => {
+  it('lets an overlapping raw socket block but not erase empty retirement', async () => {
     await startServer()
-    // Fresh current-generation daemons arm a startup-adoption deadline before
-    // any client connects, so a parent crash cannot orphan them indefinitely.
-    expect(clock.pendingCount).toBe(1)
     const client = new DaemonClient({ socketPath, tokenPath })
     await client.ensureConnected()
-    client.disconnect()
-    await waitFor(() => clock.pendingCount === 1)
-
     const rawSocket = connect(socketPath)
     await new Promise<void>((resolve) => rawSocket.once('connect', resolve))
-    await waitFor(() => clock.pendingCount === 0)
+    client.disconnect()
 
-    clock.advanceBy(1_000)
     expect(onIdleShutdown).not.toHaveBeenCalled()
 
     rawSocket.destroy()
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)
+    expect(clock.pendingCount).toBe(0)
   })
 
-  it('arms after the last authenticated client disconnects with no sessions', async () => {
+  it('retires after the last authenticated client disconnects with no sessions', async () => {
     await startServer()
     const client = new DaemonClient({ socketPath, tokenPath })
     await client.ensureConnected()
     expect(clock.pendingCount).toBe(0)
 
     client.disconnect()
-    await waitFor(() => clock.pendingCount === 1)
+    await waitFor(() => onIdleShutdown.mock.calls.length === 1)
+    expect(clock.pendingCount).toBe(0)
   })
 
-  it('cancels the old deadline on reconnect and gives a later drop a fresh grace', async () => {
+  it('lets a complete reconnect cancel retirement while a live session blocks it', async () => {
     await startServer()
     const first = new DaemonClient({ socketPath, tokenPath })
     await first.ensureConnected()
+    await first.request('createOrAttach', { sessionId: 'reconnected', cols: 80, rows: 24 })
     first.disconnect()
-    await waitFor(() => clock.pendingCount === 1)
-    clock.advanceBy(50)
+    const daemon = server as unknown as { retirementRequested: boolean }
+    await waitFor(() => daemon.retirementRequested)
+    expect(onIdleShutdown).not.toHaveBeenCalled()
 
     const second = new DaemonClient({ socketPath, tokenPath })
     await second.ensureConnected()
-    expect(clock.pendingCount).toBe(0)
-    clock.advanceBy(100)
+    await waitFor(() => !daemon.retirementRequested)
+    subprocess.exit(0)
     expect(onIdleShutdown).not.toHaveBeenCalled()
 
     second.disconnect()
-    await waitFor(() => clock.pendingCount === 1)
-    clock.advanceBy(99)
-    expect(onIdleShutdown).not.toHaveBeenCalled()
-    clock.advanceBy(1)
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)
   })
 
-  it('cancels an inherited crash deadline before the adopted adapter creates its first terminal', async () => {
+  it('cancels the initial-adoption timeout before the adapter creates its first terminal', async () => {
     await startServer()
-    const crashed = new DaemonClient({ socketPath, tokenPath })
-    await crashed.ensureConnected()
-    crashed.disconnect()
     await waitFor(() => clock.pendingCount === 1)
     clock.advanceBy(50)
 
@@ -428,7 +448,41 @@ describe('current daemon lifecycle retirement', () => {
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)
   })
 
-  it('keeps the disconnect deadline when a control-only client overlaps the last app', async () => {
+  it('does not let a control-only create cancel the initial-adoption timeout', async () => {
+    await startServer()
+    const control = connect(socketPath)
+    await new Promise<void>((resolve) => control.once('connect', resolve))
+    control.write(
+      `${JSON.stringify({
+        type: 'hello',
+        version: PROTOCOL_VERSION,
+        token: readFileSync(tokenPath, 'utf8').trim(),
+        clientId: 'startup-control-create',
+        role: 'control'
+      })}\n`
+    )
+    const daemon = server as unknown as {
+      clients: Map<string, unknown>
+      retirementRequested: boolean
+    }
+    await waitFor(() => daemon.clients.has('startup-control-create'))
+    const response = await requestOnRawSocket(control, {
+      id: 'control-only-create',
+      type: 'createOrAttach',
+      payload: { sessionId: 'must-not-start', cols: 80, rows: 24 }
+    })
+    expect(response.error).toContain('connection is incomplete')
+    expect(daemon.retirementRequested).toBe(false)
+    expect(clock.pendingCount).toBe(0)
+
+    clock.advanceBy(1_000)
+    expect(onIdleShutdown).not.toHaveBeenCalled()
+
+    control.destroy()
+    await waitFor(() => onIdleShutdown.mock.calls.length === 1)
+  })
+
+  it('keeps empty-retirement intent when a control-only client overlaps the last app', async () => {
     await startServer()
     const paired = new DaemonClient({ socketPath, tokenPath })
     await paired.ensureConnected()
@@ -445,21 +499,26 @@ describe('current daemon lifecycle retirement', () => {
     )
     const daemon = server as unknown as {
       clients: Map<string, unknown>
-      unexpectedDisconnectDeadlineMs: number | null
+      retirementRequested: boolean
     }
     await waitFor(() => daemon.clients.has('control-only-overlap'))
 
     paired.disconnect()
-    await waitFor(() => daemon.unexpectedDisconnectDeadlineMs !== null)
+    await waitFor(() => daemon.retirementRequested)
     expect(clock.pendingCount).toBe(0)
+    const response = await requestOnRawSocket(incomplete, {
+      id: 'overlap-control-create',
+      type: 'createOrAttach',
+      payload: { sessionId: 'must-not-start', cols: 80, rows: 24 }
+    })
+    expect(response.error).toContain('connection is incomplete')
+    expect(daemon.retirementRequested).toBe(true)
 
     incomplete.destroy()
-    await waitFor(() => clock.pendingCount === 1)
-    clock.advanceBy(100)
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)
   })
 
-  it('keeps disconnect evidence when a same-client replacement never completes its stream', async () => {
+  it('keeps retirement intent when a same-client replacement never completes its stream', async () => {
     await startServer()
     const paired = new DaemonClient({ socketPath, tokenPath })
     await paired.ensureConnected()
@@ -476,28 +535,26 @@ describe('current daemon lifecycle retirement', () => {
       })}\n`
     )
     const daemon = server as unknown as {
-      unexpectedDisconnectDeadlineMs: number | null
+      retirementRequested: boolean
     }
-    await waitFor(() => daemon.unexpectedDisconnectDeadlineMs !== null)
+    await waitFor(() => daemon.retirementRequested)
     expect(clock.pendingCount).toBe(0)
 
     replacementControl.destroy()
-    await waitFor(() => clock.pendingCount === 1)
-    clock.advanceBy(100)
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)
   })
 
-  it('keeps a live session after clients disconnect, then arms on its exit', async () => {
+  it('keeps a live session after clients disconnect, then retires on its exit', async () => {
     await startServer()
     const client = new DaemonClient({ socketPath, tokenPath })
     await client.ensureConnected()
     await client.request('createOrAttach', { sessionId: 'live', cols: 80, rows: 24 })
     client.disconnect()
-    const daemon = server as unknown as { unexpectedDisconnectDeadlineMs: number | null }
-    await waitFor(() => daemon.unexpectedDisconnectDeadlineMs !== null)
+    const daemon = server as unknown as { retirementRequested: boolean }
+    await waitFor(() => daemon.retirementRequested)
 
-    clock.advanceBy(1_000)
     expect(onIdleShutdown).not.toHaveBeenCalled()
+    expect(clock.pendingCount).toBe(0)
 
     subprocess.exit(0)
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)

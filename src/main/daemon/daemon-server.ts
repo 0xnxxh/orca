@@ -43,9 +43,9 @@ export type DaemonServerOptions = {
   /** Direct-construction seam for protocol fixture tests; production never overrides it. */
   protocolVersion?: number
   onIdleShutdown?: () => void
-  /** Direct-construction-only controls; production uses the compiled disconnect grace. */
-  idleShutdownTestConfig?: {
-    durationMs: number
+  /** Direct-construction-only controls; production uses the compiled initial-adoption timeout. */
+  initialAdoptionTestConfig?: {
+    timeoutMs: number
     clock: {
       setTimeout(callback: () => void, delayMs: number): unknown
       clearTimeout(handle: unknown): void
@@ -82,9 +82,9 @@ type PendingShutdownReply = {
 }
 
 export class DaemonServer {
-  // Why: a crash has no authenticated detach signal. Two minutes absorbs
-  // update/restart connection gaps while still retiring an empty orphan quickly.
-  private static readonly DISCONNECTED_IDLE_GRACE_MS = 2 * 60 * 1000
+  // Why: a new daemon must survive long enough for its first client pair, but
+  // a parent crash between launch and adoption must not orphan it forever.
+  private static readonly INITIAL_ADOPTION_TIMEOUT_MS = 2 * 60 * 1000
   private static readonly SHUTDOWN_REPLY_FLUSH_TIMEOUT_MS = 1_000
   private server: Server | null = null
   private token: string
@@ -102,13 +102,14 @@ export class DaemonServer {
   private transportSockets = new Set<Socket>()
   private createOrAttachInFlight = 0
   private idleShutdownState: 'running' | 'idle-shutdown-pending' | 'shutting-down' = 'running'
-  private idleShutdownTimer: unknown | null = null
-  private unexpectedDisconnectDeadlineMs: number | null = null
+  private initialAdoptionTimer: unknown | null = null
+  private initialAdoptionDeadlineMs: number | null = null
+  private retirementRequested = false
   private shutdownPromise: Promise<void> | null = null
   private ordinaryShutdownServerClose: Promise<void> | null = null
   private pendingShutdownReplies = new Map<string, PendingShutdownReply>()
-  private idleShutdownDurationMs: number
-  private idleShutdownClock: NonNullable<DaemonServerOptions['idleShutdownTestConfig']>['clock']
+  private initialAdoptionTimeoutMs: number
+  private lifecycleClock: NonNullable<DaemonServerOptions['initialAdoptionTestConfig']>['clock']
 
   private clients = new Map<string, ConnectedClient>()
   private streamDataBatcher = new DaemonStreamDataBatcher(
@@ -168,9 +169,9 @@ export class DaemonServer {
         ? Date.now() - process.uptime() * 1000
         : null)
     this.onIdleShutdown = opts.onIdleShutdown ?? (() => {})
-    this.idleShutdownDurationMs =
-      opts.idleShutdownTestConfig?.durationMs ?? DaemonServer.DISCONNECTED_IDLE_GRACE_MS
-    this.idleShutdownClock = opts.idleShutdownTestConfig?.clock ?? {
+    this.initialAdoptionTimeoutMs =
+      opts.initialAdoptionTestConfig?.timeoutMs ?? DaemonServer.INITIAL_ADOPTION_TIMEOUT_MS
+    this.lifecycleClock = opts.initialAdoptionTestConfig?.clock ?? {
       setTimeout: (callback, delayMs) => {
         const timer = setTimeout(callback, delayMs)
         timer.unref()
@@ -216,7 +217,7 @@ export class DaemonServer {
         if (this.protocolVersion >= CLEAN_DISCONNECT_PROTOCOL_VERSION) {
           // Why: a parent crash before the first full client pair must not leave
           // a freshly published, empty daemon alive forever.
-          this.renewLifecycleAdoptionDeadline()
+          this.armInitialAdoptionTimeout()
         }
         resolve()
       })
@@ -234,7 +235,7 @@ export class DaemonServer {
 
   private beginOrdinaryShutdownFence(): Promise<void> {
     this.idleShutdownState = 'shutting-down'
-    this.cancelIdleShutdownTimer()
+    this.cancelInitialAdoptionTimer()
     this.ordinaryShutdownServerClose ??= this.beginServerClose()
     return this.ordinaryShutdownServerClose
   }
@@ -311,42 +312,50 @@ export class DaemonServer {
     if (this.idleShutdownState !== 'running') {
       return
     }
-    if (!this.isIdle() || this.unexpectedDisconnectDeadlineMs === null) {
-      this.cancelIdleShutdownTimer()
+    if (this.retirementRequested) {
+      this.cancelInitialAdoptionTimer()
+      if (this.isIdle()) {
+        this.beginIdleShutdown()
+      }
       return
     }
-    if (this.idleShutdownTimer !== null) {
+    if (!this.isIdle() || this.initialAdoptionDeadlineMs === null) {
+      this.cancelInitialAdoptionTimer()
       return
     }
-    const remainingMs = Math.max(
-      0,
-      this.unexpectedDisconnectDeadlineMs - this.idleShutdownClock.now()
-    )
+    if (this.initialAdoptionTimer !== null) {
+      return
+    }
+    const remainingMs = Math.max(0, this.initialAdoptionDeadlineMs - this.lifecycleClock.now())
     if (remainingMs === 0) {
+      this.initialAdoptionDeadlineMs = null
+      this.retirementRequested = true
       this.beginIdleShutdown()
       return
     }
-    this.idleShutdownTimer = this.idleShutdownClock.setTimeout(() => {
-      this.idleShutdownTimer = null
+    this.initialAdoptionTimer = this.lifecycleClock.setTimeout(() => {
+      this.initialAdoptionTimer = null
+      this.initialAdoptionDeadlineMs = null
+      this.retirementRequested = true
       this.beginIdleShutdown()
     }, remainingMs)
   }
 
-  private renewLifecycleAdoptionDeadline(): void {
-    this.unexpectedDisconnectDeadlineMs = this.idleShutdownClock.now() + this.idleShutdownDurationMs
+  private armInitialAdoptionTimeout(): void {
+    this.initialAdoptionDeadlineMs = this.lifecycleClock.now() + this.initialAdoptionTimeoutMs
     this.reevaluateIdleShutdown()
   }
 
-  private cancelIdleShutdownTimer(): void {
-    if (this.idleShutdownTimer === null) {
+  private cancelInitialAdoptionTimer(): void {
+    if (this.initialAdoptionTimer === null) {
       return
     }
-    this.idleShutdownClock.clearTimeout(this.idleShutdownTimer)
-    this.idleShutdownTimer = null
+    this.lifecycleClock.clearTimeout(this.initialAdoptionTimer)
+    this.initialAdoptionTimer = null
   }
 
   private beginIdleShutdown(): void {
-    this.idleShutdownTimer = null
+    this.initialAdoptionTimer = null
     if (this.idleShutdownState !== 'running') {
       return
     }
@@ -374,7 +383,7 @@ export class DaemonServer {
   }
 
   private handleConnection(socket: Socket): void {
-    this.cancelIdleShutdownTimer()
+    this.cancelInitialAdoptionTimer()
     this.transportSockets.add(socket)
     const removeTransport = (): void => {
       this.transportSockets.delete(socket)
@@ -485,9 +494,10 @@ export class DaemonServer {
       this.setupStreamSocket(socket, client)
       client.authenticatedPairEstablished = true
       // A complete app connection, unlike a health or raw socket probe, owns
-      // the endpoint again and cancels the prior disconnect deadline.
-      this.unexpectedDisconnectDeadlineMs = null
-      this.cancelIdleShutdownTimer()
+      // the endpoint again and cancels pending event-driven retirement.
+      this.initialAdoptionDeadlineMs = null
+      this.retirementRequested = false
+      this.cancelInitialAdoptionTimer()
     }
   }
 
@@ -526,9 +536,9 @@ export class DaemonServer {
     ) {
       return
     }
-    // Why: incomplete authenticated transports pause the deadline but must
-    // not erase evidence that the last fully connected app disappeared.
-    this.unexpectedDisconnectDeadlineMs = this.idleShutdownClock.now() + this.idleShutdownDurationMs
+    // Why: once the last full client is gone, exact daemon-side emptiness is
+    // sufficient; incomplete transports may block but never erase this request.
+    this.retirementRequested = true
   }
 
   private setupStreamSocket(socket: Socket, client: ConnectedClient): void {
@@ -667,11 +677,14 @@ export class DaemonServer {
 
     switch (request.type) {
       case 'createOrAttach': {
-        this.cancelIdleShutdownTimer()
         if (this.idleShutdownState !== 'running') {
           throw new Error('Daemon temporarily unavailable; reconnect')
         }
-        this.unexpectedDisconnectDeadlineMs = null
+        if (!client?.authenticatedPairEstablished || client.streamSocket === null) {
+          // Why: a control-only replacement cannot own terminal admission or
+          // erase the prior full client's monotonic retirement request.
+          throw new Error('Daemon client connection is incomplete; reconnect')
+        }
         this.createOrAttachInFlight++
         const p = request.payload
         let result: Awaited<ReturnType<TerminalHost['createOrAttach']>>
@@ -909,8 +922,9 @@ export class DaemonServer {
           return { retiring: false }
         }
         this.idleShutdownState = 'shutting-down'
-        this.unexpectedDisconnectDeadlineMs = null
-        this.cancelIdleShutdownTimer()
+        this.initialAdoptionDeadlineMs = null
+        this.retirementRequested = false
+        this.cancelInitialAdoptionTimer()
         // Why: close before acknowledging retirement so no new terminal can
         // race between the empty proof and daemon disposal.
         const serverClose = this.beginServerClose()

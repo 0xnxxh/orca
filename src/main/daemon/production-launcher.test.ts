@@ -63,6 +63,20 @@ describe('createProductionLauncher', () => {
     expect(typeof launcher).toBe('function')
   })
 
+  it('rejects either ownership argument without its pair before forking', async () => {
+    const launcher = createProductionLauncher({
+      getDaemonEntryPath: () => '/fake/path.js'
+    })
+
+    await expect(
+      launcher(socketPathFor(dir), tokenPathFor(dir), join(dir, 'daemon.pid'))
+    ).rejects.toThrow('provided together')
+    await expect(
+      launcher(socketPathFor(dir), tokenPathFor(dir), undefined, 'launch-a')
+    ).rejects.toThrow('provided together')
+    expect(forkMock).not.toHaveBeenCalled()
+  })
+
   it('can be used with DaemonSpawner (in-process fallback)', async () => {
     // Use in-process launcher for testing (same as DaemonSpawner tests)
     const launcher = async (socketPath: string, tokenPath: string) => {

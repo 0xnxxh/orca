@@ -19,6 +19,11 @@ export function createProductionLauncher(opts: ProductionLauncherOptions): Daemo
     pidPath?: string,
     launchNonce?: string
   ): Promise<DaemonProcessHandle> => {
+    if ((pidPath === undefined) !== (launchNonce === undefined)) {
+      // Why: partial ownership metadata would launch a v24 daemon that cannot
+      // prove which PID record it may remove during self-retirement.
+      throw new Error('Daemon PID path and launch nonce must be provided together')
+    }
     const entryPath = opts.getDaemonEntryPath()
 
     const child = fork(

@@ -45,9 +45,9 @@ The narrow implementation retains these important rules from AmethystLiang's des
 - SSH, WSL, remote-runtime, degraded-provider, sleep/wake, and profile behavior stay unchanged.
 
 The narrow implementation changes one policy from the original comment: it does not use a blanket
-30-minute idle timer. Clean authenticated app detach is an event with exact local evidence, so an
-empty daemon can retire immediately. An unexpected connection loss gets a two-minute grace. This
-removes needless lingering after normal quit without running periodic ownership work.
+30-minute idle timer. Any loss of the last fully authenticated app client is an exact lifecycle
+event, so a daemon retires as soon as it can atomically prove it is empty. This removes runtime
+inactivity heuristics and periodic ownership work.
 
 ## User-visible behavior
 
@@ -64,18 +64,17 @@ clean app detach ──> daemon atomically checks itself
                          ├── any live session/work/client ──> stay alive
                          └── exactly empty ──> exit immediately
 
-unexpected drop ──> keep endpoint for two minutes
-                         ├── app reconnects/new work ──> cancel deadline
-                         ├── live session remains ──> stay alive
-                         └── empty at deadline ──> exit
+unexpected drop ──> daemon atomically checks itself
+                         ├── live session/work/connection ──> stay alive
+                         └── exactly empty ──> exit immediately
 
 v23 and older ──> existing reattach behavior; no automatic retirement
 ```
 
 An end user with live terminals should notice no change. An end user who quits with no daemon-backed
-terminals should no longer accumulate the new v24 generation. If Orca crashes or briefly loses its
-socket, an empty daemon waits two minutes for recovery. A daemon with a background agent does not
-exit; if that agent later exits while Orca remains disconnected, the original grace deadline applies.
+terminals should no longer accumulate the new v24 generation. If Orca crashes or loses its socket,
+live terminals still keep the daemon alive indefinitely. An empty daemon exits immediately; a later
+app restart launches a fresh daemon instead of reusing an empty process.
 
 ## Protocol and lifecycle design
 
@@ -106,9 +105,9 @@ v24 adapter establishes a full connection if necessary and sends `shutdownIfIdle
 250 ms budget. v23 and older adapters skip it.
 
 Initialization establishes one authenticated v24 lifecycle lease even before the first terminal is
-opened. This cancels an inherited crash deadline after app relaunch and ensures a never-used daemon
-can still receive clean retirement on quit. If startup fallback has already won, the late daemon is
-not installed; it instead receives the same bounded retirement attempt, which an adopted live session
+opened. This cancels the initial launch-adoption watchdog and ensures a never-used daemon can still
+receive clean retirement on quit. If startup fallback has already won, the late daemon is not
+installed; it instead receives the same bounded retirement attempt, which an adopted live session
 will reject.
 
 The daemon accepts retirement only when, in one event-loop turn:
@@ -121,24 +120,35 @@ The daemon accepts retirement only when, in one event-loop turn:
 
 When all conditions hold, the daemon synchronously closes the listening server before replying. That
 is the admission fence: a new socket or terminal cannot appear after the empty proof. Cleanup then
-runs asynchronously and the process exits. A failed RPC is non-fatal to app quit and falls back to the
-unexpected-disconnect behavior.
+runs asynchronously and the process exits. A failed RPC is non-fatal to app quit and falls back to
+the same event-driven empty check when the authenticated sockets close.
+
+### Initial adoption watchdog
+
+A freshly launched v24 daemon gets up to two minutes to receive its first complete authenticated
+client pair. Without this startup-only watchdog, the daemon would prove itself empty and exit in the
+normal launch handoff before the parent could connect; without a bound, a parent crash during that
+handoff would orphan the new daemon forever.
+
+A complete pair permanently cancels this watchdog, and terminal admission requires that complete
+pair. Raw and partial transports pause it without extending its original deadline. It is never
+rearmed after adoption and is not a terminal inactivity or crash-reconnect timer.
 
 ### Unexpected disconnect
 
-The two-minute deadline starts only when the last client that completed both authenticated sockets
-loses its control connection. Merely starting a daemon does not arm a timer, so an unused but healthy
-daemon cannot remove its token before the app's first terminal request.
+When the last client that completed both authenticated sockets loses its control connection, the
+daemon records an event-driven retirement request with no wall-clock grace.
 
-- A complete authenticated reconnect cancels the deadline.
-- New terminal admission cancels the deadline.
-- A raw socket or one-socket health probe pauses the timer but does not move the deadline.
-- A partial authenticated connection cannot erase evidence that the last fully connected app left.
+- A complete authenticated reconnect cancels the request if existing work or a transport kept the
+  daemon alive long enough to reconnect.
+- Only a complete authenticated pair may admit a terminal; completing that pair cancels the request
+  before admission can begin.
+- A raw socket, one-socket health probe, or partial authenticated connection blocks retirement but
+  cannot erase evidence that the last fully connected app left.
 - Replacing a client ID first records the old full connection's loss; completing the replacement
-  stream cancels that evidence, while an incomplete replacement only pauses it.
-- A live session prevents shutdown, but does not reset the deadline.
-- When the last session exits, shutdown uses the remaining time; it is immediate if the deadline
-  already passed.
+  stream cancels that evidence, while an incomplete replacement only blocks retirement.
+- A live session prevents shutdown indefinitely. When the last session exits, the daemon immediately
+  rechecks every guard and retires only if it is then exactly empty.
 
 The adapter remembers an authenticated unexpected disconnect. If self-retirement later removes the
 token, a token-file `ENOENT` is respawnable only with that prior evidence. An initial missing token is
@@ -165,8 +175,8 @@ The steady-state terminal hot path adds no timer work and no per-byte hashing. I
 two-socket authenticated lifecycle handshake; the only new RPC is on app/provider detach, and its
 connect-plus-request path shares a 250 ms cap, including when quit joins an existing connection
 attempt; teardown fences that attempt from resurrecting sockets afterward. Unexpected-disconnect
-bookkeeping changes only socket and session lifecycle events. Each daemon owns at most one unref'ed
-deadline timer.
+bookkeeping changes only socket and session lifecycle events. Each unadopted daemon owns at most one
+unref'ed startup watchdog, which is canceled permanently on adoption.
 
 Validation compares current main and the branch for:
 
@@ -187,10 +197,10 @@ The final local host was not quiet enough for publication-grade absolute numbers
 same-host screen still found no large regression. Five `main` v23 samples were bracketed by ten v24
 branch samples; medians across sample medians were:
 
-| Measure | `main` v23 | branch v24 |
-| --- | ---: | ---: |
-| two-socket connect | 1.38 ms | 1.32 ms |
-| `listSessions` RPC | 0.0366 ms | 0.0374 ms |
+| Measure              | `main` v23 | branch v24 |
+| -------------------- | ---------: | ---------: |
+| two-socket connect   |    1.38 ms |    1.32 ms |
+| `listSessions` RPC   |  0.0366 ms |  0.0374 ms |
 | terminal echo stream | 3.28 MiB/s | 3.14 MiB/s |
 
 All three medians were within about 5%. Individual stream samples varied from 0.66 to 4.04 MiB/s and
@@ -209,25 +219,28 @@ byte and no steady-state persistence or polling.
 - incomplete readiness identity or failed exclusive PID publication kills and rejects the child.
 - clean empty detach exits immediately.
 - a never-used current adapter connects and retires cleanly on quit.
-- app relaunch establishes a lease before the inherited crash deadline and keeps first-terminal spawn
-  working after the old deadline.
+- initial adoption cancels the launch watchdog and keeps first-terminal spawn working after its old
+  deadline.
 - a live session, another client, raw transport, or in-flight admission rejects clean retirement.
-- a control-only overlapping client pauses but cannot erase the last full-client deadline.
-- a same-client-ID control replacement cannot erase the prior full connection's deadline evidence.
+- a control-only overlapping client blocks but cannot erase the last full-client retirement request.
+- a same-client-ID control replacement cannot erase the prior full connection's retirement request.
+- a control-only client cannot admit a terminal or erase startup/retirement evidence with a failed
+  request.
 - startup fail-open performs bounded empty retirement without installing a late provider.
 - quit remains bounded while a prior handshake is stalled and cannot resurrect client sockets later.
 - the synchronous listener fence rejects post-fence connections as retryable.
-- unexpected disconnect honors the boundary exactly.
-- a real reconnect cancels the old deadline and a later drop gets a fresh deadline.
-- raw and health probes cannot extend the deadline.
-- final session exit uses the remaining deadline.
+- an unexpected empty disconnect retires immediately without a runtime inactivity timer.
+- a real reconnect cancels pending retirement while live work keeps the daemon available.
+- raw and health probes block but cannot erase pending retirement.
+- final session exit triggers an immediate guarded retirement check.
 - token/PID cleanup preserves malformed, stale, and replacement artifacts.
 - authenticated token disappearance performs one coalesced respawn; initial token absence does not.
 
 ### Process/E2E tests
 
 - start a real isolated v24 daemon with real socket/named-pipe, token, and PID artifacts;
-- authenticate, request clean empty retirement, and verify the exact process and owned artifacts exit;
+- authenticate, disconnect the last empty client, and verify the exact process and owned artifacts
+  exit;
 - prove a live session rejects retirement and remains reattachable;
 - run a protocol-v22 fixture beside v24 and prove v22 remains connectable/reattachable;
 - never target a production runtime directory or signal a process not created by the fixture.
@@ -243,14 +256,15 @@ byte and no steady-state persistence or polling.
 - independent review-until-clean, with review loops recorded in `.orca/bug-factory.json`;
 - packaged Windows/Linux validation where CI is available; local macOS process E2E before publication.
 
-Final local results on macOS arm64:
+Final local results on macOS arm64 after the event-driven policy revision:
 
-- full daemon suite: 53 files passed, 2 skipped; 886 tests passed, 5 skipped;
+- full daemon suite: 56 files passed, 2 skipped; 939 tests passed, 5 skipped;
 - process E2E: v22 remained live and reattachable while the exact empty v24 process and its owned
-  artifacts retired;
+  artifacts retired immediately after its final authenticated client disconnected;
 - full Node typecheck, focused oxlint, max-lines ratchet, and `git diff --check` passed;
 - full desktop, web, and native production build passed with existing build warnings;
-- six complete independent review passes, including the final post-timeout-fix pass, ended clean.
+- three independent post-revision review tracks covering architecture/state machines,
+  ownership/adoption, and process lifecycle ended clean after actionable findings were fixed.
 
 The local shell used Node 26.5.0 while the repository requests Node 24; the commands completed
 successfully, and repository CI remains responsible for the supported Node/platform matrix.
