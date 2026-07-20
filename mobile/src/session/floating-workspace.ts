@@ -1,6 +1,5 @@
-// Mirrors FLOATING_TERMINAL_WORKTREE_ID in src/shared/constants.ts — the
-// desktop Floating Workspace's synthetic worktree id (no backing repo or
-// worktree record; terminals always run on the host's local runtime).
+// Mirrors FLOATING_TERMINAL_WORKTREE_ID in src/shared/constants.ts — the desktop
+// Floating Workspace's synthetic id (no backing repo/worktree; always local runtime).
 export const FLOATING_WORKSPACE_WORKTREE_ID = 'global-floating-terminal'
 
 export const FLOATING_WORKSPACE_TITLE = 'Floating Workspace'

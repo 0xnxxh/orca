@@ -10,12 +10,8 @@ export type HostStatusGates = {
   compatVerdict: CompatVerdict
 }
 
-// Why: read desktop's protocol version from status.get on every connect and
-// re-evaluate compatibility. If the desktop declares this mobile build too old
-// (or vice versa via the local minimum), the host detail screen swaps to a
-// hard-block screen instead of the worktree list. Today's compat constants are
-// wide-open so this never blocks; the wire format is in place to flip a switch
-// in a future release.
+// Reads status.get on connect for capabilities, protocol-compat verdict, and the
+// floating-workspace flag. Compat constants are wide-open today so this never blocks yet.
 export function useHostStatusGates(args: {
   hostId: string | undefined
   client: RpcClient | null
@@ -31,17 +27,14 @@ export function useHostStatusGates(args: {
     clientRef.current = client
   }, [client])
 
-  // Why: switching hosts must clear the previous host's verdict so a stale
-  // block screen can't linger for the next host.
+  // Why: clear the prior host's verdict on switch so a stale block screen can't linger.
   useEffect(() => {
     setCompatVerdict({ kind: 'ok' })
   }, [hostId])
 
   useEffect(() => {
     if (connState !== 'connected' || !client) {
-      // Why: drop the prior host's capabilities while disconnected/switching so
-      // a capability-gated action (e.g. Agent Session History) can't linger for
-      // a host that doesn't support it.
+      // Why: drop capabilities while disconnected/switching so a capability-gated action can't linger for a new host.
       setHostCapabilities([])
       setFloatingWorkspaceEnabled(false)
       return
@@ -70,8 +63,7 @@ export function useHostStatusGates(args: {
         })
         setCompatVerdict(verdict)
         if (verdict.kind === 'blocked') {
-          // Why: deterministic breadcrumb so support can confirm a block
-          // actually fired (vs a render bug). No PII — just version ints.
+          // Why: support breadcrumb to confirm a block fired vs a render bug; no PII, just version ints.
           console.warn('[protocol-compat] blocked', {
             reason: verdict.reason,
             desktopVersion: verdict.desktopVersion,
@@ -80,8 +72,7 @@ export function useHostStatusGates(args: {
           })
         }
       } catch {
-        // Why: rare path — sendRequest can throw on transport tear-down.
-        // Treat as transient; verdict stays at previous value.
+        // Why: sendRequest can throw on transport tear-down; treat as transient, keep the prior verdict.
       }
     })()
     return () => {

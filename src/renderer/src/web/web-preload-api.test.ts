@@ -140,6 +140,41 @@ function installClipboardImageBase64(contentBase64: string): void {
   })
 }
 
+describe('web before-unload persistence', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('persists final UI and host-partitioned sessions synchronously', async () => {
+    const { api, storage } = await installApi('Linux')
+
+    api.app.persistBeforeUnloadSync({
+      sessions: [
+        { state: { activeWorktreeId: 'local-worktree' } as never },
+        {
+          state: { activeWorktreeId: 'remote-worktree' } as never,
+          hostId: 'runtime:web-env-1'
+        }
+      ],
+      ui: { activeView: 'settings' }
+    })
+
+    expect(JSON.parse(storage.getItem('orca.web.workspaceSession.v1') ?? '{}')).toMatchObject({
+      activeWorktreeId: 'local-worktree'
+    })
+    expect(
+      JSON.parse(storage.getItem('orca.web.workspaceSession.v1.runtime:web-env-1') ?? '{}')
+    ).toMatchObject({ activeWorktreeId: 'remote-worktree' })
+    expect(JSON.parse(storage.getItem('orca.web.ui.v1') ?? '{}')).toMatchObject({
+      activeView: 'settings'
+    })
+  })
+})
+
 function installClipboardImageBlob(blob: Blob): {
   getType: ReturnType<typeof vi.fn>
   read: ReturnType<typeof vi.fn>
@@ -1819,6 +1854,35 @@ describe('web UI preload API', () => {
         { method: 'computer.permissionsStatus', params: {} },
         { method: 'computer.permissions', params: { id: 'accessibility' } }
       ])
+    )
+  })
+
+  it('rejects paired web skill discovery failures instead of returning an empty scan', async () => {
+    vi.doMock('./web-runtime-client', () => ({
+      WebRuntimeClient: class {
+        call(method: string): Promise<RuntimeRpcResponse<unknown>> {
+          if (method === 'skills.discover') {
+            return Promise.reject(new Error('runtime disconnected'))
+          }
+          return Promise.resolve({
+            id: method,
+            ok: true,
+            result: {},
+            _meta: { runtimeId: 'runtime-1' }
+          })
+        }
+
+        close(): void {}
+      }
+    }))
+
+    const globals = installBrowserGlobals('Linux')
+    writeStoredRuntimeEnvironment(globals.storage)
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+
+    await expect(globals.window.api.skills.discover({ cwd: '/repo' })).rejects.toThrow(
+      'runtime disconnected'
     )
   })
 
