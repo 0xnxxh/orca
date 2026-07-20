@@ -292,7 +292,8 @@ test('Windows worktree deletion releases a reparented agent descendant file lock
   const stage = mkdtempSync(join(tmpdir(), 'orca-windows-agent-tree-'))
   const agentScript = join(stage, 'agent.cjs')
   const launcherScript = join(stage, 'launcher.cjs')
-  const lockHolderScript = join(stage, 'lock-holder.ps1')
+  const lockHolderSource = join(stage, 'lock-holder.cs')
+  const lockHolderExe = join(stage, 'lock-holder.exe')
   const agentPidPath = join(stage, 'agent.pid')
   const rootPidPath = join(stage, 'root.pid')
   const launcherPidPath = join(stage, 'launcher.pid')
@@ -306,29 +307,53 @@ test('Windows worktree deletion releases a reparented agent descendant file lock
     'powershell.exe'
   )
   writeFileSync(
-    lockHolderScript,
+    lockHolderSource,
     [
-      'param([string]$FilePath, [string]$PidMarker, [string]$ReadyMarker)',
-      '[IO.File]::WriteAllText($PidMarker, [string]$PID)',
-      '$stream = [IO.File]::Open($FilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)',
-      '[IO.File]::WriteAllText($ReadyMarker, "locked")',
-      'try { while ($true) { Start-Sleep -Milliseconds 250 } } finally { $stream.Dispose() }',
+      'using System.Diagnostics;',
+      'using System.IO;',
+      'using System.Threading;',
+      'internal static class LockHolder {',
+      '  private static void Main(string[] args) {',
+      '    File.WriteAllText(args[1], Process.GetCurrentProcess().Id.ToString());',
+      '    using (var stream = new FileStream(args[0], FileMode.Open, FileAccess.Read, FileShare.None)) {',
+      '      File.WriteAllText(args[2], "locked");',
+      '      Thread.Sleep(Timeout.Infinite);',
+      '    }',
+      '  }',
+      '}',
       ''
     ].join('\n')
   )
+  const windowsRoot = process.env.SystemRoot ?? 'C:\\Windows'
+  const csharpCompiler = [
+    join(windowsRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
+    join(windowsRoot, 'Microsoft.NET', 'Framework', 'v4.0.30319', 'csc.exe')
+  ].find((candidate) => existsSync(candidate))
+  expect(csharpCompiler, '.NET Framework C# compiler is required for the lock fixture').toBeTruthy()
+  const compileResult = spawnSync(
+    csharpCompiler!,
+    ['/nologo', '/target:exe', `/out:${lockHolderExe}`, lockHolderSource],
+    { windowsHide: true, encoding: 'utf8' }
+  )
+  expect(
+    compileResult.status,
+    compileResult.error?.message ?? compileResult.stderr ?? 'lock-holder compilation failed'
+  ).toBe(0)
   writeFileSync(
     launcherScript,
     [
       "const { spawn } = require('node:child_process')",
-      "const { writeFileSync } = require('node:fs')",
+      "const { existsSync, writeFileSync } = require('node:fs')",
       'writeFileSync(process.argv[2], String(process.pid))',
-      'const child = spawn(process.argv[3], [',
-      "  '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',",
-      "  '-File', process.argv[4], '-FilePath', process.argv[5],",
-      "  '-PidMarker', process.argv[6], '-ReadyMarker', process.argv[7]",
-      "], { cwd: process.argv[8], detached: true, stdio: 'ignore', windowsHide: true })",
+      'const child = spawn(process.argv[3], process.argv.slice(4, 7), {',
+      "  cwd: process.argv[7], detached: true, stdio: 'ignore', windowsHide: true",
+      '})',
       'child.unref()',
-      'setTimeout(() => process.exit(0), 100)',
+      'const deadline = Date.now() + 10_000',
+      'const readyPoll = setInterval(() => {',
+      '  if (existsSync(process.argv[6])) { clearInterval(readyPoll); process.exit(0) }',
+      '  if (Date.now() >= deadline) { clearInterval(readyPoll); process.exit(2) }',
+      '}, 25)',
       ''
     ].join('\n')
   )
@@ -372,8 +397,7 @@ test('Windows worktree deletion releases a reparented agent descendant file lock
       quotePowerShellArg(agentPidPath),
       quotePowerShellArg(launcherScript),
       quotePowerShellArg(launcherPidPath),
-      quotePowerShellArg(powershellPath),
-      quotePowerShellArg(lockHolderScript),
+      quotePowerShellArg(lockHolderExe),
       quotePowerShellArg(lockedPath),
       quotePowerShellArg(lockHolderPidPath),
       quotePowerShellArg(lockReadyPath),
@@ -398,7 +422,7 @@ test('Windows worktree deletion releases a reparented agent descendant file lock
     await expect
       .poll(() => existsSync(lockReadyPath), {
         timeout: 30_000,
-        message: 'reparented PowerShell descendant never acquired the worktree file lock'
+        message: 'reparented native descendant never acquired the worktree file lock'
       })
       .toBe(true)
     agentPid = readMarkerPid(agentPidPath)
@@ -419,8 +443,8 @@ test('Windows worktree deletion releases a reparented agent descendant file lock
         : null
     }, ptyId)
     expect(management?.degraded).toBe(false)
-    // Why: v24 sessions predate spawn-time Job ownership and cannot safely be
-    // adopted; this proof must exercise a newly launched v25 agent session.
+    // Why: adopted v24 sessions predate spawn-time Job ownership; this proof
+    // must exercise a newly launched v25 agent session.
     expect(management?.protocolVersion).toBe(25)
     rootPid = management?.pid ?? 0
     expect(rootPid).toBeGreaterThan(0)
@@ -537,8 +561,10 @@ test('Windows worktree deletion releases a reparented agent descendant file lock
       worktreeCleanup,
       failures: cleanupFailures
     }
+    const evidencePath = testInfo.outputPath('windows-agent-worktree-deletion-evidence.json')
+    writeFileSync(evidencePath, JSON.stringify(evidence, null, 2))
     await testInfo.attach('windows-agent-worktree-deletion-evidence.json', {
-      body: JSON.stringify(evidence, null, 2),
+      path: evidencePath,
       contentType: 'application/json'
     })
     if (cleanupFailures.length === 0) {
