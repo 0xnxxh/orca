@@ -137,9 +137,12 @@ describe('useHostClient', () => {
 
     let selectedHostId = HOST.id
     let selectedClient: RpcClient | null = null
+    let selectedState: ConnectionState = 'disconnected'
     let renderer: ReactTestRenderer | null = null
     function Probe(): null {
-      selectedClient = useHostClient(selectedHostId).client
+      const selected = useHostClient(selectedHostId)
+      selectedClient = selected.client
+      selectedState = selected.state
       useHostClient(host2.id)
       return null
     }
@@ -151,14 +154,17 @@ describe('useHostClient', () => {
         await Promise.resolve()
       })
       expect(selectedClient).toBe(client1)
+      expect(selectedState).toBe('connected')
 
       selectedHostId = host2.id
+      client2.emitState('disconnected')
       await act(async () => {
         renderer?.update(createElement(RpcClientProvider, null, createElement(Probe)))
         await Promise.resolve()
       })
 
       expect(selectedClient).toBe(client2)
+      expect(selectedState).toBe('disconnected')
       expect(connectMock).toHaveBeenCalledTimes(2)
     } finally {
       restore()

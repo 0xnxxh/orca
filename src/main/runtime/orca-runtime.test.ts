@@ -1725,24 +1725,66 @@ describe('OrcaRuntimeService', () => {
     expect(disabledRuntime.getStatus().floatingWorkspaceEnabled).toBe(false)
   })
 
-  it('lists floating session tabs without resolving repo worktrees', async () => {
+  it('polls floating tabs with targeted PTY liveness and no repo/provider inventory', async () => {
     const getRepos = vi.fn(store.getRepos)
     const listProcesses = vi.fn().mockResolvedValue([])
-    const runtime = new OrcaRuntimeService({
-      ...store,
-      getRepo: () => undefined,
-      getRepos
-    } as never)
+    const floatingPtyId = `${FLOATING_TERMINAL_WORKTREE_ID}@@pty-1`
+    const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        activeRepoId: null,
+        activeWorktreeId: FLOATING_TERMINAL_WORKTREE_ID,
+        activeTabIdByWorktree: { [FLOATING_TERMINAL_WORKTREE_ID]: 'floating-tab' },
+        tabsByWorktree: {
+          [FLOATING_TERMINAL_WORKTREE_ID]: [
+            {
+              id: 'floating-tab',
+              ptyId: floatingPtyId,
+              worktreeId: FLOATING_TERMINAL_WORKTREE_ID,
+              title: 'Floating Terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          'floating-tab': makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: floatingPtyId })
+        }
+      })
+    )
+    const runtime = new OrcaRuntimeService({ ...runtimeStore, getRepos } as never)
+    const hasPty = vi.fn(() => true)
     runtime.setPtyController({
       write: () => true,
       kill: () => true,
       getForegroundProcess: async () => null,
+      hasPty,
       listProcesses
     })
 
+    const tabs = await runtime.listMobileSessionTabs(`id:${FLOATING_TERMINAL_WORKTREE_ID}`)
+    const terminals = await runtime.listTerminals(`id:${FLOATING_TERMINAL_WORKTREE_ID}`)
     await runtime.listMobileSessionTabs(`id:${FLOATING_TERMINAL_WORKTREE_ID}`)
+    await runtime.listTerminals(`id:${FLOATING_TERMINAL_WORKTREE_ID}`)
 
-    expect(listProcesses).toHaveBeenCalledOnce()
+    expect(tabs.tabs).toEqual([
+      expect.objectContaining({
+        type: 'terminal',
+        parentTabId: 'floating-tab',
+        status: 'ready',
+        terminal: expect.any(String)
+      })
+    ])
+    expect(terminals.terminals).toEqual([
+      expect.objectContaining({
+        worktreeId: FLOATING_TERMINAL_WORKTREE_ID,
+        connected: true
+      })
+    ])
+    expect(hasPty).toHaveBeenCalledTimes(4)
+    expect(hasPty).toHaveBeenCalledWith(floatingPtyId)
+    expect(listProcesses).not.toHaveBeenCalled()
     expect(getRepos).not.toHaveBeenCalled()
   })
 

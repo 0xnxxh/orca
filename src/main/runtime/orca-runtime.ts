@@ -1275,6 +1275,8 @@ type RuntimePtyController = {
   hasChildProcesses?(ptyId: string): Promise<boolean>
   clearBuffer?(ptyId: string): Promise<void>
   resize?(ptyId: string, cols: number, rows: number): boolean
+  // Why: exact-id mobile polls should not enumerate every local and SSH PTY.
+  hasPty?(ptyId: string): boolean | null
   listProcesses?(): Promise<PtyProcessInfo[]>
   serializeBuffer?(
     ptyId: string,
@@ -4567,7 +4569,7 @@ export class OrcaRuntimeService {
   private async refreshMobileSessionPtyRecords(
     targetWorktreeId: string | null = null
   ): Promise<void> {
-    if (!this.ptyController?.listProcesses) {
+    if (!this.ptyController?.listProcesses && !this.ptyController?.hasPty) {
       return
     }
     // Why: floating PTY identity is explicit, so polling must not resolve every Git/SSH worktree.
@@ -21863,6 +21865,12 @@ export class OrcaRuntimeService {
     resolvedWorktrees: ResolvedWorktree[],
     targetWorktreeId: string | null = null
   ): Promise<Set<string> | null> {
+    if (targetWorktreeId === FLOATING_TERMINAL_WORKTREE_ID) {
+      const targetedLiveness = this.refreshFloatingWorkspacePtyLiveness()
+      if (targetedLiveness !== null) {
+        return targetedLiveness
+      }
+    }
     if (!this.ptyController?.listProcesses) {
       return null
     }
@@ -21899,6 +21907,87 @@ export class OrcaRuntimeService {
     }
     for (const pty of this.ptysById.values()) {
       if (!livePtyIds.has(pty.ptyId) && !this.leafExistsForPty(pty.ptyId)) {
+        pty.connected = false
+        pty.disconnectedAt ??= Date.now()
+      }
+    }
+    this.pruneDisconnectedPtyRecords()
+    return livePtyIds
+  }
+
+  private refreshFloatingWorkspacePtyLiveness(): Set<string> | null {
+    const hasPty = this.ptyController?.hasPty
+    if (!hasPty) {
+      return null
+    }
+    const knownPtyIds = new Set<string>()
+    const persistedBindingByPtyId = new Map<string, { tabId: string; paneKey: string }>()
+    for (const pty of this.ptysById.values()) {
+      if (pty.worktreeId === FLOATING_TERMINAL_WORKTREE_ID) {
+        knownPtyIds.add(pty.ptyId)
+      }
+    }
+    for (const leaf of this.leaves.values()) {
+      if (leaf.worktreeId === FLOATING_TERMINAL_WORKTREE_ID && leaf.ptyId) {
+        knownPtyIds.add(leaf.ptyId)
+      }
+    }
+    const snapshot = this.mobileSessionTabsByWorktree.get(FLOATING_TERMINAL_WORKTREE_ID)
+    for (const tab of snapshot?.tabs ?? []) {
+      if (tab.type !== 'terminal') {
+        continue
+      }
+      if (tab.ptyId) {
+        knownPtyIds.add(tab.ptyId)
+        persistedBindingByPtyId.set(tab.ptyId, {
+          tabId: tab.parentTabId,
+          paneKey: this.getMobileTerminalPaneKey(tab)
+        })
+      }
+      for (const [leafId, ptyId] of Object.entries(tab.parentLayout?.ptyIdsByLeafId ?? {})) {
+        knownPtyIds.add(ptyId)
+        persistedBindingByPtyId.set(ptyId, {
+          tabId: tab.parentTabId,
+          paneKey: isTerminalLeafId(leafId)
+            ? makePaneKey(tab.parentTabId, leafId)
+            : `${tab.parentTabId}:${/^pane:(\d+)$/.exec(leafId)?.[1] ?? leafId}`
+        })
+      }
+    }
+
+    const liveness = new Map<string, boolean>()
+    try {
+      for (const ptyId of knownPtyIds) {
+        const live = hasPty(ptyId)
+        if (live === null) {
+          return null
+        }
+        liveness.set(ptyId, live)
+      }
+    } catch {
+      return null
+    }
+
+    const livePtyIds = new Set<string>()
+    for (const [ptyId, live] of liveness) {
+      let pty = this.ptysById.get(ptyId)
+      if (live) {
+        livePtyIds.add(ptyId)
+        const binding = persistedBindingByPtyId.get(ptyId)
+        if (!pty && binding) {
+          // Why: a live daemon PTY restored from disk needs its pane identity before mobile can issue a safe handle.
+          pty = this.recordPtyWorktree(ptyId, FLOATING_TERMINAL_WORKTREE_ID, {
+            connected: true,
+            tabId: binding.tabId,
+            paneKey: binding.paneKey
+          })
+        }
+        if (pty) {
+          pty.connected = true
+          pty.disconnectedAt = null
+          this.refreshPtyForegroundAgent(ptyId)
+        }
+      } else if (pty && !this.leafExistsForPty(ptyId)) {
         pty.connected = false
         pty.disconnectedAt ??= Date.now()
       }

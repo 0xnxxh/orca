@@ -388,11 +388,10 @@ export function useHostClient(hostId: string | undefined): {
     }
   }, [ctx, hostId])
 
-  // Why: Expo can reuse the screen before effects bind the next host; never expose the prior host's client in that render.
-  return {
-    client: clientHostIdRef.current === hostId ? clientRef.current : null,
-    state
-  }
+  // Why: Expo can reuse the screen before effects bind the next host; never expose the prior host's client or state in that render.
+  const bound = clientHostIdRef.current === hostId
+  const boundState = bound ? state : hostId ? ctx.getState(hostId) : 'disconnected'
+  return { client: bound ? clientRef.current : null, state: boundState }
 }
 
 // Why: refcounting prevents a double-open when a host-detail screen shares one of these hosts.

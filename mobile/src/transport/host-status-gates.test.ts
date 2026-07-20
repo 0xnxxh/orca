@@ -17,51 +17,68 @@ function suppressReactTestRendererDeprecationWarning(): () => void {
 
 describe('useHostStatusGates', () => {
   it('clears every prior-host gate and ignores its late response while the client is replaced', async () => {
-    let resolveStatus: ((response: unknown) => void) | null = null
-    const pendingStatus = new Promise((resolve) => {
-      resolveStatus = resolve
+    let resolveOldStatus: ((response: unknown) => void) | null = null
+    const pendingOldStatus = new Promise((resolve) => {
+      resolveOldStatus = resolve
     })
-    const sendRequest = vi.fn().mockReturnValue(pendingStatus)
-    const client = { sendRequest } as unknown as RpcClient
+    const oldSendRequest = vi.fn().mockReturnValue(pendingOldStatus)
+    const oldClient = { sendRequest: oldSendRequest } as unknown as RpcClient
+    const newSendRequest = vi.fn().mockResolvedValue({
+      ok: true,
+      result: {
+        capabilities: ['terminal.quick-commands.v1'],
+        floatingWorkspaceEnabled: true
+      }
+    })
+    const newClient = { sendRequest: newSendRequest } as unknown as RpcClient
     let gates: HostStatusGates | null = null
+    const firstRenderByHost = new Map<string, HostStatusGates>()
     let renderer: ReactTestRenderer | null = null
 
-    function Probe({ hostId }: { hostId: string }): null {
+    function Probe({ hostId, client }: { hostId: string; client: RpcClient }): null {
       gates = useHostStatusGates({ hostId, client, connState: 'connected' })
+      if (!firstRenderByHost.has(hostId)) {
+        firstRenderByHost.set(hostId, gates)
+      }
       return null
     }
 
     const restore = suppressReactTestRendererDeprecationWarning()
     try {
       await act(async () => {
-        renderer = create(createElement(Probe, { hostId: 'host-1' }))
+        renderer = create(createElement(Probe, { hostId: 'host-1', client: oldClient }))
       })
 
       await act(async () => {
-        renderer?.update(createElement(Probe, { hostId: 'host-2' }))
+        renderer?.update(createElement(Probe, { hostId: 'host-2', client: newClient }))
+        await Promise.resolve()
       })
-      expect(gates).toMatchObject({
+      expect(firstRenderByHost.get('host-2')).toMatchObject({
         hostCapabilities: [],
         floatingWorkspaceEnabled: false,
         compatVerdict: { kind: 'ok' }
       })
+      expect(gates).toMatchObject({
+        hostCapabilities: ['terminal.quick-commands.v1'],
+        floatingWorkspaceEnabled: true
+      })
 
       await act(async () => {
-        resolveStatus?.({
+        resolveOldStatus?.({
           ok: true,
           result: {
             capabilities: ['browser.screencast.v1'],
             floatingWorkspaceEnabled: true
           }
         })
-        await pendingStatus
+        await pendingOldStatus
       })
       expect(gates).toMatchObject({
-        hostCapabilities: [],
-        floatingWorkspaceEnabled: false,
-        compatVerdict: { kind: 'ok' }
+        hostCapabilities: ['terminal.quick-commands.v1'],
+        floatingWorkspaceEnabled: true
       })
-      expect(sendRequest).toHaveBeenCalledOnce()
+      expect(oldSendRequest).toHaveBeenCalledOnce()
+      expect(newSendRequest).toHaveBeenCalledOnce()
     } finally {
       restore()
       renderer?.unmount()
@@ -97,6 +114,63 @@ describe('useHostStatusGates', () => {
       })
 
       expect(sendRequest).toHaveBeenCalledOnce()
+    } finally {
+      restore()
+      renderer?.unmount()
+    }
+  })
+
+  it('fails closed while the same client reconnects', async () => {
+    let resolveReconnect: ((response: unknown) => void) | null = null
+    const pendingReconnect = new Promise((resolve) => {
+      resolveReconnect = resolve
+    })
+    const sendRequest = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { capabilities: ['browser.screencast.v1'], floatingWorkspaceEnabled: true }
+      })
+      .mockReturnValueOnce(pendingReconnect)
+    const client = { sendRequest } as unknown as RpcClient
+    let gates: HostStatusGates | null = null
+    let renderer: ReactTestRenderer | null = null
+
+    function Probe({ connState }: { connState: 'connected' | 'disconnected' }): null {
+      gates = useHostStatusGates({ hostId: 'host-1', client, connState })
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(Probe, { connState: 'connected' }))
+        await Promise.resolve()
+      })
+      expect(gates?.floatingWorkspaceEnabled).toBe(true)
+
+      await act(async () => {
+        renderer?.update(createElement(Probe, { connState: 'disconnected' }))
+      })
+      await act(async () => {
+        renderer?.update(createElement(Probe, { connState: 'connected' }))
+      })
+      expect(gates).toMatchObject({
+        hostCapabilities: [],
+        floatingWorkspaceEnabled: false
+      })
+
+      await act(async () => {
+        resolveReconnect?.({
+          ok: true,
+          result: { capabilities: ['terminal.quick-commands.v1'], floatingWorkspaceEnabled: true }
+        })
+        await pendingReconnect
+      })
+      expect(gates).toMatchObject({
+        hostCapabilities: ['terminal.quick-commands.v1'],
+        floatingWorkspaceEnabled: true
+      })
     } finally {
       restore()
       renderer?.unmount()
