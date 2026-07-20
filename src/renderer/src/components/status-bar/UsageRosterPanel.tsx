@@ -1,6 +1,7 @@
 import React from 'react'
 import { ChevronRight, RefreshCw } from 'lucide-react'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { useResetCountdownClock } from '@/hooks/useResetCountdownClock'
 import { translate } from '@/i18n/i18n'
 import { formatRateLimitWindowChipLabel, formatWindowLabel } from '@/lib/window-label-formatter'
 import type { ProviderRateLimits, RateLimitWindow } from '../../../../shared/rate-limit-types'
@@ -63,14 +64,14 @@ export function getTightestUsageSection(p: ProviderRateLimits): UsageSection | n
 }
 
 // The soonest-resetting window summarizes the agent's next reset in one line.
-function soonestResetLabel(sections: UsageSection[]): string | null {
+function soonestResetLabel(sections: UsageSection[], now: number): string | null {
   const resets = sections
     .map((s) => s.window.resetsAt)
-    .filter((r): r is number => typeof r === 'number')
+    .filter((r): r is number => typeof r === 'number' && Number.isFinite(r))
   if (resets.length === 0) {
     return null
   }
-  return formatResetCountdown(Math.min(...resets) - Date.now())
+  return formatResetCountdown(Math.min(...resets) - now)
 }
 
 // Presentational row: a compact header (icon · name · plan · reset) with
@@ -81,18 +82,20 @@ export function UsageRow({
   p,
   display,
   state,
-  showSignInAction
+  showSignInAction,
+  now
 }: {
   p: ProviderRateLimits
   display: UsagePercentageDisplay
   state: UsageRosterRowState
   showSignInAction: boolean
+  now: number
 }): React.JSX.Element {
   const sections = usedSections(p)
   const hasUsage = sections.length > 0
   const name = getProviderDisplayName(p.provider)
   const plan = formatPlanLabel(p.planType)
-  const reset = hasUsage ? soonestResetLabel(sections) : null
+  const reset = hasUsage ? soonestResetLabel(sections, now) : null
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -176,6 +179,12 @@ export function UsageRosterPanel({
   // default clickable row.
   renderRow?: (p: ProviderRateLimits, row: React.ReactNode) => React.ReactNode
 }): React.JSX.Element {
+  // Why: one boundary-scheduled clock keeps every open row current without per-provider timers.
+  const now = useResetCountdownClock(
+    providers.flatMap((provider) =>
+      usedSections(provider).map((section) => section.window.resetsAt)
+    )
+  )
   // Worst-first so the agent nearest a limit sits on top.
   const sorted = [...providers].sort(
     (a, b) => providerMaxUsed(usedSections(b)) - providerMaxUsed(usedSections(a))
@@ -211,7 +220,13 @@ export function UsageRosterPanel({
         const state = getUsageRosterRowState(p, usedSections(p).length > 0)
         const showSignInAction = state.kind === 'sign-in' && canSignIn(p.provider)
         const rowNode = (
-          <UsageRow p={p} display={display} state={state} showSignInAction={showSignInAction} />
+          <UsageRow
+            p={p}
+            display={display}
+            state={state}
+            showSignInAction={showSignInAction}
+            now={now}
+          />
         )
         if (showSignInAction) {
           return (

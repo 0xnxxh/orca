@@ -1,6 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
+
+const mocks = vi.hoisted(() => ({
+  now: 1_000_000_000,
+  useResetCountdownClock: vi.fn(() => 1_000_000_000)
+}))
 
 vi.mock('@/i18n/i18n', () => ({
   translate: (_key: string, fallback: string) => fallback
@@ -8,8 +13,18 @@ vi.mock('@/i18n/i18n', () => ({
 vi.mock('@/lib/agent-catalog', () => ({
   AgentIcon: ({ agent }: { agent: string }) => <span data-agent-icon={agent} />
 }))
+vi.mock('@/hooks/useResetCountdownClock', () => ({
+  useResetCountdownClock: mocks.useResetCountdownClock
+}))
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenuItem: ({
+    children,
+    onSelect: _onSelect,
+    ...props
+  }: React.PropsWithChildren<{ onSelect?: () => void }>) => <div {...props}>{children}</div>
+}))
 
-import { UsageRow } from './UsageRosterPanel'
+import { UsageRosterPanel, UsageRow } from './UsageRosterPanel'
 
 const signedOutCodex: ProviderRateLimits = {
   provider: 'codex',
@@ -21,6 +36,10 @@ const signedOutCodex: ProviderRateLimits = {
 }
 
 describe('UsageRow', () => {
+  beforeEach(() => {
+    mocks.useResetCountdownClock.mockClear()
+  })
+
   it('renders sign-in as row copy instead of nesting an interactive button', () => {
     const markup = renderToStaticMarkup(
       <UsageRow
@@ -28,6 +47,7 @@ describe('UsageRow', () => {
         display="used"
         state={{ kind: 'sign-in', statusLabel: 'not signed in' }}
         showSignInAction
+        now={mocks.now}
       />
     )
 
@@ -53,11 +73,52 @@ describe('UsageRow', () => {
         display="remaining"
         state={{ kind: 'usage', statusLabel: null }}
         showSignInAction={false}
+        now={mocks.now}
       />
     )
 
     expect(markup).toContain('75%')
     expect(markup).toContain('width:75%')
     expect(markup).not.toContain('width:25%')
+  })
+
+  it('uses one shared clock for live reset labels across the roster', () => {
+    const sessionReset = mocks.now + 2 * 60_000
+    const weeklyReset = mocks.now + 7 * 24 * 60 * 60_000
+    const markup = renderToStaticMarkup(
+      <UsageRosterPanel
+        providers={[
+          {
+            ...signedOutCodex,
+            session: {
+              usedPercent: 25,
+              windowMinutes: 300,
+              resetsAt: sessionReset,
+              resetDescription: null
+            },
+            weekly: {
+              usedPercent: 10,
+              windowMinutes: 10_080,
+              resetsAt: weeklyReset,
+              resetDescription: null
+            },
+            status: 'ok',
+            error: null
+          }
+        ]}
+        display="used"
+        isRefreshing={false}
+        onRefresh={() => {}}
+        onOpenProvider={() => {}}
+        onSignIn={() => {}}
+        canSignIn={() => true}
+        onManageAccounts={() => {}}
+        onUsageDetails={() => {}}
+      />
+    )
+
+    expect(mocks.useResetCountdownClock).toHaveBeenCalledOnce()
+    expect(mocks.useResetCountdownClock).toHaveBeenCalledWith([sessionReset, weeklyReset])
+    expect(markup).toContain('Resets in 2m')
   })
 })
