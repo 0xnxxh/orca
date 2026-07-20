@@ -91,8 +91,6 @@ jobs:
           NODE_PTY_REQUIRE_TEST_FAULTS: '1'
         run: >-
           pnpm exec electron
-          node_modules/mocha/bin/mocha.js
-          --exit
           node_modules/node-pty/lib/conptyConnectFailure.test.js
 
       - name: Run Windows terminal restart regressions
