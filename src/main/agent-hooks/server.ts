@@ -1976,6 +1976,15 @@ export class AgentHookServer {
           entry.payload = hydratedPayload
         }
         this.state.lastStatusByPaneKey.set(resolvedPaneKey, entry)
+        if (entry.connectionId) {
+          // Why: a restarted process can observe an earlier wall clock; seed
+          // transport ordering so new events and clears stay after disk state.
+          const previousWatermark = this.connectionTimestampWatermarkById.get(entry.connectionId)
+          this.connectionTimestampWatermarkById.set(
+            entry.connectionId,
+            Math.max(previousWatermark ?? -1, entry.receivedAt)
+          )
+        }
         // Why: preserve only working children across restart. Live activity
         // confirms them; a later complete inventory may reap stale seeds.
         if (entry.payload.subagents) {

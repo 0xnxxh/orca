@@ -6196,6 +6196,68 @@ describe('Last-status persistence', () => {
     }
   })
 
+  it('keeps SSH status ordering monotonic across hydration and clock rollback', async () => {
+    const now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    mkdirSync(join(userDataPath, 'agent-hooks'), { recursive: true })
+    const receivedAt = now + 1_000
+    writeFileSync(
+      lastStatusPath(),
+      JSON.stringify({
+        version: 2,
+        entries: {
+          [PANE]: {
+            paneKey: PANE,
+            tabId: 'tab-1',
+            worktreeId: 'wt-1',
+            connectionId: 'ssh-a',
+            receivedAt,
+            stateStartedAt: receivedAt,
+            payload: { state: 'working', prompt: 'before restart', agentType: 'claude' }
+          }
+        }
+      }),
+      'utf8'
+    )
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      const clearListener = vi.fn()
+      server.setPaneStatusClearListener(clearListener)
+      server.ingestRemote(
+        { paneKey: PANE, payload: { state: 'working', agentType: 'codex' } },
+        'ssh-a'
+      )
+
+      expect(server.getStatusSnapshot()[0]?.receivedAt).toBe(receivedAt + 1)
+      server.clearStatusEntriesForConnection('ssh-a')
+      const clearedAt = receivedAt + 2
+      expect(clearListener).toHaveBeenCalledWith({
+        transient: true,
+        connectionId: 'ssh-a',
+        clearedAt
+      })
+      server.ingestRemote(
+        {
+          paneKey: GOOD_PANE,
+          isReplay: true,
+          payload: { state: 'working', agentType: 'claude' }
+        },
+        'ssh-a'
+      )
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({
+          paneKey: GOOD_PANE,
+          connectionId: 'ssh-a',
+          receivedAt: clearedAt + 1
+        })
+      ])
+    } finally {
+      server.stop()
+    }
+  })
+
   it('drops persisted idle Claude child rows from hydration replay', async () => {
     mkdirSync(join(userDataPath, 'agent-hooks'), { recursive: true })
     const receivedAt = recentTs()
