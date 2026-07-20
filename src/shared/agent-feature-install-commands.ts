@@ -12,7 +12,10 @@ export function buildAgentFeatureSkillInstallCommand(skillNames: readonly string
   if (skillNames.length === 0) {
     throw new Error('At least one skill name is required.')
   }
-  return `npx skills add ${ORCA_SKILLS_REPOSITORY_URL} --skill ${skillNames.join(' ')} --global`
+  // Why: Orca spawns this in a non-driven PTY (ephemeral setup terminal). Without -y the
+  // skills CLI's interactive "Which agents?" prompt blocks until Orca kills it (~50s, exit 1),
+  // so the install silently fails (#9567). -y installs to all detected agents non-interactively.
+  return `npx skills add ${ORCA_SKILLS_REPOSITORY_URL} --skill ${skillNames.join(' ')} --global -y`
 }
 
 export function buildAgentFeatureSkillUpdateCommand(skillName: string): string {
