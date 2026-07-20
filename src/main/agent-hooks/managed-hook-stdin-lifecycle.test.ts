@@ -2,11 +2,50 @@
 // matrix catches an unread early exit without duplicating template assertions.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SFTPWrapper } from 'ssh2'
 import type * as osModule from 'node:os'
+
+let isolatedUserDataDir = ''
+let previousUserDataPath: string | undefined
+
+beforeEach(() => {
+  previousUserDataPath = process.env.ORCA_USER_DATA_PATH
+  isolatedUserDataDir = mkdtempSync(join(tmpdir(), 'orca-hook-stdin-user-data-'))
+  // Why: Orca-managed Codex hooks resolve through ORCA_USER_DATA_PATH before
+  // the mocked home; an inherited live path would let this test rewrite them.
+  process.env.ORCA_USER_DATA_PATH = isolatedUserDataDir
+})
+
+afterEach(() => {
+  if (previousUserDataPath === undefined) {
+    delete process.env.ORCA_USER_DATA_PATH
+  } else {
+    process.env.ORCA_USER_DATA_PATH = previousUserDataPath
+  }
+  rmSync(isolatedUserDataDir, { recursive: true, force: true })
+})
+
+function findGitBash(): string {
+  if (process.env.KIMI_SHELL_PATH) {
+    return process.env.KIMI_SHELL_PATH
+  }
+  const candidates = [
+    process.env.ProgramFiles && join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe'),
+    process.env['ProgramFiles(x86)'] &&
+      join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe'),
+    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
+  ]
+  const bash = candidates.find((candidate): candidate is string =>
+    Boolean(candidate && existsSync(candidate))
+  )
+  if (!bash) {
+    throw new Error('Git Bash is required for the Windows Kimi hook lifecycle test')
+  }
+  return bash
+}
 
 const { homedirMock } = vi.hoisted(() => ({
   homedirMock: vi.fn<() => string>()
@@ -47,25 +86,6 @@ import { createAgentHookMemorySftp } from './agent-hook-memory-sftp.test-fixture
 
 const REMOTE_HOME = '/home/dev'
 const LARGE_PAYLOAD = Buffer.alloc(1_000_000, 'x')
-let isolatedUserDataDir = ''
-let previousUserDataPath: string | undefined
-
-beforeEach(() => {
-  previousUserDataPath = process.env.ORCA_USER_DATA_PATH
-  isolatedUserDataDir = mkdtempSync(join(tmpdir(), 'orca-hook-stdin-user-data-'))
-  // Why: Orca-managed Codex hooks resolve through ORCA_USER_DATA_PATH before
-  // the mocked home; an inherited live path would let this test rewrite them.
-  process.env.ORCA_USER_DATA_PATH = isolatedUserDataDir
-})
-
-afterEach(() => {
-  if (previousUserDataPath === undefined) {
-    delete process.env.ORCA_USER_DATA_PATH
-  } else {
-    process.env.ORCA_USER_DATA_PATH = previousUserDataPath
-  }
-  rmSync(isolatedUserDataDir, { recursive: true, force: true })
-})
 const REMOTE_INSTALLERS = [
   {
     agent: 'antigravity',
@@ -274,23 +294,19 @@ describe('Windows managed hook stdin structure', () => {
       const home = mkdtempSync(join(tmpdir(), 'orca-hook-stdin-windows-live-'))
       homedirMock.mockReturnValue(home)
       try {
+        const gitBash = findGitBash()
         for (const entry of LOCAL_INSTALLERS) {
           expect(entry.install().state, `${entry.agent} install status`).toBe('installed')
         }
         const hooksDir = join(home, '.orca', 'agent-hooks')
-        const mainScripts = readdirSync(hooksDir).filter((name) => {
-          if (name.endsWith('-hook.sh')) {
-            // Why: Windows' ambient bash.exe may be the WSL launcher, which
-            // cannot execute a Windows script path and can block indefinitely.
-            return Boolean(process.env.KIMI_SHELL_PATH)
-          }
-          return (
+        const mainScripts = readdirSync(hooksDir).filter(
+          (name) =>
             name === 'antigravity-hook.cmd' ||
             name.endsWith('-hook.ps1') ||
+            name.endsWith('-hook.sh') ||
             (name.endsWith('-hook.cmd') && !name.startsWith('antigravity-'))
-          )
-        })
-        expect(mainScripts).toHaveLength(process.env.KIMI_SHELL_PATH ? 12 : 11)
+        )
+        expect(mainScripts).toHaveLength(12)
         for (const fileName of mainScripts) {
           const scriptPath = join(hooksDir, fileName)
           const executable = fileName.endsWith('.cmd')
@@ -303,7 +319,7 @@ describe('Windows managed hook stdin structure', () => {
                   'v1.0',
                   'powershell.exe'
                 )
-              : process.env.KIMI_SHELL_PATH || 'bash.exe'
+              : gitBash
           const args = fileName.endsWith('.cmd')
             ? ['/d', '/c', scriptPath]
             : fileName.endsWith('.ps1')
@@ -327,15 +343,13 @@ describe('Windows managed hook stdin structure', () => {
             name: 'encoded PowerShell',
             executable: 'cmd.exe',
             args: ['/d', '/c', wrapWindowsHookCommand(missingScript)]
+          },
+          {
+            name: 'Git Bash fast path',
+            executable: gitBash,
+            args: ['-lc', wrapWindowsGitBashHookCommand(missingScript)]
           }
         ]
-        if (process.env.KIMI_SHELL_PATH) {
-          launcherCases.push({
-            name: 'Git Bash fast path',
-            executable: process.env.KIMI_SHELL_PATH,
-            args: ['-lc', wrapWindowsGitBashHookCommand(missingScript)]
-          })
-        }
         for (const launcher of launcherCases) {
           const result = await runHookProcess(launcher.executable, launcher.args, hookEnvironment())
           expect(result.exitCode, `${launcher.name} exit code`).toBe(0)
