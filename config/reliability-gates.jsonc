@@ -712,7 +712,7 @@
         "ssh",
         "runtime"
       ],
-      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. A Windows 2022 Actions red/green run proves production store.removeWorktree(id, true) retires an agent PTY and its reparented native lock-holder before deleting the worktree, while a separate live test proves plain terminal close preserves an intentionally detached child. Deterministic tests cover native Windows agent-only Job selection, fail-closed Job teardown and bridge errors, safe failure when Job ownership is unavailable, adopted-v24 destructive-shutdown refusal, daemon WSL exclusion, daemon-wide shutdown, daemon and SSH routing, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, WSL, SSH, and remote-runtime process evidence remains pending.",
+      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Windows 2022 Actions red/green runs prove production store.removeWorktree(id, true) retires an agent PTY and its reparented native lock-holder before deleting the worktree, plain terminal close preserves an intentionally detached child, and natural agent-root exit publishes PTY exit only after its detached Job child is absent. Deterministic tests cover native Windows agent-only Job selection, fail-closed Job teardown and bridge errors, safe failure when Job ownership is unavailable, adopted-v24 destructive-shutdown refusal, daemon WSL exclusion, daemon-wide shutdown, daemon and SSH routing, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, WSL, SSH, and remote-runtime process evidence remains pending.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/8628",
         "https://github.com/stablyai/orca/pull/8706",
@@ -722,7 +722,7 @@
       "oracle": "Capture the exact PTY before parking, prove it remains listed while the view is absent, close through the product state boundary, and poll the provider inventory until that exact ID disappears; an agent-marked PTY's detached-pgid child is alive before close and absent afterward. On Windows, prove the fixture is Git-registered, launch PowerShell shell -> agent Node process -> exited launcher -> reparented native lock-holder, invoke production store.removeWorktree(id, true), and prove the exact PTY, root, agent, lock-holder, worktree directory, Git registration, and worktree list entry are absent; separately prove a plain terminal's intentionally detached child survives close. A natural-root-exit journey records the public PTY exit callback and requires the detached Job child to be absent at that exact callback. Unit tests require agent-only spawn-time Job selection, Job termination success before root close, fail-closed timeout/rejection/synchronous-throw behavior, adopted-v24 destructive-shutdown refusal, daemon WSL exclusion, safe failure without PID-only fallback when Job ownership is unavailable, daemon-wide routing through the same teardown, naturally exited id reservation, bounded locale-stable process-table reads, duplicate completion sharing, canonical owner dedupe, exact pane tombstones, chained detach transfer, and restart alias restoration.",
       "commands": [
         "pnpm dlx node@24 ./node_modules/vitest/vitest.mjs run --config config/vitest.config.ts src/main/agent-hooks/server-pane-authority.test.ts src/main/ipc/agent-hooks.test.ts src/main/ipc/agent-pane-authority-ownership.test.ts src/main/ipc/pty-management.test.ts src/main/persistence.test.ts src/renderer/src/store/slices/agent-pane-authority.test.ts src/renderer/src/store/slices/terminal-pane-detach-agent-identity.test.ts src/renderer/src/store/slices/terminal-tab-retirement.test.ts src/renderer/src/store/slices/terminal-tab-retirement-store.test.ts src/renderer/src/components/shared/kill-all-terminal-surfaces.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/pty-descendant-termination.test.ts src/main/daemon/session.test.ts src/main/daemon/terminal-host.test.ts src/main/daemon/terminal-session-teardown.test.ts src/main/daemon/pty-subprocess.test.ts src/main/providers/local-pty-provider.test.ts src/main/runtime/worktree-teardown.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/pty-descendant-termination.test.ts src/main/daemon/daemon-pty-adapter.test.ts src/main/daemon/session.test.ts src/main/daemon/terminal-host.test.ts src/main/daemon/terminal-session-teardown.test.ts src/main/daemon/pty-subprocess.test.ts src/main/providers/local-pty-provider.test.ts src/main/runtime/worktree-teardown.test.ts",
         "pnpm run test:e2e -- tests/e2e/terminal-parked-close-retirement.spec.ts --workers=1",
         "pnpm run test:e2e -- tests/e2e/agent-descendant-process-kill.spec.ts --workers=1",
         "pnpm run test:e2e -- tests/e2e/windows-agent-job-natural-exit.spec.ts --workers=1",
@@ -735,6 +735,7 @@
         "src/main/ipc/pty-management.test.ts",
         "src/main/persistence.test.ts",
         "src/main/pty-descendant-termination.test.ts",
+        "src/main/daemon/daemon-pty-adapter.test.ts",
         "src/main/daemon/session.test.ts",
         "src/main/daemon/terminal-host.test.ts",
         "src/main/daemon/terminal-session-teardown.test.ts",
@@ -799,9 +800,15 @@
           ]
         },
         {
+          "file": "src/main/daemon/daemon-pty-adapter.test.ts",
+          "assertions": [
+            "an adopted Windows v24 daemon rejects destructive shutdown before connecting or sending kill while ordinary close remains compatible"
+          ]
+        },
+        {
           "file": "src/main/daemon/pty-subprocess.test.ts",
           "assertions": [
-            "trusted native Windows agent ConPTY spawn requests and exposes Job teardown while a plain ConPTY does neither"
+            "trusted native Windows agent ConPTY spawn requests and exposes Job teardown while plain and daemon WSL agent ConPTYs do neither"
           ]
         },
         {
@@ -869,19 +876,28 @@
           "result": "passed",
           "durationSeconds": 444,
           "summary": "Workflow run https://github.com/stablyai/orca/actions/runs/29733816749 checked out ecb8652d6, rebuilt patched node-pty with upstream Spectre mitigation preserved, built Electron, and ran the three registered specs with the workflow's five-test grep under SKIP_BUILD=1. All five Windows E2Es passed; the strengthened issue #9045 test completed in 25.1 seconds, proved its worktree was Git-registered before deletion, then proved its PTY, root, agent, reparented native lock-holder, directory, Git registration, and worktree list entry were absent. The plain-terminal regression test proved its detached child survived close."
+        },
+        {
+          "date": "2026-07-20",
+          "runner": "ci",
+          "platform": "windows",
+          "command": "gh workflow run windows-terminal-restart-e2e.yml --ref OrcaWin/issue-9045-worktree-deletion-fails",
+          "result": "passed",
+          "durationSeconds": 518,
+          "summary": "Workflow run https://github.com/stablyai/orca/actions/runs/29736500566 checked out final implementation 288116dfd, rebuilt patched node-pty from source with all three upstream Spectre mitigations preserved, built Electron, and passed all six selected E2Es in 2.6 minutes. Production issue #9045 deletion passed in 27.1 seconds, plain terminal detached-child preservation passed in 21.4 seconds, and natural agent-root exit passed in 20.7 seconds while proving the public PTY exit callback observed its detached Job child already absent."
         }
       ],
       "runtimeBudget": {
         "p95Seconds": 600,
-        "scope": "local fresh-build Electron proofs plus the Windows CI job from checkout and native dependency build through five selected Electron E2Es"
+        "scope": "local fresh-build Electron proofs plus the Windows CI job from checkout and native dependency build through six selected Electron E2Es"
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "The macOS Electron gate passed three times locally, and two Windows implementation heads passed all five selected Electron E2Es on GitHub Actions, including the strengthened final oracle at ecb8652d6; required-platform soak history is not yet available."
+        "evidence": "The macOS Electron gate passed three times locally. Three Windows implementation heads passed the selected Electron gate on GitHub Actions; final 288116dfd passed all six tests, including the strengthened deletion and natural-exit oracles. Required-platform soak history is not yet available."
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The Windows issue #9045 test failed at test-only e5a67d121 in Actions run https://github.com/stablyai/orca/actions/runs/29731005277: production worktree removal returned 'Failed to physically stop every PTY', while the root, agent, and reparented lock-holder remained alive. The strengthened test passed at implementation ecb8652d6 in run https://github.com/stablyai/orca/actions/runs/29733816749, proving registration before removal, removal ok, and all recorded processes, the worktree directory, Git registration, and list entry absent."
+        "evidence": "The Windows issue #9045 test failed at test-only e5a67d121 in Actions run https://github.com/stablyai/orca/actions/runs/29731005277: production worktree removal returned 'Failed to physically stop every PTY', while the root, agent, and reparented lock-holder remained alive. The strengthened test passed at implementation ecb8652d6 in run https://github.com/stablyai/orca/actions/runs/29733816749, proving registration before removal, removal ok, and all recorded processes, the worktree directory, Git registration, and list entry absent. Final 288116dfd repeated that production proof in https://github.com/stablyai/orca/actions/runs/29736500566 and also proved natural public exit waits for detached Job-child absence."
       },
       "performanceBudget": {
         "required": true,
