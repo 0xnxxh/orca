@@ -21,6 +21,7 @@ export function createAgentScratchWorktreePathMatcher(
           continue
         }
         const checkoutPath = segments.slice(0, index).join('/')
+        // Why: splitting strips the separator from filesystem roots, but normalized checkout keys retain it.
         const checkoutPathKey = /^[a-z]:$/i.test(checkoutPath)
           ? `${checkoutPath}/`
           : checkoutPath || '/'
