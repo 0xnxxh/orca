@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, type ExecFileException } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { userInfo } from 'node:os'
 
@@ -16,15 +16,44 @@ const LOGIN_PREFLIGHT_MAX_BUFFER_BYTES = 1024
  */
 const DISABLE_ENV_VAR = 'ORCA_DISABLE_MACOS_LOGIN_SHELL'
 
+/**
+ * Result of one PAM probe. `conclusive` marks a real PAM verdict (accept or
+ * reject) that may be cached; an inconclusive probe (our own timeout/SIGKILL,
+ * maxBuffer, or spawn error) proves nothing about PAM and must not stick.
+ */
+export type LoginPreflightOutcome = {
+  ok: boolean
+  conclusive: boolean
+  reason: 'accepted' | 'rejected' | 'timeout' | 'error'
+}
+
 let cachedLoginPreflightResult: boolean | null = null
-let loginPreflightInFlight: Promise<boolean> | null = null
+let loginPreflightInFlight: Promise<LoginPreflightOutcome> | null = null
 
 function isDisabledByEnv(): boolean {
   const value = process.env[DISABLE_ENV_VAR]
   return value === '1' || value === 'true'
 }
 
-function runLoginPreflight(username: string, accountHome: string): Promise<boolean> {
+function classifyPreflightError(error: ExecFileException): LoginPreflightOutcome {
+  // Why: our SIGKILL timeout cap (and maxBuffer, which also kills) is an
+  // environmental slow-path, not a PAM verdict — retry, don't cache (F1).
+  if (error.killed || error.code === 'ETIMEDOUT') {
+    return { ok: false, conclusive: false, reason: 'timeout' }
+  }
+  // A numeric exit code means login(1) ran to completion and rejected the user
+  // (it exits immediately on EOF-driven rejection); that verdict is cacheable.
+  if (typeof error.code === 'number') {
+    return { ok: false, conclusive: true, reason: 'rejected' }
+  }
+  // Spawn/EOF/other failure: inconclusive, fail open for this spawn but retry.
+  return { ok: false, conclusive: false, reason: 'error' }
+}
+
+// Fidelity limit: the probe runs over pipes while production shells run under a
+// real PTY, so a tty-sensitive PAM stack could diverge. It fails safe — a probe
+// pass with a prod failure only degrades to today's direct spawn (no wrapper).
+function runLoginPreflight(username: string, accountHome: string): Promise<LoginPreflightOutcome> {
   return new Promise((resolve) => {
     try {
       const child = execFile(
@@ -42,33 +71,61 @@ function runLoginPreflight(username: string, accountHome: string): Promise<boole
           timeout: LOGIN_PREFLIGHT_TIMEOUT_MS
         },
         (error, stdout) => {
-          // login(1) can return zero after an EOF-driven failed prompt, so only the
-          // requested child program's output plus a clean exit proves PAM accepted it.
-          resolve(error === null && stdout === LOGIN_PREFLIGHT_MARKER)
+          if (error === null) {
+            // login(1) can return zero after an EOF-driven failed prompt, so only the
+            // requested child program's output plus a clean exit proves PAM accepted it.
+            resolve(
+              stdout === LOGIN_PREFLIGHT_MARKER
+                ? { ok: true, conclusive: true, reason: 'accepted' }
+                : { ok: false, conclusive: true, reason: 'rejected' }
+            )
+            return
+          }
+          resolve(classifyPreflightError(error))
         }
       )
       // Why: login(1) must see immediate EOF, not an interactive pipe, so a PAM
       // rejection exits instead of waiting at `login:` until the timeout.
       child.stdin?.end()
     } catch {
-      resolve(false)
+      resolve({ ok: false, conclusive: false, reason: 'error' })
     }
   })
 }
 
-function loginPreflightSucceeds(username: string, accountHome: string): Promise<boolean> {
-  if (cachedLoginPreflightResult !== null) {
-    return Promise.resolve(cachedLoginPreflightResult)
+function cachedOutcome(): LoginPreflightOutcome | null {
+  if (cachedLoginPreflightResult === null) {
+    return null
+  }
+  return cachedLoginPreflightResult
+    ? { ok: true, conclusive: true, reason: 'accepted' }
+    : { ok: false, conclusive: true, reason: 'rejected' }
+}
+
+function loginPreflightSucceeds(
+  username: string,
+  accountHome: string
+): Promise<LoginPreflightOutcome> {
+  const cached = cachedOutcome()
+  if (cached) {
+    return Promise.resolve(cached)
   }
   if (!loginPreflightInFlight) {
     // Why: simultaneous pane restores share one PAM child instead of multiplying
     // subprocesses at exactly the point terminal startup is already busiest.
-    loginPreflightInFlight = runLoginPreflight(username, accountHome).then((result) => {
-      cachedLoginPreflightResult = result
-      if (!result) {
+    loginPreflightInFlight = runLoginPreflight(username, accountHome).then((outcome) => {
+      // Why: cache only a conclusive PAM verdict; a killed/timed-out probe is
+      // environmental and must be retried next spawn, not stuck forever (F1).
+      if (outcome.conclusive) {
+        cachedLoginPreflightResult = outcome.ok
+      }
+      if (!outcome.ok) {
         console.warn('[pty] macOS login(1) preflight failed; spawning shells directly')
       }
-      return result
+      // Why: release the in-flight slot so an inconclusive probe can re-run on the
+      // next spawn instead of pinning every terminal to the degraded outcome.
+      loginPreflightInFlight = null
+      return outcome
     })
   }
   return loginPreflightInFlight
@@ -78,16 +135,21 @@ function loginPreflightSucceeds(username: string, accountHome: string): Promise<
  * Resolves the one-time PAM capability check before a fresh PTY is spawned.
  * Callers await this at their async request boundary so existing terminals and
  * the Electron main thread remain responsive while login(1) runs.
+ *
+ * Returns the probe outcome when a probe actually ran this call, or `null` when
+ * short-circuited (non-macOS, disabled, already cached, no login binary). The
+ * daemon uses the return to emit a structured degrade record, since detached
+ * daemons destroy stderr and never surface the console.warn above (F2).
  */
-export async function prepareMacosTccLoginShell(): Promise<void> {
+export async function prepareMacosTccLoginShell(): Promise<LoginPreflightOutcome | null> {
   if (process.platform !== 'darwin' || isDisabledByEnv()) {
-    return
+    return null
   }
   if (cachedLoginPreflightResult !== null) {
-    return
+    return null
   }
   if (!existsSync(MACOS_LOGIN_PATH)) {
-    return
+    return null
   }
 
   let username: string
@@ -97,12 +159,12 @@ export async function prepareMacosTccLoginShell(): Promise<void> {
     username = account.username
     accountHome = account.homedir
   } catch {
-    return
+    return null
   }
   if (!username || !accountHome) {
-    return
+    return null
   }
-  await loginPreflightSucceeds(username, accountHome)
+  return loginPreflightSucceeds(username, accountHome)
 }
 
 export function resetMacosLoginShellPreflightForTests(): void {

@@ -75,6 +75,9 @@ type ConnectedClient = {
 
 type PendingPtySpawnPreparation = {
   canceled: boolean
+  // Why: preparations are keyed by sessionId, but a control-socket close must
+  // cancel only the disconnecting client's preps, not another client's (F4).
+  clientId: string
 }
 
 type PendingShutdownReply = {
@@ -497,6 +500,9 @@ export class DaemonServer {
       if (client?.controlSocket !== socket) {
         return
       }
+      // Why: a client that disconnects mid-preflight would otherwise still create
+      // its daemon PTY, orphaning a durable, unattached session — cancel its preps (F4).
+      this.cancelPendingPtySpawnPreparationsForClient(clientId)
       const wasFullyAuthenticated = client.authenticatedPairEstablished
       this.streamDataBatcher.clear(clientId)
       client.streamSocket?.destroy()
@@ -610,8 +616,8 @@ export class DaemonServer {
     this.pendingShutdownReplies.set(key, { start })
   }
 
-  private async preparePtySpawnUnlessCanceled(sessionId: string): Promise<void> {
-    const preparation: PendingPtySpawnPreparation = { canceled: false }
+  private async preparePtySpawnUnlessCanceled(sessionId: string, clientId: string): Promise<void> {
+    const preparation: PendingPtySpawnPreparation = { canceled: false, clientId }
     const pending = this.pendingPtySpawnPreparations.get(sessionId) ?? new Set()
     pending.add(preparation)
     this.pendingPtySpawnPreparations.set(sessionId, pending)
@@ -646,6 +652,16 @@ export class DaemonServer {
     }
   }
 
+  private cancelPendingPtySpawnPreparationsForClient(clientId: string): void {
+    for (const pending of this.pendingPtySpawnPreparations.values()) {
+      for (const preparation of pending) {
+        if (preparation.clientId === clientId) {
+          preparation.canceled = true
+        }
+      }
+    }
+  }
+
   private async routeRequest(clientId: string, request: DaemonRequest): Promise<unknown> {
     const client = this.clients.get(clientId)
 
@@ -662,7 +678,7 @@ export class DaemonServer {
         const p = request.payload
         let result: Awaited<ReturnType<TerminalHost['createOrAttach']>>
         try {
-          await this.preparePtySpawnUnlessCanceled(p.sessionId)
+          await this.preparePtySpawnUnlessCanceled(p.sessionId, clientId)
           result = await this.host.createOrAttach({
             sessionId: p.sessionId,
             cols: p.cols,

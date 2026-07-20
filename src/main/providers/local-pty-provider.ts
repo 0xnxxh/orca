@@ -820,6 +820,25 @@ export class LocalPtyProvider implements IPtyProvider {
     const spawnedShellIsWsl =
       process.platform === 'win32' && pathWin32.basename(shellPath).toLowerCase() === 'wsl.exe'
     const spawnedWslDistro = spawnedShellIsWsl ? (launchWslDistro ?? undefined) : null
+    // Why: a concurrent spawn for the same stable session id can register while we
+    // await the preflight; the tracking write below is synchronous from that await,
+    // so a live id here means we lost the race. Tear down this redundant shell and
+    // attach to the winner instead of orphaning an untracked, unkillable PTY (F3).
+    if (reattachId && ptyProcesses.has(id)) {
+      const winner = ptyProcesses.get(id)
+      try {
+        proc.kill()
+      } catch {
+        /* the redundant shell may already be gone */
+      }
+      destroyPtyProcess(proc, { alreadyKilled: true })
+      return {
+        id,
+        pid: winner?.pid ?? proc.pid,
+        ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {}),
+        isReattach: true
+      }
+    }
     createPtyPhysicalExit(id)
     ptyProcesses.set(id, proc)
     ptyInitialCwd.set(id, cwd)
