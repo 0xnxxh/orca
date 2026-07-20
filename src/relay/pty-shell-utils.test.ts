@@ -269,6 +269,51 @@ describe('getForegroundProcessName', () => {
     })
   })
 
+  // #6364 / STA-944: OMP runs as shell→omp→pi. The relay scan must report the
+  // outer `omp` wrapper the user launched, not the deeper wrapped `pi` engine.
+  it('reports the outer omp wrapper over the wrapped pi child from a shell fallback', async () => {
+    await withProcessPlatform('linux', async () => {
+      mockExecFile((_command, args) => {
+        if (args[0] === '-axo') {
+          return {
+            stdout: ['100 99 Ss   bash -l', '101 100 S+   omp', '102 101 S+   pi'].join('\n')
+          }
+        }
+        return new Error('unexpected command')
+      })
+
+      await expect(getForegroundProcessName(100, 'bash')).resolves.toBe('omp')
+    })
+  })
+
+  it('rescans for the omp wrapper when node-pty reports the wrapped pi as foreground', async () => {
+    await withProcessPlatform('linux', async () => {
+      mockExecFile((_command, args) => {
+        if (args[0] === '-axo') {
+          return {
+            stdout: ['100 99 Ss   bash -l', '101 100 S+   omp', '102 101 S+   pi'].join('\n')
+          }
+        }
+        return new Error('unexpected command')
+      })
+
+      await expect(getForegroundProcessName(100, 'pi')).resolves.toBe('omp')
+    })
+  })
+
+  it('keeps a pi fallback as pi when no omp wrapper is in the tree', async () => {
+    await withProcessPlatform('linux', async () => {
+      mockExecFile((_command, args) => {
+        if (args[0] === '-axo') {
+          return { stdout: ['100 99 Ss   bash -l', '101 100 S+   pi'].join('\n') }
+        }
+        return new Error('unexpected command')
+      })
+
+      await expect(getForegroundProcessName(100, 'pi')).resolves.toBe('pi')
+    })
+  })
+
   it('falls back to the root process command when descendant inspection fails', async () => {
     mockExecFile((_command, args) => {
       if (args[0] === '-axo') {

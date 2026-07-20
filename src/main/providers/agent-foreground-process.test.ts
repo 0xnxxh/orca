@@ -109,6 +109,29 @@ describe('resolveAgentForegroundProcess', () => {
     await expect(resolveAgentForegroundProcess(100, 'node')).resolves.toBe('codex')
   })
 
+  // #6364 / STA-944: OMP runs as shell→omp→pi and both are recognized agents.
+  // The deepest-foreground scan must not surface the wrapped `pi` engine — the
+  // user launched `omp`, so the outer wrapper is the identity.
+  it('reports the outer omp wrapper, not the wrapped pi child', async () => {
+    mockPs(['101 100 S+   omp', '102 101 S+   pi'].join('\n'))
+
+    await expect(resolveAgentForegroundProcess(100, 'omp')).resolves.toBe('omp')
+  })
+
+  it('reports omp even when the wrapped pi child holds the foreground alone', async () => {
+    // Why: across command boundaries only the deeper `pi` carries `+`; the
+    // wrapper identity must stay omp regardless of which frame we sampled.
+    mockPs(['101 100 S    omp', '102 101 S+   pi'].join('\n'))
+
+    await expect(resolveAgentForegroundProcess(100, 'omp')).resolves.toBe('omp')
+  })
+
+  it('reports bare pi when no omp wrapper is present', async () => {
+    mockPs(['101 100 S+   pi'].join('\n'))
+
+    await expect(resolveAgentForegroundProcess(100, 'pi')).resolves.toBe('pi')
+  })
+
   it('treats a fresh POSIX snapshot missing the PTY root as unavailable', async () => {
     mockPs('101 999 S+ node /Users/dev/.nvm/versions/node/bin/codex')
 

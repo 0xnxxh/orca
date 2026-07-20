@@ -11,6 +11,8 @@ import {
 } from '../shared/agent-process-recognition'
 import { getFirstCommandToken } from '../shared/command-token-scanner'
 import { getProcessTableSnapshot, type ProcessTableRow } from '../shared/process-table-snapshot'
+import { resolveOuterWrapperForegroundProcess } from '../shared/foreground-wrapper-agent'
+import { getSyntheticAgentTitleProfile } from '../shared/synthetic-agent-title'
 import { isShellProcess } from '../shared/shell-process-detection'
 import {
   resolveWindowsAgentForegroundProcess,
@@ -232,7 +234,9 @@ async function getRecognizedForegroundDescendant(
     for (const candidate of inspectionCandidates) {
       const recognized = recognizeAgentProcessFromCommandLine(candidate.command)
       if (recognized) {
-        return recognized.processName
+        // Why: return the outer wrapper (omp) rather than the deeper wrapped child
+        // (pi) of a shell→omp→pi tree — see resolveOuterWrapperForegroundProcess.
+        return resolveOuterWrapperForegroundProcess(recognized, candidate.depth, candidates)
       }
     }
   } catch {
@@ -251,6 +255,15 @@ export async function getForegroundProcessName(
   if (fallbackProcess) {
     const fallbackRecognition = recognizeAgentProcess(fallbackProcess)
     if (fallbackRecognition) {
+      // Why: node-pty may report the wrapped `pi` of a shell→omp→pi tree as the
+      // foreground. A pi-compatible fallback still needs the descendant scan to
+      // surface the outer `omp` wrapper; never downgrade below the fallback.
+      if (getSyntheticAgentTitleProfile(fallbackRecognition.agent)?.titleIdentityGroup) {
+        return (
+          (await getRecognizedForegroundDescendant(pid, fallbackProcess)) ??
+          fallbackRecognition.processName
+        )
+      }
       return fallbackRecognition.processName
     }
     if (process.platform === 'win32') {

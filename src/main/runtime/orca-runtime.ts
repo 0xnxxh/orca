@@ -39,6 +39,7 @@ import {
   normalizeCompatibleAgentStatusEntryForOwner,
   normalizeCompatibleAgentTitleForOwner
 } from '../../shared/agent-title-owner'
+import { resolvePaneAgentOwner } from '../../shared/pane-agent-owner'
 import {
   createAgentStatusOscProcessor,
   type ProcessedAgentStatusChunk
@@ -22424,7 +22425,16 @@ export class OrcaRuntimeService {
           )
         : null
       const launchAgent = tab.launchAgent ?? liveLeafPty?.launchAgent ?? pty?.launchAgent ?? null
-      const ownerAgent = launchAgent ?? liveLeafPty?.foregroundAgent ?? pty?.foregroundAgent ?? null
+      // Why: rank the pane's own hook identity above foregroundAgent. OMP's hook
+      // posts /hook/omp (runtime exec detection) so it durably carries `omp`, while
+      // foregroundAgent reads the deeper wrapped `pi` of a shell→omp→pi tree and
+      // oscillates — normalizing the hook onto it flipped OMP tabs to Pi once
+      // launchAgent was dropped (restored/mirrored pane). Unify on the shared owner.
+      const ownerAgent =
+        resolvePaneAgentOwner({ launchAgent, hookAgent: tab.agentStatus?.agentType ?? null }) ??
+        liveLeafPty?.foregroundAgent ??
+        pty?.foregroundAgent ??
+        null
       const title = normalizeCompatibleAgentTitleForOwner(
         leafTitle ?? ptyTitle ?? syncedTab?.title ?? tab.title,
         ownerAgent
@@ -22566,7 +22576,16 @@ export class OrcaRuntimeService {
         return {}
       }
     }
-    const ownerAgent = tab.launchAgent ?? pty?.launchAgent ?? pty?.foregroundAgent ?? null
+    // Why: the retained hook identity outranks foregroundAgent — OMP's hook posts
+    // /hook/omp so it durably carries `omp`, while foregroundAgent reads the wrapped
+    // `pi` of a shell→omp→pi tree and oscillates. See buildMobileSessionSnapshot.
+    const ownerAgent =
+      resolvePaneAgentOwner({
+        launchAgent: tab.launchAgent ?? pty?.launchAgent ?? null,
+        hookAgent: retained?.payload.agentType ?? null
+      }) ??
+      pty?.foregroundAgent ??
+      null
     const terminalTitle = normalizeCompatibleAgentTitleForOwner(
       (pty ? getLatestPtyTitle(pty) : null) ?? tab.title,
       ownerAgent
