@@ -3154,6 +3154,8 @@ export function useIpcEvents(): void {
         typeof data.connectionId === 'string'
           ? transientClearWatermarkByConnectionId.get(data.connectionId)
           : undefined
+      // Why: delayed snapshots and queued relay events must not resurrect a
+      // status cleared by a newer disconnect from the same connection.
       if (transientClearWatermark !== undefined && data.receivedAt <= transientClearWatermark) {
         return 'dropped'
       }
