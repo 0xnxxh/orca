@@ -258,6 +258,7 @@ import type {
   FolderWorkspacePathStatusRequest
 } from '../../shared/folder-workspace-path-status'
 import {
+  applyMetadataFallbackVisibility,
   buildKnownOrcaWorkspaceLayouts,
   isLegacyRepoForExternalWorktreeVisibility,
   toDetectedWorktree
@@ -15247,11 +15248,7 @@ export class OrcaRuntimeService {
       if (scan.ok) {
         return detectedWorktree
       }
-      return {
-        ...detectedWorktree,
-        visible: true,
-        ownership: detectedWorktree.ownership === 'orca-managed' ? 'orca-managed' : 'unknown-legacy'
-      } satisfies DetectedWorktree
+      return applyMetadataFallbackVisibility(detectedWorktree)
     })
     return {
       repoId: repo.id,

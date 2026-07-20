@@ -40,7 +40,12 @@ export function getHiddenExternalWorktrees(
   }
   return detected.worktrees.filter(
     (worktree) =>
-      !worktree.visible && !worktree.selectedCheckout && worktree.ownership !== 'orca-managed'
+      !worktree.visible &&
+      !worktree.selectedCheckout &&
+      worktree.ownership !== 'orca-managed' &&
+      // Why: agent scratch is never importable, so it must not feed the
+      // discovery card or the new-worktrees inbox.
+      worktree.ownership !== 'agent-scratch'
   )
 }
 

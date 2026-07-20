@@ -33,6 +33,7 @@ import type {
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
 import { getRepoExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import {
+  applyMetadataFallbackVisibility,
   buildKnownOrcaWorkspaceLayouts,
   isLegacyRepoForExternalWorktreeVisibility,
   toDetectedWorktree
@@ -979,11 +980,7 @@ function buildDisconnectedDetectedWorktrees(
       knownOrcaLayouts: [],
       isLegacyRepoForVisibility: true
     })
-    return {
-      ...detected,
-      visible: true,
-      ownership: detected.ownership === 'orca-managed' ? 'orca-managed' : 'unknown-legacy'
-    }
+    return applyMetadataFallbackVisibility(detected)
   })
 }
 

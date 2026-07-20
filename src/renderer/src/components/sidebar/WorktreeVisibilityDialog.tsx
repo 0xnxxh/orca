@@ -32,14 +32,21 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     ? effectiveExternalWorktreeVisibility(repo, isLegacyRepoForExternalWorktreeVisibility(repo)) ===
       'show'
     : false
+  // Why: agent scratch is never shown or importable, so it must not inflate
+  // either count in this dialog.
   const hiddenCount =
     detected?.authoritative === true
-      ? detected.worktrees.filter((worktree) => !worktree.visible).length
+      ? detected.worktrees.filter(
+          (worktree) => !worktree.visible && worktree.ownership !== 'agent-scratch'
+        ).length
       : 0
   const otherCount =
     detected?.authoritative === true
       ? detected.worktrees.filter(
-          (worktree) => !worktree.selectedCheckout && worktree.ownership !== 'orca-managed'
+          (worktree) =>
+            !worktree.selectedCheckout &&
+            worktree.ownership !== 'orca-managed' &&
+            worktree.ownership !== 'agent-scratch'
         ).length
       : 0
   const hiddenWorktreeLabel = `${hiddenCount} ${hiddenCount === 1 ? 'worktree' : 'worktrees'}`

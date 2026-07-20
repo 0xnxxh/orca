@@ -7,6 +7,7 @@ import {
   resolveRuntimePath
 } from './cross-platform-path'
 import { parseWslUncPath } from './wsl-paths'
+import { isAgentScratchWorktreePath } from './agent-scratch-worktrees'
 import { isExplicitlyImportedExternalWorktreePath } from './external-worktree-inbox'
 import type {
   DetectedWorktree,
@@ -159,6 +160,12 @@ export function classifyWorktreeOwnership(args: {
     return 'orca-managed'
   }
 
+  // Why: sub-agent scratch worktrees (e.g. .claude/worktrees) are tool
+  // plumbing, not workspaces; classify before layout heuristics (#9388).
+  if (isAgentScratchWorktreePath(args.worktree.path)) {
+    return 'agent-scratch'
+  }
+
   if (isUnderFlatOrUntrustedOrcaRoot(args.worktree.path, args.knownOrcaLayouts)) {
     return 'unknown-legacy'
   }
@@ -222,10 +229,29 @@ export function shouldShowWorktree(args: {
   ) {
     return true
   }
+  // Why: agent scratch stays hidden even when the repo shows non-Orca
+  // worktrees; only an explicit import or selected checkout reveals it.
+  if (args.ownership === 'agent-scratch') {
+    return false
+  }
   if (args.ownership === 'unknown-legacy' && args.isLegacyRepoForVisibility) {
     return true
   }
   return effectiveExternalWorktreeVisibility(args.repo, args.isLegacyRepoForVisibility) === 'show'
+}
+
+/** Fail-open override for listings built without an authoritative git scan.
+ *  Why: the fallback reveals every known worktree so none get stranded, but
+ *  agent scratch must stay hidden even there (#9388). */
+export function applyMetadataFallbackVisibility(detected: DetectedWorktree): DetectedWorktree {
+  if (detected.ownership === 'agent-scratch') {
+    return { ...detected, visible: false }
+  }
+  return {
+    ...detected,
+    visible: true,
+    ownership: detected.ownership === 'orca-managed' ? 'orca-managed' : 'unknown-legacy'
+  }
 }
 
 export function areRuntimePathsEqual(leftPath: string, rightPath: string): boolean {
