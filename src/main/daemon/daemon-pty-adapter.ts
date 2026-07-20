@@ -588,13 +588,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
   ): Promise<void> {
     if (
       process.platform === 'win32' &&
-      opts.deadlineMs !== undefined &&
-      this.protocolVersion < WINDOWS_AGENT_JOB_PROTOCOL_VERSION
+      this.protocolVersion < WINDOWS_AGENT_JOB_PROTOCOL_VERSION &&
+      !this.wslDistrosBySessionId.has(id)
     ) {
-      // Why: an adopted v24 daemon could not own agent descendants at spawn;
-      // destructive deletion must not mistake its root-only exit for a safe drain.
+      // Why: v24 could miss native agent identity and never Job-owned descendants;
+      // only an attached, known WSL session is safe for ordinary root close.
       throw new DaemonProtocolError(
-        `Windows destructive PTY shutdown requires daemon protocol ${WINDOWS_AGENT_JOB_PROTOCOL_VERSION} or newer`
+        `Windows PTY shutdown requires daemon protocol ${WINDOWS_AGENT_JOB_PROTOCOL_VERSION} or newer; restart Orca before closing adopted terminals`
       )
     }
     // Why: shutdown can be the first lazy-client operation after restart; connect

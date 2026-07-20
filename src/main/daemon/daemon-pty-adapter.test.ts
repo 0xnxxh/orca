@@ -532,18 +532,33 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
   })
 
   describe('shutdown', () => {
-    it('blocks every adopted Windows v24 session kind from deadline teardown but keeps ordinary close', async () => {
+    it('blocks unclassified Windows v24 close while preserving known WSL close', async () => {
       const ensureConnectedSpy = vi
         .spyOn(DaemonClient.prototype, 'ensureConnected')
         .mockResolvedValue()
-      const requestSpy = vi.spyOn(DaemonClient.prototype, 'request').mockResolvedValue(undefined)
+      const ensureConnectedWithinSpy = vi
+        .spyOn(DaemonClient.prototype, 'ensureConnectedWithin')
+        .mockResolvedValue()
+      const requestSpy = vi
+        .spyOn(DaemonClient.prototype, 'request')
+        .mockImplementation(async (method) =>
+          method === 'createOrAttach'
+            ? {
+                isNew: false,
+                pid: 123,
+                shellState: 'unsupported',
+                snapshot: null,
+                wslDistro: 'Ubuntu'
+              }
+            : undefined
+        )
       const platform = Object.getOwnPropertyDescriptor(process, 'platform')
       Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
       const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 24 })
 
       try {
-        // Why: v24 did not record whether a session was agent, plain, or WSL,
-        // so migration safety must reject deadline teardown for all three.
+        // Why: inventory-only sessions lack attached WSL metadata, while v24
+        // could miss native agent identity; unclassified close must fail safe.
         for (const id of ['legacy-agent', 'legacy-plain', 'legacy-wsl']) {
           await expect(
             legacy.shutdown(id, {
@@ -551,15 +566,47 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
               deadlineMs: Date.now() + 5_000
             })
           ).rejects.toThrow('requires daemon protocol 25 or newer')
+          await expect(legacy.shutdown(id, { immediate: true })).rejects.toThrow(
+            'restart Orca before closing adopted terminals'
+          )
+          await expect(legacy.shutdown(id, { immediate: true, keepHistory: true })).rejects.toThrow(
+            'restart Orca before closing adopted terminals'
+          )
         }
         expect(ensureConnectedSpy).not.toHaveBeenCalled()
+        expect(ensureConnectedWithinSpy).not.toHaveBeenCalled()
         expect(requestSpy).not.toHaveBeenCalled()
 
-        await expect(legacy.shutdown('legacy-plain', { immediate: true })).resolves.toBeUndefined()
-        expect(requestSpy).toHaveBeenCalledWith(
+        await legacy.spawn({
+          sessionId: 'known-legacy-wsl',
+          cols: 80,
+          rows: 24,
+          terminalWindowsWslDistro: 'Ubuntu'
+        })
+        await expect(
+          legacy.shutdown('known-legacy-wsl', { immediate: true })
+        ).resolves.toBeUndefined()
+        expect(requestSpy).toHaveBeenLastCalledWith(
           'kill',
-          { sessionId: 'legacy-plain', immediate: true },
+          { sessionId: 'known-legacy-wsl', immediate: true },
           undefined
+        )
+        await legacy.spawn({
+          sessionId: 'known-legacy-wsl-delete',
+          cols: 80,
+          rows: 24,
+          terminalWindowsWslDistro: 'Ubuntu'
+        })
+        await expect(
+          legacy.shutdown('known-legacy-wsl-delete', {
+            immediate: true,
+            deadlineMs: Date.now() + 5_000
+          })
+        ).resolves.toBeUndefined()
+        expect(requestSpy).toHaveBeenLastCalledWith(
+          'kill',
+          { sessionId: 'known-legacy-wsl-delete', immediate: true },
+          expect.any(Number)
         )
       } finally {
         legacy.dispose()
@@ -567,6 +614,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
           Object.defineProperty(process, 'platform', platform)
         }
         requestSpy.mockRestore()
+        ensureConnectedWithinSpy.mockRestore()
         ensureConnectedSpy.mockRestore()
       }
     })
