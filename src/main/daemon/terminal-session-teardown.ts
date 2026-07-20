@@ -145,21 +145,14 @@ export class TerminalSessionTeardown {
   }
 
   private async terminateWindowsTree(session: Session, killRoot: () => void): Promise<void> {
-    let nativeCompletion: Promise<boolean> | undefined
-    try {
-      nativeCompletion = session.terminateJobTree(WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS)
-    } catch (error) {
-      // Why: even a synchronous native bridge failure must not strand the
-      // still-owned ConPTY root while destructive teardown fails closed.
-      killRoot()
-      throw error
-    }
+    // Why: Job termination can synchronously reap the root while node-pty waits
+    // for descendants, so send any numeric root signal before PID reuse is possible.
+    killRoot()
+    const nativeCompletion = session.terminateJobTree(WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS)
     if (!nativeCompletion) {
-      killRoot()
       throw new Error(`Windows PTY Job ownership unavailable for process ${session.pid}`)
     }
 
-    killRoot()
     if (!(await nativeCompletion)) {
       throw new Error(`Windows PTY Job did not drain for process ${session.pid}`)
     }

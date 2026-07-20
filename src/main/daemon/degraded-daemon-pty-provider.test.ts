@@ -273,6 +273,71 @@ describe('DegradedDaemonPtyProvider', () => {
     warn.mockRestore()
   })
 
+  it('discovers an already-live fallback collision before direct shutdown', async () => {
+    const current = createDaemonAdapter('daemon', ['duplicate-session'])
+    const fallback = createProvider('fallback', ['duplicate-session'])
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+    await provider.discoverDaemonSessions()
+
+    await expect(provider.shutdown('duplicate-session', { immediate: true })).rejects.toThrow(
+      'Ambiguous PTY session ownership across degraded providers: duplicate-session'
+    )
+    expect(current.shutdown).not.toHaveBeenCalled()
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('probes every provider before destructive shutdown without startup inventory', async () => {
+    const current = createDaemonAdapter('daemon', ['duplicate-session'])
+    const fallback = createProvider('fallback', ['duplicate-session'])
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+    await expect(provider.shutdown('duplicate-session', { immediate: true })).rejects.toThrow(
+      'Ambiguous PTY session ownership'
+    )
+    expect(current.shutdown).not.toHaveBeenCalled()
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('keeps a daemon inventory result when fallback spawns during the listing', async () => {
+    const current = createDaemonAdapter('daemon')
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    let resolveDaemon!: (sessions: PtyProcessInfo[]) => void
+    vi.mocked(current.listProcesses).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDaemon = resolve
+      })
+    )
+
+    const listing = provider.listProcesses()
+    await provider.spawn({ sessionId: 'duplicate-session', cols: 80, rows: 24 })
+    resolveDaemon([{ id: 'duplicate-session', cwd: '', title: 'daemon' }])
+
+    await expect(listing).rejects.toThrow(
+      'Ambiguous PTY session ownership across degraded providers: duplicate-session'
+    )
+    await expect(provider.shutdown('duplicate-session', { immediate: true })).rejects.toThrow(
+      'Ambiguous PTY session ownership'
+    )
+  })
+
+  it('waits for the final fallback owner before forwarding a duplicate exit', async () => {
+    const current = createDaemonAdapter('daemon', ['duplicate-session'])
+    const fallback = createProvider('fallback', ['duplicate-session'])
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    const exitSpy = vi.fn()
+    provider.onExit(exitSpy)
+    await provider.discoverDaemonSessions()
+
+    current.emitExit('duplicate-session', 0)
+    expect(exitSpy).not.toHaveBeenCalled()
+    fallback.emitExit('duplicate-session', 0)
+
+    expect(exitSpy).toHaveBeenCalledOnce()
+    expect(exitSpy).toHaveBeenCalledWith({ id: 'duplicate-session', code: 0 })
+  })
+
   it('routes authoritative recovery snapshots to the owning daemon', async () => {
     const current = createDaemonAdapter('daemon', ['daemon-session'])
     const fallback = createProvider('fallback')
@@ -407,5 +472,20 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(exitSpy).toHaveBeenCalledWith({ id: 'current-session', code: -1 })
     expect(provider.getCurrentDaemonSessionIds()).toEqual([])
     expect(provider.hasPty('legacy-session')).toBe(true)
+  })
+
+  it('suppresses a synthetic daemon exit while a fallback duplicate survives', async () => {
+    const current = createDaemonAdapter('daemon', ['duplicate-session'])
+    const fallback = createProvider('fallback', ['duplicate-session'])
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    const exitSpy = vi.fn()
+    provider.onExit(exitSpy)
+    await provider.discoverDaemonSessions()
+
+    provider.fanoutCurrentDaemonSyntheticExits(-1)
+
+    expect(exitSpy).not.toHaveBeenCalled()
+    expect(provider.hasPty('duplicate-session')).toBe(true)
+    expect(provider.getCurrentDaemonSessionIds()).toEqual([])
   })
 })

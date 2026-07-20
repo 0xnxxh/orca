@@ -11,8 +11,7 @@ export type DegradedManagedPtyProvider = IPtyProvider & {
 }
 
 export class DegradedDaemonSessionRouting {
-  private providers = new Map<string, DegradedManagedPtyProvider>()
-  private daemonRouting = new DaemonPtySessionRouting()
+  private routing = new DaemonPtySessionRouting<DegradedManagedPtyProvider>()
 
   constructor(
     private fallback: DegradedManagedPtyProvider,
@@ -20,52 +19,59 @@ export class DegradedDaemonSessionRouting {
   ) {}
 
   get(sessionId: string): DegradedManagedPtyProvider | undefined {
-    if (this.isAmbiguous(sessionId)) {
-      return undefined
-    }
-    return this.daemonRouting.get(sessionId) ?? this.providers.get(sessionId)
+    return this.routing.get(sessionId)
   }
 
   isAmbiguous(sessionId: string): boolean {
-    return (
-      this.daemonRouting.isAmbiguous(sessionId) ||
-      (this.providers.has(sessionId) && this.daemonRouting.get(sessionId) !== undefined)
-    )
+    return this.routing.isAmbiguous(sessionId)
   }
 
   beginInventoryRefresh(): DaemonPtyInventoryRefresh {
-    return this.daemonRouting.beginInventoryRefresh()
+    return this.routing.beginInventoryRefresh()
   }
 
   finishInventoryRefresh(refresh: DaemonPtyInventoryRefresh): void {
-    this.daemonRouting.finishInventoryRefresh(refresh)
-  }
-
-  addDaemonInventorySession(
-    sessionId: string,
-    adapter: DaemonPtyAdapter,
-    refresh: DaemonPtyInventoryRefresh
-  ): void {
-    this.daemonRouting.addInventorySession(sessionId, adapter, refresh)
+    this.routing.finishInventoryRefresh(refresh)
   }
 
   add(sessionId: string, provider: DegradedManagedPtyProvider): void {
-    if (this.isDaemonAdapter(provider)) {
-      this.daemonRouting.add(sessionId, provider)
-      return
-    }
-    this.daemonRouting.recordExternalMutation(sessionId)
-    this.providers.set(sessionId, provider)
+    this.routing.add(sessionId, provider)
   }
 
-  remove(sessionId: string, provider: DegradedManagedPtyProvider): void {
-    if (this.isDaemonAdapter(provider)) {
-      this.daemonRouting.remove(sessionId, provider)
-      return
+  remove(sessionId: string, provider: DegradedManagedPtyProvider): boolean {
+    return this.routing.remove(sessionId, provider)
+  }
+
+  handleExit(sessionId: string, provider: DegradedManagedPtyProvider): boolean {
+    return this.routing.handleExit(sessionId, provider)
+  }
+
+  beginSleep(sessionId: string, provider: DegradedManagedPtyProvider): void {
+    this.routing.beginSleep(sessionId, provider)
+  }
+
+  cancelSleep(sessionId: string, provider: DegradedManagedPtyProvider): void {
+    this.routing.cancelSleep(sessionId, provider)
+  }
+
+  async shutdown(
+    sessionId: string,
+    provider: DegradedManagedPtyProvider,
+    opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
+  ): Promise<void> {
+    if (opts.keepHistory) {
+      this.beginSleep(sessionId, provider)
     }
-    this.daemonRouting.recordExternalMutation(sessionId)
-    if (this.providers.get(sessionId) === provider) {
-      this.providers.delete(sessionId)
+    try {
+      await provider.shutdown(sessionId, opts)
+    } catch (error) {
+      if (opts.keepHistory) {
+        this.cancelSleep(sessionId, provider)
+      }
+      throw error
+    }
+    if (!opts.keepHistory) {
+      this.remove(sessionId, provider)
     }
   }
 
@@ -74,31 +80,28 @@ export class DegradedDaemonSessionRouting {
     daemonResults: PtyProcessInfo[][],
     refresh: DaemonPtyInventoryRefresh
   ): string[] {
-    for (const session of fallbackSessions) {
-      this.daemonRouting.applyInventoryMutation(session.id, refresh, () => {
-        this.providers.set(session.id, this.fallback)
-      })
-    }
-    const ambiguousIds = new Set(
-      this.daemonRouting.refreshLive(this.daemonAdapters, daemonResults, refresh)
+    return this.routing.refreshLive(
+      this.allProviders(),
+      [fallbackSessions, ...daemonResults],
+      refresh
     )
-    for (const sessionId of this.providers.keys()) {
-      if (
-        this.daemonRouting.get(sessionId) !== undefined ||
-        this.daemonRouting.isAmbiguous(sessionId)
-      ) {
-        ambiguousIds.add(sessionId)
-      }
-    }
-    return [...ambiguousIds].sort()
+  }
+
+  refreshProvider(
+    provider: DegradedManagedPtyProvider,
+    sessions: PtyProcessInfo[],
+    refresh: DaemonPtyInventoryRefresh
+  ): string[] {
+    return this.routing.refreshLive([provider], [sessions], refresh)
   }
 
   idsForDaemon(adapter: DaemonPtyAdapter): string[] {
-    return this.daemonRouting.idsFor(adapter)
+    return this.routing.idsFor(adapter)
   }
 
   daemonFor(sessionId: string): DaemonPtyAdapter | null {
-    return this.isAmbiguous(sessionId) ? null : (this.daemonRouting.get(sessionId) ?? null)
+    const provider = this.routing.get(sessionId)
+    return provider && this.isDaemonAdapter(provider) ? provider : null
   }
 
   hasPty(sessionId: string): boolean {
@@ -109,8 +112,7 @@ export class DegradedDaemonSessionRouting {
     if (routed) {
       return routed.hasPty?.(sessionId) ?? true
     }
-    const discovered = this.discoverExistingProvider(sessionId)
-    return this.isAmbiguous(sessionId) || discovered !== undefined
+    return this.discoverExistingProvider(sessionId) !== undefined || this.isAmbiguous(sessionId)
   }
 
   providerFor(
@@ -120,39 +122,30 @@ export class DegradedDaemonSessionRouting {
     if (this.isAmbiguous(sessionId)) {
       return ambiguousProvider
     }
-    const routed = this.get(sessionId)
-    if (routed) {
-      return routed
-    }
-    const discovered = this.discoverExistingProvider(sessionId)
-    return this.isAmbiguous(sessionId) ? ambiguousProvider : (discovered ?? this.fallback)
+    const provider = this.get(sessionId) ?? this.discoverExistingProvider(sessionId)
+    return this.isAmbiguous(sessionId) ? ambiguousProvider : (provider ?? this.fallback)
   }
 
-  providerMap(): Map<string, DegradedManagedPtyProvider> {
-    return this.providers
+  providerMapFor(provider: DegradedManagedPtyProvider): Map<string, DegradedManagedPtyProvider> {
+    return new Map(this.routing.idsFor(provider).map((id) => [id, provider]))
   }
 
   private discoverExistingProvider(sessionId: string): DegradedManagedPtyProvider | undefined {
-    for (const adapter of this.daemonAdapters) {
-      if (adapter.hasPty(sessionId)) {
-        this.add(sessionId, adapter)
+    // Why: probing every provider before selecting one prevents an unlisted
+    // fallback/daemon collision from being mistaken for unique ownership.
+    for (const provider of this.allProviders()) {
+      if (provider.hasPty?.(sessionId) === true) {
+        this.add(sessionId, provider)
       }
     }
-    if (this.isAmbiguous(sessionId)) {
-      return undefined
-    }
-    const daemon = this.get(sessionId)
-    if (daemon) {
-      return daemon
-    }
-    if (this.fallback.hasPty?.(sessionId) === true) {
-      this.add(sessionId, this.fallback)
-      return this.fallback
-    }
-    return undefined
+    return this.isAmbiguous(sessionId) ? undefined : this.get(sessionId)
   }
 
   private isDaemonAdapter(provider: DegradedManagedPtyProvider): provider is DaemonPtyAdapter {
     return this.daemonAdapters.includes(provider as DaemonPtyAdapter)
+  }
+
+  private allProviders(): DegradedManagedPtyProvider[] {
+    return [this.fallback, ...this.daemonAdapters]
   }
 }

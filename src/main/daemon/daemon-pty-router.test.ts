@@ -281,18 +281,29 @@ describe('DaemonPtyRouter', () => {
     expect(current.spawn).toHaveBeenCalledWith({ sessionId: 'legacy-session', cols: 80, rows: 24 })
   })
 
-  it('uses mapped adapter liveness instead of routing-cache presence for hasPty', async () => {
+  it('retains a sleeping legacy owner without reporting a logical exit', async () => {
     const current = createAdapter('current')
     const legacy = createAdapter('legacy', ['legacy-session'])
     const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const exitSpy = vi.fn()
+    router.onExit(exitSpy)
 
     await router.discoverLegacySessions()
     expect(router.hasPty('legacy-session')).toBe(true)
 
     await router.shutdown('legacy-session', { keepHistory: true })
+    legacy.emitExit('legacy-session', 0)
+    await router.listProcesses()
 
     expect(router.hasPty('legacy-session')).toBe(false)
     expect(current.hasPty).not.toHaveBeenCalledWith('legacy-session')
+    expect(exitSpy).not.toHaveBeenCalled()
+    await router.spawn({ sessionId: 'legacy-session', cols: 80, rows: 24 })
+    expect(legacy.spawn).toHaveBeenCalledWith({
+      sessionId: 'legacy-session',
+      cols: 80,
+      rows: 24
+    })
   })
 
   it('fails listProcesses closed when any routed adapter cannot list sessions', async () => {
@@ -397,10 +408,13 @@ describe('DaemonPtyRouter', () => {
     const firstLegacy = createAdapter('legacy-a', ['duplicate-session'])
     const secondLegacy = createAdapter('legacy-b', ['duplicate-session'])
     const router = new DaemonPtyRouter({ current, legacy: [firstLegacy, secondLegacy] })
+    const exitSpy = vi.fn()
+    router.onExit(exitSpy)
 
     await expect(router.listProcesses()).rejects.toThrow('Ambiguous PTY session ownership')
     current.emitExit('duplicate-session', 0)
 
+    expect(exitSpy).not.toHaveBeenCalled()
     await expect(
       router.shutdown('duplicate-session', {
         immediate: true

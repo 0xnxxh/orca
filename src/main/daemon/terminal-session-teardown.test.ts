@@ -55,7 +55,7 @@ describe('TerminalSessionTeardown Windows descendant termination', () => {
     }
   })
 
-  it('terminates an agent Job before force-killing its root', async () => {
+  it('signals an agent root before terminating its Job', async () => {
     const session = createSession({ agent: true, nativeWindows: true })
     sessions.set('agent', session)
 
@@ -64,8 +64,8 @@ describe('TerminalSessionTeardown Windows descendant termination', () => {
     expect(session.beginTermination).toHaveBeenCalledOnce()
     expect(killWithDescendantSweepMock).not.toHaveBeenCalled()
     expect(session.terminateJobTree).toHaveBeenCalledOnce()
-    expect(session.terminateJobTree.mock.invocationCallOrder[0]).toBeLessThan(
-      session.forceKillAndWaitForExit.mock.invocationCallOrder[0]!
+    expect(session.forceKillAndWaitForExit.mock.invocationCallOrder[0]).toBeLessThan(
+      session.terminateJobTree.mock.invocationCallOrder[0]!
     )
   })
 

@@ -2,7 +2,8 @@ import type { IPtyProvider } from '../providers/types'
 
 export async function shutdownDegradedFallbackSessions<T extends IPtyProvider>(
   sessionProviders: Map<string, T>,
-  fallback: T
+  fallback: T,
+  onShutdown?: (sessionId: string) => void
 ): Promise<number> {
   const ids = [...sessionProviders]
     .filter(([, provider]) => provider === fallback)
@@ -11,6 +12,7 @@ export async function shutdownDegradedFallbackSessions<T extends IPtyProvider>(
     ids.map(async (id) => {
       await fallback.shutdown(id, { immediate: true })
       sessionProviders.delete(id)
+      onShutdown?.(id)
     })
   )
   // Why: fallback cleanup must not abort the user's daemon-restart recovery path.

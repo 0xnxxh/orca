@@ -10,24 +10,27 @@ type SessionMutation = {
   refresh?: DaemonPtyInventoryRefresh
 }
 
-export class DaemonPtySessionRouting {
-  private adapters = new Map<string, DaemonPtyAdapter>()
-  private ambiguousAdapters = new Map<string, Set<DaemonPtyAdapter>>()
+/** Tracks every physical owner of a logical PTY id across inventory races. */
+export class DaemonPtySessionRouting<Owner extends object = DaemonPtyAdapter> {
+  private owners = new Map<string, Owner>()
+  private ambiguousOwners = new Map<string, Set<Owner>>()
+  private sleepingOwners = new Map<string, Set<Owner>>()
   private revision = 0
-  private sessionMutations = new Map<string, SessionMutation>()
+  private sessionMutations = new Map<string, Map<Owner, SessionMutation>>()
   private activeInventoryRefreshes = new Set<DaemonPtyInventoryRefresh>()
+  private ownerInventoryRefreshes = new Map<Owner, DaemonPtyInventoryRefresh>()
 
-  get(sessionId: string): DaemonPtyAdapter | undefined {
-    return this.adapters.get(sessionId)
+  get(sessionId: string): Owner | undefined {
+    return this.owners.get(sessionId)
   }
 
   isAmbiguous(sessionId: string): boolean {
-    return this.ambiguousAdapters.has(sessionId)
+    return this.ambiguousOwners.has(sessionId)
   }
 
   beginInventoryRefresh(): DaemonPtyInventoryRefresh {
     // Why: a later overlapping snapshot may supersede an earlier refresh,
-    // while an exit/add event must supersede every snapshot already in flight.
+    // while an exit/add event must supersede only that provider's in-flight result.
     this.revision += 1
     const refresh = { revision: this.revision }
     this.activeInventoryRefreshes.add(refresh)
@@ -43,132 +46,169 @@ export class DaemonPtySessionRouting {
     const oldestRevision = Math.min(
       ...[...this.activeInventoryRefreshes].map((active) => active.revision)
     )
-    for (const [id, mutation] of this.sessionMutations) {
-      if (mutation.revision <= oldestRevision) {
+    for (const [id, ownerMutations] of this.sessionMutations) {
+      for (const [owner, mutation] of ownerMutations) {
+        if (mutation.revision <= oldestRevision) {
+          ownerMutations.delete(owner)
+        }
+      }
+      if (ownerMutations.size === 0) {
         this.sessionMutations.delete(id)
       }
     }
   }
 
-  applyInventoryMutation(
-    sessionId: string,
-    refresh: DaemonPtyInventoryRefresh,
-    mutation: () => void
-  ): boolean {
-    if (!this.isInventoryResultCurrent(sessionId, refresh)) {
-      return false
-    }
-    mutation()
-    this.recordMutation(sessionId, refresh)
-    return true
-  }
-
-  addInventorySession(
-    sessionId: string,
-    adapter: DaemonPtyAdapter,
-    refresh: DaemonPtyInventoryRefresh
-  ): void {
-    this.applyInventoryMutation(sessionId, refresh, () => this.addRoute(sessionId, adapter))
-  }
-
-  recordExternalMutation(sessionId: string): void {
-    this.recordMutation(sessionId)
-  }
-
-  idsFor(adapter: DaemonPtyAdapter): string[] {
-    const ids = [...this.adapters].filter(([, owner]) => owner === adapter).map(([id]) => id)
-    for (const [id, owners] of this.ambiguousAdapters) {
-      if (owners.has(adapter)) {
+  idsFor(owner: Owner): string[] {
+    const ids = [...this.owners].filter(([, candidate]) => candidate === owner).map(([id]) => id)
+    for (const [id, candidates] of this.ambiguousOwners) {
+      if (candidates.has(owner)) {
         ids.push(id)
       }
     }
     return ids.sort()
   }
 
-  add(sessionId: string, adapter: DaemonPtyAdapter): void {
-    this.recordMutation(sessionId)
-    this.addRoute(sessionId, adapter)
+  add(sessionId: string, owner: Owner): void {
+    this.recordMutation(sessionId, owner)
+    this.removeSleepingOwner(sessionId, owner)
+    this.addRoute(sessionId, owner)
   }
 
-  private addRoute(sessionId: string, adapter: DaemonPtyAdapter): void {
-    const ambiguous = this.ambiguousAdapters.get(sessionId)
-    if (ambiguous) {
-      ambiguous.add(adapter)
-      return
-    }
-    const existing = this.adapters.get(sessionId)
-    if (existing && existing !== adapter) {
-      this.adapters.delete(sessionId)
-      this.ambiguousAdapters.set(sessionId, new Set([existing, adapter]))
-      return
-    }
-    this.adapters.set(sessionId, adapter)
+  remove(sessionId: string, owner: Owner): boolean {
+    this.recordMutation(sessionId, owner)
+    this.removeSleepingOwner(sessionId, owner)
+    this.removeRoute(sessionId, owner)
+    return !this.hasOwner(sessionId)
   }
 
-  remove(sessionId: string, adapter: DaemonPtyAdapter): void {
-    this.recordMutation(sessionId)
-    const ambiguous = this.ambiguousAdapters.get(sessionId)
-    if (ambiguous) {
-      ambiguous.delete(adapter)
-      if (ambiguous.size === 1) {
-        this.ambiguousAdapters.delete(sessionId)
-        this.adapters.set(sessionId, ambiguous.values().next().value as DaemonPtyAdapter)
-      } else if (ambiguous.size === 0) {
-        this.ambiguousAdapters.delete(sessionId)
-        this.adapters.delete(sessionId)
-      }
-      return
+  handleExit(sessionId: string, owner: Owner): boolean {
+    this.recordMutation(sessionId, owner)
+    // Why: keepHistory intentionally exits the physical process while retaining
+    // the provider that owns its cold-restore state for the later wake.
+    if (this.isSleeping(sessionId, owner)) {
+      return false
     }
-    if (this.adapters.get(sessionId) === adapter) {
-      this.adapters.delete(sessionId)
-    }
+    this.removeRoute(sessionId, owner)
+    return !this.hasOwner(sessionId)
+  }
+
+  beginSleep(sessionId: string, owner: Owner): void {
+    this.recordMutation(sessionId, owner)
+    this.addRoute(sessionId, owner)
+    const sleeping = this.sleepingOwners.get(sessionId) ?? new Set<Owner>()
+    sleeping.add(owner)
+    this.sleepingOwners.set(sessionId, sleeping)
+  }
+
+  cancelSleep(sessionId: string, owner: Owner): void {
+    this.recordMutation(sessionId, owner)
+    this.removeSleepingOwner(sessionId, owner)
   }
 
   refreshLive(
-    adapters: DaemonPtyAdapter[],
+    inventoryOwners: Owner[],
     results: PtyProcessInfo[][],
     refresh: DaemonPtyInventoryRefresh
   ): string[] {
-    const owners = new Map<string, Set<DaemonPtyAdapter>>()
-    for (let index = 0; index < adapters.length; index += 1) {
-      for (const session of results[index]) {
-        const sessionOwners = owners.get(session.id) ?? new Set<DaemonPtyAdapter>()
-        sessionOwners.add(adapters[index])
-        owners.set(session.id, sessionOwners)
-      }
-    }
-
-    // Why: unique absent sessions may be sleeping on legacy history, but a
-    // successful all-daemon inventory can retire stale live ambiguity.
-    for (const id of this.ambiguousAdapters.keys()) {
-      if (!owners.has(id) && this.isInventoryResultCurrent(id, refresh)) {
-        this.applyInventoryMutation(id, refresh, () => this.ambiguousAdapters.delete(id))
-      }
-    }
-    const ambiguousIds: string[] = []
-    for (const [id, sessionOwners] of owners) {
-      if (!this.isInventoryResultCurrent(id, refresh)) {
-        continue
-      }
-      if (sessionOwners.size === 1) {
-        this.applyInventoryMutation(id, refresh, () => {
-          this.ambiguousAdapters.delete(id)
-          this.adapters.set(id, sessionOwners.values().next().value as DaemonPtyAdapter)
-        })
-      } else {
-        this.applyInventoryMutation(id, refresh, () => {
-          this.adapters.delete(id)
-          this.ambiguousAdapters.set(id, sessionOwners)
-        })
-        ambiguousIds.push(id)
-      }
+    for (let index = 0; index < inventoryOwners.length; index += 1) {
+      this.refreshOwner(inventoryOwners[index], results[index], refresh)
     }
     this.finishInventoryRefresh(refresh)
-    return ambiguousIds.sort()
+    return [...this.ambiguousOwners.keys()].sort()
   }
 
-  private isInventoryResultCurrent(sessionId: string, refresh: DaemonPtyInventoryRefresh): boolean {
-    const mutation = this.sessionMutations.get(sessionId)
+  private refreshOwner(
+    owner: Owner,
+    sessions: PtyProcessInfo[],
+    refresh: DaemonPtyInventoryRefresh
+  ): void {
+    const latestRefresh = this.ownerInventoryRefreshes.get(owner)
+    if (latestRefresh && latestRefresh.revision > refresh.revision) {
+      return
+    }
+    this.ownerInventoryRefreshes.set(owner, refresh)
+    const reportedIds = new Set(sessions.map((session) => session.id))
+    const relevantIds = new Set([...this.idsFor(owner), ...reportedIds])
+    for (const sessionId of relevantIds) {
+      this.applyInventoryMutation(sessionId, owner, refresh, () => {
+        if (reportedIds.has(sessionId)) {
+          this.addRoute(sessionId, owner)
+        } else if (!this.isSleeping(sessionId, owner)) {
+          this.removeRoute(sessionId, owner)
+        }
+      })
+    }
+  }
+
+  private applyInventoryMutation(
+    sessionId: string,
+    owner: Owner,
+    refresh: DaemonPtyInventoryRefresh,
+    mutation: () => void
+  ): boolean {
+    if (!this.isInventoryResultCurrent(sessionId, owner, refresh)) {
+      return false
+    }
+    mutation()
+    this.recordMutation(sessionId, owner, refresh)
+    return true
+  }
+
+  private addRoute(sessionId: string, owner: Owner): void {
+    const ambiguous = this.ambiguousOwners.get(sessionId)
+    if (ambiguous) {
+      ambiguous.add(owner)
+      return
+    }
+    const existing = this.owners.get(sessionId)
+    if (existing && existing !== owner) {
+      this.owners.delete(sessionId)
+      this.ambiguousOwners.set(sessionId, new Set([existing, owner]))
+      return
+    }
+    this.owners.set(sessionId, owner)
+  }
+
+  private removeRoute(sessionId: string, owner: Owner): void {
+    const ambiguous = this.ambiguousOwners.get(sessionId)
+    if (ambiguous) {
+      ambiguous.delete(owner)
+      if (ambiguous.size === 1) {
+        this.ambiguousOwners.delete(sessionId)
+        this.owners.set(sessionId, ambiguous.values().next().value as Owner)
+      } else if (ambiguous.size === 0) {
+        this.ambiguousOwners.delete(sessionId)
+        this.owners.delete(sessionId)
+      }
+      return
+    }
+    if (this.owners.get(sessionId) === owner) {
+      this.owners.delete(sessionId)
+    }
+  }
+
+  private hasOwner(sessionId: string): boolean {
+    return this.owners.has(sessionId) || this.ambiguousOwners.has(sessionId)
+  }
+
+  private isSleeping(sessionId: string, owner: Owner): boolean {
+    return this.sleepingOwners.get(sessionId)?.has(owner) === true
+  }
+
+  private removeSleepingOwner(sessionId: string, owner: Owner): void {
+    const sleeping = this.sleepingOwners.get(sessionId)
+    sleeping?.delete(owner)
+    if (sleeping?.size === 0) {
+      this.sleepingOwners.delete(sessionId)
+    }
+  }
+
+  private isInventoryResultCurrent(
+    sessionId: string,
+    owner: Owner,
+    refresh: DaemonPtyInventoryRefresh
+  ): boolean {
+    const mutation = this.sessionMutations.get(sessionId)?.get(owner)
     return (
       mutation === undefined ||
       mutation.revision <= refresh.revision ||
@@ -177,10 +217,17 @@ export class DaemonPtySessionRouting {
     )
   }
 
-  private recordMutation(sessionId: string, refresh?: DaemonPtyInventoryRefresh): void {
+  private recordMutation(
+    sessionId: string,
+    owner: Owner,
+    refresh?: DaemonPtyInventoryRefresh
+  ): void {
     this.revision += 1
-    if (this.activeInventoryRefreshes.size > 0) {
-      this.sessionMutations.set(sessionId, { revision: this.revision, refresh })
+    if (this.activeInventoryRefreshes.size === 0) {
+      return
     }
+    const ownerMutations = this.sessionMutations.get(sessionId) ?? new Map()
+    ownerMutations.set(owner, { revision: this.revision, refresh })
+    this.sessionMutations.set(sessionId, ownerMutations)
   }
 }

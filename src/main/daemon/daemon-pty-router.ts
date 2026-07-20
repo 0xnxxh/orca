@@ -35,9 +35,10 @@ export class DaemonPtyRouter implements IPtyProvider {
           }
         }),
         adapter.onExit((payload) => {
-          this.sessionRouting.remove(payload.id, adapter)
-          for (const listener of this.exitListeners) {
-            listener(payload)
+          if (this.sessionRouting.handleExit(payload.id, adapter)) {
+            for (const listener of this.exitListeners) {
+              listener(payload)
+            }
           }
         })
       )
@@ -49,13 +50,10 @@ export class DaemonPtyRouter implements IPtyProvider {
       const refresh = this.sessionRouting.beginInventoryRefresh()
       try {
         const sessions = await adapter.listProcesses()
-        for (const session of sessions) {
-          this.sessionRouting.addInventorySession(session.id, adapter, refresh)
-        }
+        this.sessionRouting.refreshLive([adapter], [sessions], refresh)
       } catch (error) {
-        console.warn('[daemon] Failed to discover legacy daemon sessions', error)
-      } finally {
         this.sessionRouting.finishInventoryRefresh(refresh)
+        console.warn('[daemon] Failed to discover legacy daemon sessions', error)
       }
     }
   }
@@ -113,13 +111,23 @@ export class DaemonPtyRouter implements IPtyProvider {
       throw this.ambiguousOwnershipError([id])
     }
     const adapter = this.adapterFor(id)
-    await adapter.shutdown(id, opts)
     // Why: sleep passes keepHistory=true and re-spawns against the same
     // sessionId on wake. If we delete the routing entry here, adapterFor()
     // falls back to `this.current` on wake — for a session that originally
     // lived on a legacy adapter (different protocolVersion), the wake-side
     // createOrAttach lands on the wrong adapter and creates a fresh session,
     // losing the cold-restore from the legacy adapter's history dir.
+    if (opts.keepHistory) {
+      this.sessionRouting.beginSleep(id, adapter)
+    }
+    try {
+      await adapter.shutdown(id, opts)
+    } catch (error) {
+      if (opts.keepHistory) {
+        this.sessionRouting.cancelSleep(id, adapter)
+      }
+      throw error
+    }
     if (!opts.keepHistory) {
       this.sessionRouting.remove(id, adapter)
     }

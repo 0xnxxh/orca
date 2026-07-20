@@ -24,6 +24,8 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   private current: DaemonPtyAdapter
   private legacy: DaemonPtyAdapter[]
   private fallback: DegradedManagedPtyProvider
+  private daemonAdapters: DaemonPtyAdapter[]
+  private providers: DegradedManagedPtyProvider[]
   private sessionRouting: DegradedDaemonSessionRouting
   private unsubscribers: (() => void)[] = []
   private dataListeners: ((payload: PtyDataEvent) => void)[] = []
@@ -37,9 +39,11 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     this.current = opts.current
     this.legacy = opts.legacy
     this.fallback = opts.fallback
-    this.sessionRouting = new DegradedDaemonSessionRouting(this.fallback, this.allDaemonAdapters())
+    this.daemonAdapters = [this.current, ...this.legacy]
+    this.providers = [this.fallback, ...this.daemonAdapters]
+    this.sessionRouting = new DegradedDaemonSessionRouting(this.fallback, this.daemonAdapters)
 
-    for (const provider of this.allProviders()) {
+    for (const provider of this.providers) {
       this.unsubscribers.push(
         provider.onData((payload) => {
           for (const listener of this.dataListeners) {
@@ -47,9 +51,10 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
           }
         }),
         provider.onExit((payload) => {
-          this.sessionRouting.remove(payload.id, provider)
-          for (const listener of this.exitListeners) {
-            listener(payload)
+          if (this.sessionRouting.handleExit(payload.id, provider)) {
+            for (const listener of this.exitListeners) {
+              listener(payload)
+            }
           }
         })
       )
@@ -57,17 +62,16 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   async discoverDaemonSessions(): Promise<void> {
-    for (const adapter of this.allDaemonAdapters()) {
+    // Why: fallback sessions can already exist after startup fail-open; include
+    // them so a duplicate preserved daemon owner fails closed before shutdown.
+    for (const provider of this.providers) {
       const refresh = this.sessionRouting.beginInventoryRefresh()
       try {
-        const sessions = await adapter.listProcesses()
-        for (const session of sessions) {
-          this.sessionRouting.addDaemonInventorySession(session.id, adapter, refresh)
-        }
+        const sessions = await provider.listProcesses()
+        this.sessionRouting.refreshProvider(provider, sessions, refresh)
       } catch (error) {
-        console.warn('[daemon] Failed to discover degraded daemon sessions', error)
-      } finally {
         this.sessionRouting.finishInventoryRefresh(refresh)
+        console.warn('[daemon] Failed to discover degraded PTY sessions', error)
       }
     }
   }
@@ -116,10 +120,10 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
       throw this.ambiguousOwnershipError([id])
     }
     const target = this.providerFor(id)
-    await target.shutdown(id, opts)
-    if (!opts.keepHistory) {
-      this.sessionRouting.remove(id, target)
+    if (this.sessionRouting.isAmbiguous(id)) {
+      throw this.ambiguousOwnershipError([id])
     }
+    await this.sessionRouting.shutdown(id, target, opts)
   }
 
   async sendSignal(id: string, signal: string): Promise<void> {
@@ -180,7 +184,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
-    const providers = this.allProviders()
+    const providers = this.providers
     const refresh = this.sessionRouting.beginInventoryRefresh()
     let results: PtyProcessInfo[][]
     try {
@@ -215,7 +219,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   onBackgroundStreamEvent(callback: (payload: PtyBackgroundStreamEvent) => void): () => void {
-    const unsubscribes = this.allProviders().flatMap(
+    const unsubscribes = this.providers.flatMap(
       (provider) => provider.onBackgroundStreamEvent?.(callback) ?? []
     )
     return () => {
@@ -226,7 +230,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   onReplay(callback: (payload: { id: string; data: string }) => void): () => void {
-    const unsubscribes = this.allProviders().map((provider) => provider.onReplay(callback))
+    const unsubscribes = this.providers.map((provider) => provider.onReplay(callback))
     let active = true
     const trackedUnsubscribe = (): void => {
       if (!active) {
@@ -269,7 +273,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }> {
     const alive: string[] = []
     const killed: string[] = []
-    for (const adapter of this.allDaemonAdapters()) {
+    for (const adapter of this.daemonAdapters) {
       const result = await adapter.reconcileOnStartup(validWorktreeIds)
       for (const id of result.alive) {
         alive.push(id)
@@ -285,7 +289,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
 
   dispose(): void {
     this.disposeProviderOnly()
-    for (const adapter of this.allDaemonAdapters()) {
+    for (const adapter of this.daemonAdapters) {
       adapter.dispose()
     }
   }
@@ -297,7 +301,11 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   async shutdownFallbackSessions(): Promise<number> {
-    return shutdownDegradedFallbackSessions(this.sessionRouting.providerMap(), this.fallback)
+    return shutdownDegradedFallbackSessions(
+      this.sessionRouting.providerMapFor(this.fallback),
+      this.fallback,
+      (id) => this.sessionRouting.remove(id, this.fallback)
+    )
   }
 
   getCurrentDaemonSessionIds(): string[] {
@@ -306,19 +314,20 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
 
   fanoutCurrentDaemonSyntheticExits(code: number): void {
     for (const id of this.getCurrentDaemonSessionIds()) {
-      this.sessionRouting.remove(id, this.current)
-      // Why: sessions discovered from listProcesses may not exist in the
-      // adapter's active-session set, but restart still kills that daemon.
-      // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
-      for (const listener of [...this.exitListeners]) {
-        listener({ id, code })
+      if (this.sessionRouting.handleExit(id, this.current)) {
+        // Why: sessions discovered from listProcesses may not exist in the
+        // adapter's active-session set, but restart still kills that daemon.
+        // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
+        for (const listener of [...this.exitListeners]) {
+          listener({ id, code })
+        }
       }
     }
   }
 
   async disconnectOnly(): Promise<void> {
     this.disposeProviderOnly()
-    await Promise.all(this.allDaemonAdapters().map((adapter) => adapter.disconnectOnly()))
+    await Promise.all(this.daemonAdapters.map((adapter) => adapter.disconnectOnly()))
   }
 
   getCurrentAdapter(): DaemonPtyAdapter {
@@ -330,7 +339,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   getAllAdapters(): readonly DaemonPtyAdapter[] {
-    return this.allDaemonAdapters()
+    return this.daemonAdapters
   }
 
   private providerFor(sessionId: string): DegradedManagedPtyProvider {
@@ -341,13 +350,5 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     return new Error(
       `Ambiguous PTY session ownership across degraded providers: ${sessionIds.join(', ')}`
     )
-  }
-
-  private allProviders(): DegradedManagedPtyProvider[] {
-    return [this.fallback, ...this.allDaemonAdapters()]
-  }
-
-  private allDaemonAdapters(): DaemonPtyAdapter[] {
-    return [this.current, ...this.legacy]
   }
 }
