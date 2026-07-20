@@ -48,10 +48,10 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..6047590bc9558dabacd3ece5114ed41c
      'targets' : [
 diff --git a/lib/conptyConnectFailure.test.js b/lib/conptyConnectFailure.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..11c92221f60565ddf28c96dacd5e1c6b70a13a8d
+index 0000000000000000000000000000000000000000..b149dd006735ddf64ea3f2b167c0271f9bcdb2f5
 --- /dev/null
 +++ b/lib/conptyConnectFailure.test.js
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,68 @@
 +"use strict";
 +/**
 + * Copyright (c) 2026, Stably AI (MIT License).
@@ -109,14 +109,15 @@ index 0000000000000000000000000000000000000000..11c92221f60565ddf28c96dacd5e1c6b
 +    }
 +    else {
 +        assert.ok(hasTestHooks_1(), 'ConPTY test fault injection was required but is unavailable');
++        var leakedResourceWatchdog = setTimeout(function () {
++            throw new Error('ConPTY failed-connect cleanup left JS resources alive');
++        }, 5000);
++        leakedResourceWatchdog.unref();
 +        failureCases_1.forEach(function (_a) {
 +            var failure = _a[0], expectedError = _a[1];
 +            return runFailureCase_1(failure, expectedError);
 +        });
 +        console.log('ConPTY failed-connect cleanup: 2 passed');
-+        // Why: failed constructors leave JS pipe workers for GC; native resource
-+        // assertions are complete, so the standalone CI runner can exit now.
-+        process.exit(0);
 +    }
 +}
 diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
@@ -160,7 +161,7 @@ index 1ec12f796a822c78fba9ad7f6448c3987e325c23..24cbb71bce12f8e6ec617918df1e16ba
  var DEFAULT_NAME = 'xterm';
  var DESTROY_SOCKET_TIMEOUT_MS = 200;
 diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
-index a358ffb177357e177661033c1b092f9c9d0e5f5a..187d72f22bb9ee8dbf444465d0febb302be4aa54 100644
+index a358ffb177357e177661033c1b092f9c9d0e5f5a..530171dc8000f3acdd6d5a82fcdc00fce65cbb2c 100644
 --- a/lib/windowsPtyAgent.js
 +++ b/lib/windowsPtyAgent.js
 @@ -26,17 +26,23 @@ var FLUSH_DATA_INTERVAL = 1000;
@@ -188,16 +189,38 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..187d72f22bb9ee8dbf444465d0febb30
          if (this._useConpty) {
              if (!conptyNative) {
                  conptyNative = utils_1.loadNativeModule('conpty').module;
-@@ -86,7 +92,7 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -72,7 +78,7 @@ var WindowsPtyAgent = /** @class */ (function () {
+         this._outSocket.setEncoding('utf8');
+         // The conout socket must be ready out on another thread to avoid deadlocks
+         this._conoutSocketWorker = new windowsConoutConnection_1.ConoutConnection(term.conout, this._useConptyDll);
+-        this._conoutSocketWorker.onReady(function () {
++        var conoutReady = this._conoutSocketWorker.onReady(function () {
+             _this._conoutSocketWorker.connectSocket(_this._outSocket);
+         });
+         this._outSocket.on('connect', function () {
+@@ -86,8 +92,19 @@ var WindowsPtyAgent = /** @class */ (function () {
          });
          this._inSocket.setEncoding('utf8');
          if (this._useConpty) {
 -            var connect = this._ptyNative.connect(this._pty, commandLine, cwd, env, this._useConptyDll, function (c) { return _this._$onProcessExit(c); });
-+            var connect = this._ptyNative.connect(this._pty, commandLine, cwd, env, this._useConptyDll, this._windowsAgentJob, function (c) { return _this._$onProcessExit(c); });
-             this._innerPid = connect.pid;
+-            this._innerPid = connect.pid;
++            try {
++                var connect = this._ptyNative.connect(this._pty, commandLine, cwd, env, this._useConptyDll, this._windowsAgentJob, function (c) { return _this._$onProcessExit(c); });
++                this._innerPid = connect.pid;
++            }
++            catch (error) {
++                // Why: native connect failures happen after JS pipe resources exist;
++                // stop READY from reconnecting the abandoned output socket during cleanup.
++                conoutReady.dispose();
++                this._inSocket.destroy();
++                this._outSocket.destroy();
++                this._conoutSocketWorker.dispose();
++                throw error;
++            }
          }
      }
-@@ -115,6 +121,11 @@ var WindowsPtyAgent = /** @class */ (function () {
+     Object.defineProperty(WindowsPtyAgent.prototype, "inSocket", {
+@@ -115,6 +132,11 @@ var WindowsPtyAgent = /** @class */ (function () {
          enumerable: false,
          configurable: true
      });
@@ -209,7 +232,7 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..187d72f22bb9ee8dbf444465d0febb30
      WindowsPtyAgent.prototype.resize = function (cols, rows) {
          if (this._useConpty) {
              if (this._exitCode !== undefined) {
-@@ -130,6 +141,23 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -130,6 +152,23 @@ var WindowsPtyAgent = /** @class */ (function () {
              this._ptyNative.clear(this._pty, this._useConptyDll);
          }
      };
@@ -233,7 +256,7 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..187d72f22bb9ee8dbf444465d0febb30
      WindowsPtyAgent.prototype.kill = function () {
          var _this = this;
          // Tell the agent to kill the pty, this releases handles to the process
-@@ -221,6 +249,10 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -221,6 +260,10 @@ var WindowsPtyAgent = /** @class */ (function () {
      WindowsPtyAgent.prototype._$onProcessExit = function (exitCode) {
          var _this = this;
          this._exitCode = exitCode;
@@ -353,10 +376,10 @@ index af5f343d17f012f330fe2292083f297768ff3b5e..6b558c789fc77b58c20cd9564d03e93e
          describe("WindowsTerminal (useConpty = " + useConpty + ", useConptyDll = " + useConptyDll + ")", function () {
 diff --git a/src/conptyConnectFailure.test.ts b/src/conptyConnectFailure.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d4e50e2ba2c6abccf6aabdc242082a879e066427
+index 0000000000000000000000000000000000000000..c9a657fbcae63e66b5930b7b52aaa98e6e906f24
 --- /dev/null
 +++ b/src/conptyConnectFailure.test.ts
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,113 @@
 +/**
 + * Copyright (c) 2026, Stably AI (MIT License).
 + */
@@ -462,11 +485,12 @@ index 0000000000000000000000000000000000000000..d4e50e2ba2c6abccf6aabdc242082a87
 +    });
 +  } else {
 +    assert.ok(hasTestHooks(), 'ConPTY test fault injection was required but is unavailable');
++    const leakedResourceWatchdog = setTimeout(() => {
++      throw new Error('ConPTY failed-connect cleanup left JS resources alive');
++    }, 5000);
++    leakedResourceWatchdog.unref();
 +    failureCases.forEach(([failure, expectedError]) => runFailureCase(failure, expectedError));
 +    console.log('ConPTY failed-connect cleanup: 2 passed');
-+    // Why: failed constructors leave JS pipe workers for GC; native resource
-+    // assertions are complete, so the standalone CI runner can exit now.
-+    process.exit(0);
 +  }
 +}
 diff --git a/src/conpty_console_list_agent.ts b/src/conpty_console_list_agent.ts
@@ -1425,7 +1449,7 @@ index dc2104b34fd396722a9e30821ff0b7dea18b4295..23510c3d7c85ecc911b94719832abe5f
      describe('Plain strings', () => {
        it('doesn\'t quote plain string', () => {
 diff --git a/src/windowsPtyAgent.ts b/src/windowsPtyAgent.ts
-index d7054449516f0c9a62af351c2caa17331206d530..5cc174373171329f36860103edab95323da89ed7 100644
+index d7054449516f0c9a62af351c2caa17331206d530..9742be105e477384855daa2f7d9a1483478bd331 100644
 --- a/src/windowsPtyAgent.ts
 +++ b/src/windowsPtyAgent.ts
 @@ -34,6 +34,9 @@ export class WindowsPtyAgent {
@@ -1462,16 +1486,37 @@ index d7054449516f0c9a62af351c2caa17331206d530..5cc174373171329f36860103edab9532
      if (this._useConpty) {
        if (!conptyNative) {
          conptyNative = loadNativeModule('conpty').module;
-@@ -116,7 +123,7 @@ export class WindowsPtyAgent {
+@@ -100,7 +107,7 @@ export class WindowsPtyAgent {
+     this._outSocket.setEncoding('utf8');
+     // The conout socket must be ready out on another thread to avoid deadlocks
+     this._conoutSocketWorker = new ConoutConnection(term.conout, this._useConptyDll);
+-    this._conoutSocketWorker.onReady(() => {
++    const conoutReady = this._conoutSocketWorker.onReady(() => {
+       this._conoutSocketWorker.connectSocket(this._outSocket);
+     });
+     this._outSocket.on('connect', () => {
+@@ -116,8 +123,18 @@ export class WindowsPtyAgent {
      this._inSocket.setEncoding('utf8');
  
      if (this._useConpty) {
 -      const connect = (this._ptyNative as IConptyNative).connect(this._pty, commandLine, cwd, env, this._useConptyDll, c => this._$onProcessExit(c));
-+      const connect = (this._ptyNative as IConptyNative).connect(this._pty, commandLine, cwd, env, this._useConptyDll, this._windowsAgentJob, c => this._$onProcessExit(c));
-       this._innerPid = connect.pid;
+-      this._innerPid = connect.pid;
++      try {
++        const connect = (this._ptyNative as IConptyNative).connect(this._pty, commandLine, cwd, env, this._useConptyDll, this._windowsAgentJob, c => this._$onProcessExit(c));
++        this._innerPid = connect.pid;
++      } catch (error) {
++        // Why: native connect failures happen after JS pipe resources exist;
++        // stop READY from reconnecting the abandoned output socket during cleanup.
++        conoutReady.dispose();
++        this._inSocket.destroy();
++        this._outSocket.destroy();
++        this._conoutSocketWorker.dispose();
++        throw error;
++      }
      }
    }
-@@ -138,6 +145,24 @@ export class WindowsPtyAgent {
+ 
+@@ -138,6 +155,24 @@ export class WindowsPtyAgent {
      }
    }
  
@@ -1496,7 +1541,7 @@ index d7054449516f0c9a62af351c2caa17331206d530..5cc174373171329f36860103edab9532
    public kill(): void {
      // Tell the agent to kill the pty, this releases handles to the process
      if (this._useConpty) {
-@@ -223,6 +248,10 @@ export class WindowsPtyAgent {
+@@ -223,6 +258,10 @@ export class WindowsPtyAgent {
     */
    private _$onProcessExit(exitCode: number): void {
      this._exitCode = exitCode;

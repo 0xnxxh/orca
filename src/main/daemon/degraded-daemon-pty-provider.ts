@@ -179,7 +179,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
     const providers = this.allProviders()
     const results = await Promise.all(providers.map((provider) => provider.listProcesses(opts)))
-    const ambiguousIds = this.sessionRouting.refreshDaemonSessions(results.slice(1))
+    const ambiguousIds = this.sessionRouting.refreshSessions(results[0], results.slice(1))
     if (ambiguousIds.length > 0) {
       throw this.ambiguousOwnershipError(ambiguousIds)
     }
@@ -332,7 +332,9 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   private ambiguousOwnershipError(sessionIds: string[]): Error {
-    return new Error(`Ambiguous PTY session ownership across daemons: ${sessionIds.join(', ')}`)
+    return new Error(
+      `Ambiguous PTY session ownership across degraded providers: ${sessionIds.join(', ')}`
+    )
   }
 
   private allProviders(): DegradedManagedPtyProvider[] {

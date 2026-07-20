@@ -203,13 +203,45 @@ describe('DegradedDaemonPtyProvider', () => {
         immediate: true,
         deadlineMs: Date.now() + 1000
       })
-    ).rejects.toThrow('Ambiguous PTY session ownership across daemons: duplicate-session')
+    ).rejects.toThrow(
+      'Ambiguous PTY session ownership across degraded providers: duplicate-session'
+    )
     await expect(provider.listProcesses({ deadlineMs: Date.now() + 1000 })).rejects.toThrow(
-      'Ambiguous PTY session ownership across daemons: duplicate-session'
+      'Ambiguous PTY session ownership across degraded providers: duplicate-session'
     )
     expect(current.shutdown).not.toHaveBeenCalled()
     expect(legacy.shutdown).not.toHaveBeenCalled()
     expect(fallback.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when recovered daemon ownership duplicates a fallback session', async () => {
+    const current = createDaemonAdapter('daemon', ['duplicate-session'])
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(current.listProcesses).mockRejectedValueOnce(new Error('daemon still starting'))
+
+    await provider.discoverDaemonSessions()
+    await provider.spawn({ sessionId: 'duplicate-session', cols: 80, rows: 24 })
+
+    await expect(provider.listProcesses({ deadlineMs: Date.now() + 1000 })).rejects.toThrow(
+      'Ambiguous PTY session ownership across degraded providers: duplicate-session'
+    )
+    await expect(
+      provider.shutdown('duplicate-session', {
+        immediate: true,
+        deadlineMs: Date.now() + 1000
+      })
+    ).rejects.toThrow(
+      'Ambiguous PTY session ownership across degraded providers: duplicate-session'
+    )
+    expect(current.shutdown).not.toHaveBeenCalled()
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+
+    // Why: ambiguity must not erase the local owner needed by daemon-restart cleanup.
+    await expect(provider.shutdownFallbackSessions()).resolves.toBe(1)
+    expect(fallback.shutdown).toHaveBeenCalledWith('duplicate-session', { immediate: true })
+    warn.mockRestore()
   })
 
   it('routes authoritative recovery snapshots to the owning daemon', async () => {

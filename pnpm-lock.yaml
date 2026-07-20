@@ -21,7 +21,7 @@ patchedDependencies:
     hash: 9c1de9931d86864923ff53bc9d64474a86478085ac81ea4e432648c7e23d702c
     path: config/patches/@xterm__xterm@6.1.0-beta.287.patch
   node-pty@1.1.0:
-    hash: df33dca8f8460a5183c15777601baece5d202e732f5ee7b91ffa37593e0cd89e
+    hash: d4382e83147336cfe41bd6174e27ae922723cab8da1da6939d16c74b71a46820
     path: config/patches/node-pty@1.1.0.patch
 
 importers:
@@ -63,7 +63,7 @@ importers:
         version: 3.3.1
       node-pty:
         specifier: ^1.1.0
-        version: 1.1.0(patch_hash=df33dca8f8460a5183c15777601baece5d202e732f5ee7b91ffa37593e0cd89e)
+        version: 1.1.0(patch_hash=d4382e83147336cfe41bd6174e27ae922723cab8da1da6939d16c74b71a46820)
       posthog-node:
         specifier: ^5.33.3
         version: 5.33.3
@@ -12043,7 +12043,7 @@ snapshots:
       undici: 6.27.0
       which: 6.0.1
 
-  node-pty@1.1.0(patch_hash=df33dca8f8460a5183c15777601baece5d202e732f5ee7b91ffa37593e0cd89e):
+  node-pty@1.1.0(patch_hash=d4382e83147336cfe41bd6174e27ae922723cab8da1da6939d16c74b71a46820):
     dependencies:
       node-addon-api: 7.1.1
 
