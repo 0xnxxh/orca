@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useAppStore } from '@/store'
 import type { DashboardBucket } from '../../../../shared/dashboard-snapshot'
-import { buildDashboardSnapshot, type DashboardSnapshotState } from './build-dashboard-snapshot'
+import { buildDashboardSnapshot } from './build-dashboard-snapshot'
 
 export type AgentBucketCounts = Record<DashboardBucket, number>
 
@@ -25,7 +25,6 @@ export function useAgentBucketCounts(): AgentBucketCounts {
   const terminalLayoutsByTabId = useAppStore((s) => s.terminalLayoutsByTabId)
   const ptyIdsByTabId = useAppStore((s) => s.ptyIdsByTabId)
   const runtimePaneTitlesByTabId = useAppStore((s) => s.runtimePaneTitlesByTabId)
-  const gitStatusByWorktree = useAppStore((s) => s.gitStatusByWorktree)
   const agentStatusEpoch = useAppStore((s) => s.agentStatusEpoch)
 
   return useMemo(() => {
@@ -41,8 +40,9 @@ export function useAgentBucketCounts(): AgentBucketCounts {
         terminalLayoutsByTabId,
         ptyIdsByTabId,
         runtimePaneTitlesByTabId,
-        gitStatusByWorktree
-      } as DashboardSnapshotState,
+        // Counts do not render acknowledgement state, so avoid subscribing the sidebar to it.
+        acknowledgedAgentsByPaneKey: {}
+      },
       Date.now()
     )
     if (snapshot.cards.length === 0) {
@@ -67,7 +67,6 @@ export function useAgentBucketCounts(): AgentBucketCounts {
     terminalLayoutsByTabId,
     ptyIdsByTabId,
     runtimePaneTitlesByTabId,
-    gitStatusByWorktree,
     agentStatusEpoch
   ])
 }
