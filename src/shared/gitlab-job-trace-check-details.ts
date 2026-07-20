@@ -3,19 +3,26 @@ import type { PRCheckDetail, PRCheckRunDetails } from './types'
 // Why: GitLab job traces can be megabytes; the Checks panel only needs the tail
 // to surface the failure, matching the GitHub log-excerpt behavior.
 const GITLAB_TRACE_TAIL_LINES = 200
+const GITLAB_TRACE_TAIL_CODE_UNITS = 16 * 1024
 
 function sliceTraceTail(trace: string): string {
-  // Walk back from the end over N newlines instead of splitting the whole
-  // (possibly multi-MB) trace into an array we'd immediately discard all but the tail of.
   let cut = trace.length
   for (let remaining = GITLAB_TRACE_TAIL_LINES; remaining > 0; remaining--) {
     const newline = trace.lastIndexOf('\n', cut - 1)
     if (newline === -1) {
-      return trace
+      cut = -1
+      break
     }
     cut = newline
   }
-  return trace.slice(cut + 1)
+  // Why: a single generated line can be megabytes, so the line limit alone
+  // does not bound the retained renderer state.
+  let start = Math.max(cut + 1, trace.length - GITLAB_TRACE_TAIL_CODE_UNITS)
+  const firstCodeUnit = trace.charCodeAt(start)
+  if (start > 0 && firstCodeUnit >= 0xdc00 && firstCodeUnit <= 0xdfff) {
+    start += 1
+  }
+  return trace.slice(start)
 }
 
 /**

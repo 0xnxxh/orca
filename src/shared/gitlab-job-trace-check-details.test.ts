@@ -40,6 +40,16 @@ describe('gitLabJobTraceToCheckRunDetails', () => {
     expect(tailLines.at(-1)).toBe('line 499')
   })
 
+  it('bounds a huge single-line trace without splitting a surrogate pair', () => {
+    const trace = `${'x'.repeat(10)}💥${'y'.repeat(16 * 1024 - 5)}tail`
+
+    const [job] = gitLabJobTraceToCheckRunDetails(CHECK, trace).jobs
+
+    expect(job.logTail?.length).toBeLessThanOrEqual(16 * 1024)
+    expect(job.logTail?.endsWith('tail')).toBe(true)
+    expect(job.logTail?.charCodeAt(0)).not.toBeGreaterThanOrEqual(0xdc00)
+  })
+
   it('emits no job when the trace is empty so the panel shows its empty state', () => {
     expect(gitLabJobTraceToCheckRunDetails(CHECK, '   \n  ').jobs).toEqual([])
   })

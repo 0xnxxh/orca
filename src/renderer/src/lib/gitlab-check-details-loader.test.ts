@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import type * as RuntimeRpcClient from '@/runtime/runtime-rpc-client'
 import { loadGitLabCheckRunDetails } from './gitlab-check-details-loader'
-import type { PRCheckDetail } from '../../../../shared/types'
+import type { PRCheckDetail } from '../../../shared/types'
 
 vi.mock('@/runtime/runtime-rpc-client', async () => {
   const actual = await vi.importActual<typeof RuntimeRpcClient>('@/runtime/runtime-rpc-client')

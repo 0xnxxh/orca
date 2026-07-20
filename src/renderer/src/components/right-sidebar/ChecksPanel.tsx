@@ -63,7 +63,7 @@ import type {
   PRComment,
   PRRefreshErrorType
 } from '../../../../shared/types'
-import { loadGitLabCheckRunDetails } from './gitlab-check-details-loader'
+import { loadGitLabCheckRunDetails } from '@/lib/gitlab-check-details-loader'
 import { getConnectionId } from '@/lib/connection-context'
 import {
   buildResolvePullRequestConflictsPrompt,
@@ -2627,7 +2627,9 @@ export default function ChecksPanel(): React.JSX.Element {
         const result = await resolveGitLabMRDiscussionForChecks({
           repoPath: repo.path,
           repoId: repo.id,
-          settings,
+          // Why: resolve against the viewed worktree's GitLab host, even when
+          // another local or remote runtime currently has focus.
+          settings: ownerSettings,
           iid: activeGitLabReview.number,
           discussionId: threadId,
           resolved: resolve
@@ -2686,7 +2688,7 @@ export default function ChecksPanel(): React.JSX.Element {
       prNumber,
       repo,
       resolveReviewThread,
-      settings
+      ownerSettings
     ]
   )
 

@@ -62,7 +62,7 @@ import {
   statRuntimePath
 } from '@/runtime/runtime-file-client'
 import { settingsForRuntimeOwner } from '@/runtime/runtime-rpc-client'
-import { loadGitLabCheckRunDetails } from '@/components/right-sidebar/gitlab-check-details-loader'
+import { loadGitLabCheckRunDetails } from '@/lib/gitlab-check-details-loader'
 import { notifyHostOfMirroredEditorClose } from '@/runtime/close-mirrored-editor-tab'
 import { findWorktreeById, getRepoIdFromWorktreeId } from './worktree-helpers'
 import { getExplicitRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'

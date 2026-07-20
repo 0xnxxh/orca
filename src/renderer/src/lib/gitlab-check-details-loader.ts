@@ -1,19 +1,10 @@
-import type {
-  GitLabJobTraceResult,
-  PRCheckDetail,
-  PRCheckRunDetails
-} from '../../../../shared/types'
-import { gitLabJobTraceToCheckRunDetails } from '../../../../shared/gitlab-job-trace-check-details'
+import type { GitLabJobTraceResult, PRCheckDetail, PRCheckRunDetails } from '../../../shared/types'
+import { gitLabJobTraceToCheckRunDetails } from '../../../shared/gitlab-job-trace-check-details'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 
 /**
- * Loads inline details for a GitLab pipeline job by fetching its trace via
- * `gitlab:jobTrace` and adapting it into the shared `PRCheckRunDetails` shape.
- * Shared by the Checks panel and the full-details editor tab so both surfaces
- * render GitLab jobs through the same GitHub-parity rendering path.
- *
- * Returns `null` when the check is not a GitLab job (no `gitlabJobId`); throws
- * on a failed trace fetch so callers can surface the GitLab error verbatim.
+ * Loads a GitLab job trace from the worktree's runtime owner and adapts it to
+ * the provider-neutral check-details shape used by the sidebar and editor.
  */
 export async function loadGitLabCheckRunDetails(args: {
   repoPath: string
