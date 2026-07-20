@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { writeFileAtomically } from './codex-accounts/fs-utils'
 import { getOrcaManagedCodexHomePath } from './codex/codex-home-paths'
 import { upsertProjectTrustLevel } from './codex/config-toml-trust'
@@ -120,18 +120,34 @@ export function markCodexProjectTrusted(workspacePath: string): void {
 function resolveCodexProjectTrustRoot(workspacePath: string): string {
   const absPath = canonicalize(workspacePath)
   try {
-    const gitDirReference = readFileSync(join(absPath, '.git'), 'utf-8')
-    const gitDirMatch = /^gitdir:\s*(.+?)\s*$/im.exec(gitDirReference)
-    if (!gitDirMatch?.[1]) {
+    const gitDirReference = readFileSync(join(absPath, '.git'), 'utf-8').trim()
+    if (!gitDirReference.startsWith('gitdir:')) {
       return absPath
     }
-    const gitDir = resolve(absPath, gitDirMatch[1])
-    const commonDirReference = readFileSync(join(gitDir, 'commondir'), 'utf-8').trim()
-    if (!commonDirReference) {
+    const gitDirPath = gitDirReference.slice('gitdir:'.length).trim()
+    if (!gitDirPath) {
       return absPath
     }
-    // Why: Codex resolves linked-worktree trust through commondir to the main repo root.
-    return canonicalize(dirname(resolve(gitDir, commonDirReference)))
+    const gitDir = resolve(absPath, gitDirPath)
+    const worktreesDir = dirname(gitDir)
+    if (basename(worktreesDir) !== 'worktrees') {
+      return absPath
+    }
+    // Why: workspace-controlled .git metadata must not broaden trust without Git's reciprocal link.
+    const gitDirBacklink = readFileSync(join(gitDir, 'gitdir'), 'utf-8').trim()
+    if (!gitDirBacklink) {
+      return absPath
+    }
+    const resolvedBacklink = resolve(gitDir, gitDirBacklink)
+    const workspaceGitFile = join(absPath, '.git')
+    if (
+      resolvedBacklink !== workspaceGitFile &&
+      canonicalize(resolvedBacklink) !== canonicalize(workspaceGitFile)
+    ) {
+      return absPath
+    }
+    // Why: mirror Codex's validated .git/worktrees/<name> traversal instead of trusting arbitrary commondir contents.
+    return canonicalize(dirname(dirname(worktreesDir)))
   } catch {
     return absPath
   }

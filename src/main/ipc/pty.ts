@@ -619,7 +619,7 @@ function getLocalOrcaCodexHomeEnvKeysToDelete(env: Record<string, string>): stri
   return keysToDelete
 }
 
-type GetSelectedCodexHomePath = (
+export type GetSelectedCodexHomePath = (
   target?: CodexAccountSelectionTarget,
   launchEnv?: NodeJS.ProcessEnv,
   launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
