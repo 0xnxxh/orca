@@ -970,16 +970,6 @@ describe('CodexAccountService config sync', () => {
     })
     const store = createStore(settings)
     const runtimeHome = createRuntimeHome()
-    runtimeHome.syncForCurrentSelection.mockImplementation(() => {
-      const current = store.getSettings()
-      store.updateSettings({
-        activeCodexManagedAccountId: null,
-        activeCodexManagedAccountIdsByRuntime: {
-          ...current.activeCodexManagedAccountIdsByRuntime!,
-          host: null
-        }
-      })
-    })
     const spawnMock = vi.fn(
       (_command: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
         const child = new EventEmitter() as EventEmitter & {
@@ -990,6 +980,14 @@ describe('CodexAccountService config sync', () => {
         child.stdout = new PassThrough()
         child.stderr = new PassThrough()
         child.kill = vi.fn()
+        const current = store.getSettings()
+        store.updateSettings({
+          activeCodexManagedAccountId: null,
+          activeCodexManagedAccountIdsByRuntime: {
+            ...current.activeCodexManagedAccountIdsByRuntime!,
+            host: null
+          }
+        })
         writeFileSync(
           join(options.env.CODEX_HOME!, 'auth.json'),
           createCodexAuthJson('reauthenticated@example.com', 'provider-new', 'refresh-new'),
@@ -1028,6 +1026,9 @@ describe('CodexAccountService config sync', () => {
         wsl: { Ubuntu: null }
       }
     })
+    expect(runtimeHome.syncForCurrentSelection).toHaveBeenCalledTimes(1)
+    // One test-simulated clear plus one atomic account/selection update; reauth must not add a redundant persistence write.
+    expect(store.updateSettings).toHaveBeenCalledTimes(2)
   })
 
   it('does not recreate a missing managed home at a different account path', async () => {

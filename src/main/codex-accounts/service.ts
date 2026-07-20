@@ -283,6 +283,7 @@ export class CodexAccountService {
         : entry
     )
 
+    // Why: runtime validation can clear selection while login rewrites auth.json; restore it before syncing fresh auth.
     this.store.updateSettings({
       codexManagedAccounts: updatedAccounts,
       activeCodexManagedAccountId: activeSelection.host,
@@ -297,11 +298,6 @@ export class CodexAccountService {
       undefined,
       getCodexSelectionTargetForAccount(account)
     )
-    // Why: runtime-home validation can clear the selection during reauth's credential transition.
-    this.store.updateSettings({
-      activeCodexManagedAccountId: activeSelection.host,
-      activeCodexManagedAccountIdsByRuntime: activeSelection
-    })
     return this.getSnapshot()
   }
 
