@@ -1,9 +1,11 @@
 import React from 'react'
-import { Bell, CalendarClock, Search, Smartphone } from 'lucide-react'
+import { Bell, CalendarClock, LayoutDashboard, Search, Smartphone } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import type { GlobalSettings } from '../../../../shared/types'
+import { DASHBOARD_BUCKET_ORDER, type DashboardBucket } from '../../../../shared/dashboard-snapshot'
+import { useAgentBucketCounts } from '@/components/dashboard/useAgentBucketCounts'
 import { useActivityUnreadCount } from '@/components/activity/useActivityUnreadCount'
 import { useShortcutKeyComboDetails } from '@/hooks/useShortcutLabel'
 import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
@@ -34,6 +36,38 @@ export function shouldShowAutomationsButton(
   return settings?.showAutomationsButton !== false
 }
 
+// Per-state dot colors mirror AgentStateDot so the sidebar counts read the same
+// as the board (amber = needs you, yellow = working, neutral = idle, emerald = done).
+const DASHBOARD_BUCKET_DOT_CLASS: Record<DashboardBucket, string> = {
+  attention: 'bg-amber-500',
+  working: 'bg-yellow-500',
+  idle: 'bg-neutral-500/50'
+}
+
+function DashboardBucketCounts({
+  counts
+}: {
+  counts: Record<DashboardBucket, number>
+}): React.JSX.Element | null {
+  const active = DASHBOARD_BUCKET_ORDER.filter((bucket) => counts[bucket] > 0)
+  if (active.length === 0) {
+    return null
+  }
+  return (
+    <span className="flex items-center gap-1.5">
+      {active.map((bucket) => (
+        <span
+          key={bucket}
+          className="inline-flex items-center gap-1 text-[10px] tabular-nums text-worktree-sidebar-foreground/55"
+        >
+          <span className={cn('size-1.5 rounded-full', DASHBOARD_BUCKET_DOT_CLASS[bucket])} />
+          {counts[bucket]}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 const SidebarNav = React.memo(function SidebarNav() {
   // Why: this memo boundary needs its own language subscription, while
   // translate() preserves Orca's pseudo-localization behavior.
@@ -53,6 +87,7 @@ const SidebarNav = React.memo(function SidebarNav() {
   const mobileActive = activeView === 'mobile'
   const activityUnreadCount = useActivityUnreadCount(showAgentsButton, 'sidebar-badge')
   const mobileOnboardingBadge = useMobileSidebarOnboardingBadge(showMobileButton)
+  const dashboardBucketCounts = useAgentBucketCounts()
   const hideAutomationsButton = React.useCallback(() => {
     void updateSettings({ showAutomationsButton: false })
   }, [updateSettings])
@@ -96,6 +131,23 @@ const SidebarNav = React.memo(function SidebarNav() {
           <HideSidebarMenu onHide={hideAutomationsButton} />
         </ContextMenu>
       ) : null}
+      <button
+        type="button"
+        onClick={() => {
+          void window.api.dashboard.openPopout()
+        }}
+        className={cn(
+          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium tracking-tight transition-colors',
+          'text-worktree-sidebar-foreground/60 hover:bg-worktree-sidebar-foreground/8'
+        )}
+      >
+        <LayoutDashboard
+          className="size-4 shrink-0 text-worktree-sidebar-foreground/30"
+          strokeWidth={1.75}
+        />
+        <span className="flex-1">{translate('dashboard.sidebar.label', 'Agent Dashboard')}</span>
+        <DashboardBucketCounts counts={dashboardBucketCounts} />
+      </button>
       {showAgentsButton ? (
         <button
           type="button"

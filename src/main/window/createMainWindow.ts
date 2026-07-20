@@ -49,6 +49,8 @@ import { getMainE2EConfig } from '../e2e-config'
 import { buildEditableContextMenuTemplate } from './editable-context-menu'
 import { clearTrustedUIRendererWebContentsId, setTrustedUIRendererWebContentsId } from '../ipc/ui'
 import { resolveWindowCloseAction } from './window-close-decision'
+import { rectHasVisibleAreaOnAnyDisplay } from './window-bounds-validation'
+import { closeDashboardPopout } from './dashboard-popout-window'
 
 function forceRepaint(window: BrowserWindow): void {
   if (window.isDestroyed()) {
@@ -165,32 +167,11 @@ export function createMainWindow(
   // the dock is also correctly discarded). A rect saved while an external
   // monitor was connected would otherwise be restored off-screen and
   // macOS would silently shrink/reposition the window.
-  const rectHasVisibleAreaOnAnyDisplay = (b: {
-    x: number
-    y: number
-    width: number
-    height: number
-  }): boolean => {
-    try {
-      return screen.getAllDisplays().some((d) => {
-        const wa = d.workArea
-        const overlapX = Math.max(0, Math.min(b.x + b.width, wa.x + wa.width) - Math.max(b.x, wa.x))
-        const overlapY = Math.max(
-          0,
-          Math.min(b.y + b.height, wa.y + wa.height) - Math.max(b.y, wa.y)
-        )
-        return overlapX >= MIN_WIDTH / 2 && overlapY >= MIN_HEIGHT / 2
-      })
-    } catch (err) {
-      console.warn('[window] screen.getAllDisplays() threw; treating bounds as off-screen', err)
-      return false
-    }
-  }
   const savedBounds =
     rawSavedBounds &&
     rawSavedBounds.width > MIN_WIDTH &&
     rawSavedBounds.height > MIN_HEIGHT &&
-    rectHasVisibleAreaOnAnyDisplay(rawSavedBounds)
+    rectHasVisibleAreaOnAnyDisplay(rawSavedBounds, MIN_WIDTH / 2, MIN_HEIGHT / 2)
       ? rawSavedBounds
       : undefined
   if (rawSavedBounds && !savedBounds) {
@@ -1189,6 +1170,10 @@ export function createMainWindow(
 
   ipcMain.on(confirmCloseChannel, onConfirmClose)
   mainWindow.on('closed', () => {
+    // Why: the dashboard pop-out is a companion of the main window — close it
+    // alongside so it never orphans as a lone window after the app window is
+    // gone (e.g. on macOS where the app stays alive after the window closes).
+    closeDashboardPopout()
     clearInitialRevealFallbackTimer()
     // Why: default-deny the Cmd+B carve-out after the window is gone so a
     // stale-true flag can't leak past subsequent state transitions. Paired

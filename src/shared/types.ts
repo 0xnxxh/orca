@@ -3423,6 +3423,9 @@ export type PersistedUIState = {
   windowBounds?: { x: number; y: number; width: number; height: number } | null
   /** Whether the window was maximized when it was last closed. */
   windowMaximized?: boolean
+  /** Saved bounds for the pop-out dashboard window so it restores to its last
+   *  position/size. Independent of the main window's bounds. */
+  dashboardPopoutBounds?: { x: number; y: number; width: number; height: number } | null
   /** One-shot migration flag: 'recent' used to mean the weighted smart sort
    *  (v1→v2 rename). When this flag is absent and sortBy is 'recent', the
    *  main-process load() migrates it to 'smart' and sets this flag so the
