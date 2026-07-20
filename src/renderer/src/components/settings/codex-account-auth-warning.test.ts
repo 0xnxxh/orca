@@ -52,6 +52,21 @@ describe('codex account auth warning', () => {
     ).toBe('stale-sign-in')
   })
 
+  it('preserves stale-sign-in warnings for an OAuth system default', () => {
+    expect(
+      getCodexAccountAuthWarning({
+        limits: codexLimits(
+          'Your access token could not be refreshed. Please log out and sign in again.'
+        ),
+        target: { runtime: 'host', wslDistro: null },
+        runtime: { runtime: 'host' },
+        activeAccountId: null,
+        accountId: null,
+        authKind: 'oauth'
+      })
+    ).toBe('stale-sign-in')
+  })
+
   it('does not warn for inactive accounts or a different runtime', () => {
     const limits = codexLimits(
       'Your access token could not be refreshed. Please log out and sign in again.'
