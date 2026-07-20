@@ -405,6 +405,36 @@ describe('applyTerminalAppearance theme assignment', () => {
     expect(pane.terminal.options.theme).not.toBe(firstTheme)
     expect(pane.terminal.options.theme?.background).toBe('#102030')
   })
+
+  // #7934: contrast correction rescues invisible white text on light backgrounds but over-corrects on dark; gate by mode.
+  it('keeps xterm contrast correction on light themes', () => {
+    const pane = makePane(1)
+    const settings = getDefaultSettings('/tmp')
+
+    apply(pane, { ...settings, theme: 'light' })
+
+    expect(pane.terminal.options.minimumContrastRatio).toBe(4.5)
+  })
+
+  it('disables xterm contrast correction on dark themes', () => {
+    const pane = makePane(1)
+    const settings = getDefaultSettings('/tmp')
+
+    apply(pane, { ...settings, theme: 'dark' })
+
+    expect(pane.terminal.options.minimumContrastRatio).toBe(1)
+  })
+
+  it('re-gates contrast correction when the theme flips live', () => {
+    const pane = makePane(1)
+    const settings = getDefaultSettings('/tmp')
+
+    apply(pane, { ...settings, theme: 'light' })
+    expect(pane.terminal.options.minimumContrastRatio).toBe(4.5)
+
+    apply(pane, { ...settings, theme: 'dark' })
+    expect(pane.terminal.options.minimumContrastRatio).toBe(1)
+  })
 })
 
 describe('publishTerminalViewAttributesAtAppStart', () => {

@@ -207,6 +207,13 @@ export function applyTerminalAppearance(
     if (theme && !composedTerminalThemesEqual(pane.terminal.options.theme, theme)) {
       pane.terminal.options.theme = theme
     }
+    // Why gate by mode (#7934): xterm's contrast correction rescues invisible white/bright-white ANSI text
+    // on light (white) backgrounds, but over-corrects vibrant ANSI colors on dark themes; disable it there.
+    // Why value-gated: writing minimumContrastRatio clears xterm's contrast cache, so skip on no-op re-applies.
+    const minimumContrastRatio = appearance.mode === 'light' ? 4.5 : 1
+    if (pane.terminal.options.minimumContrastRatio !== minimumContrastRatio) {
+      pane.terminal.options.minimumContrastRatio = minimumContrastRatio
+    }
     // Why clear explicitly: allowTransparency has rendering cost and a stale `true` could bleed in from a prior opacity.
     pane.terminal.options.allowTransparency =
       settings.terminalBackgroundOpacity !== undefined && settings.terminalBackgroundOpacity < 1
