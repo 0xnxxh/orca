@@ -122,10 +122,10 @@ index 0000000000000000000000000000000000000000..b149dd006735ddf64ea3f2b167c0271f
 +}
 diff --git a/lib/conptyJobTerminationFailure.test.js b/lib/conptyJobTerminationFailure.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..70f0d5757db2aafe117adf3f5ca053031f56020e
+index 0000000000000000000000000000000000000000..631d017d7187953bf8e6ef47f339f8c7231fbb06
 --- /dev/null
 +++ b/lib/conptyJobTerminationFailure.test.js
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,52 @@
 +"use strict";
 +/**
 + * Copyright (c) 2026, Stably AI (MIT License).
@@ -170,6 +170,10 @@ index 0000000000000000000000000000000000000000..70f0d5757db2aafe117adf3f5ca05303
 +        });
 +    }
 +    else {
++        var leakedWorkerWatchdog = setTimeout(function () {
++            throw new Error('ConPTY Job termination cleanup left JS resources alive');
++        }, 5000);
++        leakedWorkerWatchdog.unref();
 +        runAssertions_1();
 +        console.log('ConPTY Job capability and termination cleanup: 3 passed');
 +    }
@@ -215,7 +219,7 @@ index 1ec12f796a822c78fba9ad7f6448c3987e325c23..cec8b67aef02f8199e5606a0d257088b
  var DEFAULT_NAME = 'xterm';
  var DESTROY_SOCKET_TIMEOUT_MS = 200;
 diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
-index a358ffb177357e177661033c1b092f9c9d0e5f5a..6d5a00662763c377371603fbb8e5119a097cea3f 100644
+index a358ffb177357e177661033c1b092f9c9d0e5f5a..7ce4a29defba89c972cb405035f396041eb96695 100644
 --- a/lib/windowsPtyAgent.js
 +++ b/lib/windowsPtyAgent.js
 @@ -26,17 +26,26 @@ var FLUSH_DATA_INTERVAL = 1000;
@@ -313,7 +317,25 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..6d5a00662763c377371603fbb8e5119a
      WindowsPtyAgent.prototype.kill = function () {
          var _this = this;
          // Tell the agent to kill the pty, this releases handles to the process
-@@ -221,6 +263,10 @@ var WindowsPtyAgent = /** @class */ (function () {
+@@ -154,9 +196,15 @@ var WindowsPtyAgent = /** @class */ (function () {
+                 // Close the input write handle to signal the end of session.
+                 this._inSocket.destroy();
+                 this._ptyNative.kill(this._pty, this._useConptyDll);
+-                this._outSocket.on('data', function () {
++                if (this._windowsAgentJob) {
++                    // Why: Job termination can remove every writer before another data event.
+                     _this._conoutSocketWorker.dispose();
+-                });
++                }
++                else {
++                    this._outSocket.on('data', function () {
++                        _this._conoutSocketWorker.dispose();
++                    });
++                }
+             }
+         }
+         else {
+@@ -221,6 +269,10 @@ var WindowsPtyAgent = /** @class */ (function () {
      WindowsPtyAgent.prototype._$onProcessExit = function (exitCode) {
          var _this = this;
          this._exitCode = exitCode;
@@ -325,10 +347,10 @@ index a358ffb177357e177661033c1b092f9c9d0e5f5a..6d5a00662763c377371603fbb8e5119a
              this._flushDataAndCleanUp();
              this._outSocket.on('data', function () { return _this._flushDataAndCleanUp(); });
 diff --git a/lib/windowsPtyAgent.test.js b/lib/windowsPtyAgent.test.js
-index 15bbf5ba397ab02a5ec6a11b1c0c6f6ffd137be0..b8c2a60ca5e021e3fe2a73762f0000da35a7fc1d 100644
+index 15bbf5ba397ab02a5ec6a11b1c0c6f6ffd137be0..7a894dd2e7c139c657a0ac06d1b25679ee3de89c 100644
 --- a/lib/windowsPtyAgent.test.js
 +++ b/lib/windowsPtyAgent.test.js
-@@ -10,6 +10,26 @@ function check(file, args, expected) {
+@@ -10,6 +10,38 @@ function check(file, args, expected) {
      assert.equal(windowsPtyAgent_1.argsToCommandLine(file, args), expected);
  }
  if (process.platform === 'win32') {
@@ -350,6 +372,18 @@ index 15bbf5ba397ab02a5ec6a11b1c0c6f6ffd137be0..b8c2a60ca5e021e3fe2a73762f0000da
 +            agent._windowsAgentJob = false;
 +            assert.strictEqual(agent.windowsAgentJob, false);
 +            assert.strictEqual(agent.terminateJobTree(1000), undefined);
++        });
++        it('disposes Job output without waiting for a final data event', function () {
++            var disposed = false;
++            var agent = Object.create(windowsPtyAgent_1.WindowsPtyAgent.prototype);
++            agent._windowsAgentJob = true;
++            agent._useConpty = true;
++            agent._useConptyDll = true;
++            agent._inSocket = { destroy: function () { return undefined; } };
++            agent._ptyNative = { kill: function () { return undefined; } };
++            agent._conoutSocketWorker = { dispose: function () { disposed = true; } };
++            agent.kill();
++            assert.strictEqual(disposed, true);
 +        });
 +    });
      describe('argsToCommandLine', function () {
@@ -408,7 +442,7 @@ index 3c38f89d14cece8081782a9600ebc582b7c2a62a..1cb42dc5d6a78e502673ff84982e8904
          var _this = this;
          this._deferNoArgs(function () {
 diff --git a/lib/windowsTerminal.test.js b/lib/windowsTerminal.test.js
-index af5f343d17f012f330fe2292083f297768ff3b5e..a52859c445de83e033e69d880115051f010ff097 100644
+index af5f343d17f012f330fe2292083f297768ff3b5e..cfdabd7b1098e87af102e88b59347692647dadad 100644
 --- a/lib/windowsTerminal.test.js
 +++ b/lib/windowsTerminal.test.js
 @@ -88,6 +88,14 @@ function pollForProcessTreeSize(pid, size, intervalMs, timeoutMs) {
@@ -547,10 +581,10 @@ index 0000000000000000000000000000000000000000..c9a657fbcae63e66b5930b7b52aaa98e
 +}
 diff --git a/src/conptyJobTerminationFailure.test.ts b/src/conptyJobTerminationFailure.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d8af2df3cfa9d6d51ff35b0d9f67c40c15d26a55
+index 0000000000000000000000000000000000000000..710c34b7e0328c9fbd6f243d0dc45371ea969f62
 --- /dev/null
 +++ b/src/conptyJobTerminationFailure.test.ts
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,97 @@
 +/**
 + * Copyright (c) 2026, Stably AI (MIT License).
 + */
@@ -640,6 +674,10 @@ index 0000000000000000000000000000000000000000..d8af2df3cfa9d6d51ff35b0d9f67c40c
 +      });
 +    });
 +  } else {
++    const leakedWorkerWatchdog = setTimeout(() => {
++      throw new Error('ConPTY Job termination cleanup left JS resources alive');
++    }, 5000);
++    leakedWorkerWatchdog.unref();
 +    runAssertions();
 +    console.log('ConPTY Job capability and termination cleanup: 3 passed');
 +  }
@@ -967,10 +1005,18 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d4486e92ff89 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..cf1570b820a01284392f50dbfa5733bd833f992d 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
-@@ -45,12 +45,40 @@ struct pty_baton {
+@@ -16,6 +16,7 @@
+ #include <Shlwapi.h> // PathCombine, PathIsRelative
+ #include <sstream>
+ #include <iostream>
++#include <memory>
+ #include <string>
+ #include <thread>
+ #include <vector>
+@@ -45,12 +46,40 @@ struct pty_baton {
    HPCON hpc;
  
    HANDLE hShell;
@@ -1013,7 +1059,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
  
  static pty_baton* get_pty_baton(int id) {
    auto it = std::find_if(ptyHandles.begin(), ptyHandles.end(), [id](const auto& ptyHandle) {
-@@ -73,6 +101,147 @@ static bool remove_pty_baton(int id) {
+@@ -73,6 +102,147 @@ static bool remove_pty_baton(int id) {
    return false;
  }
  
@@ -1161,7 +1207,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
  struct ExitEvent {
    int exit_code = 0;
  };
-@@ -91,7 +260,18 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+@@ -91,7 +261,18 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
          delete th;
        });
    *th = std::thread([tsfn = std::move(tsfn), baton] {
@@ -1181,7 +1227,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
        cb.Call({Napi::Number::New(env, exit_event->exit_code)});
        delete exit_event;
      };
-@@ -99,15 +279,41 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+@@ -99,15 +280,41 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
      ExitEvent *exit_event = new ExitEvent;
      // Wait for process to complete.
      WaitForSingleObject(baton->hShell, INFINITE);
@@ -1228,7 +1274,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
          break;
  
        case napi_queue_full:
-@@ -194,6 +400,8 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
+@@ -194,6 +401,8 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
                                           HANDLE *phInput,
                                           HANDLE *phOutput,
                                           HPCON* phPC,
@@ -1237,7 +1283,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
                                           std::wstring& inName,
                                           std::wstring& outName,
                                           const std::wstring& pipeName,
-@@ -214,6 +422,18 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
+@@ -214,6 +423,18 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
          return E_INVALIDARG;
        }
  
@@ -1256,7 +1302,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
        bool success = createDataServerPipe(true, L"in", phInput, inName, pipeName);
        if (!success)
        {
-@@ -289,7 +509,21 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
+@@ -289,7 +510,21 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
  
    HANDLE hIn, hOut;
    HPCON hpc;
@@ -1279,7 +1325,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
  
    // Restore default handling of ctrl+c
    SetConsoleCtrlHandler(NULL, FALSE);
-@@ -302,7 +536,13 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
+@@ -302,7 +537,13 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
      const int ptyId = InterlockedIncrement(&ptyCounter);
      marshal.Set("pty", Napi::Number::New(env, ptyId));
      ptyHandles.emplace_back(
@@ -1294,7 +1340,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
    } else {
      throw Napi::Error::New(env, "Cannot launch conpty");
    }
-@@ -333,14 +573,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -333,14 +574,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
    std::stringstream errorText;
    BOOL fSuccess = FALSE;
  
@@ -1313,7 +1359,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
    }
  
    const int id = info[0].As<Napi::Number>().Int32Value();
-@@ -348,7 +589,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -348,7 +590,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
    const std::wstring cwd(path_util::to_wstring(info[2].As<Napi::String>()));
    const Napi::Array envValues = info[3].As<Napi::Array>();
    const bool useConptyDll = info[4].As<Napi::Boolean>().Value();
@@ -1323,7 +1369,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
  
    // Fetch pty handle from ID and start process
    pty_baton* handle = get_pty_baton(id);
-@@ -391,11 +633,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -391,11 +634,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
  
    SIZE_T size = 0;
    InitializeProcThreadAttributeList(NULL, 1, 0, &size);
@@ -1341,7 +1387,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
      throw errorWithCode(info, "InitializeProcThreadAttributeList failed");
    }
    fSuccess = UpdateProcThreadAttribute(siEx.lpAttributeList,
-@@ -406,38 +652,82 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -406,38 +653,82 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
                                         NULL,
                                         NULL);
    if (!fSuccess) {
@@ -1435,7 +1481,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
    // Update handle
    handle->hShell = piClient.hProcess;
  
-@@ -445,7 +735,9 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -445,7 +736,9 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
    CloseHandle(piClient.hThread);
    // Close the input read and output write handle of the pseudoconsole
    CloseHandle(handle->hIn);
@@ -1445,7 +1491,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
  
    SetupExitCallback(env, exitCallback, handle);
  
-@@ -544,21 +836,10 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+@@ -544,21 +837,10 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    int id = info[0].As<Napi::Number>().Int32Value();
    const bool useConptyDll = info[1].As<Napi::Boolean>().Value();
  
@@ -1469,7 +1515,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
      if (useConptyDll) {
        TerminateProcess(handle->hShell, 1);
      }
-@@ -567,6 +848,178 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+@@ -567,6 +849,178 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    return env.Undefined();
  }
  
@@ -1648,7 +1694,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
  /**
  * Init
  */
-@@ -577,6 +1030,14 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+@@ -577,6 +1031,14 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
    exports.Set("resize", Napi::Function::New(env, PtyResize));
    exports.Set("clear", Napi::Function::New(env, PtyClear));
    exports.Set("kill", Napi::Function::New(env, PtyKill));
@@ -1664,10 +1710,10 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..82571e671b9605c84e69d106acf3d448
  };
  
 diff --git a/src/windowsPtyAgent.test.ts b/src/windowsPtyAgent.test.ts
-index dc2104b34fd396722a9e30821ff0b7dea18b4295..23510c3d7c85ecc911b94719832abe5f2b90c1e3 100644
+index dc2104b34fd396722a9e30821ff0b7dea18b4295..ca448e7ba0ed9bcee0081c15b40f048021becd0d 100644
 --- a/src/windowsPtyAgent.test.ts
 +++ b/src/windowsPtyAgent.test.ts
-@@ -4,13 +4,37 @@
+@@ -4,13 +4,52 @@
   */
  
  import * as assert from 'assert';
@@ -1701,13 +1747,28 @@ index dc2104b34fd396722a9e30821ff0b7dea18b4295..23510c3d7c85ecc911b94719832abe5f
 +      assert.strictEqual(agent.windowsAgentJob, false);
 +      assert.strictEqual(agent.terminateJobTree(1000), undefined);
 +    });
++
++    it('disposes Job output without waiting for a final data event', () => {
++      let disposed = false;
++      const agent = Object.create(WindowsPtyAgent.prototype) as any;
++      agent._windowsAgentJob = true;
++      agent._useConpty = true;
++      agent._useConptyDll = true;
++      agent._inSocket = { destroy: () => undefined };
++      agent._ptyNative = { kill: () => undefined };
++      agent._conoutSocketWorker = { dispose: () => { disposed = true; } };
++
++      agent.kill();
++
++      assert.strictEqual(disposed, true);
++    });
 +  });
 +
    describe('argsToCommandLine', () => {
      describe('Plain strings', () => {
        it('doesn\'t quote plain string', () => {
 diff --git a/src/windowsPtyAgent.ts b/src/windowsPtyAgent.ts
-index d7054449516f0c9a62af351c2caa17331206d530..96deaf4fe037a983a80dfa8d9e6149aab5ea6a27 100644
+index d7054449516f0c9a62af351c2caa17331206d530..45a2a19fd6c161a33178cd047c9a69db31a4e313 100644
 --- a/src/windowsPtyAgent.ts
 +++ b/src/windowsPtyAgent.ts
 @@ -34,6 +34,9 @@ export class WindowsPtyAgent {
@@ -1802,7 +1863,24 @@ index d7054449516f0c9a62af351c2caa17331206d530..96deaf4fe037a983a80dfa8d9e6149aa
    public kill(): void {
      // Tell the agent to kill the pty, this releases handles to the process
      if (this._useConpty) {
-@@ -223,6 +261,10 @@ export class WindowsPtyAgent {
+@@ -159,9 +197,14 @@ export class WindowsPtyAgent {
+         // Close the input write handle to signal the end of session.
+         this._inSocket.destroy();
+         (this._ptyNative as IConptyNative).kill(this._pty, this._useConptyDll);
+-        this._outSocket.on('data', () => {
++        if (this._windowsAgentJob) {
++          // Why: Job termination can remove every writer before another data event.
+           this._conoutSocketWorker.dispose();
+-        });
++        } else {
++          this._outSocket.on('data', () => {
++            this._conoutSocketWorker.dispose();
++          });
++        }
+       }
+     } else {
+       // Because pty.kill closes the handle, it will kill most processes by itself.
+@@ -223,6 +266,10 @@ export class WindowsPtyAgent {
     */
    private _$onProcessExit(exitCode: number): void {
      this._exitCode = exitCode;
