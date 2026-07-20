@@ -4083,13 +4083,13 @@ describe('OrcaRuntimeRpcServer', () => {
       }
     })
 
-    // Why (#4389): v5 → v6 must add the nullable workspace_key column to the
-    // four orchestration tables, bump user_version to 6, and leave existing
+    // Why (#4389): v6 → v7 must add the nullable workspace_key column to the
+    // four orchestration tables, bump user_version to 7, and leave existing
     // rows as NULL (legacy/global) so single-orchestrator installs are intact.
-    it('upgrades a v5 on-disk DB to v6 with workspace_key columns, preserving rows as NULL', () => {
-      const tmpPath = join(mkdtempSync(join(tmpdir(), 'orca-orch-mig-v6-')), 'orch.sqlite')
+    it('upgrades a v6 on-disk DB to v7 with workspace_key columns, preserving rows as NULL', () => {
+      const tmpPath = join(mkdtempSync(join(tmpdir(), 'orca-orch-mig-v7-')), 'orch.sqlite')
       const seed = new Database(tmpPath)
-      // Minimal pre-v6 (v5) shapes — no workspace_key on any table.
+      // Minimal v6 shapes include pane authority but no workspace_key.
       seed.exec(`
         CREATE TABLE coordinator_runs (
           id TEXT PRIMARY KEY, spec TEXT NOT NULL,
@@ -4106,6 +4106,7 @@ describe('OrcaRuntimeRpcServer', () => {
         );
         CREATE TABLE dispatch_contexts (
           id TEXT PRIMARY KEY, task_id TEXT NOT NULL, assignee_handle TEXT,
+          assignee_pane_key TEXT,
           status TEXT NOT NULL DEFAULT 'pending', failure_count INTEGER NOT NULL DEFAULT 0,
           last_failure TEXT, dispatched_at TEXT, completed_at TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')), last_heartbeat_at TEXT
@@ -4116,7 +4117,8 @@ describe('OrcaRuntimeRpcServer', () => {
           type TEXT NOT NULL DEFAULT 'status', priority TEXT NOT NULL DEFAULT 'normal',
           thread_id TEXT, payload TEXT, read INTEGER NOT NULL DEFAULT 0,
           sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')), delivered_at TEXT
+          created_at TEXT NOT NULL DEFAULT (datetime('now')), delivered_at TEXT,
+          sender_pane_key TEXT
         );
         INSERT INTO coordinator_runs (id, spec, status, coordinator_handle)
           VALUES ('run_legacy', 'legacy', 'running', 'coord');
@@ -4126,14 +4128,14 @@ describe('OrcaRuntimeRpcServer', () => {
         INSERT INTO messages (id, from_handle, to_handle, subject)
           VALUES ('msg_legacy', 'a', 'coord', 'hi');
       `)
-      seed.pragma('user_version = 5')
+      seed.pragma('user_version = 6')
       seed.close()
 
       const db = new OrchestrationDb(tmpPath)
       try {
         const probe = (db as unknown as { db: Database.Database }).db
         const version = probe.pragma('user_version', { simple: true }) as number
-        expect(version).toBe(6)
+        expect(version).toBe(7)
 
         const hasColumn = (table: string): boolean =>
           (probe.pragma(`table_info(${table})`) as { name: string }[]).some(

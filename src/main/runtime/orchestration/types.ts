@@ -19,7 +19,7 @@ export type GateStatus = 'pending' | 'resolved' | 'timeout'
 export type CoordinatorStatus = 'idle' | 'running' | 'completed' | 'failed'
 
 // Why (#4389): `workspace_key` scopes a row to the worktree of the orchestrator
-// that created it. NULL = legacy/global (pre-v6 rows or callers without a
+// that created it. NULL = legacy/global (pre-v7 rows or callers without a
 // worktree), which every scoped read still matches.
 export type MessageRow = {
   id: string

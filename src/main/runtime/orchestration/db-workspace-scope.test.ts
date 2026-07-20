@@ -107,4 +107,28 @@ describe('OrchestrationDb workspace scoping', () => {
     expect(staleA).toContain(ctxA.id)
     expect(staleA).not.toContain(ctxB.id)
   })
+
+  it('lists only pending gates owned by the coordinator workspace', () => {
+    const d = createDb()
+    const taskA = d.createTask({ spec: 'a-work', workspaceKey: KEY_A })
+    const taskB = d.createTask({ spec: 'b-work', workspaceKey: KEY_B })
+    const gateA = d.createGate({ taskId: taskA.id, question: 'A?' })
+    d.createGate({ taskId: taskB.id, question: 'B?' })
+
+    expect(d.listPendingGatesForWorkspace(KEY_A).map((gate) => gate.id)).toEqual([gateA.id])
+  })
+
+  it('keeps terminals with a foreign active dispatch globally unavailable', () => {
+    const d = createDb()
+    d.insertMessage({ from: 'coord_a', to: 'term_a', subject: 'known terminal' })
+    d.insertMessage({ from: 'coord_b', to: 'term_b', subject: 'known terminal' })
+    const taskA = d.createTask({ spec: 'a-work', workspaceKey: KEY_A })
+    const taskB = d.createTask({ spec: 'b-work', workspaceKey: KEY_B })
+    d.createDispatchContext(taskA.id, 'term_a')
+    d.createDispatchContext(taskB.id, 'term_b')
+
+    const idle = d.getIdleTerminals()
+    expect(idle).not.toContain('term_a')
+    expect(idle).not.toContain('term_b')
+  })
 })

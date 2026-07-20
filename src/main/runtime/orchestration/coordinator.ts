@@ -289,7 +289,9 @@ export class Coordinator {
     }
 
     const task = this.db.getTask(taskId)
-    if (!task || task.status === 'completed' || task.status === 'failed') {
+    // Why (#4389): message payloads are routing input, not ownership proof;
+    // never let one coordinator fail a task owned by another workspace.
+    if (!task || !this.ownsTask(task) || task.status === 'completed' || task.status === 'failed') {
       return
     }
 
@@ -326,6 +328,13 @@ export class Coordinator {
       return
     }
 
+    const task = this.db.getTask(payload.taskId)
+    // Why (#4389): a foreign task ID in a visible message must not let this
+    // coordinator create a gate that blocks another workspace's task.
+    if (!task || !this.ownsTask(task)) {
+      return
+    }
+
     this.db.createGate({
       taskId: payload.taskId,
       question: payload.question,
@@ -341,7 +350,7 @@ export class Coordinator {
 
   private processDecisionGates(): void {
     // Why: the coordinator never auto-resolves gates (humans do, via orchestration.gateResolve) — that would defeat them as approval checkpoints.
-    const pendingGates = this.db.listGates({ status: 'pending' })
+    const pendingGates = this.db.listPendingGatesForWorkspace(this.opts.workspaceKey)
     for (const gate of pendingGates) {
       const task = this.db.getTask(gate.task_id)
       // Why (#4389): decision_gates have no workspace_key, so derive scope from

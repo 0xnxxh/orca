@@ -21242,18 +21242,19 @@ export class OrcaRuntimeService {
 
   // Why (#4389): tasks created by a worker/coordinator terminal belong to that
   // terminal's worktree; scoping them by it keeps each orchestrator's task DAG
-  // private. Returns null when the handle is absent/stale so task creation stays
-  // recoverable and legacy (global) when no workspace can be proven.
+  // private. Only an omitted handle is legacy/global: an explicit stale handle
+  // must fail closed instead of silently creating a globally visible task.
   async resolveWorkspaceKeyForTerminalHandle(handle?: string | null): Promise<string | null> {
     if (!handle) {
       return null
     }
-    try {
-      const terminal = await this.showTerminal(handle)
-      return this.resolveWorkspaceKeyForSelector(`id:${terminal.worktreeId}`)
-    } catch {
+    const terminal = await this.showTerminal(handle)
+    // Why: the live floating terminal intentionally has no managed worktree;
+    // its orchestration tasks belong to the legacy/global scope.
+    if (terminal.worktreeId === FLOATING_TERMINAL_WORKTREE_ID) {
       return null
     }
+    return this.resolveWorkspaceKeyForSelector(`id:${terminal.worktreeId}`)
   }
 
   async hydrateInferredWorktreeLineage(): Promise<void> {

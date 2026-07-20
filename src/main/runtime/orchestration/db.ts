@@ -83,7 +83,7 @@ function exposeMessageListTimestamps(messages: MessageRow[]): MessageRow[] {
   return messages.map(exposeMessageTimestamps)
 }
 
-// Why (#4389): scope a query to one workspace without hiding pre-v6 rows. A
+// Why (#4389): scope a query to one workspace without hiding pre-v7 rows. A
 // provided key matches its own rows plus legacy NULL rows (single-orchestrator
 // installs predate scoping); an omitted key adds no constraint, preserving the
 // original global behavior for callers that have no worktree. The fragment
@@ -625,14 +625,21 @@ export class OrchestrationDb {
     workspaceKey?: string | null
   }): TaskRow[] {
     const scope = workspaceScopeClause(filter?.workspaceKey)
+    // Why (#4389): without the scoped index hint SQLite prefers idx_tasks_status
+    // and examines every workspace's rows on each coordinator poll.
+    const scopedIndex = filter?.workspaceKey == null ? '' : ' INDEXED BY idx_tasks_workspace_status'
     if (filter?.ready) {
       return this.db
-        .prepare(`SELECT * FROM tasks WHERE status = 'ready'${scope.clause} ORDER BY created_at`)
+        .prepare(
+          `SELECT * FROM tasks${scopedIndex} WHERE status = 'ready'${scope.clause} ORDER BY created_at`
+        )
         .all(...scope.params) as TaskRow[]
     }
     if (filter?.status) {
       return this.db
-        .prepare(`SELECT * FROM tasks WHERE status = ?${scope.clause} ORDER BY created_at`)
+        .prepare(
+          `SELECT * FROM tasks${scopedIndex} WHERE status = ?${scope.clause} ORDER BY created_at`
+        )
         .all(filter.status, ...scope.params) as TaskRow[]
     }
     if (scope.clause) {
@@ -640,7 +647,7 @@ export class OrchestrationDb {
       // leading ` AND ` would be a syntax error; emit a WHERE form instead.
       return this.db
         .prepare(
-          'SELECT * FROM tasks WHERE (workspace_key = ? OR workspace_key IS NULL) ORDER BY created_at'
+          `SELECT * FROM tasks${scopedIndex} WHERE (workspace_key = ? OR workspace_key IS NULL) ORDER BY created_at`
         )
         .all(...scope.params) as TaskRow[]
     }
@@ -705,9 +712,13 @@ export class OrchestrationDb {
 
   // Why: runs in the status-update transaction, so a completed task never leaves its ready children unpromoted.
   private promoteReadyTasks(completedTaskId: string): void {
+    const completedTask = this.getTask(completedTaskId)
+    const scope = workspaceScopeClause(completedTask?.workspace_key)
+    const scopedIndex =
+      completedTask?.workspace_key == null ? '' : ' INDEXED BY idx_tasks_workspace_status'
     const candidates = this.db
-      .prepare("SELECT * FROM tasks WHERE status = 'pending'")
-      .all() as TaskRow[]
+      .prepare(`SELECT * FROM tasks${scopedIndex} WHERE status = 'pending'${scope.clause}`)
+      .all(...scope.params) as TaskRow[]
 
     for (const task of candidates) {
       const deps: string[] = JSON.parse(task.deps)
@@ -876,9 +887,10 @@ export class OrchestrationDb {
   // Why: dispatched_at grace skips workers still within their first heartbeat interval; julianday() vs raw-TEXT compare avoids misflagging space-format timestamps as stale (#8452).
   getStaleDispatches(thresholdIso: string, workspaceKey?: string | null): DispatchContextRow[] {
     const scope = workspaceScopeClause(workspaceKey)
+    const scopedIndex = workspaceKey == null ? '' : ' INDEXED BY idx_dispatch_workspace_status'
     return this.db
       .prepare(
-        `SELECT * FROM dispatch_contexts
+        `SELECT * FROM dispatch_contexts${scopedIndex}
          WHERE status = 'dispatched'
            AND dispatched_at IS NOT NULL
            AND julianday(dispatched_at) < julianday(?)
@@ -982,6 +994,23 @@ export class OrchestrationDb {
     return this.db
       .prepare('SELECT * FROM decision_gates ORDER BY created_at')
       .all() as DecisionGateRow[]
+  }
+
+  listPendingGatesForWorkspace(workspaceKey?: string | null): DecisionGateRow[] {
+    if (workspaceKey == null) {
+      return this.listGates({ status: 'pending' })
+    }
+    // Why (#4389): decision gates inherit ownership from their task. Filtering
+    // in SQL avoids every concurrent coordinator scanning every workspace's gates.
+    return this.db
+      .prepare(
+        `SELECT g.* FROM decision_gates g
+         INNER JOIN tasks t ON t.id = g.task_id
+         WHERE g.status = 'pending'
+           AND (t.workspace_key = ? OR t.workspace_key IS NULL)
+         ORDER BY g.created_at`
+      )
+      .all(workspaceKey) as DecisionGateRow[]
   }
 
   getGate(id: string): DecisionGateRow | undefined {
