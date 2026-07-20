@@ -7,7 +7,10 @@ import {
   resolveRuntimePath
 } from './cross-platform-path'
 import { parseWslUncPath } from './wsl-paths'
-import { isAgentScratchWorktreePath } from './agent-scratch-worktrees'
+import {
+  isAgentScratchWorktreePath,
+  type AgentScratchWorktreePathMatcher
+} from './agent-scratch-worktrees'
 import { isExplicitlyImportedExternalWorktreePath } from './external-worktree-inbox'
 import type {
   DetectedWorktree,
@@ -155,6 +158,7 @@ export function classifyWorktreeOwnership(args: {
   meta?: WorktreeMeta
   settings: Pick<GlobalSettings, 'workspaceDir' | 'nestWorkspaces' | 'workspaceDirHistory'>
   knownOrcaLayouts: OrcaWorkspaceLayout[]
+  agentScratchWorktreePathMatcher?: AgentScratchWorktreePathMatcher
 }): WorktreeOwnership {
   if (hasStrongOrcaMetadata(args.meta)) {
     return 'orca-managed'
@@ -162,7 +166,10 @@ export function classifyWorktreeOwnership(args: {
 
   // Why: sub-agent scratch worktrees (e.g. .claude/worktrees) are tool
   // plumbing, not workspaces; classify before layout heuristics (#9388).
-  if (isAgentScratchWorktreePath(args.repo.path, args.worktree.path)) {
+  if (
+    args.agentScratchWorktreePathMatcher?.(args.worktree.path) ??
+    isAgentScratchWorktreePath(args.repo.path, args.worktree.path)
+  ) {
     return 'agent-scratch'
   }
 
@@ -186,6 +193,7 @@ export function toDetectedWorktree(args: {
   settings: Pick<GlobalSettings, 'workspaceDir' | 'nestWorkspaces' | 'workspaceDirHistory'>
   knownOrcaLayouts: OrcaWorkspaceLayout[]
   isLegacyRepoForVisibility?: boolean
+  agentScratchWorktreePathMatcher?: AgentScratchWorktreePathMatcher
 }): DetectedWorktree {
   const ownership = classifyWorktreeOwnership(args)
   const selectedCheckout = areRuntimePathsEqual(args.worktree.path, args.repo.path)

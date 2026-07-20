@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { isAgentScratchWorktreePath } from './agent-scratch-worktrees'
+import {
+  createAgentScratchWorktreePathMatcher,
+  isAgentScratchWorktreePath
+} from './agent-scratch-worktrees'
 
 describe('isAgentScratchWorktreePath', () => {
   const repoPath = '/Users/dev/app'
@@ -17,6 +20,22 @@ describe('isAgentScratchWorktreePath', () => {
     expect(
       isAgentScratchWorktreePath(repoPath, '/Users/dev/app/.gsd-workspaces/phase-1-subagent-2')
     ).toBe(true)
+  })
+
+  it('matches scratch worktrees created from a linked checkout', () => {
+    const matchesAgentScratch = createAgentScratchWorktreePathMatcher([
+      repoPath,
+      '/Users/dev/orca/workspaces/app/feature-x'
+    ])
+
+    expect(
+      matchesAgentScratch(
+        '/Users/dev/orca/workspaces/app/feature-x/.claude/worktrees/agent-a04ccaaa'
+      )
+    ).toBe(true)
+    expect(matchesAgentScratch('/Users/dev/other/feature-x/.claude/worktrees/agent-a04ccaaa')).toBe(
+      false
+    )
   })
 
   it('matches Windows path separators and casing', () => {

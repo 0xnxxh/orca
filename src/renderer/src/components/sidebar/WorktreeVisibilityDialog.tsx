@@ -9,7 +9,10 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { getHiddenExternalWorktrees } from '../../../../shared/external-worktree-inbox'
+import {
+  getHiddenExternalWorktrees,
+  getVisibleExternalWorktrees
+} from '../../../../shared/external-worktree-inbox'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import {
   effectiveExternalWorktreeVisibility,
@@ -34,13 +37,7 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
       'show'
     : false
   const hiddenCount = getHiddenExternalWorktrees(detected).length
-  const otherCount =
-    detected?.authoritative === true
-      ? detected.worktrees.filter(
-          (worktree) =>
-            worktree.visible && !worktree.selectedCheckout && worktree.ownership !== 'orca-managed'
-        ).length
-      : 0
+  const otherCount = getVisibleExternalWorktrees(detected).length
   const hiddenWorktreeLabel = `${hiddenCount} ${hiddenCount === 1 ? 'worktree' : 'worktrees'}`
   const shownWorktreeLabel = `${otherCount} ${otherCount === 1 ? 'worktree' : 'worktrees'}`
 

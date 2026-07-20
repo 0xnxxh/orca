@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { GlobalSettings, Repo, Worktree, WorktreeMeta } from './types'
+import { createAgentScratchWorktreePathMatcher } from './agent-scratch-worktrees'
 import {
   applyMetadataFallbackVisibility,
   buildKnownOrcaWorkspaceLayouts,
@@ -437,6 +438,27 @@ describe('agent scratch worktrees', () => {
         settings,
         worktree: makeWorktree({ path: scratchPath, isMainWorktree: false }),
         knownOrcaLayouts: buildKnownOrcaWorkspaceLayouts(settings, repo)
+      })
+    ).toBe('agent-scratch')
+  })
+
+  it('classifies scratch worktrees created inside another linked checkout', () => {
+    const repo = makeRepo()
+    const settings = makeSettings()
+    const linkedCheckoutPath = '/orca/workspaces/app/feature-x'
+    expect(
+      classifyWorktreeOwnership({
+        repo,
+        settings,
+        worktree: makeWorktree({
+          path: `${linkedCheckoutPath}/.claude/worktrees/agent-a04ccaaa`,
+          isMainWorktree: false
+        }),
+        knownOrcaLayouts: buildKnownOrcaWorkspaceLayouts(settings, repo),
+        agentScratchWorktreePathMatcher: createAgentScratchWorktreePathMatcher([
+          repo.path,
+          linkedCheckoutPath
+        ])
       })
     ).toBe('agent-scratch')
   })
