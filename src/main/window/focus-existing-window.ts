@@ -64,6 +64,45 @@ function retryFocus(window: BrowserWindow, app: Pick<App, 'focus'>, setTimer: Fo
   }, 100)
 }
 
+// Why: a second-instance/activate reopen can race transient startup pressure
+// (e.g. GPU/process churn right after another launch attempt exits); one
+// swallowed throw would otherwise strand the app with no window until some
+// later external trigger happens to retry.
+const REOPEN_MAX_ATTEMPTS = 3
+const REOPEN_RETRY_DELAY_MS = 300
+
+function openWindowWithRetry(
+  opts: Pick<FocusExistingMainWindowOptions, 'app' | 'getWindow' | 'openWindow' | 'warn'>,
+  setTimer: FocusTimer,
+  attempt: number
+): BrowserWindow | null {
+  try {
+    return opts.openWindow()
+  } catch (error) {
+    opts.warn?.('[window] Failed to reopen main window for second-instance launch', error)
+    if (attempt >= REOPEN_MAX_ATTEMPTS) {
+      return null
+    }
+    setTimer(() => {
+      // Why: openWindow() (openMainWindow) is not idempotent — it constructs and
+      // registers a fresh BrowserWindow on every call. Between attempts another
+      // path (or a first attempt that threw after creating its window) may have
+      // produced a live window, so adopt it instead of opening a duplicate that
+      // would orphan the one already on screen.
+      const existing = opts.getWindow()
+      const window =
+        existing && !existing.isDestroyed()
+          ? existing
+          : openWindowWithRetry(opts, setTimer, attempt + 1)
+      if (window) {
+        safelyFocusApp(opts.app)
+        safelyRevealWindow(window)
+      }
+    }, REOPEN_RETRY_DELAY_MS)
+    return null
+  }
+}
+
 export function focusExistingMainWindow(
   opts: FocusExistingMainWindowOptions
 ): FocusExistingMainWindowResult {
@@ -76,13 +115,11 @@ export function focusExistingMainWindow(
     if (!opts.app.isReady()) {
       return 'pending'
     }
-    try {
-      window = opts.openWindow()
-      openedWindow = true
-    } catch (error) {
-      opts.warn?.('[window] Failed to reopen main window for second-instance launch', error)
+    window = openWindowWithRetry(opts, setTimer, 1)
+    if (!window) {
       return 'pending'
     }
+    openedWindow = true
   }
 
   safelyFocusApp(opts.app)
