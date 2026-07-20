@@ -137,14 +137,14 @@ describe('TerminalHost', () => {
       expect(result.snapshot?.cols).toBe(80)
     })
 
-    it('passes cwd, env, and trusted agent identity to spawn', async () => {
-      await host.createOrAttach({
+    it('passes command-recognized agent identity, cwd, and env to spawn', async () => {
+      const result = await host.createOrAttach({
         sessionId: 'session-1',
         cols: 80,
         rows: 24,
         cwd: '/home/user',
         env: { FOO: 'bar' },
-        launchAgent: 'claude',
+        command: 'claude',
         streamClient: { onData: vi.fn(), onExit: vi.fn() }
       })
 
@@ -153,9 +153,11 @@ describe('TerminalHost', () => {
           sessionId: 'session-1',
           cwd: '/home/user',
           env: { FOO: 'bar' },
+          command: 'claude',
           launchAgent: 'claude'
         })
       )
+      expect(result.launchAgent).toBe('claude')
     })
 
     it('queues startup commands through the session shell-ready barrier', async () => {

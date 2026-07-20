@@ -15,6 +15,7 @@ import { shutdownTerminalHostSessions } from './terminal-host-session-shutdown'
 import { TerminalSessionTeardown } from './terminal-session-teardown'
 import { resolveWslSessionContext } from './wsl-session-context'
 import { getDaemonSessionResultMetadata } from './daemon-create-or-attach-result'
+import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
 
 export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
 export type { TerminalHostOptions } from './terminal-host-options'
@@ -86,6 +87,10 @@ export class TerminalHost {
     this.killedTombstones.delete(opts.sessionId)
     const size = normalizePtySize(opts.cols, opts.rows)
     const wslDistro = resolveWslSessionContext(opts)?.distro
+    // Why: configured default-tab commands do not carry launchAgent metadata;
+    // preserve the recognized identity for spawn-time ownership and teardown.
+    const launchAgent =
+      opts.launchAgent ?? recognizeAgentProcessFromCommandLine(opts.command)?.agent
 
     const subprocess = this.spawnSubprocess({
       sessionId: opts.sessionId,
@@ -96,7 +101,7 @@ export class TerminalHost {
       envToDelete: opts.envToDelete,
       command: opts.command,
       startupCommandDelivery: opts.startupCommandDelivery,
-      ...(opts.launchAgent ? { launchAgent: opts.launchAgent } : {}),
+      ...(launchAgent ? { launchAgent } : {}),
       shellOverride: opts.shellOverride,
       terminalWindowsWslDistro: opts.terminalWindowsWslDistro,
       terminalWindowsPowerShellImplementation: opts.terminalWindowsPowerShellImplementation
@@ -117,7 +122,7 @@ export class TerminalHost {
       cols: size.cols,
       rows: size.rows,
       terminalHandle: opts.env?.ORCA_TERMINAL_HANDLE,
-      launchAgent: opts.launchAgent,
+      launchAgent,
       subprocess,
       shellReadySupported,
       historySeed: opts.historySeed,

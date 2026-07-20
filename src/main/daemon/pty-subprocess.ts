@@ -558,6 +558,8 @@ function spawnDaemonPtyWithWindowsFallback(args: {
  */
 export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandle {
   const size = normalizePtySize(opts.cols, opts.rows)
+  const startupAgentRecognition = recognizeAgentProcessFromCommandLine(opts.command)
+  const effectiveLaunchAgent = opts.launchAgent ?? startupAgentRecognition?.agent
   const env: Record<string, string> = {
     ...mergeGitConfigEnvProtocol(process.env, opts.env),
     TERM: 'xterm-256color',
@@ -576,7 +578,7 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     // restores clickable refs like `owner/repo#123` / `PR#123`.
     FORCE_HYPERLINK: '1'
   } as Record<string, string>
-  composeGuardedDaemonGitConfigEnv(env, opts.env, opts.launchAgent)
+  composeGuardedDaemonGitConfigEnv(env, opts.env, effectiveLaunchAgent)
   for (const key of opts.envToDelete ?? []) {
     delete env[key]
   }
@@ -605,7 +607,6 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
   let shellArgs: string[]
   let startupCommandDeliveredInShellArgs = false
   let windowsFallbackAttempts: WindowsShellSpawnAttempt[] = []
-  const startupAgentRecognition = recognizeAgentProcessFromCommandLine(opts.command)
   const isCodexStartupCommand = startupAgentRecognition?.agent === 'codex'
   if (opts.command && startupAgentRecognition) {
     assertSafeAgentStartupCwd(opts.cwd, opts.command)
@@ -824,12 +825,12 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
       cols: size.cols,
       rows: size.rows,
       windowsFallbackAttempts,
-      // Why: WSL owns a Linux process tree, while only explicit native agent
-      // sessions should change Windows process-launch semantics.
+      // Why: WSL owns a Linux process tree, while only explicit or spawn-recognized
+      // native agent sessions should change Windows process-launch semantics.
       windowsAgentJob:
         process.platform === 'win32' &&
         pathWin32.basename(shellPath).toLowerCase() !== 'wsl.exe' &&
-        Boolean(opts.launchAgent)
+        Boolean(effectiveLaunchAgent)
     })
     proc = spawned.process
     // Why: a Windows fallback (e.g. cmd.exe) carries its own argv-embedded

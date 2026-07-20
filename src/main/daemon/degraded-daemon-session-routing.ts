@@ -126,6 +126,16 @@ export class DegradedDaemonSessionRouting {
     return this.isAmbiguous(sessionId) ? ambiguousProvider : (provider ?? this.fallback)
   }
 
+  providerForShutdown(
+    sessionId: string,
+    ambiguousProvider: DegradedManagedPtyProvider
+  ): DegradedManagedPtyProvider {
+    // Why: a cached fallback route can predate recovery of a daemon with the
+    // same id; destructive shutdown must re-probe every physical owner.
+    const provider = this.discoverExistingProvider(sessionId)
+    return this.isAmbiguous(sessionId) ? ambiguousProvider : (provider ?? this.fallback)
+  }
+
   providerMapFor(provider: DegradedManagedPtyProvider): Map<string, DegradedManagedPtyProvider> {
     return new Map(this.routing.idsFor(provider).map((id) => [id, provider]))
   }

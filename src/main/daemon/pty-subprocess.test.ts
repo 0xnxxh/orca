@@ -226,6 +226,32 @@ describe('createPtySubprocess', () => {
     }
   })
 
+  it('requests a Windows Job for a spawn-recognized daemon agent command', () => {
+    spawnMock.mockReturnValue(mockPtyProcess())
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+
+    try {
+      createPtySubprocess({
+        sessionId: 'windows-recognized-agent-job',
+        cols: 80,
+        rows: 24,
+        command: 'claude',
+        cwd: process.cwd(),
+        env: {}
+      })
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({ windowsAgentJob: true })
+      )
+    } finally {
+      if (platform) {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    }
+  })
+
   it('does not request a Windows Job for a plain ConPTY', () => {
     spawnMock.mockReturnValue(mockPtyProcess())
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')

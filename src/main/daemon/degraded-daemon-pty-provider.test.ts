@@ -299,6 +299,21 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(fallback.shutdown).not.toHaveBeenCalled()
   })
 
+  it('revalidates a cached fallback route before destructive shutdown', async () => {
+    const daemonSessions: string[] = []
+    const current = createDaemonAdapter('daemon', daemonSessions)
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    await provider.spawn({ sessionId: 'duplicate-session', cols: 80, rows: 24 })
+    daemonSessions.push('duplicate-session')
+
+    await expect(provider.shutdown('duplicate-session', { immediate: true })).rejects.toThrow(
+      'Ambiguous PTY session ownership'
+    )
+    expect(current.shutdown).not.toHaveBeenCalled()
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+  })
+
   it('keeps a daemon inventory result when fallback spawns during the listing', async () => {
     const current = createDaemonAdapter('daemon')
     const fallback = createProvider('fallback')

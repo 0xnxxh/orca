@@ -712,7 +712,7 @@
         "ssh",
         "runtime"
       ],
-      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Windows 2022 Actions red/green runs prove production store.removeWorktree(id, true) retires an agent PTY and its reparented native lock-holder before deleting the worktree, plain terminal close preserves an intentionally detached child, and natural agent-root exit publishes PTY exit only after its detached Job child is absent. Deterministic tests cover native Windows agent-only Job selection, fail-closed Job teardown and bridge errors, safe failure when Job ownership is unavailable, adopted-v24 destructive-shutdown refusal, provider-scoped recovered routing, fallback/daemon duplicate refusal, duplicate-exit suppression, sleeping legacy ownership, daemon WSL exclusion, daemon-wide shutdown, daemon and SSH routing, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, WSL, SSH, and remote-runtime process evidence remains pending.",
+      "coverageNotes": "Live macOS Electron tests prove exact local PTY disappearance after parked-tab close and detached-pgid descendant death after agent close. Windows 2022 Actions red/green runs prove production store.removeWorktree(id, true) retires an agent PTY and its reparented native lock-holder before deleting the worktree, plain terminal close preserves an intentionally detached child, and natural agent-root exit publishes PTY exit only after its detached Job child is absent. Deterministic tests cover explicit and spawn-recognized native Windows agent Job selection, daemon session identity propagation, fail-closed Job teardown and bridge errors, safe failure when Job ownership is unavailable, adopted-v24 destructive-shutdown refusal, provider-scoped recovered routing, cached fallback/daemon duplicate refusal, duplicate-exit suppression, sleeping legacy ownership, daemon WSL exclusion, daemon-wide shutdown, daemon and SSH routing, local/daemon pending-snapshot ownership across natural exit, stale-root descendant-signal suppression, graceful-to-immediate kill upgrades, duplicate-kill completion sharing, locale-stable bounded/fresh/coalesced process-table reads, deadline-safe successor scans, cycle-safe linear descendant traversal, target-only escalation indexing, 32-wide bulk teardown, source-scan timestamp identity, same-second PID ambiguity, ordinary runtime close ownership, unified-only hydration, split ownership, pane detach transfer, restart alias hydration, and late-hook suppression; live Linux, WSL, SSH, and remote-runtime process evidence remains pending.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/8628",
         "https://github.com/stablyai/orca/pull/8706",
@@ -825,14 +825,14 @@
         {
           "file": "src/main/daemon/degraded-daemon-pty-provider.test.ts",
           "assertions": [
-            "startup and direct discovery reject fallback/daemon duplicates, including a fallback spawn concurrent with daemon inventory",
+            "startup and destructive revalidation reject fallback/daemon duplicates, including cached fallback routes and a fallback spawn concurrent with daemon inventory",
             "physical and synthetic daemon exits remain hidden while a fallback duplicate survives"
           ]
         },
         {
           "file": "src/main/daemon/pty-subprocess.test.ts",
           "assertions": [
-            "trusted native Windows agent ConPTY spawn requests and exposes Job teardown while plain and daemon WSL agent ConPTYs do neither"
+            "explicit and spawn-recognized native Windows agent ConPTY spawns request and expose Job teardown while plain and daemon WSL agent ConPTYs do neither"
           ]
         },
         {

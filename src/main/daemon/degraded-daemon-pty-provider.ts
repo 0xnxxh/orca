@@ -119,7 +119,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     if (this.sessionRouting.isAmbiguous(id)) {
       throw this.ambiguousOwnershipError([id])
     }
-    const target = this.providerFor(id)
+    const target = this.sessionRouting.providerForShutdown(id, this.current)
     if (this.sessionRouting.isAmbiguous(id)) {
       throw this.ambiguousOwnershipError([id])
     }
