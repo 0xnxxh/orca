@@ -34,5 +34,6 @@ export type CreateOrAttachResult = {
   shellState: ShellReadyState
   historySeeded?: boolean
   launchAgent?: TuiAgent
+  wslDistro: string | null
   attachToken: symbol
 }

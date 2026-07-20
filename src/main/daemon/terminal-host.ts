@@ -13,6 +13,8 @@ import type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-hos
 import type { TerminalHostOptions } from './terminal-host-options'
 import { shutdownTerminalHostSessions } from './terminal-host-session-shutdown'
 import { TerminalSessionTeardown } from './terminal-session-teardown'
+import { resolveWslSessionContext } from './wsl-session-context'
+import { getDaemonSessionResultMetadata } from './daemon-create-or-attach-result'
 
 export type { CreateOrAttachOptions, CreateOrAttachResult } from './terminal-host-create-contract'
 export type { TerminalHostOptions } from './terminal-host-options'
@@ -63,8 +65,7 @@ export class TerminalHost {
         snapshot,
         pid: existing.pid,
         shellState: existing.shellState,
-        ...(existing.launchAgent ? { launchAgent: existing.launchAgent } : {}),
-        ...(existing.historySeeded !== undefined ? { historySeeded: existing.historySeeded } : {}),
+        ...getDaemonSessionResultMetadata(existing),
         attachToken: token
       }
     }
@@ -84,6 +85,7 @@ export class TerminalHost {
     // Clear tombstone if re-creating a killed session
     this.killedTombstones.delete(opts.sessionId)
     const size = normalizePtySize(opts.cols, opts.rows)
+    const wslDistro = resolveWslSessionContext(opts)?.distro
 
     const subprocess = this.spawnSubprocess({
       sessionId: opts.sessionId,
@@ -120,6 +122,7 @@ export class TerminalHost {
       shellReadySupported,
       historySeed: opts.historySeed,
       ...(opts.startupIngress ? { startupIngress: opts.startupIngress } : {}),
+      wslDistro,
       // Why: reap the dead session (dispose emulator + drop from the map) the
       // moment its subprocess exits, instead of retaining it for the daemon's
       // lifetime. Nothing reads a dead session's emulator (getSnapshot/
@@ -160,8 +163,7 @@ export class TerminalHost {
       snapshot: null,
       pid: subprocess.pid,
       shellState: session.shellState,
-      ...(session.launchAgent ? { launchAgent: session.launchAgent } : {}),
-      ...(session.historySeeded !== undefined ? { historySeeded: session.historySeeded } : {}),
+      ...getDaemonSessionResultMetadata(session),
       attachToken: token
     }
   }
