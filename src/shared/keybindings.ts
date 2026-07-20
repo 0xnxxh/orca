@@ -643,7 +643,10 @@ export const KEYBINDING_DEFINITIONS: readonly KeybindingDefinition[] = [
     group: 'Tab Navigation',
     scope: 'tabs',
     searchKeywords: ['shortcut', 'tab', 'next', 'switch', 'cycle'],
-    defaultBindings: platformBindings(['Mod+Shift+BracketRight'])
+    // Why: Mod+Shift+Bracket is the widespread "switch tab" chord, so it now
+    // drives the broad all-types cycle for new users; same-type moves to
+    // Mod+Alt. Pre-release installs keep the old mapping via the seed migration.
+    defaultBindings: platformBindings(['Mod+Alt+BracketRight'])
   },
   {
     id: 'tab.previousSameType',
@@ -651,7 +654,7 @@ export const KEYBINDING_DEFINITIONS: readonly KeybindingDefinition[] = [
     group: 'Tab Navigation',
     scope: 'tabs',
     searchKeywords: ['shortcut', 'tab', 'previous', 'switch', 'cycle'],
-    defaultBindings: platformBindings(['Mod+Shift+BracketLeft'])
+    defaultBindings: platformBindings(['Mod+Alt+BracketLeft'])
   },
   {
     id: 'tab.nextAllTypes',
@@ -659,7 +662,7 @@ export const KEYBINDING_DEFINITIONS: readonly KeybindingDefinition[] = [
     group: 'Tab Navigation',
     scope: 'tabs',
     searchKeywords: ['shortcut', 'tab', 'next', 'switch', 'cycle', 'all', 'any'],
-    defaultBindings: platformBindings(['Mod+Alt+BracketRight'])
+    defaultBindings: platformBindings(['Mod+Shift+BracketRight'])
   },
   {
     id: 'tab.previousAllTypes',
@@ -667,7 +670,7 @@ export const KEYBINDING_DEFINITIONS: readonly KeybindingDefinition[] = [
     group: 'Tab Navigation',
     scope: 'tabs',
     searchKeywords: ['shortcut', 'tab', 'previous', 'switch', 'cycle', 'all', 'any'],
-    defaultBindings: platformBindings(['Mod+Alt+BracketLeft'])
+    defaultBindings: platformBindings(['Mod+Shift+BracketLeft'])
   },
   {
     id: 'tab.previousRecent',
@@ -862,7 +865,9 @@ export const KEYBINDING_DEFINITIONS: readonly KeybindingDefinition[] = [
     group: 'Editors',
     scope: 'editor',
     searchKeywords: ['shortcut', 'editor', 'markdown', 'note', 'comment', 'annotation', 'review'],
-    defaultBindings: platformBindings(['Mod+Alt+N'])
+    // Why: Ctrl+Alt+letter is AltGr text input on Windows/Linux; an editor-scope
+    // default must not reserve characters such as Polish `ń`.
+    defaultBindings: platformBindings(['Mod+Shift+A'])
   },
   {
     id: 'fileExplorer.undo',
@@ -1069,6 +1074,18 @@ export const KEYBINDING_DEFINITIONS: readonly KeybindingDefinition[] = [
   },
   ...buildAgentTabKeybindingDefinitions()
 ]
+
+/**
+ * The tab-switch bindings as they shipped before the convention swap. A one-time
+ * migration pins these for pre-release installs so upgrading users keep the
+ * shortcuts they learned; fresh installs get the new registry defaults above.
+ */
+export const LEGACY_TAB_SWITCH_BINDINGS: Readonly<Partial<Record<KeybindingActionId, string[]>>> = {
+  'tab.nextSameType': ['Mod+Shift+BracketRight'],
+  'tab.previousSameType': ['Mod+Shift+BracketLeft'],
+  'tab.nextAllTypes': ['Mod+Alt+BracketRight'],
+  'tab.previousAllTypes': ['Mod+Alt+BracketLeft']
+}
 
 export function agentTabActionId(agent: TuiAgent): AgentTabActionId {
   return `tab.newAgent.${agent}`

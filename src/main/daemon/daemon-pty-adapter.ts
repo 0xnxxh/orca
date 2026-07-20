@@ -29,13 +29,18 @@ import type {
   PtySpawnResult
 } from '../providers/types'
 import { isShellProcess } from '../../shared/agent-detection'
+import { resolveWslSessionContext } from './wsl-session-context'
+import { normalizeWslColdRestoreCwd } from './wsl-cold-restore-cwd'
 import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
 import { shouldUseShellReadyStartupDelivery } from '../../shared/codex-startup-delivery'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
+import { resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
 
 type ColdRestorePayload = {
   scrollback: string
   cwd: string
+  cols: number
+  rows: number
   oscLinks?: TerminalOscLinkRange[]
 }
 
@@ -102,6 +107,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private backgroundStreamListeners: ((payload: PtyBackgroundStreamEvent) => void)[] = []
   private removeEventListener: (() => void) | null = null
   private initialCwds = new Map<string, string>()
+  private wslDistrosBySessionId = new Map<string, string>()
   // Why: React re-renders and StrictMode double-mounts can call createOrAttach
   // for a session the user just killed. Without tombstones, the daemon would
   // create a fresh session — resurrecting a terminal the user explicitly closed.
@@ -194,6 +200,28 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   private async doSpawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     const sessionId = opts.sessionId ?? mintPtySessionId(opts.worktreeId)
+    let wslDistro = resolveWslSessionContext({
+      cwd: opts.cwd,
+      sessionId,
+      shellOverride: opts.shellOverride,
+      terminalWindowsWslDistro: opts.terminalWindowsWslDistro
+    })?.distro
+    const detectColdRestore = (options?: { ignoreCleanEnd?: boolean }): ColdRestoreInfo | null => {
+      const restoreInfo =
+        this.historyReader?.detectColdRestore(sessionId, { ...options, wslDistro }) ?? null
+      if (!restoreInfo) {
+        return null
+      }
+      return {
+        ...restoreInfo,
+        cwd:
+          normalizeWslColdRestoreCwd({
+            recoveredCwd: restoreInfo.cwd,
+            requestedCwd: opts.cwd ?? resolveSafePtyDefaultCwd(),
+            wslDistro
+          }) ?? ''
+      }
+    }
 
     if (this.killedSessionTombstones.has(sessionId)) {
       throw new TerminalKilledError(sessionId)
@@ -226,7 +254,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if ((await this.getAppliedSize(sessionId)) !== null) {
         restoreSkippedForLiveSession = true
       } else {
-        restoreInfo = this.historyReader.detectColdRestore(sessionId)
+        restoreInfo = detectColdRestore()
       }
     }
     let effectiveCwd = restoreInfo?.cwd ?? opts.cwd
@@ -273,6 +301,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
     let scrollback = restoreInfo ? getRecoveredHistorySeed(restoreInfo) : null
     let result = await createOrAttach(scrollback)
+    let providerWslDistro = result.wslDistro === undefined ? wslDistro : result.wslDistro
+    // Why: explicit null from a current daemon overrides the caller's WSL
+    // preference; undefined preserves compatibility with older daemons.
+    wslDistro = providerWslDistro ?? undefined
+    if (wslDistro) {
+      this.wslDistrosBySessionId.set(sessionId, wslDistro)
+    } else if (providerWslDistro === null || result.isNew) {
+      this.wslDistrosBySessionId.delete(sessionId)
+    }
     const launchIdentity = (): { launchAgent?: NonNullable<typeof result.launchAgent> } =>
       result.launchAgent ? { launchAgent: result.launchAgent } : {}
 
@@ -303,6 +340,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         pid,
         ...launchIdentity(),
         coldRestore: cachedRestore,
+        ...(providerWslDistro !== undefined ? { wslDistro: providerWslDistro } : {}),
         ...(!result.isNew ? { isReattach: true } : {})
       }
     }
@@ -316,8 +354,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     // must not null the restore here, or the openSession branch below would
     // delete the checkpoint instead of restoring it.
     if (result.isNew && restoreSkippedForLiveSession) {
-      restoreInfo =
-        this.historyReader?.detectColdRestore(sessionId, { ignoreCleanEnd: true }) ?? null
+      restoreInfo = detectColdRestore({ ignoreCleanEnd: true })
       scrollback = restoreInfo ? getRecoveredHistorySeed(restoreInfo) : null
       if (restoreInfo && scrollback) {
         // Why: the aliveness probe raced with session death, so the first
@@ -327,11 +364,18 @@ export class DaemonPtyAdapter implements IPtyProvider {
         effectiveCols = restoreInfo.cols
         effectiveRows = restoreInfo.rows
         result = await createOrAttach(scrollback)
+        providerWslDistro = result.wslDistro === undefined ? wslDistro : result.wslDistro
+        wslDistro = providerWslDistro ?? undefined
+        if (wslDistro) {
+          this.wslDistrosBySessionId.set(sessionId, wslDistro)
+        } else if (providerWslDistro === null || result.isNew) {
+          this.wslDistrosBySessionId.delete(sessionId)
+        }
         pid = typeof result.pid === 'number' && result.pid > 0 ? result.pid : null
         this.initialCwds.set(sessionId, effectiveCwd)
       }
     } else if (!result.isNew && result.historySeeded === false) {
-      restoreInfo = this.historyReader?.detectColdRestore(sessionId) ?? null
+      restoreInfo = detectColdRestore()
       scrollback = restoreInfo ? getRecoveredHistorySeed(restoreInfo) : null
     }
 
@@ -369,6 +413,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
           pid,
           ...launchIdentity(),
           coldRestore,
+          ...(providerWslDistro !== undefined ? { wslDistro: providerWslDistro } : {}),
           ...(providerSequence ? { providerSequence } : {}),
           ...(!result.isNew ? { isReattach: true } : {})
         }
@@ -377,6 +422,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         id: sessionId,
         pid,
         ...launchIdentity(),
+        ...(providerWslDistro !== undefined ? { wslDistro: providerWslDistro } : {}),
         ...(providerSequence ? { providerSequence } : {})
       }
     }
@@ -416,6 +462,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         id: sessionId,
         pid,
         ...launchIdentity(),
+        ...(providerWslDistro !== undefined ? { wslDistro: providerWslDistro } : {}),
         ...(providerSequence ? { providerSequence } : {}),
         ...(isReattach ? { isReattach: true } : {})
       }
@@ -435,6 +482,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       id: sessionId,
       pid,
       ...launchIdentity(),
+      ...(providerWslDistro !== undefined ? { wslDistro: providerWslDistro } : {}),
       snapshot: snapshotPayload,
       snapshotCols: result.snapshot.cols,
       snapshotRows: result.snapshot.rows,
@@ -515,6 +563,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   async shutdown(id: string, opts: { immediate?: boolean; keepHistory?: boolean }): Promise<void> {
+    // Why: shutdown can be the first lazy-client operation after restart; connect
+    // before killing so a healthy daemon session is not orphaned (#7742).
+    await this.ensureConnected()
     // Why: sleep/exact-stop kills the live PTY before the periodic checkpoint may run.
     // Force a final snapshot so wake can restore the pane users left.
     if (opts.keepHistory) {
@@ -522,7 +573,19 @@ export class DaemonPtyAdapter implements IPtyProvider {
         await this.checkpointInFlight
       }
       await this.checkpointSessions([id], { final: true, teardown: true })
-      const restoreInfo = this.historyReader?.detectColdRestore(id) ?? null
+      const wslDistro = this.wslDistrosBySessionId.get(id)
+      const detected = this.historyReader?.detectColdRestore(id, { wslDistro }) ?? null
+      const restoreInfo = detected
+        ? {
+            ...detected,
+            cwd:
+              normalizeWslColdRestoreCwd({
+                recoveredCwd: detected.cwd,
+                requestedCwd: this.initialCwds.get(id) ?? resolveSafePtyDefaultCwd(),
+                wslDistro
+              }) ?? ''
+          }
+        : null
       const coldRestore = restoreInfo ? this.buildColdRestorePayload(restoreInfo) : null
       if (coldRestore) {
         this.coldRestoreCache.set(id, coldRestore)
@@ -547,6 +610,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.lastFullCheckpointAt.delete(id)
     this.stopCheckpointTimerIfIdle()
     this.initialCwds.delete(id)
+    this.wslDistrosBySessionId.delete(id)
     // Why: history removal is for the "user explicitly closed this terminal"
     // path. Sleep also calls shutdown but expects scrollback to survive — wake
     // re-spawns and the cold-restore reader needs the dir intact. Caller
@@ -595,7 +659,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (!scrollback) {
       return null
     }
-    return { scrollback, cwd: restoreInfo.cwd, oscLinks: restoreInfo.oscLinks }
+    return {
+      scrollback,
+      cwd: restoreInfo.cwd,
+      cols: restoreInfo.cols,
+      rows: restoreInfo.rows,
+      oscLinks: restoreInfo.oscLinks
+    }
   }
 
   async sendSignal(id: string, signal: string): Promise<void> {
@@ -892,6 +962,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.dirtySessionVersions.clear()
     this.lastFullCheckpointAt.clear()
     this.coldRestoreCache.clear()
+    this.wslDistrosBySessionId.clear()
     this.pausedProducerSessionIds.clear()
     this.producerResumesOwedOnReconnect.clear()
     this.removeEventListener?.()
@@ -930,6 +1001,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.dirtySessionVersions.clear()
     this.lastFullCheckpointAt.clear()
     this.coldRestoreCache.clear()
+    this.wslDistrosBySessionId.clear()
     // Why: the detached daemon keeps these PTYs alive for warm reattach; a
     // pause left behind would block their shells for a failsafe window.
     for (const id of this.pausedProducerSessionIds) {
@@ -1375,6 +1447,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
             .catch((err) => console.warn('[history] closeSession failed:', event.sessionId, err))
         }
         this.initialCwds.delete(event.sessionId)
+        this.wslDistrosBySessionId.delete(event.sessionId)
         // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
         for (const listener of [...this.exitListeners]) {
           listener({ id: event.sessionId, code: event.payload.code })

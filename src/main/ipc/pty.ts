@@ -66,6 +66,7 @@ import {
 import { parseAppSshPtyId, toAppSshPtyId, toRelaySshPtyId } from '../providers/ssh-pty-id'
 import { createPtySpawnTiming } from './pty-spawn-timing'
 import { mintPtySessionId, isSafePtySessionId } from '../daemon/pty-session-id'
+import { resolveWslSessionContext } from '../daemon/wsl-session-context'
 import { addNodePtyRecoveryHint } from '../daemon/node-pty-error-hints'
 import { recordDaemonStreamBacklogEvent } from '../daemon/daemon-stream-backlog-probe'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
@@ -1564,6 +1565,7 @@ export function registerPtyHandlers(
   store?: Store,
   options?: {
     awaitLocalPtyStartup?: () => Promise<void>
+    awaitLocalPtyProviderStartup?: () => Promise<void>
     // Why: returns true (once, consuming the flag) for the crash-recovery reload
     // so its did-finish-load skips the orphan sweep and keeps live PTYs (#5787).
     isRecoveryReloadInFlight?: (webContentsId: number) => boolean
@@ -1585,6 +1587,15 @@ export function registerPtyHandlers(
     // first paint. Local spawns must wait before resolving getProvider(), while
     // SSH/headless paths do not use the desktop daemon.
     return options?.awaitLocalPtyStartup?.()
+  }
+
+  const getLocalPtyProviderStartupPromise = (
+    connectionId?: string | null
+  ): Promise<void> | undefined => {
+    if (connectionId) {
+      return undefined
+    }
+    return options?.awaitLocalPtyProviderStartup?.() ?? options?.awaitLocalPtyStartup?.()
   }
 
   // Remove any previously registered handlers so we can re-register them
@@ -3092,6 +3103,14 @@ export function registerPtyHandlers(
       const effectiveSessionAppId =
         sessionId !== undefined ? getAppPtyId(args.connectionId, sessionId) : undefined
       const isMintedSessionId = requestedSessionId === undefined && isDaemonHostSpawn
+      const expectedWslDistro = !args.connectionId
+        ? (resolveWslSessionContext({
+            cwd,
+            sessionId,
+            shellOverride: terminalRuntimeOptions.shellOverride,
+            terminalWindowsWslDistro: terminalRuntimeOptions.terminalWindowsWslDistro
+          })?.distro ?? null)
+        : null
       const shouldPersistHostSessionBinding = args.persistHostSessionBinding === true
       let hostSessionBinding: {
         store: NonNullable<typeof store>
@@ -3262,12 +3281,20 @@ export function registerPtyHandlers(
         ? reservePaneSpawn(materializedPaneKey)
         : null
       let result: PtySpawnResult
+      let preparedProvisionalExecutionContext = false
       try {
         try {
           if (args.preAllocatedHandle) {
             trustedTerminalHandleEnv.add(args.preAllocatedHandle)
           }
           const expectedPtyId = effectiveSessionAppId ?? sessionId
+          if (isDaemonHostSpawn && expectedPtyId) {
+            preparedProvisionalExecutionContext =
+              runtime?.preparePtyExecutionContext?.(expectedPtyId, expectedWslDistro, {
+                resetIncarnation: isMintedSessionId,
+                preserveExisting: !isMintedSessionId
+              }) ?? false
+          }
           const sequenceBeforeProviderSpawn = expectedPtyId
             ? (runtime?.getPtyOutputSequence?.(expectedPtyId) ?? 0)
             : 0
@@ -3279,7 +3306,20 @@ export function registerPtyHandlers(
               sequenceBeforeProviderSpawn
             )
           }
+          runtime?.preparePtyExecutionContext?.(
+            result.id,
+            args.connectionId
+              ? null
+              : result.wslDistro === undefined
+                ? expectedWslDistro
+                : result.wslDistro
+          )
         } catch (err) {
+          if ((isMintedSessionId || preparedProvisionalExecutionContext) && effectiveSessionAppId) {
+            runtime?.preparePtyExecutionContext?.(effectiveSessionAppId, null, {
+              resetIncarnation: true
+            })
+          }
           const rawMessage = err instanceof Error ? err.message : String(err)
           const spawnError = normalizeNodePtySpawnError(err)
           const isIdentityMismatch =
@@ -3469,65 +3509,79 @@ export function registerPtyHandlers(
       }
     },
     kill: (ptyId) => {
-      let provider: IPtyProvider
       let connectionId: string | null | undefined = ptyOwnership.get(ptyId)
       const parsedSshId = connectionId === undefined ? parseAppSshPtyId(ptyId) : null
       connectionId ??= parsedSshId?.connectionId
-      try {
-        provider = connectionId ? getProvider(connectionId) : getProviderForPty(ptyId)
-      } catch {
-        if (connectionId) {
-          // Why: runtime/CLI close can target a detached SSH PTY after its
-          // provider was unregistered. Tombstone the lease so reconnect does
-          // not revive a terminal the user explicitly closed.
-          finishPtyShutdown(ptyId, connectionId, store)
-          runtime?.onPtyExit(ptyId, -1)
-          rememberSyntheticKillExit(ptyId)
-          sendPtyExitToRenderer({ id: ptyId, code: -1 })
-          return true
-        }
-        return false
-      }
-      // Why: shutdown() is async but the PtyController interface is sync. Defer
-      // cleanup until shutdown resolves so transient SSH/daemon failures don't
-      // hide a still-running remote process or local daemon session.
-      //
-      // Same synthetic-exit contract as the renderer pty:kill handler: when the
-      // provider emitted its own exit during shutdown, the exit listener already
-      // delivered runtime + renderer exits — synthesizing again would double-fire.
-      void shutdownProviderAndDetectExit(provider, ptyId, { immediate: false })
-        .then((providerExitObserved) => {
-          finishPtyShutdown(ptyId, connectionId, store)
-          if (!providerExitObserved) {
-            runtime?.onPtyExit(ptyId, -1)
-            rememberSyntheticKillExit(ptyId)
-            sendPtyExitToRenderer({ id: ptyId, code: -1 })
-          }
-        })
-        .catch((err) => {
-          if (isPtyAlreadyGoneError(err)) {
+      const killWithCurrentProvider = (): boolean => {
+        let provider: IPtyProvider
+        try {
+          provider = connectionId ? getProvider(connectionId) : getProviderForPty(ptyId)
+        } catch {
+          if (connectionId) {
+            // Why: runtime/CLI close can target a detached SSH PTY after its
+            // provider was unregistered. Tombstone the lease so reconnect does
+            // not revive a terminal the user explicitly closed.
             finishPtyShutdown(ptyId, connectionId, store)
             runtime?.onPtyExit(ptyId, -1)
             rememberSyntheticKillExit(ptyId)
             sendPtyExitToRenderer({ id: ptyId, code: -1 })
-            return
+            return true
           }
+          return false
+        }
+        // Why: the controller is synchronous, but ownership must remain until
+        // asynchronous shutdown proves whether the provider emitted an exit.
+        void shutdownProviderAndDetectExit(provider, ptyId, { immediate: false })
+          .then((providerExitObserved) => {
+            finishPtyShutdown(ptyId, connectionId, store)
+            if (!providerExitObserved) {
+              runtime?.onPtyExit(ptyId, -1)
+              rememberSyntheticKillExit(ptyId)
+              sendPtyExitToRenderer({ id: ptyId, code: -1 })
+            }
+          })
+          .catch((err) => {
+            if (isPtyAlreadyGoneError(err)) {
+              finishPtyShutdown(ptyId, connectionId, store)
+              runtime?.onPtyExit(ptyId, -1)
+              rememberSyntheticKillExit(ptyId)
+              sendPtyExitToRenderer({ id: ptyId, code: -1 })
+              return
+            }
+            console.warn(
+              `[pty] Failed to stop PTY ${ptyId}: ${err instanceof Error ? err.message : String(err)}`
+            )
+            // Why: close runtime tails without clearing provider ownership, so
+            // a retry can still target a PTY that survived the failed shutdown.
+            runtime?.onPtyExit(ptyId, -1)
+          })
+        return true
+      }
+      const startupPromise = getLocalPtyProviderStartupPromise(connectionId)
+      if (startupPromise) {
+        // Why: provider selection must happen after the daemon swap; selecting
+        // the fallback first can report success while orphaning a daemon PTY.
+        void startupPromise.then(killWithCurrentProvider).catch((err) => {
           console.warn(
             `[pty] Failed to stop PTY ${ptyId}: ${err instanceof Error ? err.message : String(err)}`
           )
-          // Why: callers of controller.kill must observe a kill→exit pair so
-          // runtime tail buffers close and agents stop treating the pane as
-          // live. Preserve provider/lease state so a retry can still target
-          // the remote PTY if it survived the transient failure.
           runtime?.onPtyExit(ptyId, -1)
         })
-      return true
+        return true
+      }
+      return killWithCurrentProvider()
     },
     stopAndWait: async (ptyId, opts) => {
-      let provider: IPtyProvider
       let connectionId: string | null | undefined = ptyOwnership.get(ptyId)
       const parsedSshId = connectionId === undefined ? parseAppSshPtyId(ptyId) : null
       connectionId ??= parsedSshId?.connectionId
+      const startupPromise = getLocalPtyProviderStartupPromise(connectionId)
+      if (startupPromise) {
+        // Why: exact-stop must resolve the provider after daemon startup just
+        // like renderer kills, or the fallback can falsely confirm teardown.
+        await startupPromise
+      }
+      let provider: IPtyProvider
       try {
         provider = connectionId ? getProvider(connectionId) : getProviderForPty(ptyId)
       } catch {
@@ -3914,6 +3968,14 @@ export function registerPtyHandlers(
         effectiveSessionId !== undefined
           ? getRelayPtyId(args.connectionId, effectiveSessionId)
           : undefined
+      const expectedWslDistro = !args.connectionId
+        ? (resolveWslSessionContext({
+            cwd,
+            sessionId: effectiveSessionId,
+            shellOverride: terminalRuntimeOptions.shellOverride,
+            terminalWindowsWslDistro: terminalRuntimeOptions.terminalWindowsWslDistro
+          })?.distro ?? null)
+        : null
       const startupTerminalColorQueryReplyColors = getStartupTerminalColorQueryReplyColors(args)
       const preSpawnStartupTerminalColorReplyPtyId =
         startupTerminalColorQueryReplyColors && effectiveSessionId !== undefined
@@ -4221,6 +4283,7 @@ export function registerPtyHandlers(
         markHiddenRendererPty(preSpawnHiddenMarkId)
       }
       let result: PtySpawnResult
+      let preparedProvisionalExecutionContext = false
       try {
         try {
           if (preAllocatedHandle) {
@@ -4236,6 +4299,13 @@ export function registerPtyHandlers(
           }
           spawnTiming.mark('options')
           const expectedPtyId = effectiveSessionAppId ?? effectiveSessionId
+          if (isDaemonHostSpawn && expectedPtyId) {
+            preparedProvisionalExecutionContext =
+              runtime?.preparePtyExecutionContext?.(expectedPtyId, expectedWslDistro, {
+                resetIncarnation: isMintedSessionId,
+                preserveExisting: !isMintedSessionId
+              }) ?? false
+          }
           const sequenceBeforeProviderSpawn = expectedPtyId
             ? (runtime?.getPtyOutputSequence?.(expectedPtyId) ?? 0)
             : 0
@@ -4247,8 +4317,21 @@ export function registerPtyHandlers(
               sequenceBeforeProviderSpawn
             )
           }
+          runtime?.preparePtyExecutionContext?.(
+            result.id,
+            args.connectionId
+              ? null
+              : result.wslDistro === undefined
+                ? expectedWslDistro
+                : result.wslDistro
+          )
           spawnTiming.mark('provider_spawn')
         } catch (err) {
+          if ((isMintedSessionId || preparedProvisionalExecutionContext) && effectiveSessionAppId) {
+            runtime?.preparePtyExecutionContext?.(effectiveSessionAppId, null, {
+              resetIncarnation: true
+            })
+          }
           // Why: a failed spawn must not leave a stale hidden mark on a session
           // id a later visible attach may reuse.
           if (preSpawnHiddenMarkId !== null) {
@@ -4461,7 +4544,7 @@ export function registerPtyHandlers(
         // its hydration path will seed the emulator from xterm's live buffer,
         // which is richer than the daemon snapshot.
         if (runtime && !rendererPreSignaled && !rendererAlreadyRegistered) {
-          const seedSize =
+          const snapshotSeedSize =
             typeof result.snapshotCols === 'number' && typeof result.snapshotRows === 'number'
               ? { cols: result.snapshotCols, rows: result.snapshotRows }
               : undefined
@@ -4473,7 +4556,7 @@ export function registerPtyHandlers(
             runtime.seedHeadlessTerminal(
               result.id,
               result.snapshot,
-              seedSize,
+              snapshotSeedSize,
               typeof result.snapshotKittyKeyboardFlags === 'number'
                 ? { kittyKeyboardFlags: result.snapshotKittyKeyboardFlags }
                 : {}
@@ -4483,11 +4566,21 @@ export function registerPtyHandlers(
             typeof result.coldRestore.scrollback === 'string' &&
             result.coldRestore.scrollback.length > 0
           ) {
-            runtime.seedHeadlessTerminal(result.id, result.coldRestore.scrollback, seedSize, {
-              cwd: result.coldRestore.cwd,
-              oscLinks: result.coldRestore.oscLinks,
-              preferProviderIfExisting: true
-            })
+            const coldRestoreSeedSize =
+              typeof result.coldRestore.cols === 'number' &&
+              typeof result.coldRestore.rows === 'number'
+                ? { cols: result.coldRestore.cols, rows: result.coldRestore.rows }
+                : undefined
+            runtime.seedHeadlessTerminal(
+              result.id,
+              result.coldRestore.scrollback,
+              coldRestoreSeedSize,
+              {
+                cwd: result.coldRestore.cwd,
+                oscLinks: result.coldRestore.oscLinks,
+                preferProviderIfExisting: true
+              }
+            )
           }
         }
         if (
@@ -5180,6 +5273,12 @@ export function registerPtyHandlers(
     const ownedConnectionId = ptyOwnership.get(args.id)
     const parsedSshId = ownedConnectionId === undefined ? parseAppSshPtyId(args.id) : null
     const connectionId = ownedConnectionId ?? parsedSshId?.connectionId
+    // Why: select the local provider only after daemon startup; fallback shutdown
+    // can otherwise falsely succeed and orphan a restored daemon PTY (#7742).
+    const startupPromise = getLocalPtyProviderStartupPromise(connectionId)
+    if (startupPromise) {
+      await startupPromise
+    }
     const provider = connectionId ? sshProviders.get(connectionId) : tryGetProviderForPty(args.id)
     if (!provider && connectionId) {
       // Why: detached SSH PTYs intentionally keep ownership after their
