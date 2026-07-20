@@ -245,6 +245,37 @@ describe('createPtySubprocess', () => {
     }
   })
 
+  it('keeps daemon agent sessions launched through WSL outside native Windows Job control', () => {
+    const proc = mockPtyProcess()
+    spawnMock.mockReturnValue(proc)
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+
+    try {
+      const handle = createPtySubprocess({
+        sessionId: 'windows-wsl-agent',
+        cols: 80,
+        rows: 24,
+        launchAgent: 'claude',
+        shellOverride: 'wsl.exe',
+        env: {}
+      })
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'wsl.exe',
+        expect.any(Array),
+        expect.not.objectContaining({ windowsAgentJob: true })
+      )
+      expect(handle.nativeWindowsPty).toBeUndefined()
+      expect(handle.terminateJobTree).toBeUndefined()
+      expect(proc.terminateJobTree).not.toHaveBeenCalled()
+    } finally {
+      if (platform) {
+        Object.defineProperty(process, 'platform', platform)
+      }
+    }
+  })
+
   it('appends Git prompt guards after the detached daemon inherited config', () => {
     const proc = mockPtyProcess()
     spawnMock.mockReturnValue(proc)

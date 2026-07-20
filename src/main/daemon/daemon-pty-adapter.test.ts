@@ -532,6 +532,43 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
   })
 
   describe('shutdown', () => {
+    it('fails closed for destructive shutdown routed to an adopted Windows v24 daemon', async () => {
+      const ensureConnectedSpy = vi
+        .spyOn(DaemonClient.prototype, 'ensureConnected')
+        .mockResolvedValue()
+      const requestSpy = vi.spyOn(DaemonClient.prototype, 'request').mockResolvedValue(undefined)
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 24 })
+
+      try {
+        await expect(
+          legacy.shutdown('legacy-session', {
+            immediate: true,
+            deadlineMs: Date.now() + 5_000
+          })
+        ).rejects.toThrow('requires daemon protocol 25 or newer')
+        expect(ensureConnectedSpy).not.toHaveBeenCalled()
+        expect(requestSpy).not.toHaveBeenCalled()
+
+        await expect(
+          legacy.shutdown('legacy-session', { immediate: true })
+        ).resolves.toBeUndefined()
+        expect(requestSpy).toHaveBeenCalledWith(
+          'kill',
+          { sessionId: 'legacy-session', immediate: true },
+          undefined
+        )
+      } finally {
+        legacy.dispose()
+        if (platform) {
+          Object.defineProperty(process, 'platform', platform)
+        }
+        requestSpy.mockRestore()
+        ensureConnectedSpy.mockRestore()
+      }
+    })
+
     it('kills the session', async () => {
       const { id } = await adapter.spawn({ cols: 80, rows: 24 })
       await adapter.shutdown(id, { immediate: false })

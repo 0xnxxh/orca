@@ -14,7 +14,9 @@ import {
   CLEAN_DISCONNECT_PROTOCOL_VERSION,
   GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
+  WINDOWS_AGENT_JOB_PROTOCOL_VERSION,
   supportsPtyStartupIngress,
+  DaemonProtocolError,
   type CreateOrAttachResult,
   type DaemonEvent,
   type GetSnapshotResult,
@@ -584,6 +586,17 @@ export class DaemonPtyAdapter implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
+    if (
+      process.platform === 'win32' &&
+      opts.deadlineMs !== undefined &&
+      this.protocolVersion < WINDOWS_AGENT_JOB_PROTOCOL_VERSION
+    ) {
+      // Why: an adopted v24 daemon could not own agent descendants at spawn;
+      // destructive deletion must not mistake its root-only exit for a safe drain.
+      throw new DaemonProtocolError(
+        `Windows destructive PTY shutdown requires daemon protocol ${WINDOWS_AGENT_JOB_PROTOCOL_VERSION} or newer`
+      )
+    }
     // Why: shutdown can be the first lazy-client operation after restart; connect
     // before killing so a healthy daemon session is not orphaned (#7742). Connect
     // and kill share the caller's one absolute deadline, so a wedged handshake

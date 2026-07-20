@@ -1,5 +1,6 @@
 // Why: daemons survive app updates, so wire behavior must be version-gated.
 export const PROTOCOL_VERSION = 25
+export const WINDOWS_AGENT_JOB_PROTOCOL_VERSION = 25
 export const PTY_STARTUP_INGRESS_PROTOCOL_VERSION = 24
 export const GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION = 22
 export const CLEAN_DISCONNECT_PROTOCOL_VERSION = 24

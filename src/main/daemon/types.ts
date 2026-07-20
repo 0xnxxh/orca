@@ -21,6 +21,7 @@ export {
   PREVIOUS_DAEMON_PROTOCOL_VERSIONS,
   PROTOCOL_VERSION,
   PTY_STARTUP_INGRESS_PROTOCOL_VERSION,
+  WINDOWS_AGENT_JOB_PROTOCOL_VERSION,
   supportsPtyStartupIngress
 } from './daemon-protocol-version'
 
