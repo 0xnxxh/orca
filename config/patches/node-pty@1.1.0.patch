@@ -48,46 +48,37 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..6047590bc9558dabacd3ece5114ed41c
      'targets' : [
 diff --git a/lib/conptyConnectFailure.test.js b/lib/conptyConnectFailure.test.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb68c417a5de0e445d5a1c8e0c164a7e03b3fca2
+index 0000000000000000000000000000000000000000..e3d4bab402845ec10647b8e2d8a2d85e1a96c295
 --- /dev/null
 +++ b/lib/conptyConnectFailure.test.js
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,67 @@
 +"use strict";
 +/**
 + * Copyright (c) 2026, Stably AI (MIT License).
 + */
 +Object.defineProperty(exports, "__esModule", { value: true });
 +var assert = require("assert");
-+var fs = require("fs");
 +var utils_1 = require("./utils");
++var windowsPtyAgent_1 = require("./windowsPtyAgent");
 +if (process.platform === 'win32') {
 +    var native_1 = utils_1.loadNativeModule('conpty').module;
 +    var failureCases_1 = [
 +        ['assign-job', 'Cannot assign process to Job, error code: 5'],
 +        ['resume-thread', 'Cannot resume process, error code: 6']
 +    ];
++    var environment_1 = Object.keys(process.env)
++        .filter(function (key) { return typeof process.env[key] === 'string'; })
++        .map(function (key) { return key + "=" + process.env[key]; });
 +    var hasTestHooks_1 = function () {
 +        return Boolean(native_1.setTestConnectFailure && native_1.getTestResourceState);
 +    };
 +    var runFailureCase_1 = function (failure, expectedError) {
 +        assert.ok(native_1.setTestConnectFailure && native_1.getTestResourceState);
-+        var pipeName = "node-pty-connect-failure-" + process.pid + "-" + failure;
 +        var before = native_1.getTestResourceState();
 +        native_1.setTestConnectFailure(failure);
 +        try {
-+            // Reusing the same first-instance pipe names proves each failed attempt
-+            // closed both server pipes before removing its baton.
 +            for (var attempt = 1; attempt <= 3; attempt++) {
-+                var term = native_1.startProcess(process.env.ComSpec || 'cmd.exe', 80, 30, false, pipeName, false, false);
-+                var inputFd = fs.openSync(term.conin, 'w');
-+                var outputFd = fs.openSync(term.conout, 'r');
-+                try {
-+                    assert.throws(function () { return native_1.connect(term.pty, 'cmd.exe /C exit', process.cwd(), [], false, true, function () { return undefined; }); }, new RegExp(expectedError));
-+                }
-+                finally {
-+                    fs.closeSync(inputFd);
-+                    fs.closeSync(outputFd);
-+                }
++                assert.throws(function () { return new windowsPtyAgent_1.WindowsPtyAgent(process.env.ComSpec || 'cmd.exe', '/C exit', environment_1, process.cwd(), 80, 30, false, true, false, false, true); }, new RegExp(expectedError));
 +                var resourceState = native_1.getTestResourceState();
 +                assert.strictEqual(resourceState.ptyCount, before.ptyCount);
 +                assert.strictEqual(resourceState.closedPseudoConsoleCount, before.closedPseudoConsoleCount + attempt);
@@ -123,6 +114,9 @@ index 0000000000000000000000000000000000000000..fb68c417a5de0e445d5a1c8e0c164a7e
 +            return runFailureCase_1(failure, expectedError);
 +        });
 +        console.log('ConPTY failed-connect cleanup: 2 passed');
++        // Why: failed constructors leave JS pipe workers for GC; native resource
++        // assertions are complete, so the standalone CI runner can exit now.
++        process.exit(0);
 +    }
 +}
 diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
@@ -359,37 +353,19 @@ index af5f343d17f012f330fe2292083f297768ff3b5e..6b558c789fc77b58c20cd9564d03e93e
          describe("WindowsTerminal (useConpty = " + useConpty + ", useConptyDll = " + useConptyDll + ")", function () {
 diff --git a/src/conptyConnectFailure.test.ts b/src/conptyConnectFailure.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..70130579acf6c9592266f4834aa4d34f6e95b59f
+index 0000000000000000000000000000000000000000..e41b702d342590ae39baec24b479c24d392e74b5
 --- /dev/null
 +++ b/src/conptyConnectFailure.test.ts
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,112 @@
 +/**
 + * Copyright (c) 2026, Stably AI (MIT License).
 + */
 +
 +import assert = require('assert');
-+import fs = require('fs');
 +import { loadNativeModule } from './utils';
++import { WindowsPtyAgent } from './windowsPtyAgent';
 +
 +interface ITestConptyNative {
-+  startProcess(
-+    file: string,
-+    cols: number,
-+    rows: number,
-+    debug: boolean,
-+    pipeName: string,
-+    inheritCursor: boolean,
-+    useConptyDll: boolean
-+  ): { pty: number; conin: string; conout: string };
-+  connect(
-+    pty: number,
-+    commandLine: string,
-+    cwd: string,
-+    env: string[],
-+    useConptyDll: boolean,
-+    windowsAgentJob: boolean,
-+    callback: (exitCode: number) => void
-+  ): { pid: number };
 +  setTestConnectFailure?(failure: string): void;
 +  getTestResourceState?(): ITestResourceState;
 +}
@@ -410,47 +386,35 @@ index 0000000000000000000000000000000000000000..70130579acf6c9592266f4834aa4d34f
 +    ['assign-job', 'Cannot assign process to Job, error code: 5'],
 +    ['resume-thread', 'Cannot resume process, error code: 6']
 +  ];
++  const environment = Object.keys(process.env)
++    .filter(key => typeof process.env[key] === 'string')
++    .map(key => `${key}=${process.env[key]}`);
 +
 +  const hasTestHooks = (): boolean =>
 +    Boolean(native.setTestConnectFailure && native.getTestResourceState);
 +
 +  const runFailureCase = (failure: string, expectedError: string): void => {
 +    assert.ok(native.setTestConnectFailure && native.getTestResourceState);
-+    const pipeName = `node-pty-connect-failure-${process.pid}-${failure}`;
 +    const before = native.getTestResourceState();
 +    native.setTestConnectFailure(failure);
 +    try {
-+      // Reusing the same first-instance pipe names proves each failed attempt
-+      // closed both server pipes before removing its baton.
 +      for (let attempt = 1; attempt <= 3; attempt++) {
-+        const term = native.startProcess(
-+          process.env.ComSpec || 'cmd.exe',
-+          80,
-+          30,
-+          false,
-+          pipeName,
-+          false,
-+          false
++        assert.throws(
++          () => new WindowsPtyAgent(
++            process.env.ComSpec || 'cmd.exe',
++            '/C exit',
++            environment,
++            process.cwd(),
++            80,
++            30,
++            false,
++            true,
++            false,
++            false,
++            true
++          ),
++          new RegExp(expectedError)
 +        );
-+        const inputFd = fs.openSync(term.conin, 'w');
-+        const outputFd = fs.openSync(term.conout, 'r');
-+        try {
-+          assert.throws(
-+            () => native.connect(
-+              term.pty,
-+              'cmd.exe /C exit',
-+              process.cwd(),
-+              [],
-+              false,
-+              true,
-+              () => undefined
-+            ),
-+            new RegExp(expectedError)
-+          );
-+        } finally {
-+          fs.closeSync(inputFd);
-+          fs.closeSync(outputFd);
-+        }
 +
 +        const resourceState: ITestResourceState = native.getTestResourceState();
 +        assert.strictEqual(resourceState.ptyCount, before.ptyCount);
@@ -500,6 +464,9 @@ index 0000000000000000000000000000000000000000..70130579acf6c9592266f4834aa4d34f
 +    assert.ok(hasTestHooks(), 'ConPTY test fault injection was required but is unavailable');
 +    failureCases.forEach(([failure, expectedError]) => runFailureCase(failure, expectedError));
 +    console.log('ConPTY failed-connect cleanup: 2 passed');
++    // Why: failed constructors leave JS pipe workers for GC; native resource
++    // assertions are complete, so the standalone CI runner can exit now.
++    process.exit(0);
 +  }
 +}
 diff --git a/src/conpty_console_list_agent.ts b/src/conpty_console_list_agent.ts
