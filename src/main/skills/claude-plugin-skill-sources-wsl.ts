@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { posix as pathPosix } from 'node:path'
-import { buildEncodedWslBashCommand } from '../wsl-bash-command'
+import { buildEncodedWslBashCommand, quoteBashString } from '../wsl-bash-command'
 import {
   getClaudePluginMetadataPaths,
   resolveClaudePluginSkillSources,
@@ -11,10 +11,6 @@ import type { SkillScanRoot } from './skill-discovery-sources'
 const MAX_PLUGIN_METADATA_BYTES = 4 * 1024 * 1024
 const WSL_METADATA_TIMEOUT_MS = 5_000
 const WSL_METADATA_MAX_BUFFER_BYTES = 32 * 1024 * 1024
-
-function quoteBashString(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`
-}
 
 export function buildWslClaudePluginMetadataCommand(paths: readonly string[]): string {
   const lines = [

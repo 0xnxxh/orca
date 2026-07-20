@@ -6,7 +6,7 @@ import type {
   SkillDiscoveryResult,
   SkillDiscoverySource
 } from '../../shared/skills'
-import { buildEncodedWslBashCommand } from '../wsl-bash-command'
+import { buildEncodedWslBashCommand, quoteBashString } from '../wsl-bash-command'
 import {
   buildSkillDiscoverySources,
   compareSkills,
@@ -21,10 +21,6 @@ const MAX_MARKDOWN_BYTES = 256 * 1024
 const MAX_PACKAGE_FILES = 200
 const WSL_SCAN_TIMEOUT_MS = 10_000
 const WSL_SCAN_MAX_BUFFER_BYTES = 128 * 1024 * 1024
-
-function quoteBashString(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`
-}
 
 export function buildWslSkillDiscoveryCommand(roots: readonly SkillScanRoot[]): string {
   const lines = [
@@ -147,7 +143,9 @@ export function parseWslSkillDiscoveryOutput(
       id: stablePathId(canonicalSkillFilePath),
       name: summary.name ?? pathPosix.basename(directoryPath),
       description: summary.description,
-      providers: root.providers,
+      // Copy: `root.providers` is shared across every skill/source from this
+      // root, so a later in-place merge must not mutate the aliased array.
+      providers: [...root.providers],
       sourceKind,
       sourceLabel: sourceLabelForSkill(root, sourceKind),
       rootPath: root.path,
@@ -162,7 +160,12 @@ export function parseWslSkillDiscoveryOutput(
 
   const sources: SkillDiscoverySource[] = roots.map((root, rootIndex) => {
     const exists = rootExists.get(rootIndex) ?? false
-    return { ...root, exists, skippedReason: exists ? undefined : 'missing' }
+    return {
+      ...root,
+      providers: [...root.providers],
+      exists,
+      skippedReason: exists ? undefined : 'missing'
+    }
   })
   return {
     skills: [...skillsByCanonicalPath.values()].sort(compareSkills),

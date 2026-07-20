@@ -13314,7 +13314,7 @@
         "skillsLoadFailed": "이 호스트에서 스킬을 불러올 수 없습니다",
         "retrySkills": "재시도",
         "skillCommandCollision": "스킬 이름이기도 합니다 - 에이전트가 결정합니다",
-        "skillMultipleSources": "{{count}}개 소스 - 에이전트가 해결합니다",
+        "skillMultipleSources": "{{sourceCount}}개 소스 - 에이전트가 해결합니다",
         "skillScopeProject": "프로젝트",
         "skillScopePersonal": "개인",
         "skillScopeBuiltIn": "내장",

@@ -98,7 +98,9 @@ export const SkillDiscoveryTargetSchema: z.ZodType<SkillDiscoveryTarget> = z.obj
   wslDistro: z.string().nullable().optional(),
   cwd: z.string().nullable().optional(),
   worktreeId: z.string().nullable().optional(),
-  projectRuntime: z.union([ResolvedProjectRuntimeSchema, RepairProjectRuntimeSchema]).optional()
+  projectRuntime: z
+    .discriminatedUnion('status', [ResolvedProjectRuntimeSchema, RepairProjectRuntimeSchema])
+    .optional()
 })
 
 export type SkillFrontmatterSummary = {

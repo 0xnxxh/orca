@@ -14,6 +14,8 @@ export function isSafeDisplayCharacter(character: string): boolean {
     code === 0x061c ||
     code === 0x2060 ||
     code === 0xfeff ||
+    code === 0x2028 ||
+    code === 0x2029 ||
     (code >= 0x202a && code <= 0x202e) ||
     (code >= 0x2066 && code <= 0x2069)
   )

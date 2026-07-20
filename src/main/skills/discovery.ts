@@ -202,7 +202,9 @@ async function scanRoot(root: SkillScanRoot): Promise<ScannedSkill[]> {
         id: stablePathId(canonicalSkillFilePath),
         name: summary.name ?? basename(directoryPath),
         description: summary.description,
-        providers: root.providers,
+        // Copy: `root.providers` is shared across every skill/source from this
+        // root, so the dedup merge below must not mutate the aliased array.
+        providers: [...root.providers],
         sourceKind,
         sourceLabel: sourceLabelForSkill(root, sourceKind),
         rootPath: root.path,
@@ -229,13 +231,20 @@ export async function discoverSkills(args: {
     ...buildSkillDiscoverySources({ ...args, homeDir }),
     // Why: plugin discovery is native-chat data keyed to an explicit workspace.
     // Untargeted scans (Settings) keep their pre-picker inventory and cost.
-    ...(args.cwd ? await discoverClaudePluginSkillSources({ homeDir, cwd: args.cwd }) : [])
+    ...(args.cwd && args.includeCwd !== false
+      ? await discoverClaudePluginSkillSources({ homeDir, cwd: args.cwd })
+      : [])
   ]
   const sources: SkillDiscoverySource[] = []
   const skillGroups = await Promise.all(
     roots.map(async (root) => {
       const exists = await pathExists(root.path)
-      sources.push({ ...root, exists, skippedReason: exists ? undefined : 'missing' })
+      sources.push({
+        ...root,
+        providers: [...root.providers],
+        exists,
+        skippedReason: exists ? undefined : 'missing'
+      })
       if (!exists) {
         return []
       }

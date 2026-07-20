@@ -239,7 +239,10 @@ export const NativeChatComposer = forwardRef<NativeChatComposerHandle, NativeCha
       }
       const classification = classifySend(text)
       let pendingHandle: NativeChatSendHandle | null = null
-      if (classification !== 'chat') {
+      // Why: image attachments take the attachment send path even for a
+      // command/unknown send, otherwise `clearImageAttachments()` below drops
+      // them silently when the text starts with the agent's slash/skill prefix.
+      if (classification !== 'chat' && imagePaths.length === 0) {
         pendingHandle = sendNativeChatMessage(target.settings, target.ptyId, text)
       } else if (imagePaths.length > 0) {
         pendingHandle = sendNativeChatMessageWithImageAttachments(

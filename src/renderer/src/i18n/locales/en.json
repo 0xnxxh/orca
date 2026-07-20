@@ -13308,7 +13308,7 @@
         "skillsLoadFailed": "Could not load skills from this host",
         "retrySkills": "Retry",
         "skillCommandCollision": "Also a skill name - agent decides",
-        "skillMultipleSources": "{{count}} sources - agent resolves",
+        "skillMultipleSources": "{{sourceCount}} sources - agent resolves",
         "skillScopeProject": "Project",
         "skillScopePersonal": "Personal",
         "skillScopeBuiltIn": "Built-in",

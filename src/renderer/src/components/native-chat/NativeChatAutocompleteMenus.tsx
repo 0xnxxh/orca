@@ -238,10 +238,12 @@ function getPickerAnnotation(item: NativeChatPickerItem): string | null {
     )
   }
   if (item.kind === 'skill' && item.sources.length > 1) {
+    // Why: name the interpolation `sourceCount`, not `count` — a `count` option
+    // makes i18next resolve plural-suffixed keys that these locales don't define.
     return translate(
       'components.native-chat.composer.skillMultipleSources',
-      '{{count}} sources - agent resolves',
-      { count: item.sources.length }
+      '{{sourceCount}} sources - agent resolves',
+      { sourceCount: item.sources.length }
     )
   }
   return null

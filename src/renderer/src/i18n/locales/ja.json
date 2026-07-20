@@ -13314,7 +13314,7 @@
         "skillsLoadFailed": "このホストからスキルを読み込めませんでした",
         "retrySkills": "再試行",
         "skillCommandCollision": "スキル名でもあります - エージェントが判断します",
-        "skillMultipleSources": "{{count}} 個のソース - エージェントが解決します",
+        "skillMultipleSources": "{{sourceCount}} 個のソース - エージェントが解決します",
         "skillScopeProject": "プロジェクト",
         "skillScopePersonal": "個人",
         "skillScopeBuiltIn": "組み込み",

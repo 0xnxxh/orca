@@ -45,7 +45,7 @@ describe('skills.discover RPC', () => {
   it('resolves the project runtime from the owning runtime store when the caller omits it', async () => {
     const resolveProjectRuntimeForWorktree = vi.fn(() => WSL_RUNTIME)
     await discoverMethod().handler(
-      { cwd: 'C\\\\repo', worktreeId: 'worktree-1' },
+      { cwd: 'C:\\repo', worktreeId: 'worktree-1' },
       makeContext({ resolveProjectRuntimeForWorktree })
     )
     expect(resolveProjectRuntimeForWorktree).toHaveBeenCalledWith('worktree-1')

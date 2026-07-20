@@ -13314,7 +13314,7 @@
         "skillsLoadFailed": "无法从此主机加载技能",
         "retrySkills": "重试",
         "skillCommandCollision": "也是技能名称 - 由代理决定",
-        "skillMultipleSources": "{{count}} 个来源 - 由代理解析",
+        "skillMultipleSources": "{{sourceCount}} 个来源 - 由代理解析",
         "skillScopeProject": "项目",
         "skillScopePersonal": "个人",
         "skillScopeBuiltIn": "内置",

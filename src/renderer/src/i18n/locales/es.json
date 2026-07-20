@@ -13314,7 +13314,7 @@
         "skillsLoadFailed": "No se pudieron cargar las habilidades de este host",
         "retrySkills": "Reintentar",
         "skillCommandCollision": "También es un nombre de habilidad - el agente decide",
-        "skillMultipleSources": "{{count}} fuentes - el agente resuelve",
+        "skillMultipleSources": "{{sourceCount}} fuentes - el agente resuelve",
         "skillScopeProject": "Proyecto",
         "skillScopePersonal": "Personal",
         "skillScopeBuiltIn": "Integrado",
