@@ -541,6 +541,8 @@ export class DaemonServer {
       if (this.clients.get(client.clientId) !== client || client.streamSocket !== socket) {
         return
       }
+      // Why: a preflight that outlives its output channel would create an unattached daemon PTY.
+      this.cancelPendingPtySpawnPreparationsForClient(client.clientId)
       this.streamDataBatcher.clear(client.clientId)
       client.streamSocket = null
     }
