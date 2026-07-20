@@ -50,7 +50,8 @@ function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
     case 'idle':
       return 'idle'
     // blocked | waiting — the agent needs the user.
-    default:
+    case 'blocked':
+    case 'waiting':
       return 'attention'
   }
 }

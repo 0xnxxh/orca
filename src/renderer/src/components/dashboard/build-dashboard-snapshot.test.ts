@@ -119,19 +119,22 @@ describe('buildDashboardSnapshot', () => {
     expect(snapshot.cards[0].unseen).toBe(false)
   })
 
-  it('routes blocked/waiting agents to the attention bucket with an ask summary', () => {
-    const snapshot = buildDashboardSnapshot(
-      baseState({
-        agentStatusByPaneKey: {
-          [PANE_KEY]: entry({ state: 'blocked', interactivePrompt: 'Approve deploy?' })
-        }
-      }),
-      NOW
-    )
-    expect(snapshot.cards[0].bucket).toBe('attention')
-    expect(snapshot.cards[0].dotState).toBe('blocked')
-    expect(snapshot.cards[0].askSummary).toBe('Approve deploy?')
-  })
+  it.each(['blocked', 'waiting'] as const)(
+    'routes %s agents to the attention bucket with an ask summary',
+    (state) => {
+      const snapshot = buildDashboardSnapshot(
+        baseState({
+          agentStatusByPaneKey: {
+            [PANE_KEY]: entry({ state, interactivePrompt: 'Approve deploy?' })
+          }
+        }),
+        NOW
+      )
+      expect(snapshot.cards[0].bucket).toBe('attention')
+      expect(snapshot.cards[0].dotState).toBe(state)
+      expect(snapshot.cards[0].askSummary).toBe('Approve deploy?')
+    }
+  )
 
   it('decays a stale working agent to the idle bucket', () => {
     const snapshot = buildDashboardSnapshot(
