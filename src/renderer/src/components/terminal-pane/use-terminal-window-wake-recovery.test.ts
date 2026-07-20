@@ -97,6 +97,28 @@ describe('useTerminalWindowWakeRecovery', () => {
     ])
   })
 
+  it('reasserts pane PTY sizes after the window-focus fit', () => {
+    const noteVisibilityResume = vi.fn()
+    renderHook(() =>
+      useTerminalWindowWakeRecovery({
+        isVisible: true,
+        managerRef: { current: manager },
+        isActiveRef: { current: true },
+        isVisibleRef: { current: true },
+        panePtyBindingsRef: {
+          current: new Map([[1, { dispose: vi.fn(), noteVisibilityResume }]]) as never
+        }
+      })
+    )
+
+    window.dispatchEvent(new Event('focus'))
+
+    expect(noteVisibilityResume).toHaveBeenCalledTimes(1)
+    expect(recoverVisibleTerminalWindowWakeMock.mock.invocationCallOrder[0]).toBeLessThan(
+      noteVisibilityResume.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    )
+  })
+
   it('unsubscribes from the system resume event on cleanup', () => {
     const { unmount } = renderWakeRecoveryHook()
     expect(onSystemResumed).toHaveBeenCalledTimes(1)

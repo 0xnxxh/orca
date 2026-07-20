@@ -4703,6 +4703,18 @@ describe('registerPtyHandlers', () => {
       expect(reported).toEqual({ cols: 80, rows: 24 })
     })
 
+    it('preserves provider-owned null so the renderer re-forwards an unverified size', async () => {
+      setupProviderWithAppliedSize({ applied: null, getAppliedSize: async () => null })
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never)
+      const spawn = await handlers.get('pty:spawn')!(null, { cols: 100, rows: 30, env: {} })
+      const id = (spawn as { id: string }).id
+      resizeListener()(mainWindowIpcEvent, { id, cols: 80, rows: 24 })
+
+      const reported = await handlers.get('pty:getSize')!(null, { id })
+      expect(reported).toBeNull()
+    })
+
     it('falls back to the requested size when getAppliedSize throws', async () => {
       // A dead daemon/relay must never throw across the IPC boundary or block.
       setupProviderWithAppliedSize({

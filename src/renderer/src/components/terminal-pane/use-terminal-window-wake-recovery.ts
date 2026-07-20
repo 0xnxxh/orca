@@ -2,19 +2,22 @@ import { useEffect } from 'react'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import { recoverVisibleTerminalWindowWake } from './terminal-visibility-resume'
 import { recordTerminalFreezeBreadcrumb } from './terminal-freeze-breadcrumbs'
+import type { IDisposable } from '@xterm/xterm'
 
 type UseTerminalWindowWakeRecoveryArgs = {
   isVisible: boolean
   managerRef: React.RefObject<PaneManager | null>
   isActiveRef: React.RefObject<boolean>
   isVisibleRef: React.RefObject<boolean>
+  panePtyBindingsRef?: React.RefObject<Map<number, IDisposable>>
 }
 
 export function useTerminalWindowWakeRecovery({
   isVisible,
   managerRef,
   isActiveRef,
-  isVisibleRef
+  isVisibleRef,
+  panePtyBindingsRef
 }: UseTerminalWindowWakeRecoveryArgs): void {
   useEffect(() => {
     if (!isVisible) {
@@ -59,6 +62,11 @@ export function useTerminalWindowWakeRecovery({
         isActive: isActiveRef.current,
         clearGlyphAtlases
       })
+      for (const binding of panePtyBindingsRef?.current.values() ?? []) {
+        // Why: fit-only wake recovery cannot detect a dropped remote resize
+        // when xterm is already at the desired grid; verify after fitting.
+        ;(binding as IDisposable & { noteVisibilityResume?: () => void }).noteVisibilityResume?.()
+      }
       if (typeof requestAnimationFrame !== 'function') {
         return
       }
@@ -76,6 +84,9 @@ export function useTerminalWindowWakeRecovery({
           isActive: isActiveRef.current,
           clearGlyphAtlases: clearGlyphAtlasesOnSettle
         })
+        for (const binding of panePtyBindingsRef?.current.values() ?? []) {
+          ;(binding as IDisposable & { noteVisibilityResume?: () => void }).noteVisibilityResume?.()
+        }
       })
     }
     // Why: plain refocus (alt-tab, devtools) is frequent and often lands while
@@ -115,5 +126,5 @@ export function useTerminalWindowWakeRecovery({
       }
       unsubscribeSystemResumed?.()
     }
-  }, [isActiveRef, isVisible, isVisibleRef, managerRef])
+  }, [isActiveRef, isVisible, isVisibleRef, managerRef, panePtyBindingsRef])
 }

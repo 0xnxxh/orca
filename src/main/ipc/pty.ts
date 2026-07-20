@@ -4814,10 +4814,13 @@ export function registerPtyHandlers(
   ipcMain.handle(
     'pty:getSize',
     async (_event, args: { id: string }): Promise<{ cols: number; rows: number } | null> => {
+      const provider = tryGetProviderForPty(args.id)
       try {
-        const applied = await tryGetProviderForPty(args.id)?.getAppliedSize?.(args.id)
-        if (applied) {
-          return applied
+        if (provider?.getAppliedSize) {
+          // Why: a provider-owned null means it could not verify the applied
+          // grid; preserve null so the renderer re-forwards instead of trusting
+          // the requested-size cache that may describe a dropped resize.
+          return await provider.getAppliedSize(args.id)
         }
       } catch {
         // Fall through to the requested-size cache so a dead daemon/relay can't throw across the IPC boundary.
