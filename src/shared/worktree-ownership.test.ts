@@ -524,4 +524,38 @@ describe('agent scratch worktrees', () => {
       ownership: 'unknown-legacy'
     })
   })
+
+  it('preserves an explicit scratch import in the metadata fallback', () => {
+    const repo = makeRepo({
+      externalWorktreeVisibility: 'hide',
+      importedExternalWorktreePaths: [scratchPath]
+    })
+    const settings = makeSettings()
+    const scratch = toDetectedWorktree({
+      repo,
+      settings,
+      worktree: makeWorktree({ path: scratchPath, isMainWorktree: false }),
+      knownOrcaLayouts: buildKnownOrcaWorkspaceLayouts(settings, repo)
+    })
+
+    expect(scratch).toMatchObject({ ownership: 'agent-scratch', visible: true })
+    expect(applyMetadataFallbackVisibility(scratch)).toBe(scratch)
+  })
+
+  it('does not classify worktrees from a repo stored below a scratch-looking parent', () => {
+    const repo = makeRepo({ path: '/repos/.claude/worktrees/app' })
+    const settings = makeSettings()
+
+    expect(
+      classifyWorktreeOwnership({
+        repo,
+        settings,
+        worktree: makeWorktree({
+          path: '/repos/.claude/worktrees/app/manual/feature-x',
+          isMainWorktree: false
+        }),
+        knownOrcaLayouts: buildKnownOrcaWorkspaceLayouts(settings, repo)
+      })
+    ).not.toBe('agent-scratch')
+  })
 })

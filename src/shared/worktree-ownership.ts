@@ -162,7 +162,7 @@ export function classifyWorktreeOwnership(args: {
 
   // Why: sub-agent scratch worktrees (e.g. .claude/worktrees) are tool
   // plumbing, not workspaces; classify before layout heuristics (#9388).
-  if (isAgentScratchWorktreePath(args.worktree.path)) {
+  if (isAgentScratchWorktreePath(args.repo.path, args.worktree.path)) {
     return 'agent-scratch'
   }
 
@@ -240,12 +240,10 @@ export function shouldShowWorktree(args: {
   return effectiveExternalWorktreeVisibility(args.repo, args.isLegacyRepoForVisibility) === 'show'
 }
 
-/** Fail-open override for listings built without an authoritative git scan.
- *  Why: the fallback reveals every known worktree so none get stranded, but
- *  agent scratch must stay hidden even there (#9388). */
 export function applyMetadataFallbackVisibility(detected: DetectedWorktree): DetectedWorktree {
   if (detected.ownership === 'agent-scratch') {
-    return { ...detected, visible: false }
+    // Why: retain scratch policy, including explicit imports, while ordinary fallback fails open.
+    return detected
   }
   return {
     ...detected,

@@ -1,27 +1,26 @@
-import { normalizeRuntimePathSeparators } from './cross-platform-path'
+import { isWindowsAbsolutePathLike, relativePathInsideRoot } from './cross-platform-path'
+import { isWslUncPath } from './wsl-paths'
 
-/** Why: coding-agent CLIs create throwaway sub-agent worktrees at fixed
- *  tool-internal paths (#9388); these are session scratch, never user
- *  workspaces. Curated exact segments — a generic dot-directory rule would
- *  swallow legitimate layouts like `<repo>/.worktrees/<branch>`. */
-const AGENT_SCRATCH_PATH_SEGMENT_RUNS: readonly (readonly string[])[] = [
+/** Why: agent CLIs reserve these repo-root paths for scratch; broader matches
+ *  can hide legitimate user worktrees (#9388). */
+const AGENT_SCRATCH_PATH_PREFIXES: readonly (readonly string[])[] = [
   ['.claude', 'worktrees'],
   ['.gsd-workspaces']
 ]
 
-export function isAgentScratchWorktreePath(worktreePath: string): boolean {
-  const segments = normalizeRuntimePathSeparators(worktreePath)
+export function isAgentScratchWorktreePath(repoPath: string, worktreePath: string): boolean {
+  const relativePath = relativePathInsideRoot(repoPath, worktreePath)
+  if (!relativePath) {
+    return false
+  }
+  const caseInsensitive = isWindowsAbsolutePathLike(worktreePath) && !isWslUncPath(worktreePath)
+  const segments = relativePath
     .split('/')
     .filter(Boolean)
-    .map((segment) => segment.toLowerCase())
-  return AGENT_SCRATCH_PATH_SEGMENT_RUNS.some((run) => hasSegmentRun(segments, run))
-}
-
-function hasSegmentRun(segments: readonly string[], run: readonly string[]): boolean {
-  for (let start = 0; start + run.length <= segments.length; start++) {
-    if (run.every((segment, offset) => segments[start + offset] === segment)) {
-      return true
-    }
-  }
-  return false
+    .map((segment) => (caseInsensitive ? segment.toLowerCase() : segment))
+  return AGENT_SCRATCH_PATH_PREFIXES.some(
+    (prefix) =>
+      segments.length > prefix.length &&
+      prefix.every((segment, index) => segments[index] === segment)
+  )
 }

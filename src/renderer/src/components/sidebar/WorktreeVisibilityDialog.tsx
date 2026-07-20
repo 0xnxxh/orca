@@ -9,6 +9,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { getHiddenExternalWorktrees } from '../../../../shared/external-worktree-inbox'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import {
   effectiveExternalWorktreeVisibility,
@@ -32,21 +33,12 @@ export default function WorktreeVisibilityDialog(): React.JSX.Element | null {
     ? effectiveExternalWorktreeVisibility(repo, isLegacyRepoForExternalWorktreeVisibility(repo)) ===
       'show'
     : false
-  // Why: agent scratch is never shown or importable, so it must not inflate
-  // either count in this dialog.
-  const hiddenCount =
-    detected?.authoritative === true
-      ? detected.worktrees.filter(
-          (worktree) => !worktree.visible && worktree.ownership !== 'agent-scratch'
-        ).length
-      : 0
+  const hiddenCount = getHiddenExternalWorktrees(detected).length
   const otherCount =
     detected?.authoritative === true
       ? detected.worktrees.filter(
           (worktree) =>
-            !worktree.selectedCheckout &&
-            worktree.ownership !== 'orca-managed' &&
-            worktree.ownership !== 'agent-scratch'
+            worktree.visible && !worktree.selectedCheckout && worktree.ownership !== 'orca-managed'
         ).length
       : 0
   const hiddenWorktreeLabel = `${hiddenCount} ${hiddenCount === 1 ? 'worktree' : 'worktrees'}`
