@@ -60,10 +60,7 @@ import {
   captureDescendantSnapshot,
   terminateDescendantSnapshot
 } from '../pty-descendant-termination'
-import {
-  requestWindowsDescendantTreeTermination,
-  WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS
-} from '../windows-pty-descendant-termination'
+import { WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS } from '../windows-pty-job-control'
 import { readWindowsConptyProcessIds } from './windows-conpty-process-membership'
 import { canConfirmAgentFromConsolePresence } from './windows-console-foreground'
 import { forceKillPosixPtyProcessGroups } from '../pty/posix-pty-process-groups'
@@ -291,27 +288,26 @@ type WindowsPtyJobControl = pty.IPty & {
 }
 
 async function terminateWindowsPtyTree(proc: pty.IPty, closeRoot: () => void): Promise<void> {
-  const nativeCompletion = (proc as WindowsPtyJobControl).terminateJobTree?.call(
-    proc,
-    WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS
-  )
-  if (nativeCompletion) {
+  let nativeCompletion: Promise<boolean> | undefined
+  try {
+    nativeCompletion = (proc as WindowsPtyJobControl).terminateJobTree?.call(
+      proc,
+      WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS
+    )
+  } catch (error) {
+    // Why: a synchronous native bridge failure must still close ConPTY while
+    // the rejected shutdown keeps destructive deletion fail-closed.
     closeRoot()
-    if (!(await nativeCompletion)) {
-      throw new Error(`Windows PTY Job did not drain for process ${proc.pid}`)
-    }
-    return
+    throw error
+  }
+  if (!nativeCompletion) {
+    closeRoot()
+    throw new Error(`Windows PTY Job ownership unavailable for process ${proc.pid}`)
   }
 
-  try {
-    await requestWindowsDescendantTreeTermination(proc.pid)
-    // taskkill cannot identify a descendant after its launcher exits, so a
-    // successful request is cleanup only and never authorizes deletion.
-    throw new Error(`Windows PTY Job ownership unavailable for process ${proc.pid}`)
-  } finally {
-    // Why: fallback failure must not leave the agent root alive, but callers
-    // still receive the failure instead of treating worktree handles as free.
-    closeRoot()
+  closeRoot()
+  if (!(await nativeCompletion)) {
+    throw new Error(`Windows PTY Job did not drain for process ${proc.pid}`)
   }
 }
 

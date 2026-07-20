@@ -388,6 +388,12 @@ test('Windows worktree deletion releases a reparented agent descendant file lock
     created = await createIsolatedWorktree(orcaPage)
     const lockedPath = join(created.path, 'README.md')
     expect(existsSync(lockedPath), 'fixture worktree must contain tracked README.md').toBe(true)
+    const initialGitRegistration = inspectGitWorktreeRegistration(created.repoPath, created.path)
+    expect(initialGitRegistration.error).toBeUndefined()
+    expect(
+      initialGitRegistration.registered,
+      'fixture worktree must be Git-registered before destructive removal'
+    ).toBe(true)
 
     const command = [
       `[IO.File]::WriteAllText(${quotePowerShellArg(rootPidPath)}, [string]$PID);`,
@@ -464,7 +470,8 @@ test('Windows worktree deletion releases a reparented agent descendant file lock
       rootAlive: isProcessAlive(rootPid),
       agentAlive: isProcessAlive(agentPid),
       launcherAlive: isProcessAlive(launcherPid),
-      lockHolderAlive: isProcessAlive(lockHolderPid)
+      lockHolderAlive: isProcessAlive(lockHolderPid),
+      gitWorktreeRegistered: initialGitRegistration.registered
     }
 
     removalResult = await removeWorktreeViaStore(orcaPage, created.id)

@@ -4,14 +4,9 @@ import { TerminalSessionTeardown } from './terminal-session-teardown'
 import { shutdownTerminalHostSessions } from './terminal-host-session-shutdown'
 
 const killWithDescendantSweepMock = vi.hoisted(() => vi.fn())
-const requestWindowsDescendantTreeTerminationMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../pty-descendant-termination', () => ({
   killWithDescendantSweep: killWithDescendantSweepMock
-}))
-vi.mock('../windows-pty-descendant-termination', () => ({
-  requestWindowsDescendantTreeTermination: requestWindowsDescendantTreeTerminationMock,
-  WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS: 8_000
 }))
 
 type MockSession = Session & {
@@ -50,8 +45,6 @@ describe('TerminalSessionTeardown Windows descendant termination', () => {
   beforeEach(() => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
     killWithDescendantSweepMock.mockReset()
-    requestWindowsDescendantTreeTerminationMock.mockReset()
-    requestWindowsDescendantTreeTerminationMock.mockResolvedValue(undefined)
     sessions = new Map()
     teardown = new TerminalSessionTeardown(sessions)
   })
@@ -74,7 +67,6 @@ describe('TerminalSessionTeardown Windows descendant termination', () => {
     expect(session.terminateJobTree.mock.invocationCallOrder[0]).toBeLessThan(
       session.forceKillAndWaitForExit.mock.invocationCallOrder[0]!
     )
-    expect(requestWindowsDescendantTreeTerminationMock).not.toHaveBeenCalled()
   })
 
   it('rejects fail-closed after closing the root when the agent Job does not drain', async () => {
@@ -107,7 +99,7 @@ describe('TerminalSessionTeardown Windows descendant termination', () => {
     expect(teardown.get('agent')).toBeUndefined()
   })
 
-  it('uses taskkill before the agent root when Job assignment was unavailable', async () => {
+  it('closes the root and fails closed when Job assignment was unavailable', async () => {
     const session = createSession({ agent: true, nativeWindows: true, hasJob: false })
     sessions.set('agent', session)
 
@@ -115,10 +107,22 @@ describe('TerminalSessionTeardown Windows descendant termination', () => {
       'Windows PTY Job ownership unavailable'
     )
 
-    expect(requestWindowsDescendantTreeTerminationMock).toHaveBeenCalledWith(99999)
-    expect(requestWindowsDescendantTreeTerminationMock.mock.invocationCallOrder[0]).toBeLessThan(
-      session.forceKillAndWaitForExit.mock.invocationCallOrder[0]!
+    expect(session.forceKillAndWaitForExit).toHaveBeenCalledOnce()
+  })
+
+  it('closes the root when the native Job bridge throws synchronously', async () => {
+    const session = createSession({ agent: true, nativeWindows: true })
+    session.terminateJobTree.mockImplementation(() => {
+      throw new Error('synchronous native Job failure')
+    })
+    sessions.set('agent', session)
+
+    await expect(teardown.killSession('agent', session, true)).rejects.toThrow(
+      'synchronous native Job failure'
     )
+
+    expect(session.forceKillAndWaitForExit).toHaveBeenCalledOnce()
+    expect(teardown.get('agent')).toBeUndefined()
   })
 
   it('preserves native Job descendants for plain terminals', async () => {
@@ -127,25 +131,6 @@ describe('TerminalSessionTeardown Windows descendant termination', () => {
     await teardown.killSession('normal', normal, true)
 
     expect(normal.terminateJobTree).not.toHaveBeenCalled()
-  })
-
-  it('does not signal a root that exits while taskkill is pending', async () => {
-    let finishFallback!: () => void
-    requestWindowsDescendantTreeTerminationMock.mockReturnValue(
-      new Promise<void>((resolve) => {
-        finishFallback = resolve
-      })
-    )
-    const session = createSession({ agent: true, nativeWindows: true, hasJob: false })
-    sessions.set('agent', session)
-
-    const killing = teardown.killSession('agent', session, true)
-    session.setAlive(false)
-    sessions.delete('agent')
-    finishFallback()
-    await expect(killing).rejects.toThrow('Windows PTY Job ownership unavailable')
-
-    expect(session.forceKillAndWaitForExit).not.toHaveBeenCalled()
   })
 
   it('routes daemon-wide shutdown through coordinated session teardown', async () => {

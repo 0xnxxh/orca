@@ -1,17 +1,3 @@
-diff --git a/binding.gyp b/binding.gyp
-index 5f63978b07ab50aaf7523219a2170ec737a6b5db..c73569f8bac0a79023d26123e10db8a074089cf1 100644
---- a/binding.gyp
-+++ b/binding.gyp
-@@ -5,9 +5,6 @@
-     ],
-     'conditions': [
-       ['OS=="win"', {
--        'msvs_configuration_attributes': {
--          'SpectreMitigation': 'Spectre'
--        },
-         'msvs_settings': {
-             'VCCLCompilerTool': {
-               'AdditionalOptions': [
 diff --git a/deps/winpty/src/winpty.gyp b/deps/winpty/src/winpty.gyp
 index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..e619813759c6f14694838bdfbd0ea5f8360130ef 100644
 --- a/deps/winpty/src/winpty.gyp
@@ -34,26 +20,6 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..e619813759c6f14694838bdfbd0ea5f8
          ]
      },
      'targets' : [
-@@ -40,9 +40,6 @@
-                 '-lshell32',
-                 '-luser32',
-             ],
--            'msvs_configuration_attributes': {
--                'SpectreMitigation': 'Spectre'
--            },
-             'msvs_settings': {
-                 # Specify this setting here to override a setting from somewhere
-                 # else, such as node's common.gypi.
-@@ -142,9 +139,6 @@
-                 '-ladvapi32',
-                 '-luser32',
-             ],
--            'msvs_configuration_attributes': {
--                'SpectreMitigation': 'Spectre'
--            },
-             'msvs_settings': {
-                 # Specify this setting here to override a setting from somewhere
-                 # else, such as node's common.gypi.
 diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
 index 8c4fca9022a6d6f015bca87f61625cde2278f428..201fc1d70a907e31b5a2b33b19a9db20803bc652 100644
 --- a/lib/conpty_console_list_agent.js

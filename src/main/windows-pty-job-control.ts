@@ -1,0 +1,1 @@
+export const WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS = 8_000

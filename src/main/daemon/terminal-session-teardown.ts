@@ -1,8 +1,5 @@
 import { killWithDescendantSweep } from '../pty-descendant-termination'
-import {
-  requestWindowsDescendantTreeTermination,
-  WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS
-} from '../windows-pty-descendant-termination'
+import { WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS } from '../windows-pty-job-control'
 import type { Session } from './session'
 
 type AgentTeardownOperation = {
@@ -55,7 +52,7 @@ export class TerminalSessionTeardown {
   ): void | Promise<void> {
     return this.killCoordinatedSession(sessionId, session, immediate, (killRoot, ownsRoot) => {
       if (process.platform === 'win32' && session.ownsNativeWindowsPty) {
-        return this.terminateWindowsTree(session, killRoot, ownsRoot)
+        return this.terminateWindowsTree(session, killRoot)
       }
       return killWithDescendantSweep(session.pid, killRoot, { ownsRoot })
     })
@@ -138,32 +135,24 @@ export class TerminalSessionTeardown {
     return operation
   }
 
-  private async terminateWindowsTree(
-    session: Session,
-    killRoot: () => void,
-    ownsRoot: () => boolean
-  ): Promise<void> {
-    const nativeCompletion = session.terminateJobTree(WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS)
-    if (nativeCompletion) {
+  private async terminateWindowsTree(session: Session, killRoot: () => void): Promise<void> {
+    let nativeCompletion: Promise<boolean> | undefined
+    try {
+      nativeCompletion = session.terminateJobTree(WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS)
+    } catch (error) {
+      // Why: even a synchronous native bridge failure must not strand the
+      // still-owned ConPTY root while destructive teardown fails closed.
       killRoot()
-      if (!(await nativeCompletion)) {
-        throw new Error(`Windows PTY Job did not drain for process ${session.pid}`)
-      }
-      return
+      throw error
     }
-    if (!ownsRoot()) {
-      throw new Error(`Windows PTY root exited without Job ownership for process ${session.pid}`)
+    if (!nativeCompletion) {
+      killRoot()
+      throw new Error(`Windows PTY Job ownership unavailable for process ${session.pid}`)
     }
 
-    try {
-      await requestWindowsDescendantTreeTermination(session.pid)
-      // taskkill cannot identify a descendant after its launcher exits, so a
-      // successful request is cleanup only and never authorizes deletion.
-      throw new Error(`Windows PTY Job ownership unavailable for process ${session.pid}`)
-    } finally {
-      // Why: fallback failure must not leave the agent root running, while the
-      // rejected operation still keeps destructive callers fail-closed.
-      killRoot()
+    killRoot()
+    if (!(await nativeCompletion)) {
+      throw new Error(`Windows PTY Job did not drain for process ${session.pid}`)
     }
   }
 }
