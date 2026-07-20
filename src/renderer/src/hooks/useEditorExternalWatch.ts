@@ -23,6 +23,7 @@ import {
   isRecentSelfMoveSource,
   isRecentSelfMoveTarget
 } from '@/components/editor/editor-self-move-registry'
+import { isActiveMoveSourcePath } from '@/components/editor/editor-path-move-inflight'
 import type { FsChangedPayload } from '../../../shared/types'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import type { OpenFile } from '@/store/slices/editor'
@@ -493,10 +494,17 @@ export function createExternalWatchEventHandler(
       openFilesAtStart
     ).filter((fileId) => {
       // Don't tombstone the source side of an Orca move (the tab is being
-      // re-homed). A deletion has nothing to content-verify, so this stays a
-      // bounded suppression; a real concurrent delete is recoverable on save.
+      // re-homed). Op-scoped in-flight suppression is the durable mechanism; the
+      // TTL registry check is the transitional fallback until the coordinator
+      // (stage 4) drives every move through beginEditorPathMove.
       const file = openFilesAtStart.find((f) => f.id === fileId)
-      return !file || !isRecentSelfMoveSource(file.filePath, target.runtimeEnvironmentId)
+      if (!file) {
+        return true
+      }
+      return !(
+        isActiveMoveSourcePath(target.worktreeId, target.runtimeEnvironmentId, file.filePath) ||
+        isRecentSelfMoveSource(file.filePath, target.runtimeEnvironmentId)
+      )
     })
     // Why: correlate creates to deletes by basename OR parent directory to
     // avoid mislabelling unrelated create+delete pairs in a batched payload
