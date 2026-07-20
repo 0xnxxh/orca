@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { toAppSshPtyId } from '../../../shared/ssh-pty-id'
 
 const mockCreateTab = vi.fn()
 const mockQueueTabStartupCommand = vi.fn()
@@ -61,7 +62,11 @@ const store = {
   openFiles: [] as { id: string; worktreeId: string }[],
   browserTabsByWorktree: {} as Record<string, { id: string }[]>,
   tabBarOrderByWorktree: {} as Record<string, string[]>,
-  terminalLayoutsByTabId: {} as Record<string, { activeLeafId: string | null }>,
+  terminalLayoutsByTabId: {} as Record<
+    string,
+    { activeLeafId: string | null; ptyIdsByLeafId?: Record<string, string> }
+  >,
+  ptyIdsByTabId: {} as Record<string, string[]>,
   createTab: mockCreateTab,
   closeTab: vi.fn(),
   queueTabStartupCommand: mockQueueTabStartupCommand,
@@ -148,6 +153,7 @@ describe('launchAgentInNewTab', () => {
     store.browserTabsByWorktree = {}
     store.tabBarOrderByWorktree = {}
     store.terminalLayoutsByTabId = {}
+    store.ptyIdsByTabId = {}
     mockCreateTab.mockReturnValue({ id: 'tab-1' })
     mockPasteDraftWhenAgentReady.mockResolvedValue(true)
   })
@@ -678,6 +684,7 @@ describe('launchAgentInNewTab', () => {
   })
 
   it('seeds working after Command Code submit-after-ready prompt delivery', async () => {
+    store.repos = [{ id: 'repo-1', connectionId: 'ssh-a', path: '/repo' }]
     const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
 
     const result = launchAgentInNewTab({
@@ -686,7 +693,13 @@ describe('launchAgentInNewTab', () => {
       prompt: 'large generated prompt',
       promptDelivery: 'submit-after-ready'
     })
-    store.terminalLayoutsByTabId = { 'tab-1': { activeLeafId: LEAF_ID } }
+    store.terminalLayoutsByTabId = {
+      'tab-1': {
+        activeLeafId: LEAF_ID,
+        ptyIdsByLeafId: { [LEAF_ID]: toAppSshPtyId('ssh-a', 'pty-1') }
+      }
+    }
+    store.ptyIdsByTabId = { 'tab-1': [toAppSshPtyId('ssh-a', 'pty-1')] }
     await expect(result?.promptDeliveryResult).resolves.toEqual({
       delivered: true,
       failureNotified: false
@@ -709,12 +722,50 @@ describe('launchAgentInNewTab', () => {
         forcePaste: true
       })
     )
-    expect(mockSetAgentStatus).toHaveBeenCalledWith(`tab-1:${LEAF_ID}`, {
-      state: 'working',
-      prompt: 'large generated prompt',
-      agentType: 'command-code'
-    })
+    expect(mockSetAgentStatus).toHaveBeenCalledWith(
+      `tab-1:${LEAF_ID}`,
+      {
+        state: 'working',
+        prompt: 'large generated prompt',
+        agentType: 'command-code'
+      },
+      undefined,
+      undefined,
+      { connectionId: 'ssh-a' }
+    )
     expect(mockTrack).not.toHaveBeenCalledWith('agent_prompt_sent', expect.anything())
+  })
+
+  it('does not recreate SSH status when disconnect wins a pending prompt delivery', async () => {
+    let finishDelivery: ((delivered: boolean) => void) | undefined
+    mockPasteDraftWhenAgentReady.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        finishDelivery = resolve
+      })
+    )
+    store.repos = [{ id: 'repo-1', connectionId: 'ssh-a', path: '/repo' }]
+    const ptyId = toAppSshPtyId('ssh-a', 'pty-1')
+    const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')
+
+    const result = launchAgentInNewTab({
+      agent: 'command-code',
+      worktreeId: 'wt-1',
+      prompt: 'pending prompt',
+      promptDelivery: 'submit-after-ready'
+    })
+    store.terminalLayoutsByTabId = {
+      'tab-1': { activeLeafId: LEAF_ID, ptyIdsByLeafId: { [LEAF_ID]: ptyId } }
+    }
+    store.ptyIdsByTabId = { 'tab-1': [ptyId] }
+
+    store.ptyIdsByTabId = { 'tab-1': [] }
+    finishDelivery?.(true)
+    await expect(result?.promptDeliveryResult).resolves.toEqual({
+      delivered: true,
+      failureNotified: false
+    })
+
+    expect(mockSetAgentStatus).not.toHaveBeenCalled()
   })
 
   it('does not track prompt-sent when submit-after-ready delivery fails', async () => {

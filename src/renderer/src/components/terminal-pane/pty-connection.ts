@@ -5,6 +5,11 @@ import type { IBuffer, IDisposable } from '@xterm/xterm'
 import { resolveCursorAgentImeAnchor } from '@/lib/pane-manager/terminal-ime-anchor'
 import { detectAgentStatusFromTitle, agentTypeToIconAgent, isClaudeAgent } from '@/lib/agent-status'
 import { resolvePaneTitleDecision } from './terminal-title-evidence'
+import {
+  isAgentStatusPanePtyBindingCurrent,
+  isAgentStatusPtyLiveForPane,
+  resolveAgentStatusConnectionRouting
+} from '@/lib/agent-status-connection-ownership'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
 import { getWorktreeMapFromState } from '@/store/selectors'
@@ -2565,6 +2570,26 @@ export function connectPanePty(
   let hasConsideredInitialCacheTimerSeed = false
   let allowInitialIdleCacheSeed = false
 
+  const resolveCurrentAgentStatusRouting = () => {
+    const ptyId = activePanePtyBinding ?? transport.getPtyId()
+    const state = useAppStore.getState()
+    // Why: durable pane bindings survive SSH disconnect; the live PTY index
+    // prevents a queued renderer callback from recreating a cleared row.
+    if (
+      disposed ||
+      !ptyId ||
+      !isAgentStatusPtyLiveForPane(state.ptyIdsByTabId, cacheKey, ptyId) ||
+      !isAgentStatusPanePtyBindingCurrent(state.terminalLayoutsByTabId, cacheKey, ptyId)
+    ) {
+      return undefined
+    }
+    return resolveAgentStatusConnectionRouting({
+      ptyId,
+      expectedConnectionId: worktreeConnectionId,
+      runtimeEnvironmentId: transport.getRuntimeEnvironmentId?.() ?? runtimeEnvironmentId
+    })
+  }
+
   const onTitleChange = (
     title: string,
     rawTitle: string,
@@ -2631,7 +2656,8 @@ export function connectPanePty(
 
   const applyInitialAgentStatus = (terminalTitle?: string): void => {
     const initialStatus = paneStartup?.initialAgentStatus
-    if (!initialStatus) {
+    const routing = resolveCurrentAgentStatusRouting()
+    if (!initialStatus || !routing) {
       return
     }
     const statusPayload = {
@@ -2645,17 +2671,23 @@ export function connectPanePty(
     if (paneStartup.launchConfig) {
       useAppStore
         .getState()
-        .setAgentStatus(cacheKey, statusPayload, terminalTitle, undefined, undefined, {
+        .setAgentStatus(cacheKey, statusPayload, terminalTitle, undefined, routing, {
           launchConfig: paneStartup.launchConfig,
           ...(launchToken ? { launchToken } : {})
         })
       return
     }
-    useAppStore.getState().setAgentStatus(cacheKey, statusPayload, terminalTitle)
+    useAppStore
+      .getState()
+      .setAgentStatus(cacheKey, statusPayload, terminalTitle, undefined, routing)
   }
 
   const seedCommandCodeOutputWorkingStatus = (prompt: string): void => {
     clearCommandCodeOutputDoneTimer()
+    const routing = resolveCurrentAgentStatusRouting()
+    if (!routing) {
+      return
+    }
     const currentState = useAppStore.getState()
     const currentEntry = currentState.agentStatusByPaneKey[cacheKey]
     const currentTitle = currentState.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
@@ -2674,7 +2706,9 @@ export function connectPanePty(
         prompt: normalizedPrompt || (currentEntry?.state === 'working' ? currentEntry.prompt : ''),
         agentType: 'command-code'
       },
-      currentTitle
+      currentTitle,
+      undefined,
+      routing
     )
   }
 
@@ -2699,6 +2733,10 @@ export function connectPanePty(
         return
       }
       const currentState = useAppStore.getState()
+      const routing = resolveCurrentAgentStatusRouting()
+      if (!routing) {
+        return
+      }
       const currentEntry = currentState.agentStatusByPaneKey[cacheKey]
       if (currentEntry?.agentType !== 'command-code' || currentEntry.state !== 'working') {
         return
@@ -2715,7 +2753,9 @@ export function connectPanePty(
           prompt: currentPrompt || normalizedPrompt,
           agentType: 'command-code'
         },
-        currentTitle
+        currentTitle,
+        undefined,
+        routing
       )
     }, COMMAND_CODE_OUTPUT_DONE_SETTLE_MS)
   }
@@ -3136,7 +3176,8 @@ export function connectPanePty(
   // Why: folder workspaces can inherit their SSH target from child repos, so
   // use the shared resolver instead of only looking up repo-backed worktrees.
   const worktree = getWorktreeMapFromState(state).get(deps.worktreeId)
-  const connectionId = getConnectionId(deps.worktreeId) ?? null
+  const worktreeConnectionId = getConnectionId(deps.worktreeId)
+  const connectionId = worktreeConnectionId ?? null
   const tab = (state.tabsByWorktree[deps.worktreeId] ?? []).find((t) => t.id === deps.tabId)
   const shellOverride = tab?.shellOverride
   // Why: a serve/remote-runtime pane has no SSH connectionId and a Linux cwd, so
@@ -3350,6 +3391,10 @@ export function connectPanePty(
             // shift (OSC title update landing in between) and the status would
             // be stored against a title that was never paired with it.
             const currentState = useAppStore.getState()
+            const routing = resolveCurrentAgentStatusRouting()
+            if (!routing) {
+              return
+            }
             const title = currentState.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
             const authoritativePaneAgent = getAuthoritativePaneAgent()
             const agentType = resolveCompatibleAgentTypeForOwner(
@@ -3371,13 +3416,13 @@ export function connectPanePty(
                 statusPayload,
                 statusTitle,
                 undefined,
-                undefined,
+                routing,
                 {
                   launchToken
                 }
               )
             } else {
-              currentState.setAgentStatus(cacheKey, statusPayload, statusTitle)
+              currentState.setAgentStatus(cacheKey, statusPayload, statusTitle, undefined, routing)
             }
             const trackingEnabled = syncAgentTaskCompleteTrackingEnabled()
             if (payload.state === 'working' && trackingEnabled) {
