@@ -590,7 +590,7 @@ function shouldStripInheritedOrcaCodexHome(args: {
     args.target.runtime === 'host' &&
     args.selectedCodexHomePath === null &&
     !args.skipCodexHomeEnv &&
-    isCodexSystemDefaultRealHomeEnabled(args.settings)
+    isCodexSystemDefaultRealHomeEnabled()
   )
 }
 

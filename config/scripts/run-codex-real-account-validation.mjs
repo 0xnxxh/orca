@@ -123,12 +123,11 @@ export async function createValidationLayout(options = {}) {
   return { primaryHome, tempRoot, homeDir, userDataDir }
 }
 
-async function seedCompletedProfile(layout, options = {}) {
+async function seedCompletedProfile(layout) {
   // Why: the validation is about account routing, so first-run education and
   // telemetry overlays must not obscure the account controls under test.
   const profile = {
     settings: {
-      codexSystemDefaultRealHomeEnabled: options.systemDefaultRealHome !== 'off',
       telemetry: {
         optedIn: true,
         installId: '00000000-0000-4000-8000-000000000000',
@@ -502,7 +501,7 @@ async function main() {
   }
 
   try {
-    await seedCompletedProfile(layout, options)
+    await seedCompletedProfile(layout)
     await installCodexConfigTemplate(layout, options.configTemplate)
     tripwire = await startCodexPrimaryHomeTripwire({
       primaryHome: layout.primaryHome,

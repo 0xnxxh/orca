@@ -1,28 +1,22 @@
-import type { GlobalSettings } from '../../shared/types'
-
 /**
- * Staged internal flag: route the SYSTEM-DEFAULT Codex account at the user's
- * real ~/.codex instead of Orca's managed runtime home.
+ * Routing truth for the SYSTEM-DEFAULT Codex account: it always runs against
+ * the user's real ~/.codex; managed (multi-account) selections always get
+ * their own self-contained homes. There is no user-facing setting — the
+ * feature ships unconditionally.
  *
- * Why a flag: this moves where user Codex state lives (auth, config, sessions,
- * hooks). It is ENABLED BY DEFAULT on this RC for the staged rollout; a user can
- * still opt out by setting codexSystemDefaultRealHomeEnabled to false, which
- * stays byte-identical to today's managed-home behavior. Managed (multi-account)
- * selections are unaffected either way.
- *
- * The env override exists only so isolated dev/CDP verification can exercise
- * the ON path without a settings write; it never appears in the UI.
+ * The env override exists only for test rigs (containment harness, e2e home
+ * isolation, CDP verification) that must pin the legacy managed-home lane or
+ * force the real-home lane inside a disposable HOME. It never appears in any
+ * UI and no production path sets it.
  */
 const CODEX_REAL_HOME_ENV_FLAG = 'ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME'
 
-export function isCodexSystemDefaultRealHomeEnabled(
-  settings: Pick<GlobalSettings, 'codexSystemDefaultRealHomeEnabled'> | null | undefined
-): boolean {
+export function isCodexSystemDefaultRealHomeEnabled(): boolean {
   const envOverride = readCodexRealHomeEnvOverride()
   if (envOverride !== null) {
     return envOverride
   }
-  return settings?.codexSystemDefaultRealHomeEnabled !== false
+  return true
 }
 
 function readCodexRealHomeEnvOverride(): boolean | null {

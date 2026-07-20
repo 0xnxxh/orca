@@ -43,15 +43,34 @@ function decodeEncodedWslBashCommand(command: string): string {
   return encoded ? Buffer.from(encoded, 'base64').toString('utf8') : command
 }
 
-function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings {
+// Why: the shipped code no longer reads a settings flag — the legacy mirror
+// lane is reachable only through the test-rig env override. Route the old
+// per-test override key to that env var so lane coverage keeps working.
+type TestSettingsOverrides = Partial<GlobalSettings> & {
+  codexSystemDefaultRealHomeEnabled?: boolean
+}
+
+function setRealHomeLaneForTest(enabled: boolean): void {
+  process.env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME = enabled ? '1' : '0'
+}
+
+const initialRealHomeLaneEnv = process.env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME
+afterEach(() => {
+  if (initialRealHomeLaneEnv === undefined) {
+    delete process.env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME
+  } else {
+    process.env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME = initialRealHomeLaneEnv
+  }
+})
+
+function createSettings(overrides: TestSettingsOverrides = {}): GlobalSettings {
   const appFontFamily = overrides.appFontFamily ?? 'Geist'
   const agentStatusHooksEnabled = overrides.agentStatusHooksEnabled ?? true
   const tabAutoGenerateTitle = overrides.tabAutoGenerateTitle ?? false
+  // Config-sync/hot-swap tests assert the shared-mirror path; production is
+  // real-home always, so opt these managed cases out unless a test overrides it.
+  setRealHomeLaneForTest(overrides.codexSystemDefaultRealHomeEnabled ?? false)
   return {
-    // Config-sync/hot-swap tests assert the shared-mirror path; the RC defaults
-    // the real-home flag ON (per-account self-contained homes), so opt these
-    // managed cases out unless a test overrides it.
-    codexSystemDefaultRealHomeEnabled: overrides.codexSystemDefaultRealHomeEnabled ?? false,
     workspaceDir: testState.fakeHomeDir,
     nestWorkspaces: false,
     refreshLocalBaseRefOnWorktreeCreate: false,

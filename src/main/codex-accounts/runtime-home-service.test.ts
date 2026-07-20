@@ -37,14 +37,35 @@ vi.mock('node:os', async () => {
   }
 })
 
-function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings {
+// Why: the shipped code no longer reads a settings flag — the legacy mirror
+// lane is reachable only through the test-rig env override. Route the old
+// per-test override key to that env var so this suite's lane coverage and
+// mid-test flips keep exercising real transitions.
+type TestSettingsOverrides = Partial<GlobalSettings> & {
+  codexSystemDefaultRealHomeEnabled?: boolean
+}
+
+function setRealHomeLaneForTest(enabled: boolean): void {
+  process.env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME = enabled ? '1' : '0'
+}
+
+const initialRealHomeLaneEnv = process.env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME
+afterEach(() => {
+  if (initialRealHomeLaneEnv === undefined) {
+    delete process.env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME
+  } else {
+    process.env.ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME = initialRealHomeLaneEnv
+  }
+})
+
+function createSettings(overrides: TestSettingsOverrides = {}): GlobalSettings {
   const appFontFamily = overrides.appFontFamily ?? 'Geist'
   const agentStatusHooksEnabled = overrides.agentStatusHooksEnabled ?? true
   const tabAutoGenerateTitle = overrides.tabAutoGenerateTitle ?? false
+  // Managed-home tests assert the mirror path; production is real-home always,
+  // so opt these managed cases out unless a test overrides it.
+  setRealHomeLaneForTest(overrides.codexSystemDefaultRealHomeEnabled ?? false)
   return {
-    // Managed-home tests assert the mirror path; the RC defaults the real-home
-    // flag ON, so opt these managed cases out unless a test overrides it.
-    codexSystemDefaultRealHomeEnabled: overrides.codexSystemDefaultRealHomeEnabled ?? false,
     workspaceDir: testState.fakeHomeDir,
     nestWorkspaces: false,
     refreshLocalBaseRefOnWorktreeCreate: false,
@@ -1502,7 +1523,7 @@ describe('CodexRuntimeHomeService', () => {
     expect(service.prepareForCodexLaunch()).toBe(home1)
     writeFileSync(getRuntimeCodexAuthPath(), laterShared, 'utf-8')
 
-    settings.codexSystemDefaultRealHomeEnabled = false
+    setRealHomeLaneForTest(false)
     service.syncForCurrentSelection()
 
     expect(readFileSync(join(home1, 'auth.json'), 'utf-8')).toBe(accountAuth)

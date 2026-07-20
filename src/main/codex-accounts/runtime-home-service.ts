@@ -196,7 +196,7 @@ export class CodexRuntimeHomeService {
   // per-distro lane; the flag-OFF opt-out keeps the shared-home hot-swap.
   private getSelfContainedManagedHostAccount(): CodexManagedAccount | null {
     const settings = this.store.getSettings()
-    if (!isCodexSystemDefaultRealHomeEnabled(settings)) {
+    if (!isCodexSystemDefaultRealHomeEnabled()) {
       return null
     }
     const account = this.getActiveAccount(
@@ -218,7 +218,7 @@ export class CodexRuntimeHomeService {
   // byte-identical to today (its per-account homes hold only auth, no rollouts).
   private getManagedHostAccountHomesForSessionDiscovery(): string[] {
     const settings = this.store.getSettings()
-    const flagEnabled = isCodexSystemDefaultRealHomeEnabled(settings)
+    const flagEnabled = isCodexSystemDefaultRealHomeEnabled()
     const homes: string[] = []
     for (const account of settings.codexManagedAccounts) {
       if (this.getWslManagedHomePath(account)) {
@@ -309,7 +309,7 @@ export class CodexRuntimeHomeService {
       return
     }
     const realHomeSelected = this.isHostSystemDefaultRealHomeSelected(launchEnv)
-    if (realHomeSelected || !isCodexSystemDefaultRealHomeEnabled(settings)) {
+    if (realHomeSelected || !isCodexSystemDefaultRealHomeEnabled()) {
       invalidateCodexSessionBackfillMarker(
         join(getCodexSessionBackfillStateDirPath(), 'backfill-complete.json')
       )
@@ -376,7 +376,7 @@ export class CodexRuntimeHomeService {
   isHostSystemDefaultRealHomeSelected(launchEnv?: NodeJS.ProcessEnv): boolean {
     const settings = this.store.getSettings()
     if (
-      !isCodexSystemDefaultRealHomeEnabled(settings) ||
+      !isCodexSystemDefaultRealHomeEnabled() ||
       normalizeCodexRuntimeSelection(settings).host !== null
     ) {
       return false
@@ -1105,7 +1105,7 @@ export class CodexRuntimeHomeService {
 
   private safeMigrateLegacySharedAuth(): void {
     const settings = this.store.getSettings()
-    if (!isCodexSystemDefaultRealHomeEnabled(settings)) {
+    if (!isCodexSystemDefaultRealHomeEnabled()) {
       return
     }
     try {

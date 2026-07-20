@@ -208,7 +208,6 @@ describe('CodexRuntimeHomeService per-account takeover composition', () => {
 
 function createStore(accounts: CodexManagedAccount[], activeId: string | null) {
   const settings = {
-    codexSystemDefaultRealHomeEnabled: true,
     codexManagedAccounts: accounts,
     activeCodexManagedAccountId: activeId,
     activeCodexManagedAccountIdsByRuntime: { host: activeId, wsl: {} }

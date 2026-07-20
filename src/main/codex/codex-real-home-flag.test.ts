@@ -18,46 +18,26 @@ afterEach(() => {
 })
 
 describe('isCodexSystemDefaultRealHomeEnabled', () => {
-  it('is ON by default on this RC (undefined settings)', () => {
-    expect(isCodexSystemDefaultRealHomeEnabled(undefined)).toBe(true)
-    expect(isCodexSystemDefaultRealHomeEnabled(null)).toBe(true)
-    expect(isCodexSystemDefaultRealHomeEnabled({})).toBe(true)
+  it('is unconditionally ON in production (no settings consulted)', () => {
+    expect(isCodexSystemDefaultRealHomeEnabled()).toBe(true)
   })
 
-  it('honors the settings flag when set to true', () => {
-    expect(isCodexSystemDefaultRealHomeEnabled({ codexSystemDefaultRealHomeEnabled: true })).toBe(
-      true
-    )
-    expect(isCodexSystemDefaultRealHomeEnabled({ codexSystemDefaultRealHomeEnabled: false })).toBe(
-      false
-    )
-  })
-
-  it('lets the env override force ON regardless of settings', () => {
+  it('lets the test-rig env override force ON explicitly', () => {
     for (const raw of ['1', 'true', 'on', 'TRUE', ' On ']) {
       process.env[ENV_FLAG] = raw
-      expect(
-        isCodexSystemDefaultRealHomeEnabled({ codexSystemDefaultRealHomeEnabled: false })
-      ).toBe(true)
+      expect(isCodexSystemDefaultRealHomeEnabled()).toBe(true)
     }
   })
 
-  it('lets the env override force OFF regardless of settings', () => {
+  it('lets the test-rig env override pin the legacy managed lane OFF', () => {
     for (const raw of ['0', 'false', 'off']) {
       process.env[ENV_FLAG] = raw
-      expect(isCodexSystemDefaultRealHomeEnabled({ codexSystemDefaultRealHomeEnabled: true })).toBe(
-        false
-      )
+      expect(isCodexSystemDefaultRealHomeEnabled()).toBe(false)
     }
   })
 
-  it('ignores an unrecognized env value and falls back to settings', () => {
+  it('ignores an unrecognized env value and stays ON', () => {
     process.env[ENV_FLAG] = 'maybe'
-    expect(isCodexSystemDefaultRealHomeEnabled({ codexSystemDefaultRealHomeEnabled: true })).toBe(
-      true
-    )
-    expect(isCodexSystemDefaultRealHomeEnabled({ codexSystemDefaultRealHomeEnabled: false })).toBe(
-      false
-    )
+    expect(isCodexSystemDefaultRealHomeEnabled()).toBe(true)
   })
 })

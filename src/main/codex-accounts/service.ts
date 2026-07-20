@@ -624,10 +624,7 @@ export class CodexAccountService {
   private isSelfContainedHostManagedHome(managedHomePath: string): boolean {
     // Why: flag ON makes each host account home its own launch CODEX_HOME. WSL
     // homes keep their distro-local seed lane; the flag-OFF opt-out is unchanged.
-    return (
-      isCodexSystemDefaultRealHomeEnabled(this.store.getSettings()) &&
-      !parseWslUncPath(managedHomePath)
-    )
+    return isCodexSystemDefaultRealHomeEnabled() && !parseWslUncPath(managedHomePath)
   }
 
   private syncCanonicalConfigIntoManagedHome(
@@ -658,7 +655,7 @@ export class CodexAccountService {
     // real CODEX_HOMEs for `codex login`, so relative path-valued settings
     // must keep resolving against the home the config was read from.
     let sanitizedConfig = canonicalConfig.contents
-    if (isCodexSystemDefaultRealHomeEnabled(this.store.getSettings())) {
+    if (isCodexSystemDefaultRealHomeEnabled()) {
       const material = getCodexManagedHookInstallMaterial()
       // Why: source-home Orca trust is foreign to each managed home's hooks.json.
       sanitizedConfig = stripCodexManagedHookTrustEntriesFromConfig(canonicalConfig.contents, {
