@@ -269,6 +269,10 @@ export type OpenFile = {
    * Without this hard gate the scan's async read merely races the autosave
    * timer, and a slow (SSH/runtime) read loses the race. Not persisted. */
   pendingDiskBaselineVerification?: boolean
+  /** Suspends autosave while a live self-move echo verification reads disk.
+   * Separate owner from the restored scan's flag so the two can't clear each
+   * other's gate. Transient, not persisted, not carried across a re-home. */
+  pendingLiveDiskVerification?: boolean
   /** Why: diff bodies are cached in EditorPanel. Re-selecting an existing diff
    * tab from the tree bumps this so the panel refetches instead of reusing a
    * stale snapshot. */
@@ -528,6 +532,7 @@ export type EditorSlice = {
   setLastKnownDiskSignature: (fileId: string, signature: string) => void
   clearPendingDiskBaselineVerification: (fileId: string) => void
   setPendingDiskBaselineVerification: (fileId: string, value: boolean) => void
+  setPendingLiveDiskVerification: (fileId: string, value: boolean) => void
   clearUntitled: (fileId: string) => void
   openDiff: (
     worktreeId: string,
@@ -2566,6 +2571,20 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       return {
         openFiles: s.openFiles.map((f) =>
           f.id === fileId ? { ...f, pendingDiskBaselineVerification: next } : f
+        )
+      }
+    }),
+
+  setPendingLiveDiskVerification: (fileId, value) =>
+    set((s) => {
+      const file = s.openFiles.find((f) => f.id === fileId)
+      const next = value || undefined
+      if (!file || file.pendingLiveDiskVerification === next) {
+        return s
+      }
+      return {
+        openFiles: s.openFiles.map((f) =>
+          f.id === fileId ? { ...f, pendingLiveDiskVerification: next } : f
         )
       }
     }),

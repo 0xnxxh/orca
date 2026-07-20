@@ -130,7 +130,7 @@ describe('self-move suppression (registry-scoped)', () => {
 
 describe('self-move echo verification (content identity)', () => {
   const setExternalMutation = vi.fn()
-  const setPendingDiskBaselineVerification = vi.fn()
+  const setPendingLiveDiskVerification = vi.fn()
   const findTarget = (worktreePath: string, runtimeEnvironmentId: string | null = null) =>
     worktreePath === '/repo'
       ? {
@@ -162,7 +162,7 @@ describe('self-move echo verification (content identity)', () => {
     vi.mocked(useAppStore.getState).mockReturnValue({
       openFiles: [file],
       setExternalMutation,
-      setPendingDiskBaselineVerification
+      setPendingLiveDiskVerification
     } as never)
     vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([file] as never)
   }
@@ -205,11 +205,11 @@ describe('self-move echo verification (content identity)', () => {
 
     handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/subdir/notes.md' }]))
     // Autosave must be gated BEFORE the async read so it can't overwrite mid-read.
-    expect(setPendingDiskBaselineVerification).toHaveBeenCalledWith('file-notes', true)
+    expect(setPendingLiveDiskVerification).toHaveBeenCalledWith('file-notes', true)
     await vi.advanceTimersByTimeAsync(100)
 
     expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'changed')
-    expect(setPendingDiskBaselineVerification).toHaveBeenCalledWith('file-notes', false)
+    expect(setPendingLiveDiskVerification).toHaveBeenCalledWith('file-notes', false)
     dispose()
   })
 
@@ -223,7 +223,7 @@ describe('self-move echo verification (content identity)', () => {
     await vi.advanceTimersByTimeAsync(100)
 
     expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
-    expect(setPendingDiskBaselineVerification).toHaveBeenCalledWith('file-notes', false)
+    expect(setPendingLiveDiskVerification).toHaveBeenCalledWith('file-notes', false)
     dispose()
   })
 
@@ -250,7 +250,7 @@ describe('self-move echo verification (content identity)', () => {
     await vi.advanceTimersByTimeAsync(100)
 
     expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
-    expect(setPendingDiskBaselineVerification).toHaveBeenCalledWith('file-notes', false)
+    expect(setPendingLiveDiskVerification).toHaveBeenCalledWith('file-notes', false)
     dispose()
   })
 

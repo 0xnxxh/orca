@@ -810,7 +810,7 @@ function resolveLiveMoveVerification(
   }
   liveMoveVerifyGeneration.delete(fileId)
   const state = useAppStore.getState()
-  state.setPendingDiskBaselineVerification(fileId, false)
+  state.setPendingLiveDiskVerification(fileId, false)
   const file = state.openFiles.find((f) => f.id === fileId)
   // A save/reload/dismissal in the interim owns the newer state: skip if the tab
   // resolved, or its baseline advanced past the one we captured.
@@ -849,7 +849,7 @@ function scheduleSelfMoveEchoVerification(
     }
     const generation = ++liveMoveVerifyCounter
     liveMoveVerifyGeneration.set(fileId, generation)
-    state.setPendingDiskBaselineVerification(fileId, true)
+    state.setPendingLiveDiskVerification(fileId, true)
     candidates.push({ fileId, baseline: file.lastKnownDiskSignature, generation })
   }
   if (candidates.length === 0) {
