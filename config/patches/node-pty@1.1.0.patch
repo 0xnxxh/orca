@@ -1,3 +1,29 @@
+diff --git a/binding.gyp b/binding.gyp
+index 5f63978b07ab50aaf7523219a2170ec737a6b5db..e23988358eecc292ca769a738d5bfdef8172bb3d 100644
+--- a/binding.gyp
++++ b/binding.gyp
+@@ -1,4 +1,7 @@
+ {
++  'variables': {
++    'node_pty_test_faults%': 0,
++  },
+   'target_defaults': {
+     'dependencies': [
+       "<!(node -p \"require('node-addon-api').targets\"):node_addon_api_except",
+@@ -41,6 +44,13 @@
+           'libraries': [
+             '-lshlwapi'
+           ],
++          'conditions': [
++            ['node_pty_test_faults==1', {
++              'defines': [
++                'NODE_PTY_TEST_FAULTS'
++              ]
++            }]
++          ],
+         },
+         {
+           'target_name': 'conpty_console_list',
 diff --git a/deps/winpty/src/winpty.gyp b/deps/winpty/src/winpty.gyp
 index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..6047590bc9558dabacd3ece5114ed41c76e0221f 100644
 --- a/deps/winpty/src/winpty.gyp
@@ -20,6 +46,70 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..6047590bc9558dabacd3ece5114ed41c
          ]
      },
      'targets' : [
+diff --git a/lib/conptyConnectFailure.test.js b/lib/conptyConnectFailure.test.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..d6fb0340fbaaf1e76ee0ba56847bcb3b340f9044
+--- /dev/null
++++ b/lib/conptyConnectFailure.test.js
+@@ -0,0 +1,58 @@
++"use strict";
++/**
++ * Copyright (c) 2026, Stably AI (MIT License).
++ */
++Object.defineProperty(exports, "__esModule", { value: true });
++var assert = require("assert");
++var fs = require("fs");
++var utils_1 = require("./utils");
++if (process.platform === 'win32') {
++    describe('ConPTY failed-connect cleanup', function () {
++        var native = utils_1.loadNativeModule('conpty').module;
++        [
++            ['assign-job', 'Cannot assign process to Job, error code: 5'],
++            ['resume-thread', 'Cannot resume process, error code: 6']
++        ].forEach(function (_a) {
++            var failure = _a[0], expectedError = _a[1];
++            it("releases every native PTY resource after " + failure, function () {
++                if (!native.setTestConnectFailure || !native.getTestResourceState) {
++                    if (process.env.NODE_PTY_REQUIRE_TEST_FAULTS === '1') {
++                        assert.fail('ConPTY test fault injection was required but is unavailable');
++                    }
++                    this.skip();
++                    return;
++                }
++                var pipeName = "node-pty-connect-failure-" + process.pid + "-" + failure;
++                var before = native.getTestResourceState();
++                native.setTestConnectFailure(failure);
++                try {
++                    // Reusing the same first-instance pipe names proves each failed
++                    // attempt closed both server pipes before removing its baton.
++                    for (var attempt = 1; attempt <= 3; attempt++) {
++                        var term = native.startProcess(process.env.ComSpec || 'cmd.exe', 80, 30, false, pipeName, false, false);
++                        var inputFd = fs.openSync(term.conin, 'w');
++                        var outputFd = fs.openSync(term.conout, 'r');
++                        try {
++                            assert.throws(function () { return native.connect(term.pty, 'cmd.exe /C exit', process.cwd(), [], false, true, function () { return undefined; }); }, new RegExp(expectedError));
++                        }
++                        finally {
++                            fs.closeSync(inputFd);
++                            fs.closeSync(outputFd);
++                        }
++                        var resourceState = native.getTestResourceState();
++                        assert.strictEqual(resourceState.ptyCount, before.ptyCount);
++                        assert.strictEqual(resourceState.closedPseudoConsoleCount, before.closedPseudoConsoleCount + attempt);
++                        assert.strictEqual(resourceState.closedPipeHandleCount, before.closedPipeHandleCount + attempt * 2);
++                        assert.strictEqual(resourceState.closedProcessHandleCount, before.closedProcessHandleCount + attempt);
++                        assert.strictEqual(resourceState.closedThreadHandleCount, before.closedThreadHandleCount + attempt);
++                        assert.strictEqual(resourceState.closedJobHandleCount, before.closedJobHandleCount + attempt);
++                        assert.strictEqual(resourceState.drainedFailedProcessCount, before.drainedFailedProcessCount + attempt);
++                    }
++                }
++                finally {
++                    native.setTestConnectFailure('none');
++                }
++            });
++        });
++    });
++}
 diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
 index 8c4fca9022a6d6f015bca87f61625cde2278f428..0b71eba1d0fdb312bd46e5f47c218bd5330f023a 100644
 --- a/lib/conpty_console_list_agent.js
@@ -252,6 +342,140 @@ index af5f343d17f012f330fe2292083f297768ff3b5e..6b558c789fc77b58c20cd9564d03e93e
      [[false, false], [true, false], [true, true]].forEach(function (_a) {
          var useConpty = _a[0], useConptyDll = _a[1];
          describe("WindowsTerminal (useConpty = " + useConpty + ", useConptyDll = " + useConptyDll + ")", function () {
+diff --git a/src/conptyConnectFailure.test.ts b/src/conptyConnectFailure.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..2cab295e87f01fc44394ccd022bce84c16298c25
+--- /dev/null
++++ b/src/conptyConnectFailure.test.ts
+@@ -0,0 +1,128 @@
++/**
++ * Copyright (c) 2026, Stably AI (MIT License).
++ */
++
++import assert = require('assert');
++import fs = require('fs');
++import { loadNativeModule } from './utils';
++
++interface ITestConptyNative {
++  startProcess(
++    file: string,
++    cols: number,
++    rows: number,
++    debug: boolean,
++    pipeName: string,
++    inheritCursor: boolean,
++    useConptyDll: boolean
++  ): { pty: number; conin: string; conout: string };
++  connect(
++    pty: number,
++    commandLine: string,
++    cwd: string,
++    env: string[],
++    useConptyDll: boolean,
++    windowsAgentJob: boolean,
++    callback: (exitCode: number) => void
++  ): { pid: number };
++  setTestConnectFailure?(failure: string): void;
++  getTestResourceState?(): ITestResourceState;
++}
++
++interface ITestResourceState {
++  ptyCount: number;
++  closedPseudoConsoleCount: number;
++  closedPipeHandleCount: number;
++  closedProcessHandleCount: number;
++  closedThreadHandleCount: number;
++  closedJobHandleCount: number;
++  drainedFailedProcessCount: number;
++}
++
++if (process.platform === 'win32') {
++  describe('ConPTY failed-connect cleanup', () => {
++    const native = loadNativeModule('conpty').module as ITestConptyNative;
++
++    [
++      ['assign-job', 'Cannot assign process to Job, error code: 5'],
++      ['resume-thread', 'Cannot resume process, error code: 6']
++    ].forEach(([failure, expectedError]) => {
++      it(`releases every native PTY resource after ${failure}`, function() {
++        if (!native.setTestConnectFailure || !native.getTestResourceState) {
++          if (process.env.NODE_PTY_REQUIRE_TEST_FAULTS === '1') {
++            assert.fail('ConPTY test fault injection was required but is unavailable');
++          }
++          this.skip();
++          return;
++        }
++
++        const pipeName = `node-pty-connect-failure-${process.pid}-${failure}`;
++        const before = native.getTestResourceState();
++        native.setTestConnectFailure(failure);
++        try {
++          // Reusing the same first-instance pipe names proves each failed
++          // attempt closed both server pipes before removing its baton.
++          for (let attempt = 1; attempt <= 3; attempt++) {
++            const term = native.startProcess(
++              process.env.ComSpec || 'cmd.exe',
++              80,
++              30,
++              false,
++              pipeName,
++              false,
++              false
++            );
++            const inputFd = fs.openSync(term.conin, 'w');
++            const outputFd = fs.openSync(term.conout, 'r');
++            try {
++              assert.throws(
++                () => native.connect(
++                  term.pty,
++                  'cmd.exe /C exit',
++                  process.cwd(),
++                  [],
++                  false,
++                  true,
++                  () => undefined
++                ),
++                new RegExp(expectedError)
++              );
++            } finally {
++              fs.closeSync(inputFd);
++              fs.closeSync(outputFd);
++            }
++
++            const resourceState: ITestResourceState = native.getTestResourceState();
++            assert.strictEqual(resourceState.ptyCount, before.ptyCount);
++            assert.strictEqual(
++              resourceState.closedPseudoConsoleCount,
++              before.closedPseudoConsoleCount + attempt
++            );
++            assert.strictEqual(
++              resourceState.closedPipeHandleCount,
++              before.closedPipeHandleCount + attempt * 2
++            );
++            assert.strictEqual(
++              resourceState.closedProcessHandleCount,
++              before.closedProcessHandleCount + attempt
++            );
++            assert.strictEqual(
++              resourceState.closedThreadHandleCount,
++              before.closedThreadHandleCount + attempt
++            );
++            assert.strictEqual(
++              resourceState.closedJobHandleCount,
++              before.closedJobHandleCount + attempt
++            );
++            assert.strictEqual(
++              resourceState.drainedFailedProcessCount,
++              before.drainedFailedProcessCount + attempt
++            );
++          }
++        } finally {
++          native.setTestConnectFailure('none');
++        }
++      });
++    });
++  });
++}
 diff --git a/src/conpty_console_list_agent.ts b/src/conpty_console_list_agent.ts
 index 181ccabbbe9c4948a9725fb1db907a68e9de01fc..67f31facf85562b67adbfbd04ce28ddd8eeb4a79 100644
 --- a/src/conpty_console_list_agent.ts
@@ -575,18 +799,168 @@ index 7b4b9e1f990fbf95b51528bb56dc9717f5b87532..61f39f0cbb91faa2c515f35d2ca85056
  }
  #endif
 diff --git a/src/win/conpty.cc b/src/win/conpty.cc
-index 7b286d3d644c26141df516929703aa6e129df4b2..16f8d99c627159a35cb643a2752ded3094399230 100644
+index 7b286d3d644c26141df516929703aa6e129df4b2..4ac5716a6678e8ccfdd92ffe1f6529f231875265 100644
 --- a/src/win/conpty.cc
 +++ b/src/win/conpty.cc
-@@ -45,6 +45,7 @@ struct pty_baton {
+@@ -45,12 +45,37 @@ struct pty_baton {
    HPCON hpc;
  
    HANDLE hShell;
+-
+-  pty_baton(int _id, HANDLE _hIn, HANDLE _hOut, HPCON _hpc) : id(_id), hIn(_hIn), hOut(_hOut), hpc(_hpc) {};
 +  HANDLE hJob = nullptr;
- 
-   pty_baton(int _id, HANDLE _hIn, HANDLE _hOut, HPCON _hpc) : id(_id), hIn(_hIn), hOut(_hOut), hpc(_hpc) {};
++  // Why: failed connect cleanup must close HPCON without a second DLL load
++  // that can itself throw and strand the original resources.
++  PFNCLOSEPSEUDOCONSOLE closePseudoConsole;
++  PFNRELEASEPSEUDOCONSOLE releasePseudoConsole;
++
++  pty_baton(
++      int _id,
++      HANDLE _hIn,
++      HANDLE _hOut,
++      HPCON _hpc,
++      PFNCLOSEPSEUDOCONSOLE _closePseudoConsole,
++      PFNRELEASEPSEUDOCONSOLE _releasePseudoConsole) :
++      id(_id),
++      hIn(_hIn),
++      hOut(_hOut),
++      hpc(_hpc),
++      closePseudoConsole(_closePseudoConsole),
++      releasePseudoConsole(_releasePseudoConsole) {};
  };
-@@ -91,7 +92,18 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+ 
+ static std::vector<std::unique_ptr<pty_baton>> ptyHandles;
+ static volatile LONG ptyCounter;
++#ifdef NODE_PTY_TEST_FAULTS
++static LONG closedPseudoConsoleCount = 0;
++static LONG closedPipeHandleCount = 0;
++static LONG closedProcessHandleCount = 0;
++static LONG closedThreadHandleCount = 0;
++static LONG closedJobHandleCount = 0;
++static LONG drainedFailedProcessCount = 0;
++#endif
+ 
+ static pty_baton* get_pty_baton(int id) {
+   auto it = std::find_if(ptyHandles.begin(), ptyHandles.end(), [id](const auto& ptyHandle) {
+@@ -73,6 +98,117 @@ static bool remove_pty_baton(int id) {
+   return false;
+ }
+ 
++static void close_pty_resources(pty_baton* handle) {
++  if (handle->hpc != nullptr) {
++    handle->closePseudoConsole(handle->hpc);
++    handle->hpc = nullptr;
++#ifdef NODE_PTY_TEST_FAULTS
++    InterlockedIncrement(&closedPseudoConsoleCount);
++#endif
++  }
++  if (handle->hIn != INVALID_HANDLE_VALUE) {
++    CloseHandle(handle->hIn);
++    handle->hIn = INVALID_HANDLE_VALUE;
++#ifdef NODE_PTY_TEST_FAULTS
++    InterlockedIncrement(&closedPipeHandleCount);
++#endif
++  }
++  if (handle->hOut != INVALID_HANDLE_VALUE) {
++    CloseHandle(handle->hOut);
++    handle->hOut = INVALID_HANDLE_VALUE;
++#ifdef NODE_PTY_TEST_FAULTS
++    InterlockedIncrement(&closedPipeHandleCount);
++#endif
++  }
++}
++
++static void cleanup_failed_connect(
++    pty_baton* handle,
++    PROCESS_INFORMATION* process,
++    PPROC_THREAD_ATTRIBUTE_LIST attributeList) {
++  if (process->hProcess != nullptr) {
++    TerminateProcess(process->hProcess, 1);
++    const DWORD waitResult = WaitForSingleObject(process->hProcess, INFINITE);
++    CloseHandle(process->hProcess);
++    process->hProcess = nullptr;
++#ifdef NODE_PTY_TEST_FAULTS
++    InterlockedIncrement(&closedProcessHandleCount);
++    if (waitResult == WAIT_OBJECT_0) {
++      InterlockedIncrement(&drainedFailedProcessCount);
++    }
++#else
++    (void)waitResult;
++#endif
++  }
++  if (process->hThread != nullptr) {
++    CloseHandle(process->hThread);
++    process->hThread = nullptr;
++#ifdef NODE_PTY_TEST_FAULTS
++    InterlockedIncrement(&closedThreadHandleCount);
++#endif
++  }
++  if (handle->hJob != nullptr) {
++    CloseHandle(handle->hJob);
++    handle->hJob = nullptr;
++#ifdef NODE_PTY_TEST_FAULTS
++    InterlockedIncrement(&closedJobHandleCount);
++#endif
++  }
++  if (attributeList != nullptr) {
++    DeleteProcThreadAttributeList(attributeList);
++  }
++  close_pty_resources(handle);
++  const int id = handle->id;
++  assert(remove_pty_baton(id));
++}
++
++#ifdef NODE_PTY_TEST_FAULTS
++// Why: CI must exercise Win32 failure branches that cannot be triggered
++// deterministically through the production API.
++enum class ConnectFailurePoint {
++  None,
++  AssignJob,
++  ResumeThread
++};
++
++static ConnectFailurePoint connectFailurePoint = ConnectFailurePoint::None;
++
++static Napi::Value PtySetTestConnectFailure(const Napi::CallbackInfo& info) {
++  if (info.Length() != 1 || !info[0].IsString()) {
++    throw Napi::Error::New(info.Env(), "Usage: pty.setTestConnectFailure(failure)");
++  }
++  const std::string failure = info[0].As<Napi::String>().Utf8Value();
++  if (failure == "assign-job") {
++    connectFailurePoint = ConnectFailurePoint::AssignJob;
++  } else if (failure == "resume-thread") {
++    connectFailurePoint = ConnectFailurePoint::ResumeThread;
++  } else {
++    connectFailurePoint = ConnectFailurePoint::None;
++  }
++  return info.Env().Undefined();
++}
++
++static Napi::Value PtyGetTestResourceState(const Napi::CallbackInfo& info) {
++  auto result = Napi::Object::New(info.Env());
++  result.Set("ptyCount", Napi::Number::New(info.Env(), ptyHandles.size()));
++  result.Set(
++      "closedPseudoConsoleCount",
++      Napi::Number::New(info.Env(), closedPseudoConsoleCount));
++  result.Set("closedPipeHandleCount", Napi::Number::New(info.Env(), closedPipeHandleCount));
++  result.Set(
++      "closedProcessHandleCount",
++      Napi::Number::New(info.Env(), closedProcessHandleCount));
++  result.Set(
++      "closedThreadHandleCount",
++      Napi::Number::New(info.Env(), closedThreadHandleCount));
++  result.Set("closedJobHandleCount", Napi::Number::New(info.Env(), closedJobHandleCount));
++  result.Set(
++      "drainedFailedProcessCount",
++      Napi::Number::New(info.Env(), drainedFailedProcessCount));
++  return result;
++}
++#endif
++
+ struct ExitEvent {
+   int exit_code = 0;
+ };
+@@ -91,7 +227,18 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
          delete th;
        });
    *th = std::thread([tsfn = std::move(tsfn), baton] {
@@ -606,7 +980,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..16f8d99c627159a35cb643a2752ded30
        cb.Call({Napi::Number::New(env, exit_event->exit_code)});
        delete exit_event;
      };
-@@ -99,15 +111,41 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+@@ -99,15 +246,41 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
      ExitEvent *exit_event = new ExitEvent;
      // Wait for process to complete.
      WaitForSingleObject(baton->hShell, INFINITE);
@@ -653,7 +1027,73 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..16f8d99c627159a35cb643a2752ded30
          break;
  
        case napi_queue_full:
-@@ -333,14 +371,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -194,6 +367,8 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
+                                          HANDLE *phInput,
+                                          HANDLE *phOutput,
+                                          HPCON* phPC,
++                                         PFNCLOSEPSEUDOCONSOLE* pfnClose,
++                                         PFNRELEASEPSEUDOCONSOLE* pfnRelease,
+                                          std::wstring& inName,
+                                          std::wstring& outName,
+                                          const std::wstring& pipeName,
+@@ -214,6 +389,18 @@ HRESULT CreateNamedPipesAndPseudoConsole(const Napi::CallbackInfo& info,
+         return E_INVALIDARG;
+       }
+ 
++      *pfnClose = (PFNCLOSEPSEUDOCONSOLE)GetProcAddress(
++          (HMODULE)hLibrary,
++          useConptyDll ? "ConptyClosePseudoConsole" : "ClosePseudoConsole");
++      *pfnRelease = useConptyDll
++          ? (PFNRELEASEPSEUDOCONSOLE)GetProcAddress(
++              (HMODULE)hLibrary,
++              "ConptyReleasePseudoConsole")
++          : nullptr;
++      if (*pfnClose == nullptr) {
++        return HRESULT_FROM_WIN32(GetLastError());
++      }
++
+       bool success = createDataServerPipe(true, L"in", phInput, inName, pipeName);
+       if (!success)
+       {
+@@ -289,7 +476,21 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
+ 
+   HANDLE hIn, hOut;
+   HPCON hpc;
+-  HRESULT hr = CreateNamedPipesAndPseudoConsole(info, {cols, rows}, inheritCursor ? 1/*PSEUDOCONSOLE_INHERIT_CURSOR*/ : 0, &hIn, &hOut, &hpc, inName, outName, pipeName, useConptyDll);
++  PFNCLOSEPSEUDOCONSOLE closePseudoConsole;
++  PFNRELEASEPSEUDOCONSOLE releasePseudoConsole;
++  HRESULT hr = CreateNamedPipesAndPseudoConsole(
++      info,
++      {cols, rows},
++      inheritCursor ? 1/*PSEUDOCONSOLE_INHERIT_CURSOR*/ : 0,
++      &hIn,
++      &hOut,
++      &hpc,
++      &closePseudoConsole,
++      &releasePseudoConsole,
++      inName,
++      outName,
++      pipeName,
++      useConptyDll);
+ 
+   // Restore default handling of ctrl+c
+   SetConsoleCtrlHandler(NULL, FALSE);
+@@ -302,7 +503,13 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
+     const int ptyId = InterlockedIncrement(&ptyCounter);
+     marshal.Set("pty", Napi::Number::New(env, ptyId));
+     ptyHandles.emplace_back(
+-        std::make_unique<pty_baton>(ptyId, hIn, hOut, hpc));
++        std::make_unique<pty_baton>(
++            ptyId,
++            hIn,
++            hOut,
++            hpc,
++            closePseudoConsole,
++            releasePseudoConsole));
+   } else {
+     throw Napi::Error::New(env, "Cannot launch conpty");
+   }
+@@ -333,14 +540,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
    std::stringstream errorText;
    BOOL fSuccess = FALSE;
  
@@ -672,7 +1112,7 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..16f8d99c627159a35cb643a2752ded30
    }
  
    const int id = info[0].As<Napi::Number>().Int32Value();
-@@ -348,7 +387,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -348,7 +556,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
    const std::wstring cwd(path_util::to_wstring(info[2].As<Napi::String>()));
    const Napi::Array envValues = info[3].As<Napi::Array>();
    const bool useConptyDll = info[4].As<Napi::Boolean>().Value();
@@ -682,7 +1122,38 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..16f8d99c627159a35cb643a2752ded30
  
    // Fetch pty handle from ID and start process
    pty_baton* handle = get_pty_baton(id);
-@@ -416,7 +456,8 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+@@ -391,11 +600,15 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+ 
+   SIZE_T size = 0;
+   InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+-  BYTE *attrList = new BYTE[size];
+-  siEx.lpAttributeList = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(attrList);
++  auto attrList = std::make_unique<BYTE[]>(size);
++  siEx.lpAttributeList = reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(attrList.get());
++  PROCESS_INFORMATION piClient{};
+ 
+   fSuccess = InitializeProcThreadAttributeList(siEx.lpAttributeList, 1, 0, &size);
+   if (!fSuccess) {
++    const DWORD attributeError = GetLastError();
++    cleanup_failed_connect(handle, &piClient, nullptr);
++    SetLastError(attributeError);
+     throw errorWithCode(info, "InitializeProcThreadAttributeList failed");
+   }
+   fSuccess = UpdateProcThreadAttribute(siEx.lpAttributeList,
+@@ -406,36 +619,80 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+                                        NULL,
+                                        NULL);
+   if (!fSuccess) {
++    const DWORD attributeError = GetLastError();
++    cleanup_failed_connect(handle, &piClient, siEx.lpAttributeList);
++    SetLastError(attributeError);
+     throw errorWithCode(info, "UpdateProcThreadAttribute failed");
+   }
+ 
+-  PROCESS_INFORMATION piClient{};
+   fSuccess = !!CreateProcessW(
+       nullptr,
+       mutableCommandline.get(),
        nullptr,                      // lpProcessAttributes
        nullptr,                      // lpThreadAttributes
        false,                        // bInheritHandles VERY IMPORTANT that this is false
@@ -692,47 +1163,110 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..16f8d99c627159a35cb643a2752ded30
        envArg,                       // lpEnvironment
        mutableCwd.get(),             // lpCurrentDirectory
        &siEx.StartupInfo,            // lpStartupInfo
-@@ -426,6 +467,39 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+       &piClient                     // lpProcessInformation
+   );
+   if (!fSuccess) {
++    const DWORD createError = GetLastError();
++    cleanup_failed_connect(handle, &piClient, siEx.lpAttributeList);
++    SetLastError(createError);
      throw errorWithCode(info, "Cannot create process");
    }
  
+-  HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
+-  bool fLoadedDll = hLibrary != nullptr;
+-  if (useConptyDll && fLoadedDll)
+-  {
+-    PFNRELEASEPSEUDOCONSOLE const pfnReleasePseudoConsole = (PFNRELEASEPSEUDOCONSOLE)GetProcAddress(
+-      (HMODULE)hLibrary, "ConptyReleasePseudoConsole");
+-    if (pfnReleasePseudoConsole)
+-    {
+-      pfnReleasePseudoConsole(handle->hpc);
 +  if (windowsAgentJob) {
 +    // Job setup is atomic while the shell is suspended; partial ownership is unsafe.
 +    HANDLE hJob = CreateJobObjectW(nullptr, nullptr);
 +    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
 +    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-+    if (hJob == nullptr ||
-+        !SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) ||
-+        !AssignProcessToJobObject(hJob, piClient.hProcess)) {
++    bool jobReady = hJob != nullptr &&
++        SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
++#ifdef NODE_PTY_TEST_FAULTS
++    if (jobReady && connectFailurePoint == ConnectFailurePoint::AssignJob) {
++      SetLastError(ERROR_ACCESS_DENIED);
++      jobReady = false;
++    }
++#endif
++    if (jobReady) {
++      jobReady = AssignProcessToJobObject(hJob, piClient.hProcess);
++    }
++    if (!jobReady) {
 +      const DWORD jobError = GetLastError();
-+      TerminateProcess(piClient.hProcess, 1);
-+      WaitForSingleObject(piClient.hProcess, INFINITE);
-+      CloseHandle(piClient.hThread); CloseHandle(piClient.hProcess);
-+      if (hJob != nullptr) CloseHandle(hJob);
++      handle->hJob = hJob;
++      cleanup_failed_connect(handle, &piClient, siEx.lpAttributeList);
 +      SetLastError(jobError);
 +      throw errorWithCode(info, "Cannot assign process to Job");
-+    }
+     }
 +    handle->hJob = hJob;
 +
-+    if (ResumeThread(piClient.hThread) == static_cast<DWORD>(-1)) {
++    DWORD resumeResult;
++#ifdef NODE_PTY_TEST_FAULTS
++    if (connectFailurePoint == ConnectFailurePoint::ResumeThread) {
++      SetLastError(ERROR_INVALID_HANDLE);
++      resumeResult = static_cast<DWORD>(-1);
++    } else {
++      resumeResult = ResumeThread(piClient.hThread);
++    }
++#else
++    resumeResult = ResumeThread(piClient.hThread);
++#endif
++    if (resumeResult == static_cast<DWORD>(-1)) {
 +      const DWORD resumeError = GetLastError();
-+      TerminateProcess(piClient.hProcess, 1);
-+      WaitForSingleObject(piClient.hProcess, INFINITE);
-+      CloseHandle(piClient.hThread);
-+      CloseHandle(piClient.hProcess);
-+      if (handle->hJob != nullptr) {
-+        CloseHandle(handle->hJob);
-+        handle->hJob = nullptr;
-+      }
++      cleanup_failed_connect(handle, &piClient, siEx.lpAttributeList);
 +      SetLastError(resumeError);
 +      throw errorWithCode(info, "Cannot resume process");
 +    }
 +  }
 +
-   HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
-   bool fLoadedDll = hLibrary != nullptr;
-   if (useConptyDll && fLoadedDll)
-@@ -567,6 +641,109 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
++  DeleteProcThreadAttributeList(siEx.lpAttributeList);
++
++  if (handle->releasePseudoConsole != nullptr) {
++    handle->releasePseudoConsole(handle->hpc);
+   }
+ 
+   // Update handle
+@@ -445,7 +702,9 @@ static Napi::Value PtyConnect(const Napi::CallbackInfo& info) {
+   CloseHandle(piClient.hThread);
+   // Close the input read and output write handle of the pseudoconsole
+   CloseHandle(handle->hIn);
++  handle->hIn = INVALID_HANDLE_VALUE;
+   CloseHandle(handle->hOut);
++  handle->hOut = INVALID_HANDLE_VALUE;
+ 
+   SetupExitCallback(env, exitCallback, handle);
+ 
+@@ -544,21 +803,10 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+   int id = info[0].As<Napi::Number>().Int32Value();
+   const bool useConptyDll = info[1].As<Napi::Boolean>().Value();
+ 
+-  const pty_baton* handle = get_pty_baton(id);
++  pty_baton* handle = get_pty_baton(id);
+ 
+   if (handle != nullptr) {
+-    HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
+-    bool fLoadedDll = hLibrary != nullptr;
+-    if (fLoadedDll)
+-    {
+-      PFNCLOSEPSEUDOCONSOLE const pfnClosePseudoConsole = (PFNCLOSEPSEUDOCONSOLE)GetProcAddress(
+-        (HMODULE)hLibrary,
+-        useConptyDll ? "ConptyClosePseudoConsole" : "ClosePseudoConsole");
+-      if (pfnClosePseudoConsole)
+-      {
+-        pfnClosePseudoConsole(handle->hpc);
+-      }
+-    }
++    close_pty_resources(handle);
+     if (useConptyDll) {
+       TerminateProcess(handle->hShell, 1);
+     }
+@@ -567,6 +815,109 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
    return env.Undefined();
  }
  
@@ -842,11 +1376,15 @@ index 7b286d3d644c26141df516929703aa6e129df4b2..16f8d99c627159a35cb643a2752ded30
  /**
  * Init
  */
-@@ -577,6 +754,7 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
+@@ -577,6 +928,11 @@ Napi::Object init(Napi::Env env, Napi::Object exports) {
    exports.Set("resize", Napi::Function::New(env, PtyResize));
    exports.Set("clear", Napi::Function::New(env, PtyClear));
    exports.Set("kill", Napi::Function::New(env, PtyKill));
 +  exports.Set("terminateJobTree", Napi::Function::New(env, PtyTerminateJobTree));
++#ifdef NODE_PTY_TEST_FAULTS
++  exports.Set("setTestConnectFailure", Napi::Function::New(env, PtySetTestConnectFailure));
++  exports.Set("getTestResourceState", Napi::Function::New(env, PtyGetTestResourceState));
++#endif
    return exports;
  };
  

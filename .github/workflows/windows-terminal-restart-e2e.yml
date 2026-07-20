@@ -56,6 +56,9 @@ jobs:
     timeout-minutes: 30
     env:
       NODE_OPTIONS: --max-old-space-size=4096
+      # Why: failed native connect cleanup is testable without shipping fault
+      # injection in production node-pty builds.
+      GYP_DEFINES: node_pty_test_faults=1
 
     steps:
       - name: Checkout
@@ -81,6 +84,16 @@ jobs:
 
       - name: Build Electron app for Windows E2E
         run: pnpm exec electron-vite build --mode e2e
+
+      - name: Run patched node-pty failed-connect cleanup regressions
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+          NODE_PTY_REQUIRE_TEST_FAULTS: '1'
+        run: >-
+          pnpm exec electron
+          node_modules/mocha/bin/mocha.js
+          --exit
+          node_modules/node-pty/lib/conptyConnectFailure.test.js
 
       - name: Run Windows terminal restart regressions
         env:
