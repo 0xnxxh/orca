@@ -71,8 +71,8 @@ describe('editor-self-move-registry', () => {
   })
 
   it('clears the roles a move stamped when the rename fails', () => {
-    recordSelfMove('/repo/old.md', '/repo/new.md')
-    clearSelfMove('/repo/old.md', '/repo/new.md')
+    const ticket = recordSelfMove('/repo/old.md', '/repo/new.md')
+    clearSelfMove(ticket)
 
     expect(isRecentSelfMoveSource('/repo/old.md')).toBe(false)
     expect(isRecentSelfMoveTarget('/repo/new.md')).toBe(false)
@@ -84,9 +84,9 @@ describe('editor-self-move-registry', () => {
     // second fails (destination now exists) and clears. The successful move's
     // target stamp must survive so its delayed echo is still recognized.
     recordSelfMove('/one/report.md', '/dest/report.md') // move A
-    recordSelfMove('/two/report.md', '/dest/report.md') // move B (will fail)
+    const ticketB = recordSelfMove('/two/report.md', '/dest/report.md') // move B (fails)
 
-    clearSelfMove('/two/report.md', '/dest/report.md') // B's failure clear
+    clearSelfMove(ticketB)
 
     expect(isRecentSelfMoveTarget('/dest/report.md')).toBe(true)
     // B's own source is gone; A's source is untouched.
@@ -94,12 +94,41 @@ describe('editor-self-move-registry', () => {
     expect(isRecentSelfMoveSource('/one/report.md')).toBe(true)
   })
 
-  it('clear fully releases a target once every registration is cleared', () => {
-    recordSelfMove('/one/report.md', '/dest/report.md')
-    recordSelfMove('/two/report.md', '/dest/report.md')
+  it('clearing a stamp does not over-extend a concurrent stamp’s expiry', () => {
+    // Move A stamps /dest at t=0 (expires 750). Move B stamps the same target at
+    // t=700 (expires 1450) and fails at t=710. Clearing B must not leave /dest
+    // live past A's own 750ms promise — a single shared scalar expiry would.
+    recordSelfMove('/one/report.md', '/dest/report.md', undefined, 750) // A @ t=0
+    vi.advanceTimersByTime(700)
+    const ticketB = recordSelfMove('/two/report.md', '/dest/report.md', undefined, 750) // B @ t=700
+    vi.advanceTimersByTime(10)
+    clearSelfMove(ticketB) // B fails @ t=710
 
-    clearSelfMove('/one/report.md', '/dest/report.md')
-    clearSelfMove('/two/report.md', '/dest/report.md')
+    vi.advanceTimersByTime(50) // t=760, past A's 750 promise
+    expect(isRecentSelfMoveTarget('/dest/report.md')).toBe(false)
+  })
+
+  it('does not resurrect an expired registration when a later stamp reuses the key', () => {
+    // A→P (target) expires, but a reverse move keeps P's map entry resident as a
+    // source. A later failed move on P must not revive the expired target refs.
+    recordSelfMove('/x.md', '/p.md', undefined, 750) // P target, expires 750
+    recordSelfMove('/p.md', '/q.md', undefined, 3000) // P source, keeps entry alive
+    vi.advanceTimersByTime(1000) // P's target registration has expired
+
+    const failed = recordSelfMove('/y.md', '/p.md', undefined, 750) // P target again
+    clearSelfMove(failed)
+
+    expect(isRecentSelfMoveTarget('/p.md')).toBe(false)
+    // The still-live reverse-move source is untouched.
+    expect(isRecentSelfMoveSource('/p.md')).toBe(true)
+  })
+
+  it('clear fully releases a target once every registration is cleared', () => {
+    const ticketA = recordSelfMove('/one/report.md', '/dest/report.md')
+    const ticketB = recordSelfMove('/two/report.md', '/dest/report.md')
+
+    clearSelfMove(ticketA)
+    clearSelfMove(ticketB)
 
     expect(isRecentSelfMoveTarget('/dest/report.md')).toBe(false)
   })
@@ -108,9 +137,9 @@ describe('editor-self-move-registry', () => {
     // Move A → B, then C → A. Clearing the failed C → A must not drop A's source
     // role from the successful A → B move.
     recordSelfMove('/repo/A.md', '/repo/B.md')
-    recordSelfMove('/repo/C.md', '/repo/A.md')
+    const ticketC = recordSelfMove('/repo/C.md', '/repo/A.md')
 
-    clearSelfMove('/repo/C.md', '/repo/A.md')
+    clearSelfMove(ticketC)
 
     expect(isRecentSelfMoveSource('/repo/A.md')).toBe(true)
     expect(isRecentSelfMoveTarget('/repo/A.md')).toBe(false)

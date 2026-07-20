@@ -75,8 +75,8 @@ describe('recordSelfMoveForOpenTabs', () => {
       { suppressActiveRuntimeFallback: true }
     )
 
-    recordSelfMoveForOpenTabs('/repo/docs/readme.md', '/repo/notes/readme.md')
-    clearSelfMoveForOpenTabs('/repo/docs/readme.md', '/repo/notes/readme.md')
+    const tickets = recordSelfMoveForOpenTabs('/repo/docs/readme.md', '/repo/notes/readme.md')
+    clearSelfMoveForOpenTabs(tickets)
 
     expect(isRecentSelfMoveSource('/repo/docs/readme.md')).toBe(false)
     expect(isRecentSelfMoveTarget('/repo/notes/readme.md')).toBe(false)

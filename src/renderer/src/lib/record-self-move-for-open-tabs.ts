@@ -3,7 +3,8 @@ import { getConnectionIdForFile } from '@/lib/connection-context'
 import {
   clearSelfMove,
   recordSelfMove,
-  SELF_MOVE_REMOTE_TTL_MS
+  SELF_MOVE_REMOTE_TTL_MS,
+  type SelfMoveTicket
 } from '@/components/editor/editor-self-move-registry'
 import { isPathInsideOrEqual } from './remap-open-editor-tabs-for-path-change'
 import type { OpenFile } from '@/store/slices/editor'
@@ -49,15 +50,19 @@ function collectOpenTabMoves(fromPath: string, toPath: string): OpenTabMove[] {
  * before/after stamps and the failure clear. This is exported for that wrapper
  * (and tests); call it directly only when you own the rename lifecycle.
  */
-export function recordSelfMoveForOpenTabs(fromPath: string, toPath: string): void {
-  for (const move of collectOpenTabMoves(fromPath, toPath)) {
+export function recordSelfMoveForOpenTabs(fromPath: string, toPath: string): SelfMoveTicket[] {
+  return collectOpenTabMoves(fromPath, toPath).map((move) =>
     recordSelfMove(move.file.filePath, move.newFilePath, move.runtimeOwner, move.ttlMs)
-  }
+  )
 }
 
-/** Undoes {@link recordSelfMoveForOpenTabs} for a move that did not happen. */
-export function clearSelfMoveForOpenTabs(fromPath: string, toPath: string): void {
-  for (const move of collectOpenTabMoves(fromPath, toPath)) {
-    clearSelfMove(move.file.filePath, move.newFilePath, move.runtimeOwner)
+/**
+ * Retracts the exact registrations from {@link recordSelfMoveForOpenTabs} for a
+ * move that did not happen. Takes the tickets that call returned so a concurrent
+ * move's stamp on a shared path is never dropped.
+ */
+export function clearSelfMoveForOpenTabs(tickets: SelfMoveTicket[]): void {
+  for (const ticket of tickets) {
+    clearSelfMove(ticket)
   }
 }

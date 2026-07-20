@@ -23,11 +23,11 @@ export async function renameOpenTabsPathOnDisk(
   fromPath: string,
   toPath: string
 ): Promise<void> {
-  recordSelfMoveForOpenTabs(fromPath, toPath)
+  const pendingTickets = recordSelfMoveForOpenTabs(fromPath, toPath)
   try {
     await renameRuntimePath(context, fromPath, toPath)
   } catch (err) {
-    clearSelfMoveForOpenTabs(fromPath, toPath)
+    clearSelfMoveForOpenTabs(pendingTickets)
     throw err
   }
   recordSelfMoveForOpenTabs(fromPath, toPath)

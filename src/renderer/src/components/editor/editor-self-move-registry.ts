@@ -23,22 +23,28 @@ export const SELF_MOVE_REMOTE_TTL_MS = 3000
 // valve — TTL pruning is the real bound, since stamps self-expire within seconds.
 const SELF_MOVE_MAX_STAMPS = 1024
 
-// Why: a path can hold BOTH roles at once — e.g. move A→B then immediately undo
-// B→A leaves A a live source (of the first move, whose delayed watcher echo may
-// still be in flight) and a live target (of the undo) — and it can hold the SAME
-// role from two concurrent moves (drag two files named report.md into one dir →
-// both stamp that dir's report.md as a target). So each role is reference
-// counted: a role is live while any un-cleared registration remains and its
-// expiry is in the future. Refcounting lets a FAILED move's clear drop only its
-// own registration instead of erasing a concurrent successful move's stamp.
-type RoleState = {
-  refs: number
-  expiresAt: number
+// Why: each stamp is one independent registration carrying its own expiry, held
+// as a list per role. This keeps concurrent registrations of the same path+role
+// (drag two files named report.md into one dir → both stamp that dir's
+// report.md as a target) fully separate, so:
+//  - a role is live while ANY of its registrations is unexpired,
+//  - `clearSelfMove` retracts EXACTLY the registration a failed move added (by
+//    its ticket's expiry), never a concurrent move's,
+//  - an expired registration can't be "resurrected" by a later stamp on the
+//    same key, because liveness is computed per registration, not from a shared
+//    scalar. (A single shared expiry would over-extend the suppression window
+//    when the max-contributing registration is cleared.)
+type SelfMoveStamp = {
+  source: number[]
+  target: number[]
 }
 
-type SelfMoveStamp = {
-  source: RoleState
-  target: RoleState
+/** A retraction handle for one recorded move — see {@link clearSelfMove}. */
+export type SelfMoveTicket = {
+  fromPath: string
+  toPath: string
+  runtimeEnvironmentId: string | null
+  expiresAt: number
 }
 
 const stamps = new Map<string, SelfMoveStamp>()
@@ -47,15 +53,19 @@ function selfMoveKey(absolutePath: string, runtimeEnvironmentId?: string | null)
   return `${runtimeEnvironmentId?.trim() || 'client'}::${normalizeAbsolutePathForComparison(absolutePath)}`
 }
 
-function isRoleLive(state: RoleState, now: number): boolean {
-  return state.refs > 0 && now <= state.expiresAt
+function dropExpiredAndMaybeDelete(key: string, stamp: SelfMoveStamp, now: number): boolean {
+  stamp.source = stamp.source.filter((expiresAt) => now <= expiresAt)
+  stamp.target = stamp.target.filter((expiresAt) => now <= expiresAt)
+  if (stamp.source.length === 0 && stamp.target.length === 0) {
+    stamps.delete(key)
+    return true
+  }
+  return false
 }
 
 function pruneExpiredSelfMoves(now: number): void {
   for (const [key, stamp] of stamps) {
-    if (!isRoleLive(stamp.source, now) && !isRoleLive(stamp.target, now)) {
-      stamps.delete(key)
-    }
+    dropExpiredAndMaybeDelete(key, stamp, now)
   }
 }
 
@@ -69,25 +79,39 @@ function enforceSelfMoveStampLimit(): void {
   }
 }
 
-function emptyStamp(): SelfMoveStamp {
-  return { source: { refs: 0, expiresAt: 0 }, target: { refs: 0, expiresAt: 0 } }
-}
-
-function stampRole(
+function pushRegistration(
   absolutePath: string,
   role: 'source' | 'target',
   runtimeEnvironmentId: string | null | undefined,
   expiresAt: number
 ): void {
   const key = selfMoveKey(absolutePath, runtimeEnvironmentId)
-  const next = stamps.get(key) ?? emptyStamp()
-  const state = next[role]
-  state.refs += 1
-  state.expiresAt = Math.max(state.expiresAt, expiresAt)
+  const stamp = stamps.get(key) ?? { source: [], target: [] }
+  stamp[role].push(expiresAt)
   // Why: delete+set keeps insertion recency fresh so the cap evicts genuinely
   // old stamps first.
   stamps.delete(key)
-  stamps.set(key, next)
+  stamps.set(key, stamp)
+}
+
+function removeRegistration(
+  absolutePath: string,
+  role: 'source' | 'target',
+  runtimeEnvironmentId: string | null | undefined,
+  expiresAt: number
+): void {
+  const key = selfMoveKey(absolutePath, runtimeEnvironmentId)
+  const stamp = stamps.get(key)
+  if (!stamp) {
+    return
+  }
+  const index = stamp[role].indexOf(expiresAt)
+  if (index >= 0) {
+    stamp[role].splice(index, 1)
+  }
+  if (stamp.source.length === 0 && stamp.target.length === 0) {
+    stamps.delete(key)
+  }
 }
 
 /**
@@ -95,20 +119,33 @@ function stampRole(
  * delete(old)+create(new) echo as self-initiated instead of an external change.
  * Both endpoints are stamped: the source so the delete does not tombstone the
  * tab, the target so the create does not raise a changed-on-disk banner on the
- * (re-homed, still-dirty) tab.
+ * (re-homed, still-dirty) tab. Returns a ticket to retract this exact stamp with
+ * {@link clearSelfMove} if the move turns out not to happen.
  */
 export function recordSelfMove(
   fromPath: string,
   toPath: string,
   runtimeEnvironmentId?: string | null,
   ttlMs: number = SELF_MOVE_TTL_MS
-): void {
+): SelfMoveTicket {
   const now = Date.now()
   pruneExpiredSelfMoves(now)
   const expiresAt = now + ttlMs
-  stampRole(fromPath, 'source', runtimeEnvironmentId, expiresAt)
-  stampRole(toPath, 'target', runtimeEnvironmentId, expiresAt)
+  pushRegistration(fromPath, 'source', runtimeEnvironmentId, expiresAt)
+  pushRegistration(toPath, 'target', runtimeEnvironmentId, expiresAt)
   enforceSelfMoveStampLimit()
+  return { fromPath, toPath, runtimeEnvironmentId: runtimeEnvironmentId ?? null, expiresAt }
+}
+
+/**
+ * Retracts exactly the registration a {@link recordSelfMove} added, so a rename
+ * that FAILED after stamping does not keep suppressing genuine watcher events
+ * for the paths it never moved. A concurrent move's registration on the same
+ * path+role is untouched.
+ */
+export function clearSelfMove(ticket: SelfMoveTicket): void {
+  removeRegistration(ticket.fromPath, 'source', ticket.runtimeEnvironmentId, ticket.expiresAt)
+  removeRegistration(ticket.toPath, 'target', ticket.runtimeEnvironmentId, ticket.expiresAt)
 }
 
 function hasLiveRole(
@@ -122,12 +159,10 @@ function hasLiveRole(
     return false
   }
   const now = Date.now()
-  const live = isRoleLive(stamp[role], now)
-  // Why: drop the whole entry once neither role is live so expired stamps don't
-  // linger until the next write's prune.
-  if (!isRoleLive(stamp.source, now) && !isRoleLive(stamp.target, now)) {
-    stamps.delete(key)
-  }
+  const live = stamp[role].some((expiresAt) => now <= expiresAt)
+  // Why: drop expired registrations on read so they can't be counted live and
+  // don't linger until the next write's prune.
+  dropExpiredAndMaybeDelete(key, stamp, now)
   return live
 }
 
@@ -145,44 +180,6 @@ export function isRecentSelfMoveSource(
   runtimeEnvironmentId?: string | null
 ): boolean {
   return hasLiveRole(absolutePath, 'source', runtimeEnvironmentId)
-}
-
-function clearRole(
-  absolutePath: string,
-  role: 'source' | 'target',
-  runtimeEnvironmentId: string | null | undefined
-): void {
-  const key = selfMoveKey(absolutePath, runtimeEnvironmentId)
-  const stamp = stamps.get(key)
-  if (!stamp) {
-    return
-  }
-  const state = stamp[role]
-  // Why: drop only THIS move's registration (one ref). A concurrent move that
-  // stamped the same role keeps the role live via its own ref.
-  state.refs = Math.max(0, state.refs - 1)
-  if (state.refs === 0) {
-    state.expiresAt = 0
-  }
-  const now = Date.now()
-  if (!isRoleLive(stamp.source, now) && !isRoleLive(stamp.target, now)) {
-    stamps.delete(key)
-  }
-}
-
-/**
- * Drops one registration of the roles a move stamped, so a rename that FAILED
- * after stamping does not keep suppressing genuine watcher events for the paths
- * it never actually moved. Reference counted, so a concurrent move that stamped
- * the same role keeps that role live.
- */
-export function clearSelfMove(
-  fromPath: string,
-  toPath: string,
-  runtimeEnvironmentId?: string | null
-): void {
-  clearRole(fromPath, 'source', runtimeEnvironmentId)
-  clearRole(toPath, 'target', runtimeEnvironmentId)
 }
 
 export function __clearSelfMoveRegistryForTests(): void {
