@@ -2776,6 +2776,12 @@ describe('createEditorSlice conflict status reconciliation', () => {
 
   it('opens check full details as a center-pane editor tab', () => {
     const store = createEditorTabsStore()
+    store.setState({
+      repos: [{ id: 'repo-1', executionHostId: 'runtime:env-1' }] as unknown as AppState['repos'],
+      worktreesByRepo: {
+        'repo-1': [{ id: 'wt-1', repoId: 'repo-1', hostId: 'runtime:env-1' }]
+      } as unknown as AppState['worktreesByRepo']
+    })
     const check = {
       name: 'verify',
       status: 'completed' as const,
@@ -2809,6 +2815,7 @@ describe('createEditorSlice conflict status reconciliation', () => {
         id: 'wt-1::check-details::check-run:42',
         mode: 'check-details',
         relativePath: 'verify',
+        runtimeEnvironmentId: 'env-1',
         checkRunDetails: expect.objectContaining({
           contextKey: 'repo:99',
           check,

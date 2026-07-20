@@ -521,12 +521,17 @@ type CheckDetailsLoadState = {
   error: string | null
 }
 
-function getCheckIdentityKey(check: PRCheckDetail, index: number): string {
+export function getCheckIdentityKey(check: PRCheckDetail, index: number): string {
   if (check.checkRunId) {
     return `check-run:${check.checkRunId}`
   }
   if (check.workflowRunId) {
     return `workflow-run:${check.workflowRunId}`
+  }
+  // Why: URL-less GitLab jobs can be retried with the same name and position;
+  // the job id prevents stale inline logs surviving that refresh.
+  if (check.gitlabJobId) {
+    return `gitlab-job:${check.gitlabJobId}`
   }
   if (check.url) {
     return `url:${check.url}`

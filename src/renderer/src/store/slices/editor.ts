@@ -3044,6 +3044,9 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       error: state.error
     }
     set((s) => {
+      // Why: check-detail refreshes must stay on the owning worktree host even
+      // after the user focuses a different local or remote runtime.
+      const runtimeEnvironmentId = resolveDiffRuntimeEnvironmentId(s, worktreeId, undefined)
       const existing = s.openFiles.find((f) => f.id === id)
       if (existing) {
         return {
@@ -3054,6 +3057,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                   mode: 'check-details' as const,
                   relativePath: label,
                   language: 'plaintext',
+                  runtimeEnvironmentId,
                   checkRunDetails
                 }
               : f
@@ -3073,6 +3077,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         language: 'plaintext',
         isDirty: false,
         mode: 'check-details',
+        runtimeEnvironmentId,
         checkRunDetails
       }
 

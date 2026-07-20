@@ -8,6 +8,7 @@ import {
   CheckJobLogTail,
   ChecksList,
   ConflictTriageStrip,
+  getCheckIdentityKey,
   getFailedChecksForDetails,
   MergeConflictNotice,
   isMutablePRConversationComment,
@@ -40,6 +41,20 @@ function renderNotice(pr: PRInfo, isRefreshingConflictDetails = false): string {
     })
   )
 }
+
+describe('getCheckIdentityKey', () => {
+  it('keys URL-less GitLab retries by job id instead of their list position', () => {
+    const check: PRCheckDetail = {
+      name: 'deploy: release',
+      status: 'completed',
+      conclusion: 'failure',
+      url: null,
+      gitlabJobId: 42
+    }
+
+    expect(getCheckIdentityKey(check, 0)).toBe('gitlab-job:42')
+  })
+})
 
 describe('MergeConflictNotice', () => {
   it('builds safe mergeability recalculation commands', () => {
