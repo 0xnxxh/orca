@@ -5,8 +5,6 @@
 import { acquire, release } from '../gh-utils'
 import { extractExecError, ghExecFileAsync } from '../../git/runner'
 import {
-  rateLimitGuard,
-  noteRateLimitSpend,
   repositoryRateLimitGuard,
   noteRepositoryRateLimitSpend,
   type RateLimitBucketKind
@@ -27,8 +25,6 @@ export {
   release,
   extractExecError,
   ghExecFileAsync,
-  rateLimitGuard,
-  noteRateLimitSpend,
   repositoryRateLimitGuard,
   noteRepositoryRateLimitSpend
 }
