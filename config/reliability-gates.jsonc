@@ -951,6 +951,15 @@
           "result": "passed",
           "durationSeconds": 533,
           "summary": "Workflow run https://github.com/stablyai/orca/actions/runs/29743513075 checked out implementation fa1748a7e, rebuilt the patched node-pty addon from source with compile-only fault injection, and passed both assignment-failure and ResumeThread-failure cleanup cases. Each case repeated three production WindowsPtyAgent launches while proving the failed process drained, process/thread/Job handles closed, both named-pipe handles closed, HPCON closed, and the native baton count returned to baseline. The same build then passed all six selected Electron E2Es in 2.6 minutes: production issue #9045 deletion in 26.8 seconds, plain-terminal detached-child preservation in 21.6 seconds, and natural Job drain/public-exit ordering in 20.4 seconds."
+        },
+        {
+          "date": "2026-07-20",
+          "runner": "ci",
+          "platform": "windows",
+          "command": "gh workflow run windows-terminal-restart-e2e.yml --ref OrcaWin/issue-9045-worktree-deletion-fails",
+          "result": "passed",
+          "durationSeconds": 555,
+          "summary": "Exact-head workflow run https://github.com/stablyai/orca/actions/runs/29766056882 checked out 1d04fbbc5, completed frozen install, passed the real Windows SSH relay/node-pty lock-holder teardown, verified generated conpty, conpty_console_list, winpty-agent, and winpty projects retained Spectre mitigation, rebuilt Electron, passed native failed-connect cleanup, and passed all six selected Electron regressions including production issue #9045 deletion, plain-terminal descendant preservation, and natural Job-drain exit ordering."
         }
       ],
       "runtimeBudget": {
@@ -959,11 +968,11 @@
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "The macOS Electron gate passed three times locally. Four Windows implementation heads passed the selected Electron gate on GitHub Actions; latest recorded head fa1748a7e also passed both native failed-connect cleanup cases before all six Electron tests, including the strengthened deletion and natural-exit oracles. Required-platform soak history is not yet available."
+        "evidence": "The macOS Electron gate passed three times locally. Five recorded Windows implementation heads passed the selected Electron gate on GitHub Actions; exact head 1d04fbbc5 also passed frozen install, the real Windows relay lock-holder integration, generated-project Spectre assertions, both native failed-connect cleanup cases, and all six Electron tests including the strengthened deletion and natural-exit oracles. Required-platform soak history is not yet available."
       },
       "redGreenEvidence": {
         "status": "complete",
-        "evidence": "The Windows issue #9045 test failed at test-only e5a67d121 in Actions run https://github.com/stablyai/orca/actions/runs/29731005277: the root, agent, and reparented lock-holder were proved alive immediately before production worktree removal returned 'Failed to physically stop every PTY'. The strengthened test passed at implementation ecb8652d6 in run https://github.com/stablyai/orca/actions/runs/29733816749, proving registration before removal, removal ok, and all recorded processes, the worktree directory, Git registration, and list entry absent. Later heads 288116dfd, 424a04a30, and fa1748a7e repeated that production proof in runs https://github.com/stablyai/orca/actions/runs/29736500566, https://github.com/stablyai/orca/actions/runs/29739657513, and https://github.com/stablyai/orca/actions/runs/29743513075; all also proved natural public exit waits for detached Job-child absence."
+        "evidence": "The Windows issue #9045 test failed at test-only e5a67d121 in Actions run https://github.com/stablyai/orca/actions/runs/29731005277: the root, agent, and reparented lock-holder were proved alive immediately before production worktree removal returned 'Failed to physically stop every PTY'. The strengthened test passed at implementation ecb8652d6 in run https://github.com/stablyai/orca/actions/runs/29733816749, proving registration before removal, removal ok, and all recorded processes, the worktree directory, Git registration, and list entry absent. Later heads 288116dfd, 424a04a30, fa1748a7e, and exact head 1d04fbbc5 repeated that production proof in runs https://github.com/stablyai/orca/actions/runs/29736500566, https://github.com/stablyai/orca/actions/runs/29739657513, https://github.com/stablyai/orca/actions/runs/29743513075, and https://github.com/stablyai/orca/actions/runs/29766056882; all also proved natural public exit waits for detached Job-child absence."
       },
       "performanceBudget": {
         "required": true,
