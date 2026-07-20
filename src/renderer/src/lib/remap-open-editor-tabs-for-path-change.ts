@@ -2,6 +2,10 @@ import { useAppStore } from '@/store'
 import { detectLanguage } from '@/lib/language-detect'
 import { basename } from '@/lib/path'
 import {
+  recordSelfMove,
+  SELF_MOVE_REMOTE_TTL_MS
+} from '@/components/editor/editor-self-move-registry'
+import {
   normalizeRuntimePathSeparators,
   relativePathInsideRoot
 } from '../../../shared/cross-platform-path'
@@ -159,6 +163,19 @@ export function remapOpenEditorTabsForPathChange({
     })
     const draft = state.editorDrafts[file.id]
     const wasDirty = file.isDirty
+
+    // Why: stamp this Orca-initiated move BEFORE re-homing the tab so the
+    // worktree watcher's delete(old)+create(new) echo is recognized as
+    // self-initiated. Without it, the create(new) landing on the re-homed dirty
+    // tab raises a false "changed on disk" banner whose Reload discards the
+    // draft. Runtime-backed tabs use the longer remote TTL because their watcher
+    // echo travels a poll-plus-network path.
+    recordSelfMove(
+      oldFilePath,
+      updatedPath,
+      file.runtimeEnvironmentId,
+      file.runtimeEnvironmentId ? SELF_MOVE_REMOTE_TTL_MS : undefined
+    )
 
     // Why: renameRuntimePath already moved the file. Clear the untitled marker
     // before closeFile so its cleanup path does not try to delete the old path.

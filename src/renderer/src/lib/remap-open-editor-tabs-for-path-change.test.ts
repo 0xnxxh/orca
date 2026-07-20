@@ -1,7 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useAppStore } from '@/store'
 import { remapOpenEditorTabsForPathChange } from './remap-open-editor-tabs-for-path-change'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
+import {
+  __clearSelfMoveRegistryForTests,
+  isRecentSelfMoveSource,
+  isRecentSelfMoveTarget
+} from '@/components/editor/editor-self-move-registry'
 
 function ownedEditorFileId(
   filePath: string,
@@ -15,6 +20,11 @@ function ownedEditorFileId(
 describe('remapOpenEditorTabsForPathChange', () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState(), true)
+    __clearSelfMoveRegistryForTests()
+  })
+
+  afterEach(() => {
+    __clearSelfMoveRegistryForTests()
   })
 
   it('preserves runtime owners, drafts, dirty state, and markdown preview sources', () => {
@@ -191,5 +201,36 @@ describe('remapOpenEditorTabsForPathChange', () => {
       relativePath: 'renamed.md'
     })
     expect(useAppStore.getState().openFiles[0].isUntitled).toBeUndefined()
+  })
+
+  it('records a self-move so the watcher echo is not seen as an external change', () => {
+    const state = useAppStore.getState()
+    const oldPath = '/repo/docs/readme.md'
+    const newPath = '/repo/notes/readme.md'
+
+    state.openFile(
+      {
+        filePath: oldPath,
+        relativePath: 'docs/readme.md',
+        worktreeId: 'wt-1',
+        runtimeEnvironmentId: null,
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+    const editId = useAppStore.getState().openFiles[0]?.id
+    state.setEditorDraft(editId!, 'unsaved work')
+    state.markFileDirty(editId!, true)
+
+    remapOpenEditorTabsForPathChange({
+      fromPath: oldPath,
+      toPath: newPath,
+      worktreePath: '/repo',
+      worktreeId: 'wt-1'
+    })
+
+    expect(isRecentSelfMoveSource(oldPath)).toBe(true)
+    expect(isRecentSelfMoveTarget(newPath)).toBe(true)
   })
 })

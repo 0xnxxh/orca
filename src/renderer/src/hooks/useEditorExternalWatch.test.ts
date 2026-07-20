@@ -33,6 +33,10 @@ import {
   __clearSelfWriteRegistryForTests,
   recordSelfWrite
 } from '@/components/editor/editor-self-write-registry'
+import {
+  __clearSelfMoveRegistryForTests,
+  recordSelfMove
+} from '@/components/editor/editor-self-move-registry'
 
 describe('getWatchedTargetKey', () => {
   it('changes when a worktree gains an SSH connection id', () => {
@@ -225,6 +229,7 @@ describe('createExternalWatchEventHandler tombstone coalescing', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     __clearSelfWriteRegistryForTests()
+    __clearSelfMoveRegistryForTests()
   })
 
   function payload(events: FsChangedPayload['events']): FsChangedPayload {
@@ -538,6 +543,61 @@ describe('createExternalWatchEventHandler tombstone coalescing', () => {
 
     expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
     expect(notifyEditorExternalFileChange).not.toHaveBeenCalled()
+    dispose()
+  })
+
+  it('does not mark changed-on-disk for the create echo of an Orca-initiated move', () => {
+    // State after the explorer move re-homed the dirty tab to the new path.
+    const movedDirtyTab = {
+      ...fileNotes,
+      filePath: '/repo/subdir/notes.md',
+      relativePath: 'subdir/notes.md',
+      isDirty: true
+    }
+    vi.mocked(useAppStore.getState).mockReturnValue({
+      openFiles: [movedDirtyTab],
+      setExternalMutation
+    } as never)
+    vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([movedDirtyTab] as never)
+    // The remap stamps the move before the watcher echo arrives.
+    recordSelfMove('/repo/notes.md', '/repo/subdir/notes.md')
+    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
+
+    handleFsChanged(
+      payload([
+        { kind: 'delete', absolutePath: '/repo/notes.md' },
+        { kind: 'create', absolutePath: '/repo/subdir/notes.md' }
+      ])
+    )
+    vi.advanceTimersByTime(200)
+
+    // The user only moved their own file — no false changed-on-disk banner, and
+    // the source delete must not tombstone the re-homed tab either.
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'changed')
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'deleted')
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-notes', 'renamed')
+    dispose()
+  })
+
+  it('still marks changed-on-disk for a create with no self-move stamp (no over-suppression)', () => {
+    const movedDirtyTab = {
+      ...fileNotes,
+      filePath: '/repo/subdir/notes.md',
+      relativePath: 'subdir/notes.md',
+      isDirty: true
+    }
+    vi.mocked(useAppStore.getState).mockReturnValue({
+      openFiles: [movedDirtyTab],
+      setExternalMutation
+    } as never)
+    vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([movedDirtyTab] as never)
+    // No recordSelfMove: a genuine external write at this path must still surface.
+    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
+
+    handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/subdir/notes.md' }]))
+    vi.advanceTimersByTime(200)
+
+    expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
     dispose()
   })
 

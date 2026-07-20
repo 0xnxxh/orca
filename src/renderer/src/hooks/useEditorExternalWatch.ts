@@ -19,6 +19,10 @@ import {
   getRecentSelfWrite,
   type RecentSelfWrite
 } from '@/components/editor/editor-self-write-registry'
+import {
+  isRecentSelfMoveSource,
+  isRecentSelfMoveTarget
+} from '@/components/editor/editor-self-move-registry'
 import type { FsChangedPayload } from '../../../shared/types'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import type { OpenFile } from '@/store/slices/editor'
@@ -486,7 +490,13 @@ export function createExternalWatchEventHandler(
       target.worktreeId,
       target.runtimeEnvironmentId,
       openFilesAtStart
-    )
+    ).filter((fileId) => {
+      // Why: if this delete is the source side of an Orca-initiated move, the
+      // tab has already been (or is about to be) re-homed to the new path — do
+      // not tombstone it 'deleted'/'renamed' from the move's own watcher echo.
+      const file = openFilesAtStart.find((f) => f.id === fileId)
+      return !file || !isRecentSelfMoveSource(file.filePath, target.runtimeEnvironmentId)
+    })
     // Why: correlate creates to deletes by basename OR parent directory to
     // avoid mislabelling unrelated create+delete pairs in a batched payload
     // as "renamed". When we can't correlate, default to 'deleted' — that's
@@ -642,8 +652,15 @@ export function createExternalWatchEventHandler(
         }
         continue
       }
+      const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
       const dirtyMatches = matching.filter((f) => f.isDirty)
-      if (dirtyMatches.length > 0) {
+      // Why: an Orca-initiated move re-homes the dirty tab to this path and
+      // carries its draft. The move's own create(new) watcher echo is not an
+      // external edit, so suppress the changed-on-disk mark for it — otherwise
+      // the false banner's Reload discards the just-carried draft. Reload of a
+      // clean moved tab (below) is harmless, so only the dirty mark is gated.
+      const isSelfMoveTargetPath = isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)
+      if (dirtyMatches.length > 0 && !isSelfMoveTargetPath) {
         // Why: an external write landing on a dirty tab must not vanish
         // silently (issue #7265) — the user was left with a stale tab and a
         // save that clobbered the newer disk content. Mark the tab so the
@@ -664,7 +681,6 @@ export function createExternalWatchEventHandler(
         // Clean sibling tabs (e.g. an unstaged diff of the same path) still
         // reload below; every notification consumer skips dirty files.
       }
-      const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
       const recentSelfWrite = getRecentSelfWrite(absolutePath, target.runtimeEnvironmentId)
       if (recentSelfWrite) {
         scheduleSelfWriteAwareExternalReload(target, notification, matching[0], recentSelfWrite)
