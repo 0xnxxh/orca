@@ -16,7 +16,59 @@ function suppressReactTestRendererDeprecationWarning(): () => void {
 }
 
 describe('useHostStatusGates', () => {
-  it('clears every prior-host gate before a reused client can be replaced', async () => {
+  it('clears every prior-host gate and ignores its late response while the client is replaced', async () => {
+    let resolveStatus: ((response: unknown) => void) | null = null
+    const pendingStatus = new Promise((resolve) => {
+      resolveStatus = resolve
+    })
+    const sendRequest = vi.fn().mockReturnValue(pendingStatus)
+    const client = { sendRequest } as unknown as RpcClient
+    let gates: HostStatusGates | null = null
+    let renderer: ReactTestRenderer | null = null
+
+    function Probe({ hostId }: { hostId: string }): null {
+      gates = useHostStatusGates({ hostId, client, connState: 'connected' })
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(Probe, { hostId: 'host-1' }))
+      })
+
+      await act(async () => {
+        renderer?.update(createElement(Probe, { hostId: 'host-2' }))
+      })
+      expect(gates).toMatchObject({
+        hostCapabilities: [],
+        floatingWorkspaceEnabled: false,
+        compatVerdict: { kind: 'ok' }
+      })
+
+      await act(async () => {
+        resolveStatus?.({
+          ok: true,
+          result: {
+            capabilities: ['browser.screencast.v1'],
+            floatingWorkspaceEnabled: true
+          }
+        })
+        await pendingStatus
+      })
+      expect(gates).toMatchObject({
+        hostCapabilities: [],
+        floatingWorkspaceEnabled: false,
+        compatVerdict: { kind: 'ok' }
+      })
+      expect(sendRequest).toHaveBeenCalledOnce()
+    } finally {
+      restore()
+      renderer?.unmount()
+    }
+  })
+
+  it('loads gates from the connected host', async () => {
     const sendRequest = vi.fn().mockResolvedValue({
       ok: true,
       result: {
@@ -44,14 +96,6 @@ describe('useHostStatusGates', () => {
         floatingWorkspaceEnabled: true
       })
 
-      await act(async () => {
-        renderer?.update(createElement(Probe, { hostId: 'host-2' }))
-      })
-      expect(gates).toMatchObject({
-        hostCapabilities: [],
-        floatingWorkspaceEnabled: false,
-        compatVerdict: { kind: 'ok' }
-      })
       expect(sendRequest).toHaveBeenCalledOnce()
     } finally {
       restore()

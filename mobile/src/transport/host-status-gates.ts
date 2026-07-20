@@ -22,6 +22,7 @@ export function useHostStatusGates(args: {
   const [floatingWorkspaceEnabled, setFloatingWorkspaceEnabled] = useState(false)
   const [compatVerdict, setCompatVerdict] = useState<CompatVerdict>({ kind: 'ok' })
   const clientRef = useRef<RpcClient | null>(null)
+  const hostGenerationRef = useRef(0)
 
   useEffect(() => {
     clientRef.current = client
@@ -29,6 +30,7 @@ export function useHostStatusGates(args: {
 
   // Why: Expo can render the next host once with the prior client, so hide every host-scoped gate until its client answers.
   useEffect(() => {
+    hostGenerationRef.current += 1
     setHostCapabilities([])
     setFloatingWorkspaceEnabled(false)
     setCompatVerdict({ kind: 'ok' })
@@ -43,10 +45,15 @@ export function useHostStatusGates(args: {
     }
     let cancelled = false
     const requestClient = client
+    const requestHostGeneration = hostGenerationRef.current
     void (async () => {
       try {
         const response = await requestClient.sendRequest('status.get')
-        if (cancelled || clientRef.current !== requestClient) {
+        if (
+          cancelled ||
+          clientRef.current !== requestClient ||
+          hostGenerationRef.current !== requestHostGeneration
+        ) {
           return
         }
         if (!response.ok) {

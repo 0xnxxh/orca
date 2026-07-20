@@ -128,6 +128,44 @@ beforeEach(() => {
 })
 
 describe('useHostClient', () => {
+  it('rebinds when Expo reuses a screen between two connected cached hosts', async () => {
+    const host2 = { ...HOST, id: 'host-2', name: 'Host 2' }
+    const client1 = makeFakeClient('connected')
+    const client2 = makeFakeClient('connected')
+    connectMock.mockReturnValueOnce(client1).mockReturnValueOnce(client2)
+    loadHostsMock.mockResolvedValue([HOST, host2])
+
+    let selectedHostId = HOST.id
+    let selectedClient: RpcClient | null = null
+    let renderer: ReactTestRenderer | null = null
+    function Probe(): null {
+      selectedClient = useHostClient(selectedHostId).client
+      useHostClient(host2.id)
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(RpcClientProvider, null, createElement(Probe)))
+        await Promise.resolve()
+      })
+      expect(selectedClient).toBe(client1)
+
+      selectedHostId = host2.id
+      await act(async () => {
+        renderer?.update(createElement(RpcClientProvider, null, createElement(Probe)))
+        await Promise.resolve()
+      })
+
+      expect(selectedClient).toBe(client2)
+      expect(connectMock).toHaveBeenCalledTimes(2)
+    } finally {
+      restore()
+      renderer?.unmount()
+    }
+  })
+
   it('drops the closed client when the host entry is removed', async () => {
     const fake = makeFakeClient('connected')
     connectMock.mockReturnValue(fake)
