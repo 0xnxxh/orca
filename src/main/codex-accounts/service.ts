@@ -258,6 +258,7 @@ export class CodexAccountService {
   private async doReauthenticateAccount(accountId: string): Promise<CodexRateLimitAccountsState> {
     const account = this.requireAccount(accountId)
     const managedHomePath = this.ensureManagedHomeForReauthentication(account)
+    const activeSelection = normalizeCodexRuntimeSelection(this.store.getSettings())
 
     this.safeSyncCanonicalConfigIntoManagedHome(managedHomePath, undefined, account.id)
     await this.runCodexLogin(managedHomePath)
@@ -283,7 +284,9 @@ export class CodexAccountService {
     )
 
     this.store.updateSettings({
-      codexManagedAccounts: updatedAccounts
+      codexManagedAccounts: updatedAccounts,
+      activeCodexManagedAccountId: activeSelection.host,
+      activeCodexManagedAccountIdsByRuntime: activeSelection
     })
     this.safeSyncCanonicalConfigToManagedHomes()
     this.runtimeHome.clearLastWrittenAuthJson(accountId)
@@ -294,6 +297,11 @@ export class CodexAccountService {
       undefined,
       getCodexSelectionTargetForAccount(account)
     )
+    // Why: runtime-home validation can clear the selection during reauth's credential transition.
+    this.store.updateSettings({
+      activeCodexManagedAccountId: activeSelection.host,
+      activeCodexManagedAccountIdsByRuntime: activeSelection
+    })
     return this.getSnapshot()
   }
 

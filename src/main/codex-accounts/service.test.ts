@@ -938,6 +938,98 @@ describe('CodexAccountService config sync', () => {
     warnSpy.mockRestore()
   })
 
+  it.each([
+    ['the active account', 'account-1'],
+    ['a different account', 'account-2']
+  ])('preserves the active selection when reauthenticating %s', async (_label, accountId) => {
+    vi.resetModules()
+
+    const accounts = ['account-1', 'account-2'].map((id, index) => ({
+      id,
+      email: `${id}@example.com`,
+      managedHomePath: createManagedHome(
+        testState.userDataDir,
+        id,
+        '',
+        createCodexAuthJson(`${id}@example.com`, `provider-${id}`, `refresh-${id}`)
+      ),
+      providerAccountId: `provider-${id}`,
+      workspaceLabel: null,
+      workspaceAccountId: `provider-${id}`,
+      createdAt: index + 1,
+      updatedAt: index + 1,
+      lastAuthenticatedAt: index + 1
+    }))
+    const settings = createSettings({
+      codexManagedAccounts: accounts,
+      activeCodexManagedAccountId: 'account-1',
+      activeCodexManagedAccountIdsByRuntime: {
+        host: 'account-1',
+        wsl: { Ubuntu: null }
+      }
+    })
+    const store = createStore(settings)
+    const runtimeHome = createRuntimeHome()
+    runtimeHome.syncForCurrentSelection.mockImplementation(() => {
+      const current = store.getSettings()
+      store.updateSettings({
+        activeCodexManagedAccountId: null,
+        activeCodexManagedAccountIdsByRuntime: {
+          ...current.activeCodexManagedAccountIdsByRuntime!,
+          host: null
+        }
+      })
+    })
+    const spawnMock = vi.fn(
+      (_command: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
+        const child = new EventEmitter() as EventEmitter & {
+          stdout: PassThrough
+          stderr: PassThrough
+          kill: () => void
+        }
+        child.stdout = new PassThrough()
+        child.stderr = new PassThrough()
+        child.kill = vi.fn()
+        writeFileSync(
+          join(options.env.CODEX_HOME!, 'auth.json'),
+          createCodexAuthJson('reauthenticated@example.com', 'provider-new', 'refresh-new'),
+          'utf-8'
+        )
+        queueMicrotask(() => child.emit('close', 0))
+        return child
+      }
+    )
+    vi.doMock('node:child_process', () => ({
+      execFileSync: vi.fn(),
+      spawn: spawnMock
+    }))
+    vi.doMock('../codex-cli/command', () => ({
+      resolveCodexCommand: () => 'codex'
+    }))
+
+    const { CodexAccountService } = await import('./service')
+    const service = new CodexAccountService(
+      store as never,
+      createRateLimits() as never,
+      runtimeHome as never
+    )
+
+    const result = await service.reauthenticateAccount(accountId)
+
+    expect(result.activeAccountId).toBe('account-1')
+    expect(result.activeAccountIdsByRuntime).toEqual({
+      host: 'account-1',
+      wsl: { Ubuntu: null }
+    })
+    expect(store.getSettings()).toMatchObject({
+      activeCodexManagedAccountId: 'account-1',
+      activeCodexManagedAccountIdsByRuntime: {
+        host: 'account-1',
+        wsl: { Ubuntu: null }
+      }
+    })
+  })
+
   it('does not recreate a missing managed home at a different account path', async () => {
     vi.resetModules()
     const managedHomePath = join(testState.userDataDir, 'codex-accounts', 'other-account', 'home')
