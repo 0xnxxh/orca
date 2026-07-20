@@ -175,6 +175,22 @@ describe('web before-unload persistence', () => {
   })
 })
 
+describe('web PTY preload API', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('does not classify remote-runtime PTYs as unsafe local Windows sessions', async () => {
+    const { api } = await installApi('Windows')
+
+    await expect(api.pty.getShutdownBlockReason('remote:web-env-1:pty-1')).resolves.toBeNull()
+  })
+})
+
 function installClipboardImageBlob(blob: Blob): {
   getType: ReturnType<typeof vi.fn>
   read: ReturnType<typeof vi.fn>
