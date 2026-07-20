@@ -40,10 +40,12 @@ vi.mock('../providers/windows-powershell-executable', () => ({
 }))
 
 vi.mock('../providers/agent-foreground-process', () => ({
-  resolveAgentForegroundProcessWithAvailability: async (...args: unknown[]) => ({
-    available: true,
-    processName: await resolveAgentForegroundProcessMock(...args)
-  })
+  resolveAgentForegroundProcessWithAvailability: async (...args: unknown[]) => {
+    const value = await resolveAgentForegroundProcessMock(...args)
+    return value && typeof value === 'object' && 'available' in value
+      ? value
+      : { available: true, processName: value }
+  }
 }))
 
 import { createPtySubprocess } from './pty-subprocess'
@@ -208,6 +210,32 @@ describe('daemon pty foreground scan cadence', () => {
         'pi',
         expect.objectContaining({ fresh: true })
       )
+    }
+  )
+
+  it.each(['darwin', 'win32'] as const)(
+    'keeps authoritative %s omp reads on the zero-scan path',
+    async (targetPlatform) => {
+      const { handle } = spawnShellSubprocess('omp', targetPlatform)
+
+      for (let atMs = 0; atMs <= 3_000; atMs += 250) {
+        expect(await readForegroundAt(handle, atMs)).toBe('omp')
+      }
+      expect(resolveAgentForegroundProcessMock).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['darwin', 'win32'] as const)(
+    'keeps the cached omp owner when a %s wrapper scan is unavailable',
+    async (targetPlatform) => {
+      resolveAgentForegroundProcessMock
+        .mockResolvedValueOnce('omp')
+        .mockResolvedValue({ available: false, processName: 'pi' })
+      const { handle } = spawnShellSubprocess('pi', targetPlatform)
+
+      expect(await readForegroundAt(handle, 0)).toBe('pi')
+      expect(await readForegroundAt(handle, 1_000)).toBe('omp')
+      expect(await readForegroundAt(handle, 2_500)).toBe('omp')
     }
   )
 })

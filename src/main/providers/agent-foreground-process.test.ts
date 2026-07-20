@@ -208,7 +208,7 @@ describe('resolveAgentForegroundProcess', () => {
     ).resolves.toEqual({ available: false, processName: 'zsh' })
   })
 
-  it('treats a failed fresh POSIX scan as unavailable', async () => {
+  it('treats failed POSIX scans as unavailable', async () => {
     execFileMock.mockImplementation(
       (_cmd: string, _args: string[], _opts: unknown, cb: unknown) => {
         const callback = cb as (err: unknown, result: { stdout: string; stderr: string }) => void
@@ -219,6 +219,10 @@ describe('resolveAgentForegroundProcess', () => {
     await expect(
       resolveAgentForegroundProcessWithAvailability(100, 'zsh', { fresh: true })
     ).resolves.toEqual({ available: false, processName: 'zsh' })
+    await expect(resolveAgentForegroundProcessWithAvailability(100, 'zsh')).resolves.toEqual({
+      available: false,
+      processName: 'zsh'
+    })
     await expect(resolveAgentForegroundProcess(100, 'zsh')).resolves.toBe('zsh')
   })
 

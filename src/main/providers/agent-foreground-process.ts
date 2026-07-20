@@ -102,7 +102,8 @@ export async function resolveAgentForegroundProcessWithAvailability(
       processName: resolveAgentForegroundProcessFromPs(rows, shellPid) ?? fallbackProcess
     }
   } catch {
-    return { available: !options.fresh, processName: fallbackProcess }
+    // Why: a failed scan cannot prove fallback ownership; callers retain the last recognized agent.
+    return { available: false, processName: fallbackProcess }
   }
 }
 
