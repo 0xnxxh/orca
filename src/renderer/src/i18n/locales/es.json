@@ -292,6 +292,16 @@
             "f518e89aa5": "El proyecto ya existe en ese perfil",
             "f03ae7f27b": "Error al transferir proyecto"
           }
+        },
+        "terminal": {
+          "shutdown": {
+            "safety": {
+              "5a57c04372": "Terminal mantenida abierta por seguridad",
+              "8a31e30a75": "Orca no puede detener de forma segura esta sesión antigua de Windows. Sal del agente o del shell en esta terminal. Si sigue en ejecución, finaliza su árbol de procesos en el Administrador de tareas o reinicia Windows.",
+              "d929a6767b": "Terminal mantenida abierta porque no se pudo verificar el cierre",
+              "44c3706121": "Vuelve a intentar cerrar la terminal. Orca mantuvo intactos la pestaña y el control de sus procesos."
+            }
+          }
         }
       }
     },

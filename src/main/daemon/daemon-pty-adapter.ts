@@ -32,6 +32,10 @@ import type {
   PtySpawnOptions,
   PtySpawnResult
 } from '../providers/types'
+import {
+  WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON,
+  type PtyShutdownBlockReason
+} from '../../shared/pty-shutdown-safety'
 import { isShellProcess } from '../../shared/agent-detection'
 import { resolveWslSessionContext } from './wsl-session-context'
 import { normalizeWslColdRestoreCwd } from './wsl-cold-restore-cwd'
@@ -217,12 +221,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   private async doSpawn(opts: PtySpawnOptions): Promise<PtySpawnResult> {
     const sessionId = opts.sessionId ?? mintPtySessionId(opts.worktreeId)
-    let wslDistro = resolveWslSessionContext({
+    const requestedWslDistro = resolveWslSessionContext({
       cwd: opts.cwd,
       sessionId,
       shellOverride: opts.shellOverride,
       terminalWindowsWslDistro: opts.terminalWindowsWslDistro
     })?.distro
+    let wslDistro = requestedWslDistro
     const detectColdRestore = (options?: { ignoreCleanEnd?: boolean }): ColdRestoreInfo | null => {
       const restoreInfo =
         this.historyReader?.detectColdRestore(sessionId, { ...options, wslDistro }) ?? null
@@ -321,9 +326,14 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
     let scrollback = restoreInfo ? getRecoveredHistorySeed(restoreInfo) : null
     let result = await createOrAttach(scrollback)
-    let providerWslDistro = result.wslDistro === undefined ? wslDistro : result.wslDistro
-    // Why: explicit null from a current daemon overrides the caller's WSL
-    // preference; undefined preserves compatibility with older daemons.
+    let providerWslDistro =
+      result.wslDistro === undefined
+        ? result.isNew
+          ? requestedWslDistro
+          : undefined
+        : result.wslDistro
+    // Why: caller WSL preference proves a fresh spawn, not an old daemon's
+    // reattached host. Reattach requires daemon metadata before root-only close.
     wslDistro = providerWslDistro ?? undefined
     if (wslDistro) {
       this.wslDistrosBySessionId.set(sessionId, wslDistro)
@@ -384,7 +394,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
         effectiveCols = restoreInfo.cols
         effectiveRows = restoreInfo.rows
         result = await createOrAttach(scrollback)
-        providerWslDistro = result.wslDistro === undefined ? wslDistro : result.wslDistro
+        providerWslDistro =
+          result.wslDistro === undefined
+            ? result.isNew
+              ? requestedWslDistro
+              : undefined
+            : result.wslDistro
         wslDistro = providerWslDistro ?? undefined
         if (wslDistro) {
           this.wslDistrosBySessionId.set(sessionId, wslDistro)
@@ -586,15 +601,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
-    if (
-      process.platform === 'win32' &&
-      this.protocolVersion < WINDOWS_AGENT_JOB_PROTOCOL_VERSION &&
-      !this.wslDistrosBySessionId.has(id)
-    ) {
+    if (this.getShutdownBlockReason(id)) {
       // Why: v24 could miss native agent identity and never Job-owned descendants;
       // only an attached, known WSL session is safe for ordinary root close.
       throw new DaemonProtocolError(
-        `Windows PTY shutdown requires daemon protocol ${WINDOWS_AGENT_JOB_PROTOCOL_VERSION} or newer; restart Orca before closing adopted terminals`
+        `Windows PTY shutdown requires daemon protocol ${WINDOWS_AGENT_JOB_PROTOCOL_VERSION} or newer. Exit the agent or shell in this terminal; if it stays running, end its process tree in Task Manager or restart Windows.`
       )
     }
     // Why: shutdown can be the first lazy-client operation after restart; connect
@@ -674,6 +685,14 @@ export class DaemonPtyAdapter implements IPtyProvider {
         }
       }
     }
+  }
+
+  getShutdownBlockReason(id: string): PtyShutdownBlockReason | null {
+    return process.platform === 'win32' &&
+      this.protocolVersion < WINDOWS_AGENT_JOB_PROTOCOL_VERSION &&
+      !this.wslDistrosBySessionId.has(id)
+      ? WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON
+      : null
   }
 
   ackColdRestore(sessionId: string): void {

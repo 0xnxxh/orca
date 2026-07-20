@@ -13,6 +13,7 @@ import type {
   PtySpawnOptions,
   PtySpawnResult
 } from '../providers/types'
+import type { PtyShutdownBlockReason } from '../../shared/pty-shutdown-safety'
 
 export class DegradedDaemonPtyProvider implements IPtyProvider {
   readonly routesFreshSpawnsToLocalProvider = true
@@ -124,6 +125,15 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     }
     const target = this.sessionRouting.get(id) ?? this.fallback
     await this.sessionRouting.shutdown(id, target, opts)
+  }
+
+  async getShutdownBlockReason(id: string): Promise<PtyShutdownBlockReason | null> {
+    // Why: degraded routing can hide a preserved legacy owner behind the fallback.
+    await this.sessionRouting.refreshInventories()
+    if (this.sessionRouting.isAmbiguous(id)) {
+      throw this.ambiguousOwnershipError([id])
+    }
+    return (await this.sessionRouting.get(id)?.getShutdownBlockReason?.(id)) ?? null
   }
 
   async sendSignal(id: string, signal: string): Promise<void> {

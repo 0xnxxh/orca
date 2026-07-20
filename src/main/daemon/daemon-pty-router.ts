@@ -8,6 +8,7 @@ import type {
   PtySpawnOptions,
   PtySpawnResult
 } from '../providers/types'
+import type { PtyShutdownBlockReason } from '../../shared/pty-shutdown-safety'
 
 export class DaemonPtyRouter implements IPtyProvider {
   private current: DaemonPtyAdapter
@@ -136,6 +137,17 @@ export class DaemonPtyRouter implements IPtyProvider {
     if (!opts.keepHistory) {
       this.sessionRouting.remove(id, adapter)
     }
+  }
+
+  async getShutdownBlockReason(id: string): Promise<PtyShutdownBlockReason | null> {
+    if (this.legacy.length > 0) {
+      // Why: preflight must select the same authoritative legacy owner as shutdown.
+      await this.refreshInventories()
+    }
+    if (this.sessionRouting.isAmbiguous(id)) {
+      throw this.ambiguousOwnershipError([id])
+    }
+    return this.adapterFor(id).getShutdownBlockReason(id)
   }
 
   async sendSignal(id: string, signal: string): Promise<void> {

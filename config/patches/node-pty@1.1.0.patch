@@ -1,8 +1,8 @@
 diff --git a/binding.gyp b/binding.gyp
-index 5f63978b07ab50aaf7523219a2170ec737a6b5db..7fecd38719772f7b31c2a91b17c7f3700446189f 100644
+index 5f63978b07ab50aaf7523219a2170ec737a6b5db..e23988358eecc292ca769a738d5bfdef8172bb3d 100644
 --- a/binding.gyp
 +++ b/binding.gyp
-@@ -1,13 +1,13 @@
+@@ -1,4 +1,7 @@
  {
 +  'variables': {
 +    'node_pty_test_faults%': 0,
@@ -10,16 +10,7 @@ index 5f63978b07ab50aaf7523219a2170ec737a6b5db..7fecd38719772f7b31c2a91b17c7f370
    'target_defaults': {
      'dependencies': [
        "<!(node -p \"require('node-addon-api').targets\"):node_addon_api_except",
-     ],
-     'conditions': [
-       ['OS=="win"', {
--        'msvs_configuration_attributes': {
--          'SpectreMitigation': 'Spectre'
--        },
-         'msvs_settings': {
-             'VCCLCompilerTool': {
-               'AdditionalOptions': [
-@@ -41,6 +41,13 @@
+@@ -41,6 +44,13 @@
            'libraries': [
              '-lshlwapi'
            ],
@@ -34,7 +25,7 @@ index 5f63978b07ab50aaf7523219a2170ec737a6b5db..7fecd38719772f7b31c2a91b17c7f370
          {
            'target_name': 'conpty_console_list',
 diff --git a/deps/winpty/src/winpty.gyp b/deps/winpty/src/winpty.gyp
-index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..e619813759c6f14694838bdfbd0ea5f8360130ef 100644
+index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..6047590bc9558dabacd3ece5114ed41c76e0221f 100644
 --- a/deps/winpty/src/winpty.gyp
 +++ b/deps/winpty/src/winpty.gyp
 @@ -10,7 +10,7 @@
@@ -55,26 +46,6 @@ index 1ac5758bedd8cf54f32280dea4e4aeb5afdee30d..e619813759c6f14694838bdfbd0ea5f8
          ]
      },
      'targets' : [
-@@ -40,9 +40,6 @@
-                 '-lshell32',
-                 '-luser32',
-             ],
--            'msvs_configuration_attributes': {
--                'SpectreMitigation': 'Spectre'
--            },
-             'msvs_settings': {
-                 # Specify this setting here to override a setting from somewhere
-                 # else, such as node's common.gypi.
-@@ -142,9 +139,6 @@
-                 '-ladvapi32',
-                 '-luser32',
-             ],
--            'msvs_configuration_attributes': {
--                'SpectreMitigation': 'Spectre'
--            },
-             'msvs_settings': {
-                 # Specify this setting here to override a setting from somewhere
-                 # else, such as node's common.gypi.
 diff --git a/lib/conptyConnectFailure.test.js b/lib/conptyConnectFailure.test.js
 new file mode 100644
 index 0000000000000000000000000000000000000000..b149dd006735ddf64ea3f2b167c0271f9bcdb2f5

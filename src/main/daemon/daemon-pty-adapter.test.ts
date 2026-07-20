@@ -567,10 +567,10 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
             })
           ).rejects.toThrow('requires daemon protocol 25 or newer')
           await expect(legacy.shutdown(id, { immediate: true })).rejects.toThrow(
-            'restart Orca before closing adopted terminals'
+            'end its process tree in Task Manager or restart Windows'
           )
           await expect(legacy.shutdown(id, { immediate: true, keepHistory: true })).rejects.toThrow(
-            'restart Orca before closing adopted terminals'
+            'end its process tree in Task Manager or restart Windows'
           )
         }
         expect(ensureConnectedSpy).not.toHaveBeenCalled()
@@ -615,6 +615,61 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         }
         requestSpy.mockRestore()
         ensureConnectedWithinSpy.mockRestore()
+        ensureConnectedSpy.mockRestore()
+      }
+    })
+
+    it('does not trust caller WSL preference on metadata-less v22/v23 reattach', async () => {
+      const ensureConnectedSpy = vi
+        .spyOn(DaemonClient.prototype, 'ensureConnected')
+        .mockResolvedValue()
+      const requestSpy = vi
+        .spyOn(DaemonClient.prototype, 'request')
+        .mockImplementation(async (method) =>
+          method === 'createOrAttach'
+            ? {
+                isNew: false,
+                pid: 123,
+                shellState: 'unsupported',
+                snapshot: null
+              }
+            : undefined
+        )
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const adapters: DaemonPtyAdapter[] = []
+
+      try {
+        for (const protocolVersion of [22, 23]) {
+          const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion })
+          adapters.push(legacy)
+          const id = `metadata-less-v${protocolVersion}`
+          await legacy.spawn({
+            sessionId: id,
+            cols: 80,
+            rows: 24,
+            shellOverride: 'wsl.exe',
+            terminalWindowsWslDistro: 'Ubuntu'
+          })
+
+          await expect(legacy.shutdown(id, { immediate: true })).rejects.toThrow(
+            'requires daemon protocol 25 or newer'
+          )
+          await expect(legacy.shutdown(id, { immediate: true, keepHistory: true })).rejects.toThrow(
+            'requires daemon protocol 25 or newer'
+          )
+          await expect(
+            legacy.shutdown(id, { immediate: true, deadlineMs: Date.now() + 5_000 })
+          ).rejects.toThrow('requires daemon protocol 25 or newer')
+        }
+
+        expect(requestSpy.mock.calls.some(([method]) => method === 'kill')).toBe(false)
+      } finally {
+        adapters.forEach((adapter) => adapter.dispose())
+        if (platform) {
+          Object.defineProperty(process, 'platform', platform)
+        }
+        requestSpy.mockRestore()
         ensureConnectedSpy.mockRestore()
       }
     })

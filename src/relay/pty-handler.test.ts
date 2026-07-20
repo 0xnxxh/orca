@@ -11,6 +11,7 @@ import {
   SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV
 } from '../shared/setup-agent-sequencing'
 import { PTY_STARTUP_INGRESS_VERSION } from '../shared/pty-startup-ingress'
+import { WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS } from '../main/windows-pty-job-control'
 
 const { mockPtySpawn, mockPtyInstance } = vi.hoisted(() => ({
   mockPtySpawn: vi.fn(),
@@ -1347,6 +1348,82 @@ describe('PtyHandler', () => {
         onExitCb!({ exitCode: 137 })
         await shutdown
         expectBareKills(mockKill, 1)
+      })
+    })
+
+    it('Job-owns and drains a native Windows SSH relay agent', async () => {
+      await withWindowsPlatform(async () => {
+        let onExitCb: ((evt: { exitCode: number }) => void) | undefined
+        const order: string[] = []
+        const terminateJobTree = vi.fn(async () => {
+          order.push('job')
+          return true
+        })
+        const mockKill = vi.fn(() => {
+          order.push('conpty')
+          onExitCb?.({ exitCode: 137 })
+        })
+        mockPtySpawn.mockReturnValue({
+          ...mockPtyInstance,
+          kill: mockKill,
+          terminateJobTree,
+          onData: vi.fn(),
+          onExit: vi.fn((cb: (evt: { exitCode: number }) => void) => {
+            onExitCb = cb
+          })
+        })
+
+        await dispatcher.callRequest('pty.spawn', {
+          shellOverride: 'powershell.exe',
+          launchAgent: 'claude'
+        })
+        expect(mockPtySpawn).toHaveBeenCalledWith(
+          expect.stringMatching(/powershell/i),
+          expect.any(Array),
+          expect.objectContaining({ windowsAgentJob: true })
+        )
+
+        await dispatcher.callRequest('pty.shutdown', { id: 'pty-1', immediate: true })
+
+        expect(terminateJobTree).toHaveBeenCalledWith(WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS)
+        expect(order).toEqual(['job', 'conpty'])
+      })
+    })
+
+    it('rejects and retains relay ownership when a Windows SSH agent Job does not drain', async () => {
+      await withWindowsPlatform(async () => {
+        const mockKill = vi.fn()
+        const terminateJobTree = vi.fn(async () => false)
+        mockPtySpawn.mockReturnValue({
+          ...mockPtyInstance,
+          kill: mockKill,
+          terminateJobTree,
+          onData: vi.fn(),
+          onExit: vi.fn()
+        })
+
+        await dispatcher.callRequest('pty.spawn', {
+          shellOverride: 'powershell.exe',
+          launchAgent: 'claude'
+        })
+
+        await expect(
+          dispatcher.callRequest('pty.shutdown', { id: 'pty-1', immediate: true })
+        ).rejects.toThrow('Windows PTY Job did not drain')
+        expectBareKills(mockKill, 1)
+        expect(handler.activePtyCount).toBe(1)
+      })
+    })
+
+    it('does not Job-own WSL agents on a Windows SSH relay', async () => {
+      await withWindowsPlatform(async () => {
+        await dispatcher.callRequest('pty.spawn', {
+          shellOverride: 'wsl.exe',
+          launchAgent: 'claude'
+        })
+
+        const spawnOptions = mockPtySpawn.mock.calls[0]?.[2]
+        expect(spawnOptions).not.toHaveProperty('windowsAgentJob')
       })
     })
 

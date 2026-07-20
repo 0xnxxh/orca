@@ -27,6 +27,7 @@ import type {
 } from '../shared/terminal-render-desync-evidence'
 import type { MobileRelayStatus } from '../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../shared/mobile-pairing-connection-mode'
+import type { PtyShutdownBlockReason } from '../shared/pty-shutdown-safety'
 import type {
   CreateLocalOrcaProfileArgs,
   CreateLocalOrcaProfileResult,
@@ -1350,6 +1351,7 @@ export type PreloadApi = {
     reportGeometry: (id: string, cols: number, rows: number) => void
     signal: (id: string, signal: string) => void
     clearBuffer: (id: string) => void
+    getShutdownBlockReason: (id: string) => Promise<PtyShutdownBlockReason | null>
     kill: (id: string, opts?: { keepHistory?: boolean }) => Promise<void>
     ackColdRestore: (id: string) => void
     ackData: (id: string, charCount: number, processedChars?: number) => void

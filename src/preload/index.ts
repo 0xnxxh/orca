@@ -950,6 +950,9 @@ const api = {
       ipcRenderer.send('pty:terminalViewAttributes', attributes)
     },
 
+    getShutdownBlockReason: (id: string) =>
+      ipcRenderer.invoke('pty:getShutdownBlockReason', { id }),
+
     kill: (id: string, opts?: { keepHistory?: boolean }): Promise<void> =>
       ipcRenderer.invoke('pty:kill', { id, keepHistory: opts?.keepHistory ?? false }),
 

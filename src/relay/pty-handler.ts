@@ -39,6 +39,9 @@ import {
 } from '../shared/git-credential-prompt-env'
 import { isTuiAgent } from '../shared/tui-agent-config'
 import { forceKillPosixPtyProcessGroups } from '../main/pty/posix-pty-process-groups'
+import { terminateWindowsPtyTree } from '../main/windows-pty-job-control'
+import { isWslShellName } from '../shared/local-windows-terminal-runtime'
+import { recognizeAgentProcessFromCommandLine } from '../shared/agent-process-recognition'
 import {
   PTY_STARTUP_INGRESS_VERSION,
   PtyStartupIngress,
@@ -84,6 +87,7 @@ type ManagedPty = {
   physicalExit?: PhysicalExitTracker
   forceKillSent?: boolean
   gracefulKillSent?: boolean
+  windowsAgentJob?: boolean
   startupIngress?: PtyStartupIngress
   startupIngressIntent?: ReturnType<typeof parsePtyStartupIngressIntent>
 }
@@ -924,6 +928,13 @@ export class PtyHandler {
     const shouldProviderDeliverCommand = commandDelivery === 'provider' && command !== undefined
     const spawnEnv = this.buildSpawnEnv(env, { id, paneKey, shell, command }, envToDelete)
     const launchCommandHint = resolveSetupAgentSequenceLaunchCommand(spawnEnv, command)
+    const windowsAgentJob =
+      process.platform === 'win32' &&
+      !isWslShellName(shell) &&
+      Boolean(
+        isTuiAgent(params.launchAgent) ||
+        recognizeAgentProcessFromCommandLine(launchCommandHint)?.agent
+      )
     // Why: SSH PTYs bypass main's host-env builder. Apply the policy only
     // after the relay merges its authoritative process environment so indexed
     // Git config and remote Windows/WSL behavior remain intact.
@@ -962,7 +973,8 @@ export class PtyHandler {
         cwd,
         // Why: relay shells inherit process.env; never let an ambient Orca marker
         // enable shell-ready behavior unless this spawn explicitly requested it.
-        env: { ...spawnEnv, ORCA_SHELL_READY_MARKER: '0', ...shellLaunch.env }
+        env: { ...spawnEnv, ORCA_SHELL_READY_MARKER: '0', ...shellLaunch.env },
+        ...(windowsAgentJob ? { windowsAgentJob: true } : {})
       })
     } catch (error) {
       // Why: Windows node-pty loads conpty.node only on first spawn, after the
@@ -1002,6 +1014,7 @@ export class PtyHandler {
       ...(explicitTerm !== undefined ? { explicitTerm } : {}),
       envToDelete,
       gitCredentialPromptGuarded,
+      ...(windowsAgentJob ? { windowsAgentJob: true } : {}),
       ...(startupIngressIntent ? { startupIngressIntent } : {}),
       ...(terminalHandle ? { terminalHandle } : {}),
       ...(shouldProviderDeliverCommand
@@ -1143,7 +1156,18 @@ export class PtyHandler {
       return
     }
 
-    if (immediate) {
+    if (process.platform === 'win32' && managed.windowsAgentJob) {
+      this.releaseStartupCommand(managed)
+      if (immediate) {
+        this.flushPtyOutput(id)
+      }
+      // Why: the SSH relay is the native host on Windows; it must drain its Job
+      // before acknowledging close to a client that may delete the worktree.
+      await terminateWindowsPtyTree(managed.pty, () => this.requestForceKill(managed))
+      if (immediate) {
+        await this.waitForPhysicalExit(managed, IMMEDIATE_PTY_EXIT_TIMEOUT_MS)
+      }
+    } else if (immediate) {
       this.releaseStartupCommand(managed)
       this.flushPtyOutput(id)
       this.requestForceKill(managed)

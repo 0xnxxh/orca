@@ -77,6 +77,10 @@ import {
   resolvePtyBoundActiveLeafId
 } from '@/components/terminal-pane/terminal-layout-leaf-ids'
 import { shutdownBufferCaptures } from '@/components/terminal-pane/shutdown-buffer-captures'
+import {
+  assertTerminalShutdownSafety,
+  deferTerminalCloseForShutdownSafety
+} from './terminal-shutdown-safety'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { parseRemoteRuntimePtyId, toRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
 import { toRuntimeWorktreeSelector } from '@/runtime/runtime-worktree-selector'
@@ -613,6 +617,8 @@ export type TerminalSlice = {
       remoteCloseOwnedByHost?: boolean
       localPtyTeardownOwnedExternally?: boolean
       precomputedRetirementPlan?: TerminalTabRetirementPlan
+      /** Internal re-entry after main has verified shutdown ownership. */
+      shutdownSafetyChecked?: boolean
     }
   ) => void
   reorderTabs: (worktreeId: string, tabIds: string[]) => void
@@ -1224,6 +1230,23 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       opts?.precomputedRetirementPlan?.tabId === tabId
         ? opts.precomputedRetirementPlan
         : buildTerminalTabRetirementPlan(get(), tabId)
+    if (
+      retiresSession &&
+      !opts?.localPtyTeardownOwnedExternally &&
+      !opts?.shutdownSafetyChecked &&
+      deferTerminalCloseForShutdownSafety({
+        tabId,
+        ptyIds: retirementPlan.localOrSshPtyIds,
+        onAllowed: () =>
+          get().closeTab(tabId, {
+            ...opts,
+            precomputedRetirementPlan: retirementPlan,
+            shutdownSafetyChecked: true
+          })
+      })
+    ) {
+      return
+    }
     let closingWorktreeId: string | null = null
 
     // Why: a parked tab has no mounted TerminalPane cleanup. Retirement must
@@ -2493,6 +2516,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     const rendererShutdownPtyIds = sortedUniquePtyIds(ptyIds)
     const expectedRuntimePtyIds = sortedUniquePtyIds(opts?.expectedRuntimePtyIds)
     const runtimeEnvironmentId = resolveTerminalStopRuntimeEnvironmentId(get(), worktreeId)
+    await assertTerminalShutdownSafety({
+      surfaceId: worktreeId,
+      ptyIds: rendererShutdownPtyIds.filter((ptyId) => !ptyId.startsWith('remote:'))
+    })
     // Why: expectedRuntimePtyIds are raw RPC handles. Only renderer-bound ids
     // can emit pane exit callbacks, so they are the complete guard identity set.
     const exitGuardPtyIds = rendererShutdownPtyIds

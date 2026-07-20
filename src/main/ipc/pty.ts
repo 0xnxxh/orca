@@ -499,9 +499,9 @@ async function isProviderPtyLive(
 ): Promise<boolean> {
   // Why: bound the liveness list RPC by the teardown deadline so a wedged daemon
   // fails fast; undefined keeps the provider default for all other callers.
-  return (
-    await provider.listProcesses(deadlineMs !== undefined ? { deadlineMs } : undefined)
-  ).some((session) => session.id === ptyId)
+  return (await provider.listProcesses(deadlineMs !== undefined ? { deadlineMs } : undefined)).some(
+    (session) => session.id === ptyId
+  )
 }
 
 async function verifyPtyStopped(
@@ -1545,6 +1545,7 @@ export function registerPtyHandlers(
   // Remove any previously registered handlers so we can re-register them
   // (e.g. when macOS re-activates the app and creates a new window).
   ipcMain.removeHandler('pty:spawn')
+  ipcMain.removeHandler('pty:getShutdownBlockReason')
   ipcMain.removeHandler('pty:kill')
   ipcMain.removeHandler('pty:listSessions')
   ipcMain.removeHandler('pty:hasPty')
@@ -5194,6 +5195,21 @@ export function registerPtyHandlers(
       ?.clearBuffer(args.id)
       .catch(() => {})
     runtime?.clearHeadlessTerminalBuffer(args.id).catch(() => {})
+  })
+
+  ipcMain.handle('pty:getShutdownBlockReason', async (_event, args: { id: string }) => {
+    if (typeof args?.id !== 'string' || !args.id || args.id.startsWith('remote:')) {
+      throw new Error('Invalid PTY provider id')
+    }
+    const ownedConnectionId = ptyOwnership.get(args.id)
+    const parsedSshId = ownedConnectionId === undefined ? parseAppSshPtyId(args.id) : null
+    const connectionId = ownedConnectionId ?? parsedSshId?.connectionId
+    const startupPromise = getLocalPtyProviderStartupPromise(connectionId)
+    if (startupPromise) {
+      await startupPromise
+    }
+    const provider = connectionId ? sshProviders.get(connectionId) : tryGetProviderForPty(args.id)
+    return (await provider?.getShutdownBlockReason?.(args.id)) ?? null
   })
 
   ipcMain.handle('pty:kill', async (_event, args: { id: string; keepHistory?: boolean }) => {

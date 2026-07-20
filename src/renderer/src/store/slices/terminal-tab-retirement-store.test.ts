@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SleepingAgentSessionRecord } from '../../../../shared/agent-session-resume'
+import { WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON } from '../../../../shared/pty-shutdown-safety'
 
 const mockKill = vi.fn().mockResolvedValue(undefined)
+const mockGetShutdownBlockReason = vi.fn().mockResolvedValue(null)
 const mockRuntimeCall = vi.fn().mockResolvedValue({
   id: 'rpc-1',
   ok: true,
@@ -11,11 +13,15 @@ const mockRuntimeCall = vi.fn().mockResolvedValue({
 
 vi.stubGlobal('window', {
   api: {
-    pty: { kill: mockKill },
+    pty: { kill: mockKill, getShutdownBlockReason: mockGetShutdownBlockReason },
     runtime: { call: mockRuntimeCall },
     runtimeEnvironments: { call: vi.fn() }
   }
 })
+
+vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
+
+import { toast } from 'sonner'
 
 import {
   capturedPanesByTabId,
@@ -47,6 +53,7 @@ describe('terminal tab retirement store boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockKill.mockResolvedValue(undefined)
+    mockGetShutdownBlockReason.mockResolvedValue(null)
     mockRuntimeCall.mockResolvedValue({
       id: 'rpc-1',
       ok: true,
@@ -255,5 +262,51 @@ describe('terminal tab retirement store boundary', () => {
 
     expect(store.getState().tabsByWorktree['wt-1']).toEqual([])
     warn.mockRestore()
+  })
+
+  it('keeps a legacy Windows tab and PTY ownership visible when shutdown is unsafe', async () => {
+    const store = createTestStore()
+    mockGetShutdownBlockReason.mockResolvedValueOnce(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'pty-v24' })]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-v24'] }
+    })
+
+    store.getState().closeTab('tab-1')
+    await vi.waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        'Terminal kept open for safety',
+        expect.objectContaining({
+          description: expect.stringContaining('Task Manager')
+        })
+      )
+    )
+
+    expect(mockGetShutdownBlockReason).toHaveBeenCalledWith('pty-v24')
+    expect(mockKill).not.toHaveBeenCalled()
+    expect(store.getState().tabsByWorktree['wt-1']).toHaveLength(1)
+    expect(store.getState().ptyIdsByTabId['tab-1']).toEqual(['pty-v24'])
+  })
+
+  it('keeps sleep state and PTY ownership intact when legacy shutdown is unsafe', async () => {
+    const store = createTestStore()
+    mockGetShutdownBlockReason.mockResolvedValueOnce(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'pty-v24' })]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-v24'] }
+    })
+
+    await expect(
+      store.getState().shutdownWorktreeTerminals('wt-1', { keepIdentifiers: true })
+    ).rejects.toThrow(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+
+    expect(mockGetShutdownBlockReason).toHaveBeenCalledWith('pty-v24')
+    expect(mockKill).not.toHaveBeenCalled()
+    expect(store.getState().tabsByWorktree['wt-1']).toHaveLength(1)
+    expect(store.getState().ptyIdsByTabId['tab-1']).toEqual(['pty-v24'])
   })
 })

@@ -12,6 +12,7 @@ export function closeLocalTerminalTabState(
     remoteCloseOwnedByHost?: boolean
     localPtyTeardownOwnedExternally?: boolean
     precomputedRetirementPlan?: TerminalTabRetirementPlan
+    shutdownSafetyChecked?: boolean
   }
 ): void {
   const state = useAppStore.getState()
@@ -24,7 +25,8 @@ export function closeLocalTerminalTabState(
       options?.captureRecentlyClosed !== undefined ||
       options?.remoteCloseOwnedByHost ||
       options?.localPtyTeardownOwnedExternally ||
-      options?.precomputedRetirementPlan
+      options?.precomputedRetirementPlan ||
+      options?.shutdownSafetyChecked
     ) {
       state.closeTab(terminalTabId, options)
     } else {

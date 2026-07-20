@@ -8,6 +8,7 @@ import type {
   PtySpawnResult
 } from '../providers/types'
 import { GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION } from './types'
+import { WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON } from '../../shared/pty-shutdown-safety'
 
 type AdapterMock = DaemonPtyAdapter & {
   emitData: (id: string, data: string, sequenceChars?: number) => void
@@ -60,6 +61,7 @@ function createAdapter(
     resize: vi.fn(),
     setPtyBackgrounded: vi.fn(),
     getBufferSnapshot: vi.fn(async () => null),
+    getShutdownBlockReason: vi.fn(() => null),
     shutdown: vi.fn(async (id: string) => {
       const idx = sessions.indexOf(id)
       if (idx !== -1) {
@@ -141,6 +143,37 @@ describe('DaemonPtyRouter', () => {
 
     expect(current.listProcesses).not.toHaveBeenCalled()
     expect(current.shutdown).toHaveBeenCalledWith('current-session', { immediate: true })
+  })
+
+  it('preflights against the authoritative legacy owner', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['legacy-session'])
+    vi.mocked(legacy.getShutdownBlockReason).mockReturnValue(
+      WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON
+    )
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    await expect(router.getShutdownBlockReason('legacy-session')).resolves.toBe(
+      WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON
+    )
+
+    expect(current.listProcesses).toHaveBeenCalledOnce()
+    expect(legacy.listProcesses).toHaveBeenCalledOnce()
+    expect(legacy.getShutdownBlockReason).toHaveBeenCalledWith('legacy-session')
+    expect(current.getShutdownBlockReason).not.toHaveBeenCalled()
+  })
+
+  it('fails shutdown preflight closed for ambiguous ownership', async () => {
+    const current = createAdapter('current', ['duplicate-session'])
+    const legacy = createAdapter('legacy', ['duplicate-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+    await expect(router.getShutdownBlockReason('duplicate-session')).rejects.toThrow(
+      'Ambiguous PTY session ownership across daemons: duplicate-session'
+    )
+
+    expect(current.getShutdownBlockReason).not.toHaveBeenCalled()
+    expect(legacy.getShutdownBlockReason).not.toHaveBeenCalled()
   })
 
   it('reports snapshot capability for the adapter that owns each session', async () => {

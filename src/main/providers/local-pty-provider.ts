@@ -60,7 +60,7 @@ import {
   captureDescendantSnapshot,
   terminateDescendantSnapshot
 } from '../pty-descendant-termination'
-import { WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS } from '../windows-pty-job-control'
+import { terminateWindowsPtyTree } from '../windows-pty-job-control'
 import { readWindowsConptyProcessIds } from './windows-conpty-process-membership'
 import { canConfirmAgentFromConsolePresence } from './windows-console-foreground'
 import { forceKillPosixPtyProcessGroups } from '../pty/posix-pty-process-groups'
@@ -281,34 +281,6 @@ function killLocalPtyProcess(proc: pty.IPty, immediate: boolean): void {
     return
   }
   forceKillPosixPtyProcessGroups(proc.pid, () => proc.kill('SIGKILL'))
-}
-
-type WindowsPtyJobControl = pty.IPty & {
-  terminateJobTree?(timeoutMs: number): Promise<boolean> | undefined
-}
-
-async function terminateWindowsPtyTree(proc: pty.IPty, closeRoot: () => void): Promise<void> {
-  let nativeCompletion: Promise<boolean> | undefined
-  try {
-    nativeCompletion = (proc as WindowsPtyJobControl).terminateJobTree?.call(
-      proc,
-      WINDOWS_PTY_JOB_DRAIN_TIMEOUT_MS
-    )
-  } catch (error) {
-    // Why: a synchronous native bridge failure must still close ConPTY while
-    // the rejected shutdown keeps destructive deletion fail-closed.
-    closeRoot()
-    throw error
-  }
-  if (!nativeCompletion) {
-    closeRoot()
-    throw new Error(`Windows PTY Job ownership unavailable for process ${proc.pid}`)
-  }
-
-  closeRoot()
-  if (!(await nativeCompletion)) {
-    throw new Error(`Windows PTY Job did not drain for process ${proc.pid}`)
-  }
 }
 
 function armLocalPtyForceKill(
@@ -878,9 +850,9 @@ export class LocalPtyProvider implements IPtyProvider {
     const historyEnabled = worktreeId && (this.opts.isHistoryEnabled?.() ?? true)
     // Resolve the effective shell kind for history injection. For WSL, the
     // outer executable is wsl.exe but the inner login shell is bash.
-    const isWslTerminal =
-      Boolean(wslInfo || worktreeWslContext || preferredWslContext) ||
-      pathWin32.basename(shellPath).toLowerCase() === 'wsl.exe'
+    // Why: a saved WSL distro is only a preference; a native shell override must
+    // still get native history and agent Job ownership.
+    const isWslTerminal = isWslShell
     const effectiveShellPath = isWslTerminal ? 'bash' : shellPath
     let historyResult: ReturnType<typeof injectHistoryEnv> | null = null
     if (historyEnabled) {
@@ -912,7 +884,7 @@ export class LocalPtyProvider implements IPtyProvider {
       // belongs to a separate execution host and plain terminals stay unchanged.
       windowsAgentJob:
         process.platform === 'win32' &&
-        !isWslTerminal &&
+        !isWslShell &&
         Boolean(args.launchAgent || startupAgentRecognition)
     })
     shellPath = spawnResult.shellPath

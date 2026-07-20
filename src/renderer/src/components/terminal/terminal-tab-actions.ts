@@ -15,6 +15,7 @@ import type {
   TerminalTabCloseReason,
   TerminalTabRetirementPlan
 } from '@/store/slices/terminal-tab-retirement'
+import { deferTerminalTabCloseForShutdownSafety } from '@/store/slices/terminal-shutdown-safety'
 import { closeLocalTerminalTabState } from './close-local-terminal-tab-state'
 import {
   getWorktreeTerminalTabIds,
@@ -55,6 +56,8 @@ export function closeTerminalTab(
     localPtyTeardownOwnedExternally?: boolean
     precomputedRetirementPlan?: TerminalTabRetirementPlan
     precomputedCloseState?: PrecomputedTerminalCloseState
+    /** Internal re-entry after main has verified shutdown ownership. */
+    shutdownSafetyChecked?: boolean
     onClosed?: () => void
     onCancel?: () => void
   }
@@ -94,6 +97,29 @@ export function closeTerminalTab(
     return
   }
 
+  const retiresSession = options?.reason !== 'pty-exit'
+  if (
+    retiresSession &&
+    !options?.localPtyTeardownOwnedExternally &&
+    !options?.shutdownSafetyChecked &&
+    deferTerminalTabCloseForShutdownSafety({
+      state,
+      tabId: terminalTabId,
+      ...(options?.precomputedRetirementPlan
+        ? { precomputedRetirementPlan: options.precomputedRetirementPlan }
+        : {}),
+      onAllowed: (retirementPlan) =>
+        closeTerminalTab(tabId, {
+          ...options,
+          precomputedRetirementPlan: retirementPlan,
+          shutdownSafetyChecked: true
+        }),
+      ...(options?.onCancel ? { onBlocked: options.onCancel } : {})
+    })
+  ) {
+    return
+  }
+
   const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(state, owningWorktreeId)
   if (runtimeEnvironmentId && isWebRuntimeSessionActive(runtimeEnvironmentId)) {
     // Why: a remote-owned worktree's tabs are host-authoritative, so the close
@@ -124,7 +150,8 @@ export function closeTerminalTab(
         : {}),
       ...(options?.precomputedRetirementPlan
         ? { precomputedRetirementPlan: options.precomputedRetirementPlan }
-        : {})
+        : {}),
+      ...(options?.shutdownSafetyChecked ? { shutdownSafetyChecked: true } : {})
     })
     void closeWebRuntimeSessionTab({
       worktreeId: owningWorktreeId,
@@ -151,7 +178,8 @@ export function closeTerminalTab(
         : {}),
       ...(options?.precomputedRetirementPlan
         ? { precomputedRetirementPlan: options.precomputedRetirementPlan }
-        : {})
+        : {}),
+      ...(options?.shutdownSafetyChecked ? { shutdownSafetyChecked: true } : {})
     })
     if (state.activeWorktreeId === owningWorktreeId) {
       // Why: only deactivate the worktree when no tabs of any kind remain.
@@ -193,7 +221,8 @@ export function closeTerminalTab(
     ...(options?.localPtyTeardownOwnedExternally ? { localPtyTeardownOwnedExternally: true } : {}),
     ...(options?.precomputedRetirementPlan
       ? { precomputedRetirementPlan: options.precomputedRetirementPlan }
-      : {})
+      : {}),
+    ...(options?.shutdownSafetyChecked ? { shutdownSafetyChecked: true } : {})
   })
   options?.onClosed?.()
 }

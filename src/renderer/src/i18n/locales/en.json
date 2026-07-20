@@ -315,6 +315,16 @@
             "f518e89aa5": "Project already exists in that profile",
             "f03ae7f27b": "Failed to transfer project"
           }
+        },
+        "terminal": {
+          "shutdown": {
+            "safety": {
+              "5a57c04372": "Terminal kept open for safety",
+              "8a31e30a75": "This older Windows session cannot be stopped safely by Orca. Exit the agent or shell in this terminal. If it stays running, end its process tree in Task Manager or restart Windows.",
+              "d929a6767b": "Terminal kept open because shutdown could not be verified",
+              "44c3706121": "Retry closing the terminal. Orca kept the tab and its process ownership intact."
+            }
+          }
         }
       }
     },

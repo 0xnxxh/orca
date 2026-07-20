@@ -19,6 +19,7 @@ import type {
 } from '../../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
 import type { PtyStartupIngressIntent } from '../../shared/pty-startup-ingress'
+import type { PtyShutdownBlockReason } from '../../shared/pty-shutdown-safety'
 import type { CommitMessageDraftContext } from '../../shared/commit-message-generation'
 import type { WorkspaceSpaceDirectoryScanResult } from '../../shared/workspace-space-types'
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
@@ -160,6 +161,11 @@ export type IPtyProvider = {
    * providers without an authoritative size source can omit it.
    */
   getAppliedSize?: (id: string) => Promise<{ cols: number; rows: number } | null>
+
+  /** A non-mutating preflight for shutdown modes that must preserve renderer ownership. */
+  getShutdownBlockReason?: (
+    id: string
+  ) => PtyShutdownBlockReason | null | Promise<PtyShutdownBlockReason | null>
 
   // Why: deadlineMs (absolute epoch ms) bounds the underlying RPCs so destructive
   // teardown fails fast inside its sweep budget instead of tripping the outer sweep

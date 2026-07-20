@@ -1170,6 +1170,28 @@ describe('LocalPtyProvider', () => {
       expect(order).toEqual(['job', 'conpty'])
     })
 
+    it('Job-owns a native agent despite a stale saved WSL distro', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      mockProc.terminateJobTree.mockResolvedValue(true)
+      mockProc.kill.mockImplementation(() => exitCb?.({ exitCode: 1 }))
+
+      const { id } = await provider.spawn({
+        cols: 80,
+        rows: 24,
+        shellOverride: 'powershell.exe',
+        terminalWindowsWslDistro: 'Debian',
+        launchAgent: 'claude'
+      })
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        expect.stringMatching(/powershell/i),
+        expect.any(Array),
+        expect.objectContaining({ windowsAgentJob: true })
+      )
+      await expect(provider.shutdown(id, { immediate: true })).resolves.toBeUndefined()
+      expect(mockProc.terminateJobTree).toHaveBeenCalledOnce()
+    })
+
     it('rejects fail-closed after closing ConPTY when the agent Job does not drain', async () => {
       Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
       mockProc.terminateJobTree.mockResolvedValue(false)

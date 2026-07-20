@@ -7,6 +7,7 @@ import type {
   PtySpawnOptions,
   PtySpawnResult
 } from '../providers/types'
+import { WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON } from '../../shared/pty-shutdown-safety'
 
 type ProviderMock = IPtyProvider & {
   emitData: (id: string, data: string, sequenceChars?: number) => void
@@ -29,6 +30,7 @@ function createProvider(label: string, sessions: string[] = []): ProviderMock {
     hasPty: vi.fn((id: string) => sessions.includes(id)),
     write: vi.fn(),
     resize: vi.fn(),
+    getShutdownBlockReason: vi.fn(() => null),
     shutdown: vi.fn(async (id: string) => {
       const idx = sessions.indexOf(id)
       if (idx !== -1) {
@@ -114,6 +116,37 @@ function createDaemonAdapter(
 }
 
 describe('DegradedDaemonPtyProvider', () => {
+  it('preflights against the authoritative daemon owner', async () => {
+    const current = createDaemonAdapter('daemon', ['daemon-session'])
+    const fallback = createProvider('fallback')
+    vi.mocked(current.getShutdownBlockReason!).mockReturnValue(
+      WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON
+    )
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+    await expect(provider.getShutdownBlockReason('daemon-session')).resolves.toBe(
+      WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON
+    )
+
+    expect(current.listProcesses).toHaveBeenCalledOnce()
+    expect(fallback.listProcesses).toHaveBeenCalledOnce()
+    expect(current.getShutdownBlockReason).toHaveBeenCalledWith('daemon-session')
+    expect(fallback.getShutdownBlockReason).not.toHaveBeenCalled()
+  })
+
+  it('fails shutdown preflight closed for ambiguous degraded ownership', async () => {
+    const current = createDaemonAdapter('daemon', ['duplicate-session'])
+    const fallback = createProvider('fallback', ['duplicate-session'])
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+
+    await expect(provider.getShutdownBlockReason('duplicate-session')).rejects.toThrow(
+      'Ambiguous PTY session ownership across degraded providers: duplicate-session'
+    )
+
+    expect(current.getShutdownBlockReason).not.toHaveBeenCalled()
+    expect(fallback.getShutdownBlockReason).not.toHaveBeenCalled()
+  })
+
   it('routes fresh foreground confirmation to the session owner', async () => {
     const current = createDaemonAdapter('daemon', ['daemon-session'])
     const fallback = createProvider('fallback')
