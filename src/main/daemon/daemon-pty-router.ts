@@ -108,7 +108,7 @@ export class DaemonPtyRouter implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
-    if (this.legacy.length > 0) {
+    if (this.requiresInventoryBeforeTargetedShutdown(id)) {
       // Why: a recovered legacy daemon may own an id absent from hasPty's local
       // cache; await authoritative inventories before selecting an adapter.
       await this.refreshInventories({ deadlineMs: opts.deadlineMs })
@@ -140,7 +140,7 @@ export class DaemonPtyRouter implements IPtyProvider {
   }
 
   async getShutdownBlockReason(id: string): Promise<PtyShutdownBlockReason | null> {
-    if (this.legacy.length > 0) {
+    if (this.requiresInventoryBeforeTargetedShutdown(id)) {
       // Why: preflight must select the same authoritative legacy owner as shutdown.
       await this.refreshInventories()
     }
@@ -355,6 +355,13 @@ export class DaemonPtyRouter implements IPtyProvider {
     return this.sessionRouting.get(sessionId) ?? this.current
   }
 
+  private requiresInventoryBeforeTargetedShutdown(sessionId: string): boolean {
+    // Why: Windows legacy sessions need a fresh ambiguity check before teardown;
+    // on POSIX, a known route must not be stranded by an unrelated dead daemon.
+    const hasLegacy = this.legacy.length > 0
+    return hasLegacy && (process.platform === 'win32' || !this.sessionRouting.get(sessionId))
+  }
+
   private refreshInventories(opts?: { deadlineMs?: number }): Promise<{
     results: PtyProcessInfo[][]
     ambiguousIds: string[]
@@ -362,9 +369,8 @@ export class DaemonPtyRouter implements IPtyProvider {
     return this.sessionRouting.refreshInventories(this.allAdapters(), opts)
   }
 
-  private ambiguousOwnershipError(sessionIds: string[]): Error {
-    return new Error(`Ambiguous PTY session ownership across daemons: ${sessionIds.join(', ')}`)
-  }
+  private ambiguousOwnershipError = (sessionIds: string[]): Error =>
+    new Error(`Ambiguous PTY session ownership across daemons: ${sessionIds.join(', ')}`)
 
   private allAdapters(): DaemonPtyAdapter[] {
     return [this.current, ...this.legacy]

@@ -60,6 +60,8 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 describe('terminal tab retirement store boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })
+    delete (globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__
     mockKill.mockResolvedValue(undefined)
     mockGetShutdownBlockReason.mockResolvedValue(null)
     mockRuntimeCall.mockResolvedValue({
@@ -270,6 +272,39 @@ describe('terminal tab retirement store boundary', () => {
 
     expect(store.getState().tabsByWorktree['wt-1']).toEqual([])
     warn.mockRestore()
+  })
+
+  it('keeps ordinary non-Windows close synchronous and skips Windows inventory', () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)' })
+    const store = createTestStore()
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'pty-1' })]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] }
+    })
+
+    store.getState().closeTab('tab-1')
+
+    expect(store.getState().tabsByWorktree['wt-1']).toEqual([])
+    expect(mockGetShutdownBlockReason).not.toHaveBeenCalled()
+    expect(mockKill).toHaveBeenCalledWith('pty-1')
+  })
+
+  it('does not run native shutdown inventory in a Windows web client', () => {
+    ;(globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__ = true
+    const store = createTestStore()
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'remote:terminal-1' })]
+      },
+      ptyIdsByTabId: { 'tab-1': ['remote:terminal-1'] }
+    })
+
+    store.getState().closeTab('tab-1')
+
+    expect(store.getState().tabsByWorktree['wt-1']).toEqual([])
+    expect(mockGetShutdownBlockReason).not.toHaveBeenCalled()
   })
 
   it('keeps a legacy Windows tab and PTY ownership visible when shutdown is unsafe', async () => {

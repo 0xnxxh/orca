@@ -47,6 +47,8 @@ import { runSleepWorktree, runSleepWorktrees } from './sleep-worktree-flow'
 describe('runSleepWorktree', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })
+    delete (globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__
     vi.stubGlobal('window', {
       api: {
         ephemeralVm: {
@@ -74,25 +76,22 @@ describe('runSleepWorktree', () => {
     mocks.state.pendingReconnectPtyIdByTabId = {}
   })
 
-  it('tears down browsers before terminals on the sleep path', async () => {
+  it('starts checked terminal teardown before browsers on the sleep path', async () => {
     mocks.state.activeWorktreeId = 'wt-1'
 
     await runSleepWorktree('wt-1')
 
-    // Why: browsers must run first so destroyPersistentWebview can unregister
-    // the Chromium guests while browserTabsByWorktree/browserPagesByWorkspace
-    // are still populated. If terminals ran first and kept its old
-    // browserTabsByWorktree delete, browsers would no-op and leak webviews.
     expect(mocks.state.shutdownWorktreeBrowsers).toHaveBeenCalledWith('wt-1')
     expect(mocks.state.shutdownWorktreeTerminals).toHaveBeenCalledWith('wt-1', {
-      keepIdentifiers: true
+      keepIdentifiers: true,
+      shutdownSafetyChecked: true
     })
     expect(mocks.suspendWorkspace).toHaveBeenCalledWith({ workspaceId: 'wt-1' })
     const browsersCallOrder = mocks.state.shutdownWorktreeBrowsers.mock.invocationCallOrder[0]
     const terminalsCallOrder = mocks.state.shutdownWorktreeTerminals.mock.invocationCallOrder[0]
     const suspendCallOrder = mocks.suspendWorkspace.mock.invocationCallOrder[0]
-    expect(browsersCallOrder).toBeLessThan(terminalsCallOrder)
-    expect(terminalsCallOrder).toBeLessThan(suspendCallOrder)
+    expect(terminalsCallOrder).toBeLessThan(browsersCallOrder)
+    expect(browsersCallOrder).toBeLessThan(suspendCallOrder)
   })
 
   it('clears activeWorktreeId before teardown when the slept worktree is active', async () => {
@@ -156,6 +155,39 @@ describe('runSleepWorktree', () => {
     expect(mocks.state.shutdownWorktreeBrowsers).not.toHaveBeenCalled()
     expect(mocks.state.shutdownWorktreeTerminals).not.toHaveBeenCalled()
     expect(mocks.clearWorktreeSleepIntent).not.toHaveBeenCalled()
+  })
+
+  it('retires checked PTY ownership before browser teardown can replace it', async () => {
+    const getShutdownBlockReason = vi.fn().mockResolvedValue(null)
+    vi.stubGlobal('window', {
+      api: {
+        pty: { getShutdownBlockReason },
+        ephemeralVm: { suspendWorkspace: mocks.suspendWorkspace }
+      },
+      requestAnimationFrame: vi.fn()
+    })
+    mocks.state.activeWorktreeId = 'wt-1'
+    mocks.state.tabsByWorktree = { 'wt-1': [{ id: 'tab-1' }] }
+    mocks.state.ptyIdsByTabId = { 'tab-1': ['pty-safe'] }
+    mocks.state.shutdownWorktreeTerminals.mockImplementationOnce(async () => {
+      mocks.state.ptyIdsByTabId = { 'tab-1': [] }
+    })
+    const unsafeReplacement = vi.fn(() => {
+      if ((mocks.state.ptyIdsByTabId['tab-1'] ?? []).length > 0) {
+        mocks.state.ptyIdsByTabId = { 'tab-1': ['pty-v24'] }
+      }
+    })
+    mocks.state.shutdownWorktreeBrowsers.mockImplementationOnce(async () => unsafeReplacement())
+
+    await runSleepWorktree('wt-1')
+
+    expect(getShutdownBlockReason).toHaveBeenCalledTimes(1)
+    expect(getShutdownBlockReason).toHaveBeenCalledWith('pty-safe')
+    expect(unsafeReplacement).toHaveBeenCalledOnce()
+    expect(mocks.state.ptyIdsByTabId['tab-1']).toEqual([])
+    const terminalCall = mocks.state.shutdownWorktreeTerminals.mock.invocationCallOrder[0]
+    const browserCall = mocks.state.shutdownWorktreeBrowsers.mock.invocationCallOrder[0]
+    expect(terminalCall).toBeLessThan(browserCall)
   })
 
   it('preserves active row position through section-scoped sidebar row ids', async () => {
@@ -239,7 +271,7 @@ describe('runSleepWorktree', () => {
     expect(mocks.markWorktreeSleepIntent).not.toHaveBeenCalled()
   })
 
-  it('surfaces a toast and skips terminals when browsers throws', async () => {
+  it('surfaces a toast after a post-terminal browser failure', async () => {
     mocks.state.activeWorktreeId = 'wt-1'
     mocks.state.shutdownWorktreeBrowsers.mockRejectedValueOnce(new Error('boom'))
     mocks.state.tabsByWorktree = { 'wt-1': [{ id: 'tab-1' }] }
@@ -247,7 +279,10 @@ describe('runSleepWorktree', () => {
 
     await runSleepWorktree('wt-1')
 
-    expect(mocks.state.shutdownWorktreeTerminals).not.toHaveBeenCalled()
+    expect(mocks.state.shutdownWorktreeTerminals).toHaveBeenCalledWith('wt-1', {
+      keepIdentifiers: true,
+      shutdownSafetyChecked: true
+    })
     expect(mocks.suspendWorkspace).not.toHaveBeenCalled()
     expect(mocks.clearWorktreeSleepIntent).toHaveBeenCalledWith('wt-1')
     expect(mocks.toastError).toHaveBeenCalledWith(
@@ -266,12 +301,14 @@ describe('runSleepWorktree', () => {
 
     await runSleepWorktrees(['wt-1', 'wt-2'])
 
-    expect(mocks.state.shutdownWorktreeTerminals).not.toHaveBeenCalledWith('wt-1', {
-      keepIdentifiers: true
+    expect(mocks.state.shutdownWorktreeTerminals).toHaveBeenCalledWith('wt-1', {
+      keepIdentifiers: true,
+      shutdownSafetyChecked: true
     })
     expect(mocks.state.shutdownWorktreeBrowsers).toHaveBeenCalledWith('wt-2')
     expect(mocks.state.shutdownWorktreeTerminals).toHaveBeenCalledWith('wt-2', {
-      keepIdentifiers: true
+      keepIdentifiers: true,
+      shutdownSafetyChecked: true
     })
     expect(mocks.suspendWorkspace).toHaveBeenCalledWith({ workspaceId: 'wt-2' })
     expect(mocks.toastError).toHaveBeenCalledWith(
@@ -289,11 +326,13 @@ describe('runSleepWorktree', () => {
     expect(mocks.state.setActiveWorktree).toHaveBeenCalledWith(null)
     expect(mocks.state.shutdownWorktreeBrowsers).toHaveBeenNthCalledWith(1, 'wt-1')
     expect(mocks.state.shutdownWorktreeTerminals).toHaveBeenNthCalledWith(1, 'wt-1', {
-      keepIdentifiers: true
+      keepIdentifiers: true,
+      shutdownSafetyChecked: true
     })
     expect(mocks.state.shutdownWorktreeBrowsers).toHaveBeenNthCalledWith(2, 'wt-2')
     expect(mocks.state.shutdownWorktreeTerminals).toHaveBeenNthCalledWith(2, 'wt-2', {
-      keepIdentifiers: true
+      keepIdentifiers: true,
+      shutdownSafetyChecked: true
     })
     expect(mocks.suspendWorkspace).toHaveBeenNthCalledWith(1, { workspaceId: 'wt-1' })
     expect(mocks.suspendWorkspace).toHaveBeenNthCalledWith(2, { workspaceId: 'wt-2' })

@@ -26,6 +26,12 @@ function buildSessionIds(prefix: string, count: number): string[] {
   return ids
 }
 
+function stubProcessPlatform(platform: NodeJS.Platform): () => void {
+  const original = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { configurable: true, value: platform })
+  return () => Object.defineProperty(process, 'platform', original)
+}
+
 function createAdapter(
   label: string,
   sessions: string[] = [],
@@ -144,6 +150,48 @@ describe('DaemonPtyRouter', () => {
     expect(current.listProcesses).not.toHaveBeenCalled()
     expect(current.shutdown).toHaveBeenCalledWith('current-session', { immediate: true })
   })
+
+  it.each(['darwin', 'linux'] as const)(
+    'does not let a dead legacy daemon strand known current sessions on %s',
+    async (platform) => {
+      const restorePlatform = stubProcessPlatform(platform)
+      const current = createAdapter('current')
+      const legacy = createAdapter('legacy', ['legacy-session'])
+      const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+
+      try {
+        await router.discoverLegacySessions()
+        await router.spawn({ sessionId: 'current-close', cols: 80, rows: 24 })
+        await router.spawn({ sessionId: 'current-sleep', cols: 80, rows: 24 })
+        vi.mocked(legacy.listProcesses).mockRejectedValue(new Error('legacy unavailable'))
+
+        await expect(router.shutdown('current-close', { immediate: true })).resolves.toBeUndefined()
+        await expect(
+          router.shutdown('current-sleep', { immediate: true, keepHistory: true })
+        ).resolves.toBeUndefined()
+        current.emitExit('current-sleep', 0)
+        await router.spawn({ sessionId: 'current-sleep', cols: 80, rows: 24 })
+        router.write('legacy-session', 'legacy still routed\n')
+
+        expect(legacy.listProcesses).toHaveBeenCalledOnce()
+        expect(current.shutdown).toHaveBeenCalledWith('current-close', { immediate: true })
+        expect(current.shutdown).toHaveBeenCalledWith('current-sleep', {
+          immediate: true,
+          keepHistory: true
+        })
+        expect(legacy.shutdown).not.toHaveBeenCalled()
+        expect(current.spawn).toHaveBeenLastCalledWith({
+          sessionId: 'current-sleep',
+          cols: 80,
+          rows: 24
+        })
+        expect(legacy.spawn).not.toHaveBeenCalled()
+        expect(legacy.write).toHaveBeenCalledWith('legacy-session', 'legacy still routed\n')
+      } finally {
+        restorePlatform()
+      }
+    }
+  )
 
   it('preflights against the authoritative legacy owner', async () => {
     const current = createAdapter('current')
@@ -447,24 +495,29 @@ describe('DaemonPtyRouter', () => {
   })
 
   it('inventories a hidden legacy owner before cached current shutdown', async () => {
-    const current = createAdapter('current')
-    const legacy = createAdapter('legacy', ['duplicate-session'])
-    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const restorePlatform = stubProcessPlatform('win32')
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    vi.mocked(legacy.hasPty).mockReturnValue(false)
-    vi.mocked(legacy.listProcesses).mockRejectedValueOnce(new Error('legacy still starting'))
-    await router.discoverLegacySessions()
-    await router.spawn({ sessionId: 'duplicate-session', cols: 80, rows: 24 })
-    const deadlineMs = Date.now() + 1000
+    try {
+      const current = createAdapter('current')
+      const legacy = createAdapter('legacy', ['duplicate-session'])
+      const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+      vi.mocked(legacy.hasPty).mockReturnValue(false)
+      vi.mocked(legacy.listProcesses).mockRejectedValueOnce(new Error('legacy still starting'))
+      await router.discoverLegacySessions()
+      await router.spawn({ sessionId: 'duplicate-session', cols: 80, rows: 24 })
+      const deadlineMs = Date.now() + 1000
 
-    await expect(
-      router.shutdown('duplicate-session', { immediate: true, deadlineMs })
-    ).rejects.toThrow('Ambiguous PTY session ownership')
-    expect(current.listProcesses).toHaveBeenLastCalledWith({ deadlineMs })
-    expect(legacy.listProcesses).toHaveBeenLastCalledWith({ deadlineMs })
-    expect(current.shutdown).not.toHaveBeenCalled()
-    expect(legacy.shutdown).not.toHaveBeenCalled()
-    warn.mockRestore()
+      await expect(
+        router.shutdown('duplicate-session', { immediate: true, deadlineMs })
+      ).rejects.toThrow('Ambiguous PTY session ownership')
+      expect(current.listProcesses).toHaveBeenLastCalledWith({ deadlineMs })
+      expect(legacy.listProcesses).toHaveBeenLastCalledWith({ deadlineMs })
+      expect(current.shutdown).not.toHaveBeenCalled()
+      expect(legacy.shutdown).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+      restorePlatform()
+    }
   })
 
   it('keeps duplicate ownership ambiguous when one of three owners exits', async () => {

@@ -114,15 +114,6 @@ function getTargetIndex(
   return { ownerByTargetId, terminalIdsByWorktree }
 }
 
-function getNextTerminalId(ids: ReadonlySet<string>, closingId: string): string | null {
-  for (const id of ids) {
-    if (id !== closingId) {
-      return id
-    }
-  }
-  return null
-}
-
 function createDefaultDependencies(): KillAllTerminalSurfaceDependencies {
   return {
     getState: useAppStore.getState,
@@ -228,7 +219,8 @@ export async function runKillAllTerminalSurfaces(
       const owningWorktreeId = closeWave.ownerByTargetId.get(targetId)!
       const remainingTerminalIds =
         closeWave.terminalIdsByWorktree.get(owningWorktreeId) ?? new Set<string>()
-      const nextTerminalTabId = getNextTerminalId(remainingTerminalIds, targetId)
+      const nextTerminalTabId =
+        [...remainingTerminalIds].find((terminalId) => terminalId !== targetId) ?? null
       const { plan: retirementPlan, newlyScheduledPtyOwners } = reserveTerminalRetirementTeardowns(
         closeWave.state,
         closeWave.retirementPlans.get(targetId)!,
@@ -285,8 +277,12 @@ export async function runKillAllTerminalSurfaces(
       closeBatchStartedAt = deps.now()
       const stateAfterYield = deps.getState()
       if (mustReplanAfterYield || stateAfterYield !== stateAfterBatch) {
-        // Why: replanning after a mutable yield prevents killing a new PTY owner.
-        closeWave = createCloseWave(stateAfterYield)
+        // Why: a yield can attach an unsafe legacy owner; revalidate before
+        // rebuilding the wave that will synchronously retire the next target.
+        if (shouldPreflightTargets) {
+          await assertTargetsSafe()
+        }
+        closeWave = createCloseWave(deps.getState())
       }
     }
   }

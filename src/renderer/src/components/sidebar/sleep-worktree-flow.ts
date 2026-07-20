@@ -114,50 +114,41 @@ export async function runSleepWorktrees(worktreeIds: readonly string[]): Promise
   if (worktreeIds.length === 0) {
     return
   }
-  const worktreeIdSet = new Set(worktreeIds)
-  try {
-    // Why: a legacy refusal must leave activation, browsers, and sleep intent untouched.
-    await assertStableTerminalShutdownSafety({
-      surfaceId: worktreeIds.join(':'),
-      getState: useAppStore.getState,
-      selectTabIds: (state) => selectTerminalTabIdsForWorktrees(state, worktreeIdSet)
-    })
-  } catch {
-    // The safety preflight already explains why the workspace stayed awake.
-    return
-  }
-  const {
-    activeWorktreeId,
-    setActiveWorktree,
-    shutdownWorktreeBrowsers,
-    shutdownWorktreeTerminals
-  } = useAppStore.getState()
   let activeSleepIntentWorktreeId: string | null = null
-  if (activeWorktreeId && worktreeIds.includes(activeWorktreeId)) {
-    const restoreSidebarPosition = preserveSidebarWorktreePosition(activeWorktreeId)
-    // Why: clearing the active workspace can unmount TerminalPanes before
-    // shutdownWorktreeTerminals writes PTY suppressions. Use a non-rendering
-    // intent marker so those exits do not stamp activity, without inserting an
-    // extra Zustand update that can disturb the sidebar's scroll restoration.
-    markWorktreeSleepIntent(activeWorktreeId)
-    activeSleepIntentWorktreeId = activeWorktreeId
-    setActiveWorktree(null)
-    restoreSidebarPosition()
-  }
   const errors: string[] = []
   try {
     for (const worktreeId of worktreeIds) {
       try {
-        // Why: sleep mirrors removeWorktree's shutdown sequence — browsers first
-        // so destroyPersistentWebview unregisters the Chromium guests before any
-        // other teardown runs, terminals second so the PTY kill uses the same
-        // ordering on both paths. Without the browser thunk here, sleep leaks
-        // browserPagesByWorkspace entries and live webviews for the slept worktree.
-        await shutdownWorktreeBrowsers(worktreeId)
-      } catch (err) {
-        errors.push(err instanceof Error ? err.message : String(err))
+        // Why: verify each worktree immediately before its first mutation; an
+        // earlier worktree's async teardown must not stale this ownership answer.
+        await assertStableTerminalShutdownSafety({
+          surfaceId: worktreeId,
+          getState: useAppStore.getState,
+          selectTabIds: (state) => selectTerminalTabIdsForWorktrees(state, new Set([worktreeId]))
+        })
+      } catch {
+        // The safety preflight already explains why this workspace stayed awake.
         continue
       }
+
+      const {
+        activeWorktreeId,
+        setActiveWorktree,
+        shutdownWorktreeBrowsers,
+        shutdownWorktreeTerminals
+      } = useAppStore.getState()
+      if (activeWorktreeId === worktreeId) {
+        const restoreSidebarPosition = preserveSidebarWorktreePosition(activeWorktreeId)
+        // Why: clearing the active workspace can unmount TerminalPanes before
+        // shutdownWorktreeTerminals writes PTY suppressions. Use a non-rendering
+        // intent marker so those exits do not stamp activity, without inserting an
+        // extra Zustand update that can disturb the sidebar's scroll restoration.
+        markWorktreeSleepIntent(activeWorktreeId)
+        activeSleepIntentWorktreeId = activeWorktreeId
+        setActiveWorktree(null)
+        restoreSidebarPosition()
+      }
+
       try {
         // Why: sleep is reversible — the tab record stays in tabsByWorktree, the
         // layout stays in terminalLayoutsByTabId, only the live PTY processes are
@@ -166,7 +157,15 @@ export async function runSleepWorktrees(worktreeIds: readonly string[]): Promise
         // history dir (local) or relay session id (SSH); it also captures
         // serializer buffers into buffersByLeafId for SSH wake to reseed
         // scrollback. See DESIGN_DOC_TERMINAL_HISTORY_FIX_V2.md §3.3.c.
-        await shutdownWorktreeTerminals(worktreeId, { keepIdentifiers: true })
+        // Why: start terminal retirement in the same renderer turn as the stable
+        // preflight; browser teardown awaits and can otherwise attach a legacy PTY.
+        await shutdownWorktreeTerminals(worktreeId, {
+          keepIdentifiers: true,
+          shutdownSafetyChecked: true
+        })
+        // Why: terminal shutdown no longer mutates browser maps, so Chromium
+        // guests can be removed afterward without creating a PTY safety gap.
+        await shutdownWorktreeBrowsers(worktreeId)
         if (typeof window !== 'undefined' && window.api?.ephemeralVm?.suspendWorkspace) {
           await window.api.ephemeralVm.suspendWorkspace({ workspaceId: worktreeId })
         }

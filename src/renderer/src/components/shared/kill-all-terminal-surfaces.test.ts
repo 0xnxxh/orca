@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON } from '../../../../shared/pty-shutdown-safety'
 import { useAppStore, type AppState } from '@/store'
@@ -101,6 +101,11 @@ describe('snapshotKillAllTerminalSurfaceIds', () => {
 })
 
 describe('runKillAllTerminalSurfaces', () => {
+  beforeEach(() => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' })
+    delete (globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__
+  })
+
   it('preserves unsafe legacy tabs and mappings before daemon kill-all starts', async () => {
     const current = state({
       tabsByWorktree: {
@@ -575,6 +580,50 @@ describe('runKillAllTerminalSurfaces', () => {
       exactKillAcceptedCount: 2,
       closeYieldCount: 1
     })
+  })
+
+  it('keeps a legacy PTY visible when it attaches during a renderer yield', async () => {
+    let current = state({
+      activeWorktreeId: 'wt',
+      tabsByWorktree: {
+        wt: [terminal('first', 'wt'), terminal('second', 'wt'), terminal('remaining', 'wt')]
+      },
+      ptyIdsByTabId: {
+        first: ['pty-first'],
+        second: ['pty-second'],
+        remaining: ['pty-safe-before-yield']
+      }
+    })
+    const getShutdownBlockReason = vi.fn(async (ptyId: string) =>
+      ptyId === 'pty-v24' ? WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON : null
+    )
+    const closeSurface = vi.fn((targetId: string) => removeSurface(current, targetId))
+    const killPty = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('window', { api: { pty: { getShutdownBlockReason } } })
+
+    await expect(
+      runKillAllTerminalSurfaces(['first', 'second', 'remaining'], {
+        getState: () => current,
+        killDaemonSessions: vi.fn().mockResolvedValue({ killedCount: 0, remainingCount: 0 }),
+        closeSurface,
+        killPty,
+        yieldToRenderer: vi.fn(async () => {
+          current = state({
+            activeWorktreeId: 'wt',
+            tabsByWorktree: {
+              wt: [{ ...terminal('remaining', 'wt'), ptyId: 'pty-v24' }]
+            },
+            ptyIdsByTabId: { remaining: ['pty-v24'] }
+          })
+        }),
+        reportSummary: vi.fn()
+      })
+    ).rejects.toThrow(WINDOWS_LEGACY_PTY_SHUTDOWN_BLOCK_REASON)
+
+    expect(closeSurface.mock.calls.map(([targetId]) => targetId)).toEqual(['first', 'second'])
+    expect(killPty).not.toHaveBeenCalledWith('pty-v24')
+    expect(snapshotKillAllTerminalSurfaceIds(current)).toEqual(['remaining'])
+    expect(current.ptyIdsByTabId.remaining).toEqual(['pty-v24'])
   })
 
   it('records bounded fanout and two-close batches for 100 terminal tabs', async () => {

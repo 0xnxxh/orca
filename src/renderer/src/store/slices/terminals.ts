@@ -606,6 +606,8 @@ export type TerminalSlice = {
       shutdownReason?: AgentStatusWorktreeShutdownReason
       sleepingPaneKeys?: string[]
       expectedRuntimePtyIds?: string[]
+      /** Internal handoff from a stable safety check in the same renderer turn. */
+      shutdownSafetyChecked?: boolean
     }
   ) => Promise<void>
   shutdownCompletedAgentPaneForHibernation: (
@@ -2302,11 +2304,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     const shutdownReason: AgentStatusWorktreeShutdownReason =
       opts?.shutdownReason ?? (keepIdentifiers ? 'manual-sleep' : 'remove-worktree')
     const worktreeIds = new Set([worktreeId])
-    await assertStableTerminalShutdownSafety({
-      surfaceId: worktreeId,
-      getState: get,
-      selectTabIds: (state) => selectTerminalTabIdsForWorktrees(state, worktreeIds)
-    })
+    if (!opts?.shutdownSafetyChecked) {
+      await assertStableTerminalShutdownSafety({
+        surfaceId: worktreeId,
+        getState: get,
+        selectTabIds: (state) => selectTerminalTabIdsForWorktrees(state, worktreeIds)
+      })
+    }
     const tabs = get().tabsByWorktree[worktreeId] ?? []
     const ptyIds = tabs.flatMap((tab) => get().ptyIdsByTabId[tab.id] ?? [])
     const rendererShutdownPtyIds = sortedUniquePtyIds(ptyIds)

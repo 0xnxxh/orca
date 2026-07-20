@@ -19,6 +19,13 @@ type StableTerminalShutdownPlan = {
 function getShutdownSafetyPreflight():
   | ((id: string) => ReturnType<Window['api']['pty']['getShutdownBlockReason']>)
   | undefined {
+  const isNativeWindowsRenderer =
+    typeof navigator !== 'undefined' &&
+    navigator.userAgent.includes('Windows') &&
+    (globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__ !== true
+  if (!isNativeWindowsRenderer) {
+    return undefined
+  }
   return (globalThis.window?.api?.pty as Partial<Window['api']['pty']> | undefined)
     ?.getShutdownBlockReason
 }
