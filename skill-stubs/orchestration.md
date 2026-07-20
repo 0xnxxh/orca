@@ -1,27 +1,18 @@
----
-name: computer-use
-description: >-
-  Use Orca's computer-use CLI to inspect and operate local desktop app windows
-  through accessibility trees, screenshots, and safe UI actions. Use for
-  desktop app interaction: list apps/windows, get app state, read visible UI,
-  click controls, type, press keys, scroll, drag, set values, or perform
-  accessibility actions. Also use for browser windows, webviews, Orca app UI,
-  or other desktop UI. Triggers include "computer use", "orca computer", "read
-  Spotify", "read Slack", "control/click/read in a desktop app", and "get app
-  state".
----
+# Orca Orchestration
 
-# Computer Use
+This file is a discovery stub, not the usage guide. The full, version-matched Orca
+orchestration reference is served by the `orca` binary itself — kept out of this file on
+purpose so it can never drift from the binary that will actually run your commands.
 
-This file is a discovery stub, not the usage guide. The full, version-matched computer-use
-reference is served by the `orca` binary itself — kept out of this file on purpose so it can
-never drift from the binary that will actually run your commands.
-
-Engage Orca's computer-use surface whenever you must inspect or operate a local desktop app
-window — reading its accessibility tree, taking screenshots, or performing safe UI actions
-(click controls, type, press keys, scroll, drag, set values). It also covers browser
-windows, webviews, and Orca's own UI. Triggers include "computer use", "orca computer",
-"read Spotify", "read Slack", "control/click/read in a desktop app", and "get app state".
+Engage Orca orchestration whenever you need structured multi-agent coordination: threaded
+messages, blocking ask/reply flows, task dispatch, worker_done/escalation waits, task DAGs,
+decision gates, coordinator loops, or decomposing work across agents. Use the orca-cli skill
+instead for full ownership handoffs ("hand off", "handoff", "handover", "give this to
+another agent", "another worktree") when the user did not ask to supervise, monitor, wait
+for results, or coordinate a DAG — and for ordinary terminal control, shell commands,
+worktree management, and the built-in browser. Coordination requires real Orca runtime
+state: create it with `orca orchestration task-create` and `orca orchestration dispatch`,
+never a non-Orca subagent tool.
 
 ## Resolve the CLI for this session
 
@@ -45,12 +36,13 @@ to another executable, which could silently target a different Orca build.
 ## Load the full guide before running Orca commands
 
 ```text
-ORCA skills get computer-use
+ORCA skills get orchestration
 ```
 
 That prints the complete, version-matched guide for the exact binary that will handle your
-next commands — listing apps/windows, reading UI, and driving clicks, typing, and other
-accessibility actions. Read it first, then run the specific command you need.
+next commands — task creation and dispatch, injected lifecycle preambles, worker_done
+authority, decision gates, and coordinator loops. Read it first, then run the specific
+command you need.
 
 Don't guess subcommands or flags from memory or from a cached copy of this stub. They
 change between Orca releases, and this file deliberately no longer lists them. Confirm the
@@ -71,5 +63,5 @@ ORCA terminal list --json
 ```
 
 Then tell the user that updating Orca restores the full, version-matched guide via
-`ORCA skills get computer-use`. Beyond these commands, ask the user rather than guessing a
+`ORCA skills get orchestration`. Beyond these commands, ask the user rather than guessing a
 command surface this older binary may not support.

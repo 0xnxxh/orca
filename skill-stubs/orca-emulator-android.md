@@ -1,27 +1,14 @@
----
-name: computer-use
-description: >-
-  Use Orca's computer-use CLI to inspect and operate local desktop app windows
-  through accessibility trees, screenshots, and safe UI actions. Use for
-  desktop app interaction: list apps/windows, get app state, read visible UI,
-  click controls, type, press keys, scroll, drag, set values, or perform
-  accessibility actions. Also use for browser windows, webviews, Orca app UI,
-  or other desktop UI. Triggers include "computer use", "orca computer", "read
-  Spotify", "read Slack", "control/click/read in a desktop app", and "get app
-  state".
----
+# Orca Emulator (Android)
 
-# Computer Use
+This file is a discovery stub, not the usage guide. The full, version-matched Orca Android
+emulator reference is served by the `orca` binary itself — kept out of this file on purpose
+so it can never drift from the binary that will actually run your commands.
 
-This file is a discovery stub, not the usage guide. The full, version-matched computer-use
-reference is served by the `orca` binary itself — kept out of this file on purpose so it can
-never drift from the binary that will actually run your commands.
-
-Engage Orca's computer-use surface whenever you must inspect or operate a local desktop app
-window — reading its accessibility tree, taking screenshots, or performing safe UI actions
-(click controls, type, press keys, scroll, drag, set values). It also covers browser
-windows, webviews, and Orca's own UI. Triggers include "computer use", "orca computer",
-"read Spotify", "read Slack", "control/click/read in a desktop app", and "get app state".
+Engage Orca whenever you drive an adb-connected Android emulator or device from inside the
+Orca app: listing/booting AVDs, taps, swipes, typing, hardware buttons (including Back and
+Recents), rotation, app install/launch, runtime permissions, the accessibility tree, and
+logcat. It is cross-platform (Windows, Linux, macOS) and complements the orca-emulator (iOS)
+and orca-cli skills.
 
 ## Resolve the CLI for this session
 
@@ -45,12 +32,13 @@ to another executable, which could silently target a different Orca build.
 ## Load the full guide before running Orca commands
 
 ```text
-ORCA skills get computer-use
+ORCA skills get orca-emulator-android
 ```
 
 That prints the complete, version-matched guide for the exact binary that will handle your
-next commands — listing apps/windows, reading UI, and driving clicks, typing, and other
-accessibility actions. Read it first, then run the specific command you need.
+next commands — booting AVDs, taps and swipes, typing, hardware buttons, app lifecycle,
+permissions, the accessibility tree, and logcat. Read it first, then run the specific
+command you need.
 
 Don't guess subcommands or flags from memory or from a cached copy of this stub. They
 change between Orca releases, and this file deliberately no longer lists them. Confirm the
@@ -71,5 +59,5 @@ ORCA terminal list --json
 ```
 
 Then tell the user that updating Orca restores the full, version-matched guide via
-`ORCA skills get computer-use`. Beyond these commands, ask the user rather than guessing a
-command surface this older binary may not support.
+`ORCA skills get orca-emulator-android`. Beyond these commands, ask the user rather than
+guessing a command surface this older binary may not support.
