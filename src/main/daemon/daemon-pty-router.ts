@@ -107,6 +107,11 @@ export class DaemonPtyRouter implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
+    if (this.legacy.length > 0) {
+      // Why: a recovered legacy daemon may own an id absent from hasPty's local
+      // cache; await authoritative inventories before selecting an adapter.
+      await this.refreshInventories({ deadlineMs: opts.deadlineMs })
+    }
     if (this.sessionRouting.isAmbiguous(id)) {
       throw this.ambiguousOwnershipError([id])
     }
@@ -195,16 +200,7 @@ export class DaemonPtyRouter implements IPtyProvider {
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
     // Why: runtime exact-stop/liveness flows must fail closed if any adapter
     // cannot provide a trustworthy process list.
-    const adapters = this.allAdapters()
-    const refresh = this.sessionRouting.beginInventoryRefresh()
-    let results: PtyProcessInfo[][]
-    try {
-      results = await Promise.all(adapters.map((adapter) => adapter.listProcesses(opts)))
-    } catch (error) {
-      this.sessionRouting.finishInventoryRefresh(refresh)
-      throw error
-    }
-    const ambiguousIds = this.sessionRouting.refreshLive(adapters, results, refresh)
+    const { results, ambiguousIds } = await this.refreshInventories(opts)
     if (ambiguousIds.length > 0) {
       throw this.ambiguousOwnershipError(ambiguousIds)
     }
@@ -345,6 +341,13 @@ export class DaemonPtyRouter implements IPtyProvider {
 
   private adapterFor(sessionId: string): DaemonPtyAdapter {
     return this.sessionRouting.get(sessionId) ?? this.current
+  }
+
+  private refreshInventories(opts?: { deadlineMs?: number }): Promise<{
+    results: PtyProcessInfo[][]
+    ambiguousIds: string[]
+  }> {
+    return this.sessionRouting.refreshInventories(this.allAdapters(), opts)
   }
 
   private ambiguousOwnershipError(sessionIds: string[]): Error {

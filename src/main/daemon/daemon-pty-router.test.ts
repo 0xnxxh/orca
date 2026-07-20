@@ -133,6 +133,16 @@ function createAdapter(
 }
 
 describe('DaemonPtyRouter', () => {
+  it('keeps current-only shutdown on the direct route', async () => {
+    const current = createAdapter('current', ['current-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [] })
+
+    await router.shutdown('current-session', { immediate: true })
+
+    expect(current.listProcesses).not.toHaveBeenCalled()
+    expect(current.shutdown).toHaveBeenCalledWith('current-session', { immediate: true })
+  })
+
   it('reports snapshot capability for the adapter that owns each session', async () => {
     const current = createAdapter('current', ['current-session'], undefined, 22)
     const legacy = createAdapter('legacy', ['legacy-session'], undefined, 19)
@@ -373,8 +383,8 @@ describe('DaemonPtyRouter', () => {
     )
     const router = new DaemonPtyRouter({ current, legacy: [legacy] })
 
-    const olderListing = router.listProcesses()
-    await router.listProcesses()
+    const olderListing = router.listProcesses({ deadlineMs: Date.now() + 1000 })
+    await router.listProcesses({ deadlineMs: Date.now() + 2000 })
     resolveOldCurrent([])
     resolveOldLegacy([{ id: 'migrated-session', cwd: '', title: 'stale legacy' }])
     await olderListing
@@ -401,6 +411,27 @@ describe('DaemonPtyRouter', () => {
     ).rejects.toThrow('Ambiguous PTY session ownership')
     expect(current.shutdown).not.toHaveBeenCalled()
     expect(legacy.shutdown).not.toHaveBeenCalled()
+  })
+
+  it('inventories a hidden legacy owner before cached current shutdown', async () => {
+    const current = createAdapter('current')
+    const legacy = createAdapter('legacy', ['duplicate-session'])
+    const router = new DaemonPtyRouter({ current, legacy: [legacy] })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(legacy.hasPty).mockReturnValue(false)
+    vi.mocked(legacy.listProcesses).mockRejectedValueOnce(new Error('legacy still starting'))
+    await router.discoverLegacySessions()
+    await router.spawn({ sessionId: 'duplicate-session', cols: 80, rows: 24 })
+    const deadlineMs = Date.now() + 1000
+
+    await expect(
+      router.shutdown('duplicate-session', { immediate: true, deadlineMs })
+    ).rejects.toThrow('Ambiguous PTY session ownership')
+    expect(current.listProcesses).toHaveBeenLastCalledWith({ deadlineMs })
+    expect(legacy.listProcesses).toHaveBeenLastCalledWith({ deadlineMs })
+    expect(current.shutdown).not.toHaveBeenCalled()
+    expect(legacy.shutdown).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('keeps duplicate ownership ambiguous when one of three owners exits', async () => {

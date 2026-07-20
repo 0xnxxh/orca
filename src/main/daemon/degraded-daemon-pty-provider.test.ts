@@ -299,23 +299,63 @@ describe('DegradedDaemonPtyProvider', () => {
     expect(fallback.shutdown).not.toHaveBeenCalled()
   })
 
-  it('revalidates a cached fallback route before destructive shutdown', async () => {
-    const daemonSessions: string[] = []
+  it('awaits one authoritative inventory before cached fallback shutdown', async () => {
+    const daemonSessions = ['duplicate-session']
     const current = createDaemonAdapter('daemon', daemonSessions)
     const fallback = createProvider('fallback')
     const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.mocked(current.hasPty).mockReturnValue(false)
+    vi.mocked(current.listProcesses).mockRejectedValueOnce(new Error('daemon still starting'))
+    await provider.discoverDaemonSessions()
     await provider.spawn({ sessionId: 'duplicate-session', cols: 80, rows: 24 })
-    daemonSessions.push('duplicate-session')
-
-    await expect(provider.shutdown('duplicate-session', { immediate: true })).rejects.toThrow(
-      'Ambiguous PTY session ownership'
+    let resolveDaemon!: (sessions: PtyProcessInfo[]) => void
+    vi.mocked(current.listProcesses).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDaemon = resolve
+      })
     )
+    const deadlineMs = Date.now() + 1000
+    const inventory = provider.listProcesses({ deadlineMs }).then(
+      () => 'listed',
+      (error: unknown) => String(error)
+    )
+    const stopped = provider.shutdown('duplicate-session', { immediate: true, deadlineMs }).then(
+      () => 1,
+      () => 0
+    )
+
+    await vi.waitFor(() => expect(current.listProcesses).toHaveBeenCalledTimes(2))
+    expect(current.listProcesses).toHaveBeenLastCalledWith({ deadlineMs })
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+    resolveDaemon([{ id: 'duplicate-session', cwd: '', title: 'daemon' }])
+
+    await expect(inventory).resolves.toContain('Ambiguous PTY session ownership')
+    await expect(stopped).resolves.toBe(0)
+    expect(current.shutdown).not.toHaveBeenCalled()
+    expect(fallback.shutdown).not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('fails shutdown closed when authoritative inventory fails', async () => {
+    const current = createDaemonAdapter('daemon')
+    const fallback = createProvider('fallback')
+    const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
+    await provider.spawn({ sessionId: 'fallback-session', cols: 80, rows: 24 })
+    vi.mocked(current.listProcesses).mockRejectedValueOnce(new Error('inventory unavailable'))
+
+    await expect(
+      provider.shutdown('fallback-session', {
+        immediate: true,
+        deadlineMs: Date.now() + 1000
+      })
+    ).rejects.toThrow('inventory unavailable')
     expect(current.shutdown).not.toHaveBeenCalled()
     expect(fallback.shutdown).not.toHaveBeenCalled()
   })
 
   it('keeps a daemon inventory result when fallback spawns during the listing', async () => {
-    const current = createDaemonAdapter('daemon')
+    const current = createDaemonAdapter('daemon', ['duplicate-session'])
     const fallback = createProvider('fallback')
     const provider = new DegradedDaemonPtyProvider({ current, legacy: [], fallback })
     let resolveDaemon!: (sessions: PtyProcessInfo[]) => void

@@ -116,13 +116,13 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
+    // Why: synchronous daemon hasPty caches can miss restored sessions after
+    // transient discovery failure; destructive routing needs fresh inventories.
+    await this.sessionRouting.refreshInventories({ deadlineMs: opts.deadlineMs })
     if (this.sessionRouting.isAmbiguous(id)) {
       throw this.ambiguousOwnershipError([id])
     }
-    const target = this.sessionRouting.providerForShutdown(id, this.current)
-    if (this.sessionRouting.isAmbiguous(id)) {
-      throw this.ambiguousOwnershipError([id])
-    }
+    const target = this.sessionRouting.get(id) ?? this.fallback
     await this.sessionRouting.shutdown(id, target, opts)
   }
 
@@ -184,16 +184,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
-    const providers = this.providers
-    const refresh = this.sessionRouting.beginInventoryRefresh()
-    let results: PtyProcessInfo[][]
-    try {
-      results = await Promise.all(providers.map((provider) => provider.listProcesses(opts)))
-    } catch (error) {
-      this.sessionRouting.finishInventoryRefresh(refresh)
-      throw error
-    }
-    const ambiguousIds = this.sessionRouting.refreshSessions(results[0], results.slice(1), refresh)
+    const { results, ambiguousIds } = await this.sessionRouting.refreshInventories(opts)
     if (ambiguousIds.length > 0) {
       throw this.ambiguousOwnershipError(ambiguousIds)
     }

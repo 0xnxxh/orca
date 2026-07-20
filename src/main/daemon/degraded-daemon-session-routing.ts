@@ -75,16 +75,11 @@ export class DegradedDaemonSessionRouting {
     }
   }
 
-  refreshSessions(
-    fallbackSessions: PtyProcessInfo[],
-    daemonResults: PtyProcessInfo[][],
-    refresh: DaemonPtyInventoryRefresh
-  ): string[] {
-    return this.routing.refreshLive(
-      this.allProviders(),
-      [fallbackSessions, ...daemonResults],
-      refresh
-    )
+  refreshInventories(opts?: { deadlineMs?: number }): Promise<{
+    results: PtyProcessInfo[][]
+    ambiguousIds: string[]
+  }> {
+    return this.routing.refreshInventories(this.allProviders(), opts)
   }
 
   refreshProvider(
@@ -123,16 +118,6 @@ export class DegradedDaemonSessionRouting {
       return ambiguousProvider
     }
     const provider = this.get(sessionId) ?? this.discoverExistingProvider(sessionId)
-    return this.isAmbiguous(sessionId) ? ambiguousProvider : (provider ?? this.fallback)
-  }
-
-  providerForShutdown(
-    sessionId: string,
-    ambiguousProvider: DegradedManagedPtyProvider
-  ): DegradedManagedPtyProvider {
-    // Why: a cached fallback route can predate recovery of a daemon with the
-    // same id; destructive shutdown must re-probe every physical owner.
-    const provider = this.discoverExistingProvider(sessionId)
     return this.isAmbiguous(sessionId) ? ambiguousProvider : (provider ?? this.fallback)
   }
 

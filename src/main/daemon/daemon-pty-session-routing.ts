@@ -1,5 +1,5 @@
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
-import type { PtyProcessInfo } from '../providers/types'
+import type { IPtyProvider, PtyProcessInfo } from '../providers/types'
 
 export type DaemonPtyInventoryRefresh = {
   readonly revision: number
@@ -19,6 +19,10 @@ export class DaemonPtySessionRouting<Owner extends object = DaemonPtyAdapter> {
   private sessionMutations = new Map<string, Map<Owner, SessionMutation>>()
   private activeInventoryRefreshes = new Set<DaemonPtyInventoryRefresh>()
   private ownerInventoryRefreshes = new Map<Owner, DaemonPtyInventoryRefresh>()
+  private inFlightInventories = new Map<
+    number | undefined,
+    Promise<{ results: PtyProcessInfo[][]; ambiguousIds: string[] }>
+  >()
 
   get(sessionId: string): Owner | undefined {
     return this.owners.get(sessionId)
@@ -115,6 +119,45 @@ export class DaemonPtySessionRouting<Owner extends object = DaemonPtyAdapter> {
     }
     this.finishInventoryRefresh(refresh)
     return [...this.ambiguousOwners.keys()].sort()
+  }
+
+  refreshInventories(
+    inventoryOwners: (Owner & Pick<IPtyProvider, 'listProcesses'>)[],
+    opts?: { deadlineMs?: number }
+  ): Promise<{ results: PtyProcessInfo[][]; ambiguousIds: string[] }> {
+    const deadlineKey = opts?.deadlineMs
+    const existing = this.inFlightInventories.get(deadlineKey)
+    if (existing) {
+      return existing
+    }
+    const refresh = this.beginInventoryRefresh()
+    const request = Promise.all(inventoryOwners.map((owner) => owner.listProcesses(opts))).then(
+      (results) => ({
+        results,
+        ambiguousIds: this.refreshLive(inventoryOwners, results, refresh)
+      }),
+      (error: unknown) => {
+        this.finishInventoryRefresh(refresh)
+        throw error
+      }
+    )
+    this.inFlightInventories.set(deadlineKey, request)
+    // Why: provider and registry sweeps run concurrently with one deadline;
+    // shutdown must join their authoritative inventory before choosing an owner.
+    void request.then(
+      () => this.clearInventoryRequest(deadlineKey, request),
+      () => this.clearInventoryRequest(deadlineKey, request)
+    )
+    return request
+  }
+
+  private clearInventoryRequest(
+    deadlineKey: number | undefined,
+    request: Promise<{ results: PtyProcessInfo[][]; ambiguousIds: string[] }>
+  ): void {
+    if (this.inFlightInventories.get(deadlineKey) === request) {
+      this.inFlightInventories.delete(deadlineKey)
+    }
   }
 
   private refreshOwner(
