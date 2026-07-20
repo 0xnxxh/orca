@@ -533,6 +533,14 @@ export type EditorSlice = {
   clearPendingDiskBaselineVerification: (fileId: string) => void
   setPendingDiskBaselineVerification: (fileId: string, value: boolean) => void
   setPendingLiveDiskVerification: (fileId: string, value: boolean) => void
+  /** Atomically retargets open editor sessions across an Orca-owned move: one
+   * commit-only store update migrating every path-derived id + all id-keyed
+   * state, with no close/reopen lifecycle. Returns collision/stale without
+   * mutating. See design: preserve dirty editor sessions across moves. */
+  rekeyOpenFilesForPathChange: (args: {
+    worktreeId: string
+    rekeys: readonly OpenFilePathRekey[]
+  }) => RekeyOpenFilesResult
   clearUntitled: (fileId: string) => void
   openDiff: (
     worktreeId: string,
@@ -1252,7 +1260,10 @@ function migrateHydratedEditorTabsAndGroups(
     }
     const tabIdMigrations = new Map<string, string>()
     const nextTabs = tabs.map((tab) => {
-      if (tab.contentType !== 'editor') {
+      // Why: hydration + live move rekey share this primitive; a move retargets
+      // every editor-family tab (edit/diff/conflict-review/check-details), not
+      // only plain 'editor'.
+      if (!isEditorTabContentType(tab.contentType)) {
         return tab
       }
       const nextId = idMigrations.get(tab.id) ?? tab.id
@@ -1315,6 +1326,39 @@ function migrateHydratedEditorTabsAndGroups(
     ...(tabsChanged ? { unifiedTabsByWorktree: nextUnifiedTabsByWorktree } : {}),
     ...(groupsChanged ? { groupsByWorktree: nextGroupsByWorktree } : {})
   }
+}
+
+/** One tab's migration in an Orca-owned move; precomputed by the move coordinator. */
+export type OpenFilePathRekey = {
+  oldFileId: string
+  newFileId: string
+  oldFilePath: string
+  newFilePath: string
+  newRelativePath: string
+  newLanguage?: string
+  newMarkdownPreviewSourceFileId?: string
+  /** Explicit rename of an untitled file consumes its untitled status. */
+  consumeUntitled?: boolean
+}
+
+export type RekeyOpenFilesResult = { ok: true } | { ok: false; reason: 'collision' | 'stale' }
+
+function rekeyFileIdRecord<T>(
+  record: Record<string, T>,
+  migrations: ReadonlyMap<string, string>
+): Record<string, T> {
+  let changed = false
+  const next: Record<string, T> = {}
+  for (const [key, value] of Object.entries(record)) {
+    const mapped = migrations.get(key)
+    if (mapped !== undefined && mapped !== key) {
+      next[mapped] = value
+      changed = true
+    } else {
+      next[key] = value
+    }
+  }
+  return changed ? next : record
 }
 
 function deleteUntouchedUntitledFile(state: AppState, file: OpenFile): void {
@@ -2588,6 +2632,99 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         )
       }
     }),
+
+  rekeyOpenFilesForPathChange: ({ worktreeId, rekeys }) => {
+    if (rekeys.length === 0) {
+      return { ok: true }
+    }
+    let result: RekeyOpenFilesResult = { ok: true }
+    set((s) => {
+      const migrations = new Map<string, string>()
+      const rekeyByOldId = new Map<string, OpenFilePathRekey>()
+      for (const rekey of rekeys) {
+        migrations.set(rekey.oldFileId, rekey.newFileId)
+        rekeyByOldId.set(rekey.oldFileId, rekey)
+      }
+      const openById = new Map(s.openFiles.map((f) => [f.id, f]))
+
+      // Preflight (atomic with apply): every source still open, target ids unique,
+      // and no target id belongs to an UNAFFECTED live session (never merge two).
+      const seenNewIds = new Set<string>()
+      for (const rekey of rekeys) {
+        if (!openById.has(rekey.oldFileId)) {
+          result = { ok: false, reason: 'stale' }
+          return s
+        }
+        if (seenNewIds.has(rekey.newFileId)) {
+          result = { ok: false, reason: 'collision' }
+          return s
+        }
+        seenNewIds.add(rekey.newFileId)
+        const occupier = openById.get(rekey.newFileId)
+        if (occupier && !migrations.has(occupier.id)) {
+          result = { ok: false, reason: 'collision' }
+          return s
+        }
+      }
+
+      const nextOpenFiles = s.openFiles.map((f) => {
+        const rekey = rekeyByOldId.get(f.id)
+        if (!rekey) {
+          return f
+        }
+        // Spread the whole OpenFile so every field — including ones this action
+        // doesn't know about — survives; change only the path-derived ones.
+        return {
+          ...f,
+          id: rekey.newFileId,
+          filePath: rekey.newFilePath,
+          relativePath: rekey.newRelativePath,
+          ...(rekey.newLanguage !== undefined ? { language: rekey.newLanguage } : {}),
+          ...(rekey.newMarkdownPreviewSourceFileId !== undefined
+            ? { markdownPreviewSourceFileId: rekey.newMarkdownPreviewSourceFileId }
+            : {}),
+          ...(rekey.consumeUntitled ? { isUntitled: false, deleteUntouchedOnClose: undefined } : {})
+        }
+      })
+
+      const activeFileIdByWorktree: Record<string, string | null> = {}
+      for (const [wtId, activeId] of Object.entries(s.activeFileIdByWorktree)) {
+        activeFileIdByWorktree[wtId] = activeId ? (migrations.get(activeId) ?? activeId) : activeId
+      }
+
+      const tabBarOrderByWorktree = { ...s.tabBarOrderByWorktree }
+      const prevBarOrder = tabBarOrderByWorktree[worktreeId]
+      if (prevBarOrder) {
+        tabBarOrderByWorktree[worktreeId] = prevBarOrder.map((id) => migrations.get(id) ?? id)
+      }
+
+      const reveal = s.pendingEditorReveal
+      const rekeyForReveal = reveal
+        ? rekeys.find((r) => r.oldFilePath === reveal.filePath)
+        : undefined
+
+      return {
+        openFiles: nextOpenFiles,
+        editorDrafts: rekeyFileIdRecord(s.editorDrafts, migrations),
+        editorCursorLine: rekeyFileIdRecord(s.editorCursorLine, migrations),
+        markdownViewMode: rekeyFileIdRecord(s.markdownViewMode, migrations),
+        editorViewMode: rekeyFileIdRecord(s.editorViewMode, migrations),
+        markdownFrontmatterVisible: rekeyFileIdRecord(s.markdownFrontmatterVisible, migrations),
+        markdownTableOfContentsVisible: rekeyFileIdRecord(
+          s.markdownTableOfContentsVisible,
+          migrations
+        ),
+        activeFileId: s.activeFileId ? (migrations.get(s.activeFileId) ?? s.activeFileId) : null,
+        activeFileIdByWorktree,
+        tabBarOrderByWorktree,
+        ...migrateHydratedEditorTabsAndGroups(s, { [worktreeId]: migrations }),
+        ...(reveal && rekeyForReveal
+          ? { pendingEditorReveal: { ...reveal, filePath: rekeyForReveal.newFilePath } }
+          : {})
+      }
+    })
+    return result
+  },
 
   clearUntitled: (fileId) =>
     set((s) => ({
