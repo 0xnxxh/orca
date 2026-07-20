@@ -49,7 +49,7 @@ describe('codex account auth warning', () => {
         activeAccountId: 'account-1',
         accountId: 'account-1'
       })
-    ).toContain('access token could not be refreshed')
+    ).toBe('stale-sign-in')
   })
 
   it('does not warn for inactive accounts or a different runtime', () => {
@@ -101,9 +101,20 @@ describe('codex account auth warning', () => {
         authKind
       })
 
-    expect(getWarning('none')).not.toBeNull()
+    expect(getWarning('none')).toBe('missing-sign-in')
     expect(getWarning('api-key')).toBeNull()
     expect(getWarning('oauth')).toBeNull()
+
+    expect(
+      getCodexAccountAuthWarning({
+        limits: null,
+        target: { runtime: 'host', wslDistro: null },
+        runtime: { runtime: 'host' },
+        activeAccountId: 'account-1',
+        accountId: null,
+        authKind: 'none'
+      })
+    ).toBeNull()
   })
 
   it('allows a WSL default account location to receive the active WSL target warning', () => {
