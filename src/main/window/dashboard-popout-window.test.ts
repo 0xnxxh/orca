@@ -29,6 +29,10 @@ const {
       id: created.length + 1,
       send: vi.fn(),
       isDestroyed: () => this.destroyed,
+      session: {
+        setPermissionRequestHandler: vi.fn(),
+        setPermissionCheckHandler: vi.fn()
+      },
       on: (event: string, cb: (...args: unknown[]) => void) => {
         ;(this.webContentsHandlers[event] ||= []).push(cb)
       },
@@ -198,6 +202,14 @@ describe('createOrFocusDashboardPopout', () => {
     expect(opts.webPreferences?.webviewTag).toBe(false)
     expect(opts.webPreferences?.preload).toMatch(/preload[\\/]index\.js$/)
     expect(installNavigationPolicyMock).toHaveBeenCalledWith(instances[0].webContents)
+    const { session } = instances[0].webContents
+    expect(session.setPermissionRequestHandler).toHaveBeenCalledTimes(1)
+    expect(session.setPermissionCheckHandler).toHaveBeenCalledTimes(1)
+
+    const permissionCallback = vi.fn()
+    session.setPermissionRequestHandler.mock.calls[0][0](null, 'notifications', permissionCallback)
+    expect(permissionCallback).toHaveBeenCalledWith(false)
+    expect(session.setPermissionCheckHandler.mock.calls[0][0]()).toBe(false)
     expect(sendToTrustedUIRendererMock).toHaveBeenCalledWith('dashboard:popoutOpenChanged', true)
   })
 

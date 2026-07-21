@@ -177,6 +177,11 @@ export function createOrFocusDashboardPopout(
     }
   })
   installPrivilegedWindowNavigationPolicy(window.webContents)
+  // Why: isolated sessions do not inherit the main session's deny-by-default permission policy.
+  window.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) =>
+    callback(false)
+  )
+  window.webContents.session.setPermissionCheckHandler(() => false)
   dashboardPopoutWindow = window
   broadcastPopoutOpenChanged(true)
 
