@@ -217,6 +217,39 @@ describe('remapOpenEditorTabsForPathChange', () => {
     expect(useAppStore.getState().editorDrafts[idB]).toBe('draft B')
   })
 
+  it('selects a Windows tab whose path differs only in case from the move root', () => {
+    // Windows paths are case-insensitive: an open tab at C:\Repo\Src\a.ts must be
+    // retargeted when the move root is c:\repo\src — otherwise the rename lands on
+    // disk while the tab is stranded on the vanished source path.
+    const state = useAppStore.getState()
+    state.openFile(
+      {
+        filePath: 'C:\\Repo\\Src\\a.ts',
+        relativePath: 'Src\\a.ts',
+        worktreeId: 'wt-1',
+        language: 'typescript',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+    const id = useAppStore.getState().openFiles[0]!.id
+    state.setEditorDraft(id, 'dirty windows work')
+    state.markFileDirty(id, true)
+
+    const result = remapOpenEditorTabsForPathChange({
+      fromPath: 'c:\\repo\\src',
+      toPath: 'c:\\repo\\dst',
+      worktreePath: 'c:\\repo',
+      worktreeId: 'wt-1'
+    })
+
+    expect(result.ok).toBe(true)
+    const moved = useAppStore.getState().openFiles[0]!
+    expect(moved.filePath).toBe('c:\\repo\\dst\\a.ts')
+    expect(moved.isDirty).toBe(true)
+    expect(useAppStore.getState().editorDrafts[moved.id]).toBe('dirty windows work')
+  })
+
   it('clears the untitled marker when remapping a renamed new markdown file', () => {
     const state = useAppStore.getState()
     const oldPath = '/repo/untitled.md'

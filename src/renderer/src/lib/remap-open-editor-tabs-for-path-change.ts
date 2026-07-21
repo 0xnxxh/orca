@@ -10,17 +10,16 @@ import {
   type RekeyOpenFilesResult
 } from '@/store/slices/editor'
 import {
+  isPathInsideOrEqual,
   normalizeRuntimePathSeparators,
   relativePathInsideRoot
 } from '../../../shared/cross-platform-path'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
 
-export function isPathInsideOrEqual(rootPath: string, candidatePath: string): boolean {
-  if (candidatePath === rootPath) {
-    return true
-  }
-  return candidatePath.startsWith(`${rootPath}/`) || candidatePath.startsWith(`${rootPath}\\`)
-}
+// Re-export the shared, flavor-aware containment check: move selection must fold
+// case + separators (Windows/UNC/WSL) so a same-file tab differing only in case
+// isn't missed and left stranded on the vanished source path after the rename.
+export { isPathInsideOrEqual }
 
 function isAbsolutePathLike(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\')
@@ -87,11 +86,20 @@ function getRelativePathFromRoot(rootPath: string, candidatePath: string): strin
     return normalizeRuntimePathSeparators(candidatePath)
   }
 
+  // Windows drive/UNC segments are case-insensitive, so a case-only difference
+  // is the SAME directory and must not emit a spurious `..`. The WSL Linux suffix
+  // (prefix //wsl…) stays case-sensitive; POSIX roots stay case-sensitive.
+  const foldCase =
+    /^[a-z]:$/i.test(root.prefix) ||
+    (root.prefix.startsWith('//') && !root.prefix.startsWith('//wsl'))
+  const sameSegment = (a: string, b: string): boolean =>
+    foldCase ? a.toLowerCase() === b.toLowerCase() : a === b
+
   let commonSegmentCount = 0
   while (
     commonSegmentCount < root.segments.length &&
     commonSegmentCount < candidate.segments.length &&
-    root.segments[commonSegmentCount] === candidate.segments[commonSegmentCount]
+    sameSegment(root.segments[commonSegmentCount], candidate.segments[commonSegmentCount])
   ) {
     commonSegmentCount += 1
   }
