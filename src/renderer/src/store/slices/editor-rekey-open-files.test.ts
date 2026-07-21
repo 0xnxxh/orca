@@ -189,6 +189,39 @@ describe('rekeyOpenFilesForPathChange', () => {
     expect(moved.filePath).toBe('/repo/named.md')
   })
 
+  it('installs the move-echo gate + provenance on a dirty destination when moveOperationId is set', () => {
+    seedEditTab()
+    const oldId = useAppStore.getState().openFiles[0]!.id
+    const newPath = '/repo/sub/a.md'
+
+    useAppStore.getState().rekeyOpenFilesForPathChange({
+      worktreeId: 'wt-1',
+      rekeys: [rekeyFor(oldId, newPath, 'sub/a.md')],
+      moveOperationId: 'op-42'
+    })
+
+    const moved = useAppStore.getState().openFiles[0]!
+    // Autosave is gated synchronously by the same commit that re-homes the tab.
+    expect(moved.pendingLiveDiskVerification).toBe(true)
+    expect(moved.pendingSelfMoveEcho).toEqual({ operationId: 'op-42', targetPath: newPath })
+  })
+
+  it('does not gate a clean destination', () => {
+    seedEditTab()
+    const oldId = useAppStore.getState().openFiles[0]!.id
+    useAppStore.getState().markFileDirty(oldId, false)
+
+    useAppStore.getState().rekeyOpenFilesForPathChange({
+      worktreeId: 'wt-1',
+      rekeys: [rekeyFor(oldId, '/repo/sub/a.md', 'sub/a.md')],
+      moveOperationId: 'op-42'
+    })
+
+    const moved = useAppStore.getState().openFiles[0]!
+    expect(moved.pendingLiveDiskVerification).toBeUndefined()
+    expect(moved.pendingSelfMoveEcho).toBeUndefined()
+  })
+
   it('migrates a pending editor reveal to the new path', () => {
     seedEditTab()
     const oldId = useAppStore.getState().openFiles[0]!.id

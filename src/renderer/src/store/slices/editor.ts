@@ -273,6 +273,11 @@ export type OpenFile = {
    * Separate owner from the restored scan's flag so the two can't clear each
    * other's gate. Transient, not persisted, not carried across a re-home. */
   pendingLiveDiskVerification?: boolean
+  /** Routes the destination watcher echo of an Orca-owned move into content
+   * verification. Stored ON the tab so it (and its operationId token) survive
+   * the atomic rekey; the token also supersedes a stale in-flight verification
+   * when the tab is moved again. Transient, not persisted. */
+  pendingSelfMoveEcho?: { operationId: string; targetPath: string }
   /** Why: diff bodies are cached in EditorPanel. Re-selecting an existing diff
    * tab from the tree bumps this so the panel refetches instead of reusing a
    * stale snapshot. */
@@ -540,6 +545,9 @@ export type EditorSlice = {
   rekeyOpenFilesForPathChange: (args: {
     worktreeId: string
     rekeys: readonly OpenFilePathRekey[]
+    /** When set, dirty autosave-capable destinations get a move-echo provenance
+     * + a synchronous autosave gate so the watcher can content-verify the echo. */
+    moveOperationId?: string
   }) => RekeyOpenFilesResult
   clearUntitled: (fileId: string) => void
   openDiff: (
@@ -2633,7 +2641,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       }
     }),
 
-  rekeyOpenFilesForPathChange: ({ worktreeId, rekeys }) => {
+  rekeyOpenFilesForPathChange: ({ worktreeId, rekeys, moveOperationId }) => {
     if (rekeys.length === 0) {
       return { ok: true }
     }
@@ -2674,6 +2682,13 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         }
         // Spread the whole OpenFile so every field — including ones this action
         // doesn't know about — survives; change only the path-derived ones.
+        // Install the move-echo gate atomically here so autosave is suspended
+        // before any watcher echo can be verified (only a dirty autosave-capable
+        // tab can be clobbered by autosave, so others need no gate).
+        const gatesEcho =
+          moveOperationId !== undefined &&
+          f.isDirty &&
+          (f.mode === 'edit' || (f.mode === 'diff' && f.diffSource === 'unstaged'))
         return {
           ...f,
           id: rekey.newFileId,
@@ -2683,7 +2698,18 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           ...(rekey.newMarkdownPreviewSourceFileId !== undefined
             ? { markdownPreviewSourceFileId: rekey.newMarkdownPreviewSourceFileId }
             : {}),
-          ...(rekey.consumeUntitled ? { isUntitled: false, deleteUntouchedOnClose: undefined } : {})
+          ...(rekey.consumeUntitled
+            ? { isUntitled: false, deleteUntouchedOnClose: undefined }
+            : {}),
+          ...(gatesEcho
+            ? {
+                pendingLiveDiskVerification: true,
+                pendingSelfMoveEcho: {
+                  operationId: moveOperationId,
+                  targetPath: rekey.newFilePath
+                }
+              }
+            : {})
         }
       })
 
