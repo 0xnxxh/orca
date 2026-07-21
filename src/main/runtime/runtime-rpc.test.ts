@@ -3253,6 +3253,58 @@ describe('OrcaRuntimeRpcServer', () => {
     }
   })
 
+  it('completes remote E2EE authentication against a runtime proxy without activateRecentPtyPathCandidateTracking', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+    // Why: a remote-host runtime proxy only implements RPC-forwarded methods;
+    // activation is a local-host concern, so the proxy legitimately lacks
+    // activateRecentPtyPathCandidateTracking and onReady must not throw.
+    const runtimeProxy = {
+      getRuntimeId: () => 'proxy-runtime-test',
+      getStartedAt: () => 1,
+      getStatus: () => ({ graphStatus: 'unavailable' }),
+      cleanupSubscriptionsForConnection: () => {},
+      cancelMobileDictationForConnection: () => {},
+      onClientDisconnected: () => {}
+    } as unknown as OrcaRuntimeService
+    expect(
+      (runtimeProxy as { activateRecentPtyPathCandidateTracking?: unknown })
+        .activateRecentPtyPathCandidateTracking
+    ).toBeUndefined()
+    const server = new OrcaRuntimeRpcServer({
+      runtime: runtimeProxy,
+      userDataPath,
+      enableWebSocket: true,
+      wsPort: 0
+    })
+
+    await server.start()
+    const offer = server.createPairingOffer({
+      address: '127.0.0.1',
+      name: 'remote',
+      scope: 'runtime'
+    })
+    expect(offer.available).toBe(true)
+    if (!offer.available) {
+      throw new Error('WebSocket pairing unavailable')
+    }
+    // Real E2EE pairing + authentication drives MobileSocketWiring.onReady
+    // before e2ee_authenticated is sent; a throwing onReady never authenticates.
+    const session = await authenticateMobileWsSession(offer.pairingUrl)
+    const responses = createEncryptedWsResponseReader(session)
+    try {
+      sendEncryptedWsRequest(session, { id: 'proxy_status', method: 'status.get' })
+      await expect(responses.next('proxy_status')).resolves.toMatchObject({
+        id: 'proxy_status',
+        ok: true,
+        result: { graphStatus: 'unavailable' }
+      })
+    } finally {
+      responses.dispose()
+      session.ws.close()
+      await server.stop()
+    }
+  })
+
   it('keeps active runtime multiplex streams responsive while a background stream is ACK-limited over WebSocket', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     const writes: { terminal: string; text: string }[] = []

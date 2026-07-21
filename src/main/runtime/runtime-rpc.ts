@@ -894,7 +894,10 @@ export class OrcaRuntimeRpcServer {
           onReady: () => {
             // Why: first authenticated mobile/remote client (direct WS and
             // cloud relay both attach here) starts path-candidate tracking.
-            this.runtime.activateRecentPtyPathCandidateTracking()
+            // Activation is a local-host concern: candidate buffers live on the
+            // buffer-owning host's runtime, so a remote runtime proxy may
+            // legitimately lack this method (its own server activates it).
+            this.runtime.activateRecentPtyPathCandidateTracking?.()
             this.mobileRelayPairingProvider?.onDemandStateChanged?.()
           },
           onClose: (socket, hasOtherConnections) => {
