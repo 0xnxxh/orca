@@ -5452,6 +5452,7 @@ function SourceControlInner(): React.JSX.Element {
     <>
       <div ref={setSourceControlRoot} className="relative flex h-full flex-col overflow-hidden">
         <SourceControlHeaderToolbar
+          branchName={branchName}
           filterQuery={filterQuery}
           filterExpanded={filterExpanded}
           onFilterQueryChange={setFilterQuery}

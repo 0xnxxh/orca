@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react'
-import { GitPullRequestArrow, Loader2, Search, X } from 'lucide-react'
+import { GitBranch, GitPullRequestArrow, Loader2, Search, X } from 'lucide-react'
 import type {
   GitBranchCompareSummary,
   GitUpstreamStatus,
@@ -19,6 +19,7 @@ import {
 import { SourceControlHeaderOverflowMenu } from './source-control-header-overflow-menu'
 
 type SourceControlHeaderToolbarProps = {
+  branchName: string
   filterQuery: string
   filterExpanded: boolean
   onFilterQueryChange: (value: string) => void
@@ -41,6 +42,31 @@ type SourceControlHeaderToolbarProps = {
   compareBaseRef: string | null
   upstreamStatus?: GitUpstreamStatus
   manualReviewUrl?: string | null
+}
+
+function SourceControlBranchHeaderLabel({ branchName }: { branchName: string }): React.JSX.Element {
+  const label = translate(
+    'auto.components.right.sidebar.SourceControl.a4e93c21d7',
+    'Current branch: {{value0}}',
+    { value0: branchName }
+  )
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="flex min-w-0 flex-1 items-center gap-1 text-[11.5px] font-medium leading-none text-foreground/90"
+          aria-label={label}
+        >
+          <GitBranch className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span className="min-w-0 truncate">{branchName}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={6} className="max-w-72 break-all">
+        {branchName}
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 function HostedReviewToolbarLink({
@@ -124,6 +150,7 @@ function renderOverflowMenu(
 }
 
 export function SourceControlHeaderToolbar({
+  branchName,
   filterQuery,
   filterExpanded,
   onFilterQueryChange,
@@ -196,10 +223,16 @@ export function SourceControlHeaderToolbar({
       >
         {showCollapsedToolbar ? (
           <>
+            {branchName ? (
+              <SourceControlBranchHeaderLabel branchName={branchName} />
+            ) : (
+              <span className="min-w-0 flex-1" aria-hidden="true" />
+            )}
             {hostedReview ? (
               <HostedReviewToolbarLink
                 review={hostedReview}
                 onOpenHostedReviewInChecks={onOpenHostedReviewInChecks}
+                compact
               />
             ) : visibleCreatePrHeaderAction ? (
               <CreatePrHeaderButton
@@ -208,12 +241,6 @@ export function SourceControlHeaderToolbar({
                 isCreatingPr={isCreatingPr}
                 onClick={onCreatePrHeaderClick}
               />
-            ) : (
-              <span className="min-w-0 flex-1" aria-hidden="true" />
-            )}
-            {visibleCreatePrHeaderAction && !hostedReview ? (
-              // Why: keep filter/overflow pinned right without stretching Create PR.
-              <span className="min-w-0 flex-1" aria-hidden="true" />
             ) : null}
             <button
               type="button"
