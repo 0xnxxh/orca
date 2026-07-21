@@ -11,6 +11,7 @@ export type MobileNativeChatSendOrigin = {
   pendingKey: string | null
   normalizedText: string
   baselineOccurrences: number
+  baselineTailMessageId: string | null
 }
 
 const NO_PENDING_MESSAGES: MobileNativeChatPendingMessage[] = []
@@ -24,8 +25,8 @@ type UnconfirmedSend = {
   pendingKey: string | null
   text: string
   normalizedText: string
-  expectedOccurrence: number
-  deadline: ReturnType<typeof setTimeout>
+  baselineTailMessageId: string | null
+  deadline: ReturnType<typeof setTimeout> | null
 }
 
 function normalizedUserText(message: NativeChatMessage): string | null {
@@ -48,6 +49,43 @@ function countUserTextOccurrences(messages: readonly NativeChatMessage[], text: 
     }
   }
   return count
+}
+
+function findLandedUnconfirmedSends(
+  messages: readonly NativeChatMessage[],
+  entries: readonly UnconfirmedSend[]
+): UnconfirmedSend[] {
+  // Why: pagination prepends old equal text; only unclaimed matches after each captured tail prove new echoes.
+  const messageIndexById = new Map<string, number>()
+  const userMessagesByText = new Map<string, Array<{ id: string; index: number }>>()
+  for (const [index, message] of messages.entries()) {
+    messageIndexById.set(message.id, index)
+    const text = normalizedUserText(message)
+    if (text) {
+      const current = userMessagesByText.get(text) ?? []
+      current.push({ id: message.id, index })
+      userMessagesByText.set(text, current)
+    }
+  }
+
+  const claimedMessageIds = new Set<string>()
+  const landed: UnconfirmedSend[] = []
+  for (const entry of entries) {
+    const tailIndex = entry.baselineTailMessageId
+      ? messageIndexById.get(entry.baselineTailMessageId)
+      : -1
+    if (tailIndex === undefined) {
+      continue
+    }
+    const echo = userMessagesByText
+      .get(entry.normalizedText)
+      ?.find((message) => message.index > tailIndex && !claimedMessageIds.has(message.id))
+    if (echo) {
+      claimedMessageIds.add(echo.id)
+      landed.push(entry)
+    }
+  }
+  return landed
 }
 
 export function useMobileNativeChatDrafts(args: {
@@ -82,6 +120,7 @@ export function useMobileNativeChatDrafts(args: {
   activeDraftKeyRef.current = draftKey
   const activePendingKeyRef = useRef(pendingKey)
   activePendingKeyRef.current = pendingKey
+  const mountedRef = useRef(false)
 
   const setComposerText: Dispatch<SetStateAction<string>> = useCallback(
     (value) => {
@@ -103,11 +142,13 @@ export function useMobileNativeChatDrafts(args: {
         return null
       }
       const normalizedText = text.trim()
+      const currentMessages = messagesRef.current
       return {
         draftKey,
         pendingKey,
         normalizedText,
-        baselineOccurrences: countUserTextOccurrences(messagesRef.current, normalizedText)
+        baselineOccurrences: countUserTextOccurrences(currentMessages, normalizedText),
+        baselineTailMessageId: currentMessages[currentMessages.length - 1]?.id ?? null
       }
     },
     [draftKey, pendingKey]
@@ -151,21 +192,24 @@ export function useMobileNativeChatDrafts(args: {
   const unconfirmedRef = useRef<UnconfirmedSend[]>([])
   const holdUnconfirmedSend = useCallback(
     (origin: MobileNativeChatSendOrigin, text: string, onUnconfirmed: () => void) => {
-      const earlierOutstanding = unconfirmedRef.current.filter(
-        (entry) =>
-          entry.draftKey === origin.draftKey &&
-          entry.pendingKey === origin.pendingKey &&
-          entry.normalizedText === origin.normalizedText &&
-          entry.expectedOccurrence > origin.baselineOccurrences
-      ).length
-      const expectedOccurrence = origin.baselineOccurrences + earlierOutstanding + 1
+      if (!mountedRef.current) {
+        return
+      }
       const isActiveTranscript =
         activeDraftKeyRef.current === origin.draftKey &&
         (origin.pendingKey === null || activePendingKeyRef.current === origin.pendingKey)
+      const entry: UnconfirmedSend = {
+        draftKey: origin.draftKey,
+        pendingKey: origin.pendingKey,
+        text,
+        normalizedText: origin.normalizedText,
+        baselineTailMessageId: origin.baselineTailMessageId,
+        deadline: null
+      }
       // Why: the transcript event can beat the lost RPC acknowledgement.
       if (
         isActiveTranscript &&
-        countUserTextOccurrences(messagesRef.current, origin.normalizedText) >= expectedOccurrence
+        findLandedUnconfirmedSends(messagesRef.current, [entry]).length > 0
       ) {
         setDrafts((previous) =>
           (previous[origin.draftKey] ?? '').trim() === text.trim()
@@ -174,17 +218,10 @@ export function useMobileNativeChatDrafts(args: {
         )
         return
       }
-      const entry: UnconfirmedSend = {
-        draftKey: origin.draftKey,
-        pendingKey: origin.pendingKey,
-        text,
-        normalizedText: origin.normalizedText,
-        expectedOccurrence,
-        deadline: setTimeout(() => {
-          unconfirmedRef.current = unconfirmedRef.current.filter((held) => held !== entry)
-          onUnconfirmed()
-        }, UNCONFIRMED_SEND_DEADLINE_MS)
-      }
+      entry.deadline = setTimeout(() => {
+        unconfirmedRef.current = unconfirmedRef.current.filter((held) => held !== entry)
+        onUnconfirmed()
+      }, UNCONFIRMED_SEND_DEADLINE_MS)
       unconfirmedRef.current = [...unconfirmedRef.current, entry]
     },
     []
@@ -194,18 +231,21 @@ export function useMobileNativeChatDrafts(args: {
     if (!draftKey || unconfirmedRef.current.length === 0) {
       return
     }
-    const landed = unconfirmedRef.current.filter(
+    const relevant = unconfirmedRef.current.filter(
       (entry) =>
         entry.draftKey === draftKey &&
-        (entry.pendingKey === null || entry.pendingKey === pendingKey) &&
-        countUserTextOccurrences(messages, entry.normalizedText) >= entry.expectedOccurrence
+        (entry.pendingKey === null || entry.pendingKey === pendingKey)
     )
+    const landed = findLandedUnconfirmedSends(messages, relevant)
     if (landed.length === 0) {
       return
     }
-    unconfirmedRef.current = unconfirmedRef.current.filter((entry) => !landed.includes(entry))
+    const landedSet = new Set(landed)
+    unconfirmedRef.current = unconfirmedRef.current.filter((entry) => !landedSet.has(entry))
     for (const entry of landed) {
-      clearTimeout(entry.deadline)
+      if (entry.deadline !== null) {
+        clearTimeout(entry.deadline)
+      }
       // Same guard as acceptSend: never erase edits typed after the send began.
       setDrafts((previous) =>
         (previous[entry.draftKey] ?? '').trim() === entry.text.trim()
@@ -215,14 +255,18 @@ export function useMobileNativeChatDrafts(args: {
     }
   }, [messages, draftKey, pendingKey])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
       for (const entry of unconfirmedRef.current) {
-        clearTimeout(entry.deadline)
+        if (entry.deadline !== null) {
+          clearTimeout(entry.deadline)
+        }
       }
-    },
-    []
-  )
+      unconfirmedRef.current = []
+    }
+  }, [])
 
   const pending = pendingKey
     ? (pendingBySession[pendingKey] ?? NO_PENDING_MESSAGES)

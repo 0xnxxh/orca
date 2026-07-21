@@ -285,6 +285,93 @@ describe('useMobileNativeChatDrafts', () => {
     }
   })
 
+  it('does not confirm an unconfirmed send when pagination prepends an older identical turn', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      const anchor = assistantTextMessage('anchor', 'working')
+      await act(async () =>
+        renderer?.update(createElement(Harness, { tabId: 'a', messages: [anchor] }))
+      )
+      act(() => state?.setComposerText('ping'))
+      const origin = state?.captureSendOrigin('ping')
+      const onUnconfirmed = vi.fn()
+      act(() => {
+        if (origin) {
+          state?.holdUnconfirmedSend(origin, 'ping', onUnconfirmed)
+        }
+      })
+
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, {
+            tabId: 'a',
+            messages: [userTextMessage('older', 'ping'), anchor]
+          })
+        )
+      )
+      expect(state?.composerText).toBe('ping')
+
+      act(() => vi.advanceTimersByTime(30_000))
+      expect(onUnconfirmed).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('requires one new transcript echo per repeated unconfirmed send', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      act(() => state?.setComposerText('ping'))
+      const origin = state?.captureSendOrigin('ping')
+      const firstUnconfirmed = vi.fn()
+      const secondUnconfirmed = vi.fn()
+      act(() => {
+        if (origin) {
+          state?.holdUnconfirmedSend(origin, 'ping', firstUnconfirmed)
+          state?.holdUnconfirmedSend(origin, 'ping', secondUnconfirmed)
+        }
+      })
+
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, { tabId: 'a', messages: [userTextMessage('echo-1', 'ping')] })
+        )
+      )
+      act(() => vi.advanceTimersByTime(30_000))
+
+      expect(firstUnconfirmed).not.toHaveBeenCalled()
+      expect(secondUnconfirmed).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not retain a deadline when an ambiguous send settles after unmount', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      const origin = state?.captureSendOrigin('ping')
+      const holdUnconfirmedSend = state?.holdUnconfirmedSend
+      const onUnconfirmed = vi.fn()
+      act(() => renderer?.unmount())
+      renderer = null
+
+      act(() => {
+        if (origin) {
+          holdUnconfirmedSend?.(origin, 'ping', onUnconfirmed)
+        }
+      })
+
+      expect(vi.getTimerCount()).toBe(0)
+      act(() => vi.advanceTimersByTime(30_000))
+      expect(onUnconfirmed).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not erase newer edits when an unconfirmed send lands', async () => {
     await mount('a')
     act(() => state?.setComposerText('submitted'))
