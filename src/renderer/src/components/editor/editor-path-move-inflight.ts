@@ -48,12 +48,22 @@ export function settleEditorPathMove(operationId: string): void {
   operations.delete(operationId)
 }
 
+/** Cheap gate so watcher hot paths can skip per-file work when no move is live. */
+export function hasActiveEditorPathMoves(): boolean {
+  return operations.size > 0
+}
+
 /** True when this delete is the source side of a live Orca-owned move. */
 export function isActiveMoveSourcePath(
   worktreeId: string,
   runtimeEnvironmentId: string | null | undefined,
   absolutePath: string
 ): boolean {
+  // Fast path: this runs per deleted open-editor in the fs-watcher hot path, but a
+  // move is in flight only briefly and rarely. Skip the normalize regex when idle.
+  if (operations.size === 0) {
+    return false
+  }
   const normalizedPath = normalize(absolutePath)
   const scopedOwner = owner(runtimeEnvironmentId)
   for (const operation of operations.values()) {

@@ -16,7 +16,10 @@ import {
   getRecentSelfWrite,
   type RecentSelfWrite
 } from '@/components/editor/editor-self-write-registry'
-import { isActiveMoveSourcePath } from '@/components/editor/editor-path-move-inflight'
+import {
+  hasActiveEditorPathMoves,
+  isActiveMoveSourcePath
+} from '@/components/editor/editor-path-move-inflight'
 import type { FsChangedPayload } from '../../../shared/types'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import type { OpenFile } from '@/store/slices/editor'
@@ -418,20 +421,23 @@ export function createExternalWatchEventHandler(
     // Why: mark editor tabs deleted/renamed instead of closing them so the user keeps in-memory content; a paired create means rename, a lone delete is hard.
     // Why: snapshot openFiles once so the delete/rename helpers share a consistent view without N store reads per payload.
     const openFilesAtStart = useAppStore.getState().openFiles
-    const deletedOpenEditorIds = collectDeletedOpenEditorIds(
+    const deletedOpenEditorIdsRaw = collectDeletedOpenEditorIds(
       payload,
       target.worktreeId,
       target.runtimeEnvironmentId,
       openFilesAtStart
-    ).filter((fileId) => {
-      // Don't tombstone the source side of an in-flight Orca move (the tab is
-      // being re-homed, not deleted).
-      const file = openFilesAtStart.find((f) => f.id === fileId)
-      return (
-        !file ||
-        !isActiveMoveSourcePath(target.worktreeId, target.runtimeEnvironmentId, file.filePath)
-      )
-    })
+    )
+    // Only pay the per-id lookup to suppress a move's own source-delete when a move
+    // is actually in flight; otherwise the whole delete batch stays O(deletes).
+    const deletedOpenEditorIds = hasActiveEditorPathMoves()
+      ? deletedOpenEditorIdsRaw.filter((fileId) => {
+          const file = openFilesAtStart.find((f) => f.id === fileId)
+          return (
+            !file ||
+            !isActiveMoveSourcePath(target.worktreeId, target.runtimeEnvironmentId, file.filePath)
+          )
+        })
+      : deletedOpenEditorIdsRaw
     // Why: correlate creates to deletes by basename to avoid mislabelling unrelated create+delete pairs as "renamed"; default to 'deleted' when we can't correlate.
     const hasPairedCreate =
       deletedOpenEditorIds.length > 0 &&
@@ -559,14 +565,19 @@ export function createExternalWatchEventHandler(
         const dirtyIds = dirtyMatches.filter((f) => canAutoSaveOpenFile(f)).map((f) => f.id)
         // A tab carrying move-echo provenance for this path may be seeing the
         // move's own echo — settle it by disk identity: an echo leaves disk ==
-        // the tab's baseline, a real external write does not.
-        const normalizedAbsolutePath = normalizeRuntimePathForComparison(absolutePath)
-        const isSelfMoveEcho = dirtyMatches.some(
-          (f) =>
-            f.pendingSelfMoveEcho &&
-            normalizeRuntimePathForComparison(f.pendingSelfMoveEcho.targetPath) ===
-              normalizedAbsolutePath
-        )
+        // the tab's baseline, a real external write does not. Only a tab WITH
+        // provenance can match, so skip the path normalize in the common
+        // external-write-to-dirty case where none carries it.
+        let isSelfMoveEcho = false
+        if (dirtyMatches.some((f) => f.pendingSelfMoveEcho)) {
+          const normalizedAbsolutePath = normalizeRuntimePathForComparison(absolutePath)
+          isSelfMoveEcho = dirtyMatches.some(
+            (f) =>
+              f.pendingSelfMoveEcho &&
+              normalizeRuntimePathForComparison(f.pendingSelfMoveEcho.targetPath) ===
+                normalizedAbsolutePath
+          )
+        }
         if (isSelfMoveEcho) {
           // A real destination fs event confirms the echo — consume the
           // provenance so a later genuine write takes the normal path.
