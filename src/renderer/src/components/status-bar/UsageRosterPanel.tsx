@@ -1,6 +1,7 @@
 import React from 'react'
 import { ChevronRight, RefreshCw } from 'lucide-react'
-import { DropdownMenuCheckboxItem, DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import { SettingsSegmentedControl } from '@/components/settings/SettingsFormControls'
 import { useResetCountdownClock } from '@/hooks/useResetCountdownClock'
 import { translate } from '@/i18n/i18n'
 import { formatRateLimitWindowChipLabel, formatWindowLabel } from '@/lib/window-label-formatter'
@@ -220,6 +221,30 @@ export function UsageRosterPanel({
           </DropdownMenuItem>
         </div>
       </div>
+      {/* Density picker lives at the top of the popover it controls (view-switcher
+          pattern) so both modes are named and discoverable on first open. */}
+      <div className="px-3.5 pb-2.5">
+        <SettingsSegmentedControl<StatusBarUsageMode>
+          value={statusBarUsageMode}
+          onChange={onStatusBarUsageModeChange}
+          ariaLabel={translate(
+            'auto.components.status.bar.UsageRosterPanel.footerDetailAria',
+            'Usage footer detail'
+          )}
+          size="sm"
+          equalWidth
+          options={[
+            {
+              value: 'verbose',
+              label: translate('auto.components.status.bar.UsageRosterPanel.detailed', 'Detailed')
+            },
+            {
+              value: 'compact',
+              label: translate('auto.components.status.bar.UsageRosterPanel.compact', 'Compact')
+            }
+          ]}
+        />
+      </div>
       <div className="border-t border-border/70" />
       {sorted.map((p) => {
         const state = getUsageRosterRowState(p, usedSections(p).length > 0)
@@ -259,29 +284,6 @@ export function UsageRosterPanel({
         )
       })}
       <div className="border-t border-border/70" />
-      <DropdownMenuCheckboxItem
-        checked={statusBarUsageMode === 'verbose'}
-        onCheckedChange={(checked) => {
-          onStatusBarUsageModeChange(checked ? 'verbose' : 'compact')
-        }}
-        onSelect={(event) => event.preventDefault()}
-        className="w-full cursor-pointer justify-between rounded-none px-3.5 py-2.5 text-[13px] text-foreground [&>span:first-child]:hidden"
-      >
-        {translate('auto.components.status.bar.UsageRosterPanel.verboseFooter', 'Verbose footer')}
-        {/* Why: one menu control avoids nesting the SettingsSwitch button inside an interactive item. */}
-        <span
-          aria-hidden
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-transparent transition-colors ${
-            statusBarUsageMode === 'verbose' ? 'bg-foreground' : 'bg-muted-foreground/30'
-          }`}
-        >
-          <span
-            className={`block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
-              statusBarUsageMode === 'verbose' ? 'translate-x-4' : 'translate-x-0.5'
-            }`}
-          />
-        </span>
-      </DropdownMenuCheckboxItem>
       <DropdownMenuItem
         onSelect={onUsageDetails}
         className="w-full cursor-pointer justify-between rounded-none px-3.5 py-2.5 text-[13px] text-foreground"

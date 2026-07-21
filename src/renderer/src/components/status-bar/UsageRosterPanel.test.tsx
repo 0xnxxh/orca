@@ -1,5 +1,9 @@
+// @vitest-environment happy-dom
+
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderRateLimits } from '../../../../shared/rate-limit-types'
 
 const mocks = vi.hoisted(() => ({
@@ -17,21 +21,6 @@ vi.mock('@/hooks/useResetCountdownClock', () => ({
   useResetCountdownClock: mocks.useResetCountdownClock
 }))
 vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenuCheckboxItem: ({
-    children,
-    checked,
-    onCheckedChange: _onCheckedChange,
-    onSelect: _onSelect,
-    ...props
-  }: React.PropsWithChildren<{
-    checked?: boolean
-    onCheckedChange?: (checked: boolean) => void
-    onSelect?: () => void
-  }>) => (
-    <div data-checked={checked} {...props}>
-      {children}
-    </div>
-  ),
   DropdownMenuItem: ({
     children,
     onSelect: _onSelect,
@@ -137,7 +126,81 @@ describe('UsageRow', () => {
     expect(mocks.useResetCountdownClock).toHaveBeenCalledOnce()
     expect(mocks.useResetCountdownClock).toHaveBeenCalledWith([sessionReset, weeklyReset])
     expect(markup).toContain('Resets in 2m')
-    expect(markup).toContain('Verbose footer')
-    expect(markup).toContain('data-checked="true"')
+  })
+})
+
+describe('UsageRosterPanel density picker', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    mocks.useResetCountdownClock.mockClear()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(() => {
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  function renderPanel(
+    statusBarUsageMode: 'verbose' | 'compact',
+    onStatusBarUsageModeChange: (mode: 'verbose' | 'compact') => void
+  ): void {
+    act(() => {
+      root.render(
+        <UsageRosterPanel
+          providers={[]}
+          display="used"
+          statusBarUsageMode={statusBarUsageMode}
+          onStatusBarUsageModeChange={onStatusBarUsageModeChange}
+          isRefreshing={false}
+          onRefresh={() => {}}
+          onOpenProvider={() => {}}
+          onSignIn={() => {}}
+          canSignIn={() => true}
+          onManageAccounts={() => {}}
+          onUsageDetails={() => {}}
+        />
+      )
+    })
+  }
+
+  function segmentButton(label: string): HTMLButtonElement {
+    const button = [...container.querySelectorAll('button')].find(
+      (node) => node.textContent === label
+    )
+    if (!button) {
+      throw new Error(`missing "${label}" segment`)
+    }
+    return button as HTMLButtonElement
+  }
+
+  it('offers named Detailed/Compact segments and marks the active one', () => {
+    renderPanel('compact', () => {})
+
+    expect(container.textContent).toContain('Detailed')
+    expect(container.textContent).toContain('Compact')
+    expect(segmentButton('Compact').getAttribute('aria-checked')).toBe('true')
+    expect(segmentButton('Detailed').getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('switches mode when a segment is chosen', () => {
+    const onStatusBarUsageModeChange = vi.fn()
+    renderPanel('compact', onStatusBarUsageModeChange)
+
+    act(() => {
+      segmentButton('Detailed').click()
+    })
+    expect(onStatusBarUsageModeChange).toHaveBeenLastCalledWith('verbose')
+
+    act(() => {
+      segmentButton('Compact').click()
+    })
+    expect(onStatusBarUsageModeChange).toHaveBeenLastCalledWith('compact')
   })
 })
