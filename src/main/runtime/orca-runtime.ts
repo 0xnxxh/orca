@@ -3728,7 +3728,13 @@ export class OrcaRuntimeService {
         activeTabId: mergedActiveTab?.id ?? null,
         activeTabType: mergedActiveTab?.type ?? null,
         tabGroups: nextTabGroups,
-        ...(hasPersistedSplit && persistedLayout ? { tabGroupLayout: persistedLayout } : {}),
+        // Why: the serve-only rebuild runs on every graph sync — carry the
+        // existing split layout forward or each sync drops it and fans out.
+        ...(hasPersistedSplit && persistedLayout
+          ? { tabGroupLayout: persistedLayout }
+          : options.onlyServeOwnedTerminals === true && existing?.tabGroupLayout
+            ? { tabGroupLayout: existing.tabGroupLayout }
+            : {}),
         tabs: mergedTabs
       }
       // Why: the serve-only hydrate runs on EVERY graph sync; when the rebuilt
@@ -22306,6 +22312,8 @@ export class OrcaRuntimeService {
     return {
       ...existing,
       publicationEpoch: this.getMergedMobileSessionPublicationEpoch(existing, tabs),
+      // Why: mint a fresh version or clients' same-epoch gate drops the prune frame.
+      snapshotVersion: existing.snapshotVersion + 1,
       activeGroupId:
         existing.activeGroupId ?? this.getHeadlessMobileSessionGroupId(existing.worktree),
       activeTabId: activeTab?.id ?? null,

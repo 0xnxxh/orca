@@ -572,6 +572,47 @@ describe('graph-sync mobile snapshot gating', () => {
     expect(internals.mobileSessionTabsByWorktree.get(WT)?.tabs).toEqual([])
   })
 
+  it('delivers the prune frame when the renderer omits a worktree whose serve tab is preserved', () => {
+    const { events, sync } = createRuntime(
+      makeSession({
+        tabsByWorktree: { [WT]: [makeTerminalTab('serve-tab', 'serve-pty-1')] }
+      })
+    )
+    const webClientAccepts = makeWebClientFreshnessGate()
+
+    // Phone accepts the renderer+serve merged frame.
+    sync([makeRendererSnapshot({ version: 1 })])
+    vi.advanceTimersByTime(300)
+    expect(events).toHaveLength(1)
+    expect(webClientAccepts(events[0]!)).toBe(true)
+    expect(events[0]?.tabs.map((tab) => ('parentTabId' in tab ? tab.parentTabId : tab.id))).toEqual(
+      ['tab-1', 'serve-tab']
+    )
+
+    // Desktop closes the renderer tab, so the next graph omits the worktree
+    // while the serve binding persists. Preservation prunes the renderer tab,
+    // but the preserved epoch hashes only the unchanged serve tab — without a
+    // fresh snapshotVersion the phone's same-epoch freshness gate drops the
+    // prune frame and keeps the closed tab forever.
+    events.length = 0
+    sync([])
+    vi.advanceTimersByTime(60)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.tabs).toEqual([
+      expect.objectContaining({ type: 'terminal', parentTabId: 'serve-tab' })
+    ])
+    expect(webClientAccepts(events[0]!)).toBe(true)
+
+    // Recomputing the preservation on further omitted syncs is a genuine
+    // no-op: the preservedIsNoOp identity gate keeps the entry, zero fanout.
+    events.length = 0
+    for (let i = 0; i < 3; i++) {
+      sync([])
+    }
+    vi.advanceTimersByTime(500)
+    expect(events).toHaveLength(0)
+  })
+
   it('drops a de-persisted serve tab when the renderer resends the unchanged accepted revision', () => {
     const { runtime, events, sync, setSession } = createRuntime(makeSession())
     const internals = runtime as unknown as RuntimeInternals
@@ -731,6 +772,70 @@ describe('graph-sync mobile snapshot gating', () => {
         .get(WT)
         ?.tabs.some((tab) => tab.type === 'terminal' && tab.parentTabId === 'ssh-tab')
     ).toBe(false)
+  })
+
+  it('retains the split-group layout across no-op syncs with a serve-owned terminal present', () => {
+    const { runtime, events, sync } = createRuntime(
+      makeSession({
+        tabsByWorktree: { [WT]: [makeTerminalTab('serve-tab', 'serve-pty-1')] }
+      })
+    )
+    const internals = runtime as unknown as RuntimeInternals
+    const splitLayout = {
+      type: 'split' as const,
+      direction: 'horizontal' as const,
+      first: { type: 'leaf' as const, groupId: 'group-1' },
+      second: { type: 'leaf' as const, groupId: 'group-2' },
+      ratio: 0.4
+    }
+    const makeSplitRendererSnapshot = (): RuntimeMobileSessionTabsSnapshot => ({
+      worktree: WT,
+      publicationEpoch: 'renderer:test-epoch',
+      snapshotVersion: 1,
+      activeGroupId: 'group-1',
+      activeTabId: 'tab-1::leaf-1',
+      activeTabType: 'terminal',
+      tabGroups: [
+        { id: 'group-1', activeTabId: 'tab-1', tabOrder: ['tab-1'] },
+        { id: 'group-2', activeTabId: 'tab-2', tabOrder: ['tab-2'] }
+      ],
+      tabGroupLayout: structuredClone(splitLayout),
+      tabs: [
+        {
+          type: 'terminal',
+          id: 'tab-1::leaf-1',
+          parentTabId: 'tab-1',
+          leafId: 'leaf-1',
+          title: 'Terminal 1',
+          isActive: true
+        },
+        {
+          type: 'terminal',
+          id: 'tab-2::leaf-1',
+          parentTabId: 'tab-2',
+          leafId: 'leaf-1',
+          title: 'Terminal 2',
+          isActive: false
+        }
+      ]
+    })
+
+    // Renderer publishes a two-group split while a serve binding exists; the
+    // merged snapshot must carry the renderer's split layout.
+    sync([makeSplitRendererSnapshot()])
+    vi.advanceTimersByTime(300)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.tabGroupLayout).toEqual(splitLayout)
+    expect(internals.mobileSessionTabsByWorktree.get(WT)?.tabGroupLayout).toEqual(splitLayout)
+
+    // A second identical renderer pair: the serve-only hydrate rebuild runs
+    // (serve PTY present) and must carry the stored split layout forward, so
+    // the sync is a full no-op — stored layout unchanged, zero fanout.
+    events.length = 0
+    sync([makeSplitRendererSnapshot()])
+    vi.advanceTimersByTime(500)
+    expect(events).toHaveLength(0)
+    expect(internals.mobileSessionTabsByWorktree.get(WT)?.tabGroupLayout).toEqual(splitLayout)
   })
 
   it('hydrates a serve terminal that appears in the session after suppressed syncs', () => {
