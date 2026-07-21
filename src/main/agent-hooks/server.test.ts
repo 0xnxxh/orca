@@ -231,7 +231,7 @@ describe('AgentHookServer listener replay', () => {
     })
   })
 
-  it('applies inferred interrupts through the cached status lifecycle', () => {
+  it('keeps Codex lead state terminal after an inferred interrupt', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
     try {
@@ -244,7 +244,13 @@ describe('AgentHookServer listener replay', () => {
           tabId: 'tab-1',
           worktreeId: 'wt-1',
           providerSession: { key: 'session_id', id: 'codex-interrupt-session-1' },
-          payload: { state: 'working', prompt: 'long task', agentType: 'codex' }
+          hookEventName: 'UserPromptSubmit',
+          payload: {
+            state: 'working',
+            prompt: 'long task',
+            agentType: 'codex',
+            model: 'gpt-5.6-sol'
+          }
         },
         'conn-1'
       )
@@ -280,6 +286,25 @@ describe('AgentHookServer listener replay', () => {
           payload: expect.objectContaining({ state: 'done', interrupted: true })
         })
       )
+
+      vi.setSystemTime(17_000)
+      server.ingestRemote(
+        {
+          paneKey: PANE,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          hookEventName: 'SubagentStop',
+          toolAgentId: 'delayed-child',
+          payload: { state: 'done', prompt: 'long task', agentType: 'codex' }
+        },
+        'conn-1'
+      )
+
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'done',
+        model: 'gpt-5.6-sol',
+        prompt: 'long task'
+      })
     } finally {
       vi.useRealTimers()
     }

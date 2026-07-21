@@ -18,6 +18,7 @@ import {
   hasPendingAgentResultText,
   HOOK_REQUEST_SLOWLORIS_MS,
   markClaudeLeadTurnInterrupted,
+  markCodexLeadTurnInterrupted,
   MAX_PANE_KEY_LEN,
   movePaneCacheState,
   normalizeHookPayload,
@@ -556,6 +557,9 @@ export class AgentHookServer {
     // Why: keep the Claude lead-turn record in sync, or a later child event re-emits the stale 'working' state and resurrects the cancelled pane.
     if (agentType === 'claude') {
       markClaudeLeadTurnInterrupted(this.state, existing.paneKey)
+    }
+    if (agentType === 'codex') {
+      markCodexLeadTurnInterrupted(this.state, existing.paneKey)
     }
     const inferred = this.applyNormalizedStatus({
       paneKey: existing.paneKey,

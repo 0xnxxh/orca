@@ -3064,6 +3064,12 @@ export function seedCodexStateFromSnapshot(
   }
 }
 
+/** Sync the Codex lead record when the server infers an interrupt, so delayed child events cannot restore stale working state. */
+export function markCodexLeadTurnInterrupted(state: HookListenerState, paneKey: string): void {
+  const lead = state.codexLeadStateByPaneKey.get(paneKey)
+  state.codexLeadStateByPaneKey.set(paneKey, { state: 'done', model: lead?.model })
+}
+
 function codexLeadStateForHookEvent(
   eventName: string | undefined
 ): CodexLeadTurnState['state'] | undefined {
