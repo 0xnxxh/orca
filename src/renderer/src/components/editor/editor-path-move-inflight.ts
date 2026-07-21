@@ -6,14 +6,16 @@ import { normalizeAbsolutePathForComparison } from '@/components/right-sidebar/f
 // no TTL to race a slow SSH rename and no cross-operation aliasing.
 //
 // Only the source side needs this: while an operation is live, a watcher delete
-// of one of its exact source paths is the move's own echo, not an external
-// delete — don't tombstone. The destination is handled after commit: the
-// coordinator proactively content-verifies every gated moved tab.
+// of anything under one of its source ROOTS is the move's own echo, not an
+// external delete — don't tombstone. Roots are prefix-matched (not exact) so a
+// file opened UNDER a moving directory mid-rename is covered too. The
+// destination is handled after commit: the coordinator proactively
+// content-verifies every gated moved tab.
 
 type MoveOperation = {
   worktreeId: string
   runtimeEnvironmentId: string | null
-  sourcePaths: Set<string>
+  sourceRoots: string[]
 }
 
 const operations = new Map<string, MoveOperation>()
@@ -26,16 +28,23 @@ function normalize(absolutePath: string): string {
   return normalizeAbsolutePathForComparison(absolutePath)
 }
 
+// Both sides are normalized (separators folded, trailing slash trimmed), so a
+// single-separator prefix check is exact.
+function isInsideOrEqual(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}/`)
+}
+
 export function beginEditorPathMove(args: {
   operationId: string
   worktreeId: string
   runtimeEnvironmentId: string | null | undefined
+  /** Move roots (fromPath); a delete under any of them is suppressed. */
   sourcePaths: readonly string[]
 }): void {
   operations.set(args.operationId, {
     worktreeId: args.worktreeId,
     runtimeEnvironmentId: owner(args.runtimeEnvironmentId),
-    sourcePaths: new Set(args.sourcePaths.map(normalize))
+    sourceRoots: args.sourcePaths.map(normalize)
   })
 }
 
@@ -52,11 +61,10 @@ export function isActiveMoveSourcePath(
   const normalizedPath = normalize(absolutePath)
   const scopedOwner = owner(runtimeEnvironmentId)
   for (const operation of operations.values()) {
-    if (
-      operation.worktreeId === worktreeId &&
-      operation.runtimeEnvironmentId === scopedOwner &&
-      operation.sourcePaths.has(normalizedPath)
-    ) {
+    if (operation.worktreeId !== worktreeId || operation.runtimeEnvironmentId !== scopedOwner) {
+      continue
+    }
+    if (operation.sourceRoots.some((root) => isInsideOrEqual(root, normalizedPath))) {
       return true
     }
   }

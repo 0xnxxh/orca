@@ -24,6 +24,21 @@ describe('editor-path-move-inflight', () => {
     expect(__activeEditorPathMoveCountForTests()).toBe(0)
   })
 
+  it('prefix-matches a root so a file opened under a moving directory is suppressed', () => {
+    beginEditorPathMove({
+      operationId: 'op-1',
+      worktreeId: 'wt-1',
+      runtimeEnvironmentId: null,
+      sourcePaths: ['/repo/src']
+    })
+    // The exact root, and a file that appeared under it mid-move, are both echoes.
+    expect(isActiveMoveSourcePath('wt-1', null, '/repo/src')).toBe(true)
+    expect(isActiveMoveSourcePath('wt-1', null, '/repo/src/late.ts')).toBe(true)
+    // A sibling outside the root is a genuine external delete.
+    expect(isActiveMoveSourcePath('wt-1', null, '/repo/srcabc.ts')).toBe(false)
+    expect(isActiveMoveSourcePath('wt-1', null, '/repo/other.ts')).toBe(false)
+  })
+
   it('scopes by worktree and runtime owner', () => {
     beginEditorPathMove({
       operationId: 'op-1',

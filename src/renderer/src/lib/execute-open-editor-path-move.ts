@@ -11,7 +11,10 @@ import {
 } from '@/lib/remap-open-editor-tabs-for-path-change'
 import { verifyLatchedMoveDestinations } from '@/hooks/useEditorExternalWatch'
 import { notifyHostOfMirroredEditorClose } from '@/runtime/close-mirrored-editor-tab'
-import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
+import {
+  getExecutionHostIdForWorktree,
+  getRuntimeEnvironmentIdForWorktree
+} from '@/lib/worktree-runtime-owner'
 
 let moveOperationCounter = 0
 
@@ -47,24 +50,28 @@ export async function executeOpenEditorPathMove(args: {
       getExecutionHostIdForWorktree(moveState, f.worktreeId) === initiatingHostId
   )
 
-  // In-flight source suppression is scoped per (worktree, runtime owner): the
-  // same path can be open and watched under more than one worktree/owner.
+  // In-flight source suppression is scoped per (worktree, runtime owner) and
+  // registers the move ROOT (fromPath, prefix-matched) — so a file opened UNDER a
+  // moving directory mid-rename still has its own delete/rename echo suppressed,
+  // even though it wasn't in `affected`. Always include the initiating scope even
+  // when no tab is open there yet (an empty-affected directory move).
   const ownerSubOps: string[] = []
-  const scopeKey = (f: (typeof affected)[number]): string =>
-    `${f.worktreeId}::${f.runtimeEnvironmentId?.trim() || 'local'}`
-  const scopes = new Map<string, typeof affected>()
-  for (const f of affected) {
-    ;(scopes.get(scopeKey(f)) ?? scopes.set(scopeKey(f), []).get(scopeKey(f))!).push(f)
+  const scopes = new Map<string, { worktreeId: string; owner: string | null }>()
+  const addScope = (wtId: string, owner: string | null): void => {
+    scopes.set(`${wtId}::${owner ?? 'local'}`, { worktreeId: wtId, owner })
   }
-  for (const [, scopeFiles] of scopes) {
-    const first = scopeFiles[0]!
-    const subOperationId = `${operationId}::${scopeKey(first)}`
+  addScope(worktreeId, getRuntimeEnvironmentIdForWorktree(moveState, worktreeId))
+  for (const f of affected) {
+    addScope(f.worktreeId, f.runtimeEnvironmentId?.trim() || null)
+  }
+  for (const [key, scope] of scopes) {
+    const subOperationId = `${operationId}::${key}`
     ownerSubOps.push(subOperationId)
     beginEditorPathMove({
       operationId: subOperationId,
-      worktreeId: first.worktreeId,
-      runtimeEnvironmentId: first.runtimeEnvironmentId?.trim() || null,
-      sourcePaths: scopeFiles.map((f) => f.filePath)
+      worktreeId: scope.worktreeId,
+      runtimeEnvironmentId: scope.owner,
+      sourcePaths: [fromPath]
     })
   }
 

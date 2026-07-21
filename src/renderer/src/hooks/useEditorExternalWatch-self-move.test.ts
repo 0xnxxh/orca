@@ -86,6 +86,45 @@ describe('self-move source suppression (in-flight)', () => {
     dispose()
   })
 
+  it('does not tombstone a tab opened UNDER a moving directory mid-rename', () => {
+    // A directory move registers the root; a file opened under it during the
+    // in-flight window is not in the registered tab list but must still be
+    // recognized as the move's own echo (prefix match) — no false conflict.
+    const lateTab = {
+      id: 'file-late',
+      worktreeId: 'wt-1',
+      worktreePath: '/repo',
+      filePath: '/repo/src/late.md',
+      relativePath: 'src/late.md',
+      mode: 'edit' as const,
+      isDirty: true
+    }
+    vi.mocked(useAppStore.getState).mockReturnValue({
+      openFiles: [lateTab],
+      setExternalMutation
+    } as never)
+    beginEditorPathMove({
+      operationId: 'op-dir',
+      worktreeId: 'wt-1',
+      runtimeEnvironmentId: null,
+      sourcePaths: ['/repo/src']
+    })
+    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
+
+    // The rename echo arrives as a delete+create pair for the old subtree path.
+    handleFsChanged(
+      payload([
+        { kind: 'delete', absolutePath: '/repo/src/late.md' },
+        { kind: 'create', absolutePath: '/repo/dst/late.md' }
+      ])
+    )
+    vi.advanceTimersByTime(200)
+
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-late', 'renamed')
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-late', 'deleted')
+    dispose()
+  })
+
   it('tombstones a genuine delete once the move has settled', () => {
     beginMove()
     settleEditorPathMove('op-1')
