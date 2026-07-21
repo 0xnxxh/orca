@@ -757,6 +757,12 @@ function mergePtyEnvDeletions(
   return Array.from(new Set([...(existingKeys ?? []), ...additionalKeys]))
 }
 
+function removeCodexHomeDeletionRequests(keys: string[] | undefined): string[] | undefined {
+  // Why: resume provenance is launch-authoritative; late deletions must not fall back to the current account.
+  const filtered = keys?.filter((key) => key !== 'CODEX_HOME' && key !== 'ORCA_CODEX_HOME')
+  return filtered?.length ? filtered : undefined
+}
+
 function getInheritedAgentHookEnvKeysToDelete(
   spawnEnv: Record<string, string> | undefined
 ): string[] {
@@ -2922,6 +2928,9 @@ export function registerPtyHandlers(
           'ORCA_CODEX_HOME'
         ])
       }
+      if (codexResumeHome?.codexHomePath) {
+        spawnOptions.envToDelete = removeCodexHomeDeletionRequests(spawnOptions.envToDelete)
+      }
       deleteRequestedEnvKeys(env, spawnOptions.envToDelete)
       promoteAgentTeamsShimPath(env, requestedAgentTeamsPath)
       if (args.command !== undefined) {
@@ -3830,7 +3839,7 @@ export function registerPtyHandlers(
       const envToDelete = claudeAuth?.stripAuthEnv
         ? [...CLAUDE_AUTH_ENV_VARS, 'ANTHROPIC_CUSTOM_HEADERS']
         : undefined
-      const combinedEnvToDelete = mergePtyEnvDeletions(
+      let combinedEnvToDelete = mergePtyEnvDeletions(
         mergePtyEnvDeletions(
           mergePtyEnvDeletions(
             mergePtyEnvDeletions(
@@ -3845,6 +3854,9 @@ export function registerPtyHandlers(
         // main cannot safely decide ownership for a process it may not parent.
         stripInheritedOrcaCodexHome ? ['ORCA_CODEX_HOME'] : []
       )
+      if (codexResumeHome?.codexHomePath) {
+        combinedEnvToDelete = removeCodexHomeDeletionRequests(combinedEnvToDelete)
+      }
       deleteRequestedEnvKeys(spawnEnv, combinedEnvToDelete)
       promoteAgentTeamsShimPath(spawnEnv, requestedAgentTeamsPath)
       const spawnOptions: PtySpawnOptions = {

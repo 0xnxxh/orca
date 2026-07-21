@@ -37,7 +37,7 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
   })
 
   it('rejects paths outside trusted homes or outside the rollout layout', () => {
-    const fileIsRegular = (): boolean => true
+    const fileIsRegular = vi.fn((): boolean => true)
     expect(
       resolveTrustedCodexSessionResumeHome({
         transcriptPath: '/tmp/sessions/2026/07/20/rollout-a.jsonl',
@@ -60,6 +60,7 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
         fileIsRegular
       })
     ).toBeNull()
+    expect(fileIsRegular).not.toHaveBeenCalled()
   })
 
   it('rejects a trusted-looking path when the rollout no longer exists', () => {

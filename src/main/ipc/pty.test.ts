@@ -985,7 +985,8 @@ describe('registerPtyHandlers', () => {
         cols: 80,
         rows: 24,
         command: 'codex resume session-a',
-        env: { CODEX_HOME: '/custom/codex' },
+        env: { CODEX_HOME: '/custom/codex', REMOVE_ME: 'stale' },
+        envToDelete: ['CODEX_HOME', 'ORCA_CODEX_HOME', 'REMOVE_ME'],
         launchAgent: 'codex',
         resumeProviderSession: {
           key: 'session_id',
@@ -998,6 +999,7 @@ describe('registerPtyHandlers', () => {
       expect(selectedHome).not.toHaveBeenCalled()
       expect(env.CODEX_HOME).toBe(systemHome)
       expect(env.ORCA_CODEX_HOME).toBe(systemHome)
+      expect(env.REMOVE_ME).toBeUndefined()
     })
 
     it('does not fall back to the selected account when automatic resume provenance is rejected', async () => {
@@ -1851,7 +1853,8 @@ describe('registerPtyHandlers', () => {
           cols: 80,
           rows: 24,
           command: 'codex resume session-a',
-          env: { CODEX_HOME: '/custom/codex' },
+          env: { CODEX_HOME: '/custom/codex', REMOVE_ME: 'stale' },
+          envToDelete: ['CODEX_HOME', 'ORCA_CODEX_HOME', 'REMOVE_ME'],
           launchAgent: 'codex',
           resumeProviderSession: {
             key: 'session_id',
@@ -1864,6 +1867,68 @@ describe('registerPtyHandlers', () => {
         expect(selectedHome).not.toHaveBeenCalled()
         expect(env.CODEX_HOME).toBe(systemHome)
         expect(env.ORCA_CODEX_HOME).toBe(systemHome)
+        expect(env.REMOVE_ME).toBeUndefined()
+      })
+
+      it('keeps the authoritative home for runtime-created daemon resumes', async () => {
+        type RuntimeSpawnController = {
+          spawn(args: {
+            cols: number
+            rows: number
+            command: string
+            env: Record<string, string>
+            envToDelete: string[]
+            launchAgent: 'codex'
+            resumeProviderSession: {
+              key: 'session_id'
+              id: string
+              transcriptPath: string
+            }
+          }): Promise<{ id: string }>
+        }
+        const daemonSpawn = setupDaemonAdapter()
+        const runtime = {
+          setPtyController: vi.fn(),
+          registerPty: vi.fn(),
+          noteTerminalSpawnCommand: vi.fn(),
+          onPtySpawned: vi.fn(),
+          onPtyExit: vi.fn(),
+          onPtyData: vi.fn()
+        }
+        const systemHome = '/Users/example/.codex'
+        handlers.clear()
+        registerPtyHandlers(
+          mainWindow as never,
+          runtime as never,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { prepareCodexSessionResume: async () => ({ codexHomePath: systemHome }) }
+        )
+        const controller = runtime.setPtyController.mock.calls[0]?.[0] as RuntimeSpawnController
+
+        await controller.spawn({
+          cols: 80,
+          rows: 24,
+          command: 'codex resume session-a',
+          env: { CODEX_HOME: '/custom/codex', REMOVE_ME: 'stale' },
+          envToDelete: ['CODEX_HOME', 'ORCA_CODEX_HOME', 'REMOVE_ME'],
+          launchAgent: 'codex',
+          resumeProviderSession: {
+            key: 'session_id',
+            id: 'session-a',
+            transcriptPath: `${systemHome}/sessions/2026/07/20/rollout-a.jsonl`
+          }
+        })
+
+        const spawnOptions = daemonSpawn.mock.calls.at(-1)?.[0] as DaemonSpawnCall
+        expect(spawnOptions.env.CODEX_HOME).toBe(systemHome)
+        expect(spawnOptions.env.ORCA_CODEX_HOME).toBe(systemHome)
+        expect(spawnOptions.env.REMOVE_ME).toBeUndefined()
+        expect(spawnOptions.envToDelete ?? []).not.toContain('CODEX_HOME')
+        expect(spawnOptions.envToDelete ?? []).not.toContain('ORCA_CODEX_HOME')
+        expect(spawnOptions.envToDelete).toContain('REMOVE_ME')
       })
 
       it('prepares Codex project trust before a daemon-backed interactive launch', async () => {

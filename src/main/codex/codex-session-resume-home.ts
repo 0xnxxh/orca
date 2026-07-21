@@ -48,15 +48,20 @@ function resolveTrustedCodexSessionResume(args: {
   fileIsRegular?: (filePath: string) => boolean
 }): { homePath: string; transcriptPath: string } | null {
   const persistedPath = args.transcriptPath?.trim()
-  const transcriptPath = persistedPath
-    ? resolveExistingRolloutPath(persistedPath, args.fileIsRegular ?? isRegularFile)
-    : null
-  if (!transcriptPath) {
+  if (!persistedPath) {
     return null
   }
 
   for (const homePath of args.trustedCodexHomes) {
-    if (isCodexRolloutInsideSessionsRoot(join(homePath, 'sessions'), transcriptPath)) {
+    const sessionsRoot = join(homePath, 'sessions')
+    if (!isCodexRolloutInsideSessionsRoot(sessionsRoot, persistedPath)) {
+      continue
+    }
+    const transcriptPath = resolveExistingRolloutPath(
+      persistedPath,
+      args.fileIsRegular ?? isRegularFile
+    )
+    if (transcriptPath) {
       return { homePath, transcriptPath }
     }
   }
