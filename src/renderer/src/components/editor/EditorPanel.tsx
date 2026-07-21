@@ -24,6 +24,7 @@ import {
   selectEditorPanelGitStatusEntries
 } from './editor-panel-git-entry-selector'
 import { createEditorPanelDraftSelector } from './editor-panel-draft-selector'
+import { notifyEditorSaveFailure } from './editor-save-failure-notice'
 
 function EditorPanelInner({
   activeFileId: activeFileIdProp,
@@ -193,7 +194,9 @@ function EditorPanelInner({
       }
       try {
         await requestEditorFileSave({ fileId: saveTargetFile.id, fallbackContent: content })
-      } catch {}
+      } catch (error) {
+        notifyEditorSaveFailure(error)
+      }
     },
     [openFiles, requestRenameForFile]
   )
