@@ -28,24 +28,41 @@ export async function startHeadlessPairingRuntime({
   // home, so the pairing runtime must hand it a matching disposable HOME.
   const homeDir = path.join(runDir, 'home')
   mkdirSync(homeDir, { recursive: true, mode: 0o700 })
+  const transcriptHomeDir = process.env.ORCA_NATIVE_CHAT_TRANSCRIPT_HOME_DIR?.trim() || os.homedir()
   const pairingAddress = primaryLanIp(lanIpCandidates)
   const child = spawn(
     orcaCli,
     ['serve', '--mobile-pairing', '--pairing-address', pairingAddress, '--json'],
     {
       cwd,
-      env: {
-        ...process.env,
-        ORCA_E2E_USER_DATA_DIR: userData,
-        ORCA_E2E_HOME_DIR: homeDir,
-        HOME: homeDir,
-        USERPROFILE: homeDir
-      },
+      env: buildHeadlessPairingRuntimeEnvironment({
+        baseEnv: process.env,
+        userData,
+        isolatedHomeDir: homeDir,
+        transcriptHomeDir
+      }),
       stdio: ['ignore', 'pipe', 'pipe']
     }
   )
 
   return await waitForPairingRuntime({ child, userData, pairingAddress, logSuccess })
+}
+
+export function buildHeadlessPairingRuntimeEnvironment({
+  baseEnv,
+  userData,
+  isolatedHomeDir,
+  transcriptHomeDir
+}) {
+  return {
+    ...baseEnv,
+    ORCA_E2E_USER_DATA_DIR: userData,
+    ORCA_E2E_HOME_DIR: isolatedHomeDir,
+    // Why: login-shell agents write transcripts outside the disposable runtime home.
+    ORCA_NATIVE_CHAT_TRANSCRIPT_HOME_DIR: transcriptHomeDir,
+    HOME: isolatedHomeDir,
+    USERPROFILE: isolatedHomeDir
+  }
 }
 
 export async function registerWorktreeForPairingRuntime(runtime, worktree, tools) {
