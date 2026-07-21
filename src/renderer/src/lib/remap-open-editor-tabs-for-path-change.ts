@@ -244,10 +244,13 @@ export function remapOpenEditorTabsForPathChange({
       newMarkdownPreviewSourceFileId: newSourceFileId
     })
   }
-  // Single-file diff tabs carry a path-derived id too; retarget them so a moved
-  // directory doesn't strand them at the old path.
+  // Single-file staged/unstaged diff tabs carry a purely path-derived id, so
+  // retarget them on a move. Other diff sources (branch/commit carry extra
+  // compare metadata in their id; combined "Changes" is worktree-rooted, not
+  // file-relative) are left alone — rebuilding them from path alone would
+  // produce the wrong id.
   for (const file of filesToMove) {
-    if (file.mode !== 'diff' || !file.diffSource) {
+    if (file.mode !== 'diff' || (file.diffSource !== 'staged' && file.diffSource !== 'unstaged')) {
       continue
     }
     const newRelativePath = relativeOf(file)

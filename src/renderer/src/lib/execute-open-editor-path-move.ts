@@ -77,16 +77,11 @@ export async function executeOpenEditorPathMove(args: {
     throw err
   }
 
-  // The rename committed; close the host's old-path tab for any mirrored file
-  // (doing this only AFTER success so a failed rename can't desync the host).
-  // The rekey detaches the tab to a local one, so without this the host snapshot
-  // would resurrect the old path; the close intent suppresses re-mirroring.
+  // Capture host-close resolution from the PRE-rekey store (mirrored tab ids
+  // change on rekey), but don't send it yet — only a committed rekey should
+  // close the host's authoritative tab.
   const mirrorState = useAppStore.getState()
-  for (const file of affected) {
-    if (file.mirroredFromRuntimeSession) {
-      notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
-    }
-  }
+  const mirroredAffected = affected.filter((f) => f.mirroredFromRuntimeSession)
 
   // Commit: retarget the live sessions in place (the rekey installs the gate +
   // provenance on dirty destinations), then settle the transaction.
@@ -104,8 +99,27 @@ export async function executeOpenEditorPathMove(args: {
     for (const subOperationId of ownerSubOps) {
       settleEditorPathMove(subOperationId)
     }
-    await renameRuntimePath(context, toPath, fromPath).catch(() => undefined)
-    throw new Error(`Could not retarget open editors for the move (${rekeyResult.reason}).`)
+    let rollbackError: unknown
+    try {
+      await renameRuntimePath(context, toPath, fromPath)
+    } catch (err) {
+      rollbackError = err
+    }
+    const base = `Could not retarget open editors for the move (${rekeyResult.reason}).`
+    throw new Error(
+      rollbackError
+        ? `${base} The on-disk move could not be undone and the file may remain at the new path: ${
+            rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+          }`
+        : base
+    )
+  }
+
+  // Rekey committed: close the host's old-path tab for any mirrored file. The
+  // rekey detached it to a local tab, so without this the host snapshot would
+  // resurrect the old path; the close intent suppresses re-mirroring.
+  for (const file of mirroredAffected) {
+    notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
   }
 
   const latchedTargets = new Set<string>()
