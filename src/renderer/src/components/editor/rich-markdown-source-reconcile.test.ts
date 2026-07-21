@@ -341,6 +341,29 @@ describe('reconcileSerializedMarkdown', () => {
       reconciled.includes('_alpha edited_') && reconciled.split('_beta_').length === 3
     expect(landedInStyle || reconciled === edited).toBe(true)
   })
+
+  it('reconciles a multi-byte edit without throwing "Failed to determine byte offset" (#9492)', () => {
+    // Regression: dmp's byte/char index mixup crashes when the patch seed lands mid multi-byte run.
+    // Build a mostly-Chinese doc with non-canonical `_`/`*` markers and edit a position that
+    // previously threw; every such edit must reconcile and stay render-equal to `edited`.
+    const lines: string[] = []
+    for (let i = 0; i < 20; i++) {
+      lines.push(`_强调${i}_ 这是一段包含很多中文字符的文本内容用来测试多字节偏移问题`)
+    }
+    const originalSource = `# 标题\n\n${lines.join('\n')}\n`
+    const baseCanonical = fakeCanonicalize(originalSource)
+
+    // Sweep insert positions so we exercise the offsets that used to overshoot the byte target.
+    const chars = [...baseCanonical]
+    for (let pos = 5; pos < chars.length - 5; pos += 3) {
+      const edited = `${chars.slice(0, pos).join('')}插${chars.slice(pos).join('')}`
+
+      const reconciled = reconcileWithFake(originalSource, edited)
+
+      // Never throws, and the reconciled bytes render exactly to `edited`.
+      expect(fakeCanonicalize(reconciled).trimEnd()).toBe(edited.trimEnd())
+    }
+  })
 })
 
 describe('serializeRichMarkdownForReconcile (real editor pipeline)', () => {

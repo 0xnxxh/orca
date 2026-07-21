@@ -80,7 +80,13 @@ export function reconcileSerializedMarkdown({
     diffs = cleanupEfficiency(diffs)
   }
   const patches = makePatches(baseLf, diffs)
-  const [reconciledLf, results] = applyPatches(patches, originalSourceLf)
+  // Why: dmp's adjustIndiciesToUcs2 treats patch.start1 (a char index) as a UTF-8 byte offset, so on multi-byte
+  // text (Chinese/emoji/accented) its byte counter overshoots the target and throws "Failed to determine byte
+  // offset" (#9492). allowExceedingIndices returns the nearest index instead; the fuzzy match relocates the hunk
+  // and branch 6's round-trip proof rejects any misplacement, so the seed offset need not be exact.
+  const [reconciledLf, results] = applyPatches(patches, originalSourceLf, {
+    allowExceedingIndices: true
+  })
 
   // Branch 5: a hunk failed to locate in the non-canonical source → unreliable fuzzy match, fall back to canonical.
   if (results.some((applied) => !applied)) {
