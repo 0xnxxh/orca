@@ -1,31 +1,23 @@
-import { execFile } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import { symlink, mkdir, stat, lstat, unlink, rm, link, rmdir, chmod } from 'node:fs/promises'
+import { symlink, mkdir, stat, lstat, unlink, cp } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
-import { promisify } from 'node:util'
-
-type ExecFileAsync = (
-  file: string,
-  args: readonly string[]
-) => Promise<{ stdout: string; stderr: string }>
-
-const execFileAsync = promisify(execFile) as ExecFileAsync
-
-type ApfsCloneDeps = {
-  execFileAsync: ExecFileAsync
-  randomUUID: () => string
-}
-
-const defaultApfsCloneDeps: ApfsCloneDeps = {
-  execFileAsync,
-  randomUUID
-}
+import {
+  ApfsCloneUnavailableError,
+  cloneWorktreePathWithApfs,
+  defaultApfsCloneDeps,
+  WorktreeLinkedPathTargetExistsError,
+  type ApfsCloneDeps
+} from './worktree-apfs-clone'
 
 type WorktreeLinkedPathOptions = {
   platform?: NodeJS.Platform
   cloneWorktreePath?: (source: string, target: string, sourceIsDirectory: boolean) => Promise<void>
   apfsCloneDeps?: ApfsCloneDeps
 }
+
+// 'link': symlink when APFS clone is unavailable (user-configured shared paths).
+// 'copy': real copy when APFS clone is unavailable (.worktreeinclude paths, which
+// are per-worktree copies by cross-tool convention — edits must not leak back).
+type WorktreeMaterializeMode = 'link' | 'copy'
 
 type SafeRelativePathResult =
   | {
@@ -35,29 +27,6 @@ type SafeRelativePathResult =
   | {
       safe: false
     }
-
-type DarwinFilesystemInfo = {
-  device: string
-  filesystemName: string
-}
-
-class ApfsCloneUnavailableError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ApfsCloneUnavailableError'
-  }
-}
-
-class WorktreeLinkedPathTargetExistsError extends Error {
-  constructor(target: string) {
-    super(`Worktree linked path target already exists: ${target}`)
-    this.name = 'WorktreeLinkedPathTargetExistsError'
-  }
-}
-
-function isAlreadyExistsError(error: unknown): boolean {
-  return (error as { code?: unknown })?.code === 'EEXIST'
-}
 
 function getSafeRelativePath(rawPath: string): SafeRelativePathResult {
   // Why: strip leading separators (both `/` and `\`) before the guard so
@@ -98,115 +67,11 @@ async function symlinkWorktreePath(
   await symlink(source, target, sourceIsDirectory ? 'dir' : 'file')
 }
 
-async function getDarwinFilesystemInfo(
-  path: string,
-  deps: ApfsCloneDeps
-): Promise<DarwinFilesystemInfo> {
-  const { stdout: dfOutput } = await deps.execFileAsync('/bin/df', ['-P', path])
-  const device = dfOutput.trim().split(/\r?\n/)[1]?.trim().split(/\s+/)[0]
-  if (!device) {
-    throw new Error(`Could not resolve filesystem device for ${path}`)
-  }
-  const { stdout: diskutilOutput } = await deps.execFileAsync('/usr/sbin/diskutil', [
-    'info',
-    '-plist',
-    device
-  ])
-  const filesystemNameMatch = /<key>FilesystemName<\/key>\s*<string>([^<]+)<\/string>/u.exec(
-    diskutilOutput
-  )
-  return {
-    device,
-    filesystemName: filesystemNameMatch?.[1] ?? ''
-  }
-}
-
-async function assertSameApfsVolume(
-  source: string,
-  target: string,
-  deps: ApfsCloneDeps
-): Promise<void> {
-  const [sourceInfo, targetInfo] = await Promise.all([
-    getDarwinFilesystemInfo(source, deps),
-    getDarwinFilesystemInfo(dirname(target), deps)
-  ])
-  if (
-    sourceInfo.device !== targetInfo.device ||
-    sourceInfo.filesystemName !== 'APFS' ||
-    targetInfo.filesystemName !== 'APFS'
-  ) {
-    throw new ApfsCloneUnavailableError(
-      'APFS clone-copy requires source and target on the same APFS volume'
-    )
-  }
-}
-
-async function cloneFileWithApfs(
-  source: string,
-  target: string,
-  deps: ApfsCloneDeps
-): Promise<void> {
-  const tempTarget = resolve(dirname(target), `.orca-apfs-clone-${deps.randomUUID()}`)
-  try {
-    await deps.execFileAsync('/bin/cp', ['-c', source, tempTarget])
-    try {
-      // Why: link(2) is an atomic no-clobber publish for files; rename(2) can
-      // overwrite a target that appeared after the earlier existence check.
-      await link(tempTarget, target)
-    } catch (error) {
-      if (isAlreadyExistsError(error)) {
-        throw new WorktreeLinkedPathTargetExistsError(target)
-      }
-      throw error
-    }
-  } finally {
-    await rm(tempTarget, { force: true }).catch(() => undefined)
-  }
-}
-
-async function cloneDirectoryWithApfs(
-  source: string,
-  target: string,
-  deps: ApfsCloneDeps
-): Promise<void> {
-  const sourceMode = (await stat(source)).mode & 0o777
-  try {
-    // Why: reserve the final directory path before copying into it so a raced
-    // user-created directory cannot be replaced by a final rename.
-    await mkdir(target)
-  } catch (error) {
-    if (isAlreadyExistsError(error)) {
-      throw new WorktreeLinkedPathTargetExistsError(target)
-    }
-    throw error
-  }
-
-  try {
-    // Why: the top-level directory is reserved before cp runs, so use `-n`
-    // to keep a raced nested file from being overwritten during the copy.
-    await deps.execFileAsync('/bin/cp', ['-n', '-c', '-R', source, dirname(target)])
-    await chmod(target, sourceMode)
-  } catch (error) {
-    // Why: remove only the empty reservation. If cp wrote anything, or another
-    // process raced files into the directory, leave it for Git/user review.
-    await rmdir(target).catch(() => undefined)
-    throw error
-  }
-}
-
-async function cloneWorktreePathWithApfs(
-  source: string,
-  target: string,
-  sourceIsDirectory: boolean,
-  deps: ApfsCloneDeps = defaultApfsCloneDeps
-): Promise<void> {
-  const targetParent = dirname(target)
-  await mkdir(targetParent, { recursive: true })
-  await assertSameApfsVolume(source, target, deps)
-  // Why: Node's COPYFILE_FICLONE_FORCE returns ENOSYS on macOS in our runtime,
-  // while Darwin's cp exposes APFS clonefile via -c. Preflight the volume so
-  // cp's non-APFS full-copy fallback cannot surprise users.
-  await (sourceIsDirectory ? cloneDirectoryWithApfs : cloneFileWithApfs)(source, target, deps)
+async function copyWorktreePath(source: string, target: string): Promise<void> {
+  await mkdir(dirname(target), { recursive: true })
+  // Why: force=false + errorOnExist=false skips (not clobbers) anything a racing
+  // process placed at the target after the earlier existence preflight.
+  await cp(source, target, { recursive: true, force: false, errorOnExist: false })
 }
 
 async function createWorktreeLinkedPath(
@@ -214,6 +79,7 @@ async function createWorktreeLinkedPath(
   target: string,
   sourceIsDirectory: boolean,
   sourceIsSymbolicLink: boolean,
+  mode: WorktreeMaterializeMode,
   options: WorktreeLinkedPathOptions
 ): Promise<void> {
   if (options.platform === 'darwin' && !sourceIsSymbolicLink) {
@@ -234,20 +100,25 @@ async function createWorktreeLinkedPath(
         return
       }
       // Why: APFS clone-copy can fail across volumes or on non-APFS disks.
-      // Fall back to the historical symlink behavior without touching any
-      // target path that may have appeared after our preflight.
+      // Fall back per mode without touching any target path that may have
+      // appeared after our preflight.
       if (!(error instanceof ApfsCloneUnavailableError)) {
         console.warn(`[worktree-symlinks] APFS clone-copy unavailable for "${target}":`, error)
       }
     }
   }
+  if (mode === 'copy') {
+    await copyWorktreePath(source, target)
+    return
+  }
   await symlinkWorktreePath(source, target, sourceIsDirectory)
 }
 
-export async function createWorktreeLinkedPaths(
+async function materializeWorktreePaths(
   primaryPath: string,
   worktreePath: string,
   paths: readonly string[],
+  mode: WorktreeMaterializeMode,
   options: WorktreeLinkedPathOptions = {}
 ): Promise<void> {
   const effectiveOptions = { platform: process.platform, ...options }
@@ -287,6 +158,7 @@ export async function createWorktreeLinkedPaths(
         target,
         sourceIsDirectory,
         sourceIsSymbolicLink,
+        mode,
         effectiveOptions
       )
     } catch (error) {
@@ -296,6 +168,28 @@ export async function createWorktreeLinkedPaths(
       )
     }
   }
+}
+
+export async function createWorktreeLinkedPaths(
+  primaryPath: string,
+  worktreePath: string,
+  paths: readonly string[],
+  options: WorktreeLinkedPathOptions = {}
+): Promise<void> {
+  await materializeWorktreePaths(primaryPath, worktreePath, paths, 'link', options)
+}
+
+/** Copy `.worktreeinclude`-resolved paths from the primary checkout into a
+ *  freshly-created worktree. Same per-path failure isolation as
+ *  createWorktreeLinkedPaths, but the non-APFS fallback is a real copy, never a
+ *  symlink: the convention promises each worktree its own private copy. */
+export async function createWorktreeCopiedPaths(
+  primaryPath: string,
+  worktreePath: string,
+  paths: readonly string[],
+  options: WorktreeLinkedPathOptions = {}
+): Promise<void> {
+  await materializeWorktreePaths(primaryPath, worktreePath, paths, 'copy', options)
 }
 
 /** Create filesystem symlinks from the primary checkout into a freshly-created

@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  createWorktreeCopiedPaths,
   createWorktreeLinkedPaths,
   createWorktreeSymlinks,
   findExistingWorktreeSymlinkPaths,
@@ -386,6 +387,116 @@ describe('createWorktreeSymlinks', () => {
     expect(cloneWorktreePath).not.toHaveBeenCalled()
     expect(lstatSync(join(worktree, '.env')).isSymbolicLink()).toBe(true)
     expect(readlinkSync(join(worktree, '.env'))).toBe(join(primary, '.env'))
+  })
+})
+
+describe('createWorktreeCopiedPaths', () => {
+  let root: string
+  let primary: string
+  let worktree: string
+  let warn: ReturnType<typeof vi.spyOn>
+  let error: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'orca-copiedpaths-'))
+    primary = join(root, 'primary')
+    worktree = join(root, 'worktree')
+    mkdirSync(primary, { recursive: true })
+    mkdirSync(worktree, { recursive: true })
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    warn.mockRestore()
+    error.mockRestore()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('copies a file so worktree edits never leak back to the primary checkout', async () => {
+    writeFileSync(join(primary, '.env'), 'SECRET=1\n')
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.env'], { platform: 'linux' })
+
+    expect(lstatSync(join(worktree, '.env')).isSymbolicLink()).toBe(false)
+    expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('SECRET=1\n')
+    writeFileSync(join(worktree, '.env'), 'SECRET=2\n')
+    expect(readFileSync(join(primary, '.env'), 'utf8')).toBe('SECRET=1\n')
+  })
+
+  it('copies a directory recursively without symlinking', async () => {
+    mkdirSync(join(primary, '.vscode'))
+    writeFileSync(join(primary, '.vscode', 'settings.json'), '{}')
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.vscode'], { platform: 'linux' })
+
+    expect(lstatSync(join(worktree, '.vscode')).isSymbolicLink()).toBe(false)
+    expect(readFileSync(join(worktree, '.vscode', 'settings.json'), 'utf8')).toBe('{}')
+  })
+
+  it('creates parent directories lazily for nested paths', async () => {
+    mkdirSync(join(primary, 'apps', 'web'), { recursive: true })
+    writeFileSync(join(primary, 'apps', 'web', '.env'), 'A=1')
+
+    await createWorktreeCopiedPaths(primary, worktree, ['apps/web/.env'], { platform: 'linux' })
+
+    expect(readFileSync(join(worktree, 'apps', 'web', '.env'), 'utf8')).toBe('A=1')
+  })
+
+  it('preserves a pre-existing target in the worktree (no clobber)', async () => {
+    writeFileSync(join(primary, '.env'), 'SECRET=1\n')
+    writeFileSync(join(worktree, '.env'), 'MINE=1\n')
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.env'], { platform: 'linux' })
+
+    expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('MINE=1\n')
+  })
+
+  it('rejects traversal and treats absolute paths as repo-relative', async () => {
+    writeFileSync(join(root, 'outside.txt'), 'OUT=1')
+
+    await createWorktreeCopiedPaths(primary, worktree, ['../outside.txt', '/etc/passwd'], {
+      platform: 'linux'
+    })
+
+    expect(existsSync(join(worktree, 'outside.txt'))).toBe(false)
+    // `/etc/passwd` → `etc/passwd`, absent from primary → silently skipped.
+    expect(existsSync(join(worktree, 'etc'))).toBe(false)
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to a real copy, not a symlink, when macOS clone-copy is unavailable', async () => {
+    writeFileSync(join(primary, '.env'), 'SECRET=1\n')
+    const cloneWorktreePath = vi.fn(async () => {
+      throw new Error('clonefile unsupported')
+    })
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.env'], {
+      platform: 'darwin',
+      cloneWorktreePath
+    })
+
+    expect(lstatSync(join(worktree, '.env')).isSymbolicLink()).toBe(false)
+    expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('SECRET=1\n')
+  })
+
+  it('uses APFS clone-copy for configured paths on macOS', async () => {
+    writeFileSync(join(primary, '.env'), 'SECRET=1\n')
+    const cloneWorktreePath = vi.fn(async (_source: string, target: string) => {
+      writeFileSync(target, 'CLONED=1\n')
+    })
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.env'], {
+      platform: 'darwin',
+      cloneWorktreePath
+    })
+
+    expect(cloneWorktreePath).toHaveBeenCalledWith(
+      join(primary, '.env'),
+      join(worktree, '.env'),
+      false
+    )
+    expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('CLONED=1\n')
   })
 })
 

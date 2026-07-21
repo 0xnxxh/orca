@@ -175,6 +175,7 @@ vi.mock('../providers/ssh-filesystem-dispatch', () => ({
 }))
 
 vi.mock('./worktree-symlinks', () => ({
+  createWorktreeCopiedPaths: vi.fn(),
   createWorktreeLinkedPaths: vi.fn(),
   findExistingWorktreeSymlinkPaths: findExistingWorktreeSymlinkPathsMock,
   removeWorktreeLinkedPaths: removeWorktreeLinkedPathsMock
