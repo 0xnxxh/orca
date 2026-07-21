@@ -1,7 +1,7 @@
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
 import type { TuiAgent } from '../../../../shared/types'
-import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
+import { callRuntimeRpc, RuntimeRpcCallError } from '@/runtime/runtime-rpc-client'
 
 // Why: remote runtime hosts are not SSH connections, but their launch surfaces
 // (tab bar, quick launch, Settings → Agents under an Active Server) still have
@@ -26,6 +26,10 @@ export type RuntimeDetectedAgentsSlice = {
 // concurrent callers without storing a Promise in Zustand state.
 const runtimeDetectPromises = new Map<string, Promise<TuiAgent[]>>()
 const runtimeRefreshPromises = new Map<string, Promise<TuiAgent[]>>()
+
+function isRuntimeMethodNotFoundError(error: unknown): boolean {
+  return error instanceof RuntimeRpcCallError && error.code === 'method_not_found'
+}
 
 export function _getRuntimeDetectPromiseCountForTest(): number {
   return runtimeDetectPromises.size
@@ -118,11 +122,17 @@ export const createRuntimeDetectedAgentsSlice: StateCreator<
       'preflight.refreshAgents'
     )
       .then((result) => result.agents)
-      .catch(() =>
-        // Why: older `orca serve` builds may not expose preflight.refreshAgents;
-        // a plain re-detect still probes the server instead of failing Refresh.
-        callRuntimeRpc<TuiAgent[]>({ kind: 'environment', environmentId }, 'preflight.detectAgents')
-      )
+      .catch((error) => {
+        if (!isRuntimeMethodNotFoundError(error)) {
+          throw error
+        }
+        // Why: only older servers need the fallback; retrying disconnects and
+        // runtime failures doubles remote work without any chance of recovery.
+        return callRuntimeRpc<TuiAgent[]>(
+          { kind: 'environment', environmentId },
+          'preflight.detectAgents'
+        )
+      })
       .then((ids) => {
         const typed = ids as TuiAgent[]
         // Why: same guard as ensureRuntimeDetectedAgents — if the environment

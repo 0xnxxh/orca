@@ -616,7 +616,12 @@ describe('createDetectedAgentsSlice remote detection', () => {
     const store = createTestStore()
     runtimeEnvironmentCall.mockImplementation(({ method }: { method: string }) => {
       if (method === 'preflight.refreshAgents') {
-        return Promise.reject(new Error('unknown method'))
+        return Promise.resolve({
+          id: method,
+          ok: false,
+          error: { code: 'method_not_found', message: `Unknown method: ${method}` },
+          _meta: { runtimeId: 'remote-runtime' }
+        })
       }
       const result =
         method === 'status.get'
@@ -644,7 +649,7 @@ describe('createDetectedAgentsSlice remote detection', () => {
     expect(store.getState().isRefreshingRuntimeAgents['env-1']).toBe(false)
   })
 
-  it('keeps the last known runtime agent list when a refresh fails entirely', async () => {
+  it('does not retry ordinary runtime refresh failures with a second RPC', async () => {
     const store = createTestStore()
     store.setState({ runtimeDetectedAgentIds: { 'env-1': ['claude'] } } as Partial<AppState>)
     runtimeEnvironmentCall.mockImplementation(({ method }: { method: string }) => {
@@ -665,7 +670,20 @@ describe('createDetectedAgentsSlice remote detection', () => {
           _meta: { runtimeId: 'remote-runtime' }
         })
       }
-      return Promise.reject(new Error('runtime disconnected'))
+      if (method === 'preflight.refreshAgents') {
+        return Promise.resolve({
+          id: method,
+          ok: false,
+          error: { code: 'runtime_error', message: 'runtime disconnected' },
+          _meta: { runtimeId: 'remote-runtime' }
+        })
+      }
+      return Promise.resolve({
+        id: method,
+        ok: true,
+        result: ['codex'],
+        _meta: { runtimeId: 'remote-runtime' }
+      })
     })
 
     await expect(store.getState().refreshRuntimeDetectedAgents('env-1')).resolves.toEqual([
@@ -673,5 +691,8 @@ describe('createDetectedAgentsSlice remote detection', () => {
     ])
     expect(store.getState().runtimeDetectedAgentIds['env-1']).toEqual(['claude'])
     expect(store.getState().isRefreshingRuntimeAgents['env-1']).toBe(false)
+    expect(
+      runtimeEnvironmentCall.mock.calls.filter(([{ method }]) => method.startsWith('preflight.'))
+    ).toHaveLength(1)
   })
 })
