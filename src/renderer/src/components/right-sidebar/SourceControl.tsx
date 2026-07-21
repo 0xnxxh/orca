@@ -1485,10 +1485,13 @@ function SourceControlInner(): React.JSX.Element {
       repoId: activeRepo?.id ?? null,
       worktreeId: activeWorktreeId ?? null,
       worktreePath,
-      branch: branchName,
+      // Why: mid-rebase branchName is the recovered review label, which equals the run
+      // token's branch — record '' instead so a rebase starting during an in-flight
+      // create-PR intent still trips the target-drift abort before the remote push step.
+      branch: isOnLiveBranch ? branchName : '',
       baseRef: effectiveBaseRef ?? null
     }
-  }, [activeRepo?.id, activeWorktreeId, branchName, effectiveBaseRef, worktreePath])
+  }, [activeRepo?.id, activeWorktreeId, branchName, effectiveBaseRef, isOnLiveBranch, worktreePath])
 
   const linkedGitHubPR = activeWorktree?.linkedPR ?? null
   const fallbackGitHubPRNumber = linkedGitHubPR == null ? (activePrFromQueue?.number ?? null) : null

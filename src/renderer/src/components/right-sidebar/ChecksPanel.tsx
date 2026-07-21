@@ -2128,6 +2128,8 @@ export default function ChecksPanel(): React.JSX.Element {
             observedBranch !== undefined &&
             hasChecksPanelGitStatusBranchChanged({
               observedBranch,
+              observedRebasing: status.rebasing === true,
+              observedRebaseBranch: status.rebaseBranch ?? null,
               currentBranch: branch
             })
           ) {
@@ -3770,7 +3772,9 @@ export default function ChecksPanel(): React.JSX.Element {
         shouldShowChecksPanelPublishBranchAction({
           hostedReviewBlockedReason: hostedReviewCreation?.blockedReason,
           hasUpstream: publishActionRemoteStatus?.hasUpstream,
-          hasCurrentBranch: Boolean(branch)
+          // Why: mid-rebase `branch` is only the recovered review label; publishing needs a
+          // checked-out branch, and the `conflictOperation` gate alone is eventually-consistent.
+          hasCurrentBranch: isOnLiveBranch
         }))
     // Feed refresh state only for GitHub; surface a sticky hard error so its card and composer suppression persist across retries.
     const emptyRefreshInput = !isGitHubReviewContext
@@ -3807,7 +3811,8 @@ export default function ChecksPanel(): React.JSX.Element {
       refresh: emptyRefreshInput,
       gitStatusPhase: emptyGitStatusPhase,
       hasUpstream: publishActionRemoteStatus?.hasUpstream,
-      hasCurrentBranch: Boolean(branch)
+      // Why: publish/sync workflow actions need a checked-out branch, not the recovered label.
+      hasCurrentBranch: isOnLiveBranch
     })
     const emptyStateCopy = { title: reviewState.title, description: reviewState.description }
     const reviewStateAutoRetryText =
