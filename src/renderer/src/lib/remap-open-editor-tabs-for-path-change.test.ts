@@ -250,6 +250,62 @@ describe('remapOpenEditorTabsForPathChange', () => {
     expect(useAppStore.getState().editorDrafts[moved.id]).toBe('dirty windows work')
   })
 
+  it('rebuilds the moved path across WSL UNC aliases without fabricating segments', () => {
+    // The shared matcher equates \\wsl$\Ubuntu and \\wsl.localhost\ubuntu (same
+    // filesystem), but they differ in raw length — a raw slice(fromPath.length)
+    // would corrupt the destination. Segment-count reconstruction must not.
+    const state = useAppStore.getState()
+    state.openFile(
+      {
+        filePath: '\\\\wsl.localhost\\ubuntu\\repo\\src\\a.ts',
+        relativePath: 'src\\a.ts',
+        worktreeId: 'wt-1',
+        language: 'typescript',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+    const id = useAppStore.getState().openFiles[0]!.id
+    state.setEditorDraft(id, 'wsl draft')
+    state.markFileDirty(id, true)
+
+    const result = remapOpenEditorTabsForPathChange({
+      fromPath: '\\\\wsl$\\Ubuntu\\repo\\src',
+      toPath: '\\\\wsl$\\Ubuntu\\repo\\dst',
+      worktreePath: '\\\\wsl$\\Ubuntu\\repo',
+      worktreeId: 'wt-1'
+    })
+
+    expect(result.ok).toBe(true)
+    const moved = useAppStore.getState().openFiles[0]!
+    expect(moved.filePath).toBe('\\\\wsl$\\Ubuntu\\repo\\dst\\a.ts')
+    expect(useAppStore.getState().editorDrafts[moved.id]).toBe('wsl draft')
+  })
+
+  it('rebuilds the moved path when the source root has duplicate separators', () => {
+    const state = useAppStore.getState()
+    state.openFile(
+      {
+        filePath: 'C:\\Repo\\Src\\deep\\a.ts',
+        relativePath: 'Src\\deep\\a.ts',
+        worktreeId: 'wt-1',
+        language: 'typescript',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+
+    remapOpenEditorTabsForPathChange({
+      fromPath: 'C:\\Repo\\\\Src',
+      toPath: 'C:\\Repo\\Dst',
+      worktreePath: 'C:\\Repo',
+      worktreeId: 'wt-1'
+    })
+
+    // Nested suffix preserved, no dropped or doubled separator.
+    expect(useAppStore.getState().openFiles[0]!.filePath).toBe('C:\\Repo\\Dst\\deep\\a.ts')
+  })
+
   it('clears the untitled marker when remapping a renamed new markdown file', () => {
     const state = useAppStore.getState()
     const oldPath = '/repo/untitled.md'

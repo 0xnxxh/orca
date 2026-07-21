@@ -63,15 +63,41 @@ function splitAbsolutePath(path: string): { prefix: string; segments: string[] }
   }
   if (normalized.startsWith('//')) {
     const segments = normalized.slice(2).split('/').filter(Boolean)
-    return {
-      prefix: `//${segments.slice(0, 2).join('/').toLowerCase()}`,
-      segments: segments.slice(2)
-    }
+    const server = (segments[0] ?? '').toLowerCase()
+    // Canonicalize the two WSL UNC aliases to one identity (matches the shared
+    // normalizer) so `\\wsl$\Distro` and `\\wsl.localhost\Distro` compare equal.
+    const prefix =
+      server === 'wsl.localhost' || server === 'wsl$'
+        ? `//wsl/${(segments[1] ?? '').toLowerCase()}`
+        : `//${segments.slice(0, 2).join('/').toLowerCase()}`
+    return { prefix, segments: segments.slice(2) }
   }
   if (normalized.startsWith('/')) {
     return { prefix: '/', segments: normalized.slice(1).split('/').filter(Boolean) }
   }
   return { prefix: '', segments: normalized.split('/').filter(Boolean) }
+}
+
+// Rebuild a moved descendant's path WITHOUT raw-length slicing. The shared
+// containment check matches paths equal under normalization but differing in raw
+// length (wsl$ vs wsl.localhost aliases, duplicate/trailing separators), so
+// `slice(fromPath.length)` would fabricate a path. Derive the suffix by segment
+// count from the normalized relative path, then re-emit the ORIGINAL-case tail of
+// filePath onto toPath in toPath's separator style.
+function computeMovedPath(fromPath: string, toPath: string, filePath: string): string {
+  const suffix = relativePathInsideRoot(fromPath, filePath)
+  if (suffix === null) {
+    // Selection already matched, so this is unreachable; degrade to the raw splice.
+    return toPath + filePath.slice(fromPath.length)
+  }
+  if (suffix === '') {
+    return toPath
+  }
+  const segmentCount = suffix.split('/').filter(Boolean).length
+  const rawSegments = filePath.split(/[\\/]+/).filter(Boolean)
+  const tail = rawSegments.slice(rawSegments.length - segmentCount)
+  const separator = toPath.includes('\\') ? '\\' : '/'
+  return `${toPath.replace(/[\\/]+$/, '')}${separator}${tail.join(separator)}`
 }
 
 function getRelativePathFromRoot(rootPath: string, candidatePath: string): string {
@@ -88,10 +114,10 @@ function getRelativePathFromRoot(rootPath: string, candidatePath: string): strin
 
   // Windows drive/UNC segments are case-insensitive, so a case-only difference
   // is the SAME directory and must not emit a spurious `..`. The WSL Linux suffix
-  // (prefix //wsl…) stays case-sensitive; POSIX roots stay case-sensitive.
+  // (canonical prefix //wsl/<distro>) stays case-sensitive, as do POSIX roots.
   const foldCase =
     /^[a-z]:$/i.test(root.prefix) ||
-    (root.prefix.startsWith('//') && !root.prefix.startsWith('//wsl'))
+    (root.prefix.startsWith('//') && !root.prefix.startsWith('//wsl/'))
   const sameSegment = (a: string, b: string): boolean =>
     foldCase ? a.toLowerCase() === b.toLowerCase() : a === b
 
@@ -173,7 +199,7 @@ export function remapOpenEditorTabsForPathChange({
   // close+reopen: preserves the full OpenFile + all id-keyed state and closes
   // the watcher-race window that close/reopen opened.
   const updatedPathOf = (file: { filePath: string }): string =>
-    toPath + file.filePath.slice(fromPath.length)
+    computeMovedPath(fromPath, toPath, file.filePath)
   const relativeOf = (file: {
     filePath: string
     relativePath: string
