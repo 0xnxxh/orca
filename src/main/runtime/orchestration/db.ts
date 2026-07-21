@@ -61,6 +61,23 @@ function addLifecycleRejectionMarker(payload: string | null, reason: string): st
   })
 }
 
+function stampResolvedLifecycleIds(
+  payload: string | null,
+  taskId: string,
+  dispatchId: string
+): string {
+  let parsed: Record<string, unknown> = {}
+  try {
+    const value: unknown = payload ? JSON.parse(payload) : {}
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      parsed = value as Record<string, unknown>
+    }
+  } catch {
+    // Fallback resolution only reaches this path with object/empty payloads.
+  }
+  return JSON.stringify({ ...parsed, taskId, dispatchId })
+}
+
 const SQLITE_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/
 
 function exposeUtcTimestamp(timestamp: string | null): string | null {
@@ -383,6 +400,16 @@ export class OrchestrationDb {
       )
       .run(`Rejected ${message.type}: ${message.subject}`, body, payload, messageId)
     return this.getMessageById(messageId)
+  }
+
+  // Why: stamp fallback-resolved ids onto a null-id worker_done so a later re-read takes the stable id path instead of re-resolving against a newer dispatch (#7429).
+  stampResolvedWorkerDoneIds(messageId: string, taskId: string, dispatchId: string): void {
+    const message = this.getMessageById(messageId)
+    if (!message || message.type !== 'worker_done') {
+      return
+    }
+    const payload = stampResolvedLifecycleIds(message.payload, taskId, dispatchId)
+    this.db.prepare('UPDATE messages SET payload = ? WHERE id = ?').run(payload, messageId)
   }
 
   // Why: delivered_at IS NULL filter — push-on-idle delivers each row at most once; read (set only by check) wouldn't prevent replay.

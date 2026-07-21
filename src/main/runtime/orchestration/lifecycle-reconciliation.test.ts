@@ -432,6 +432,41 @@ describe('lifecycle reconciliation', () => {
     expect(db.getDispatchContextById(dispatch.id)?.status).toBe('completed')
   })
 
+  it('does not let a re-read of a fallback-resolved worker_done complete a later dispatch to the same pane', () => {
+    db = new OrchestrationDb(':memory:')
+    const taskA = db.createTask({ spec: 'work A' })
+    const dispatchA = db.createDispatchContext(taskA.id, 'term_worker', `tab_w:${LEAF_A}`)
+    const done = db.insertMessage({
+      from: 'term_worker',
+      to: 'term_coordinator',
+      subject: 'Done',
+      type: 'worker_done',
+      payload: JSON.stringify({}),
+      senderPaneKey: `tab_w:${LEAF_A}`
+    })
+
+    // First reconcile completes A via the sole-active-dispatch fallback.
+    expect(reconcileLifecycleMessage(db, done)).toMatchObject({
+      action: 'completed',
+      taskId: taskA.id,
+      dispatchId: dispatchA.id
+    })
+
+    // The same pane now owns a fresh dispatch B.
+    const taskB = db.createTask({ spec: 'work B' })
+    const dispatchB = db.createDispatchContext(taskB.id, 'term_worker', `tab_w:${LEAF_A}`)
+
+    // Re-reading the ORIGINAL message (as the coordinator does) must re-target A, not B.
+    const reread = db.getMessageById(done.id)
+    expect(reread && reconcileLifecycleMessage(db, reread)).toMatchObject({
+      action: 'completed',
+      taskId: taskA.id,
+      dispatchId: dispatchA.id
+    })
+    expect(db.getTask(taskB.id)?.status).toBe('dispatched')
+    expect(db.getDispatchContextById(dispatchB.id)?.status).toBe('dispatched')
+  })
+
   it('ignores a null-id worker_done sent from a foreign pane and handle', () => {
     db = new OrchestrationDb(':memory:')
     const task = db.createTask({ spec: 'work' })

@@ -252,7 +252,10 @@ function resolveWorkerDoneTarget(
 
   const fallback = db.getSoleActiveDispatchForSender(msg.from_handle, msg.sender_pane_key)
   if (fallback && hasLifecycleAuthority(fallback, msg)) {
-    return { taskId: taskId || fallback.task_id, dispatchId: dispatchId || fallback.id }
+    const resolved = { taskId: taskId || fallback.task_id, dispatchId: dispatchId || fallback.id }
+    // Why: persist before completion so a re-read of this same message uses the recorded ids; else the sole-dispatch fallback would re-resolve onto a later dispatch B and wrongly complete it (#7429).
+    db.stampResolvedWorkerDoneIds(msg.id, resolved.taskId, resolved.dispatchId)
+    return resolved
   }
 
   onLog(
