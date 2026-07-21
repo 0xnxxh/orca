@@ -182,6 +182,48 @@ describe('PtyHandler', () => {
     expect(handler.activePtyCount).toBe(1)
   })
 
+  it("does not forward Orca's own NODE_ENV into the spawned shell", async () => {
+    // Why: NODE_ENV in the relay host process is a build-mode flag, not the
+    // user's; leaking it breaks `next build` and Vitest in the terminal.
+    const previous = process.env.NODE_ENV
+    process.env.NODE_ENV = 'development'
+    try {
+      await dispatcher.callRequest('pty.spawn', { cols: 80, rows: 24 })
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previous
+      }
+    }
+
+    const spawnOptions = mockPtySpawn.mock.calls[0][2] as { env: Record<string, string> }
+    expect(spawnOptions.env.NODE_ENV).toBeUndefined()
+    expect(spawnOptions.env.PATH).toBe(process.env.PATH)
+  })
+
+  it('keeps a renderer-supplied NODE_ENV for the spawned shell', async () => {
+    // Why: only the ambient value is stripped; an explicit request still wins.
+    const previous = process.env.NODE_ENV
+    process.env.NODE_ENV = 'development'
+    try {
+      await dispatcher.callRequest('pty.spawn', {
+        cols: 80,
+        rows: 24,
+        env: { NODE_ENV: 'production' }
+      })
+    } finally {
+      if (previous === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previous
+      }
+    }
+
+    const spawnOptions = mockPtySpawn.mock.calls[0][2] as { env: Record<string, string> }
+    expect(spawnOptions.env.NODE_ENV).toBe('production')
+  })
+
   it('normalizes a missing native binding as degraded node-pty availability', async () => {
     mockPtySpawn.mockImplementationOnce(() => {
       throw new Error(

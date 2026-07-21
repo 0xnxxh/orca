@@ -441,6 +441,44 @@ describe('LocalPtyProvider', () => {
       expect(spawnCall[2].env.CUSTOM_VAR).toBe('custom-value')
     })
 
+    it('does not inherit NODE_ENV from the Orca process env', async () => {
+      // Why: NODE_ENV in Orca's process is Orca's build mode (electron-vite sets
+      // `development` in dev runs); leaking it breaks `next build` and Vitest.
+      const previous = process.env.NODE_ENV
+      process.env.NODE_ENV = 'development'
+      try {
+        await provider.spawn({ cols: 80, rows: 24 })
+      } finally {
+        if (previous === undefined) {
+          delete process.env.NODE_ENV
+        } else {
+          process.env.NODE_ENV = previous
+        }
+      }
+
+      const spawnCall = spawnMock.mock.calls.at(-1)!
+      expect(spawnCall[2].env.NODE_ENV).toBeUndefined()
+      expect(spawnCall[2].env.PATH).toBe(process.env.PATH)
+    })
+
+    it('keeps an explicitly requested NODE_ENV for spawned terminals', async () => {
+      // Why: only the ambient value is stripped; a caller-supplied NODE_ENV still wins.
+      const previous = process.env.NODE_ENV
+      process.env.NODE_ENV = 'development'
+      try {
+        await provider.spawn({ cols: 80, rows: 24, env: { NODE_ENV: 'production' } })
+      } finally {
+        if (previous === undefined) {
+          delete process.env.NODE_ENV
+        } else {
+          process.env.NODE_ENV = previous
+        }
+      }
+
+      const spawnCall = spawnMock.mock.calls.at(-1)!
+      expect(spawnCall[2].env.NODE_ENV).toBe('production')
+    })
+
     it('suppresses the first-run Powerlevel10k wizard for spawned terminals', async () => {
       await provider.spawn({ cols: 80, rows: 24 })
 

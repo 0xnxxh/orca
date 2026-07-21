@@ -37,6 +37,7 @@ import {
 import type { ShellReadySignal } from './local-pty-shell-ready'
 import { removeInheritedNoColor } from '../pty/terminal-color-env'
 import { removeAppImageRuntimeEnv } from '../pty/appimage-terminal-env'
+import { stripInheritedBuildModeEnv } from '../pty/build-mode-env'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
 import { addWslEnvKeys } from '../wsl-env'
 import {
@@ -635,7 +636,7 @@ export class LocalPtyProvider implements IPtyProvider {
     validateWorkingDirectory(validationCwd)
 
     const spawnEnv: Record<string, string> = {
-      ...mergeGitConfigEnvProtocol(process.env, args.env),
+      ...mergeGitConfigEnvProtocol(stripInheritedBuildModeEnv(process.env), args.env),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       TERM_PROGRAM: 'Orca',

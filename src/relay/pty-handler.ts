@@ -39,6 +39,7 @@ import {
 } from '../shared/git-credential-prompt-env'
 import { isTuiAgent } from '../shared/tui-agent-config'
 import { forceKillPosixPtyProcessGroups } from '../main/pty/posix-pty-process-groups'
+import { stripInheritedBuildModeEnv } from '../main/pty/build-mode-env'
 import {
   PTY_STARTUP_INGRESS_VERSION,
   PtyStartupIngress,
@@ -387,7 +388,7 @@ export class PtyHandler {
   ): Record<string, string> {
     const baseEnv = mergeGitConfigEnvProtocol(
       {
-        ...process.env,
+        ...stripInheritedBuildModeEnv(process.env),
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
         TERM_PROGRAM: 'Orca',
