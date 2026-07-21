@@ -41,12 +41,22 @@ export function commitRichMarkdownSerialization(
     return { markdown: refs.lastCommittedMarkdownRef.current, didSerialize: false }
   }
 
-  const reconciled = reconcileSerializedMarkdown({
-    originalSource: refs.originalSourceRef.current,
-    baseCanonical: refs.baseCanonicalRef.current,
-    edited,
-    roundTrip
-  })
+  let reconciled: string
+  try {
+    reconciled = reconcileSerializedMarkdown({
+      originalSource: refs.originalSourceRef.current,
+      baseCanonical: refs.baseCanonicalRef.current,
+      edited,
+      roundTrip
+    })
+  } catch (error) {
+    // Why: reconcile is best-effort style preservation that already degrades to canonical `edited`
+    // on any internal mismatch; a *thrown* failure must degrade the same way, not crash Cmd+S or
+    // silently stall auto-save by leaving the draft un-updated (STA-2027/#9158). Worst case is a
+    // canonical save (#6080), never lost content.
+    console.error('[editor] markdown reconcile failed; falling back to canonical output', error)
+    reconciled = edited
+  }
 
   refs.originalSourceRef.current = reconciled
   // Why: reconciled ≡ edited semantically, so its canonical form is `edited`
