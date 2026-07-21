@@ -12,6 +12,9 @@ const terminalHarness = vi.hoisted(() => ({
     dispose: ReturnType<typeof vi.fn>
     resize: ReturnType<typeof vi.fn>
     reset: ReturnType<typeof vi.fn>
+    paste: ReturnType<typeof vi.fn>
+    selectionText: string
+    customKeyHandler: ((event: KeyboardEvent) => boolean) | null
   }[],
   userInputListener: null as (() => void) | null,
   userInputDispose: vi.fn()
@@ -23,6 +26,8 @@ vi.mock('@xterm/xterm', () => ({
     buffer = { active: { cursorY: 0 } }
     writeCallbacks: (() => void)[] = []
     onDataListener: ((data: string) => void) | null = null
+    customKeyHandler: ((event: KeyboardEvent) => boolean) | null = null
+    selectionText = ''
     write = vi.fn((_data: string, callback?: () => void) => {
       if (callback) {
         this.writeCallbacks.push(callback)
@@ -33,6 +38,11 @@ vi.mock('@xterm/xterm', () => ({
     dispose = vi.fn()
     resize = vi.fn()
     reset = vi.fn()
+    paste = vi.fn()
+    getSelection = vi.fn(() => this.selectionText)
+    attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+      this.customKeyHandler = handler
+    })
     onData = vi.fn((listener: (data: string) => void) => {
       this.onDataListener = listener
       return { dispose: vi.fn() }
@@ -55,9 +65,12 @@ vi.mock('@/components/terminal-pane/terminal-user-input-signal', () => ({
 vi.mock('@/components/terminal-pane/use-system-prefers-dark', () => ({
   useSystemPrefersDark: () => false
 }))
-vi.mock('@/store', () => ({
-  useAppStore: (selector: (state: { settings: null }) => unknown) => selector({ settings: null })
-}))
+vi.mock('@/store', () => {
+  const state = { settings: null, keybindings: {} }
+  const useAppStore = (selector: (s: typeof state) => unknown): unknown => selector(state)
+  useAppStore.getState = (): typeof state => state
+  return { useAppStore }
+})
 
 import { AgentTerminalPreview } from './AgentTerminalPreview'
 
@@ -66,16 +79,21 @@ describe('AgentTerminalPreview', () => {
   const ack = vi.fn(async () => {})
   const unsubscribe = vi.fn(async () => {})
   const connect = vi.fn()
+  const readClipboardText = vi.fn(async () => 'clip-text')
+  const writeClipboardText = vi.fn(async () => {})
   let emitData: ((payload: unknown) => void) | null
+  let emitAppMenuPaste: (() => void) | null
 
   beforeEach(() => {
     terminalHarness.instances.length = 0
     terminalHarness.userInputListener = null
     emitData = null
+    emitAppMenuPaste = null
     connect.mockResolvedValue({
       snapshot: { data: '', cols: 80, rows: 24, seq: 1 },
       replay: []
     })
+    readClipboardText.mockResolvedValue('clip-text')
     Object.assign(window, {
       api: {
         terminalPreview: {
@@ -85,6 +103,14 @@ describe('AgentTerminalPreview', () => {
           unsubscribe,
           onData: (listener: (payload: unknown) => void) => {
             emitData = listener
+            return vi.fn()
+          }
+        },
+        ui: {
+          readClipboardText,
+          writeClipboardText,
+          onAppMenuPaste: (listener: () => void) => {
+            emitAppMenuPaste = listener
             return vi.fn()
           }
         }
@@ -118,6 +144,78 @@ describe('AgentTerminalPreview', () => {
 
     act(() => terminal.writeCallbacks.shift()?.())
     expect(ack).toHaveBeenCalledWith('pty-1', 4)
+  })
+
+  it('copies the terminal selection on the copy chord and blocks xterm handling', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    terminal.selectionText = 'selected text'
+    const handled = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', { key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true })
+    )
+    expect(handled).toBe(false)
+    expect(writeClipboardText).toHaveBeenCalledWith('selected text')
+  })
+
+  it('lets the copy chord fall through to xterm when nothing is selected', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    const handled = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', { key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true })
+    )
+    expect(handled).toBe(true)
+    expect(writeClipboardText).not.toHaveBeenCalled()
+  })
+
+  it('pastes clipboard text on the app-menu paste signal while the preview owns focus', async () => {
+    const view = render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    expect(emitAppMenuPaste).not.toBeNull()
+
+    const host = view.container.querySelector<HTMLElement>('.origin-bottom-left')!
+    const focusTarget = document.createElement('input')
+    host.appendChild(focusTarget)
+    focusTarget.focus()
+
+    act(() => emitAppMenuPaste?.())
+    await waitFor(() => expect(terminal.paste).toHaveBeenCalledWith('clip-text'))
+  })
+
+  it('ignores the app-menu paste signal when focus is outside the preview', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    expect(emitAppMenuPaste).not.toBeNull()
+
+    await act(async () => emitAppMenuPaste?.())
+    expect(readClipboardText).not.toHaveBeenCalled()
+    expect(terminalHarness.instances[0]!.paste).not.toHaveBeenCalled()
+  })
+
+  it('leaves plain Ctrl+V to the Edit-menu accelerator but handles the shifted paste chord', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    const plain = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', { key: 'v', code: 'KeyV', ctrlKey: true })
+    )
+    expect(plain).toBe(true)
+    expect(readClipboardText).not.toHaveBeenCalled()
+
+    const shifted = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', { key: 'V', code: 'KeyV', ctrlKey: true, shiftKey: true })
+    )
+    expect(shifted).toBe(false)
+    await waitFor(() => expect(terminal.paste).toHaveBeenCalledWith('clip-text'))
+    expect(readClipboardText).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the existing terminal visible while a resync snapshot is captured', async () => {

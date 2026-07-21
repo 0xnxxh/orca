@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { buildDefaultTerminalOptions } from '@/lib/pane-manager/pane-terminal-options'
+import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { subscribeToTerminalUserInput } from '@/components/terminal-pane/terminal-user-input-signal'
+import { TERMINAL_PASTE_MAX_BYTES } from '@/components/terminal-pane/terminal-paste-limits'
 import { composeActiveTerminalTheme } from '@/components/terminal-pane/terminal-appearance'
 import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import { translate } from '@/i18n/i18n'
 import { getBuiltinTheme, resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
+import { keybindingMatchesAction } from '../../../../shared/keybindings'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import type { TerminalPreviewDataPayload } from '../../../../shared/terminal-preview'
@@ -115,6 +118,56 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
       })
     }
 
+    const pasteClipboardText = async (): Promise<void> => {
+      let text: string
+      try {
+        text = await window.api.ui.readClipboardText({ maxBytes: TERMINAL_PASTE_MAX_BYTES })
+      } catch {
+        return
+      }
+      if (!disposed && terminal && text) {
+        // Why: paste() flows through onData as user input, so the existing PTY routing applies.
+        terminal.paste(text)
+      }
+    }
+
+    const installClipboardShortcuts = (): void => {
+      if (!terminal) {
+        return
+      }
+      const platform = getShortcutPlatform()
+      terminal.attachCustomKeyEventHandler((event) => {
+        if (event.type !== 'keydown') {
+          return true
+        }
+        const keybindings = useAppStore.getState().keybindings
+        if (keybindingMatchesAction('terminal.copySelection', event, platform, keybindings)) {
+          const selection = terminal?.getSelection()
+          if (!selection) {
+            return true
+          }
+          void window.api.ui.writeClipboardText(selection).catch(() => undefined)
+          return false
+        }
+        // Why: plain Mod+V is the Edit-menu accelerator, which reaches this window as ui:appMenuPaste — matching it here too would paste twice.
+        const isMenuPasteChord =
+          (platform === 'darwin'
+            ? event.metaKey && !event.ctrlKey
+            : event.ctrlKey && !event.metaKey) &&
+          !event.altKey &&
+          !event.shiftKey &&
+          event.key.toLowerCase() === 'v'
+        if (
+          !isMenuPasteChord &&
+          keybindingMatchesAction('terminal.paste', event, platform, keybindings)
+        ) {
+          void pasteClipboardText()
+          return false
+        }
+        return true
+      })
+    }
+
     const installInputRouting = (): void => {
       if (!terminal) {
         return
@@ -158,6 +211,7 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
           return
         }
         installInputRouting()
+        installClipboardShortcuts()
       } else if (replaceExisting) {
         // Why: keep the old frame visible during capture, then atomically replace it once the authoritative snapshot arrives.
         terminal.resize(
@@ -235,6 +289,16 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
       replayConnection(connection, replaceExisting, () => void setup(true))
     }
 
+    // Why: the popout has no TerminalPane/useAppMenuPaste, so the Edit menu's
+    // Cmd/Ctrl+V (routed to the focused window as ui:appMenuPaste) would
+    // otherwise be dropped and paste would silently do nothing here.
+    const offAppMenuPaste = window.api.ui.onAppMenuPaste(() => {
+      const active = document.activeElement
+      if (active && container.contains(active)) {
+        void pasteClipboardText()
+      }
+    })
+
     offData = window.api.terminalPreview.onData((payload) => {
       if (payload.ptyId !== ptyId) {
         return
@@ -253,6 +317,7 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
       if (retryTimer) {
         clearTimeout(retryTimer)
       }
+      offAppMenuPaste()
       offData?.()
       userInputDisposable?.dispose()
       void window.api.terminalPreview.unsubscribe(ptyId)
