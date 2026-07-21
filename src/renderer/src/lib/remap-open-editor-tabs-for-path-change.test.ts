@@ -307,6 +307,30 @@ describe('remapOpenEditorTabsForPathChange', () => {
     expect(useAppStore.getState().openFiles[0]!.filePath).toBe('/repo/dst/a\\b.txt')
   })
 
+  it('keeps `/` for a POSIX destination whose ancestor contains a legal backslash', () => {
+    const state = useAppStore.getState()
+    state.openFile(
+      {
+        filePath: '/srv/team\\repo/src/a.ts',
+        relativePath: 'src/a.ts',
+        worktreeId: 'wt-1',
+        language: 'typescript',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+
+    remapOpenEditorTabsForPathChange({
+      fromPath: '/srv/team\\repo/src',
+      toPath: '/srv/team\\repo/dst',
+      worktreePath: '/srv/team\\repo',
+      worktreeId: 'wt-1'
+    })
+
+    // POSIX flavor: the separator stays `/`; the ancestor backslash is untouched.
+    expect(useAppStore.getState().openFiles[0]!.filePath).toBe('/srv/team\\repo/dst/a.ts')
+  })
+
   it('rebuilds the moved path when the source root has duplicate separators', () => {
     const state = useAppStore.getState()
     state.openFile(
