@@ -1044,7 +1044,7 @@ function isSameEditorOwner(
   )
 }
 
-function buildOwnedEditorFileId(
+export function buildOwnedEditorFileId(
   filePath: string,
   worktreeId: string,
   runtimeEnvironmentId: string | null | undefined
@@ -1114,7 +1114,7 @@ function getReusableOpenFileModes(mode: OpenFile['mode']): readonly OpenFile['mo
   return [mode]
 }
 
-function resolveEditorFileIdForOwner(
+export function resolveEditorFileIdForOwner(
   state: Pick<EditorSlice, 'openFiles'>,
   filePath: string,
   worktreeId: string,
@@ -2699,7 +2699,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
             ? { markdownPreviewSourceFileId: rekey.newMarkdownPreviewSourceFileId }
             : {}),
           ...(rekey.consumeUntitled
-            ? { isUntitled: false, deleteUntouchedOnClose: undefined }
+            ? { isUntitled: undefined, deleteUntouchedOnClose: undefined }
             : {}),
           ...(gatesEcho
             ? {

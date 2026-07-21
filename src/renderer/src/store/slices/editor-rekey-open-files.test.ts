@@ -185,7 +185,7 @@ describe('rekeyOpenFilesForPathChange', () => {
     })
 
     const moved = useAppStore.getState().openFiles[0]!
-    expect(moved.isUntitled).toBe(false)
+    expect(moved.isUntitled).toBeUndefined()
     expect(moved.filePath).toBe('/repo/named.md')
   })
 
