@@ -1,6 +1,9 @@
 import type { MutableRefObject } from 'react'
 import type { Editor } from '@tiptap/react'
-import { reconcileSerializedMarkdown } from './rich-markdown-source-reconcile'
+import {
+  reconcileSerializedMarkdown,
+  restoreMarkdownSourceEol
+} from './rich-markdown-source-reconcile'
 
 export type RichMarkdownReconcileRefs = {
   /** Current on-disk source bytes; updated to the reconciled output each commit. */
@@ -50,12 +53,9 @@ export function commitRichMarkdownSerialization(
       roundTrip
     })
   } catch (error) {
-    // Why: reconcile is best-effort style preservation that already degrades to canonical `edited`
-    // on any internal mismatch; a *thrown* failure must degrade the same way, not crash Cmd+S or
-    // silently stall auto-save by leaving the draft un-updated (STA-2027/#9158). Worst case is a
-    // canonical save (#6080), never lost content.
+    // Why: style reconciliation is best-effort; preserve content and source EOL when it fails.
     console.error('[editor] markdown reconcile failed; falling back to canonical output', error)
-    reconciled = edited
+    reconciled = restoreMarkdownSourceEol(edited, refs.originalSourceRef.current)
   }
 
   refs.originalSourceRef.current = reconciled

@@ -255,9 +255,7 @@ export function createRichMarkdownEditorConfig(params: EditorConfigParams): UseE
             onContentChangeRef.current(markdown)
           }
         } catch (error) {
-          // Why: commit already tolerates teardown (didSerialize:false) and reconcile failures
-          // (canonical fallback), so this only guards truly unexpected errors — log rather than
-          // swallow so a debounced serialize can't fail invisibly (STA-2027/#9158).
+          // Why: teardown and reconcile failures are handled above; other failures must stay observable.
           console.error('[editor] rich markdown serialize (debounced) failed', error)
         }
       }, 300)
