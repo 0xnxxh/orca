@@ -1480,7 +1480,12 @@ export class AgentBrowserBridge {
             )
           }
           return {
-            result: result.value !== undefined ? String(result.value) : (result.description ?? ''),
+            result:
+              result.value !== undefined
+                ? typeof result.value === 'object' && result.value !== null
+                  ? JSON.stringify(result.value)
+                  : String(result.value)
+                : (result.description ?? ''),
             origin: wc.getURL()
           }
         } catch (error) {

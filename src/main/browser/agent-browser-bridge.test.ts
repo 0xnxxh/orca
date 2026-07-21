@@ -1667,6 +1667,20 @@ describe('AgentBrowserBridge', () => {
     }
   })
 
+  it('fails closed when direct navigation is aborted', async () => {
+    const wc = mockWebContents(100, 'https://example.com/current', 'Current')
+    wc.loadURL.mockRejectedValue(
+      Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED' })
+    )
+    webContentsFromIdMock.mockReturnValue(wc)
+
+    await expect(bridge.goto('https://example.com/download')).rejects.toMatchObject({
+      code: 'browser_error',
+      message: 'Failed to navigate browser page tab-1: ERR_ABORTED (-3)'
+    })
+    expect(execFileMock).not.toHaveBeenCalled()
+  })
+
   it.each([
     {
       command: 'goto',
@@ -1747,6 +1761,18 @@ describe('AgentBrowserBridge', () => {
       result: '42',
       origin: 'https://example.com/path?query=1'
     })
+    expect(execFileMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [{ answer: 42 }, '{"answer":42}'],
+    [['a', 'b'], '["a","b"]']
+  ])('preserves structured direct evaluation values as JSON text', async (value, expected) => {
+    const wc = mockWebContents(100)
+    wc.debugger.sendCommand.mockResolvedValue({ result: { value } })
+    webContentsFromIdMock.mockReturnValue(wc)
+
+    await expect(bridge.evaluate('structuredValue')).resolves.toMatchObject({ result: expected })
     expect(execFileMock).not.toHaveBeenCalled()
   })
 

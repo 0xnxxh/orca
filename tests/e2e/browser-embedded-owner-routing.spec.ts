@@ -10,6 +10,7 @@ import { test, expect } from './helpers/orca-app'
 import { ensureTerminalVisible, getActiveWorktreeId, waitForActiveWorktree } from './helpers/store'
 
 const execFileAsync = promisify(execFile)
+// Why: Unix-domain helper sockets can exceed platform path limits under macOS's long temp root.
 const shortTempRoot =
   process.platform === 'win32' ? os.tmpdir() : path.join(path.parse(os.tmpdir()).root, 'tmp')
 const helperSocketDir = mkdtempSync(path.join(shortTempRoot, 'ob-'))
@@ -228,6 +229,7 @@ test('stale helper cannot take goto or eval away from the real embedded webview'
       ok: true,
       result: { result: 'destination-webview', origin: server.destinationUrl }
     })
+    // Why: the stopped helper has no cleanup left; a PID after eval means a forbidden relaunch.
     expect(existsSync(path.join(helperSocketDir, `${sessionName}.pid`))).toBe(false)
   } finally {
     await electronApp.evaluate(() => {
