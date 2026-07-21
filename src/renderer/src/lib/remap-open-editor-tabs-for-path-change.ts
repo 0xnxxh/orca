@@ -11,6 +11,7 @@ import {
 } from '@/store/slices/editor'
 import {
   isPathInsideOrEqual,
+  isWindowsAbsolutePathLike,
   normalizeRuntimePathSeparators,
   relativePathInsideRoot
 } from '../../../shared/cross-platform-path'
@@ -81,9 +82,9 @@ function splitAbsolutePath(path: string): { prefix: string; segments: string[] }
 // Rebuild a moved descendant's path WITHOUT raw-length slicing. The shared
 // containment check matches paths equal under normalization but differing in raw
 // length (wsl$ vs wsl.localhost aliases, duplicate/trailing separators), so
-// `slice(fromPath.length)` would fabricate a path. Derive the suffix by segment
-// count from the normalized relative path, then re-emit the ORIGINAL-case tail of
-// filePath onto toPath in toPath's separator style.
+// `slice(fromPath.length)` would fabricate a path. relativePathInsideRoot returns
+// the ORIGINAL-case suffix with `/` separators (POSIX backslashes preserved as
+// filename data), which we re-emit in the destination's flavor.
 function computeMovedPath(fromPath: string, toPath: string, filePath: string): string {
   const suffix = relativePathInsideRoot(fromPath, filePath)
   if (suffix === null) {
@@ -93,11 +94,14 @@ function computeMovedPath(fromPath: string, toPath: string, filePath: string): s
   if (suffix === '') {
     return toPath
   }
-  const segmentCount = suffix.split('/').filter(Boolean).length
-  const rawSegments = filePath.split(/[\\/]+/).filter(Boolean)
-  const tail = rawSegments.slice(rawSegments.length - segmentCount)
-  const separator = toPath.includes('\\') ? '\\' : '/'
-  return `${toPath.replace(/[\\/]+$/, '')}${separator}${tail.join(separator)}`
+  const strippedToPath = toPath.replace(/[\\/]+$/, '')
+  // Flavor by SYNTAX (drive/UNC), never by "contains a backslash": a POSIX/SSH
+  // path may hold a legal backslash, so it must keep `/` and never gain one.
+  if (isWindowsAbsolutePathLike(toPath)) {
+    const separator = toPath.includes('\\') ? '\\' : '/'
+    return `${strippedToPath}${separator}${suffix.split('/').join(separator)}`
+  }
+  return `${strippedToPath}/${suffix}`
 }
 
 function getRelativePathFromRoot(rootPath: string, candidatePath: string): string {

@@ -282,6 +282,31 @@ describe('remapOpenEditorTabsForPathChange', () => {
     expect(useAppStore.getState().editorDrafts[moved.id]).toBe('wsl draft')
   })
 
+  it('preserves a legal backslash in a POSIX/SSH filename (no separator invention)', () => {
+    // Backslash is legal filename data on POSIX; the move must not treat it as a
+    // separator or emit one into the destination.
+    const state = useAppStore.getState()
+    state.openFile(
+      {
+        filePath: '/repo/src/a\\b.txt',
+        relativePath: 'src/a\\b.txt',
+        worktreeId: 'wt-1',
+        language: 'plaintext',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+
+    remapOpenEditorTabsForPathChange({
+      fromPath: '/repo/src',
+      toPath: '/repo/dst',
+      worktreePath: '/repo',
+      worktreeId: 'wt-1'
+    })
+
+    expect(useAppStore.getState().openFiles[0]!.filePath).toBe('/repo/dst/a\\b.txt')
+  })
+
   it('rebuilds the moved path when the source root has duplicate separators', () => {
     const state = useAppStore.getState()
     state.openFile(
