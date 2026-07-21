@@ -64,6 +64,27 @@ function retryFocus(window: BrowserWindow, app: Pick<App, 'focus'>, setTimer: Fo
   }, 100)
 }
 
+// Why: shared so the sync success path and the async retry/adopt callback can't
+// drift on win32 reinforcement (moveTop/pulseAlwaysOnTop) or the 100ms focus retry.
+function activateWindow(
+  window: BrowserWindow,
+  app: Pick<App, 'focus'>,
+  platform: NodeJS.Platform,
+  setTimer: FocusTimer
+): void {
+  safelyFocusApp(app)
+  safelyRevealWindow(window)
+  if (platform === 'win32') {
+    try {
+      window.moveTop()
+    } catch {
+      // Older Electron versions or destroyed windows may reject this; focus retry remains.
+    }
+    pulseAlwaysOnTop(window, setTimer)
+  }
+  retryFocus(window, app, setTimer)
+}
+
 // Why: a second-instance/activate reopen can race transient startup pressure
 // (e.g. GPU/process churn right after another launch attempt exits); one
 // swallowed throw would otherwise strand the app with no window until some
@@ -73,6 +94,7 @@ const REOPEN_RETRY_DELAY_MS = 300
 
 function openWindowWithRetry(
   opts: Pick<FocusExistingMainWindowOptions, 'app' | 'getWindow' | 'openWindow' | 'warn'>,
+  platform: NodeJS.Platform,
   setTimer: FocusTimer,
   attempt: number
 ): BrowserWindow | null {
@@ -93,10 +115,9 @@ function openWindowWithRetry(
       const window =
         existing && !existing.isDestroyed()
           ? existing
-          : openWindowWithRetry(opts, setTimer, attempt + 1)
+          : openWindowWithRetry(opts, platform, setTimer, attempt + 1)
       if (window) {
-        safelyFocusApp(opts.app)
-        safelyRevealWindow(window)
+        activateWindow(window, opts.app, platform, setTimer)
       }
     }, REOPEN_RETRY_DELAY_MS)
     return null
@@ -115,23 +136,13 @@ export function focusExistingMainWindow(
     if (!opts.app.isReady()) {
       return 'pending'
     }
-    window = openWindowWithRetry(opts, setTimer, 1)
+    window = openWindowWithRetry(opts, platform, setTimer, 1)
     if (!window) {
       return 'pending'
     }
     openedWindow = true
   }
 
-  safelyFocusApp(opts.app)
-  safelyRevealWindow(window)
-  if (platform === 'win32') {
-    try {
-      window.moveTop()
-    } catch {
-      // Older Electron versions or destroyed windows may reject this; focus retry remains.
-    }
-    pulseAlwaysOnTop(window, setTimer)
-  }
-  retryFocus(window, opts.app, setTimer)
+  activateWindow(window, opts.app, platform, setTimer)
   return openedWindow ? 'opened' : 'focused'
 }

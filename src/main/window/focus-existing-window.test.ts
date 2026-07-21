@@ -229,6 +229,43 @@ describe('focusExistingMainWindow', () => {
     expect(raceWindow.calls.focus).toHaveBeenCalledTimes(1)
   })
 
+  it('reinforces win32 activation when a window is recovered on the retry path', () => {
+    const app = makeFakeApp()
+    const timer = makeTimer()
+    const openedWindow = makeFakeWindow()
+    const warn = vi.fn()
+    let attempts = 0
+    const openWindow = vi.fn(() => {
+      attempts += 1
+      if (attempts < 2) {
+        throw new Error('transient failure')
+      }
+      return openedWindow
+    })
+
+    focusExistingMainWindow({
+      app,
+      getWindow: () => null,
+      openWindow,
+      warn,
+      platform: 'win32',
+      setTimeout: timer.setTimeout
+    })
+
+    timer.run(300)
+    // Why: the retry callback must run the same win32 reinforcement + focus retry
+    // as the sync success path, not just show/focus.
+    expect(openedWindow.calls.moveTop).toHaveBeenCalledTimes(1)
+    expect(openedWindow.calls.setAlwaysOnTop).toHaveBeenCalledWith(true)
+
+    timer.run(100)
+    expect(app.focus).toHaveBeenCalledTimes(2)
+    expect(openedWindow.calls.focus).toHaveBeenCalledTimes(2)
+
+    timer.run(250)
+    expect(openedWindow.calls.setAlwaysOnTop).toHaveBeenLastCalledWith(false)
+  })
+
   it('gives up after exhausting reopen retries', () => {
     const timer = makeTimer()
     const warn = vi.fn()
@@ -251,6 +288,9 @@ describe('focusExistingMainWindow', () => {
     timer.run(300)
     // Why: REOPEN_MAX_ATTEMPTS caps total tries at 3 (1 initial + 2 retries);
     // a further run() call must not schedule or fire a 4th attempt.
+    expect(openWindow).toHaveBeenCalledTimes(3)
+    expect(warn).toHaveBeenCalledTimes(3)
+    timer.run(300)
     expect(openWindow).toHaveBeenCalledTimes(3)
     expect(warn).toHaveBeenCalledTimes(3)
   })
