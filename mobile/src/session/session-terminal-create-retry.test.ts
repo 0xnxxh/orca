@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import { LogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
-import { sendSessionTerminalCreateResilient } from './session-terminal-create-retry'
+import {
+  sendSessionTerminalCreateResilient,
+  supportsSessionTerminalCreateCutoverRetry
+} from './session-terminal-create-retry'
 
 type Attempt = { method: string; params: Record<string, unknown> }
 
@@ -34,6 +37,14 @@ function scriptedClient(
 const params = { worktree: 'id:w', clientMutationId: 'mobile-create:key', agent: 'codex' }
 
 describe('sendSessionTerminalCreateResilient', () => {
+  it('requires the explicit disconnect-safe idempotency capability', () => {
+    expect(supportsSessionTerminalCreateCutoverRetry(undefined)).toBe(false)
+    expect(supportsSessionTerminalCreateCutoverRetry(['terminal.quick-commands.v1'])).toBe(false)
+    expect(
+      supportsSessionTerminalCreateCutoverRetry(['session.tabs.create-terminal-idempotency.v1'])
+    ).toBe(true)
+  })
+
   it('replays the same params after a connection-migration cutover', async () => {
     const attempts: Attempt[] = []
     const client = scriptedClient(
@@ -42,7 +53,7 @@ describe('sendSessionTerminalCreateResilient', () => {
     )
 
     const response = await sendSessionTerminalCreateResilient(client, params, {
-      hostDedupesTerminalCreates: true
+      supportsIdempotentCutoverRetry: true
     })
 
     expect(response.ok).toBe(true)
@@ -60,7 +71,7 @@ describe('sendSessionTerminalCreateResilient', () => {
     )
 
     const response = await sendSessionTerminalCreateResilient(client, params, {
-      hostDedupesTerminalCreates: true
+      supportsIdempotentCutoverRetry: true
     })
 
     expect(response.ok).toBe(true)
@@ -75,7 +86,9 @@ describe('sendSessionTerminalCreateResilient', () => {
     )
 
     await expect(
-      sendSessionTerminalCreateResilient(client, params, { hostDedupesTerminalCreates: false })
+      sendSessionTerminalCreateResilient(client, params, {
+        supportsIdempotentCutoverRetry: false
+      })
     ).rejects.toThrow('RPC interrupted by connection migration')
     expect(attempts).toHaveLength(1)
   })
@@ -88,7 +101,9 @@ describe('sendSessionTerminalCreateResilient', () => {
     )
 
     await expect(
-      sendSessionTerminalCreateResilient(client, params, { hostDedupesTerminalCreates: true })
+      sendSessionTerminalCreateResilient(client, params, {
+        supportsIdempotentCutoverRetry: true
+      })
     ).rejects.toThrow('relay RPC timed out')
     expect(attempts).toHaveLength(1)
   })
@@ -98,7 +113,9 @@ describe('sendSessionTerminalCreateResilient', () => {
     const client = scriptedClient([{ throws: new LogicalClientCutoverError() }], attempts)
 
     await expect(
-      sendSessionTerminalCreateResilient(client, params, { hostDedupesTerminalCreates: true })
+      sendSessionTerminalCreateResilient(client, params, {
+        supportsIdempotentCutoverRetry: true
+      })
     ).rejects.toThrow('RPC interrupted by connection migration')
     // 1 initial attempt + 5 replays.
     expect(attempts).toHaveLength(6)

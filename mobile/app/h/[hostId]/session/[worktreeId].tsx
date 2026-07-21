@@ -77,10 +77,13 @@ import { SessionDockColumn } from '../../../../src/session/SessionDockColumn'
 import { MobileSessionHeaderIconButton } from '../../../../src/session/MobileSessionHeaderIconButton'
 import { MobileSessionHeaderMoreActionsSheet } from '../../../../src/session/MobileSessionHeaderMoreActionsSheet'
 import { QuickCommandsSheet } from '../../../../src/session/QuickCommandsSheet'
-import { sendSessionTerminalCreateResilient } from '../../../../src/session/session-terminal-create-retry'
+import {
+  sendSessionTerminalCreateResilient,
+  supportsSessionTerminalCreateCutoverRetry
+} from '../../../../src/session/session-terminal-create-retry'
 import {
   buildMobileQuickCommandLaunch,
-  describeQuickCommandLaunchFailure,
+  formatQuickCommandFailure,
   supportsMobileQuickCommands,
   type MobileQuickCommandLaunch
 } from '../../../../src/terminal/quick-commands'
@@ -1054,6 +1057,7 @@ export default function SessionScreen() {
     null
   )
   const [quickCommandsSupported, setQuickCommandsSupported] = useState<boolean | null>(null)
+  const terminalCreateCutoverRetrySupportedRef = useRef(false)
   // Why: stable callbacks (handleFileTap) read the live value via this ref, since
   // the capability probe resolves after the callbacks are created.
   const browserScreencastSupportedRef = useRef(browserScreencastSupported)
@@ -2309,6 +2313,7 @@ export default function SessionScreen() {
   const hostQueryReplyInputSupportedRef = useRef(false)
 
   useEffect(() => {
+    terminalCreateCutoverRetrySupportedRef.current = false
     if (!client || connState !== 'connected') {
       setBrowserScreencastSupported(null)
       setAgentSessionHistorySupported(null)
@@ -2336,6 +2341,9 @@ export default function SessionScreen() {
           status.capabilities?.includes(MOBILE_AI_VAULT_CAPABILITY) === true
         )
         setQuickCommandsSupported(supportsMobileQuickCommands(status.capabilities))
+        terminalCreateCutoverRetrySupportedRef.current = supportsSessionTerminalCreateCutoverRetry(
+          status.capabilities
+        )
         // Why: hosts without this capability strip inputKind from terminal.send,
         // so a forwarded xterm reply would become floor-stealing shell input.
         hostQueryReplyInputSupportedRef.current =
@@ -3759,9 +3767,7 @@ export default function SessionScreen() {
           select: true,
           navigation: 'caller'
         },
-        // Why: quick-commands support implies the createTerminal mutation-id
-        // dedupe (it shipped earlier), so a cutover replay cannot double-create.
-        { hostDedupesTerminalCreates: quickCommandsSupported === true }
+        { supportsIdempotentCutoverRetry: terminalCreateCutoverRetrySupportedRef.current }
       )
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
@@ -3854,10 +3860,7 @@ export default function SessionScreen() {
         }
         scheduleDelayedAction(() => void fetchSessionTabs(), 500)
       } else {
-        const message = describeQuickCommandLaunchFailure(
-          options?.errorToast,
-          (response as RpcFailure).error.message
-        )
+        const message = formatQuickCommandFailure(options?.errorToast, response.error.message)
         setCreateError(message)
         if (options?.errorToast) {
           triggerError()
@@ -3865,7 +3868,7 @@ export default function SessionScreen() {
         }
       }
     } catch (err) {
-      const message = describeQuickCommandLaunchFailure(options?.errorToast, err)
+      const message = formatQuickCommandFailure(options?.errorToast, err)
       setCreateError(message)
       if (options?.errorToast) {
         triggerError()
@@ -3882,7 +3885,6 @@ export default function SessionScreen() {
   // use the host's shell-ready startup path; insert-only commands stay drafts.
   function launchQuickCommand(command: TerminalQuickCommand): boolean {
     if (!client || connState !== 'connected') {
-      // Why: a dead tap here reads as "quick commands are broken"; name the real blocker.
       triggerError()
       showToast('Not connected to desktop — try again in a moment', 1800)
       return false
