@@ -307,6 +307,50 @@ describe('remapOpenEditorTabsForPathChange', () => {
     expect(useAppStore.getState().openFiles[0]!.filePath).toBe('/repo/dst/a\\b.txt')
   })
 
+  it('preserves a legal POSIX backslash in a cross-worktree tab relative path', () => {
+    const state = useAppStore.getState()
+    // Anchor the move to wt-1 / local host.
+    state.openFile(
+      {
+        filePath: '/repo/src/keep.ts',
+        relativePath: 'src/keep.ts',
+        worktreeId: 'wt-1',
+        runtimeEnvironmentId: null,
+        language: 'typescript',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+    // Floating tab for a POSIX file whose name contains a literal backslash.
+    state.openFile(
+      {
+        filePath: '/repo/src/a\\b.txt',
+        relativePath: 'a\\b.txt',
+        worktreeId: FLOATING_TERMINAL_WORKTREE_ID,
+        runtimeEnvironmentId: null,
+        language: 'plaintext',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+
+    remapOpenEditorTabsForPathChange({
+      fromPath: '/repo/src',
+      toPath: '/repo/dst',
+      worktreePath: '/repo',
+      worktreeId: 'wt-1'
+    })
+
+    const floating = useAppStore
+      .getState()
+      .openFiles.find((f) => f.worktreeId === FLOATING_TERMINAL_WORKTREE_ID)!
+    expect(floating.filePath).toBe('/repo/dst/a\\b.txt')
+    // The backslash stays filename data in the recomputed relativePath — it must
+    // NOT have been folded into a `a/b.txt` separator.
+    expect(floating.relativePath.includes('a\\b.txt')).toBe(true)
+    expect(floating.relativePath.includes('a/b.txt')).toBe(false)
+  })
+
   it('does not strip a trailing backslash from a POSIX destination directory name', () => {
     const state = useAppStore.getState()
     state.openFile(

@@ -37,9 +37,17 @@ function stripTrailingSeparators(path: string): string {
     : path.replace(/\/+$/, '')
 }
 
+// Fold `\`→`/` only when the associated absolute path (flavorSource) is Windows
+// drive/UNC syntax; on POSIX a backslash is legal filename data, not a separator.
+function foldSeparatorsForFlavor(fragment: string, flavorSource: string): string {
+  return isWindowsAbsolutePathLike(flavorSource)
+    ? normalizeRuntimePathSeparators(fragment)
+    : fragment
+}
+
 function deriveRelativeRootFromOpenFile(filePath: string, relativePath: string): string {
   const normalizedFilePath = stripTrailingSeparators(filePath)
-  const normalizedRelativePath = normalizeRuntimePathSeparators(relativePath).replace(/^\/+/, '')
+  const normalizedRelativePath = foldSeparatorsForFlavor(relativePath, filePath).replace(/^\/+/, '')
   if (!normalizedRelativePath || isAbsolutePathLike(relativePath)) {
     const separatorIndex = normalizedFilePath.lastIndexOf('/')
     return separatorIndex <= 0 ? '/' : normalizedFilePath.slice(0, separatorIndex)
@@ -117,7 +125,7 @@ function getRelativePathFromRoot(rootPath: string, candidatePath: string): strin
   const root = splitAbsolutePath(rootPath)
   const candidate = splitAbsolutePath(candidatePath)
   if (root.prefix !== candidate.prefix) {
-    return normalizeRuntimePathSeparators(candidatePath)
+    return foldSeparatorsForFlavor(candidatePath, candidatePath)
   }
 
   // Windows drive/UNC segments are case-insensitive, so a case-only difference
@@ -160,13 +168,16 @@ function getUpdatedRelativePath({
   initiatingWorktreePath: string
 }): string {
   const worktreeRelative = relativePathInsideRoot(initiatingWorktreePath, filePath)
-  const normalizedRelativePath = normalizeRuntimePathSeparators(relativePath).replace(/^\/+/, '')
+  // Both sides fold on the same flavor (the file's own absolute path) so the
+  // comparison stays consistent and a legal POSIX backslash isn't mistaken for a
+  // separator.
+  const normalizedRelativePath = foldSeparatorsForFlavor(relativePath, filePath).replace(/^\/+/, '')
   const usesInitiatingWorktreeRoot =
     initiatingWorktreeId !== undefined
       ? worktreeId === initiatingWorktreeId
       : worktreeId !== FLOATING_TERMINAL_WORKTREE_ID &&
         worktreeRelative !== null &&
-        normalizeRuntimePathSeparators(worktreeRelative) === normalizedRelativePath
+        foldSeparatorsForFlavor(worktreeRelative, filePath) === normalizedRelativePath
   const relativeRoot = usesInitiatingWorktreeRoot
     ? initiatingWorktreePath
     : deriveRelativeRootFromOpenFile(filePath, relativePath)
