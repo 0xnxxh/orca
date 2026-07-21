@@ -1361,6 +1361,8 @@ export class GitHandler {
    * Recover the original branch for any worktree detached mid-rebase.
    * Why: only `detached` entries can be rebasing, so gate the fs probe on that flag
    * (not empty `branch`, which bare worktrees also have) and run the reads in parallel.
+   * The per-worktree catch keeps a decorative probe failure from collapsing the whole
+   * list to [] via the caller's terminal `.catch(() => [])`.
    */
   private async enrichWorktreesWithRebaseState(
     worktrees: Record<string, unknown>[]
@@ -1370,11 +1372,15 @@ export class GitHandler {
         if (worktree.detached !== true || typeof worktree.path !== 'string') {
           return worktree
         }
-        const { rebasing, rebaseBranch } = await readWorktreeRebaseState(worktree.path)
-        return {
-          ...worktree,
-          ...(rebasing ? { rebasing: true } : {}),
-          ...(rebaseBranch ? { rebaseBranch } : {})
+        try {
+          const { rebasing, rebaseBranch } = await readWorktreeRebaseState(worktree.path)
+          return {
+            ...worktree,
+            ...(rebasing ? { rebasing: true } : {}),
+            ...(rebaseBranch ? { rebaseBranch } : {})
+          }
+        } catch {
+          return worktree
         }
       })
     )

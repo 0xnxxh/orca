@@ -21569,6 +21569,10 @@ export class OrcaRuntimeService {
               head: gitWorktree.head,
               branch: gitWorktree.branch,
               isBare: gitWorktree.isBare,
+              ...(gitWorktree.rebasing === true ? { rebasing: true } : {}),
+              ...(gitWorktree.rebaseBranch !== undefined
+                ? { rebaseBranch: gitWorktree.rebaseBranch }
+                : {}),
               isMainWorktree: gitWorktree.isMainWorktree
             },
             displayName: merged.displayName,

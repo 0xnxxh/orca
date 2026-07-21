@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: this file keeps git worktree create/remove behavior together so local cleanup and creation invariants stay in one place. */
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { join, posix, win32 } from 'node:path'
 import {
   branchHasNoUnmergedChangesOnAnyTarget,
@@ -16,6 +17,7 @@ import type {
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
 import { isSubmoduleWorktreeRemovalRefusal } from '../../shared/worktree-submodule-removal'
 import { decodeGitCQuotedPath } from '../../shared/git-cquoted-path'
+import { parseRebaseHeadName } from '../../shared/git-rebase-head-name'
 import { parseGitRevListAheadBehindCounts } from '../../shared/git-rev-list-output'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import {
@@ -643,14 +645,73 @@ async function annotatePrunableByExistence(
   return annotated
 }
 
+/**
+ * Recover the branch a worktree is rebasing, from git's on-disk `head-name` state file.
+ * Why: host-side twin of `readWorktreeRebaseState` in src/relay/git-handler-status-ops.ts, for
+ * local/native (non-relay) repos. Reads plain state files only (version-agnostic; no subcommand).
+ */
+export async function readWorktreeRebaseState(
+  worktreePath: string
+): Promise<{ rebasing: boolean; rebaseBranch: string | null }> {
+  const gitDir = await resolveGitDir(worktreePath)
+  let rebaseDir: string | null = null
+  if (existsSync(join(gitDir, 'rebase-merge'))) {
+    // rebase-merge is written only by rebase (interactive/merge backend).
+    rebaseDir = join(gitDir, 'rebase-merge')
+  } else if (
+    existsSync(join(gitDir, 'rebase-apply')) &&
+    existsSync(join(gitDir, 'rebase-apply', 'rebasing'))
+  ) {
+    // rebase-apply is shared with `git am`; gate on the `rebasing` sentinel to avoid a false badge.
+    rebaseDir = join(gitDir, 'rebase-apply')
+  }
+
+  if (!rebaseDir) {
+    return { rebasing: false, rebaseBranch: null }
+  }
+
+  try {
+    const headName = await readFile(join(rebaseDir, 'head-name'), 'utf-8')
+    return { rebasing: true, rebaseBranch: parseRebaseHeadName(headName) }
+  } catch {
+    return { rebasing: true, rebaseBranch: null }
+  }
+}
+
+// Why: mirror the relay's detached-worktree rebase recovery on the local path so the badge
+// recovers `<branch> (rebasing)` for local repos too. Gates the fs probe to detached, non-bare
+// worktrees (bare also has an empty branch), and isolates failures to a single entry.
+async function enrichLocalWorktreeWithRebaseState(
+  worktree: GitWorktreeInfo
+): Promise<GitWorktreeInfo> {
+  if (worktree.isBare || worktree.branch) {
+    return worktree
+  }
+  try {
+    const { rebasing, rebaseBranch } = await readWorktreeRebaseState(worktree.path)
+    return {
+      ...worktree,
+      ...(rebasing ? { rebasing: true } : {}),
+      ...(rebaseBranch ? { rebaseBranch } : {})
+    }
+  } catch {
+    return worktree
+  }
+}
+
 async function readTranslatedWorktreeGraph(
   repoPath: string,
   options: GitWorktreeExecOptions = {}
 ): Promise<GitWorktreeInfo[]> {
-  return (await readWorktreeList(repoPath, options)).map((worktree) => {
-    const translatedPath = translateWorktreePath(worktree.path, repoPath, options)
-    return translatedPath === worktree.path ? worktree : { ...worktree, path: translatedPath }
-  })
+  const worktrees = await readWorktreeList(repoPath, options)
+  return Promise.all(
+    worktrees.map((worktree) => {
+      const translatedPath = translateWorktreePath(worktree.path, repoPath, options)
+      const translated =
+        translatedPath === worktree.path ? worktree : { ...worktree, path: translatedPath }
+      return enrichLocalWorktreeWithRebaseState(translated)
+    })
+  )
 }
 
 export async function listWorktreeGraph(
