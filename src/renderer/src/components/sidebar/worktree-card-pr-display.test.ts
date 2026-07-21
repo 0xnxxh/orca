@@ -72,7 +72,7 @@ describe('getWorktreeCardPrDisplay', () => {
     ).toBeNull()
   })
 
-  it('keeps an unlinked GitHub PR visible when the branch PR cache names the same PR', () => {
+  it('keeps an unlinked GitHub PR visible when branch provenance names the same PR', () => {
     expect(
       getWorktreeCardPrDisplay(pr, null, null, null, null, null, {
         reviewHintKey: 'github:123',
@@ -81,7 +81,7 @@ describe('getWorktreeCardPrDisplay', () => {
     ).toBe(pr)
   })
 
-  it('still suppresses unlinked linked-lookup details when the branch PR cache names a different PR', () => {
+  it('still suppresses unlinked linked-lookup details when branch provenance names a different PR', () => {
     expect(
       getWorktreeCardPrDisplay(pr, null, null, null, null, null, {
         reviewHintKey: 'github:123',
@@ -95,6 +95,15 @@ describe('getWorktreeCardPrDisplay', () => {
       getWorktreeCardPrDisplay(gitLabReview, null, null, null, null, null, {
         reviewHintKey: 'gitlab:321',
         branchLookupGitHubPRNumber: 321
+      })
+    ).toBeNull()
+  })
+
+  it('does not let branch provenance override linked non-GitHub review metadata', () => {
+    expect(
+      getWorktreeCardPrDisplay(pr, null, 321, null, null, null, {
+        reviewHintKey: 'gitlab:321',
+        branchLookupGitHubPRNumber: 123
       })
     ).toBeNull()
   })

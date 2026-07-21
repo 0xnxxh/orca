@@ -40,7 +40,7 @@ export type WorktreeCardPrDisplay =
 
 type WorktreeCardPrDisplayOptions = {
   reviewHintKey?: string
-  /** GitHub PR number the branch-keyed PR cache attributes to this branch. */
+  /** GitHub PR number proven by a branch-scoped lookup. */
   branchLookupGitHubPRNumber?: number | null
 }
 
@@ -93,6 +93,12 @@ export function getWorktreeCardPrDisplay(
     linkedAzureDevOpsPR,
     linkedGiteaPR
   }
+  const hasLinkedReview =
+    linkedPR !== null ||
+    linkedGitLabMR !== null ||
+    linkedBitbucketPR !== null ||
+    linkedAzureDevOpsPR !== null ||
+    linkedGiteaPR !== null
   if (review) {
     if (review.provider === 'unsupported') {
       return review
@@ -102,10 +108,9 @@ export function getWorktreeCardPrDisplay(
       if (review.provider !== 'github' && review.provider !== 'gitlab') {
         return review
       }
-      // Why: PR-fetch mirror writes stamp a linked-style hint on branch-discovered
-      // reviews; a branch-keyed PR cache naming the same PR proves it belongs to
-      // this branch, so keep it visible like the checks panel does.
+      // Why: GitHub refreshes retain a linked-style request hint; trust only the separately recorded branch-lookup provenance.
       if (
+        !hasLinkedReview &&
         review.provider === 'github' &&
         options.branchLookupGitHubPRNumber != null &&
         options.branchLookupGitHubPRNumber === review.number

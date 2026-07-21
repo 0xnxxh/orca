@@ -1883,9 +1883,36 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
     await expect(request).resolves.toMatchObject({ title: 'Local request result' })
     expect(store.getState().hostedReviewCache[localHostedReviewCacheKey]).toMatchObject({
       data: expect.objectContaining({ provider: 'github', title: 'Local request result' }),
-      linkedReviewHintKey: 'github:12'
+      linkedReviewHintKey: 'github:12',
+      branchLookupGitHubPRNumber: 12
     })
     expect(store.getState().hostedReviewCache[runtimeHostedReviewCacheKey]).toBeUndefined()
+  })
+
+  it('does not mark an exact linked PR refresh as branch-discovered', async () => {
+    const store = createTestStore()
+    const repoPath = '/repo'
+    const repoId = 'repo-1'
+    const branch = 'feature/exact-linked-provenance'
+    const hostedReviewCacheKey = getHostedReviewCacheKey(repoPath, branch, null, repoId)
+    store.setState({
+      repos: [{ id: repoId, path: repoPath, name: 'repo', kind: 'git' }]
+    } as unknown as Partial<AppState>)
+    mockApi.gh.refreshPRNow.mockResolvedValueOnce({
+      kind: 'found',
+      pr: makePR({ number: 12 }),
+      fetchedAt: 2
+    })
+
+    await store.getState().fetchPRForBranch(repoPath, branch, {
+      force: true,
+      repoId,
+      linkedPRNumber: 12
+    })
+
+    expect(store.getState().hostedReviewCache[hostedReviewCacheKey]).toEqual(
+      expect.not.objectContaining({ branchLookupGitHubPRNumber: expect.anything() })
+    )
   })
 
   it('does not let an older direct PR refresh overwrite a newer hosted-review cache entry', async () => {
