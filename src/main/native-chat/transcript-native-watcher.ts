@@ -2,12 +2,19 @@ import { watch, type FSWatcher } from 'node:fs'
 import { basename, dirname } from 'node:path'
 
 export type TranscriptNativeWatcher = {
+  /** Best-effort bind; false keeps the caller in reconciliation-only mode. */
   bind: () => boolean
+  /** Detach from an identity that may no longer represent the watched path. */
   invalidate: () => void
   needsRebind: () => boolean
   dispose: () => void
 }
 
+/**
+ * Optional fs.watch acceleration for transcript reconciliation. Native watches
+ * can fail on otherwise-readable remote filesystems, so binding is retryable
+ * and never owns transcript liveness; the caller's polling loop does.
+ */
 export function createTranscriptNativeWatcher(
   filePath: string,
   onEvent: () => void,
