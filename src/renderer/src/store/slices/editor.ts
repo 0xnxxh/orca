@@ -2709,6 +2709,11 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           id: rekey.newFileId,
           filePath: rekey.newFilePath,
           relativePath: rekey.newRelativePath,
+          // A moved tab detaches from the host mirror: its id no longer matches
+          // the host snapshot, so leaving it host-owned would cull it (losing the
+          // draft). The coordinator close-notifies the host's old-path tab. (The
+          // full protocol that re-homes the host tab in place is a follow-up.)
+          mirroredFromRuntimeSession: undefined,
           ...(rekey.newLanguage !== undefined ? { language: rekey.newLanguage } : {}),
           ...(rekey.newMarkdownPreviewSourceFileId !== undefined
             ? { markdownPreviewSourceFileId: rekey.newMarkdownPreviewSourceFileId }

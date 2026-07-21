@@ -222,6 +222,23 @@ describe('rekeyOpenFilesForPathChange', () => {
     expect(moved.pendingSelfMoveEcho).toBeUndefined()
   })
 
+  it('detaches a moved tab from the host mirror so the snapshot cannot cull it', () => {
+    seedEditTab()
+    const oldId = useAppStore.getState().openFiles[0]!.id
+    useAppStore.setState((s) => ({
+      openFiles: s.openFiles.map((f) =>
+        f.id === oldId ? { ...f, mirroredFromRuntimeSession: true } : f
+      )
+    }))
+
+    useAppStore.getState().rekeyOpenFilesForPathChange({
+      worktreeId: 'wt-1',
+      rekeys: [rekeyFor(oldId, '/repo/sub/a.md', 'sub/a.md')]
+    })
+
+    expect(useAppStore.getState().openFiles[0]!.mirroredFromRuntimeSession).toBeUndefined()
+  })
+
   it('migrates a pending editor reveal to the new path', () => {
     seedEditTab()
     const oldId = useAppStore.getState().openFiles[0]!.id

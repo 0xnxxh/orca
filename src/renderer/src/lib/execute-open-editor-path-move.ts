@@ -11,6 +11,7 @@ import {
 } from '@/lib/remap-open-editor-tabs-for-path-change'
 import { verifyLatchedMoveDestinations } from '@/hooks/useEditorExternalWatch'
 import { normalizeAbsolutePathForComparison } from '@/components/right-sidebar/file-explorer-paths'
+import { notifyHostOfMirroredEditorClose } from '@/runtime/close-mirrored-editor-tab'
 
 let moveOperationCounter = 0
 
@@ -60,6 +61,16 @@ export async function executeOpenEditorPathMove(args: {
   // Let any in-flight autosave settle so a trailing write can't recreate the old
   // path after the rename.
   await Promise.all(affected.map((f) => requestEditorSaveQuiesce({ fileId: f.id })))
+
+  // Close the host's old-path tab for any mirrored file: the rekey detaches it
+  // to a local tab, so without this the host snapshot would resurrect the old
+  // path. The close intent recorded by the RPC suppresses re-mirroring.
+  const mirrorState = useAppStore.getState()
+  for (const file of affected) {
+    if (file.mirroredFromRuntimeSession) {
+      notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
+    }
+  }
 
   try {
     await renameRuntimePath(context, fromPath, toPath)
