@@ -1754,14 +1754,18 @@ describe('OrcaRuntimeService', () => {
       })
     )
     const runtime = new OrcaRuntimeService({ ...runtimeStore, getRepos } as never)
-    const hasPty = vi.fn(() => true)
-    runtime.setPtyController({
+    const ptyController = {
+      livePtyIds: new Set([floatingPtyId]),
       write: () => true,
       kill: () => true,
       getForegroundProcess: async () => null,
-      hasPty,
+      hasPty(this: { livePtyIds: Set<string> }, ptyId: string) {
+        return this.livePtyIds.has(ptyId)
+      },
       listProcesses
-    })
+    }
+    const hasPty = vi.spyOn(ptyController, 'hasPty')
+    runtime.setPtyController(ptyController)
 
     const tabs = await runtime.listMobileSessionTabs(`id:${FLOATING_TERMINAL_WORKTREE_ID}`)
     const terminals = await runtime.listTerminals(`id:${FLOATING_TERMINAL_WORKTREE_ID}`)

@@ -3623,6 +3623,23 @@ describe('registerPtyHandlers', () => {
     deletePtyOwnership('remote-pty')
   })
 
+  it('routes runtime exact liveness without enumerating provider sessions', () => {
+    const provider = getLocalPtyProvider()
+    const hasPty = vi.spyOn(provider, 'hasPty').mockImplementation((id) => id === 'live-pty')
+    const listProcesses = vi.spyOn(provider, 'listProcesses')
+    const runtime = { setPtyController: vi.fn() }
+    handlers.clear()
+    registerPtyHandlers(mainWindow as never, runtime as never)
+    const controller = runtime.setPtyController.mock.calls[0]?.[0] as {
+      hasPty: (ptyId: string) => boolean | null
+    }
+
+    expect(controller.hasPty('live-pty')).toBe(true)
+    expect(controller.hasPty('missing-pty')).toBe(false)
+    expect(hasPty).toHaveBeenCalledTimes(2)
+    expect(listProcesses).not.toHaveBeenCalled()
+  })
+
   it('returns unavailable runtime confirmation for unsupported or missing providers', async () => {
     registerSshPtyProvider('ssh-1', {} as never)
     setPtyOwnership('unsupported-pty', 'ssh-1')

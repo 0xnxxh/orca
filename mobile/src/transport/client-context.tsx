@@ -373,9 +373,9 @@ export function useHostClient(hostId: string | undefined): {
       }
     })
     const initial = ctx.acquire(hostId)
+    clientRef.current = initial
+    setState(ctx.getState(hostId))
     if (initial) {
-      clientRef.current = initial
-      setState(ctx.getState(hostId))
       // Why: two cached hosts can both be connected, so equal state values cannot reveal the replacement client.
       force((n) => n + 1)
     }

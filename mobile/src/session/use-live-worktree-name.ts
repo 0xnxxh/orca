@@ -20,11 +20,19 @@ export function useLiveWorktreeName({ client, connState, routeName, worktreeId }
   // Why: the floating sentinel has no worktree record, so worktree.show would
   // fail forever and keep the 3s fallback poll alive; its title is fixed.
   const isFloatingWorkspace = isFloatingWorkspaceWorktreeId(worktreeId)
-  const [worktreeName, setWorktreeName] = useState(() => routeName?.trim() ?? '')
+  const routeNameHint = routeName?.trim() ?? ''
+  const [worktreeName, setWorktreeName] = useState(() => ({
+    worktreeId,
+    name: routeNameHint
+  }))
 
   useEffect(() => {
-    setWorktreeName(routeName?.trim() ?? '')
-  }, [routeName, worktreeId])
+    setWorktreeName((current) =>
+      current.worktreeId === worktreeId && current.name === routeNameHint
+        ? current
+        : { worktreeId, name: routeNameHint }
+    )
+  }, [routeNameHint, worktreeId])
 
   useFocusEffect(
     useCallback(() => {
@@ -62,7 +70,11 @@ export function useLiveWorktreeName({ client, connState, routeName, worktreeId }
             ? getLiveWorktreeDisplayName([result.worktree], worktreeId)
             : null
           if (liveName) {
-            setWorktreeName((current) => (current === liveName ? current : liveName))
+            setWorktreeName((current) =>
+              current.worktreeId === worktreeId && current.name === liveName
+                ? current
+                : { worktreeId, name: liveName }
+            )
           }
           hasSuccessfulRefresh = true
           if (eventStreamReady) {
@@ -136,7 +148,7 @@ export function useLiveWorktreeName({ client, connState, routeName, worktreeId }
   )
 
   if (isFloatingWorkspace) {
-    return worktreeName || FLOATING_WORKSPACE_TITLE
+    return FLOATING_WORKSPACE_TITLE
   }
-  return worktreeName
+  return worktreeName.worktreeId === worktreeId ? worktreeName.name : routeNameHint
 }

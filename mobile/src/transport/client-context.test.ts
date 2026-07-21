@@ -168,7 +168,47 @@ describe('useHostClient', () => {
       expect(connectMock).toHaveBeenCalledTimes(2)
     } finally {
       restore()
-      renderer?.unmount()
+      act(() => renderer?.unmount())
+    }
+  })
+
+  it('stays disconnected while a reused screen resolves an uncached host', async () => {
+    const client = makeFakeClient('connected')
+    connectMock.mockReturnValue(client)
+    loadHostsMock.mockResolvedValueOnce([HOST]).mockReturnValueOnce(new Promise<never>(() => {}))
+
+    let selectedHostId = HOST.id
+    let renderTick = 0
+    const stateByRenderTick = new Map<number, ConnectionState>()
+    let renderer: ReactTestRenderer | null = null
+    function Probe(): null {
+      stateByRenderTick.set(renderTick, useHostClient(selectedHostId).state)
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(RpcClientProvider, null, createElement(Probe)))
+        await Promise.resolve()
+      })
+      expect(stateByRenderTick.get(0)).toBe('connected')
+
+      selectedHostId = 'missing-host'
+      renderTick = 1
+      await act(async () => {
+        renderer?.update(createElement(RpcClientProvider, null, createElement(Probe)))
+      })
+      expect(stateByRenderTick.get(1)).toBe('disconnected')
+
+      renderTick = 2
+      await act(async () => {
+        renderer?.update(createElement(RpcClientProvider, null, createElement(Probe)))
+      })
+      expect(stateByRenderTick.get(2)).toBe('disconnected')
+    } finally {
+      restore()
+      act(() => renderer?.unmount())
     }
   })
 

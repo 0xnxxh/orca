@@ -22018,8 +22018,8 @@ export class OrcaRuntimeService {
   }
 
   private refreshFloatingWorkspacePtyLiveness(): Set<string> | null {
-    const hasPty = this.ptyController?.hasPty
-    if (!hasPty) {
+    const controller = this.ptyController
+    if (!controller?.hasPty) {
       return null
     }
     const knownPtyIds = new Set<string>()
@@ -22060,7 +22060,7 @@ export class OrcaRuntimeService {
     const liveness = new Map<string, boolean>()
     try {
       for (const ptyId of knownPtyIds) {
-        const live = hasPty(ptyId)
+        const live = controller.hasPty(ptyId)
         if (live === null) {
           return null
         }
