@@ -889,6 +889,8 @@ describe('AgentBrowserBridge', () => {
     )
     expect(routeCalls).toHaveLength(2)
     expect(routeCalls.at(-1)).toContain('https://old.example/**')
+    expect(routeCalls.at(-1)).toContain('--cdp')
+    expect(routeCalls.at(-1)).toContain('9222')
   })
 
   it('clears stale sessions after direct CDP visibility re-registration', async () => {

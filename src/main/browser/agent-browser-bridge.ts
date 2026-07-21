@@ -2414,6 +2414,8 @@ export class AgentBrowserBridge {
           await this.runAgentBrowserRaw(sessionName, [
             '--session',
             sessionName,
+            '--cdp',
+            String(session.proxy.getPort()),
             'network',
             'route',
             urlPattern,
