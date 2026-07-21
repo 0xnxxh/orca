@@ -26,7 +26,7 @@ import { useChecksPanelTerminalWorktree } from './use-checks-panel-terminal-work
 import { cn } from '@/lib/utils'
 import { openHttpLink } from '@/lib/http-link-routing'
 import { Button } from '@/components/ui/button'
-import { DetachedHeadBadge } from '@/components/DetachedHeadBadge'
+import { WorktreeIdentityBadge } from '@/components/WorktreeIdentityBadge'
 import {
   getTerminalUrlSystemBrowserHint,
   isMacPlatform
@@ -570,7 +570,10 @@ export default function ChecksPanel(): React.JSX.Element {
   const gitStatusSnapshotRerunContextRef = useRef<string | null>(null)
   const gitStatusSnapshotRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const gitIdentityDisplay = activeWorktree ? getWorktreeGitIdentityDisplay(activeWorktree) : null
-  const detachedHeadDisplay = gitIdentityDisplay?.kind === 'detached' ? gitIdentityDisplay : null
+  const identityBadgeDisplay =
+    gitIdentityDisplay?.kind === 'detached' || gitIdentityDisplay?.kind === 'rebasing'
+      ? gitIdentityDisplay
+      : null
   const branch = gitIdentityDisplay?.kind === 'branch' ? gitIdentityDisplay.branchName : ''
   const activeWorktreePath = activeWorktree?.path ?? null
   const activeWorktreePushTarget = activeWorktree?.pushTarget ?? null
@@ -3809,9 +3812,9 @@ export default function ChecksPanel(): React.JSX.Element {
       reviewShowRetryOrRefresh
     return (
       <div className="px-4 py-6">
-        {detachedHeadDisplay && (
+        {identityBadgeDisplay && (
           <div className="mb-3">
-            <DetachedHeadBadge display={detachedHeadDisplay} side="bottom" />
+            <WorktreeIdentityBadge display={identityBadgeDisplay} side="bottom" />
           </div>
         )}
         <div className="text-sm font-medium text-foreground">{emptyStateCopy.title}</div>
@@ -3985,7 +3988,9 @@ export default function ChecksPanel(): React.JSX.Element {
           onLinkAnotherPullRequest={handleLinkAnotherPullRequest}
         />
 
-        {detachedHeadDisplay && <DetachedHeadBadge display={detachedHeadDisplay} side="bottom" />}
+        {identityBadgeDisplay && (
+          <WorktreeIdentityBadge display={identityBadgeDisplay} side="bottom" />
+        )}
 
         {/* Review title */}
         {editingTitle ? (

@@ -42,7 +42,11 @@ import { annotatePrunableWorktreesByExistence } from './git-handler-worktree-lis
 import { forceDeletePreservedRelayBranch } from './git-handler-branch-cleanup'
 import { refreshLocalBaseRefForWorktreeCreateOp } from './git-handler-local-base-ref-refresh'
 import { gitExecMutatesRepository } from '../shared/git-exec-mutation'
-import { detectConflictOperation, getStatusOp } from './git-handler-status-ops'
+import {
+  detectConflictOperation,
+  getStatusOp,
+  readWorktreeRebaseState
+} from './git-handler-status-ops'
 import { capGitStatusEntries, resolveGitStatusLimit } from '../shared/git-status-limit'
 import { checkIgnoredPathsOp } from './git-handler-check-ignore'
 import { resolveRelayPushTarget } from './git-handler-push-target'
@@ -1349,7 +1353,31 @@ export class GitHandler {
         },
         isUnsupportedWorktreeListZError
       )
+      .then((worktrees) => this.enrichWorktreesWithRebaseState(worktrees))
       .catch(() => [])
+  }
+
+  /**
+   * Recover the original branch for any worktree detached mid-rebase.
+   * Why: only `detached` entries can be rebasing, so gate the fs probe on that flag
+   * (not empty `branch`, which bare worktrees also have) and run the reads in parallel.
+   */
+  private async enrichWorktreesWithRebaseState(
+    worktrees: Record<string, unknown>[]
+  ): Promise<Record<string, unknown>[]> {
+    return Promise.all(
+      worktrees.map(async (worktree) => {
+        if (worktree.detached !== true || typeof worktree.path !== 'string') {
+          return worktree
+        }
+        const { rebasing, rebaseBranch } = await readWorktreeRebaseState(worktree.path)
+        return {
+          ...worktree,
+          ...(rebasing ? { rebasing: true } : {}),
+          ...(rebaseBranch ? { rebaseBranch } : {})
+        }
+      })
+    )
   }
 
   private async addWorktree(params: Record<string, unknown>) {

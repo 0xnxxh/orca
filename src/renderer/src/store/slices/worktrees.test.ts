@@ -95,6 +95,7 @@ globalThis.window = { api: mockApi }
 
 import {
   WORKTREE_REFRESH_CONCURRENCY,
+  areWorktreesEqual,
   createWorktreeSlice,
   getHostedReviewLinkMutationGenerationForTests,
   getHostedReviewLinkWorktreeAliasCountForTests,
@@ -7422,5 +7423,47 @@ describe('pending worktree creation state', () => {
     store.getState().setActiveWorktree(wt.id)
 
     expect(store.getState().activePendingCreationId).toBeNull()
+  })
+})
+
+describe('areWorktreesEqual rebasing sensitivity', () => {
+  it('admits an update that flips only the rebasing flag on an unchanged HEAD', () => {
+    const base = makeWorktree({ id: 'w1', repoId: 'r1', branch: '', head: 'abc123' })
+    const rebasing = makeWorktree({
+      id: 'w1',
+      repoId: 'r1',
+      branch: '',
+      head: 'abc123',
+      rebasing: true,
+      rebaseBranch: 'feature/x'
+    })
+    // Why: a rebase started at the current tip changes no other field; the memo must
+    // still admit the delta so the badge refreshes instead of staying "Detached HEAD".
+    expect(areWorktreesEqual([base], [rebasing])).toBe(false)
+  })
+
+  it('admits an update that changes only the recovered rebase branch', () => {
+    const a = makeWorktree({
+      id: 'w1',
+      repoId: 'r1',
+      branch: '',
+      head: 'abc123',
+      rebasing: true
+    })
+    const b = makeWorktree({
+      id: 'w1',
+      repoId: 'r1',
+      branch: '',
+      head: 'abc123',
+      rebasing: true,
+      rebaseBranch: 'feature/x'
+    })
+    expect(areWorktreesEqual([a], [b])).toBe(false)
+  })
+
+  it('treats two identical non-rebasing worktrees as equal', () => {
+    const a = makeWorktree({ id: 'w1', repoId: 'r1' })
+    const b = makeWorktree({ id: 'w1', repoId: 'r1' })
+    expect(areWorktreesEqual([a], [b])).toBe(true)
   })
 })

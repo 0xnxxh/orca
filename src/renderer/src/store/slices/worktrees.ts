@@ -227,7 +227,7 @@ function areLineageRecordsEqual(
   )
 }
 
-function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): boolean {
+export function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): boolean {
   if (!current || current.length !== next.length) {
     return false
   }
@@ -244,6 +244,10 @@ function areWorktreesEqual(current: Worktree[] | undefined, next: Worktree[]): b
       worktree.path === candidate.path &&
       worktree.head === candidate.head &&
       worktree.branch === candidate.branch &&
+      // Why: a rebase that doesn't move HEAD flips only these; omitting them lets the
+      // memo drop the update and the badge stays a stale "Detached HEAD".
+      worktree.rebasing === candidate.rebasing &&
+      worktree.rebaseBranch === candidate.rebaseBranch &&
       worktree.isBare === candidate.isBare &&
       worktree.isMainWorktree === candidate.isMainWorktree &&
       worktree.isSparse === candidate.isSparse &&

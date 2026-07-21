@@ -72,7 +72,7 @@ import {
   canShowWorkspaceDeleteQuickAction,
   useWorkspaceDeleteModifierPressed
 } from './workspace-delete-quick-action'
-import { DetachedHeadBadge } from '@/components/DetachedHeadBadge'
+import { WorktreeIdentityBadge } from '@/components/WorktreeIdentityBadge'
 import { getWorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
 import {
   getFlushWorktreeCardPaddingLeft,
@@ -363,7 +363,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
   )
 
   const gitIdentityDisplay = getWorktreeGitIdentityDisplay(worktree)
-  const detachedHeadDisplay = gitIdentityDisplay?.kind === 'detached' ? gitIdentityDisplay : null
+  const identityBadgeDisplay =
+    gitIdentityDisplay?.kind === 'detached' || gitIdentityDisplay?.kind === 'rebasing'
+      ? gitIdentityDisplay
+      : null
   const branch = gitIdentityDisplay?.kind === 'branch' ? gitIdentityDisplay.branchName : ''
   const workspaceScope = parseWorkspaceKey(worktree.id)
   const folderWorkspaceId =
@@ -1126,7 +1129,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const showRepoBadgeInMetaRow =
     !showRepoIdentityInTitle && !!repo && !hideRepoBadge && !showPinnedRepoIcon
   const showHostContextBadge = !compactCards && !!hostContextLabel
-  const showDetachedHeadInMetaRow = !compactCards && !isFolder && detachedHeadDisplay !== null
+  const showIdentityBadgeInMetaRow = !compactCards && !isFolder && identityBadgeDisplay !== null
   const showBranch =
     !isFolder &&
     branch.length > 0 &&
@@ -1149,7 +1152,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     folderMetaRowContent ||
     showBranch ||
     showIdentityInNewCard ||
-    showDetachedHeadInMetaRow ||
+    showIdentityBadgeInMetaRow ||
     showConflictOperationBadge ||
     cacheStartedAt != null ||
     showMetaRowDetails
@@ -1616,9 +1619,9 @@ const WorktreeCard = React.memo(function WorktreeCard({
                   // Why: whole-card details hover already shows full identity; a nested tooltip would compete for it.
                   tooltipEnabled={!hasHoverDetails}
                 />
-              ) : showDetachedHeadInMetaRow && detachedHeadDisplay ? (
-                <DetachedHeadBadge
-                  display={detachedHeadDisplay}
+              ) : showIdentityBadgeInMetaRow && identityBadgeDisplay ? (
+                <WorktreeIdentityBadge
+                  display={identityBadgeDisplay}
                   label="sidebar"
                   side="right"
                   className="h-[16px]"
