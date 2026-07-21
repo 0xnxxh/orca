@@ -37,6 +37,7 @@ import {
 import type { ShellReadySignal } from './local-pty-shell-ready'
 import { removeInheritedNoColor } from '../pty/terminal-color-env'
 import { removeAppImageRuntimeEnv } from '../pty/appimage-terminal-env'
+import { stripInheritedBuildModeEnv } from '../pty/build-mode-env'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
 import { addWslEnvKeys } from '../wsl-env'
 import {
@@ -66,6 +67,7 @@ import { ORCA_HERMES_STARTUP_QUERY_ENV } from '../../shared/hermes-startup-query
 import { PhysicalExitTracker } from '../../shared/physical-exit-tracker'
 import { mergeGitConfigEnvProtocol } from '../../shared/git-credential-prompt-env'
 import { PtyStartupIngress, type PtyIngressEmission } from '../../shared/pty-startup-ingress'
+import { resolvePtyOwnerBackend } from '../../shared/pty-owner-backend'
 
 const PANE_IDENTITY_ENV_KEYS = [
   'ORCA_PANE_KEY',
@@ -365,6 +367,24 @@ function normalizeLocalCallerSessionId(sessionId: string | undefined): string | 
   return requested
 }
 
+function reattachLocalPty(id: string, cols: number, rows: number): PtySpawnResult | null {
+  const existing = ptyProcesses.get(id)
+  if (!existing) {
+    return null
+  }
+  try {
+    existing.resize(cols, rows)
+  } catch {
+    /* Existing PTY may reject resize during teardown; still return the live handle. */
+  }
+  return {
+    id,
+    pid: existing.pid,
+    ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {}),
+    isReattach: true
+  }
+}
+
 /**
  * Normalizes node-pty foreground process strings to executable basenames.
  */
@@ -453,6 +473,8 @@ export type LocalPtyProviderOptions = {
     ctx?: {
       command?: string
       launchAgent?: PtySpawnOptions['launchAgent']
+      codexHomePathOverride?: PtySpawnOptions['codexHomePathOverride']
+      cwd?: string
       shellPath?: string
       isWsl?: boolean
       wslDistro?: string | null
@@ -499,20 +521,9 @@ export class LocalPtyProvider implements IPtyProvider {
       if (pendingShutdown) {
         await pendingShutdown.promise
       }
-      const existing = ptyProcesses.get(reattachId)
+      const existing = reattachLocalPty(reattachId, args.cols, args.rows)
       if (existing) {
-        const existingWslDistro = ptyWslDistroById.get(reattachId)
-        try {
-          existing.resize(args.cols, args.rows)
-        } catch {
-          /* Existing PTY may reject resize during teardown; still return the live handle. */
-        }
-        return {
-          id: reattachId,
-          pid: existing.pid,
-          ...(ptyWslDistroById.has(reattachId) ? { wslDistro: existingWslDistro ?? null } : {}),
-          isReattach: true
-        }
+        return existing
       }
     }
     const id = allocatePtyId(reattachId ?? undefined)
@@ -627,7 +638,7 @@ export class LocalPtyProvider implements IPtyProvider {
     validateWorkingDirectory(validationCwd)
 
     const spawnEnv: Record<string, string> = {
-      ...mergeGitConfigEnvProtocol(process.env, args.env),
+      ...mergeGitConfigEnvProtocol(stripInheritedBuildModeEnv(process.env), args.env),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       TERM_PROGRAM: 'Orca',
@@ -665,6 +676,8 @@ export class LocalPtyProvider implements IPtyProvider {
       ? this.opts.buildSpawnEnv(id, spawnEnv, {
           command: args.command,
           launchAgent: args.launchAgent,
+          codexHomePathOverride: args.codexHomePathOverride,
+          cwd,
           shellPath,
           isWsl: isWslShell,
           wslDistro: launchWslDistro
@@ -787,6 +800,11 @@ export class LocalPtyProvider implements IPtyProvider {
     }
 
     await prepareLocalPtySpawn(id)
+    // Why: another same-id request can win while this one awaits preflight; attach before launching a redundant shell.
+    const concurrentWinner = reattachId ? reattachLocalPty(id, args.cols, args.rows) : null
+    if (concurrentWinner) {
+      return concurrentWinner
+    }
     const spawnResult = spawnShellWithFallback({
       shellPath,
       shellArgs,
@@ -864,6 +882,11 @@ export class LocalPtyProvider implements IPtyProvider {
     }
     const startupIngress = new PtyStartupIngress({
       ...(args.startupIngress ? { intent: args.startupIngress } : {}),
+      ownerBackend: resolvePtyOwnerBackend({
+        platform: process.platform,
+        shellPath,
+        wslDistro: spawnedWslDistro
+      }),
       write: (data) => proc.write(data),
       onEmission: emitIngressData
     })

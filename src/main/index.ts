@@ -53,7 +53,7 @@ import {
   rebuildAppMenu
 } from './menu/register-app-menu'
 import { checkForUpdatesFromMenu, isQuittingForUpdate } from './updater'
-import type { UpdateCheckOptions } from '../shared/types'
+import type { TuiAgent, UpdateCheckOptions } from '../shared/types'
 import { recordUpdaterLifecycle } from './updater-lifecycle-diagnostics'
 import {
   configureElectronNetworkCompatibility,
@@ -113,6 +113,7 @@ import { RateLimitService } from './rate-limits/service'
 import { readMiniMaxSessionCookie } from './minimax/minimax-cookie-store'
 import { getInitialClaudeRateLimitTarget } from './rate-limits/claude-rate-limit-target'
 import { getInitialCodexRateLimitTarget } from './rate-limits/codex-rate-limit-target'
+import { createAccountRuntimeTargetSettingsSync } from './rate-limits/account-runtime-target-sync'
 import {
   attachMainWindowServices,
   ensureAutoUpdaterConfigured
@@ -129,12 +130,27 @@ import { focusExistingMainWindow } from './window/focus-existing-window'
 import { notifyMainWindowBecameVisible } from './window/main-window-visibility'
 import { CodexAccountService } from './codex-accounts/service'
 import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
+import { markCodexProjectTrusted } from './agent-trust-presets'
 import {
   normalizeCodexRuntimeSelection,
   type CodexAccountSelectionTarget
 } from './codex-accounts/runtime-selection'
 import { normalizeClaudeRuntimeSelection } from './claude-accounts/runtime-selection'
-import { codexHookService } from './codex/hook-service'
+import { codexHookService, setSystemCodexHomeHookSweepSuppressed } from './codex/hook-service'
+import {
+  ensureRealHomeCodexHookState,
+  isRealHomeCodexHookLaneUsable
+} from './codex/codex-real-home-hook-install'
+import { setCodexTrustGrantTelemetry } from './codex/codex-hook-trust-grant'
+import { startCodexSessionBackfillInBackground } from './codex/codex-session-backfill'
+import { startCodexSessionIndexHealInBackground } from './codex/codex-session-index-heal'
+import { createCodexSessionMigrationScheduler } from './codex/codex-session-migration-scheduler'
+import { prepareLegacySharedCodexSessionResume } from './codex/codex-legacy-session-resume'
+import { resolveHostCodexSessionSourceHome } from './codex/codex-session-source-home'
+import { findTrustedCodexSessionResume } from './codex/codex-session-resume-home'
+import { getSystemCodexHomePath } from './codex/codex-home-paths'
+import { normalizeRuntimePathForComparison } from '../shared/cross-platform-path'
+import type { AgentProviderSessionMetadata } from '../shared/agent-session-resume'
 import { getDefaultWslDistro } from './wsl'
 import { ClaudeAccountService } from './claude-accounts/service'
 import { ClaudeRuntimeAuthService } from './claude-accounts/runtime-auth-service'
@@ -685,8 +701,56 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
   return firstWindowStartupServicesReady
 }
 
-function prepareCodexRuntimeHomeForLaunch(target?: CodexAccountSelectionTarget): string | null {
-  const runtimeHomePath = codexRuntimeHome!.prepareForCodexLaunch(target)
+function prepareCodexRuntimeHomeForLaunch(
+  target?: CodexAccountSelectionTarget,
+  launchEnv?: NodeJS.ProcessEnv,
+  launchContext?: { workspacePath?: string; launchAgent?: TuiAgent }
+): string | null {
+  if (
+    target?.runtime !== 'wsl' &&
+    launchContext?.launchAgent === 'codex' &&
+    launchContext.workspacePath
+  ) {
+    try {
+      // Why: renderer quick-launch cannot await trust IPC before its PTY mounts; launch prep runs synchronously before every recognized Codex spawn.
+      markCodexProjectTrusted(launchContext.workspacePath)
+    } catch (error) {
+      console.warn('[codex-project-trust] failed to pre-mark launch workspace:', error)
+    }
+  }
+  const ensureRealHomeHooksIfSelected = (): boolean => {
+    if (
+      target?.runtime === 'wsl' ||
+      !codexRuntimeHome!.isHostSystemDefaultRealHomeSelected(launchEnv)
+    ) {
+      return false
+    }
+    // Why (flag ON, system default): the hook entry must exist — appended last
+    // and trusted by codex's own app-server grant — in the real ~/.codex before
+    // the pane spawns. An incapable grant flips the lane gate so the launch
+    // below falls back to the managed home instead of a status-blind pane.
+    ensureRealHomeCodexHookState({
+      hooksEnabled: isAgentStatusHooksEnabled(store?.getSettings()),
+      userDataPath: app.getPath('userData')
+    })
+    return true
+  }
+  let realHomeHooksPrepared = ensureRealHomeHooksIfSelected()
+  let runtimeHomePath = codexRuntimeHome!.prepareForCodexLaunch(target, launchEnv)
+  if (runtimeHomePath === null && !realHomeHooksPrepared) {
+    // Why: a managed home can lose auth during launch prep, which clears its
+    // selection and falls through to real home. Establish hook capability for
+    // that newly selected lane, then re-resolve if the capability gate rejects it.
+    realHomeHooksPrepared = ensureRealHomeHooksIfSelected()
+    if (realHomeHooksPrepared) {
+      runtimeHomePath = codexRuntimeHome!.prepareForCodexLaunch(target, launchEnv)
+    }
+  }
+  if (runtimeHomePath === null && target?.runtime !== 'wsl') {
+    // Why: Codex runs on the user's real ~/.codex; the managed-home hook
+    // install below would target a home Codex never reads on this lane.
+    return null
+  }
   const hookTarget =
     target?.runtime === 'wsl'
       ? {
@@ -699,9 +763,11 @@ function prepareCodexRuntimeHomeForLaunch(target?: CodexAccountSelectionTarget):
     // Why: honor the persisted off switch so post-startup launches can't reinstall removed hooks.
     const status = hooksEnabled
       ? (codexHookService.installForRuntimeHome(runtimeHomePath, hookTarget) ??
-        codexHookService.install())
+        // Why: a managed account's launch home is its own self-contained
+        // CODEX_HOME, so hooks/trust must install there, not the shared mirror.
+        codexHookService.install(runtimeHomePath ?? undefined))
       : (codexHookService.refreshRuntimeUserHooksForRuntimeHome(runtimeHomePath, hookTarget) ??
-        codexHookService.refreshRuntimeUserHooks())
+        codexHookService.refreshRuntimeUserHooks(runtimeHomePath ?? undefined))
     if (status.state === 'error') {
       console.warn(
         `[codex-hook-service] failed to ${
@@ -720,6 +786,84 @@ function prepareCodexRuntimeHomeForLaunch(target?: CodexAccountSelectionTarget):
     )
   }
   return runtimeHomePath
+}
+
+async function prepareCodexSessionResumeForLaunch(args: {
+  providerSession: AgentProviderSessionMetadata
+  target: CodexAccountSelectionTarget
+  launchEnv?: NodeJS.ProcessEnv
+  workspacePath?: string
+}): Promise<{ codexHomePath: string | null } | null> {
+  if (args.target.runtime === 'wsl' || !codexRuntimeHome || !store) {
+    return null
+  }
+  const systemHomePath = getSystemCodexHomePath()
+  // Why: codexSessionSourceHome is import-only; treating it as CODEX_HOME would mutate history sources and bypass account auth.
+  const trustedHomes = [
+    systemHomePath,
+    ...codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery()
+  ]
+  const sessionSource = await findTrustedCodexSessionResume({
+    sessionId: args.providerSession.id,
+    transcriptPath: args.providerSession.transcriptPath,
+    trustedCodexHomes: trustedHomes
+  })
+  if (!sessionSource) {
+    if (args.providerSession.transcriptPath) {
+      throw new Error(
+        'Orca could not verify the originating Codex session file, so automatic resume was stopped to avoid using a different account.'
+      )
+    }
+    return null
+  }
+
+  let migrated = { useRealCodexHome: false }
+  try {
+    migrated = await prepareLegacySharedCodexSessionResume(
+      {
+        agent: 'codex',
+        executionHostId: 'local',
+        filePath: sessionSource.transcriptPath,
+        codexHome: sessionSource.homePath
+      },
+      {
+        isHostSystemDefaultRealHome: () => codexRuntimeHome!.isHostSystemDefaultRealHome(),
+        systemCodexHomePath: systemHomePath
+      }
+    )
+  } catch (error) {
+    // Why: migration is a compatibility repair; its failure must not prevent the PTY from resuming from its trusted origin home.
+    console.warn(
+      '[codex-session-resume] Legacy rollout migration failed; using origin home:',
+      error
+    )
+  }
+  const resumeHome = migrated.useRealCodexHome ? systemHomePath : sessionSource.homePath
+
+  if (args.workspacePath) {
+    try {
+      markCodexProjectTrusted(args.workspacePath)
+    } catch (error) {
+      console.warn('[codex-project-trust] failed to pre-mark resumed workspace:', error)
+    }
+  }
+  const isSystemHome =
+    normalizeRuntimePathForComparison(resumeHome) ===
+    normalizeRuntimePathForComparison(systemHomePath)
+  const hooksEnabled = isAgentStatusHooksEnabled(store.getSettings())
+  try {
+    if (isSystemHome) {
+      ensureRealHomeCodexHookState({ hooksEnabled, userDataPath: app.getPath('userData') })
+    } else if (hooksEnabled) {
+      codexHookService.install(resumeHome)
+    } else {
+      codexHookService.refreshRuntimeUserHooks(resumeHome)
+    }
+  } catch (error) {
+    // Why: hook repair is best-effort; session provenance must still win over the currently selected home.
+    console.warn('[codex-hook-service] failed to prepare automatic resume home:', error)
+  }
+  return { codexHomePath: resumeHome }
 }
 
 // Why: restore the window the close handler may have hidden to tray, or reopen it (dock-reactivation style) if fully torn down.
@@ -963,7 +1107,13 @@ function openMainWindow(): BrowserWindow {
     keybindings,
     {
       getAdditionalAiVaultCodexHomePaths: () =>
-        codexRuntimeHome ? [codexRuntimeHome.getHostRuntimeHomePath()] : [],
+        codexRuntimeHome ? codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery() : [],
+      prepareAiVaultSessionResume: (args) =>
+        prepareLegacySharedCodexSessionResume(args, {
+          isHostSystemDefaultRealHome: () =>
+            codexRuntimeHome?.isHostSystemDefaultRealHome() === true,
+          systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
+        }),
       onBeforeRelaunch: async () => {
         isQuitting = true
         desktopRelayService?.fenceAndCloseNow()
@@ -982,6 +1132,7 @@ function openMainWindow(): BrowserWindow {
     prepareCodexRuntimeHomeForLaunch,
     (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target),
     {
+      prepareCodexSessionResume: prepareCodexSessionResumeForLaunch,
       awaitLocalPtyStartup: () => localPtyStartupReady,
       awaitLocalPtyProviderStartup: () => localPtyProviderStartupReady,
       onBeforeRendererReload: ({ ignoreCache, webContentsId }) => {
@@ -1331,8 +1482,13 @@ function getServeOptions(argv = process.argv): ServeOptions {
 }
 
 function getBundledWebClientRoot(): string | undefined {
-  const root = join(app.getAppPath(), 'out', 'web')
-  return existsSync(join(root, 'web-index.html')) ? root : undefined
+  const appPath = app.getAppPath()
+  const roots = [
+    join(appPath, 'out', 'web'),
+    // Why: unpacked electron-vite entrypoints set appPath to out/main, next to the web bundle.
+    join(appPath, '..', 'web')
+  ]
+  return roots.find((root) => existsSync(join(root, 'web-index.html')))
 }
 
 async function renderTerminalPairingQr(pairingUrl: string): Promise<string | null> {
@@ -1687,7 +1843,22 @@ app.whenReady().then(async () => {
   })
   // Why: telemetry must init before any IPC handler/renderer can call track(); it's a no-op in dev and while TELEMETRY_ENABLED is false, so it's safe early.
   initTelemetry(store)
-  // Why: the error-tracking lane (telemetry-error-tracking.md) is its own root and must init before any span is created so the tracer's sink is populated first.
+  // Why: the trust-grant module is bundled into plain-node CLI entries where
+  // the telemetry client cannot load, so the tracker is injected here instead
+  // of imported there.
+  setCodexTrustGrantTelemetry(({ outcome, hostKind, reason }) => {
+    track('codex_trust_grant', {
+      outcome,
+      host_kind: hostKind,
+      ...(reason !== undefined ? { fallback_reason: reason } : {})
+    })
+  })
+  // Why: the error-tracking lane (telemetry-error-tracking.md) is its own
+  // composition root — independent of product telemetry — and must
+  // initialize before any IPC handler / runtime span is created so the
+  // tracer's active sink is populated at the moment the first span fires.
+  // Honors DO_NOT_TRACK / ORCA_TELEMETRY_DISABLED / ORCA_DIAGNOSTICS_DISABLED
+  // / CI internally; those gates do not need to be re-checked here.
   initObservability()
   recordDurableCrashBreadcrumb('main_process_lifecycle_started', {
     packaged: app.isPackaged,
@@ -1702,7 +1873,35 @@ app.whenReady().then(async () => {
   openCodeUsage = new OpenCodeUsageStore(store)
   rateLimits = new RateLimitService()
   codexRuntimeHome = new CodexRuntimeHomeService(store)
-  codexAccounts = new CodexAccountService(store, rateLimits, codexRuntimeHome)
+  // Why: an incapable trust-grant host must fall back to the managed home for
+  // every consumer (PTY env, rate limits, commit messages) in one place.
+  codexRuntimeHome.setRealHomeLaneGate(() => isRealHomeCodexHookLaneUsable())
+  // Why: while the real-home lane owns ~/.codex/hooks.json, the legacy
+  // system-home sweep inside managed installs would delete the entry the
+  // real-home installer just appended. Flag OFF, hooks off, or an incapable
+  // trust lane re-arms the sweep so downgrade, opt-out, and rollback converge.
+  setSystemCodexHomeHookSweepSuppressed(
+    () =>
+      codexRuntimeHome !== null &&
+      codexRuntimeHome.isHostSystemDefaultRealHome() &&
+      isAgentStatusHooksEnabled(store?.getSettings())
+  )
+  const codexSessionMigration = createCodexSessionMigrationScheduler({
+    isEligible: () => codexRuntimeHome?.isHostSystemDefaultRealHome() === true,
+    isQuitting: () => isQuitting,
+    resolveSystemCodexHomePathOverride: () =>
+      resolveHostCodexSessionSourceHome(store!.getSettings()),
+    startBackfill: startCodexSessionBackfillInBackground,
+    startIndexHeal: startCodexSessionIndexHealInBackground
+  })
+  codexAccounts = new CodexAccountService(store, rateLimits, codexRuntimeHome, {
+    onHostSystemDefaultSelected: codexSessionMigration.requestRun
+  })
+  // Why: one-time per-host backfill makes historical Orca-managed Codex
+  // sessions visible to the user's own resume picker and app history (#4444,
+  // #8612). Deferred so startup and first PTY spawns never compete with the
+  // sessions tree walk.
+  codexSessionMigration.scheduleInitialRun()
   claudeRuntimeAuth = new ClaudeRuntimeAuthService(store)
   claudeAccounts = new ClaudeAccountService(store, rateLimits, claudeRuntimeAuth)
   rateLimits.setCodexHomePathResolver((target) =>
@@ -1710,9 +1909,23 @@ app.whenReady().then(async () => {
   )
   rateLimits.setCodexFetchTarget(getInitialCodexRateLimitTarget(store.getSettings()))
   rateLimits.setClaudeFetchTarget(getInitialClaudeRateLimitTarget(store.getSettings()))
+  const syncAccountRuntimeTargets = createAccountRuntimeTargetSettingsSync(
+    rateLimits,
+    store.getSettings()
+  )
+  store.onSettingsChanged((updates, settings) => {
+    // Why: auto is a live policy; retarget only providers whose settings-derived runtime changed.
+    void syncAccountRuntimeTargets(updates, settings).catch((error) =>
+      console.warn('[rate-limits] Failed to apply account runtime target:', error)
+    )
+  })
   rateLimits.setClaudeAuthPreparationResolver((target) =>
     claudeRuntimeAuth!.prepareForRateLimitFetch(target)
   )
+  // Why: live Claude sessions stream usage windows through their statusLine command; feeding them here avoids OAuth usage-endpoint polling (and its 429s).
+  agentHookServer.setClaudeStatusLineListener((event) => {
+    rateLimits?.ingestLiveClaudeRateLimits(event)
+  })
   rateLimits.setOpenCodeGoConfigResolver(() => {
     const settings = store!.getSettings()
     return {
@@ -1792,7 +2005,12 @@ app.whenReady().then(async () => {
       agentHookServer.getStatusSnapshot().filter((entry) => entry.providerSessionOnly !== true),
     // Why: source codex-home here (runs in window AND serve) so aiVault.listSessions includes managed-Codex sessions; registerCoreHandlers is window-only.
     getAdditionalAiVaultCodexHomePaths: () =>
-      codexRuntimeHome ? [codexRuntimeHome.getHostRuntimeHomePath()] : [],
+      codexRuntimeHome ? codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery() : [],
+    prepareAiVaultSessionResume: (args) =>
+      prepareLegacySharedCodexSessionResume(args, {
+        isHostSystemDefaultRealHome: () => codexRuntimeHome?.isHostSystemDefaultRealHome() === true,
+        systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
+      }),
     buildAgentHookPtyEnv: () =>
       isAgentStatusHooksEnabled(store?.getSettings()) ? agentHookServer.buildPtyEnv() : {}
   })
@@ -1913,6 +2131,14 @@ app.whenReady().then(async () => {
   const emulatorBridge = new EmulatorBridge()
   runtimeService.setEmulatorBridge(emulatorBridge)
   nativeTheme.themeSource = store.getSettings().theme ?? 'system'
+  if (codexRuntimeHome.isHostSystemDefaultRealHomeSelected()) {
+    // Why: establish capability before managed-hook reconciliation so an
+    // incapable host re-arms and completes the legacy real-home sweep now.
+    ensureRealHomeCodexHookState({
+      hooksEnabled: isAgentStatusHooksEnabled(store.getSettings()),
+      userDataPath: app.getPath('userData')
+    })
+  }
   if (shouldInstallManagedHooks(is.dev)) {
     // Why: check the persisted off switch before any auto-install so removed hooks don't silently reappear on launch.
     if (isAgentStatusHooksEnabled(store.getSettings())) {
@@ -1921,7 +2147,6 @@ app.whenReady().then(async () => {
       removeManagedAgentHooks()
     }
   }
-
   app.on('child-process-gone', (_event, details) => {
     recordProcessGoneCrash('child', details.type, details.reason, details.exitCode ?? null, {
       name: details.name,
@@ -2062,7 +2287,8 @@ app.whenReady().then(async () => {
       prepareCodexRuntimeHomeForLaunch,
       () => store!.getSettings(),
       (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target),
-      store
+      store,
+      prepareCodexSessionResumeForLaunch
     )
     // Why: headless servers can't mount <webview> panes; use offscreen WebContents, gated on a real display so browser.headless.v1 stays honest.
     if (headlessBrowserDisplayAvailable) {

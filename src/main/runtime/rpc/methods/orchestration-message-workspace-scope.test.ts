@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RpcContext } from '../core'
 import { OrcaRuntimeService } from '../../orca-runtime'
 import { OrchestrationDb } from '../../orchestration/db'
-import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import { ORCHESTRATION_METHODS } from './orchestration'
 
 function findMethod(name: string) {
@@ -39,14 +38,11 @@ describe('orchestration RPC workspace ownership', () => {
     expect(db.listTasks()).toHaveLength(0)
   })
 
-  it('creates a global task for a live floating-terminal caller', async () => {
+  it('creates a global task when the runtime resolves the caller to global scope', async () => {
     db = new OrchestrationDb(':memory:')
     const runtime = new OrcaRuntimeService()
     runtime.setOrchestrationDb(db)
-    vi.spyOn(runtime, 'showTerminal').mockResolvedValue({
-      handle: 'term_floating',
-      worktreeId: FLOATING_TERMINAL_WORKTREE_ID
-    } as Awaited<ReturnType<OrcaRuntimeService['showTerminal']>>)
+    vi.spyOn(runtime, 'resolveWorkspaceKeyForTerminalHandle').mockResolvedValue(null)
 
     const result = (await call({ runtime }, 'orchestration.taskCreate', {
       spec: 'global floating-terminal task',

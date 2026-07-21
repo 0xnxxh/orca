@@ -1387,6 +1387,7 @@ export function useIpcEvents(): void {
           cwd,
           env,
           launchConfig,
+          resumeProviderSession,
           launchToken,
           launchAgent,
           viewMode,
@@ -1572,6 +1573,7 @@ export function useIpcEvents(): void {
                 command,
                 ...(env ? { env } : {}),
                 ...(launchConfig ? { launchConfig } : {}),
+                ...(resumeProviderSession ? { resumeProviderSession } : {}),
                 ...(launchToken ? { launchToken } : {}),
                 ...(launchAgent ? { launchAgent } : {})
               })
@@ -1721,7 +1723,11 @@ export function useIpcEvents(): void {
             store.queueTabStartupCommand(tab.id, {
               command: data.command,
               ...(data.env ? { env: data.env } : {}),
+              ...(data.envToDelete ? { envToDelete: data.envToDelete } : {}),
               ...(data.launchConfig ? { launchConfig: data.launchConfig } : {}),
+              ...(data.resumeProviderSession
+                ? { resumeProviderSession: data.resumeProviderSession }
+                : {}),
               ...(data.launchToken ? { launchToken: data.launchToken } : {}),
               ...(data.launchAgent ? { launchAgent: data.launchAgent } : {}),
               ...(data.startupCommandDelivery

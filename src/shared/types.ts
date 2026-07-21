@@ -41,6 +41,7 @@ import type {
   LocalWindowsRuntimePreference
 } from './project-execution-runtime'
 import type { UsagePercentageDisplay } from './usage-percentage-display'
+import type { StatusBarUsageMode } from './status-bar-usage-mode'
 import type { PersistedNativeChatSessionOptions } from './native-chat-session-options'
 
 // Re-exported for backward compat with renderer call sites that import
@@ -103,6 +104,7 @@ export type ProjectProviderIdentity = {
   provider: 'github'
   owner: string
   repo: string
+  host?: string
 }
 
 export type Project = {
@@ -1154,7 +1156,9 @@ export type PRConflictSummary = {
   localMergeState?: 'clean'
 }
 
-export type GitHubRepositoryIdentity = { owner: string; repo: string }
+// Why: host must survive renderer/RPC boundaries so Enterprise review actions
+// cannot silently fall back to a same-named repository on github.com.
+export type GitHubRepositoryIdentity = { owner: string; repo: string; host?: string }
 
 export type GitHubPRMergeMethod = 'merge' | 'squash' | 'rebase'
 
@@ -1571,6 +1575,7 @@ export type GitHubPRFileContents = {
 
 export type GitHubPRReviewCommentInput = {
   repoPath: string
+  prRepo?: GitHubRepositoryIdentity | null
   prNumber: number
   commitId: string
   path: string
@@ -1682,6 +1687,7 @@ export type LinearIssue = {
 
 export type LinearProjectSummary = {
   id: string
+  slugId?: string
   workspaceId?: string
   workspaceName?: string
   name: string
@@ -1846,6 +1852,7 @@ export type LinearIssueUpdate = {
   dueDate?: string | null
   labelIds?: string[]
   projectId?: string | null
+  parentId?: string | null
 }
 
 export type ClassifiedError = {
@@ -2021,6 +2028,8 @@ export type LinearLabel = {
 export type LinearMember = {
   id: string
   displayName: string
+  name?: string
+  email?: string
   avatarUrl?: string
 }
 
@@ -2360,10 +2369,28 @@ export type CodexManagedAccountSummary = {
   lastAuthenticatedAt: number
 }
 
+/** Live, read-only identity of the user's real ~/.codex used by the
+ *  system-default (activeAccountId:null) Codex account. Orca reads this to
+ *  display and attribute the system default; it never writes ~/.codex. */
+export type CodexSystemDefaultIdentity = {
+  /** True when ~/.codex/auth.json exists (signed in via a token file). */
+  hasAuth: boolean
+  /** 'oauth' = ChatGPT sign-in with an id token (has ChatGPT usage);
+   *  'api-key' = env-key/custom provider (no ChatGPT usage);
+   *  'none' = signed out or identity could not be resolved. */
+  authKind: 'oauth' | 'api-key' | 'none'
+  email: string | null
+  providerAccountId: string | null
+  workspaceLabel: string | null
+}
+
 export type CodexRateLimitAccountsState = {
   accounts: CodexManagedAccountSummary[]
   activeAccountId: string | null
   activeAccountIdsByRuntime?: CodexManagedAccountRuntimeSelection
+  /** Resolved identity of the host system-default (real ~/.codex) account.
+   *  Omitted for runtimes where it is not resolved (e.g. per-distro WSL). */
+  systemDefault?: CodexSystemDefaultIdentity
 }
 
 export type CodexManagedAccountRuntimeSelection = {
@@ -2579,6 +2606,8 @@ export type GlobalSettings = {
   editorAutoSave: boolean
   editorAutoSaveDelayMs: number
   editorMinimapEnabled: boolean
+  /** Opt-in code-editor font; empty (the default) keeps following `terminalFontFamily`. */
+  editorFontFamily?: string
   /** Defaults on for profiles saved before file-editor wrapping became configurable. */
   editorWordWrap?: boolean
   /** Persisted opt-out for browser spellcheck noise in rich Markdown editing surfaces. */
@@ -2653,9 +2682,11 @@ export type GlobalSettings = {
   terminalWindowsShell: string
   /** Pins the WSL distro for terminals/agent scans instead of WSL's current global default. */
   terminalWindowsWslDistro?: string | null
-  /** Account/auth location independent from the terminal shell (e.g. WSL terminals but Windows-scoped accounts). */
-  localAccountRuntime: 'host' | 'wsl'
+  /** Account/auth location; auto follows the global Windows runtime while host/wsl pin it. */
+  localAccountRuntime: 'auto' | 'host' | 'wsl'
   localAccountWslDistro?: string | null
+  /** One-shot guard for migrating the legacy host default to auto. */
+  localAccountRuntimeDefaultedToAutoForAllUsers?: boolean
   /** Independent from the terminal shell so users can inspect Windows vs WSL agent PATH state without changing it. */
   localAgentRuntime?: 'host' | 'wsl'
   localAgentWslDistro?: string | null
@@ -2856,6 +2887,8 @@ export type GlobalSettings = {
   experimentalSidekick?: boolean
   /** Experimental: left-sidebar Agents view — threaded feed of agent completions, blocking/unread state, worktree creation. */
   experimentalActivity: boolean
+  /** Experimental: pop-out Kanban dashboard for monitoring and opening agent terminals across worktrees. */
+  experimentalAgentDashboardPopout?: boolean
   /** One-shot migration guard for defaulting the Agents view off; later explicit opt-ins persist normally. */
   experimentalActivityDefaultedOffForAllUsers?: boolean
   /** Experimental: persistent terminal-pane attention ring for bell + agent-completion events. Opt-in while tuning signal/noise. */
@@ -3213,6 +3246,8 @@ export type PersistedUIState = {
   statusBarVisible: boolean
   /** Why: this is client-side presentation, not a provider/account or execution-host setting. */
   usagePercentageDisplay?: UsagePercentageDisplay
+  /** Client-side footer presentation; verbose preserves the pre-roster all-window default. */
+  statusBarUsageMode?: StatusBarUsageMode
   dismissedUpdateVersion: string | null
   lastUpdateCheckAt: number | null
   pendingUpdateNudgeId?: string | null
@@ -3254,6 +3289,9 @@ export type PersistedUIState = {
   windowBounds?: { x: number; y: number; width: number; height: number } | null
   /** Whether the window was maximized when it was last closed. */
   windowMaximized?: boolean
+  /** Saved bounds for the pop-out dashboard window so it restores to its last
+   *  position/size. Independent of the main window's bounds. */
+  dashboardPopoutBounds?: { x: number; y: number; width: number; height: number } | null
   /** One-shot flag: 'recent' once meant the smart sort (v1→v2 rename), migrated to 'smart' once so the new last-activity 'recent' isn't re-clobbered. */
   _sortBySmartMigrated?: boolean
   /** LEGACY inline-agents flag, stamped unconditionally every load so it can't gate migration; kept only for rollback forward-compat (real gate: _inlineAgentsDefaultedForAllUsers). */
