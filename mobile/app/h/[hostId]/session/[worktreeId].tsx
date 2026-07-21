@@ -77,8 +77,10 @@ import { SessionDockColumn } from '../../../../src/session/SessionDockColumn'
 import { MobileSessionHeaderIconButton } from '../../../../src/session/MobileSessionHeaderIconButton'
 import { MobileSessionHeaderMoreActionsSheet } from '../../../../src/session/MobileSessionHeaderMoreActionsSheet'
 import { QuickCommandsSheet } from '../../../../src/session/QuickCommandsSheet'
+import { sendSessionTerminalCreateResilient } from '../../../../src/session/session-terminal-create-retry'
 import {
   buildMobileQuickCommandLaunch,
+  describeQuickCommandLaunchFailure,
   supportsMobileQuickCommands,
   type MobileQuickCommandLaunch
 } from '../../../../src/terminal/quick-commands'
@@ -3741,20 +3743,26 @@ export default function SessionScreen() {
       .slice(2, 10)}`
 
     try {
-      const response = await client.sendRequest('session.tabs.createTerminal', {
-        worktree: `id:${worktreeId}`,
-        afterTabId: activeSessionTabId ?? undefined,
-        clientMutationId,
-        ...(options?.startupCommand ? { command: options.startupCommand } : {}),
-        ...(options?.startupCommandDelivery
-          ? { startupCommandDelivery: options.startupCommandDelivery }
-          : {}),
-        ...(options?.agentPrompt ? { agentPrompt: options.agentPrompt } : {}),
-        ...(agent ? { agent } : {}),
-        activate: false,
-        select: true,
-        navigation: 'caller'
-      })
+      const response = await sendSessionTerminalCreateResilient(
+        client,
+        {
+          worktree: `id:${worktreeId}`,
+          afterTabId: activeSessionTabId ?? undefined,
+          clientMutationId,
+          ...(options?.startupCommand ? { command: options.startupCommand } : {}),
+          ...(options?.startupCommandDelivery
+            ? { startupCommandDelivery: options.startupCommandDelivery }
+            : {}),
+          ...(options?.agentPrompt ? { agentPrompt: options.agentPrompt } : {}),
+          ...(agent ? { agent } : {}),
+          activate: false,
+          select: true,
+          navigation: 'caller'
+        },
+        // Why: quick-commands support implies the createTerminal mutation-id
+        // dedupe (it shipped earlier), so a cutover replay cannot double-create.
+        { hostDedupesTerminalCreates: quickCommandsSupported === true }
+      )
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
         const created = result.tab
@@ -3846,19 +3854,22 @@ export default function SessionScreen() {
         }
         scheduleDelayedAction(() => void fetchSessionTabs(), 500)
       } else {
-        const message = options?.errorToast ?? 'Failed to create terminal'
+        const message = describeQuickCommandLaunchFailure(
+          options?.errorToast,
+          (response as RpcFailure).error.message
+        )
         setCreateError(message)
         if (options?.errorToast) {
           triggerError()
-          showToast(message, 1800)
+          showToast(message, 2600)
         }
       }
-    } catch {
-      const message = options?.errorToast ?? 'Failed to create terminal'
+    } catch (err) {
+      const message = describeQuickCommandLaunchFailure(options?.errorToast, err)
       setCreateError(message)
       if (options?.errorToast) {
         triggerError()
-        showToast(message, 1800)
+        showToast(message, 2600)
       }
     } finally {
       creatingTerminalRef.current = false
@@ -3870,13 +3881,13 @@ export default function SessionScreen() {
   // run-quick-command-in-new-tab: agent prompts and runnable terminal commands
   // use the host's shell-ready startup path; insert-only commands stay drafts.
   function launchQuickCommand(command: TerminalQuickCommand): boolean {
-    if (
-      !client ||
-      connState !== 'connected' ||
-      creatingTerminalRef.current ||
-      creatingBrowser ||
-      creatingMarkdown
-    ) {
+    if (!client || connState !== 'connected') {
+      // Why: a dead tap here reads as "quick commands are broken"; name the real blocker.
+      triggerError()
+      showToast('Not connected to desktop — try again in a moment', 1800)
+      return false
+    }
+    if (creatingTerminalRef.current || creatingBrowser || creatingMarkdown) {
       return false
     }
     const launch = buildMobileQuickCommandLaunch(command)
