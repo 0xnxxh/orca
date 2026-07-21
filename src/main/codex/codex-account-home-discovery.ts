@@ -1,6 +1,7 @@
-import { existsSync, readdirSync } from 'node:fs'
+import { lstatSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { getOrcaUserDataPath } from './codex-home-paths'
+import { getOrcaUserDataPath, getSystemCodexHomePath } from './codex-home-paths'
+import { assertOwnedHostCodexManagedHomePath } from '../codex-accounts/host-codex-managed-home-ownership'
 
 /** Session roots of per-account self-contained host Codex homes present on disk.
  *  Why disk-enumerated, not settings-driven: rollouts retained after an account
@@ -11,8 +12,22 @@ export function getCodexAccountHomeSessionDirectories(): string[] {
   try {
     return readdirSync(accountsRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
-      .map((entry) => join(accountsRoot, entry.name, 'home', 'sessions'))
-      .filter((sessionsPath) => existsSync(sessionsPath))
+      .flatMap((entry) => {
+        const accountHome = join(accountsRoot, entry.name, 'home')
+        try {
+          assertOwnedHostCodexManagedHomePath({
+            candidatePath: accountHome,
+            managedAccountsRoot: accountsRoot,
+            systemCodexHomePath: getSystemCodexHomePath(),
+            expectedAccountId: entry.name
+          })
+          const sessionsPath = join(accountHome, 'sessions')
+          // Why: a redirected sessions root could make usage scan unrelated, unbounded trees.
+          return lstatSync(sessionsPath).isDirectory() ? [sessionsPath] : []
+        } catch {
+          return []
+        }
+      })
   } catch {
     return []
   }

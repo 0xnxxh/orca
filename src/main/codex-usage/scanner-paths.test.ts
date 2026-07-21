@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync
 } from 'node:fs'
@@ -163,10 +164,25 @@ describe('listCodexSessionFiles', () => {
     mkdirSync(runtimeSessionsDir, { recursive: true })
     mkdirSync(systemSessionsDir, { recursive: true })
     mkdirSync(accountSessionsDir, { recursive: true })
+    writeFileSync(
+      join(userDataDir, 'codex-accounts', 'acct-1', 'home', '.orca-managed-home'),
+      'acct-1\n',
+      'utf-8'
+    )
     // Why: an account home without a sessions tree (auth-only) must not add a scan root.
     mkdirSync(join(userDataDir, 'codex-accounts', 'acct-2', 'home'), { recursive: true })
     const accountSessionPath = join(accountSessionsDir, 'account.jsonl')
-    writeFileSync(accountSessionPath, '{}\n', 'utf-8')
+    writeFileSync(
+      accountSessionPath,
+      [
+        `${JSON.stringify({
+          type: 'session_meta',
+          payload: { id: 'account-session', cwd: join(fakeHomeDir, 'repo') }
+        })}\n`,
+        usageRecord('2026-07-21T12:00:00.000Z', 42)
+      ].join(''),
+      'utf-8'
+    )
 
     expect(getCodexSessionDirectories()).toEqual([
       runtimeSessionsDir,
@@ -174,6 +190,46 @@ describe('listCodexSessionFiles', () => {
       accountSessionsDir
     ])
     expect(await listCodexSessionFiles()).toEqual([accountSessionPath])
+    const result = await scanCodexUsageFiles([], [])
+    expect(result.sessions).toHaveLength(1)
+    expect(result.dailyAggregates).toEqual([
+      expect.objectContaining({ totalTokens: 42, eventCount: 1 })
+    ])
+  })
+
+  it('does not scan an account home redirected outside managed storage', async () => {
+    const accountDir = join(userDataDir, 'codex-accounts', 'acct-redirected')
+    const externalHome = join(fakeHomeDir, 'redirected-account-home')
+    const externalSessionsDir = join(externalHome, 'sessions')
+    mkdirSync(accountDir, { recursive: true })
+    mkdirSync(externalSessionsDir, { recursive: true })
+    writeFileSync(join(externalHome, '.orca-managed-home'), 'acct-redirected\n', 'utf-8')
+    writeFileSync(join(externalSessionsDir, 'unrelated.jsonl'), '{}\n', 'utf-8')
+    symlinkSync(
+      externalHome,
+      join(accountDir, 'home'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    expect(getCodexSessionDirectories()).not.toContain(join(accountDir, 'home', 'sessions'))
+    expect(await listCodexSessionFiles()).toEqual([])
+  })
+
+  it('does not scan a sessions root redirected outside an owned account home', async () => {
+    const accountHome = join(userDataDir, 'codex-accounts', 'acct-redirected-sessions', 'home')
+    const externalSessionsDir = join(fakeHomeDir, 'redirected-sessions')
+    mkdirSync(accountHome, { recursive: true })
+    mkdirSync(externalSessionsDir, { recursive: true })
+    writeFileSync(join(accountHome, '.orca-managed-home'), 'acct-redirected-sessions\n', 'utf-8')
+    writeFileSync(join(externalSessionsDir, 'unrelated.jsonl'), '{}\n', 'utf-8')
+    symlinkSync(
+      externalSessionsDir,
+      join(accountHome, 'sessions'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    expect(getCodexSessionDirectories()).not.toContain(join(accountHome, 'sessions'))
+    expect(await listCodexSessionFiles()).toEqual([])
   })
 
   it('dedupes managed session aliases that point at system sessions', async () => {
