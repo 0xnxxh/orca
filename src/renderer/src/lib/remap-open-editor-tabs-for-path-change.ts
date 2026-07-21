@@ -2,9 +2,11 @@ import { useAppStore } from '@/store'
 import { detectLanguage } from '@/lib/language-detect'
 import { basename } from '@/lib/path'
 import {
+  buildDiffEditorFileId,
   buildOwnedEditorFileId,
   resolveEditorFileIdForOwner,
-  type OpenFilePathRekey
+  type OpenFilePathRekey,
+  type RekeyOpenFilesResult
 } from '@/store/slices/editor'
 import {
   normalizeRuntimePathSeparators,
@@ -143,13 +145,12 @@ export function remapOpenEditorTabsForPathChange({
   /** Passed by the move coordinator so dirty destinations get a content-verify
    * gate + provenance installed atomically with the re-home. */
   moveOperationId?: string
-}): void {
+}): RekeyOpenFilesResult {
   const state = useAppStore.getState()
   const filesToMove = state.openFiles.filter((file) => isPathInsideOrEqual(fromPath, file.filePath))
   if (filesToMove.length === 0) {
-    return
+    return { ok: true }
   }
-  const scopedWorktreeId = worktreeId ?? filesToMove[0]!.worktreeId
 
   // Retarget the live edit session in place (atomic store rekey) instead of
   // close+reopen: preserves the full OpenFile + all id-keyed state and closes
@@ -243,10 +244,28 @@ export function remapOpenEditorTabsForPathChange({
       newMarkdownPreviewSourceFileId: newSourceFileId
     })
   }
-  if (rekeys.length === 0) {
-    return
+  // Single-file diff tabs carry a path-derived id too; retarget them so a moved
+  // directory doesn't strand them at the old path.
+  for (const file of filesToMove) {
+    if (file.mode !== 'diff' || !file.diffSource) {
+      continue
+    }
+    const newRelativePath = relativeOf(file)
+    rekeys.push({
+      oldFileId: file.id,
+      newFileId: buildDiffEditorFileId(
+        file.worktreeId,
+        file.diffSource,
+        newRelativePath,
+        file.runtimeEnvironmentId
+      ),
+      oldFilePath: file.filePath,
+      newFilePath: updatedPathOf(file),
+      newRelativePath
+    })
   }
-  useAppStore
-    .getState()
-    .rekeyOpenFilesForPathChange({ worktreeId: scopedWorktreeId, rekeys, moveOperationId })
+  if (rekeys.length === 0) {
+    return { ok: true }
+  }
+  return useAppStore.getState().rekeyOpenFilesForPathChange({ rekeys, moveOperationId })
 }

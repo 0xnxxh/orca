@@ -545,7 +545,6 @@ export type EditorSlice = {
    * state, with no close/reopen lifecycle. Returns collision/stale without
    * mutating. See design: preserve dirty editor sessions across moves. */
   rekeyOpenFilesForPathChange: (args: {
-    worktreeId: string
     rekeys: readonly OpenFilePathRekey[]
     /** When set, dirty autosave-capable destinations get a move-echo provenance
      * + a synchronous autosave gate so the watcher can content-verify the echo. */
@@ -1055,7 +1054,7 @@ export function buildOwnedEditorFileId(
   return `editor:${encodeURIComponent(worktreeId)}:${encodeURIComponent(runtimeKey)}:${encodeURIComponent(filePath)}`
 }
 
-function buildDiffEditorFileId(
+export function buildDiffEditorFileId(
   worktreeId: string,
   diffSource: DiffSource,
   relativePath: string,
@@ -2656,7 +2655,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       }
     }),
 
-  rekeyOpenFilesForPathChange: ({ worktreeId, rekeys, moveOperationId }) => {
+  rekeyOpenFilesForPathChange: ({ rekeys, moveOperationId }) => {
     if (rekeys.length === 0) {
       return { ok: true }
     }
@@ -2738,10 +2737,21 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         activeFileIdByWorktree[wtId] = activeId ? (migrations.get(activeId) ?? activeId) : activeId
       }
 
+      // Partition migrations by each moved file's OWN worktree: the same path can
+      // be open in more than one worktree (e.g. a floating workspace), and tab
+      // bar / unified-tab / group state is per-worktree.
+      const migrationsByWorktree: Record<string, Map<string, string>> = {}
+      for (const rekey of rekeys) {
+        const wtId = openById.get(rekey.oldFileId)!.worktreeId
+        ;(migrationsByWorktree[wtId] ??= new Map()).set(rekey.oldFileId, rekey.newFileId)
+      }
+
       const tabBarOrderByWorktree = { ...s.tabBarOrderByWorktree }
-      const prevBarOrder = tabBarOrderByWorktree[worktreeId]
-      if (prevBarOrder) {
-        tabBarOrderByWorktree[worktreeId] = prevBarOrder.map((id) => migrations.get(id) ?? id)
+      for (const [wtId, wtMigrations] of Object.entries(migrationsByWorktree)) {
+        const prevBarOrder = tabBarOrderByWorktree[wtId]
+        if (prevBarOrder) {
+          tabBarOrderByWorktree[wtId] = prevBarOrder.map((id) => wtMigrations.get(id) ?? id)
+        }
       }
 
       const reveal = s.pendingEditorReveal
@@ -2763,7 +2773,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         activeFileId: s.activeFileId ? (migrations.get(s.activeFileId) ?? s.activeFileId) : null,
         activeFileIdByWorktree,
         tabBarOrderByWorktree,
-        ...migrateHydratedEditorTabsAndGroups(s, { [worktreeId]: migrations }),
+        ...migrateHydratedEditorTabsAndGroups(s, migrationsByWorktree),
         ...(reveal && rekeyForReveal
           ? { pendingEditorReveal: { ...reveal, filePath: rekeyForReveal.newFilePath } }
           : {})

@@ -77,6 +77,39 @@ describe('executeOpenEditorPathMove', () => {
     expect(__activeEditorPathMoveCountForTests()).toBe(0)
   })
 
+  it('undoes the on-disk rename when the editor rekey collides', async () => {
+    openDirtyTab()
+    // A distinct live session already occupies the destination id.
+    useAppStore.getState().openFile(
+      {
+        filePath: '/repo/sub/a.md',
+        relativePath: 'sub/a.md',
+        worktreeId: 'wt-1',
+        runtimeEnvironmentId: null,
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+    const before = useAppStore.getState().openFiles.map((f) => f.id)
+
+    await expect(
+      executeOpenEditorPathMove({
+        context: CONTEXT,
+        fromPath: '/repo/a.md',
+        toPath: '/repo/sub/a.md',
+        worktreeId: 'wt-1',
+        worktreePath: '/repo'
+      })
+    ).rejects.toThrow(/retarget/)
+
+    // Forward rename then inverse rename to undo the disk move.
+    expect(mocks.renameRuntimePath).toHaveBeenCalledWith(CONTEXT, '/repo/a.md', '/repo/sub/a.md')
+    expect(mocks.renameRuntimePath).toHaveBeenCalledWith(CONTEXT, '/repo/sub/a.md', '/repo/a.md')
+    // The stranded source session is left intact (not rekeyed).
+    expect(useAppStore.getState().openFiles.map((f) => f.id)).toEqual(before)
+  })
+
   it('leaves the store untouched and settles the transaction when the rename fails', async () => {
     openDirtyTab()
     const before = useAppStore.getState().openFiles.map((f) => ({ ...f }))

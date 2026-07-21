@@ -224,4 +224,33 @@ describe('remapOpenEditorTabsForPathChange', () => {
     expect(moved?.externalMutation).toBe('changed')
     expect(moved?.isDirty).toBe(true)
   })
+
+  it('retargets an unstaged diff tab when its directory is moved', () => {
+    const state = useAppStore.getState()
+    state.openFile(
+      {
+        filePath: '/repo/docs/readme.md',
+        relativePath: 'docs/readme.md',
+        worktreeId: 'wt-1',
+        runtimeEnvironmentId: null,
+        language: 'markdown',
+        mode: 'diff',
+        diffSource: 'unstaged'
+      } as never,
+      { suppressActiveRuntimeFallback: true }
+    )
+
+    remapOpenEditorTabsForPathChange({
+      fromPath: '/repo/docs',
+      toPath: '/repo/notes',
+      worktreePath: '/repo',
+      worktreeId: 'wt-1'
+    })
+
+    const moved = useAppStore.getState().openFiles.find((f) => f.mode === 'diff')
+    expect(moved?.filePath).toBe('/repo/notes/readme.md')
+    expect(
+      useAppStore.getState().openFiles.some((f) => f.filePath === '/repo/docs/readme.md')
+    ).toBe(false)
+  })
 })

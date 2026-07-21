@@ -34,43 +34,39 @@ export async function executeOpenEditorPathMove(args: {
   const { context, fromPath, toPath, worktreeId, worktreePath } = args
   const operationId = `editor-move-${(moveOperationCounter += 1)}`
 
+  // Every open session under the source path is affected — including one open in
+  // a DIFFERENT worktree (e.g. a floating workspace) at the same absolute path,
+  // which the in-place rekey also retargets — so quiesce/suppress/notify them all.
   const affected = useAppStore
     .getState()
-    .openFiles.filter(
-      (f) => f.worktreeId === worktreeId && isPathInsideOrEqual(fromPath, f.filePath)
-    )
+    .openFiles.filter((f) => isPathInsideOrEqual(fromPath, f.filePath))
   const newPathOf = (filePath: string): string => toPath + filePath.slice(fromPath.length)
 
-  // In-flight source suppression is scoped per runtime owner, since the same
-  // path can be open (and watched) under more than one owner.
+  // In-flight source suppression is scoped per (worktree, runtime owner): the
+  // same path can be open and watched under more than one worktree/owner.
   const ownerSubOps: string[] = []
-  const owners = new Set(affected.map((f) => f.runtimeEnvironmentId?.trim() || null))
-  for (const owner of owners) {
-    const ownerFiles = affected.filter((f) => (f.runtimeEnvironmentId?.trim() || null) === owner)
-    const subOperationId = `${operationId}::${owner ?? 'local'}`
+  const scopeKey = (f: (typeof affected)[number]): string =>
+    `${f.worktreeId}::${f.runtimeEnvironmentId?.trim() || 'local'}`
+  const scopes = new Map<string, typeof affected>()
+  for (const f of affected) {
+    ;(scopes.get(scopeKey(f)) ?? scopes.set(scopeKey(f), []).get(scopeKey(f))!).push(f)
+  }
+  for (const [, scopeFiles] of scopes) {
+    const first = scopeFiles[0]!
+    const subOperationId = `${operationId}::${scopeKey(first)}`
     ownerSubOps.push(subOperationId)
     beginEditorPathMove({
       operationId: subOperationId,
-      worktreeId,
-      runtimeEnvironmentId: owner,
-      sourcePaths: ownerFiles.map((f) => f.filePath),
-      targetPaths: ownerFiles.map((f) => newPathOf(f.filePath))
+      worktreeId: first.worktreeId,
+      runtimeEnvironmentId: first.runtimeEnvironmentId?.trim() || null,
+      sourcePaths: scopeFiles.map((f) => f.filePath),
+      targetPaths: scopeFiles.map((f) => newPathOf(f.filePath))
     })
   }
 
   // Let any in-flight autosave settle so a trailing write can't recreate the old
   // path after the rename.
   await Promise.all(affected.map((f) => requestEditorSaveQuiesce({ fileId: f.id })))
-
-  // Close the host's old-path tab for any mirrored file: the rekey detaches it
-  // to a local tab, so without this the host snapshot would resurrect the old
-  // path. The close intent recorded by the RPC suppresses re-mirroring.
-  const mirrorState = useAppStore.getState()
-  for (const file of affected) {
-    if (file.mirroredFromRuntimeSession) {
-      notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
-    }
-  }
 
   try {
     await renameRuntimePath(context, fromPath, toPath)
@@ -81,15 +77,36 @@ export async function executeOpenEditorPathMove(args: {
     throw err
   }
 
+  // The rename committed; close the host's old-path tab for any mirrored file
+  // (doing this only AFTER success so a failed rename can't desync the host).
+  // The rekey detaches the tab to a local one, so without this the host snapshot
+  // would resurrect the old path; the close intent suppresses re-mirroring.
+  const mirrorState = useAppStore.getState()
+  for (const file of affected) {
+    if (file.mirroredFromRuntimeSession) {
+      notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
+    }
+  }
+
   // Commit: retarget the live sessions in place (the rekey installs the gate +
   // provenance on dirty destinations), then settle the transaction.
-  remapOpenEditorTabsForPathChange({
+  const rekeyResult = remapOpenEditorTabsForPathChange({
     fromPath,
     toPath,
     worktreePath,
     worktreeId,
     moveOperationId: operationId
   })
+  if (!rekeyResult.ok) {
+    // The disk rename succeeded but the editor state couldn't be retargeted
+    // (a destination collision or stale plan). Undo the on-disk move so the
+    // still-open source session isn't stranded pointing at a vanished path.
+    for (const subOperationId of ownerSubOps) {
+      settleEditorPathMove(subOperationId)
+    }
+    await renameRuntimePath(context, toPath, fromPath).catch(() => undefined)
+    throw new Error(`Could not retarget open editors for the move (${rekeyResult.reason}).`)
+  }
 
   const latchedTargets = new Set<string>()
   for (const subOperationId of ownerSubOps) {

@@ -55,7 +55,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     const newPath = '/repo/sub/a.md'
 
     const result = useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [rekeyFor(oldId, newPath, 'sub/a.md')]
     })
 
@@ -101,7 +100,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     const newPath = '/repo/sub/a.md'
 
     useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [rekeyFor(oldId, newPath, 'sub/a.md')]
     })
 
@@ -133,7 +131,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     const before = useAppStore.getState().openFiles.map((f) => f.id)
 
     const result = useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [rekeyFor(oldId, '/repo/sub/a.md', 'sub/a.md')]
     })
 
@@ -146,7 +143,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     const before = useAppStore.getState().openFiles.map((f) => f.id)
 
     const result = useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [rekeyFor('editor:gone', '/repo/sub/a.md', 'sub/a.md')]
     })
 
@@ -171,7 +167,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     const oldId = useAppStore.getState().openFiles[0]!.id
 
     useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [
         {
           oldFileId: oldId,
@@ -195,7 +190,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     const newPath = '/repo/sub/a.md'
 
     useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [rekeyFor(oldId, newPath, 'sub/a.md')],
       moveOperationId: 'op-42'
     })
@@ -212,7 +206,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     useAppStore.getState().markFileDirty(oldId, false)
 
     useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [rekeyFor(oldId, '/repo/sub/a.md', 'sub/a.md')],
       moveOperationId: 'op-42'
     })
@@ -232,7 +225,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     }))
 
     useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [rekeyFor(oldId, '/repo/sub/a.md', 'sub/a.md')]
     })
 
@@ -247,7 +239,6 @@ describe('rekeyOpenFilesForPathChange', () => {
     } as never)
 
     useAppStore.getState().rekeyOpenFilesForPathChange({
-      worktreeId: 'wt-1',
       rekeys: [rekeyFor(oldId, '/repo/sub/a.md', 'sub/a.md')]
     })
 
