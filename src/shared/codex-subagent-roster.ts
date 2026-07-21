@@ -1,4 +1,10 @@
-import { AGENT_STATUS_MAX_SUBAGENTS, type AgentSubagentSnapshot } from './agent-status-types'
+import {
+  AGENT_MODEL_MAX_LENGTH,
+  AGENT_STATUS_MAX_SUBAGENTS,
+  AGENT_TYPE_MAX_LENGTH,
+  type AgentSubagentSnapshot
+} from './agent-status-types'
+import { normalizeOptionalField } from './agent-status-field-normalization'
 
 const CODEX_SUBAGENT_ID_MAX_LENGTH = 64
 
@@ -21,29 +27,32 @@ export function upsertCodexSubagent(
   },
   now: number
 ): void {
-  if (id.length === 0 || id.length > CODEX_SUBAGENT_ID_MAX_LENGTH) {
+  const normalizedId = id.trim()
+  if (normalizedId.length === 0 || normalizedId.length > CODEX_SUBAGENT_ID_MAX_LENGTH) {
     return
   }
-  const existing = roster.get(id)
+  const agentType = normalizeOptionalField(fields.agentType, AGENT_TYPE_MAX_LENGTH)
+  const model = normalizeOptionalField(fields.model, AGENT_MODEL_MAX_LENGTH)
+  const existing = roster.get(normalizedId)
   if (existing) {
-    existing.agentType = fields.agentType ?? existing.agentType
-    existing.model = fields.model ?? existing.model
+    existing.agentType = agentType ?? existing.agentType
+    existing.model = model ?? existing.model
     existing.state = fields.state
     return
   }
   if (roster.size >= AGENT_STATUS_MAX_SUBAGENTS) {
     return
   }
-  roster.set(id, {
-    agentType: fields.agentType,
-    model: fields.model,
+  roster.set(normalizedId, {
+    agentType,
+    model,
     state: fields.state,
     startedAt: now
   })
 }
 
 export function finishCodexSubagent(roster: CodexSubagentRoster, id: string): void {
-  roster.delete(id)
+  roster.delete(id.trim())
 }
 
 export function seedCodexSubagentRoster(
@@ -54,15 +63,12 @@ export function seedCodexSubagentRoster(
     if (snapshot.state !== 'working' && snapshot.state !== 'waiting') {
       continue
     }
-    if (roster.size >= AGENT_STATUS_MAX_SUBAGENTS) {
-      return
-    }
-    roster.set(snapshot.id, {
-      agentType: snapshot.agentType,
-      model: snapshot.model,
-      state: snapshot.state,
-      startedAt: snapshot.startedAt
-    })
+    upsertCodexSubagent(
+      roster,
+      snapshot.id,
+      { agentType: snapshot.agentType, model: snapshot.model, state: snapshot.state },
+      snapshot.startedAt
+    )
   }
 }
 

@@ -26,7 +26,7 @@ import {
   resolveHookSource,
   preparePendingGrokResultDiscovery,
   seedClaudeSubagentRosterFromSnapshots,
-  seedCodexSubagentRosterFromSnapshots,
+  seedCodexStateFromSnapshot,
   warnOnHookEnvOrVersionMismatch,
   writeEndpointFile,
   type AgentHookEventPayload,
@@ -1830,20 +1830,14 @@ export class AgentHookServer {
           )
         }
         // Why: restore live child hierarchy immediately; provider-specific reconciliation reaps stale seeds.
-        if (entry.payload.subagents) {
-          if (entry.payload.agentType === 'codex') {
-            seedCodexSubagentRosterFromSnapshots(
-              this.state,
-              resolvedPaneKey,
-              entry.payload.subagents
-            )
-          } else if (entry.payload.agentType === 'claude') {
-            seedClaudeSubagentRosterFromSnapshots(
-              this.state,
-              resolvedPaneKey,
-              entry.payload.subagents
-            )
-          }
+        if (entry.payload.agentType === 'codex') {
+          seedCodexStateFromSnapshot(this.state, resolvedPaneKey, entry.payload)
+        } else if (entry.payload.agentType === 'claude' && entry.payload.subagents) {
+          seedClaudeSubagentRosterFromSnapshots(
+            this.state,
+            resolvedPaneKey,
+            entry.payload.subagents
+          )
         }
         hydrated += 1
       } else {

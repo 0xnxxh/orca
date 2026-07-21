@@ -6436,6 +6436,26 @@ describe('Last-status persistence', () => {
 
       await postHookEvent(
         server,
+        buildBody({
+          hook_event_name: 'PreToolUse',
+          agent_id: '11111111-2222-4333-8444-555555555555',
+          agent_type: 'reviewer',
+          model: 'gpt-5.4-mini',
+          tool_name: 'exec_command',
+          tool_input: { cmd: 'pnpm test' }
+        }),
+        '/hook/codex'
+      )
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({
+          state: 'working',
+          model: 'gpt-5.4',
+          subagents: [expect.objectContaining({ model: 'gpt-5.4-mini' })]
+        })
+      ])
+
+      await postHookEvent(
+        server,
         buildBody({ hook_event_name: 'Stop', model: 'gpt-5.4' }),
         '/hook/codex'
       )

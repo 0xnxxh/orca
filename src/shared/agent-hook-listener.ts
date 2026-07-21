@@ -19,12 +19,14 @@ import {
 import { isAbsolute, join } from 'node:path'
 
 import {
+  AGENT_MODEL_MAX_LENGTH,
   normalizeAgentStatusPayload,
   parseAgentStatusPayload,
   type AgentStatusState,
   type AgentSubagentSnapshot,
   type ParsedAgentStatusPayload
 } from './agent-status-types'
+import { normalizeOptionalField } from './agent-status-field-normalization'
 import { isAskUserQuestionTool } from './agent-question-answered-intent'
 import {
   claudeRosterHasWorkingSubagent,
@@ -3037,15 +3039,29 @@ function getOrCreateCodexSubagentRoster(
   return roster
 }
 
-export function seedCodexSubagentRosterFromSnapshots(
+export function seedCodexStateFromSnapshot(
   state: HookListenerState,
   paneKey: string,
-  snapshots: readonly AgentSubagentSnapshot[]
+  payload: Pick<ParsedAgentStatusPayload, 'model' | 'state' | 'subagents'>
 ): void {
-  if (snapshots.length === 0 || state.codexSubagentRosterByPaneKey.has(paneKey)) {
-    return
+  const snapshots = payload.subagents ?? []
+  if (snapshots.length > 0 && !state.codexSubagentRosterByPaneKey.has(paneKey)) {
+    seedCodexSubagentRoster(getOrCreateCodexSubagentRoster(state, paneKey), snapshots)
   }
-  seedCodexSubagentRoster(getOrCreateCodexSubagentRoster(state, paneKey), snapshots)
+  if (!state.codexLeadStateByPaneKey.has(paneKey)) {
+    // Why: child hooks after restart omit the root model; seed it from durable status before they can overwrite the cache.
+    state.codexLeadStateByPaneKey.set(paneKey, {
+      // Why: a child wait drives the aggregate waiting state, so it is not evidence that the root itself was waiting.
+      state:
+        payload.state === 'done'
+          ? 'done'
+          : payload.state === 'waiting' &&
+              !snapshots.some((snapshot) => snapshot.state === 'waiting')
+            ? 'waiting'
+            : 'working',
+      model: payload.model
+    })
+  }
 }
 
 function buildCodexStatusPayload(
@@ -3175,7 +3191,7 @@ function normalizeCodexEvent(
   state.codexLeadStateByPaneKey.set(paneKey, {
     state: stateName,
     model:
-      readString(hookPayload, 'model') ??
+      normalizeOptionalField(hookPayload['model'], AGENT_MODEL_MAX_LENGTH) ??
       (eventName === 'SessionStart' ? undefined : previousLead?.model)
   })
   const effectiveState = codexRosterEffectiveState(
