@@ -30,9 +30,7 @@ export function TerminalWindowsShellSection({
   gitBashAvailable
 }: TerminalWindowsShellSectionProps): React.JSX.Element {
   const showGitBashOption = gitBashAvailable || windowsShell === WINDOWS_GIT_BASH_SHELL
-  // Why: WSL can't be *selected* here (it needs a companion distro chosen in
-  // onboarding), but surface it disabled when it's the active default so the
-  // control reflects the real shell instead of mislabeling WSL as PowerShell.
+  // Why: selecting WSL here would omit its required distro, but an existing WSL default must stay visible.
   const showWslOption = windowsShell === 'wsl.exe'
 
   return (
