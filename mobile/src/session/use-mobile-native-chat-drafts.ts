@@ -15,12 +15,13 @@ export type MobileNativeChatSendOrigin = {
 
 const NO_PENDING_MESSAGES: MobileNativeChatPendingMessage[] = []
 
-// How long an ack-lost send may wait for its transcript echo before it is
-// reported as a failure. Covers a relay reconnect plus the transcript resync.
+// How long an ack-lost send waits for its transcript echo before the UI surfaces
+// that delivery remains unconfirmed.
 const UNCONFIRMED_SEND_DEADLINE_MS = 20_000
 
 type UnconfirmedSend = {
   draftKey: string
+  pendingKey: string | null
   text: string
   normalizedText: string
   expectedOccurrence: number
@@ -64,7 +65,7 @@ export function useMobileNativeChatDrafts(args: {
   holdUnconfirmedSend: (
     origin: MobileNativeChatSendOrigin,
     text: string,
-    onLost: () => void
+    onUnconfirmed: () => void
   ) => void
 } {
   const { hostId, worktreeId, tabId, sessionId, messages } = args
@@ -77,6 +78,10 @@ export function useMobileNativeChatDrafts(args: {
   const pendingCounterRef = useRef(0)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+  const activeDraftKeyRef = useRef(draftKey)
+  activeDraftKeyRef.current = draftKey
+  const activePendingKeyRef = useRef(pendingKey)
+  activePendingKeyRef.current = pendingKey
 
   const setComposerText: Dispatch<SetStateAction<string>> = useCallback(
     (value) => {
@@ -142,24 +147,42 @@ export function useMobileNativeChatDrafts(args: {
   // Why: a relay drop mid-send loses only the ack in the common case — the
   // desktop already delivered the message. Hold the send instead of claiming
   // failure (which baits a duplicate): clear the draft when the transcript echo
-  // lands, and only report a loss if the deadline passes without one.
+  // lands, and surface the uncertainty if the deadline passes without one.
   const unconfirmedRef = useRef<UnconfirmedSend[]>([])
   const holdUnconfirmedSend = useCallback(
-    (origin: MobileNativeChatSendOrigin, text: string, onLost: () => void) => {
+    (origin: MobileNativeChatSendOrigin, text: string, onUnconfirmed: () => void) => {
       const earlierOutstanding = unconfirmedRef.current.filter(
         (entry) =>
           entry.draftKey === origin.draftKey &&
+          entry.pendingKey === origin.pendingKey &&
           entry.normalizedText === origin.normalizedText &&
           entry.expectedOccurrence > origin.baselineOccurrences
       ).length
+      const expectedOccurrence = origin.baselineOccurrences + earlierOutstanding + 1
+      const isActiveTranscript =
+        activeDraftKeyRef.current === origin.draftKey &&
+        (origin.pendingKey === null || activePendingKeyRef.current === origin.pendingKey)
+      // Why: the transcript event can beat the lost RPC acknowledgement.
+      if (
+        isActiveTranscript &&
+        countUserTextOccurrences(messagesRef.current, origin.normalizedText) >= expectedOccurrence
+      ) {
+        setDrafts((previous) =>
+          (previous[origin.draftKey] ?? '').trim() === text.trim()
+            ? { ...previous, [origin.draftKey]: '' }
+            : previous
+        )
+        return
+      }
       const entry: UnconfirmedSend = {
         draftKey: origin.draftKey,
+        pendingKey: origin.pendingKey,
         text,
         normalizedText: origin.normalizedText,
-        expectedOccurrence: origin.baselineOccurrences + earlierOutstanding + 1,
+        expectedOccurrence,
         deadline: setTimeout(() => {
           unconfirmedRef.current = unconfirmedRef.current.filter((held) => held !== entry)
-          onLost()
+          onUnconfirmed()
         }, UNCONFIRMED_SEND_DEADLINE_MS)
       }
       unconfirmedRef.current = [...unconfirmedRef.current, entry]
@@ -174,6 +197,7 @@ export function useMobileNativeChatDrafts(args: {
     const landed = unconfirmedRef.current.filter(
       (entry) =>
         entry.draftKey === draftKey &&
+        (entry.pendingKey === null || entry.pendingKey === pendingKey) &&
         countUserTextOccurrences(messages, entry.normalizedText) >= entry.expectedOccurrence
     )
     if (landed.length === 0) {
@@ -189,7 +213,7 @@ export function useMobileNativeChatDrafts(args: {
           : previous
       )
     }
-  }, [messages, draftKey])
+  }, [messages, draftKey, pendingKey])
 
   useEffect(
     () => () => {

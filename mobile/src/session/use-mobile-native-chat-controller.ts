@@ -239,7 +239,9 @@ export function useMobileNativeChatController(args: {
       if (outcome === 'unknown') {
         // Why: an ack-lost send usually WAS delivered (issue seen on cellular
         // relay) — verify via the transcript echo instead of a false "not sent".
-        holdUnconfirmedSend(origin, text, () => onSendError('Message not sent'))
+        holdUnconfirmedSend(origin, text, () =>
+          onSendError('Delivery unconfirmed — check chat before retrying')
+        )
         return true
       }
       if (outcome === 'rejected') {

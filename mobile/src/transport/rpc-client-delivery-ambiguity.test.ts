@@ -31,7 +31,6 @@ class MockWebSocket {
   sent: string[] = []
   close = vi.fn(() => {
     this.readyState = MockWebSocket.CLOSED
-    this.onclose?.()
   })
 
   constructor(readonly endpoint: string) {
@@ -49,6 +48,11 @@ class MockWebSocket {
 
   receive(payload: unknown): void {
     this.onmessage?.({ data: payload })
+  }
+
+  drop(): void {
+    this.close()
+    this.onclose?.()
   }
 }
 
@@ -95,12 +99,28 @@ describe('mobile rpc-client delivery ambiguity marking', () => {
     await Promise.resolve()
     expect(hasSentRequest(socket, 'terminal.send')).toBe(true)
 
-    socket.close()
+    socket.drop()
 
     const error = await requestError
     expect(error).toMatchObject({ message: 'Connection interrupted' })
     expect(isRpcDeliveryUnknown(error)).toBe(true)
     client.close()
+  })
+
+  it('marks an in-flight request when the client closes before its response arrives', async () => {
+    const { client, socket } = connectAuthenticated()
+    const requestError = client.sendRequest('terminal.send', { terminal: 't' }).then(
+      () => null,
+      (error: Error) => error
+    )
+    await Promise.resolve()
+    expect(hasSentRequest(socket, 'terminal.send')).toBe(true)
+
+    client.close()
+
+    const error = await requestError
+    expect(error).toMatchObject({ message: 'Client closed' })
+    expect(isRpcDeliveryUnknown(error)).toBe(true)
   })
 
   it('marks timed-out requests as delivery-unknown', async () => {

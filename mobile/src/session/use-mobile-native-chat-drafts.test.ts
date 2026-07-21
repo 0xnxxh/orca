@@ -179,10 +179,10 @@ describe('useMobileNativeChatDrafts', () => {
       await mount('a')
       act(() => state?.setComposerText('ping'))
       const origin = state?.captureSendOrigin('ping')
-      const onLost = vi.fn()
+      const onUnconfirmed = vi.fn()
       act(() => {
         if (origin) {
-          state?.holdUnconfirmedSend(origin, 'ping', onLost)
+          state?.holdUnconfirmedSend(origin, 'ping', onUnconfirmed)
         }
       })
       expect(state?.composerText).toBe('ping')
@@ -195,27 +195,55 @@ describe('useMobileNativeChatDrafts', () => {
       expect(state?.composerText).toBe('')
 
       act(() => vi.advanceTimersByTime(30_000))
-      expect(onLost).not.toHaveBeenCalled()
+      expect(onUnconfirmed).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('reports a loss and keeps the draft when no echo lands before the deadline', async () => {
+  it('clears immediately when the transcript echo beat the ambiguous RPC rejection', async () => {
     vi.useFakeTimers()
     try {
       await mount('a')
       act(() => state?.setComposerText('ping'))
       const origin = state?.captureSendOrigin('ping')
-      const onLost = vi.fn()
+      const onUnconfirmed = vi.fn()
+
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, { tabId: 'a', messages: [userTextMessage('m1', 'ping')] })
+        )
+      )
       act(() => {
         if (origin) {
-          state?.holdUnconfirmedSend(origin, 'ping', onLost)
+          state?.holdUnconfirmedSend(origin, 'ping', onUnconfirmed)
+        }
+      })
+
+      expect(state?.composerText).toBe('')
+      expect(vi.getTimerCount()).toBe(0)
+      act(() => vi.advanceTimersByTime(30_000))
+      expect(onUnconfirmed).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('surfaces uncertainty and keeps the draft when no echo lands before the deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      act(() => state?.setComposerText('ping'))
+      const origin = state?.captureSendOrigin('ping')
+      const onUnconfirmed = vi.fn()
+      act(() => {
+        if (origin) {
+          state?.holdUnconfirmedSend(origin, 'ping', onUnconfirmed)
         }
       })
 
       act(() => vi.advanceTimersByTime(30_000))
-      expect(onLost).toHaveBeenCalledTimes(1)
+      expect(onUnconfirmed).toHaveBeenCalledTimes(1)
       expect(state?.composerText).toBe('ping')
     } finally {
       vi.useRealTimers()
@@ -233,10 +261,10 @@ describe('useMobileNativeChatDrafts', () => {
       )
       act(() => state?.setComposerText('ping'))
       const origin = state?.captureSendOrigin('ping')
-      const onLost = vi.fn()
+      const onUnconfirmed = vi.fn()
       act(() => {
         if (origin) {
-          state?.holdUnconfirmedSend(origin, 'ping', onLost)
+          state?.holdUnconfirmedSend(origin, 'ping', onUnconfirmed)
         }
       })
 
@@ -251,7 +279,7 @@ describe('useMobileNativeChatDrafts', () => {
       expect(state?.composerText).toBe('ping')
 
       act(() => vi.advanceTimersByTime(30_000))
-      expect(onLost).toHaveBeenCalledTimes(1)
+      expect(onUnconfirmed).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }
@@ -274,6 +302,37 @@ describe('useMobileNativeChatDrafts', () => {
       )
     )
     expect(state?.composerText).toBe('new edit')
+  })
+
+  it('does not confirm an old session send from an identical turn in its replacement', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      act(() => state?.setComposerText('ping'))
+      const origin = state?.captureSendOrigin('ping')
+      const onUnconfirmed = vi.fn()
+      act(() => {
+        if (origin) {
+          state?.holdUnconfirmedSend(origin, 'ping', onUnconfirmed)
+        }
+      })
+
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, {
+            tabId: 'a',
+            sessionId: 'replacement',
+            messages: [userTextMessage('replacement-message', 'ping')]
+          })
+        )
+      )
+
+      expect(state?.composerText).toBe('ping')
+      act(() => vi.advanceTimersByTime(30_000))
+      expect(onUnconfirmed).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('accepts and clears the first send before a provider session id exists', async () => {
