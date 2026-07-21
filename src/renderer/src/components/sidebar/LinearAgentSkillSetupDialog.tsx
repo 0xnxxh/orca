@@ -35,7 +35,6 @@ type LinearAgentSkillSetupDialogProps = {
   onRecheck: AgentSkillSetupPanelProps['onRecheck']
   onOpenChange: (open: boolean) => void
   onDismissPermanently: () => void
-  onSnoozeForSession: () => void
   onDone: () => void
 }
 
@@ -55,7 +54,6 @@ export function LinearAgentSkillSetupDialog({
   onRecheck,
   onOpenChange,
   onDismissPermanently,
-  onSnoozeForSession,
   onDone
 }: LinearAgentSkillSetupDialogProps): React.JSX.Element {
   return (
@@ -154,11 +152,10 @@ export function LinearAgentSkillSetupDialog({
               onBeforeOpenTerminal={onBeforeOpenTerminal}
               onRecheck={onRecheck}
             />
-            {/* Why: this modal auto-opens unsolicited, so the reflexive dismiss must be
-                the non-destructive one. "Not now" (session snooze, same as the ×) is the
-                easy ghost target; permanent "Don't show again" is demoted to a quiet muted
-                link so nuking the prompt takes intent. Install stays the filled primary. */}
-            <DialogFooter className="px-6 pb-6 sm:items-center sm:justify-between">
+            {/* Why: the dialog's × already dismisses for the session, so the only footer
+                control is the permanent opt-out — kept as a quiet muted link so it doesn't
+                pull the eye from the filled Install primary. */}
+            <DialogFooter className="px-6 pb-6">
               <Button
                 type="button"
                 variant="link"
@@ -170,9 +167,6 @@ export function LinearAgentSkillSetupDialog({
                   'auto.components.sidebar.LinearAgentSkillSetupPrompt.dontShowAgain',
                   "Don't show again"
                 )}
-              </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={onSnoozeForSession}>
-                {translate('auto.components.sidebar.LinearAgentSkillSetupPrompt.notNow', 'Not now')}
               </Button>
             </DialogFooter>
           </>

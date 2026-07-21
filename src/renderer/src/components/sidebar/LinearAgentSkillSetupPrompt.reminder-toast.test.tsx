@@ -143,8 +143,10 @@ async function snoozeInitialModal(
   props: ComponentProps<typeof LinearAgentSkillSetupPrompt>
 ): Promise<void> {
   await renderPrompt(props)
+  // Why: the modal's casual dismiss is the dialog × (session snooze) now that
+  // "Not now" is removed.
   await act(async () => {
-    findBodyButton('Not now')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    findBodyButton('Close')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   })
   await unmountPrompt()
 }
@@ -203,7 +205,7 @@ describe('LinearAgentSkillSetupPrompt reminder toast', () => {
     Reflect.deleteProperty(window, 'api')
   })
 
-  it('shows a warning toast on a later modal-only activation after Not now', async () => {
+  it('shows a warning toast on a later modal-only activation after a casual close', async () => {
     await snoozeInitialModal({ linked: true, remote: false, surface: 'modal' })
     await renderPrompt({ linked: true, remote: false, surface: 'modal' })
 
