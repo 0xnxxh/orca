@@ -3,6 +3,7 @@ import type {
   LinearCommentAddResult,
   LinearCreateResult,
   LinearIssueListResult,
+  LinearMcpIssueListResult,
   LinearIssueContextResult,
   LinearIssueTaskUpdateResult,
   LinearProjectListResult,
@@ -53,6 +54,9 @@ export function formatLinearIssue(result: LinearIssueContextResult): string {
   }
   if (sections.relations) {
     lines.push(`Relations: ${sections.relations.returned}`)
+  }
+  if (sections.activity) {
+    lines.push(`Activity: ${sections.activity.returned}`)
   }
   if (result.inlineMedia?.length) {
     lines.push(`Inline media: ${result.inlineMedia.length} (use --json for URLs)`)
@@ -109,6 +113,28 @@ export function formatLinearIssueList(result: LinearIssueListResult): string {
     return 'No Linear issues found.'
   }
   return result.issues.map(formatSearchRow).join('\n')
+}
+
+export function formatLinearMcpIssueList(result: LinearMcpIssueListResult): string {
+  if (result.issues.length === 0) {
+    return 'No Linear issues found.'
+  }
+  return result.issues.map(formatSearchRow).join('\n')
+}
+
+export function printLinearMcpIssueListWarnings(result: LinearMcpIssueListResult): void {
+  if (result.meta.hasMore) {
+    const workspaceHint =
+      result.meta.nextCursor && result.meta.workspaceId !== 'all' && result.meta.workspaceId
+        ? `; continue with --workspace ${result.meta.workspaceId}`
+        : ''
+    console.error(
+      `warning: more results available; next cursor: ${result.meta.nextCursor ?? 'n/a'}${workspaceHint}`
+    )
+  }
+  for (const error of result.meta.workspaceErrors) {
+    console.error(`warning: ${error.workspace.name} unavailable for Linear: ${error.message}`)
+  }
 }
 
 export function formatLinearProjectList(result: LinearProjectListResult): string {

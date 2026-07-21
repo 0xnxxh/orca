@@ -81,7 +81,8 @@ describe('orca linear CLI handlers', () => {
           comments: true,
           children: true,
           attachments: true,
-          relations: true
+          relations: true,
+          activity: true
         },
         depth: 2,
         context: {
@@ -90,6 +91,42 @@ describe('orca linear CLI handlers', () => {
         }
       },
       { timeoutMs: 120_000 }
+    )
+  })
+
+  it('maps MCP-compatible list-issues filters and cursor pagination', async () => {
+    queueFixtures(callMock, okFixture('req_list', issueResult()))
+
+    await main(
+      [
+        'linear',
+        'list-issues',
+        '--team',
+        'ENG',
+        '--assignee',
+        'me',
+        '--priority',
+        '2',
+        '--cursor',
+        'next-page',
+        '--order-by',
+        'createdAt',
+        '--include-archived',
+        '--json'
+      ],
+      '/tmp/repo'
+    )
+
+    expect(callMock).toHaveBeenCalledWith(
+      'linear.mcpListIssues',
+      expect.objectContaining({
+        team: 'ENG',
+        assignee: 'me',
+        priority: 2,
+        cursor: 'next-page',
+        orderBy: 'createdAt',
+        includeArchived: true
+      })
     )
   })
 
@@ -106,7 +143,8 @@ describe('orca linear CLI handlers', () => {
           comments: true,
           children: true,
           attachments: true,
-          relations: true
+          relations: true,
+          activity: true
         })
       }),
       { timeoutMs: 120_000 }
@@ -488,7 +526,13 @@ function issueResult(): unknown {
     meta: {
       requested: {
         current: false,
-        include: { comments: false, children: false, attachments: false, relations: false },
+        include: {
+          comments: false,
+          children: false,
+          attachments: false,
+          relations: false,
+          activity: false
+        },
         depth: 2
       },
       resolved: {
