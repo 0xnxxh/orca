@@ -68,59 +68,62 @@ export async function executeOpenEditorPathMove(args: {
   try {
     await renameRuntimePath(context, fromPath, toPath)
   } catch (err) {
+    // Rename never landed — release the source suppression immediately.
     for (const subOperationId of ownerSubOps) {
       settleEditorPathMove(subOperationId)
     }
     throw err
   }
 
-  // Capture host-close resolution from the PRE-rekey store (mirrored tab ids
-  // change on rekey), but don't send it yet — only a committed rekey should
-  // close the host's authoritative tab.
-  const mirrorState = useAppStore.getState()
-  const mirroredAffected = affected.filter((f) => f.mirroredFromRuntimeSession)
+  // The on-disk rename has committed. Guarantee the source suppression is
+  // released on every exit path, but only AFTER any rollback rename runs so a
+  // late forward-rename delete event stays suppressed during rollback.
+  try {
+    // Capture host-close resolution from the PRE-rekey store (mirrored tab ids
+    // change on rekey), but don't send it yet — only a committed rekey should
+    // close the host's authoritative tab.
+    const mirrorState = useAppStore.getState()
+    const mirroredAffected = affected.filter((f) => f.mirroredFromRuntimeSession)
 
-  // Commit: retarget the live sessions in place (the rekey installs the gate +
-  // provenance on dirty destinations), then settle the transaction.
-  const rekeyResult = remapOpenEditorTabsForPathChange({
-    fromPath,
-    toPath,
-    worktreePath,
-    worktreeId,
-    moveOperationId: operationId
-  })
-  if (!rekeyResult.ok) {
-    // The disk rename succeeded but the editor state couldn't be retargeted
-    // (a destination collision or stale plan). Undo the on-disk move so the
-    // still-open source session isn't stranded pointing at a vanished path.
+    // Commit: retarget the live sessions in place (the rekey installs the gate +
+    // provenance on dirty destinations).
+    const rekeyResult = remapOpenEditorTabsForPathChange({
+      fromPath,
+      toPath,
+      worktreePath,
+      worktreeId,
+      moveOperationId: operationId
+    })
+    if (!rekeyResult.ok) {
+      // The disk rename succeeded but the editor state couldn't be retargeted
+      // (a destination collision or stale plan). Undo the on-disk move so the
+      // still-open source session isn't stranded pointing at a vanished path.
+      let rollbackError: unknown
+      try {
+        await renameRuntimePath(context, toPath, fromPath)
+      } catch (err) {
+        rollbackError = err
+      }
+      const base = `Could not retarget open editors for the move (${rekeyResult.reason}).`
+      throw new Error(
+        rollbackError
+          ? `${base} The on-disk move could not be undone and the file may remain at the new path: ${
+              rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+            }`
+          : base
+      )
+    }
+
+    // Rekey committed: close the host's old-path tab for any mirrored file. The
+    // rekey detached it to a local tab, so without this the host snapshot would
+    // resurrect the old path; the close intent suppresses re-mirroring.
+    for (const file of mirroredAffected) {
+      notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
+    }
+  } finally {
     for (const subOperationId of ownerSubOps) {
       settleEditorPathMove(subOperationId)
     }
-    let rollbackError: unknown
-    try {
-      await renameRuntimePath(context, toPath, fromPath)
-    } catch (err) {
-      rollbackError = err
-    }
-    const base = `Could not retarget open editors for the move (${rekeyResult.reason}).`
-    throw new Error(
-      rollbackError
-        ? `${base} The on-disk move could not be undone and the file may remain at the new path: ${
-            rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-          }`
-        : base
-    )
-  }
-
-  // Rekey committed: close the host's old-path tab for any mirrored file. The
-  // rekey detached it to a local tab, so without this the host snapshot would
-  // resurrect the old path; the close intent suppresses re-mirroring.
-  for (const file of mirroredAffected) {
-    notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
-  }
-
-  for (const subOperationId of ownerSubOps) {
-    settleEditorPathMove(subOperationId)
   }
 
   // Drive verification for EVERY tab the rekey gated — not just paths whose

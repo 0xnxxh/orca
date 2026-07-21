@@ -669,7 +669,7 @@ export function createExternalWatchEventHandler(
               normalizedAbsolutePath
         )
         if (isSelfMoveEcho) {
-          scheduleSelfMoveEchoVerification(target, notification, dirtyIds)
+          scheduleSelfMoveEchoVerification(target, dirtyIds)
         } else {
           // An external write on a dirty tab must not vanish silently (issue
           // #7265); mark it so the editor shows the reload banner.
@@ -852,39 +852,29 @@ export function verifyLatchedMoveDestinations(
   fileIds: readonly string[]
 ): void {
   const state = useAppStore.getState()
-  for (const fileId of fileIds) {
-    const file = state.openFiles.find((f) => f.id === fileId)
-    if (!file?.pendingSelfMoveEcho) {
-      continue
-    }
-    const runtimeEnvironmentId = file.runtimeEnvironmentId?.trim() || null
-    scheduleSelfMoveEchoVerification(
-      { worktreeId: file.worktreeId, worktreePath, connectionId, runtimeEnvironmentId },
-      {
-        worktreeId: file.worktreeId,
-        worktreePath,
-        relativePath: file.relativePath,
-        runtimeEnvironmentId
-      },
-      [fileId]
-    )
+  const gated = fileIds.filter(
+    (id) => state.openFiles.find((f) => f.id === id)?.pendingSelfMoveEcho
+  )
+  if (gated.length === 0) {
+    return
   }
+  // Owner/worktree are resolved per-tab inside the read; only connectionId is
+  // shared. worktreePath is unused here (each tab is read at its own filePath).
+  scheduleSelfMoveEchoVerification(
+    { worktreeId: '', worktreePath, connectionId, runtimeEnvironmentId: null },
+    gated
+  )
 }
 
 // The move's own watcher echo leaves disk == the tab's disk baseline; a genuine
 // external write does not. Read the destination once and settle each dirty tab
 // by content identity. Autosave is suspended synchronously first so a write
 // landing mid-read can't be overwritten before we decide.
-function scheduleSelfMoveEchoVerification(
-  target: WatchedTarget,
-  notification: ExternalWatchNotification,
-  fileIds: string[]
-): void {
+function scheduleSelfMoveEchoVerification(target: WatchedTarget, fileIds: string[]): void {
   if (fileIds.length === 0) {
     return
   }
   const state = useAppStore.getState()
-  const candidates: LiveMoveVerifyCandidate[] = []
   for (const fileId of fileIds) {
     const file = state.openFiles.find((f) => f.id === fileId)
     if (!file || !file.isDirty || file.externalMutation === 'changed') {
@@ -893,35 +883,29 @@ function scheduleSelfMoveEchoVerification(
     const generation = ++liveMoveVerifyCounter
     liveMoveVerifyGeneration.set(fileId, generation)
     state.setPendingLiveDiskVerification(fileId, true)
-    candidates.push({
+    const candidate: LiveMoveVerifyCandidate = {
       fileId,
       baseline: file.lastKnownDiskSignature,
       generation,
       operationId: file.pendingSelfMoveEcho?.operationId
+    }
+    // Read the tab's OWN absolute path: a cross-worktree/floating tab's
+    // relativePath is relative to its own root (can be `../…`) and must not be
+    // joined onto another worktree's path. readFileForEchoVerification dedups
+    // concurrent reads of the same path, so sibling tabs still share one read.
+    void readFileForEchoVerification({
+      runtimeEnvironmentId: file.runtimeEnvironmentId?.trim() || target.runtimeEnvironmentId,
+      filePath: file.filePath,
+      relativePath: file.relativePath,
+      worktreeId: file.worktreeId,
+      connectionId: target.connectionId
     })
-  }
-  if (candidates.length === 0) {
-    return
-  }
-  const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
-  void readFileForEchoVerification({
-    runtimeEnvironmentId: target.runtimeEnvironmentId,
-    filePath: absolutePath,
-    relativePath: notification.relativePath,
-    worktreeId: notification.worktreeId,
-    connectionId: target.connectionId
-  })
-    .then((result) => {
-      const diskSignature = result.isBinary ? null : getDiskBaselineSignature(result.content)
-      for (const candidate of candidates) {
+      .then((result) => {
+        const diskSignature = result.isBinary ? null : getDiskBaselineSignature(result.content)
         resolveLiveMoveVerification(candidate, diskSignature, target.connectionId)
-      }
-    })
-    .catch(() => {
-      for (const candidate of candidates) {
-        resolveLiveMoveVerification(candidate, null, target.connectionId)
-      }
-    })
+      })
+      .catch(() => resolveLiveMoveVerification(candidate, null, target.connectionId))
+  }
 }
 
 function scheduleSelfWriteAwareExternalReload(

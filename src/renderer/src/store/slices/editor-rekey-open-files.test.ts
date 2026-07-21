@@ -200,6 +200,44 @@ describe('rekeyOpenFilesForPathChange', () => {
     expect(moved.pendingSelfMoveEcho).toEqual({ operationId: 'op-42', targetPath: newPath })
   })
 
+  it('does not gate a tab already showing the changed-on-disk banner', () => {
+    seedEditTab()
+    const oldId = useAppStore.getState().openFiles[0]!.id
+    // A dirty tab that already conflicts with disk: autosave is suspended by the
+    // banner; gating it would strand the gate (verification skips a 'changed' tab).
+    useAppStore.setState((s) => ({
+      openFiles: s.openFiles.map((f) =>
+        f.id === oldId ? { ...f, externalMutation: 'changed' as const } : f
+      )
+    }))
+
+    useAppStore.getState().rekeyOpenFilesForPathChange({
+      rekeys: [rekeyFor(oldId, '/repo/sub/a.md', 'sub/a.md')],
+      moveOperationId: 'op-42'
+    })
+
+    const moved = useAppStore.getState().openFiles[0]!
+    expect(moved.externalMutation).toBe('changed')
+    expect(moved.pendingLiveDiskVerification).toBeUndefined()
+    expect(moved.pendingSelfMoveEcho).toBeUndefined()
+  })
+
+  it('migrates a pending editor reveal keyed by fileId to the new tab id', () => {
+    seedEditTab()
+    const oldId = useAppStore.getState().openFiles[0]!.id
+    useAppStore.setState({
+      pendingEditorReveal: { fileId: oldId, filePath: '/repo/a.md', line: 40, requestId: 1 }
+    } as never)
+
+    useAppStore.getState().rekeyOpenFilesForPathChange({
+      rekeys: [rekeyFor(oldId, '/repo/sub/a.md', 'sub/a.md')]
+    })
+
+    const reveal = useAppStore.getState().pendingEditorReveal!
+    expect(reveal.fileId).toBe(useAppStore.getState().openFiles[0]!.id)
+    expect(reveal.filePath).toBe('/repo/sub/a.md')
+  })
+
   it('does not gate a clean destination', () => {
     seedEditTab()
     const oldId = useAppStore.getState().openFiles[0]!.id

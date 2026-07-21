@@ -14,7 +14,10 @@ vi.mock('@/components/editor/editor-autosave', async (importOriginal) => {
   }
 })
 
-import { createExternalWatchEventHandler } from './useEditorExternalWatch'
+import {
+  createExternalWatchEventHandler,
+  verifyLatchedMoveDestinations
+} from './useEditorExternalWatch'
 import { useAppStore } from '@/store'
 import { getOpenFilesForExternalFileChange } from '@/components/editor/editor-autosave'
 import { __clearSelfWriteRegistryForTests } from '@/components/editor/editor-self-write-registry'
@@ -230,5 +233,59 @@ describe('self-move echo verification (content identity)', () => {
     // No provenance -> not treated as a move echo -> normal path marks it changed.
     expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
     dispose()
+  })
+})
+
+describe('verifyLatchedMoveDestinations (proactive, cross-worktree path)', () => {
+  const setPendingLiveDiskVerification = vi.fn()
+  const clearSelfMoveEcho = vi.fn()
+  const setExternalMutation = vi.fn()
+
+  const CONTENT = 'the echoed file on disk\n'
+  const baseline = getDiskBaselineSignature(CONTENT)
+  // A floating-workspace tab: relativePath is relative to its OWN root (`../…`)
+  // and must NOT be joined onto the initiating worktree path.
+  const FLOATING_FILE_PATH = '/elsewhere/notes/readme.md'
+  const floatingTab = {
+    id: 'file-x',
+    worktreeId: 'floating',
+    worktreePath: '/elsewhere',
+    filePath: FLOATING_FILE_PATH,
+    relativePath: '../notes/readme.md',
+    runtimeEnvironmentId: null,
+    mode: 'edit' as const,
+    isDirty: true,
+    lastKnownDiskSignature: baseline,
+    pendingSelfMoveEcho: { operationId: 'op-1', targetPath: FLOATING_FILE_PATH }
+  }
+  let readFile: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    readFile = vi.fn().mockResolvedValue({ isBinary: false, content: CONTENT })
+    vi.stubGlobal('window', { api: { fs: { readFile } } })
+    vi.mocked(useAppStore.getState).mockReturnValue({
+      openFiles: [floatingTab],
+      setPendingLiveDiskVerification,
+      clearSelfMoveEcho,
+      setExternalMutation
+    } as never)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('reads the tab own filePath, not the initiating worktree joined with its relativePath', async () => {
+    verifyLatchedMoveDestinations('/initiating-worktree', undefined, ['file-x'])
+    await vi.advanceTimersByTimeAsync(50)
+
+    expect(readFile).toHaveBeenCalledWith(expect.objectContaining({ filePath: FLOATING_FILE_PATH }))
+    // Disk == baseline -> echo -> suppress + release the gate, no false banner.
+    expect(setExternalMutation).not.toHaveBeenCalledWith('file-x', 'changed')
+    expect(clearSelfMoveEcho).toHaveBeenCalledWith('file-x')
+    expect(setPendingLiveDiskVerification).toHaveBeenCalledWith('file-x', false)
   })
 })

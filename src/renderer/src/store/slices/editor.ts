@@ -2702,6 +2702,10 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         const gatesEcho =
           moveOperationId !== undefined &&
           f.isDirty &&
+          // A tab already showing the changed-on-disk banner is autosave-suspended
+          // via externalMutation; gating it would strand the gate (verification
+          // skips a 'changed' tab), so leave the banner as the terminal state.
+          f.externalMutation !== 'changed' &&
           (f.mode === 'edit' || (f.mode === 'diff' && f.diffSource === 'unstaged'))
         return {
           ...f,
@@ -2775,7 +2779,15 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         tabBarOrderByWorktree,
         ...migrateHydratedEditorTabsAndGroups(s, migrationsByWorktree),
         ...(reveal && rekeyForReveal
-          ? { pendingEditorReveal: { ...reveal, filePath: rekeyForReveal.newFilePath } }
+          ? {
+              pendingEditorReveal: {
+                ...reveal,
+                filePath: rekeyForReveal.newFilePath,
+                // matchesPendingEditorReveal prefers fileId, so migrate it too or
+                // the reveal would never match the rekeyed tab.
+                ...(reveal.fileId ? { fileId: migrations.get(reveal.fileId) ?? reveal.fileId } : {})
+              }
+            }
           : {})
       }
     })
