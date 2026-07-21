@@ -812,18 +812,27 @@ async function prepareCodexSessionResumeForLaunch(args: {
     return null
   }
 
-  const migrated = await prepareLegacySharedCodexSessionResume(
-    {
-      agent: 'codex',
-      executionHostId: 'local',
-      filePath: sessionSource.transcriptPath,
-      codexHome: sessionSource.homePath
-    },
-    {
-      isHostSystemDefaultRealHome: () => codexRuntimeHome!.isHostSystemDefaultRealHome(),
-      systemCodexHomePath: systemHomePath
-    }
-  )
+  let migrated = { useRealCodexHome: false }
+  try {
+    migrated = await prepareLegacySharedCodexSessionResume(
+      {
+        agent: 'codex',
+        executionHostId: 'local',
+        filePath: sessionSource.transcriptPath,
+        codexHome: sessionSource.homePath
+      },
+      {
+        isHostSystemDefaultRealHome: () => codexRuntimeHome!.isHostSystemDefaultRealHome(),
+        systemCodexHomePath: systemHomePath
+      }
+    )
+  } catch (error) {
+    // Why: migration is a compatibility repair; its failure must not prevent the PTY from resuming from its trusted origin home.
+    console.warn(
+      '[codex-session-resume] Legacy rollout migration failed; using origin home:',
+      error
+    )
+  }
   const resumeHome = migrated.useRealCodexHome ? systemHomePath : sessionSource.homePath
 
   if (args.workspacePath) {
