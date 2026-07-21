@@ -9760,7 +9760,7 @@
               "783a808870": "Cerrar"
             },
             "97e7124eac": "No se pudo actualizar Source Control. Vuelve a intentarlo.",
-            "a4e93c21d7": "Current branch: {{value0}}"
+            "a4e93c21d7": "Rama actual: {{value0}}"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "No se pudo iniciar el agente seleccionado.",

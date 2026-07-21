@@ -290,7 +290,6 @@ import {
 } from './source-control-hosted-review-push-target'
 import { buildSourceControlManualReviewUrlFromContext } from './source-control-manual-review-url'
 import { parseRemoteRepo } from './source-control-remote-repo'
-export { HostedReviewHeaderLink } from './hosted-review-header-chrome'
 import {
   createRunningCommitMessageGenerationRecord,
   getCommitMessageGenerationRecordKey,
@@ -2805,11 +2804,6 @@ function SourceControlInner(): React.JSX.Element {
       updateWorktreeMeta
     ]
   )
-
-  const openHostedReviewInChecks = useCallback(() => {
-    setRightSidebarOpen(true)
-    setRightSidebarTab('checks')
-  }, [setRightSidebarOpen, setRightSidebarTab])
 
   const handleBranchChangedByPullRequestGeneration = useCallback(async (): Promise<void> => {
     // Why: AI PR detail generation may rebase before summarizing, so refresh status if HEAD moved before the user submits the draft.
@@ -5458,11 +5452,9 @@ function SourceControlInner(): React.JSX.Element {
           onFilterQueryChange={setFilterQuery}
           onFilterExpandedChange={setFilterExpanded}
           visibleCreatePrHeaderAction={visibleCreatePrHeaderAction}
-          hostedReview={hostedReview}
           isCreatePrIntentInFlight={isCreatePrIntentInFlight}
           isCreatingPr={isCreatingPr || prGenerating}
           onCreatePrHeaderClick={handleCreatePrHeaderClick}
-          onOpenHostedReviewInChecks={openHostedReviewInChecks}
           sourceControlViewMode={sourceControlViewMode}
           viewModeToggleDisabled={settings === null}
           onToggleViewMode={handleToggleSourceControlViewMode}

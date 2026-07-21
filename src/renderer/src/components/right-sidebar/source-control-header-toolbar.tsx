@@ -5,13 +5,11 @@ import type {
   GitUpstreamStatus,
   SourceControlViewMode
 } from '../../../../shared/types'
-import type { HostedReviewInfo } from '../../../../shared/hosted-review'
 import type { PrimaryAction } from './source-control-primary-action'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
-import { HostedReviewHeaderLink, HostedReviewIcon } from './hosted-review-header-chrome'
 import {
   shouldShowSourceControlBranchContextRow,
   SourceControlBranchContextRow
@@ -25,11 +23,9 @@ type SourceControlHeaderToolbarProps = {
   onFilterQueryChange: (value: string) => void
   onFilterExpandedChange: (expanded: boolean) => void
   visibleCreatePrHeaderAction: PrimaryAction | null
-  hostedReview: HostedReviewInfo | null
   isCreatePrIntentInFlight: boolean
   isCreatingPr: boolean
   onCreatePrHeaderClick: () => void
-  onOpenHostedReviewInChecks: () => void
   sourceControlViewMode: SourceControlViewMode
   viewModeToggleDisabled: boolean
   onToggleViewMode: () => void
@@ -55,42 +51,17 @@ function SourceControlBranchHeaderLabel({ branchName }: { branchName: string }):
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className="flex min-w-0 flex-1 items-center gap-1 text-[11.5px] font-medium leading-none text-foreground/90"
+          className="flex min-w-0 flex-1 items-center gap-1 font-mono text-xs font-medium leading-none text-foreground/90"
           aria-label={label}
         >
           <GitBranch className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span className="min-w-0 truncate">{branchName}</span>
         </span>
       </TooltipTrigger>
-      <TooltipContent side="bottom" sideOffset={6} className="max-w-72 break-all">
+      <TooltipContent side="bottom" sideOffset={6} className="max-w-72 break-all font-mono">
         {branchName}
       </TooltipContent>
     </Tooltip>
-  )
-}
-
-function HostedReviewToolbarLink({
-  review,
-  onOpenHostedReviewInChecks,
-  compact
-}: {
-  review: HostedReviewInfo
-  onOpenHostedReviewInChecks: () => void
-  compact?: boolean
-}): React.JSX.Element {
-  return (
-    <div
-      className={cn(
-        'flex min-w-0 items-center gap-1 text-[11.5px] leading-none',
-        compact ? 'max-w-[72px] shrink-0' : 'flex-1'
-      )}
-    >
-      <HostedReviewIcon review={review} className="size-3 shrink-0" />
-      <HostedReviewHeaderLink
-        review={review}
-        onOpenHostedReviewInChecks={onOpenHostedReviewInChecks}
-      />
-    </div>
   )
 }
 
@@ -156,11 +127,9 @@ export function SourceControlHeaderToolbar({
   onFilterQueryChange,
   onFilterExpandedChange,
   visibleCreatePrHeaderAction,
-  hostedReview,
   isCreatePrIntentInFlight,
   isCreatingPr,
   onCreatePrHeaderClick,
-  onOpenHostedReviewInChecks,
   sourceControlViewMode,
   viewModeToggleDisabled,
   onToggleViewMode,
@@ -228,13 +197,7 @@ export function SourceControlHeaderToolbar({
             ) : (
               <span className="min-w-0 flex-1" aria-hidden="true" />
             )}
-            {hostedReview ? (
-              <HostedReviewToolbarLink
-                review={hostedReview}
-                onOpenHostedReviewInChecks={onOpenHostedReviewInChecks}
-                compact
-              />
-            ) : visibleCreatePrHeaderAction ? (
+            {visibleCreatePrHeaderAction ? (
               <CreatePrHeaderButton
                 action={visibleCreatePrHeaderAction}
                 isCreatePrIntentInFlight={isCreatePrIntentInFlight}
@@ -264,7 +227,7 @@ export function SourceControlHeaderToolbar({
         ) : (
           <>
             {/* Why: expanded filter owns the toolbar row so typing isn't squeezed
-                beside PR links or overflow actions — collapse to reach those. */}
+                beside branch identity or header actions — collapse to reach those. */}
             <div className="flex min-w-0 w-full flex-1 items-center gap-1.5">
               <Search className="size-3.5 shrink-0 text-muted-foreground" />
               <input

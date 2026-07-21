@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import type { HostedReviewInfo } from '../../../../shared/hosted-review'
 import { SourceControlHeaderToolbar } from './source-control-header-toolbar'
 
 vi.mock('@/components/ui/tooltip', () => ({
@@ -19,31 +18,18 @@ vi.mock('./source-control-branch-context-row', () => ({
   SourceControlBranchContextRow: () => null
 }))
 
-const hostedReview: HostedReviewInfo = {
-  provider: 'github',
-  number: 9777,
-  title: 'Show the current branch',
-  state: 'open',
-  url: 'https://github.com/stablyai/orca/pull/9777',
-  status: 'pending',
-  updatedAt: '2026-07-21T00:00:00Z',
-  mergeable: 'UNKNOWN'
-}
-
-function renderToolbar(): string {
+function renderToolbar(branchName = 'brennanb2025/source-control-branch-name'): string {
   return renderToStaticMarkup(
     <SourceControlHeaderToolbar
-      branchName="brennanb2025/source-control-branch-name"
+      branchName={branchName}
       filterQuery=""
       filterExpanded={false}
       onFilterQueryChange={vi.fn()}
       onFilterExpandedChange={vi.fn()}
       visibleCreatePrHeaderAction={null}
-      hostedReview={hostedReview}
       isCreatePrIntentInFlight={false}
       isCreatingPr={false}
       onCreatePrHeaderClick={vi.fn()}
-      onOpenHostedReviewInChecks={vi.fn()}
       sourceControlViewMode="list"
       viewModeToggleDisabled={false}
       onToggleViewMode={vi.fn()}
@@ -59,15 +45,21 @@ function renderToolbar(): string {
 }
 
 describe('SourceControlHeaderToolbar', () => {
-  it('renders the truncating branch identity before compact review status', () => {
+  it('renders the truncating branch identity before source control actions', () => {
     const markup = renderToolbar()
     const branchIndex = markup.indexOf('brennanb2025/source-control-branch-name')
-    const reviewIndex = markup.indexOf('PR #9777')
+    const filterIndex = markup.indexOf('data-testid="source-control-filter-toggle"')
 
     expect(branchIndex).toBeGreaterThan(-1)
-    expect(reviewIndex).toBeGreaterThan(branchIndex)
+    expect(filterIndex).toBeGreaterThan(branchIndex)
     expect(markup).toContain('aria-label="Current branch: brennanb2025/source-control-branch-name"')
     expect(markup).toContain('min-w-0 truncate')
-    expect(markup).toContain('max-w-[72px] shrink-0')
+  })
+
+  it('does not announce a branch while HEAD is detached', () => {
+    const markup = renderToolbar('')
+
+    expect(markup).not.toContain('aria-label="Current branch:')
+    expect(markup).not.toContain('lucide-git-branch')
   })
 })
