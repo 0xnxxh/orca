@@ -191,6 +191,24 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
     expect(listSessionFiles).not.toHaveBeenCalled()
   })
 
+  it('does not replace rejected transcript provenance with a same-id rollout from another home', async () => {
+    const sessionId = '019f81b9-19a9-7651-a8d1-352d9420bd11'
+    const listSessionFiles = vi.fn((): AsyncIterable<string> => {
+      throw new Error('must not scan')
+    })
+
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId,
+        transcriptPath: `/managed/origin/home/sessions/2026/07/20/rollout-${sessionId}.jsonl`,
+        trustedCodexHomes: ['/managed/origin/home', '/managed/other/home'],
+        fileIsRegular: () => false,
+        listSessionFiles
+      })
+    ).resolves.toBeNull()
+    expect(listSessionFiles).not.toHaveBeenCalled()
+  })
+
   it('does not scan homes for an untrusted legacy session id shape', async () => {
     const listSessionFiles = (): AsyncIterable<string> => {
       throw new Error('must not scan')

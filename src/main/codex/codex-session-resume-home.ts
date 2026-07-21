@@ -82,6 +82,10 @@ export async function findTrustedCodexSessionResume(args: {
   if (directSession) {
     return directSession
   }
+  if (args.transcriptPath?.trim()) {
+    // Why: stale/rejected provenance must not select a same-id rollout under different account credentials; scanning is legacy-only.
+    return null
+  }
   if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(args.sessionId)) {
     return null
   }

@@ -999,6 +999,40 @@ describe('registerPtyHandlers', () => {
       expect(env.ORCA_CODEX_HOME).toBeUndefined()
     })
 
+    it('does not fall back to the selected account when automatic resume provenance is rejected', async () => {
+      const selectedHome = vi.fn(() => '/managed/current/home')
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        selectedHome,
+        undefined,
+        undefined,
+        undefined,
+        {
+          prepareCodexSessionResume: async () => {
+            throw new Error('origin unavailable')
+          }
+        }
+      )
+
+      await expect(
+        handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          command: 'codex resume session-a',
+          launchAgent: 'codex',
+          resumeProviderSession: {
+            key: 'session_id',
+            id: 'session-a',
+            transcriptPath: '/managed/origin/home/sessions/2026/07/20/rollout-a.jsonl'
+          }
+        })
+      ).rejects.toThrow('origin unavailable')
+
+      expect(selectedHome).not.toHaveBeenCalled()
+      expect(spawnMock).not.toHaveBeenCalled()
+    })
+
     it('prepares Codex launch state for the workspace before spawning an interactive tab', async () => {
       const workspacePath = '/repo/worktrees/new-feature'
       const resolveHome = vi.fn(
