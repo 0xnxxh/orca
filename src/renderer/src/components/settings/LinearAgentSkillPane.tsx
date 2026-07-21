@@ -1,7 +1,16 @@
 import { useMemo } from 'react'
-import { ArrowRightCircle, BookOpen, Link2, ListTodo, MessageSquarePlus } from 'lucide-react'
+import {
+  ArrowRightCircle,
+  BookOpen,
+  Blocks,
+  Link2,
+  ListTodo,
+  MessageSquarePlus
+} from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { LinearIcon } from '@/components/icons/LinearIcon'
+import { Button } from '@/components/ui/button'
+import { useAppStore } from '@/store'
 import {
   LINEAR_AGENT_SKILL_NAMES,
   ORCA_LINEAR_SKILL_INSTALL_COMMAND,
@@ -48,6 +57,14 @@ function resolveLinearExampleIcon(example: SkillUsageExample): LucideIcon {
 // connection that makes it useful.
 export function LinearAgentSkillPane(): React.JSX.Element {
   const activeSkillRuntime = useActiveProjectSkillRuntime()
+  const openSettingsPage = useAppStore((state) => state.openSettingsPage)
+  const openSettingsTarget = useAppStore((state) => state.openSettingsTarget)
+
+  const openIntegrationSettings = (): void => {
+    openSettingsPage()
+    openSettingsTarget({ pane: 'integrations', repoId: null })
+  }
+
   const {
     installed: linearSkillInstalled,
     loading: linearSkillLoading,
@@ -94,6 +111,26 @@ export function LinearAgentSkillPane(): React.JSX.Element {
       keywords={getLinearAgentSkillPaneSearchEntries()[0].keywords}
       className="space-y-5 py-2"
     >
+      <p className="text-xs text-muted-foreground">
+        {translate(
+          'auto.components.settings.LinearAgentSkillPane.manageConnectionHint',
+          'Review connected Linear workspaces and API keys in'
+        )}{' '}
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto gap-1 p-0 text-xs align-baseline"
+          onClick={openIntegrationSettings}
+        >
+          <Blocks className="size-3" />
+          {translate(
+            'auto.components.settings.LinearAgentSkillPane.manageConnectionLink',
+            'Integrations settings'
+          )}
+        </Button>
+      </p>
+
       <AgentSkillSetupPanel
         title={translate(
           'auto.components.settings.LinearAgentSkillPane.skillTitle',
