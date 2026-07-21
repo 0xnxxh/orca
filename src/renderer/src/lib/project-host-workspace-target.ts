@@ -123,7 +123,11 @@ export function resolveWorkspaceCreationTarget(
   const setups = model?.setups ?? []
 
   if (projectHostSetupId) {
-    const setup = setups.find((entry) => entry.id === projectHostSetupId)
+    // Why: legacy projected setups reuse repo ids, so one setup id can exist on
+    // several hosts (#9783); an explicit hostId must pin the lookup to that host.
+    const setup = setups.find(
+      (entry) => entry.id === projectHostSetupId && (!hostId || entry.hostId === hostId)
+    )
     if (!setup) {
       return { status: 'unavailable', reason: 'setup-not-found' }
     }

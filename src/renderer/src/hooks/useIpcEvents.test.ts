@@ -4,16 +4,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildRuntimeClientEventEnvironmentKey,
   buildNewWorkspaceShortcutModalData,
+  collectSshTargetWorktreeIds,
   getNewlyConnectedRuntimeEnvironmentIds,
   getNewlyDisconnectedRuntimeEnvironmentIds,
   getRuntimeProjectRefreshEnvironmentIds,
+  isRuntimeEventRepoKnown,
   openNewWorkspaceFromShortcut,
   resolveBrowserSessionTabTarget,
   resolveZoomTarget
 } from './useIpcEvents'
 import type { SleepingAgentLaunchConfig } from '../../../shared/agent-session-resume'
 import type { AgentStatusClearIpcPayload } from '../../../shared/agent-status-types'
-import type { TuiAgent } from '../../../shared/types'
+import type { Repo, TuiAgent, Worktree } from '../../../shared/types'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import { YOLO_TUI_AGENT_ARGS } from '../../../shared/tui-agent-permissions'
 
@@ -89,6 +91,64 @@ describe('getRuntimeProjectRefreshEnvironmentIds', () => {
         nextReachable: ['env-a']
       })
     ).toEqual(['env-a'])
+  })
+})
+
+function makeHostRepo(id: string, overrides: Partial<Repo> = {}): Repo {
+  return { id, path: `/repos/${id}`, displayName: id, badgeColor: '#000', addedAt: 0, ...overrides }
+}
+
+function makeHostWorktree(id: string, repoId: string, hostId?: Worktree['hostId']): Worktree {
+  return { id, repoId, path: `/repos/${repoId}/${id}`, hostId } as Worktree
+}
+
+describe('collectSshTargetWorktreeIds', () => {
+  const sshRepo = makeHostRepo('repo-1', { connectionId: 'ssh-target-1' })
+
+  it('includes host-stamped and legacy hostless rows of the target repos', () => {
+    const ids = collectSshTargetWorktreeIds(
+      [sshRepo, makeHostRepo('repo-2')],
+      {
+        'repo-1': [
+          makeHostWorktree('wt-ssh', 'repo-1', 'ssh:ssh-target-1'),
+          makeHostWorktree('wt-legacy', 'repo-1')
+        ],
+        'repo-2': [makeHostWorktree('wt-other-repo', 'repo-2')]
+      },
+      'ssh-target-1'
+    )
+    expect(ids).toEqual(new Set(['wt-ssh', 'wt-legacy']))
+  })
+
+  it('excludes sibling-host rows that share the repo id', () => {
+    const ids = collectSshTargetWorktreeIds(
+      [sshRepo, makeHostRepo('repo-1', { executionHostId: 'runtime:env-1' })],
+      {
+        'repo-1': [
+          makeHostWorktree('wt-ssh', 'repo-1', 'ssh:ssh-target-1'),
+          makeHostWorktree('wt-runtime', 'repo-1', 'runtime:env-1'),
+          makeHostWorktree('wt-local', 'repo-1', 'local')
+        ]
+      },
+      'ssh-target-1'
+    )
+    expect(ids).toEqual(new Set(['wt-ssh']))
+  })
+})
+
+describe('isRuntimeEventRepoKnown', () => {
+  it('recognizes a repo fetched from the event environment', () => {
+    const repos = [makeHostRepo('repo-1', { executionHostId: 'runtime:env-1' })]
+    expect(isRuntimeEventRepoKnown(repos, 'env-1', 'repo-1')).toBe(true)
+  })
+
+  it('does not let a same-id repo on another host suppress the environment fetch', () => {
+    const repos = [
+      makeHostRepo('repo-1'),
+      makeHostRepo('repo-1', { executionHostId: 'runtime:env-2' })
+    ]
+    expect(isRuntimeEventRepoKnown(repos, 'env-1', 'repo-1')).toBe(false)
+    expect(isRuntimeEventRepoKnown(undefined, 'env-1', 'repo-1')).toBe(false)
   })
 })
 

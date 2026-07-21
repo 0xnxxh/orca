@@ -201,6 +201,26 @@ describe('project-host workspace target resolution', () => {
     })
   })
 
+  it('pins an explicit setup id to the requested host when setup ids collide across hosts', () => {
+    // Legacy projected setups reuse the repo id, so the same setup id exists on
+    // both hosts when a repo id is checked out locally and on a runtime host.
+    const result = resolveWorkspaceCreationTarget({
+      eligibleRepos: [
+        makeRepo('orca', { executionHostId: 'local' }),
+        makeRepo('orca', { executionHostId: 'runtime:env-1' })
+      ],
+      projectHostSetups: [
+        makeSetup('orca', 'github:stablyai/orca', 'local', 'orca'),
+        makeSetup('orca', 'github:stablyai/orca', 'runtime:env-1', 'orca')
+      ],
+      projectHostSetupId: 'orca',
+      hostId: 'runtime:env-1'
+    })
+
+    expect(result.status).toBe('ready')
+    expect(result.status === 'ready' && result.target.setup.hostId).toBe('runtime:env-1')
+  })
+
   // Regression: selecting a project in the new-workspace dropdown must not be
   // pinned to the host of the currently-active workspace. Each project below is
   // set up on exactly one (different) host; picking the other project while the

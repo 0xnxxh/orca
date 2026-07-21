@@ -21,11 +21,18 @@ import { getVisibleWorktreeIds } from '@/components/sidebar/visible-worktrees'
 import { activateTabNumberShortcut } from '@/lib/tab-number-shortcuts'
 import { nextEditorFontZoomLevel, computeEditorFontSize } from '@/lib/editor-font-zoom'
 import type {
+  Repo,
   TerminalLayoutSnapshot,
   TerminalPaneLayoutNode,
   UpdateStatus,
-  WorkspaceSessionState
+  WorkspaceSessionState,
+  Worktree
 } from '../../../shared/types'
+import {
+  getRepoExecutionHostId,
+  toRuntimeExecutionHostId,
+  toSshExecutionHostId
+} from '../../../shared/execution-host'
 import type {
   RemoteWorkspacePatchResult,
   RemoteWorkspaceSnapshot
@@ -437,23 +444,43 @@ async function prepareRemoteWorkspaceTarget(targetId: string): Promise<boolean> 
   return true
 }
 
-function targetRepoIds(targetId: string): Set<string> {
+export function collectSshTargetWorktreeIds(
+  repos: readonly Repo[],
+  worktreesByRepo: Record<string, Worktree[]>,
+  targetId: string
+): Set<string> {
+  const repoIds = new Set(
+    repos.filter((repo) => repo.connectionId === targetId).map((repo) => repo.id)
+  )
+  const sshHostId = toSshExecutionHostId(targetId)
   return new Set(
-    useAppStore
-      .getState()
-      .repos.filter((repo) => repo.connectionId === targetId)
-      .map((repo) => repo.id)
+    Object.values(worktreesByRepo)
+      .flat()
+      .filter(
+        (worktree) =>
+          repoIds.has(worktree.repoId) &&
+          // Why: same-id repos can exist on several hosts (#9783); only rows owned by
+          // this SSH host (or legacy hostless rows) may be claimed by its snapshot.
+          (worktree.hostId == null || worktree.hostId === sshHostId)
+      )
+      .map((worktree) => worktree.id)
   )
 }
 
 function targetWorktreeIds(targetId: string): Set<string> {
-  const repoIds = targetRepoIds(targetId)
-  return new Set(
-    Object.values(useAppStore.getState().worktreesByRepo)
-      .flat()
-      .filter((worktree) => repoIds.has(worktree.repoId))
-      .map((worktree) => worktree.id)
-  )
+  const state = useAppStore.getState()
+  return collectSshTargetWorktreeIds(state.repos, state.worktreesByRepo, targetId)
+}
+
+export function isRuntimeEventRepoKnown(
+  repos: readonly Repo[] | undefined,
+  environmentId: string,
+  repoId: string
+): boolean {
+  const hostId = toRuntimeExecutionHostId(environmentId)
+  // Why: same-id repos can exist on several hosts (#9783); a row known only on
+  // another host must still trigger the environment repo fetch.
+  return (repos ?? []).some((repo) => repo.id === repoId && getRepoExecutionHostId(repo) === hostId)
 }
 
 function mergeRemoteWorkspaceSession(
@@ -937,7 +964,7 @@ export function useIpcEvents(): void {
       environmentId: string,
       repoId: string
     ): Promise<void> => {
-      if ((useAppStore.getState().repos ?? []).some((repo) => repo.id === repoId)) {
+      if (isRuntimeEventRepoKnown(useAppStore.getState().repos, environmentId, repoId)) {
         return
       }
       await useAppStore.getState().fetchRuntimeEnvironmentRepos(environmentId)
@@ -2646,11 +2673,10 @@ export function useIpcEvents(): void {
         store.setDetectedPorts(targetId, [])
 
         // Why: SSH teardown fires no per-PTY exit events; clear stale PTY ids so reconnect remounts rather than reattach a dead PTY.
-        const remoteWorktreeIds = new Set(
-          Object.values(store.worktreesByRepo)
-            .flat()
-            .filter((w) => remoteRepos.some((r) => r.id === w.repoId))
-            .map((w) => w.id)
+        const remoteWorktreeIds = collectSshTargetWorktreeIds(
+          store.repos,
+          store.worktreesByRepo,
+          targetId
         )
         for (const worktreeId of remoteWorktreeIds) {
           const tabs = useAppStore.getState().tabsByWorktree[worktreeId] ?? []
@@ -2668,11 +2694,11 @@ export function useIpcEvents(): void {
           // Why: panes that never spawned (no PTY provider at cold start) or whose deferred reattach never ran sit inert.
           // Bumping generation remounts TerminalPane so the deferred-connect gate reattaches or spawns fresh now that the provider exists.
           const freshStore = useAppStore.getState()
-          const remoteRepoIds = new Set(remoteRepos.map((r) => r.id))
-          const worktreeIds = Object.values(freshStore.worktreesByRepo)
-            .flat()
-            .filter((w) => remoteRepoIds.has(w.repoId))
-            .map((w) => w.id)
+          const worktreeIds = collectSshTargetWorktreeIds(
+            freshStore.repos,
+            freshStore.worktreesByRepo,
+            targetId
+          )
 
           for (const worktreeId of worktreeIds) {
             const tabs = freshStore.tabsByWorktree[worktreeId] ?? []
