@@ -35,7 +35,6 @@ type LinearAgentSkillSetupDialogProps = {
   onRecheck: AgentSkillSetupPanelProps['onRecheck']
   onOpenChange: (open: boolean) => void
   onDismissPermanently: () => void
-  onSnoozeForSession: () => void
   onDone: () => void
 }
 
@@ -55,7 +54,6 @@ export function LinearAgentSkillSetupDialog({
   onRecheck,
   onOpenChange,
   onDismissPermanently,
-  onSnoozeForSession,
   onDone
 }: LinearAgentSkillSetupDialogProps): React.JSX.Element {
   return (
@@ -145,21 +143,25 @@ export function LinearAgentSkillSetupDialog({
                 'auto.components.sidebar.LinearAgentSkillSetupPrompt.install',
                 'Install CLI & Skill'
               )}
+              // Why: Install is this modal's sole CTA, so make it the filled primary —
+              // matching the other setup surfaces (filled primary + muted dismiss).
+              installVariant="default"
               preInstallNotice={AGENT_SKILL_CLI_PREREQUISITE_NOTICE}
               getPrerequisiteStatus={getPrerequisiteStatus}
               isPrerequisiteAvailable={isOrcaCliAvailableOnPath}
               onBeforeOpenTerminal={onBeforeOpenTerminal}
               onRecheck={onRecheck}
             />
+            {/* Why: the dialog's × already dismisses-for-session (onOpenChange), so a
+                separate "Not now" button was redundant and, styled as the footer CTA,
+                read as the primary action over Install. Keep only the distinct
+                permanent-dismiss action. */}
             <DialogFooter className="px-6 pb-6">
               <Button type="button" variant="ghost" size="sm" onClick={onDismissPermanently}>
                 {translate(
                   'auto.components.sidebar.LinearAgentSkillSetupPrompt.dontShowAgain',
                   "Don't show again"
                 )}
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={onSnoozeForSession}>
-                {translate('auto.components.sidebar.LinearAgentSkillSetupPrompt.notNow', 'Not now')}
               </Button>
             </DialogFooter>
           </>

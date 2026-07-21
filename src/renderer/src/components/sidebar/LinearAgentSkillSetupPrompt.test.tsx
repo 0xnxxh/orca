@@ -452,7 +452,7 @@ describe('LinearAgentSkillSetupPrompt', () => {
     )
   })
 
-  it('auto-opens as a modal-only prompt and treats Not now as a casual close', async () => {
+  it('auto-opens as a modal-only prompt and treats the × close as a casual snooze', async () => {
     await renderPrompt({ linked: true, remote: false, surface: 'modal' })
 
     expect(container?.textContent).not.toContain('Set up Linear agent skill')
@@ -461,17 +461,20 @@ describe('LinearAgentSkillSetupPrompt', () => {
     )
     expect(document.body.textContent).toContain('Orca CLI and Linear agent skill are missing.')
     expect(document.body.textContent).toContain('Mock install')
+    expect(document.body.textContent).not.toContain('Not now')
     expect(mocks.panelProps.at(-1)).toEqual(
       expect.objectContaining({
         preInstallNotice: 'CLI registration notice'
       })
     )
 
-    const notNowButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Not now'
+    // Why: "Not now" was removed; the dialog's × is the casual dismiss and must snooze
+    // (session-only) rather than persist a permanent dismissal.
+    const closeButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Close'
     )
     await act(async () => {
-      notNowButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      closeButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
     expect(window.localStorage.getItem(HOST_DISMISS_STORAGE_KEY)).toBeNull()
