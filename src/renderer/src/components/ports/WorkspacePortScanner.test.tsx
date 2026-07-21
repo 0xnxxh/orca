@@ -219,6 +219,20 @@ afterEach(() => {
 })
 
 describe('WorkspacePortScanner', () => {
+  it('turns a missing runtime scan payload into an unavailable result', async () => {
+    runtimeEnvironmentCall.mockResolvedValue({ ok: true, result: undefined })
+
+    await act(async () => {
+      root?.render(<WorkspacePortScanner />)
+      await flushPromises()
+    })
+
+    expect(useAppStore.getState().workspacePortScansByKey[remoteScanKey]).toMatchObject({
+      ports: [],
+      unavailableReason: 'Workspace port scan returned an invalid response.'
+    })
+  })
+
   it('does not restart remote scans before the background interval when host inputs rerender', async () => {
     await act(async () => {
       root?.render(<WorkspacePortScanner />)
