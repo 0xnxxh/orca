@@ -497,7 +497,8 @@ const WorktreeCard = React.memo(function WorktreeCard({
       reviewHintKey:
         (useCachedBranchReview || cachedMergedBranchPRMatchesCurrentHead) && !hasLinkedReview
           ? ''
-          : hostedReviewEntry?.linkedReviewHintKey
+          : hostedReviewEntry?.linkedReviewHintKey,
+      branchLookupGitHubPRNumber: cachedBranchFallbackGitHubPRNumber
     }
   )
   const issue: IssueInfo | null | undefined = worktree.linkedIssue
