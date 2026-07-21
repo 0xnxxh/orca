@@ -73,7 +73,10 @@ import {
   useWorkspaceDeleteModifierPressed
 } from './workspace-delete-quick-action'
 import { WorktreeIdentityBadge } from '@/components/WorktreeIdentityBadge'
-import { getWorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
+import {
+  getWorktreeGitIdentityDisplay,
+  getWorktreeIdentityBranchName
+} from '@/lib/worktree-git-identity-display'
 import {
   getFlushWorktreeCardPaddingLeft,
   getNewCardStyleParentContentMarginLeft
@@ -368,6 +371,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
       ? gitIdentityDisplay
       : null
   const branch = gitIdentityDisplay?.kind === 'branch' ? gitIdentityDisplay.branchName : ''
+  // Why: mid-rebase the PR still lives on the original branch, so resolve/display it against the
+  // recovered rebase branch even though `branch` (the actively checked-out branch) is empty. This
+  // is read-only — PR creation/compare stay gated on `branch` so they can't fire on a detached HEAD.
+  const reviewBranch = getWorktreeIdentityBranchName(gitIdentityDisplay) ?? ''
   const workspaceScope = parseWorkspaceKey(worktree.id)
   const folderWorkspaceId =
     workspaceScope?.type === 'folder' ? workspaceScope.folderWorkspaceId : null
@@ -384,10 +391,10 @@ const WorktreeCard = React.memo(function WorktreeCard({
     ? hasPathIdentityEnabled && Boolean(folderPathIdentityDisplay)
     : isFolder
   const hostedReviewCacheKey =
-    repo && branch
+    repo && reviewBranch
       ? getHostedReviewCacheKey(
           repo.path,
-          branch,
+          reviewBranch,
           settings,
           repo.id,
           repo.connectionId,
@@ -396,11 +403,11 @@ const WorktreeCard = React.memo(function WorktreeCard({
         )
       : ''
   const prCacheKey =
-    repo && branch
+    repo && reviewBranch
       ? getGitHubPRCacheKey(
           repo.path,
           repo.id,
-          branch,
+          reviewBranch,
           settings,
           repo.connectionId,
           repo.executionHostId,
@@ -621,7 +628,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     }
     const refreshHostedReview = (): void => {
       // Why: branch lookup is lossy for fork/deleted-head PRs; reuse a known PR number from explicit metadata when we have one.
-      void fetchHostedReviewForBranch(repo.path, branch, {
+      void fetchHostedReviewForBranch(repo.path, reviewBranch, {
         repoId: repo.id,
         linkedGitHubPR: worktree.linkedPR ?? null,
         ...(cachedBranchFallbackGitHubPRNumber !== null
@@ -652,7 +659,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     linkedAzureDevOpsPR,
     linkedGiteaPR,
     fetchHostedReviewForBranch,
-    branch,
+    reviewBranch,
     hostedReviewCacheKey,
     shouldRefreshHostedReview
   ])
@@ -672,7 +679,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
       return
     }
     // Why: hidden card metadata is revealed on whole-card hover, so fetch lazily instead of always-on polling.
-    void fetchHostedReviewForBranch(repo.path, branch, {
+    void fetchHostedReviewForBranch(repo.path, reviewBranch, {
       repoId: repo.id,
       linkedGitHubPR: worktree.linkedPR ?? null,
       ...(cachedBranchFallbackGitHubPRNumber !== null
@@ -700,7 +707,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
     linkedAzureDevOpsPR,
     linkedGiteaPR,
     fetchHostedReviewForBranch,
-    branch,
+    reviewBranch,
     hostedReviewCacheKey
   ])
 

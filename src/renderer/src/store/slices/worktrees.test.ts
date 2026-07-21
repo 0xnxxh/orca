@@ -2067,7 +2067,8 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'new-head',
-      branch: 'refs/heads/feature'
+      branch: 'refs/heads/feature',
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
@@ -2096,11 +2097,13 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'old-head',
-      branch: 'refs/heads/main'
+      branch: 'refs/heads/main',
+      rebasing: false
     })
     store.getState().updateWorktreeGitIdentity('repo1::/path/missing', {
       head: 'new-head',
-      branch: 'refs/heads/feature'
+      branch: 'refs/heads/feature',
+      rebasing: false
     })
 
     unsubscribe()
@@ -2126,7 +2129,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
@@ -2137,6 +2141,248 @@ describe('updateWorktreeGitIdentity', () => {
       linkedAzureDevOpsPR: null,
       linkedGiteaPR: null,
       pushTarget: undefined
+    })
+  })
+
+  it('preserves linked reviews when a rebasing worktree detaches HEAD (branch clears to empty)', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/stack/one',
+      rebasing: true,
+      rebaseBranch: 'stack/one',
+      linkedPR: 101,
+      linkedGitLabMR: 102,
+      pushTarget: { remoteName: 'fork', branchName: 'old/review-head' }
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    // Mid-rebase git status reports detached HEAD -> branch clears to ''. The PR still lives on
+    // the original branch, so the link (and push target) must survive.
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: null,
+      rebasing: true
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      branch: '',
+      linkedPR: 101,
+      linkedGitLabMR: 102,
+      pushTarget: { remoteName: 'fork', branchName: 'old/review-head' }
+    })
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+  })
+
+  it('preserves linked reviews at rebase start when status flags rebasing on the detach poll', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/stack/one',
+      // Not yet flagged rebasing (the worktree-list refresh hasn't run) — the incoming status
+      // signal is what must protect the link on this very first detach poll.
+      linkedPR: 101,
+      pushTarget: { remoteName: 'fork', branchName: 'old/review-head' }
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: null,
+      rebasing: true
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      branch: '',
+      rebasing: true,
+      linkedPR: 101,
+      pushTarget: { remoteName: 'fork', branchName: 'old/review-head' }
+    })
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+  })
+
+  it('clears the rebasing flag when status reports the rebase ended', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: '',
+      rebasing: true,
+      rebaseBranch: 'stack/one'
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: 'refs/heads/stack/one',
+      rebasing: false
+    })
+
+    const updated = store.getState().worktreesByRepo.repo1[0]
+    expect(updated.branch).toBe('refs/heads/stack/one')
+    expect(updated.rebasing).toBeUndefined()
+    expect(updated.rebaseBranch).toBeUndefined()
+  })
+
+  it('preserves linked reviews when the rebase ends and HEAD reattaches to the original branch', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: '',
+      rebasing: true,
+      rebaseBranch: 'stack/one',
+      linkedPR: 101,
+      linkedGitLabMR: 102,
+      pushTarget: { remoteName: 'fork', branchName: 'old/review-head' }
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    // Rebase finished: '' -> refs/heads/stack/one looks like a branch switch by raw string
+    // compare, but it reattaches to the SAME review identity — the link must survive.
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: 'refs/heads/stack/one',
+      rebasing: false
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      branch: 'refs/heads/stack/one',
+      linkedPR: 101,
+      linkedGitLabMR: 102,
+      pushTarget: { remoteName: 'fork', branchName: 'old/review-head' }
+    })
+    expect(store.getState().worktreesByRepo.repo1[0].rebasing).toBeUndefined()
+    expect(store.getState().worktreesByRepo.repo1[0].rebaseBranch).toBeUndefined()
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+  })
+
+  it('snapshots the outgoing branch as rebaseBranch when the producer could not read one', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/stack/one',
+      linkedPR: 101
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    // Status-only hosts (WSL skips the worktree-list watcher) flag rebasing but can't read
+    // head-name; the store must remember the branch it is transitioning off.
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: null,
+      rebasing: true
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      branch: '',
+      rebasing: true,
+      rebaseBranch: 'stack/one',
+      linkedPR: 101
+    })
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+  })
+
+  it('normalizes a supplied full-ref rebaseBranch to its short name', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/stack/one'
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: null,
+      rebasing: true,
+      rebaseBranch: 'refs/heads/stack/one'
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0].rebaseBranch).toBe('stack/one')
+  })
+
+  it('still clears linked reviews on a plain (non-rebase) detach', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: 'refs/heads/stack/one',
+      linkedPR: 101
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: null,
+      rebasing: false
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      branch: '',
+      linkedPR: null
+    })
+  })
+
+  it('clears linked reviews when a rebase is quit while HEAD stays detached', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: '',
+      rebasing: true,
+      rebaseBranch: 'stack/one',
+      linkedPR: 101
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    // `git rebase --quit` removes the rebase state but leaves HEAD detached: the recovered
+    // identity is gone for real, so this IS a leave-the-branch transition.
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: null,
+      rebasing: false
+    })
+
+    const updated = store.getState().worktreesByRepo.repo1[0]
+    expect(updated.linkedPR).toBeNull()
+    expect(updated.rebasing).toBeUndefined()
+    expect(updated.rebaseBranch).toBeUndefined()
+  })
+
+  it('clears linked reviews when the rebase ends on a different branch', () => {
+    const store = createTestStore()
+    const existing = makeWorktree({
+      id: 'repo1::/path/wt1',
+      repoId: 'repo1',
+      path: '/path/wt1',
+      branch: '',
+      rebasing: true,
+      rebaseBranch: 'stack/one',
+      linkedPR: 101
+    })
+
+    store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
+
+    store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
+      branch: 'refs/heads/other',
+      rebasing: false
+    })
+
+    expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
+      branch: 'refs/heads/other',
+      linkedPR: null
     })
   })
 
@@ -2154,7 +2400,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/one'
+      branch: 'refs/heads/stack/one',
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
@@ -2183,7 +2430,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await Promise.resolve()
 
@@ -2213,7 +2461,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await Promise.resolve()
 
@@ -2262,7 +2511,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await Promise.resolve()
     await store.getState().updateWorktreeMeta('repo1::/path/wt1', { linkedGitLabMR: 202 })
@@ -2310,7 +2560,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await Promise.resolve()
     await store.getState().updateWorktreeMeta('repo1::/path/wt1', { pushTarget: nextPushTarget })
@@ -2358,11 +2609,13 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await Promise.resolve()
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/three'
+      branch: 'refs/heads/stack/three',
+      rebasing: false
     })
     releaseFirstClear()
 
@@ -2405,7 +2658,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await Promise.resolve()
     const switched = store.getState().worktreesByRepo.repo1[0]
@@ -2457,7 +2711,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     const switched = store.getState().worktreesByRepo.repo1[0]
     store.setState({
@@ -2516,7 +2771,8 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'new-head',
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await vi.waitFor(() => {
       expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
@@ -2562,7 +2818,8 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await vi.waitFor(() => {
       expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
@@ -2572,7 +2829,8 @@ describe('updateWorktreeGitIdentity', () => {
     })
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/one'
+      branch: 'refs/heads/stack/one',
+      rebasing: false
     })
     mockApi.worktrees.list.mockResolvedValue([laterBranch])
     await store.getState().fetchWorktrees('repo1')
@@ -2613,7 +2871,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'new-head',
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await vi.waitFor(() => {
       expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
@@ -2654,7 +2913,8 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await vi.waitFor(() => {
       expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
@@ -2704,7 +2964,8 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'new-head',
-      branch: 'refs/heads/stack/one'
+      branch: 'refs/heads/stack/one',
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
@@ -2728,7 +2989,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/main'
+      branch: 'refs/heads/main',
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0].displayName).toBe('main')
@@ -2747,7 +3009,8 @@ describe('updateWorktreeGitIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [existing] } } as Partial<AppState>)
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
-      branch: 'refs/heads/main'
+      branch: 'refs/heads/main',
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0].displayName).toBe('My Cool Work')
@@ -2768,7 +3031,8 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'new-head',
-      branch: null
+      branch: null,
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
@@ -2794,7 +3058,8 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'new-head',
-      branch: null
+      branch: null,
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
@@ -2818,11 +3083,13 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'detached-head',
-      branch: null
+      branch: null,
+      rebasing: false
     })
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'reattached-head',
-      branch: 'refs/heads/main'
+      branch: 'refs/heads/main',
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
@@ -2846,7 +3113,8 @@ describe('updateWorktreeGitIdentity', () => {
 
     store.getState().updateWorktreeGitIdentity('repo1::/path/wt1', {
       head: 'reattached-head',
-      branch: 'refs/heads/main'
+      branch: 'refs/heads/main',
+      rebasing: false
     })
 
     expect(store.getState().worktreesByRepo.repo1[0]).toMatchObject({
@@ -6981,7 +7249,9 @@ describe('migrateWorktreeIdentity', () => {
     })
 
     store.setState({ worktreesByRepo: { repo1: [oldWorktree] } } as Partial<AppState>)
-    store.getState().updateWorktreeGitIdentity(OLD, { branch: 'refs/heads/stack/two' })
+    store
+      .getState()
+      .updateWorktreeGitIdentity(OLD, { branch: 'refs/heads/stack/two', rebasing: false })
     await vi.waitFor(() => {
       expect(getHostedReviewLinkMutationGenerationForTests(OLD)).toBe(0)
       expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
@@ -7035,7 +7305,8 @@ describe('migrateWorktreeIdentity', () => {
     store.setState({ worktreesByRepo: { repo1: [oldWorktree] } } as Partial<AppState>)
     store.getState().updateWorktreeGitIdentity(OLD, {
       head: 'new-head',
-      branch: 'refs/heads/stack/two'
+      branch: 'refs/heads/stack/two',
+      rebasing: false
     })
     await vi.waitFor(() => {
       expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
@@ -7078,7 +7349,9 @@ describe('migrateWorktreeIdentity', () => {
     })
 
     store.setState({ worktreesByRepo: { repo1: [oldWorktree] } } as Partial<AppState>)
-    store.getState().updateWorktreeGitIdentity(OLD, { branch: 'refs/heads/stack/two' })
+    store
+      .getState()
+      .updateWorktreeGitIdentity(OLD, { branch: 'refs/heads/stack/two', rebasing: false })
     await vi.waitFor(() => {
       expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith({
         worktreeId: OLD,
@@ -7107,7 +7380,9 @@ describe('migrateWorktreeIdentity', () => {
     })
 
     store.setState({ worktreesByRepo: { repo1: [oldWorktree] } } as Partial<AppState>)
-    store.getState().updateWorktreeGitIdentity(OLD, { branch: 'refs/heads/stack/two' })
+    store
+      .getState()
+      .updateWorktreeGitIdentity(OLD, { branch: 'refs/heads/stack/two', rebasing: false })
     const switched = store.getState().worktreesByRepo.repo1[0]
     store.setState({
       worktreesByRepo: {
@@ -7163,7 +7438,9 @@ describe('migrateWorktreeIdentity', () => {
     })
 
     store.setState({ worktreesByRepo: { repo1: [oldWorktree] } } as Partial<AppState>)
-    store.getState().updateWorktreeGitIdentity(OLD, { branch: 'refs/heads/stack/two' })
+    store
+      .getState()
+      .updateWorktreeGitIdentity(OLD, { branch: 'refs/heads/stack/two', rebasing: false })
     await oldPersistStartedPromise
     const switched = store.getState().worktreesByRepo.repo1[0]
     store.setState({

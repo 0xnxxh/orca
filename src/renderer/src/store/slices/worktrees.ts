@@ -23,6 +23,7 @@ import {
   findWorktreeById,
   applyWorktreeUpdates,
   getRepoIdFromWorktreeId,
+  type WorktreeGitIdentityUpdate,
   type WorktreeSlice
 } from './worktree-helpers'
 import { splitWorktreeIdForFilesystem } from '../../../../shared/worktree-id'
@@ -1557,6 +1558,51 @@ function canonicalHostedReviewBranchIdentity(branch: string): string {
   return branchName(branch).trim()
 }
 
+/**
+ * Rebase fields for a worktree's next identity state. When the producer saw a rebase but
+ * couldn't read the original branch (status-only hosts — e.g. WSL, where the worktree-list
+ * watcher is skipped), fall back to the branch already remembered, then to the branch the
+ * worktree is transitioning off — a continuity snapshot that keeps the badge and review
+ * link branch-aware without any disk read. Normalized to `true | undefined` to match the
+ * worktree-list merge; both fields drop when the rebase ends so a stale recovered branch
+ * can't linger as a label.
+ */
+function nextWorktreeRebaseFields(
+  worktree: Pick<Worktree, 'branch' | 'rebaseBranch'>,
+  identity: WorktreeGitIdentityUpdate
+): { rebasing: true | undefined; rebaseBranch: string | undefined } {
+  if (!identity.rebasing) {
+    return { rebasing: undefined, rebaseBranch: undefined }
+  }
+  const supplied = identity.rebaseBranch
+    ? canonicalHostedReviewBranchIdentity(identity.rebaseBranch)
+    : ''
+  const rebaseBranch =
+    supplied ||
+    worktree.rebaseBranch ||
+    canonicalHostedReviewBranchIdentity(worktree.branch) ||
+    undefined
+  return { rebasing: true, rebaseBranch }
+}
+
+/**
+ * The branch a worktree's hosted review is scoped to: the live branch, or mid-rebase the
+ * recovered original branch. Why: rebase entry ('' + rebaseBranch) and exit (reattach to
+ * that same branch) keep this identity constant, so the review-link clear can't fire at
+ * either boundary regardless of which producer observed the transition first.
+ */
+function derivedHostedReviewBranchIdentity(
+  branch: string,
+  rebasing: boolean | undefined,
+  rebaseBranch: string | undefined
+): string {
+  const live = canonicalHostedReviewBranchIdentity(branch)
+  if (live) {
+    return live
+  }
+  return rebasing && rebaseBranch ? canonicalHostedReviewBranchIdentity(rebaseBranch) : ''
+}
+
 function rememberHostedReviewLinkClear(
   worktreeId: string,
   branch: string,
@@ -2700,7 +2746,13 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     }
     const expectedHead = identity.head ?? existing.head
     const expectedBranch = identity.branch === null ? '' : (identity.branch ?? existing.branch)
-    if (expectedHead === existing.head && expectedBranch === existing.branch) {
+    const expectedRebase = nextWorktreeRebaseFields(existing, identity)
+    if (
+      expectedHead === existing.head &&
+      expectedBranch === existing.branch &&
+      expectedRebase.rebasing === existing.rebasing &&
+      expectedRebase.rebaseBranch === existing.rebaseBranch
+    ) {
       return
     }
 
@@ -2717,13 +2769,31 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         }
         const nextHead = identity.head ?? worktree.head
         const nextBranch = identity.branch === null ? '' : (identity.branch ?? worktree.branch)
-        if (nextHead === worktree.head && nextBranch === worktree.branch) {
+        const nextRebase = nextWorktreeRebaseFields(worktree, identity)
+        if (
+          nextHead === worktree.head &&
+          nextBranch === worktree.branch &&
+          nextRebase.rebasing === worktree.rebasing &&
+          nextRebase.rebaseBranch === worktree.rebaseBranch
+        ) {
           return worktree
         }
         changed = true
+        // Why: compare rebase-aware review identities, not raw branch strings — mid-rebase
+        // the review still lives on the recovered branch, so rebase entry and exit resolve
+        // to the same identity and never trigger the clear, while a plain detach or a real
+        // branch switch still does.
         const hostedReviewBranchChanged =
-          canonicalHostedReviewBranchIdentity(nextBranch) !==
-          canonicalHostedReviewBranchIdentity(worktree.branch)
+          derivedHostedReviewBranchIdentity(
+            nextBranch,
+            nextRebase.rebasing,
+            nextRebase.rebaseBranch
+          ) !==
+          derivedHostedReviewBranchIdentity(
+            worktree.branch,
+            worktree.rebasing,
+            worktree.rebaseBranch
+          )
         const shouldClearHostedReviewContext =
           hostedReviewBranchChanged && hasBranchScopedHostedReviewContext(worktree)
         if (shouldClearHostedReviewContext) {
@@ -2769,6 +2839,8 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           head: nextHead,
           branch: nextBranch,
           displayName: nextDisplayName,
+          rebasing: nextRebase.rebasing,
+          rebaseBranch: nextRebase.rebaseBranch,
           // Why: linked reviews are branch-scoped; keeping the old link on a branch switch would refresh the old PR.
           ...(shouldClearHostedReviewContext ? CLEARED_HOSTED_REVIEW_LINK_UPDATES : {})
         }

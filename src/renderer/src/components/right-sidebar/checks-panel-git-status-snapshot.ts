@@ -26,6 +26,10 @@ export type ChecksPanelGitStatusSnapshot = {
   gitIdentity?: {
     head?: string
     branch?: string | null
+    // Why: a snapshot identity is replayed into the store later; without its rebase
+    // context a mid-rebase detach would replay as a plain branch switch.
+    rebasing?: boolean
+    rebaseBranch?: string | null
   }
 }
 
@@ -45,6 +49,8 @@ export type ChecksPanelRefreshGitIdentitySnapshot =
       kind: 'changed'
       head?: string
       branch: string | null
+      rebasing: boolean
+      rebaseBranch: string | null
     }
 
 export function buildChecksPanelGitStatusContextKey(
@@ -159,17 +165,23 @@ export function readChecksPanelRefreshGitIdentitySnapshot(input: {
     return { kind: 'missing' }
   }
 
-  if (
-    canonicalBranchIdentity(input.snapshot.gitIdentity.branch) ===
-    canonicalBranchIdentity(input.currentBranch)
-  ) {
+  const identity = input.snapshot.gitIdentity
+  // Why: mid-rebase the snapshot's live branch is empty but its review identity is the
+  // recovered branch — compare that, so a rebase pause isn't misread as a branch switch.
+  const snapshotBranchIdentity =
+    canonicalBranchIdentity(identity.branch) ||
+    (identity.rebasing ? canonicalBranchIdentity(identity.rebaseBranch) : '')
+  if (snapshotBranchIdentity === canonicalBranchIdentity(input.currentBranch)) {
     return { kind: 'same' }
   }
 
   return {
     kind: 'changed',
-    head: input.snapshot.gitIdentity.head,
-    branch: input.snapshot.gitIdentity.branch
+    head: identity.head,
+    // undefined was excluded by the missing-snapshot guard above.
+    branch: identity.branch ?? null,
+    rebasing: identity.rebasing === true,
+    rebaseBranch: identity.rebaseBranch ?? null
   }
 }
 

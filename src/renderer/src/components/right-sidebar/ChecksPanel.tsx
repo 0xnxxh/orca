@@ -139,7 +139,10 @@ import { installWindowVisibilityInterval } from '@/lib/window-visibility-interva
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { gitLabPipelineJobsToPRChecks } from '../../../../shared/gitlab-pipeline-checks'
-import { getWorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
+import {
+  getWorktreeGitIdentityDisplay,
+  getWorktreeIdentityBranchName
+} from '@/lib/worktree-git-identity-display'
 import { SourceControlAgentActionDialog } from './SourceControlAgentActionDialog'
 import { readSourceControlLaunchRecipeAgentId } from '@/lib/source-control-launch-agent-selection'
 import {
@@ -574,7 +577,11 @@ export default function ChecksPanel(): React.JSX.Element {
     gitIdentityDisplay?.kind === 'detached' || gitIdentityDisplay?.kind === 'rebasing'
       ? gitIdentityDisplay
       : null
-  const branch = gitIdentityDisplay?.kind === 'branch' ? gitIdentityDisplay.branchName : ''
+  // Why: `branch` drives PR/review resolution and refresh keys; mid-rebase the PR still lives on
+  // the recovered branch, so resolve against it (read-only). `isOnLiveBranch` stays false while
+  // detached/rebasing so PR *creation* can't fire on a HEAD that isn't on a branch.
+  const branch = getWorktreeIdentityBranchName(gitIdentityDisplay) ?? ''
+  const isOnLiveBranch = gitIdentityDisplay?.kind === 'branch'
   const activeWorktreePath = activeWorktree?.path ?? null
   const activeWorktreePushTarget = activeWorktree?.pushTarget ?? null
   const activeSourceControlLaunchPlatform = resolveSourceControlLaunchPlatform({
@@ -1054,14 +1061,20 @@ export default function ChecksPanel(): React.JSX.Element {
   )
   // Confirmed-only gate: a confirmed composer survives transient refresh failures, but a failure never *opens* a never-confirmed Create.
   const createComposerOpen =
-    !isFolder && !activeReview && Boolean(branch) && confirmedReadiness.confirmed
+    !isFolder && !activeReview && isOnLiveBranch && Boolean(branch) && confirmedReadiness.confirmed
   const handleGeneratePullRequestFieldsForActive = useCallback(
     async (
       fields: PullRequestGenerationFields,
       fieldRevisions: PullRequestFieldRevisions,
       overrides?: RuntimeGeneratePullRequestFieldsOverrides
     ): Promise<void> => {
-      if (!repo || !activePullRequestGenerationKey || !activeWorktreePath || !branch) {
+      if (
+        !repo ||
+        !activePullRequestGenerationKey ||
+        !activeWorktreePath ||
+        !branch ||
+        !isOnLiveBranch
+      ) {
         return
       }
       const generationKey = activePullRequestGenerationKey
@@ -1155,6 +1168,7 @@ export default function ChecksPanel(): React.JSX.Element {
       activeWorktreePath,
       allocatePullRequestGenerationRequestId,
       branch,
+      isOnLiveBranch,
       handleBranchChangedByPullRequestGeneration,
       hostedReviewCreateProvider,
       ownerSettings,
@@ -1480,7 +1494,9 @@ export default function ChecksPanel(): React.JSX.Element {
         // Why: the Checks tab can be the only visible git surface; commit branch identity before branch-scoped upstream refresh can fail.
         updateWorktreeGitIdentity(activeWorktreeId, {
           head: status.head,
-          branch: status.branch ?? (status.head ? null : undefined)
+          branch: status.branch ?? (status.head ? null : undefined),
+          rebasing: status.rebasing === true,
+          rebaseBranch: status.rebaseBranch ?? null
         })
       }
       let freshRemoteStatus = status.upstreamStatus
@@ -1507,7 +1523,9 @@ export default function ChecksPanel(): React.JSX.Element {
             remoteStatus,
             gitIdentity: {
               head: status.head,
-              branch: status.branch ?? (status.head ? null : undefined)
+              branch: status.branch ?? (status.head ? null : undefined),
+              rebasing: status.rebasing === true,
+              rebaseBranch: status.rebaseBranch ?? null
             }
           })
           // A fresh probe succeeded, so this context is no longer in the "could not check branch status" state.
@@ -2083,7 +2101,9 @@ export default function ChecksPanel(): React.JSX.Element {
         if (snapshotIdentity.kind === 'changed') {
           updateWorktreeGitIdentity(activeWorktreeId, {
             head: snapshotIdentity.head,
-            branch: snapshotIdentity.branch
+            branch: snapshotIdentity.branch,
+            rebasing: snapshotIdentity.rebasing,
+            rebaseBranch: snapshotIdentity.rebaseBranch
           })
           // Why: this click discovered a terminal branch switch; let branch-keyed render/effects restart instead of refreshing old PR data.
           refreshOutcome = 'branch-changed'
@@ -2100,7 +2120,9 @@ export default function ChecksPanel(): React.JSX.Element {
           const observedBranch = status.branch ?? (status.head ? null : undefined)
           updateWorktreeGitIdentity(activeWorktreeId, {
             head: status.head,
-            branch: observedBranch
+            branch: observedBranch,
+            rebasing: status.rebasing === true,
+            rebaseBranch: status.rebaseBranch ?? null
           })
           if (
             observedBranch !== undefined &&
@@ -2138,7 +2160,9 @@ export default function ChecksPanel(): React.JSX.Element {
               remoteStatus: freshRemoteStatus,
               gitIdentity: {
                 head: status.head,
-                branch: observedBranch
+                branch: observedBranch,
+                rebasing: status.rebasing === true,
+                rebaseBranch: status.rebaseBranch ?? null
               }
             })
           }

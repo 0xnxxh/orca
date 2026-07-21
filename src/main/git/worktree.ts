@@ -1,6 +1,5 @@
 /* eslint-disable max-lines -- Why: this file keeps git worktree create/remove behavior together so local cleanup and creation invariants stay in one place. */
-import { readFile, stat } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { join, posix, win32 } from 'node:path'
 import {
   branchHasNoUnmergedChangesOnAnyTarget,
@@ -17,7 +16,7 @@ import type {
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
 import { isSubmoduleWorktreeRemovalRefusal } from '../../shared/worktree-submodule-removal'
 import { decodeGitCQuotedPath } from '../../shared/git-cquoted-path'
-import { parseRebaseHeadName } from '../../shared/git-rebase-head-name'
+import { readWorktreeRebaseState } from '../../shared/git-rebase-worktree-state'
 import { parseGitRevListAheadBehindCounts } from '../../shared/git-rev-list-output'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import {
@@ -643,39 +642,6 @@ async function annotatePrunableByExistence(
   const workerCount = Math.min(PRUNABLE_EXISTENCE_PROBE_CONCURRENCY, worktrees.length)
   await Promise.all(Array.from({ length: workerCount }, () => probeNext()))
   return annotated
-}
-
-/**
- * Recover the branch a worktree is rebasing, from git's on-disk `head-name` state file.
- * Why: host-side twin of `readWorktreeRebaseState` in src/relay/git-handler-status-ops.ts, for
- * local/native (non-relay) repos. Reads plain state files only (version-agnostic; no subcommand).
- */
-export async function readWorktreeRebaseState(
-  worktreePath: string
-): Promise<{ rebasing: boolean; rebaseBranch: string | null }> {
-  const gitDir = await resolveGitDir(worktreePath)
-  let rebaseDir: string | null = null
-  if (existsSync(join(gitDir, 'rebase-merge'))) {
-    // rebase-merge is written only by rebase (interactive/merge backend).
-    rebaseDir = join(gitDir, 'rebase-merge')
-  } else if (
-    existsSync(join(gitDir, 'rebase-apply')) &&
-    existsSync(join(gitDir, 'rebase-apply', 'rebasing'))
-  ) {
-    // rebase-apply is shared with `git am`; gate on the `rebasing` sentinel to avoid a false badge.
-    rebaseDir = join(gitDir, 'rebase-apply')
-  }
-
-  if (!rebaseDir) {
-    return { rebasing: false, rebaseBranch: null }
-  }
-
-  try {
-    const headName = await readFile(join(rebaseDir, 'head-name'), 'utf-8')
-    return { rebasing: true, rebaseBranch: parseRebaseHeadName(headName) }
-  } catch {
-    return { rebasing: true, rebaseBranch: null }
-  }
 }
 
 // Why: mirror the relay's detached-worktree rebase recovery on the local path so the badge

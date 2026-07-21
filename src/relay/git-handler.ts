@@ -42,11 +42,8 @@ import { annotatePrunableWorktreesByExistence } from './git-handler-worktree-lis
 import { forceDeletePreservedRelayBranch } from './git-handler-branch-cleanup'
 import { refreshLocalBaseRefForWorktreeCreateOp } from './git-handler-local-base-ref-refresh'
 import { gitExecMutatesRepository } from '../shared/git-exec-mutation'
-import {
-  detectConflictOperation,
-  getStatusOp,
-  readWorktreeRebaseState
-} from './git-handler-status-ops'
+import { detectConflictOperation, getStatusOp } from './git-handler-status-ops'
+import { readWorktreeRebaseState } from '../shared/git-rebase-worktree-state'
 import { capGitStatusEntries, resolveGitStatusLimit } from '../shared/git-status-limit'
 import { checkIgnoredPathsOp } from './git-handler-check-ignore'
 import { resolveRelayPushTarget } from './git-handler-push-target'

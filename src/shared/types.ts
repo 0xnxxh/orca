@@ -455,6 +455,11 @@ export type WorktreeHeadIdentity = {
   head: string
   /** Full ref (e.g. `refs/heads/main`), or null for a detached HEAD. */
   branch: string | null
+  /** Present only when detached mid-rebase; `rebaseBranch` is the recovered original
+   *  branch (short name). Why: a detach observed without rebase context reads as a
+   *  branch switch and would clear the branch-scoped review link. */
+  rebasing?: boolean
+  rebaseBranch?: string
 }
 
 // ─── Worktree (app-level, enriched) ──────────────────────────────────
