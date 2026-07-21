@@ -2,6 +2,7 @@ import type { RpcResponse } from '../runtime/rpc/core'
 import type { RpcDispatcher } from '../runtime/rpc/dispatcher'
 import { getRemoteLinearWriteHelp } from './ssh-remote-linear-write-help'
 import { dispatchRemoteLinearRelationWrite } from './ssh-remote-linear-relation-write'
+import { dispatchRemoteLinearSaveIssue } from './ssh-remote-linear-save-issue'
 import {
   RemoteLinearWriteArgumentError,
   buildRemoteContext,
@@ -60,13 +61,15 @@ const LINEAR_CREATE_FLAGS = new Set([
   'parent-current',
   'write-id'
 ])
-
 export async function tryDispatchRemoteLinearWriteCli(
   dispatcher: RpcDispatcher,
   parsed: ParsedRemoteCli,
   env: Record<string, string>,
   stdin?: string
 ): Promise<RpcResponse | null> {
+  if (isRemoteCommand(parsed, 'linear', 'save-issue')) {
+    return await dispatchRemoteLinearSaveIssue(dispatcher, parsed, env, stdin)
+  }
   if (isRemoteCommand(parsed, 'linear', 'relation', 'add')) {
     return await dispatchRemoteLinearRelationWrite(dispatcher, parsed, env, 'add')
   }

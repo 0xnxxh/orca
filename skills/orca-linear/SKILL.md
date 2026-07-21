@@ -68,6 +68,7 @@ Do not use `orca linear attach` to read screenshots. That command creates link a
 ## Common Commands
 
 ```bash
+orca linear save-issue [<id>] [--current] [--team <key|id>] [--title <title>] [--description <text> | --body-file <path|->] [--state <state>] [--assignee me|<user>|null] [--priority none|low|medium|high|urgent] [--estimate <number>|null] [--due-date <yyyy-mm-dd>|null] [--label <label>]... [--project <project>|null] [--parent-id <issue>|null] [--write-id <uuid>] [--workspace <id>] [--json]
 orca linear issue [<id>] [--current] [--comments] [--children] [--depth <n>] [--attachments] [--relations] [--activity] [--full] [--workspace <id>] [--json]
 orca linear list-issues [--team <team>] [--cycle <cycle>] [--label <label>] [--limit <n>] [--query <text>] [--state <state>] [--cursor <cursor>] [--order-by createdAt|updatedAt] [--project <project>] [--release <release>] [--assignee <user|me|null>] [--delegate <user|me|null>] [--parent-id <issue|null>] [--priority <0-4>] [--created-at <datetime|duration>] [--updated-at <datetime|duration>] [--include-archived] [--workspace <id>|all] [--json]
 orca linear relation add [<id>] [--current] --related <issue> --type blocks|blocked-by|related|duplicate-of [--workspace <id>] [--json]
@@ -107,6 +108,8 @@ orca linear team members --team <key-or-id> --workspace <workspaceId> --json
 ```
 
 Prefer IDs for automation. Names are accepted only when they exactly and uniquely match in the issue's team.
+
+`save-issue` matches Linear MCP's create-or-update shape: omit an issue target to create, or pass an id/`--current` to update. Repeated labels replace the complete label set. Use the literal `null` to clear assignee, estimate, due date, project, or parent.
 
 SSH/remoting note: when running through an SSH-backed remote Orca CLI, body files are only supported via stdin (`--body-file -`), not arbitrary remote file paths. Pipe or redirect the body content explicitly.
 

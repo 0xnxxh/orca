@@ -44,6 +44,7 @@ const LINEAR_HELP = `orca linear
 Usage: orca linear <command> [options]
 
 Commands:
+  save-issue         Create or update a Linear issue
   list-issues        List Linear issues with MCP-compatible filters
   relation add       Add a Linear issue relation
   relation remove    Remove a Linear issue relation

@@ -1270,6 +1270,9 @@ export async function updateIssue(
     if (updates.projectId !== undefined) {
       payload.projectId = updates.projectId
     }
+    if (updates.parentId !== undefined) {
+      payload.parentId = updates.parentId
+    }
 
     const result = await entry.client.updateIssue(id, payload)
     if (!result.success) {
@@ -1290,10 +1293,7 @@ export async function updateIssue(
 
 export async function updateIssueForAgent(
   id: string,
-  updates: Pick<
-    LinearIssueUpdate,
-    'stateId' | 'assigneeId' | 'priority' | 'estimate' | 'dueDate' | 'labelIds'
-  >,
+  updates: LinearIssueUpdate,
   workspaceId: string,
   options: { signal?: AbortSignal } = {}
 ): Promise<LinearIssueWriteRecord> {
@@ -1306,6 +1306,12 @@ export async function updateIssueForAgent(
     const payload: Record<string, unknown> = {}
     if (updates.stateId !== undefined) {
       payload.stateId = updates.stateId
+    }
+    if (updates.title !== undefined) {
+      payload.title = updates.title
+    }
+    if (updates.description !== undefined) {
+      payload.description = updates.description
     }
     if (updates.assigneeId !== undefined) {
       payload.assigneeId = updates.assigneeId
@@ -1321,6 +1327,12 @@ export async function updateIssueForAgent(
     }
     if (updates.labelIds !== undefined) {
       payload.labelIds = updates.labelIds
+    }
+    if (updates.projectId !== undefined) {
+      payload.projectId = updates.projectId
+    }
+    if (updates.parentId !== undefined) {
+      payload.parentId = updates.parentId
     }
     const result = await client.updateIssue(id, payload)
     if (!result.success) {
