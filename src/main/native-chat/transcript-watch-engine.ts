@@ -3,6 +3,11 @@ import { open, stat } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import type { NativeChatMessage, NativeChatTurnLifecycle } from '../../shared/native-chat-types'
 import {
+  readTranscriptFileVersion,
+  transcriptFileVersionChanged,
+  type TranscriptFileVersion
+} from './transcript-file-version'
+import {
   readIncrementalTranscriptMessages,
   resetIncrementalTranscriptState,
   type IncrementalTranscriptState
@@ -13,19 +18,14 @@ import type {
   NativeChatTranscriptSubscription,
   SubscribeNativeChatTranscriptArgs
 } from './transcript-watch-contract'
+import { createTranscriptWatchScheduler } from './transcript-watch-scheduler'
 
-const DEFAULT_DEBOUNCE_MS = 40
 const ROTATION_RETRY_MS = 25
 const MAX_ROTATION_RETRY_MS = 2_000
 let activeWatcherCount = 0
 
 export function getActiveNativeChatWatcherCount(): number {
   return activeWatcherCount
-}
-
-async function fileVersion(filePath: string): Promise<{ identity: string; size: number }> {
-  const value = await stat(filePath)
-  return { identity: `${value.dev}:${value.ino}`, size: value.size }
 }
 
 async function boundaryFingerprint(filePath: string, offset: number): Promise<string> {
@@ -62,7 +62,7 @@ export async function installTranscriptWatcher(
   } catch {
     return null
   }
-  const { onAppend, onInitialSnapshot, onReplace, initialLimit, debounceMs } = args
+  const { onAppend, onInitialSnapshot, onReplace, initialLimit } = args
   const decodeLifecycle = nativeChatTurnLifecycleDecoderForAgent(args.agent)
 
   const state: IncrementalTranscriptState = {
@@ -72,7 +72,7 @@ export async function installTranscriptWatcher(
     pendingBytes: 0,
     droppingOversizedRecord: false
   }
-  let watchedIdentity: string | null = null
+  let watchedVersion: TranscriptFileVersion | null = null
   let watchedBoundary = ''
   let initialDrain = true
   // Guards the one-time error snapshot emitted when the initial drain throws, so
@@ -82,36 +82,20 @@ export async function installTranscriptWatcher(
   let reading = false
   let pendingReadRequested = false
   let rotationRetryCount = 0
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null
   let watcher: FSWatcher | null = null
   let watcherNeedsRebind = false
 
-  function scheduleDrain(): void {
-    if (closed) {
-      return
-    }
-    if (debounceTimer) {
-      clearTimeout(debounceTimer)
-    }
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null
-      void drain()
-    }, debounceMs ?? DEFAULT_DEBOUNCE_MS)
-  }
-
   function scheduleRotationRetry(): void {
-    if (closed || debounceTimer) {
+    if (closed) {
       return
     }
     const retryDelay = Math.min(
       ROTATION_RETRY_MS * 2 ** Math.min(rotationRetryCount, 7),
       MAX_ROTATION_RETRY_MS
     )
-    rotationRetryCount += 1
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null
-      void drain()
-    }, retryDelay)
+    if (scheduler.scheduleRetry(retryDelay)) {
+      rotationRetryCount += 1
+    }
   }
 
   async function readAndEmitAppends(): Promise<void> {
@@ -136,7 +120,7 @@ export async function installTranscriptWatcher(
   }
 
   async function drainOnce(): Promise<void> {
-    const current = await fileVersion(filePath)
+    const current = await readTranscriptFileVersion(filePath)
     const currentBoundary = await boundaryFingerprint(filePath, state.offset)
     if (closed) {
       return
@@ -144,7 +128,7 @@ export async function installTranscriptWatcher(
     if (watcherNeedsRebind) {
       bindWatcher()
     }
-    const identityChanged = watchedIdentity !== null && current.identity !== watchedIdentity
+    const identityChanged = watchedVersion !== null && current.identity !== watchedVersion.identity
     const contentReplaced =
       identityChanged ||
       current.size < state.offset ||
@@ -152,7 +136,7 @@ export async function installTranscriptWatcher(
     if (contentReplaced) {
       resetIncrementalTranscriptState(state)
     }
-    watchedIdentity = current.identity
+    watchedVersion = current
 
     const replacementSnapshot =
       // Why: 0 is a valid window — an explicit undefined check keeps an empty
@@ -267,15 +251,45 @@ export async function installTranscriptWatcher(
     }
   }
 
+  async function reconcile(): Promise<void> {
+    if (closed) {
+      return
+    }
+    try {
+      const current = await readTranscriptFileVersion(filePath)
+      if (closed) {
+        return
+      }
+      const versionChanged =
+        watchedVersion === null || transcriptFileVersionChanged(current, watchedVersion)
+      if (versionChanged || current.size !== state.offset || watcherNeedsRebind) {
+        await drain()
+      }
+    } catch {
+      // Why: a missing/replaced path needs the existing capped rotation retry,
+      // even when fs.watch stayed silent about the transition.
+      await drain()
+    }
+  }
+
+  const scheduler = createTranscriptWatchScheduler({
+    debounceMs: args.debounceMs,
+    reconciliationIntervalMs: args.reconciliationIntervalMs,
+    drain: () => void drain(),
+    reconcile
+  })
+
   function bindWatcher(): void {
     const watchedName = basename(filePath)
     // Why: file watchers stay bound to an unlinked inode on macOS. Watching
     // the parent keeps observing a successor even after a long recreate gap.
     const nextWatcher = watch(dirname(filePath), (_event, changedName) => {
       if (changedName === null || changedName.toString() === watchedName) {
-        scheduleDrain()
+        scheduler.scheduleEventDrain()
       }
     })
+    // Why: an active tail should not keep a headless runtime alive during shutdown.
+    nextWatcher.unref?.()
     nextWatcher.on('error', () => {
       // Why: Windows can emit EPERM when a watched directory disappears. An
       // error listener prevents a process crash and retries against its successor.
@@ -298,7 +312,8 @@ export async function installTranscriptWatcher(
     return null
   }
   activeWatcherCount++
-  scheduleDrain()
+  scheduler.startReconciliation()
+  scheduler.scheduleEventDrain()
 
   return {
     watching: true,
@@ -307,10 +322,7 @@ export async function installTranscriptWatcher(
         return
       }
       closed = true
-      if (debounceTimer) {
-        clearTimeout(debounceTimer)
-        debounceTimer = null
-      }
+      scheduler.dispose()
       watcher?.close()
       watcher = null
       activeWatcherCount--
