@@ -4,6 +4,7 @@ import {
   linearCreateProject,
   linearCreateSubIssue,
   linearGetCustomView,
+  linearGetIssuesByIdentifier,
   linearGetProject,
   linearListCustomViewIssues,
   linearListCustomViewProjects,
@@ -28,6 +29,7 @@ const runtimeEnvironmentCall = vi.fn()
 const runtimeEnvironmentTransportCall = vi.fn()
 const linearStatusLocal = vi.fn()
 const linearSearchIssuesLocal = vi.fn()
+const linearGetIssuesByIdentifierLocal = vi.fn()
 const linearListIssuesLocal = vi.fn()
 const linearCreateIssueLocal = vi.fn()
 const linearCreateProjectLocal = vi.fn()
@@ -48,6 +50,7 @@ beforeEach(() => {
   runtimeEnvironmentTransportCall.mockReset()
   linearStatusLocal.mockReset()
   linearSearchIssuesLocal.mockReset()
+  linearGetIssuesByIdentifierLocal.mockReset()
   linearListIssuesLocal.mockReset()
   linearCreateIssueLocal.mockReset()
   linearCreateProjectLocal.mockReset()
@@ -70,6 +73,7 @@ beforeEach(() => {
       linear: {
         status: linearStatusLocal,
         searchIssues: linearSearchIssuesLocal,
+        getIssuesByIdentifier: linearGetIssuesByIdentifierLocal,
         listIssues: linearListIssuesLocal,
         createIssue: linearCreateIssueLocal,
         createProject: linearCreateProjectLocal,
@@ -92,6 +96,7 @@ describe('runtime linear client', () => {
   it('uses local Linear IPC when no runtime environment is active', async () => {
     linearStatusLocal.mockResolvedValue({ connected: false, viewer: null })
     linearSearchIssuesLocal.mockResolvedValue([{ id: 'issue-1' }])
+    linearGetIssuesByIdentifierLocal.mockResolvedValue({ items: [{ id: 'issue-42' }], errors: [] })
     linearListIssuesLocal.mockResolvedValue({ items: [{ id: 'issue-2' }], hasMore: true })
     linearCreateIssueLocal.mockResolvedValue({
       ok: true,
@@ -110,6 +115,9 @@ describe('runtime linear client', () => {
       linearSearchIssues({ activeRuntimeEnvironmentId: null }, 'bug', 10)
     ).resolves.toEqual([{ id: 'issue-1' }])
     await expect(
+      linearGetIssuesByIdentifier({ activeRuntimeEnvironmentId: null }, 'ENG-42')
+    ).resolves.toEqual({ items: [{ id: 'issue-42' }], errors: [] })
+    await expect(
       linearListIssues({ activeRuntimeEnvironmentId: null }, 'all', 72, 'workspace-1')
     ).resolves.toEqual({ items: [{ id: 'issue-2' }], hasMore: true })
     await linearCreateSubIssue(
@@ -126,6 +134,10 @@ describe('runtime linear client', () => {
       query: 'bug',
       limit: 10,
       workspaceId: undefined
+    })
+    expect(linearGetIssuesByIdentifierLocal).toHaveBeenCalledWith({
+      identifier: 'ENG-42',
+      workspaceId: 'all'
     })
     expect(linearListIssuesLocal).toHaveBeenCalledWith({
       filter: 'all',

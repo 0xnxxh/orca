@@ -82,6 +82,10 @@ import {
   type TaskSourceContext
 } from '../../../../shared/task-source-context'
 import { parseExecutionHostId, type ExecutionHostId } from '../../../../shared/execution-host'
+import {
+  findLinearIssueExactReferenceMatch,
+  parseLinearIssueInput
+} from '../../../../shared/linear-links'
 
 type RepoOption = ReturnType<typeof useAppStore.getState>['repos'][number]
 const EMPTY_REPO_SEARCH_REPOS: readonly RepoOption[] = []
@@ -141,6 +145,12 @@ export function canUseGitLabSmartSource({
 
 type RowEntry = SmartWorkspaceSourceRow
 
+type LinearReferenceResolution =
+  | { status: 'idle'; query: string }
+  | { status: 'resolving'; query: string }
+  | { status: 'resolved'; query: string; identifier: string }
+  | { status: 'not-found'; query: string }
+
 const ROW_ITEM_CLASS_NAME = 'gap-2 px-3 py-2 text-xs'
 
 function isTypedTextSourceRow(row: RowEntry): boolean {
@@ -152,6 +162,15 @@ function getRowItemClassName(row: RowEntry, options?: { pinnedAction?: boolean }
     ROW_ITEM_CLASS_NAME,
     options?.pinnedAction && isTypedTextSourceRow(row) && 'bg-muted/35'
   )
+}
+
+function pinLinearIssue(exactIssue: LinearIssue, issues: LinearIssue[]): LinearIssue[] {
+  return [
+    exactIssue,
+    ...issues.filter(
+      (issue) => issue.id !== exactIssue.id || issue.workspaceId !== exactIssue.workspaceId
+    )
+  ]
 }
 
 export default function SmartWorkspaceNameField({
@@ -187,6 +206,7 @@ export default function SmartWorkspaceNameField({
     checkLinearConnection,
     fetchWorkItems,
     fetchWorkItemsAcrossRepos,
+    getLinearIssuesByIdentifier,
     getCachedWorkItems,
     linearStatus,
     linearStatusChecked,
@@ -204,6 +224,7 @@ export default function SmartWorkspaceNameField({
       checkLinearConnection: s.checkLinearConnection,
       fetchWorkItems: s.fetchWorkItems,
       fetchWorkItemsAcrossRepos: s.fetchWorkItemsAcrossRepos,
+      getLinearIssuesByIdentifier: s.getLinearIssuesByIdentifier,
       getCachedWorkItems: s.getCachedWorkItems,
       linearStatus: s.linearStatus,
       linearStatusChecked: s.linearStatusChecked,
@@ -299,6 +320,8 @@ export default function SmartWorkspaceNameField({
     query: string
   } | null>(null)
   const [linearIssues, setLinearIssues] = useState<LinearIssue[]>([])
+  const [linearReferenceResolution, setLinearReferenceResolution] =
+    useState<LinearReferenceResolution>({ status: 'idle', query: '' })
   const [githubLoading, setGithubLoading] = useState(false)
   const [gitlabLoading, setGitlabLoading] = useState(false)
   const [branchesLoading, setBranchesLoading] = useState(false)
@@ -487,6 +510,7 @@ export default function SmartWorkspaceNameField({
     setMode('smart')
     setGitlabItems([])
     setLinearIssues([])
+    setLinearReferenceResolution({ status: 'idle', query: '' })
     setGitlabLoading(false)
     setLinearLoading(false)
     setCommandValue('')
@@ -525,6 +549,10 @@ export default function SmartWorkspaceNameField({
   )
   const parsedGhLink = useMemo(
     () => (sourceQueryWithinLimit ? parseGitHubIssueOrPRLink(debouncedQuery) : null),
+    [debouncedQuery, sourceQueryWithinLimit]
+  )
+  const parsedLinearReference = useMemo(
+    () => (sourceQueryWithinLimit ? parseLinearIssueInput(debouncedQuery) : null),
     [debouncedQuery, sourceQueryWithinLimit]
   )
   const shouldQueryGithub =
@@ -845,27 +873,77 @@ export default function SmartWorkspaceNameField({
   useEffect(() => {
     if (disabled || !shouldQueryLinear || !linearStatus.connected) {
       setLinearIssues([])
+      setLinearReferenceResolution({ status: 'idle', query: '' })
       setLinearLoading(false)
       return
     }
     let stale = false
     setLinearLoading(true)
     const trimmed = debouncedQuery.trim()
-    const request = trimmed
-      ? searchLinearIssues(trimmed, RESULT_LIMIT, { sourceContext: linearSourceContext })
+    const query = parsedLinearReference?.identifier ?? trimmed
+    const isUrlReference = parsedLinearReference?.organizationUrlKey !== undefined
+    setLinearReferenceResolution({
+      status: isUrlReference ? 'resolving' : 'idle',
+      query: trimmed
+    })
+    const request = query
+      ? searchLinearIssues(query, RESULT_LIMIT, { sourceContext: linearSourceContext })
       : listLinearIssues(
           { kind: 'list', filter: 'assigned', limit: RESULT_LIMIT },
           { sourceContext: linearSourceContext }
         ).then((result) => result.items)
-    void request
-      .then((issues) => {
-        if (!stale) {
-          setLinearIssues(issues)
+    void (async () => {
+      const issues = await request
+      if (stale) {
+        return
+      }
+      const searchExactIssue = parsedLinearReference
+        ? findLinearIssueExactReferenceMatch(issues, parsedLinearReference)
+        : null
+      if (searchExactIssue) {
+        setLinearIssues(pinLinearIssue(searchExactIssue, issues))
+        setLinearReferenceResolution({
+          status: 'resolved',
+          query: trimmed,
+          identifier: searchExactIssue.identifier
+        })
+        return
+      }
+      setLinearIssues(issues)
+      if (!isUrlReference || !parsedLinearReference) {
+        return
+      }
+
+      try {
+        const result = await getLinearIssuesByIdentifier(parsedLinearReference.identifier, {
+          sourceContext: linearSourceContext
+        })
+        if (stale) {
+          return
         }
-      })
+        const exactIssue = findLinearIssueExactReferenceMatch(result.items, parsedLinearReference)
+        if (exactIssue) {
+          setLinearIssues(pinLinearIssue(exactIssue, issues))
+          setLinearReferenceResolution({
+            status: 'resolved',
+            query: trimmed,
+            identifier: exactIssue.identifier
+          })
+        } else if ((result.errors?.length ?? 0) === 0) {
+          setLinearReferenceResolution({ status: 'not-found', query: trimmed })
+        } else {
+          setLinearReferenceResolution({ status: 'idle', query: trimmed })
+        }
+      } catch {
+        if (!stale) {
+          setLinearReferenceResolution({ status: 'idle', query: trimmed })
+        }
+      }
+    })()
       .catch(() => {
         if (!stale) {
           setLinearIssues([])
+          setLinearReferenceResolution({ status: 'idle', query: trimmed })
         }
       })
       .finally(() => {
@@ -876,10 +954,17 @@ export default function SmartWorkspaceNameField({
     return () => {
       stale = true
     }
-    // Why: list/search actions are stable store methods; depending on them
+    // Why: Linear read actions are stable store methods; depending on them
     // would refetch on unrelated store writes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQuery, disabled, linearSourceContext, linearStatus.connected, shouldQueryLinear])
+  }, [
+    debouncedQuery,
+    disabled,
+    linearSourceContext,
+    linearStatus.connected,
+    parsedLinearReference,
+    shouldQueryLinear
+  ])
 
   // Why: GitLab paste-URL flow. Watches the debounced query for a GitLab
   // issue/MR URL (parseGitLabIssueOrMRLink already filters non-GitLab URLs
@@ -1106,7 +1191,7 @@ export default function SmartWorkspaceNameField({
     if (parseGitLabIssueOrMRLink(trimmed) !== null) {
       return 'gitlab'
     }
-    if (linearAvailable && /^[A-Za-z][A-Za-z0-9_]*-\d+$/.test(trimmed)) {
+    if (linearAvailable && parseLinearIssueInput(trimmed) !== null) {
       return 'linear'
     }
     return null
@@ -1120,6 +1205,21 @@ export default function SmartWorkspaceNameField({
   })
 
   const loading = githubLoading || gitlabLoading || branchesLoading || linearLoading
+  const currentLinearReferenceResolution =
+    linearReferenceResolution.query === trimmedValue ? linearReferenceResolution : null
+  const linearUrlResolving = currentLinearReferenceResolution?.status === 'resolving'
+  const linearNotFound = currentLinearReferenceResolution?.status === 'not-found'
+  const linearNotFoundCue = linearNotFound
+    ? searchResultRows.length > 0
+      ? translate(
+          'auto.components.new.workspace.SmartWorkspaceNameField.c24d9b8ef1',
+          'No exact match for this Linear link.'
+        )
+      : translate(
+          'auto.components.new.workspace.SmartWorkspaceNameField.51f5a8c927',
+          'Linear issue not found in your connected workspaces.'
+        )
+    : null
   const ActiveInputIcon = mode === 'text' ? CaseSensitive : loading ? LoaderCircle : Search
 
   const handleSelect = useCallback(
@@ -1585,11 +1685,25 @@ export default function SmartWorkspaceNameField({
               </div>
             ) : null}
             <CommandList className="!max-h-none min-h-0 flex-1 scrollbar-sleek">
+              {currentLinearReferenceResolution?.status === 'resolved' ? (
+                <div className="sr-only" aria-live="polite">
+                  {translate(
+                    'auto.components.new.workspace.SmartWorkspaceNameField.2e128194c4',
+                    'Linear issue {{identifier}} resolved.',
+                    { identifier: currentLinearReferenceResolution.identifier }
+                  )}
+                </div>
+              ) : null}
               {typedTextActionRow ? (
                 <div
                   className="sticky top-0 z-10 border-b border-border/40 bg-popover p-1"
                   onMouseDown={(event) => event.preventDefault()}
                 >
+                  {linearNotFoundCue ? (
+                    <div aria-live="polite" className="px-2 py-1 text-xs text-muted-foreground">
+                      {linearNotFoundCue}
+                    </div>
+                  ) : null}
                   <CommandItem
                     key={typedTextActionRow.value}
                     value={typedTextActionRow.value}
@@ -1601,7 +1715,24 @@ export default function SmartWorkspaceNameField({
                   </CommandItem>
                 </div>
               ) : null}
-              {loading && searchResultRows.length === 0 ? (
+              {linearNotFoundCue && !typedTextActionRow ? (
+                <div aria-live="polite" className="px-3 py-2 text-xs text-muted-foreground">
+                  {linearNotFoundCue}
+                </div>
+              ) : null}
+              {linearUrlResolving ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex h-8 items-center gap-2 px-3 text-xs text-muted-foreground"
+                >
+                  <LoaderCircle className="size-3.5 animate-spin" />
+                  {translate(
+                    'auto.components.new.workspace.SmartWorkspaceNameField.8dc291159e',
+                    'Resolving Linear link…'
+                  )}
+                </div>
+              ) : loading && searchResultRows.length === 0 ? (
                 <div className="space-y-1 p-1">
                   {[0, 1, 2].map((index) => (
                     <div key={index} className="h-8 animate-pulse rounded bg-muted/40" />

@@ -27,6 +27,7 @@ const linearListIssues = vi.fn()
 const linearSearchIssues = vi.fn()
 const linearListTeams = vi.fn()
 const linearGetIssue = vi.fn()
+const linearGetIssuesByIdentifier = vi.fn()
 const linearListProjects = vi.fn()
 const linearGetCustomView = vi.fn()
 const linearGetProject = vi.fn()
@@ -46,6 +47,7 @@ vi.mock('@/runtime/runtime-linear-client', async (importOriginal) => {
     linearGetCustomView: (...args: unknown[]) => linearGetCustomView(...args),
     linearGetProject: (...args: unknown[]) => linearGetProject(...args),
     linearGetIssue: (...args: unknown[]) => linearGetIssue(...args),
+    linearGetIssuesByIdentifier: (...args: unknown[]) => linearGetIssuesByIdentifier(...args),
     linearListCustomViewIssues: (...args: unknown[]) => linearListCustomViewIssues(...args),
     linearListCustomViewProjects: (...args: unknown[]) => linearListCustomViewProjects(...args),
     linearListCustomViews: (...args: unknown[]) => linearListCustomViews(...args),
@@ -150,6 +152,22 @@ describe('createLinearSlice caching', () => {
     ).resolves.toMatchObject({ items: [{ id: 'LIN-2' }] })
 
     expect(linearListIssues).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not cache all-workspace identifier verification lookups', async () => {
+    const store = createTestStore()
+    linearGetIssuesByIdentifier
+      .mockResolvedValueOnce({
+        items: [],
+        errors: [{ workspaceId: 'workspace-1', type: 'network', message: 'timeout' }]
+      })
+      .mockResolvedValueOnce({ items: [issue('ENG-42')], errors: [] })
+
+    await store.getState().getLinearIssuesByIdentifier('ENG-42')
+    await store.getState().getLinearIssuesByIdentifier('ENG-42')
+
+    expect(linearGetIssuesByIdentifier).toHaveBeenCalledTimes(2)
+    expect(linearGetIssuesByIdentifier).toHaveBeenLastCalledWith(null, 'ENG-42', 'all')
   })
 
   it('isolates list cache entries by attribute filter signature', async () => {
@@ -1093,6 +1111,7 @@ describe('createLinearSlice', () => {
     linearSearchIssues.mockReset()
     linearListTeams.mockReset()
     linearGetIssue.mockReset()
+    linearGetIssuesByIdentifier.mockReset()
     linearTestConnection.mockReset()
   })
 

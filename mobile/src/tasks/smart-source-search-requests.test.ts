@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
-import { scopeGitHubQuery, searchLinearIssues } from './smart-source-search-requests'
+import {
+  getLinearIssuesByIdentifier,
+  scopeGitHubQuery,
+  searchLinearIssues
+} from './smart-source-search-requests'
 
 type Call = { method: string; params: Record<string, unknown> }
 
@@ -41,5 +45,31 @@ describe('searchLinearIssues', () => {
     await searchLinearIssues(client, 'bug', 'ws-1')
     expect(calls[0]!.method).toBe('linear.searchIssues')
     expect(calls[0]!.params).toMatchObject({ query: 'bug', workspaceId: 'ws-1' })
+  })
+
+  it('gets identifier hits from all Linear workspaces with the error envelope', async () => {
+    const calls: Call[] = []
+    const client = fakeClient(
+      {
+        items: [
+          {
+            id: 'issue-1',
+            identifier: 'ENG-42',
+            url: 'https://linear.app/acme/issue/ENG-42'
+          }
+        ],
+        errors: [{ workspaceId: 'workspace-2', type: 'network', message: 'timeout' }]
+      },
+      calls
+    )
+
+    await expect(getLinearIssuesByIdentifier(client, 'ENG-42')).resolves.toMatchObject({
+      items: [{ identifier: 'ENG-42' }],
+      errors: [{ workspaceId: 'workspace-2', type: 'network' }]
+    })
+    expect(calls[0]).toEqual({
+      method: 'linear.getIssuesByIdentifier',
+      params: { identifier: 'ENG-42', workspaceId: 'all' }
+    })
   })
 })

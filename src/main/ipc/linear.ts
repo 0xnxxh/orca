@@ -5,6 +5,7 @@ import { connect, disconnect, getStatus, selectWorkspace, testConnection } from 
 import { _resetPreflightCache } from './preflight'
 import {
   getIssue,
+  getIssuesByIdentifier,
   searchIssues,
   listIssues,
   createIssue,
@@ -214,6 +215,19 @@ export function registerLinearHandlers(): void {
     }
     return getIssue(args.id.trim(), normalizeWorkspaceId(args.workspaceId))
   })
+
+  ipcMain.handle(
+    'linear:getIssuesByIdentifier',
+    async (_event, args: { identifier: string; workspaceId?: LinearWorkspaceSelection }) => {
+      if (typeof args?.identifier !== 'string' || !args.identifier.trim()) {
+        return { items: [], errors: [] }
+      }
+      return getIssuesByIdentifier(
+        args.identifier.trim(),
+        normalizeWorkspaceSelection(args.workspaceId) ?? 'all'
+      )
+    }
+  )
 
   ipcMain.handle(
     'linear:updateIssue',

@@ -646,6 +646,16 @@ function isLinearLookupMiss(error: unknown): boolean {
   return message.includes('Entity not found:') && message.includes('Could not find referenced')
 }
 
+function isLinearIssueIdentifierLookupMiss(error: unknown): boolean {
+  if (isLinearLookupMiss(error)) {
+    return true
+  }
+  const message = error instanceof Error ? error.message : String(error)
+  // Why: SDK issue(identifier) errors have changed wording across releases;
+  // keep only issue-specific not-found shapes authoritative for the URL cue.
+  return /(?:issue[^\n]*not found|could not find[^\n]*issue)/i.test(message)
+}
+
 async function confirmLinearWrite<T>(message: string, readback: () => Promise<T>): Promise<T> {
   try {
     return await readback()
@@ -735,6 +745,48 @@ export async function getIssue(
     }
   }
   return null
+}
+
+export async function getIssuesByIdentifier(
+  identifier: string,
+  workspaceId: LinearWorkspaceSelection | null | undefined = 'all'
+): Promise<LinearCollectionResult<LinearIssue>> {
+  const entries = getClients(workspaceId ?? 'all')
+  if (entries.length === 0) {
+    return { items: [], errors: [] }
+  }
+
+  const results = await Promise.all(
+    entries.map(async (entry) => {
+      await acquire()
+      try {
+        const issue = await entry.client.issue(identifier)
+        return {
+          item: await mapIssueForWorkspace(entry, issue)
+        }
+      } catch (error) {
+        if (isLinearIssueIdentifierLookupMiss(error)) {
+          return {}
+        }
+        if (isAuthError(error)) {
+          clearToken(entry.workspace.id)
+          if (shouldThrowAuthError(workspaceId ?? 'all')) {
+            throw error
+          }
+        } else {
+          console.warn('[linear] getIssuesByIdentifier failed:', error)
+        }
+        return { error: linearWorkspaceError(entry, error) }
+      } finally {
+        release()
+      }
+    })
+  )
+
+  return {
+    items: results.flatMap((result) => (result.item ? [result.item] : [])),
+    errors: results.flatMap((result) => (result.error ? [result.error] : []))
+  }
 }
 
 export async function getIssueByUuidForAgent(

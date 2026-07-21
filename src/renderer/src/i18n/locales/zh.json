@@ -10670,7 +10670,11 @@
             "searchGitLab": "搜索 GitLab MR 和议题",
             "searchBranches": "搜索分支",
             "searchLinear": "搜索 Linear 议题",
-            "workspaceName": "工作区名称"
+            "workspaceName": "工作区名称",
+            "c24d9b8ef1": "No exact match for this Linear link.",
+            "51f5a8c927": "Linear issue not found in your connected workspaces.",
+            "2e128194c4": "Linear issue {{identifier}} resolved.",
+            "8dc291159e": "Resolving Linear link…"
           },
           "ProjectHostSetupCombobox": {
             "empty": "此项目没有已就绪的主机。",

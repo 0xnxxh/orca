@@ -27,7 +27,9 @@ import { useSmartWorkspaceSource } from '../tasks/use-smart-workspace-source'
 import type { MobileComposerSource } from '../tasks/use-mobile-composer-source'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 import { BottomDrawer, BOTTOM_DRAWER_HIDE_DURATION_MS } from './BottomDrawer'
+import { SmartCrossRepoSourcePrompt } from './SmartCrossRepoSourcePrompt'
 import { SmartSourceModeIcon } from './SmartSourceModeIcon'
+import { SmartLinearLinkResolutionStatus } from './SmartLinearLinkResolutionStatus'
 import { SmartWorkspaceSourceRow } from './SmartWorkspaceSourceRow'
 
 type Props = {
@@ -85,7 +87,8 @@ export function SmartWorkspaceSourceDrawer({
     needsGitHubRemote,
     emptyHint,
     crossRepoPrompt,
-    dismissCrossRepoPrompt
+    dismissCrossRepoPrompt,
+    linearLinkResolution
   } = useSmartWorkspaceSource({
     client,
     enabled: searchEnabled,
@@ -220,21 +223,11 @@ export function SmartWorkspaceSourceDrawer({
       ) : null}
 
       {crossRepoPrompt ? (
-        <View style={styles.crossRepo}>
-          <Text style={styles.crossRepoText}>
-            This item lives in {crossRepoPrompt.link.slug.owner}/{crossRepoPrompt.link.slug.repo}.
-          </Text>
-          <View style={styles.crossRepoActions}>
-            <Pressable style={styles.crossRepoDismiss} onPress={dismissCrossRepoPrompt}>
-              <Text style={styles.crossRepoDismissText}>Cancel</Text>
-            </Pressable>
-            <Pressable style={styles.crossRepoSwitch} onPress={() => void handleAcceptCrossRepo()}>
-              <Text style={styles.crossRepoSwitchText}>
-                Switch to {crossRepoPrompt.matchingRepo.displayName}
-              </Text>
-            </Pressable>
-          </View>
-        </View>
+        <SmartCrossRepoSourcePrompt
+          prompt={crossRepoPrompt}
+          onDismiss={dismissCrossRepoPrompt}
+          onAccept={() => void handleAcceptCrossRepo()}
+        />
       ) : null}
 
       {!sshReady && effectiveMode !== 'text' && effectiveMode !== 'linear' ? (
@@ -253,8 +246,16 @@ export function SmartWorkspaceSourceDrawer({
         style={styles.list}
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
+        ListHeaderComponent={
+          <SmartLinearLinkResolutionStatus
+            resolution={linearLinkResolution}
+            hasSourceResults={rows.some(
+              (row) => row.kind !== 'use-name' && row.kind !== 'create-branch'
+            )}
+          />
+        }
         ListFooterComponent={
-          loading ? (
+          loading && linearLinkResolution.status !== 'resolving' ? (
             <View style={styles.loading}>
               <ActivityIndicator size="small" color={colors.textSecondary} />
             </View>
@@ -350,48 +351,6 @@ const styles = StyleSheet.create({
   chipTextSelected: {
     color: colors.textPrimary,
     fontWeight: '600'
-  },
-  crossRepo: {
-    backgroundColor: colors.bgRaised,
-    borderRadius: radii.input,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    gap: spacing.sm
-  },
-  crossRepoText: {
-    fontSize: 13,
-    color: colors.textSecondary
-  },
-  crossRepoActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: spacing.sm
-  },
-  crossRepoDismiss: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
-    borderRadius: radii.button,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle
-  },
-  crossRepoDismissText: {
-    fontSize: 13,
-    color: colors.textSecondary
-  },
-  crossRepoSwitch: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
-    borderRadius: radii.button,
-    backgroundColor: colors.bgPanel,
-    borderWidth: 1,
-    borderColor: colors.textSecondary
-  },
-  crossRepoSwitchText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.textPrimary
   },
   notice: {
     fontSize: 12,

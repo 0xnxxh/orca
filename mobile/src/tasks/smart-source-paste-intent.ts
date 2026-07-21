@@ -6,6 +6,10 @@ import {
   type RepoSlug
 } from '../../../src/shared/new-workspace/github-links'
 import { parseGitLabIssueOrMRLink } from '../../../src/shared/new-workspace/gitlab-links'
+import {
+  parseLinearIssueInput,
+  type ParsedLinearIssueInput
+} from '../../../src/shared/linear-links'
 import { isSmartWorkspaceSourceQueryWithinLimit } from '../../../src/shared/new-workspace/smart-workspace-source-results'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcSuccess } from '../transport/types'
@@ -27,11 +31,13 @@ export type GitLabPasteIntent = {
   link: NonNullable<ReturnType<typeof parseGitLabIssueOrMRLink>>
 }
 
-export type PasteIntent = GitHubPasteIntent | GitLabPasteIntent | null
+export type LinearPasteIntent = {
+  kind: 'linear-link'
+  reference: ParsedLinearIssueInput & { organizationUrlKey: string }
+}
 
-// Pure: classify pasted text into a work-item lookup intent. A slug-bearing
-// GitHub URL becomes 'github-link'; a bare "#123"/number becomes 'github-number';
-// a GitLab issue/MR URL becomes 'gitlab-link'.
+export type PasteIntent = GitHubPasteIntent | GitLabPasteIntent | LinearPasteIntent | null
+
 export function resolvePasteIntent(query: string): PasteIntent {
   if (!isSmartWorkspaceSourceQueryWithinLimit(query)) {
     return null
@@ -51,6 +57,18 @@ export function resolvePasteIntent(query: string): PasteIntent {
   const glLink = parseGitLabIssueOrMRLink(trimmed)
   if (glLink) {
     return { kind: 'gitlab-link', link: glLink }
+  }
+  const linearReference = parseLinearIssueInput(trimmed)
+  // Why: bare identifiers remain ordinary search text; only URLs are precise
+  // enough to trigger the all-workspace exact lookup and not-found cue.
+  if (linearReference?.organizationUrlKey) {
+    return {
+      kind: 'linear-link',
+      reference: {
+        ...linearReference,
+        organizationUrlKey: linearReference.organizationUrlKey
+      }
+    }
   }
   return null
 }

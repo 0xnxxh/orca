@@ -1654,6 +1654,9 @@ const api = {
     getIssue: (args: { id: string; workspaceId?: string }): Promise<unknown> =>
       ipcRenderer.invoke('linear:getIssue', args),
 
+    getIssuesByIdentifier: (args: { identifier: string; workspaceId?: string }): Promise<unknown> =>
+      ipcRenderer.invoke('linear:getIssuesByIdentifier', args),
+
     updateIssue: (args: {
       id: string
       updates: unknown

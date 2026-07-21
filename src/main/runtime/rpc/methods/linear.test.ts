@@ -39,6 +39,7 @@ describe('linear RPC methods', () => {
       linearSearchIssues: vi.fn().mockResolvedValue([{ id: 'issue-1' }]),
       linearListIssues: vi.fn().mockResolvedValue({ items: [{ id: 'issue-2' }], hasMore: true }),
       linearGetIssue: vi.fn().mockResolvedValue({ id: 'issue-3' }),
+      linearGetIssuesByIdentifier: vi.fn().mockResolvedValue({ items: [{ id: 'issue-3' }] }),
       linearCreateIssue: vi.fn().mockResolvedValue({ ok: true, id: 'issue-4' }),
       linearUpdateIssue: vi.fn().mockResolvedValue({ ok: true }),
       linearAddIssueComment: vi.fn().mockResolvedValue({ ok: true, id: 'comment-1' }),
@@ -58,6 +59,12 @@ describe('linear RPC methods', () => {
     )
     await dispatcher.dispatch(
       makeRequest('linear.getIssue', { id: 'issue-3', workspaceId: 'workspace-1' })
+    )
+    await dispatcher.dispatch(
+      makeRequest('linear.getIssuesByIdentifier', {
+        identifier: 'ENG-3',
+        workspaceId: 'all'
+      })
     )
     await dispatcher.dispatch(
       makeRequest('linear.createIssue', {
@@ -106,6 +113,7 @@ describe('linear RPC methods', () => {
       attributeFilter: undefined
     })
     expect(runtime.linearGetIssue).toHaveBeenCalledWith('issue-3', 'workspace-1')
+    expect(runtime.linearGetIssuesByIdentifier).toHaveBeenCalledWith('ENG-3', 'all')
     expect(runtime.linearCreateIssue).toHaveBeenCalledWith(
       'team-1',
       'Fix bug',

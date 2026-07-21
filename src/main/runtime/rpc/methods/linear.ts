@@ -62,6 +62,11 @@ const IssueId = z.object({
   workspaceId: OptionalString
 })
 
+const IssuesByIdentifier = z.object({
+  identifier: requiredString('Issue identifier is required'),
+  workspaceId: OptionalString
+})
+
 const IssueComment = z.object({
   issueId: requiredString('Issue ID is required'),
   body: requiredString('Comment body is required'),
@@ -195,6 +200,12 @@ export const LINEAR_METHODS: RpcMethod[] = [
     params: IssueId,
     handler: async (params, { runtime }) =>
       runtime.linearGetIssue(params.id.trim(), params.workspaceId)
+  }),
+  defineMethod({
+    name: 'linear.getIssuesByIdentifier',
+    params: IssuesByIdentifier,
+    handler: async (params, { runtime }) =>
+      runtime.linearGetIssuesByIdentifier(params.identifier.trim(), params.workspaceId)
   }),
   defineMethod({
     name: 'linear.updateIssue',

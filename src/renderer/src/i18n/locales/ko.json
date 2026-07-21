@@ -10670,7 +10670,11 @@
             "searchGitLab": "GitLab MR 및 이슈 검색",
             "searchBranches": "브랜치 검색",
             "searchLinear": "Linear 이슈 검색",
-            "workspaceName": "워크스페이스 이름"
+            "workspaceName": "워크스페이스 이름",
+            "c24d9b8ef1": "No exact match for this Linear link.",
+            "51f5a8c927": "Linear issue not found in your connected workspaces.",
+            "2e128194c4": "Linear issue {{identifier}} resolved.",
+            "8dc291159e": "Resolving Linear link…"
           },
           "ProjectHostSetupCombobox": {
             "empty": "이 프로젝트에 준비된 호스트가 없습니다.",

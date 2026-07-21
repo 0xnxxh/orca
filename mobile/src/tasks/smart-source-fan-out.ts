@@ -60,6 +60,7 @@ type FanOutArgs = {
   linearAvailable: boolean
   mrStateFilter: MrStateFilter
   linearWorkspaceId: string | null | undefined
+  linearQuery?: string
 }
 
 // Runs every provider search the active mode needs, concurrently. Smart mode is
@@ -93,7 +94,7 @@ export async function fanOutSmartSearch(args: FanOutArgs): Promise<SmartFanOutRe
         ? searchGitLabItems(client, repoId, query, mrStateFilter)
         : null,
     linear: shouldSearchLinear(mode, linearAvailable)
-      ? searchLinearIssues(client, query, args.linearWorkspaceId)
+      ? searchLinearIssues(client, args.linearQuery ?? query, args.linearWorkspaceId)
       : null,
     branches:
       shouldSearchBranches(mode, query) && repoId ? searchBranches(client, repoId, query) : null

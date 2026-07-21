@@ -1,3 +1,5 @@
+import type { LinearIssue } from './types'
+
 export function buildLinearTeamUrl(args: {
   organizationUrlKey?: string | null
   teamKey?: string | null
@@ -44,6 +46,29 @@ export type ParsedLinearIssueInput = {
   organizationUrlKey?: string
 }
 
+export function isLinearIssueExactReferenceMatch(
+  issue: Pick<LinearIssue, 'identifier' | 'url'>,
+  reference: ParsedLinearIssueInput
+): boolean {
+  if (issue.identifier.toUpperCase() !== reference.identifier.toUpperCase()) {
+    return false
+  }
+  if (!reference.organizationUrlKey) {
+    return true
+  }
+  const issueOrganizationUrlKey = getLinearOrganizationUrlKeyFromIssueUrl(issue.url)
+  return (
+    issueOrganizationUrlKey !== null &&
+    issueOrganizationUrlKey.toLowerCase() === reference.organizationUrlKey.toLowerCase()
+  )
+}
+
+export function findLinearIssueExactReferenceMatch<
+  T extends Pick<LinearIssue, 'identifier' | 'url'>
+>(issues: readonly T[], reference: ParsedLinearIssueInput): T | null {
+  return issues.find((issue) => isLinearIssueExactReferenceMatch(issue, reference)) ?? null
+}
+
 const LINEAR_IDENTIFIER_PATTERN = /^[A-Za-z][A-Za-z0-9_]*-\d+$/
 
 export function parseLinearIssueInput(input: string): ParsedLinearIssueInput | null {
@@ -62,9 +87,8 @@ export function parseLinearIssueInput(input: string): ParsedLinearIssueInput | n
       return null
     }
     const parts = parsed.pathname.split('/').filter(Boolean)
-    const issueIndex = parts.indexOf('issue')
     const organizationUrlKey = parts[0]
-    const rawIdentifier = issueIndex >= 0 ? parts[issueIndex + 1] : undefined
+    const rawIdentifier = parts[1] === 'issue' ? parts[2] : undefined
     if (!organizationUrlKey || !rawIdentifier) {
       return null
     }

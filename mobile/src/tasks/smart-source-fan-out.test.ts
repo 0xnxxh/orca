@@ -109,4 +109,20 @@ describe('fanOutSmartSearch', () => {
       branches: []
     })
   })
+
+  it('uses a normalized Linear query without changing other provider searches', async () => {
+    const calls: Call[] = []
+    const client = fakeClient({}, calls)
+    await fanOutSmartSearch({
+      ...smartArgs,
+      query: 'raw-linear-url',
+      linearQuery: 'ENG-42',
+      client
+    })
+
+    const linearCall = calls.find((call) => call.method === 'linear.searchIssues')
+    const githubCall = calls.find((call) => call.method === 'github.listWorkItems')
+    expect(linearCall?.params.query).toBe('ENG-42')
+    expect(githubCall?.params.query).toBe('raw-linear-url')
+  })
 })

@@ -28,6 +28,21 @@ describe('resolvePasteIntent', () => {
     }
   })
 
+  it('classifies a Linear issue URL with its normalized reference', () => {
+    expect(resolvePasteIntent('https://linear.app/Acme/issue/eng-42/fix-auth')).toEqual({
+      kind: 'linear-link',
+      reference: { identifier: 'ENG-42', organizationUrlKey: 'Acme' }
+    })
+  })
+
+  it('keeps bare Linear identifiers on the search-only path', () => {
+    expect(resolvePasteIntent('ENG-42')).toBeNull()
+  })
+
+  it('rejects non-issue Linear URLs', () => {
+    expect(resolvePasteIntent('https://linear.app/acme/settings/api')).toBeNull()
+  })
+
   it('returns null for plain search text', () => {
     expect(resolvePasteIntent('login bug')).toBeNull()
   })

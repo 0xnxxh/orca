@@ -1980,6 +1980,10 @@ export type PreloadApi = {
       | { ok: false; error: string }
     >
     getIssue: (args: { id: string; workspaceId?: string }) => Promise<LinearIssue | null>
+    getIssuesByIdentifier: (args: {
+      identifier: string
+      workspaceId?: LinearWorkspaceSelection
+    }) => Promise<LinearCollectionResult<LinearIssue>>
     updateIssue: (args: {
       id: string
       updates: LinearIssueUpdate

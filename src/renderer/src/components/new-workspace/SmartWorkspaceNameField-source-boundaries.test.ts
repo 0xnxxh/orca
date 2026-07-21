@@ -98,4 +98,23 @@ describe('SmartWorkspaceNameField repo-backed source boundaries', () => {
     expect(FIELD_SOURCE).toContain('onPointerDown={() => {')
     expect(FIELD_SOURCE).toContain('markSourcePopoverUserEngaged()')
   })
+
+  it('normalizes and verifies Linear link resolution before showing an exact result', () => {
+    const linearLookupSection = sourceBetween(
+      FIELD_SOURCE,
+      'useEffect(() => {\n    if (disabled || !shouldQueryLinear || !linearStatus.connected)',
+      '// Why: GitLab paste-URL flow.'
+    )
+
+    expect(linearLookupSection).toContain(
+      'const query = parsedLinearReference?.identifier ?? trimmed'
+    )
+    expect(linearLookupSection).toContain('findLinearIssueExactReferenceMatch')
+    expect(linearLookupSection).toContain('getLinearIssuesByIdentifier')
+    expect(linearLookupSection).toContain("status: 'not-found'")
+    expect(linearLookupSection).toContain("status: 'idle'")
+    expect(FIELD_SOURCE).toContain('No exact match for this Linear link.')
+    expect(FIELD_SOURCE).toContain('Linear issue not found in your connected workspaces.')
+    expect(FIELD_SOURCE).toContain('parseLinearIssueInput(trimmed) !== null')
+  })
 })

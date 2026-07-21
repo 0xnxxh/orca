@@ -29,6 +29,7 @@ import {
   linearGetCustomView,
   linearGetProject,
   linearGetIssue,
+  linearGetIssuesByIdentifier,
   linearListCustomViewIssues,
   linearListCustomViewProjects,
   linearListCustomViews,
@@ -492,6 +493,10 @@ export type LinearSlice = {
     workspaceId?: string | null,
     options?: LinearFetchOptions
   ) => Promise<LinearIssue | null>
+  getLinearIssuesByIdentifier: (
+    identifier: string,
+    options?: Pick<LinearFetchOptions, 'sourceContext'>
+  ) => Promise<LinearCollectionResult<LinearIssue>>
   refreshLinearIssue: (
     id: string,
     workspaceId?: string | null,
@@ -893,6 +898,13 @@ export const createLinearSlice: StateCreator<AppState, [], [], LinearSlice> = (s
       linearStatusChecked: true,
       linearStatusContextKey: contextKey
     })
+  },
+
+  getLinearIssuesByIdentifier: async (identifier, options) => {
+    const scope = getLinearReadScope(get().settings, options?.sourceContext)
+    // Why: URL verification must fan out on every attempt; caching a transient
+    // miss would prevent retyping the link from retrying a recovered workspace.
+    return linearGetIssuesByIdentifier(scope.settings, identifier, 'all')
   },
 
   fetchLinearIssue: async (

@@ -10,12 +10,14 @@ const linearListIssues = vi.fn()
 const linearSearchIssues = vi.fn()
 const linearListTeams = vi.fn()
 const linearGetIssue = vi.fn()
+const linearGetIssuesByIdentifier = vi.fn()
 
 vi.mock('@/runtime/runtime-linear-client', () => ({
   linearConnect: (...args: unknown[]) => linearConnect(...args),
   linearDisconnect: vi.fn(),
   linearDisconnectWorkspace: vi.fn(),
   linearGetIssue: (...args: unknown[]) => linearGetIssue(...args),
+  linearGetIssuesByIdentifier: (...args: unknown[]) => linearGetIssuesByIdentifier(...args),
   isLinearIssueAttributeFilterUnsupportedError: () => false,
   linearListIssues: (...args: unknown[]) => linearListIssues(...args),
   linearListTeams: (...args: unknown[]) => linearListTeams(...args),

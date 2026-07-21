@@ -10670,7 +10670,11 @@
             "searchGitLab": "Buscar MRs e issues de GitLab",
             "searchBranches": "Buscar ramas",
             "searchLinear": "Buscar issues de Linear",
-            "workspaceName": "Nombre del espacio de trabajo"
+            "workspaceName": "Nombre del espacio de trabajo",
+            "c24d9b8ef1": "No exact match for this Linear link.",
+            "51f5a8c927": "Linear issue not found in your connected workspaces.",
+            "2e128194c4": "Linear issue {{identifier}} resolved.",
+            "8dc291159e": "Resolving Linear link…"
           },
           "ProjectHostSetupCombobox": {
             "empty": "No hay hosts listos para este proyecto.",

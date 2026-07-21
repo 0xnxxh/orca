@@ -508,6 +508,7 @@ import {
   getAttachmentByUuidForAgent as getLinearAttachmentByUuidForAgent,
   getCommentByUuidForAgent as getLinearCommentByUuidForAgent,
   getIssue as getLinearIssue,
+  getIssuesByIdentifier as getLinearIssuesByIdentifier,
   getIssueByUuidForAgent as getLinearIssueByUuidForAgent,
   getIssueCommentThreadRoot as getLinearIssueCommentThreadRoot,
   getIssueComments as getLinearIssueComments,
@@ -24074,6 +24075,13 @@ export class OrcaRuntimeService {
 
   linearGetIssue(id: string, workspaceId?: string): ReturnType<typeof getLinearIssue> {
     return getLinearIssue(id, workspaceId)
+  }
+
+  linearGetIssuesByIdentifier(
+    identifier: string,
+    workspaceId?: LinearWorkspaceSelection
+  ): ReturnType<typeof getLinearIssuesByIdentifier> {
+    return getLinearIssuesByIdentifier(identifier, workspaceId ?? 'all')
   }
 
   linearUpdateIssue(

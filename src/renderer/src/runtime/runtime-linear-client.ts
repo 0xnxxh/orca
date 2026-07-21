@@ -304,6 +304,24 @@ export async function linearGetIssue(
     : window.api.linear.getIssue({ id, workspaceId: workspaceId ?? undefined })
 }
 
+export async function linearGetIssuesByIdentifier(
+  settings: RuntimeLinearSettings,
+  identifier: string,
+  workspaceId: LinearWorkspaceSelection = 'all'
+): Promise<LinearCollectionResult<LinearIssue>> {
+  const target = getLinearRuntimeTarget(settings)
+  const result =
+    target.kind === 'environment'
+      ? await callRuntimeRpc<unknown>(
+          target,
+          'linear.getIssuesByIdentifier',
+          { identifier, workspaceId },
+          { timeoutMs: 30_000 }
+        )
+      : await window.api.linear.getIssuesByIdentifier({ identifier, workspaceId })
+  return normalizeLinearIssueCollectionResult(result)
+}
+
 export async function linearUpdateIssue(
   settings: RuntimeLinearSettings,
   id: string,

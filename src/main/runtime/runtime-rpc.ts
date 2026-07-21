@@ -304,6 +304,7 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'hostedReview.getCreationEligibility',
   'linear.getCustomView',
   'linear.getIssue',
+  'linear.getIssuesByIdentifier',
   'linear.getProject',
   'linear.agentSearchIssues',
   'linear.issueContext',

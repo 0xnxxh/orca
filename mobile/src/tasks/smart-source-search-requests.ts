@@ -2,6 +2,7 @@ import type {
   BaseRefSearchResult,
   GitHubWorkItem,
   GitLabWorkItem,
+  LinearCollectionResult,
   LinearIssue
 } from '../../../src/shared/types'
 import type { RpcClient } from '../transport/rpc-client'
@@ -93,6 +94,26 @@ export async function searchLinearIssues(
   // extractLinearIssueReadItems yields the mobile issue-read shape; the fields the
   // row builder/create flow read (id/identifier/title/url/state/team) are a subset.
   return extractLinearIssueReadItems((response as RpcSuccess).result) as unknown as LinearIssue[]
+}
+
+export async function getLinearIssuesByIdentifier(
+  client: RpcClient,
+  identifier: string
+): Promise<LinearCollectionResult<LinearIssue>> {
+  const response = await client.sendRequest('linear.getIssuesByIdentifier', {
+    identifier,
+    workspaceId: 'all'
+  })
+  if (!response.ok) {
+    throw new Error(response.error.message)
+  }
+  const result = (response as RpcSuccess).result
+  const items = extractLinearIssueReadItems(result) as unknown as LinearIssue[]
+  const errors =
+    result && typeof result === 'object' && Array.isArray((result as { errors?: unknown }).errors)
+      ? ((result as LinearCollectionResult<LinearIssue>).errors ?? [])
+      : []
+  return { items, errors }
 }
 
 export async function searchBranches(

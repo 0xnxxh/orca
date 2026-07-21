@@ -4,7 +4,9 @@ import {
   buildLinearPersonalApiKeySettingsUrl,
   buildLinearTeamUrl,
   buildLinearWorkspaceApiSettingsUrl,
+  findLinearIssueExactReferenceMatch,
   getLinearOrganizationUrlKeyFromIssueUrl,
+  isLinearIssueExactReferenceMatch,
   parseLinearIssueInput
 } from './linear-links'
 
@@ -59,7 +61,52 @@ describe('linear links', () => {
   })
 
   it('rejects non-Linear issue input', () => {
+    expect(parseLinearIssueInput('https://linear.app/acme/settings/api')).toBeNull()
+    expect(parseLinearIssueInput('https://linear.app/acme/team/ENG/all')).toBeNull()
+    expect(parseLinearIssueInput('https://linear.app/acme/settings/issue/ENG-123')).toBeNull()
     expect(parseLinearIssueInput('https://example.com/acme/issue/ENG-123')).toBeNull()
+    expect(parseLinearIssueInput('https://linear.app/acme/issue/not-an-identifier')).toBeNull()
     expect(parseLinearIssueInput('not an issue')).toBeNull()
+  })
+
+  it('matches exact issue references with strict organization verification', () => {
+    const issue = {
+      identifier: 'ENG-123',
+      url: 'https://linear.app/AcMe/issue/ENG-123/fix-auth'
+    }
+
+    expect(
+      isLinearIssueExactReferenceMatch(issue, {
+        identifier: 'eng-123',
+        organizationUrlKey: 'acme'
+      })
+    ).toBe(true)
+    expect(
+      isLinearIssueExactReferenceMatch(issue, {
+        identifier: 'ENG-123',
+        organizationUrlKey: 'other'
+      })
+    ).toBe(false)
+    expect(isLinearIssueExactReferenceMatch(issue, { identifier: 'ENG-123' })).toBe(true)
+    expect(
+      isLinearIssueExactReferenceMatch(
+        { identifier: 'ENG-123', url: 'https://example.com/acme/issue/ENG-123' },
+        { identifier: 'ENG-123', organizationUrlKey: 'acme' }
+      )
+    ).toBe(false)
+  })
+
+  it('selects the organization-matching issue when identifiers collide', () => {
+    const issues = [
+      { identifier: 'ENG-42', url: 'https://linear.app/wrong/issue/ENG-42' },
+      { identifier: 'ENG-42', url: 'https://linear.app/acme/issue/ENG-42' }
+    ]
+
+    expect(
+      findLinearIssueExactReferenceMatch(issues, {
+        identifier: 'ENG-42',
+        organizationUrlKey: 'ACME'
+      })
+    ).toBe(issues[1])
   })
 })
