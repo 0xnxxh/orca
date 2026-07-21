@@ -6239,6 +6239,93 @@ describe('connectPanePty', () => {
     }
   })
 
+  it('re-runs the resume command when a hibernated local session reattaches with no payload', async () => {
+    // Why (regression): on Windows the daemon can reattach a hibernation-killed local
+    // session as isNew:false with no snapshot/coldRestore, silently dropping the --resume
+    // command it only runs for a fresh session. The old code adopted that empty reattach,
+    // stranding the tab blank with nothing running. The pane owns a resumable slept
+    // session, so a contentless isReattach must re-drive the prepared resume instead.
+    const pendingTimeouts: (() => void)[] = []
+    const originalSetTimeout = globalThis.setTimeout
+    globalThis.setTimeout = vi.fn((fn: () => void) => {
+      pendingTimeouts.push(fn)
+      return 999 as unknown as ReturnType<typeof setTimeout>
+    }) as unknown as typeof setTimeout
+
+    try {
+      const { connectPanePty } = await import('./pty-connection')
+      const paneKey = makePaneKey('tab-1', LEAF_2)
+      // Seed the reattach session id so getPtyId() matches the adopted reattach payload.
+      const transport = createMockTransport('restored-session')
+      transport.connect.mockImplementation(async (opts: { sessionId?: string }) => {
+        if (opts.sessionId) {
+          // Bare zombie reattach: adopted an existing session, no replay payload.
+          return { id: opts.sessionId, isReattach: true }
+        }
+        const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+          | ((ptyId: string) => void)
+          | undefined
+        onPtySpawn?.('fresh-resume-pty')
+        return 'fresh-resume-pty'
+      })
+      transportFactoryQueue.push(transport)
+      mockStoreState = {
+        ...mockStoreState,
+        tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'restored-session' }] },
+        settings: {
+          ...mockStoreState.settings,
+          agentCmdOverrides: {}
+        },
+        sleepingAgentSessionsByPaneKey: {
+          [paneKey]: {
+            paneKey,
+            tabId: 'tab-1',
+            worktreeId: 'wt-1',
+            agent: 'codex',
+            providerSession: { key: 'session_id', id: 'codex-session-1' },
+            prompt: 'finish the task',
+            // Mirrors the user's scenario: a stopped/completed agent that hibernated.
+            state: 'done',
+            origin: 'worktree-sleep',
+            capturedAt: 1,
+            updatedAt: 1
+          }
+        }
+      } as StoreState
+      const pane = createPane(2)
+      const manager = createManager(2)
+      const deps = createDeps({
+        restoredLeafId: LEAF_2,
+        restoredPtyIdByLeafId: { [LEAF_2]: 'restored-session' }
+      })
+
+      connectPanePty(pane as never, manager as never, deps as never)
+      await flushAsyncTicks(20)
+      for (const fn of pendingTimeouts) {
+        fn()
+      }
+
+      // The empty reattach is discarded and a fresh resume is spawned.
+      expect(transport.connect).toHaveBeenCalledTimes(2)
+      expect(transport.connect).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          command: "codex '--dangerously-bypass-approvals-and-sandbox' 'resume' 'codex-session-1'",
+          env: expect.objectContaining({
+            ORCA_PANE_KEY: paneKey,
+            ORCA_AGENT_LAUNCH_TOKEN: expect.stringMatching(new RegExp(`^${UUID_RE}$`))
+          })
+        })
+      )
+      // The dead session is not adopted as the pane's live PTY.
+      expect(deps.clearExitedPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'restored-session')
+      expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'restored-session')
+      expect(deps.syncPanePtyLayoutBinding).not.toHaveBeenCalledWith(2, 'restored-session')
+    } finally {
+      globalThis.setTimeout = originalSetTimeout
+    }
+  })
+
   it('clears the pending serializer when disposed before non-deferred SSH reattach expiry resolves', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const reattach = createDeferred<undefined>()

@@ -1353,6 +1353,7 @@ describe('createIpcPtyTransport', () => {
 
     expect(result).toEqual({
       id: 'pty-reattach',
+      isReattach: true,
       launchAgent: 'droid',
       snapshot: 'snapshot data',
       snapshotCols: 132,
@@ -1377,6 +1378,7 @@ describe('createIpcPtyTransport', () => {
 
     expect(result).toEqual({
       id: 'pty-unknown-launch-agent',
+      isReattach: true,
       snapshot: undefined,
       snapshotCols: undefined,
       snapshotRows: undefined,

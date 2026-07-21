@@ -7165,6 +7165,30 @@ export function connectPanePty(
       if (!isCurrentReattachPayload()) {
         return false
       }
+      // Strict precedence snapshot > replay > coldRestore: paint exactly one, else overlapping tails duplicate TUI output on worktree switch.
+      const hasStructuralReplay = Boolean(
+        connectResult?.snapshot || connectResult?.replay || connectResult?.coldRestore
+      )
+      // Why: a bare reattach (daemon adopted an existing session, isNew=false) with no
+      // replayable payload means the daemon reattached a session we hibernated/killed but
+      // could not cold-restore — and, being a reattach not a fresh spawn, it silently
+      // dropped the --resume command we passed on connect. Adopting it strands the pane
+      // blank with nothing running (the hibernation-wake blank-terminal bug). This pane
+      // owns a resumable slept session, so re-drive it with the prepared resume instead.
+      // Excluded: a fresh session the daemon created (isReattach falsy — it already ran the
+      // command) and a live reattach (carries a snapshot/replay).
+      if (!hasStructuralReplay && connectResult?.isReattach && coldRestoreStartup?.hasSleepingRecord) {
+        if (staleSessionId) {
+          deps.clearExitedPanePtyLayoutBinding(pane.id, staleSessionId)
+          deps.clearTabPtyId(deps.tabId, staleSessionId)
+        } else {
+          deps.syncPanePtyLayoutBinding(pane.id, null)
+        }
+        startFreshColdRestoreAgentResume(coldRestoreStartup, {
+          forceBlankRestoredViewport: true
+        })
+        return false
+      }
       setPanePtyFitBinding(ptyId)
       reportPanePtyVisibility(ptyId, deps.isVisibleRef.current)
       registerSideEffectFactConsumerForPty(ptyId)
@@ -7177,10 +7201,6 @@ export function connectPanePty(
       // Why: mobile streaming needs xterm's exact screen state; install the serializer + lastTitle source for main-process hydration parity.
       registerPaneSerializerFor(ptyId)
 
-      // Strict precedence snapshot > replay > coldRestore: paint exactly one, else overlapping tails duplicate TUI output on worktree switch.
-      const hasStructuralReplay = Boolean(
-        connectResult?.snapshot || connectResult?.replay || connectResult?.coldRestore
-      )
       let reattachPayloadApplied = !hasStructuralReplay
       const applyReattachPayload = async (): Promise<void> => {
         if (!isCurrentReattachPayload()) {
