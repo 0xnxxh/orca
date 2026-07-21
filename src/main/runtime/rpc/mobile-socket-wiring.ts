@@ -50,6 +50,9 @@ type MobileSocketWiringOptions = {
   onBinary: (socket: AuthenticatedMobileSocket, bytes: Uint8Array<ArrayBufferLike>) => void
   onClose: (socket: AuthenticatedMobileSocket | null, hasOtherConnections: boolean) => void
   onReady?: (socket: AuthenticatedMobileSocket) => void
+  // Why: an auth attempt with a token missing from the registry is invisible to
+  // the user (silent 4001) — surface it so the desktop can suggest re-pairing.
+  onUnknownDeviceAuth?: (metadata: MobileSocketTransportMetadata) => void
 }
 
 function toAuthenticatedDevice(device: DeviceEntry): E2EEAuthenticatedDevice {
@@ -67,6 +70,7 @@ export class MobileSocketWiring {
   private readonly onBinary: MobileSocketWiringOptions['onBinary']
   private readonly onClose: MobileSocketWiringOptions['onClose']
   private readonly onReady: MobileSocketWiringOptions['onReady']
+  private readonly onUnknownDeviceAuth: MobileSocketWiringOptions['onUnknownDeviceAuth']
   private readonly channels = new Map<WebSocket, E2EEChannel>()
   private readonly connectionIds = new Map<WebSocket, string>()
   private readonly authenticatedSockets = new Map<WebSocket, AuthenticatedMobileSocket>()
@@ -79,6 +83,7 @@ export class MobileSocketWiring {
     this.onBinary = options.onBinary
     this.onClose = options.onClose
     this.onReady = options.onReady
+    this.onUnknownDeviceAuth = options.onUnknownDeviceAuth
   }
 
   attachTransport(
@@ -134,6 +139,7 @@ export class MobileSocketWiring {
         resolveAuthenticatedDevice: (token) => {
           const device = this.deviceRegistry.validateToken(token)
           if (!device) {
+            this.onUnknownDeviceAuth?.(metadata)
             return null
           }
           // Why: outer relay authorization cannot choose the local Orca

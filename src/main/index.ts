@@ -2269,6 +2269,10 @@ app.whenReady().then(async () => {
     webClientRoot: getBundledWebClientRoot()
   })
   registerMobileHandlers(runtimeRpc, { getRelayStatus: () => desktopRelayStatus })
+  // Why: silent 4001 loops (lost device registry) look like "phone won't connect" — tell the renderer so it can suggest re-pairing.
+  runtimeRpc.setOnUnpairedDeviceAuthFailure(() => {
+    mainWindow?.webContents.send('mobile:unpairedDeviceAuthFailure')
+  })
 
   startTerminalRuntimeStartupServices()
   app.on('activate', requestDesktopActivation)

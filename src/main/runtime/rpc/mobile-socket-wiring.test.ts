@@ -139,6 +139,45 @@ describe('MobileSocketWiring', () => {
     expect(wiring.connectionCount).toBe(0)
   })
 
+  it('reports an unknown device token on the direct path and closes 4001', () => {
+    const desktop = generateKeyPair()
+    const phone = generateKeyPair()
+    const ws = new FakeSocket()
+    const transport = new FakeTransport()
+    const onUnknownDeviceAuth = vi.fn()
+    const wiring = new MobileSocketWiring({
+      deviceRegistry: registryFor('device-1', 'valid-token'),
+      e2eeKeypair: {
+        publicKey: desktop.publicKey,
+        secretKey: desktop.secretKey,
+        publicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+      },
+      onText: vi.fn(),
+      onBinary: vi.fn(),
+      onClose: vi.fn(),
+      onUnknownDeviceAuth
+    })
+    wiring.attachTransport(transport)
+
+    transport.receive(
+      ws,
+      JSON.stringify({
+        type: 'e2ee_hello',
+        publicKeyB64: Buffer.from(phone.publicKey).toString('base64')
+      })
+    )
+    const sharedKey = deriveSharedKey(phone.secretKey, desktop.publicKey)
+    transport.receive(
+      ws,
+      encrypt(JSON.stringify({ type: 'e2ee_auth', deviceToken: 'stale-token' }), sharedKey)
+    )
+
+    expect(onUnknownDeviceAuth).toHaveBeenCalledOnce()
+    expect(onUnknownDeviceAuth).toHaveBeenCalledWith({ transport: 'direct' })
+    expect(transport.setClientId).not.toHaveBeenCalled()
+    expect(ws.close).toHaveBeenCalledWith(4001, 'Unauthorized')
+  })
+
   it('rejects a relay socket whose immutable relayDeviceId differs from E2EE identity', () => {
     const desktop = nacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(1))
     const phone = nacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(2))

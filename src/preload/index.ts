@@ -4366,6 +4366,13 @@ const api = {
         callback(status)
       ipcRenderer.on('mobile:relayStatusChanged', listener)
       return () => ipcRenderer.removeListener('mobile:relayStatusChanged', listener)
+    },
+
+    /** Fires (throttled, once per session) when an unpaired phone repeatedly fails direct-transport auth. */
+    onUnpairedDeviceAuthFailure: (callback: () => void): (() => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('mobile:unpairedDeviceAuthFailure', listener)
+      return () => ipcRenderer.removeListener('mobile:unpairedDeviceAuthFailure', listener)
     }
   },
 

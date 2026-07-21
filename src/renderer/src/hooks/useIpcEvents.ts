@@ -1172,6 +1172,34 @@ export function useIpcEvents(): void {
       }) ?? (() => {})
     )
 
+    // Why: a phone stuck in a silent 4001 auth loop (lost device registry) reads as
+    // "phone won't connect" with no clue on either end; main throttles to once per session.
+    unsubs.push(
+      window.api.mobile?.onUnpairedDeviceAuthFailure?.(() => {
+        toast.warning(
+          translate(
+            'auto.hooks.useIpcEvents.ef223fbb6b',
+            'A phone tried to connect but is not paired'
+          ),
+          {
+            description: translate(
+              'auto.hooks.useIpcEvents.11992d0337',
+              'Its pairing is no longer valid on this desktop. Re-pair it from Settings → Mobile.'
+            ),
+            duration: 15_000,
+            action: {
+              label: translate('auto.hooks.useIpcEvents.6573cfe955', 'Open Mobile Settings'),
+              onClick: () => {
+                const store = useAppStore.getState()
+                store.openSettingsTarget({ pane: 'mobile', repoId: null })
+                store.openSettingsPage()
+              }
+            }
+          }
+        )
+      }) ?? (() => {})
+    )
+
     unsubs.push(
       window.api.ui.onOpenFeatureTour(() => {
         useAppStore.getState().openModal('feature-wall', { source: 'help_menu' })
