@@ -6,6 +6,7 @@ import {
   ATTACHMENTS_QUERY,
   CHILDREN_QUERY,
   COMMENTS_QUERY,
+  INVERSE_RELATIONS_QUERY,
   RELATIONS_QUERY
 } from './issue-context-raw'
 
@@ -154,7 +155,8 @@ describe('Linear issue context includes', () => {
       CHILDREN_QUERY,
       ATTACHMENTS_QUERY,
       RELATIONS_QUERY,
-      ACTIVITY_QUERY
+      ACTIVITY_QUERY,
+      INVERSE_RELATIONS_QUERY
     ]) {
       expect(query).toContain('$after: String')
       expect(query).toContain('after: $after')

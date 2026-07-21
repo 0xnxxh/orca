@@ -95,6 +95,11 @@ export type {
 export type { LinearIssueActivityEntry, LinearIssueActivityValue } from './linear-issue-activity'
 export type { LinearInlineMedia } from './linear-inline-media'
 export type { LinearMcpIssueListRequest, LinearMcpIssueListResult } from './linear-mcp-issue-list'
+export type {
+  LinearIssueRelationship,
+  LinearIssueRelationWriteRequest,
+  LinearIssueRelationWriteResult
+} from './linear-issue-relation-write'
 
 export type LinearWriteTargetRequest = {
   input?: string

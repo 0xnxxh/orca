@@ -45,6 +45,8 @@ Usage: orca linear <command> [options]
 
 Commands:
   list-issues        List Linear issues with MCP-compatible filters
+  relation add       Add a Linear issue relation
+  relation remove    Remove a Linear issue relation
   issue              Read Linear issue context for agents
   search             Search connected Linear workspaces
   team list          List connected Linear teams

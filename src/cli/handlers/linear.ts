@@ -65,12 +65,15 @@ import {
   printLinearSearchWarnings
 } from '../linear-format'
 import { runLinearListIssues } from './linear-list-issues'
+import { linearRelationWriteHandler } from './linear-relation-write'
 
 const ISSUE_CONTEXT_TIMEOUT_MS = 120_000
 const LINEAR_WRITE_TIMEOUT_MS = 75_000
 
 export const LINEAR_HANDLERS: Record<string, CommandHandler> = {
   'linear list-issues': runLinearListIssues,
+  'linear relation add': linearRelationWriteHandler('add'),
+  'linear relation remove': linearRelationWriteHandler('remove'),
   'linear issue': async ({ flags, client, cwd, json }) => {
     const request = buildIssueRequest(flags, cwd, client.isRemote)
     const response = await client.call<LinearIssueContextResult>('linear.issueContext', request, {

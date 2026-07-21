@@ -6,6 +6,7 @@ import type {
   LinearMcpIssueListResult,
   LinearIssueContextResult,
   LinearIssueTaskUpdateResult,
+  LinearIssueRelationWriteResult,
   LinearProjectListResult,
   LinearSearchIssueSummary,
   LinearSearchResult,
@@ -166,6 +167,12 @@ export function formatLinearCreate(result: LinearCreateResult): string {
 export function formatLinearTaskUpdate(result: LinearIssueTaskUpdateResult): string {
   const suffix = result.meta.alreadySet ? ' (already set)' : ''
   return `Updated ${result.issue.identifier} ${taskOperationLabel(result.operation)}${suffix}.`
+}
+
+export function formatLinearRelationWrite(result: LinearIssueRelationWriteResult): string {
+  const verb = result.operation === 'add' ? 'Added' : 'Removed'
+  const suffix = result.meta.alreadySet ? ' (already set)' : ''
+  return `${verb} ${result.issue.identifier} ${result.relation.relationship} ${result.relatedIssue.identifier}${suffix}.`
 }
 
 export function printLinearIssueWarnings(result: LinearIssueContextResult): void {
