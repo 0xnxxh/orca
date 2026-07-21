@@ -2,6 +2,8 @@ import {
   getRuntimeEnvironmentIdForWorktree,
   type WorktreeRuntimeOwnerState
 } from '@/lib/worktree-runtime-owner'
+import { recordWebSessionCloseIntent } from './web-session-close-intent'
+import { toHostSessionTabId } from '../../../shared/terminal-surface-id'
 import type { OpenFile } from '@/store/slices/editor'
 import type { Tab } from '../../../shared/types'
 
@@ -40,6 +42,10 @@ export function notifyHostOfMirroredEditorClose(
   if (!unifiedTab) {
     return false
   }
+  // Record the close intent SYNCHRONOUSLY (leaf modules, no cycle) so a host
+  // snapshot landing before the dynamic import below resolves can't flash the
+  // old-path tab back. closeWebRuntimeSessionTab re-records it idempotently.
+  recordWebSessionCloseIntent(worktreeId, toHostSessionTabId(unifiedTab.id), Date.now())
   // Why: this helper is imported by the editor slice during store creation.
   // Importing web-runtime-session eagerly would import the store back and can
   // trip cyclic initialization in full-suite test/import order.
