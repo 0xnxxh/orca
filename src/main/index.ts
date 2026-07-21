@@ -863,7 +863,7 @@ async function prepareCodexSessionResumeForLaunch(args: {
     // Why: hook repair is best-effort; session provenance must still win over the currently selected home.
     console.warn('[codex-hook-service] failed to prepare automatic resume home:', error)
   }
-  return { codexHomePath: isSystemHome ? null : resumeHome }
+  return { codexHomePath: resumeHome }
 }
 
 // Why: restore the window the close handler may have hidden to tray, or reopen it (dock-reactivation style) if fully torn down.

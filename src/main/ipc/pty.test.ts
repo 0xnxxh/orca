@@ -968,8 +968,9 @@ describe('registerPtyHandlers', () => {
       expect(env.ORCA_CODEX_HOME).toBe('/managed/origin/home')
     })
 
-    it('strips the currently selected managed home when the resumed session originated in real home', async () => {
+    it('overrides an unmarked custom home when the resumed session originated in real home', async () => {
       const selectedHome = vi.fn(() => '/managed/current/home')
+      const systemHome = '/Users/example/.codex'
       registerPtyHandlers(
         mainWindow as never,
         undefined,
@@ -977,14 +978,14 @@ describe('registerPtyHandlers', () => {
         undefined,
         undefined,
         undefined,
-        { prepareCodexSessionResume: async () => ({ codexHomePath: null }) }
+        { prepareCodexSessionResume: async () => ({ codexHomePath: systemHome }) }
       )
 
       await handlers.get('pty:spawn')!(null, {
         cols: 80,
         rows: 24,
         command: 'codex resume session-a',
-        env: { CODEX_HOME: '/managed/current/home', ORCA_CODEX_HOME: '/managed/current/home' },
+        env: { CODEX_HOME: '/custom/codex' },
         launchAgent: 'codex',
         resumeProviderSession: {
           key: 'session_id',
@@ -995,8 +996,8 @@ describe('registerPtyHandlers', () => {
 
       const env = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
       expect(selectedHome).not.toHaveBeenCalled()
-      expect(env.CODEX_HOME).toBeUndefined()
-      expect(env.ORCA_CODEX_HOME).toBeUndefined()
+      expect(env.CODEX_HOME).toBe(systemHome)
+      expect(env.ORCA_CODEX_HOME).toBe(systemHome)
     })
 
     it('does not fall back to the selected account when automatic resume provenance is rejected', async () => {
@@ -1829,6 +1830,40 @@ describe('registerPtyHandlers', () => {
         const env = await daemonSpawnAndGetEnv({}, () => TEST_CODEX_HOME)
         expect(env.CODEX_HOME).toBe(TEST_CODEX_HOME)
         expect(env.ORCA_CODEX_HOME).toBe(TEST_CODEX_HOME)
+      })
+
+      it('overrides an unmarked custom home for an authoritative daemon resume', async () => {
+        const daemonSpawn = setupDaemonAdapter()
+        const selectedHome = vi.fn(() => '/managed/current/home')
+        const systemHome = '/Users/example/.codex'
+        handlers.clear()
+        registerPtyHandlers(
+          mainWindow as never,
+          undefined,
+          selectedHome,
+          undefined,
+          undefined,
+          undefined,
+          { prepareCodexSessionResume: async () => ({ codexHomePath: systemHome }) }
+        )
+
+        await handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          command: 'codex resume session-a',
+          env: { CODEX_HOME: '/custom/codex' },
+          launchAgent: 'codex',
+          resumeProviderSession: {
+            key: 'session_id',
+            id: 'session-a',
+            transcriptPath: `${systemHome}/sessions/2026/07/20/rollout-a.jsonl`
+          }
+        })
+
+        const env = daemonSpawn.mock.calls.at(-1)![0].env
+        expect(selectedHome).not.toHaveBeenCalled()
+        expect(env.CODEX_HOME).toBe(systemHome)
+        expect(env.ORCA_CODEX_HOME).toBe(systemHome)
       })
 
       it('prepares Codex project trust before a daemon-backed interactive launch', async () => {
