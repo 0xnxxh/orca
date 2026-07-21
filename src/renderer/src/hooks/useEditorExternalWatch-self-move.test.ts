@@ -285,7 +285,8 @@ describe('verifyLatchedMoveDestinations (proactive, cross-worktree path)', () =>
     expect(readFile).toHaveBeenCalledWith(expect.objectContaining({ filePath: FLOATING_FILE_PATH }))
     // Disk == baseline -> echo -> suppress + release the gate, no false banner.
     expect(setExternalMutation).not.toHaveBeenCalledWith('file-x', 'changed')
-    expect(clearSelfMoveEcho).toHaveBeenCalledWith('file-x')
     expect(setPendingLiveDiskVerification).toHaveBeenCalledWith('file-x', false)
+    // Safety net does NOT consume provenance (a later watcher event still needs it).
+    expect(clearSelfMoveEcho).not.toHaveBeenCalled()
   })
 })

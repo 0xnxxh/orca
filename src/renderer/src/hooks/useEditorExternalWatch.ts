@@ -669,7 +669,9 @@ export function createExternalWatchEventHandler(
               normalizedAbsolutePath
         )
         if (isSelfMoveEcho) {
-          scheduleSelfMoveEchoVerification(target, dirtyIds)
+          // A real destination fs event confirms the echo — consume the
+          // provenance so a later genuine write takes the normal path.
+          scheduleSelfMoveEchoVerification(target, dirtyIds, true)
         } else {
           // An external write on a dirty tab must not vanish silently (issue
           // #7265); mark it so the editor shows the reload banner.
@@ -810,7 +812,8 @@ type LiveMoveVerifyCandidate = {
 function resolveLiveMoveVerification(
   candidate: LiveMoveVerifyCandidate,
   diskSignature: string | null,
-  connectionId: string | undefined
+  connectionId: string | undefined,
+  consumeProvenance: boolean
 ): void {
   const { fileId, baseline, generation, operationId } = candidate
   if (liveMoveVerifyGeneration.get(fileId) !== generation) {
@@ -832,9 +835,14 @@ function resolveLiveMoveVerification(
   ) {
     return
   }
-  // Consume the provenance: this echo is settled, so a later write at this path
-  // takes the normal changed-on-disk path.
-  state.clearSelfMoveEcho(fileId)
+  // Consume the provenance only when a real watcher event drove this check: the
+  // proactive post-commit verify is a safety net and must LEAVE the provenance,
+  // or the destination fs event (which on FSEvents/SSH lands after the faster
+  // local read) would fall through to the immediate changed-on-disk mark and
+  // raise a false conflict banner. Keeping it is safe — every consumer verifies.
+  if (consumeProvenance) {
+    state.clearSelfMoveEcho(fileId)
+  }
   const isMoveEcho = baseline !== undefined && diskSignature === baseline
   if (!isMoveEcho) {
     markFileChangedOnDisk(state, file, { connectionId, origin: 'live' })
@@ -860,9 +868,12 @@ export function verifyLatchedMoveDestinations(
   }
   // Owner/worktree are resolved per-tab inside the read; only connectionId is
   // shared. worktreePath is unused here (each tab is read at its own filePath).
+  // consumeProvenance:false — this is the safety net; leave the provenance so a
+  // destination watcher event arriving after this read is still seen as an echo.
   scheduleSelfMoveEchoVerification(
     { worktreeId: '', worktreePath, connectionId, runtimeEnvironmentId: null },
-    gated
+    gated,
+    false
   )
 }
 
@@ -870,7 +881,11 @@ export function verifyLatchedMoveDestinations(
 // external write does not. Read the destination once and settle each dirty tab
 // by content identity. Autosave is suspended synchronously first so a write
 // landing mid-read can't be overwritten before we decide.
-function scheduleSelfMoveEchoVerification(target: WatchedTarget, fileIds: string[]): void {
+function scheduleSelfMoveEchoVerification(
+  target: WatchedTarget,
+  fileIds: string[],
+  consumeProvenance: boolean
+): void {
   if (fileIds.length === 0) {
     return
   }
@@ -902,9 +917,16 @@ function scheduleSelfMoveEchoVerification(target: WatchedTarget, fileIds: string
     })
       .then((result) => {
         const diskSignature = result.isBinary ? null : getDiskBaselineSignature(result.content)
-        resolveLiveMoveVerification(candidate, diskSignature, target.connectionId)
+        resolveLiveMoveVerification(
+          candidate,
+          diskSignature,
+          target.connectionId,
+          consumeProvenance
+        )
       })
-      .catch(() => resolveLiveMoveVerification(candidate, null, target.connectionId))
+      .catch(() =>
+        resolveLiveMoveVerification(candidate, null, target.connectionId, consumeProvenance)
+      )
   }
 }
 

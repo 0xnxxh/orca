@@ -16,6 +16,7 @@ import { useAppStore } from '@/store'
 import { executeOpenEditorPathMove } from './execute-open-editor-path-move'
 import { __activeEditorPathMoveCountForTests } from '@/components/editor/editor-path-move-inflight'
 import { getDiskBaselineSignature } from '@/components/editor/diff-content-signature'
+import { createExternalWatchEventHandler } from '@/hooks/useEditorExternalWatch'
 
 const CONTEXT = {
   settings: null,
@@ -100,9 +101,56 @@ describe('executeOpenEditorPathMove', () => {
     const moved = useAppStore.getState().openFiles[0]!
     // Disk matched the carried baseline: gate released, no false conflict banner.
     expect(moved.pendingLiveDiskVerification).toBeFalsy()
-    expect(moved.pendingSelfMoveEcho).toBeUndefined()
     expect(moved.externalMutation).toBeUndefined()
     expect(moved.isDirty).toBe(true)
+    // Safety-net verify LEAVES the provenance so a destination watcher event
+    // arriving after this read is still recognized as the move's own echo.
+    expect(moved.pendingSelfMoveEcho?.targetPath).toBe('/repo/sub/a.md')
+  })
+
+  it('does not raise a false banner when the destination watcher event lands after the move', async () => {
+    // Regression: the proactive verify must NOT consume the echo provenance, or
+    // the real destination fs event (which on FSEvents/SSH lands after the fast
+    // local read) would fall through to the immediate changed-on-disk mark.
+    const DISK_CONTENT = 'the file as it exists on disk\n'
+    const id = openDirtyTab()
+    useAppStore.getState().setLastKnownDiskSignature(id, getDiskBaselineSignature(DISK_CONTENT))
+    vi.stubGlobal('window', {
+      api: {
+        fs: { readFile: vi.fn().mockResolvedValue({ isBinary: false, content: DISK_CONTENT }) }
+      }
+    })
+
+    await executeOpenEditorPathMove({
+      context: CONTEXT,
+      fromPath: '/repo/a.md',
+      toPath: '/repo/sub/a.md',
+      worktreeId: 'wt-1',
+      worktreePath: '/repo'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    // The delayed destination create/update event finally arrives.
+    const { handleFsChanged, dispose } = createExternalWatchEventHandler((worktreePath) =>
+      worktreePath === '/repo'
+        ? {
+            worktreeId: 'wt-1',
+            worktreePath: '/repo',
+            connectionId: undefined,
+            runtimeEnvironmentId: null
+          }
+        : undefined
+    )
+    handleFsChanged({
+      worktreePath: '/repo',
+      events: [{ kind: 'update', absolutePath: '/repo/sub/a.md' }]
+    })
+    await new Promise((resolve) => setTimeout(resolve, 120))
+
+    const moved = useAppStore.getState().openFiles[0]!
+    expect(moved.externalMutation).toBeUndefined()
+    expect(moved.isDirty).toBe(true)
+    dispose()
   })
 
   it('undoes the on-disk rename when the editor rekey collides', async () => {
