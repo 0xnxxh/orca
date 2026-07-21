@@ -27,7 +27,7 @@ import {
   Check,
   UserCircle,
   PanelLeftClose,
-  PanelsTopLeft
+  SquareTerminal
 } from 'lucide-react-native'
 import type { RpcClient } from '../../../src/transport/rpc-client'
 import { loadHosts, updateLastConnected } from '../../../src/transport/host-store'
@@ -834,6 +834,24 @@ export function HostScreen({
               </>
             )
           })()}
+          {!embedded && floatingWorkspaceEnabled ? (
+            <Pressable
+              style={[
+                styles.floatingWorkspaceHeaderButton,
+                connState !== 'connected' && styles.toolbarIconDisabled
+              ]}
+              onPress={openFloatingWorkspace}
+              disabled={connState !== 'connected'}
+              accessibilityRole="button"
+              accessibilityLabel="Floating Workspace"
+              hitSlop={8}
+            >
+              <SquareTerminal
+                size={18}
+                color={connState === 'connected' ? colors.textPrimary : colors.textMuted}
+              />
+            </Pressable>
+          ) : null}
           {embedded && onHideSidebar ? (
             <Pressable
               style={styles.sidebarCollapseButton}
@@ -951,8 +969,8 @@ export function HostScreen({
                   accessibilityRole="button"
                   accessibilityLabel="Floating Workspace"
                 >
-                  <PanelsTopLeft
-                    size={16}
+                  <SquareTerminal
+                    size={18}
                     color={connState === 'connected' ? colors.textSecondary : colors.textMuted}
                   />
                 </Pressable>
@@ -1051,21 +1069,6 @@ export function HostScreen({
                 color={connState === 'connected' ? colors.textSecondary : colors.textMuted}
               />
             </Pressable>
-
-            {floatingWorkspaceEnabled ? (
-              <Pressable
-                style={styles.searchToggle}
-                onPress={openFloatingWorkspace}
-                disabled={connState !== 'connected'}
-                accessibilityRole="button"
-                accessibilityLabel="Floating Workspace"
-              >
-                <PanelsTopLeft
-                  size={16}
-                  color={connState === 'connected' ? colors.textSecondary : colors.textMuted}
-                />
-              </Pressable>
-            ) : null}
 
             <Pressable style={styles.searchToggle} onPress={() => setShowSearch((s) => !s)}>
               {showSearch ? (
@@ -1551,12 +1554,12 @@ const styles = StyleSheet.create({
   toolbarSpacer: {
     flex: 1
   },
-  toolbarIconButton: {
+  floatingWorkspaceHeaderButton: {
     width: 32,
-    height: 28,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radii.button
+    marginLeft: spacing.xs
   },
   embeddedToolbarIconButton: {
     flex: 1,
