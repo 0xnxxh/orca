@@ -684,11 +684,9 @@ export class ClaudeRuntimeAuthService {
   private getDefaultAccountSelectionTarget(
     settings = this.store.getSettings()
   ): ClaudeAccountSelectionTarget {
-    // Why: auth defaults follow the resolved account runtime ('auto' tracks the
-    // global WSL project default), not legacy terminal WSL settings that can
-    // outlive the Terminal UI.
+    // Why: Windows auth follows the resolved account runtime; stale cross-platform WSL pins must stay local-host.
     const resolved = resolveLocalAccountRuntimeTarget(settings)
-    if (resolved.runtime === 'wsl') {
+    if (process.platform === 'win32' && resolved.runtime === 'wsl') {
       return { runtime: 'wsl', wslDistro: resolved.wslDistro }
     }
     return { runtime: 'host' }

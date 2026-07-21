@@ -2653,10 +2653,10 @@ export type GlobalSettings = {
   terminalWindowsShell: string
   /** Pins the WSL distro for terminals/agent scans instead of WSL's current global default. */
   terminalWindowsWslDistro?: string | null
-  /** Account/auth location independent from the terminal shell (e.g. WSL terminals but Windows-scoped accounts). 'auto' follows the global Windows runtime default; 'host'/'wsl' pin it explicitly. */
+  /** Account/auth location; auto follows the global Windows runtime while host/wsl pin it. */
   localAccountRuntime: 'auto' | 'host' | 'wsl'
   localAccountWslDistro?: string | null
-  /** One-shot guard: flips the legacy hard 'host' default to 'auto' once so account detection follows the WSL project runtime; preserves explicit 'wsl'. */
+  /** One-shot guard for migrating the legacy host default to auto. */
   localAccountRuntimeDefaultedToAutoForAllUsers?: boolean
   /** Independent from the terminal shell so users can inspect Windows vs WSL agent PATH state without changing it. */
   localAgentRuntime?: 'host' | 'wsl'

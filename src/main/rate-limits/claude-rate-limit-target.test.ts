@@ -103,7 +103,7 @@ describe('getInitialClaudeRateLimitTarget', () => {
     ).toEqual({ runtime: 'wsl', wslDistro: 'Ubuntu' })
   })
 
-  it("auto follows the global WSL project runtime default", () => {
+  it('auto follows the global WSL project runtime default', () => {
     expect(
       getInitialClaudeRateLimitTarget(
         {
@@ -123,6 +123,23 @@ describe('getInitialClaudeRateLimitTarget', () => {
           ...getDefaultSettings('/tmp'),
           localAccountRuntime: 'auto',
           localWindowsRuntimeDefault: { kind: 'windows-host' }
+        },
+        'win32'
+      )
+    ).toEqual({ runtime: 'host' })
+  })
+
+  it('does not let a stale WSL-only selection override an auto host target', () => {
+    expect(
+      getInitialClaudeRateLimitTarget(
+        {
+          ...getDefaultSettings('/tmp'),
+          localAccountRuntime: 'auto',
+          localWindowsRuntimeDefault: { kind: 'windows-host' },
+          activeClaudeManagedAccountIdsByRuntime: {
+            host: null,
+            wsl: { Ubuntu: 'wsl-account-1' }
+          }
         },
         'win32'
       )

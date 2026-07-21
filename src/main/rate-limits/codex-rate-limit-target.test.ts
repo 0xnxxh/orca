@@ -129,6 +129,23 @@ describe('getInitialCodexRateLimitTarget', () => {
     ).toEqual({ runtime: 'host' })
   })
 
+  it('does not let a stale WSL-only selection override an auto host target', () => {
+    expect(
+      getInitialCodexRateLimitTarget(
+        {
+          ...getDefaultSettings('/tmp'),
+          localAccountRuntime: 'auto',
+          localWindowsRuntimeDefault: { kind: 'windows-host' },
+          activeCodexManagedAccountIdsByRuntime: {
+            host: null,
+            wsl: { Ubuntu: 'wsl-account-1' }
+          }
+        },
+        'win32'
+      )
+    ).toEqual({ runtime: 'host' })
+  })
+
   it('keeps explicit host runtime on host', () => {
     expect(
       getInitialCodexRateLimitTarget(

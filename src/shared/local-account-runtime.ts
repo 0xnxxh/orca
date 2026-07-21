@@ -11,13 +11,7 @@ type LocalAccountRuntimeSettings = Pick<
   'localAccountRuntime' | 'localAccountWslDistro' | 'localWindowsRuntimeDefault'
 >
 
-/**
- * Resolves where provider accounts are inspected (Windows host vs a WSL distro).
- *
- * `'host'`/`'wsl'` are explicit pins; `'auto'` (the default) follows the global
- * Windows runtime default so a WSL project surfaces WSL accounts instead of the
- * Windows-host ones. Non-Windows platforms have no WSL, so always resolve host.
- */
+/** Resolves the persisted account policy to a concrete host or WSL target. */
 export function resolveLocalAccountRuntimeTarget(
   settings: LocalAccountRuntimeSettings,
   platform: NodeJS.Platform = process.platform

@@ -1,4 +1,5 @@
 import type { GlobalSettings } from '../../shared/types'
+import { resolveLocalAccountRuntimeTarget } from '../../shared/local-account-runtime'
 import {
   getClaudeWslSelectionKey,
   normalizeClaudeRuntimeSelection,
@@ -36,9 +37,14 @@ export function getInitialClaudeRateLimitTarget(
         getSingleSelectedWslDistro(settings)
     }
   }
+  if (settings.localAccountRuntime === 'auto') {
+    const target = resolveLocalAccountRuntimeTarget(settings, platform)
+    return target.runtime === 'wsl'
+      ? { runtime: 'wsl', wslDistro: target.wslDistro }
+      : { runtime: 'host' }
+  }
 
-  // 'auto' (the default) and legacy-unset settings fall through here so account
-  // detection follows the global WSL project runtime instead of pinning host.
+  // Why: pre-setting profiles used account selection as their startup fallback.
   const projectRuntimeTarget = getProjectRuntimeRateLimitTarget(settings, platform)
   if (projectRuntimeTarget) {
     return projectRuntimeTarget

@@ -10,6 +10,7 @@ import type {
   GlobalSettings
 } from '../../../../shared/types'
 import { resolveLocalAccountRuntimeTarget } from '../../../../shared/local-account-runtime'
+import { getRendererAppPlatform } from '../../lib/renderer-app-platform'
 import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -267,11 +268,8 @@ function getSelectedAccountRuntime(
   wslDistros: string[],
   wslCapabilitiesLoading: boolean
 ): LocalAccountRuntime {
-  // Why: 'auto' (the default) follows the global WSL project runtime, so resolve
-  // it to a concrete host/wsl position for the toggle instead of only honoring an
-  // explicit 'wsl' pin. The renderer is sandboxed, so derive platform from the UA.
-  const platform = navigator.userAgent.includes('Windows') ? 'win32' : 'linux'
-  const resolvedRuntime = resolveLocalAccountRuntimeTarget(settings, platform)
+  // Why: the two-option control displays the concrete target behind the persisted auto policy.
+  const resolvedRuntime = resolveLocalAccountRuntimeTarget(settings, getRendererAppPlatform())
   if (wslSupportedPlatform && resolvedRuntime.runtime === 'wsl') {
     if (!wslAvailable && !wslCapabilitiesLoading) {
       return {

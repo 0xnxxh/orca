@@ -2959,9 +2959,7 @@ export class Store {
         ) {
           this.loadNeedsSave = true
         }
-        // Why (#9537): the legacy hard 'host' default pinned account detection to
-        // Windows even for WSL projects. Flip the untouched default to 'auto' once
-        // so it follows localWindowsRuntimeDefault; an explicit 'wsl' pin survives.
+        // Why (#9537): migrate the indistinguishable legacy host default once so WSL-default users follow their runtime.
         const localAccountRuntimeAlreadyMigrated =
           parsed.settings?.localAccountRuntimeDefaultedToAutoForAllUsers === true
         const migratedLocalAccountRuntime: GlobalSettings['localAccountRuntime'] =

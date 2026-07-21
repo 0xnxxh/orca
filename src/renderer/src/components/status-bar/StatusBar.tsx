@@ -46,6 +46,7 @@ import type {
   RateLimitWindow
 } from '../../../../shared/rate-limit-types'
 import { resolveLocalAccountRuntimeTarget } from '../../../../shared/local-account-runtime'
+import { getRendererAppPlatform } from '../../lib/renderer-app-platform'
 import {
   ProviderIcon,
   ProviderPanel,
@@ -196,24 +197,24 @@ function toCodexStatusRuntimeTarget(
 
 export function getStatusBarPreferredWslDistro(
   settings: GlobalSettings | null | undefined,
-  wslDistros: string[]
+  wslDistros: string[],
+  platform: NodeJS.Platform = getRendererAppPlatform()
 ): string | null {
-  const configuredDistro = settings?.localAccountWslDistro?.trim() || null
-  if (configuredDistro) {
-    return configuredDistro
+  if (settings) {
+    const target = resolveLocalAccountRuntimeTarget(settings, platform)
+    if (target.runtime === 'wsl' && target.wslDistro) {
+      return target.wslDistro
+    }
   }
   return wslDistros.length === 1 ? wslDistros[0] : null
 }
 
 function shouldIncludeSettingsWslRuntime(settings: GlobalSettings | null | undefined): boolean {
-  // Why: 'auto' (the default) surfaces the WSL group when the global project
-  // runtime is WSL, matching where account detection now reads from. The renderer
-  // is sandboxed without process.platform, so derive it from the user agent.
   if (!settings) {
     return false
   }
-  const platform = navigator.userAgent.includes('Windows') ? 'win32' : 'linux'
-  return resolveLocalAccountRuntimeTarget(settings, platform).runtime === 'wsl'
+  // Why: the fallback group must match the concrete runtime used for account polling.
+  return resolveLocalAccountRuntimeTarget(settings, getRendererAppPlatform()).runtime === 'wsl'
 }
 
 function getSingleConcreteCodexWslDistro(state: CodexRateLimitAccountsState): string | null {
