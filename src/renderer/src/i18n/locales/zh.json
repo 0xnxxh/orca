@@ -3289,7 +3289,7 @@
             "compact": "Compact",
             "footerDetailAria": "Usage footer detail",
             "detailedTooltip": "完整使用情况，包含条形图、标签和百分比",
-            "compactTooltip": "压缩使用：只使用最紧的窗口"
+            "compactTooltip": "精简使用情况：仅显示最吃紧的窗口"
           }
         }
       },
