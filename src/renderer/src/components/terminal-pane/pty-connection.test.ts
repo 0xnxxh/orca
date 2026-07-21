@@ -240,6 +240,7 @@ type MockTransport = {
       impl: (opts: { callbacks?: ConnectCallbacks } & Record<string, unknown>) => Promise<unknown>
     ) => unknown
   }
+  disconnect: ReturnType<typeof vi.fn>
   sendInput: ReturnType<typeof vi.fn>
   sendInputImmediate: ReturnType<typeof vi.fn>
   sendInputAccepted?: ReturnType<typeof vi.fn>
@@ -371,6 +372,9 @@ function createMockTransport(initialPtyId: string | null = null): MockTransport 
         return { id: opts.sessionId }
       }
       return ptyId
+    }),
+    disconnect: vi.fn(() => {
+      ptyId = null
     }),
     sendInput: vi.fn(() => true),
     claimViewport: vi.fn(() => true),
@@ -6240,11 +6244,7 @@ describe('connectPanePty', () => {
   })
 
   it('re-runs the resume command when a hibernated local session reattaches with no payload', async () => {
-    // Why (regression): on Windows the daemon can reattach a hibernation-killed local
-    // session as isNew:false with no snapshot/coldRestore, silently dropping the --resume
-    // command it only runs for a fresh session. The old code adopted that empty reattach,
-    // stranding the tab blank with nothing running. The pane owns a resumable slept
-    // session, so a contentless isReattach must re-drive the prepared resume instead.
+    // Why: the daemon drops startup commands on reattach, so a passive hibernation record must replace a contentless adopted shell.
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -6255,13 +6255,24 @@ describe('connectPanePty', () => {
     try {
       const { connectPanePty } = await import('./pty-connection')
       const paneKey = makePaneKey('tab-1', LEAF_2)
-      // Seed the reattach session id so getPtyId() matches the adopted reattach payload.
+      let activePtyId: string | null = 'restored-session'
       const transport = createMockTransport('restored-session')
+      transport.getPtyId.mockImplementation(() => activePtyId)
+      transport.disconnect.mockImplementation(() => {
+        activePtyId = null
+      })
       transport.connect.mockImplementation(async (opts: { sessionId?: string }) => {
         if (opts.sessionId) {
-          // Bare zombie reattach: adopted an existing session, no replay payload.
-          return { id: opts.sessionId, isReattach: true }
+          activePtyId = opts.sessionId
+          return {
+            id: opts.sessionId,
+            isReattach: true,
+            snapshot: undefined,
+            replay: undefined,
+            coldRestore: undefined
+          }
         }
+        activePtyId = 'fresh-resume-pty'
         const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
           | ((ptyId: string) => void)
           | undefined
@@ -6298,14 +6309,18 @@ describe('connectPanePty', () => {
         restoredLeafId: LEAF_2,
         restoredPtyIdByLeafId: { [LEAF_2]: 'restored-session' }
       })
+      vi.mocked(window.api.pty.declarePendingPaneSerializer)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(2)
 
       connectPanePty(pane as never, manager as never, deps as never)
       await flushAsyncTicks(20)
       for (const fn of pendingTimeouts) {
         fn()
       }
+      await flushAsyncTicks(10)
 
-      // The empty reattach is discarded and a fresh resume is spawned.
+      expect(transport.disconnect).toHaveBeenCalledTimes(1)
       expect(transport.connect).toHaveBeenCalledTimes(2)
       expect(transport.connect).toHaveBeenNthCalledWith(
         2,
@@ -6321,9 +6336,118 @@ describe('connectPanePty', () => {
       expect(deps.clearExitedPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'restored-session')
       expect(deps.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'restored-session')
       expect(deps.syncPanePtyLayoutBinding).not.toHaveBeenCalledWith(2, 'restored-session')
+      expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'fresh-resume-pty')
+      expect(mockStoreState.clearSleepingAgentSession).toHaveBeenCalledWith(paneKey)
+      expect(window.api.pty.clearPendingPaneSerializer).toHaveBeenCalledWith(paneKey, 1)
     } finally {
       globalThis.setTimeout = originalSetTimeout
     }
+  })
+
+  it('keeps a contentless reattach when the sleeping record represents a live session', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const paneKey = makePaneKey('tab-1', LEAF_2)
+    const transport = createMockTransport('restored-session')
+    transport.connect.mockResolvedValue({
+      id: 'restored-session',
+      isReattach: true,
+      snapshot: undefined,
+      replay: undefined,
+      coldRestore: undefined
+    })
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'restored-session' }] },
+      settings: { ...mockStoreState.settings, agentCmdOverrides: {} },
+      sleepingAgentSessionsByPaneKey: {
+        [paneKey]: {
+          paneKey,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          agent: 'codex',
+          providerSession: { key: 'session_id', id: 'codex-session-1' },
+          prompt: 'finish the task',
+          state: 'working',
+          origin: 'live',
+          capturedAt: 1,
+          updatedAt: 1
+        }
+      }
+    } as StoreState
+    const pane = createPane(2)
+    const manager = createManager(2)
+    const deps = createDeps({
+      restoredLeafId: LEAF_2,
+      restoredPtyIdByLeafId: { [LEAF_2]: 'restored-session' }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks(20)
+
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    expect(transport.disconnect).not.toHaveBeenCalled()
+    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'restored-session')
+    expect(mockStoreState.clearSleepingAgentSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps a contentless reattach when a live status supersedes passive sleep evidence', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const paneKey = makePaneKey('tab-1', LEAF_2)
+    const transport = createMockTransport('restored-session')
+    transport.connect.mockResolvedValue({
+      id: 'restored-session',
+      isReattach: true,
+      snapshot: undefined,
+      replay: undefined,
+      coldRestore: undefined
+    })
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'restored-session' }] },
+      settings: { ...mockStoreState.settings, agentCmdOverrides: {} },
+      agentStatusByPaneKey: {
+        [paneKey]: {
+          state: 'working',
+          prompt: 'new live task',
+          agentType: 'codex',
+          providerSession: { key: 'session_id', id: 'live-codex-session' },
+          paneKey,
+          updatedAt: 2,
+          stateStartedAt: 2,
+          stateHistory: []
+        }
+      },
+      sleepingAgentSessionsByPaneKey: {
+        [paneKey]: {
+          paneKey,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          agent: 'codex',
+          providerSession: { key: 'session_id', id: 'old-codex-session' },
+          prompt: 'old completed task',
+          state: 'done',
+          origin: 'worktree-sleep',
+          capturedAt: 1,
+          updatedAt: 1
+        }
+      }
+    } as StoreState
+    const pane = createPane(2)
+    const manager = createManager(2)
+    const deps = createDeps({
+      restoredLeafId: LEAF_2,
+      restoredPtyIdByLeafId: { [LEAF_2]: 'restored-session' }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks(20)
+
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    expect(transport.disconnect).not.toHaveBeenCalled()
+    expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'restored-session')
+    expect(mockStoreState.clearSleepingAgentSession).not.toHaveBeenCalled()
   })
 
   it('clears the pending serializer when disposed before non-deferred SSH reattach expiry resolves', async () => {

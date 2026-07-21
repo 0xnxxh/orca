@@ -7179,15 +7179,15 @@ export function connectPanePty(
       const hasStructuralReplay = Boolean(
         connectResult?.snapshot || connectResult?.replay || connectResult?.coldRestore
       )
-      // Why: a bare reattach (daemon adopted an existing session, isNew=false) with no
-      // replayable payload means the daemon reattached a session we hibernated/killed but
-      // could not cold-restore — and, being a reattach not a fresh spawn, it silently
-      // dropped the --resume command we passed on connect. Adopting it strands the pane
-      // blank with nothing running (the hibernation-wake blank-terminal bug). This pane
-      // owns a resumable slept session, so re-drive it with the prepared resume instead.
-      // Excluded: a fresh session the daemon created (isReattach falsy — it already ran the
-      // command) and a live reattach (carries a snapshot/replay).
-      if (!hasStructuralReplay && connectResult?.isReattach && coldRestoreStartup?.hasSleepingRecord) {
+      const resumeComesFromPassiveHibernation = Boolean(
+        coldRestoreStartup &&
+        !coldRestoreStartup.useLiveEntry &&
+        coldRestoreStartup.sleepingRecordEntry &&
+        isPassiveCompletedHibernationEvidence(coldRestoreStartup.sleepingRecordEntry.record)
+      )
+      // Why: reattach drops startup commands; only passive hibernation is authority to retire an empty adopted shell and resume its provider session.
+      if (!hasStructuralReplay && connectResult?.isReattach && resumeComesFromPassiveHibernation) {
+        transport.disconnect()
         if (staleSessionId) {
           deps.clearExitedPanePtyLayoutBinding(pane.id, staleSessionId)
           deps.clearTabPtyId(deps.tabId, staleSessionId)
@@ -7640,7 +7640,9 @@ export function connectPanePty(
                 finishReattachLiveDataDeferral(accepted, outputCallbacks.generation)
                 const gen = await preSignalPromise
                 if (typeof gen === 'number') {
-                  if (!isRemoteRuntimePtyId(pendingSessionId)) {
+                  if (!accepted) {
+                    await window.api.pty.clearPendingPaneSerializer(cacheKey, gen).catch(() => {})
+                  } else if (!isRemoteRuntimePtyId(pendingSessionId)) {
                     const settledPtyId =
                       result && typeof result === 'object' && 'id' in result
                         ? result.id
@@ -7844,7 +7846,9 @@ export function connectPanePty(
           finishReattachLiveDataDeferral(accepted, outputCallbacks.generation)
           const gen = await preSignalPromise
           if (typeof gen === 'number') {
-            if (!isRemoteRuntimePtyId(deferredReattachSessionId)) {
+            if (!accepted) {
+              await window.api.pty.clearPendingPaneSerializer(cacheKey, gen).catch(() => {})
+            } else if (!isRemoteRuntimePtyId(deferredReattachSessionId)) {
               const settledPtyId =
                 result && typeof result === 'object' && 'id' in result
                   ? result.id

@@ -749,9 +749,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         if (spawnResult.isReattach || spawnResult.coldRestore || spawnResult.sessionExpired) {
           return {
             id: spawnResult.id,
-            // Why: forward isReattach so a bare reattach with no replay payload is
-            // distinguishable from a fresh session that ran our startup command; the
-            // former dropped the command and must recover a resumable slept session.
+            // Why: recovery needs to distinguish an attach that ignored startup intent from a fresh spawn that ran it.
             ...(spawnResult.isReattach ? { isReattach: true } : {}),
             ...(resultLaunchAgent ? { launchAgent: resultLaunchAgent } : {}),
             ...(spawnResult.launchConfig ? { launchConfig: spawnResult.launchConfig } : {}),
