@@ -5,6 +5,15 @@ import { buildDefaultTerminalOptions } from '@/lib/pane-manager/pane-terminal-op
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { subscribeToTerminalUserInput } from '@/components/terminal-pane/terminal-user-input-signal'
 import { TERMINAL_PASTE_MAX_BYTES } from '@/components/terminal-pane/terminal-paste-limits'
+import {
+  installTerminalImeCompositionTracker,
+  type TerminalImeCompositionTracker
+} from '@/components/terminal-pane/terminal-ime-composition-tracker'
+import {
+  installTerminalImeNativeTextForwarder,
+  type TerminalImeNativeTextForwarder
+} from '@/components/terminal-pane/terminal-ime-native-text-forwarder'
+import { getMacNativeTextInputSourceTracker } from '@/components/terminal-pane/terminal-ime-input-source'
 import { composeActiveTerminalTheme } from '@/components/terminal-pane/terminal-appearance'
 import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import { translate } from '@/i18n/i18n'
@@ -60,6 +69,8 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
     let terminal: Terminal | null = null
     let offData: (() => void) | null = null
     let userInputDisposable: { dispose: () => void } | null = null
+    let imeCompositionTracker: TerminalImeCompositionTracker | null = null
+    let imeNativeTextForwarder: TerminalImeNativeTextForwarder | null = null
     let refreshInFlight = false
     let refreshAgain = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -131,12 +142,39 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
       }
     }
 
+    const disposeImeNativeTextBridge = (): void => {
+      imeNativeTextForwarder?.dispose()
+      imeNativeTextForwarder = null
+      imeCompositionTracker?.dispose()
+      imeCompositionTracker = null
+    }
+
+    // Why: xterm's kitty encoder can encode+cancel a printable keydown before
+    // Chromium commits IME/native text, silently dropping the glyph (mirrors
+    // TerminalPane's forwarder; macOS-only like the pane's install).
+    const installImeNativeTextBridge = (): void => {
+      if (!terminal || getShortcutPlatform() !== 'darwin') {
+        return
+      }
+      imeCompositionTracker = installTerminalImeCompositionTracker(terminal.element)
+      imeNativeTextForwarder = installTerminalImeNativeTextForwarder({
+        terminalElement: terminal.element,
+        isComposing: () => imeCompositionTracker?.isActive() ?? false,
+        sendInput: (data) => terminal?.input(data),
+        getInputSourceFeatures: () => getMacNativeTextInputSourceTracker().getFeatures()
+      })
+    }
+
     const installClipboardShortcuts = (): void => {
       if (!terminal) {
         return
       }
       const platform = getShortcutPlatform()
       terminal.attachCustomKeyEventHandler((event) => {
+        if (imeNativeTextForwarder?.claimKeyEvent(event)) {
+          // Why: bypass xterm's kitty encoder for native-text keydowns so the committed glyph survives via the input event.
+          return false
+        }
         if (event.type !== 'keydown') {
           return true
         }
@@ -211,6 +249,7 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
           return
         }
         installInputRouting()
+        installImeNativeTextBridge()
         installClipboardShortcuts()
       } else if (replaceExisting) {
         // Why: keep the old frame visible during capture, then atomically replace it once the authoritative snapshot arrives.
@@ -276,6 +315,7 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
         offData = null
         userInputDisposable?.dispose()
         userInputDisposable = null
+        disposeImeNativeTextBridge()
         terminal?.dispose()
         terminal = null
         void window.api.terminalPreview.unsubscribe(ptyId)
@@ -320,6 +360,7 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
       offAppMenuPaste()
       offData?.()
       userInputDisposable?.dispose()
+      disposeImeNativeTextBridge()
       void window.api.terminalPreview.unsubscribe(ptyId)
       terminal?.dispose()
     }
