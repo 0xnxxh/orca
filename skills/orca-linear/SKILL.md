@@ -95,7 +95,7 @@ orca linear create --title <title> [--body <text> | --body-file <path|->] [--tea
 
 ## Discovery And Triage
 
-Use discovery before mutating fields when you do not already have stable IDs:
+Use discovery before mutating fields when you do not already have stable IDs. Run only the command for the metadata you need; do not execute the entire block:
 
 ```bash
 orca linear team list --workspace all --json
