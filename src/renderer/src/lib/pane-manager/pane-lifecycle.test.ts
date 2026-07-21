@@ -115,7 +115,7 @@ describe('buildDefaultTerminalOptions', () => {
   })
 
   it('starts with light-theme contrast correction so first paint never flashes low-contrast text', () => {
-    // Initial value is the light-theme setting (4.5); applyTerminalAppearance re-gates it by mode (dark => 1; #7934).
+    // Initial value is the light-background setting (4.5); applyTerminalAppearance re-gates it by background luminance (dark bg => 1; #7934).
     expect(buildDefaultTerminalOptions().minimumContrastRatio).toBe(4.5)
   })
 

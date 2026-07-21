@@ -48,9 +48,9 @@ export function buildDefaultTerminalOptions(): ITerminalOptions {
     fastScrollSensitivity: DEFAULT_TERMINAL_FAST_SCROLL_SENSITIVITY,
     allowTransparency: false,
     // Why 4.5 as the initial value: agent CLIs render body text with ANSI white/bright-white that
-    // vanishes on light (white) backgrounds. applyTerminalAppearance re-gates this by theme mode
-    // (light => 4.5, dark => 1; #7934) — start high so the first paint on a light theme never flashes
-    // low-contrast text before appearance-apply runs.
+    // vanishes on light (white) backgrounds. applyTerminalAppearance re-gates this by the theme's
+    // background luminance (light bg => 4.5, dark bg => 1; #7934) — start high so the first paint on
+    // a light theme never flashes low-contrast text before appearance-apply runs.
     minimumContrastRatio: 4.5,
     // Why: on macOS, non-US layouts rely on Option to compose characters like @ and €.
     macOptionIsMeta: false,
