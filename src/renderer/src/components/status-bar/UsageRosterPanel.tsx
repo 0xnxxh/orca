@@ -239,7 +239,7 @@ export function UsageRosterPanel({
               label: translate('auto.components.status.bar.UsageRosterPanel.detailed', 'Detailed'),
               tooltip: translate(
                 'auto.components.status.bar.UsageRosterPanel.detailedTooltip',
-                'Full usage with bars, labels, and percentages in the status bar'
+                'Full usage with bars, labels, and percentages'
               )
             },
             {
@@ -247,7 +247,7 @@ export function UsageRosterPanel({
               label: translate('auto.components.status.bar.UsageRosterPanel.compact', 'Compact'),
               tooltip: translate(
                 'auto.components.status.bar.UsageRosterPanel.compactTooltip',
-                'Condensed usage — just the tightest window'
+                'Condensed usage: only the tightest window'
               )
             }
           ]}

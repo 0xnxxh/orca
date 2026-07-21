@@ -3310,8 +3310,8 @@
             "noUsageData": "No usage data",
             "detailed": "Detailed",
             "compact": "Compact",
-            "detailedTooltip": "Full usage with bars, labels, and percentages in the status bar",
-            "compactTooltip": "Condensed usage — just the tightest window",
+            "detailedTooltip": "Full usage with bars, labels, and percentages",
+            "compactTooltip": "Condensed usage: only the tightest window",
             "footerDetailAria": "Usage footer detail"
           }
         }

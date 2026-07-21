@@ -3287,7 +3287,9 @@
             "noUsageData": "No usage data",
             "detailed": "Detailed",
             "compact": "Compact",
-            "footerDetailAria": "Usage footer detail"
+            "footerDetailAria": "Usage footer detail",
+            "detailedTooltip": "バー、ラベル、パーセントを完全に使用",
+            "compactTooltip": "凝縮された使用法: 最も狭いウィンドウのみ"
           }
         }
       },
