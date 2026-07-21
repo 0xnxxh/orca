@@ -239,6 +239,39 @@ describe('issue source operations', () => {
     )
   })
 
+  it('does not preflight large bodies when the selected GitHub server accepts them', async () => {
+    // Why: server limits can differ, so recovery must follow the API response
+    // instead of imposing GitHub.com's current create limit on every host.
+    const body = 'x'.repeat(65_537)
+    getIssueOwnerRepoMock.mockResolvedValueOnce({ owner: 'enterprise', repo: 'orca' })
+    ghExecFileAsyncMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        number: 926,
+        html_url: 'https://github.example.com/enterprise/orca/issues/926'
+      })
+    })
+
+    await expect(createIssue('/repo-root', 'Large issue', body)).resolves.toEqual({
+      ok: true,
+      number: 926,
+      url: 'https://github.example.com/enterprise/orca/issues/926'
+    })
+    expect(ghExecFileAsyncMock).toHaveBeenCalledOnce()
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
+      [
+        'api',
+        '-X',
+        'POST',
+        'repos/enterprise/orca/issues',
+        '--raw-field',
+        'title=Large issue',
+        '--raw-field',
+        `body=${body}`
+      ],
+      { cwd: '/repo-root' }
+    )
+  })
+
   it('recovers issue 7704 oversized inline-image creation', async () => {
     const imagePrefix = 'data:image/png;base64,'
     const body = imagePrefix + 'x'.repeat(133596 - imagePrefix.length)
