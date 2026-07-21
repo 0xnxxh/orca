@@ -41,7 +41,6 @@ import {
   codexRosterEffectiveState,
   codexRosterToSnapshots,
   finishCodexSubagent,
-  reapUnconfirmedCodexSubagents,
   seedCodexSubagentRoster,
   upsertCodexSubagent,
   type CodexSubagentRoster
@@ -3169,8 +3168,8 @@ function normalizeCodexEvent(
     // Why: a pane can host a new Codex process after the old one exited without child Stop hooks.
     state.codexSubagentRosterByPaneKey.delete(paneKey)
   } else if (eventName === 'Stop') {
-    // Why: restart-hydrated children are provisional; without fresh child evidence they must not leave the root working forever.
-    reapUnconfirmedCodexSubagents(getOrCreateCodexSubagentRoster(state, paneKey))
+    // Why: Codex CLI 0.144 can omit child Stop hooks; later child activity safely recreates any agent still running.
+    state.codexSubagentRosterByPaneKey.delete(paneKey)
   }
   const previousLead = state.codexLeadStateByPaneKey.get(paneKey)
   state.codexLeadStateByPaneKey.set(paneKey, {

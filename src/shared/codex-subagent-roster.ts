@@ -9,9 +9,6 @@ type TrackedCodexSubagent = {
   model?: string
   state: 'working' | 'waiting'
   startedAt: number
-  /** Persisted rows need fresh lifecycle/tool evidence before they can keep a
-   *  parent Stop gated after Orca restarts. */
-  confirmedLive: boolean
 }
 
 export function upsertCodexSubagent(
@@ -32,7 +29,6 @@ export function upsertCodexSubagent(
     existing.agentType = fields.agentType ?? existing.agentType
     existing.model = fields.model ?? existing.model
     existing.state = fields.state
-    existing.confirmedLive = true
     return
   }
   if (roster.size >= AGENT_STATUS_MAX_SUBAGENTS) {
@@ -42,21 +38,12 @@ export function upsertCodexSubagent(
     agentType: fields.agentType,
     model: fields.model,
     state: fields.state,
-    startedAt: now,
-    confirmedLive: true
+    startedAt: now
   })
 }
 
 export function finishCodexSubagent(roster: CodexSubagentRoster, id: string): void {
   roster.delete(id)
-}
-
-export function reapUnconfirmedCodexSubagents(roster: CodexSubagentRoster): void {
-  for (const [id, tracked] of roster) {
-    if (!tracked.confirmedLive) {
-      roster.delete(id)
-    }
-  }
 }
 
 export function seedCodexSubagentRoster(
@@ -74,8 +61,7 @@ export function seedCodexSubagentRoster(
       agentType: snapshot.agentType,
       model: snapshot.model,
       state: snapshot.state,
-      startedAt: snapshot.startedAt,
-      confirmedLive: false
+      startedAt: snapshot.startedAt
     })
   }
 }

@@ -4314,21 +4314,35 @@ describe('Codex hook normalization', () => {
     expect(workingAgain?.payload.state).toBe('working')
     expect(workingAgain?.payload.subagents?.[0].state).toBe('working')
 
-    const gatedStop = _internals.normalizeHookPayload(
+    const rootStop = _internals.normalizeHookPayload(
       'codex',
       buildBody({ hook_event_name: 'Stop', model: 'gpt-5.4' }),
       'production'
     )
-    expect(gatedStop?.payload.state).toBe('working')
+    expect(rootStop?.payload.state).toBe('done')
+    expect(rootStop?.payload.subagents).toBeUndefined()
+
+    const resumedChild = _internals.normalizeHookPayload(
+      'codex',
+      buildBody({
+        hook_event_name: 'PreToolUse',
+        agent_id: 'child-session',
+        agent_type: 'reviewer',
+        model: 'gpt-5.4-mini',
+        tool_name: 'exec_command',
+        tool_input: { cmd: 'pnpm test' }
+      }),
+      'production'
+    )
+    expect(resumedChild?.payload.state).toBe('working')
+    expect(resumedChild?.payload.subagents?.[0]).toMatchObject({
+      id: 'child-session',
+      state: 'working'
+    })
 
     const stopped = _internals.normalizeHookPayload(
       'codex',
-      buildBody({
-        hook_event_name: 'SubagentStop',
-        agent_id: 'child-session',
-        agent_type: 'reviewer',
-        model: 'gpt-5.4-mini'
-      }),
+      buildBody({ hook_event_name: 'SubagentStop', agent_id: 'child-session' }),
       'production'
     )
     expect(stopped?.payload.state).toBe('done')
