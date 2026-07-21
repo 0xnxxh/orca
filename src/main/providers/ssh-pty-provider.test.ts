@@ -474,7 +474,7 @@ describe('SshPtyProvider', () => {
     mux.request.mockResolvedValue({ cols: 120, rows: 40 })
 
     await expect(provider.getAppliedSize(scopedPty1)).resolves.toEqual({ cols: 120, rows: 40 })
-    expect(mux.request).toHaveBeenCalledWith('pty.getSize', { id: 'pty-1' })
+    expect(mux.request).toHaveBeenCalledWith('pty.getSize', { id: 'pty-1' }, { timeoutMs: 1_000 })
   })
 
   it('caches only an old relay method-not-found response', async () => {

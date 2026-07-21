@@ -12,6 +12,10 @@ type UseTerminalWindowWakeRecoveryArgs = {
   panePtyBindingsRef?: React.RefObject<Map<number, IDisposable>>
 }
 
+type WindowWakePtyBinding = IDisposable & {
+  reassertPtySizeAfterWindowWake?: () => void
+}
+
 export function useTerminalWindowWakeRecovery({
   isVisible,
   managerRef,
@@ -32,6 +36,13 @@ export function useTerminalWindowWakeRecovery({
       }
       cancelAnimationFrame(wakeRecoveryFrameId)
       wakeRecoveryFrameId = null
+    }
+    const reassertPanePtySizes = (): void => {
+      for (const binding of panePtyBindingsRef?.current.values() ?? []) {
+        // Why: one settled read avoids duplicate SSH RPCs while still detecting a dropped resize.
+        const windowWakeBinding = binding as WindowWakePtyBinding
+        windowWakeBinding.reassertPtySizeAfterWindowWake?.()
+      }
     }
     const recoverVisibleWake = (
       clearGlyphAtlases: boolean,
@@ -62,12 +73,8 @@ export function useTerminalWindowWakeRecovery({
         isActive: isActiveRef.current,
         clearGlyphAtlases
       })
-      for (const binding of panePtyBindingsRef?.current.values() ?? []) {
-        // Why: fit-only wake recovery cannot detect a dropped remote resize
-        // when xterm is already at the desired grid; verify after fitting.
-        ;(binding as IDisposable & { noteVisibilityResume?: () => void }).noteVisibilityResume?.()
-      }
       if (typeof requestAnimationFrame !== 'function') {
+        reassertPanePtySizes()
         return
       }
       settledClearGlyphAtlases = clearGlyphAtlases
@@ -84,9 +91,7 @@ export function useTerminalWindowWakeRecovery({
           isActive: isActiveRef.current,
           clearGlyphAtlases: clearGlyphAtlasesOnSettle
         })
-        for (const binding of panePtyBindingsRef?.current.values() ?? []) {
-          ;(binding as IDisposable & { noteVisibilityResume?: () => void }).noteVisibilityResume?.()
-        }
+        reassertPanePtySizes()
       })
     }
     // Why: plain refocus (alt-tab, devtools) is frequent and often lands while

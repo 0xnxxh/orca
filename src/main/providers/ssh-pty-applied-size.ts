@@ -3,6 +3,8 @@ import { JsonRpcErrorCode } from '../ssh/relay-protocol'
 import { toRelaySshPtyId } from './ssh-pty-id'
 
 type AppliedPtySize = { cols: number; rows: number }
+// Why: wake repair can safely re-forward on failure, so never inherit the generic 30-second RPC timeout.
+const SSH_PTY_APPLIED_SIZE_TIMEOUT_MS = 1_000
 
 export function createSshPtyAppliedSizeReader(
   mux: SshChannelMultiplexer,
@@ -14,9 +16,16 @@ export function createSshPtyAppliedSizeReader(
       return null
     }
     try {
-      const result = (await mux.request('pty.getSize', {
-        id: toRelaySshPtyId(connectionId, id)
-      })) as { cols?: unknown; rows?: unknown } | null
+      const result = (await mux.request(
+        'pty.getSize',
+        {
+          id: toRelaySshPtyId(connectionId, id)
+        },
+        { timeoutMs: SSH_PTY_APPLIED_SIZE_TIMEOUT_MS }
+      )) as {
+        cols?: unknown
+        rows?: unknown
+      } | null
       supported = true
       if (
         !result ||
