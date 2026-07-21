@@ -6986,7 +6986,6 @@
           "cf4437a2f7": "Color negro ANSI",
           "adfdee23cb": "Negro",
           "68e9f07de0": "ANSI normal",
-          "fb8c6f1967": "Color para texto en negrita. Vuelve al color normal si no se establece.",
           "862e463f7f": "Texto en negrita",
           "b2c0857c49": "Color del texto seleccionado",
           "8b450b5305": "Primer plano de selección",
@@ -7002,7 +7001,8 @@
           "79f6bfb76e": "Primer plano",
           "cf37ff69f6": "Base",
           "8abdab9f7c": "Reiniciar ahora",
-          "907131d741": "Reiniciando…"
+          "907131d741": "Reiniciando…",
+          "605a35d600": "Not applied by the terminal renderer yet — xterm.js has no bold color slot. A saved value is preserved."
         },
         "UIZoomControl": {
           "c2c64b24d0": "Restablecer"

@@ -7008,7 +7008,6 @@
           "cf4437a2f7": "ANSI黒色",
           "adfdee23cb": "黒",
           "68e9f07de0": "ANSI標準",
-          "fb8c6f1967": "太字のテキストの色。設定されていない場合は、通常の色に戻ります。",
           "862e463f7f": "太字のテキスト",
           "b2c0857c49": "選択したテキストの文字色",
           "8b450b5305": "選択範囲の前景",
@@ -7024,7 +7023,8 @@
           "79f6bfb76e": "前景",
           "cf37ff69f6": "ベース",
           "8abdab9f7c": "今すぐ再起動",
-          "907131d741": "再起動中…"
+          "907131d741": "再起動中…",
+          "605a35d600": "Not applied by the terminal renderer yet — xterm.js has no bold color slot. A saved value is preserved."
         },
         "UIZoomControl": {
           "c2c64b24d0": "リセット"

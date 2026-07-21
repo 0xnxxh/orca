@@ -7046,7 +7046,6 @@
           "cf4437a2f7": "ANSI black color",
           "adfdee23cb": "Black",
           "68e9f07de0": "ANSI Normal",
-          "fb8c6f1967": "Color for bold text. Falls back to the normal color if not set.",
           "862e463f7f": "Bold Text",
           "b2c0857c49": "Text color of selected text",
           "8b450b5305": "Selection Foreground",
@@ -7062,7 +7061,8 @@
           "79f6bfb76e": "Foreground",
           "cf37ff69f6": "Base",
           "8abdab9f7c": "Restart now",
-          "907131d741": "Restarting…"
+          "907131d741": "Restarting…",
+          "605a35d600": "Not applied by the terminal renderer yet — xterm.js has no bold color slot. A saved value is preserved."
         },
         "UIZoomControl": {
           "c2c64b24d0": "Reset"
