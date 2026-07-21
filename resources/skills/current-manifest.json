@@ -40,7 +40,7 @@
     {
       "name": "orca-cli",
       "sourcePath": "skills/orca-cli",
-      "releaseRevision": 33,
+      "releaseRevision": 35,
       "packageDigest": "72f63dcaad3dea8bea54838835fe46c689c37b63cd96a9ef2f2537f0c2f6b8c8",
       "gitTreeSha": "97f6596bb43a56c6e81246f077c35144c9025343",
       "files": [
