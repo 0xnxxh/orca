@@ -20,10 +20,6 @@ import {
   type RecentSelfWrite
 } from '@/components/editor/editor-self-write-registry'
 import {
-  isRecentSelfMoveSource,
-  isRecentSelfMoveTarget
-} from '@/components/editor/editor-self-move-registry'
-import {
   isActiveMoveSourcePath,
   noteEditorPathMoveDestinationEvent
 } from '@/components/editor/editor-path-move-inflight'
@@ -496,17 +492,12 @@ export function createExternalWatchEventHandler(
       target.runtimeEnvironmentId,
       openFilesAtStart
     ).filter((fileId) => {
-      // Don't tombstone the source side of an Orca move (the tab is being
-      // re-homed). Op-scoped in-flight suppression is the durable mechanism; the
-      // TTL registry check is the transitional fallback until the coordinator
-      // (stage 4) drives every move through beginEditorPathMove.
+      // Don't tombstone the source side of an in-flight Orca move (the tab is
+      // being re-homed, not deleted).
       const file = openFilesAtStart.find((f) => f.id === fileId)
-      if (!file) {
-        return true
-      }
-      return !(
-        isActiveMoveSourcePath(target.worktreeId, target.runtimeEnvironmentId, file.filePath) ||
-        isRecentSelfMoveSource(file.filePath, target.runtimeEnvironmentId)
+      return (
+        !file ||
+        !isActiveMoveSourcePath(target.worktreeId, target.runtimeEnvironmentId, file.filePath)
       )
     })
     // Why: correlate creates to deletes by basename OR parent directory to
@@ -678,18 +669,16 @@ export function createExternalWatchEventHandler(
         // canAutoSaveOpenFile is the set of tabs that can hold unsaved edits —
         // the tabs the changed-on-disk banner serves.
         const dirtyIds = dirtyMatches.filter((f) => canAutoSaveOpenFile(f)).map((f) => f.id)
-        // A tab carrying move-echo provenance for this path (or, transitionally,
-        // a live TTL-registry target) may be seeing the move's own echo — settle
-        // it by disk identity: an echo leaves disk == the tab's baseline, a real
-        // external write does not.
+        // A tab carrying move-echo provenance for this path may be seeing the
+        // move's own echo — settle it by disk identity: an echo leaves disk ==
+        // the tab's baseline, a real external write does not.
         const normalizedAbsolutePath = normalizeRuntimePathForComparison(absolutePath)
-        const isSelfMoveEcho =
-          dirtyMatches.some(
-            (f) =>
-              f.pendingSelfMoveEcho &&
-              normalizeRuntimePathForComparison(f.pendingSelfMoveEcho.targetPath) ===
-                normalizedAbsolutePath
-          ) || isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)
+        const isSelfMoveEcho = dirtyMatches.some(
+          (f) =>
+            f.pendingSelfMoveEcho &&
+            normalizeRuntimePathForComparison(f.pendingSelfMoveEcho.targetPath) ===
+              normalizedAbsolutePath
+        )
         if (isSelfMoveEcho) {
           scheduleSelfMoveEchoVerification(target, notification, dirtyIds)
         } else {
