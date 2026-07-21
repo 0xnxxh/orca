@@ -2,9 +2,9 @@ import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-nati
 import { router } from 'expo-router'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 import type { CompatVerdict } from '../transport/protocol-compat'
+import { IOS_APP_STORE_URL } from './mobile-app-store-link'
 
 const RELEASES_URL = 'https://github.com/stablyai/orca/releases'
-const IOS_APP_STORE_URL = 'itms-apps://apps.apple.com/app/orca-ide/id6766130217'
 
 type Props = {
   verdict: Extract<CompatVerdict, { kind: 'blocked' }>

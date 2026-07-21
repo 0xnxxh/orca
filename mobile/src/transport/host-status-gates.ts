@@ -8,6 +8,8 @@ export type HostStatusGates = {
   hostCapabilities: string[]
   floatingWorkspaceEnabled: boolean
   compatVerdict: CompatVerdict
+  // Why: null when the host predates the field — callers show no update nudge.
+  recommendedMobileAppVersion: string | null
 }
 
 type LoadedHostStatusGates = HostStatusGates & {
@@ -56,7 +58,11 @@ export function useHostStatusGates(args: {
           client: requestClient,
           hostCapabilities: status.capabilities ?? [],
           floatingWorkspaceEnabled: status.floatingWorkspaceEnabled === true,
-          compatVerdict: verdict
+          compatVerdict: verdict,
+          recommendedMobileAppVersion:
+            typeof status.recommendedMobileAppVersion === 'string'
+              ? status.recommendedMobileAppVersion
+              : null
         })
         if (verdict.kind === 'blocked') {
           // Why: support breadcrumb to confirm a block fired vs a render bug; no PII, just version ints.
@@ -87,12 +93,14 @@ export function useHostStatusGates(args: {
     return {
       hostCapabilities: EMPTY_HOST_CAPABILITIES,
       floatingWorkspaceEnabled: false,
-      compatVerdict: { kind: 'ok' }
+      compatVerdict: { kind: 'ok' },
+      recommendedMobileAppVersion: null
     }
   }
   return {
     hostCapabilities: loaded.hostCapabilities,
     floatingWorkspaceEnabled: loaded.floatingWorkspaceEnabled,
-    compatVerdict: loaded.compatVerdict
+    compatVerdict: loaded.compatVerdict,
+    recommendedMobileAppVersion: loaded.recommendedMobileAppVersion
   }
 }

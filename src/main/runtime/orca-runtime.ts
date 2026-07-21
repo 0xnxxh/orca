@@ -293,6 +293,7 @@ import {
   BROWSER_HEADLESS_RUNTIME_CAPABILITY,
   BROWSER_CERTIFICATE_TRUST_RUNTIME_CAPABILITY,
   MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION,
+  RECOMMENDED_MOBILE_APP_VERSION,
   RUNTIME_CAPABILITIES,
   RUNTIME_PROTOCOL_VERSION,
   type RuntimeCapability
@@ -3259,6 +3260,10 @@ export class OrcaRuntimeService {
       hostPlatform: process.platform,
       terminalWindowsShell: this.store?.getSettings?.().terminalWindowsShell ?? null,
       floatingWorkspaceEnabled: this.store?.getSettings?.().floatingTerminalEnabled !== false,
+      // Why: the main process stamps its version into the env at startup;
+      // omit rather than fabricate when running outside that bootstrap (tests).
+      appVersion: process.env.ORCA_APP_VERSION,
+      recommendedMobileAppVersion: RECOMMENDED_MOBILE_APP_VERSION,
       protocolVersion: RUNTIME_PROTOCOL_VERSION,
       minCompatibleMobileVersion: MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION
     }

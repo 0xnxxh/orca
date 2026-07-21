@@ -21,6 +21,7 @@ import type {
   WorkspaceSessionState
 } from '../../shared/types'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../shared/agent-status-types'
+import { RECOMMENDED_MOBILE_APP_VERSION } from '../../shared/protocol-version'
 import { detectAgentStatusFromTitle, MAX_OSC_TITLE_CHARS } from '../../shared/agent-detection'
 import {
   addWorktree,
@@ -1703,6 +1704,19 @@ describe('OrcaRuntimeService', () => {
     expect(typeof status.minCompatibleMobileVersion).toBe('number')
     expect(status.protocolVersion).toBeGreaterThanOrEqual(1)
     expect(status.minCompatibleMobileVersion).toBeGreaterThanOrEqual(0)
+  })
+
+  it('reports app version and the recommended mobile app version on status', () => {
+    vi.stubEnv('ORCA_APP_VERSION', '9.9.9-test')
+    try {
+      const status = createRuntime().getStatus()
+      expect(status.appVersion).toBe('9.9.9-test')
+      expect(status.recommendedMobileAppVersion).toBe(RECOMMENDED_MOBILE_APP_VERSION)
+      // Why: the nudge constant must stay a plain semver string mobile can compare.
+      expect(RECOMMENDED_MOBILE_APP_VERSION).toMatch(/^\d+\.\d+\.\d+$/)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('reports the configured Windows terminal shell on status', () => {

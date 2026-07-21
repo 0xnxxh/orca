@@ -8,6 +8,11 @@ export type DesktopStatus = {
   // Why: absent on hosts that predate the mobile Floating Workspace entry;
   // treat absence as unsupported and hide the entry.
   floatingWorkspaceEnabled?: boolean
+  // Why: the desktop's own app version (semver); informational only.
+  appVersion?: string
+  // Why: newest shipped mobile app version per the desktop; absent on older
+  // hosts — fail open and show no update nudge.
+  recommendedMobileAppVersion?: string
 }
 
 export type RepoSummary = {
