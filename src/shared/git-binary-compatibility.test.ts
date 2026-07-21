@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -172,5 +172,30 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
       // the scalar prompt guards still provide the baseline fail-fast behavior.
       expect(supports(2, 31)).toBe(false)
     }
+  })
+
+  it('lists collapsed ignored entries for worktree includes on the baseline', async () => {
+    await writeFile(join(repoPath, '.gitignore'), '.env\ncache/\n')
+    await writeFile(join(repoPath, '.env'), 'ROOT=1\n')
+    await mkdir(join(repoPath, 'apps', 'web'), { recursive: true })
+    await writeFile(join(repoPath, 'apps', 'web', '.env'), 'NESTED=1\n')
+    await mkdir(join(repoPath, 'cache'))
+    await writeFile(join(repoPath, 'cache', 'artifact'), 'ignored\n')
+
+    const { stdout } = await runGit([
+      '-c',
+      'core.quotePath=false',
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '--directory',
+      '-z'
+    ])
+    const entries = stdout.split('\0').filter(Boolean)
+    expect(entries).toContain('.env')
+    expect(entries).toContain('apps/web/.env')
+    expect(entries).toContain('cache/')
+    expect(entries).not.toContain('cache/artifact')
   })
 })

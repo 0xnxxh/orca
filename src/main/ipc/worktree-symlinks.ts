@@ -1,4 +1,4 @@
-import { symlink, mkdir, stat, lstat, unlink, cp } from 'node:fs/promises'
+import { symlink, mkdir, stat, lstat, unlink, cp, realpath, rmdir, chmod } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import {
   ApfsCloneUnavailableError,
@@ -67,8 +67,40 @@ async function symlinkWorktreePath(
   await symlink(source, target, sourceIsDirectory ? 'dir' : 'file')
 }
 
-async function copyWorktreePath(source: string, target: string): Promise<void> {
+function isAlreadyExistsError(error: unknown): boolean {
+  return (error as { code?: unknown })?.code === 'EEXIST'
+}
+
+async function copyWorktreePath(
+  source: string,
+  target: string,
+  sourceIsDirectory: boolean
+): Promise<void> {
   await mkdir(dirname(target), { recursive: true })
+  if (sourceIsDirectory) {
+    const sourceMode = (await stat(source)).mode & 0o777
+    try {
+      // Why: owning the top-level directory prevents a raced directory from
+      // being merged with copied contents.
+      await mkdir(target, { mode: sourceMode })
+    } catch (error) {
+      if (isAlreadyExistsError(error)) {
+        return
+      }
+      throw error
+    }
+    try {
+      await cp(source, target, { recursive: true, force: false, errorOnExist: false })
+      if (process.platform !== 'win32') {
+        await chmod(target, sourceMode)
+      }
+    } catch (error) {
+      // Preserve partial output for diagnosis; remove only an empty reservation.
+      await rmdir(target).catch(() => undefined)
+      throw error
+    }
+    return
+  }
   // Why: force=false + errorOnExist=false skips (not clobbers) anything a racing
   // process placed at the target after the earlier existence preflight.
   await cp(source, target, { recursive: true, force: false, errorOnExist: false })
@@ -82,7 +114,10 @@ async function createWorktreeLinkedPath(
   mode: WorktreeMaterializeMode,
   options: WorktreeLinkedPathOptions
 ): Promise<void> {
-  if (options.platform === 'darwin' && !sourceIsSymbolicLink) {
+  // Why: copy mode promises independent contents; copying the link itself
+  // would let edits in the worktree mutate its shared target.
+  const copySource = mode === 'copy' && sourceIsSymbolicLink ? await realpath(source) : source
+  if (options.platform === 'darwin' && (!sourceIsSymbolicLink || mode === 'copy')) {
     try {
       const cloneWorktreePath =
         options.cloneWorktreePath ??
@@ -93,7 +128,7 @@ async function createWorktreeLinkedPath(
             cloneSourceIsDirectory,
             options.apfsCloneDeps ?? defaultApfsCloneDeps
           ))
-      await cloneWorktreePath(source, target, sourceIsDirectory)
+      await cloneWorktreePath(copySource, target, sourceIsDirectory)
       return
     } catch (error) {
       if (error instanceof WorktreeLinkedPathTargetExistsError) {
@@ -108,7 +143,7 @@ async function createWorktreeLinkedPath(
     }
   }
   if (mode === 'copy') {
-    await copyWorktreePath(source, target)
+    await copyWorktreePath(copySource, target, sourceIsDirectory)
     return
   }
   await symlinkWorktreePath(source, target, sourceIsDirectory)

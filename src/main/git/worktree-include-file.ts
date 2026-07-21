@@ -233,9 +233,9 @@ export async function resolveWorktreeIncludePaths(
       }
     }
 
-    // Glob patterns match against the collapsed gitignored entry list; run the
-    // enumeration only when a glob is actually present.
-    if (patterns.some((pattern) => !pattern.negated && pattern.hasGlob)) {
+    // Why: bare gitignore patterns match at every depth; direct stat covers the
+    // root candidate, while one collapsed enumeration discovers nested matches.
+    if (patterns.some((pattern) => !pattern.negated && (pattern.hasGlob || !pattern.anchored))) {
       for (const entry of await listGitignoredEntries(repoPath, options)) {
         addCandidate(entry)
       }

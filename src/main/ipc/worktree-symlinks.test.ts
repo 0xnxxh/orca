@@ -426,12 +426,27 @@ describe('createWorktreeCopiedPaths', () => {
 
   it('copies a directory recursively without symlinking', async () => {
     mkdirSync(join(primary, '.vscode'))
+    chmodSync(join(primary, '.vscode'), 0o750)
     writeFileSync(join(primary, '.vscode', 'settings.json'), '{}')
 
     await createWorktreeCopiedPaths(primary, worktree, ['.vscode'], { platform: 'linux' })
 
     expect(lstatSync(join(worktree, '.vscode')).isSymbolicLink()).toBe(false)
     expect(readFileSync(join(worktree, '.vscode', 'settings.json'), 'utf8')).toBe('{}')
+    if (process.platform !== 'win32') {
+      expect(statSync(join(worktree, '.vscode')).mode & 0o777).toBe(0o750)
+    }
+  })
+
+  posixIt('dereferences a top-level symlink into an independent copy', async () => {
+    writeFileSync(join(primary, '.env.shared'), 'SECRET=1\n')
+    symlinkSync(join(primary, '.env.shared'), join(primary, '.env'))
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.env'], { platform: 'linux' })
+
+    expect(lstatSync(join(worktree, '.env')).isSymbolicLink()).toBe(false)
+    writeFileSync(join(worktree, '.env'), 'SECRET=2\n')
+    expect(readFileSync(join(primary, '.env.shared'), 'utf8')).toBe('SECRET=1\n')
   })
 
   it('creates parent directories lazily for nested paths', async () => {
@@ -450,6 +465,24 @@ describe('createWorktreeCopiedPaths', () => {
     await createWorktreeCopiedPaths(primary, worktree, ['.env'], { platform: 'linux' })
 
     expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('MINE=1\n')
+  })
+
+  it('does not merge into a directory that appears during copy fallback', async () => {
+    mkdirSync(join(primary, 'config'))
+    writeFileSync(join(primary, 'config', 'source.json'), '{}')
+    const cloneWorktreePath = vi.fn(async () => {
+      mkdirSync(join(worktree, 'config'))
+      writeFileSync(join(worktree, 'config', 'mine.json'), '{}')
+      throw new Error('clonefile unsupported')
+    })
+
+    await createWorktreeCopiedPaths(primary, worktree, ['config'], {
+      platform: 'darwin',
+      cloneWorktreePath
+    })
+
+    expect(existsSync(join(worktree, 'config', 'source.json'))).toBe(false)
+    expect(existsSync(join(worktree, 'config', 'mine.json'))).toBe(true)
   })
 
   it('rejects traversal and treats absolute paths as repo-relative', async () => {

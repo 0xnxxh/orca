@@ -87,7 +87,24 @@ describe('resolveWorktreeIncludePaths', () => {
       '.env',
       'config/secrets.json'
     ])
-    // Literal-only files never pay for a full gitignored enumeration.
+    expect(gitExecFileAsyncMock.mock.calls.some(([args]) => args.includes('ls-files'))).toBe(true)
+  })
+
+  it('resolves bare literal patterns at any depth', async () => {
+    writeInclude('.env\n')
+    writeFileSync(join(repo, '.env'), 'ROOT=1')
+    mockGit({ entries: ['.env', 'apps/web/.env'], ignored: ['.env', 'apps/web/.env'] })
+
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env', 'apps/web/.env'])
+  })
+
+  it('avoids enumeration for root-anchored literal patterns', async () => {
+    writeInclude('/config/secrets.json\n')
+    mkdirSync(join(repo, 'config'))
+    writeFileSync(join(repo, 'config', 'secrets.json'), '{}')
+    mockGit({ ignored: ['config/secrets.json'] })
+
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['config/secrets.json'])
     expect(gitExecFileAsyncMock.mock.calls.every(([args]) => !args.includes('ls-files'))).toBe(true)
   })
 
