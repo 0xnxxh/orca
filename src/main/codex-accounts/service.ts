@@ -79,6 +79,10 @@ export type CodexAccountAddTarget = {
   wslDistro?: string | null
 }
 
+export type CodexAccountServiceLifecycle = {
+  onHostSystemDefaultSelected?: () => void
+}
+
 type ManagedHomeLocation = {
   managedHomePath: string
   managedHomeRuntime: 'host' | 'wsl'
@@ -158,7 +162,8 @@ export class CodexAccountService {
   constructor(
     private readonly store: Store,
     private readonly rateLimits: RateLimitService,
-    private readonly runtimeHome: CodexRuntimeHomeService
+    private readonly runtimeHome: CodexRuntimeHomeService,
+    private readonly lifecycle: CodexAccountServiceLifecycle = {}
   ) {
     this.safeSyncCanonicalConfigToManagedHomes()
   }
@@ -258,6 +263,11 @@ export class CodexAccountService {
   private async doReauthenticateAccount(accountId: string): Promise<CodexRateLimitAccountsState> {
     const account = this.requireAccount(accountId)
     const managedHomePath = this.ensureManagedHomeForReauthentication(account)
+    const accountTarget = getCodexSelectionTargetForAccount(account)
+    const selectedAccountId = getSelectedCodexAccountIdForTarget(
+      this.store.getSettings(),
+      accountTarget
+    )
 
     this.safeSyncCanonicalConfigIntoManagedHome(managedHomePath, undefined, account.id)
     await this.runCodexLogin(managedHomePath)
@@ -281,19 +291,24 @@ export class CodexAccountService {
           }
         : entry
     )
+    const activeSelection = setSelectedCodexAccountIdForTarget(
+      normalizeCodexRuntimeSelection(settings),
+      selectedAccountId,
+      accountTarget
+    )
 
+    // Why: login can transiently clear this runtime's selection; unrelated runtime validation must remain authoritative.
     this.store.updateSettings({
-      codexManagedAccounts: updatedAccounts
+      codexManagedAccounts: updatedAccounts,
+      activeCodexManagedAccountId: activeSelection.host,
+      activeCodexManagedAccountIdsByRuntime: activeSelection
     })
     this.safeSyncCanonicalConfigToManagedHomes()
     this.runtimeHome.clearLastWrittenAuthJson(accountId)
-    this.runtimeHome.syncForCurrentSelection(getCodexSelectionTargetForAccount(account))
+    this.runtimeHome.syncForCurrentSelection(accountTarget)
 
     // Why: re-auth can change the underlying Codex identity, so force a fresh read to avoid showing stale quota.
-    await this.rateLimits.refreshForCodexAccountChange(
-      undefined,
-      getCodexSelectionTargetForAccount(account)
-    )
+    await this.rateLimits.refreshForCodexAccountChange(undefined, accountTarget)
     return this.getSnapshot()
   }
 
@@ -314,6 +329,9 @@ export class CodexAccountService {
       activeCodexManagedAccountIdsByRuntime: nextSelection
     })
     this.runtimeHome.syncForCurrentSelection()
+    if (account.managedHomeRuntime === 'host' && nextSelection.host === null) {
+      this.lifecycle.onHostSystemDefaultSelected?.()
+    }
 
     this.safeRemoveManagedHome(account.managedHomePath, account.id)
     // Why: a removed account can no longer appear in the switcher dropdown,
@@ -361,6 +379,12 @@ export class CodexAccountService {
     })
     this.safeSyncCanonicalConfigToManagedHomes()
     this.runtimeHome.syncForCurrentSelection(effectiveTarget)
+    if (
+      accountId === null &&
+      normalizeCodexAccountSelectionTarget(effectiveTarget).runtime === 'host'
+    ) {
+      this.lifecycle.onHostSystemDefaultSelected?.()
+    }
 
     await this.rateLimits.refreshForCodexAccountChange(outgoingAccountId, effectiveTarget)
     return this.getSnapshot()
@@ -510,6 +534,9 @@ export class CodexAccountService {
         activeCodexManagedAccountId: nextSelection.host,
         activeCodexManagedAccountIdsByRuntime: nextSelection
       })
+      if (selection.host !== null && nextSelection.host === null) {
+        this.lifecycle.onHostSystemDefaultSelected?.()
+      }
     }
   }
 

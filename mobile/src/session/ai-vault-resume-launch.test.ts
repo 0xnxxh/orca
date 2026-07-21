@@ -198,7 +198,10 @@ describe('resumeAiVaultSessionInTerminal', () => {
           agentEnv: { ANTHROPIC_BASE_URL: 'http://localhost:3000' }
         },
         launchAgent: 'claude',
-        clientMutationId: 'resume-1'
+        clientMutationId: 'resume-1',
+        activate: false,
+        select: true,
+        navigation: 'caller'
       })
     ).resolves.toMatchObject({ id: 'tab-1', terminal: 'pty-1' })
     expect(sendRequest).toHaveBeenNthCalledWith(
@@ -214,7 +217,10 @@ describe('resumeAiVaultSessionInTerminal', () => {
           agentEnv: { ANTHROPIC_BASE_URL: 'http://localhost:3000' }
         },
         launchAgent: 'claude',
-        clientMutationId: 'resume-1'
+        clientMutationId: 'resume-1',
+        activate: false,
+        select: true,
+        navigation: 'caller'
       },
       // Why: a socket drop mid-resume must reject within the request timeout
       // instead of parking on the reconnect waiter with the spinner pinned.

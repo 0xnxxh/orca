@@ -146,6 +146,7 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'accounts.subscribe',
   'accounts.unsubscribe',
   'aiVault.listSessions',
+  'aiVault.prepareSessionResume',
   'browser.back',
   'browser.dialogAccept',
   'browser.dialogDismiss',
@@ -539,6 +540,7 @@ export class OrcaRuntimeRpcServer {
       return false
     }
     this.mobileRelayPairingProvider?.onDemandStateChanged?.()
+    this.runtime.forgetClientNavigationState(deviceId)
     this.mobileSocketWiring?.terminateDeviceConnections(device.token)
     return true
   }
@@ -548,6 +550,7 @@ export class OrcaRuntimeRpcServer {
     if (device?.scope !== 'runtime' || !this.deviceRegistry?.removeDevice(deviceId)) {
       return false
     }
+    this.runtime.forgetClientNavigationState(deviceId)
     this.mobileSocketWiring?.terminateDeviceConnections(device.token)
     return true
   }
@@ -848,7 +851,15 @@ export class OrcaRuntimeRpcServer {
             )
           },
           onBinary: (socket, bytes) => this.handleWebSocketBinaryMessage(bytes, socket.ws),
-          onReady: () => this.mobileRelayPairingProvider?.onDemandStateChanged?.(),
+          onReady: () => {
+            // Why: first authenticated mobile/remote client (direct WS and
+            // cloud relay both attach here) starts path-candidate tracking.
+            // Activation is a local-host concern: candidate buffers live on the
+            // buffer-owning host's runtime, so a remote runtime proxy may
+            // legitimately lack this method (its own server activates it).
+            this.runtime.activateRecentPtyPathCandidateTracking?.()
+            this.mobileRelayPairingProvider?.onDemandStateChanged?.()
+          },
           onClose: (socket, hasOtherConnections) => {
             if (!socket) {
               return
@@ -1093,6 +1104,7 @@ export class OrcaRuntimeRpcServer {
       await this.dispatcher.dispatchStreaming(request, replyForRequest, {
         connectionId,
         clientId: token,
+        pairedDeviceId: device.deviceId,
         // Why: gates the mobile-only payload diet so full-screen web/desktop clients aren't truncated.
         clientKind: device.scope,
         pairing: pairingContext,

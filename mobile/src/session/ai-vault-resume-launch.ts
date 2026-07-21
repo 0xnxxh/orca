@@ -4,6 +4,10 @@ import {
   buildAiVaultResumeShellCommand,
   realHomeCodexResumeEnvDeletion
 } from '../../../src/shared/ai-vault-types'
+import {
+  isAiVaultPrepareSessionResumeUnavailableError,
+  isLegacySharedCodexHome
+} from '../../../src/shared/ai-vault-resume-preparation'
 import { isResumableTuiAgent } from '../../../src/shared/agent-session-resume'
 import type { SleepingAgentLaunchConfig } from '../../../src/shared/agent-session-resume'
 import { buildAgentResumeStartupPlan } from '../../../src/shared/tui-agent-startup'
@@ -151,6 +155,39 @@ function normalizeMobileAiVaultResumeCommandOverrides(
 // on the reconnect waiter for the full reconnect budget, pinning the spinner.
 export const RESUME_RPC_TIMEOUT_MS = 30_000
 
+export async function prepareMobileAiVaultSessionResume(
+  client: Pick<RpcClient, 'sendRequest'>,
+  session: AiVaultSession
+): Promise<AiVaultSession> {
+  if (session.agent !== 'codex' || !isLegacySharedCodexHome(session.codexHome)) {
+    return session
+  }
+  const response = await client.sendRequest(
+    'aiVault.prepareSessionResume',
+    {
+      agent: session.agent,
+      filePath: session.filePath,
+      codexHome: session.codexHome,
+      executionHostId: session.executionHostId
+    },
+    { timeoutMs: RESUME_RPC_TIMEOUT_MS }
+  )
+  if (!response.ok) {
+    if (isAiVaultPrepareSessionResumeUnavailableError(response.error)) {
+      // Why: older hosts cannot prepare, but their shared home still supports the legacy resume path.
+      return session
+    }
+    throw new Error(
+      response.error?.message || 'Could not prepare this legacy Codex session. Retry resume.'
+    )
+  }
+  const result = response.result as { useRealCodexHome?: unknown } | null
+  if (result?.useRealCodexHome !== true) {
+    return session
+  }
+  return { ...session, codexHome: null }
+}
+
 export async function resumeAiVaultSessionInTerminal(
   client: Pick<RpcClient, 'sendRequest'>,
   worktreeId: string,
@@ -164,7 +201,10 @@ export async function resumeAiVaultSessionInTerminal(
       ...(launch.envToDelete ? { envToDelete: launch.envToDelete } : {}),
       ...(launch.launchConfig ? { launchConfig: launch.launchConfig } : {}),
       ...(launch.launchAgent ? { launchAgent: launch.launchAgent } : {}),
-      ...(launch.clientMutationId ? { clientMutationId: launch.clientMutationId } : {})
+      ...(launch.clientMutationId ? { clientMutationId: launch.clientMutationId } : {}),
+      activate: false,
+      select: true,
+      navigation: 'caller'
     },
     { timeoutMs: RESUME_RPC_TIMEOUT_MS }
   )

@@ -10,6 +10,8 @@ type AccountRuntime = {
   wslDistro?: string | null
 }
 
+type CodexAccountAuthWarning = 'missing-sign-in' | 'stale-sign-in'
+
 export function codexRateLimitTargetMatchesAccountRuntime(
   target: RateLimitRuntimeTarget,
   runtime: AccountRuntime
@@ -30,14 +32,17 @@ export function getCodexAccountAuthWarning(args: {
   activeAccountId: string | null
   accountId: string | null
   authKind?: CodexSystemDefaultIdentity['authKind']
-}): string | null {
+}): CodexAccountAuthWarning | null {
+  if (args.accountId !== args.activeAccountId) {
+    return null
+  }
   // Why: app-server reports API-key homes as a ChatGPT-auth error because
   // usage is unsupported; that is not a stale sign-in the user can re-auth.
   if (args.accountId === null && args.authKind === 'api-key') {
     return null
   }
-  if (args.accountId !== args.activeAccountId) {
-    return null
+  if (args.accountId === null && args.authKind === 'none') {
+    return 'missing-sign-in'
   }
   if (!codexRateLimitTargetMatchesAccountRuntime(args.target, args.runtime)) {
     return null
@@ -45,5 +50,5 @@ export function getCodexAccountAuthWarning(args: {
   if (args.limits?.status !== 'error' || !isCodexAuthError(args.limits.error)) {
     return null
   }
-  return args.limits.error?.trim() || 'Codex reported that this sign-in needs re-authentication.'
+  return 'stale-sign-in'
 }

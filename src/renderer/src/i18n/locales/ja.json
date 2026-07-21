@@ -746,8 +746,7 @@
         "a4c8e1b2f7": "Codex はまだ {{value0}} としてサインインしています",
         "d3e8a1f4b2": "アカウントを切り替えました",
         "9375620cc3": "Restart this session to use {{value0}}. It stays on the previous account until you do.",
-        "6133594b12": "Keep old account",
-        "b9000fe511": "Not now"
+        "6133594b12": "Keep old account"
       },
       "FirstLaunchBanner": {
         "b9e1b966c7": "通知を閉じる",
@@ -1784,7 +1783,9 @@
         "jiraSortDescending": "降順",
         "jiraSortBy": "並べ替え",
         "jiraToggleSortDirection": "{{value0}}に並べ替え",
-        "75a38d7df8": "GitHub data is temporarily unavailable. Its API may be down, rate-limited, or unreachable. Please try again shortly."
+        "75a38d7df8": "GitHub data is temporarily unavailable. Its API may be down, rate-limited, or unreachable. Please try again shortly.",
+        "noGithubSourceDetected": "No GitHub source detected for",
+        "noGithubSourceDetectedHint": "it may have no GitHub remote, or the source could not be resolved."
       },
       "Terminal": {
         "73768427cf": "閉じる",
@@ -3276,6 +3277,19 @@
             "dismiss": "Dismiss",
             "openSettings": "Open Settings",
             "gotIt": "Got it"
+          },
+          "UsageRosterPanel": {
+            "title": "Usage",
+            "openDetails": "Open usage details",
+            "notSignedIn": "not signed in",
+            "allAgents": "all agents",
+            "usageDetails": "Usage details & history",
+            "loadingUsage": "Loading usage…",
+            "usageUnavailable": "Usage unavailable",
+            "noUsageData": "No usage data",
+            "detailed": "Detailed",
+            "compact": "Compact",
+            "footerDetailAria": "Usage footer detail"
           }
         }
       },
@@ -4572,7 +4586,6 @@
           "modalDescription": "terminal から Linear スキルをインストールします。",
           "modalPrompt": "Agents が添付された Linear チケットを読み書きできるようにします。",
           "dontShowAgain": "今後表示しない",
-          "notNow": "後で",
           "missingBoth": "Orca CLI と Linear agent スキルがありません。",
           "missingCli": "Orca CLI がありません。",
           "missingSkill": "Linear agent スキルがありません。",
@@ -4952,7 +4965,8 @@
           "remoteScopeAuthContext": "各アカウントは {{value0}} 上に独自のサインインコンテキストを保持します。",
           "remoteEmptyClaudeAccounts": "{{value0}} に管理対象の Claude アカウントはありません。システム既定の Claude ログインを使用します。アカウントの追加はそのサーバー上で行ってください。",
           "remoteEmptyCodexAccounts": "{{value0}} に管理対象の Codex アカウントはありません。システム既定の Codex ログインを使用します。アカウントの追加はそのサーバー上で行ってください。",
-          "codexSystemDefaultCustomProvider": "カスタムプロバイダー — 使用量は追跡されません。"
+          "codexSystemDefaultCustomProvider": "カスタムプロバイダー — 使用量は追跡されません。",
+          "codexSystemDefaultNeedsSignIn": "{{value0}} の Codex サインインが見つかりません。"
         },
         "AdvancedPane": {
           "40b29e0bf3": "再起動",
@@ -5441,6 +5455,12 @@
             "defaultViewLabel": "デフォルトのネイティブ チャット ビュー",
             "defaultViewTerminal": "Terminal チャット",
             "defaultViewNative": "ネイティブチャット"
+          },
+          "agentDashboard": {
+            "title": "Agent Dashboard",
+            "description": "Pop-out Kanban board for monitoring agents across worktrees.",
+            "copy": "Adds an Agent Dashboard entry to the left sidebar. Open it to monitor attention, working, and idle agents in a separate window and jump into their live terminals.",
+            "toggleLabel": "Toggle Agent Dashboard"
           }
         },
         "FloatingWorkspacePane": {
@@ -6989,7 +7009,6 @@
           "cf4437a2f7": "ANSI黒色",
           "adfdee23cb": "黒",
           "68e9f07de0": "ANSI標準",
-          "fb8c6f1967": "太字のテキストの色。設定されていない場合は、通常の色に戻ります。",
           "862e463f7f": "太字のテキスト",
           "b2c0857c49": "選択したテキストの文字色",
           "8b450b5305": "選択範囲の前景",
@@ -7005,7 +7024,8 @@
           "79f6bfb76e": "前景",
           "cf37ff69f6": "ベース",
           "8abdab9f7c": "今すぐ再起動",
-          "907131d741": "再起動中…"
+          "907131d741": "再起動中…",
+          "605a35d600": "Not applied by the terminal renderer yet — xterm.js has no bold color slot. A saved value is preserved."
         },
         "UIZoomControl": {
           "c2c64b24d0": "リセット"
@@ -7651,6 +7671,10 @@
               "title": "ネイティブチャット",
               "description": "対応エージェントのターミナルセッション用デスクトップチャット画面をプレビューします。",
               "grok": "grok"
+            },
+            "agentDashboard": {
+              "title": "Agent Dashboard",
+              "description": "Pop-out Kanban board for monitoring agents across worktrees."
             }
           }
         },
@@ -7818,7 +7842,9 @@
             "d2d2d929c0": "Rich Markdown Spellcheck",
             "4497e2e2bb": "Show browser spelling underlines and suggestions while editing rich Markdown.",
             "e61157e926": "エディターのワードラップ",
-            "005be5c699": "水平スクロールを使わずに、ファイルエディターで長い行を折り返します。"
+            "005be5c699": "水平スクロールを使わずに、ファイルエディターで長い行を折り返します。",
+            "editorFontFamily": "Editor Font Family",
+            "editorFontFamilyDesc": "Font used by file editors and diff views. Leave empty to follow the terminal font."
           }
         },
         "git": {
@@ -9225,6 +9251,11 @@
         },
         "MobileRelayBetaNotice": {
           "notice": "Orca Relay is in beta."
+        },
+        "EditorFontFamilySetting": {
+          "title": "Editor Font Family",
+          "description": "Font used by file editors and diff views. Leave empty to follow the terminal font.",
+          "placeholder": "Same as terminal font"
         }
       },
       "right": {
@@ -10223,13 +10254,6 @@
               "control": {
                 "ai": {
                   "cfafa92509": "送信する未解決の競合はありません。"
-                }
-              }
-            },
-            "hosted": {
-              "review": {
-                "actions": {
-                  "e475c29b17": "This will merge the {{value0}}."
                 }
               }
             }
@@ -12293,6 +12317,15 @@
         },
         "richMarkdownSourceOwningCutFeedback": {
           "selectLessContent": "保持されたHTML引用を切り取るには、選択範囲を小さくするかコードモードを使用してください。"
+        },
+        "editor": {
+          "save": {
+            "failure": {
+              "notice": {
+                "8c59ce5075": "Failed to save the file. Please try again."
+              }
+            }
+          }
         }
       },
       "diff": {
@@ -13539,6 +13572,42 @@
           "githubPullRequestNumber": "PR #{{value0}}"
         }
       }
+    }
+  },
+  "dashboardPopout": {
+    "placeholder": {
+      "title": "Agent dashboard",
+      "description": "This is where all your agents will show up at a glance. The board is coming soon."
+    },
+    "recoverableError": {
+      "title": "Orca dashboard hit an error.",
+      "description": "The dashboard could not finish rendering. Retry to remount it, or reopen it."
+    },
+    "bucket": {
+      "attention": "Needs You",
+      "working": "Working",
+      "idle": "Idle",
+      "empty": "None"
+    },
+    "title": "Agents",
+    "total": "{{count}} total",
+    "card": {
+      "you": "You",
+      "time": {
+        "justNow": "たった今",
+        "minutes": "{{count}}分",
+        "hours": "{{count}}時間",
+        "days": "{{count}}日"
+      }
+    },
+    "terminal": {
+      "closed": "No live terminal — this agent's pane has closed.",
+      "focusWorktree": "Focus worktree"
+    }
+  },
+  "dashboard": {
+    "sidebar": {
+      "label": "Agent Dashboard"
     }
   },
   "browser": {
