@@ -348,7 +348,7 @@ describe('reconcileSerializedMarkdown', () => {
     // previously threw; every such edit must reconcile and stay render-equal to `edited`.
     const lines: string[] = []
     for (let i = 0; i < 20; i++) {
-      lines.push(`_强调${i}_ 这是一段包含很多中文字符的文本内容用来测试多字节偏移问题`)
+      lines.push(`_强调${i}_ 😀 café 这是一段包含很多中文字符的文本内容用来测试多字节偏移问题`)
     }
     const originalSource = `# 标题\n\n${lines.join('\n')}\n`
     const baseCanonical = fakeCanonicalize(originalSource)
@@ -356,11 +356,13 @@ describe('reconcileSerializedMarkdown', () => {
     // Sweep insert positions so we exercise the offsets that used to overshoot the byte target.
     const chars = [...baseCanonical]
     for (let pos = 5; pos < chars.length - 5; pos += 3) {
-      const edited = `${chars.slice(0, pos).join('')}插${chars.slice(pos).join('')}`
+      const inserted = ['插', '😀', 'é'][Math.floor(pos / 3) % 3]
+      const edited = `${chars.slice(0, pos).join('')}${inserted}${chars.slice(pos).join('')}`
 
       const reconciled = reconcileWithFake(originalSource, edited)
 
-      // Never throws, and the reconciled bytes render exactly to `edited`.
+      // Never throws or falls back to a whole-document canonical rewrite.
+      expect(reconciled).not.toBe(edited)
       expect(fakeCanonicalize(reconciled).trimEnd()).toBe(edited.trimEnd())
     }
   })
