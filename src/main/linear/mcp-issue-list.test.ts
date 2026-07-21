@@ -99,6 +99,9 @@ describe('MCP-compatible Linear issue listing', () => {
         })
       })
     )
+    expect(rawRequest.mock.calls[0]?.[1]).not.toMatchObject({
+      filter: { team: { or: expect.arrayContaining([{ id: { eq: 'ENG' } }]) } }
+    })
     expect(result.meta).toMatchObject({
       limit: 100,
       returned: 1,
@@ -125,6 +128,26 @@ describe('MCP-compatible Linear issue listing', () => {
       filter: { assignee: { null: true }, parent: { null: true } }
     })
     expect(result.meta.workspaceId).toBe('workspace-1')
+  })
+
+  it('uses UUID comparators only for values Linear accepts as IDs', async () => {
+    rawRequest.mockResolvedValue({
+      data: { issues: { nodes: [], pageInfo: { hasNextPage: false } } }
+    })
+    const { listMcpIssues } = await import('./mcp-issue-list')
+    const teamId = 'edece093-2649-4b21-9bf6-ff9192adf4f7'
+    const assigneeId = '256097b4-4dc3-4722-b5c3-888faa672554'
+    const parentId = 'c1097b4f-fa53-49da-ab5d-a38c596fbb5f'
+
+    await listMcpIssues({ team: teamId, assignee: assigneeId, parentId })
+
+    expect(rawRequest.mock.calls[0]?.[1]).toMatchObject({
+      filter: {
+        team: { or: expect.arrayContaining([{ id: { eq: teamId } }]) },
+        assignee: { or: expect.arrayContaining([{ id: { eq: assigneeId } }]) },
+        parent: { id: { eq: parentId } }
+      }
+    })
   })
 
   it('fans out one bounded provider request per workspace concurrently', async () => {

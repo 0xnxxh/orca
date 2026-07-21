@@ -416,6 +416,12 @@ function formatCommandFlagHelp(flag: string, commandPath: string[]): string {
   if (command === 'linear search' && flag === 'workspace') {
     return '--workspace <id|all>  Connected Linear workspace id, or all'
   }
+  if (command === 'linear list-issues' && flag === 'cursor') {
+    return '--cursor <cursor>      Opaque cursor returned by a previous list-issues page'
+  }
+  if (command === 'linear list-issues' && flag === 'workspace') {
+    return '--workspace <id|all>  Connected Linear workspace id, or all'
+  }
   if (command.startsWith('linear ') && flag === 'workspace') {
     return '--workspace <id>      Connected Linear workspace id'
   }

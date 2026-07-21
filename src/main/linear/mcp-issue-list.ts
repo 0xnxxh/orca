@@ -228,7 +228,7 @@ function buildIssueFilter(request: LinearMcpIssueListRequest): Record<string, un
 function namedFilter(value: string, includeKey = false, includeVersion = false): object {
   return {
     or: [
-      { id: { eq: value } },
+      ...(isLinearId(value) ? [{ id: { eq: value } }] : []),
       { name: { eqIgnoreCase: value } },
       ...(includeKey ? [{ key: { eqIgnoreCase: value } }] : []),
       ...(includeVersion ? [{ version: { eqIgnoreCase: value } }] : [])
@@ -268,12 +268,16 @@ function nullableUserFilter(value: string): object {
   }
   return {
     or: [
-      { id: { eq: value } },
+      ...(isLinearId(value) ? [{ id: { eq: value } }] : []),
       { displayName: { eqIgnoreCase: value } },
       { name: { eqIgnoreCase: value } },
       { email: { eqIgnoreCase: value } }
     ]
   }
+}
+
+function isLinearId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 }
 
 function clampLimit(limit: number | undefined): number {

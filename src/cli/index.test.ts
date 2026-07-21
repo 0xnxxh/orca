@@ -395,6 +395,16 @@ describe('orca root help', () => {
     expect(searchHelp).toContain('orca linear search <query>')
     expect(searchHelp).toContain('--workspace <id|all>  Connected Linear workspace id, or all')
     expect(searchHelp).toContain('--query <text>        Text to search across Linear issues')
+
+    logSpy.mockClear()
+    await main(['linear', 'list-issues', '--help'], '/tmp/repo')
+
+    const listIssuesHelp = String(logSpy.mock.calls[0][0])
+    expect(listIssuesHelp).toContain(
+      '--cursor <cursor>      Opaque cursor returned by a previous list-issues page'
+    )
+    expect(listIssuesHelp).toContain('--workspace <id|all>  Connected Linear workspace id, or all')
+    expect(listIssuesHelp).not.toContain('Line cursor from a previous read')
     expect(callMock).not.toHaveBeenCalled()
   })
 
