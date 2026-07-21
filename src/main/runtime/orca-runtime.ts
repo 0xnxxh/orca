@@ -2666,6 +2666,7 @@ export class OrcaRuntimeService {
       {
         clientId: string
         viewport: { cols: number; rows: number } | null
+        leaseOnly: boolean
         wasResizedToPhone: boolean
         previousCols: number | null
         previousRows: number | null
@@ -2740,6 +2741,7 @@ export class OrcaRuntimeService {
       record: {
         clientId: string
         viewport: { cols: number; rows: number } | null
+        leaseOnly: boolean
         wasResizedToPhone: boolean
         previousCols: number | null
         previousRows: number | null
@@ -8601,7 +8603,7 @@ export class OrcaRuntimeService {
     // mutable Map order or passive desktop-mode watchers.
     let earliest: { clientId: string; subscribedAt: number } | null = null
     for (const subscriber of subscribers.values()) {
-      if (!subscriber.wasResizedToPhone) {
+      if (subscriber.leaseOnly || !subscriber.wasResizedToPhone) {
         continue
       }
       if (earliest === null || subscriber.subscribedAt < earliest.subscribedAt) {
@@ -11318,6 +11320,7 @@ export class OrcaRuntimeService {
       return { updated: false, applied: false }
     }
     sub.viewport = viewport
+    sub.leaseOnly = false
     sub.lastActedAt = Date.now()
 
     const mode = this.getMobileDisplayMode(ptyId)
@@ -11889,7 +11892,7 @@ export class OrcaRuntimeService {
     viewport?: { cols: number; rows: number }
   ): Promise<boolean> {
     try {
-      return await this.handleMobileSubscribeInternal(ptyId, clientId, viewport)
+      return await this.handleMobileSubscribeInternal(ptyId, clientId, viewport, false)
     } finally {
       // Every subscribe path mutates mobileSubscribers — resync the daemon
       // background mark once, whatever branch returned.
@@ -11897,10 +11900,19 @@ export class OrcaRuntimeService {
     }
   }
 
+  async handleMobileLeaseSubscribe(ptyId: string, clientId: string): Promise<void> {
+    try {
+      await this.handleMobileSubscribeInternal(ptyId, clientId, undefined, true)
+    } finally {
+      this.notifyRemoteTerminalViewPresenceChanged(ptyId)
+    }
+  }
+
   private async handleMobileSubscribeInternal(
     ptyId: string,
     clientId: string,
-    viewport?: { cols: number; rows: number }
+    viewport: { cols: number; rows: number } | undefined,
+    leaseOnly: boolean
   ): Promise<boolean> {
     const mode = this.getMobileDisplayMode(ptyId)
 
@@ -11927,6 +11939,7 @@ export class OrcaRuntimeService {
       inner.set(clientId, {
         ...softLeaver.record,
         viewport: viewport ?? null,
+        leaseOnly,
         lastActedAt: Date.now()
       })
       if (!viewport) {
@@ -11992,7 +12005,11 @@ export class OrcaRuntimeService {
       inner.set(clientId, {
         clientId,
         viewport: null,
-        wasResizedToPhone: false,
+        leaseOnly,
+        // Why: a late lease-only resubscribe owns the existing fit hold's
+        // eventual restore without becoming terminal-output query authority.
+        wasResizedToPhone:
+          existing?.wasResizedToPhone === true || heldOverride != null || pendingRestore != null,
         previousCols,
         previousRows,
         subscribedAt,
@@ -12013,6 +12030,7 @@ export class OrcaRuntimeService {
       inner.set(clientId, {
         clientId,
         viewport,
+        leaseOnly,
         wasResizedToPhone: false,
         previousCols: null,
         previousRows: null,
@@ -12025,6 +12043,7 @@ export class OrcaRuntimeService {
     inner.set(clientId, {
       clientId,
       viewport,
+      leaseOnly,
       wasResizedToPhone: true,
       previousCols,
       previousRows,
@@ -12147,6 +12166,7 @@ export class OrcaRuntimeService {
       record: {
         clientId: subscriber.clientId,
         viewport: subscriber.viewport,
+        leaseOnly: subscriber.leaseOnly,
         wasResizedToPhone: subscriber.wasResizedToPhone,
         previousCols: subscriber.previousCols,
         previousRows: subscriber.previousRows,

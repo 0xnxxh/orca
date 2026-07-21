@@ -272,6 +272,31 @@ describe('mobile subscribe integration', () => {
     expect(resizes).toEqual([])
   })
 
+  it('lease-only subscribe registers send authority without resize or query authority', async () => {
+    const { runtime, ptySizes, resizes } = createRuntime()
+
+    await runtime.handleMobileLeaseSubscribe('pty-1', 'client-a')
+
+    expect(runtime.isMobileSubscriberActive('pty-1')).toBe(true)
+    expect(runtime.isMobileTerminalQueryReplyAuthority('pty-1', 'client-a')).toBe(false)
+    expect(ptySizes.get('pty-1')).toEqual({ cols: 150, rows: 40 })
+    expect(resizes).toEqual([])
+    const claim = runtime.beginMobileInputFloor('pty-1', 'client-a')
+    expect(claim).not.toBeNull()
+    claim?.rollback()
+  })
+
+  it('lease-only resubscribe preserves fit hold without becoming query authority', async () => {
+    const { runtime } = createRuntime()
+    await runtime.handleMobileSubscribe('pty-1', 'client-a', { cols: 45, rows: 20 })
+    expect(runtime.isMobileTerminalQueryReplyAuthority('pty-1', 'client-a')).toBe(true)
+
+    runtime.handleMobileUnsubscribe('pty-1', 'client-a')
+    await runtime.handleMobileLeaseSubscribe('pty-1', 'client-a')
+
+    expect(runtime.isMobileTerminalQueryReplyAuthority('pty-1', 'client-a')).toBe(false)
+  })
+
   it('handleMobileUnsubscribe restores PTY after debounce in auto mode', async () => {
     const { runtime, ptySizes } = createRuntime()
     await runtime.handleMobileSubscribe('pty-1', 'client-a', { cols: 45, rows: 20 })
@@ -744,6 +769,23 @@ describe('mobile subscribe integration', () => {
       // The new subscribe should have cancelled the pending restore timer.
       await vi.advanceTimersByTimeAsync(120_000)
       expect(ptySizes.get('pty-1')).toEqual({ cols: 45, rows: 20 })
+    })
+
+    it('late lease-only resubscribe schedules a fresh restore when it leaves', async () => {
+      settingsState.mobileAutoRestoreFitMs = 60_000
+      const { runtime, ptySizes } = createRuntime()
+      await runtime.handleMobileSubscribe('pty-1', 'client-a', { cols: 45, rows: 20 })
+      runtime.handleMobileUnsubscribe('pty-1', 'client-a')
+
+      // Land after soft-leave grace so the lease rebuilds its subscriber record.
+      await vi.advanceTimersByTimeAsync(251)
+      await runtime.handleMobileLeaseSubscribe('pty-1', 'client-a')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(ptySizes.get('pty-1')).toEqual({ cols: 45, rows: 20 })
+
+      runtime.handleMobileUnsubscribe('pty-1', 'client-a')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(ptySizes.get('pty-1')).toEqual({ cols: 150, rows: 40 })
     })
 
     it('reclaimTerminalForDesktop with active subscriber resets mode so next subscribe re-fits', async () => {
