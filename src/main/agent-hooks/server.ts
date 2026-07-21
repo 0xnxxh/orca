@@ -824,14 +824,26 @@ export class AgentHookServer {
       this.onAgentStatus?.(enriched)
       return enriched
     }
-    // Why: Codex child hooks expose a child session id that normalization drops; retain the root resume identity across child-driven states.
-    const providerSessionPreservingPayload =
+    const previousCodexRoot =
       payload.payload.agentType === 'codex' &&
       payload.toolAgentId &&
-      !payload.providerSession &&
-      previous?.payload.agentType === 'codex' &&
-      previous.providerSession
-        ? { ...payload, providerSession: previous.providerSession }
+      previous?.payload.agentType === 'codex'
+        ? previous
+        : undefined
+    const preservedProviderSession = !payload.providerSession
+      ? previousCodexRoot?.providerSession
+      : undefined
+    const preservedRootModel = !payload.payload.model ? previousCodexRoot?.payload.model : undefined
+    // Why: an SSH relay restart forgets root-only fields; child hooks must not erase durable resume/model identity.
+    const rootContextPreservingPayload =
+      preservedProviderSession || preservedRootModel
+        ? {
+            ...payload,
+            ...(preservedProviderSession ? { providerSession: preservedProviderSession } : {}),
+            payload: preservedRootModel
+              ? { ...payload.payload, model: preservedRootModel }
+              : payload.payload
+          }
         : payload
     const identity = resolveAgentStatusIdentity({
       existing: previous
@@ -841,7 +853,7 @@ export class AgentHookServer {
             updatedAt: previous.receivedAt
           }
         : undefined,
-      incoming: providerSessionPreservingPayload.payload.agentType,
+      incoming: rootContextPreservingPayload.payload.agentType,
       now
     })
     if (
@@ -854,12 +866,12 @@ export class AgentHookServer {
       return previous
     }
     const identityResolvedPayload =
-      identity.agentType === providerSessionPreservingPayload.payload.agentType
-        ? providerSessionPreservingPayload
+      identity.agentType === rootContextPreservingPayload.payload.agentType
+        ? rootContextPreservingPayload
         : {
-            ...providerSessionPreservingPayload,
+            ...rootContextPreservingPayload,
             payload: {
-              ...providerSessionPreservingPayload.payload,
+              ...rootContextPreservingPayload.payload,
               agentType: identity.agentType
             }
           }

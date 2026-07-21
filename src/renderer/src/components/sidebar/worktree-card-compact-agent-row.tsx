@@ -63,7 +63,15 @@ function getCompactAgentSecondary(agent: DashboardAgentRowData): string {
       return toolName
     }
   }
-  return agent.entry.lastAssistantMessage?.trim() || formatAgentTypeLabel(agent.agentType)
+  const lastAssistantMessage = agent.entry.lastAssistantMessage?.trim()
+  if (lastAssistantMessage) {
+    return lastAssistantMessage
+  }
+  // Why: child rows without descriptions use their role as primary text; repeating its formatted label adds no information.
+  if (agent.rowSource === 'subagent' && agent.entry.prompt?.trim() === agent.agentType.trim()) {
+    return ''
+  }
+  return formatAgentTypeLabel(agent.agentType)
 }
 
 function getCompactAgentTime(agent: DashboardAgentRowData, now: number): string | null {

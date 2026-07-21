@@ -89,7 +89,7 @@ afterEach(() => {
 })
 
 describe('AgentHookServer listener replay', () => {
-  it('retains the root Codex session across child-driven waiting and completion states', () => {
+  it('retains root Codex identity when relay child events omit it', () => {
     const server = new AgentHookServer()
     const providerSession = { key: 'session_id' as const, id: 'root-session' }
 
@@ -97,7 +97,12 @@ describe('AgentHookServer listener replay', () => {
       {
         paneKey: PANE,
         providerSession,
-        payload: { state: 'working', prompt: 'coordinate reviewers', agentType: 'codex' }
+        payload: {
+          state: 'working',
+          prompt: 'coordinate reviewers',
+          agentType: 'codex',
+          model: 'gpt-5.4'
+        }
       },
       'conn-1'
     )
@@ -109,7 +114,10 @@ describe('AgentHookServer listener replay', () => {
       },
       'conn-1'
     )
-    expect(server.getStatusSnapshot()[0].providerSession).toEqual(providerSession)
+    expect(server.getStatusSnapshot()[0]).toMatchObject({
+      model: 'gpt-5.4',
+      providerSession
+    })
 
     server.ingestRemote(
       {
@@ -122,6 +130,7 @@ describe('AgentHookServer listener replay', () => {
     )
     expect(server.getStatusSnapshot()[0]).toMatchObject({
       state: 'done',
+      model: 'gpt-5.4',
       providerSession
     })
   })
