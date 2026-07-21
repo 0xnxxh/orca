@@ -128,6 +128,7 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
   const primary = getCompactAgentPrimary(agent)
   const isLineageChild = agent.lineage?.depth === 1
   const secondary = getCompactAgentSecondary(agent)
+  const model = agent.entry.model?.trim() ?? ''
   const shortTime = getCompactAgentTime(agent, now)
   const cacheTimer = usePromptCacheCountdownForPane(agent.paneKey, cacheTimerActive)
 
@@ -218,6 +219,17 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
           </span>
         )}
       </span>
+      {model && (
+        <span
+          className={cn(
+            'max-w-24 shrink-0 truncate font-mono text-[10px]',
+            isFocusedPane ? 'text-foreground/70' : 'text-muted-foreground/70'
+          )}
+          title={model}
+        >
+          {model}
+        </span>
+      )}
       {hasChildDisclosure && !childAgentsExpanded && (
         <span
           className={cn(

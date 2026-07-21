@@ -2891,6 +2891,7 @@ export function useIpcEvents(): void {
         state: data.state,
         prompt: data.prompt,
         agentType: data.agentType,
+        model: data.model,
         toolName: data.toolName,
         toolInput: data.toolInput,
         // Why: the live AskUserQuestion prompt rides this field; omitting it drops the native question card on web/mobile.

@@ -89,6 +89,43 @@ afterEach(() => {
 })
 
 describe('AgentHookServer listener replay', () => {
+  it('retains the root Codex session across child-driven waiting and completion states', () => {
+    const server = new AgentHookServer()
+    const providerSession = { key: 'session_id' as const, id: 'root-session' }
+
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        providerSession,
+        payload: { state: 'working', prompt: 'coordinate reviewers', agentType: 'codex' }
+      },
+      'conn-1'
+    )
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        toolAgentId: 'child-session',
+        payload: { state: 'waiting', prompt: 'coordinate reviewers', agentType: 'codex' }
+      },
+      'conn-1'
+    )
+    expect(server.getStatusSnapshot()[0].providerSession).toEqual(providerSession)
+
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        hookEventName: 'SubagentStop',
+        toolAgentId: 'child-session',
+        payload: { state: 'done', prompt: 'coordinate reviewers', agentType: 'codex' }
+      },
+      'conn-1'
+    )
+    expect(server.getStatusSnapshot()[0]).toMatchObject({
+      state: 'done',
+      providerSession
+    })
+  })
+
   it('applies inferred interrupts through the cached status lifecycle', () => {
     vi.useFakeTimers()
     vi.setSystemTime(1_000)
@@ -4209,6 +4246,95 @@ describe('Claude hook normalization', () => {
 })
 
 describe('Codex hook normalization', () => {
+  it('tracks nested subagents with their role, model, and lifecycle state', () => {
+    const root = _internals.normalizeHookPayload(
+      'codex',
+      buildBody({
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'Coordinate the review',
+        model: 'gpt-5.4'
+      }),
+      'production'
+    )
+    expect(root?.payload.model).toBe('gpt-5.4')
+
+    const started = _internals.normalizeHookPayload(
+      'codex',
+      buildBody({
+        hook_event_name: 'SubagentStart',
+        session_id: 'child-session',
+        agent_id: 'child-session',
+        agent_type: 'reviewer',
+        model: 'gpt-5.4-mini'
+      }),
+      'production'
+    )
+    expect(started?.providerSession).toBeUndefined()
+    expect(started?.payload).toMatchObject({
+      state: 'working',
+      prompt: 'Coordinate the review',
+      model: 'gpt-5.4',
+      subagents: [
+        {
+          id: 'child-session',
+          agentType: 'reviewer',
+          model: 'gpt-5.4-mini',
+          state: 'working'
+        }
+      ]
+    })
+
+    const waiting = _internals.normalizeHookPayload(
+      'codex',
+      buildBody({
+        hook_event_name: 'PermissionRequest',
+        agent_id: 'child-session',
+        agent_type: 'reviewer',
+        model: 'gpt-5.4-mini',
+        tool_name: 'exec_command',
+        tool_input: { cmd: 'git fetch' }
+      }),
+      'production'
+    )
+    expect(waiting?.payload.state).toBe('waiting')
+    expect(waiting?.payload.subagents?.[0].state).toBe('waiting')
+
+    const workingAgain = _internals.normalizeHookPayload(
+      'codex',
+      buildBody({
+        hook_event_name: 'PreToolUse',
+        agent_id: 'child-session',
+        agent_type: 'reviewer',
+        model: 'gpt-5.4-mini',
+        tool_name: 'exec_command',
+        tool_input: { cmd: 'git fetch' }
+      }),
+      'production'
+    )
+    expect(workingAgain?.payload.state).toBe('working')
+    expect(workingAgain?.payload.subagents?.[0].state).toBe('working')
+
+    const gatedStop = _internals.normalizeHookPayload(
+      'codex',
+      buildBody({ hook_event_name: 'Stop', model: 'gpt-5.4' }),
+      'production'
+    )
+    expect(gatedStop?.payload.state).toBe('working')
+
+    const stopped = _internals.normalizeHookPayload(
+      'codex',
+      buildBody({
+        hook_event_name: 'SubagentStop',
+        agent_id: 'child-session',
+        agent_type: 'reviewer',
+        model: 'gpt-5.4-mini'
+      }),
+      'production'
+    )
+    expect(stopped?.payload.state).toBe('done')
+    expect(stopped?.payload.subagents).toBeUndefined()
+  })
+
   it('Stop carries last_assistant_message into lastAssistantMessage', () => {
     const result = _internals.normalizeHookPayload(
       'codex',
@@ -6238,6 +6364,70 @@ describe('Last-status persistence', () => {
       // Why: migration must be one-time, else every launch re-prunes the same persisted idle rows.
       const persisted = JSON.parse(readFileSync(lastStatusPath(), 'utf8'))
       expect(persisted.entries[PANE].payload.subagents).toBeUndefined()
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('restores Codex child hierarchy and reaps unconfirmed children on the next root Stop', async () => {
+    mkdirSync(join(userDataPath, 'agent-hooks'), { recursive: true })
+    const receivedAt = recentTs()
+    writeFileSync(
+      lastStatusPath(),
+      JSON.stringify({
+        version: 2,
+        entries: {
+          [PANE]: {
+            paneKey: PANE,
+            tabId: 'tab-1',
+            worktreeId: 'wt-1',
+            receivedAt,
+            stateStartedAt: recentTs(-1000),
+            payload: {
+              state: 'working',
+              prompt: 'coordinate reviews',
+              agentType: 'codex',
+              model: 'gpt-5.4',
+              subagents: [
+                {
+                  id: '11111111-2222-4333-8444-555555555555',
+                  state: 'working',
+                  startedAt: receivedAt - 5000,
+                  agentType: 'reviewer',
+                  model: 'gpt-5.4-mini'
+                }
+              ]
+            }
+          }
+        }
+      }),
+      'utf8'
+    )
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({
+          state: 'working',
+          model: 'gpt-5.4',
+          subagents: [
+            expect.objectContaining({
+              id: '11111111-2222-4333-8444-555555555555',
+              model: 'gpt-5.4-mini'
+            })
+          ]
+        })
+      ])
+
+      await postHookEvent(
+        server,
+        buildBody({ hook_event_name: 'Stop', model: 'gpt-5.4' }),
+        '/hook/codex'
+      )
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({ state: 'done', model: 'gpt-5.4', subagents: undefined })
+      ])
     } finally {
       server.stop()
     }

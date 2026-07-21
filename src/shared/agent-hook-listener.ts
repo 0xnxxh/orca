@@ -37,6 +37,15 @@ import {
   upsertWorkingClaudeSubagent,
   type ClaudeSubagentRoster
 } from './claude-subagent-roster'
+import {
+  codexRosterEffectiveState,
+  codexRosterToSnapshots,
+  finishCodexSubagent,
+  reapUnconfirmedCodexSubagents,
+  seedCodexSubagentRoster,
+  upsertCodexSubagent,
+  type CodexSubagentRoster
+} from './codex-subagent-roster'
 import { ORCA_HOOK_PROTOCOL_VERSION } from './agent-hook-types'
 import { REMOTE_AGENT_HOOK_ENV, type AgentHookSource } from './agent-hook-relay'
 import {
@@ -89,6 +98,10 @@ export type HookListenerState = {
   claudeSubagentRosterByPaneKey: Map<string, ClaudeSubagentRoster>
   /** Last state from the LEAD session's own events (subagent events carry agent_id, excluded), so a SubagentStop can re-emit pane status; `interrupted` persists so the eventual done still carries it. */
   claudeLeadStateByPaneKey: Map<string, ClaudeLeadTurnState>
+  /** Live thread-spawn children per Codex pane. */
+  codexSubagentRosterByPaneKey: Map<string, CodexSubagentRoster>
+  /** Root Codex state/model, kept separate from child hook traffic. */
+  codexLeadStateByPaneKey: Map<string, CodexLeadTurnState>
 }
 
 export type ClaudeLeadTurnState = {
@@ -98,6 +111,11 @@ export type ClaudeLeadTurnState = {
   waitingAgentId?: string
   /** Lead state a child-induced wait displaced, restored when the wait clears; can't invent 'working' since the done-gate only downgrades done→working, never back. */
   stateBeforeWait?: Pick<ClaudeLeadTurnState, 'state' | 'interrupted'>
+}
+
+type CodexLeadTurnState = {
+  state: 'working' | 'waiting' | 'done'
+  model?: string
 }
 
 export function createHookListenerState(): HookListenerState {
@@ -110,7 +128,9 @@ export function createHookListenerState(): HookListenerState {
     antigravityCompletedTranscriptByPaneKey: new Map(),
     ampCompletedCacheKeys: new Set(),
     claudeSubagentRosterByPaneKey: new Map(),
-    claudeLeadStateByPaneKey: new Map()
+    claudeLeadStateByPaneKey: new Map(),
+    codexSubagentRosterByPaneKey: new Map(),
+    codexLeadStateByPaneKey: new Map()
   }
 }
 
@@ -122,6 +142,8 @@ export function clearPaneCacheState(state: HookListenerState, paneKey: string): 
   deletePaneScopedSetEntry(state.ampCompletedCacheKeys, paneKey)
   state.claudeSubagentRosterByPaneKey.delete(paneKey)
   state.claudeLeadStateByPaneKey.delete(paneKey)
+  state.codexSubagentRosterByPaneKey.delete(paneKey)
+  state.codexLeadStateByPaneKey.delete(paneKey)
 }
 
 function movePaneScopedMapEntries<T>(
@@ -163,6 +185,8 @@ export function movePaneCacheState(
   movePaneScopedSetEntries(state.ampCompletedCacheKeys, fromPaneKey, toPaneKey)
   movePaneScopedMapEntries(state.claudeSubagentRosterByPaneKey, fromPaneKey, toPaneKey)
   movePaneScopedMapEntries(state.claudeLeadStateByPaneKey, fromPaneKey, toPaneKey)
+  movePaneScopedMapEntries(state.codexSubagentRosterByPaneKey, fromPaneKey, toPaneKey)
+  movePaneScopedMapEntries(state.codexLeadStateByPaneKey, fromPaneKey, toPaneKey)
 }
 
 function clearPaneTurnCacheState(state: HookListenerState, paneKey: string): void {
@@ -202,6 +226,8 @@ export function clearAllListenerCaches(state: HookListenerState): void {
   state.warnedEnvs.clear()
   state.claudeSubagentRosterByPaneKey.clear()
   state.claudeLeadStateByPaneKey.clear()
+  state.codexSubagentRosterByPaneKey.clear()
+  state.codexLeadStateByPaneKey.clear()
 }
 
 /** Warn-once on cross-build (`version`) and dev-vs-prod (`env`) mismatches; the relay's "remote" env marker is a location tag, not a build env, so it must not warn as a stale local hook. */
@@ -3000,6 +3026,104 @@ function hasExplicitPromptForSource(
   return eventName === 'agent.start' && promptText.length > 0
 }
 
+function getOrCreateCodexSubagentRoster(
+  state: HookListenerState,
+  paneKey: string
+): CodexSubagentRoster {
+  let roster = state.codexSubagentRosterByPaneKey.get(paneKey)
+  if (!roster) {
+    roster = new Map()
+    state.codexSubagentRosterByPaneKey.set(paneKey, roster)
+  }
+  return roster
+}
+
+export function seedCodexSubagentRosterFromSnapshots(
+  state: HookListenerState,
+  paneKey: string,
+  snapshots: readonly AgentSubagentSnapshot[]
+): void {
+  if (snapshots.length === 0 || state.codexSubagentRosterByPaneKey.has(paneKey)) {
+    return
+  }
+  seedCodexSubagentRoster(getOrCreateCodexSubagentRoster(state, paneKey), snapshots)
+}
+
+function buildCodexStatusPayload(
+  state: HookListenerState,
+  eventName: unknown,
+  promptText: string,
+  paneKey: string,
+  hookPayload: Record<string, unknown>,
+  options: { stateName: 'working' | 'waiting' | 'done'; updateLead: boolean }
+): ParsedAgentStatusPayload | null {
+  const snapshot = options.updateLead
+    ? resolveToolState(state, paneKey, extractToolFields('codex', eventName, hookPayload), {
+        resetOnNewTurn: isNewTurnEvent('codex', eventName)
+      })
+    : (state.lastToolByPaneKey.get(paneKey) ?? {})
+  const lead = state.codexLeadStateByPaneKey.get(paneKey)
+
+  return normalizeAgentStatusPayload({
+    state: options.stateName,
+    prompt: resolvePrompt(state, paneKey, promptText, {
+      resetOnNewTurn: options.updateLead && isNewTurnEvent('codex', eventName)
+    }),
+    agentType: 'codex',
+    model: lead?.model,
+    toolName: snapshot.toolName,
+    toolInput: snapshot.toolInput,
+    interactivePrompt: snapshot.interactivePrompt,
+    lastAssistantMessage: snapshot.lastAssistantMessage,
+    subagents: codexRosterToSnapshots(state.codexSubagentRosterByPaneKey.get(paneKey))
+  })
+}
+
+function buildCodexChildDrivenStatusPayload(
+  state: HookListenerState,
+  eventName: unknown,
+  paneKey: string,
+  hookPayload: Record<string, unknown>
+): ParsedAgentStatusPayload | null {
+  const leadState = state.codexLeadStateByPaneKey.get(paneKey)?.state ?? 'working'
+  const stateName = codexRosterEffectiveState(
+    state.codexSubagentRosterByPaneKey.get(paneKey),
+    leadState
+  )
+  return buildCodexStatusPayload(state, eventName, '', paneKey, hookPayload, {
+    stateName,
+    updateLead: false
+  })
+}
+
+function normalizeCodexSubagentLifecycleEvent(
+  state: HookListenerState,
+  eventName: 'SubagentStart' | 'SubagentStop',
+  paneKey: string,
+  hookPayload: Record<string, unknown>
+): ParsedAgentStatusPayload | null {
+  const agentId = readString(hookPayload, 'agent_id')
+  if (!agentId) {
+    return null
+  }
+  const roster = getOrCreateCodexSubagentRoster(state, paneKey)
+  if (eventName === 'SubagentStart') {
+    upsertCodexSubagent(
+      roster,
+      agentId,
+      {
+        agentType: readString(hookPayload, 'agent_type'),
+        model: readString(hookPayload, 'model'),
+        state: 'working'
+      },
+      Date.now()
+    )
+  } else {
+    finishCodexSubagent(roster, agentId)
+  }
+  return buildCodexChildDrivenStatusPayload(state, eventName, paneKey, hookPayload)
+}
+
 function normalizeCodexEvent(
   state: HookListenerState,
   eventName: unknown,
@@ -3007,6 +3131,10 @@ function normalizeCodexEvent(
   paneKey: string,
   hookPayload: Record<string, unknown>
 ): ParsedAgentStatusPayload | null {
+  if (eventName === 'SubagentStart' || eventName === 'SubagentStop') {
+    return normalizeCodexSubagentLifecycleEvent(state, eventName, paneKey, hookPayload)
+  }
+
   const stateName =
     eventName === 'SessionStart' ||
     eventName === 'UserPromptSubmit' ||
@@ -3018,31 +3146,47 @@ function normalizeCodexEvent(
         : eventName === 'Stop'
           ? 'done'
           : null
-
   if (!stateName) {
     return null
   }
 
-  const snapshot = resolveToolState(
-    state,
-    paneKey,
-    extractToolFields('codex', eventName, hookPayload),
-    { resetOnNewTurn: isNewTurnEvent('codex', eventName) }
-  )
+  const agentId = readString(hookPayload, 'agent_id')
+  if (agentId) {
+    upsertCodexSubagent(
+      getOrCreateCodexSubagentRoster(state, paneKey),
+      agentId,
+      {
+        agentType: readString(hookPayload, 'agent_type'),
+        model: readString(hookPayload, 'model'),
+        state: stateName === 'waiting' ? 'waiting' : 'working'
+      },
+      Date.now()
+    )
+    return buildCodexChildDrivenStatusPayload(state, eventName, paneKey, hookPayload)
+  }
 
-  return parseAgentStatusPayload(
-    JSON.stringify({
-      state: stateName,
-      prompt: resolvePrompt(state, paneKey, promptText, {
-        resetOnNewTurn: isNewTurnEvent('codex', eventName)
-      }),
-      agentType: 'codex',
-      toolName: snapshot.toolName,
-      toolInput: snapshot.toolInput,
-      interactivePrompt: snapshot.interactivePrompt,
-      lastAssistantMessage: snapshot.lastAssistantMessage
-    })
+  if (eventName === 'SessionStart') {
+    // Why: a pane can host a new Codex process after the old one exited without child Stop hooks.
+    state.codexSubagentRosterByPaneKey.delete(paneKey)
+  } else if (eventName === 'Stop') {
+    // Why: restart-hydrated children are provisional; without fresh child evidence they must not leave the root working forever.
+    reapUnconfirmedCodexSubagents(getOrCreateCodexSubagentRoster(state, paneKey))
+  }
+  const previousLead = state.codexLeadStateByPaneKey.get(paneKey)
+  state.codexLeadStateByPaneKey.set(paneKey, {
+    state: stateName,
+    model:
+      readString(hookPayload, 'model') ??
+      (eventName === 'SessionStart' ? undefined : previousLead?.model)
+  })
+  const effectiveState = codexRosterEffectiveState(
+    state.codexSubagentRosterByPaneKey.get(paneKey),
+    stateName
   )
+  return buildCodexStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
+    stateName: effectiveState,
+    updateLead: true
+  })
 }
 
 function normalizeOpenCodeFamilyEvent(
@@ -3694,7 +3838,12 @@ export function normalizeHookPayload(
   }
 
   // Why: connectionId is null here; ingestRemote stamps it from mux identity on receive. See docs/design/agent-status-over-ssh.md §5.
-  const providerSession = extractAgentProviderSession(source, hookPayloadRecord)
+  // Why: Codex child hooks expose the child's session_id on the parent's pane;
+  // treating it as the root resume id would replace the terminal's real session.
+  const providerSession =
+    source === 'codex' && readString(hookPayloadRecord, 'agent_id')
+      ? null
+      : extractAgentProviderSession(source, hookPayloadRecord)
   const providerSessionOnly =
     source === 'pi' && eventName === 'session_start' && providerSession !== null
   // Why: Pi session_start carries resume identity while idle; providerSessionOnly makes receivers discard the placeholder row.

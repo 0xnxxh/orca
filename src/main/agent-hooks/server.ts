@@ -26,6 +26,7 @@ import {
   resolveHookSource,
   preparePendingGrokResultDiscovery,
   seedClaudeSubagentRosterFromSnapshots,
+  seedCodexSubagentRosterFromSnapshots,
   warnOnHookEnvOrVersionMismatch,
   writeEndpointFile,
   type AgentHookEventPayload,
@@ -157,11 +158,11 @@ function dropHydratedIdleClaudeSubagents(
   ) {
     return payload
   }
-  const workingSubagents = payload.subagents.filter((subagent) => subagent.state === 'working')
+  const activeSubagents = payload.subagents.filter((subagent) => subagent.state !== 'idle')
   // Why: older builds persisted finished Claude children as idle rows; prune them so restart can't resurrect the pile.
   return {
     ...payload,
-    subagents: workingSubagents.length > 0 ? workingSubagents : undefined
+    subagents: activeSubagents.length > 0 ? activeSubagents : undefined
   }
 }
 
@@ -266,7 +267,7 @@ function toAgentStatusIpcPayload(entry: EnrichedAgentHookEventPayload): AgentSta
   }
 }
 
-// Why: OSC-only dedupe; omits `subagents` (OSC never carries them) so an OSC ping can't wipe the hook-cached roster. Don't reuse for hook comparisons.
+// Why: OSC never carries model/children; omit both so an equivalent OSC ping preserves the hook-cached identity graph.
 function equivalentParsedAgentStatusPayload(
   a: ParsedAgentStatusPayload,
   b: ParsedAgentStatusPayload
@@ -547,7 +548,7 @@ export class AgentHookServer {
       return false
     }
     // Why: a 'working' pane can be child-driven; Ctrl+C doesn't stop background children, so inferring done would retire live child rows.
-    if (payload.subagents?.some((subagent) => subagent.state === 'working')) {
+    if (payload.subagents?.some((subagent) => subagent.state !== 'idle')) {
       return false
     }
 
@@ -565,6 +566,7 @@ export class AgentHookServer {
         state: 'done',
         prompt: payload.prompt,
         agentType,
+        ...(payload.model ? { model: payload.model } : {}),
         interrupted: true,
         // Why: idle children are display state; dropping them on an inferred interrupt blanks rows a later hook would restore.
         ...(payload.subagents ? { subagents: payload.subagents } : {})
@@ -822,6 +824,15 @@ export class AgentHookServer {
       this.onAgentStatus?.(enriched)
       return enriched
     }
+    // Why: Codex child hooks expose a child session id that normalization drops; retain the root resume identity across child-driven states.
+    const providerSessionPreservingPayload =
+      payload.payload.agentType === 'codex' &&
+      payload.toolAgentId &&
+      !payload.providerSession &&
+      previous?.payload.agentType === 'codex' &&
+      previous.providerSession
+        ? { ...payload, providerSession: previous.providerSession }
+        : payload
     const identity = resolveAgentStatusIdentity({
       existing: previous
         ? {
@@ -830,7 +841,7 @@ export class AgentHookServer {
             updatedAt: previous.receivedAt
           }
         : undefined,
-      incoming: payload.payload.agentType,
+      incoming: providerSessionPreservingPayload.payload.agentType,
       now
     })
     if (
@@ -843,12 +854,12 @@ export class AgentHookServer {
       return previous
     }
     const identityResolvedPayload =
-      identity.agentType === payload.payload.agentType
-        ? payload
+      identity.agentType === providerSessionPreservingPayload.payload.agentType
+        ? providerSessionPreservingPayload
         : {
-            ...payload,
+            ...providerSessionPreservingPayload,
             payload: {
-              ...payload.payload,
+              ...providerSessionPreservingPayload.payload,
               agentType: identity.agentType
             }
           }
@@ -1818,13 +1829,21 @@ export class AgentHookServer {
             Math.max(previousWatermark ?? -1, entry.receivedAt)
           )
         }
-        // Why: seed only working children across restart; a later full inventory reaps stale ones.
+        // Why: restore live child hierarchy immediately; provider-specific reconciliation reaps stale seeds.
         if (entry.payload.subagents) {
-          seedClaudeSubagentRosterFromSnapshots(
-            this.state,
-            resolvedPaneKey,
-            entry.payload.subagents
-          )
+          if (entry.payload.agentType === 'codex') {
+            seedCodexSubagentRosterFromSnapshots(
+              this.state,
+              resolvedPaneKey,
+              entry.payload.subagents
+            )
+          } else if (entry.payload.agentType === 'claude') {
+            seedClaudeSubagentRosterFromSnapshots(
+              this.state,
+              resolvedPaneKey,
+              entry.payload.subagents
+            )
+          }
         }
         hydrated += 1
       } else {
