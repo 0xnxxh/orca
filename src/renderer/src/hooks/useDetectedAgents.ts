@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useAppStore } from '@/store'
 import type { TuiAgent } from '../../../shared/types'
 
@@ -7,9 +7,10 @@ export type UseDetectedAgentsResult = {
   detectedIds: TuiAgent[] | null
   isLoading: boolean
   isRefreshing: boolean
-  /** Re-runs `preflight.refreshAgents` and updates every subscribed surface in
-   *  the same tick. Idempotent while in flight: concurrent callers receive the
-   *  same pending promise. */
+  /** Forces a re-detect on the target host (`preflight.refreshAgents` for
+   *  local/runtime targets, a fresh probe for SSH) and updates every
+   *  subscribed surface in the same tick. Idempotent while in flight:
+   *  concurrent callers receive the same pending promise. */
   refresh: () => Promise<TuiAgent[]>
 }
 
@@ -87,11 +88,34 @@ export function useDetectedAgents(
     }
     return s.isDetectingAgents
   })
-  const isRefreshing = useAppStore((s) => (targetKind === 'local' ? s.isRefreshingAgents : false))
+  const isRefreshing = useAppStore((s) => {
+    if (targetKind === 'runtime' && targetId) {
+      return s.isRefreshingRuntimeAgents[targetId] ?? false
+    }
+    if (targetKind === 'ssh' && targetId) {
+      return s.isDetectingRemoteAgents[targetId] ?? false
+    }
+    return targetKind === 'local' ? s.isRefreshingAgents : false
+  })
   const ensureLocal = useAppStore((s) => s.ensureDetectedAgents)
   const ensureRemote = useAppStore((s) => s.ensureRemoteDetectedAgents)
   const ensureRuntime = useAppStore((s) => s.ensureRuntimeDetectedAgents)
-  const refresh = useAppStore((s) => s.refreshDetectedAgents)
+  const refreshLocal = useAppStore((s) => s.refreshDetectedAgents)
+  const refreshRuntime = useAppStore((s) => s.refreshRuntimeDetectedAgents)
+  const clearRemote = useAppStore((s) => s.clearRemoteDetectedAgents)
+  // Why: refresh must hit the same host the list came from — refreshing the
+  // local PATH while showing a remote server's agents is a silent no-op.
+  const refresh = useCallback((): Promise<TuiAgent[]> => {
+    if (targetKind === 'runtime' && targetId) {
+      return refreshRuntime(targetId)
+    }
+    if (targetKind === 'ssh' && targetId) {
+      // Why: SSH hosts have no refresh RPC; dropping the cache forces a probe.
+      clearRemote(targetId)
+      return ensureRemote(targetId)
+    }
+    return refreshLocal()
+  }, [targetKind, targetId, refreshRuntime, clearRemote, ensureRemote, refreshLocal])
 
   useEffect(() => {
     if (isUnknown) {

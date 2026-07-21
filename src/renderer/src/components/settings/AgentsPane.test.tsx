@@ -25,16 +25,20 @@ import { TooltipProvider } from '../ui/tooltip'
 
 const detectedAgentsMock = vi.hoisted(() => ({
   detectedIds: ['claude'] as TuiAgent[] | null,
-  refresh: vi.fn()
+  refresh: vi.fn(),
+  lastTarget: undefined as unknown
 }))
 
 vi.mock('@/hooks/useDetectedAgents', () => ({
-  useDetectedAgents: () => ({
-    detectedIds: detectedAgentsMock.detectedIds,
-    isLoading: detectedAgentsMock.detectedIds === null,
-    isRefreshing: false,
-    refresh: detectedAgentsMock.refresh
-  })
+  useDetectedAgents: (target: unknown) => {
+    detectedAgentsMock.lastTarget = target
+    return {
+      detectedIds: detectedAgentsMock.detectedIds,
+      isLoading: detectedAgentsMock.detectedIds === null,
+      isRefreshing: false,
+      refresh: detectedAgentsMock.refresh
+    }
+  }
 }))
 
 type ReactElementLike = {
@@ -142,12 +146,45 @@ describe('AgentsPane', () => {
   beforeEach(() => {
     detectedAgentsMock.detectedIds = ['claude']
     detectedAgentsMock.refresh.mockReset()
+    detectedAgentsMock.lastTarget = undefined
     useAppStore.setState({
       settingsSearchQuery: '',
       detectedAgentIds: ['claude'],
       isDetectingAgents: false,
-      isRefreshingAgents: false
-    })
+      isRefreshingAgents: false,
+      runtimeEnvironments: []
+    } as never)
+  })
+
+  it('detects agents locally when no active remote server is set', () => {
+    renderPane(getDefaultSettings('/tmp'))
+
+    expect(detectedAgentsMock.lastTarget).toEqual({ kind: 'local' })
+  })
+
+  it('scopes agent detection to the active remote server', () => {
+    // Repro for the "Remote Server lists local agents" bug: with an Active
+    // Server selected, the Installed list must probe that server's PATH.
+    // Why the mutation: renderToStaticMarkup makes useSyncExternalStore read
+    // the zustand SERVER snapshot (getInitialState), so setState is invisible
+    // here — patch the initial-state object itself and restore it after.
+    const initialState = useAppStore.getInitialState() as unknown as {
+      runtimeEnvironments: unknown
+    }
+    const priorRuntimeEnvironments = initialState.runtimeEnvironments
+    initialState.runtimeEnvironments = [{ id: 'env-1', name: 'Coder' }]
+
+    try {
+      const markup = renderPane({
+        ...getDefaultSettings('/tmp'),
+        activeRuntimeEnvironmentId: 'env-1'
+      })
+
+      expect(detectedAgentsMock.lastTarget).toEqual({ kind: 'runtime', environmentId: 'env-1' })
+      expect(markup).toContain('on Coder')
+    } finally {
+      initialState.runtimeEnvironments = priorRuntimeEnvironments
+    }
   })
 
   it('renders the keep-awake toggle from settings', () => {
