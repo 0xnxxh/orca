@@ -111,26 +111,6 @@ export function LinearAgentSkillPane(): React.JSX.Element {
       keywords={getLinearAgentSkillPaneSearchEntries()[0].keywords}
       className="space-y-5 py-2"
     >
-      <p className="text-xs text-muted-foreground">
-        {translate(
-          'auto.components.settings.LinearAgentSkillPane.manageConnectionHint',
-          'Review connected Linear workspaces and API keys in'
-        )}{' '}
-        <Button
-          type="button"
-          variant="link"
-          size="sm"
-          className="h-auto gap-1 p-0 text-xs align-baseline"
-          onClick={openIntegrationSettings}
-        >
-          <Blocks className="size-3" />
-          {translate(
-            'auto.components.settings.LinearAgentSkillPane.manageConnectionLink',
-            'Integrations settings'
-          )}
-        </Button>
-      </p>
-
       <AgentSkillSetupPanel
         title={translate(
           'auto.components.settings.LinearAgentSkillPane.skillTitle',
@@ -191,6 +171,26 @@ export function LinearAgentSkillPane(): React.JSX.Element {
         resolveIcon={resolveLinearExampleIcon}
         slashCommand={`/${ORCA_LINEAR_SKILL_NAME}`}
       />
+
+      <p className="text-xs text-muted-foreground">
+        {translate(
+          'auto.components.settings.LinearAgentSkillPane.manageConnectionHint',
+          'Review connected Linear workspaces and API keys in'
+        )}{' '}
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto gap-1 p-0 text-xs align-baseline"
+          onClick={openIntegrationSettings}
+        >
+          <Blocks className="size-3" />
+          {translate(
+            'auto.components.settings.LinearAgentSkillPane.manageConnectionLink',
+            'Integrations settings'
+          )}
+        </Button>
+      </p>
     </SearchableSetting>
   )
 }
