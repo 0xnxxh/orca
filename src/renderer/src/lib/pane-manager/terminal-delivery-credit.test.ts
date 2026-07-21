@@ -27,4 +27,18 @@ describe('terminal delivery credit', () => {
     expect(completeInner).toHaveBeenCalledOnce()
     expect(completeOuter).toHaveBeenCalledOnce()
   })
+
+  it('auto-settles before a deferred consumer can claim the delivery', async () => {
+    const { deliverTerminalDataWithDeferredCredit, takeCurrentTerminalDeliveryCredit } =
+      await import('./terminal-delivery-credit')
+    const complete = vi.fn()
+    let claimLater: (() => (() => void) | null) | null = null
+
+    deliverTerminalDataWithDeferredCredit(complete, () => {
+      claimLater = takeCurrentTerminalDeliveryCredit
+    })
+
+    expect(complete).toHaveBeenCalledOnce()
+    expect(claimLater!()).toBeNull()
+  })
 })

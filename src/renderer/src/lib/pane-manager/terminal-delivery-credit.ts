@@ -4,6 +4,7 @@ type TerminalDeliveryCredit = {
   credited: boolean
 }
 
+// Why: consumers must claim during deliver(); after it returns this synchronous slot is restored and unclaimed credit settles.
 let currentDeliveryCredit: TerminalDeliveryCredit | null = null
 
 function completeTerminalDeliveryCredit(credit: TerminalDeliveryCredit): void {
