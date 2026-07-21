@@ -3288,7 +3288,7 @@
             "detailed": "Detailed",
             "compact": "Compact",
             "footerDetailAria": "Usage footer detail",
-            "detailedTooltip": "Uso completo con barras, etiquetas y porcentajes.",
+            "detailedTooltip": "Uso completo con barras, etiquetas y porcentajes",
             "compactTooltip": "Uso condensado: sólo la ventana más estrecha"
           }
         }

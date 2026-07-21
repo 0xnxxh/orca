@@ -3288,8 +3288,8 @@
             "detailed": "Detailed",
             "compact": "Compact",
             "footerDetailAria": "Usage footer detail",
-            "detailedTooltip": "バー、ラベル、パーセントを完全に使用",
-            "compactTooltip": "凝縮された使用法: 最も狭いウィンドウのみ"
+            "detailedTooltip": "バー・ラベル・パーセントを含む完全な使用状況",
+            "compactTooltip": "凝縮された使用状況: 最も狭いウィンドウのみ"
           }
         }
       },
