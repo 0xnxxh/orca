@@ -5,6 +5,9 @@ import type { Store } from '../persistence'
 import { rectHasVisibleAreaOnAnyDisplay } from './window-bounds-validation'
 import { sendToTrustedUIRenderer } from '../ipc/ui'
 import { installPrivilegedWindowNavigationPolicy } from './privileged-window-navigation'
+import { stepUIZoomLevel, type UIZoomDirection } from '../../shared/ui-zoom-level'
+import { resolveWindowShortcutAction } from '../../shared/window-shortcut-policy'
+import type { KeybindingOverrides } from '../../shared/keybindings'
 
 const MIN_WIDTH = 480
 const MIN_HEIGHT = 360
@@ -28,6 +31,26 @@ export function getDashboardPopoutWindow(): BrowserWindow | null {
 
 export function isDashboardPopoutRenderer(sender: WebContents): boolean {
   return getDashboardPopoutWindow()?.webContents === sender
+}
+
+function zoomDashboardPopout(window: BrowserWindow, direction: UIZoomDirection): void {
+  const webContents = window.webContents
+  webContents.setZoomLevel(stepUIZoomLevel(webContents.getZoomLevel(), direction))
+}
+
+/**
+ * Apply a zoom step to the pop-out when it is the focused window. Returns false
+ * when the pop-out is closed or unfocused so the caller can route the action to
+ * the main window instead — the menu's zoom items must act on the window the
+ * user is looking at.
+ */
+export function zoomDashboardPopoutIfFocused(direction: UIZoomDirection): boolean {
+  const popout = getDashboardPopoutWindow()
+  if (!popout || !popout.isFocused()) {
+    return false
+  }
+  zoomDashboardPopout(popout, direction)
+  return true
 }
 
 // In-process listeners (the dashboard relay clears its cached snapshot on close).
@@ -88,7 +111,8 @@ function resolveRestoredBounds(store: Store | null): {
  */
 export function createOrFocusDashboardPopout(
   store: Store | null,
-  view: string = DEFAULT_VIEW
+  view: string = DEFAULT_VIEW,
+  options: { getKeybindings?: () => KeybindingOverrides | undefined } = {}
 ): BrowserWindow {
   if (dashboardPopoutWindow && !dashboardPopoutWindow.isDestroyed()) {
     if (dashboardPopoutWindow.isMinimized()) {
@@ -126,6 +150,47 @@ export function createOrFocusDashboardPopout(
   installPrivilegedWindowNavigationPolicy(window.webContents)
   dashboardPopoutWindow = window
   broadcastPopoutOpenChanged(true)
+
+  // Why: uiZoomLevel is the app-wide UI zoom; without this the pop-out always
+  // renders at 100% while the main window honors the persisted level.
+  window.webContents.on('dom-ready', () => {
+    if (!window.isDestroyed()) {
+      window.webContents.setZoomLevel(store?.getUI().uiZoomLevel ?? 0)
+    }
+  })
+  // Follow app-zoom changes made while the pop-out is open (main-window zoom,
+  // settings control, mobile ui.set). Compare against the last followed value,
+  // not the live webContents level, so a window-local zoom via the menu/chords
+  // is not snapped back until the app-wide level actually changes.
+  let lastFollowedZoomLevel = store?.getUI().uiZoomLevel ?? 0
+  const unsubscribeUIChanged = store?.onUIChanged((ui) => {
+    const level = ui.uiZoomLevel ?? 0
+    if (level === lastFollowedZoomLevel) {
+      return
+    }
+    lastFollowedZoomLevel = level
+    if (!window.isDestroyed()) {
+      window.webContents.setZoomLevel(level)
+    }
+  })
+
+  // Why: the pop-out has no renderer-side shortcut plumbing; resolve only the
+  // zoom chords here and let every other key fall through untouched.
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') {
+      return
+    }
+    const action = resolveWindowShortcutAction(
+      input,
+      process.platform,
+      options.getKeybindings?.(),
+      { context: 'app' }
+    )
+    if (action?.type === 'zoom') {
+      event.preventDefault()
+      zoomDashboardPopout(window, action.direction)
+    }
+  })
 
   window.once('ready-to-show', () => {
     if (!window.isDestroyed()) {
@@ -169,6 +234,7 @@ export function createOrFocusDashboardPopout(
 
   window.on('closed', () => {
     app.removeListener('before-quit', freezeBounds)
+    unsubscribeUIChanged?.()
     if (dashboardPopoutWindow === window) {
       dashboardPopoutWindow = null
     }

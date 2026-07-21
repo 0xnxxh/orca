@@ -22,7 +22,26 @@ const {
     destroyed = false
     minimized = false
     fullscreen = false
-    webContents = { id: created.length + 1, send: vi.fn(), isDestroyed: () => this.destroyed }
+    focused = false
+    zoomLevel = 0
+    private webContentsHandlers: Record<string, ((...args: unknown[]) => void)[]> = {}
+    webContents = {
+      id: created.length + 1,
+      send: vi.fn(),
+      isDestroyed: () => this.destroyed,
+      on: (event: string, cb: (...args: unknown[]) => void) => {
+        ;(this.webContentsHandlers[event] ||= []).push(cb)
+      },
+      setZoomLevel: vi.fn((level: number) => {
+        this.zoomLevel = level
+      }),
+      getZoomLevel: vi.fn(() => this.zoomLevel)
+    }
+    emitWebContents(event: string, ...args: unknown[]): void {
+      for (const cb of this.webContentsHandlers[event] ?? []) {
+        cb(...args)
+      }
+    }
     bounds = { x: 100, y: 100, width: 960, height: 720 }
     focus = vi.fn()
     show = vi.fn()
@@ -63,6 +82,9 @@ const {
 
     isDestroyed(): boolean {
       return this.destroyed
+    }
+    isFocused(): boolean {
+      return this.focused
     }
     isMinimized(): boolean {
       return this.minimized
@@ -111,7 +133,8 @@ vi.mock('./privileged-window-navigation', () => ({
 import {
   createOrFocusDashboardPopout,
   closeDashboardPopout,
-  isDashboardPopoutRenderer
+  isDashboardPopoutRenderer,
+  zoomDashboardPopoutIfFocused
 } from './dashboard-popout-window'
 
 type FakeWindow = InstanceType<typeof BrowserWindowMock>
@@ -119,8 +142,26 @@ type FakeWindow = InstanceType<typeof BrowserWindowMock>
 function makeStore(ui: Record<string, unknown> = {}): {
   getUI: () => Record<string, unknown>
   updateUI: ReturnType<typeof vi.fn>
+  onUIChanged: ReturnType<typeof vi.fn>
+  emitUIChanged: (next: Record<string, unknown>) => void
+  uiChangeUnsubscribe: ReturnType<typeof vi.fn>
 } {
-  return { getUI: () => ui, updateUI: vi.fn() }
+  const listeners: ((next: Record<string, unknown>) => void)[] = []
+  const uiChangeUnsubscribe = vi.fn()
+  return {
+    getUI: () => ui,
+    updateUI: vi.fn(),
+    onUIChanged: vi.fn((listener: (next: Record<string, unknown>) => void) => {
+      listeners.push(listener)
+      return uiChangeUnsubscribe
+    }),
+    emitUIChanged: (next) => {
+      for (const listener of listeners) {
+        listener(next)
+      }
+    },
+    uiChangeUnsubscribe
+  }
 }
 
 const RENDERER_URL = 'http://localhost:5173'
@@ -266,5 +307,85 @@ describe('createOrFocusDashboardPopout', () => {
     const win = instances[0]
     closeDashboardPopout()
     expect(win.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('applies the persisted app zoom level on dom-ready', () => {
+    const store = makeStore({ uiZoomLevel: 1.5 })
+    const win = createOrFocusDashboardPopout(store as never) as unknown as FakeWindow
+    expect(win.webContents.setZoomLevel).not.toHaveBeenCalled()
+    win.emitWebContents('dom-ready')
+    expect(win.webContents.setZoomLevel).toHaveBeenCalledWith(1.5)
+  })
+
+  it('follows app zoom changes while open and unsubscribes on close', () => {
+    const store = makeStore({ uiZoomLevel: 0 })
+    const win = createOrFocusDashboardPopout(store as never) as unknown as FakeWindow
+
+    store.emitUIChanged({ uiZoomLevel: 2 })
+    expect(win.webContents.setZoomLevel).toHaveBeenCalledWith(2)
+
+    // Unchanged level: no redundant reapply that would clobber a local zoom.
+    win.webContents.setZoomLevel.mockClear()
+    store.emitUIChanged({ uiZoomLevel: 2 })
+    expect(win.webContents.setZoomLevel).not.toHaveBeenCalled()
+
+    win.emit('closed')
+    expect(store.uiChangeUnsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('zoomDashboardPopoutIfFocused steps the popout zoom only while focused', () => {
+    expect(zoomDashboardPopoutIfFocused('in')).toBe(false)
+
+    const store = makeStore()
+    const win = createOrFocusDashboardPopout(store as never) as unknown as FakeWindow
+    expect(zoomDashboardPopoutIfFocused('in')).toBe(false)
+    expect(win.zoomLevel).toBe(0)
+
+    win.focused = true
+    expect(zoomDashboardPopoutIfFocused('in')).toBe(true)
+    expect(win.zoomLevel).toBe(0.5)
+    expect(zoomDashboardPopoutIfFocused('out')).toBe(true)
+    expect(win.zoomLevel).toBe(0)
+
+    win.zoomLevel = 5
+    expect(zoomDashboardPopoutIfFocused('in')).toBe(true)
+    expect(win.zoomLevel).toBe(5) // clamped at max
+
+    expect(zoomDashboardPopoutIfFocused('reset')).toBe(true)
+    expect(win.zoomLevel).toBe(0)
+  })
+
+  it('handles the zoom-in chord via before-input-event and ignores other keys', () => {
+    const store = makeStore()
+    const win = createOrFocusDashboardPopout(store as never) as unknown as FakeWindow
+    const mod =
+      process.platform === 'darwin'
+        ? { meta: true, control: false }
+        : { meta: false, control: true }
+
+    const zoomEvent = { preventDefault: vi.fn() }
+    win.emitWebContents('before-input-event', zoomEvent, {
+      type: 'keyDown',
+      key: '=',
+      code: 'Equal',
+      alt: false,
+      shift: false,
+      ...mod
+    })
+    expect(zoomEvent.preventDefault).toHaveBeenCalledTimes(1)
+    expect(win.zoomLevel).toBe(0.5)
+
+    const plainKeyEvent = { preventDefault: vi.fn() }
+    win.emitWebContents('before-input-event', plainKeyEvent, {
+      type: 'keyDown',
+      key: 'a',
+      code: 'KeyA',
+      alt: false,
+      shift: false,
+      meta: false,
+      control: false
+    })
+    expect(plainKeyEvent.preventDefault).not.toHaveBeenCalled()
+    expect(win.zoomLevel).toBe(0.5)
   })
 })
