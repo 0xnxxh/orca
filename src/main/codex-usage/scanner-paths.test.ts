@@ -156,6 +156,26 @@ describe('listCodexSessionFiles', () => {
     expect(await listCodexSessionFiles()).toEqual([runtimeSessionPath, systemSessionPath].sort())
   })
 
+  it('scans per-account self-contained Codex homes that hold sessions', async () => {
+    const runtimeSessionsDir = join(userDataDir, 'codex-runtime-home', 'home', 'sessions')
+    const systemSessionsDir = join(fakeHomeDir, '.codex', 'sessions')
+    const accountSessionsDir = join(userDataDir, 'codex-accounts', 'acct-1', 'home', 'sessions')
+    mkdirSync(runtimeSessionsDir, { recursive: true })
+    mkdirSync(systemSessionsDir, { recursive: true })
+    mkdirSync(accountSessionsDir, { recursive: true })
+    // Why: an account home without a sessions tree (auth-only) must not add a scan root.
+    mkdirSync(join(userDataDir, 'codex-accounts', 'acct-2', 'home'), { recursive: true })
+    const accountSessionPath = join(accountSessionsDir, 'account.jsonl')
+    writeFileSync(accountSessionPath, '{}\n', 'utf-8')
+
+    expect(getCodexSessionDirectories()).toEqual([
+      runtimeSessionsDir,
+      systemSessionsDir,
+      accountSessionsDir
+    ])
+    expect(await listCodexSessionFiles()).toEqual([accountSessionPath])
+  })
+
   it('dedupes managed session aliases that point at system sessions', async () => {
     const runtimeSessionsDir = join(userDataDir, 'codex-runtime-home', 'home', 'sessions')
     const systemSessionsDir = join(fakeHomeDir, '.codex', 'sessions')
