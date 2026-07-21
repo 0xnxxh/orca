@@ -1,8 +1,9 @@
 import type { ComponentProps } from 'react'
-import { CheckCircle2, Info } from 'lucide-react'
+import { CheckCircle2, EyeOff, Info } from 'lucide-react'
 import { IntegrationStatusPill } from '@/components/integration-status-pill'
 import { AgentSkillSetupPanel } from '@/components/settings/AgentSkillSetupPanel'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Dialog,
   DialogContent,
@@ -89,7 +90,7 @@ export function LinearAgentSkillSetupDialog({
           </>
         ) : (
           <>
-            <div className="px-6 pt-6 pr-14">
+            <div className="px-6 pt-6 pr-20">
               <DialogHeader>
                 <DialogTitle className="sr-only">
                   {translate(
@@ -115,7 +116,7 @@ export function LinearAgentSkillSetupDialog({
               </div>
             </div>
             <AgentSkillSetupPanel
-              className="px-6 pt-4 pb-3"
+              className="px-6 pt-4 pb-6"
               variant="inline"
               hideHeader
               title={translate(
@@ -152,23 +153,36 @@ export function LinearAgentSkillSetupDialog({
               onBeforeOpenTerminal={onBeforeOpenTerminal}
               onRecheck={onRecheck}
             />
-            {/* Why: the dialog's × already dismisses for the session, so the only footer
-                control is the permanent opt-out — kept as a quiet muted link so it doesn't
-                pull the eye from the filled Install primary. */}
-            <DialogFooter className="px-6 pb-6">
-              <Button
-                type="button"
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-muted-foreground hover:text-foreground"
-                onClick={onDismissPermanently}
-              >
-                {translate(
-                  'auto.components.sidebar.LinearAgentSkillSetupPrompt.dontShowAgain',
-                  "Don't show again"
-                )}
-              </Button>
-            </DialogFooter>
+            {/* Why: permanent opt-out as a quiet EyeOff icon next to the × — matching
+                SetupGuideModal's "hide this setup surface" affordance — instead of a
+                footer button that competes with (or gets reflex-clicked over) Install.
+                Rendered last so the dialog's initial focus lands on Install, not here —
+                otherwise Enter-on-open would permanently dismiss. */}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={translate(
+                      'auto.components.sidebar.LinearAgentSkillSetupPrompt.dontShowAgain',
+                      "Don't show again"
+                    )}
+                    onClick={onDismissPermanently}
+                    className="absolute top-3.5 right-10 text-muted-foreground"
+                  >
+                    <EyeOff className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={4}>
+                  {translate(
+                    'auto.components.sidebar.LinearAgentSkillSetupPrompt.dontShowAgain',
+                    "Don't show again"
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </>
         )}
       </DialogContent>

@@ -461,8 +461,8 @@ describe('LinearAgentSkillSetupPrompt', () => {
     )
     expect(document.body.textContent).toContain('Orca CLI and Linear agent skill are missing.')
     expect(document.body.textContent).toContain('Mock install')
-    // Why: only "Don't show again" (permanent) is a footer button now; the casual
-    // dismiss is the dialog ×.
+    // Why: the permanent opt-out is an EyeOff icon (no visible text); the casual
+    // dismiss is the dialog ×. Neither "Not now" nor any dismiss label shows as text.
     expect(document.body.textContent).not.toContain('Not now')
     expect(mocks.panelProps.at(-1)).toEqual(
       expect.objectContaining({
@@ -915,8 +915,9 @@ describe('LinearAgentSkillSetupPrompt', () => {
   it('permanently dismisses the modal-only prompt when requested', async () => {
     await renderPrompt({ linked: true, remote: false, surface: 'modal' })
 
-    const dismissButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent === "Don't show again"
+    // Why: permanent dismiss is now an EyeOff icon button (aria-label, no text).
+    const dismissButton = document.body.querySelector<HTMLButtonElement>(
+      'button[aria-label="Don\'t show again"]'
     )
     await act(async () => {
       dismissButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
