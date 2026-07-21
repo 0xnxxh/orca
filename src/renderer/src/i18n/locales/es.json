@@ -7819,7 +7819,9 @@
             "d2d2d929c0": "Corrector ortográfico de Rich Markdown",
             "4497e2e2bb": "Muestra subrayados y sugerencias ortográficas del navegador al editar Rich Markdown.",
             "e61157e926": "Ajuste de línea en el editor",
-            "005be5c699": "Ajusta las líneas largas en editores de archivos en lugar de requerir desplazamiento horizontal."
+            "005be5c699": "Ajusta las líneas largas en editores de archivos en lugar de requerir desplazamiento horizontal.",
+            "editorFontFamily": "Editor Font Family",
+            "editorFontFamilyDesc": "Font used by file editors and diff views. Leave empty to follow the terminal font."
           }
         },
         "git": {
@@ -9248,6 +9250,11 @@
         },
         "MobileRelayBetaNotice": {
           "notice": "Orca Relay is in beta."
+        },
+        "EditorFontFamilySetting": {
+          "title": "Editor Font Family",
+          "description": "Font used by file editors and diff views. Leave empty to follow the terminal font.",
+          "placeholder": "Same as terminal font"
         }
       },
       "right": {

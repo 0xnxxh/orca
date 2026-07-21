@@ -7804,7 +7804,9 @@
             "d2d2d929c0": "리치 Markdown 맞춤법 검사",
             "4497e2e2bb": "리치 Markdown을 편집하는 동안 브라우저 맞춤법 밑줄과 제안을 표시합니다.",
             "e61157e926": "편집기 자동 줄 바꿈",
-            "005be5c699": "가로 스크롤 대신 파일 편집기에서 긴 줄을 자동으로 줄 바꿈합니다."
+            "005be5c699": "가로 스크롤 대신 파일 편집기에서 긴 줄을 자동으로 줄 바꿈합니다.",
+            "editorFontFamily": "Editor Font Family",
+            "editorFontFamilyDesc": "Font used by file editors and diff views. Leave empty to follow the terminal font."
           }
         },
         "git": {
@@ -9248,6 +9250,11 @@
         },
         "MobileRelayBetaNotice": {
           "notice": "Orca Relay is in beta."
+        },
+        "EditorFontFamilySetting": {
+          "title": "Editor Font Family",
+          "description": "Font used by file editors and diff views. Leave empty to follow the terminal font.",
+          "placeholder": "Same as terminal font"
         }
       },
       "right": {
