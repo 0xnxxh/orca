@@ -1,12 +1,5 @@
 import { useMemo } from 'react'
-import {
-  ArrowRightCircle,
-  BookOpen,
-  Blocks,
-  Link2,
-  ListTodo,
-  MessageSquarePlus
-} from 'lucide-react'
+import { ArrowRightCircle, BookOpen, Link2, ListTodo, MessageSquarePlus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { LinearIcon } from '@/components/icons/LinearIcon'
 import { Button } from '@/components/ui/button'
@@ -181,10 +174,9 @@ export function LinearAgentSkillPane(): React.JSX.Element {
           type="button"
           variant="link"
           size="sm"
-          className="h-auto gap-1 p-0 text-xs align-baseline"
+          className="h-auto p-0 text-xs align-baseline"
           onClick={openIntegrationSettings}
         >
-          <Blocks className="size-3" />
           {translate(
             'auto.components.settings.LinearAgentSkillPane.manageConnectionLink',
             'Integrations settings'
