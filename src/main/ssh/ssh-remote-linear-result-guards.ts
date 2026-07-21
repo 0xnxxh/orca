@@ -2,10 +2,12 @@ import type {
   LinearAttachResult,
   LinearCommentAddResult,
   LinearCreateResult,
+  LinearSaveIssueResult,
   LinearIssueContextResult,
   LinearIssueListResult,
   LinearMcpIssueListResult,
   LinearIssueTaskUpdateResult,
+  LinearIssueRelationWriteResult,
   LinearProjectListResult,
   LinearSearchResult,
   LinearStatusSetResult,
@@ -114,6 +116,20 @@ export function isLinearTaskUpdateResult(result: unknown): result is LinearIssue
   )
 }
 
+export function isLinearRelationWriteResult(
+  result: unknown
+): result is LinearIssueRelationWriteResult {
+  return (
+    isRecord(result) &&
+    isRecord(result.issue) &&
+    isRecord(result.relatedIssue) &&
+    isRecord(result.relation) &&
+    isRecord(result.meta) &&
+    (result.operation === 'add' || result.operation === 'remove') &&
+    typeof result.relation.relationship === 'string'
+  )
+}
+
 export function isLinearCommentAddResult(result: unknown): result is LinearCommentAddResult {
   return (
     isRecord(result) &&
@@ -144,6 +160,17 @@ export function isLinearCreateResult(result: unknown): result is LinearCreateRes
     typeof result.issue.identifier === 'string' &&
     typeof result.issue.title === 'string' &&
     typeof result.meta.writeId === 'string'
+  )
+}
+
+export function isLinearSaveIssueResult(result: unknown): result is LinearSaveIssueResult {
+  return (
+    isRecord(result) &&
+    isRecord(result.issue) &&
+    isRecord(result.meta) &&
+    typeof result.issue.identifier === 'string' &&
+    typeof result.issue.title === 'string' &&
+    typeof result.meta.created === 'boolean'
   )
 }
 

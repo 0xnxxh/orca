@@ -6,6 +6,8 @@ import type {
   LinearMcpIssueListResult,
   LinearIssueContextResult,
   LinearIssueTaskUpdateResult,
+  LinearIssueRelationWriteResult,
+  LinearSaveIssueResult,
   LinearProjectListResult,
   LinearSearchIssueSummary,
   LinearSearchResult,
@@ -156,16 +158,33 @@ export function formatLinearAttach(result: LinearAttachResult): string {
   return `Attached ${result.attachment.title} to ${result.issue.identifier}${suffix}.`
 }
 
-export function formatLinearCreate(result: LinearCreateResult): string {
+export function formatLinearCreate(result: LinearCreateResult | LinearSaveIssueResult): string {
   const parent = result.issue.parent ? ` under ${result.issue.parent.identifier}` : ''
   const project = result.issue.project?.name ? ` in ${result.issue.project.name}` : ''
   const suffix = result.meta.deduplicated ? ' (already created)' : ''
   return `Created ${result.issue.identifier}${parent}${project}: ${result.issue.title}${suffix}.`
 }
 
+export function formatLinearSaveIssue(result: LinearSaveIssueResult): string {
+  if (result.meta.created) {
+    return formatLinearCreate(result)
+  }
+  return `Saved ${result.issue.identifier}: ${result.issue.title}.`
+}
+
 export function formatLinearTaskUpdate(result: LinearIssueTaskUpdateResult): string {
   const suffix = result.meta.alreadySet ? ' (already set)' : ''
   return `Updated ${result.issue.identifier} ${taskOperationLabel(result.operation)}${suffix}.`
+}
+
+export function formatLinearRelationWrite(result: LinearIssueRelationWriteResult): string {
+  const verb = result.operation === 'add' ? 'Added' : 'Removed'
+  const suffix = result.meta.alreadySet
+    ? result.operation === 'add'
+      ? ' (already present)'
+      : ' (already absent)'
+    : ''
+  return `${verb} ${result.issue.identifier} ${result.relation.relationship} ${result.relatedIssue.identifier}${suffix}.`
 }
 
 export function printLinearIssueWarnings(result: LinearIssueContextResult): void {

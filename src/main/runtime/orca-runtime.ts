@@ -180,6 +180,10 @@ import type {
   LinearIssueTaskUpdateResult,
   LinearMcpIssueListRequest,
   LinearMcpIssueListResult,
+  LinearIssueRelationWriteRequest,
+  LinearIssueRelationWriteResult,
+  LinearSaveIssueRequest,
+  LinearSaveIssueResult,
   LinearTeamLabelsResult,
   LinearTeamListResult,
   LinearTeamMembersResult,
@@ -568,6 +572,7 @@ import {
   sanitizeLinearErrorMessage
 } from '../linear/issue-context-errors'
 import { listMcpIssues } from '../linear/mcp-issue-list'
+import { writeIssueRelation } from '../linear/issue-relation-write'
 import {
   createProject as createLinearProject,
   getCustomView as getLinearCustomView,
@@ -25063,6 +25068,133 @@ export class OrcaRuntimeService {
     }
   }
 
+  async linearIssueRelationWrite(
+    params: LinearIssueRelationWriteRequest
+  ): Promise<LinearIssueRelationWriteResult> {
+    const target = await this.resolveLinearAgentWriteTarget(params)
+    const related = await this.resolveLinearAgentWriteTarget({
+      input: params.relatedInput,
+      workspaceId: target.workspaceId,
+      context: params.context
+    })
+    if (target.issue.id === related.issue.id) {
+      throw linearError('linear_write_failed', 'An issue cannot be related to itself.')
+    }
+    try {
+      const result = await this.runLinearAgentWrite(
+        (signal) =>
+          writeIssueRelation({
+            issue: { ...this.linearWriteIssueRef(target.issue), title: target.issue.title },
+            relatedIssue: {
+              ...this.linearWriteIssueRef(related.issue),
+              title: related.issue.title
+            },
+            relationship: params.relationship,
+            operation: params.operation,
+            workspaceId: target.workspaceId,
+            signal
+          }),
+        (cause) =>
+          linearError(
+            'linear_write_unconfirmed',
+            'Linear may have applied the relation change, but Orca could not confirm it.',
+            {
+              nextSteps: [
+                `Run \`orca linear issue ${target.issue.identifier} --relations --workspace ${target.workspaceId} --json\` before retrying.`
+              ],
+              ...(cause ? { cause } : {})
+            }
+          )
+      )
+      await this.notifyLinearLinkedIssueUpdated(target.workspaceId, [
+        target.issue.identifier,
+        related.issue.identifier
+      ])
+      return result
+    } catch (error) {
+      throw this.mapLinearReadFailure(error)
+    }
+  }
+
+  async linearSaveIssue(params: LinearSaveIssueRequest): Promise<LinearSaveIssueResult> {
+    if ((params.description?.length ?? 0) > LINEAR_WRITE_BODY_CAP) {
+      throw linearError('linear_body_too_large', 'Linear issue body is too large.')
+    }
+    if (!params.input && !params.current) {
+      if (!params.title || !params.team) {
+        throw linearError(
+          'linear_write_failed',
+          'Creating with save-issue requires both team and title.'
+        )
+      }
+      const created = await this.linearIssueCreate({
+        title: params.title,
+        body: params.description,
+        teamInput: params.team,
+        state: params.state,
+        assignee: params.assignee ?? undefined,
+        priority: params.priority,
+        estimate: params.estimate ?? undefined,
+        dueDate: params.dueDate ?? undefined,
+        labels: params.labels,
+        projectInput: params.project ?? undefined,
+        parentInput: params.parentId ?? undefined,
+        workspaceId: params.workspaceId,
+        writeId: params.writeId,
+        context: params.context
+      })
+      return { ...created, meta: { ...created.meta, created: true } }
+    }
+    if (params.team !== undefined) {
+      throw linearError('linear_write_failed', 'Team can only be set when creating an issue.')
+    }
+    const target = await this.resolveLinearAgentWriteTarget(params)
+    const current = await this.readLinearAgentIssueWriteRecord(target.issue.id, target.workspaceId)
+    const fields = await this.buildLinearSaveUpdate(params, current, target.workspaceId)
+    if (Object.keys(fields).length === 0) {
+      throw linearError('linear_write_failed', 'No issue fields were provided to save.')
+    }
+    const alreadySet = this.linearSavedIssueMatchesIntent(current, fields)
+    const updated = alreadySet
+      ? current
+      : await this.runLinearAgentWrite(
+          async (signal) => {
+            const saved = await updateLinearIssueForAgent(
+              target.issue.id,
+              fields,
+              target.workspaceId,
+              { signal }
+            )
+            if (!this.linearSavedIssueMatchesIntent(saved, fields)) {
+              throw new LinearWriteFailure(
+                'unconfirmed',
+                'Linear issue save could not be confirmed.'
+              )
+            }
+            return saved
+          },
+          (cause) =>
+            linearError(
+              'linear_write_unconfirmed',
+              'Linear may have applied the issue save, but Orca could not confirm it.',
+              {
+                nextSteps: [
+                  `Run \`orca linear issue ${target.issue.identifier} --workspace ${target.workspaceId} --json\` before retrying.`
+                ],
+                ...(cause ? { cause } : {})
+              }
+            )
+        )
+    await this.notifyLinearLinkedIssueUpdated(target.workspaceId, target.issue.identifier)
+    return {
+      issue: updated,
+      meta: {
+        workspaceId: target.workspaceId,
+        created: false
+      }
+    }
+  }
+
   async linearIssueUpdateTask(
     params: LinearIssueTaskUpdateRequest
   ): Promise<LinearIssueTaskUpdateResult> {
@@ -25416,13 +25548,12 @@ export class OrcaRuntimeService {
     states: Awaited<ReturnType<typeof getLinearTeamStatesOrThrow>>
   ): Awaited<ReturnType<typeof getLinearTeamStatesOrThrow>>[number] | null {
     const normalized = input.toLocaleLowerCase()
-    return (
-      states.find(
-        (state) =>
-          state.id.toLocaleLowerCase() === normalized ||
-          state.name.toLocaleLowerCase() === normalized
-      ) ?? null
+    const exact = states.find(
+      (state) =>
+        state.id.toLocaleLowerCase() === normalized || state.name.toLocaleLowerCase() === normalized
     )
+    // Why: Linear MCP accepts lifecycle types; keep explicit IDs/names authoritative when they collide.
+    return exact ?? states.find((state) => state.type.toLocaleLowerCase() === normalized) ?? null
   }
 
   private async getLinearTeamLabelsForWrite(
@@ -25513,6 +25644,153 @@ export class OrcaRuntimeService {
     return null
   }
 
+  private async buildLinearSaveUpdate(
+    params: LinearSaveIssueRequest,
+    current: NonNullable<Awaited<ReturnType<typeof getLinearIssueByUuidForAgent>>>,
+    workspaceId: string
+  ): Promise<LinearIssueUpdate> {
+    const fields: LinearIssueUpdate = {}
+    if (params.title !== undefined) {
+      fields.title = params.title
+    }
+    if (params.description !== undefined) {
+      fields.description = params.description
+    }
+    if (params.priority !== undefined) {
+      fields.priority = params.priority
+    }
+    if (params.estimate !== undefined) {
+      fields.estimate = params.estimate
+    }
+    if (params.dueDate !== undefined) {
+      fields.dueDate = params.dueDate
+    }
+    if (params.state !== undefined) {
+      const states = await this.getLinearTeamStatesForWrite(current.team.id, workspaceId)
+      const state = this.resolveLinearAgentState(params.state, states)
+      if (!state) {
+        throw linearError(
+          'linear_invalid_state',
+          `No workflow state exactly matched "${params.state}".`
+        )
+      }
+      fields.stateId = state.id
+    }
+    if (params.assignee !== undefined) {
+      fields.assigneeId =
+        params.assignee === null
+          ? null
+          : await this.resolveLinearAssignee(params.assignee, current.team.id, workspaceId)
+    }
+    if (params.labels !== undefined) {
+      if (params.labels.length === 0) {
+        fields.labelIds = []
+      } else {
+        const labels = await this.resolveLinearLabelsForIssue(current, params.labels, workspaceId)
+        fields.labelIds = labels.map((label) => label.id)
+      }
+    }
+    if (params.project !== undefined) {
+      fields.projectId =
+        params.project === null
+          ? null
+          : (
+              await this.resolveLinearCreateProject(params.project, {
+                id: current.team.id,
+                workspaceId
+              })
+            ).id
+    }
+    if (params.parentId !== undefined) {
+      fields.parentId =
+        params.parentId === null
+          ? null
+          : (
+              await this.resolveLinearAgentWriteTarget({
+                input: params.parentId,
+                workspaceId,
+                context: params.context
+              })
+            ).issue.id
+      if (fields.parentId === current.id) {
+        throw linearError('linear_invalid_parent', 'An issue cannot be its own parent.')
+      }
+    }
+    return fields
+  }
+
+  private async resolveLinearAssignee(
+    input: string,
+    teamId: string,
+    workspaceId: string
+  ): Promise<string> {
+    if (input.toLocaleLowerCase() === 'me') {
+      return (await this.getLinearViewerForWrite(workspaceId)).id
+    }
+    // Why: caller-supplied IDs were accepted directly before save-issue; avoid a paginated member scan on that existing fast path.
+    if (isLinearUuid(input)) {
+      return input
+    }
+    let members: Awaited<ReturnType<typeof getLinearTeamMembersOrThrow>>
+    try {
+      members = await getLinearTeamMembersOrThrow(teamId, workspaceId)
+    } catch (error) {
+      throw this.mapLinearReadFailure(error)
+    }
+    const normalized = input.toLocaleLowerCase()
+    const matches = members.filter(
+      (member) =>
+        member.id.toLocaleLowerCase() === normalized ||
+        member.displayName.toLocaleLowerCase() === normalized ||
+        member.name?.toLocaleLowerCase() === normalized ||
+        member.email?.toLocaleLowerCase() === normalized
+    )
+    if (matches.length === 1) {
+      return matches[0].id
+    }
+    throw linearError(
+      'linear_invalid_assignee',
+      matches.length === 0
+        ? `No team member exactly matched "${input}".`
+        : `Multiple team members exactly matched "${input}".`
+    )
+  }
+
+  private linearSavedIssueMatchesIntent(
+    issue: NonNullable<Awaited<ReturnType<typeof getLinearIssueByUuidForAgent>>>,
+    fields: LinearIssueUpdate
+  ): boolean {
+    if (fields.title !== undefined && issue.title !== fields.title) {
+      return false
+    }
+    if (fields.description !== undefined && (issue.description ?? '') !== fields.description) {
+      return false
+    }
+    if (fields.parentId !== undefined && (issue.parent?.id ?? null) !== fields.parentId) {
+      return false
+    }
+    if (fields.stateId !== undefined && issue.state?.id !== fields.stateId) {
+      return false
+    }
+    if (fields.assigneeId !== undefined && (issue.assignee?.id ?? null) !== fields.assigneeId) {
+      return false
+    }
+    if (fields.priority !== undefined && issue.priority !== fields.priority) {
+      return false
+    }
+    if (fields.estimate !== undefined && (issue.estimate ?? null) !== fields.estimate) {
+      return false
+    }
+    if (fields.dueDate !== undefined && (issue.dueDate ?? null) !== fields.dueDate) {
+      return false
+    }
+    if (fields.projectId !== undefined && (issue.project?.id ?? null) !== fields.projectId) {
+      return false
+    }
+    const issueLabelIds = issue.labelIds ?? issue.labels?.map((label) => label.id) ?? []
+    return fields.labelIds === undefined || sameStringSet(issueLabelIds, fields.labelIds)
+  }
+
   private async resolveLinearCreateFields(
     params: {
       state?: string
@@ -25539,10 +25817,11 @@ export class OrcaRuntimeService {
       fields.stateId = state.id
     }
     if (params.assignee) {
-      fields.assigneeId =
-        params.assignee.toLocaleLowerCase() === 'me'
-          ? (await this.getLinearViewerForWrite(team.workspaceId)).id
-          : params.assignee
+      fields.assigneeId = await this.resolveLinearAssignee(
+        params.assignee,
+        team.id,
+        team.workspaceId
+      )
     }
     if (params.priority !== undefined) {
       fields.priority = params.priority
@@ -25585,6 +25864,13 @@ export class OrcaRuntimeService {
     if (idMatch) {
       await this.assertLinearProjectIncludesTeam(idMatch, team.id, team.workspaceId, trimmed)
       return idMatch
+    }
+    const slugMatch = searchCandidates.find(
+      (project) => project.slugId?.toLowerCase() === normalized
+    )
+    if (slugMatch) {
+      await this.assertLinearProjectIncludesTeam(slugMatch, team.id, team.workspaceId, trimmed)
+      return slugMatch
     }
     const nameMatches = await this.readLinearProjectsByExactNameForCreate(trimmed, team.workspaceId)
     const compatibleNameMatches = await this.filterLinearProjectsForTeam(
@@ -26503,11 +26789,17 @@ export class OrcaRuntimeService {
 
   private async notifyLinearLinkedIssueUpdated(
     workspaceId: string,
-    identifier: string
+    identifier: string | readonly string[]
   ): Promise<void> {
-    const normalized = identifier.toLocaleUpperCase()
+    const identifiers = typeof identifier === 'string' ? [identifier] : identifier
+    const normalized = new Map(
+      identifiers.map((value) => [value.toLocaleUpperCase(), value] as const)
+    )
     for (const worktree of await this.listResolvedWorktrees()) {
-      if ((worktree.linkedLinearIssue ?? '').toLocaleUpperCase() !== normalized) {
+      const linkedIdentifier = normalized.get(
+        (worktree.linkedLinearIssue ?? '').toLocaleUpperCase()
+      )
+      if (!linkedIdentifier) {
         continue
       }
       const linkedWorkspaceId = worktree.linkedLinearIssueWorkspaceId ?? workspaceId
@@ -26517,7 +26809,7 @@ export class OrcaRuntimeService {
       this.emitClientEvent({
         type: 'linearLinkedIssueUpdated',
         worktreeId: worktree.id,
-        identifier,
+        identifier: linkedIdentifier,
         workspaceId
       })
     }

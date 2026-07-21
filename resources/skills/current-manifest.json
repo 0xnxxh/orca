@@ -22,18 +22,18 @@
     {
       "name": "linear-tickets",
       "sourcePath": "skills/linear-tickets",
-      "releaseRevision": 5,
-      "packageDigest": "706bca83a326e49a3112321fa2469ea2bc160a61665ab6a6e6e48d5faa796919",
-      "gitTreeSha": "5a15634cbef182946624c2d3468be6c40d58373c",
+      "releaseRevision": 6,
+      "packageDigest": "ff9f085631f753f059c631d874177ddd4fa847c5eca85a420dc85fb2bece6ff6",
+      "gitTreeSha": "e35ac3c0c583661983d3fc1352ff3aec74e67e8c",
       "files": [
         {
           "path": "SKILL.md",
-          "size": 11239,
+          "size": 12466,
           "executable": false,
           "classification": "text",
-          "exactSha256": "9c4f373d61b9f2ccf271fbaae128bea26ba9d94fc599e8840fa48a78323f4801",
-          "textNormalizedSha256": "9c4f373d61b9f2ccf271fbaae128bea26ba9d94fc599e8840fa48a78323f4801",
-          "identitySha256": "9c4f373d61b9f2ccf271fbaae128bea26ba9d94fc599e8840fa48a78323f4801"
+          "exactSha256": "ea2a508c60ab145981f5b16fbed949c4a4c167ec4df16888cf1703fd4c6056c0",
+          "textNormalizedSha256": "ea2a508c60ab145981f5b16fbed949c4a4c167ec4df16888cf1703fd4c6056c0",
+          "identitySha256": "ea2a508c60ab145981f5b16fbed949c4a4c167ec4df16888cf1703fd4c6056c0"
         }
       ]
     },
@@ -94,18 +94,18 @@
     {
       "name": "orca-linear",
       "sourcePath": "skills/orca-linear",
-      "releaseRevision": 3,
-      "packageDigest": "8da5220e31dcaefee8878e5f5c8a6f75f8356b820629aa887851d749a64bdc15",
-      "gitTreeSha": "2adfaca9e3db2a0cff9d3bb9a16d62ea34145d24",
+      "releaseRevision": 4,
+      "packageDigest": "5e9622bd3883c0f53e6bd349758096deafceebd2fa260d3e90d677e64d06416d",
+      "gitTreeSha": "f3727995a4719fd522119eca6d1b57542cb5fe23",
       "files": [
         {
           "path": "SKILL.md",
-          "size": 10963,
+          "size": 12190,
           "executable": false,
           "classification": "text",
-          "exactSha256": "5f76c347107c1c2c428181e48cf255a8245e40b717a063a9104d5fee03e2ec3e",
-          "textNormalizedSha256": "5f76c347107c1c2c428181e48cf255a8245e40b717a063a9104d5fee03e2ec3e",
-          "identitySha256": "5f76c347107c1c2c428181e48cf255a8245e40b717a063a9104d5fee03e2ec3e"
+          "exactSha256": "af855a87af929e2da19d51c46e5f2bf156b026c6f3b9cfbf23708a0d53b6a764",
+          "textNormalizedSha256": "af855a87af929e2da19d51c46e5f2bf156b026c6f3b9cfbf23708a0d53b6a764",
+          "identitySha256": "af855a87af929e2da19d51c46e5f2bf156b026c6f3b9cfbf23708a0d53b6a764"
         }
       ]
     },
