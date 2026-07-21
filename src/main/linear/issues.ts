@@ -564,7 +564,7 @@ function errorCauseCode(error: unknown): string {
   return typeof code === 'string' ? code.toLowerCase() : ''
 }
 
-function classifyWriteFailure(error: unknown): LinearWriteFailure {
+export function classifyLinearWriteFailure(error: unknown): LinearWriteFailure {
   if (error instanceof LinearWriteFailure) {
     return error
   }
@@ -615,7 +615,7 @@ async function runLinearWrite<T>(
       clearToken(entry.workspace.id)
       throw error
     }
-    throw classifyWriteFailure(error)
+    throw classifyLinearWriteFailure(error)
   } finally {
     release()
   }
