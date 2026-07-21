@@ -1182,6 +1182,11 @@ describe('createRemoteRuntimePtyTransport', () => {
       },
       launchToken: 'fresh-token',
       launchAgent: 'codex',
+      resumeProviderSession: {
+        key: 'session_id',
+        id: 'session-1',
+        transcriptPath: '/home/example/.codex/sessions/2026/07/20/rollout-a.jsonl'
+      },
       callbacks: {}
     })
 
@@ -1197,7 +1202,12 @@ describe('createRemoteRuntimePtyTransport', () => {
             agentEnv: { CODEX_PROFILE: 'captured' }
           },
           launchToken: 'fresh-token',
-          launchAgent: 'codex'
+          launchAgent: 'codex',
+          resumeProviderSession: {
+            key: 'session_id',
+            id: 'session-1',
+            transcriptPath: '/home/example/.codex/sessions/2026/07/20/rollout-a.jsonl'
+          }
         })
       })
     )

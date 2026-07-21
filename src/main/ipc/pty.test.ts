@@ -931,6 +931,74 @@ describe('registerPtyHandlers', () => {
       expect(env.ORCA_CODEX_HOME).toBe(TEST_CODEX_HOME)
     })
 
+    it('resumes an automatic Codex session from its prepared originating home', async () => {
+      const selectedHome = vi.fn(() => '/managed/current/home')
+      const prepareResume = vi.fn(async () => ({ codexHomePath: '/managed/origin/home' }))
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        selectedHome,
+        undefined,
+        undefined,
+        undefined,
+        { prepareCodexSessionResume: prepareResume }
+      )
+
+      await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        command: 'codex resume session-a',
+        launchAgent: 'codex',
+        resumeProviderSession: {
+          key: 'session_id',
+          id: 'session-a',
+          transcriptPath: '/managed/origin/home/sessions/2026/07/20/rollout-a.jsonl'
+        }
+      })
+
+      const env = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
+      expect(prepareResume).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerSession: expect.objectContaining({ id: 'session-a' }),
+          target: { runtime: 'host' }
+        })
+      )
+      expect(selectedHome).not.toHaveBeenCalled()
+      expect(env.CODEX_HOME).toBe('/managed/origin/home')
+      expect(env.ORCA_CODEX_HOME).toBe('/managed/origin/home')
+    })
+
+    it('strips the currently selected managed home when the resumed session originated in real home', async () => {
+      const selectedHome = vi.fn(() => '/managed/current/home')
+      registerPtyHandlers(
+        mainWindow as never,
+        undefined,
+        selectedHome,
+        undefined,
+        undefined,
+        undefined,
+        { prepareCodexSessionResume: async () => ({ codexHomePath: null }) }
+      )
+
+      await handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        command: 'codex resume session-a',
+        env: { CODEX_HOME: '/managed/current/home', ORCA_CODEX_HOME: '/managed/current/home' },
+        launchAgent: 'codex',
+        resumeProviderSession: {
+          key: 'session_id',
+          id: 'session-a',
+          transcriptPath: '/Users/example/.codex/sessions/2026/07/20/rollout-a.jsonl'
+        }
+      })
+
+      const env = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
+      expect(selectedHome).not.toHaveBeenCalled()
+      expect(env.CODEX_HOME).toBeUndefined()
+      expect(env.ORCA_CODEX_HOME).toBeUndefined()
+    })
+
     it('prepares Codex launch state for the workspace before spawning an interactive tab', async () => {
       const workspacePath = '/repo/worktrees/new-feature'
       const resolveHome = vi.fn(

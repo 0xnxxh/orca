@@ -147,6 +147,10 @@ import { startCodexSessionIndexHealInBackground } from './codex/codex-session-in
 import { createCodexSessionMigrationScheduler } from './codex/codex-session-migration-scheduler'
 import { prepareLegacySharedCodexSessionResume } from './codex/codex-legacy-session-resume'
 import { resolveHostCodexSessionSourceHome } from './codex/codex-session-source-home'
+import { findTrustedCodexSessionResume } from './codex/codex-session-resume-home'
+import { getSystemCodexHomePath } from './codex/codex-home-paths'
+import { normalizeRuntimePathForComparison } from '../shared/cross-platform-path'
+import type { AgentProviderSessionMetadata } from '../shared/agent-session-resume'
 import { getDefaultWslDistro } from './wsl'
 import { ClaudeAccountService } from './claude-accounts/service'
 import { ClaudeRuntimeAuthService } from './claude-accounts/runtime-auth-service'
@@ -784,6 +788,72 @@ function prepareCodexRuntimeHomeForLaunch(
   return runtimeHomePath
 }
 
+async function prepareCodexSessionResumeForLaunch(args: {
+  providerSession: AgentProviderSessionMetadata
+  target: CodexAccountSelectionTarget
+  launchEnv?: NodeJS.ProcessEnv
+  workspacePath?: string
+}): Promise<{ codexHomePath: string | null } | null> {
+  if (args.target.runtime === 'wsl' || !codexRuntimeHome || !store) {
+    return null
+  }
+  const configuredSourceHome = resolveHostCodexSessionSourceHome(store.getSettings())
+  const systemHomePath = getSystemCodexHomePath()
+  const trustedHomes = [
+    configuredSourceHome ?? systemHomePath,
+    ...codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery()
+  ]
+  const sessionSource = await findTrustedCodexSessionResume({
+    sessionId: args.providerSession.id,
+    transcriptPath: args.providerSession.transcriptPath,
+    trustedCodexHomes: trustedHomes
+  })
+  if (!sessionSource) {
+    return null
+  }
+
+  const migrated = await prepareLegacySharedCodexSessionResume(
+    {
+      agent: 'codex',
+      executionHostId: 'local',
+      filePath: sessionSource.transcriptPath,
+      codexHome: sessionSource.homePath
+    },
+    {
+      isHostSystemDefaultRealHome: () => codexRuntimeHome!.isHostSystemDefaultRealHome(),
+      systemCodexHomePath: configuredSourceHome
+    }
+  )
+  const resumeHome = migrated.useRealCodexHome
+    ? (configuredSourceHome ?? systemHomePath)
+    : sessionSource.homePath
+
+  if (args.workspacePath) {
+    try {
+      markCodexProjectTrusted(args.workspacePath)
+    } catch (error) {
+      console.warn('[codex-project-trust] failed to pre-mark resumed workspace:', error)
+    }
+  }
+  const isSystemHome =
+    normalizeRuntimePathForComparison(resumeHome) ===
+    normalizeRuntimePathForComparison(systemHomePath)
+  const hooksEnabled = isAgentStatusHooksEnabled(store.getSettings())
+  try {
+    if (isSystemHome) {
+      ensureRealHomeCodexHookState({ hooksEnabled, userDataPath: app.getPath('userData') })
+    } else if (hooksEnabled) {
+      codexHookService.install(resumeHome)
+    } else {
+      codexHookService.refreshRuntimeUserHooks(resumeHome)
+    }
+  } catch (error) {
+    // Why: hook repair is best-effort; session provenance must still win over the currently selected home.
+    console.warn('[codex-hook-service] failed to prepare automatic resume home:', error)
+  }
+  return { codexHomePath: isSystemHome ? null : resumeHome }
+}
+
 // Why: restore the window the close handler may have hidden to tray, or reopen it (dock-reactivation style) if fully torn down.
 function showMainWindowFromTray(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1050,6 +1120,7 @@ function openMainWindow(): BrowserWindow {
     prepareCodexRuntimeHomeForLaunch,
     (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target),
     {
+      prepareCodexSessionResume: prepareCodexSessionResumeForLaunch,
       awaitLocalPtyStartup: () => localPtyStartupReady,
       awaitLocalPtyProviderStartup: () => localPtyProviderStartupReady,
       onBeforeRendererReload: ({ ignoreCache, webContentsId }) => {
@@ -2200,7 +2271,8 @@ app.whenReady().then(async () => {
       prepareCodexRuntimeHomeForLaunch,
       () => store!.getSettings(),
       (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target),
-      store
+      store,
+      prepareCodexSessionResumeForLaunch
     )
     // Why: headless servers can't mount <webview> panes; use offscreen WebContents, gated on a real display so browser.headless.v1 stays honest.
     if (headlessBrowserDisplayAvailable) {
