@@ -176,6 +176,12 @@ function dirent(name: string, directory = true): { name: string; isDirectory: ()
   return { name, isDirectory: () => directory }
 }
 
+function shellIdListArray(childCount: number): Buffer {
+  const value = Buffer.alloc(4 + 4 * (childCount + 1))
+  value.writeUInt32LE(childCount)
+  return value
+}
+
 describe('registerClipboardHandlers', () => {
   beforeEach(() => {
     vi.spyOn(Date, 'now').mockReturnValue(1760000000000)
@@ -578,7 +584,9 @@ describe('registerClipboardHandlers', () => {
     const sourcePath = 'C:\\Users\\alice\\图片\\copied-image.png'
     const png = Buffer.from([4, 3, 2, 1])
     clipboardReadImageMock.mockReturnValue({ isEmpty: () => true })
-    clipboardReadBufferMock.mockReturnValue(Buffer.from(`${sourcePath}\0`, 'utf16le'))
+    clipboardReadBufferMock.mockImplementation((format: string) =>
+      format === 'FileNameW' ? Buffer.from(`${sourcePath}\0`, 'utf16le') : shellIdListArray(1)
+    )
     const source = Buffer.alloc(24)
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(source)
     source.writeUInt32BE(13, 8)
@@ -614,6 +622,7 @@ describe('registerClipboardHandlers', () => {
         '/var/tmp/orca-paste-1760000000000-00000000-0000-4000-8000-000000000000.png'
       )
       expect(clipboardReadBufferMock).toHaveBeenCalledWith('FileNameW')
+      expect(clipboardReadBufferMock).toHaveBeenCalledWith('Shell IDList Array')
       expect(fsOpenMock).toHaveBeenCalledWith(sourcePath, 'r')
       expect(nativeImageCreateFromBufferMock).toHaveBeenCalledWith(source)
       expect(close).toHaveBeenCalled()

@@ -13,6 +13,11 @@ type WindowsClipboardImageFileDeps = {
   openFile: (filePath: string) => Promise<ClipboardImageFileHandle>
 }
 
+type WindowsClipboardImageFileFormats = {
+  fileNameW: Buffer
+  shellIdListArray: Buffer
+}
+
 const FILE_NAME_W_MAX_BYTES = 64 * 1024
 const FILE_READ_MAX_CALLS = 1024
 const IMAGE_FILE_EXTENSION_SET = new Set(['.jpeg', '.jpg', '.png'])
@@ -61,6 +66,14 @@ function decodeFileNameW(value: Buffer): string | null {
     return null
   }
   return IMAGE_FILE_EXTENSION_SET.has(win32.extname(filePath).toLowerCase()) ? filePath : null
+}
+
+function hasAtMostOneShellItem(value: Buffer): boolean {
+  if (value.byteLength === 0) {
+    return true
+  }
+  // Why: Explorer's FileNameW exposes only the first path even when its CIDA has multiple items.
+  return value.byteLength >= 12 && value.readUInt32LE(0) === 1
 }
 
 function readPngDimensions(source: Buffer): { height: number; width: number } | null {
@@ -140,9 +153,12 @@ async function readStableFile(
 }
 
 export async function readWindowsClipboardImageFileAsPng(
-  fileNameW: Buffer,
+  { fileNameW, shellIdListArray }: WindowsClipboardImageFileFormats,
   { createImageFromBuffer, openFile }: WindowsClipboardImageFileDeps
 ): Promise<Buffer | null> {
+  if (!hasAtMostOneShellItem(shellIdListArray)) {
+    return null
+  }
   const filePath = decodeFileNameW(fileNameW)
   if (!filePath) {
     return null

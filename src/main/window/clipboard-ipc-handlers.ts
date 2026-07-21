@@ -107,7 +107,10 @@ export function registerClipboardHandlers(store: Store): void {
           return null
         }
         const copiedFilePng = await readWindowsClipboardImageFileAsPng(
-          clipboard.readBuffer('FileNameW'),
+          {
+            fileNameW: clipboard.readBuffer('FileNameW'),
+            shellIdListArray: clipboard.readBuffer('Shell IDList Array')
+          },
           {
             createImageFromBuffer: (buffer) => nativeImage.createFromBuffer(buffer),
             openFile: (filePath) => open(filePath, 'r')

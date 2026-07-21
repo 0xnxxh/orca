@@ -9,6 +9,12 @@ function fileNameW(filePath: string): Buffer {
   return Buffer.from(`${filePath}\0`, 'utf16le')
 }
 
+function clipboardFormats(filePath: string, shellItemCount = 1) {
+  const shellIdListArray = Buffer.alloc(4 + 4 * (shellItemCount + 1))
+  shellIdListArray.writeUInt32LE(shellItemCount)
+  return { fileNameW: fileNameW(filePath), shellIdListArray }
+}
+
 function pngHeader(width = 10, height = 10): Buffer {
   const source = Buffer.alloc(24)
   Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(source)
@@ -85,7 +91,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
     const createImageFromBuffer = vi.fn(() => image(png) as never)
 
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW(filePath), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats(filePath), {
         createImageFromBuffer,
         openFile
       })
@@ -115,7 +121,25 @@ describe('readWindowsClipboardImageFileAsPng', () => {
     const createImageFromBuffer = vi.fn()
 
     await expect(
-      readWindowsClipboardImageFileAsPng(payload, { createImageFromBuffer, openFile })
+      readWindowsClipboardImageFileAsPng(
+        { fileNameW: payload, shellIdListArray: Buffer.alloc(0) },
+        { createImageFromBuffer, openFile }
+      )
+    ).resolves.toBeNull()
+
+    expect(openFile).not.toHaveBeenCalled()
+    expect(createImageFromBuffer).not.toHaveBeenCalled()
+  })
+
+  it('rejects an Explorer multi-selection when FileNameW exposes only its first path', async () => {
+    const openFile = vi.fn()
+    const createImageFromBuffer = vi.fn()
+
+    await expect(
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\one.png', 2), {
+        createImageFromBuffer,
+        openFile
+      })
     ).resolves.toBeNull()
 
     expect(openFile).not.toHaveBeenCalled()
@@ -128,7 +152,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
       const openFile = vi.fn().mockRejectedValue(error)
 
       await expect(
-        readWindowsClipboardImageFileAsPng(fileNameW('C:\\shot.png'), {
+        readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\shot.png'), {
           createImageFromBuffer: vi.fn(),
           openFile
         })
@@ -141,7 +165,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
     const createImageFromBuffer = vi.fn()
 
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW('C:\\images.png'), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\images.png'), {
         createImageFromBuffer,
         openFile: vi.fn().mockResolvedValue(handle)
       })
@@ -159,7 +183,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
     const createImageFromBuffer = vi.fn()
 
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW('C:\\huge.png'), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\huge.png'), {
         createImageFromBuffer,
         openFile: vi.fn().mockResolvedValue(handle)
       })
@@ -175,7 +199,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
     const createImageFromBuffer = vi.fn()
 
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW('C:\\changed.png'), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\changed.png'), {
         createImageFromBuffer,
         openFile: vi.fn().mockResolvedValue(handle)
       })
@@ -189,7 +213,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
     const handle = fileHandle(Buffer.from('not-an-image'))
 
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW('C:\\invalid.png'), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\invalid.png'), {
         createImageFromBuffer: vi.fn(() => ({ isEmpty: () => true }) as never),
         openFile: vi.fn().mockResolvedValue(handle)
       })
@@ -201,7 +225,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
     const createImageFromBuffer = vi.fn()
 
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW('C:\\pixel-bomb.png'), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\pixel-bomb.png'), {
         createImageFromBuffer,
         openFile: vi.fn().mockResolvedValue(handle)
       })
@@ -220,7 +244,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
     const createImageFromBuffer = vi.fn()
 
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW('C:\\marker-flood.jpg'), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\marker-flood.jpg'), {
         createImageFromBuffer,
         openFile: vi.fn().mockResolvedValue(fileHandle(source))
       })
@@ -232,7 +256,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
   it('bounds decoded dimensions and converted PNG bytes', async () => {
     const oversizedDimensions = fileHandle(pngHeader())
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW('C:\\wide.png'), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\wide.png'), {
         createImageFromBuffer: vi.fn(
           () =>
             ({
@@ -247,7 +271,7 @@ describe('readWindowsClipboardImageFileAsPng', () => {
 
     const oversizedPng = fileHandle(pngHeader())
     await expect(
-      readWindowsClipboardImageFileAsPng(fileNameW('C:\\expanded.png'), {
+      readWindowsClipboardImageFileAsPng(clipboardFormats('C:\\expanded.png'), {
         createImageFromBuffer: vi.fn(
           () => image(Buffer.alloc(CLIPBOARD_IMAGE_MAX_SOURCE_BYTES + 1)) as never
         ),
