@@ -30,7 +30,8 @@ import {
   moveWorktree,
   parseWorktreeList,
   removeWorktree,
-  WORKTREE_ADD_TIMEOUT_MS
+  WORKTREE_ADD_TIMEOUT_MS,
+  WORKTREE_LIST_TIMEOUT_MS
 } from './worktree'
 
 beforeEach(() => {
@@ -551,7 +552,8 @@ branch refs/heads/feature/test
 
     expect(gitExecFileAsyncMock).toHaveBeenCalledTimes(1)
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(['worktree', 'list', '--porcelain', '-z'], {
-      cwd: '/repo'
+      cwd: '/repo',
+      timeout: WORKTREE_LIST_TIMEOUT_MS
     })
   })
 
@@ -595,8 +597,11 @@ branch refs/heads/main-2
     ])
 
     expect(gitExecFileAsyncMock.mock.calls).toEqual([
-      [['worktree', 'list', '--porcelain', '-z'], { cwd: '/repo' }],
-      [['worktree', 'list', '--porcelain'], { cwd: '/repo' }]
+      [
+        ['worktree', 'list', '--porcelain', '-z'],
+        { cwd: '/repo', timeout: WORKTREE_LIST_TIMEOUT_MS }
+      ],
+      [['worktree', 'list', '--porcelain'], { cwd: '/repo', timeout: WORKTREE_LIST_TIMEOUT_MS }]
     ])
   })
 
@@ -628,8 +633,11 @@ branch refs/heads/main
     ])
 
     expect(gitExecFileAsyncMock.mock.calls).toEqual([
-      [['worktree', 'list', '--porcelain', '-z'], { cwd: '/repo' }],
-      [['worktree', 'list', '--porcelain'], { cwd: '/repo' }]
+      [
+        ['worktree', 'list', '--porcelain', '-z'],
+        { cwd: '/repo', timeout: WORKTREE_LIST_TIMEOUT_MS }
+      ],
+      [['worktree', 'list', '--porcelain'], { cwd: '/repo', timeout: WORKTREE_LIST_TIMEOUT_MS }]
     ])
   })
 
@@ -646,7 +654,10 @@ branch refs/heads/main
     await expect(listWorktreeGraph('/repo')).resolves.toEqual([])
 
     expect(gitExecFileAsyncMock.mock.calls).toEqual([
-      [['worktree', 'list', '--porcelain', '-z'], { cwd: '/repo' }]
+      [
+        ['worktree', 'list', '--porcelain', '-z'],
+        { cwd: '/repo', timeout: WORKTREE_LIST_TIMEOUT_MS }
+      ]
     ])
   })
 
@@ -654,6 +665,20 @@ branch refs/heads/main
     gitExecFileAsyncMock.mockRejectedValueOnce(new Error('fatal: not a git repository'))
 
     await expect(listWorktreeGraph('/not-a-repo')).resolves.toEqual([])
+  })
+
+  it('lets callers override the default worktree list timeout', async () => {
+    gitExecFileAsyncMock.mockResolvedValueOnce({
+      stdout: 'worktree /repo\nHEAD abc123\nbranch refs/heads/main\n'
+    })
+
+    await listWorktreeGraph('/repo', { timeout: 5_000 })
+
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(['worktree', 'list', '--porcelain', '-z'], {
+      cwd: '/repo',
+      timeout: 5_000
+    })
+    expect(WORKTREE_LIST_TIMEOUT_MS).toBeGreaterThan(0)
   })
 })
 
