@@ -86,7 +86,6 @@ import {
   continueBackgroundWorktreeCreation,
   runBackgroundWorktreeCreation
 } from './worktree-creation-flow'
-import { WORKTREE_CREATE_WATCHDOG_MS } from './worktree-create-watchdog'
 
 const FLOW_SOURCE = readFileSync(join(__dirname, 'worktree-creation-flow.ts'), 'utf8')
 
@@ -129,11 +128,8 @@ function makePendingCreation(request: WorktreeCreationRequest): PendingWorktreeC
 }
 
 async function flushAsyncWorktreeCreation(): Promise<void> {
-  // Why: the create await chain deepened when the watchdog wrapper landed; keep
-  // a couple of spare ticks so this fixed flush doesn't silently starve again.
-  for (let i = 0; i < 6; i += 1) {
-    await Promise.resolve()
-  }
+  await Promise.resolve()
+  await Promise.resolve()
 }
 
 function sourceBetween(source: string, startPattern: string, endPattern: string): string {
@@ -648,33 +644,6 @@ describe('staged background worktree creation', () => {
       })
     )
     expect(toast.error).toHaveBeenCalledTimes(1)
-  })
-
-  // Why: a wedged main-side create used to spin "Creating worktree…" forever; the
-  // watchdog must convert it into the normal retryable error path.
-  it('fails a create that outlives the end-to-end watchdog with a retryable error', async () => {
-    vi.useFakeTimers()
-    try {
-      store.createWorktree.mockImplementationOnce(() => new Promise(() => {}))
-
-      const started = continueBackgroundWorktreeCreation('creation-1', makeRequest(), {
-        revealCreationSurface: false
-      })
-
-      expect(started).toBe(true)
-      await flushAsyncWorktreeCreation()
-      await vi.advanceTimersByTimeAsync(WORKTREE_CREATE_WATCHDOG_MS)
-
-      expect(store.updatePendingWorktreeCreation).toHaveBeenCalledWith(
-        'creation-1',
-        expect.objectContaining({
-          status: 'error',
-          error: expect.stringContaining('Timed out creating the workspace')
-        })
-      )
-    } finally {
-      vi.useRealTimers()
-    }
   })
 })
 

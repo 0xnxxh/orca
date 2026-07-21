@@ -87,8 +87,7 @@ const PRUNABLE_EXISTENCE_PROBE_CONCURRENCY = 8
 // Why: bound `git worktree add` so a OneDrive cloud-placeholder stall fails fast (STA-1292); generous enough for a legit large checkout (#7225).
 export const WORKTREE_ADD_TIMEOUT_MS = 180_000
 export const WORKTREE_REMOVAL_PREFLIGHT_TIMEOUT_MS = 30_000
-// Why: `worktree list` is a local read but can wedge on a stuck FS/index; concurrent callers share the
-// scan, so one unbounded wedge hangs every later list — including create's post-add re-list (forever spinner).
+// Why: one wedged shared scan otherwise hangs every later list, including create's post-add re-list.
 export const WORKTREE_LIST_TIMEOUT_MS = 30_000
 
 function gitExecOptions(
@@ -742,7 +741,9 @@ export function listWorktrees(
     return listWorktreesUnshared(repoPath, options)
   }
   const generation = worktreeScanGenerations.get(repoPath) ?? 0
-  const key = `${repoPath}\0${options.wslDistro ?? ''}\0${generation}`
+  const timeout = options.timeout ?? WORKTREE_LIST_TIMEOUT_MS
+  // Why: callers with different deadlines cannot safely share which timeout wins the scan.
+  const key = `${repoPath}\0${options.wslDistro ?? ''}\0${timeout}\0${generation}`
   const inFlight = inFlightWorktreeScans.get(key)
   if (inFlight) {
     return inFlight
