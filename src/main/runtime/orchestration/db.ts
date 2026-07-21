@@ -694,6 +694,28 @@ export class OrchestrationDb {
     return this.findActiveDispatchForAssignee(handle)
   }
 
+  // Why: attributing an id-less lifecycle message is only safe when the sender owns
+  // exactly one active dispatch (#7429) — more than one match must not be guessed.
+  getSoleActiveDispatchForSender(
+    assigneeHandle: string,
+    assigneePaneKey?: string | null
+  ): DispatchContextRow | undefined {
+    const matches = (
+      this.db
+        .prepare("SELECT * FROM dispatch_contexts WHERE status IN ('pending', 'dispatched')")
+        .all() as DispatchContextRow[]
+    ).filter(
+      (row) =>
+        row.assignee_handle === assigneeHandle ||
+        Boolean(
+          assigneePaneKey &&
+          row.assignee_pane_key &&
+          isEquivalentPaneKey(row.assignee_pane_key, assigneePaneKey)
+        )
+    )
+    return matches.length === 1 ? matches[0] : undefined
+  }
+
   private findActiveDispatchForAssignee(
     assigneeHandle: string,
     assigneePaneKey?: string
