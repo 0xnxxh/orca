@@ -156,12 +156,14 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
       if (!terminal || getShortcutPlatform() !== 'darwin') {
         return
       }
+      // Why: prewarm the async input-source lookup before the first native-text key needs classification.
+      const inputSourceTracker = getMacNativeTextInputSourceTracker()
       imeCompositionTracker = installTerminalImeCompositionTracker(terminal.element)
       imeNativeTextForwarder = installTerminalImeNativeTextForwarder({
         terminalElement: terminal.element,
         isComposing: () => imeCompositionTracker?.isActive() ?? false,
         sendInput: (data) => terminal?.input(data),
-        getInputSourceFeatures: () => getMacNativeTextInputSourceTracker().getFeatures()
+        getInputSourceFeatures: () => inputSourceTracker.getFeatures()
       })
     }
 
