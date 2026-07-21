@@ -15,6 +15,18 @@ export type MobileNativeChatSendOrigin = {
 
 const NO_PENDING_MESSAGES: MobileNativeChatPendingMessage[] = []
 
+// How long an ack-lost send may wait for its transcript echo before it is
+// reported as a failure. Covers a relay reconnect plus the transcript resync.
+const UNCONFIRMED_SEND_DEADLINE_MS = 20_000
+
+type UnconfirmedSend = {
+  draftKey: string
+  text: string
+  normalizedText: string
+  expectedOccurrence: number
+  deadline: ReturnType<typeof setTimeout>
+}
+
 function normalizedUserText(message: NativeChatMessage): string | null {
   if (message.role !== 'user') {
     return null
@@ -49,6 +61,11 @@ export function useMobileNativeChatDrafts(args: {
   pending: MobileNativeChatPendingMessage[]
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
   acceptSend: (origin: MobileNativeChatSendOrigin, text: string) => void
+  holdUnconfirmedSend: (
+    origin: MobileNativeChatSendOrigin,
+    text: string,
+    onLost: () => void
+  ) => void
 } {
   const { hostId, worktreeId, tabId, sessionId, messages } = args
   const draftKey = tabId ? `${hostId}\0${worktreeId}\0${tabId}` : null
@@ -122,6 +139,67 @@ export function useMobileNativeChatDrafts(args: {
     })
   }, [])
 
+  // Why: a relay drop mid-send loses only the ack in the common case — the
+  // desktop already delivered the message. Hold the send instead of claiming
+  // failure (which baits a duplicate): clear the draft when the transcript echo
+  // lands, and only report a loss if the deadline passes without one.
+  const unconfirmedRef = useRef<UnconfirmedSend[]>([])
+  const holdUnconfirmedSend = useCallback(
+    (origin: MobileNativeChatSendOrigin, text: string, onLost: () => void) => {
+      const earlierOutstanding = unconfirmedRef.current.filter(
+        (entry) =>
+          entry.draftKey === origin.draftKey &&
+          entry.normalizedText === origin.normalizedText &&
+          entry.expectedOccurrence > origin.baselineOccurrences
+      ).length
+      const entry: UnconfirmedSend = {
+        draftKey: origin.draftKey,
+        text,
+        normalizedText: origin.normalizedText,
+        expectedOccurrence: origin.baselineOccurrences + earlierOutstanding + 1,
+        deadline: setTimeout(() => {
+          unconfirmedRef.current = unconfirmedRef.current.filter((held) => held !== entry)
+          onLost()
+        }, UNCONFIRMED_SEND_DEADLINE_MS)
+      }
+      unconfirmedRef.current = [...unconfirmedRef.current, entry]
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!draftKey || unconfirmedRef.current.length === 0) {
+      return
+    }
+    const landed = unconfirmedRef.current.filter(
+      (entry) =>
+        entry.draftKey === draftKey &&
+        countUserTextOccurrences(messages, entry.normalizedText) >= entry.expectedOccurrence
+    )
+    if (landed.length === 0) {
+      return
+    }
+    unconfirmedRef.current = unconfirmedRef.current.filter((entry) => !landed.includes(entry))
+    for (const entry of landed) {
+      clearTimeout(entry.deadline)
+      // Same guard as acceptSend: never erase edits typed after the send began.
+      setDrafts((previous) =>
+        (previous[entry.draftKey] ?? '').trim() === entry.text.trim()
+          ? { ...previous, [entry.draftKey]: '' }
+          : previous
+      )
+    }
+  }, [messages, draftKey])
+
+  useEffect(
+    () => () => {
+      for (const entry of unconfirmedRef.current) {
+        clearTimeout(entry.deadline)
+      }
+    },
+    []
+  )
+
   const pending = pendingKey
     ? (pendingBySession[pendingKey] ?? NO_PENDING_MESSAGES)
     : NO_PENDING_MESSAGES
@@ -160,6 +238,7 @@ export function useMobileNativeChatDrafts(args: {
     setComposerText,
     pending,
     captureSendOrigin,
-    acceptSend
+    acceptSend,
+    holdUnconfirmedSend
   }
 }

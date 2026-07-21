@@ -173,6 +173,109 @@ describe('useMobileNativeChatDrafts', () => {
     expect(state?.composerText).toBe('new edit')
   })
 
+  it('clears the draft when an unconfirmed send lands in the transcript', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      act(() => state?.setComposerText('ping'))
+      const origin = state?.captureSendOrigin('ping')
+      const onLost = vi.fn()
+      act(() => {
+        if (origin) {
+          state?.holdUnconfirmedSend(origin, 'ping', onLost)
+        }
+      })
+      expect(state?.composerText).toBe('ping')
+
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, { tabId: 'a', messages: [userTextMessage('m1', 'ping')] })
+        )
+      )
+      expect(state?.composerText).toBe('')
+
+      act(() => vi.advanceTimersByTime(30_000))
+      expect(onLost).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports a loss and keeps the draft when no echo lands before the deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      act(() => state?.setComposerText('ping'))
+      const origin = state?.captureSendOrigin('ping')
+      const onLost = vi.fn()
+      act(() => {
+        if (origin) {
+          state?.holdUnconfirmedSend(origin, 'ping', onLost)
+        }
+      })
+
+      act(() => vi.advanceTimersByTime(30_000))
+      expect(onLost).toHaveBeenCalledTimes(1)
+      expect(state?.composerText).toBe('ping')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not confirm an unconfirmed send against an older identical turn', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, { tabId: 'a', messages: [userTextMessage('old', 'ping')] })
+        )
+      )
+      act(() => state?.setComposerText('ping'))
+      const origin = state?.captureSendOrigin('ping')
+      const onLost = vi.fn()
+      act(() => {
+        if (origin) {
+          state?.holdUnconfirmedSend(origin, 'ping', onLost)
+        }
+      })
+
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, {
+            tabId: 'a',
+            messages: [userTextMessage('old', 'ping'), assistantTextMessage('other', 'working')]
+          })
+        )
+      )
+      expect(state?.composerText).toBe('ping')
+
+      act(() => vi.advanceTimersByTime(30_000))
+      expect(onLost).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not erase newer edits when an unconfirmed send lands', async () => {
+    await mount('a')
+    act(() => state?.setComposerText('submitted'))
+    const origin = state?.captureSendOrigin('submitted')
+    act(() => {
+      if (origin) {
+        state?.holdUnconfirmedSend(origin, 'submitted', vi.fn())
+      }
+    })
+    act(() => state?.setComposerText('new edit'))
+
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', messages: [userTextMessage('m1', 'submitted')] })
+      )
+    )
+    expect(state?.composerText).toBe('new edit')
+  })
+
   it('accepts and clears the first send before a provider session id exists', async () => {
     await mount('a')
     await act(async () => renderer?.update(createElement(Harness, { tabId: 'a', sessionId: null })))
