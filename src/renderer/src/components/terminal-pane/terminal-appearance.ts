@@ -24,7 +24,7 @@ import type { TerminalViewAttributes } from '../../../../shared/terminal-view-at
 import { publishTerminalViewAttributes } from './terminal-view-attributes-publisher'
 import { normalizeTerminalLineHeight } from '../../../../shared/terminal-line-height-settings'
 import { maybePushMode2031Flip } from './terminal-mode-2031-replies'
-import { isTerminalBackgroundLight } from '@/lib/terminal-title-contrast'
+import { resolveTerminalMinimumContrastRatio } from '@/lib/terminal-contrast-correction'
 
 // Why Pick over a hand-rolled type: stays tied to xterm's canonical signature so upstream tightening surfaces here.
 type Mode2031Parser = Pick<IParser, 'registerCsiHandler'>
@@ -208,15 +208,13 @@ export function applyTerminalAppearance(
     if (theme && !composedTerminalThemesEqual(pane.terminal.options.theme, theme)) {
       pane.terminal.options.theme = theme
     }
-    // Why gate by background luminance, not appearance.mode (#7934): xterm's contrast correction rescues
-    // invisible white/bright-white ANSI text on light backgrounds but over-corrects vibrant ANSI colors on
-    // dark ones — and either theme slot can hold either kind (match-dark-mode, light theme in the dark slot).
+    // Gate off the configured theme background; the live OSC-11 background is deliberately preserved by the
+    // theme write above, so a TUI that repaints its background at runtime won't re-gate (known limitation).
     // Why value-gated: writing minimumContrastRatio clears xterm's contrast cache, so skip on no-op re-applies.
-    const minimumContrastRatio = isTerminalBackgroundLight(theme?.background, {
-      appSurface: appearance.mode
-    })
-      ? 4.5
-      : 1
+    const minimumContrastRatio = resolveTerminalMinimumContrastRatio(
+      theme?.background,
+      appearance.mode
+    )
     if (pane.terminal.options.minimumContrastRatio !== minimumContrastRatio) {
       pane.terminal.options.minimumContrastRatio = minimumContrastRatio
     }

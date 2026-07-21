@@ -8,7 +8,7 @@ import { buildDefaultTerminalOptions } from '@/lib/pane-manager/pane-terminal-op
 import { buildFontFamily } from '@/components/terminal-pane/layout-serialization'
 import { composeActiveTerminalTheme } from '@/components/terminal-pane/terminal-appearance'
 import { clampNumber, resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
-import { isTerminalBackgroundLight } from '@/lib/terminal-title-contrast'
+import { resolveTerminalMinimumContrastRatio } from '@/lib/terminal-contrast-correction'
 import { resolveTerminalFontWeights } from '../../../../shared/terminal-fonts'
 import { resolveTerminalLigaturesEnabled } from '../../../../shared/terminal-ligatures'
 import { normalizeTerminalLineHeight } from '../../../../shared/terminal-line-height-settings'
@@ -196,12 +196,11 @@ export function TerminalSettingsPreview({
       return
     }
     terminal.options.theme = composedTheme
-    // Why: mirror applyTerminalAppearance's background-luminance gating (#7934) so the preview matches live panes.
-    terminal.options.minimumContrastRatio = isTerminalBackgroundLight(composedTheme.background, {
-      appSurface: effectiveMode
-    })
-      ? 4.5
-      : 1
+    // Why: share applyTerminalAppearance's gating helper (#7934) so the preview can't drift from live panes.
+    terminal.options.minimumContrastRatio = resolveTerminalMinimumContrastRatio(
+      composedTheme.background,
+      effectiveMode
+    )
     // Why: xterm renders an alpha-channel background opaque unless allowTransparency is set (matches applyTerminalAppearance).
     terminal.options.allowTransparency =
       settings.terminalBackgroundOpacity !== undefined && settings.terminalBackgroundOpacity < 1

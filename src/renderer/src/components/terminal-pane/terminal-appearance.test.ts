@@ -455,6 +455,30 @@ describe('applyTerminalAppearance theme assignment', () => {
 
     expect(pane.terminal.options.minimumContrastRatio).toBe(4.5)
   })
+
+  it('skips the minimumContrastRatio write on a no-op re-apply (preserves xterm contrast cache)', () => {
+    const pane = makePane(1)
+    let writes = 0
+    let stored: number | undefined
+    Object.defineProperty(pane.terminal.options, 'minimumContrastRatio', {
+      configurable: true,
+      enumerable: true,
+      get: () => stored,
+      set: (value: number) => {
+        stored = value
+        writes += 1
+      }
+    })
+    const settings = getDefaultSettings('/tmp')
+
+    apply(pane, { ...settings, theme: 'dark' })
+    const writesAfterFirst = writes
+
+    apply(pane, { ...settings, theme: 'dark' })
+
+    // The value-gate must not rewrite an unchanged ratio — each write clears xterm's contrast cache.
+    expect(writes).toBe(writesAfterFirst)
+  })
 })
 
 describe('publishTerminalViewAttributesAtAppStart', () => {
