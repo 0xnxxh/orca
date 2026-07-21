@@ -135,9 +135,6 @@ export class MobileEndpointSupervisor {
         const result = await this.tryRelayCredential(credential)
         if (result.ok) {
           retryAfterOperation = this.logical.getState() !== 'connected'
-          if (!retryAfterOperation) {
-            this.relayReconnect.reset()
-          }
           return
         }
         lastError = result.error

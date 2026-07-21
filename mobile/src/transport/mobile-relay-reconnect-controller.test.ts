@@ -65,6 +65,22 @@ describe('relay reconnect controller', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('starts a new failure streak after one ceiling without a failure', () => {
+    const onRetry = vi.fn()
+    const reconnect = createController(onRetry)
+
+    reconnect.registerFailure(new RelayOuterError(4429))
+    vi.advanceTimersByTime(250)
+    expect(onRetry).toHaveBeenCalledOnce()
+
+    vi.advanceTimersByTime(30_000)
+    reconnect.registerFailure(new RelayOuterError(4429))
+    vi.advanceTimersByTime(249)
+    expect(onRetry).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(1)
+    expect(onRetry).toHaveBeenCalledTimes(2)
+  })
+
   it('uses grace only when the outer relay credential was rejected', () => {
     const reconnect = createController(vi.fn())
 

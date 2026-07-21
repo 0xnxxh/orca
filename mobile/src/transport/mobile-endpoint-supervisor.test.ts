@@ -344,6 +344,34 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
+  it('escalates backoff when relay sessions connect and then drop repeatedly', async () => {
+    const logical = new FakeLogicalClient('disconnected', 'lan')
+    const openRelay = vi.fn(() => new FakeRelaySession('connected', new RelayOuterError(4408)))
+    const deps = dependencies({
+      openRelay,
+      randomBytes: () => new Uint8Array([128, 0])
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    logical.publishState('disconnected')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(openRelay).toHaveBeenCalledTimes(2)
+
+    logical.publishState('disconnected')
+    await vi.advanceTimersByTimeAsync(499)
+    expect(openRelay).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(openRelay).toHaveBeenCalledTimes(3)
+
+    logical.publishState('disconnected')
+    await vi.advanceTimersByTimeAsync(999)
+    expect(openRelay).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(openRelay).toHaveBeenCalledTimes(4)
+    supervisor.stop()
+  })
+
   it('does not try a grace credential for a capacity failure before backing off', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
     const openRelay = vi.fn(() => new FakeRelaySession('disconnected', new RelayOuterError(4429)))

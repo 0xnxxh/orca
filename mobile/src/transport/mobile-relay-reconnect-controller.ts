@@ -25,6 +25,7 @@ type RecoveryGate = 'host-revival' | 'fresh-credential'
 
 export class RelayReconnectController {
   private consecutiveFailures = 0
+  private lastFailureAt: number | null = null
   private nextAttemptAt = 0
   private timer: ReturnType<typeof setTimeout> | null = null
   private activeSession: MobileRelayRpcSession | null = null
@@ -79,6 +80,9 @@ export class RelayReconnectController {
 
   setActiveSession(session: MobileRelayRpcSession): void {
     this.activeSession = session
+    this.nextAttemptAt = 0
+    this.recoveryGate = null
+    this.clearTimer()
   }
 
   resetForDirectConnection(): boolean {
@@ -164,9 +168,16 @@ export class RelayReconnectController {
       this.clearTimer()
       return
     }
+    const now = this.dependencies.now()
+    if (this.lastFailureAt != null && now - this.lastFailureAt >= RELAY_BACKOFF_CEILING_MS) {
+      this.consecutiveFailures = 0
+    }
+    // Why: a relay can authenticate and collapse immediately; only a quiet
+    // ceiling-length window proves the prior failure streak has ended.
+    this.lastFailureAt = now
     this.consecutiveFailures += 1
     const delay = this.delayMs()
-    this.nextAttemptAt = this.dependencies.now() + delay
+    this.nextAttemptAt = now + delay
     if (recovery?.kind === 'wait-for-host-revival') {
       // Why: retrying HOST_OFFLINE without a revival signal is polling a known-negative state.
       this.recoveryGate = 'host-revival'
@@ -205,6 +216,7 @@ export class RelayReconnectController {
 
   reset(): void {
     this.consecutiveFailures = 0
+    this.lastFailureAt = null
     this.nextAttemptAt = 0
     this.recoveryGate = null
     this.clearTimer()
