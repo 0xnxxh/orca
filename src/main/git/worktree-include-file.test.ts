@@ -96,6 +96,13 @@ describe('resolveWorktreeIncludePaths', () => {
     mockGit({ entries: ['.env', 'apps/web/.env'], ignored: ['.env', 'apps/web/.env'] })
 
     await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env', 'apps/web/.env'])
+    const lsFilesCalls = gitExecFileAsyncMock.mock.calls.filter(([args]) =>
+      args.includes('ls-files')
+    )
+    expect(lsFilesCalls).toHaveLength(2)
+    expect(lsFilesCalls[0][0]).toContain('--directory')
+    expect(lsFilesCalls[1][0]).not.toContain('--directory')
+    expect(lsFilesCalls[1][0]).toContain(':(glob)**/.env')
   })
 
   it('avoids enumeration for root-anchored literal patterns', async () => {

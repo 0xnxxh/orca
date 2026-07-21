@@ -174,7 +174,7 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
     }
   })
 
-  it('lists collapsed ignored entries for worktree includes on the baseline', async () => {
+  it('lists collapsed directories and targeted nested files for worktree includes', async () => {
     await writeFile(join(repoPath, '.gitignore'), '.env\ncache/\n')
     await writeFile(join(repoPath, '.env'), 'ROOT=1\n')
     await mkdir(join(repoPath, 'apps', 'web'), { recursive: true })
@@ -182,7 +182,7 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
     await mkdir(join(repoPath, 'cache'))
     await writeFile(join(repoPath, 'cache', 'artifact'), 'ignored\n')
 
-    const { stdout } = await runGit([
+    const collapsed = await runGit([
       '-c',
       'core.quotePath=false',
       'ls-files',
@@ -192,10 +192,22 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
       '--directory',
       '-z'
     ])
-    const entries = stdout.split('\0').filter(Boolean)
-    expect(entries).toContain('.env')
-    expect(entries).toContain('apps/web/.env')
-    expect(entries).toContain('cache/')
-    expect(entries).not.toContain('cache/artifact')
+    const collapsedEntries = collapsed.stdout.split('\0').filter(Boolean)
+    expect(collapsedEntries).toContain('.env')
+    expect(collapsedEntries).toContain('cache/')
+    expect(collapsedEntries).not.toContain('cache/artifact')
+
+    const targeted = await runGit([
+      '-c',
+      'core.quotePath=false',
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '-z',
+      '--',
+      ':(glob)**/.env'
+    ])
+    expect(targeted.stdout.split('\0').filter(Boolean)).toEqual(['.env', 'apps/web/.env'])
   })
 })

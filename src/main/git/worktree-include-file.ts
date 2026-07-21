@@ -13,6 +13,9 @@ export const WORKTREE_INCLUDE_FILE = '.worktreeinclude'
 // filesystem or a pathological repo; bail and create the worktree without it.
 const WORKTREE_INCLUDE_GIT_TIMEOUT_MS = 15_000
 const WORKTREE_INCLUDE_MAX_FILE_BYTES = 256 * 1024
+// Why: Windows limits native command lines to 32K UTF-16 code units; leave
+// room for Git's executable, fixed arguments, and the repository path.
+const WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH = 12 * 1024
 
 type WorktreeIncludePattern = {
   negated: boolean
@@ -135,29 +138,32 @@ type GitignoredEntry = {
   isDirectory: boolean
 }
 
-/** Untracked gitignored files/dirs at directory granularity. `--directory`
- *  collapses wholly-ignored dirs (e.g. `node_modules/`) into one entry and
- *  prunes traversal beneath them, keeping this fast in huge repos. */
+type ListGitignoredEntriesOptions = {
+  collapseDirectories: boolean
+  pathspecs?: readonly string[]
+  timeout: number
+}
+
 async function listGitignoredEntries(
   repoPath: string,
-  options: GitRuntimeOptions
+  options: GitRuntimeOptions,
+  listOptions: ListGitignoredEntriesOptions
 ): Promise<GitignoredEntry[]> {
-  const { stdout } = await gitExecFileAsync(
-    [
-      '-c',
-      'core.quotePath=false',
-      'ls-files',
-      '--others',
-      '--ignored',
-      '--exclude-standard',
-      '--directory',
-      '-z'
-    ],
-    {
-      ...gitOptionsForWorktree(repoPath, options),
-      timeout: WORKTREE_INCLUDE_GIT_TIMEOUT_MS
-    }
-  )
+  const args = [
+    '-c',
+    'core.quotePath=false',
+    'ls-files',
+    '--others',
+    '--ignored',
+    '--exclude-standard',
+    ...(listOptions.collapseDirectories ? ['--directory'] : []),
+    '-z',
+    ...(listOptions.pathspecs ? ['--', ...listOptions.pathspecs] : [])
+  ]
+  const { stdout } = await gitExecFileAsync(args, {
+    ...gitOptionsForWorktree(repoPath, options),
+    timeout: listOptions.timeout
+  })
   const entries: GitignoredEntry[] = []
   for (const rawEntry of stdout.split('\0')) {
     if (!rawEntry) {
@@ -170,6 +176,40 @@ async function listGitignoredEntries(
     })
   }
   return entries
+}
+
+function patternToGitPathspec(pattern: WorktreeIncludePattern): string {
+  // Why: our supported matcher treats `[` literally, while Git pathspec globs
+  // treat it as a character class opener.
+  const body = pattern.body.replaceAll('[', '[[]')
+  return `:(glob)${pattern.anchored ? '' : '**/'}${body}`
+}
+
+function chunkPathspecs(pathspecs: readonly string[]): string[][] {
+  const chunks: string[][] = []
+  let chunk: string[] = []
+  let chunkLength = 0
+  for (const pathspec of new Set(pathspecs)) {
+    // A single impossible-to-match pattern must not exceed Windows' process
+    // command-line limit; the collapsed scan still provides safe fallback.
+    if (pathspec.length > WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH) {
+      continue
+    }
+    if (
+      chunk.length > 0 &&
+      chunkLength + pathspec.length > WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH
+    ) {
+      chunks.push(chunk)
+      chunk = []
+      chunkLength = 0
+    }
+    chunk.push(pathspec)
+    chunkLength += pathspec.length
+  }
+  if (chunk.length > 0) {
+    chunks.push(chunk)
+  }
+  return chunks
 }
 
 async function readWorktreeIncludeFile(repoPath: string): Promise<string | null> {
@@ -233,11 +273,38 @@ export async function resolveWorktreeIncludePaths(
       }
     }
 
-    // Why: bare gitignore patterns match at every depth; direct stat covers the
-    // root candidate, while one collapsed enumeration discovers nested matches.
-    if (patterns.some((pattern) => !pattern.negated && (pattern.hasGlob || !pattern.anchored))) {
-      for (const entry of await listGitignoredEntries(repoPath, options)) {
+    const broadPatterns = patterns.filter(
+      (pattern) => !pattern.negated && (pattern.hasGlob || !pattern.anchored)
+    )
+    if (broadPatterns.length > 0) {
+      const deadline = Date.now() + WORKTREE_INCLUDE_GIT_TIMEOUT_MS
+      // Why: collapsing ignored directories prevents huge trees such as
+      // node_modules from producing one entry per file.
+      for (const entry of await listGitignoredEntries(repoPath, options, {
+        collapseDirectories: true,
+        timeout: Math.max(1, deadline - Date.now())
+      })) {
         addCandidate(entry)
+      }
+
+      // Why: Git 2.25's directory collapsing can stop at an untracked parent
+      // before discovering nested ignored files; targeted scans preserve the
+      // cross-version behavior without expanding unrelated ignored trees.
+      const filePathspecs = broadPatterns
+        .filter((pattern) => !pattern.dirOnly)
+        .map(patternToGitPathspec)
+      for (const pathspecs of chunkPathspecs(filePathspecs)) {
+        const timeout = deadline - Date.now()
+        if (timeout <= 0) {
+          throw new Error(`${WORKTREE_INCLUDE_FILE} Git enumeration timed out`)
+        }
+        for (const entry of await listGitignoredEntries(repoPath, options, {
+          collapseDirectories: false,
+          pathspecs,
+          timeout
+        })) {
+          addCandidate(entry)
+        }
       }
     }
     if (candidates.size === 0) {
