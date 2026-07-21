@@ -191,6 +191,8 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     editorAutoSave: false,
     editorAutoSaveDelayMs: DEFAULT_EDITOR_AUTO_SAVE_DELAY_MS,
     editorMinimapEnabled: false,
+    // Why empty: the editor keeps following the terminal font unless the user opts in.
+    editorFontFamily: '',
     editorWordWrap: true,
     richMarkdownSpellcheckEnabled: true,
     markdownReviewToolsEnabled: true,
@@ -229,7 +231,8 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     terminalRightClickToPasteDefaultedForPlatform: true,
     terminalWindowsShell: 'powershell.exe',
     terminalWindowsWslDistro: null,
-    localAccountRuntime: 'host',
+    localAccountRuntime: 'auto',
+    localAccountRuntimeDefaultedToAutoForAllUsers: true,
     localAccountWslDistro: null,
     localWindowsRuntimeDefault: { kind: 'windows-host' },
     // Why: prefer modern PowerShell when installed, falling back to inbox Windows PowerShell.
