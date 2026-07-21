@@ -102,7 +102,7 @@ export function useDetectedAgents(
   const ensureRuntime = useAppStore((s) => s.ensureRuntimeDetectedAgents)
   const refreshLocal = useAppStore((s) => s.refreshDetectedAgents)
   const refreshRuntime = useAppStore((s) => s.refreshRuntimeDetectedAgents)
-  const clearRemote = useAppStore((s) => s.clearRemoteDetectedAgents)
+  const refreshRemote = useAppStore((s) => s.refreshRemoteDetectedAgents)
   // Why: refresh must hit the same host the list came from — refreshing the
   // local PATH while showing a remote server's agents is a silent no-op.
   const refresh = useCallback((): Promise<TuiAgent[]> => {
@@ -110,12 +110,10 @@ export function useDetectedAgents(
       return refreshRuntime(targetId)
     }
     if (targetKind === 'ssh' && targetId) {
-      // Why: SSH hosts have no refresh RPC; dropping the cache forces a probe.
-      clearRemote(targetId)
-      return ensureRemote(targetId)
+      return refreshRemote(targetId)
     }
     return refreshLocal()
-  }, [targetKind, targetId, refreshRuntime, clearRemote, ensureRemote, refreshLocal])
+  }, [targetKind, targetId, refreshRuntime, refreshRemote, refreshLocal])
 
   useEffect(() => {
     if (isUnknown) {
