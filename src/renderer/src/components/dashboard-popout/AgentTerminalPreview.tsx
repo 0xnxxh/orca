@@ -4,6 +4,11 @@ import '@xterm/xterm/css/xterm.css'
 import { buildDefaultTerminalOptions } from '@/lib/pane-manager/pane-terminal-options'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { subscribeToTerminalUserInput } from '@/components/terminal-pane/terminal-user-input-signal'
+import {
+  executeTerminalPastePlan,
+  planTerminalPasteWithYield
+} from '@/components/terminal-pane/terminal-paste-coordinator'
+import { resolveTerminalPasteRuntime } from '@/components/terminal-pane/terminal-paste-runtime'
 import { TERMINAL_PASTE_MAX_BYTES } from '@/components/terminal-pane/terminal-paste-limits'
 import {
   installTerminalImeCompositionTracker,
@@ -129,17 +134,50 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
       })
     }
 
-    const pasteClipboardText = async (): Promise<void> => {
+    const pasteClipboardText = async (
+      activeElementAtDispatch: Element | null,
+      source: 'keyboard' | 'app-menu'
+    ): Promise<void> => {
       let text: string
       try {
         text = await window.api.ui.readClipboardText({ maxBytes: TERMINAL_PASTE_MAX_BYTES })
       } catch {
         return
       }
-      if (!disposed && terminal && text) {
-        // Why: paste() flows through onData as user input, so the existing PTY routing applies.
-        terminal.paste(text)
+      const pasteTerminal = terminal
+      if (!pasteTerminal || !text) {
+        return
       }
+      const targetIsCurrent = (): boolean =>
+        !disposed &&
+        terminal === pasteTerminal &&
+        activeElementAtDispatch !== null &&
+        document.activeElement === activeElementAtDispatch &&
+        container.contains(activeElementAtDispatch)
+      if (!targetIsCurrent()) {
+        return
+      }
+      const platform = getShortcutPlatform()
+      const plan = await planTerminalPasteWithYield({
+        text,
+        source,
+        target: {
+          kind: 'terminal',
+          paneId: 0,
+          leafId: ptyId,
+          ptyId,
+          runtime: resolveTerminalPasteRuntime({ platform, ptyId })
+        },
+        terminalBracketedPasteMode: pasteTerminal.modes.bracketedPasteMode
+      })
+      await executeTerminalPastePlan(plan, {
+        // Why: stream large pastes so the renderer never emits one huge IPC payload.
+        pasteText: (pasteText) => pasteTerminal.paste(pasteText),
+        writePty: (data) => window.api.terminalPreview.input(ptyId, data),
+        isTargetCurrent: targetIsCurrent,
+        // Why: if focus changes mid-bracketed paste, the closing marker must still reach the live PTY.
+        canContinue: () => true
+      })
     }
 
     const disposeImeNativeTextBridge = (): void => {
@@ -172,22 +210,37 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
         return
       }
       const platform = getShortcutPlatform()
+      const consumedClipboardKeys = new Set<string>()
+      const consumeEvent = (event: KeyboardEvent): false => {
+        event.preventDefault()
+        event.stopPropagation()
+        return false
+      }
       terminal.attachCustomKeyEventHandler((event) => {
         if (imeNativeTextForwarder?.claimKeyEvent(event)) {
           // Why: bypass xterm's kitty encoder for native-text keydowns so the committed glyph survives via the input event.
           return false
         }
         if (event.type !== 'keydown') {
+          const keyIdentity = event.code || event.key
+          if (consumedClipboardKeys.has(keyIdentity)) {
+            if (event.type === 'keyup') {
+              consumedClipboardKeys.delete(keyIdentity)
+            }
+            return consumeEvent(event)
+          }
           return true
         }
         const keybindings = useAppStore.getState().keybindings
         if (keybindingMatchesAction('terminal.copySelection', event, platform, keybindings)) {
+          const keyIdentity = event.code || event.key
+          const firstKeydown = !consumedClipboardKeys.has(keyIdentity)
+          consumedClipboardKeys.add(keyIdentity)
           const selection = terminal?.getSelection()
-          if (!selection) {
-            return true
+          if (firstKeydown && selection) {
+            void window.api.ui.writeClipboardText(selection).catch(() => undefined)
           }
-          void window.api.ui.writeClipboardText(selection).catch(() => undefined)
-          return false
+          return consumeEvent(event)
         }
         // Why: plain Mod+V is the Edit-menu accelerator, which reaches this window as ui:appMenuPaste — matching it here too would paste twice.
         const isMenuPasteChord =
@@ -201,8 +254,12 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
           !isMenuPasteChord &&
           keybindingMatchesAction('terminal.paste', event, platform, keybindings)
         ) {
-          void pasteClipboardText()
-          return false
+          const keyIdentity = event.code || event.key
+          if (!consumedClipboardKeys.has(keyIdentity)) {
+            consumedClipboardKeys.add(keyIdentity)
+            void pasteClipboardText(document.activeElement, 'keyboard')
+          }
+          return consumeEvent(event)
         }
         return true
       })
@@ -337,7 +394,7 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
     const offAppMenuPaste = window.api.ui.onAppMenuPaste(() => {
       const active = document.activeElement
       if (active && container.contains(active)) {
-        void pasteClipboardText()
+        void pasteClipboardText(active, 'app-menu')
       }
     })
 
