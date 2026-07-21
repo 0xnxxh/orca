@@ -294,7 +294,9 @@ describe('AgentTerminalPreview', () => {
 
   it('streams large pastes as bounded IPC payloads instead of one renderer-blocking write', async () => {
     const encoder = new TextEncoder()
-    const largePaste = '😀'.repeat(TERMINAL_PASTE_DIRECT_MAX_BYTES / 4 + 1)
+    const multibytePrefix = '😀'.repeat(TERMINAL_PASTE_DIRECT_MAX_BYTES / 4 + 1)
+    const largePaste = `${multibytePrefix}\r\nnext\n`
+    const expectedPaste = `${multibytePrefix}\rnext\r`
     readClipboardText.mockResolvedValueOnce(largePaste)
     const view = render(<AgentTerminalPreview ptyId="pty-1" />)
     await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
@@ -306,13 +308,13 @@ describe('AgentTerminalPreview', () => {
 
     act(() => emitAppMenuPaste!())
     const expectedChunks = Math.ceil(
-      encoder.encode(largePaste).byteLength / TERMINAL_PASTE_CHUNK_MAX_BYTES
+      encoder.encode(expectedPaste).byteLength / TERMINAL_PASTE_CHUNK_MAX_BYTES
     )
     await waitFor(() => expect(input).toHaveBeenCalledTimes(expectedChunks))
 
     const payloads = input.mock.calls.map(([, data]) => data as string)
     expect(terminal.paste).not.toHaveBeenCalled()
-    expect(payloads.join('')).toBe(largePaste)
+    expect(payloads.join('')).toBe(expectedPaste)
     expect(
       payloads.every(
         (payload) => encoder.encode(payload).byteLength <= TERMINAL_PASTE_CHUNK_MAX_BYTES
