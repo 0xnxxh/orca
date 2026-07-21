@@ -31,7 +31,8 @@ import type {
 import {
   getRepoExecutionHostId,
   toRuntimeExecutionHostId,
-  toSshExecutionHostId
+  toSshExecutionHostId,
+  type ExecutionHostId
 } from '../../../shared/execution-host'
 import type {
   RemoteWorkspacePatchResult,
@@ -439,7 +440,13 @@ async function prepareRemoteWorkspaceTarget(targetId: string): Promise<boolean> 
     await store.fetchRepos()
     repos = useAppStore.getState().repos.filter((repo) => repo.connectionId === targetId)
   }
-  await Promise.all(repos.map((repo) => useAppStore.getState().fetchWorktrees(repo.id)))
+  await Promise.all(
+    repos.map((repo) =>
+      useAppStore.getState().fetchWorktrees(repo.id, {
+        ownerHostId: getRepoExecutionHostId(repo)
+      })
+    )
+  )
   await useAppStore.getState().fetchWorktreeLineage()
   return true
 }
@@ -453,15 +460,27 @@ export function collectSshTargetWorktreeIds(
     repos.filter((repo) => repo.connectionId === targetId).map((repo) => repo.id)
   )
   const sshHostId = toSshExecutionHostId(targetId)
+  const repoOwnerById = new Map<string, { count: number; onlyHostId?: ExecutionHostId }>()
+  for (const repo of repos) {
+    const current = repoOwnerById.get(repo.id)
+    repoOwnerById.set(
+      repo.id,
+      current
+        ? { count: current.count + 1 }
+        : { count: 1, onlyHostId: getRepoExecutionHostId(repo) }
+    )
+  }
   return new Set(
     Object.values(worktreesByRepo)
       .flat()
       .filter(
         (worktree) =>
           repoIds.has(worktree.repoId) &&
-          // Why: same-id repos can exist on several hosts (#9783); only rows owned by
-          // this SSH host (or legacy hostless rows) may be claimed by its snapshot.
-          (worktree.hostId == null || worktree.hostId === sshHostId)
+          (worktree.hostId === sshHostId ||
+            // Why: a hostless legacy row belongs to a remote host only when that repo has one unambiguous owner.
+            (worktree.hostId == null &&
+              repoOwnerById.get(worktree.repoId)?.count === 1 &&
+              repoOwnerById.get(worktree.repoId)?.onlyHostId === sshHostId))
       )
       .map((worktree) => worktree.id)
   )
@@ -818,7 +837,7 @@ export function getRuntimeProjectRefreshEnvironmentIds(args: {
   ]
 }
 
-async function refreshRuntimeProjectWorktrees(repos: readonly { id: string }[]): Promise<void> {
+async function refreshRuntimeProjectWorktrees(repos: readonly Repo[]): Promise<void> {
   let nextIndex = 0
   const failures: { repoId: string; error: unknown }[] = []
   const workerCount = Math.min(RUNTIME_PROJECT_REFRESH_CONCURRENCY, repos.length)
@@ -829,9 +848,12 @@ async function refreshRuntimeProjectWorktrees(repos: readonly { id: string }[]):
       while (nextIndex < repos.length) {
         const index = nextIndex
         nextIndex += 1
-        const repoId = repos[index].id
+        const repo = repos[index]
+        const repoId = repo.id
         try {
-          await useAppStore.getState().fetchWorktrees(repoId)
+          await useAppStore.getState().fetchWorktrees(repoId, {
+            ownerHostId: getRepoExecutionHostId(repo)
+          })
         } catch (error) {
           failures.push({ repoId, error })
         }
@@ -873,6 +895,7 @@ export function useIpcEvents(): void {
 
     const handleWorktreesChanged = async (
       repoId: string,
+      ownerHostId?: ExecutionHostId,
       renamed?: { oldWorktreeId: string; newWorktreeId: string }
     ): Promise<void> => {
       // Why: capture active-ness before migration moves the pointer; re-key maps before the diff so a rename isn't a deletion.
@@ -890,7 +913,9 @@ export function useIpcEvents(): void {
       const before =
         getAuthoritativeDetectedWorktreeIds(state, repoId) ??
         getVisibleWorktreeIdsForRepo(state, repoId)
-      await state.fetchWorktrees(repoId)
+      await (ownerHostId
+        ? state.fetchWorktrees(repoId, { ownerHostId })
+        : state.fetchWorktrees(repoId))
       await useAppStore.getState().fetchWorktreeLineage()
       // Why: an id change unmounts the active pane; re-activate so the tab reconciles, else it vanishes until re-select.
       if (renamedWasActive && renamed) {
@@ -939,7 +964,7 @@ export function useIpcEvents(): void {
         startup,
         defaultTabs
       }: Extract<RuntimeClientEvent, { type: 'activateWorktree' }>,
-      options: { allowRuntimeEnvironment: boolean }
+      options: { allowRuntimeEnvironment: boolean; ownerHostId?: ExecutionHostId }
     ): Promise<void> => {
       if (!options.allowRuntimeEnvironment && isRuntimeEnvironmentActive()) {
         // Why: local CLI worktree events carry local ids; runtime activation comes via the remote stream, allowed separately.
@@ -947,7 +972,10 @@ export function useIpcEvents(): void {
       }
       const existedBeforeFetch = Boolean(useAppStore.getState().getKnownWorktreeById(worktreeId))
       // Why: fetch first so activation can resolve the CLI-created worktree; it arrived from main, not yet in renderer state.
-      await useAppStore.getState().fetchWorktrees(repoId)
+      const store = useAppStore.getState()
+      await (options.ownerHostId
+        ? store.fetchWorktrees(repoId, { ownerHostId: options.ownerHostId })
+        : store.fetchWorktrees(repoId))
       const existsAfterFetch = Boolean(useAppStore.getState().getKnownWorktreeById(worktreeId))
       // Why: use the canonical activation path so the CLI switch records a back/forward visit, or the nav buttons ignore it.
       activateAndRevealWorktree(worktreeId, {
@@ -1005,7 +1033,10 @@ export function useIpcEvents(): void {
       }
       if (event.type === 'worktreesChanged') {
         void ensureRuntimeEventRepoKnown(environmentId, event.repoId).then(() =>
-          worktreeChangeRefreshQueue.enqueue({ repoId: event.repoId })
+          worktreeChangeRefreshQueue.enqueue({
+            repoId: event.repoId,
+            ownerHostId: toRuntimeExecutionHostId(environmentId)
+          })
         )
         return
       }
@@ -1019,7 +1050,12 @@ export function useIpcEvents(): void {
         return
       }
       void ensureRuntimeEventRepoKnown(environmentId, event.repoId)
-        .then(() => activateNotifiedWorktree(event, { allowRuntimeEnvironment: true }))
+        .then(() =>
+          activateNotifiedWorktree(event, {
+            allowRuntimeEnvironment: true,
+            ownerHostId: toRuntimeExecutionHostId(environmentId)
+          })
+        )
         .catch((error) => {
           console.error('Failed to activate runtime-created worktree:', error)
         })
@@ -2689,7 +2725,11 @@ export function useIpcEvents(): void {
       }
 
       if (state.status === 'connected') {
-        void Promise.all(remoteRepos.map((r) => store.fetchWorktrees(r.id))).then(async () => {
+        void Promise.all(
+          remoteRepos.map((repo) =>
+            store.fetchWorktrees(repo.id, { ownerHostId: getRepoExecutionHostId(repo) })
+          )
+        ).then(async () => {
           await useAppStore.getState().fetchWorktreeLineage()
           // Why: panes that never spawned (no PTY provider at cold start) or whose deferred reattach never ran sit inert.
           // Bumping generation remounts TerminalPane so the deferred-connect gate reattaches or spawns fresh now that the provider exists.
