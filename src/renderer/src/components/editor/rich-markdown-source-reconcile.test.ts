@@ -366,6 +366,21 @@ describe('reconcileSerializedMarkdown', () => {
       expect(fakeCanonicalize(reconciled).trimEnd()).toBe(edited.trimEnd())
     }
   })
+
+  it('keeps later multi-hunk seeds in the rolling application coordinate space', () => {
+    const lines = Array.from({ length: 8 }, (_, i) => `_强调${i}_ ascii segment ${i} 中文 tail`)
+    const originalSource = `# 标题\n\n${lines.join('\n')}\n`
+    const baseCanonical = fakeCanonicalize(originalSource)
+    // Why: the first hunk changes the UTF-8/code-unit delta before the second seed is decoded.
+    const edited = baseCanonical
+      .replace('segment 1', 'segment 1 🚀🚀')
+      .replace('segment 6', 'segment 6 XYZ')
+
+    const reconciled = reconcileWithFake(originalSource, edited)
+
+    expect(reconciled).not.toBe(edited)
+    expect(fakeCanonicalize(reconciled)).toBe(edited)
+  })
 })
 
 describe('serializeRichMarkdownForReconcile (real editor pipeline)', () => {
