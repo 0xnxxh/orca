@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { MessageCircleQuestion } from 'lucide-react'
 import { AgentIcon } from '@/lib/agent-catalog'
 import { agentTypeToIconAgent, formatAgentTypeLabel } from '@/lib/agent-status'
 import { AgentStateDot } from '@/components/AgentStateDot'
@@ -125,7 +126,7 @@ export const AgentKanbanCard = memo(
 
         {card.askSummary ? (
           <div className="flex items-start gap-1 rounded-md bg-amber-500/10 px-1.5 py-1 text-[11px] text-amber-600 dark:text-amber-400">
-            <span aria-hidden>✋</span>
+            <MessageCircleQuestion className="mt-px size-3 shrink-0" aria-hidden />
             <span className="line-clamp-2">{card.askSummary}</span>
           </div>
         ) : null}
