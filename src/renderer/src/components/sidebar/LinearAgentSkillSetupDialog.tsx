@@ -35,6 +35,7 @@ type LinearAgentSkillSetupDialogProps = {
   onRecheck: AgentSkillSetupPanelProps['onRecheck']
   onOpenChange: (open: boolean) => void
   onDismissPermanently: () => void
+  onSnoozeForSession: () => void
   onDone: () => void
 }
 
@@ -54,6 +55,7 @@ export function LinearAgentSkillSetupDialog({
   onRecheck,
   onOpenChange,
   onDismissPermanently,
+  onSnoozeForSession,
   onDone
 }: LinearAgentSkillSetupDialogProps): React.JSX.Element {
   return (
@@ -152,16 +154,25 @@ export function LinearAgentSkillSetupDialog({
               onBeforeOpenTerminal={onBeforeOpenTerminal}
               onRecheck={onRecheck}
             />
-            {/* Why: the dialog's × already dismisses-for-session (onOpenChange), so a
-                separate "Not now" button was redundant and, styled as the footer CTA,
-                read as the primary action over Install. Keep only the distinct
-                permanent-dismiss action. */}
-            <DialogFooter className="px-6 pb-6">
-              <Button type="button" variant="ghost" size="sm" onClick={onDismissPermanently}>
+            {/* Why: this modal auto-opens unsolicited, so the reflexive dismiss must be
+                the non-destructive one. "Not now" (session snooze, same as the ×) is the
+                easy ghost target; permanent "Don't show again" is demoted to a quiet muted
+                link so nuking the prompt takes intent. Install stays the filled primary. */}
+            <DialogFooter className="px-6 pb-6 sm:items-center sm:justify-between">
+              <Button
+                type="button"
+                variant="link"
+                size="sm"
+                className="h-auto p-0 text-muted-foreground hover:text-foreground"
+                onClick={onDismissPermanently}
+              >
                 {translate(
                   'auto.components.sidebar.LinearAgentSkillSetupPrompt.dontShowAgain',
                   "Don't show again"
                 )}
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={onSnoozeForSession}>
+                {translate('auto.components.sidebar.LinearAgentSkillSetupPrompt.notNow', 'Not now')}
               </Button>
             </DialogFooter>
           </>

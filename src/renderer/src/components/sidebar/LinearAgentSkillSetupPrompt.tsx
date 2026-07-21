@@ -338,6 +338,7 @@ export function LinearAgentSkillSetupPrompt({
         setSetupDialogOpen(false)
       }}
       onDismissPermanently={dismissPermanently}
+      onSnoozeForSession={snoozeForSession}
       onDone={closeSuccessModal}
     />
   )
