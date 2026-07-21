@@ -402,7 +402,7 @@ describe('createOrFocusDashboardPopout', () => {
     expect(win.zoomLevel).toBe(0.5)
   })
 
-  it('handles native zoom commands that bypass before-input-event', () => {
+  it('handles mouse-wheel zoom requests outside before-input-event', () => {
     const win = createOrFocusDashboardPopout(makeStore() as never) as unknown as FakeWindow
     const event = { preventDefault: vi.fn() }
 
@@ -415,7 +415,7 @@ describe('createOrFocusDashboardPopout', () => {
     expect(win.zoomLevel).toBe(0)
   })
 
-  it('respects zoom keybinding overrides for direct and native command paths', () => {
+  it('respects zoom keybinding overrides for keyboard and mouse-wheel paths', () => {
     const win = createOrFocusDashboardPopout(makeStore() as never, undefined, {
       getKeybindings: () => ({
         'zoom.in': ['Mod+Y'],

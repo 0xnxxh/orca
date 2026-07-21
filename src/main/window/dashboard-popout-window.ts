@@ -222,7 +222,7 @@ export function createOrFocusDashboardPopout(
   })
 
   window.webContents.on('zoom-changed', (event, direction) => {
-    // Why: some keyboard layouts emit Electron's native command without a before-input event.
+    // Why: Electron reports Ctrl/Cmd+wheel zoom outside the keyboard input path.
     if (
       (direction === 'in' || direction === 'out') &&
       nativeZoomCommandMatchesKeybindings(direction, process.platform, options.getKeybindings?.(), {
