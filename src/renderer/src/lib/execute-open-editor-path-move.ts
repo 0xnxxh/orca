@@ -11,6 +11,7 @@ import {
 } from '@/lib/remap-open-editor-tabs-for-path-change'
 import { verifyLatchedMoveDestinations } from '@/hooks/useEditorExternalWatch'
 import { notifyHostOfMirroredEditorClose } from '@/runtime/close-mirrored-editor-tab'
+import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
 
 let moveOperationCounter = 0
 
@@ -33,12 +34,18 @@ export async function executeOpenEditorPathMove(args: {
   const { context, fromPath, toPath, worktreeId, worktreePath } = args
   const operationId = `editor-move-${(moveOperationCounter += 1)}`
 
-  // Every open session under the source path is affected — including one open in
-  // a DIFFERENT worktree (e.g. a floating workspace) at the same absolute path,
-  // which the in-place rekey also retargets — so quiesce/suppress/notify them all.
-  const affected = useAppStore
-    .getState()
-    .openFiles.filter((f) => isPathInsideOrEqual(fromPath, f.filePath))
+  // Every open session under the source path on the SAME execution host is
+  // affected — including one in a DIFFERENT worktree (e.g. a floating workspace)
+  // at the same absolute path — so quiesce/suppress/notify them all. A tab at the
+  // same path on another host (2nd SSH connection, local vs runtime) is a distinct
+  // file the rename never touched; scoping by host keeps it out of the transaction.
+  const moveState = useAppStore.getState()
+  const initiatingHostId = getExecutionHostIdForWorktree(moveState, worktreeId)
+  const affected = moveState.openFiles.filter(
+    (f) =>
+      isPathInsideOrEqual(fromPath, f.filePath) &&
+      getExecutionHostIdForWorktree(moveState, f.worktreeId) === initiatingHostId
+  )
 
   // In-flight source suppression is scoped per (worktree, runtime owner): the
   // same path can be open and watched under more than one worktree/owner.

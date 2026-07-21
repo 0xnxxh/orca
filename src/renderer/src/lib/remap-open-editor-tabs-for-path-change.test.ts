@@ -164,6 +164,59 @@ describe('remapOpenEditorTabsForPathChange', () => {
     })
   })
 
+  it('leaves a same-path tab on a different execution host untouched', () => {
+    // Two SSH connections both have /repo/a.md open with separate dirty drafts.
+    // Renaming on connA's host must not retarget connB's tab (a distinct file).
+    const state = useAppStore.getState()
+    useAppStore.setState({
+      repos: [
+        { id: 'repoA', connectionId: 'connA' },
+        { id: 'repoB', connectionId: 'connB' }
+      ] as never,
+      worktreesByRepo: {
+        repoA: [{ id: 'wt-a', repoId: 'repoA' }],
+        repoB: [{ id: 'wt-b', repoId: 'repoB' }]
+      } as never
+    })
+
+    const openDirtyAt = (worktreeId: string, draft: string): string => {
+      state.openFile(
+        {
+          filePath: '/repo/a.md',
+          relativePath: 'a.md',
+          worktreeId,
+          runtimeEnvironmentId: null,
+          language: 'markdown',
+          mode: 'edit'
+        },
+        { suppressActiveRuntimeFallback: true }
+      )
+      const id = useAppStore.getState().openFiles.find((f) => f.worktreeId === worktreeId)!.id
+      state.setEditorDraft(id, draft)
+      state.markFileDirty(id, true)
+      return id
+    }
+    openDirtyAt('wt-a', 'draft A')
+    const idB = openDirtyAt('wt-b', 'draft B')
+
+    const result = remapOpenEditorTabsForPathChange({
+      fromPath: '/repo/a.md',
+      toPath: '/repo/b.md',
+      worktreePath: '/repo',
+      worktreeId: 'wt-a'
+    })
+    expect(result.ok).toBe(true)
+
+    const files = useAppStore.getState().openFiles
+    // connA's tab moved; connB's tab kept its id, path, AND its dirty draft.
+    expect(files.find((f) => f.worktreeId === 'wt-a')!.filePath).toBe('/repo/b.md')
+    const tabB = files.find((f) => f.worktreeId === 'wt-b')!
+    expect(tabB.id).toBe(idB)
+    expect(tabB.filePath).toBe('/repo/a.md')
+    expect(tabB.isDirty).toBe(true)
+    expect(useAppStore.getState().editorDrafts[idB]).toBe('draft B')
+  })
+
   it('clears the untitled marker when remapping a renamed new markdown file', () => {
     const state = useAppStore.getState()
     const oldPath = '/repo/untitled.md'

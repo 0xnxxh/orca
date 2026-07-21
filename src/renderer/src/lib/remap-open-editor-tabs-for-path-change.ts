@@ -1,6 +1,7 @@
 import { useAppStore } from '@/store'
 import { detectLanguage } from '@/lib/language-detect'
 import { basename } from '@/lib/path'
+import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
 import {
   buildDiffEditorFileId,
   buildOwnedEditorFileId,
@@ -147,7 +148,15 @@ export function remapOpenEditorTabsForPathChange({
   moveOperationId?: string
 }): RekeyOpenFilesResult {
   const state = useAppStore.getState()
-  const filesToMove = state.openFiles.filter((file) => isPathInsideOrEqual(fromPath, file.filePath))
+  // The rename only touched the initiating execution host. The same absolute
+  // path can be open on a DIFFERENT host (a second SSH connection, or local vs
+  // runtime) as a distinct physical file — never retarget those tabs.
+  const initiatingHostId = getExecutionHostIdForWorktree(state, worktreeId)
+  const filesToMove = state.openFiles.filter(
+    (file) =>
+      isPathInsideOrEqual(fromPath, file.filePath) &&
+      getExecutionHostIdForWorktree(state, file.worktreeId) === initiatingHostId
+  )
   if (filesToMove.length === 0) {
     return { ok: true }
   }
