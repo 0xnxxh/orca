@@ -30,7 +30,11 @@ function stripTrailingSeparators(path: string): string {
   if (path === '/' || /^[A-Za-z]:[\\/]?$/.test(path)) {
     return normalizeRuntimePathSeparators(path)
   }
-  return normalizeRuntimePathSeparators(path).replace(/\/+$/, '')
+  // Only fold backslashes to `/` for Windows/UNC paths; on POSIX a backslash is
+  // legal filename data and must not be treated as a separator.
+  return isWindowsAbsolutePathLike(path)
+    ? normalizeRuntimePathSeparators(path).replace(/\/+$/, '')
+    : path.replace(/\/+$/, '')
 }
 
 function deriveRelativeRootFromOpenFile(filePath: string, relativePath: string): string {
@@ -94,14 +98,14 @@ function computeMovedPath(fromPath: string, toPath: string, filePath: string): s
   if (suffix === '') {
     return toPath
   }
-  const strippedToPath = toPath.replace(/[\\/]+$/, '')
   // Flavor by SYNTAX (drive/UNC), never by "contains a backslash": a POSIX/SSH
-  // path may hold a legal backslash, so it must keep `/` and never gain one.
+  // path may hold a legal backslash, so it must keep `/`, never gain one, and
+  // never have a trailing backslash stripped as if it were a separator.
   if (isWindowsAbsolutePathLike(toPath)) {
     const separator = toPath.includes('\\') ? '\\' : '/'
-    return `${strippedToPath}${separator}${suffix.split('/').join(separator)}`
+    return `${toPath.replace(/[\\/]+$/, '')}${separator}${suffix.split('/').join(separator)}`
   }
-  return `${strippedToPath}/${suffix}`
+  return `${toPath.replace(/\/+$/, '')}/${suffix}`
 }
 
 function getRelativePathFromRoot(rootPath: string, candidatePath: string): string {

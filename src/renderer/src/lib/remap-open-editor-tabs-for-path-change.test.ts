@@ -307,6 +307,30 @@ describe('remapOpenEditorTabsForPathChange', () => {
     expect(useAppStore.getState().openFiles[0]!.filePath).toBe('/repo/dst/a\\b.txt')
   })
 
+  it('does not strip a trailing backslash from a POSIX destination directory name', () => {
+    const state = useAppStore.getState()
+    state.openFile(
+      {
+        filePath: '/repo/src/a.ts',
+        relativePath: 'src/a.ts',
+        worktreeId: 'wt-1',
+        language: 'typescript',
+        mode: 'edit'
+      },
+      { suppressActiveRuntimeFallback: true }
+    )
+
+    // Destination directory is literally named `dst\` (legal on POSIX).
+    remapOpenEditorTabsForPathChange({
+      fromPath: '/repo/src',
+      toPath: '/repo/dst\\',
+      worktreePath: '/repo',
+      worktreeId: 'wt-1'
+    })
+
+    expect(useAppStore.getState().openFiles[0]!.filePath).toBe('/repo/dst\\/a.ts')
+  })
+
   it('keeps `/` for a POSIX destination whose ancestor contains a legal backslash', () => {
     const state = useAppStore.getState()
     state.openFile(
