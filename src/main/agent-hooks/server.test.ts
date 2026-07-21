@@ -24,6 +24,11 @@ import {
   AGENT_STATUS_STALE_AFTER_MS,
   parseAgentStatusPayload
 } from '../../shared/agent-status-types'
+import {
+  createHookListenerState,
+  normalizeHookPayload,
+  type HookListenerState
+} from '../../shared/agent-hook-listener'
 import { makePaneKey } from '../../shared/stable-pane-id'
 
 const { getCohortAtEmitMock, trackMock } = vi.hoisted(() => ({
@@ -89,6 +94,97 @@ afterEach(() => {
 })
 
 describe('AgentHookServer listener replay', () => {
+  it('preserves Codex sibling and lead state across relay listener restarts', () => {
+    const server = new AgentHookServer()
+    const send = (state: HookListenerState, payload: Record<string, unknown>): void => {
+      const event = normalizeHookPayload(state, 'codex', buildBody(payload), 'production')
+      if (!event) {
+        throw new Error('normalizeHookPayload rejected a known-good Codex fixture')
+      }
+      server.ingestRemote(event, 'conn-1')
+    }
+
+    const initialRelay = createHookListenerState()
+    send(initialRelay, {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: 'root-session',
+      prompt: 'coordinate reviewers',
+      model: 'gpt-5.4'
+    })
+    for (const id of ['child-a', 'child-b']) {
+      send(initialRelay, {
+        hook_event_name: 'SubagentStart',
+        agent_id: id,
+        agent_type: 'reviewer',
+        model: 'gpt-5.4-mini'
+      })
+    }
+
+    const restartedRelay = createHookListenerState()
+    send(restartedRelay, { hook_event_name: 'SubagentStop', agent_id: 'child-a' })
+    expect(server.getStatusSnapshot()[0]).toMatchObject({
+      state: 'working',
+      model: 'gpt-5.4',
+      providerSession: { key: 'session_id', id: 'root-session' },
+      subagents: [expect.objectContaining({ id: 'child-b' })]
+    })
+
+    send(restartedRelay, {
+      hook_event_name: 'Stop',
+      session_id: 'root-session',
+      model: 'gpt-5.4'
+    })
+    const restartedAgain = createHookListenerState()
+    send(restartedAgain, { hook_event_name: 'SubagentStop', agent_id: 'child-b' })
+    expect(server.getStatusSnapshot()[0]).toMatchObject({
+      state: 'done',
+      model: 'gpt-5.4',
+      providerSession: { key: 'session_id', id: 'root-session' },
+      subagents: undefined
+    })
+  })
+
+  it('does not carry a remote Codex roster across connection cleanup', () => {
+    const server = new AgentHookServer()
+    const child = (id: string) => ({
+      id,
+      state: 'working' as const,
+      startedAt: 1
+    })
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        hookEventName: 'SubagentStart',
+        toolAgentId: 'old-child',
+        payload: {
+          state: 'working',
+          prompt: '',
+          agentType: 'codex',
+          subagents: [child('old-child')]
+        }
+      },
+      'conn-1'
+    )
+
+    server.clearStatusEntriesForConnection('conn-1')
+    server.ingestRemote(
+      {
+        paneKey: PANE,
+        hookEventName: 'SubagentStart',
+        toolAgentId: 'new-child',
+        payload: {
+          state: 'working',
+          prompt: '',
+          agentType: 'codex',
+          subagents: [child('new-child')]
+        }
+      },
+      'conn-2'
+    )
+
+    expect(server.getStatusSnapshot()[0]?.subagents).toEqual([child('new-child')])
+  })
+
   it('retains root Codex identity when relay child events omit it', () => {
     const server = new AgentHookServer()
     const providerSession = { key: 'session_id' as const, id: 'root-session' }

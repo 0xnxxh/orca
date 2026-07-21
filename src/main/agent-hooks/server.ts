@@ -23,6 +23,7 @@ import {
   normalizeHookPayload,
   parseFormEncodedBody,
   readRequestBody,
+  reconcileRemoteCodexState,
   resolveHookSource,
   preparePendingGrokResultDiscovery,
   seedClaudeSubagentRosterFromSnapshots,
@@ -824,27 +825,43 @@ export class AgentHookServer {
       this.onAgentStatus?.(enriched)
       return enriched
     }
+    const stateReconciledPayload =
+      payload.connectionId && payload.payload.agentType === 'codex' && payload.hookEventName
+        ? {
+            ...payload,
+            payload: reconcileRemoteCodexState(
+              this.state,
+              payload.paneKey,
+              payload.hookEventName,
+              payload.toolAgentId,
+              payload.payload,
+              previous?.payload
+            )
+          }
+        : payload
     const previousCodexRoot =
-      payload.payload.agentType === 'codex' &&
-      payload.toolAgentId &&
+      stateReconciledPayload.payload.agentType === 'codex' &&
+      stateReconciledPayload.toolAgentId &&
       previous?.payload.agentType === 'codex'
         ? previous
         : undefined
-    const preservedProviderSession = !payload.providerSession
+    const preservedProviderSession = !stateReconciledPayload.providerSession
       ? previousCodexRoot?.providerSession
       : undefined
-    const preservedRootModel = !payload.payload.model ? previousCodexRoot?.payload.model : undefined
+    const preservedRootModel = !stateReconciledPayload.payload.model
+      ? previousCodexRoot?.payload.model
+      : undefined
     // Why: an SSH relay restart forgets root-only fields; child hooks must not erase durable resume/model identity.
     const rootContextPreservingPayload =
       preservedProviderSession || preservedRootModel
         ? {
-            ...payload,
+            ...stateReconciledPayload,
             ...(preservedProviderSession ? { providerSession: preservedProviderSession } : {}),
             payload: preservedRootModel
-              ? { ...payload.payload, model: preservedRootModel }
-              : payload.payload
+              ? { ...stateReconciledPayload.payload, model: preservedRootModel }
+              : stateReconciledPayload.payload
           }
-        : payload
+        : stateReconciledPayload
     const identity = resolveAgentStatusIdentity({
       existing: previous
         ? {
@@ -860,7 +877,7 @@ export class AgentHookServer {
       previous &&
       shouldSuppressInheritedTerminalStatus({
         inheritedFromActivePane: identity.inheritedFromActivePane,
-        incomingState: payload.payload.state
+        incomingState: rootContextPreservingPayload.payload.state
       })
     ) {
       return previous
@@ -1599,8 +1616,14 @@ export class AgentHookServer {
       if (entry.connectionId !== normalizedConnectionId) {
         continue
       }
-      if (this.deleteStatusEntry(paneKey)) {
+      const deleted = this.deleteStatusEntry(paneKey)
+      if (deleted) {
         statusChanged = true
+        if (deleted.payload.agentType === 'codex') {
+          // Why: a replacement remote process may reuse the pane; don't merge it with the lost connection's children.
+          this.state.codexSubagentRosterByPaneKey.delete(paneKey)
+          this.state.codexLeadStateByPaneKey.delete(paneKey)
+        }
       }
     }
     if (statusChanged) {

@@ -3064,6 +3064,79 @@ export function seedCodexStateFromSnapshot(
   }
 }
 
+function codexLeadStateForHookEvent(
+  eventName: string | undefined
+): CodexLeadTurnState['state'] | undefined {
+  if (eventName === 'Stop') {
+    return 'done'
+  }
+  if (eventName === 'PermissionRequest') {
+    return 'waiting'
+  }
+  if (
+    eventName === 'SessionStart' ||
+    eventName === 'UserPromptSubmit' ||
+    eventName === 'PreToolUse' ||
+    eventName === 'PostToolUse'
+  ) {
+    return 'working'
+  }
+  return undefined
+}
+
+/** Why: relay restarts lose lead/roster state; merge child events into main's longer-lived cache. */
+export function reconcileRemoteCodexState(
+  state: HookListenerState,
+  paneKey: string,
+  eventName: string | undefined,
+  agentId: string | undefined,
+  payload: ParsedAgentStatusPayload,
+  previous: ParsedAgentStatusPayload | undefined
+): ParsedAgentStatusPayload {
+  if (previous?.agentType === 'codex') {
+    seedCodexStateFromSnapshot(state, paneKey, previous)
+  } else {
+    seedCodexStateFromSnapshot(state, paneKey, payload)
+  }
+
+  // Why: older relays send child identity without roster snapshots; keep their already-normalized aggregate authoritative.
+  if (agentId && !payload.subagents && !state.codexSubagentRosterByPaneKey.has(paneKey)) {
+    return payload
+  }
+  const roster = getOrCreateCodexSubagentRoster(state, paneKey)
+  if (payload.subagents) {
+    seedCodexSubagentRoster(roster, payload.subagents)
+  }
+  if (agentId) {
+    if (eventName === 'SubagentStop') {
+      finishCodexSubagent(roster, agentId)
+    }
+  } else {
+    const leadState = codexLeadStateForHookEvent(eventName)
+    if (eventName === 'SessionStart' || eventName === 'Stop') {
+      roster.clear()
+    }
+    if (leadState) {
+      const previousLead = state.codexLeadStateByPaneKey.get(paneKey)
+      state.codexLeadStateByPaneKey.set(paneKey, {
+        state: leadState,
+        model: payload.model ?? previousLead?.model
+      })
+    }
+  }
+
+  const lead = state.codexLeadStateByPaneKey.get(paneKey)
+  if (!lead) {
+    return payload
+  }
+  return {
+    ...payload,
+    state: codexRosterEffectiveState(roster, lead.state),
+    model: lead.model ?? payload.model,
+    subagents: codexRosterToSnapshots(roster)
+  }
+}
+
 function buildCodexStatusPayload(
   state: HookListenerState,
   eventName: unknown,
