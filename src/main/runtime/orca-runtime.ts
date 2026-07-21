@@ -151,7 +151,10 @@ import {
   parseExecutionHostId,
   type ExecutionHostId
 } from '../../shared/execution-host'
-import type { SleepingAgentLaunchConfig } from '../../shared/agent-session-resume'
+import type {
+  AgentProviderSessionMetadata,
+  SleepingAgentLaunchConfig
+} from '../../shared/agent-session-resume'
 import type { RuntimeClientEvent } from '../../shared/runtime-client-events'
 import { toRuntimeActivateWorktreeEvent } from '../../shared/runtime-client-events'
 import type { SshConnectionState } from '../../shared/ssh-types'
@@ -1075,6 +1078,7 @@ type TerminalCreateOptions = {
   env?: Record<string, string>
   envToDelete?: string[]
   launchConfig?: WorktreeStartupLaunch['launchConfig']
+  resumeProviderSession?: AgentProviderSessionMetadata
   launchToken?: string
   launchAgent?: TuiAgent
   viewMode?: 'terminal' | 'chat'
@@ -1268,6 +1272,7 @@ type RuntimePtyController = {
     startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
     env?: Record<string, string>
     envToDelete?: string[]
+    resumeProviderSession?: AgentProviderSessionMetadata
     telemetry?: WorktreeStartupLaunch['telemetry']
     connectionId?: string | null
     worktreeId?: string
@@ -19205,6 +19210,7 @@ export class OrcaRuntimeService {
           launchOpts.envToDelete,
           agentTeamsPlan?.envToDelete
         ),
+        resumeProviderSession: launchOpts.resumeProviderSession,
         telemetry: launchOpts.telemetry,
         connectionId: workspace.connectionId,
         worktreeId: workspace.id,
@@ -19348,6 +19354,9 @@ export class OrcaRuntimeService {
         cwd,
         ...(launchOpts.env ? { env: launchOpts.env } : {}),
         ...(launchOpts.launchConfig ? { launchConfig: launchOpts.launchConfig } : {}),
+        ...(launchOpts.resumeProviderSession
+          ? { resumeProviderSession: launchOpts.resumeProviderSession }
+          : {}),
         ...(launchOpts.launchToken ? { launchToken: launchOpts.launchToken } : {}),
         ...(launchOpts.launchAgent ? { launchAgent: launchOpts.launchAgent } : {}),
         ...(launchOpts.viewMode ? { viewMode: launchOpts.viewMode } : {}),
