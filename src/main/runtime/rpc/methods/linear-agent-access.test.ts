@@ -336,7 +336,10 @@ type LinearUnconfirmedBuilder = {
   ): Error & { data?: { cause?: string; nextSteps?: string[] } }
   resolveLinearAgentState(input: string, states: unknown[]): unknown | null
   linearCreatedIssueMatchesIntent(issue: unknown, intent: unknown): boolean
-  notifyLinearLinkedIssueUpdated(workspaceId: string, identifier: string): Promise<void>
+  notifyLinearLinkedIssueUpdated(
+    workspaceId: string,
+    identifier: string | readonly string[]
+  ): Promise<void>
   listResolvedWorktrees(): Promise<unknown[]>
 }
 
@@ -666,7 +669,7 @@ describe('Linear agent write recovery helpers', () => {
     ).rejects.toBe(unconfirmed)
   })
 
-  it('emits linked issue refresh events for matching workspace links', async () => {
+  it('emits linked issue refresh events for every changed relation endpoint in one scan', async () => {
     const runtime = new OrcaRuntimeService()
     const builder = runtime as unknown as LinearUnconfirmedBuilder
     const events: unknown[] = []
@@ -681,10 +684,15 @@ describe('Linear agent write recovery helpers', () => {
         id: 'worktree-2',
         linkedLinearIssue: 'ENG-123',
         linkedLinearIssueWorkspaceId: 'workspace-2'
+      },
+      {
+        id: 'worktree-3',
+        linkedLinearIssue: 'eng-456',
+        linkedLinearIssueWorkspaceId: 'workspace-1'
       }
     ])
 
-    await builder.notifyLinearLinkedIssueUpdated('workspace-1', 'ENG-123')
+    await builder.notifyLinearLinkedIssueUpdated('workspace-1', ['ENG-123', 'ENG-456'])
 
     expect(events).toEqual([
       {
@@ -692,7 +700,14 @@ describe('Linear agent write recovery helpers', () => {
         worktreeId: 'worktree-1',
         identifier: 'ENG-123',
         workspaceId: 'workspace-1'
+      },
+      {
+        type: 'linearLinkedIssueUpdated',
+        worktreeId: 'worktree-3',
+        identifier: 'ENG-456',
+        workspaceId: 'workspace-1'
       }
     ])
+    expect(builder.listResolvedWorktrees).toHaveBeenCalledTimes(1)
   })
 })

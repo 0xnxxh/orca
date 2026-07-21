@@ -23,17 +23,17 @@
       "name": "linear-tickets",
       "sourcePath": "skills/linear-tickets",
       "releaseRevision": 5,
-      "packageDigest": "706bca83a326e49a3112321fa2469ea2bc160a61665ab6a6e6e48d5faa796919",
-      "gitTreeSha": "5a15634cbef182946624c2d3468be6c40d58373c",
+      "packageDigest": "30f836d836df611c0c974ac0ee48d817fbe6711a49465d139f0981cbd75f828e",
+      "gitTreeSha": "8e862333bdeb9970e11dcd6634e493ecc6ff6698",
       "files": [
         {
           "path": "SKILL.md",
-          "size": 11239,
+          "size": 11514,
           "executable": false,
           "classification": "text",
-          "exactSha256": "9c4f373d61b9f2ccf271fbaae128bea26ba9d94fc599e8840fa48a78323f4801",
-          "textNormalizedSha256": "9c4f373d61b9f2ccf271fbaae128bea26ba9d94fc599e8840fa48a78323f4801",
-          "identitySha256": "9c4f373d61b9f2ccf271fbaae128bea26ba9d94fc599e8840fa48a78323f4801"
+          "exactSha256": "922c1740ffe8be685ed35e6f51c7baa81f246e1738c8ecff224fca2b64a415b9",
+          "textNormalizedSha256": "922c1740ffe8be685ed35e6f51c7baa81f246e1738c8ecff224fca2b64a415b9",
+          "identitySha256": "922c1740ffe8be685ed35e6f51c7baa81f246e1738c8ecff224fca2b64a415b9"
         }
       ]
     },
