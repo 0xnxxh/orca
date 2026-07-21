@@ -3,6 +3,14 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  TERMINAL_PASTE_CHUNK_MAX_BYTES,
+  TERMINAL_PASTE_DIRECT_MAX_BYTES
+} from '@/components/terminal-pane/terminal-paste-limits'
+import {
+  BRACKETED_PASTE_END,
+  BRACKETED_PASTE_START
+} from '@/components/terminal-pane/terminal-bracketed-paste'
 
 const terminalHarness = vi.hoisted(() => ({
   instances: [] as {
@@ -13,6 +21,7 @@ const terminalHarness = vi.hoisted(() => ({
     resize: ReturnType<typeof vi.fn>
     reset: ReturnType<typeof vi.fn>
     paste: ReturnType<typeof vi.fn>
+    modes: { bracketedPasteMode: boolean }
     selectionText: string
     customKeyHandler: ((event: KeyboardEvent) => boolean) | null
   }[],
@@ -38,7 +47,11 @@ vi.mock('@xterm/xterm', () => ({
     dispose = vi.fn()
     resize = vi.fn()
     reset = vi.fn()
-    paste = vi.fn()
+    modes = { bracketedPasteMode: false }
+    paste = vi.fn((data: string) => {
+      terminalHarness.userInputListener?.()
+      this.onDataListener?.(data)
+    })
     getSelection = vi.fn(() => this.selectionText)
     attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
       this.customKeyHandler = handler
@@ -75,7 +88,7 @@ vi.mock('@/store', () => {
 import { AgentTerminalPreview } from './AgentTerminalPreview'
 
 describe('AgentTerminalPreview', () => {
-  const input = vi.fn(async () => true)
+  const input = vi.fn(async (_ptyId: string, _data: string) => true)
   const ack = vi.fn(async () => {})
   const unsubscribe = vi.fn(async () => {})
   const connect = vi.fn()
@@ -153,14 +166,24 @@ describe('AgentTerminalPreview', () => {
     await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
 
     terminal.selectionText = 'selected text'
-    const handled = terminal.customKeyHandler!(
-      new KeyboardEvent('keydown', { key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true })
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'C',
+      code: 'KeyC',
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true
+    })
+    const handled = terminal.customKeyHandler!(keydown)
+    const keyupHandled = terminal.customKeyHandler!(
+      new KeyboardEvent('keyup', { key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true })
     )
     expect(handled).toBe(false)
+    expect(keyupHandled).toBe(false)
+    expect(keydown.defaultPrevented).toBe(true)
     expect(writeClipboardText).toHaveBeenCalledWith('selected text')
   })
 
-  it('lets the copy chord fall through to xterm when nothing is selected', async () => {
+  it('keeps an empty copy chord from leaking terminal input', async () => {
     render(<AgentTerminalPreview ptyId="pty-1" />)
     await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
     const terminal = terminalHarness.instances[0]!
@@ -169,7 +192,7 @@ describe('AgentTerminalPreview', () => {
     const handled = terminal.customKeyHandler!(
       new KeyboardEvent('keydown', { key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true })
     )
-    expect(handled).toBe(true)
+    expect(handled).toBe(false)
     expect(writeClipboardText).not.toHaveBeenCalled()
   })
 
@@ -186,6 +209,7 @@ describe('AgentTerminalPreview', () => {
 
     act(() => emitAppMenuPaste?.())
     await waitFor(() => expect(terminal.paste).toHaveBeenCalledWith('clip-text'))
+    expect(input).toHaveBeenCalledWith('pty-1', 'clip-text')
   })
 
   it('ignores the app-menu paste signal when focus is outside the preview', async () => {
@@ -199,10 +223,14 @@ describe('AgentTerminalPreview', () => {
   })
 
   it('leaves plain Ctrl+V to the Edit-menu accelerator but handles the shifted paste chord', async () => {
-    render(<AgentTerminalPreview ptyId="pty-1" />)
+    const view = render(<AgentTerminalPreview ptyId="pty-1" />)
     await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
     const terminal = terminalHarness.instances[0]!
     await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+    const host = view.container.querySelector<HTMLElement>('.origin-bottom-left')!
+    const terminalInput = document.createElement('input')
+    host.appendChild(terminalInput)
+    terminalInput.focus()
 
     const plain = terminal.customKeyHandler!(
       new KeyboardEvent('keydown', { key: 'v', code: 'KeyV', ctrlKey: true })
@@ -210,12 +238,105 @@ describe('AgentTerminalPreview', () => {
     expect(plain).toBe(true)
     expect(readClipboardText).not.toHaveBeenCalled()
 
-    const shifted = terminal.customKeyHandler!(
-      new KeyboardEvent('keydown', { key: 'V', code: 'KeyV', ctrlKey: true, shiftKey: true })
+    const shiftedEvent = new KeyboardEvent('keydown', {
+      key: 'V',
+      code: 'KeyV',
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true
+    })
+    const shifted = terminal.customKeyHandler!(shiftedEvent)
+    const repeated = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', {
+        key: 'V',
+        code: 'KeyV',
+        ctrlKey: true,
+        shiftKey: true,
+        repeat: true
+      })
     )
     expect(shifted).toBe(false)
+    expect(repeated).toBe(false)
+    expect(shiftedEvent.defaultPrevented).toBe(true)
     await waitFor(() => expect(terminal.paste).toHaveBeenCalledWith('clip-text'))
     expect(readClipboardText).toHaveBeenCalledTimes(1)
+    expect(
+      terminal.customKeyHandler!(
+        new KeyboardEvent('keyup', { key: 'V', code: 'KeyV', ctrlKey: true, shiftKey: true })
+      )
+    ).toBe(false)
+  })
+
+  it('cancels an async paste when the preview loses focus', async () => {
+    let resolveClipboard!: (text: string) => void
+    readClipboardText.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveClipboard = resolve
+      })
+    )
+    const view = render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    const host = view.container.querySelector<HTMLElement>('.origin-bottom-left')!
+    const terminalInput = document.createElement('input')
+    const outsideInput = document.createElement('input')
+    host.appendChild(terminalInput)
+    view.container.appendChild(outsideInput)
+    terminalInput.focus()
+
+    act(() => emitAppMenuPaste?.())
+    outsideInput.focus()
+    await act(async () => resolveClipboard('stale text'))
+
+    expect(terminal.paste).not.toHaveBeenCalled()
+    expect(input).not.toHaveBeenCalled()
+  })
+
+  it('streams large pastes as bounded IPC payloads instead of one renderer-blocking write', async () => {
+    const largePaste = 'x'.repeat(TERMINAL_PASTE_DIRECT_MAX_BYTES + 1)
+    readClipboardText.mockResolvedValueOnce(largePaste)
+    const view = render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    const host = view.container.querySelector<HTMLElement>('.origin-bottom-left')!
+    const terminalInput = document.createElement('input')
+    host.appendChild(terminalInput)
+    terminalInput.focus()
+
+    act(() => emitAppMenuPaste?.())
+    const expectedChunks = Math.ceil(largePaste.length / TERMINAL_PASTE_CHUNK_MAX_BYTES)
+    await waitFor(() => expect(input).toHaveBeenCalledTimes(expectedChunks))
+
+    const payloads = input.mock.calls.map(([, data]) => data as string)
+    expect(terminal.paste).not.toHaveBeenCalled()
+    expect(payloads.join('')).toBe(largePaste)
+    expect(payloads.every((payload) => payload.length <= TERMINAL_PASTE_CHUNK_MAX_BYTES)).toBe(true)
+  })
+
+  it('closes a bracketed large paste when focus changes between chunks', async () => {
+    readClipboardText.mockResolvedValueOnce('x'.repeat(TERMINAL_PASTE_DIRECT_MAX_BYTES + 1))
+    const view = render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    terminal.modes.bracketedPasteMode = true
+    const host = view.container.querySelector<HTMLElement>('.origin-bottom-left')!
+    const terminalInput = document.createElement('input')
+    const outsideInput = document.createElement('input')
+    host.appendChild(terminalInput)
+    view.container.appendChild(outsideInput)
+    terminalInput.focus()
+    input.mockImplementationOnce(async () => {
+      outsideInput.focus()
+      return true
+    })
+
+    act(() => emitAppMenuPaste?.())
+    await waitFor(() => expect(input).toHaveBeenCalledTimes(2))
+
+    expect(input.mock.calls.map(([, data]) => data)).toEqual([
+      BRACKETED_PASTE_START,
+      BRACKETED_PASTE_END
+    ])
   })
 
   it('keeps the existing terminal visible while a resync snapshot is captured', async () => {
