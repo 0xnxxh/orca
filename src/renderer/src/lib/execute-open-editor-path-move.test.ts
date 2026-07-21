@@ -15,6 +15,7 @@ vi.mock('@/components/editor/editor-autosave', async (importOriginal) => {
 import { useAppStore } from '@/store'
 import { executeOpenEditorPathMove } from './execute-open-editor-path-move'
 import { __activeEditorPathMoveCountForTests } from '@/components/editor/editor-path-move-inflight'
+import { getDiskBaselineSignature } from '@/components/editor/diff-content-signature'
 
 const CONTEXT = {
   settings: null,
@@ -75,6 +76,33 @@ describe('executeOpenEditorPathMove', () => {
     expect(moved.pendingSelfMoveEcho?.targetPath).toBe('/repo/sub/a.md')
     // The in-flight transaction is settled (no leak).
     expect(__activeEditorPathMoveCountForTests()).toBe(0)
+  })
+
+  it('resolves the verify gate proactively when no destination watcher event arrives', async () => {
+    const DISK_CONTENT = 'the file as it exists on disk\n'
+    const id = openDirtyTab()
+    useAppStore.getState().setLastKnownDiskSignature(id, getDiskBaselineSignature(DISK_CONTENT))
+    vi.stubGlobal('window', {
+      api: {
+        fs: { readFile: vi.fn().mockResolvedValue({ isBinary: false, content: DISK_CONTENT }) }
+      }
+    })
+
+    await executeOpenEditorPathMove({
+      context: CONTEXT,
+      fromPath: '/repo/a.md',
+      toPath: '/repo/sub/a.md',
+      worktreeId: 'wt-1',
+      worktreePath: '/repo'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    const moved = useAppStore.getState().openFiles[0]!
+    // Disk matched the carried baseline: gate released, no false conflict banner.
+    expect(moved.pendingLiveDiskVerification).toBeFalsy()
+    expect(moved.pendingSelfMoveEcho).toBeUndefined()
+    expect(moved.externalMutation).toBeUndefined()
+    expect(moved.isDirty).toBe(true)
   })
 
   it('undoes the on-disk rename when the editor rekey collides', async () => {

@@ -67,8 +67,7 @@ describe('self-move source suppression (in-flight)', () => {
       operationId: 'op-1',
       worktreeId: 'wt-1',
       runtimeEnvironmentId: null,
-      sourcePaths: ['/repo/notes.md'],
-      targetPaths: ['/repo/subdir/notes.md']
+      sourcePaths: ['/repo/notes.md']
     })
   }
 

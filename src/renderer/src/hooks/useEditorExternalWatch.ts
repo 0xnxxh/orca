@@ -19,10 +19,7 @@ import {
   getRecentSelfWrite,
   type RecentSelfWrite
 } from '@/components/editor/editor-self-write-registry'
-import {
-  isActiveMoveSourcePath,
-  noteEditorPathMoveDestinationEvent
-} from '@/components/editor/editor-path-move-inflight'
+import { isActiveMoveSourcePath } from '@/components/editor/editor-path-move-inflight'
 import type { FsChangedPayload } from '../../../shared/types'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import type { OpenFile } from '@/store/slices/editor'
@@ -647,14 +644,6 @@ export function createExternalWatchEventHandler(
       const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
       const matching = getOpenFilesForExternalFileChange(openFilesSnapshot, notification)
       if (matching.length === 0) {
-        // Latch a destination event that arrived before the rekey installed the
-        // tab (drag-drop's refresh-before-remap window), so the coordinator can
-        // content-verify it post-rekey instead of dropping it.
-        noteEditorPathMoveDestinationEvent(
-          target.worktreeId,
-          target.runtimeEnvironmentId,
-          absolutePath
-        )
         // Why: notify the combined-diff tab so its section reloads. Its own
         // dirty/section guards make a blanket reload safe, and there is no
         // in-memory editor content to clobber, so self-write suppression is

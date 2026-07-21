@@ -10,7 +10,6 @@ import {
   remapOpenEditorTabsForPathChange
 } from '@/lib/remap-open-editor-tabs-for-path-change'
 import { verifyLatchedMoveDestinations } from '@/hooks/useEditorExternalWatch'
-import { normalizeAbsolutePathForComparison } from '@/components/right-sidebar/file-explorer-paths'
 import { notifyHostOfMirroredEditorClose } from '@/runtime/close-mirrored-editor-tab'
 
 let moveOperationCounter = 0
@@ -40,7 +39,6 @@ export async function executeOpenEditorPathMove(args: {
   const affected = useAppStore
     .getState()
     .openFiles.filter((f) => isPathInsideOrEqual(fromPath, f.filePath))
-  const newPathOf = (filePath: string): string => toPath + filePath.slice(fromPath.length)
 
   // In-flight source suppression is scoped per (worktree, runtime owner): the
   // same path can be open and watched under more than one worktree/owner.
@@ -59,8 +57,7 @@ export async function executeOpenEditorPathMove(args: {
       operationId: subOperationId,
       worktreeId: first.worktreeId,
       runtimeEnvironmentId: first.runtimeEnvironmentId?.trim() || null,
-      sourcePaths: scopeFiles.map((f) => f.filePath),
-      targetPaths: scopeFiles.map((f) => newPathOf(f.filePath))
+      sourcePaths: scopeFiles.map((f) => f.filePath)
     })
   }
 
@@ -122,21 +119,21 @@ export async function executeOpenEditorPathMove(args: {
     notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
   }
 
-  const latchedTargets = new Set<string>()
   for (const subOperationId of ownerSubOps) {
-    for (const target of settleEditorPathMove(subOperationId)) {
-      latchedTargets.add(target)
-    }
+    settleEditorPathMove(subOperationId)
   }
-  if (latchedTargets.size > 0) {
-    const latchedTabIds = useAppStore
-      .getState()
-      .openFiles.filter(
-        (f) =>
-          f.pendingSelfMoveEcho &&
-          latchedTargets.has(normalizeAbsolutePathForComparison(f.pendingSelfMoveEcho.targetPath))
-      )
-      .map((f) => f.id)
-    verifyLatchedMoveDestinations(worktreePath, context.connectionId, latchedTabIds)
+
+  // Drive verification for EVERY tab the rekey gated — not just paths whose
+  // watcher event was latched. The rename has completed, so disk is authoritative
+  // now; verifying proactively guarantees the autosave gate resolves even if the
+  // destination watcher event never arrives (watcher down / dropped / coalesced).
+  // A move echo reads disk == baseline (suppress); a genuine write differs
+  // (banner). A later watcher event finds the provenance consumed and no-ops.
+  const gatedTabIds = useAppStore
+    .getState()
+    .openFiles.filter((f) => f.pendingSelfMoveEcho?.operationId === operationId)
+    .map((f) => f.id)
+  if (gatedTabIds.length > 0) {
+    verifyLatchedMoveDestinations(worktreePath, context.connectionId, gatedTabIds)
   }
 }
