@@ -3,22 +3,84 @@ import {
   RuntimeRpcCallError,
   type RuntimeClientTarget
 } from '@/runtime/runtime-rpc-client'
-import type { WorkspacePortScanResult } from '../../../shared/workspace-ports'
+import type { WorkspacePort, WorkspacePortScanResult } from '../../../shared/workspace-ports'
+
+const WORKSPACE_PORT_PLATFORMS = new Set<NodeJS.Platform | 'unknown'>([
+  'aix',
+  'android',
+  'cygwin',
+  'darwin',
+  'freebsd',
+  'haiku',
+  'linux',
+  'netbsd',
+  'openbsd',
+  'sunos',
+  'unknown',
+  'win32'
+])
+const WORKSPACE_PORT_PROTOCOLS = new Set<WorkspacePort['protocol']>(['http', 'https', 'unknown'])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === 'string'
+}
+
+function isOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === 'number' && Number.isFinite(value))
+}
+
+function isWorkspacePortOwner(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false
+  }
+  return (
+    typeof value.worktreeId === 'string' &&
+    typeof value.repoId === 'string' &&
+    typeof value.displayName === 'string' &&
+    typeof value.path === 'string' &&
+    (value.confidence === 'cwd' || value.confidence === 'command' || value.confidence === 'none')
+  )
+}
+
+function isWorkspacePort(value: unknown): value is WorkspacePort {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    typeof value.bindHost !== 'string' ||
+    typeof value.connectHost !== 'string' ||
+    typeof value.port !== 'number' ||
+    !Number.isFinite(value.port) ||
+    !isOptionalFiniteNumber(value.pid) ||
+    !isOptionalString(value.processName) ||
+    !WORKSPACE_PORT_PROTOCOLS.has(value.protocol as WorkspacePort['protocol'])
+  ) {
+    return false
+  }
+  if (value.kind === 'workspace') {
+    return isWorkspacePortOwner(value.owner) && isOptionalString(value.advertisedUrl)
+  }
+  return value.kind === 'container' || value.kind === 'external'
+}
 
 function requireWorkspacePortScanResult(value: unknown): WorkspacePortScanResult {
   if (
-    !value ||
-    typeof value !== 'object' ||
-    !Array.isArray((value as WorkspacePortScanResult).ports) ||
-    typeof (value as WorkspacePortScanResult).platform !== 'string' ||
-    !Number.isFinite((value as WorkspacePortScanResult).scannedAt) ||
+    !isRecord(value) ||
+    !Array.isArray(value.ports) ||
+    !value.ports.every(isWorkspacePort) ||
+    !WORKSPACE_PORT_PLATFORMS.has(value.platform as NodeJS.Platform | 'unknown') ||
+    typeof value.scannedAt !== 'number' ||
+    !Number.isFinite(value.scannedAt) ||
     ('unavailableReason' in value &&
-      (value as WorkspacePortScanResult).unavailableReason !== undefined &&
-      typeof (value as WorkspacePortScanResult).unavailableReason !== 'string')
+      value.unavailableReason !== undefined &&
+      typeof value.unavailableReason !== 'string')
   ) {
     throw new Error('Workspace port scan returned an invalid response.')
   }
-  return value as WorkspacePortScanResult
+  return value as unknown as WorkspacePortScanResult
 }
 
 export async function runWorkspacePortScanForTarget(
