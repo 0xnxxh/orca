@@ -23,7 +23,10 @@ import {
   isRecentSelfMoveSource,
   isRecentSelfMoveTarget
 } from '@/components/editor/editor-self-move-registry'
-import { isActiveMoveSourcePath } from '@/components/editor/editor-path-move-inflight'
+import {
+  isActiveMoveSourcePath,
+  noteEditorPathMoveDestinationEvent
+} from '@/components/editor/editor-path-move-inflight'
 import type { FsChangedPayload } from '../../../shared/types'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import type { OpenFile } from '@/store/slices/editor'
@@ -650,8 +653,17 @@ export function createExternalWatchEventHandler(
         relativePath,
         runtimeEnvironmentId: target.runtimeEnvironmentId
       }
+      const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
       const matching = getOpenFilesForExternalFileChange(openFilesSnapshot, notification)
       if (matching.length === 0) {
+        // Latch a destination event that arrived before the rekey installed the
+        // tab (drag-drop's refresh-before-remap window), so the coordinator can
+        // content-verify it post-rekey instead of dropping it.
+        noteEditorPathMoveDestinationEvent(
+          target.worktreeId,
+          target.runtimeEnvironmentId,
+          absolutePath
+        )
         // Why: notify the combined-diff tab so its section reloads. Its own
         // dirty/section guards make a blanket reload safe, and there is no
         // in-memory editor content to clobber, so self-write suppression is
@@ -661,17 +673,24 @@ export function createExternalWatchEventHandler(
         }
         continue
       }
-      const absolutePath = joinPath(notification.worktreePath, notification.relativePath)
       const dirtyMatches = matching.filter((f) => f.isDirty)
       if (dirtyMatches.length > 0) {
         // canAutoSaveOpenFile is the set of tabs that can hold unsaved edits —
         // the tabs the changed-on-disk banner serves.
         const dirtyIds = dirtyMatches.filter((f) => canAutoSaveOpenFile(f)).map((f) => f.id)
-        if (isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)) {
-          // This path is a live self-move destination, so the event may be the
-          // move's own echo. Distinguish it from a real external write by disk
-          // identity, not by trusting the stamp: an echo leaves disk == the
-          // tab's baseline, a genuine write does not.
+        // A tab carrying move-echo provenance for this path (or, transitionally,
+        // a live TTL-registry target) may be seeing the move's own echo — settle
+        // it by disk identity: an echo leaves disk == the tab's baseline, a real
+        // external write does not.
+        const normalizedAbsolutePath = normalizeRuntimePathForComparison(absolutePath)
+        const isSelfMoveEcho =
+          dirtyMatches.some(
+            (f) =>
+              f.pendingSelfMoveEcho &&
+              normalizeRuntimePathForComparison(f.pendingSelfMoveEcho.targetPath) ===
+                normalizedAbsolutePath
+          ) || isRecentSelfMoveTarget(absolutePath, target.runtimeEnvironmentId)
+        if (isSelfMoveEcho) {
           scheduleSelfMoveEchoVerification(target, notification, dirtyIds)
         } else {
           // An external write on a dirty tab must not vanish silently (issue
@@ -802,6 +821,9 @@ type LiveMoveVerifyCandidate = {
   fileId: string
   baseline: string | undefined
   generation: number
+  /** The move that installed the provenance; a newer move (different op) that
+   * re-homes the tab supersedes this verification even across a rekey. */
+  operationId?: string
 }
 
 // Resolves one candidate against the disk read. `diskSignature` is null for a
@@ -812,7 +834,7 @@ function resolveLiveMoveVerification(
   diskSignature: string | null,
   connectionId: string | undefined
 ): void {
-  const { fileId, baseline, generation } = candidate
+  const { fileId, baseline, generation, operationId } = candidate
   if (liveMoveVerifyGeneration.get(fileId) !== generation) {
     return // a newer verification owns this tab and its autosave gate
   }
@@ -820,19 +842,54 @@ function resolveLiveMoveVerification(
   const state = useAppStore.getState()
   state.setPendingLiveDiskVerification(fileId, false)
   const file = state.openFiles.find((f) => f.id === fileId)
-  // A save/reload/dismissal in the interim owns the newer state: skip if the tab
-  // resolved, or its baseline advanced past the one we captured.
+  // A save/reload/dismissal/newer-move in the interim owns the newer state: skip
+  // if the tab resolved, its baseline advanced, or a different move replaced the
+  // provenance we captured.
   if (
     !file ||
     !file.isDirty ||
     file.externalMutation === 'changed' ||
-    file.lastKnownDiskSignature !== baseline
+    file.lastKnownDiskSignature !== baseline ||
+    (operationId !== undefined && file.pendingSelfMoveEcho?.operationId !== operationId)
   ) {
     return
   }
+  // Consume the provenance: this echo is settled, so a later write at this path
+  // takes the normal changed-on-disk path.
+  state.clearSelfMoveEcho(fileId)
   const isMoveEcho = baseline !== undefined && diskSignature === baseline
   if (!isMoveEcho) {
     markFileChangedOnDisk(state, file, { connectionId, origin: 'live' })
+  }
+}
+
+/**
+ * Drives content verification for tabs whose destination echo was LATCHED before
+ * the rekey installed them (the coordinator calls this after a successful move so
+ * a pre-rekey event isn't lost and the autosave gate can't strand).
+ */
+export function verifyLatchedMoveDestinations(
+  worktreePath: string,
+  connectionId: string | undefined,
+  fileIds: readonly string[]
+): void {
+  const state = useAppStore.getState()
+  for (const fileId of fileIds) {
+    const file = state.openFiles.find((f) => f.id === fileId)
+    if (!file?.pendingSelfMoveEcho) {
+      continue
+    }
+    const runtimeEnvironmentId = file.runtimeEnvironmentId?.trim() || null
+    scheduleSelfMoveEchoVerification(
+      { worktreeId: file.worktreeId, worktreePath, connectionId, runtimeEnvironmentId },
+      {
+        worktreeId: file.worktreeId,
+        worktreePath,
+        relativePath: file.relativePath,
+        runtimeEnvironmentId
+      },
+      [fileId]
+    )
   }
 }
 
@@ -858,7 +915,12 @@ function scheduleSelfMoveEchoVerification(
     const generation = ++liveMoveVerifyCounter
     liveMoveVerifyGeneration.set(fileId, generation)
     state.setPendingLiveDiskVerification(fileId, true)
-    candidates.push({ fileId, baseline: file.lastKnownDiskSignature, generation })
+    candidates.push({
+      fileId,
+      baseline: file.lastKnownDiskSignature,
+      generation,
+      operationId: file.pendingSelfMoveEcho?.operationId
+    })
   }
   if (candidates.length === 0) {
     return

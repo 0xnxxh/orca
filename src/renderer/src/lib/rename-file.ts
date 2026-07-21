@@ -4,8 +4,7 @@ import { basename, dirname, joinPath } from '@/lib/path'
 import { getConnectionId } from '@/lib/connection-context'
 import { requestEditorSaveQuiesce } from '@/components/editor/editor-autosave'
 import { commitFileExplorerOp } from '@/components/right-sidebar/fileExplorerUndoRedo'
-import { remapOpenEditorTabsForPathChange } from '@/lib/remap-open-editor-tabs-for-path-change'
-import { renameOpenTabsPathOnDisk } from '@/lib/rename-open-editor-tabs-path'
+import { executeOpenEditorPathMove } from '@/lib/execute-open-editor-path-move'
 
 /**
  * Electron's ipcRenderer.invoke wraps errors as:
@@ -75,22 +74,37 @@ export async function renameFileOnDisk(args: RenameFileArgs): Promise<void> {
   }
 
   try {
-    await renameOpenTabsPathOnDisk(fileContext, oldPath, newPath)
-    remapOpenEditorTabsForPathChange({ fromPath: oldPath, toPath: newPath, worktreePath })
+    await executeOpenEditorPathMove({
+      context: fileContext,
+      fromPath: oldPath,
+      toPath: newPath,
+      worktreeId,
+      worktreePath
+    })
     commitFileExplorerOp({
       undo: async () => {
-        await renameOpenTabsPathOnDisk(fileContext, newPath, oldPath)
+        await executeOpenEditorPathMove({
+          context: fileContext,
+          fromPath: newPath,
+          toPath: oldPath,
+          worktreeId,
+          worktreePath
+        })
         if (refreshDir) {
           await refreshDir(parentDir)
         }
-        remapOpenEditorTabsForPathChange({ fromPath: newPath, toPath: oldPath, worktreePath })
       },
       redo: async () => {
-        await renameOpenTabsPathOnDisk(fileContext, oldPath, newPath)
+        await executeOpenEditorPathMove({
+          context: fileContext,
+          fromPath: oldPath,
+          toPath: newPath,
+          worktreeId,
+          worktreePath
+        })
         if (refreshDir) {
           await refreshDir(parentDir)
         }
-        remapOpenEditorTabsForPathChange({ fromPath: oldPath, toPath: newPath, worktreePath })
       }
     })
   } catch (err) {

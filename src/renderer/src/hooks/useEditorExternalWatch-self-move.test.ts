@@ -162,7 +162,8 @@ describe('self-move echo verification (content identity)', () => {
     vi.mocked(useAppStore.getState).mockReturnValue({
       openFiles: [file],
       setExternalMutation,
-      setPendingLiveDiskVerification
+      setPendingLiveDiskVerification,
+      clearSelfMoveEcho: vi.fn()
     } as never)
     vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([file] as never)
   }

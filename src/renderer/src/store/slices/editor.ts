@@ -538,6 +538,8 @@ export type EditorSlice = {
   clearPendingDiskBaselineVerification: (fileId: string) => void
   setPendingDiskBaselineVerification: (fileId: string, value: boolean) => void
   setPendingLiveDiskVerification: (fileId: string, value: boolean) => void
+  /** Consumes the move-echo provenance once its verification has settled. */
+  clearSelfMoveEcho: (fileId: string) => void
   /** Atomically retargets open editor sessions across an Orca-owned move: one
    * commit-only store update migrating every path-derived id + all id-keyed
    * state, with no close/reopen lifecycle. Returns collision/stale without
@@ -2637,6 +2639,19 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       return {
         openFiles: s.openFiles.map((f) =>
           f.id === fileId ? { ...f, pendingLiveDiskVerification: next } : f
+        )
+      }
+    }),
+
+  clearSelfMoveEcho: (fileId) =>
+    set((s) => {
+      const file = s.openFiles.find((f) => f.id === fileId)
+      if (!file?.pendingSelfMoveEcho) {
+        return s
+      }
+      return {
+        openFiles: s.openFiles.map((f) =>
+          f.id === fileId ? { ...f, pendingSelfMoveEcho: undefined } : f
         )
       }
     }),
