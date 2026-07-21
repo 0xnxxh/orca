@@ -6,14 +6,20 @@ import { rectHasVisibleAreaOnAnyDisplay } from './window-bounds-validation'
 import { sendToTrustedUIRenderer } from '../ipc/ui'
 import { installPrivilegedWindowNavigationPolicy } from './privileged-window-navigation'
 import { stepUIZoomLevel, type UIZoomDirection } from '../../shared/ui-zoom-level'
-import { resolveWindowShortcutAction } from '../../shared/window-shortcut-policy'
-import type { KeybindingOverrides } from '../../shared/keybindings'
+import { nativeZoomCommandMatchesKeybindings } from '../../shared/window-shortcut-policy'
+import {
+  keybindingMatchesAction,
+  type KeybindingActionId,
+  type KeybindingInput,
+  type KeybindingOverrides
+} from '../../shared/keybindings'
 
 const MIN_WIDTH = 480
 const MIN_HEIGHT = 360
 const DEFAULT_WIDTH = 960
 const DEFAULT_HEIGHT = 720
 const DEFAULT_VIEW = 'kanban'
+const DASHBOARD_POPOUT_PARTITION = 'orca-dashboard-popout'
 
 // Why: singleton — the dashboard is a companion surface, so a second "Pop Out"
 // request focuses the existing window rather than spawning duplicates.
@@ -36,6 +42,27 @@ export function isDashboardPopoutRenderer(sender: WebContents): boolean {
 function zoomDashboardPopout(window: BrowserWindow, direction: UIZoomDirection): void {
   const webContents = window.webContents
   webContents.setZoomLevel(stepUIZoomLevel(webContents.getZoomLevel(), direction))
+}
+
+const ZOOM_SHORTCUTS: readonly [KeybindingActionId, UIZoomDirection][] = [
+  ['zoom.in', 'in'],
+  ['zoom.out', 'out'],
+  ['zoom.reset', 'reset']
+]
+
+function resolveZoomShortcut(
+  input: KeybindingInput,
+  keybindings: KeybindingOverrides | undefined
+): UIZoomDirection | null {
+  // Why: this runs on every keydown; avoid scanning unrelated window shortcuts in the typing path.
+  for (const [actionId, direction] of ZOOM_SHORTCUTS) {
+    if (
+      keybindingMatchesAction(actionId, input, process.platform, keybindings, { context: 'app' })
+    ) {
+      return direction
+    }
+  }
+  return null
 }
 
 /**
@@ -142,6 +169,8 @@ export function createOrFocusDashboardPopout(
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
+      // Why: Chromium shares zoom by origin; a separate in-memory session keeps pop-out zoom window-local.
+      partition: DASHBOARD_POPOUT_PARTITION,
       // Why: the dashboard is plain DOM — no <webview> guests — so keep the
       // guest-embedding surface off for this window.
       webviewTag: false
@@ -180,15 +209,23 @@ export function createOrFocusDashboardPopout(
     if (input.type !== 'keyDown') {
       return
     }
-    const action = resolveWindowShortcutAction(
-      input,
-      process.platform,
-      options.getKeybindings?.(),
-      { context: 'app' }
-    )
-    if (action?.type === 'zoom') {
+    const direction = resolveZoomShortcut(input, options.getKeybindings?.())
+    if (direction) {
       event.preventDefault()
-      zoomDashboardPopout(window, action.direction)
+      zoomDashboardPopout(window, direction)
+    }
+  })
+
+  window.webContents.on('zoom-changed', (event, direction) => {
+    // Why: some keyboard layouts emit Electron's native command without a before-input event.
+    if (
+      (direction === 'in' || direction === 'out') &&
+      nativeZoomCommandMatchesKeybindings(direction, process.platform, options.getKeybindings?.(), {
+        context: 'app'
+      })
+    ) {
+      event.preventDefault()
+      zoomDashboardPopout(window, direction)
     }
   })
 

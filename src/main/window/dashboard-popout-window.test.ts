@@ -194,6 +194,7 @@ describe('createOrFocusDashboardPopout', () => {
     expect(opts.frame).toBeUndefined()
     expect(opts.backgroundColor).toBe('#0a0a0a') // dark theme mock
     expect(opts.webPreferences?.sandbox).toBe(true)
+    expect(opts.webPreferences?.partition).toBe('orca-dashboard-popout')
     expect(opts.webPreferences?.webviewTag).toBe(false)
     expect(opts.webPreferences?.preload).toMatch(/preload[\\/]index\.js$/)
     expect(installNavigationPolicyMock).toHaveBeenCalledWith(instances[0].webContents)
@@ -386,6 +387,57 @@ describe('createOrFocusDashboardPopout', () => {
       control: false
     })
     expect(plainKeyEvent.preventDefault).not.toHaveBeenCalled()
+    expect(win.zoomLevel).toBe(0.5)
+  })
+
+  it('handles native zoom commands that bypass before-input-event', () => {
+    const win = createOrFocusDashboardPopout(makeStore() as never) as unknown as FakeWindow
+    const event = { preventDefault: vi.fn() }
+
+    win.emitWebContents('zoom-changed', event, 'in')
+    expect(event.preventDefault).toHaveBeenCalledTimes(1)
+    expect(win.zoomLevel).toBe(0.5)
+
+    win.emitWebContents('zoom-changed', event, 'out')
+    expect(event.preventDefault).toHaveBeenCalledTimes(2)
+    expect(win.zoomLevel).toBe(0)
+  })
+
+  it('respects zoom keybinding overrides for direct and native command paths', () => {
+    const win = createOrFocusDashboardPopout(makeStore() as never, undefined, {
+      getKeybindings: () => ({
+        'zoom.in': ['Mod+Y'],
+        'zoom.out': []
+      })
+    }) as unknown as FakeWindow
+    const mod =
+      process.platform === 'darwin'
+        ? { meta: true, control: false }
+        : { meta: false, control: true }
+
+    const defaultEvent = { preventDefault: vi.fn() }
+    win.emitWebContents('before-input-event', defaultEvent, {
+      type: 'keyDown',
+      key: '=',
+      code: 'Equal',
+      alt: false,
+      shift: false,
+      ...mod
+    })
+    win.emitWebContents('zoom-changed', defaultEvent, 'out')
+    expect(defaultEvent.preventDefault).not.toHaveBeenCalled()
+    expect(win.zoomLevel).toBe(0)
+
+    const customEvent = { preventDefault: vi.fn() }
+    win.emitWebContents('before-input-event', customEvent, {
+      type: 'keyDown',
+      key: 'y',
+      code: 'KeyY',
+      alt: false,
+      shift: false,
+      ...mod
+    })
+    expect(customEvent.preventDefault).toHaveBeenCalledTimes(1)
     expect(win.zoomLevel).toBe(0.5)
   })
 })
