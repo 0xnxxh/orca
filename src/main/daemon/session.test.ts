@@ -106,6 +106,11 @@ describe('Session', () => {
     cols?: number
     rows?: number
     launchAgent?: TuiAgent
+    startupIngress?: {
+      colors: { foreground: string; background: string }
+      deadlineMs: number
+    }
+    ownerBackend?: 'posix-pty' | 'windows-conpty' | 'windows-wsl'
     wslDistro?: string
   }): Session {
     session = new Session({
@@ -115,7 +120,9 @@ describe('Session', () => {
       ...(opts?.launchAgent ? { launchAgent: opts.launchAgent } : {}),
       wslDistro: opts?.wslDistro,
       subprocess,
+      ...(opts?.ownerBackend ? { ownerBackend: opts.ownerBackend } : {}),
       shellReadySupported: opts?.shellReadySupported ?? false,
+      ...(opts?.startupIngress ? { startupIngress: opts.startupIngress } : {}),
       ...(opts?.shellReadyTimeoutMs !== undefined
         ? { shellReadyTimeoutMs: opts.shellReadyTimeoutMs }
         : {})
@@ -186,6 +193,103 @@ describe('Session', () => {
       subprocess.simulateData('broadcast')
       expect(received1).toEqual(['broadcast'])
       expect(received2).toEqual(['broadcast'])
+    })
+
+    it('classifies startup queries and cooked echoes before model, persistence, and fanout', () => {
+      createSession({
+        ownerBackend: 'windows-conpty',
+        startupIngress: {
+          colors: { foreground: '#2e3434', background: '#ffffff' },
+          deadlineMs: 5_000
+        }
+      })
+      const onData = vi.fn()
+      session.attachClient({ onData, onExit: () => {} })
+      const query = '\x1b]10;?\x07'
+      const echo = ']10;rgb:2e2e/3434/3434\\'
+
+      subprocess.simulateData(query)
+      subprocess.simulateData(echo)
+      subprocess.simulateData('prompt')
+
+      expect(subprocess.written).toEqual(['\x1b]10;rgb:2e2e/3434/3434\x1b\\'])
+      expect(onData.mock.calls).toEqual([
+        ['', query.length, true, query.length],
+        ['', echo.length, true, query.length + echo.length],
+        ['prompt']
+      ])
+      expect(session.takePendingOutput(false)?.records).toEqual([
+        { kind: 'output', data: 'prompt' }
+      ])
+      expect(session.getSnapshot()).toMatchObject({
+        outputSequence: query.length + echo.length + 'prompt'.length
+      })
+      expect(session.getSnapshot()?.snapshotAnsi).toContain('prompt')
+      expect(session.getSnapshot()?.snapshotAnsi).not.toContain(']10;rgb')
+    })
+
+    it('releases a held cooked-echo prefix before taking a snapshot', () => {
+      createSession({
+        ownerBackend: 'windows-conpty',
+        startupIngress: {
+          colors: { foreground: '#2e3434', background: '#ffffff' },
+          deadlineMs: 5_000
+        }
+      })
+      subprocess.simulateData('\x1b]10;?\x07')
+      subprocess.simulateData(']10;rgb:2e2e/')
+
+      const snapshot = session.getSnapshot()
+
+      expect(snapshot?.snapshotAnsi).toContain(']10;rgb:2e2e/')
+      expect(snapshot?.outputSequence).toBe('\x1b]10;?\x07]10;rgb:2e2e/'.length)
+    })
+
+    it('reproduces the legacy paired-runtime leak and removes its downstream producer', () => {
+      const query = '\x1b]10;?\x07'
+      const reply = '\x1b]10;rgb:2e2e/3434/3434\x1b\\'
+      const projectedEcho = ']10;rgb:2e2e/3434/3434\\'
+      createSession({ ownerBackend: 'posix-pty' })
+      session.closeStartupQueryAuthority()
+      const legacyReplyProducers: string[] = []
+      const legacyOnData = vi.fn((data: string) => {
+        if (data === query) {
+          legacyReplyProducers.push('remote-visible-renderer')
+          session.write(reply)
+          if (subprocess.written.at(-1) === reply) {
+            subprocess.simulateData(projectedEcho)
+          }
+        }
+      })
+      session.attachClient({ onData: legacyOnData, onExit: () => {} })
+
+      subprocess.simulateData(query)
+
+      expect(legacyReplyProducers).toEqual(['remote-visible-renderer'])
+      expect(subprocess.written).toEqual([reply])
+      expect(legacyOnData.mock.calls).toEqual([[query], [projectedEcho]])
+      expect(session.getSnapshot()?.snapshotAnsi).toContain(projectedEcho)
+      session.dispose()
+
+      subprocess = createMockSubprocess()
+      createSession({ ownerBackend: 'windows-conpty' })
+      session.closeStartupQueryAuthority()
+      const fixedReplyProducers: string[] = []
+      const fixedOnData = vi.fn((data: string) => {
+        if (data === query) {
+          fixedReplyProducers.push('remote-visible-renderer')
+          session.write(reply)
+        }
+      })
+      session.attachClient({ onData: fixedOnData, onExit: () => {} })
+
+      subprocess.simulateData(query)
+      subprocess.simulateData('prompt')
+
+      expect(fixedReplyProducers).toEqual([])
+      expect(subprocess.written).toEqual([])
+      expect(fixedOnData.mock.calls).toEqual([['', query.length, true, query.length], ['prompt']])
+      expect(session.getSnapshot()?.snapshotAnsi).not.toContain(']10;rgb')
     })
   })
 
