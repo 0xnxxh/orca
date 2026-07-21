@@ -207,7 +207,7 @@ describe('AgentTerminalPreview', () => {
     host.appendChild(focusTarget)
     focusTarget.focus()
 
-    act(() => emitAppMenuPaste?.())
+    act(() => emitAppMenuPaste!())
     await waitFor(() => expect(terminal.paste).toHaveBeenCalledWith('clip-text'))
     expect(input).toHaveBeenCalledWith('pty-1', 'clip-text')
   })
@@ -217,7 +217,7 @@ describe('AgentTerminalPreview', () => {
     await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
     expect(emitAppMenuPaste).not.toBeNull()
 
-    await act(async () => emitAppMenuPaste?.())
+    await act(async () => emitAppMenuPaste!())
     expect(readClipboardText).not.toHaveBeenCalled()
     expect(terminalHarness.instances[0]!.paste).not.toHaveBeenCalled()
   })
@@ -284,7 +284,7 @@ describe('AgentTerminalPreview', () => {
     view.container.appendChild(outsideInput)
     terminalInput.focus()
 
-    act(() => emitAppMenuPaste?.())
+    act(() => emitAppMenuPaste!())
     outsideInput.focus()
     await act(async () => resolveClipboard('stale text'))
 
@@ -293,7 +293,8 @@ describe('AgentTerminalPreview', () => {
   })
 
   it('streams large pastes as bounded IPC payloads instead of one renderer-blocking write', async () => {
-    const largePaste = 'x'.repeat(TERMINAL_PASTE_DIRECT_MAX_BYTES + 1)
+    const encoder = new TextEncoder()
+    const largePaste = '😀'.repeat(TERMINAL_PASTE_DIRECT_MAX_BYTES / 4 + 1)
     readClipboardText.mockResolvedValueOnce(largePaste)
     const view = render(<AgentTerminalPreview ptyId="pty-1" />)
     await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
@@ -303,14 +304,20 @@ describe('AgentTerminalPreview', () => {
     host.appendChild(terminalInput)
     terminalInput.focus()
 
-    act(() => emitAppMenuPaste?.())
-    const expectedChunks = Math.ceil(largePaste.length / TERMINAL_PASTE_CHUNK_MAX_BYTES)
+    act(() => emitAppMenuPaste!())
+    const expectedChunks = Math.ceil(
+      encoder.encode(largePaste).byteLength / TERMINAL_PASTE_CHUNK_MAX_BYTES
+    )
     await waitFor(() => expect(input).toHaveBeenCalledTimes(expectedChunks))
 
     const payloads = input.mock.calls.map(([, data]) => data as string)
     expect(terminal.paste).not.toHaveBeenCalled()
     expect(payloads.join('')).toBe(largePaste)
-    expect(payloads.every((payload) => payload.length <= TERMINAL_PASTE_CHUNK_MAX_BYTES)).toBe(true)
+    expect(
+      payloads.every(
+        (payload) => encoder.encode(payload).byteLength <= TERMINAL_PASTE_CHUNK_MAX_BYTES
+      )
+    ).toBe(true)
   })
 
   it('closes a bracketed large paste when focus changes between chunks', async () => {
@@ -330,7 +337,7 @@ describe('AgentTerminalPreview', () => {
       return true
     })
 
-    act(() => emitAppMenuPaste?.())
+    act(() => emitAppMenuPaste!())
     await waitFor(() => expect(input).toHaveBeenCalledTimes(2))
 
     expect(input.mock.calls.map(([, data]) => data)).toEqual([
