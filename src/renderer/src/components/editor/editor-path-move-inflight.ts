@@ -1,16 +1,12 @@
 import { normalizeAbsolutePathForComparison } from '@/components/right-sidebar/file-explorer-paths'
 
-// Tracks Orca-owned moves that are in flight (rename issued, not yet settled).
-// Replaces the old time-bounded self-move registry: an operation is live only
-// for the exact duration of its filesystem rename + atomic rekey, so there is
-// no TTL to race a slow SSH rename and no cross-operation aliasing.
+// Tracks Orca-owned moves in flight (rename issued, not yet settled). Live only
+// for the rename + rekey duration — no TTL to race a slow SSH rename.
 //
-// Only the source side needs this: while an operation is live, a watcher delete
-// of anything under one of its source ROOTS is the move's own echo, not an
-// external delete — don't tombstone. Roots are prefix-matched (not exact) so a
-// file opened UNDER a moving directory mid-rename is covered too. The
-// destination is handled after commit: the coordinator proactively
-// content-verifies every gated moved tab.
+// Source side only: while live, a watcher delete under any source ROOT is the
+// move's own echo (prefix-matched so a file opened under a moving directory
+// mid-rename is covered too), not an external delete — don't tombstone. The
+// destination is content-verified by the coordinator after commit.
 
 type MoveOperation = {
   worktreeId: string

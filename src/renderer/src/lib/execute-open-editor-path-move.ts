@@ -37,11 +37,8 @@ export async function executeOpenEditorPathMove(args: {
   const { context, fromPath, toPath, worktreeId, worktreePath } = args
   const operationId = `editor-move-${(moveOperationCounter += 1)}`
 
-  // Every open session under the source path on the SAME execution host is
-  // affected — including one in a DIFFERENT worktree (e.g. a floating workspace)
-  // at the same absolute path — so quiesce/suppress/notify them all. A tab at the
-  // same path on another host (2nd SSH connection, local vs runtime) is a distinct
-  // file the rename never touched; scoping by host keeps it out of the transaction.
+  // Host-scoped: the same abs path on another host (2nd SSH connection, local vs
+  // runtime) is a distinct file the rename never touched — keep it out of the move.
   const moveState = useAppStore.getState()
   const initiatingHostId = getExecutionHostIdForWorktree(moveState, worktreeId)
   const affected = moveState.openFiles.filter(
@@ -50,11 +47,9 @@ export async function executeOpenEditorPathMove(args: {
       getExecutionHostIdForWorktree(moveState, f.worktreeId) === initiatingHostId
   )
 
-  // In-flight source suppression is scoped per (worktree, runtime owner) and
-  // registers the move ROOT (fromPath, prefix-matched) — so a file opened UNDER a
-  // moving directory mid-rename still has its own delete/rename echo suppressed,
-  // even though it wasn't in `affected`. Always include the initiating scope even
-  // when no tab is open there yet (an empty-affected directory move).
+  // Register the move ROOT (prefix-matched) per scope, always including the
+  // initiating scope, so a file opened UNDER a moving directory mid-rename still has
+  // its own delete/rename echo suppressed even though it wasn't in `affected`.
   const ownerSubOps: string[] = []
   const scopes = new Map<string, { worktreeId: string; owner: string | null }>()
   const addScope = (wtId: string, owner: string | null): void => {
@@ -128,9 +123,8 @@ export async function executeOpenEditorPathMove(args: {
       )
     }
 
-    // Rekey committed: close the host's old-path tab for any mirrored file. The
-    // rekey detached it to a local tab, so without this the host snapshot would
-    // resurrect the old path; the close intent suppresses re-mirroring.
+    // Rekey detached mirrored tabs to local; close the host's old-path tab so its
+    // snapshot can't resurrect the old path (the close intent suppresses re-mirroring).
     for (const file of mirroredAffected) {
       notifyHostOfMirroredEditorClose(mirrorState, file.worktreeId, file.id)
     }
@@ -140,12 +134,8 @@ export async function executeOpenEditorPathMove(args: {
     }
   }
 
-  // Drive verification for EVERY tab the rekey gated — not just paths whose
-  // watcher event was latched. The rename has completed, so disk is authoritative
-  // now; verifying proactively guarantees the autosave gate resolves even if the
-  // destination watcher event never arrives (watcher down / dropped / coalesced).
-  // A move echo reads disk == baseline (suppress); a genuine write differs
-  // (banner). A later watcher event finds the provenance consumed and no-ops.
+  // Proactively verify every gated tab so the autosave gate resolves even if the
+  // destination watcher event never arrives (down / dropped / coalesced).
   const gatedTabIds = useAppStore
     .getState()
     .openFiles.filter((f) => f.pendingSelfMoveEcho?.operationId === operationId)
