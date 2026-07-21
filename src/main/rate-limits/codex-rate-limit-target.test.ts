@@ -163,4 +163,17 @@ describe('getInitialCodexRateLimitTarget', () => {
       )
     ).toEqual({ runtime: 'host' })
   })
+
+  it('ignores a stale explicit WSL runtime on non-Windows hosts', () => {
+    expect(
+      getInitialCodexRateLimitTarget(
+        {
+          ...getDefaultSettings('/tmp'),
+          localAccountRuntime: 'wsl',
+          localAccountWslDistro: 'Ubuntu'
+        },
+        'darwin'
+      )
+    ).toEqual({ runtime: 'host' })
+  })
 })

@@ -30,6 +30,9 @@ export function getInitialCodexRateLimitTarget(
     return { runtime: 'host' }
   }
   if (settings.localAccountRuntime === 'wsl') {
+    if (platform !== 'win32') {
+      return { runtime: 'host' }
+    }
     return {
       runtime: 'wsl',
       wslDistro:

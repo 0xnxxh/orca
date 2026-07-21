@@ -163,4 +163,17 @@ describe('getInitialClaudeRateLimitTarget', () => {
       )
     ).toEqual({ runtime: 'host' })
   })
+
+  it('ignores a stale explicit WSL runtime on non-Windows hosts', () => {
+    expect(
+      getInitialClaudeRateLimitTarget(
+        {
+          ...getDefaultSettings('/tmp'),
+          localAccountRuntime: 'wsl',
+          localAccountWslDistro: 'Ubuntu'
+        },
+        'linux'
+      )
+    ).toEqual({ runtime: 'host' })
+  })
 })
