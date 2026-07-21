@@ -170,7 +170,9 @@ export function LinearAgentSkillSetupDialog({
                       "Don't show again"
                     )}
                     onClick={onDismissPermanently}
-                    className="absolute top-3.5 right-10 text-muted-foreground"
+                    // Why: top-3 (not top-3.5) so this icon-xs button's centered 16px icon
+                    // lines up with the bare × close icon (top-4) — verified pixel-aligned.
+                    className="absolute top-3 right-10 text-muted-foreground"
                   >
                     <EyeOff className="size-4" />
                   </Button>
