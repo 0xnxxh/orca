@@ -1,8 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   findTrustedCodexSessionResume,
   resolveTrustedCodexSessionResumeHome
 } from './codex-session-resume-home'
+
+const tempRoots: string[] = []
+
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 describe('resolveTrustedCodexSessionResumeHome', () => {
   it('returns the trusted home containing a persisted rollout', () => {
@@ -10,7 +21,7 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
       resolveTrustedCodexSessionResumeHome({
         transcriptPath: '/Users/example/.codex/sessions/2026/07/20/rollout-session.jsonl',
         trustedCodexHomes: ['/managed/account/home', '/Users/example/.codex'],
-        fileExists: () => true
+        fileIsRegular: () => true
       })
     ).toBe('/Users/example/.codex')
   })
@@ -20,25 +31,33 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
       resolveTrustedCodexSessionResumeHome({
         transcriptPath: 'C:\\Users\\Example\\.codex\\sessions\\2026\\07\\20\\rollout-a.jsonl',
         trustedCodexHomes: ['c:\\users\\example\\.codex'],
-        fileExists: () => true
+        fileIsRegular: () => true
       })
     ).toBe('c:\\users\\example\\.codex')
   })
 
   it('rejects paths outside trusted homes or outside the rollout layout', () => {
-    const fileExists = (): boolean => true
+    const fileIsRegular = (): boolean => true
     expect(
       resolveTrustedCodexSessionResumeHome({
         transcriptPath: '/tmp/sessions/2026/07/20/rollout-a.jsonl',
         trustedCodexHomes: ['/Users/example/.codex'],
-        fileExists
+        fileIsRegular
       })
     ).toBeNull()
     expect(
       resolveTrustedCodexSessionResumeHome({
         transcriptPath: '/Users/example/.codex/sessions/index.jsonl',
         trustedCodexHomes: ['/Users/example/.codex'],
-        fileExists
+        fileIsRegular
+      })
+    ).toBeNull()
+    expect(
+      resolveTrustedCodexSessionResumeHome({
+        transcriptPath:
+          '/Users/example/.codex/sessions/2026/07/20/rollout-a/../../../../outside.jsonl',
+        trustedCodexHomes: ['/Users/example/.codex'],
+        fileIsRegular
       })
     ).toBeNull()
   })
@@ -48,9 +67,32 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
       resolveTrustedCodexSessionResumeHome({
         transcriptPath: '/Users/example/.codex/sessions/2026/07/20/rollout-a.jsonl',
         trustedCodexHomes: ['/Users/example/.codex'],
-        fileExists: () => false
+        fileIsRegular: () => false
       })
     ).toBeNull()
+  })
+
+  it('requires the transcript provenance to name a regular rollout file', () => {
+    const homePath = mkdtempSync(join(tmpdir(), 'orca-codex-resume-home-'))
+    tempRoots.push(homePath)
+    const rolloutDirectory = join(homePath, 'sessions', '2026', '07', '20', 'rollout-a.jsonl')
+    mkdirSync(rolloutDirectory, { recursive: true })
+
+    expect(
+      resolveTrustedCodexSessionResumeHome({
+        transcriptPath: rolloutDirectory,
+        trustedCodexHomes: [homePath]
+      })
+    ).toBeNull()
+
+    const rolloutFile = join(homePath, 'sessions', '2026', '07', '20', 'rollout-b.jsonl')
+    writeFileSync(rolloutFile, '{}\n')
+    expect(
+      resolveTrustedCodexSessionResumeHome({
+        transcriptPath: rolloutFile,
+        trustedCodexHomes: [homePath]
+      })
+    ).toBe(homePath)
   })
 
   it('finds older saved sessions by id when transcript provenance is absent', async () => {
@@ -70,6 +112,25 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
         listSessionFiles
       })
     ).resolves.toEqual({ homePath: '/managed/account/home', transcriptPath: rolloutPath })
+  })
+
+  it('does not scan session trees when exact transcript provenance is valid', async () => {
+    const transcriptPath =
+      '/managed/account/home/sessions/2026/07/20/rollout-2026-07-20-session.jsonl'
+    const listSessionFiles = vi.fn((): AsyncIterable<string> => {
+      throw new Error('must not scan')
+    })
+
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId: 'session-a',
+        transcriptPath,
+        trustedCodexHomes: ['/managed/account/home'],
+        fileIsRegular: () => true,
+        listSessionFiles
+      })
+    ).resolves.toEqual({ homePath: '/managed/account/home', transcriptPath })
+    expect(listSessionFiles).not.toHaveBeenCalled()
   })
 
   it('does not scan homes for an untrusted legacy session id shape', async () => {

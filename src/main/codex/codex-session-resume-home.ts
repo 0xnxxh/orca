@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   getRuntimePathBasename,
@@ -7,15 +7,23 @@ import {
 } from '../../shared/cross-platform-path'
 import { listCodexSessionJsonlFilesIncrementally } from './codex-session-file-listing'
 
-const ROLLOUT_RELATIVE_PATH = /^\d{4}\/\d{2}\/\d{2}\/rollout-.+\.jsonl$/
+const ROLLOUT_RELATIVE_PATH = /^\d{4}\/\d{2}\/\d{2}\/rollout-[^/]+\.jsonl$/
+
+function isRegularFile(filePath: string): boolean {
+  try {
+    return lstatSync(filePath).isFile()
+  } catch {
+    return false
+  }
+}
 
 export function resolveTrustedCodexSessionResumeHome(args: {
   transcriptPath: string | undefined
   trustedCodexHomes: readonly string[]
-  fileExists?: (filePath: string) => boolean
+  fileIsRegular?: (filePath: string) => boolean
 }): string | null {
   const transcriptPath = args.transcriptPath?.trim()
-  if (!transcriptPath || !(args.fileExists ?? existsSync)(transcriptPath)) {
+  if (!transcriptPath || !(args.fileIsRegular ?? isRegularFile)(transcriptPath)) {
     return null
   }
 
@@ -32,7 +40,7 @@ export async function findTrustedCodexSessionResume(args: {
   sessionId: string
   transcriptPath: string | undefined
   trustedCodexHomes: readonly string[]
-  fileExists?: (filePath: string) => boolean
+  fileIsRegular?: (filePath: string) => boolean
   listSessionFiles?: (sessionsRoot: string) => AsyncIterable<string>
 }): Promise<{ homePath: string; transcriptPath: string } | null> {
   const directHome = resolveTrustedCodexSessionResumeHome(args)

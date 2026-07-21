@@ -797,10 +797,10 @@ async function prepareCodexSessionResumeForLaunch(args: {
   if (args.target.runtime === 'wsl' || !codexRuntimeHome || !store) {
     return null
   }
-  const configuredSourceHome = resolveHostCodexSessionSourceHome(store.getSettings())
   const systemHomePath = getSystemCodexHomePath()
+  // Why: codexSessionSourceHome is import-only; treating it as CODEX_HOME would mutate history sources and bypass account auth.
   const trustedHomes = [
-    configuredSourceHome ?? systemHomePath,
+    systemHomePath,
     ...codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery()
   ]
   const sessionSource = await findTrustedCodexSessionResume({
@@ -821,12 +821,10 @@ async function prepareCodexSessionResumeForLaunch(args: {
     },
     {
       isHostSystemDefaultRealHome: () => codexRuntimeHome!.isHostSystemDefaultRealHome(),
-      systemCodexHomePath: configuredSourceHome
+      systemCodexHomePath: systemHomePath
     }
   )
-  const resumeHome = migrated.useRealCodexHome
-    ? (configuredSourceHome ?? systemHomePath)
-    : sessionSource.homePath
+  const resumeHome = migrated.useRealCodexHome ? systemHomePath : sessionSource.homePath
 
   if (args.workspacePath) {
     try {
