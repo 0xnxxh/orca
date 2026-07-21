@@ -95,11 +95,69 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
     ).toBe(homePath)
   })
 
+  it('follows Codex when a persisted plain rollout was compressed in place', async () => {
+    const homePath = mkdtempSync(join(tmpdir(), 'orca-codex-resume-home-'))
+    tempRoots.push(homePath)
+    const plainPath = join(
+      homePath,
+      'sessions',
+      '2026',
+      '07',
+      '20',
+      'rollout-2026-07-20T12-00-00-session.jsonl'
+    )
+    const compressedPath = `${plainPath}.zst`
+    mkdirSync(join(plainPath, '..'), { recursive: true })
+    writeFileSync(compressedPath, 'compressed-rollout')
+
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId: 'session-a',
+        transcriptPath: plainPath,
+        trustedCodexHomes: [homePath]
+      })
+    ).resolves.toEqual({ homePath, transcriptPath: compressedPath })
+
+    writeFileSync(plainPath, 'active-rollout')
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId: 'session-a',
+        transcriptPath: compressedPath,
+        trustedCodexHomes: [homePath]
+      })
+    ).resolves.toEqual({ homePath, transcriptPath: plainPath })
+  })
+
+  it('finds compressed rollouts for legacy records without transcript provenance', async () => {
+    const homePath = mkdtempSync(join(tmpdir(), 'orca-codex-resume-home-'))
+    tempRoots.push(homePath)
+    const sessionId = '019f81b9-19a9-7651-a8d1-352d9420bd11'
+    const compressedPath = join(
+      homePath,
+      'sessions',
+      '2026',
+      '07',
+      '20',
+      `rollout-2026-07-20T12-00-00-${sessionId}.jsonl.zst`
+    )
+    mkdirSync(join(compressedPath, '..'), { recursive: true })
+    writeFileSync(compressedPath, 'compressed-rollout')
+
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId,
+        transcriptPath: undefined,
+        trustedCodexHomes: [homePath]
+      })
+    ).resolves.toEqual({ homePath, transcriptPath: compressedPath })
+  })
+
   it('finds older saved sessions by id when transcript provenance is absent', async () => {
     const sessionId = '019f81b9-19a9-7651-a8d1-352d9420bd11'
     const rolloutPath = `/managed/account/home/sessions/2026/07/20/rollout-2026-07-20T15-50-19-${sessionId}.jsonl`
     const listSessionFiles = async function* (sessionsRoot: string): AsyncIterable<string> {
       if (sessionsRoot === '/managed/account/home/sessions') {
+        yield `/managed/account/home/sessions/misplaced-${sessionId}.jsonl`
         yield rolloutPath
       }
     }
