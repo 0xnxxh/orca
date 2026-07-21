@@ -9,6 +9,15 @@ export class LogicalClientCutoverError extends Error {
   }
 }
 
+// Why: cutover errors can cross module boundaries as plain Errors (re-thrown or
+// serialized), so callers match on the message as well as the instance.
+export function isLogicalClientCutoverError(error: unknown): boolean {
+  return (
+    error instanceof LogicalClientCutoverError ||
+    (error instanceof Error && error.message === 'RPC interrupted by connection migration')
+  )
+}
+
 type SubscriptionRecord = {
   method: string
   params: unknown
