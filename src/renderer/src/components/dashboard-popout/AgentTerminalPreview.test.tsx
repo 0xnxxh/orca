@@ -21,12 +21,26 @@ const terminalHarness = vi.hoisted(() => ({
     resize: ReturnType<typeof vi.fn>
     reset: ReturnType<typeof vi.fn>
     paste: ReturnType<typeof vi.fn>
+    input: ReturnType<typeof vi.fn>
     modes: { bracketedPasteMode: boolean }
     selectionText: string
     customKeyHandler: ((event: KeyboardEvent) => boolean) | null
   }[],
   userInputListener: null as (() => void) | null,
   userInputDispose: vi.fn()
+}))
+
+const platformState = vi.hoisted(() => ({ value: 'linux' }))
+
+const imeHarness = vi.hoisted(() => ({
+  forwarders: [] as {
+    claimKeyEvent: ReturnType<typeof vi.fn>
+    dispose: ReturnType<typeof vi.fn>
+    sendInput: (data: string) => void
+  }[],
+  trackers: [] as { dispose: ReturnType<typeof vi.fn> }[],
+  claimResult: false,
+  inputSourceTrackerRequests: 0
 }))
 
 vi.mock('@xterm/xterm', () => ({
@@ -52,6 +66,11 @@ vi.mock('@xterm/xterm', () => ({
       terminalHarness.userInputListener?.()
       this.onDataListener?.(data)
     })
+    input = vi.fn((data: string) => {
+      terminalHarness.userInputListener?.()
+      this.onDataListener?.(data)
+    })
+    element = document.createElement('div')
     getSelection = vi.fn(() => this.selectionText)
     attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
       this.customKeyHandler = handler
@@ -78,6 +97,33 @@ vi.mock('@/components/terminal-pane/terminal-user-input-signal', () => ({
 vi.mock('@/components/terminal-pane/use-system-prefers-dark', () => ({
   useSystemPrefersDark: () => false
 }))
+vi.mock('@/lib/shortcut-platform', () => ({
+  getShortcutPlatform: () => platformState.value
+}))
+vi.mock('@/components/terminal-pane/terminal-ime-native-text-forwarder', () => ({
+  installTerminalImeNativeTextForwarder: (args: { sendInput: (data: string) => void }) => {
+    const forwarder = {
+      claimKeyEvent: vi.fn(() => imeHarness.claimResult),
+      dispose: vi.fn(),
+      sendInput: args.sendInput
+    }
+    imeHarness.forwarders.push(forwarder)
+    return forwarder
+  }
+}))
+vi.mock('@/components/terminal-pane/terminal-ime-composition-tracker', () => ({
+  installTerminalImeCompositionTracker: () => {
+    const tracker = { isActive: () => false, dispose: vi.fn() }
+    imeHarness.trackers.push(tracker)
+    return tracker
+  }
+}))
+vi.mock('@/components/terminal-pane/terminal-ime-input-source', () => ({
+  getMacNativeTextInputSourceTracker: () => {
+    imeHarness.inputSourceTrackerRequests++
+    return { getFeatures: () => ({}) }
+  }
+}))
 vi.mock('@/store', () => {
   const state = { settings: null, keybindings: {} }
   const useAppStore = (selector: (s: typeof state) => unknown): unknown => selector(state)
@@ -100,6 +146,11 @@ describe('AgentTerminalPreview', () => {
   beforeEach(() => {
     terminalHarness.instances.length = 0
     terminalHarness.userInputListener = null
+    platformState.value = 'linux'
+    imeHarness.forwarders.length = 0
+    imeHarness.trackers.length = 0
+    imeHarness.claimResult = false
+    imeHarness.inputSourceTrackerRequests = 0
     emitData = null
     emitAppMenuPaste = null
     connect.mockResolvedValue({
@@ -157,6 +208,76 @@ describe('AgentTerminalPreview', () => {
 
     act(() => terminal.writeCallbacks.shift()?.())
     expect(ack).toHaveBeenCalledWith('pty-1', 4)
+  })
+
+  it('installs the macOS IME native-text forwarder and lets its claims bypass chord handling', async () => {
+    platformState.value = 'darwin'
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+    expect(imeHarness.forwarders).toHaveLength(1)
+    expect(imeHarness.trackers).toHaveLength(1)
+    expect(imeHarness.inputSourceTrackerRequests).toBe(1)
+
+    imeHarness.forwarders[0]!.sendInput('。')
+    expect(terminal.input).toHaveBeenCalledOnce()
+    expect(input).toHaveBeenCalledOnce()
+    expect(input).toHaveBeenCalledWith('pty-1', '。')
+
+    // A claimed native-text key bypasses xterm AND the clipboard chords.
+    imeHarness.claimResult = true
+    terminal.selectionText = 'selected text'
+    const handled = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', { key: 'C', code: 'KeyC', metaKey: true, shiftKey: true })
+    )
+    expect(handled).toBe(false)
+    expect(writeClipboardText).not.toHaveBeenCalled()
+
+    // Unclaimed events still reach the chord handling.
+    imeHarness.claimResult = false
+    const copied = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', { key: 'C', code: 'KeyC', metaKey: true, shiftKey: true })
+    )
+    expect(copied).toBe(false)
+    expect(writeClipboardText).toHaveBeenCalledWith('selected text')
+    expect(imeHarness.inputSourceTrackerRequests).toBe(1)
+  })
+
+  it('does not install the IME native-text forwarder off macOS', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    await waitFor(() => expect(terminalHarness.instances[0]!.customKeyHandler).not.toBeNull())
+    expect(imeHarness.forwarders).toHaveLength(0)
+    expect(imeHarness.trackers).toHaveLength(0)
+  })
+
+  it('disposes the IME bridge on unmount', async () => {
+    platformState.value = 'darwin'
+    const view = render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(imeHarness.forwarders).toHaveLength(1))
+    view.unmount()
+    expect(imeHarness.forwarders[0]!.dispose).toHaveBeenCalledTimes(1)
+    expect(imeHarness.trackers[0]!.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('disposes the IME bridge once when the PTY disappears', async () => {
+    platformState.value = 'darwin'
+    connect.mockResolvedValueOnce({
+      snapshot: { data: '', cols: 80, rows: 24, seq: 1 },
+      replay: []
+    })
+    connect.mockResolvedValueOnce({ snapshot: null, replay: [] })
+    const view = render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(imeHarness.forwarders).toHaveLength(1))
+
+    act(() => emitData?.({ type: 'resync', ptyId: 'pty-1' }))
+    await waitFor(() => expect(imeHarness.forwarders[0]!.dispose).toHaveBeenCalledOnce())
+    expect(imeHarness.trackers[0]!.dispose).toHaveBeenCalledOnce()
+
+    view.unmount()
+    expect(imeHarness.forwarders[0]!.dispose).toHaveBeenCalledOnce()
+    expect(imeHarness.trackers[0]!.dispose).toHaveBeenCalledOnce()
   })
 
   it('copies the terminal selection on the copy chord and blocks xterm handling', async () => {
