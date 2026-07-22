@@ -131,6 +131,7 @@ export function AgentTerminalPreview({ ptyId }: { ptyId: string }): React.JSX.El
     if (container.parentElement) {
       boxResizeObserver?.observe(container.parentElement)
     }
+    boxResizeObserver?.observe(container)
 
     let replayDepth = 0
     const writeReplayed = (chunk: string, onDone?: () => void): void => {

@@ -50,8 +50,6 @@ export function createPreviewGridClaim(args: {
       box.clientWidth <= 0 ||
       box.clientHeight <= 0
     ) {
-      // Not laid out yet (e.g. occluded window) — retry until measurable.
-      schedule()
       return
     }
     const cols = clampGridAxis(Math.floor(box.clientWidth / cellWidth), FIT_MIN_COLS, FIT_MAX_COLS)
@@ -68,7 +66,7 @@ export function createPreviewGridClaim(args: {
     // The resize triggers a main-side resync push; the reconnect snapshot
     // carries the new grid. If the claim didn't land (a phone owns the size),
     // the dialog's scaled fallback rendering stays correct as-is.
-    void window.api.terminalPreview.fit(args.ptyId, cols, rows)
+    void window.api.terminalPreview.fit(args.ptyId, cols, rows).catch(() => undefined)
   }
 
   const schedule = (): void => {
