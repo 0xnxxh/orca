@@ -34,7 +34,16 @@ beforeEach(() => {
 })
 
 describe('useAgentRowConversationName', () => {
-  it('returns null while the setting is off', () => {
+  it('returns null without reading the tab map while the setting is off', () => {
+    const tabsByWorktree = new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error('inactive rows must not read the tab map')
+        }
+      }
+    )
+    storeState.current = { settings: {}, tabsByWorktree }
     expect(useAgentRowConversationName(makeAgent())).toBeNull()
   })
 
@@ -43,9 +52,52 @@ describe('useAgentRowConversationName', () => {
     expect(useAgentRowConversationName(makeAgent())).toBe('Patient sync spike')
   })
 
-  it('never renames subagent child rows after the parent tab', () => {
-    storeState.current = { settings: { agentRowsUseConversationName: true }, tabsByWorktree: {} }
+  it('never reads the parent tab for subagent child rows', () => {
+    const tabsByWorktree = new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error('subagent rows must not read the parent tab')
+        }
+      }
+    )
+    storeState.current = { settings: { agentRowsUseConversationName: true }, tabsByWorktree }
     expect(useAgentRowConversationName(makeAgent({ rowSource: 'subagent' }))).toBeNull()
+  })
+
+  it('indexes one immutable tab array once across rows', () => {
+    let tabReads = 0
+    const tabs = new Proxy(
+      [
+        { id: 'tab-1', worktreeId: 'wt-1', customTitle: 'First name', title: '' },
+        { id: 'tab-2', worktreeId: 'wt-1', customTitle: 'Second name', title: '' }
+      ],
+      {
+        get: (target, property, receiver) => {
+          if (typeof property === 'string' && /^\d+$/.test(property)) {
+            tabReads += 1
+          }
+          return Reflect.get(target, property, receiver)
+        }
+      }
+    )
+    storeState.current = {
+      settings: { agentRowsUseConversationName: true },
+      tabsByWorktree: { 'wt-1': tabs }
+    }
+
+    expect(useAgentRowConversationName(makeAgent())).toBe('First name')
+    const readsAfterFirstRow = tabReads
+    expect(
+      useAgentRowConversationName(
+        makeAgent({
+          paneKey: 'tab-2:leaf-1',
+          tab: { id: 'tab-2', worktreeId: 'wt-1', customTitle: null, title: '' }
+        } as Partial<DashboardAgentRow>)
+      )
+    ).toBe('Second name')
+    expect(readsAfterFirstRow).toBeGreaterThan(0)
+    expect(tabReads).toBe(readsAfterFirstRow)
   })
 
   it('prefers the live store tab over the stale row snapshot', () => {

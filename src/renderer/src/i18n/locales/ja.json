@@ -9295,7 +9295,7 @@
         },
         "agent-row-conversation-name-copy": {
           "title": "Label agent rows with conversation names",
-          "description": "Show the conversation name (tab rename or agent-set title) on sidebar and dashboard agent rows instead of the last message. Rows without a name keep the last message."
+          "description": "Show conversation names on sidebar and dashboard agent rows instead of the last message. Rows without a usable name keep the last message."
         }
       },
       "right": {

@@ -59,6 +59,16 @@ describe('getAgentRowConversationName', () => {
     expect(
       getAgentRowConversationName(makeTab({ title: 'orca/workspaces' }), 'codex', false)
     ).toBeNull()
+    expect(
+      getAgentRowConversationName(
+        makeTab({ title: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\orca' }),
+        'codex',
+        false
+      )
+    ).toBeNull()
+    expect(
+      getAgentRowConversationName(makeTab({ title: 'repos\\orca' }), 'codex', false)
+    ).toBeNull()
   })
 
   it('accepts multi-word titles that merely contain a slash', () => {
@@ -81,6 +91,22 @@ describe('getAgentRowConversationName', () => {
 
   it('rejects identity-echo, management, and placeholder titles', () => {
     expect(getAgentRowConversationName(makeTab({ title: 'Claude' }), 'claude', false)).toBeNull()
+    expect(
+      getAgentRowConversationName(makeTab({ title: '✳ Claude Code' }), 'claude', false)
+    ).toBeNull()
+    expect(
+      getAgentRowConversationName(
+        makeTab({ title: 'Claude Code - action required' }),
+        'claude',
+        false
+      )
+    ).toBeNull()
+    expect(
+      getAgentRowConversationName(makeTab({ title: '✦ Gemini CLI' }), 'gemini', false)
+    ).toBeNull()
+    expect(
+      getAgentRowConversationName(makeTab({ title: '◇ Ready (orca)' }), 'gemini', false)
+    ).toBeNull()
     expect(
       getAgentRowConversationName(makeTab({ title: 'claude agents' }), 'claude', false)
     ).toBeNull()

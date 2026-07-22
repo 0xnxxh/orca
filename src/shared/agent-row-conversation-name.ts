@@ -32,18 +32,54 @@ const SYNTHETIC_STATUS_TITLES_LOWER: ReadonlySet<string> = new Set(
 // (worktree-agent-row-fallback-tab.ts); it is a placeholder, not a name.
 const FALLBACK_TAB_TITLE_LOWER = 'agent'
 
+const AGENT_IDENTITY_ALIASES_LOWER: Readonly<Record<string, readonly string[]>> = {
+  claude: ['claude code'],
+  gemini: ['gemini cli']
+}
+
+const STATUS_WITH_CONTEXT_RE = /^(?:ready|idle|done)(?:\s+\([^)]*\))?$/i
+
+function isIdentityStatusTitle(titleLower: string, identityLower: string): boolean {
+  return (
+    titleLower === identityLower ||
+    titleLower === `${identityLower} ready` ||
+    titleLower === `${identityLower} idle` ||
+    titleLower === `${identityLower} done` ||
+    titleLower === `${identityLower} working` ||
+    titleLower === `${identityLower} thinking` ||
+    titleLower === `${identityLower} running` ||
+    titleLower === `${identityLower} - action required`
+  )
+}
+
+function isAgentIdentityStatusTitle(
+  titleLower: string,
+  agentType: AgentType | null | undefined,
+  agentTypeLabelLower: string
+): boolean {
+  if (isIdentityStatusTitle(titleLower, agentTypeLabelLower)) {
+    return true
+  }
+  return (
+    AGENT_IDENTITY_ALIASES_LOWER[agentType ?? '']?.some((identity) =>
+      isIdentityStatusTitle(titleLower, identity)
+    ) ?? false
+  )
+}
+
 function isCwdLikeTitle(title: string): boolean {
   // Hook-less agents over SSH surface spinner+cwd titles (#8711); once the
   // spinner is stripped, what remains is a path, not a conversation name.
-  if (/^(?:~|\/|[A-Za-z]:[\\/])/.test(title)) {
+  if (/^(?:~|[\\/]|[A-Za-z]:[\\/])/.test(title)) {
     return true
   }
   // A single path-ish token ("orca/workspaces") is still a cwd, not a name.
-  return !/\s/.test(title) && title.includes('/')
+  return !/\s/.test(title) && /[\\/]/.test(title)
 }
 
 function conversationNameFromLiveTitle(
   liveTitle: string,
+  agentType: AgentType | null | undefined,
   agentTypeLabelLower: string,
   defaultTitle: string | undefined
 ): string | null {
@@ -55,7 +91,8 @@ function conversationNameFromLiveTitle(
   if (
     SYNTHETIC_STATUS_TITLES_LOWER.has(lower) ||
     lower === FALLBACK_TAB_TITLE_LOWER ||
-    lower === agentTypeLabelLower ||
+    isAgentIdentityStatusTitle(lower, agentType, agentTypeLabelLower) ||
+    STATUS_WITH_CONTEXT_RE.test(stripped) ||
     isClaudeManagementTitle(stripped) ||
     isCwdLikeTitle(stripped)
   ) {
@@ -97,6 +134,7 @@ export function getAgentRowConversationName(
   }
   return conversationNameFromLiveTitle(
     liveTitle,
+    agentType,
     formatAgentTypeLabel(agentType).toLowerCase(),
     tab.defaultTitle
   )

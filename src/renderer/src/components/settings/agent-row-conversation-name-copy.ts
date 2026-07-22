@@ -11,7 +11,7 @@ export function getAgentRowConversationNamesTitle(): string {
 export function getAgentRowConversationNamesDescription(): string {
   return translate(
     'auto.components.settings.agent-row-conversation-name-copy.description',
-    'Show the conversation name (tab rename or agent-set title) on sidebar and dashboard agent rows instead of the last message. Rows without a name keep the last message.'
+    'Show conversation names on sidebar and dashboard agent rows instead of the last message. Rows without a usable name keep the last message.'
   )
 }
 
