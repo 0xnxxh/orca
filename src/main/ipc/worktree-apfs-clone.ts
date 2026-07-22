@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat, rm, link, rmdir, chmod } from 'node:fs/promises'
+import { mkdir, stat, lstat, rm, link, rmdir, chmod } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -30,6 +30,7 @@ export type ApfsCloneFilesystemCache = Map<number, Promise<DarwinFilesystemInfo>
 
 export type ApfsCloneOptions = {
   filesystemCache?: ApfsCloneFilesystemCache
+  mergeExistingDirectory?: boolean
 }
 
 export class ApfsCloneUnavailableError extends Error {
@@ -85,12 +86,8 @@ async function getCachedDarwinFilesystemInfo(
   }
   const pending = getDarwinFilesystemInfo(path, deps)
   cache.set(deviceId, pending)
-  try {
-    return await pending
-  } catch (error) {
-    cache.delete(deviceId)
-    throw error
-  }
+  // Why: cache probe failures for this materialization so fallback doesn't respawn df/diskutil per path.
+  return pending
 }
 
 async function assertSameApfsVolume(
@@ -140,18 +137,28 @@ async function cloneFileWithApfs(
 async function cloneDirectoryWithApfs(
   source: string,
   target: string,
-  deps: ApfsCloneDeps
+  deps: ApfsCloneDeps,
+  mergeExistingDirectory: boolean
 ): Promise<void> {
   const sourceMode = (await stat(source)).mode & 0o777
+  let createdTarget = false
   try {
     // Why: reserve the final directory path before copying into it so a raced
     // user-created directory cannot be replaced by a final rename.
     await mkdir(target)
+    createdTarget = true
   } catch (error) {
     if (isAlreadyExistsError(error)) {
-      throw new WorktreeLinkedPathTargetExistsError(target)
+      if (!mergeExistingDirectory) {
+        throw new WorktreeLinkedPathTargetExistsError(target)
+      }
+      const targetStats = await lstat(target)
+      if (!targetStats.isDirectory() || targetStats.isSymbolicLink()) {
+        throw new WorktreeLinkedPathTargetExistsError(target)
+      }
+    } else {
+      throw error
     }
-    throw error
   }
 
   try {
@@ -160,11 +167,15 @@ async function cloneDirectoryWithApfs(
     // Why: copy into the reserved target so a resolved top-level symlink whose
     // target has another basename still lands at the requested path.
     await deps.execFileAsync('/bin/cp', ['-n', '-c', '-R', `${source}${sep}.`, target])
-    await chmod(target, sourceMode)
+    if (createdTarget) {
+      await chmod(target, sourceMode)
+    }
   } catch (error) {
     // Why: remove only the empty reservation. If cp wrote anything, or another
     // process raced files into the directory, leave it for Git/user review.
-    await rmdir(target).catch(() => undefined)
+    if (createdTarget) {
+      await rmdir(target).catch(() => undefined)
+    }
     throw error
   }
 }
@@ -183,6 +194,6 @@ export async function cloneWorktreePathWithApfs(
   // while Darwin's cp exposes APFS clonefile via -c. Preflight the volume so
   // cp's non-APFS full-copy fallback cannot surprise users.
   await (sourceIsDirectory
-    ? cloneDirectoryWithApfs(source, target, deps)
+    ? cloneDirectoryWithApfs(source, target, deps, options.mergeExistingDirectory === true)
     : cloneFileWithApfs(source, target, deps))
 }

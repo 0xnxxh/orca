@@ -2464,7 +2464,9 @@ export async function createLocalWorktree(
   const includePaths = await resolveWorktreeIncludePaths(repo.path, localWorktreeGitOptions)
   if (includePaths.length > 0) {
     await timing.time('copy_worktreeinclude', async () => {
-      await createWorktreeCopiedPaths(repo.path, created.path, includePaths)
+      await createWorktreeCopiedPaths(repo.path, created.path, includePaths, {
+        existingLinkedPaths: symlinkPaths
+      })
     })
   }
 

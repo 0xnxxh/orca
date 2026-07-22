@@ -17250,8 +17250,9 @@ export class OrcaRuntimeService {
       warnings: lineageWarnings
     } = this.recordCreatedWorktreeLineage(worktree, lineageResolution)
 
-    if (repo.symlinkPaths && repo.symlinkPaths.length > 0) {
-      await createWorktreeLinkedPaths(repo.path, created.path, repo.symlinkPaths)
+    const symlinkPaths = repo.symlinkPaths ?? []
+    if (symlinkPaths.length > 0) {
+      await createWorktreeLinkedPaths(repo.path, created.path, symlinkPaths)
     }
 
     // Why: project-level `.worktreeinclude` travels with the repo (issue #7549); copy semantics
@@ -17261,7 +17262,9 @@ export class OrcaRuntimeService {
       localWorktreeGitOptions
     )
     if (worktreeIncludePaths.length > 0) {
-      await createWorktreeCopiedPaths(repo.path, created.path, worktreeIncludePaths)
+      await createWorktreeCopiedPaths(repo.path, created.path, worktreeIncludePaths, {
+        existingLinkedPaths: symlinkPaths
+      })
     }
 
     let setup: CreateWorktreeResult['setup']

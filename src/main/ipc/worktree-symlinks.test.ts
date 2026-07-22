@@ -32,6 +32,7 @@ function createApfsCloneDeps(options: {
   uuid?: string
   onCp?: (args: readonly string[]) => void
   onDiskutil?: () => void
+  diskutilError?: Error
 }): ApfsCloneDepsForTest {
   const execFileAsync = vi.fn<ApfsCloneDepsForTest['execFileAsync']>(async (file, args) => {
     if (file === '/bin/df') {
@@ -43,6 +44,9 @@ function createApfsCloneDeps(options: {
       }
     }
     if (file === '/usr/sbin/diskutil') {
+      if (options.diskutilError) {
+        throw options.diskutilError
+      }
       options.onDiskutil?.()
       return {
         stdout: `<plist><dict><key>FilesystemName</key><string>APFS</string></dict></plist>`,
@@ -450,17 +454,44 @@ describe('createWorktreeCopiedPaths', () => {
     expect(readFileSync(join(primary, '.env.shared'), 'utf8')).toBe('SECRET=1\n')
   })
 
-  posixIt('preserves nested symlinks instead of expanding external trees', async () => {
+  posixIt('keeps relative nested symlinks inside the copied directory', async () => {
     mkdirSync(join(primary, 'config'))
-    writeFileSync(join(primary, 'shared.json'), '{"owner":"primary"}')
-    symlinkSync(join(primary, 'shared.json'), join(primary, 'config', 'settings.json'))
+    writeFileSync(join(primary, 'config', 'shared.json'), '{"owner":"primary"}')
+    symlinkSync('shared.json', join(primary, 'config', 'settings.json'))
 
     await createWorktreeCopiedPaths(primary, worktree, ['config'], { platform: 'linux' })
 
     const copiedSettings = join(worktree, 'config', 'settings.json')
     expect(lstatSync(copiedSettings).isSymbolicLink()).toBe(true)
-    expect(readlinkSync(copiedSettings)).toBe(join(primary, 'shared.json'))
+    expect(readlinkSync(copiedSettings)).toBe('shared.json')
+    writeFileSync(join(worktree, 'config', 'shared.json'), '{"owner":"worktree"}')
+    expect(readFileSync(copiedSettings, 'utf8')).toBe('{"owner":"worktree"}')
+    expect(readFileSync(join(primary, 'config', 'shared.json'), 'utf8')).toBe('{"owner":"primary"}')
   })
+
+  it.each(['linux', 'darwin'] as const)(
+    'copies siblings when a linked path created the destination directory on %s',
+    async (platform) => {
+      mkdirSync(join(primary, 'config'))
+      writeFileSync(join(primary, 'config', 'shared.json'), '{}')
+      writeFileSync(join(primary, 'config', 'local.json'), '{"copied":true}')
+      await createWorktreeLinkedPaths(primary, worktree, ['config/shared.json'], {
+        platform: 'linux'
+      })
+      const apfsCloneDeps = createApfsCloneDeps({
+        onCp: () => writeFileSync(join(worktree, 'config', 'local.json'), '{"copied":true}')
+      })
+
+      await createWorktreeCopiedPaths(primary, worktree, ['config'], {
+        platform,
+        existingLinkedPaths: ['config/shared.json'],
+        ...(platform === 'darwin' ? { apfsCloneDeps } : {})
+      })
+
+      expect(lstatSync(join(worktree, 'config', 'shared.json')).isSymbolicLink()).toBe(true)
+      expect(readFileSync(join(worktree, 'config', 'local.json'), 'utf8')).toBe('{"copied":true}')
+    }
+  )
 
   it('creates parent directories lazily for nested paths', async () => {
     mkdirSync(join(primary, 'apps', 'web'), { recursive: true })
@@ -569,25 +600,29 @@ describe('createWorktreeCopiedPaths', () => {
     expect(existsSync(join(worktree, 'shared-config'))).toBe(false)
   })
 
-  it('probes an APFS volume once when copying multiple paths', async () => {
-    mkdirSync(join(primary, 'config'))
-    mkdirSync(join(primary, 'secrets'))
-    const deps = createApfsCloneDeps({})
+  it.each([undefined, new Error('diskutil unavailable')])(
+    'probes an APFS volume once when copying multiple paths (failure: %s)',
+    async (diskutilError) => {
+      mkdirSync(join(primary, 'config'))
+      mkdirSync(join(primary, 'secrets'))
+      const deps = createApfsCloneDeps({ diskutilError })
 
-    await createWorktreeCopiedPaths(primary, worktree, ['config', 'secrets'], {
-      platform: 'darwin',
-      apfsCloneDeps: deps
-    })
+      await createWorktreeCopiedPaths(primary, worktree, ['config', 'secrets'], {
+        platform: 'darwin',
+        apfsCloneDeps: deps
+      })
 
-    const execFileAsyncMock = vi.mocked(deps.execFileAsync)
-    const filesystemProbeCalls = execFileAsyncMock.mock.calls.filter(
-      ([file]) => file === '/bin/df' || file === '/usr/sbin/diskutil'
-    )
-    expect(filesystemProbeCalls).toHaveLength(2)
-    const copyCalls = execFileAsyncMock.mock.calls.filter(([file]) => file === '/bin/cp')
-    expect(copyCalls).toHaveLength(2)
-    expect(copyCalls.every(([, args]) => !args.includes('-L'))).toBe(true)
-  })
+      const execFileAsyncMock = vi.mocked(deps.execFileAsync)
+      const filesystemProbeCalls = execFileAsyncMock.mock.calls.filter(
+        ([file]) => file === '/bin/df' || file === '/usr/sbin/diskutil'
+      )
+      expect(filesystemProbeCalls).toHaveLength(2)
+      const copyCalls = execFileAsyncMock.mock.calls.filter(([file]) => file === '/bin/cp')
+      expect(copyCalls).toHaveLength(diskutilError ? 0 : 2)
+      expect(copyCalls.every(([, args]) => !args.includes('-L'))).toBe(true)
+      expect(warn).toHaveBeenCalledTimes(diskutilError ? 1 : 0)
+    }
+  )
 })
 
 describe('removeWorktreeSymlinks', () => {

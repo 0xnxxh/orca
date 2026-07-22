@@ -13,6 +13,7 @@ type WorktreeLinkedPathOptions = {
   platform?: NodeJS.Platform
   cloneWorktreePath?: (source: string, target: string, sourceIsDirectory: boolean) => Promise<void>
   apfsCloneDeps?: ApfsCloneDeps
+  existingLinkedPaths?: readonly string[]
 }
 
 // 'link': symlink when APFS clone is unavailable (user-configured shared paths).
@@ -75,34 +76,48 @@ function isAlreadyExistsError(error: unknown): boolean {
 async function copyWorktreePath(
   source: string,
   target: string,
-  sourceIsDirectory: boolean
+  sourceIsDirectory: boolean,
+  mergeExistingDirectory: boolean
 ): Promise<void> {
   await mkdir(dirname(target), { recursive: true })
   if (sourceIsDirectory) {
     const sourceMode = (await stat(source)).mode & 0o777
+    let createdTarget = false
     try {
       // Why: owning the top-level directory prevents a raced directory from
       // being merged with copied contents.
       await mkdir(target, { mode: sourceMode })
+      createdTarget = true
     } catch (error) {
       if (isAlreadyExistsError(error)) {
-        return
+        if (!mergeExistingDirectory) {
+          return
+        }
+        const targetStats = await lstat(target)
+        if (!targetStats.isDirectory() || targetStats.isSymbolicLink()) {
+          return
+        }
+      } else {
+        throw error
       }
-      throw error
     }
     try {
       await cp(source, target, {
         recursive: true,
         force: false,
         errorOnExist: false,
-        dereference: false
+        dereference: false,
+        // Why: Node otherwise rewrites relative links to absolute paths back into the primary.
+        verbatimSymlinks: true
       })
-      if (process.platform !== 'win32') {
+      if (createdTarget && process.platform !== 'win32') {
         await chmod(target, sourceMode)
       }
     } catch (error) {
       // Preserve partial output for diagnosis; remove only an empty reservation.
-      await rmdir(target).catch(() => undefined)
+      if (createdTarget) {
+        await rmdir(target).catch(() => undefined)
+      }
       throw error
     }
     return
@@ -113,8 +128,23 @@ async function copyWorktreePath(
     recursive: true,
     force: false,
     errorOnExist: false,
-    dereference: false
+    dereference: false,
+    verbatimSymlinks: true
   })
+}
+
+function hasExistingLinkedDescendant(
+  relativePath: string,
+  normalizedLinkedPaths: readonly string[],
+  platform: NodeJS.Platform
+): boolean {
+  const directoryPrefix = `${normalizeWorktreeRelativePath(relativePath, platform)}/`
+  return normalizedLinkedPaths.some((linkedPath) => linkedPath.startsWith(directoryPrefix))
+}
+
+function normalizeWorktreeRelativePath(relativePath: string, platform: NodeJS.Platform): string {
+  const normalized = relativePath.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '')
+  return platform === 'win32' ? normalized.toLowerCase() : normalized
 }
 
 async function createWorktreeLinkedPath(
@@ -124,7 +154,9 @@ async function createWorktreeLinkedPath(
   sourceIsSymbolicLink: boolean,
   mode: WorktreeMaterializeMode,
   options: WorktreeLinkedPathOptions,
-  apfsFilesystemCache: ApfsCloneFilesystemCache
+  apfsFilesystemCache: ApfsCloneFilesystemCache,
+  warnedApfsErrors: Set<unknown>,
+  mergeExistingDirectory: boolean
 ): Promise<void> {
   // Why: copy mode promises independent contents; copying the link itself
   // would let edits in the worktree mutate its shared target.
@@ -140,7 +172,8 @@ async function createWorktreeLinkedPath(
             cloneSourceIsDirectory,
             options.apfsCloneDeps ?? defaultApfsCloneDeps,
             {
-              filesystemCache: apfsFilesystemCache
+              filesystemCache: apfsFilesystemCache,
+              mergeExistingDirectory
             }
           ))
       await cloneWorktreePath(copySource, target, sourceIsDirectory)
@@ -152,13 +185,14 @@ async function createWorktreeLinkedPath(
       // Why: APFS clone-copy can fail across volumes or on non-APFS disks.
       // Fall back per mode without touching any target path that may have
       // appeared after our preflight.
-      if (!(error instanceof ApfsCloneUnavailableError)) {
+      if (!(error instanceof ApfsCloneUnavailableError) && !warnedApfsErrors.has(error)) {
+        warnedApfsErrors.add(error)
         console.warn(`[worktree-symlinks] APFS clone-copy unavailable for "${target}":`, error)
       }
     }
   }
   if (mode === 'copy') {
-    await copyWorktreePath(copySource, target, sourceIsDirectory)
+    await copyWorktreePath(copySource, target, sourceIsDirectory, mergeExistingDirectory)
     return
   }
   await symlinkWorktreePath(source, target, sourceIsDirectory)
@@ -174,6 +208,13 @@ async function materializeWorktreePaths(
   const effectiveOptions = { platform: process.platform, ...options }
   // Why: probing APFS via df+diskutil once per copied path multiplies subprocesses in large includes.
   const apfsFilesystemCache: ApfsCloneFilesystemCache = new Map()
+  const warnedApfsErrors = new Set<unknown>()
+  const normalizedLinkedPaths = (options.existingLinkedPaths ?? []).flatMap((rawPath) => {
+    const linkedPath = getSafeRelativePath(rawPath)
+    return linkedPath.safe
+      ? [normalizeWorktreeRelativePath(linkedPath.rel, effectiveOptions.platform)]
+      : []
+  })
 
   for (const rawPath of paths) {
     const safePath = getSafeRelativePath(rawPath)
@@ -200,7 +241,13 @@ async function materializeWorktreePaths(
       continue
     }
 
-    if (await targetExists(target)) {
+    const targetAlreadyExists = await targetExists(target)
+    const mergeExistingDirectory =
+      targetAlreadyExists &&
+      mode === 'copy' &&
+      sourceIsDirectory &&
+      hasExistingLinkedDescendant(safePath.rel, normalizedLinkedPaths, effectiveOptions.platform)
+    if (targetAlreadyExists && !mergeExistingDirectory) {
       continue
     }
 
@@ -212,7 +259,9 @@ async function materializeWorktreePaths(
         sourceIsSymbolicLink,
         mode,
         effectiveOptions,
-        apfsFilesystemCache
+        apfsFilesystemCache,
+        warnedApfsErrors,
+        mergeExistingDirectory
       )
     } catch (error) {
       console.error(
