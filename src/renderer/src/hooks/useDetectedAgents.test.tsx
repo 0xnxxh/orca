@@ -13,6 +13,7 @@ import {
   MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION,
   RUNTIME_PROTOCOL_VERSION
 } from '../../../shared/protocol-version'
+import { clearRuntimeCompatibilityCacheForTests } from '@/runtime/runtime-rpc-client'
 
 const detectRemoteAgents = vi.fn()
 const runtimeEnvironmentCall = vi.fn()
@@ -45,6 +46,7 @@ async function renderProbe(target: AgentDetectionTarget): Promise<Root> {
 }
 
 beforeEach(() => {
+  clearRuntimeCompatibilityCacheForTests()
   useAppStore.setState(initialAppState, true)
   latestHookResult = null
   detectRemoteAgents.mockReset().mockResolvedValue([])
@@ -122,6 +124,35 @@ describe('useDetectedAgents (ssh call site)', () => {
 })
 
 describe('useDetectedAgents (runtime call site)', () => {
+  it('distinguishes an initial remote failure from the pre-effect loading state', async () => {
+    runtimeEnvironmentCall.mockRejectedValue(new Error('runtime disconnected'))
+
+    await renderProbe({ kind: 'runtime', environmentId: 'env-1' })
+
+    expect(latestHookResult?.detectedIds).toBeNull()
+    expect(latestHookResult?.isLoading).toBe(false)
+    expect(latestHookResult?.detectionFailed).toBe(true)
+  })
+
+  it('probes each empty runtime target at most once per mounted surface', async () => {
+    const root = await renderProbe({ kind: 'runtime', environmentId: 'env-1' })
+
+    await act(async () => {
+      root.render(createElement(HookProbe, { target: { kind: 'runtime', environmentId: 'env-2' } }))
+    })
+    await flushEffects()
+    await act(async () => {
+      root.render(createElement(HookProbe, { target: { kind: 'runtime', environmentId: 'env-1' } }))
+    })
+    await flushEffects()
+
+    expect(
+      runtimeEnvironmentCall.mock.calls.filter(
+        ([{ method }]) => method === 'preflight.detectAgents'
+      )
+    ).toHaveLength(2)
+  })
+
   it('does not re-probe after an explicit refresh finds no agents', async () => {
     useAppStore.setState({
       runtimeDetectedAgentIds: { 'env-1': ['claude'] },

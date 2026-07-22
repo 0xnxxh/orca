@@ -2,7 +2,15 @@
    selection, per-agent controls, and runtime location together so settings
    reconciliation stays visible in one file. */
 import { useId, useMemo, useState } from 'react'
-import { Check, ChevronDown, ExternalLink, Info, RefreshCw, Terminal } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ExternalLink,
+  Info,
+  RefreshCw,
+  Terminal
+} from 'lucide-react'
 import type { GlobalSettings, TuiAgent } from '../../../../shared/types'
 import { getAgentCatalog, AgentIcon } from '@/lib/agent-catalog'
 import { useDetectedAgents, type AgentDetectionTarget } from '@/hooks/useDetectedAgents'
@@ -693,6 +701,7 @@ export function AgentsPane({
   )
   const {
     detectedIds: detectedList,
+    detectionFailed,
     isRefreshing,
     refresh: refreshTargetAgents
   } = useDetectedAgents(agentDetectionTarget)
@@ -987,12 +996,34 @@ export function AgentsPane({
         </section>
       )}
 
-      {detectedIds === null && (
+      {detectedIds === null && !detectionFailed && (
         <div className="flex items-center justify-center rounded-md border border-dashed border-border/50 py-6 text-sm text-muted-foreground">
           {translate(
             'auto.components.settings.AgentsPane.d83834f5e6',
             'Detecting installed agents…'
           )}
+        </div>
+      )}
+
+      {detectionFailed && (
+        <div className="flex items-start justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          <span className="flex min-w-0 items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            {translate(
+              'auto.components.settings.AgentsPane.remoteDetectionFailed',
+              'Couldn’t detect installed agents. Check the host connection and try again.'
+            )}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={handleRefresh}
+            className="h-6 shrink-0 gap-1.5 px-2 text-destructive hover:text-destructive"
+          >
+            <RefreshCw className="size-3" />
+            {translate('auto.components.settings.AgentsPane.retryDetection', 'Retry')}
+          </Button>
         </div>
       )}
     </div>

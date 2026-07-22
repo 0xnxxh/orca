@@ -6,6 +6,8 @@ export type UseDetectedAgentsResult = {
   /** Null while detection is in flight on first load. */
   detectedIds: TuiAgent[] | null
   isLoading: boolean
+  /** True when the first probe for this mounted remote target finished without a result. */
+  detectionFailed: boolean
   isRefreshing: boolean
   /** Forces a re-detect on the target host (`preflight.refreshAgents` for
    *  local/runtime targets, a fresh probe for SSH) and updates every
@@ -51,7 +53,7 @@ export function useDetectedAgents(
   connectionId: AgentDetectionTarget | string | null | undefined = null
 ): UseDetectedAgentsResult {
   const target = normalizeAgentDetectionTarget(connectionId)
-  const observedRemoteTargetRef = useRef<string | null>(null)
+  const observedRemoteTargetKeysRef = useRef<Set<string>>(new Set())
   // Why: undefined means "store not yet hydrated" — we don't know if the
   // worktree is local or remote yet. This prevents flashing local agents for
   // remote worktrees during hydration.
@@ -103,63 +105,61 @@ export function useDetectedAgents(
     }
     return targetKind === 'local' ? s.isRefreshingAgents : false
   })
-  const ensureLocal = useAppStore((s) => s.ensureDetectedAgents)
-  const ensureRemote = useAppStore((s) => s.ensureRemoteDetectedAgents)
-  const ensureRuntime = useAppStore((s) => s.ensureRuntimeDetectedAgents)
-  const refreshLocal = useAppStore((s) => s.refreshDetectedAgents)
-  const refreshRuntime = useAppStore((s) => s.refreshRuntimeDetectedAgents)
-  const refreshRemote = useAppStore((s) => s.refreshRemoteDetectedAgents)
+  const detectionFailed =
+    detectedIds === null &&
+    !isLoading &&
+    !isRefreshing &&
+    remoteTargetKey !== null &&
+    observedRemoteTargetKeysRef.current.has(remoteTargetKey)
   // Why: refresh must hit the same host the list came from — refreshing the
   // local PATH while showing a remote server's agents is a silent no-op.
   const refresh = useCallback((): Promise<TuiAgent[]> => {
+    // Why: retained tab bars stay mounted; imperative action reads avoid six
+    // no-op Zustand subscriptions per hook during unrelated store churn.
+    const state = useAppStore.getState()
     if (targetKind === 'runtime' && targetId) {
-      return refreshRuntime(targetId)
+      return state.refreshRuntimeDetectedAgents(targetId)
     }
     if (targetKind === 'ssh' && targetId) {
-      return refreshRemote(targetId)
+      return state.refreshRemoteDetectedAgents(targetId)
     }
-    return refreshLocal()
-  }, [targetKind, targetId, refreshRuntime, refreshRemote, refreshLocal])
+    return state.refreshDetectedAgents()
+  }, [targetKind, targetId])
 
   useEffect(() => {
     if (isUnknown) {
       return
     }
     const isNewRemoteTarget =
-      remoteTargetKey !== null && observedRemoteTargetRef.current !== remoteTargetKey
-    // Why: a later refresh to [] is not a newly opened surface and must not trigger another probe.
-    observedRemoteTargetRef.current = remoteTargetKey
+      remoteTargetKey !== null && !observedRemoteTargetKeysRef.current.has(remoteTargetKey)
+    // Why: switching A → B → A is still one mounted surface; remember every
+    // target so empty hosts don't respawn all detection subprocesses on each switch.
+    if (remoteTargetKey !== null) {
+      observedRemoteTargetKeysRef.current.add(remoteTargetKey)
+    }
+    const state = useAppStore.getState()
     if (targetKind === 'ssh' && targetId) {
       if (detectedIds === null) {
-        void ensureRemote(targetId)
+        void state.ensureRemoteDetectedAgents(targetId)
       } else if (detectedIds.length === 0 && isNewRemoteTarget) {
         // Why: a newly opened remote launch surface should get one fresh probe
         // after a prior empty result, but must not spin while the host has no agents.
-        void ensureRemote(targetId)
+        void state.ensureRemoteDetectedAgents(targetId)
       }
     } else if (targetKind === 'runtime' && targetId) {
       if (detectedIds === null) {
-        void ensureRuntime(targetId)
+        void state.ensureRuntimeDetectedAgents(targetId)
       } else if (detectedIds.length === 0 && isNewRemoteTarget) {
         // Why: remote `orca serve` users can install/fix PATH without reconnecting;
         // retry once per mounted surface so the menu can pick that up.
-        void ensureRuntime(targetId)
+        void state.ensureRuntimeDetectedAgents(targetId)
       }
     } else {
       if (detectedIds === null) {
-        void ensureLocal()
+        void state.ensureDetectedAgents()
       }
     }
-  }, [
-    isUnknown,
-    targetKind,
-    targetId,
-    remoteTargetKey,
-    detectedIds,
-    ensureLocal,
-    ensureRemote,
-    ensureRuntime
-  ])
+  }, [isUnknown, targetKind, targetId, remoteTargetKey, detectedIds])
 
-  return { detectedIds, isLoading, isRefreshing, refresh }
+  return { detectedIds, isLoading, detectionFailed, isRefreshing, refresh }
 }

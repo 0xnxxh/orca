@@ -26,6 +26,8 @@ import { TooltipProvider } from '../ui/tooltip'
 
 const detectedAgentsMock = vi.hoisted(() => ({
   detectedIds: ['claude'] as TuiAgent[] | null,
+  isLoading: false,
+  detectionFailed: false,
   refresh: vi.fn(),
   lastTarget: undefined as unknown
 }))
@@ -38,7 +40,8 @@ vi.mock('@/hooks/useDetectedAgents', () => ({
     detectedAgentsMock.lastTarget = target
     return {
       detectedIds: detectedAgentsMock.detectedIds,
-      isLoading: detectedAgentsMock.detectedIds === null,
+      isLoading: detectedAgentsMock.isLoading,
+      detectionFailed: detectedAgentsMock.detectionFailed,
       isRefreshing: false,
       refresh: detectedAgentsMock.refresh
     }
@@ -160,6 +163,8 @@ function findSegmentedControl(node: unknown, ariaLabel: string): ReactElementLik
 describe('AgentsPane', () => {
   beforeEach(() => {
     detectedAgentsMock.detectedIds = ['claude']
+    detectedAgentsMock.isLoading = false
+    detectedAgentsMock.detectionFailed = false
     detectedAgentsMock.refresh.mockReset()
     detectedAgentsMock.lastTarget = undefined
     agentRuntimeSettingMock.lastRefresh = null
@@ -201,6 +206,32 @@ describe('AgentsPane', () => {
     } finally {
       initialState.runtimeEnvironments = priorRuntimeEnvironments
     }
+  })
+
+  it('shows a retryable error when initial remote detection fails', () => {
+    detectedAgentsMock.detectedIds = null
+    detectedAgentsMock.isLoading = false
+    detectedAgentsMock.detectionFailed = true
+
+    const markup = renderPane({
+      ...getDefaultSettings('/tmp'),
+      activeRuntimeEnvironmentId: 'env-1'
+    })
+
+    expect(markup).toContain('Couldn’t detect installed agents')
+    expect(markup).toContain('Retry')
+    expect(markup).not.toContain('Detecting installed agents…')
+  })
+
+  it('does not flash a failure before the initial detection effect starts', () => {
+    detectedAgentsMock.detectedIds = null
+    detectedAgentsMock.isLoading = false
+    detectedAgentsMock.detectionFailed = false
+
+    const markup = renderPane(getDefaultSettings('/tmp'))
+
+    expect(markup).toContain('Detecting installed agents…')
+    expect(markup).not.toContain('Couldn’t detect installed agents')
   })
 
   it('keeps Windows runtime changes scoped to the local agent refresh', () => {
