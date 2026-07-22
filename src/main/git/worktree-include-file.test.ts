@@ -168,6 +168,15 @@ describe('resolveWorktreeIncludePaths', () => {
     expect(gitExecFileAsyncMock.mock.calls.every(([args]) => !args.includes('ls-files'))).toBe(true)
   })
 
+  it('removes child candidates when an ignored directory covers them', async () => {
+    writeInclude('/ignored/child\n/ignored/\n')
+    mkdirSync(join(repo, 'ignored'))
+    writeFileSync(join(repo, 'ignored', 'child'), 'local')
+    mockGit({ ignored: ['ignored', 'ignored/child'] })
+
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['ignored'])
+  })
+
   it('finds ignored descendants when a root-anchored directory is not itself ignored', async () => {
     writeInclude('/config/\n')
     mkdirSync(join(repo, 'config'))

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveWorktreeIncludePaths, WORKTREE_INCLUDE_FILE } from './worktree-include-file'
 import { gitExecFileAsync } from './runner'
 
@@ -15,6 +15,16 @@ vi.mock('./runner', () => ({
 }))
 
 describe('worktree include stat concurrency', () => {
+  beforeEach(() => {
+    lstatMock.mockReset()
+    readFileMock.mockReset()
+    vi.mocked(gitExecFileAsync).mockReset()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('bounds anchored literal probes instead of awaiting thousands serially', async () => {
     let active = 0
     let peak = 0
@@ -40,5 +50,25 @@ describe('worktree include stat concurrency', () => {
     expect(peak).toBe(8)
     expect(lstatMock).toHaveBeenCalledTimes(25)
     expect(gitExecFileAsync).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops starting filesystem probes when the resolution deadline expires', async () => {
+    vi.useFakeTimers()
+    readFileMock.mockResolvedValue(
+      Array.from({ length: 24 }, (_, index) => `/config/file-${index}`).join('\n')
+    )
+    lstatMock.mockImplementation((path: string) => {
+      if (path.endsWith(WORKTREE_INCLUDE_FILE)) {
+        return Promise.resolve({ isFile: () => true, size: 1_024 })
+      }
+      return new Promise(() => {})
+    })
+
+    const resolution = resolveWorktreeIncludePaths('/repo')
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    await expect(resolution).resolves.toEqual([])
+    expect(lstatMock).toHaveBeenCalledTimes(9)
+    expect(gitExecFileAsync).not.toHaveBeenCalled()
   })
 })

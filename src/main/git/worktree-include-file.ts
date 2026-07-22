@@ -23,7 +23,7 @@ export const WORKTREE_INCLUDE_FILE = '.worktreeinclude'
 
 // Why: reading the include file must never delay worktree creation on a wedged
 // filesystem or a pathological repo; bail and create the worktree without it.
-const WORKTREE_INCLUDE_GIT_TIMEOUT_MS = 15_000
+const WORKTREE_INCLUDE_RESOLUTION_TIMEOUT_MS = 15_000
 const WORKTREE_INCLUDE_MAX_FILE_BYTES = 256 * 1024
 const WORKTREE_INCLUDE_MAX_CANDIDATES = 10_000
 const WORKTREE_INCLUDE_MAX_CANDIDATE_BYTES = 1024 * 1024
@@ -52,14 +52,38 @@ function hasCandidateDirectoryAncestor(
   return false
 }
 
-async function readWorktreeIncludeFile(repoPath: string): Promise<string | null> {
+async function completeBeforeDeadline<T>(
+  operation: () => Promise<T>,
+  deadline: number
+): Promise<T> {
+  const remainingMs = deadline - Date.now()
+  if (remainingMs <= 0) {
+    throw new Error(`${WORKTREE_INCLUDE_FILE} resolution timed out`)
+  }
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`${WORKTREE_INCLUDE_FILE} resolution timed out`)),
+          remainingMs
+        )
+      })
+    ])
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+async function readWorktreeIncludeFile(repoPath: string, deadline: number): Promise<string | null> {
   const includePath = join(repoPath, WORKTREE_INCLUDE_FILE)
   try {
-    const stats = await lstat(includePath)
+    const stats = await completeBeforeDeadline(() => lstat(includePath), deadline)
     if (!stats.isFile() || stats.size > WORKTREE_INCLUDE_MAX_FILE_BYTES) {
       return null
     }
-    return await readFile(includePath, 'utf8')
+    return await completeBeforeDeadline(() => readFile(includePath, 'utf8'), deadline)
   } catch {
     return null
   }
@@ -80,7 +104,8 @@ export async function resolveWorktreeIncludePaths(
   options: GitRuntimeOptions = {}
 ): Promise<string[]> {
   try {
-    const content = await readWorktreeIncludeFile(repoPath)
+    const deadline = Date.now() + WORKTREE_INCLUDE_RESOLUTION_TIMEOUT_MS
+    const content = await readWorktreeIncludeFile(repoPath, deadline)
     if (content === null) {
       return []
     }
@@ -92,7 +117,20 @@ export async function resolveWorktreeIncludePaths(
     const candidates = new Map<string, GitignoredEntry>()
     let candidateBytes = 0
     const matchBudget = { remaining: WORKTREE_INCLUDE_MATCH_STEP_BUDGET }
-    const deadline = Date.now() + WORKTREE_INCLUDE_GIT_TIMEOUT_MS
+    const pruneCoveredCandidateDescendants = (): void => {
+      for (const candidatePath of candidates.keys()) {
+        if (hasCandidateDirectoryAncestor(candidates, candidatePath)) {
+          candidates.delete(candidatePath)
+          candidateBytes -= Buffer.byteLength(candidatePath) + 1
+        }
+      }
+    }
+    const markCandidateDirectoryAsCovering = (relativePath: string): void => {
+      const candidate = candidates.get(relativePath)
+      if (candidate?.isDirectory) {
+        candidate.coversDescendants = true
+      }
+    }
     const addCandidate = (entry: GitignoredEntry): void => {
       if (
         isSafeIncludeCandidate(entry.relativePath) &&
@@ -137,7 +175,10 @@ export async function resolveWorktreeIncludePaths(
       WORKTREE_INCLUDE_STAT_CONCURRENCY,
       async ([relativePath, pattern]) => {
         try {
-          const stats = await lstat(join(repoPath, relativePath))
+          const stats = await completeBeforeDeadline(
+            () => lstat(join(repoPath, relativePath)),
+            deadline
+          )
           return { relativePath, pattern, isDirectory: stats.isDirectory() }
         } catch {
           return null
@@ -195,11 +236,11 @@ export async function resolveWorktreeIncludePaths(
         timeout
       )) {
         ignoredAnchoredDirectories.add(relativePath)
-        const candidate = candidates.get(relativePath)
-        if (candidate?.isDirectory) {
-          candidate.coversDescendants = true
-        }
+        markCandidateDirectoryAsCovering(relativePath)
       }
+      // Why: a directory validated after its children were collected replaces
+      // them as one bounded copy instead of duplicating every descendant.
+      pruneCoveredCandidateDescendants()
     }
 
     // Why: Git 2.25's directory collapsing can stop at an untracked parent, so targeted scans preserve nested matches without expanding unrelated ignored trees.
