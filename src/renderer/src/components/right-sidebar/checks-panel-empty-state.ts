@@ -74,14 +74,7 @@ export function getChecksPanelReviewState(
 
   const blockedReason = input.eligibilityBlockedReason
 
-  // 1.5 Positive review evidence while the lookup is still in flight → a
-  //      self-updating "Checking status" state, never a terminal card.
-  //      `existing_review` and positive-unresolved evidence both mean a
-  //      renderable review is inbound; #9428 short-circuited them to a terminal
-  //      "already exists" card during the fetch window, so the panel stalled on
-  //      that card until a manual refresh even though the review was about to
-  //      render. A concurrent branch blocker (publish/sync/auth/needs_push)
-  //      still owns the copy.
+  // 1.5 Keep active positive-review lookups self-updating; concurrent branch blockers still own their guidance.
   const reviewFetchInFlight =
     input.refresh?.status === 'queued' || input.refresh?.status === 'in-flight'
   const hasPendingReviewEvidence =

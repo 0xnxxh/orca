@@ -33,6 +33,18 @@ describe('resolveChecksPanelPRRefreshRequest', () => {
     ).toEqual({ reason: 'active', priority: 80 })
   })
 
+  it('does not repeatedly force provider work for the same unrendered review evidence', () => {
+    expect(
+      resolveChecksPanelPRRefreshRequest({
+        cachedHasPR: false,
+        cachedFetchedAt: 100,
+        panelVisibleSince: 200,
+        hasUnrenderedReviewEvidence: true,
+        hasRequestedForegroundRefresh: true
+      })
+    ).toEqual({ reason: 'swr', priority: 30 })
+  })
+
   it('keeps populated or unknown cache entries on the background path', () => {
     expect(
       resolveChecksPanelPRRefreshRequest({

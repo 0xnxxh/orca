@@ -525,6 +525,7 @@ export default function ChecksPanel(): React.JSX.Element {
   const prevChecksRef = useRef<string>('')
   const conflictSummaryRefreshKeyRef = useRef<string | null>(null)
   const panelVisibleSinceRef = useRef<number | null>(null)
+  const foregroundedUnrenderedReviewKeyRef = useRef<string | null>(null)
   commentsRef.current = comments
   const prGenerationRecords = useAppStore((s) => s.pullRequestGenerationRecords)
   const allocatePullRequestGenerationRequestId = useAppStore(
@@ -954,6 +955,15 @@ export default function ChecksPanel(): React.JSX.Element {
     eligibilityReview: hostedReviewCreation?.review ?? null
   })
   const checksPanelReviewLookup = checksPanelReviewLookupResult.state
+  const hasUnrenderedReviewEvidence =
+    checksPanelReviewLookup === 'positive_unresolved' ||
+    hostedReviewCreation?.blockedReason === 'existing_review'
+  const unrenderedReviewEvidenceIdentity =
+    linkedReviewNumber ??
+    hostedReview?.number ??
+    hostedReviewCreation?.review?.number ??
+    checksPanelReviewLookupResult.openReviewUrl ??
+    'unknown'
   // Confirmed readiness from the last eligibility snapshot, not live canCreate (which would be circular and flap during transient failures).
   const hardErrorObservedAt =
     isGitHubReviewContext && hardRefreshError && hardRefreshError.contextKey === panelContextKey
@@ -1364,12 +1374,7 @@ export default function ChecksPanel(): React.JSX.Element {
         const refreshRequest = resolveChecksPanelPRRefreshRequest({
           cachedHasPR: prCachedHasPR,
           cachedFetchedAt: prFetchedAt ?? null,
-          panelVisibleSince: panelVisibleSinceRef.current,
-          // A known-but-unrendered review must foreground-fetch so the panel
-          // resolves to the review instead of stalling on a transient card.
-          hasUnrenderedReviewEvidence:
-            checksPanelReviewLookup === 'positive_unresolved' ||
-            hostedReviewCreation?.blockedReason === 'existing_review'
+          panelVisibleSince: panelVisibleSinceRef.current
         })
         enqueueGitHubPRRefresh(activeWorktreeId, refreshRequest.reason, refreshRequest.priority)
       }
@@ -1377,11 +1382,9 @@ export default function ChecksPanel(): React.JSX.Element {
   }, [
     activeWorktreeId,
     branch,
-    checksPanelReviewLookup,
     enqueueGitHubPRRefresh,
     fallbackGitHubPRNumber,
     fetchHostedReviewForBranch,
-    hostedReviewCreation?.blockedReason,
     isFolder,
     isGitHubReviewContext,
     isPanelVisible,
@@ -1394,6 +1397,43 @@ export default function ChecksPanel(): React.JSX.Element {
     prCachedHasPR,
     prFetchedAt,
     repo
+  ])
+
+  useEffect(() => {
+    if (!hasUnrenderedReviewEvidence || !isPanelVisible) {
+      foregroundedUnrenderedReviewKeyRef.current = null
+      return
+    }
+    if (!repo || isFolder || !branch || !activeWorktreeId || !isGitHubReviewContext) {
+      return
+    }
+    const evidenceKey = `${refreshContextKey}::${unrenderedReviewEvidenceIdentity}`
+    const refreshRequest = resolveChecksPanelPRRefreshRequest({
+      cachedHasPR: prCachedHasPR,
+      cachedFetchedAt: prFetchedAt ?? null,
+      panelVisibleSince: panelVisibleSinceRef.current,
+      hasUnrenderedReviewEvidence: true,
+      hasRequestedForegroundRefresh: foregroundedUnrenderedReviewKeyRef.current === evidenceKey
+    })
+    if (refreshRequest.reason !== 'active') {
+      return
+    }
+    // One forced lookup per evidence revision prevents a settled miss from creating a provider-request loop.
+    foregroundedUnrenderedReviewKeyRef.current = evidenceKey
+    enqueueGitHubPRRefresh(activeWorktreeId, refreshRequest.reason, refreshRequest.priority)
+  }, [
+    activeWorktreeId,
+    branch,
+    enqueueGitHubPRRefresh,
+    hasUnrenderedReviewEvidence,
+    isFolder,
+    isGitHubReviewContext,
+    isPanelVisible,
+    prCachedHasPR,
+    prFetchedAt,
+    refreshContextKey,
+    repo,
+    unrenderedReviewEvidenceIdentity
   ])
 
   useEffect(() => {
