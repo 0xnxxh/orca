@@ -2698,12 +2698,12 @@ describe('shared agent-hook-listener', () => {
       expect(stopped?.payload.state).toBe('done')
     })
 
-    it('removes a finished teammate/named agent on SubagentStop despite its task reading running', () => {
-      // Why: the interactive agent-teams / orchestration shape observed live —
+    it('parks a teammate as a persistent idle row across its stop/idle/lead-Stop cycle', () => {
+      // Why: the interactive agent-teams shape observed live on 2.1.217 —
       // lifecycle events use `a<name>-<hex>` agent ids while background_tasks
-      // uses unrelated `type: "teammate"` task ids that report "running"
-      // forever, even after the named agent finished. The finished row must
-      // leave the sidebar at once (the reported "long idle list" symptom).
+      // uses unrelated `type: "teammate"` task ids. SubagentStop + TeammateIdle
+      // fire at every TURN end while the teammate stays alive awaiting mail,
+      // so the row must park idle and survive lead Stops, not vanish.
       claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'spawn probe' })
       claudeEvent({
         hook_event_name: 'SubagentStart',
@@ -2725,15 +2725,16 @@ describe('shared agent-hook-listener', () => {
         expect.objectContaining({ id: 'aprobe1-6d3cb5b52120b7bf', state: 'working' })
       ])
 
-      // SubagentStop is the reliable finish signal — the row goes even though
-      // its teammate task is still listed "running".
+      // Turn boundary: the row parks idle instead of leaving the sidebar.
       const stopped = claudeEvent({
         hook_event_name: 'SubagentStop',
         agent_id: 'aprobe1-6d3cb5b52120b7bf',
         agent_type: 'probe1',
         background_tasks: [teammateTask]
       })
-      expect(stopped?.payload.subagents).toBeUndefined()
+      expect(stopped?.payload.subagents).toEqual([
+        expect.objectContaining({ id: 'aprobe1-6d3cb5b52120b7bf', state: 'idle' })
+      ])
 
       claudeEvent({
         hook_event_name: 'TeammateIdle',
@@ -2741,15 +2742,19 @@ describe('shared agent-hook-listener', () => {
         team_name: 'session-56c87269'
       })
 
+      // The confirmed idle row survives the lead Stop (its teammate task is
+      // still listed) without pinning the pane working.
       const wakeStop = claudeEvent({
         hook_event_name: 'Stop',
         background_tasks: [teammateTask]
       })
       expect(wakeStop?.payload.state).toBe('done')
-      expect(wakeStop?.payload.subagents).toBeUndefined()
+      expect(wakeStop?.payload.subagents).toEqual([
+        expect.objectContaining({ id: 'aprobe1-6d3cb5b52120b7bf', state: 'idle' })
+      ])
     })
 
-    it('removes a working teammate via TeammateIdle when its id prefix matches the name', () => {
+    it('parks a working teammate via TeammateIdle when its id prefix matches the name', () => {
       claudeEvent({ hook_event_name: 'UserPromptSubmit', prompt: 'spawn reviewer' })
       claudeEvent({
         hook_event_name: 'SubagentStart',
@@ -2765,15 +2770,17 @@ describe('shared agent-hook-listener', () => {
 
       // Why: teammate name and agent type are separate Agent-tool inputs; the
       // lifecycle id embeds the former while the hook reports the latter.
-      // TeammateIdle keyed by name reaps it via the id prefix (fallback when
-      // its SubagentStop was lost), so the finished row leaves and the pane
-      // can settle back to the lead's done state.
+      // TeammateIdle keyed by name parks it via the id prefix (fallback when
+      // its SubagentStop was lost), so the pane settles back to the lead's
+      // done state while the row stays visible as idle.
       const idled = claudeEvent({
         hook_event_name: 'TeammateIdle',
         teammate_name: 'reviewer',
         team_name: 'session-x'
       })
-      expect(idled?.payload.subagents).toBeUndefined()
+      expect(idled?.payload.subagents).toEqual([
+        expect.objectContaining({ id: 'areviewer-6d3cb5b52120b7bf', state: 'idle' })
+      ])
       expect(idled?.payload.state).toBe('done')
     })
 
@@ -3018,8 +3025,10 @@ describe('shared agent-hook-listener', () => {
         teammate_name: 'lane-hooks',
         team_name: 'session-x'
       })
-      // Why: idle means finished — the exact-name match reaps the row.
-      expect(idled?.payload.subagents).toBeUndefined()
+      // Why: the exact-name match parks the row idle (turn over, still alive).
+      expect(idled?.payload.subagents).toEqual([
+        expect.objectContaining({ id: 'alane-hooks-6d3cb5b5', state: 'idle' })
+      ])
     })
 
     it('keeps an inferred interrupt terminal across later child lifecycle events', () => {
