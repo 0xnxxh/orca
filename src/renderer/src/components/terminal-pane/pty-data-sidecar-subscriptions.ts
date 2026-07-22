@@ -1,5 +1,6 @@
 import { acquirePtyDeliveryInterest } from './pty-delivery-interest'
 import { ensurePtyDispatcher, ptyDataSidecars } from './pty-dispatcher'
+import { syncTerminalDeliveryWatchdogTimer } from './terminal-delivery-watchdog'
 
 /** Register a side-channel data watcher for a PTY without taking ownership
  *  of the primary handler. Returns an unsubscribe fn. */
@@ -15,6 +16,8 @@ export function subscribeToPtyData(ptyId: string, watcher: (data: string) => voi
     ptyDataSidecars.set(ptyId, set)
   }
   set.add(watcher)
+  // Why: a sidecar receives pushed bytes with no primary handler, so it must arm the delivery watchdog.
+  syncTerminalDeliveryWatchdogTimer()
   return () => {
     releaseDeliveryInterest()
     const current = ptyDataSidecars.get(ptyId)
@@ -25,5 +28,6 @@ export function subscribeToPtyData(ptyId: string, watcher: (data: string) => voi
     if (current.size === 0) {
       ptyDataSidecars.delete(ptyId)
     }
+    syncTerminalDeliveryWatchdogTimer()
   }
 }

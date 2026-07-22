@@ -59,6 +59,10 @@ let stallStreakTicks = 0
 let lastHealAtMs: number | null = null
 let healCount = 0
 let tickInFlight = false
+// Why: bumped whenever a live timer is torn down (disarm / stop / reconfigure) so an in-flight tick
+// whose health invoke was awaited across a last-PTY detach can discard its now-stale result instead
+// of resurrecting the stall streak while parked.
+let watchdogGeneration = 0
 
 /** One Map upsert per received chunk — the watchdog's only hot-path cost.
  *  Counted at dispatcher enqueue, BEFORE parse-deferred ACK crediting, so
@@ -104,10 +108,17 @@ async function runWatchdogTick(): Promise<void> {
     stallStreakTicks = 0
     return
   }
+  const generationAtInvoke = watchdogGeneration
   const health = await report({
     receivedCharsByPty: Object.fromEntries(receivedPtyCharTotals),
     processedCharsByPty: getProcessedPtyCharTotals()
   })
+  // Why: a last-PTY detach (or reconfigure) during the await disarmed/re-armed the timer — this
+  // health reply is for the pre-detach state, so discard it WITHOUT touching the streak: mutating it
+  // now would either resurrect a stale streak while parked or reset progress a live reattach kept.
+  if (watchdogGeneration !== generationAtInvoke || !watchdogTimer) {
+    return
+  }
   if (!health || !isMainDeliveryStalled(health)) {
     stallStreakTicks = 0
     return
@@ -172,10 +183,16 @@ async function healDeadPushDelivery(
   })
 }
 
-function scheduleWatchdogTimer(): void {
+function clearWatchdogTimer(): void {
   if (watchdogTimer) {
     clearInterval(watchdogTimer)
+    watchdogTimer = null
+    watchdogGeneration += 1
   }
+}
+
+function scheduleWatchdogTimer(): void {
+  clearWatchdogTimer()
   watchdogTimer = setInterval(() => {
     // Why serialized: a heal awaits two invokes; overlapping ticks could
     // double-heal inside one cooldown window.
@@ -189,6 +206,22 @@ function scheduleWatchdogTimer(): void {
   }, watchdogConfig.intervalMs)
 }
 
+export function syncTerminalDeliveryWatchdogTimer(): void {
+  const deps = watchdogDeps
+  if (!deps || !deps.hasAttachedPtys()) {
+    // Why: only park the timer — do NOT reset stallStreakTicks. A wedge mid-confirmation must not
+    // lose its progress across a brief zero-attachment detach/reattach flicker (matching the old
+    // always-armed timer); a healthy tick after re-arm clears the streak. No ticks fire while parked,
+    // so a stale streak can only ever heal one confirmation early, never permanently mis-detect.
+    clearWatchdogTimer()
+    return
+  }
+  if (!watchdogTimer) {
+    eventCountAtLastTick = receivedPtyDataEventCount
+    scheduleWatchdogTimer()
+  }
+}
+
 export function startTerminalDeliveryWatchdog(deps: TerminalDeliveryWatchdogDeps): void {
   if (watchdogDeps) {
     return
@@ -200,17 +233,13 @@ export function startTerminalDeliveryWatchdog(deps: TerminalDeliveryWatchdogDeps
     return
   }
   watchdogDeps = deps
-  eventCountAtLastTick = receivedPtyDataEventCount
-  scheduleWatchdogTimer()
+  syncTerminalDeliveryWatchdogTimer()
   exposeE2eTerminalDeliveryWatchdog()
 }
 
 export function stopTerminalDeliveryWatchdog(): void {
   watchdogDeps = null
-  if (watchdogTimer) {
-    clearInterval(watchdogTimer)
-    watchdogTimer = null
-  }
+  clearWatchdogTimer()
 }
 
 /** Prod-reachable state for the one-paste freeze report (ids redacted). */
@@ -264,7 +293,7 @@ function exposeE2eTerminalDeliveryWatchdog(): void {
     },
     configure: (config) => {
       watchdogConfig = { ...watchdogConfig, ...config }
-      if (watchdogDeps) {
+      if (watchdogTimer) {
         scheduleWatchdogTimer()
       }
     },

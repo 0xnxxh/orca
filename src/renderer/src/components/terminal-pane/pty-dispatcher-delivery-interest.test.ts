@@ -89,6 +89,31 @@ describe('pty dispatcher delivery interest', () => {
     expect(setPtyDeliveryInterest).not.toHaveBeenCalled()
   })
 
+  it('arms the delivery watchdog for a sidecar-only PTY and disarms on the last unsubscribe', async () => {
+    // Why: a parked terminal (and draft-readiness / automation observers) receives pushed bytes
+    // through a sidecar with no primary handler — the watchdog must still cover that dead-channel case.
+    vi.useFakeTimers()
+    const reportMock = vi.fn(() =>
+      Promise.resolve({ inFlightTotalChars: 0, inFlightPtyCount: 0, msSinceLastAck: null })
+    )
+    ;(window.api.pty as { reportRendererDeliveryState?: unknown }).reportRendererDeliveryState =
+      reportMock
+    try {
+      const { subscribeToPtyData } = await import('./pty-data-sidecar-subscriptions')
+
+      const unsubscribe = subscribeToPtyData('pty-1', vi.fn())
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(reportMock).toHaveBeenCalled()
+
+      reportMock.mockClear()
+      unsubscribe()
+      await vi.advanceTimersByTimeAsync(15_000 * 2)
+      expect(reportMock).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('lets a sidecar exclusively own interest while an eager buffer overlaps', async () => {
     const { registerEagerPtyBuffer } = await import('./pty-dispatcher')
     const { subscribeToPtyData } = await import('./pty-data-sidecar-subscriptions')

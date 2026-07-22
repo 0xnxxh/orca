@@ -64,6 +64,30 @@ describe('pty dispatcher push-listener reattach and delivery blackhole', () => {
     }
   })
 
+  it('arms for eager PTYs and disarms only after the last eager PTY is disposed', async () => {
+    vi.useFakeTimers()
+    try {
+      const { ensurePtyDispatcher, registerEagerPtyBuffer } = await import('./pty-dispatcher')
+      ensurePtyDispatcher()
+      expect(vi.getTimerCount()).toBe(0)
+
+      const first = registerEagerPtyBuffer('pty-eager-1', vi.fn())
+      expect(vi.getTimerCount()).toBe(1)
+      const second = registerEagerPtyBuffer('pty-eager-2', vi.fn())
+      expect(vi.getTimerCount()).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(reportMock).toHaveBeenCalledTimes(2)
+
+      first.dispose()
+      expect(vi.getTimerCount()).toBe(1)
+      second.dispose()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('blackholed delivery reproduces the wedge: no handler dispatch, no ACK ever', async () => {
     const { ensurePtyDispatcher, ptyDataHandlers } = await import('./pty-dispatcher')
     ensurePtyDispatcher()

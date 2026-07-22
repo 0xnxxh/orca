@@ -18,7 +18,8 @@ import {
   clearReceivedPtyCharTotal,
   isPtyPushDeliveryBlackholed,
   recordPtyDataReceived,
-  startTerminalDeliveryWatchdog
+  startTerminalDeliveryWatchdog,
+  syncTerminalDeliveryWatchdogTimer
 } from './terminal-delivery-watchdog'
 import { recordTerminalFreezeBreadcrumb } from './terminal-freeze-breadcrumbs'
 import { installTerminalFreezeReport } from './terminal-freeze-report'
@@ -76,6 +77,7 @@ export function unregisterPtyDataHandlers(ptyIds: string[]): PtyDataHandlerShutd
     ptyTeardownHandlers.delete(id)
     clearPreHandlerPtyState(id)
   }
+  syncTerminalDeliveryWatchdogTimer()
   return snapshots
 }
 
@@ -93,6 +95,7 @@ export function restorePtyDataHandlersAfterFailedShutdown(
       ptyTeardownHandlers.set(snapshot.ptyId, snapshot.teardownHandler)
     }
   }
+  syncTerminalDeliveryWatchdogTimer()
 }
 
 let pushListenerUnsubscribes: (() => void)[] = []
@@ -120,7 +123,10 @@ export function ensurePtyDispatcher(): void {
   attachPtyPushListeners()
   startTerminalDeliveryWatchdog({
     reattachPushListeners: reattachPtyDispatcherPushListeners,
-    hasAttachedPtys: () => ptyDataHandlers.size > 0 || eagerPtyHandles.size > 0
+    // Why: sidecar consumers (parked terminals, draft-readiness, automation observers) hold main-side
+    // delivery interest and receive pushed bytes with no primary handler, so they need the watchdog too.
+    hasAttachedPtys: () =>
+      ptyDataHandlers.size > 0 || eagerPtyHandles.size > 0 || ptyDataSidecars.size > 0
   })
 }
 
@@ -296,13 +302,7 @@ export function registerEagerPtyBuffer(
     }
   }
   const exitHandler = (code: number): void => {
-    // Shell died before attach; identity-guard so we never evict a handler a transport re-registered for this id (#7894 detach/attach race).
-    if (ptyDataHandlers.get(ptyId) === dataHandler) {
-      ptyDataHandlers.delete(ptyId)
-      ptyReplayHandlers.delete(ptyId)
-    }
-    ptyExitHandlers.delete(ptyId)
-    eagerPtyHandles.delete(ptyId)
+    handle.dispose()
     onExit(ptyId, code)
   }
 
@@ -330,10 +330,12 @@ export function registerEagerPtyBuffer(
         ptyExitHandlers.delete(ptyId)
       }
       eagerPtyHandles.delete(ptyId)
+      syncTerminalDeliveryWatchdogTimer()
     }
   }
 
   eagerPtyHandles.set(ptyId, handle)
+  syncTerminalDeliveryWatchdogTimer()
   drainPreHandlerPtyData(ptyId, dataHandler)
   // Why: defer the pre-handler exit one microtask so the caller receives the returned handle before onExit fires.
   queueMicrotask(() => {

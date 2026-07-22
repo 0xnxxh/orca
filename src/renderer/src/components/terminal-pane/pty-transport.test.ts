@@ -79,6 +79,41 @@ describe('createIpcPtyTransport', () => {
     transport.disconnect()
   })
 
+  it('arms for mounted PTYs and disarms only after the last transport detaches', async () => {
+    vi.useFakeTimers()
+    const reportRendererDeliveryState = vi.fn().mockResolvedValue({
+      inFlightTotalChars: 0,
+      inFlightPtyCount: 0,
+      msSinceLastAck: null
+    })
+    window.api.pty.reportRendererDeliveryState = reportRendererDeliveryState
+    try {
+      const { createIpcPtyTransport, ensurePtyDispatcher } = await import('./pty-transport')
+      const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+      spawn.mockResolvedValueOnce({ id: 'pty-1' }).mockResolvedValueOnce({ id: 'pty-2' })
+
+      ensurePtyDispatcher()
+      expect(vi.getTimerCount()).toBe(0)
+
+      const first = createIpcPtyTransport({})
+      await first.connect({ url: '', callbacks: {} })
+      expect(vi.getTimerCount()).toBe(1)
+
+      const second = createIpcPtyTransport({})
+      await second.connect({ url: '', callbacks: {} })
+      expect(vi.getTimerCount()).toBe(1)
+
+      first.detach?.()
+      expect(vi.getTimerCount()).toBe(1)
+      second.detach?.()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      const { stopTerminalDeliveryWatchdog } = await import('./terminal-delivery-watchdog')
+      stopTerminalDeliveryWatchdog()
+      vi.useRealTimers()
+    }
+  })
+
   it('does not create a second kill authority when a mounted pane detaches', async () => {
     const { createIpcPtyTransport } = await import('./pty-transport')
     const kill = window.api.pty.kill as unknown as ReturnType<typeof vi.fn>

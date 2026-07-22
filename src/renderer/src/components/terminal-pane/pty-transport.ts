@@ -11,6 +11,7 @@ import {
   iterateTerminalInputChunks
 } from '../../../../shared/terminal-input'
 import { isRuntimeOwnedSshTargetId } from '../../../../shared/execution-host'
+import { syncTerminalDeliveryWatchdogTimer } from './terminal-delivery-watchdog'
 import {
   ptyDataHandlers,
   ptyReplayHandlers,
@@ -542,6 +543,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
     }
     ownedDataAndReplayHandlers.delete(id)
+    syncTerminalDeliveryWatchdogTimer()
   }
 
   function registerPtyDataHandler(id: string): void {
@@ -572,6 +574,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     }
     ptyDataHandlers.set(id, dataHandler)
     ownedDataAndReplayHandlers.set(id, { data: dataHandler, replay: replayHandler })
+    syncTerminalDeliveryWatchdogTimer()
     drainPreHandlerPtyData(id, dataHandler)
   }
 

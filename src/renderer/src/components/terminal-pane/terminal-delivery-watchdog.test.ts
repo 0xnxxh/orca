@@ -59,24 +59,26 @@ describe('terminal delivery watchdog', () => {
     }
   })
 
-  async function startWatchdog(): Promise<{
+  async function startWatchdog(hasAttachedPtys: () => boolean = () => true): Promise<{
     recordPtyDataReceived: (ptyId: string, chars: number) => void
     registerRestoreHandler: (
       ptyId: string,
       handler: (event: { id: string; reason: string; markerSeq?: number }) => void
     ) => void
+    syncTimer: () => void
   }> {
     const watchdog = await import('./terminal-delivery-watchdog')
     const restoreChannel = await import('./pty-model-restore-channel')
     watchdog.startTerminalDeliveryWatchdog({
       reattachPushListeners: reattachMock,
-      hasAttachedPtys: () => true
+      hasAttachedPtys
     })
     return {
       recordPtyDataReceived: watchdog.recordPtyDataReceived,
       registerRestoreHandler: (ptyId, handler) => {
         restoreChannel.registerPtyModelRestoreNeededHandler(ptyId, handler)
-      }
+      },
+      syncTimer: watchdog.syncTerminalDeliveryWatchdogTimer
     }
   }
 
@@ -182,6 +184,67 @@ describe('terminal delivery watchdog', () => {
     await vi.advanceTimersByTimeAsync(INTERVAL_MS * 3)
 
     expect(reportMock).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('arms on the first attached PTY and disarms on the last detach', async () => {
+    reportMock.mockResolvedValue(HEALTHY)
+    let hasAttachedPty = false
+    const { syncTimer } = await startWatchdog(() => hasAttachedPty)
+
+    expect(vi.getTimerCount()).toBe(0)
+
+    hasAttachedPty = true
+    syncTimer()
+    expect(vi.getTimerCount()).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS * 2)
+    expect(reportMock).toHaveBeenCalledTimes(2)
+
+    hasAttachedPty = false
+    syncTimer()
+    expect(vi.getTimerCount()).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS * 2)
+    expect(reportMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards a stalled tick whose invoke was awaited across a last-PTY detach', async () => {
+    let hasAttachedPty = true
+    const { syncTimer } = await startWatchdog(() => hasAttachedPty)
+
+    // One stalled tick brings the streak to one below the two-tick heal threshold.
+    reportMock.mockResolvedValue(STALLED)
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS)
+    expect(reattachMock).not.toHaveBeenCalled()
+
+    // The next tick's invoke is slow; while it is awaited, the last PTY detaches (disarm).
+    let resolveHealth: (health: PtyRendererDeliveryHealthReply) => void = () => {}
+    reportMock.mockReturnValueOnce(
+      new Promise<PtyRendererDeliveryHealthReply>((resolve) => {
+        resolveHealth = resolve
+      })
+    )
+    const tick = vi.advanceTimersByTimeAsync(INTERVAL_MS)
+    await Promise.resolve()
+    hasAttachedPty = false
+    syncTimer()
+
+    // Even though the (now stale) reply is stalled, the tick must be discarded — no second
+    // confirmation, so no heal. Without the generation guard this would resurrect the streak to the
+    // threshold and heal spuriously while parked.
+    resolveHealth(STALLED)
+    await tick
+
+    expect(reattachMock).not.toHaveBeenCalled()
+
+    // The legitimate first-tick streak is preserved across the flicker (not reset), but the racing
+    // tick contributed nothing — so exactly ONE more real stalled confirmation after re-arm heals.
+    hasAttachedPty = true
+    syncTimer()
+    reportMock.mockResolvedValue(STALLED)
+    await vi.advanceTimersByTimeAsync(INTERVAL_MS)
+    expect(reattachMock).toHaveBeenCalledTimes(1)
   })
 
   it('never starts without the invoke heal lane (web client, partial mocks)', async () => {
