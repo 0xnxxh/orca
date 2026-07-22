@@ -36,11 +36,14 @@ describe('TerminalTabLeadingIcon', () => {
     expect(markup).toContain('data-agent-icon="codex"')
   })
 
-  it('shows a needs-input (permission) state as an amber dot', () => {
+  it('shows a needs-input (permission) state as an amber question glyph', () => {
     const markup = renderStatus('permission')
 
     expect(markup).toContain('data-agent-activity-status="permission"')
-    expect(markup).toContain('bg-amber-500')
+    // Why: the "needs you" states render the amber MessageCircleQuestion glyph
+    // rather than a bare amber dot (unified across board/sidebar/tabs).
+    expect(markup).toContain('lucide-message-circle-question')
+    expect(markup).toContain('text-amber-500')
     expect(markup).not.toContain('bg-red-500')
   })
 

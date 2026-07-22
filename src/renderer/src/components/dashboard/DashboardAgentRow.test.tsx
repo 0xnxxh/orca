@@ -247,12 +247,15 @@ describe('DashboardAgentRow', () => {
     expect(classes.every((className) => !/\bgroup-hover:/.test(className))).toBe(true)
   })
 
-  it('renders waiting rows with the amber permission color', () => {
+  it('renders waiting rows with the amber question glyph', () => {
     const markup = renderRow(makeAgent({}, { state: 'waiting' }))
     const tokens = classTokens(markup)
 
     expect(markup).toContain('aria-label="Waiting for input"')
-    expect(tokens).toContain('bg-amber-500')
+    // Why: the "needs you" states render the amber MessageCircleQuestion glyph
+    // rather than a bare amber dot (unified across the board/sidebar).
+    expect(markup).toContain('lucide-message-circle-question')
+    expect(tokens).toContain('text-amber-500')
     expect(tokens).not.toContain('bg-red-500')
   })
 
