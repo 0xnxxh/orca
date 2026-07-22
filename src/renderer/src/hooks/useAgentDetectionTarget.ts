@@ -6,7 +6,9 @@ import {
   getExecutionHostIdForWorktree,
   type WorktreeRuntimeOwnerState
 } from '@/lib/worktree-runtime-owner'
+import { getResolvedExecutionHostIdForWorktree } from '@/lib/resolved-worktree-execution-host'
 import { parseExecutionHostId } from '../../../shared/execution-host'
+import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import type { AgentDetectionTarget } from './useDetectedAgents'
 
 export const AGENT_DETECTION_LOCAL_TARGET_KEY = 'local'
@@ -27,18 +29,27 @@ export function getAgentDetectionTargetKeyForWorktree(
   state: AgentDetectionOwnerState,
   worktreeId: string | null
 ): string | undefined {
-  // Why: a paired-runtime owner is authoritative even when its server-side
-  // child repos span SSH transports; avoid both ambiguity and a broad repo scan.
-  const explicitRuntimeEnvironmentId = getExplicitRuntimeEnvironmentIdForWorktree(state, worktreeId)
-  if (explicitRuntimeEnvironmentId) {
-    return `runtime:${explicitRuntimeEnvironmentId}`
+  if (worktreeId === null) {
+    return AGENT_DETECTION_LOCAL_TARGET_KEY
   }
-  const connectionId = getConnectionIdFromState(state, worktreeId)
-  if (connectionId === undefined) {
+  if (parseWorkspaceKey(worktreeId)?.type === 'folder') {
+    const explicitRuntimeEnvironmentId = getExplicitRuntimeEnvironmentIdForWorktree(
+      state,
+      worktreeId
+    )
+    if (explicitRuntimeEnvironmentId) {
+      return `runtime:${explicitRuntimeEnvironmentId}`
+    }
+    // Why: a hostless folder can span local and SSH children, so keep the
+    // ambiguity gate before applying its focused-runtime fallback.
+    if (getConnectionIdFromState(state, worktreeId) === undefined) {
+      return undefined
+    }
+  } else if (getResolvedExecutionHostIdForWorktree(state, worktreeId) === null) {
+    // Why: repo rows can hydrate before a restored remote worktree; that gap
+    // must stay unresolved instead of probing the repo row's local owner.
     return undefined
   }
-  // Why: runtime-owned repo rows can retain a server-side SSH connectionId;
-  // the explicit execution host is authoritative over that transport detail.
   const executionHost = parseExecutionHostId(getExecutionHostIdForWorktree(state, worktreeId))
   if (executionHost?.kind === 'ssh') {
     return `ssh:${executionHost.targetId}`
