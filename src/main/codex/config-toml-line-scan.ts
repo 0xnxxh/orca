@@ -99,18 +99,6 @@ export function getTomlTableHeader(line: string): string | null {
   return match?.[1] ?? null
 }
 
-// Why: callers need the table's dotted name (e.g. `tui`, `tui.notifications`) to
-// distinguish a bare `[tui]` table from its subtables. Array-of-tables headers
-// (`[[...]]`) are not plain tables, so they return null.
-export function getTomlTableName(header: string): string | null {
-  const trimmed = header.trim()
-  if (trimmed.startsWith('[[')) {
-    return null
-  }
-  const match = /^\[(.+)\]$/.exec(trimmed)
-  return match ? match[1].trim() : null
-}
-
 export function parseTomlSingleLineStringValue(
   line: string,
   offset: number

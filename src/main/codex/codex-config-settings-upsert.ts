@@ -1,10 +1,10 @@
 import {
   createTomlLineScanState,
   getTomlTableHeader,
-  getTomlTableName,
   isTomlStructuralLine,
   updateTomlLineScanState
 } from './config-toml-line-scan'
+import { getTomlTableName, parseTomlKeyPath } from './config-toml-key-path'
 
 const TUI_STRUCTURED_PREFIX = 'tui.'
 
@@ -64,9 +64,10 @@ export function upsertTopLevelSettingsInContent(
         preambleEnd = index
         break
       }
-      const match = /^[ \t]*([A-Za-z0-9_-]+)[ \t]*=/.exec(line)
-      if (match?.[1] && updates.has(match[1])) {
-        keyLineIndexes.set(match[1], index)
+      const parsed = parseTomlKeyPath(line)
+      const key = parsed?.segments.length === 1 ? parsed.segments[0] : null
+      if (parsed && line[parsed.end] === '=' && key && updates.has(key)) {
+        keyLineIndexes.set(key, index)
       }
     }
     state = updateTomlLineScanState(state, line)
@@ -210,21 +211,23 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
       if (inPreamble) {
         // Why: any dotted `tui.*` key (allowlisted or not) already defines the
         // implicit tui table, so a new `[tui]` table at EOF would duplicate it.
-        const dotted = /^[ \t]*(tui\.[A-Za-z0-9_.-]+)[ \t]*=/.exec(line)
-        if (dotted) {
+        const parsed = parseTomlKeyPath(line)
+        const isAssignment = parsed && line[parsed.end] === '='
+        if (isAssignment && parsed.segments[0] === 'tui' && parsed.segments.length > 1) {
           hasDottedTuiKey = true
           lastDottedTuiIndex = index
-          const promoted = /^tui\.([A-Za-z0-9_-]+)$/.exec(dotted[1]!)
-          if (promoted && updates.has(promoted[1]!)) {
-            dottedKeyIndexes.set(promoted[1]!, index)
+          const promotedKey = parsed.segments.length === 2 ? parsed.segments[1] : null
+          if (promotedKey && updates.has(promotedKey)) {
+            dottedKeyIndexes.set(promotedKey, index)
           }
-        } else if (/^[ \t]*tui[ \t]*=/.test(line)) {
+        } else if (isAssignment && parsed.segments.length === 1 && parsed.segments[0] === 'tui') {
           blocksNewTuiTable = true
         }
       } else if (tuiBodyActive) {
-        const bare = /^[ \t]*([A-Za-z0-9_-]+)[ \t]*=/.exec(line)
-        if (bare && updates.has(bare[1]!)) {
-          bareKeyIndexes.set(bare[1]!, index)
+        const parsed = parseTomlKeyPath(line)
+        const key = parsed?.segments.length === 1 ? parsed.segments[0] : null
+        if (parsed && line[parsed.end] === '=' && key && updates.has(key)) {
+          bareKeyIndexes.set(key, index)
         }
       }
     }
@@ -247,7 +250,13 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
 
 function isRootTuiArrayTableHeader(header: string): boolean {
   const match = /^\[\[(.+)\]\]$/.exec(header.trim())
-  return match?.[1]?.trim() === 'tui'
+  if (!match) {
+    return false
+  }
+  const parsed = parseTomlKeyPath(match[1]!)
+  return (
+    parsed?.end === match[1]!.length && parsed.segments.length === 1 && parsed.segments[0] === 'tui'
+  )
 }
 
 // Why: TOML forbids adding bare keys to `[tui]` after a `[tui.*]` subtable opens,

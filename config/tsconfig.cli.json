@@ -35,6 +35,7 @@
     "../src/main/codex/codex-user-hook-trust-rebase.ts",
     "../src/main/codex/codex-wsl-hook-install-plan.ts",
     "../src/main/codex/config-settings-promotion.ts",
+    "../src/main/codex/config-toml-key-path.ts",
     "../src/main/codex/config-toml-line-scan.ts",
     "../src/main/codex/config-toml-trust.ts",
     "../src/main/codex/hook-service.ts",

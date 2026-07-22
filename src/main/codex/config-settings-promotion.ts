@@ -15,10 +15,10 @@ import { getOrcaManagedCodexHomePath, getSystemCodexHomePath } from './codex-hom
 import {
   createTomlLineScanState,
   getTomlTableHeader,
-  getTomlTableName,
   isTomlStructuralLine,
   updateTomlLineScanState
 } from './config-toml-line-scan'
+import { getTomlTableName, parseTomlKeyPath } from './config-toml-key-path'
 import { tuiStructuredKey, upsertPromotedSettingsInContent } from './codex-config-settings-upsert'
 
 // Why: the mirror reverts in-Codex config changes each launch; promotion salvages them by diffing the last baseline.
@@ -58,15 +58,16 @@ function isPromotedTuiKey(key: string): boolean {
 // inside the first `[tui]` table body it recognizes the bare `<key>` form Codex
 // writes. Both map to the same structured key so either config shape promotes.
 function matchTuiStructuredKey(
-  key: string,
+  keyPath: string[],
   inPreamble: boolean,
   tuiBodyActive: boolean
 ): string | null {
   if (inPreamble) {
-    const dotted = /^tui\.([A-Za-z0-9_-]+)$/.exec(key)
-    return dotted && isPromotedTuiKey(dotted[1]!) ? tuiStructuredKey(dotted[1]!) : null
+    const tuiKey = keyPath.length === 2 && keyPath[0] === 'tui' ? keyPath[1] : null
+    return tuiKey && isPromotedTuiKey(tuiKey) ? tuiStructuredKey(tuiKey) : null
   }
-  return tuiBodyActive && isPromotedTuiKey(key) ? tuiStructuredKey(key) : null
+  const tuiKey = keyPath.length === 1 ? keyPath[0] : null
+  return tuiBodyActive && tuiKey && isPromotedTuiKey(tuiKey) ? tuiStructuredKey(tuiKey) : null
 }
 
 type TopLevelSettingValue = {
@@ -115,16 +116,20 @@ function matchPromotedStructuredKey(
   inPreamble: boolean,
   tuiBodyActive: boolean
 ): { structuredKey: string; raw: string } | null {
-  const match = /^[ \t]*([A-Za-z0-9_.-]+)[ \t]*=[ \t]*(.*?)[ \t\r]*$/.exec(line)
-  if (!match) {
+  const parsed = parseTomlKeyPath(line)
+  if (!parsed || line[parsed.end] !== '=') {
     return null
   }
-  const key = match[1]!
-  const raw = match[2] ?? ''
-  if (inPreamble && (PROMOTED_CODEX_SETTING_KEYS as readonly string[]).includes(key)) {
-    return { structuredKey: key, raw }
+  const raw = line.slice(parsed.end + 1).trim()
+  const topLevelKey = parsed.segments.length === 1 ? parsed.segments[0] : null
+  if (
+    inPreamble &&
+    topLevelKey &&
+    (PROMOTED_CODEX_SETTING_KEYS as readonly string[]).includes(topLevelKey)
+  ) {
+    return { structuredKey: topLevelKey, raw }
   }
-  const tuiKey = matchTuiStructuredKey(key, inPreamble, tuiBodyActive)
+  const tuiKey = matchTuiStructuredKey(parsed.segments, inPreamble, tuiBodyActive)
   return tuiKey ? { structuredKey: tuiKey, raw } : null
 }
 

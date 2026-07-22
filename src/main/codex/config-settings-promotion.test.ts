@@ -490,6 +490,17 @@ describe('codex [tui] settings write-back promotion', () => {
     expect(readSystemConfig()).not.toContain('[tui]')
   })
 
+  it('promotes through a quoted tui table without creating a duplicate table', () => {
+    writeSystemConfig('model = "gpt-5"\n\n["tui"]\ntheme = "dark"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    setRuntimeConfig('model = "gpt-5"\n\n["tui"]\ntheme = "light"\n')
+    syncSystemConfigIntoManagedCodexHome()
+
+    expect(readSystemConfig()).toBe('model = "gpt-5"\n\n["tui"]\ntheme = "light"\n')
+    expect(readSystemConfig()).not.toContain('\n[tui]\n')
+  })
+
   it('inserts a second dotted tui key beside an existing dotted-only tui config', () => {
     writeSystemConfig('model = "gpt-5"\ntui.theme = "dark"\n')
     syncSystemConfigIntoManagedCodexHome()
@@ -658,6 +669,21 @@ describe('upsertPromotedSettingsInContent', () => {
     ).toBe('tui = { animations = false }\n')
   })
 
+  it('drops an absent key beside a quoted inline tui table', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '"tui" = { animations = false }\n',
+        new Map([['tui.theme', '"dark"']])
+      )
+    ).toBe('"tui" = { animations = false }\n')
+  })
+
+  it('inserts beside a quoted dotted tui key instead of appending a table', () => {
+    expect(
+      upsertPromotedSettingsInContent('"tui" . "pet" = "cat"\n', new Map([['tui.theme', '"dark"']]))
+    ).toBe('"tui" . "pet" = "cat"\ntui.theme = "dark"\n')
+  })
+
   it('creates a [tui] super-table at EOF after a [tui.*] subtable', () => {
     expect(
       upsertPromotedSettingsInContent(
@@ -683,6 +709,15 @@ describe('upsertPromotedSettingsInContent', () => {
         new Map([['tui.theme', '"root-theme"']])
       )
     ).toBe('[[tui]]\ntheme = "array-theme"\n')
+  })
+
+  it('does not append a table beside a quoted root tui array-of-tables', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '[["tui"]]\ntheme = "array-theme"\n',
+        new Map([['tui.theme', '"root-theme"']])
+      )
+    ).toBe('[["tui"]]\ntheme = "array-theme"\n')
   })
 
   it('creates one [tui] table for multiple keys reaching the new-table branch', () => {
@@ -743,6 +778,12 @@ describe('upsertTopLevelSettingsInContent', () => {
         new Map([['model', '"new"']])
       )
     ).toBe('# keep\nmodel = "new"\n\n[t]\nk = 1\n')
+  })
+
+  it('replaces a quoted top-level key instead of adding its bare equivalent', () => {
+    expect(
+      upsertTopLevelSettingsInContent('"model" = "old"\n', new Map([['model', '"new"']]))
+    ).toBe('model = "new"\n')
   })
 
   it('inserts with CRLF endings into CRLF content', () => {
