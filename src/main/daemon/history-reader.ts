@@ -1,13 +1,14 @@
 import { join } from 'node:path'
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import type { SessionMeta } from './history-manager'
 import type { TerminalCheckpointFile, TerminalModes } from './types'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
 import { getHistorySessionDirName } from './history-paths'
-import { decodeTerminalHistoryLog } from './terminal-history-log'
+import { decodeTerminalHistoryLog, LOG_HEADER_BYTES } from './terminal-history-log'
 import { HeadlessEmulator } from './headless-emulator'
 import { PrioritySemaphore } from './priority-semaphore'
+import { ColdRestoreReplayWriter } from './cold-restore-replay-writer'
 
 export type ColdRestoreInfo = {
   snapshotAnsi: string
@@ -24,10 +25,6 @@ const ALT_SCREEN_ON = '\x1b[?1049h'
 const ALT_SCREEN_OFF = '\x1b[?1049l'
 // Why: parallel pane mounts should interleave with main-process work without multiplying replay slices per turn.
 const coldRestoreReplaySemaphore = new PrioritySemaphore(1)
-
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve))
-}
 
 export class HistoryReader {
   private basePath: string
@@ -138,11 +135,20 @@ export class HistoryReader {
     checkpoint: TerminalCheckpointFile | null,
     wslDistro?: string
   ): Promise<ColdRestoreInfo | null> {
+    const logPath = join(sessionDir, 'output.log')
+    try {
+      // Why: final checkpoints leave a header-only log; they need no scarce replay slot and must not queue sleep teardown behind startup restores.
+      if ((await stat(logPath)).size <= LOG_HEADER_BYTES) {
+        return null
+      }
+    } catch {
+      return null
+    }
     const release = await coldRestoreReplaySemaphore.acquire(0)
     try {
       let logBuffer: Buffer
       try {
-        logBuffer = await readFile(join(sessionDir, 'output.log'))
+        logBuffer = await readFile(logPath)
       } catch {
         return null
       }
@@ -167,33 +173,29 @@ export class HistoryReader {
         rows: checkpoint?.rows ?? meta.rows,
         wslDistro
       })
+      const replay = new ColdRestoreReplayWriter(emulator)
       try {
         if (checkpoint) {
           if (
-            !emulator.writeSync(
-              (checkpoint.scrollbackAnsi ?? '') +
-                checkpoint.rehydrateSequences +
-                checkpoint.snapshotAnsi
-            )
+            !(await replay.write(checkpoint.scrollbackAnsi ?? '')) ||
+            !(await replay.write(checkpoint.rehydrateSequences)) ||
+            !(await replay.write(checkpoint.snapshotAnsi))
           ) {
             return null
           }
           emulator.setRestoredOscLinks(checkpoint.oscLinks)
         }
-        for (const [batchIndex, batch] of log.batches.entries()) {
+        for (const batch of log.batches) {
           for (const record of batch.records) {
             if (record.kind === 'output') {
-              if (!emulator.writeSync(record.data)) {
+              if (!(await replay.write(record.data))) {
                 return null
               }
             } else if (record.kind === 'resize') {
-              emulator.resize(record.cols, record.rows)
+              await replay.resize(record.cols, record.rows)
             } else {
-              emulator.clearScrollback()
+              await replay.clearScrollback()
             }
-          }
-          if (batchIndex < log.batches.length - 1) {
-            await yieldToEventLoop()
           }
         }
         const snapshot = emulator.getSnapshot()

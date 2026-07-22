@@ -252,12 +252,13 @@ describe('incremental terminal history restore', () => {
     expect(restore!.scrollbackAnsi).toContain('after relaunch')
   })
 
-  it('yields between batches and admits only one replay at a time', async () => {
+  it('bounds large single-batch replay slices and admits only one replay at a time', async () => {
     const secondSessionId = `${SESSION_ID}-second`
     await manager.openSession(secondSessionId, { cwd: '/home/user', cols: 80, rows: 24 })
     for (const sessionId of [SESSION_ID, secondSessionId]) {
-      await manager.appendIncrements(sessionId, 1, [{ kind: 'output', data: 'first\r\n' }])
-      await manager.appendIncrements(sessionId, 2, [{ kind: 'output', data: 'second\r\n' }])
+      await manager.appendIncrements(sessionId, 1, [
+        { kind: 'output', data: `${'x'.repeat(64 * 1024 - 1)}😀second\r\n` }
+      ])
     }
 
     const pendingYields: (() => void)[] = []
@@ -269,20 +270,55 @@ describe('incremental terminal history restore', () => {
       return {} as NodeJS.Immediate
     }) as typeof setImmediate)
 
+    const firstReplay = reader.detectColdRestore(SESSION_ID)
+    const secondReplay = reader.detectColdRestore(secondSessionId)
     try {
-      const firstReplay = reader.detectColdRestore(SESSION_ID)
-      const secondReplay = reader.detectColdRestore(secondSessionId)
       await vi.waitFor(() => expect(pendingYields).toHaveLength(1))
 
       pendingYields.shift()!()
-      expect((await firstReplay)?.scrollbackAnsi).toContain('second')
+      expect((await firstReplay)?.scrollbackAnsi).toContain('😀second')
       await vi.waitFor(() => expect(pendingYields).toHaveLength(1))
 
       pendingYields.shift()!()
-      expect((await secondReplay)?.scrollbackAnsi).toContain('second')
+      expect((await secondReplay)?.scrollbackAnsi).toContain('😀second')
       expect(pendingYields).toHaveLength(0)
     } finally {
+      for (const resume of pendingYields.splice(0)) {
+        resume()
+      }
       immediateSpy.mockRestore()
+      await Promise.allSettled([firstReplay, secondReplay])
+    }
+  })
+
+  it('does not queue header-only checkpoint restores behind replay work', async () => {
+    const checkpointOnlySessionId = `${SESSION_ID}-checkpoint-only`
+    await manager.openSession(checkpointOnlySessionId, { cwd: '/home/user', cols: 80, rows: 24 })
+    await manager.checkpoint(checkpointOnlySessionId, snapshotOf(['checkpoint only\r\n']))
+    await manager.appendIncrements(SESSION_ID, 1, [
+      { kind: 'output', data: `${'x'.repeat(64 * 1024)}slow replay\r\n` }
+    ])
+
+    const pendingYields: (() => void)[] = []
+    const immediateSpy = vi.spyOn(globalThis, 'setImmediate').mockImplementation(((
+      callback: (...args: unknown[]) => void,
+      ...args: unknown[]
+    ) => {
+      pendingYields.push(() => callback(...args))
+      return {} as NodeJS.Immediate
+    }) as typeof setImmediate)
+
+    const replay = reader.detectColdRestore(SESSION_ID)
+    try {
+      await vi.waitFor(() => expect(pendingYields).toHaveLength(1))
+      const checkpointOnlyRestore = await reader.detectColdRestore(checkpointOnlySessionId)
+
+      expect(checkpointOnlyRestore?.scrollbackAnsi).toContain('checkpoint only')
+      expect(pendingYields).toHaveLength(1)
+    } finally {
+      pendingYields.shift()?.()
+      immediateSpy.mockRestore()
+      await replay
     }
   })
 })
