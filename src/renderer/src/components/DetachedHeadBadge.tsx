@@ -27,6 +27,7 @@ export function DetachedHeadBadge({
       <TooltipTrigger asChild>
         <Badge
           variant="outline"
+          aria-label={display.tooltip}
           className={cn(
             'h-[18px] shrink-0 gap-1 rounded px-1.5 text-[10px] font-medium leading-none',
             'border-[color:color-mix(in_srgb,var(--git-decoration-modified)_30%,transparent)] bg-[color:color-mix(in_srgb,var(--git-decoration-modified)_8%,transparent)] text-[color:var(--git-decoration-modified)]',
@@ -34,7 +35,7 @@ export function DetachedHeadBadge({
           )}
         >
           <GitCommitHorizontal className="size-2.5" />
-          {visibleLabel}
+          <span className="min-w-0 truncate">{visibleLabel}</span>
         </Badge>
       </TooltipTrigger>
       <TooltipContent side={side} sideOffset={8}>

@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
+import { DetachedHeadBadge } from '@/components/DetachedHeadBadge'
+import type { WorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
 import {
   shouldShowSourceControlBranchContextRow,
   SourceControlBranchContextRow
@@ -17,7 +19,7 @@ import {
 import { SourceControlHeaderOverflowMenu } from './source-control-header-overflow-menu'
 
 type SourceControlHeaderToolbarProps = {
-  branchName: string
+  gitIdentityDisplay: WorktreeGitIdentityDisplay | null
   filterQuery: string
   filterExpanded: boolean
   onFilterQueryChange: (value: string) => void
@@ -40,7 +42,20 @@ type SourceControlHeaderToolbarProps = {
   manualReviewUrl?: string | null
 }
 
-function SourceControlBranchHeaderLabel({ branchName }: { branchName: string }): React.JSX.Element {
+function SourceControlGitIdentityLabel({
+  display
+}: {
+  display: WorktreeGitIdentityDisplay
+}): React.JSX.Element {
+  if (display.kind === 'detached') {
+    return (
+      <span className="flex min-w-0 flex-1 items-center">
+        <DetachedHeadBadge display={display} side="bottom" className="min-w-0 max-w-full shrink" />
+      </span>
+    )
+  }
+
+  const branchName = display.branchName
   const label = translate(
     'auto.components.right.sidebar.SourceControl.a4e93c21d7',
     'Current branch: {{value0}}',
@@ -121,7 +136,7 @@ function renderOverflowMenu(
 }
 
 export function SourceControlHeaderToolbar({
-  branchName,
+  gitIdentityDisplay,
   filterQuery,
   filterExpanded,
   onFilterQueryChange,
@@ -192,8 +207,8 @@ export function SourceControlHeaderToolbar({
       >
         {showCollapsedToolbar ? (
           <>
-            {branchName ? (
-              <SourceControlBranchHeaderLabel branchName={branchName} />
+            {gitIdentityDisplay ? (
+              <SourceControlGitIdentityLabel display={gitIdentityDisplay} />
             ) : (
               <span className="min-w-0 flex-1" aria-hidden="true" />
             )}

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
+import type { WorktreeGitIdentityDisplay } from '@/lib/worktree-git-identity-display'
 import { SourceControlHeaderToolbar } from './source-control-header-toolbar'
 
 vi.mock('@/components/ui/tooltip', () => ({
@@ -18,10 +19,15 @@ vi.mock('./source-control-branch-context-row', () => ({
   SourceControlBranchContextRow: () => null
 }))
 
-function renderToolbar(branchName = 'brennanb2025/source-control-branch-name'): string {
+function renderToolbar(
+  gitIdentityDisplay: WorktreeGitIdentityDisplay | null = {
+    kind: 'branch',
+    branchName: 'brennanb2025/source-control-branch-name'
+  }
+): string {
   return renderToStaticMarkup(
     <SourceControlHeaderToolbar
-      branchName={branchName}
+      gitIdentityDisplay={gitIdentityDisplay}
       filterQuery=""
       filterExpanded={false}
       onFilterQueryChange={vi.fn()}
@@ -56,10 +62,30 @@ describe('SourceControlHeaderToolbar', () => {
     expect(markup).toContain('min-w-0 truncate')
   })
 
-  it('does not announce a branch while HEAD is detached', () => {
-    const markup = renderToolbar('')
+  it('renders detached HEAD in the same identity slot', () => {
+    const markup = renderToolbar({
+      kind: 'detached',
+      shortHead: '8cec248',
+      sidebarLabel: 'Detached HEAD @ 8cec248',
+      sourceControlLabel: 'Detached HEAD · 8cec248',
+      tooltip: 'Detached HEAD at 8cec248. You are viewing a commit, not a branch.'
+    })
+    const identityIndex = markup.indexOf('Detached HEAD · 8cec248')
+    const filterIndex = markup.indexOf('data-testid="source-control-filter-toggle"')
 
     expect(markup).not.toContain('aria-label="Current branch:')
-    expect(markup).not.toContain('lucide-git-branch')
+    expect(identityIndex).toBeGreaterThan(-1)
+    expect(filterIndex).toBeGreaterThan(identityIndex)
+    expect(markup).toContain(
+      'aria-label="Detached HEAD at 8cec248. You are viewing a commit, not a branch."'
+    )
+    expect(markup).toContain('lucide-git-commit-horizontal')
+  })
+
+  it('keeps the identity slot empty until git identity is known', () => {
+    const markup = renderToolbar(null)
+
+    expect(markup).not.toContain('aria-label="Current branch:')
+    expect(markup).not.toContain('Detached HEAD')
   })
 })
