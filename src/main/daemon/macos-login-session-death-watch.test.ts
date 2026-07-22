@@ -255,6 +255,28 @@ describe('MacosLoginSessionDeathWatch', () => {
     expect(clock.pendingCount()).toBe(0)
   })
 
+  it('stop() prevents an in-flight resolver check from retiring the daemon', async () => {
+    let resolveHealth!: (health: SystemResolverHealth) => void
+    const resolverHealth = new Promise<SystemResolverHealth>((resolve) => {
+      resolveHealth = resolve
+    })
+    const { watch, clock, onRetire } = createWatch({
+      outcomes: [ACCEPTED, REJECTED, REJECTED, REJECTED],
+      readResolverHealth: () => resolverHealth
+    })
+    watch.start()
+    await drainMicrotasks()
+    await clock.advance(120_000)
+    await clock.advance(10_000)
+    await clock.advance(10_000) // retirement is now waiting on resolver health
+
+    watch.stop()
+    resolveHealth('unhealthy')
+    await drainMicrotasks()
+
+    expect(onRetire).not.toHaveBeenCalled()
+  })
+
   it('logs and reschedules when a probe throws instead of surfacing a rejection', async () => {
     const outcomes: (() => Promise<LoginPreflightOutcome>)[] = [
       async () => ACCEPTED,

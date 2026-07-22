@@ -135,6 +135,7 @@ async function main(): Promise<void> {
   })
 
   let daemon: DaemonHandle | null = null
+  let deathWatch: MacosLoginSessionDeathWatch | null = null
   let shuttingDown = false
   // Bound the wait so a wedged native shutdown can't leave the daemon running
   // forever on SIGTERM/SIGINT (it would then survive a real quit, not just updates).
@@ -146,6 +147,7 @@ async function main(): Promise<void> {
       return
     }
     shuttingDown = true
+    deathWatch?.stop()
     daemonLog.log('shutdown', { reason })
     try {
       if (daemon) {
@@ -181,7 +183,7 @@ async function main(): Promise<void> {
       return ''
     }
   }
-  const deathWatch =
+  deathWatch =
     loginSessionWatch && process.platform === 'darwin'
       ? new MacosLoginSessionDeathWatch({
           probeLoginSession: e2eProbeFile
@@ -242,6 +244,7 @@ async function main(): Promise<void> {
       : {}),
     spawnSubprocess: (opts) => createPtySubprocess(opts),
     onIdleShutdown: () => {
+      deathWatch?.stop()
       shuttingDown = true
       daemonLog.log('shutdown', { reason: 'idle' })
       daemonLog.close()
