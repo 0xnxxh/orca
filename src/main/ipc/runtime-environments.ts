@@ -14,7 +14,6 @@ import type { RuntimeStatus } from '../../shared/runtime-types'
 import type { RuntimeRpcResponse } from '../../shared/runtime-rpc-envelope'
 import type { RemoteRuntimeSubscription } from '../../shared/remote-runtime-client'
 import type { Store } from '../persistence'
-import { clearActiveRuntimeEnvironmentFocusIfMatches } from '../runtime-environment-focus-self-heal'
 import { closeRemoteRuntimeRequestConnection } from './runtime-environment-request-connections'
 import {
   callRuntimeEnvironment,
@@ -94,6 +93,10 @@ export function registerRuntimeEnvironmentHandlers(store: Store): void {
   ipcMain.handle(
     'runtimeEnvironments:remove',
     (_event, args: { selector: string }): { removed: PublicKnownRuntimeEnvironment } => {
+      const environment = resolveEnvironment(getUserDataPath(), args.selector)
+      if (store.getSettings().activeRuntimeEnvironmentId === environment.id) {
+        throw new Error('Choose another Active Server in Advanced before removing this server.')
+      }
       const removed = removeEnvironment(getUserDataPath(), args.selector)
       closeRemoteRuntimeRequestConnection(removed.id)
       clearSharedControlSupport(removed.id)
@@ -101,7 +104,6 @@ export function registerRuntimeEnvironmentHandlers(store: Store): void {
         closeRemoteRuntimeRequestConnection(args.selector)
         clearSharedControlSupport(args.selector)
       }
-      clearActiveRuntimeEnvironmentFocusIfMatches(store, removed.id)
       closeSubscriptionsForEnvironment(removed.id)
       return { removed: redactRuntimeEnvironment(removed) }
     }

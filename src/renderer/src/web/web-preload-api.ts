@@ -616,18 +616,24 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       // Why: localStorage-backed settings are synchronous, so the pre-hydration kill-switch read works the same as desktop.
       getSync: () => getStoredSettings(),
       set: async (updates) => {
-        if (updates.activeRuntimeEnvironmentId === null) {
-          disconnectActiveRuntimeEnvironment()
-        }
         const sanitizedUpdates = { ...updates }
+        delete sanitizedUpdates.activeRuntimeEnvironmentId
         if ('autoRenameBranchFromWorkDefaultedOn' in sanitizedUpdates) {
           sanitizedUpdates.autoRenameBranchFromWorkDefaultedOn = true
         }
         const next = mergeSettings(getStoredSettings(), sanitizedUpdates, {
           preserveAutoRenameBranchFromWorkUpdate: 'autoRenameBranchFromWork' in sanitizedUpdates
         })
-        writeJson(SETTINGS_STORAGE_KEY, next)
+        writeStoredSettings(next)
         return syncRuntimeBackedSettings(sanitizedUpdates, next)
+      },
+      setActiveRuntimeEnvironmentPreference: async ({ environmentId }) => {
+        const activeRuntimeEnvironmentId = environmentId?.trim() || null
+        const next = mergeSettings(getStoredSettings(), {
+          activeRuntimeEnvironmentId
+        })
+        writeStoredSettings(next, activeRuntimeEnvironmentId)
+        return next
       },
       updatePRBotAuthorOverride: (args) => updateRuntimePRBotAuthorOverride(args),
       listFonts: () => Promise.resolve([]),
@@ -3281,7 +3287,7 @@ function updateEnvironmentFromResponse(
 }
 
 function getStoredSettings(): GlobalSettings {
-  const environment = (activeEnvironment = activeEnvironment ?? readStoredWebRuntimeEnvironment())
+  activeEnvironment = activeEnvironment ?? readStoredWebRuntimeEnvironment()
   const defaults = getDefaultSettings('~')
   const rawStoredSettings = window.localStorage.getItem(SETTINGS_STORAGE_KEY)
   const stored = readJson<Partial<GlobalSettings>>(SETTINGS_STORAGE_KEY, {})
@@ -3317,10 +3323,28 @@ function getStoredSettings(): GlobalSettings {
       ...defaults,
       floatingTerminalEnabled: false,
       rightSidebarOpenByDefault: false,
-      activeRuntimeEnvironmentId: environment?.id ?? null
+      activeRuntimeEnvironmentId: null
     },
     migratedStored
   )
+}
+
+function writeStoredSettings(
+  settings: GlobalSettings,
+  explicitActiveRuntimeEnvironmentId?: string | null
+): void {
+  const durable = { ...settings }
+  if (explicitActiveRuntimeEnvironmentId !== undefined) {
+    durable.activeRuntimeEnvironmentId = explicitActiveRuntimeEnvironmentId
+  } else {
+    const stored = readJson<Partial<GlobalSettings>>(SETTINGS_STORAGE_KEY, {})
+    if (Object.hasOwn(stored, 'activeRuntimeEnvironmentId')) {
+      durable.activeRuntimeEnvironmentId = stored.activeRuntimeEnvironmentId ?? null
+    } else {
+      delete durable.activeRuntimeEnvironmentId
+    }
+  }
+  writeJson(SETTINGS_STORAGE_KEY, durable)
 }
 
 async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
@@ -3354,7 +3378,7 @@ async function getRuntimeBackedStoredSettings(): Promise<GlobalSettings> {
       )
     }
     const next = mergeSettings(local, runtimeSettings)
-    writeJson(SETTINGS_STORAGE_KEY, next)
+    writeStoredSettings(next)
     return next
   } catch {
     // Why: unpaired/offline web clients keep a local settings fallback.
@@ -3396,8 +3420,10 @@ async function syncRuntimeBackedSettings(
       runtimeUpdates,
       15_000
     )
-    const next = mergeSettings(localNext, result.settings)
-    writeJson(SETTINGS_STORAGE_KEY, next)
+    const runtimeSettings = { ...result.settings }
+    delete runtimeSettings.activeRuntimeEnvironmentId
+    const next = mergeSettings(localNext, runtimeSettings)
+    writeStoredSettings(next)
     return next
   } catch {
     // Why: unpaired/offline web clients still need local settings persistence.
@@ -3420,7 +3446,7 @@ async function updateRuntimePRBotAuthorOverride(args: {
     const next = mergeSettings(local, {
       prBotAuthorOverrides: normalizePRBotAuthorOverrides(result.settings.prBotAuthorOverrides)
     })
-    writeJson(SETTINGS_STORAGE_KEY, next)
+    writeStoredSettings(next)
     return next
   }
   const next = mergeSettings(local, {
@@ -3430,7 +3456,7 @@ async function updateRuntimePRBotAuthorOverride(args: {
       args.isBot
     )
   })
-  writeJson(SETTINGS_STORAGE_KEY, next)
+  writeStoredSettings(next)
   return next
 }
 
@@ -3610,7 +3636,9 @@ function mergeSettings(
       ...(base.voice ?? defaults.voice),
       ...updates.voice
     } as NonNullable<GlobalSettings['voice']>,
-    activeRuntimeEnvironmentId: activeEnvironment?.id ?? updates.activeRuntimeEnvironmentId ?? null,
+    activeRuntimeEnvironmentId: Object.hasOwn(updates, 'activeRuntimeEnvironmentId')
+      ? (updates.activeRuntimeEnvironmentId ?? null)
+      : (base.activeRuntimeEnvironmentId ?? null),
     terminalCustomThemes: normalizeTerminalCustomThemes(
       updates.terminalCustomThemes ?? base.terminalCustomThemes
     ),

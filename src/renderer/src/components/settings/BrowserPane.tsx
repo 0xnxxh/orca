@@ -21,7 +21,6 @@ import { buildSidebarHostOptions } from '../sidebar/sidebar-host-options'
 import { getHostDisplayLabelOverrides } from '../../../../shared/host-setting-overrides'
 import {
   getSettingsFocusedExecutionHostId,
-  parseExecutionHostId,
   type ExecutionHostId
 } from '../../../../shared/execution-host'
 import { isMacUserAgent } from '@/components/terminal-pane/pane-helpers'
@@ -59,7 +58,8 @@ export function BrowserPane({
   const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
   const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
   const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
-  const switchRuntimeEnvironment = useAppStore((s) => s.switchRuntimeEnvironment)
+  const browserSessionHostIdOverride = useAppStore((s) => s.browserSessionHostIdOverride)
+  const setBrowserSessionHostId = useAppStore((s) => s.setBrowserSessionHostId)
   const detectedBrowsers = useAppStore((s) => s.detectedBrowsers)
   const browserSessionImportState = useAppStore((s) => s.browserSessionImportState)
   const defaultBrowserSessionProfileId = useAppStore((s) => s.defaultBrowserSessionProfileId)
@@ -137,19 +137,13 @@ export function BrowserPane({
       hostLabelOverrides
     ]
   )
-  const selectedBrowserSessionHostId = getSettingsFocusedExecutionHostId(settings)
+  const selectedBrowserSessionHostId =
+    browserSessionHostIdOverride ?? getSettingsFocusedExecutionHostId(settings)
   const selectBrowserSessionHost = useCallback(
     (hostId: ExecutionHostId) => {
-      const parsed = parseExecutionHostId(hostId)
-      if (parsed?.kind === 'runtime') {
-        void switchRuntimeEnvironment(parsed.environmentId)
-        return
-      }
-      if (parsed?.kind === 'local') {
-        void switchRuntimeEnvironment(null)
-      }
+      void setBrowserSessionHostId(hostId)
     },
-    [switchRuntimeEnvironment]
+    [setBrowserSessionHostId]
   )
 
   const requestSessionCookieScrollFrame = (callback: FrameRequestCallback): void => {

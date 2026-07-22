@@ -1461,18 +1461,6 @@ export function useIpcEvents(): void {
           splitTelemetrySource
         }) => {
           try {
-            if (isRuntimeEnvironmentActive()) {
-              if (requestId) {
-                window.api.ui.replyTerminalCreate({
-                  requestId,
-                  error: translate(
-                    'auto.hooks.useIpcEvents.60428567b4',
-                    'Local terminal reveal is unavailable while a remote runtime is active'
-                  )
-                })
-              }
-              return
-            }
             const store = useAppStore.getState()
             const terminalPresentation = resolveTerminalPresentation({ presentation, activate })
             const shouldActivate = terminalPresentation === 'focused'
@@ -1685,23 +1673,26 @@ export function useIpcEvents(): void {
     unsubs.push(
       window.api.ui.onRequestTerminalCreate((data) => {
         try {
-          // Why: runtime-session requests are host-owned tabs materialized by this renderer, not ordinary local creates.
-          if (isRuntimeEnvironmentActive() && data.source !== 'runtime-session') {
-            window.api.ui.replyTerminalCreate({
-              requestId: data.requestId,
-              error: translate(
-                'auto.hooks.useIpcEvents.7a64b31991',
-                'Local terminal creation is unavailable while a remote runtime is active'
-              )
-            })
-            return
-          }
           const store = useAppStore.getState()
           const worktreeId = data.worktreeId ?? store.activeWorktreeId
           if (!worktreeId) {
             window.api.ui.replyTerminalCreate({
               requestId: data.requestId,
               error: translate('auto.hooks.useIpcEvents.f000b2ff76', 'No active worktree')
+            })
+            return
+          }
+          // Why: runtime-session requests are host-owned tabs materialized by this renderer, not ordinary local creates.
+          if (
+            getRuntimeEnvironmentIdForWorktree(store, worktreeId) &&
+            data.source !== 'runtime-session'
+          ) {
+            window.api.ui.replyTerminalCreate({
+              requestId: data.requestId,
+              error: translate(
+                'auto.hooks.useIpcEvents.7a64b31991',
+                'Local terminal creation is unavailable while a remote runtime is active'
+              )
             })
             return
           }

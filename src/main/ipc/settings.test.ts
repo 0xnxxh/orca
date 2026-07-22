@@ -108,6 +108,43 @@ describe('registerSettingsHandlers', () => {
     expect(event.returnValue).toEqual({ terminalMainSideEffectAuthority: false })
   })
 
+  it('rejects durable Active Server writes through generic settings:set', async () => {
+    store.getSettings.mockReturnValue({ activeRuntimeEnvironmentId: null })
+    store.updateSettings.mockReturnValue({ activeRuntimeEnvironmentId: null })
+    registerSettingsHandlers(store as never)
+    const handler = handleMock.mock.calls.find((call) => call[0] === 'settings:set')?.[1] as (
+      event: typeof settingsInvokeEvent,
+      args: { activeRuntimeEnvironmentId: string }
+    ) => Promise<unknown>
+
+    await handler(settingsInvokeEvent, { activeRuntimeEnvironmentId: 'windows-2' })
+
+    expect(store.updateSettings).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ originWebContentsId: 1 })
+    )
+  })
+
+  it('persists Active Server only through the dedicated preference channel', () => {
+    store.updateSettings.mockReturnValue({ activeRuntimeEnvironmentId: 'windows-2' })
+    registerSettingsHandlers(store as never)
+    const handler = handleMock.mock.calls.find(
+      (call) => call[0] === 'settings:set-active-runtime-environment-preference'
+    )?.[1] as (event: typeof settingsInvokeEvent, args: { environmentId: string | null }) => unknown
+
+    expect(handler(settingsInvokeEvent, { environmentId: '  windows-2  ' })).toEqual({
+      activeRuntimeEnvironmentId: 'windows-2'
+    })
+    expect(store.updateSettings).toHaveBeenCalledWith(
+      { activeRuntimeEnvironmentId: 'windows-2' },
+      { notifyListeners: true, originWebContentsId: 1 }
+    )
+
+    expect(() => handler(settingsInvokeEvent, { environmentId: 42 as never })).toThrow(
+      'Invalid Active Server preference'
+    )
+  })
+
   it('applies bot-author deltas against the authoritative settings snapshot', () => {
     store.getSettings
       .mockReturnValueOnce({ prBotAuthorOverrides: ['alice'] })
