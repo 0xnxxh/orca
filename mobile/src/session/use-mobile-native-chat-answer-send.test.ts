@@ -195,6 +195,29 @@ describe('useMobileNativeChatAnswerSend', () => {
     expect(sendRequest.mock.calls[0]?.[1]).toMatchObject({ text: '2', enter: false })
   })
 
+  it('does not send a trailing Enter after Codex submits a multi-question answer', async () => {
+    const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn(), 'codex')
+    const prompt: AskPrompt = {
+      questions: [
+        { question: 'q1', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] },
+        { question: 'q2', multiSelect: false, options: [{ label: 'C' }, { label: 'D' }] }
+      ]
+    }
+
+    let result: Promise<boolean> | undefined
+    await act(async () => {
+      result = answerSend?.answerAsk(prompt, [{ indices: [1] }, { indices: [0] }])
+    })
+    await act(async () => vi.runAllTimersAsync())
+
+    await expect(result).resolves.toBe(true)
+    expect(sendRequest.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ text: '2', enter: false }),
+      expect.objectContaining({ text: '1', enter: false })
+    ])
+  })
+
   it('submits a non-selector answer as pasted label text with a single Enter', async () => {
     const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
     await mount({ sendRequest } as unknown as RpcClient, vi.fn(), 'grok')
