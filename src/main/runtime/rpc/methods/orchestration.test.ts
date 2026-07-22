@@ -1158,14 +1158,17 @@ describe('orchestration RPC methods', () => {
       expect(result.task.status).toBe('pending')
     })
 
-    it('records the caller terminal handle when creating a task', async () => {
+    it('records the caller terminal handle and pane key when creating a task', async () => {
       setup()
+      vi.spyOn(runtime, 'getTerminalPaneKey').mockReturnValue('tab_creator:leaf_creator')
       const result = (await call('orchestration.taskCreate', {
         spec: 'spawn related workspace',
         callerTerminalHandle: 'term_creator'
       })) as { task: { id: string } }
 
       expect(db.getTask(result.task.id)?.created_by_terminal_handle).toBe('term_creator')
+      expect(db.getTask(result.task.id)?.created_by_pane_key).toBe('tab_creator:leaf_creator')
+      expect(runtime.getTerminalPaneKey).toHaveBeenCalledWith('term_creator')
     })
 
     it('rejects invalid deps JSON', async () => {

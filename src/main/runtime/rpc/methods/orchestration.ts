@@ -425,7 +425,12 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         displayName: params.displayName,
         deps,
         parentId: params.parent,
-        createdByTerminalHandle: params.callerTerminalHandle
+        createdByTerminalHandle: params.callerTerminalHandle,
+        // Why: capture the creator's remint-stable pane key so the sidebar
+        // parent/child lineage survives a restart that re-mints the handle.
+        createdByPaneKey: params.callerTerminalHandle
+          ? (runtime.getTerminalPaneKey(params.callerTerminalHandle) ?? undefined)
+          : undefined
       })
       return { task }
     }

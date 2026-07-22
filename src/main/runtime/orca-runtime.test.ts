@@ -24332,6 +24332,257 @@ describe('OrcaRuntimeService', () => {
     expect(summary).toMatchObject({ hasHostSidebarActivity: true, status: 'working' })
   })
 
+  it('rebuilds the orchestration parent link by pane key after a restart remints handles', async () => {
+    // Why: sidebar lineage must rebuild from pane identity once stored handles remint.
+    const childLeafId = '44444444-4444-4444-8444-444444444444'
+    const parentLeafId = '55555555-5555-4555-8555-555555555555'
+    const childPaneKey = `tab-child:${childLeafId}`
+    const parentPaneKey = `tab-parent:${parentLeafId}`
+    const persistedParentPaneKey = `tab-before-breakout:${parentLeafId}`
+    const now = Date.now()
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getAgentStatusSnapshot: () => [
+        {
+          paneKey: parentPaneKey,
+          worktreeId: TEST_WORKTREE_ID,
+          tabId: 'tab-parent',
+          state: 'working',
+          prompt: 'coordinate',
+          agentType: 'claude',
+          connectionId: null,
+          receivedAt: now,
+          stateStartedAt: now - 200
+        },
+        {
+          paneKey: childPaneKey,
+          worktreeId: TEST_WORKTREE_ID,
+          tabId: 'tab-child',
+          state: 'working',
+          prompt: 'do the work',
+          agentType: 'claude',
+          connectionId: null,
+          receivedAt: now,
+          stateStartedAt: now - 100
+        }
+      ]
+    })
+    // Simulate a restart: no stored handle matches, only the pane key resolves.
+    runtime.setOrchestrationDb({
+      getActiveDispatchForTerminal: vi.fn((_handle: string, paneKey?: string) =>
+        paneKey === childPaneKey
+          ? {
+              id: 'ctx-1',
+              task_id: 'task-1',
+              assignee_handle: 'term_before_restart',
+              assignee_pane_key: childPaneKey,
+              status: 'dispatched'
+            }
+          : undefined
+      ),
+      getLatestDispatchForTerminal: vi.fn(() => undefined),
+      getTask: vi.fn(() => ({
+        id: 'task-1',
+        // Stale handle no longer resolves; the pane key is the durable link.
+        created_by_terminal_handle: 'term_parent_before_restart',
+        created_by_pane_key: persistedParentPaneKey,
+        task_title: 'Ship it',
+        display_name: 'Ship the change',
+        spec: 'Ship the change'
+      })),
+      getActiveCoordinatorRun: vi.fn(() => undefined)
+    } as never)
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'tab-parent',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Claude',
+          activeLeafId: parentLeafId,
+          layout: null
+        },
+        {
+          tabId: 'tab-child',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Claude',
+          activeLeafId: childLeafId,
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId: 'tab-parent',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: parentLeafId,
+          paneRuntimeId: 1,
+          ptyId: 'pty-parent'
+        },
+        {
+          tabId: 'tab-child',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: childLeafId,
+          paneRuntimeId: 1,
+          ptyId: 'pty-child'
+        }
+      ]
+    })
+
+    expect(runtime.getAgentStatusOrchestrationContextForPaneKey(childPaneKey)?.parentPaneKey).toBe(
+      parentPaneKey
+    )
+    const { worktrees } = await runtime.getWorktreePs()
+    const summary = worktrees.find((w) => w.worktreeId === TEST_WORKTREE_ID)
+    const childAgent = summary?.agents?.find((agent) => agent.paneKey === childPaneKey)
+    expect(childAgent?.parentPaneKey).toBe(parentPaneKey)
+  })
+
+  it('never fails a prior dispatch when a new terminal reusing the same pane exits', () => {
+    // Why: crash detection mutates persistent task state, so it must match the
+    // exiting terminal strictly by its own handle — a new terminal reusing the
+    // pane must not fail the previous worker's dispatch. Display grouping stays
+    // lenient (pane-based, cosmetic); only this mutating path is strict.
+    const childLeafId = '66666666-6666-4666-8666-666666666666'
+    const childPaneKey = `tab-reuse:${childLeafId}`
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getAgentStatusSnapshot: () => []
+    })
+    const graph = (ptyId: string) => ({
+      tabs: [
+        {
+          tabId: 'tab-reuse',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Claude',
+          activeLeafId: childLeafId,
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId: 'tab-reuse',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: childLeafId,
+          paneRuntimeId: 1,
+          ptyId
+        }
+      ]
+    })
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, graph('pty-old'))
+    const oldHandle = runtime.getAgentStatusTerminalHandleForPaneKey(childPaneKey)
+    expect(oldHandle).toBeTruthy()
+    const failDispatch = vi.fn()
+    runtime.setOrchestrationDb({
+      // Why: mirror the real DB — an exact handle hit resolves the dispatch, and
+      // the pane key only serves the lenient (display) fallback.
+      getActiveDispatchForTerminal: vi.fn((handle: string, paneKey?: string) =>
+        handle === oldHandle || paneKey === childPaneKey
+          ? {
+              id: 'ctx-reuse',
+              task_id: 'task-reuse',
+              assignee_handle: oldHandle,
+              assignee_pane_key: childPaneKey,
+              status: 'dispatched'
+            }
+          : undefined
+      ),
+      getLatestDispatchForTerminal: vi.fn(() => undefined),
+      getTask: vi.fn(() => ({
+        id: 'task-reuse',
+        task_title: 'Old work',
+        display_name: 'Old work',
+        spec: 'Old work'
+      })),
+      getActiveCoordinatorRun: vi.fn(() => undefined),
+      failDispatch
+    } as never)
+
+    // The genuine worker's terminal exiting DOES fail its dispatch (exact handle).
+    runtime.onPtyExit('pty-old', 1)
+    expect(failDispatch).toHaveBeenCalledWith('ctx-reuse', expect.any(String))
+
+    // A new, unrelated terminal reuses the pane; its exit must NOT touch the
+    // prior dispatch — its handle owns nothing.
+    failDispatch.mockClear()
+    runtime.syncWindowGraph(1, graph('pty-new'))
+    runtime.onPtyExit('pty-new', 1)
+    expect(failDispatch).not.toHaveBeenCalled()
+  })
+
+  it('resolves the parent via its live handle when the persisted pane key is a dead legacy key', () => {
+    const childLeafId = '77777777-7777-4777-8777-777777777777'
+    const parentLeafId = '88888888-8888-4888-8888-888888888888'
+    const childPaneKey = `tab-legacy-child:${childLeafId}`
+    const parentPaneKey = `tab-legacy-parent:${parentLeafId}`
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getAgentStatusSnapshot: () => []
+    })
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'tab-legacy-parent',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Claude',
+          activeLeafId: parentLeafId,
+          layout: null
+        },
+        {
+          tabId: 'tab-legacy-child',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Claude',
+          activeLeafId: childLeafId,
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId: 'tab-legacy-parent',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: parentLeafId,
+          paneRuntimeId: 1,
+          ptyId: 'pty-legacy-parent'
+        },
+        {
+          tabId: 'tab-legacy-child',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: childLeafId,
+          paneRuntimeId: 2,
+          ptyId: 'pty-legacy-child'
+        }
+      ]
+    })
+    const liveParentHandle = runtime.getAgentStatusTerminalHandleForPaneKey(parentPaneKey)
+    expect(liveParentHandle).toBeTruthy()
+    runtime.setOrchestrationDb({
+      getActiveDispatchForTerminal: vi.fn((_handle: string, paneKey?: string) =>
+        paneKey === childPaneKey
+          ? {
+              id: 'ctx-legacy',
+              task_id: 'task-legacy',
+              assignee_handle: 'term_child_before_restart',
+              assignee_pane_key: childPaneKey,
+              status: 'dispatched'
+            }
+          : undefined
+      ),
+      getLatestDispatchForTerminal: vi.fn(() => undefined),
+      getTask: vi.fn(() => ({
+        id: 'task-legacy',
+        created_by_terminal_handle: liveParentHandle,
+        // Legacy numeric pane key: unparseable, and no live pane matches it.
+        created_by_pane_key: 'stale-tab:3',
+        task_title: 'Legacy parent',
+        display_name: 'Legacy parent',
+        spec: 'Legacy parent'
+      })),
+      getActiveCoordinatorRun: vi.fn(() => undefined)
+    } as never)
+
+    expect(runtime.getAgentStatusOrchestrationContextForPaneKey(childPaneKey)?.parentPaneKey).toBe(
+      parentPaneKey
+    )
+  })
+
   it('uses mirrored tab ownership after a workspace rename instead of stale hook attribution', async () => {
     const renamedPath = '/tmp/worktree-renamed'
     const renamedWorktreeId = `${TEST_REPO_ID}::${renamedPath}`

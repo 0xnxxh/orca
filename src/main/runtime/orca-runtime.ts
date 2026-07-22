@@ -10960,6 +10960,13 @@ export class OrcaRuntimeService {
       return
     }
 
+    // Why: this path mutates persistent task state (failDispatch), so match
+    // strictly by the exiting terminal's current handle — never by fuzzy pane
+    // identity, which could fail an unrelated task that merely reused this
+    // pane. A heartbeat rebinds the assignee to the live handle (see
+    // rebindDispatchAssignee), so this resolves the genuine worker once it
+    // checks in; before that (the brief post-restart window) we no-op and let
+    // the coordinator's stale-heartbeat timeout be the backstop.
     const dispatch = this._orchestrationDb.getActiveDispatchForTerminal(handle)
     if (!dispatch) {
       return
@@ -21080,8 +21087,13 @@ export class OrcaRuntimeService {
         const terminalParent = await this.resolveWorkspaceParentSelector(
           `id:${terminal.worktreeId}`
         )
+        // Why: lineage-candidate attribution is advisory (parent selection for
+        // display), so resolve leniently by durable pane identity; a heartbeat
+        // rebinds the assignee to the live handle, so this is normally an exact
+        // handle hit.
         const activeDispatch = this._orchestrationDb?.getActiveDispatchForTerminal(
-          input.callerTerminalHandle
+          input.callerTerminalHandle,
+          this.getPaneKeyForTerminalHandle(input.callerTerminalHandle) ?? undefined
         )
         const activeRun = this._orchestrationDb?.getActiveCoordinatorRun()
         if (activeDispatch) {
@@ -22863,7 +22875,7 @@ export class OrcaRuntimeService {
     if (!handle) {
       return undefined
     }
-    return this.getAgentStatusOrchestrationContextForHandle(handle)
+    return this.getAgentStatusOrchestrationContextForHandle(handle, paneKey)
   }
 
   getAgentStatusTerminalHandleForPaneKey(paneKey: string): string | undefined {
@@ -22897,9 +22909,10 @@ export class OrcaRuntimeService {
         continue
       }
       const handle = this.issueHandle(leaf)
-      const context = this.getAgentStatusOrchestrationContextForHandle(handle, db)
+      const paneKey = this.makeRuntimePaneKey(leaf)
+      const context = this.getAgentStatusOrchestrationContextForHandle(handle, paneKey, db)
       if (context) {
-        contexts[this.makeRuntimePaneKey(leaf)] = context
+        contexts[paneKey] = context
       }
     }
     for (const pty of this.ptysById.values()) {
@@ -22907,7 +22920,7 @@ export class OrcaRuntimeService {
         continue
       }
       const handle = this.issuePtyHandle(pty)
-      const context = this.getAgentStatusOrchestrationContextForHandle(handle, db)
+      const context = this.getAgentStatusOrchestrationContextForHandle(handle, pty.paneKey, db)
       if (context) {
         contexts[pty.paneKey] = context
       }
@@ -22917,14 +22930,20 @@ export class OrcaRuntimeService {
 
   private getAgentStatusOrchestrationContextForHandle(
     handle: string,
+    paneKey?: string,
     db = this.getOrchestrationDbIfAvailable()
   ): AgentStatusOrchestrationContext | undefined {
-    // Why: active dispatches are authoritative for reused terminals. Completed
-    // context is only useful while the corresponding done/recent row can still
-    // be visible; after that it would stale-group unrelated future work.
+    // Why: this is a read-only display path (sidebar lineage grouping), so
+    // resolve leniently by durable pane identity — handle first, then leaf-UUID
+    // equivalence for a reminted/broken-out pane. A heartbeat rebinds the
+    // assignee to the live handle (see rebindDispatchAssignee), so the common
+    // case is an exact handle hit; the rare pre-heartbeat pane match can only
+    // mis-group cosmetically and self-heals once the real worker checks in or
+    // the dispatch closes. State mutation lives on the strict handle-only path
+    // (failActiveDispatchOnExit), never here.
     const dispatch =
-      db?.getActiveDispatchForTerminal?.(handle) ??
-      this.getRecentCompletedDispatchForTerminal(handle, db)
+      db?.getActiveDispatchForTerminal?.(handle, paneKey) ??
+      this.getRecentCompletedDispatchForTerminal(handle, paneKey, db)
     if (!dispatch) {
       return undefined
     }
@@ -22943,9 +22962,16 @@ export class OrcaRuntimeService {
       (activeRun?.coordinator_handle && activeRun.coordinator_handle !== handle
         ? activeRun.coordinator_handle
         : undefined)
-    const parentPaneKey = parentTerminalHandle
-      ? this.getPaneKeyForTerminalHandle(parentTerminalHandle)
-      : undefined
+    const persistedParentPaneKey = task?.created_by_pane_key
+    // Why: breakout changes a pane's tab prefix; emit its current key so the
+    // sidebar's exact parent-row lookup still succeeds after restart. A live
+    // resolution (persisted key or handle) beats the raw persisted key, which
+    // may be stale when the parent pane is gone or legacy-keyed.
+    const parentPaneKey =
+      (persistedParentPaneKey ? this.getLiveEquivalentPaneKey(persistedParentPaneKey) : null) ??
+      (parentTerminalHandle ? this.getPaneKeyForTerminalHandle(parentTerminalHandle) : null) ??
+      persistedParentPaneKey ??
+      undefined
 
     return {
       taskId: dispatch.task_id,
@@ -22961,9 +22987,10 @@ export class OrcaRuntimeService {
 
   private getRecentCompletedDispatchForTerminal(
     handle: string,
+    paneKey?: string,
     db = this.getOrchestrationDbIfAvailable()
   ): ReturnType<OrchestrationDb['getLatestDispatchForTerminal']> {
-    const dispatch = db?.getLatestDispatchForTerminal?.(handle)
+    const dispatch = db?.getLatestDispatchForTerminal?.(handle, paneKey)
     if (dispatch?.status !== 'completed' || !dispatch.completed_at) {
       return undefined
     }
@@ -23009,6 +23036,45 @@ export class OrcaRuntimeService {
       }
     }
     return null
+  }
+
+  private getLiveEquivalentPaneKey(paneKey: string): string | null {
+    const leafId = parsePaneKey(paneKey)?.leafId
+    let equivalentLeafPaneKey: string | null = null
+    for (const leaf of this.leaves.values()) {
+      // Why: "live" means a pane that can host an agent row; skip empty leaves.
+      if (!leaf.ptyId) {
+        continue
+      }
+      const currentPaneKey = this.makeRuntimePaneKey(leaf)
+      if (currentPaneKey === paneKey) {
+        return currentPaneKey
+      }
+      if (!equivalentLeafPaneKey && leafId && leaf.leafId === leafId) {
+        equivalentLeafPaneKey = currentPaneKey
+      }
+    }
+    if (equivalentLeafPaneKey) {
+      return equivalentLeafPaneKey
+    }
+
+    let equivalentPtyPaneKey: string | null = null
+    for (const pty of this.ptysById.values()) {
+      if (pty.paneKey === paneKey) {
+        return paneKey
+      }
+      // Why: without the leafId guard, two unparseable legacy keys would match
+      // as `undefined === undefined` and adopt an unrelated pane as parent.
+      if (
+        !equivalentPtyPaneKey &&
+        leafId &&
+        pty.paneKey &&
+        parsePaneKey(pty.paneKey)?.leafId === leafId
+      ) {
+        equivalentPtyPaneKey = pty.paneKey
+      }
+    }
+    return equivalentPtyPaneKey
   }
 
   private getPaneKeyForTerminalHandle(handle: string): string | null {

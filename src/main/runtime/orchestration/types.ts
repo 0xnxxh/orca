@@ -39,6 +39,7 @@ export type TaskRow = {
   id: string
   parent_id: string | null
   created_by_terminal_handle: string | null
+  created_by_pane_key: string | null
   task_title: string | null
   display_name: string | null
   spec: string

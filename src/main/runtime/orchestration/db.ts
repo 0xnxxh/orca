@@ -94,8 +94,13 @@ function exposeMessageListTimestamps(messages: MessageRow[]): MessageRow[] {
 // explicit task_title/display_name fields for orchestration worker UI labels.
 // v5 → v6 adds pane-identity columns (dispatch_contexts.assignee_pane_key,
 // messages.sender_pane_key) so worker_done ownership survives terminal handle
-// remints without accepting completions from unrelated panes.
-const SCHEMA_VERSION = 6
+// remints without accepting completions from unrelated panes. v6 → v7 adds
+// tasks.created_by_pane_key so the parent/child lineage the sidebar renders can
+// be rebuilt after a restart remints every terminal handle. v7 → v8 re-runs that
+// same column ensure: some long-lived DBs stamped user_version=7 before the v7
+// ALTER shipped (version reuse), which left CREATE/INSERT on created_by_pane_key
+// failing while migrate short-circuited.
+const SCHEMA_VERSION = 8
 
 export class OrchestrationDb {
   private db: Database.Database
@@ -141,6 +146,7 @@ export class OrchestrationDb {
         id            TEXT PRIMARY KEY,
         parent_id     TEXT,
         created_by_terminal_handle TEXT,
+        created_by_pane_key TEXT,
         task_title    TEXT,
         display_name  TEXT,
         spec          TEXT NOT NULL,
@@ -203,6 +209,7 @@ export class OrchestrationDb {
       );
     `)
     this.createUndeliveredInboxIndexIfPossible()
+    this.createDispatchPaneKeyIndexIfPossible()
   }
 
   // Why: `CREATE TABLE IF NOT EXISTS` is a no-op against an existing on-disk
@@ -210,10 +217,14 @@ export class OrchestrationDb {
   // not reach an upgraded user unless we migrate explicitly. The transaction
   // guarantees atomicity — a mid-migration crash leaves the DB at the prior
   // version because `user_version` is bumped only on success. Idempotent
-  // re-invocation is a no-op (current >= SCHEMA_VERSION short-circuit).
+  // re-invocation is a no-op (current >= SCHEMA_VERSION short-circuit), except
+  // for lightweight column repairs that recover version-reuse mistakes.
   private migrate(): void {
     const current = this.db.pragma('user_version', { simple: true }) as number
     if (current >= SCHEMA_VERSION) {
+      // Why: short-circuit skips versioned steps; still repair columns that may
+      // be missing when user_version was stamped without the matching ALTER.
+      this.ensureCreatedByPaneKeyColumn()
       return
     }
 
@@ -310,13 +321,26 @@ export class OrchestrationDb {
           this.db.exec(`ALTER TABLE messages ADD COLUMN sender_pane_key TEXT`)
         }
       }
+      // v6→v7 and v7→v8 both ensure created_by_pane_key (v8 repairs version-reuse).
+      if (current < 8) {
+        this.ensureCreatedByPaneKeyColumn()
+      }
       this.createUndeliveredInboxIndexIfPossible()
+      this.createDispatchPaneKeyIndexIfPossible()
 
       this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
       this.db.exec('COMMIT')
     } catch (err) {
       this.db.exec('ROLLBACK')
       throw err
+    }
+  }
+
+  // Why: INSERT always names created_by_pane_key; a missing column hard-fails
+  // task-create even when user_version claims the schema is current.
+  private ensureCreatedByPaneKeyColumn(): void {
+    if (!this.hasColumn('tasks', 'created_by_pane_key')) {
+      this.db.exec(`ALTER TABLE tasks ADD COLUMN created_by_pane_key TEXT`)
     }
   }
 
@@ -332,6 +356,16 @@ export class OrchestrationDb {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_messages_undelivered_inbox
         ON messages(to_handle, read, delivered_at, sequence)
+    `)
+  }
+
+  private createDispatchPaneKeyIndexIfPossible(): void {
+    if (!this.hasColumn('dispatch_contexts', 'assignee_pane_key')) {
+      return
+    }
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_dispatch_contexts_assignee_pane_key
+        ON dispatch_contexts(assignee_pane_key)
     `)
   }
 
@@ -562,6 +596,8 @@ export class OrchestrationDb {
     deps?: string[]
     parentId?: string
     createdByTerminalHandle?: string
+    // Why: terminal handles remint on restart, but sidebar lineage must persist.
+    createdByPaneKey?: string
   }): TaskRow {
     const id = generateId('task')
     const depsJson = JSON.stringify(task.deps ?? [])
@@ -574,12 +610,13 @@ export class OrchestrationDb {
     })
     this.db
       .prepare(
-        'INSERT INTO tasks (id, parent_id, created_by_terminal_handle, task_title, display_name, spec, status, deps) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO tasks (id, parent_id, created_by_terminal_handle, created_by_pane_key, task_title, display_name, spec, status, deps) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         id,
         task.parentId ?? null,
         task.createdByTerminalHandle ?? null,
+        task.createdByPaneKey ?? null,
         display.taskTitle || null,
         display.displayName || null,
         task.spec,
@@ -758,8 +795,9 @@ export class OrchestrationDb {
       | undefined
   }
 
-  getActiveDispatchForTerminal(handle: string): DispatchContextRow | undefined {
-    return this.findActiveDispatchForAssignee(handle)
+  getActiveDispatchForTerminal(handle: string, paneKey?: string): DispatchContextRow | undefined {
+    // Why: the pane key keeps the dispatch resolvable after handle remint.
+    return this.findActiveDispatchForAssignee(handle, paneKey)
   }
 
   private findActiveDispatchForAssignee(
@@ -774,31 +812,73 @@ export class OrchestrationDb {
     if (byHandle) {
       return byHandle
     }
+    return assigneePaneKey ? this.resolveDispatchByPaneKey(assigneePaneKey, true) : undefined
+  }
 
-    if (!assigneePaneKey) {
-      return undefined
+  getLatestDispatchForTerminal(handle: string, paneKey?: string): DispatchContextRow | undefined {
+    const byHandle = this.db
+      .prepare(
+        'SELECT * FROM dispatch_contexts WHERE assignee_handle = ? ORDER BY rowid DESC LIMIT 1'
+      )
+      .get(handle) as DispatchContextRow | undefined
+    if (byHandle || !paneKey) {
+      return byHandle
+    }
+    return this.resolveDispatchByPaneKey(paneKey, false)
+  }
+
+  // Why: the handle remints on restart, so fall back to the durable pane
+  // identity. Exact `assignee_pane_key` is index-served; the `substr` leaf
+  // suffix is a rare bridge for pre-heartbeat break-out (a heartbeat rebinds
+  // `assignee_pane_key` to the current key, so exact match dominates once a
+  // worker checks in). `activeOnly` scopes to live dispatches.
+  private resolveDispatchByPaneKey(
+    paneKey: string,
+    activeOnly: boolean
+  ): DispatchContextRow | undefined {
+    const statusFilter = activeOnly ? " AND status IN ('pending', 'dispatched')" : ''
+    const exactPane = this.db
+      .prepare(
+        `SELECT * FROM dispatch_contexts
+         WHERE assignee_pane_key = ?${statusFilter} ORDER BY rowid DESC LIMIT 1`
+      )
+      .get(paneKey) as DispatchContextRow | undefined
+    if (exactPane) {
+      return exactPane
     }
 
-    const actives = this.db
+    const leafId = parsePaneKey(paneKey)?.leafId
+    if (!leafId) {
+      return undefined
+    }
+    const rows = this.db
       .prepare(
-        "SELECT * FROM dispatch_contexts WHERE assignee_pane_key IS NOT NULL AND status IN ('pending', 'dispatched')"
+        `SELECT * FROM dispatch_contexts
+         WHERE substr(assignee_pane_key, -37) = ?${statusFilter} ORDER BY rowid DESC`
       )
-      .all() as DispatchContextRow[]
-
-    for (const row of actives) {
-      if (row.assignee_pane_key && isEquivalentPaneKey(row.assignee_pane_key, assigneePaneKey)) {
+      .all(`:${leafId}`) as DispatchContextRow[]
+    for (const row of rows) {
+      if (row.assignee_pane_key && isEquivalentPaneKey(row.assignee_pane_key, paneKey)) {
         return row
       }
     }
     return undefined
   }
 
-  getLatestDispatchForTerminal(handle: string): DispatchContextRow | undefined {
-    return this.db
+  // Why: a heartbeat/worker_done authorized by dispatchId + pane identity
+  // proves this handle+pane now drives the dispatch. Rebinding the assignee
+  // re-anchors handle-based resolution after a restart remints the handle (or
+  // a break-out changes the tab prefix) — durably, with no in-memory tracking.
+  // Scoped to `dispatched` rows so a late message can't resurrect a closed
+  // dispatch; COALESCE keeps a missing sender pane key from wiping the stored one.
+  rebindDispatchAssignee(dispatchId: string, handle: string, paneKey?: string): void {
+    this.db
       .prepare(
-        'SELECT * FROM dispatch_contexts WHERE assignee_handle = ? ORDER BY rowid DESC LIMIT 1'
+        `UPDATE dispatch_contexts
+           SET assignee_handle = ?, assignee_pane_key = COALESCE(?, assignee_pane_key)
+         WHERE id = ? AND status = 'dispatched'`
       )
-      .get(handle) as DispatchContextRow | undefined
+      .run(handle, paneKey ?? null, dispatchId)
   }
 
   completeDispatch(ctxId: string): void {

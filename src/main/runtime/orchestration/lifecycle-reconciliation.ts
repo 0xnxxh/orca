@@ -146,6 +146,13 @@ function reconcileHeartbeatMessage(
     return { action: 'rejected', code: 'sender_not_assignee', reason }
   }
 
+  // Why: the heartbeat's pane authority proves this handle+pane now drives the
+  // dispatch, so re-anchor the assignee here. This is the durable self-heal
+  // after a restart remints the worker's handle — handle-based resolution and
+  // strict crash detection work again from the first post-restart heartbeat,
+  // with no in-memory tracking.
+  db.rebindDispatchAssignee(dispatchId, msg.from_handle, msg.sender_pane_key ?? undefined)
+
   // Why: dispatchId-specific writes let the DB ignore late heartbeats for
   // completed/failed retries without masking a newer hung dispatch.
   db.recordHeartbeat(dispatchId, msg.created_at)
