@@ -1246,7 +1246,17 @@
         "noRunTargets": "此项目还没有可用的运行目标。",
         "perWorkspaceEnvHint": "通过环境模板按需创建环境",
         "branchName": "分支名称",
-        "branchNamePlaceholder": "feature/my-branch"
+        "branchNamePlaceholder": "feature/my-branch",
+        "connectTimedOut": "Connection timed out. It may still be connecting in the background.",
+        "connectingHost": "Connecting…",
+        "connectHost": "Connect",
+        "addHost": "Add host",
+        "addHostHint": "Register another machine or Orca server",
+        "addSshHost": "Add SSH host",
+        "addSshHostHint": "Use an existing machine over SSH",
+        "addRemoteOrcaServer": "Add Remote Orca Server",
+        "addRemoteOrcaServerHint": "Pair another Orca runtime",
+        "hostConnectionFailed": "Connection failed"
       },
       "NewWorkspaceComposerModal": {
         "createWorktree": "创建工作树",
@@ -4484,7 +4494,14 @@
           "worktree": {
             "flow": {
               "c460fecc4a": "无法睡眠某些工作区",
-              "8bc3fc0671": "无法睡眠工作区"
+              "8bc3fc0671": "无法睡眠工作区",
+              "legacy": {
+                "unverified": "The older host runtime could not confirm terminal shutdown. The workspace was kept open; update the host and try again."
+              },
+              "host": {
+                "unverified": "The host could not confirm terminal shutdown. The workspace was kept open; check the connection and try again."
+              },
+              "retry": "The workspace was kept open. Try again; if the problem continues, check the host connection."
             }
           }
         },
@@ -4793,7 +4810,8 @@
           "sshImportFailed": "导入 SSH 配置失败。",
           "importing": "正在导入...",
           "importSshConfig": "导入 ~/.ssh/config",
-          "sshPersistenceDefault": "此主机上的远程终端会保持运行，直到你结束它们或重置中继。"
+          "sshPersistenceDefault": "此主机上的远程终端会保持运行，直到你结束它们或重置中继。",
+          "advanced": "Advanced"
         },
         "ForgetSshWorkspaceDialog": {
           "reconnectFailed": "重新连接失败",
@@ -7208,7 +7226,14 @@
             "agentPermissions": "智能体权限",
             "agentPermissionsDescription": "在 Yolo 和手动之间切换智能体权限默认值。",
             "agentRuntime": "智能体运行时",
-            "agentRuntimeDescription": "选择默认在 Windows 还是 WSL 中检测并启动智能体。"
+            "agentRuntimeDescription": "选择默认在 Windows 还是 WSL 中检测并启动智能体。",
+            "conversation": "conversation",
+            "conversationName": "conversation name",
+            "sidebar": "sidebar",
+            "dashboard": "dashboard",
+            "activityRow": "activity",
+            "lastMessage": "last message",
+            "rowLabel": "label"
           }
         },
         "appearance": {
@@ -9267,6 +9292,10 @@
           "title": "Editor Font Family",
           "description": "Font used by file editors and diff views. Leave empty to follow the terminal font.",
           "placeholder": "Same as terminal font"
+        },
+        "agent-row-conversation-name-copy": {
+          "title": "Label agent rows with conversation names",
+          "description": "Show the conversation name (tab rename or agent-set title) on sidebar and dashboard agent rows instead of the last message. Rows without a name keep the last message."
         }
       },
       "right": {

@@ -1246,7 +1246,17 @@
         "noRunTargets": "No hay destinos de ejecución listos para este proyecto.",
         "perWorkspaceEnvHint": "Provisiona un entorno bajo demanda a partir de una receta",
         "branchName": "Nombre de rama",
-        "branchNamePlaceholder": "feature/my-branch"
+        "branchNamePlaceholder": "feature/my-branch",
+        "connectTimedOut": "Connection timed out. It may still be connecting in the background.",
+        "connectingHost": "Connecting…",
+        "connectHost": "Connect",
+        "addHost": "Add host",
+        "addHostHint": "Register another machine or Orca server",
+        "addSshHost": "Add SSH host",
+        "addSshHostHint": "Use an existing machine over SSH",
+        "addRemoteOrcaServer": "Add Remote Orca Server",
+        "addRemoteOrcaServerHint": "Pair another Orca runtime",
+        "hostConnectionFailed": "Connection failed"
       },
       "NewWorkspaceComposerModal": {
         "createWorktree": "Crear worktree",
@@ -4503,7 +4513,14 @@
           "worktree": {
             "flow": {
               "c460fecc4a": "No se pudieron poner en reposo algunos espacios de trabajo",
-              "8bc3fc0671": "No se pudo poner en reposo el espacio de trabajo"
+              "8bc3fc0671": "No se pudo poner en reposo el espacio de trabajo",
+              "legacy": {
+                "unverified": "The older host runtime could not confirm terminal shutdown. The workspace was kept open; update the host and try again."
+              },
+              "host": {
+                "unverified": "The host could not confirm terminal shutdown. The workspace was kept open; check the connection and try again."
+              },
+              "retry": "The workspace was kept open. Try again; if the problem continues, check the host connection."
             }
           }
         },
@@ -4793,7 +4810,8 @@
           "sshImportFailed": "No se pudo importar la configuración SSH.",
           "importing": "Importando...",
           "importSshConfig": "Importar ~/.ssh/config",
-          "sshPersistenceDefault": "Los terminales remotos en este host seguirán activos hasta que los cierres o restablezcas el relay."
+          "sshPersistenceDefault": "Los terminales remotos en este host seguirán activos hasta que los cierres o restablezcas el relay.",
+          "advanced": "Advanced"
         },
         "ForgetSshWorkspaceDialog": {
           "reconnectFailed": "Error de reconexión",
@@ -7223,7 +7241,14 @@
             "agentPermissions": "Permisos de agentes",
             "agentPermissionsDescription": "Cambia los permisos predeterminados de los agentes entre Yolo y Manual.",
             "agentRuntime": "Runtime del agente",
-            "agentRuntimeDescription": "Elige si los agentes se detectan y ejecutan en Windows o en WSL de forma predeterminada."
+            "agentRuntimeDescription": "Elige si los agentes se detectan y ejecutan en Windows o en WSL de forma predeterminada.",
+            "conversation": "conversation",
+            "conversationName": "conversation name",
+            "sidebar": "sidebar",
+            "dashboard": "dashboard",
+            "activityRow": "activity",
+            "lastMessage": "last message",
+            "rowLabel": "label"
           }
         },
         "appearance": {
@@ -9267,6 +9292,10 @@
           "title": "Editor Font Family",
           "description": "Font used by file editors and diff views. Leave empty to follow the terminal font.",
           "placeholder": "Same as terminal font"
+        },
+        "agent-row-conversation-name-copy": {
+          "title": "Label agent rows with conversation names",
+          "description": "Show the conversation name (tab rename or agent-set title) on sidebar and dashboard agent rows instead of the last message. Rows without a name keep the last message."
         }
       },
       "right": {

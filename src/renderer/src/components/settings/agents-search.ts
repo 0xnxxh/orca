@@ -10,6 +10,11 @@ import {
   getAgentGeneratedTabTitlesTitle
 } from './agent-generated-tab-title-copy'
 import {
+  getAgentRowConversationNamesDescription,
+  getAgentRowConversationNamesSearchKeywords,
+  getAgentRowConversationNamesTitle
+} from './agent-row-conversation-name-copy'
+import {
   getAgentStatusHooksDescription,
   getAgentStatusHooksSearchKeywords,
   getAgentStatusHooksTitle
@@ -110,6 +115,11 @@ const getAllAgentsPaneSearchEntries = createLocalizedCatalog(() => [
     title: getAgentGeneratedTabTitlesTitle(),
     description: getAgentGeneratedTabTitlesDescription(),
     keywords: getAgentGeneratedTabTitlesSearchKeywords()
+  },
+  {
+    title: getAgentRowConversationNamesTitle(),
+    description: getAgentRowConversationNamesDescription(),
+    keywords: getAgentRowConversationNamesSearchKeywords()
   },
   {
     title: getAgentAwakeTitle(),
