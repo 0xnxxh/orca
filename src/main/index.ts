@@ -243,6 +243,7 @@ let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
 let desktopRelayService: DesktopRelayService | null = null
 let desktopRelayStatus: RelayBrokerStatus = 'offline'
+let pendingUnpairedDeviceAuthFailure = false
 // Why: gates whether headless serve installs the offscreen browser backend (and advertises browser pane support).
 let headlessBrowserDisplayAvailable = false
 
@@ -2268,10 +2269,28 @@ app.whenReady().then(async () => {
       : {}),
     webClientRoot: getBundledWebClientRoot()
   })
-  registerMobileHandlers(runtimeRpc, { getRelayStatus: () => desktopRelayStatus })
-  // Why: silent 4001 loops (lost device registry) look like "phone won't connect" — tell the renderer so it can suggest re-pairing.
+  registerMobileHandlers(runtimeRpc, {
+    getRelayStatus: () => desktopRelayStatus,
+    consumePendingUnpairedDeviceAuthFailure: (webContentsId) => {
+      if (
+        !mainWindow ||
+        mainWindow.isDestroyed() ||
+        mainWindow.webContents.id !== webContentsId ||
+        !pendingUnpairedDeviceAuthFailure
+      ) {
+        return false
+      }
+      pendingUnpairedDeviceAuthFailure = false
+      return true
+    }
+  })
+  // Why: repeated direct auth failures otherwise look like a client that never connects; point users to re-pairing.
   runtimeRpc.setOnUnpairedDeviceAuthFailure(() => {
-    mainWindow?.webContents.send('mobile:unpairedDeviceAuthFailure')
+    // Why: runtime startup races renderer mount; retain the one-shot until the listener consumes it.
+    pendingUnpairedDeviceAuthFailure = true
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('mobile:unpairedDeviceAuthFailure')
+    }
   })
 
   startTerminalRuntimeStartupServices()

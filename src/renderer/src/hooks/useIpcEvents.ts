@@ -86,6 +86,7 @@ import { attachMobileMarkdownBridge } from '@/runtime/mobile-markdown-bridge'
 import { closeMobileSessionTabInStore } from '@/runtime/mobile-session-tab-close'
 import { createWorktreeChangeRefreshQueue } from './worktree-change-refresh-queue'
 import { subscribeRuntimeClientEvents } from '@/runtime/runtime-client-events'
+import { subscribeToUnpairedDeviceAuthNotification } from './unpaired-device-auth-notification'
 import {
   applyRuntimeEnvironmentSshStateChanged,
   hydrateRuntimeEnvironmentSshState
@@ -1175,16 +1176,17 @@ export function useIpcEvents(): void {
     // Why: a phone stuck in a silent 4001 auth loop (lost device registry) reads as
     // "phone won't connect" with no clue on either end; main throttles to once per session.
     unsubs.push(
-      window.api.mobile?.onUnpairedDeviceAuthFailure?.(() => {
+      subscribeToUnpairedDeviceAuthNotification(window.api.mobile, () => {
         toast.warning(
           translate(
             'auto.hooks.useIpcEvents.ef223fbb6b',
-            'A phone tried to connect but is not paired'
+            'A device tried to connect but is not paired'
           ),
           {
+            id: 'unpaired-device-auth-failure',
             description: translate(
               'auto.hooks.useIpcEvents.11992d0337',
-              'Its pairing is no longer valid on this desktop. Re-pair it from Settings → Mobile.'
+              'If this was your phone or another Orca client, re-pair it from Settings → Mobile.'
             ),
             duration: 15_000,
             action: {
@@ -1197,7 +1199,7 @@ export function useIpcEvents(): void {
             }
           }
         )
-      }) ?? (() => {})
+      })
     )
 
     unsubs.push(

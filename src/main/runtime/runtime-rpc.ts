@@ -886,9 +886,8 @@ export class OrcaRuntimeRpcServer {
               this.runtime.onClientDisconnected(socket.device.deviceToken)
             }
           },
-          // Why: relay attempts are authorized upstream; only direct-transport misses
-          // indicate a phone holding credentials this desktop no longer recognizes.
-          onUnknownDeviceAuth: (metadata) => {
+          // Why: relay attempts are authorized upstream; only direct failures should prompt local re-pairing.
+          onUnpairedDeviceAuthFailure: (metadata) => {
             if (metadata.transport === 'direct') {
               this.unpairedDeviceAuthThrottle?.recordFailure()
             }

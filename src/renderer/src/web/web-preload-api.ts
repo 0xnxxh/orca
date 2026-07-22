@@ -784,6 +784,7 @@ function createWebPreloadApi(): Partial<PreloadApi> {
         Promise.resolve({ ready: Boolean(activeEnvironment), endpoint: null }),
       getRelayStatus: () => Promise.resolve({ status: 'offline' as const }),
       onRelayStatusChanged: () => noopUnsubscribe,
+      consumePendingUnpairedDeviceAuthFailure: () => Promise.resolve(false),
       onUnpairedDeviceAuthFailure: () => noopUnsubscribe
     },
     telemetryTrack: () => Promise.resolve(),

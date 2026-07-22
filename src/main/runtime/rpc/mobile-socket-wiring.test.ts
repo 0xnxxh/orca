@@ -144,7 +144,7 @@ describe('MobileSocketWiring', () => {
     const phone = generateKeyPair()
     const ws = new FakeSocket()
     const transport = new FakeTransport()
-    const onUnknownDeviceAuth = vi.fn()
+    const onUnpairedDeviceAuthFailure = vi.fn()
     const wiring = new MobileSocketWiring({
       deviceRegistry: registryFor('device-1', 'valid-token'),
       e2eeKeypair: {
@@ -155,7 +155,7 @@ describe('MobileSocketWiring', () => {
       onText: vi.fn(),
       onBinary: vi.fn(),
       onClose: vi.fn(),
-      onUnknownDeviceAuth
+      onUnpairedDeviceAuthFailure
     })
     wiring.attachTransport(transport)
 
@@ -172,8 +172,48 @@ describe('MobileSocketWiring', () => {
       encrypt(JSON.stringify({ type: 'e2ee_auth', deviceToken: 'stale-token' }), sharedKey)
     )
 
-    expect(onUnknownDeviceAuth).toHaveBeenCalledOnce()
-    expect(onUnknownDeviceAuth).toHaveBeenCalledWith({ transport: 'direct' })
+    expect(onUnpairedDeviceAuthFailure).toHaveBeenCalledOnce()
+    expect(onUnpairedDeviceAuthFailure).toHaveBeenCalledWith({ transport: 'direct' })
+    expect(transport.setClientId).not.toHaveBeenCalled()
+    expect(ws.close).toHaveBeenCalledWith(4001, 'Unauthorized')
+  })
+
+  it('reports auth encrypted to a stale desktop key on the direct path', () => {
+    const currentDesktop = generateKeyPair()
+    const staleDesktop = generateKeyPair()
+    const phone = generateKeyPair()
+    const ws = new FakeSocket()
+    const transport = new FakeTransport()
+    const onUnpairedDeviceAuthFailure = vi.fn()
+    const wiring = new MobileSocketWiring({
+      deviceRegistry: registryFor('device-1', 'valid-token'),
+      e2eeKeypair: {
+        publicKey: currentDesktop.publicKey,
+        secretKey: currentDesktop.secretKey,
+        publicKeyB64: Buffer.from(currentDesktop.publicKey).toString('base64')
+      },
+      onText: vi.fn(),
+      onBinary: vi.fn(),
+      onClose: vi.fn(),
+      onUnpairedDeviceAuthFailure
+    })
+    wiring.attachTransport(transport)
+
+    transport.receive(
+      ws,
+      JSON.stringify({
+        type: 'e2ee_hello',
+        publicKeyB64: Buffer.from(phone.publicKey).toString('base64')
+      })
+    )
+    const staleSharedKey = deriveSharedKey(phone.secretKey, staleDesktop.publicKey)
+    transport.receive(
+      ws,
+      encrypt(JSON.stringify({ type: 'e2ee_auth', deviceToken: 'valid-token' }), staleSharedKey)
+    )
+
+    expect(onUnpairedDeviceAuthFailure).toHaveBeenCalledOnce()
+    expect(onUnpairedDeviceAuthFailure).toHaveBeenCalledWith({ transport: 'direct' })
     expect(transport.setClientId).not.toHaveBeenCalled()
     expect(ws.close).toHaveBeenCalledWith(4001, 'Unauthorized')
   })
