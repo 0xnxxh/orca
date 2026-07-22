@@ -139,12 +139,16 @@ describe('MobileSocketWiring', () => {
     expect(wiring.connectionCount).toBe(0)
   })
 
-  it('reports an unknown device token on the direct path and closes 4001', () => {
+  it('closes an unknown-token socket even when reporting the failure throws', () => {
     const desktop = generateKeyPair()
     const phone = generateKeyPair()
     const ws = new FakeSocket()
     const transport = new FakeTransport()
-    const onUnpairedDeviceAuthFailure = vi.fn()
+    const notificationError = new Error('renderer exited')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const onUnpairedDeviceAuthFailure = vi.fn(() => {
+      throw notificationError
+    })
     const wiring = new MobileSocketWiring({
       deviceRegistry: registryFor('device-1', 'valid-token'),
       e2eeKeypair: {
@@ -167,15 +171,23 @@ describe('MobileSocketWiring', () => {
       })
     )
     const sharedKey = deriveSharedKey(phone.secretKey, desktop.publicKey)
-    transport.receive(
-      ws,
-      encrypt(JSON.stringify({ type: 'e2ee_auth', deviceToken: 'stale-token' }), sharedKey)
-    )
+    expect(() =>
+      transport.receive(
+        ws,
+        encrypt(JSON.stringify({ type: 'e2ee_auth', deviceToken: 'stale-token' }), sharedKey)
+      )
+    ).not.toThrow()
 
     expect(onUnpairedDeviceAuthFailure).toHaveBeenCalledOnce()
     expect(onUnpairedDeviceAuthFailure).toHaveBeenCalledWith({ transport: 'direct' })
+    expect(consoleError).toHaveBeenCalledWith(
+      '[mobile] Failed to report unpaired-device auth failure:',
+      notificationError
+    )
     expect(transport.setClientId).not.toHaveBeenCalled()
     expect(ws.close).toHaveBeenCalledWith(4001, 'Unauthorized')
+    expect(wiring.channelCount).toBe(0)
+    consoleError.mockRestore()
   })
 
   it('reports auth encrypted to a stale desktop key on the direct path', () => {

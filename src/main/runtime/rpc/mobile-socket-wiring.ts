@@ -155,12 +155,18 @@ export class MobileSocketWiring {
           this.onReady?.(socket)
         },
         onError: (code, reason) => {
-          if (code === 4001 && reason === 'Unauthorized') {
-            this.onUnpairedDeviceAuthFailure?.(metadata)
-          }
+          const reportUnpairedDevice = code === 4001 && reason === 'Unauthorized'
           this.channels.get(ws)?.destroy()
           this.channels.delete(ws)
           ws.close(code, reason)
+          if (reportUnpairedDevice) {
+            try {
+              this.onUnpairedDeviceAuthFailure?.(metadata)
+            } catch (error) {
+              // Why: renderer teardown can make UI delivery throw; auth cleanup must remain authoritative.
+              console.error('[mobile] Failed to report unpaired-device auth failure:', error)
+            }
+          }
         }
       })
       channel.onMessage((plaintext, reply, sendBinary) => {
