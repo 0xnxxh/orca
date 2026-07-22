@@ -41,10 +41,6 @@ const StatusIndicator = React.memo(function StatusIndicator({
   }
 
   if (status === 'permission') {
-    // Why: the "needs permission / needs you" state renders the same
-    // MessageCircleQuestion glyph the agent dashboard uses, so the sidebar's
-    // worktree-level status matches the board and agent-row indicators
-    // instead of showing a bare amber dot. Amber keeps the attention color.
     return (
       <span
         className={cn('inline-flex h-3 w-3 shrink-0 items-center justify-center', className)}

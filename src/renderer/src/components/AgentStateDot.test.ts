@@ -51,12 +51,10 @@ describe('AgentStateDot', () => {
     (state) => {
       const markup = renderMarkup(state)
 
-      // Why: the "needs you" states share the dashboard's MessageCircleQuestion
-      // glyph rather than a bare dot. Assert the lucide class hook + amber text
-      // color without coupling to the exact SVG path lucide emits.
-      expect(markup).toContain('lucide-message-circle-question')
+      expect(markup).toContain('lucide-message-circle-question-mark')
       expect(markup).toContain('text-amber-500')
       expect(markup).not.toContain('bg-amber-500')
+      expect(markup).not.toContain('data-agent-spinner')
     }
   )
 

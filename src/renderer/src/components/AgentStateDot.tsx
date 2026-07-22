@@ -96,11 +96,6 @@ export const AgentStateDot = React.memo(function AgentStateDot({
   }
 
   if (state === 'permission' || state === 'waiting') {
-    // Why: the "needs you" states (an agent asking a question / awaiting
-    // input) render the same MessageCircleQuestion glyph the dashboard card
-    // uses for its pending-question pill, so "an agent needs you" reads
-    // identically across the board, sidebar rows, and terminal tabs instead
-    // of as an ambiguous amber dot. Amber still carries the attention color.
     return (
       <span
         className={cn('inline-flex shrink-0 items-center justify-center', box, className)}

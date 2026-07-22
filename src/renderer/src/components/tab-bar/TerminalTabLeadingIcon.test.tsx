@@ -40,9 +40,7 @@ describe('TerminalTabLeadingIcon', () => {
     const markup = renderStatus('permission')
 
     expect(markup).toContain('data-agent-activity-status="permission"')
-    // Why: the "needs you" states render the amber MessageCircleQuestion glyph
-    // rather than a bare amber dot (unified across board/sidebar/tabs).
-    expect(markup).toContain('lucide-message-circle-question')
+    expect(markup).toContain('lucide-message-circle-question-mark')
     expect(markup).toContain('text-amber-500')
     expect(markup).not.toContain('bg-red-500')
   })

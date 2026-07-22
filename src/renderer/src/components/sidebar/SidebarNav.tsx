@@ -52,10 +52,6 @@ export function shouldShowAutomationsButton(
   return settings?.showAutomationsButton !== false
 }
 
-// Per-state markers mirror AgentStateDot so the sidebar counts read the same as
-// the board: 'attention' (needs you) renders the amber MessageCircleQuestion
-// glyph — the same one the board and status dots now use — while the calmer
-// buckets stay dots (yellow = working, neutral = idle).
 const DASHBOARD_BUCKET_DOT_CLASS: Record<'working' | 'idle', string> = {
   working: 'bg-yellow-500',
   idle: 'bg-neutral-500/50'

@@ -252,9 +252,7 @@ describe('DashboardAgentRow', () => {
     const tokens = classTokens(markup)
 
     expect(markup).toContain('aria-label="Waiting for input"')
-    // Why: the "needs you" states render the amber MessageCircleQuestion glyph
-    // rather than a bare amber dot (unified across the board/sidebar).
-    expect(markup).toContain('lucide-message-circle-question')
+    expect(markup).toContain('lucide-message-circle-question-mark')
     expect(tokens).toContain('text-amber-500')
     expect(tokens).not.toContain('bg-red-500')
   })

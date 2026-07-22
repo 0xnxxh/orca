@@ -126,9 +126,7 @@ describe('WorktreeCardStatusSlot', () => {
     )
 
     expect(markup).toContain('Needs permission · Unread')
-    // Why: the permission status renders the amber MessageCircleQuestion glyph
-    // rather than a bare amber dot.
-    expect(markup).toContain('lucide-message-circle-question')
+    expect(markup).toContain('lucide-message-circle-question-mark')
     expect(markup).toContain('text-amber-500')
     expect(markup).not.toContain('data-worktree-status-lane-unread=""')
     expect(markup).not.toContain('data-worktree-unread-alert=""')
@@ -381,7 +379,7 @@ describe('WorktreeCardStatusSlot', () => {
     )
 
     expect(markup).toContain('Needs permission')
-    expect(markup).toContain('lucide-message-circle-question')
+    expect(markup).toContain('lucide-message-circle-question-mark')
     expect(markup).toContain('text-amber-500')
     expect(markup).not.toContain('PR checks: Failed')
   })
