@@ -22,8 +22,8 @@ type WatchClock = {
 
 export type MacosLoginSessionDeathWatchOptions = {
   /** Fresh PAM probe (cache-bypassing); null when the login wrapper doesn't apply on this host. */
-  probeLoginSession: () => Promise<LoginPreflightOutcome | null>
-  readResolverHealth: () => Promise<SystemResolverHealth>
+  probeLoginSession: (signal?: AbortSignal) => Promise<LoginPreflightOutcome | null>
+  readResolverHealth: (signal?: AbortSignal) => Promise<SystemResolverHealth>
   onRetire: (details: {
     cause: 'pam-rejections'
     rejections: number
@@ -78,7 +78,10 @@ export class MacosLoginSessionDeathWatch {
   private stopped = false
   private retired = false
   private scheduledProbeTimer: unknown | null = null
+  private scheduledProbeAtMs: number | null = null
   private ptyExitDebounceTimer: unknown | null = null
+  private pendingProbeTrigger: string | null = null
+  private probeAbortController: AbortController | null = null
 
   constructor(opts: MacosLoginSessionDeathWatchOptions) {
     this.probeLoginSession = opts.probeLoginSession
@@ -110,9 +113,12 @@ export class MacosLoginSessionDeathWatch {
 
   stop(): void {
     this.stopped = true
+    this.probeAbortController?.abort()
+    this.probeAbortController = null
     if (this.scheduledProbeTimer !== null) {
       this.clock.clearTimeout(this.scheduledProbeTimer)
       this.scheduledProbeTimer = null
+      this.scheduledProbeAtMs = null
     }
     if (this.ptyExitDebounceTimer !== null) {
       this.clock.clearTimeout(this.ptyExitDebounceTimer)
@@ -138,43 +144,87 @@ export class MacosLoginSessionDeathWatch {
     if (this.stopped) {
       return
     }
-    if (
-      this.lastProbeStartedAtMs !== null &&
-      this.clock.now() - this.lastProbeStartedAtMs < this.clientActivityMinGapMs
-    ) {
+    if (this.probeInFlight) {
+      if (this.armed) {
+        this.retainPendingProbe('client-hello')
+      }
+      return
+    }
+    const elapsedSinceProbe =
+      this.lastProbeStartedAtMs === null ? null : this.clock.now() - this.lastProbeStartedAtMs
+    if (elapsedSinceProbe !== null && elapsedSinceProbe < this.clientActivityMinGapMs) {
+      // Why: dropping a post-login hello here can defer stale-daemon recovery to the two-minute backstop.
+      this.scheduleProbeNoLaterThan(this.clientActivityMinGapMs - elapsedSinceProbe, 'client-hello')
       return
     }
     void this.runProbe('client-hello')
   }
 
-  private scheduleNextProbe(delayMs: number): void {
+  private scheduleProbe(delayMs: number, trigger: string): void {
     if (this.stopped) {
       return
     }
     if (this.scheduledProbeTimer !== null) {
       this.clock.clearTimeout(this.scheduledProbeTimer)
     }
+    this.scheduledProbeAtMs = this.clock.now() + delayMs
     this.scheduledProbeTimer = this.clock.setTimeout(() => {
       this.scheduledProbeTimer = null
-      void this.runProbe('periodic')
+      this.scheduledProbeAtMs = null
+      void this.runProbe(trigger)
     }, delayMs)
   }
 
-  private async runProbe(trigger: string): Promise<void> {
-    if (this.stopped || this.retired || this.probeInFlight) {
+  private scheduleNextProbe(delayMs: number): void {
+    this.scheduleProbe(delayMs, 'periodic')
+  }
+
+  private scheduleProbeNoLaterThan(delayMs: number, trigger: string): void {
+    const requestedAtMs = this.clock.now() + delayMs
+    if (this.scheduledProbeAtMs !== null && this.scheduledProbeAtMs <= requestedAtMs) {
       return
     }
+    this.scheduleProbe(delayMs, trigger)
+  }
+
+  private probeGapMs(trigger: string): number {
+    return trigger === 'client-hello' ? this.clientActivityMinGapMs : this.minProbeGapMs
+  }
+
+  private retainPendingProbe(trigger: string): void {
+    if (
+      this.pendingProbeTrigger === null ||
+      this.probeGapMs(trigger) < this.probeGapMs(this.pendingProbeTrigger)
+    ) {
+      this.pendingProbeTrigger = trigger
+    }
+  }
+
+  private async runProbe(trigger: string): Promise<void> {
+    if (this.stopped || this.retired) {
+      return
+    }
+    if (this.probeInFlight) {
+      // Why: the current probe may describe the pre-logout state; retain one follow-up without polling.
+      this.retainPendingProbe(trigger)
+      return
+    }
+    const elapsedSinceProbe =
+      this.lastProbeStartedAtMs === null ? null : this.clock.now() - this.lastProbeStartedAtMs
     if (
       trigger !== 'startup' &&
-      this.lastProbeStartedAtMs !== null &&
-      this.clock.now() - this.lastProbeStartedAtMs < this.minProbeGapMs
+      elapsedSinceProbe !== null &&
+      elapsedSinceProbe < this.minProbeGapMs
     ) {
+      this.scheduleProbeNoLaterThan(this.minProbeGapMs - elapsedSinceProbe, trigger)
       return
     }
     this.probeInFlight = true
     this.lastProbeStartedAtMs = this.clock.now()
+    const abortController = new AbortController()
+    this.probeAbortController = abortController
     try {
-      const outcome = await this.probeLoginSession()
+      const outcome = await this.probeLoginSession(abortController.signal)
       if (this.stopped || this.retired) {
         return
       }
@@ -215,7 +265,7 @@ export class MacosLoginSessionDeathWatch {
       }
       await this.retireIfResolverDegraded(() => {
         this.consecutiveRejections = REQUIRED_CONSECUTIVE_REJECTIONS - 1
-      })
+      }, abortController.signal)
     } catch (error) {
       // Why: a probe failure is diagnostic only; an escaped rejection would trip the
       // daemon's fatal unhandled-error path and kill live terminals.
@@ -223,11 +273,26 @@ export class MacosLoginSessionDeathWatch {
       this.scheduleNextProbe(this.periodicProbeMs)
     } finally {
       this.probeInFlight = false
+      if (this.probeAbortController === abortController) {
+        this.probeAbortController = null
+      }
+      const pendingTrigger = this.pendingProbeTrigger
+      this.pendingProbeTrigger = null
+      if (!this.stopped && !this.retired && pendingTrigger !== null) {
+        const elapsed = this.clock.now() - (this.lastProbeStartedAtMs ?? this.clock.now())
+        this.scheduleProbeNoLaterThan(
+          Math.max(0, this.probeGapMs(pendingTrigger) - elapsed),
+          pendingTrigger
+        )
+      }
     }
   }
 
-  private async retireIfResolverDegraded(holdAtThreshold: () => void): Promise<void> {
-    const resolverHealth = await this.readResolverHealth()
+  private async retireIfResolverDegraded(
+    holdAtThreshold: () => void,
+    signal: AbortSignal
+  ): Promise<void> {
+    const resolverHealth = await this.readResolverHealth(signal)
     if (this.stopped || this.retired) {
       return
     }

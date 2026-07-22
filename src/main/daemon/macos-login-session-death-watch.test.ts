@@ -225,13 +225,70 @@ describe('MacosLoginSessionDeathWatch', () => {
     watch.start()
     await drainMicrotasks()
     const after = probe.mock.calls.length
-    watch.notifyClientActivity() // too soon after startup probe
-    await drainMicrotasks()
+    watch.notifyClientActivity() // too soon after startup probe, so retain one deferred probe
+    await clock.advance(29_999)
     expect(probe.mock.calls.length).toBe(after)
-    await clock.advance(30_000)
-    watch.notifyClientActivity()
-    await drainMicrotasks()
+    await clock.advance(1)
     expect(probe.mock.calls.length).toBe(after + 1)
+  })
+
+  it('defers a PTY-exit trigger that lands inside the global probe gap', async () => {
+    const { watch, clock, probe } = createWatch({ outcomes: [ACCEPTED, ACCEPTED] })
+    watch.start()
+    await drainMicrotasks()
+
+    watch.notifyPtyExit()
+    await clock.advance(4_999)
+    expect(probe).toHaveBeenCalledOnce()
+    await clock.advance(1)
+    expect(probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains one follow-up when a logout signal arrives during a probe', async () => {
+    let resolveStartup!: (outcome: LoginPreflightOutcome) => void
+    const startup = new Promise<LoginPreflightOutcome>((resolve) => {
+      resolveStartup = resolve
+    })
+    const probe = vi
+      .fn<MacosLoginSessionDeathWatchOptions['probeLoginSession']>()
+      .mockReturnValueOnce(startup)
+      .mockResolvedValue(ACCEPTED)
+    const { watch, clock } = createWatch({ probeLoginSession: probe })
+    watch.start()
+    watch.notifyPtyExit()
+    await clock.advance(2_000)
+    expect(probe).toHaveBeenCalledOnce()
+
+    resolveStartup(ACCEPTED)
+    await drainMicrotasks()
+    await clock.advance(2_999)
+    expect(probe).toHaveBeenCalledOnce()
+    await clock.advance(1)
+    expect(probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('retains client activity that arrives during an armed periodic probe', async () => {
+    let resolvePeriodic!: (outcome: LoginPreflightOutcome) => void
+    const periodic = new Promise<LoginPreflightOutcome>((resolve) => {
+      resolvePeriodic = resolve
+    })
+    const probe = vi
+      .fn<MacosLoginSessionDeathWatchOptions['probeLoginSession']>()
+      .mockResolvedValueOnce(ACCEPTED)
+      .mockReturnValueOnce(periodic)
+      .mockResolvedValue(ACCEPTED)
+    const { watch, clock } = createWatch({ probeLoginSession: probe })
+    watch.start()
+    await drainMicrotasks()
+    await clock.advance(120_000)
+
+    watch.notifyClientActivity()
+    resolvePeriodic(ACCEPTED)
+    await drainMicrotasks()
+    await clock.advance(29_999)
+    expect(probe).toHaveBeenCalledTimes(2)
+    await clock.advance(1)
+    expect(probe).toHaveBeenCalledTimes(3)
   })
 
   it('disables itself when the wrapper machinery does not apply', async () => {
@@ -255,14 +312,33 @@ describe('MacosLoginSessionDeathWatch', () => {
     expect(clock.pendingCount()).toBe(0)
   })
 
+  it('stop() aborts an in-flight subprocess probe', async () => {
+    let probeSignal: AbortSignal | undefined
+    const probe = vi.fn((signal?: AbortSignal) => {
+      probeSignal = signal
+      return new Promise<LoginPreflightOutcome>(() => {})
+    })
+    const { watch } = createWatch({ probeLoginSession: probe })
+    watch.start()
+    expect(probeSignal?.aborted).toBe(false)
+
+    watch.stop()
+
+    expect(probeSignal?.aborted).toBe(true)
+  })
+
   it('stop() prevents an in-flight resolver check from retiring the daemon', async () => {
     let resolveHealth!: (health: SystemResolverHealth) => void
+    let resolverSignal: AbortSignal | undefined
     const resolverHealth = new Promise<SystemResolverHealth>((resolve) => {
       resolveHealth = resolve
     })
     const { watch, clock, onRetire } = createWatch({
       outcomes: [ACCEPTED, REJECTED, REJECTED, REJECTED],
-      readResolverHealth: () => resolverHealth
+      readResolverHealth: (signal) => {
+        resolverSignal = signal
+        return resolverHealth
+      }
     })
     watch.start()
     await drainMicrotasks()
@@ -271,6 +347,7 @@ describe('MacosLoginSessionDeathWatch', () => {
     await clock.advance(10_000) // retirement is now waiting on resolver health
 
     watch.stop()
+    expect(resolverSignal?.aborted).toBe(true)
     resolveHealth('unhealthy')
     await drainMicrotasks()
 

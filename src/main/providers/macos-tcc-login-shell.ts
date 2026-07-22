@@ -36,6 +36,8 @@ const DISABLE_ENV_VAR = 'ORCA_DISABLE_MACOS_LOGIN_SHELL'
 let cachedLoginPreflightResult: boolean | null = null
 let loginPreflightInFlight: Promise<LoginPreflightOutcome> | null = null
 let transientLoginPreflightFailure: { failureCount: number; retryAtMs: number } | null = null
+let loginPreflightCacheEpoch = 0
+let loginSessionProbeInFlight = false
 
 function isDisabledByEnv(): boolean {
   const value = process.env[DISABLE_ENV_VAR]
@@ -55,7 +57,8 @@ function loginPreflightRetryDelayMs(failureCount: number): number {
 function runLoginPreflight(
   username: string,
   accountHome: string,
-  timeoutMs = LOGIN_PREFLIGHT_TIMEOUT_MS
+  timeoutMs = LOGIN_PREFLIGHT_TIMEOUT_MS,
+  signal?: AbortSignal
 ): Promise<LoginPreflightOutcome> {
   return new Promise((resolve) => {
     try {
@@ -71,6 +74,7 @@ function runLoginPreflight(
           // captured diagnostics without blocking the PTY host's event loop.
           killSignal: 'SIGKILL',
           maxBuffer: LOGIN_PREFLIGHT_MAX_BUFFER_BYTES,
+          signal,
           timeout: timeoutMs
         },
         (error, stdout) => {
@@ -114,15 +118,17 @@ function loginPreflightSucceeds(
     return Promise.resolve(cached)
   }
   if (!loginPreflightInFlight) {
+    const cacheEpoch = loginPreflightCacheEpoch
     // Why: simultaneous pane restores share one PAM child instead of multiplying
     // subprocesses at exactly the point terminal startup is already busiest.
     loginPreflightInFlight = runLoginPreflight(username, accountHome).then((outcome) => {
       // Why: cache only a conclusive PAM verdict; a killed/timed-out probe is
       // environmental and must be retried next spawn, not stuck forever (F1).
-      if (outcome.conclusive) {
+      const mayUpdateCache = !loginSessionProbeInFlight && cacheEpoch === loginPreflightCacheEpoch
+      if (outcome.conclusive && mayUpdateCache) {
         cachedLoginPreflightResult = outcome.ok
         transientLoginPreflightFailure = null
-      } else {
+      } else if (!outcome.conclusive && mayUpdateCache) {
         const failureCount = (transientLoginPreflightFailure?.failureCount ?? 0) + 1
         transientLoginPreflightFailure = {
           failureCount,
@@ -185,6 +191,8 @@ export function resetMacosLoginShellPreflightForTests(): void {
   cachedLoginPreflightResult = null
   loginPreflightInFlight = null
   transientLoginPreflightFailure = null
+  loginPreflightCacheEpoch = 0
+  loginSessionProbeInFlight = false
 }
 
 /**
@@ -196,7 +204,9 @@ export function resetMacosLoginShellPreflightForTests(): void {
  * probe is inconclusive, since a dead session's PAM stack may only misbehave
  * under a real tty. Returns null when the wrapper doesn't apply.
  */
-export async function probeMacosLoginSessionAlive(): Promise<LoginPreflightOutcome | null> {
+export async function probeMacosLoginSessionAlive(
+  signal?: AbortSignal
+): Promise<LoginPreflightOutcome | null> {
   if (process.platform !== 'darwin' || isDisabledByEnv() || !existsSync(MACOS_LOGIN_PATH)) {
     return null
   }
@@ -212,14 +222,27 @@ export async function probeMacosLoginSessionAlive(): Promise<LoginPreflightOutco
   if (!username || !accountHome) {
     return null
   }
-  let outcome = await runLoginPreflight(username, accountHome, LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS)
-  if (!outcome.conclusive) {
-    outcome = await runMacosLoginSessionPtyProbe(
-      username,
-      accountHome,
-      LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS,
-      LOGIN_PREFLIGHT_MAX_BUFFER_BYTES
-    )
+  // Why: reuse the startup warmup when present, and fence older spawn-path results from restoring a stale verdict.
+  const existingPreflight = loginPreflightInFlight
+  loginSessionProbeInFlight = true
+  loginPreflightCacheEpoch++
+  let outcome: LoginPreflightOutcome
+  try {
+    outcome = await (existingPreflight ??
+      runLoginPreflight(username, accountHome, LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS, signal))
+    if (!outcome.conclusive && !signal?.aborted) {
+      outcome = await runMacosLoginSessionPtyProbe(
+        username,
+        accountHome,
+        LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS,
+        LOGIN_PREFLIGHT_MAX_BUFFER_BYTES,
+        signal
+      )
+    }
+  } finally {
+    // Why: invalidate spawn probes started during this fresh check before they can overwrite its newer verdict.
+    loginPreflightCacheEpoch++
+    loginSessionProbeInFlight = false
   }
   if (outcome.conclusive) {
     cachedLoginPreflightResult = outcome.ok

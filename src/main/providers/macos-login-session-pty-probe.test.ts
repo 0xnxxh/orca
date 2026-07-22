@@ -21,6 +21,7 @@ describe('runMacosLoginSessionPtyProbe', () => {
   })
 
   it('runs login under expect-owned PTY and requires its marker plus a clean exit', async () => {
+    const abortController = new AbortController()
     execFileMock.mockImplementation(
       (_file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
         callback(null, '^D\b\bORCA_LOGIN_PREFLIGHT_OK', '')
@@ -28,11 +29,9 @@ describe('runMacosLoginSessionPtyProbe', () => {
       }
     )
 
-    await expect(runMacosLoginSessionPtyProbe('ada', '/Users/ada', 4_000, 1_024)).resolves.toEqual({
-      ok: true,
-      conclusive: true,
-      reason: 'accepted'
-    })
+    await expect(
+      runMacosLoginSessionPtyProbe('ada', '/Users/ada', 4_000, 1_024, abortController.signal)
+    ).resolves.toEqual({ ok: true, conclusive: true, reason: 'accepted' })
     expect(execFileMock).toHaveBeenCalledWith(
       '/usr/bin/expect',
       [
@@ -46,11 +45,13 @@ describe('runMacosLoginSessionPtyProbe', () => {
         env: expect.objectContaining({ ORCA_LOGIN_PROBE_USERNAME: 'ada' }),
         killSignal: 'SIGKILL',
         maxBuffer: 1_024,
+        signal: abortController.signal,
         timeout: 4_000
       }),
       expect.any(Function)
     )
     expect(stdinEndMock).toHaveBeenCalledOnce()
+    expect(execFileMock.mock.calls[0]?.[1]?.[1]).toContain('send "\\004"; expect eof')
   })
 
   it('treats a natural exit without the marker as a conclusive rejection', async () => {

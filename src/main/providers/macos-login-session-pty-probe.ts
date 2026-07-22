@@ -33,7 +33,8 @@ export function runMacosLoginSessionPtyProbe(
   username: string,
   accountHome: string,
   timeoutMs: number,
-  maxOutputBytes: number
+  maxOutputBytes: number,
+  signal?: AbortSignal
 ): Promise<LoginPreflightOutcome> {
   if (!existsSync(MACOS_EXPECT_PATH)) {
     return Promise.resolve({ ok: false, conclusive: false, reason: 'error' })
@@ -49,6 +50,7 @@ export function runMacosLoginSessionPtyProbe(
           env: { ...process.env, [LOGIN_PROBE_USERNAME_ENV]: username },
           killSignal: 'SIGKILL',
           maxBuffer: maxOutputBytes,
+          signal,
           timeout: timeoutMs
         },
         (error, stdout) => {
