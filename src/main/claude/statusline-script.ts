@@ -22,20 +22,20 @@ export function getManagedStatusLineScript(target: 'local' | 'posix' = 'local'):
       'setlocal',
       // Why: pane key is static PTY env (the endpoint file never sets it), so it can gate before stdin is consumed.
       `if "%ORCA_PANE_KEY%"=="" goto :${WINDOWS_HOOK_STDIN_DRAIN_LABEL}`,
+      // Why: tab ids may contain path characters or exceed filename limits; the stable leaf UUID is safe and globally unique.
+      'set "ORCA_STATUSLINE_PANE_ID=%ORCA_PANE_KEY:~-36%"',
       // Why: cmd has no builtin stdin capture, so buffer the payload in a per-pane temp file
       // (%RANDOM% collides across same-second cmd spawns) to guard before any curl spawn.
-      'set "ORCA_STATUSLINE_PAYLOAD_FILE=%TEMP%\\orca-claude-statusline-%ORCA_PANE_KEY::=_%.tmp"',
+      'set "ORCA_STATUSLINE_PAYLOAD_FILE=%TEMP%\\orca-claude-statusline-%ORCA_STATUSLINE_PANE_ID%.tmp"',
       `${WINDOWS_HOOK_STDIN_READER} >"%ORCA_STATUSLINE_PAYLOAD_FILE%" 2>nul`,
-      // Why: all-builtin seconds-of-day throttle — ~3 ticks/sec while streaming would otherwise spawn
-      // findstr+curl each tick. `1%%x %% 100` defuses cmd's leading-zero-is-octal parse; any parse/read
-      // oddity (locale separators, garbage stamp, midnight wrap) leaves ELAPSED undefined or negative
-      // and fails open to posting, so a broken throttle can never dark the live usage feed.
-      'set "ORCA_STATUSLINE_STAMP_FILE=%TEMP%\\orca-claude-statusline-last-%ORCA_PANE_KEY::=_%.tmp"',
+      // Why: an all-builtin seconds-of-day throttle avoids spawning findstr+curl on every streaming tick.
+      'set "ORCA_STATUSLINE_STAMP_FILE=%TEMP%\\orca-claude-statusline-last-%ORCA_STATUSLINE_PANE_ID%.tmp"',
       'set "ORCA_STATUSLINE_TIME=%TIME: =0%"',
       'for /f "tokens=1-3 delims=:.," %%a in ("%ORCA_STATUSLINE_TIME%") do set /a "ORCA_STATUSLINE_NOW=(1%%a %% 100)*3600+(1%%b %% 100)*60+(1%%c %% 100)" 2>nul',
       'set "ORCA_STATUSLINE_LAST="',
       'set "ORCA_STATUSLINE_ELAPSED="',
       'if exist "%ORCA_STATUSLINE_STAMP_FILE%" set /p ORCA_STATUSLINE_LAST=<"%ORCA_STATUSLINE_STAMP_FILE%"',
+      'if defined ORCA_STATUSLINE_LAST for /f "delims=0123456789" %%d in ("%ORCA_STATUSLINE_LAST%") do set "ORCA_STATUSLINE_LAST="',
       'if defined ORCA_STATUSLINE_LAST set /a "ORCA_STATUSLINE_ELAPSED=ORCA_STATUSLINE_NOW-ORCA_STATUSLINE_LAST" 2>nul',
       `if not defined ORCA_STATUSLINE_ELAPSED goto :${STATUSLINE_PROBE_LABEL}`,
       `if %ORCA_STATUSLINE_ELAPSED% GEQ 0 if %ORCA_STATUSLINE_ELAPSED% LSS ${CLAUDE_STATUSLINE_MIN_POST_INTERVAL_SECONDS} goto :${STATUSLINE_CLEANUP_LABEL}`,
@@ -90,19 +90,40 @@ export function getManagedStatusLineScript(target: 'local' | 'posix' = 'local'):
     'if [ -z "$ORCA_AGENT_HOOK_PORT" ] || [ -z "$ORCA_AGENT_HOOK_TOKEN" ] || [ -z "$ORCA_PANE_KEY" ]; then',
     '  exit 0',
     'fi',
-    // Why: rate_limits ticks arrive ~3x/sec while streaming; a per-pane stamp file bounds curl
-    // spawns to one per interval. Every parse/read oddity fails open to posting — a lost throttle
-    // costs spawns, a wrong throttle would silently dark the live usage feed.
-    'orca_statusline_stamp="${TMPDIR:-/tmp}/orca-claude-statusline-last-${ORCA_PANE_KEY}"',
-    'orca_statusline_now=$(date +%s 2>/dev/null) || orca_statusline_now=',
+    // Why: the stable leaf UUID avoids path-unsafe and overlong user-supplied tab ids.
+    'orca_statusline_pane_id=${ORCA_PANE_KEY##*:}',
+    'orca_statusline_stamp="${TMPDIR:-/tmp}/orca-claude-statusline-last-${orca_statusline_pane_id}"',
+    // Why: the payload clock keeps throttled ticks free of subprocesses; date is only a schema-drift fallback.
+    'orca_statusline_now=',
+    'case "$payload" in',
+    '  *\'"total_duration_ms"\'*)',
+    '    orca_statusline_duration=${payload#*\'"total_duration_ms"\'}',
+    '    orca_statusline_duration=${orca_statusline_duration#*:}',
+    '    orca_statusline_duration=${orca_statusline_duration#"${orca_statusline_duration%%[![:space:]]*}"}',
+    '    orca_statusline_duration=${orca_statusline_duration%%[!0-9]*}',
+    '    case "$orca_statusline_duration" in',
+    '      0|[1-9]|[1-9][0-9]*)',
+    '        if [ "${#orca_statusline_duration}" -le 15 ]; then',
+    '          orca_statusline_now=$((orca_statusline_duration / 1000))',
+    '        fi',
+    '        ;;',
+    '    esac',
+    '    ;;',
+    'esac',
+    'if [ -z "$orca_statusline_now" ]; then',
+    '  orca_statusline_now=$(date +%s 2>/dev/null) || orca_statusline_now=',
+    'fi',
     'case "$orca_statusline_now" in \'\'|*[!0-9]*) orca_statusline_now= ;; esac',
     'if [ -n "$orca_statusline_now" ] && [ -f "$orca_statusline_stamp" ]; then',
     '  orca_statusline_last=',
     '  IFS= read -r orca_statusline_last <"$orca_statusline_stamp" 2>/dev/null || :',
-    '  case "$orca_statusline_last" in \'\'|*[!0-9]*) orca_statusline_last=0 ;; esac',
-    '  orca_statusline_elapsed=$((orca_statusline_now - orca_statusline_last))',
-    `  if [ "$orca_statusline_elapsed" -ge 0 ] && [ "$orca_statusline_elapsed" -lt ${CLAUDE_STATUSLINE_MIN_POST_INTERVAL_SECONDS} ]; then`,
-    '    exit 0',
+    '  case "$orca_statusline_last" in \'\'|*[!0-9]*) orca_statusline_last= ;; esac',
+    '  if [ "${#orca_statusline_last}" -gt 15 ]; then orca_statusline_last=; fi',
+    '  if [ -n "$orca_statusline_last" ]; then',
+    '    orca_statusline_elapsed=$((orca_statusline_now - orca_statusline_last))',
+    `    if [ "$orca_statusline_elapsed" -ge 0 ] && [ "$orca_statusline_elapsed" -lt ${CLAUDE_STATUSLINE_MIN_POST_INTERVAL_SECONDS} ]; then`,
+    '      exit 0',
+    '    fi',
     '  fi',
     'fi',
     'if [ -n "$orca_statusline_now" ]; then',

@@ -58,10 +58,10 @@ describe('getManagedStatusLineScript (win32 local)', () => {
   it('posts the buffered payload file and deletes it afterwards', () => {
     stubPlatform('win32')
     const script = getManagedStatusLineScript('local')
-    // Why: the temp file is per-pane (pane key with ":" mapped to "_") because %RANDOM%
-    // collides across cmd instances spawned in the same second.
+    // Why: the stable leaf UUID stays filename-safe even when a host-supplied tab id does not.
+    expect(script).toContain('set "ORCA_STATUSLINE_PANE_ID=%ORCA_PANE_KEY:~-36%"')
     expect(script).toContain(
-      'set "ORCA_STATUSLINE_PAYLOAD_FILE=%TEMP%\\orca-claude-statusline-%ORCA_PANE_KEY::=_%.tmp"'
+      'set "ORCA_STATUSLINE_PAYLOAD_FILE=%TEMP%\\orca-claude-statusline-%ORCA_STATUSLINE_PANE_ID%.tmp"'
     )
     expect(script).toContain('--data-urlencode "payload@%ORCA_STATUSLINE_PAYLOAD_FILE%"')
     expect(script).not.toContain('payload@-')
@@ -100,7 +100,7 @@ describe('getManagedStatusLineScript (win32 local)', () => {
     const script = getManagedStatusLineScript('local')
     const captureIndex = script.indexOf('more.com')
     const stampIndex = script.indexOf(
-      'set "ORCA_STATUSLINE_STAMP_FILE=%TEMP%\\orca-claude-statusline-last-%ORCA_PANE_KEY::=_%.tmp"'
+      'set "ORCA_STATUSLINE_STAMP_FILE=%TEMP%\\orca-claude-statusline-last-%ORCA_STATUSLINE_PANE_ID%.tmp"'
     )
     const throttleIndex = script.indexOf(
       `if %ORCA_STATUSLINE_ELAPSED% GEQ 0 if %ORCA_STATUSLINE_ELAPSED% LSS ${CLAUDE_STATUSLINE_MIN_POST_INTERVAL_SECONDS} goto :orca_statusline_cleanup`
@@ -120,6 +120,9 @@ describe('getManagedStatusLineScript (win32 local)', () => {
     expect(stampWriteIndex).toBeLessThan(curlIndex)
     // Fail-open shape: undefined elapsed (unparseable time/stamp) proceeds to the probe.
     expect(script).toContain('if not defined ORCA_STATUSLINE_ELAPSED goto :orca_statusline_probe')
+    expect(script).toContain(
+      'for /f "delims=0123456789" %%d in ("%ORCA_STATUSLINE_LAST%") do set "ORCA_STATUSLINE_LAST="'
+    )
     // cmd parses leading-zero numbers as octal; 1%%x %% 100 defuses 08/09.
     expect(script).toContain('(1%%a %% 100)*3600+(1%%b %% 100)*60+(1%%c %% 100)')
     expect(script).toContain('set "ORCA_STATUSLINE_TIME=%TIME: =0%"')
@@ -131,23 +134,23 @@ describe('statusline curl throttle (posix)', () => {
     stubPlatform('darwin')
     const script = getManagedStatusLineScript('local')
     const envGuardIndex = script.indexOf('-z "$ORCA_AGENT_HOOK_PORT"')
-    const stampIndex = script.indexOf('orca-claude-statusline-last-${ORCA_PANE_KEY}')
+    const durationIndex = script.indexOf('"total_duration_ms"')
+    const stampIndex = script.indexOf('orca-claude-statusline-last-${orca_statusline_pane_id}')
     const intervalIndex = script.indexOf(`-lt ${CLAUDE_STATUSLINE_MIN_POST_INTERVAL_SECONDS}`)
     const curlIndex = script.indexOf('curl -sS')
     expect(envGuardIndex).toBeLessThan(stampIndex)
-    expect(stampIndex).toBeLessThan(intervalIndex)
+    expect(stampIndex).toBeLessThan(durationIndex)
+    expect(durationIndex).toBeLessThan(intervalIndex)
     expect(intervalIndex).toBeLessThan(curlIndex)
     // Fail-open shape: non-numeric date output or stamp content must never suppress the post.
     expect(script).toContain('case "$orca_statusline_now" in \'\'|*[!0-9]*) orca_statusline_now=')
-    expect(script).toContain(
-      'case "$orca_statusline_last" in \'\'|*[!0-9]*) orca_statusline_last=0'
-    )
+    expect(script).toContain('case "$orca_statusline_last" in \'\'|*[!0-9]*) orca_statusline_last=')
   })
 })
 
 describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix behavioral)', () => {
+  const LEAF_ID = '00000000-0000-4000-8000-000000000000'
   const PANE_KEY = 'tab-1:00000000-0000-4000-8000-000000000000'
-  const RATE_LIMIT_PAYLOAD = '{"rate_limits":{"five_hour":{"used_percentage":12}}}'
   const dirs: string[] = []
 
   afterEach(() => {
@@ -156,10 +159,18 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     }
   })
 
-  function makeHarness(): { scriptPath: string; dir: string; curlLog: string } {
+  function rateLimitPayload(durationMs: number): string {
+    return JSON.stringify({
+      cost: { total_duration_ms: durationMs },
+      rate_limits: { five_hour: { used_percentage: 12 } }
+    })
+  }
+
+  function makeHarness(): { scriptPath: string; dir: string; curlLog: string; dateLog: string } {
     const dir = mkdtempSync(join(tmpdir(), 'orca-statusline-throttle-'))
     dirs.push(dir)
     const curlLog = join(dir, 'curl.log')
+    const dateLog = join(dir, 'date.log')
     const scriptPath = join(dir, 'statusline.sh')
     writeFileSync(scriptPath, getManagedStatusLineScript('posix'))
     const binDir = join(dir, 'stub-bin')
@@ -167,10 +178,20 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     writeFileSync(join(binDir, 'curl'), `#!/bin/sh\nprintf 'x\\n' >> "${curlLog}"\nexit 0\n`, {
       mode: 0o755
     })
-    return { scriptPath, dir, curlLog }
+    writeFileSync(
+      join(binDir, 'date'),
+      `#!/bin/sh\nprintf 'x\\n' >> "${dateLog}"\nprintf '2000000000\\n'\n`,
+      { mode: 0o755 }
+    )
+    return { scriptPath, dir, curlLog, dateLog }
   }
 
-  function runScript(scriptPath: string, dir: string, payload: string): Promise<void> {
+  function runScript(
+    scriptPath: string,
+    dir: string,
+    payload: string,
+    paneKey = PANE_KEY
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const child = spawn('sh', [scriptPath], {
         env: {
@@ -178,7 +199,7 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
           TMPDIR: dir,
           ORCA_AGENT_HOOK_PORT: '65535',
           ORCA_AGENT_HOOK_TOKEN: 'test-token',
-          ORCA_PANE_KEY: PANE_KEY
+          ORCA_PANE_KEY: paneKey
         },
         stdio: ['pipe', 'ignore', 'pipe']
       })
@@ -199,48 +220,66 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     })
   }
 
-  function curlCount(curlLog: string): number {
+  function lineCount(logPath: string): number {
     try {
-      return readFileSync(curlLog, 'utf8').split('\n').filter(Boolean).length
+      return readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length
     } catch {
       return 0
     }
   }
 
-  function stampPathFor(dir: string): string {
-    return join(dir, `orca-claude-statusline-last-${PANE_KEY}`)
+  function stampPathFor(dir: string, leafId = LEAF_ID): string {
+    return join(dir, `orca-claude-statusline-last-${leafId}`)
   }
 
-  it('spawns curl once across rapid ticks, not once per tick', async () => {
-    const { scriptPath, dir, curlLog } = makeHarness()
-    await runScript(scriptPath, dir, RATE_LIMIT_PAYLOAD)
-    await runScript(scriptPath, dir, RATE_LIMIT_PAYLOAD)
-    await runScript(scriptPath, dir, RATE_LIMIT_PAYLOAD)
-    expect(curlCount(curlLog)).toBe(1)
+  it('spawns one curl and no clock subprocesses across 30 rapid ticks', async () => {
+    const { scriptPath, dir, curlLog, dateLog } = makeHarness()
+    for (let index = 0; index < 30; index += 1) {
+      await runScript(scriptPath, dir, rateLimitPayload(1_000 + index * 100))
+    }
+    expect(lineCount(curlLog)).toBe(1)
+    expect(lineCount(dateLog)).toBe(0)
     expect(readFileSync(stampPathFor(dir), 'utf8')).toMatch(/^[0-9]+$/)
   })
 
   it('posts again once the interval has elapsed', async () => {
     const { scriptPath, dir, curlLog } = makeHarness()
-    await runScript(scriptPath, dir, RATE_LIMIT_PAYLOAD)
-    const expired = Math.floor(Date.now() / 1000) - CLAUDE_STATUSLINE_MIN_POST_INTERVAL_SECONDS - 1
-    writeFileSync(stampPathFor(dir), String(expired))
-    await runScript(scriptPath, dir, RATE_LIMIT_PAYLOAD)
-    expect(curlCount(curlLog)).toBe(2)
+    await runScript(scriptPath, dir, rateLimitPayload(1_000))
+    await runScript(scriptPath, dir, rateLimitPayload(16_000))
+    expect(lineCount(curlLog)).toBe(2)
   })
 
-  it('fails open and posts when the stamp file holds garbage', async () => {
+  it('fails open on a garbage stamp even early in a session', async () => {
     const { scriptPath, dir, curlLog } = makeHarness()
     writeFileSync(stampPathFor(dir), 'not-a-number')
-    await runScript(scriptPath, dir, RATE_LIMIT_PAYLOAD)
-    expect(curlCount(curlLog)).toBe(1)
+    await runScript(scriptPath, dir, rateLimitPayload(1_000))
+    expect(lineCount(curlLog)).toBe(1)
     expect(readFileSync(stampPathFor(dir), 'utf8')).toMatch(/^[0-9]+$/)
   })
 
-  it('never touches curl or the stamp for payloads without rate_limits', async () => {
+  it('uses the clock fallback when the payload omits session duration', async () => {
+    const { scriptPath, dir, curlLog, dateLog } = makeHarness()
+    const payload = '{"rate_limits":{"five_hour":{"used_percentage":12}}}'
+    await runScript(scriptPath, dir, payload)
+    await runScript(scriptPath, dir, payload)
+    expect(lineCount(curlLog)).toBe(1)
+    expect(lineCount(dateLog)).toBe(2)
+  })
+
+  it('uses only the stable leaf id for temp files', async () => {
     const { scriptPath, dir, curlLog } = makeHarness()
+    const paneKey = `${'path/segment/'.repeat(30)}tab:${LEAF_ID}`
+    await runScript(scriptPath, dir, rateLimitPayload(1_000), paneKey)
+    await runScript(scriptPath, dir, rateLimitPayload(2_000), paneKey)
+    expect(lineCount(curlLog)).toBe(1)
+    expect(readFileSync(stampPathFor(dir), 'utf8')).toBe('1')
+  })
+
+  it('never touches curl or the stamp for payloads without rate_limits', async () => {
+    const { scriptPath, dir, curlLog, dateLog } = makeHarness()
     await runScript(scriptPath, dir, '{"model":{"id":"claude-fable-5"}}')
-    expect(curlCount(curlLog)).toBe(0)
+    expect(lineCount(curlLog)).toBe(0)
+    expect(lineCount(dateLog)).toBe(0)
     expect(() => readFileSync(stampPathFor(dir), 'utf8')).toThrow()
   })
 })
