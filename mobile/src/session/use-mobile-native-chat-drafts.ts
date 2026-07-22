@@ -43,6 +43,8 @@ export function useMobileNativeChatDrafts(args: {
   tabId: string | null
   sessionId: string | null
   messages: readonly NativeChatMessage[]
+  /** Host-provided launch context still parked as an unsent TUI-input draft. */
+  launchDraft?: string | null
 }): {
   composerText: string
   setComposerText: Dispatch<SetStateAction<string>>
@@ -50,7 +52,7 @@ export function useMobileNativeChatDrafts(args: {
   captureSendOrigin: (text: string) => MobileNativeChatSendOrigin | null
   acceptSend: (origin: MobileNativeChatSendOrigin, text: string) => void
 } {
-  const { hostId, worktreeId, tabId, sessionId, messages } = args
+  const { hostId, worktreeId, tabId, sessionId, messages, launchDraft } = args
   const draftKey = tabId ? `${hostId}\0${worktreeId}\0${tabId}` : null
   const pendingKey = draftKey && sessionId ? `${draftKey}\0${sessionId}` : null
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -60,6 +62,48 @@ export function useMobileNativeChatDrafts(args: {
   const pendingCounterRef = useRef(0)
   const messagesRef = useRef(messages)
   messagesRef.current = messages
+  // Seeded launch-context text per tab; '' marks a permanent decline so a
+  // cleared composer never resurrects the prefill.
+  const seededLaunchDraftByKeyRef = useRef(new Map<string, string>())
+
+  // Why: launch context delivered as a TUI-input prefill is invisible in chat;
+  // adopt it once as the composer draft so mobile shows the same context.
+  useEffect(() => {
+    if (!draftKey || !launchDraft?.trim() || seededLaunchDraftByKeyRef.current.has(draftKey)) {
+      return
+    }
+    // A user turn already in the transcript means the one-line TUI prefill was
+    // submitted or deliberately cleared; decline instead of resurrecting it.
+    if (messages.some((message) => normalizedUserText(message) !== null)) {
+      seededLaunchDraftByKeyRef.current.set(draftKey, '')
+      return
+    }
+    seededLaunchDraftByKeyRef.current.set(draftKey, launchDraft)
+    setDrafts((previous) =>
+      (previous[draftKey] ?? '') === '' ? { ...previous, [draftKey]: launchDraft } : previous
+    )
+  }, [draftKey, launchDraft, messages])
+
+  // Drop an untouched adopted copy once the prefill is resolved elsewhere — a
+  // user turn landed (sent or cleared TUI-side) or the host stopped publishing
+  // it (desktop sent or reconciled it). User edits are always kept.
+  useEffect(() => {
+    if (!draftKey) {
+      return
+    }
+    const seeded = seededLaunchDraftByKeyRef.current.get(draftKey)
+    if (!seeded) {
+      return
+    }
+    const hasUserTurn = messages.some((message) => normalizedUserText(message) !== null)
+    if (!hasUserTurn && launchDraft?.trim()) {
+      return
+    }
+    seededLaunchDraftByKeyRef.current.set(draftKey, '')
+    setDrafts((previous) =>
+      (previous[draftKey] ?? '') === seeded ? { ...previous, [draftKey]: '' } : previous
+    )
+  }, [draftKey, launchDraft, messages])
 
   const setComposerText: Dispatch<SetStateAction<string>> = useCallback(
     (value) => {

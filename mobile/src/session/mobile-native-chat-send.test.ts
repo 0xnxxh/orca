@@ -56,6 +56,27 @@ describe('sendMobileNativeChatMessage', () => {
     ).resolves.toBe(false)
   })
 
+  it('prepends the input-line clear byte when clearInputFirst is set', async () => {
+    const client = clientWithResponse({
+      id: 'request',
+      ok: true,
+      result: { send: { accepted: true } },
+      _meta: { runtimeId: 'runtime' }
+    })
+
+    await sendMobileNativeChatMessage({
+      client,
+      terminal: 'term',
+      text: 'hello',
+      clearInputFirst: true
+    })
+    expect(client.sendRequest).toHaveBeenCalledWith('terminal.send', {
+      terminal: 'term',
+      text: '\x15hello',
+      enter: true
+    })
+  })
+
   it('sends a single non-submitting Escape for prompt cancellation', async () => {
     const client = clientWithResponse({
       id: 'request',

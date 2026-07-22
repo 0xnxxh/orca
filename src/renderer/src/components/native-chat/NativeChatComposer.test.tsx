@@ -39,7 +39,9 @@ vi.mock('../../store', () => {
   const state = {
     dictationState: 'idle',
     settings: { voice: { enabled: false }, nativeChatSessionOptions: {} },
-    updateSettings: vi.fn()
+    updateSettings: vi.fn(),
+    clearNativeChatLaunchDraft: vi.fn(),
+    markNativeChatLaunchDraftAdopted: vi.fn()
   }
   const useAppStore = (selector: (value: typeof state) => unknown) => selector(state)
   useAppStore.getState = () => state

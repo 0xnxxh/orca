@@ -85,7 +85,7 @@ import { sanitizeTerminalLayoutPaneTitles } from '@/lib/terminal-pane-title-sani
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
-import type { NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
+import type { NativeChatLaunchDraft, NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
 import {
   addAdditionalValidWorkspaceKeys,
   type WorkspaceSessionHydrationOptions
@@ -479,6 +479,11 @@ export type TerminalSlice = {
   seedNativeChatLaunchPrompt: (prompt: NativeChatLaunchPrompt) => void
   markNativeChatLaunchPromptFailed: (tabId: string) => void
   clearNativeChatLaunchPrompt: (tabId: string) => void
+  /** Launch context prefilled into the TUI input as an unsent draft; the chat composer adopts it. In-memory only. */
+  nativeChatLaunchDraftByTabId: Record<string, NativeChatLaunchDraft>
+  seedNativeChatLaunchDraft: (draft: NativeChatLaunchDraft) => void
+  markNativeChatLaunchDraftAdopted: (tabId: string) => void
+  clearNativeChatLaunchDraft: (tabId: string) => void
   pendingStartupByTabId: Record<
     string,
     {
@@ -726,6 +731,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   pendingIssueCommandSplitByTabId: {},
   automaticAgentResumeClaimsByTabId: {},
   nativeChatLaunchPromptByTabId: {},
+  nativeChatLaunchDraftByTabId: {},
   tabBarOrderByWorktree: {},
   workspaceSessionReady: false,
   restoredRuntimeHostIdByWorkspaceSessionKey: {},
@@ -808,6 +814,41 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const next = { ...s.nativeChatLaunchPromptByTabId }
       delete next[tabId]
       return { nativeChatLaunchPromptByTabId: next }
+    })
+  },
+
+  seedNativeChatLaunchDraft: (draft) => {
+    set((s) => ({
+      nativeChatLaunchDraftByTabId: {
+        ...s.nativeChatLaunchDraftByTabId,
+        [draft.tabId]: draft
+      }
+    }))
+  },
+
+  markNativeChatLaunchDraftAdopted: (tabId) => {
+    set((s) => {
+      const current = s.nativeChatLaunchDraftByTabId[tabId]
+      if (!current || current.adopted) {
+        return {}
+      }
+      return {
+        nativeChatLaunchDraftByTabId: {
+          ...s.nativeChatLaunchDraftByTabId,
+          [tabId]: { ...current, adopted: true }
+        }
+      }
+    })
+  },
+
+  clearNativeChatLaunchDraft: (tabId) => {
+    set((s) => {
+      if (!s.nativeChatLaunchDraftByTabId[tabId]) {
+        return {}
+      }
+      const next = { ...s.nativeChatLaunchDraftByTabId }
+      delete next[tabId]
+      return { nativeChatLaunchDraftByTabId: next }
     })
   },
 

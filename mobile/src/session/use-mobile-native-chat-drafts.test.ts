@@ -43,18 +43,21 @@ describe('useMobileNativeChatDrafts', () => {
   function Harness({
     tabId,
     sessionId = `session-${tabId}`,
-    messages = []
+    messages = [],
+    launchDraft = null
   }: {
     tabId: string
     sessionId?: string | null
     messages?: NativeChatMessage[]
+    launchDraft?: string | null
   }): null {
     state = useMobileNativeChatDrafts({
       hostId: 'host',
       worktreeId: 'worktree',
       tabId,
       sessionId,
-      messages
+      messages,
+      launchDraft
     })
     return null
   }
@@ -171,6 +174,96 @@ describe('useMobileNativeChatDrafts', () => {
     })
 
     expect(state?.composerText).toBe('new edit')
+  })
+
+  it('prefills the composer from a host launch draft exactly once', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', launchDraft: 'https://github.com/o/r/issues/12' })
+      )
+    )
+    expect(state?.composerText).toBe('https://github.com/o/r/issues/12')
+
+    // A user clear must not see the prefill resurrected on the next render.
+    act(() => state?.setComposerText(''))
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', launchDraft: 'https://github.com/o/r/issues/12' })
+      )
+    )
+    expect(state?.composerText).toBe('')
+  })
+
+  it('does not overwrite typed composer text with a launch draft', async () => {
+    await mount('a')
+    act(() => state?.setComposerText('typed first'))
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: 'issue link' }))
+    )
+    expect(state?.composerText).toBe('typed first')
+  })
+
+  it('declines a launch draft when the transcript already has a user turn', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [userTextMessage('m1', 'already sent')],
+          launchDraft: 'issue link'
+        })
+      )
+    )
+    expect(state?.composerText).toBe('')
+  })
+
+  it('clears an untouched prefill once a user turn lands, keeping user edits', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: 'issue link' }))
+    )
+    expect(state?.composerText).toBe('issue link')
+
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [userTextMessage('m1', 'sent from the TUI')],
+          launchDraft: 'issue link'
+        })
+      )
+    )
+    expect(state?.composerText).toBe('')
+
+    // Edited prefill survives resolution on another tab's copy.
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'b', launchDraft: 'issue link' }))
+    )
+    act(() => state?.setComposerText('issue link plus my notes'))
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'b',
+          messages: [userTextMessage('m2', 'sent from the TUI')],
+          launchDraft: 'issue link'
+        })
+      )
+    )
+    expect(state?.composerText).toBe('issue link plus my notes')
+  })
+
+  it('clears an untouched prefill when the host stops publishing the launch draft', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: 'issue link' }))
+    )
+    expect(state?.composerText).toBe('issue link')
+
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: null }))
+    )
+    expect(state?.composerText).toBe('')
   })
 
   it('accepts and clears the first send before a provider session id exists', async () => {

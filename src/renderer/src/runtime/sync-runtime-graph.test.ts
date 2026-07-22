@@ -386,6 +386,28 @@ describe('getRuntimeMobileSessionSyncKey', () => {
     expect(runtimeMobileSessionSyncKeysEqual(before, after)).toBe(false)
   })
 
+  it('changes when a native-chat launch draft is seeded or cleared', () => {
+    const sharedOverrides = makeSharedOverrides()
+    const launchDraft = {
+      tabId: 'term-1',
+      agent: 'claude' as const,
+      text: 'https://github.com/o/r/issues/12',
+      createdAt: 1
+    }
+
+    const before = getRuntimeMobileSessionSyncKey(
+      makeState({ ...sharedOverrides, nativeChatLaunchDraftByTabId: {} })
+    )
+    const after = getRuntimeMobileSessionSyncKey(
+      makeState({
+        ...sharedOverrides,
+        nativeChatLaunchDraftByTabId: { 'term-1': launchDraft }
+      })
+    )
+
+    expect(runtimeMobileSessionSyncKeysEqual(before, after)).toBe(false)
+  })
+
   it('changes when explicit agent status epoch changes', () => {
     const sharedOverrides = makeSharedOverrides()
     const before = getRuntimeMobileSessionSyncKey(
@@ -667,6 +689,41 @@ describe('buildMobileSessionTabSnapshots', () => {
         })
       ])
     )
+  })
+
+  it('publishes the native-chat launch draft on terminal surface tabs', () => {
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    const state = makeState({
+      tabsByWorktree: {
+        'wt-1': [{ id: 'term-1', title: 'Terminal 1', launchAgent: 'claude' }]
+      } as unknown as AppState['tabsByWorktree'],
+      terminalLayoutsByTabId: {
+        'term-1': {
+          root: { type: 'leaf', leafId },
+          activeLeafId: leafId,
+          expandedLeafId: null,
+          ptyIdsByLeafId: { [leafId]: 'pty-1' }
+        }
+      } as unknown as AppState['terminalLayoutsByTabId'],
+      nativeChatLaunchDraftByTabId: {
+        'term-1': {
+          tabId: 'term-1',
+          agent: 'claude',
+          text: 'https://github.com/o/r/issues/12',
+          createdAt: 1
+        }
+      }
+    })
+
+    const snapshot = buildMobileSessionTabSnapshots(state)[0]
+
+    expect(snapshot?.tabs).toEqual([
+      expect.objectContaining({
+        type: 'terminal',
+        parentTabId: 'term-1',
+        launchDraft: 'https://github.com/o/r/issues/12'
+      })
+    ])
   })
 
   it('preserves source-control diff metadata for mobile file tabs', () => {

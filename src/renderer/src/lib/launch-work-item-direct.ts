@@ -13,6 +13,7 @@ import {
   workspaceActivationErrorMessage
 } from '@/lib/launch-work-item-direct-messages'
 import { ensureHooksConfirmed } from '@/lib/ensure-hooks-confirmed'
+import { seedNativeChatLaunchDraftForAgentTab } from '@/lib/agent-launch-prompt-delivery'
 import { getConnectionId } from '@/lib/connection-context'
 import type { GitPushTarget, SetupDecision, TuiAgent } from '../../../shared/types'
 import { getLinearIssueWorkspaceName } from '../../../shared/workspace-name'
@@ -305,6 +306,17 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
   if (startupPlanFailed) {
     toast.error(agentLaunchCommandErrorMessage())
     return false
+  }
+
+  // Why: draft delivery lands only in the TUI input buffer (argv prefill or
+  // startup-owned paste); seed the chat-composer copy so the work-item context
+  // isn't invisible in the GUI view.
+  if (promptDelivery === 'draft' && primaryTabId && effectiveAgent) {
+    seedNativeChatLaunchDraftForAgentTab({
+      tabId: primaryTabId,
+      agent: effectiveAgent,
+      text: draftContent
+    })
   }
 
   // Why: at this point the workspace is live and the agent (if any) has

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   pasteDraftWhenAgentReady: vi.fn(),
   seedNativeChatLaunchPrompt: vi.fn(),
+  seedNativeChatLaunchDraft: vi.fn(),
   markNativeChatLaunchPromptFailed: vi.fn()
 }))
 
@@ -14,6 +15,7 @@ vi.mock('@/store', () => ({
   useAppStore: {
     getState: () => ({
       seedNativeChatLaunchPrompt: mocks.seedNativeChatLaunchPrompt,
+      seedNativeChatLaunchDraft: mocks.seedNativeChatLaunchDraft,
       markNativeChatLaunchPromptFailed: mocks.markNativeChatLaunchPromptFailed
     })
   }
@@ -55,7 +57,7 @@ describe('deliverLaunchPromptToAgentTab', () => {
     })
   })
 
-  it('does not seed for drafts, unsupported agents, or empty content', async () => {
+  it('does not seed a launch prompt for drafts, unsupported agents, or empty content', async () => {
     await deliverLaunchPromptToAgentTab({
       tabId: 'draft-tab',
       agent: 'codex',
@@ -79,6 +81,67 @@ describe('deliverLaunchPromptToAgentTab', () => {
     })
 
     expect(mocks.seedNativeChatLaunchPrompt).not.toHaveBeenCalled()
+  })
+
+  it('seeds a native-chat launch draft for supported unsubmitted content', async () => {
+    await deliverLaunchPromptToAgentTab({
+      tabId: 'draft-tab',
+      agent: 'codex',
+      content: 'Review first',
+      submit: false,
+      forcePaste: false
+    })
+
+    expect(mocks.seedNativeChatLaunchDraft).toHaveBeenCalledWith({
+      tabId: 'draft-tab',
+      agent: 'codex',
+      text: 'Review first',
+      createdAt: expect.any(Number)
+    })
+    expect(mocks.seedNativeChatLaunchPrompt).not.toHaveBeenCalled()
+  })
+
+  it('does not seed a launch draft for submitted, unsupported, or empty content', async () => {
+    await deliverLaunchPromptToAgentTab({
+      tabId: 'submit-tab',
+      agent: 'codex',
+      content: 'Fix failing checks',
+      submit: true,
+      forcePaste: true
+    })
+    await deliverLaunchPromptToAgentTab({
+      tabId: 'unsupported-tab',
+      agent: 'gemini',
+      content: 'Review first',
+      submit: false,
+      forcePaste: false
+    })
+    await deliverLaunchPromptToAgentTab({
+      tabId: 'empty-tab',
+      agent: 'claude',
+      content: '   ',
+      submit: false,
+      forcePaste: false
+    })
+
+    expect(mocks.seedNativeChatLaunchDraft).not.toHaveBeenCalled()
+  })
+
+  it('keeps the seeded launch draft when paste delivery fails', async () => {
+    // A paste timeout means the TUI never got the draft — the composer copy is
+    // then the only copy, so it must not be flagged or cleared.
+    mocks.pasteDraftWhenAgentReady.mockResolvedValue(false)
+
+    await deliverLaunchPromptToAgentTab({
+      tabId: 'draft-tab',
+      agent: 'codex',
+      content: 'Review first',
+      submit: false,
+      forcePaste: false
+    })
+
+    expect(mocks.seedNativeChatLaunchDraft).toHaveBeenCalled()
+    expect(mocks.markNativeChatLaunchPromptFailed).not.toHaveBeenCalled()
   })
 
   it('marks a seeded launch prompt failed when paste delivery returns false', async () => {

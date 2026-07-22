@@ -4,6 +4,25 @@ import { isNativeChatSupportedAgent } from '@/lib/native-chat-supported-agent'
 import { useAppStore } from '@/store'
 import type { TuiAgent } from '../../../shared/types'
 
+/** Seed the chat-composer copy of launch context that reaches only the TUI
+ *  input (argv prefill or startup paste). No-op for empty text or agents
+ *  without a native-chat renderer. */
+export function seedNativeChatLaunchDraftForAgentTab(args: {
+  tabId: string
+  agent: TuiAgent
+  text: string
+}): void {
+  if (args.text.trim().length === 0 || !isNativeChatSupportedAgent(args.agent)) {
+    return
+  }
+  useAppStore.getState().seedNativeChatLaunchDraft({
+    tabId: args.tabId,
+    agent: args.agent,
+    text: args.text,
+    createdAt: Date.now()
+  })
+}
+
 export function deliverLaunchPromptToAgentTab(args: {
   tabId: string
   agent: TuiAgent
@@ -24,6 +43,10 @@ export function deliverLaunchPromptToAgentTab(args: {
       text: content,
       createdAt: Date.now()
     })
+  } else if (submit !== true) {
+    // Why: an unsubmitted draft lives only in the TUI input buffer; seed the
+    // chat-composer copy so the context isn't invisible in the GUI view.
+    seedNativeChatLaunchDraftForAgentTab({ tabId, agent, text: content })
   }
 
   // Why: native-prefill agents (claude/openclaude etc.) get the prompt at launch,

@@ -116,7 +116,8 @@ export function useMobileNativeChatController(args: {
     worktreeId,
     tabId: activeSessionTabId,
     sessionId: activeChatSessionId,
-    messages: nativeChatSession.messages
+    messages: nativeChatSession.messages,
+    launchDraft: activeChatResolution ? (activeSessionTab?.launchDraft ?? null) : null
   })
 
   const nativeChatStatus = activeChatResolution ? activeSessionTab?.agentStatus : null
@@ -228,6 +229,9 @@ export function useMobileNativeChatController(args: {
         client,
         terminal: handle,
         text,
+        // Why: desktop-parity pre-clear — a launch-context prefill parked in
+        // the TUI input line must not concatenate with this message.
+        clearInputFirst: true,
         ...(deviceTokenRef.current
           ? { mobileClient: { id: deviceTokenRef.current, type: 'mobile' } }
           : {})
