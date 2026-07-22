@@ -4,10 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import { HostProtocolGate, useHostProtocolGates } from './HostProtocolGate'
 
+const nativeTestState = vi.hoisted(() => ({
+  openUrl: vi.fn(),
+  platform: { OS: 'ios' as 'ios' | 'android' }
+}))
+
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
-  Linking: { openURL: vi.fn() },
-  Platform: { OS: 'ios' },
+  Linking: { openURL: nativeTestState.openUrl },
+  Platform: nativeTestState.platform,
   Pressable: 'Pressable',
   StyleSheet: { create: <T>(styles: T) => styles },
   Text: 'Text',
@@ -62,6 +67,8 @@ describe('HostProtocolGate', () => {
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    nativeTestState.openUrl.mockClear()
+    nativeTestState.platform.OS = 'ios'
   })
 
   afterEach(() => {
@@ -82,6 +89,26 @@ describe('HostProtocolGate', () => {
     expect(output).toContain('Update Orca Mobile')
     expect(output).toContain('Open App Store')
     expect(output).not.toContain('HostContent')
+  })
+
+  it('routes Android mobile updates to GitHub Releases', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    nativeTestState.platform.OS = 'android'
+    hostClient.current = {
+      client: clientWithStatus({ protocolVersion: 5, minCompatibleMobileVersion: 999 }),
+      state: 'connected'
+    }
+    renderer = await renderGate()
+    const output = renderedText(renderer)
+    expect(output).toContain('Update Orca Mobile')
+    expect(output).toContain('Update Orca Mobile from GitHub Releases')
+    expect(output).toContain('Open GitHub Releases')
+    expect(output).not.toContain('mobile app store')
+    expect(output).not.toContain('HostContent')
+    act(() => renderer?.root.findAllByType('Pressable')[0]?.props.onPress())
+    expect(nativeTestState.openUrl).toHaveBeenCalledWith(
+      'https://github.com/stablyai/orca/releases'
+    )
   })
 
   it('replaces the host UI with the block screen when desktop is too old', async () => {
