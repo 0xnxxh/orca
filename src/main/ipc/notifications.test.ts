@@ -252,13 +252,16 @@ describe('registerNotificationHandlers', () => {
     }
   })
 
-  it('falls back to the launchd bundle id for packaged local builds', async () => {
+  it('prefers the packaged bundle id over an inherited launchd bundle id', async () => {
     const originalPlatform = process.platform
     const originalDevBundleId = process.env.ORCA_DEV_MACOS_BUNDLE_ID
     const originalLaunchdBundleId = process.env.__CFBundleIdentifier
     Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
     delete process.env.ORCA_DEV_MACOS_BUNDLE_ID
-    process.env.__CFBundleIdentifier = 'com.stablyai.orca.local'
+    process.env.__CFBundleIdentifier = 'com.stablyai.orca'
+    electronAppMock.isPackaged = true
+    electronAppMock.getPath.mockReturnValue('/Applications/Orca Local.app/Contents/MacOS/Orca')
+    execFileSyncMock.mockReturnValue('com.stablyai.orca.local\n')
     try {
       registerNotificationHandlers({
         getSettings: () => ({
@@ -277,8 +280,10 @@ describe('registerNotificationHandlers', () => {
       expect(shellOpenExternalMock).toHaveBeenCalledWith(
         'x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.stablyai.orca.local'
       )
+      expect(execFileSyncMock).toHaveBeenCalledOnce()
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      electronAppMock.isPackaged = false
       if (originalDevBundleId === undefined) {
         delete process.env.ORCA_DEV_MACOS_BUNDLE_ID
       } else {

@@ -205,8 +205,8 @@ function readPackagedMacBundleId(): string | null {
 }
 
 function getMacNotificationSettingsUrl(): string {
-  // Why: direct executable launches do not reliably receive launchd's private
-  // bundle-id environment variable, so packaged apps read their own plist.
+  // Why: direct launches can inherit another app's private bundle-id variable,
+  // so packaged apps read their own plist before trusting the environment.
   const bundleId =
     process.env.ORCA_DEV_MACOS_BUNDLE_ID ??
     readPackagedMacBundleId() ??
