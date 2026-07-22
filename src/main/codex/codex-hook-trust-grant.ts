@@ -64,21 +64,14 @@ export type CodexManagedTrustGrantOutcome =
   | { lane: 'rpc'; entries: CodexTrustEntry[] }
   | { lane: 'fallback'; reason: CodexTrustGrantFallbackReason }
 
-export type CodexTrustGrantDiagnostics = {
-  granted: number
-  ledgerHits: number
-  fellBack: number
-  verifyFailed: number
-  lastFallbackReason: CodexTrustGrantFallbackReason | null
-}
-
-const diagnostics: CodexTrustGrantDiagnostics = {
+const diagnostics = {
   granted: 0,
   ledgerHits: 0,
   fellBack: 0,
   verifyFailed: 0,
-  lastFallbackReason: null
+  lastFallbackReason: null as CodexTrustGrantFallbackReason | null
 }
+export type CodexTrustGrantDiagnostics = typeof diagnostics
 const transientRetryAfterByHost = new Map<string, number>()
 
 export function getCodexTrustGrantDiagnostics(): CodexTrustGrantDiagnostics {

@@ -1,4 +1,5 @@
 import type { CodexTrustGrantSessionVerifyClass } from './codex-app-server-client'
+import { WSL_CODEX_NOT_FOUND_MESSAGE } from '../codex-accounts/wsl-codex-command'
 
 /** Which install surface asked for the grant: the system-default real ~/.codex
  *  or a managed (mirror/per-account) home. Telemetry attribution only — the
@@ -44,16 +45,17 @@ export function classifyCodexTrustGrantError(error: unknown): CodexTrustGrantErr
   if (message.includes('codex trust-grant entry')) {
     return 'entry-failed'
   }
-  // Why: ordered before the bare-ENOENT check — an early-exit message carries a
-  // stderr tail that could itself mention ENOENT after the binary already ran.
+  if (
+    /^spawn (?:.*[\\/])?codex(?:\.(?:cmd|exe|bat))? ENOENT$/.test(message) ||
+    message.includes(WSL_CODEX_NOT_FOUND_MESSAGE)
+  ) {
+    return 'binary-missing'
+  }
   if (message.includes('exited before completing the session')) {
     return 'early-exit'
   }
   if (/codex app-server \S+ failed:/.test(message)) {
     return 'rpc-failed'
-  }
-  if (message.includes('ENOENT')) {
-    return 'binary-missing'
   }
   return 'unexpected'
 }
