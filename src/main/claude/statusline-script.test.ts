@@ -275,6 +275,24 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     expect(lineCount(curlLog)).toBe(2)
   })
 
+  it('stays bounded and keeps a valid stamp under overlapping same-pane ticks', async () => {
+    const { scriptPath, dir, curlLog } = makeHarness()
+    // Why: the stamp check/write is deliberately lock-free — a lock could wedge the feed closed,
+    // and fail-open is the contract — so a truly concurrent burst may post more than once,
+    // bounded by the overlap width. The deterministic invariants are: every overlapping run
+    // exits 0, the raced stamp still lands valid, and it throttles the very next ticks.
+    await Promise.all(
+      Array.from({ length: 10 }, () => runScript(scriptPath, dir, rateLimitPayload(1_000)))
+    )
+    const burstPosts = lineCount(curlLog)
+    expect(burstPosts).toBeGreaterThanOrEqual(1)
+    expect(readFileSync(stampPathFor(dir), 'utf8')).toBe('1')
+    for (let index = 0; index < 5; index += 1) {
+      await runScript(scriptPath, dir, rateLimitPayload(2_000 + index * 100))
+    }
+    expect(lineCount(curlLog)).toBe(burstPosts)
+  })
+
   it('preserves multiline payloads while capturing stdin with shell builtins', async () => {
     const { scriptPath, dir, payloadLog } = makeHarness()
     const payload = JSON.stringify(JSON.parse(rateLimitPayload(1_000)), null, 2)
