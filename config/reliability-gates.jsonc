@@ -1608,6 +1608,130 @@
       "demotionRule": "Keep experimental or demote if the focused gate flakes without a product or harness bug, if a retry can physically spawn twice, if a stale exit/publication can replace or resurrect a terminal, or if mixed-version fallback occurs after an authority side effect."
     },
     {
+      "id": "runtime-routing.active-server-preference",
+      "title": "Active Server changes only through its explicit Advanced control",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "runtime-routing",
+      "layer": "main-preload-renderer-persistence-contract",
+      "surfaces": [
+        "Advanced Active Server setting",
+        "saved server Connect and Disconnect",
+        "remote workspace navigation",
+        "terminal reveal and create",
+        "browser and mobile handoff",
+        "app restart"
+      ],
+      "platforms": [
+        "macos",
+        "linux",
+        "windows",
+        "mobile"
+      ],
+      "providers": [
+        "local",
+        "remote-runtime",
+        "ssh",
+        "wsl"
+      ],
+      "coveredPlatforms": [
+        "macos"
+      ],
+      "coveredProviders": [
+        "local",
+        "remote-runtime",
+        "ssh",
+        "wsl"
+      ],
+      "coverageNotes": "Platform-neutral deterministic tests separate the durable Active Server preference from per-client connection, selected-workspace, browser-session, and execution-host routing. The composed regression models Local desktop -> connect/navigate Windows 2 -> reveal a local terminal -> restart. Multi-client browser host overrides, multi-server profile caches, generic settings IPC rejection, local and remote workspace ownership, and restart reset of transient routing are covered. Live desktop UI runs remain uncollected.",
+      "motivatingLinks": [
+        "https://github.com/stablyai/orca/pull/9687"
+      ],
+      "invariant": "Only an explicit user change in Settings > Remote Orca Servers > Advanced > Active Server may mutate activeRuntimeEnvironmentId. Connecting, pairing, disconnecting, selecting or revealing a workspace or terminal, browser/mobile handoff, remote navigation, and reconnect must use transient or target-owner routing and must never rewrite the durable preference. Generic settings mutation cannot bypass the dedicated preference IPC.",
+      "oracle": "Start with Active Server=Local desktop, connect and navigate Windows 2, then reveal a local terminal and assert it succeeds while the persisted preference remains local before and after restart. Repeat with multiple clients and servers, browser host switches, remote-owned and local-owned workspaces, pairing/connect/disconnect, and generic settings writes. Assert only the dedicated validated preference method changes activeRuntimeEnvironmentId and stale host-operation completions cannot overwrite the newly selected transient host.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/settings.test.ts src/main/ipc/runtime-environments.test.ts src/renderer/src/store/slices/settings.test.ts src/renderer/src/store/slices/browser.test.ts src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts src/renderer/src/components/status-bar/SshStatusSegment.test.ts src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts src/renderer/src/hooks/useIpcEvents.test.ts src/renderer/src/web/web-preload-api.test.ts --maxWorkers=1"
+      ],
+      "testFiles": [
+        "src/main/ipc/settings.test.ts",
+        "src/main/ipc/runtime-environments.test.ts",
+        "src/renderer/src/store/slices/settings.test.ts",
+        "src/renderer/src/store/slices/browser.test.ts",
+        "src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts",
+        "src/renderer/src/components/status-bar/SshStatusSegment.test.ts",
+        "src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts",
+        "src/renderer/src/hooks/useIpcEvents.test.ts",
+        "src/renderer/src/web/web-preload-api.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/ipc/settings.test.ts",
+          "assertions": [
+            "generic settings IPC strips activeRuntimeEnvironmentId while the dedicated validated IPC persists it",
+            "invalid preference types and unknown server identities cannot mutate the durable preference"
+          ]
+        },
+        {
+          "file": "src/renderer/src/hooks/useIpcEvents.test.ts",
+          "assertions": [
+            "Local desktop remains the durable default after transient Windows 2 navigation and a focused local terminal reveal succeeds",
+            "local and remote terminal create route by target workspace ownership instead of the durable preference"
+          ]
+        },
+        {
+          "file": "src/renderer/src/store/slices/browser.test.ts",
+          "assertions": [
+            "multiple clients select different transient browser hosts without changing Active Server",
+            "restart clears transient browser host override while retaining the durable local preference",
+            "late profile and import results update only their captured host and cannot overwrite a newer selection"
+          ]
+        },
+        {
+          "file": "src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts",
+          "assertions": [
+            "connection status and the Advanced default-host selection are distinct concepts"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-07-22",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/settings.test.ts src/main/ipc/runtime-environments.test.ts src/renderer/src/store/slices/settings.test.ts src/renderer/src/store/slices/browser.test.ts src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts src/renderer/src/components/status-bar/SshStatusSegment.test.ts src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts src/renderer/src/hooks/useIpcEvents.test.ts src/renderer/src/web/web-preload-api.test.ts --maxWorkers=1",
+          "result": "passed",
+          "durationSeconds": 6.55,
+          "summary": "Nine files and 271 tests passed, including the composed Local -> Windows 2 navigation -> local reveal -> restart regression, dedicated-only preference persistence, multi-client browser routing, late host-operation suppression, and web pairing/preference separation."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 20,
+        "scope": "focused persistence and routing contract tests"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "New deterministic gate with no soak history."
+      },
+      "redGreenEvidence": {
+        "status": "partial",
+        "evidence": "The user-observed local terminal reveal failure and unintended Active Server switch are encoded by deterministic routing and persistence tests; a saved intentional-break artifact is not yet attached."
+      },
+      "performanceBudget": {
+        "required": false,
+        "evidence": "Preference writes are explicit user actions; transient routing adds no polling and uses existing host/worktree indexes."
+      },
+      "promotionCriteria": [
+        "Run the focused gate in soak across macOS, Linux, and Windows.",
+        "Attach a live Windows Local -> Windows 2 -> local reveal -> restart artifact.",
+        "Attach saved red/green evidence for generic settings mutation and transient connection routing."
+      ],
+      "knownGaps": [
+        "The exact journey is deterministic contract coverage, not a packaged Windows UI automation run.",
+        "Browser/mobile handoff is covered through transient routing state and preload contracts, not a live phone browser session."
+      ],
+      "demotionRule": "Demote or block release if any non-Advanced path mutates Active Server, if local reveal depends on the durable default instead of workspace ownership, or if transient host state survives restart."
+    },
+    {
       "id": "terminal-geometry.visible-convergence",
       "title": "Visible desktop terminals converge across xterm, fit, PTY, shell, and runtime mirror size",
       "maturity": "experimental",
