@@ -1,4 +1,4 @@
-import WebSocket from 'ws'
+import WebSocket, { type RawData } from 'ws'
 import type { RpcTransport } from './transport'
 import type { MobileSocketTransport, MobileSocketTransportMetadata } from './mobile-socket-wiring'
 
@@ -49,6 +49,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
   private readonly socketsByConnectionId = new Map<string, WebSocket>()
   private readonly metadataBySocket = new Map<WebSocket, MobileSocketTransportMetadata>()
   private readonly clientIds = new Map<WebSocket, string>()
+  private readonly detachListenersBySocket = new Map<WebSocket, () => void>()
   private messageHandler: Parameters<MobileSocketTransport['onMessage']>[0] | null = null
   private closeHandler: Parameters<MobileSocketTransport['onConnectionClose']>[0] | null = null
   private stopped = false
@@ -161,7 +162,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
         clearTimeout(deadline)
         this.finalizeConnection(connection.connId, socket)
       }
-      socket.on('message', (raw, isBinary) => {
+      const onMessage = (raw: RawData, isBinary: boolean): void => {
         if (!attached) {
           attached = true
           clearTimeout(deadline)
@@ -178,8 +179,8 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
           },
           socket
         )
-      })
-      socket.once('open', () => {
+      }
+      const onOpen = (): void => {
         opened = true
         const networkSocket = (
           socket as unknown as { _socket?: { setNoDelay(value: boolean): void } }
@@ -194,13 +195,22 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
           })
         )
         resolve()
-      })
-      socket.once('error', (error) => {
+      }
+      const onError = (error: Error): void => {
         if (!opened) {
           finalize()
           reject(error)
         }
+      }
+      this.detachListenersBySocket.set(socket, () => {
+        socket.off('message', onMessage)
+        socket.off('open', onOpen)
+        socket.off('error', onError)
+        socket.off('close', finalize)
       })
+      socket.on('message', onMessage)
+      socket.once('open', onOpen)
+      socket.once('error', onError)
       socket.once('close', finalize)
     })
   }
@@ -246,6 +256,8 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
     }
     this.socketsByConnectionId.delete(connectionId)
     this.metadataBySocket.delete(socket)
+    this.detachListenersBySocket.get(socket)?.()
+    this.detachListenersBySocket.delete(socket)
     const clientId = this.clientIds.get(socket) ?? null
     this.clientIds.delete(socket)
     this.onConnectionClosed?.(connectionId)

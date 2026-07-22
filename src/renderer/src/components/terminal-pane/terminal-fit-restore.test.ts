@@ -121,19 +121,34 @@ describe('terminal-fit-restore', () => {
     }
   })
 
-  it('bounds bulk restore to one deadline and stops launching work after the transport wedges', async () => {
+  it('gives restores started later only the remainder of the shared bulk deadline', async () => {
     vi.useFakeTimers()
     try {
       vi.mocked(getRemoteRuntimeTerminalHandle).mockReturnValue(null)
-      restoreTerminalFit.mockReturnValue(new Promise(() => {}))
+      restoreTerminalFit.mockImplementation(
+        (ptyId: string) =>
+          new Promise((resolve) => {
+            if (ptyId === 'pty-0') {
+              setTimeout(() => resolve({ restored: false }), 10_000)
+            }
+          })
+      )
       const ptyIds = Array.from({ length: 100 }, (_, index) => `pty-${index}`)
 
       const pending = restoreTerminalFitsToDesktop(ptyIds, undefined)
       expect(restoreTerminalFit).toHaveBeenCalledTimes(8)
-      await vi.advanceTimersByTimeAsync(15_000)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(restoreTerminalFit).toHaveBeenCalledTimes(9)
+      await vi.advanceTimersByTimeAsync(4_999)
+      let settled = false
+      void pending.then(() => {
+        settled = true
+      })
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
 
       await expect(pending).resolves.toBe(false)
-      expect(restoreTerminalFit).toHaveBeenCalledTimes(8)
+      expect(restoreTerminalFit).toHaveBeenCalledTimes(9)
       expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()

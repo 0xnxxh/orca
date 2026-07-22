@@ -156,6 +156,15 @@ describe('CloudRelayTransport', () => {
       expect(() => transport.metadataFor(fakeSocket as unknown as WebSocketClient)).toThrow(
         'unknown_relay_socket'
       )
+      const onLateMessage = vi.fn()
+      transport.onMessage((_message, _reply, socket) => {
+        transport.metadataFor(socket)
+        onLateMessage()
+      })
+      // Why: timeout cleanup can precede the native socket's eventual close;
+      // late frames must not reach wiring after their metadata was released.
+      expect(() => emit('message', 'late-after-stop', false)).not.toThrow()
+      expect(onLateMessage).not.toHaveBeenCalled()
       expect(() => transport.setGeneration(2)).not.toThrow()
     } finally {
       vi.useRealTimers()
