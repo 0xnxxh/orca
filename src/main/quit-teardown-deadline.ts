@@ -7,15 +7,29 @@
 // enough that a wedged teardown never needs Force Quit.
 export const WILL_QUIT_TEARDOWN_DEADLINE_MS = 20_000
 
-export function settleTeardownWithinDeadline(
-  teardowns: Promise<unknown>[],
+export type NamedQuitTeardown = {
+  name: string
+  promise: Promise<unknown>
+}
+
+export async function settleTeardownWithinDeadline(
+  teardowns: readonly NamedQuitTeardown[],
   deadlineMs: number = WILL_QUIT_TEARDOWN_DEADLINE_MS
-): Promise<void> {
-  const deadline = new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, deadlineMs)
-    if (typeof timer.unref === 'function') {
-      timer.unref()
-    }
+): Promise<string[]> {
+  const pendingNames = new Set(teardowns.map(({ name }) => name))
+  const settled = Promise.allSettled(
+    teardowns.map(({ name, promise }) =>
+      promise.finally(() => {
+        pendingNames.delete(name)
+      })
+    )
+  ).then(() => 'settled' as const)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<'deadline'>((resolve) => {
+    timer = setTimeout(() => resolve('deadline'), deadlineMs)
+    timer.unref?.()
   })
-  return Promise.race([Promise.allSettled(teardowns).then(() => undefined), deadline])
+  const outcome = await Promise.race([settled, deadline])
+  clearTimeout(timer)
+  return outcome === 'deadline' ? [...pendingNames] : []
 }

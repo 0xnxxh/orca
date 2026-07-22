@@ -2487,11 +2487,16 @@ app.on('will-quit', (e) => {
     // Why: a wedged transport (half-open post-sleep socket) can leave one
     // member unsettled forever and block app.quit() until Force Quit (#9447).
     settleTeardownWithinDeadline([
-      daemonTeardown,
-      rpcStopAndClear,
-      watcherShutdown,
-      emulatorShutdown
+      { name: 'daemon', promise: daemonTeardown },
+      { name: 'runtime-rpc', promise: rpcStopAndClear },
+      { name: 'watchers', promise: watcherShutdown },
+      { name: 'emulator', promise: emulatorShutdown }
     ])
+      .then((pendingTeardowns) => {
+        if (pendingTeardowns.length > 0) {
+          console.warn('[shutdown] Quit teardown deadline reached', { pendingTeardowns })
+        }
+      })
       .then(() => shutdownTelemetry())
       .then(() => shutdownObservability())
       .catch(() => {

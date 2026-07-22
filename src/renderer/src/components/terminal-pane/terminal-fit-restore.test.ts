@@ -121,11 +121,47 @@ describe('terminal-fit-restore', () => {
     }
   })
 
+  it('bounds bulk restore to one deadline and stops launching work after the transport wedges', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(getRemoteRuntimeTerminalHandle).mockReturnValue(null)
+      restoreTerminalFit.mockReturnValue(new Promise(() => {}))
+      const ptyIds = Array.from({ length: 100 }, (_, index) => `pty-${index}`)
+
+      const pending = restoreTerminalFitsToDesktop(ptyIds, undefined)
+      expect(restoreTerminalFit).toHaveBeenCalledTimes(8)
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      await expect(pending).resolves.toBe(false)
+      expect(restoreTerminalFit).toHaveBeenCalledTimes(8)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('treats failed remote RPC restore transport as not restored', async () => {
     vi.mocked(getRemoteRuntimeTerminalHandle).mockReturnValue('terminal-fail')
     vi.mocked(getRemoteRuntimePtyEnvironmentId).mockReturnValue('env-fail')
     vi.mocked(callRuntimeRpc).mockRejectedValue(new Error('RPC failed'))
 
     await expect(restoreTerminalFitToDesktop('remote:pty-fail', undefined)).resolves.toBe(false)
+  })
+
+  it('bounds a remote restore even when the RPC client does not enforce its timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(getRemoteRuntimeTerminalHandle).mockReturnValue('terminal-stuck')
+      vi.mocked(getRemoteRuntimePtyEnvironmentId).mockReturnValue('env-stuck')
+      vi.mocked(callRuntimeRpc).mockReturnValue(new Promise(() => {}))
+
+      const pending = restoreTerminalFitToDesktop('remote:pty-stuck', undefined)
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      await expect(pending).resolves.toBe(false)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

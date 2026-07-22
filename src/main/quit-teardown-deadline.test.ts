@@ -13,27 +13,32 @@ describe('settleTeardownWithinDeadline', () => {
     vi.useFakeTimers()
     let resolved = false
     const pending = settleTeardownWithinDeadline([
-      Promise.resolve(),
-      Promise.reject(new Error('daemon disconnect failed'))
+      { name: 'daemon', promise: Promise.resolve() },
+      { name: 'runtime-rpc', promise: Promise.reject(new Error('daemon disconnect failed')) }
     ]).then(() => {
       resolved = true
     })
     await vi.advanceTimersByTimeAsync(0)
     await pending
     expect(resolved).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('resolves at the deadline when a teardown never settles', async () => {
+  it('reports the teardowns still pending at the deadline', async () => {
     vi.useFakeTimers()
+    const pending = settleTeardownWithinDeadline([
+      { name: 'daemon', promise: Promise.resolve() },
+      { name: 'runtime-rpc', promise: new Promise(() => {}) }
+    ])
+    await vi.advanceTimersByTimeAsync(WILL_QUIT_TEARDOWN_DEADLINE_MS - 1)
     let resolved = false
-    const pending = settleTeardownWithinDeadline([new Promise(() => {})]).then(() => {
+    void pending.then(() => {
       resolved = true
     })
-    await vi.advanceTimersByTimeAsync(WILL_QUIT_TEARDOWN_DEADLINE_MS - 1)
     expect(resolved).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
-    await pending
-    expect(resolved).toBe(true)
+    await expect(pending).resolves.toEqual(['runtime-rpc'])
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   // Why: pin the magnitude so the wedge escape hatch cannot be silently

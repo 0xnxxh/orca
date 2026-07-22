@@ -117,10 +117,11 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
   async stop(): Promise<void> {
     this.stopped = true
     const sockets = [...this.metadataBySocket.keys()]
+    const closePromises = sockets.map((socket) => this.waitForClose(socket))
     for (const socket of sockets) {
       socket.terminate()
     }
-    await Promise.all(sockets.map((socket) => this.waitForClose(socket)))
+    await Promise.all(closePromises)
   }
 
   async openConnection(connection: RelayConnectionOpen): Promise<void> {
@@ -158,14 +159,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
         }
         finalized = true
         clearTimeout(deadline)
-        this.socketsByConnectionId.delete(connection.connId)
-        this.metadataBySocket.delete(socket)
-        const clientId = this.clientIds.get(socket) ?? null
-        this.clientIds.delete(socket)
-        this.onConnectionClosed?.(connection.connId)
-        const hasOtherConnections =
-          clientId !== null && [...this.clientIds.values()].includes(clientId)
-        this.closeHandler?.(clientId, socket, hasOtherConnections)
+        this.finalizeConnection(connection.connId, socket)
       }
       socket.on('message', (raw, isBinary) => {
         if (!attached) {
@@ -213,16 +207,49 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
 
   private waitForClose(socket: WebSocket): Promise<void> {
     if (socket.readyState === socket.CLOSED) {
+      const connectionId = this.connectionIdForSocket(socket)
+      if (connectionId) {
+        this.finalizeConnection(connectionId, socket)
+      }
       return Promise.resolve()
     }
     // Why: a half-open relay socket after system sleep can never emit 'close';
     // an unbounded wait here wedges stop() and blocks app quit (#9447).
     return new Promise((resolve) => {
-      const deadline = setTimeout(resolve, RELAY_SOCKET_CLOSE_TIMEOUT_MS)
-      socket.once('close', () => {
+      const onClose = (): void => {
         clearTimeout(deadline)
         resolve()
-      })
+      }
+      const deadline = setTimeout(() => {
+        socket.off('close', onClose)
+        const connectionId = this.connectionIdForSocket(socket)
+        if (connectionId) {
+          this.finalizeConnection(connectionId, socket)
+        }
+        resolve()
+      }, RELAY_SOCKET_CLOSE_TIMEOUT_MS)
+      socket.once('close', onClose)
+      if (socket.readyState === socket.CLOSED) {
+        onClose()
+      }
     })
+  }
+
+  private connectionIdForSocket(socket: WebSocket): string | undefined {
+    const metadata = this.metadataBySocket.get(socket)
+    return metadata?.transport === 'relay' ? metadata.basisConnId : undefined
+  }
+
+  private finalizeConnection(connectionId: string, socket: WebSocket): void {
+    if (this.socketsByConnectionId.get(connectionId) !== socket) {
+      return
+    }
+    this.socketsByConnectionId.delete(connectionId)
+    this.metadataBySocket.delete(socket)
+    const clientId = this.clientIds.get(socket) ?? null
+    this.clientIds.delete(socket)
+    this.onConnectionClosed?.(connectionId)
+    const hasOtherConnections = clientId !== null && [...this.clientIds.values()].includes(clientId)
+    this.closeHandler?.(clientId, socket, hasOtherConnections)
   }
 }

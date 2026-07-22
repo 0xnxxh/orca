@@ -60,7 +60,11 @@ vi.mock('../browser/browser-manager', () => ({
   }
 }))
 
-import { createMainWindow, loadMainWindow } from './createMainWindow'
+import {
+  createMainWindow,
+  loadMainWindow,
+  WINDOW_QUIT_RENDERER_ACK_TIMEOUT_MS
+} from './createMainWindow'
 import { ipcMain } from 'electron'
 import { shouldRecoverRendererAfterProcessGone } from '../crash-reporting/process-gone-classification'
 
@@ -1802,6 +1806,101 @@ describe('createMainWindow', () => {
     expect(webContents.send).toHaveBeenCalledWith('window:close-requested', {
       isQuitting: false
     })
+  })
+
+  it('destroys an already-unresponsive renderer after an app-wide quit deadline', async () => {
+    vi.useFakeTimers()
+    const windowHandlers: Record<string, (...args: any[]) => void> = {}
+    const webContents = {
+      id: 42,
+      on: vi.fn((event, handler) => {
+        windowHandlers[event] = handler
+      }),
+      setZoomLevel: vi.fn(),
+      setBackgroundThrottling: vi.fn(),
+      invalidate: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      send: vi.fn(),
+      isCrashed: vi.fn(() => false)
+    }
+    const destroy = vi.fn()
+    browserWindowMock.mockImplementation(function () {
+      return {
+        webContents,
+        on: vi.fn((event, handler) => {
+          windowHandlers[event] = handler
+        }),
+        isDestroyed: vi.fn(() => false),
+        isMaximized: vi.fn(() => true),
+        isFullScreen: vi.fn(() => false),
+        getSize: vi.fn(() => [1200, 800]),
+        setSize: vi.fn(),
+        maximize: vi.fn(),
+        show: vi.fn(),
+        destroy,
+        loadFile: vi.fn(),
+        loadURL: vi.fn()
+      }
+    })
+    createMainWindow(null, { getIsQuitting: () => true })
+
+    windowHandlers.close({ preventDefault: vi.fn() } as never)
+    await vi.advanceTimersByTimeAsync(WINDOW_QUIT_RENDERER_ACK_TIMEOUT_MS - 1)
+    expect(destroy).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(destroy).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the renderer-owned close flow after the quit request is acknowledged', async () => {
+    vi.useFakeTimers()
+    const windowHandlers: Record<string, (...args: any[]) => void> = {}
+    const ipcHandlers: Record<string, (...args: any[]) => void> = {}
+    vi.mocked(ipcMain.on).mockImplementation((channel, handler) => {
+      ipcHandlers[channel] = handler as (...args: any[]) => void
+      return ipcMain
+    })
+    const webContents = {
+      id: 42,
+      on: vi.fn((event, handler) => {
+        windowHandlers[event] = handler
+      }),
+      setZoomLevel: vi.fn(),
+      setBackgroundThrottling: vi.fn(),
+      invalidate: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      send: vi.fn(),
+      isCrashed: vi.fn(() => false)
+    }
+    const destroy = vi.fn()
+    browserWindowMock.mockImplementation(function () {
+      return {
+        webContents,
+        on: vi.fn((event, handler) => {
+          windowHandlers[event] = handler
+        }),
+        isDestroyed: vi.fn(() => false),
+        isMaximized: vi.fn(() => true),
+        isFullScreen: vi.fn(() => false),
+        getSize: vi.fn(() => [1200, 800]),
+        setSize: vi.fn(),
+        maximize: vi.fn(),
+        show: vi.fn(),
+        destroy,
+        loadFile: vi.fn(),
+        loadURL: vi.fn()
+      }
+    })
+    createMainWindow(null, { getIsQuitting: () => true })
+
+    windowHandlers.close({ preventDefault: vi.fn() } as never)
+    ipcHandlers['window:close-request-received']?.({ sender: { id: 99 } })
+    await vi.advanceTimersByTimeAsync(WINDOW_QUIT_RENDERER_ACK_TIMEOUT_MS - 1)
+    expect(destroy).not.toHaveBeenCalled()
+    ipcHandlers['window:close-request-received']?.({ sender: { id: 42 } })
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(destroy).not.toHaveBeenCalled()
   })
 
   it('ignores traffic light sync IPC on non-macOS', () => {
