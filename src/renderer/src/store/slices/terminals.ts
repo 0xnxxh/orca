@@ -99,7 +99,10 @@ import {
   addAdditionalValidWorkspaceKeys,
   type WorkspaceSessionHydrationOptions
 } from '@/lib/workspace-session-hydration-keys'
-import { buildValidWorktreeIdsForSessionHydration } from './degraded-repo-worktree-validity'
+import {
+  buildValidWorktreeIdsForSessionHydration,
+  collectPersistedWorktreeIdsForSessionHydration
+} from './degraded-repo-worktree-validity'
 import {
   collectHibernatedCompletionEvidenceForWorktree,
   collectSleepingAgentSessionRecordsForWorktree,
@@ -3044,7 +3047,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           worktreesByRepo: runtimeSessionPlaceholders.worktreesByRepo,
           detectedWorktreesByRepo: s.detectedWorktreesByRepo
         },
-        Object.keys(session.tabsByWorktree)
+        collectPersistedWorktreeIdsForSessionHydration(session)
       )
       const knownRepoIds = new Set(runtimeSessionPlaceholders.repos.map((r) => r.id))
       // Why: the Floating Workspace isn't a repo worktree, but its tabs use the normal session pipeline so daemon PTYs survive app restart.

@@ -1,4 +1,9 @@
-import type { DetectedWorktreeListResult, Repo, Worktree } from '../../../../shared/types'
+import type {
+  DetectedWorktreeListResult,
+  Repo,
+  WorkspaceSessionState,
+  Worktree
+} from '../../../../shared/types'
 import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { getRepoIdFromWorktreeId } from '../../../../shared/worktree-id'
 
@@ -8,6 +13,25 @@ type WorktreeValidityCatalog = {
   detectedWorktreesByRepo?: Readonly<
     Record<string, Pick<DetectedWorktreeListResult, 'authoritative'> | undefined>
   >
+}
+
+export function collectPersistedWorktreeIdsForSessionHydration(
+  session: WorkspaceSessionState
+): Set<string> {
+  const persistedWorktreeIds = new Set<string>()
+  for (const worktreeId of Object.keys(session.tabsByWorktree)) {
+    persistedWorktreeIds.add(worktreeId)
+  }
+  for (const worktreeId of Object.keys(session.unifiedTabs ?? {})) {
+    persistedWorktreeIds.add(worktreeId)
+  }
+  for (const worktreeId of Object.keys(session.openFilesByWorktree ?? {})) {
+    persistedWorktreeIds.add(worktreeId)
+  }
+  for (const worktreeId of Object.keys(session.browserTabsByWorktree ?? {})) {
+    persistedWorktreeIds.add(worktreeId)
+  }
+  return persistedWorktreeIds
 }
 
 export function buildValidWorktreeIdsForSessionHydration(

@@ -117,9 +117,25 @@ function makeDegradedRepoSession(): WorkspaceSessionState {
   }
 }
 
-function hydrateWithFailedScan(
+function makeTerminalFreeDegradedRepoSession(): WorkspaceSessionState {
+  const session = makeDegradedRepoSession()
+  session.activeTabId = null
+  session.tabsByWorktree = {}
+  session.unifiedTabs![WORKTREE_ID] = session.unifiedTabs![WORKTREE_ID].filter(
+    (tab) => tab.contentType !== 'terminal'
+  )
+  session.tabGroups![WORKTREE_ID] = session.tabGroups![WORKTREE_ID].map((group) => ({
+    ...group,
+    tabOrder: [EDITOR_FILE_ID, BROWSER_ID],
+    recentTabIds: [EDITOR_FILE_ID, BROWSER_ID]
+  }))
+  return session
+}
+
+function hydrateWithRepoScan(
   store: ReturnType<typeof createTestStore>,
-  session: WorkspaceSessionState
+  session: WorkspaceSessionState,
+  authoritative = false
 ): void {
   store.setState({
     repos: [{ id: 'repo1', path: '/repo1', displayName: 'Repo 1', badgeColor: '#000', addedAt: 0 }],
@@ -127,8 +143,8 @@ function hydrateWithFailedScan(
     detectedWorktreesByRepo: {
       repo1: {
         repoId: 'repo1',
-        authoritative: false,
-        source: 'metadata-fallback',
+        authoritative,
+        source: authoritative ? 'git' : 'metadata-fallback',
         worktrees: []
       }
     }
@@ -141,14 +157,14 @@ function hydrateWithFailedScan(
 
 it('keeps tab, editor, and browser chrome through degraded hydration and persistence', () => {
   const firstStore = createTestStore()
-  hydrateWithFailedScan(firstStore, makeDegradedRepoSession())
+  hydrateWithRepoScan(firstStore, makeDegradedRepoSession())
   firstStore.setState({ workspaceSessionReady: true })
   firstStore.getState().setHydrationSucceeded(true)
   expect(shouldPersistWorkspaceSession(firstStore.getState())).toBe(true)
 
   const persisted = buildWorkspaceSessionPayload(firstStore.getState())
   const restoredStore = createTestStore()
-  hydrateWithFailedScan(restoredStore, persisted)
+  hydrateWithRepoScan(restoredStore, persisted)
 
   const restored = restoredStore.getState()
   expect(restored.unifiedTabsByWorktree[WORKTREE_ID]?.map((tab) => tab.id)).toEqual([
@@ -158,4 +174,38 @@ it('keeps tab, editor, and browser chrome through degraded hydration and persist
   ])
   expect(restored.openFiles.map((file) => file.id)).toEqual([EDITOR_FILE_ID])
   expect(restored.browserTabsByWorktree[WORKTREE_ID]?.map((tab) => tab.id)).toEqual([BROWSER_ID])
+})
+
+it('keeps a terminal-free degraded workspace selected through hydration and persistence', () => {
+  const firstStore = createTestStore()
+  hydrateWithRepoScan(firstStore, makeTerminalFreeDegradedRepoSession())
+
+  const first = firstStore.getState()
+  expect(first.activeWorktreeId).toBe(WORKTREE_ID)
+  expect(first.activeTabType).toBe('browser')
+
+  firstStore.setState({ workspaceSessionReady: true })
+  firstStore.getState().setHydrationSucceeded(true)
+  const persisted = buildWorkspaceSessionPayload(firstStore.getState())
+  const restoredStore = createTestStore()
+  hydrateWithRepoScan(restoredStore, persisted)
+
+  const restored = restoredStore.getState()
+  expect(restored.activeWorktreeId).toBe(WORKTREE_ID)
+  expect(restored.unifiedTabsByWorktree[WORKTREE_ID]?.map((tab) => tab.id)).toEqual([
+    EDITOR_FILE_ID,
+    BROWSER_ID
+  ])
+  expect(restored.activeTabType).toBe('browser')
+})
+
+it('drops terminal-free chrome when an authoritative scan proves deletion', () => {
+  const store = createTestStore()
+  hydrateWithRepoScan(store, makeTerminalFreeDegradedRepoSession(), true)
+
+  const state = store.getState()
+  expect(state.activeWorktreeId).toBeNull()
+  expect(state.unifiedTabsByWorktree[WORKTREE_ID]).toBeUndefined()
+  expect(state.openFiles).toEqual([])
+  expect(state.browserTabsByWorktree[WORKTREE_ID]).toBeUndefined()
 })
