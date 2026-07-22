@@ -13,6 +13,8 @@ export type ClientSessionTabSelection = {
 type StoredClientSessionTabSelection = {
   selection: ClientSessionTabSelection
   revision: number
+  // Why: listAll projects every worktree; only hydrated or user-activated selections belong on disk.
+  shouldPersist: boolean
 }
 
 function emptyClientSessionTabSelection(): ClientSessionTabSelection {
@@ -126,14 +128,18 @@ export function projectClientSessionTabSelection(
 }
 
 function normalizeClientSessionTabSelection(raw: unknown): ClientSessionTabSelection | null {
-  if (typeof raw !== 'object' || raw === null) {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return null
   }
   const candidate = raw as Partial<ClientSessionTabSelection>
   const activeTabId = typeof candidate.activeTabId === 'string' ? candidate.activeTabId : null
   const activeGroupId = typeof candidate.activeGroupId === 'string' ? candidate.activeGroupId : null
   const activeTabIdByGroupId: Record<string, string> = {}
-  if (typeof candidate.activeTabIdByGroupId === 'object' && candidate.activeTabIdByGroupId) {
+  if (
+    typeof candidate.activeTabIdByGroupId === 'object' &&
+    candidate.activeTabIdByGroupId &&
+    !Array.isArray(candidate.activeTabIdByGroupId)
+  ) {
     for (const [groupId, tabId] of Object.entries(candidate.activeTabIdByGroupId)) {
       if (typeof tabId === 'string') {
         activeTabIdByGroupId[groupId] = tabId
@@ -151,11 +157,15 @@ export function normalizePersistedMobileClientTabSelections(
   raw: unknown
 ): PersistedMobileClientTabSelections {
   const normalized: PersistedMobileClientTabSelections = {}
-  if (typeof raw !== 'object' || raw === null) {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     return normalized
   }
   for (const [clientNavigationId, selectionsByWorktree] of Object.entries(raw)) {
-    if (typeof selectionsByWorktree !== 'object' || selectionsByWorktree === null) {
+    if (
+      typeof selectionsByWorktree !== 'object' ||
+      selectionsByWorktree === null ||
+      Array.isArray(selectionsByWorktree)
+    ) {
       continue
     }
     const entries: Record<string, ClientSessionTabSelection> = {}
@@ -183,7 +193,7 @@ export class ClientSessionTabSelectionStore {
     )) {
       const statesByWorktree = this.getStatesByWorktree(clientNavigationId)
       for (const [worktreeId, selection] of Object.entries(selectionsByWorktree)) {
-        statesByWorktree.set(worktreeId, { selection, revision: 0 })
+        statesByWorktree.set(worktreeId, { selection, revision: 0, shouldPersist: true })
       }
     }
   }
@@ -197,7 +207,9 @@ export class ClientSessionTabSelectionStore {
     for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
       const entries: Record<string, ClientSessionTabSelection> = {}
       for (const [worktreeId, state] of statesByWorktree) {
-        entries[worktreeId] = state.selection
+        if (state.shouldPersist) {
+          entries[worktreeId] = state.selection
+        }
       }
       if (Object.keys(entries).length > 0) {
         persisted[clientNavigationId] = entries
@@ -232,7 +244,8 @@ export class ClientSessionTabSelectionStore {
     const state = statesByWorktree.get(snapshot.worktree) ?? {
       // Why: host focus is private navigation; a new paired device starts from deterministic topology instead of inheriting it.
       selection: emptyClientSessionTabSelection(),
-      revision: 0
+      revision: 0,
+      shouldPersist: false
     }
     if (snapshot.tabs.length === 0) {
       // Why: an empty snapshot has no topology to project; writing it back would wipe a restart-hydrated selection before tabs arrive.
@@ -245,7 +258,8 @@ export class ClientSessionTabSelectionStore {
     const projected = projectClientSessionTabSelection(snapshot, state.selection)
     statesByWorktree.set(snapshot.worktree, {
       selection: projected.selection,
-      revision: state.revision
+      revision: state.revision,
+      shouldPersist: state.shouldPersist
     })
     return {
       ...projected.snapshot,
@@ -262,18 +276,25 @@ export class ClientSessionTabSelectionStore {
     const statesByWorktree = this.getStatesByWorktree(clientNavigationId)
     const state = statesByWorktree.get(snapshot.worktree) ?? {
       selection: emptyClientSessionTabSelection(),
-      revision: 0
+      revision: 0,
+      shouldPersist: false
     }
+    const nextSelection = activateClientSessionTabSelection(snapshot, state.selection, activeTabId)
     statesByWorktree.set(snapshot.worktree, {
-      selection: activateClientSessionTabSelection(snapshot, state.selection, activeTabId),
-      revision: state.revision + 1
+      selection: nextSelection,
+      revision: state.revision + 1,
+      shouldPersist: true
     })
     this.persistNow()
     return this.project(snapshot, clientNavigationId)
   }
 
   forgetClient(clientNavigationId: string): void {
-    if (this.statesByClient.delete(clientNavigationId)) {
+    const statesByWorktree = this.statesByClient.get(clientNavigationId)
+    const hadPersistedState = [...(statesByWorktree?.values() ?? [])].some(
+      (state) => state.shouldPersist
+    )
+    if (this.statesByClient.delete(clientNavigationId) && hadPersistedState) {
       this.persistNow()
     }
   }
@@ -281,7 +302,9 @@ export class ClientSessionTabSelectionStore {
   forgetWorktree(worktreeId: string): void {
     let changed = false
     for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
-      changed = statesByWorktree.delete(worktreeId) || changed
+      const state = statesByWorktree.get(worktreeId)
+      changed = Boolean(state?.shouldPersist) || changed
+      statesByWorktree.delete(worktreeId)
       if (statesByWorktree.size === 0) {
         this.statesByClient.delete(clientNavigationId)
       }

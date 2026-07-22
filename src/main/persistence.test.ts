@@ -9418,6 +9418,7 @@ describe('Store', () => {
       })
 
       store.removeProject('r1')
+      store.flush()
 
       expect(store.getMobileClientTabSelections()['device-a']).toEqual({
         'other-repo::/tmp/wt': {
@@ -9426,6 +9427,57 @@ describe('Store', () => {
           activeTabIdByGroupId: {}
         }
       })
+      const reloaded = await createStore()
+      expect(reloaded.getMobileClientTabSelections()['device-a']).toEqual({
+        'other-repo::/tmp/wt': {
+          activeTabId: 'tab-2',
+          activeGroupId: null,
+          activeTabIdByGroupId: {}
+        }
+      })
+    })
+
+    it('prunes selections when a folder workspace is removed directly or with its group', async () => {
+      const store = await createStore()
+      const directGroup = store.createProjectGroup({
+        name: 'Direct',
+        parentPath: '/tmp/direct',
+        createdFrom: 'manual'
+      })
+      const directWorkspace = store.createFolderWorkspace({
+        projectGroupId: directGroup.id,
+        name: 'Direct workspace'
+      })
+      const cascadeGroup = store.createProjectGroup({
+        name: 'Cascade',
+        parentPath: '/tmp/cascade',
+        createdFrom: 'manual'
+      })
+      const cascadeWorkspace = store.createFolderWorkspace({
+        projectGroupId: cascadeGroup.id,
+        name: 'Cascade workspace'
+      })
+      store.setMobileClientTabSelections({
+        'device-a': {
+          [folderWorkspaceKey(directWorkspace.id)]: {
+            activeTabId: 'tab-direct',
+            activeGroupId: null,
+            activeTabIdByGroupId: {}
+          },
+          [folderWorkspaceKey(cascadeWorkspace.id)]: {
+            activeTabId: 'tab-cascade',
+            activeGroupId: null,
+            activeTabIdByGroupId: {}
+          }
+        }
+      })
+
+      store.removeFolderWorkspace(directWorkspace.id)
+      store.deleteProjectGroup(cascadeGroup.id)
+      store.flush()
+
+      const reloaded = await createStore()
+      expect(reloaded.getMobileClientTabSelections()).toEqual({})
     })
   })
 

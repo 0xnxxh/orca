@@ -3885,8 +3885,10 @@ export class Store {
         ? { ...repo, projectGroupId: null }
         : repo
     )
+    const removedFolderWorkspaceKeys = new Set<string>()
     for (const workspace of this.state.folderWorkspaces ?? []) {
       if (deletedGroupIds.has(workspace.projectGroupId)) {
+        removedFolderWorkspaceKeys.add(folderWorkspaceKey(workspace.id))
         this.state.workspaceSession = removeWorkspaceSessionOwner(
           this.state.workspaceSession,
           folderWorkspaceKey(workspace.id)
@@ -3897,6 +3899,7 @@ export class Store {
     this.state.folderWorkspaces = (this.state.folderWorkspaces ?? []).filter(
       (workspace) => !deletedGroupIds.has(workspace.projectGroupId)
     )
+    this.pruneMobileClientTabSelections((worktreeId) => removedFolderWorkspaceKeys.has(worktreeId))
     this.scheduleSave()
     return true
   }
@@ -4046,6 +4049,7 @@ export class Store {
       folderWorkspaceKey(id)
     )!
     this.removeWorkspaceLineageForFolderParent(id)
+    this.pruneMobileClientTabSelections((worktreeId) => worktreeId === folderWorkspaceKey(id))
     this.scheduleSave()
     return true
   }
@@ -4204,13 +4208,20 @@ export class Store {
         delete this.state.workspaceLineageByChildKey[childKey as WorkspaceKey]
       }
     }
-    for (const selectionsByWorktree of Object.values(
+    this.pruneMobileClientTabSelections(belongsToHost)
+  }
+
+  private pruneMobileClientTabSelections(matchesWorktreeId: (worktreeId: string) => boolean): void {
+    for (const [clientNavigationId, selectionsByWorktree] of Object.entries(
       this.state.mobileClientTabSelectionsByDeviceId ?? {}
     )) {
-      for (const key of Object.keys(selectionsByWorktree)) {
-        if (belongsToHost(key)) {
-          delete selectionsByWorktree[key]
+      for (const worktreeId of Object.keys(selectionsByWorktree)) {
+        if (matchesWorktreeId(worktreeId)) {
+          delete selectionsByWorktree[worktreeId]
         }
+      }
+      if (Object.keys(selectionsByWorktree).length === 0) {
+        delete this.state.mobileClientTabSelectionsByDeviceId?.[clientNavigationId]
       }
     }
   }

@@ -179,6 +179,30 @@ describe('client session-tab selection', () => {
     expect(persisted.length).toBe(writes)
   })
 
+  it('does not persist topology-only projections from unrelated worktrees', () => {
+    const persisted: PersistedMobileClientTabSelections[] = []
+    const store = new ClientSessionTabSelectionStore()
+    store.setPersistListener((state) => persisted.push(state))
+
+    store.project({ ...snapshot(), worktree: 'listed-only' }, 'device-a')
+    store.activate(snapshot(), 'device-a', 'browser-unified')
+
+    expect(persisted).toEqual([
+      {
+        'device-a': {
+          'wt-1': {
+            activeTabId: 'browser-unified',
+            activeGroupId: 'group-right',
+            activeTabIdByGroupId: { 'group-right': 'browser-unified' }
+          }
+        }
+      }
+    ])
+
+    store.forgetWorktree('listed-only')
+    expect(persisted).toHaveLength(1)
+  })
+
   it('does not let an empty snapshot wipe a hydrated selection before tabs arrive', () => {
     const store = new ClientSessionTabSelectionStore()
     store.hydrate({
@@ -187,8 +211,15 @@ describe('client session-tab selection', () => {
       }
     })
 
-    const empty = { ...snapshot(), tabGroups: [], tabs: [] }
-    expect(store.project(empty, 'device-a').activeTabId).toBe('terminal-a::leaf-a')
+    const empty = {
+      ...snapshot(),
+      activeGroupId: null,
+      activeTabId: null,
+      activeTabType: null,
+      tabGroups: [],
+      tabs: []
+    }
+    expect(store.project(empty, 'device-a').activeTabId).toBeNull()
 
     expect(store.project(snapshot(), 'device-a').activeTabId).toBe('browser-unified')
   })
@@ -210,5 +241,19 @@ describe('client session-tab selection', () => {
     })
     expect(normalizePersistedMobileClientTabSelections(null)).toEqual({})
     expect(normalizePersistedMobileClientTabSelections('garbage')).toEqual({})
+    expect(normalizePersistedMobileClientTabSelections([{ 'wt-1': {} }])).toEqual({})
+    expect(
+      normalizePersistedMobileClientTabSelections({
+        'device-array': [{ activeTabId: 'tab-1' }],
+        'device-selection-array': { 'wt-1': ['tab-1'] },
+        'device-group-array': {
+          'wt-1': { activeTabId: 'tab-1', activeGroupId: null, activeTabIdByGroupId: ['tab-1'] }
+        }
+      })
+    ).toEqual({
+      'device-group-array': {
+        'wt-1': { activeTabId: 'tab-1', activeGroupId: null, activeTabIdByGroupId: {} }
+      }
+    })
   })
 })
