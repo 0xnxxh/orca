@@ -14,6 +14,7 @@ import type { ConnectionState } from './types'
 const RELAY_BACKOFF_MIN_MS = 250
 const RELAY_BACKOFF_BASE_MS = 500
 const RELAY_BACKOFF_CEILING_MS = 30_000
+const RELAY_STABLE_CONNECTION_MS = RELAY_BACKOFF_CEILING_MS
 
 export type RelayReconnectDependencies = {
   now: () => number
@@ -26,7 +27,7 @@ type RecoveryGate = 'external-signal' | 'fresh-credential'
 
 export class RelayReconnectController {
   private consecutiveFailures = 0
-  private lastFailureAt: number | null = null
+  private activeRelayConnectedAt: number | null = null
   private nextAttemptAt = 0
   private timer: ReturnType<typeof setTimeout> | null = null
   private activeSession: MobileRelayRpcSession | null = null
@@ -76,11 +77,13 @@ export class RelayReconnectController {
       return
     }
     this.activeSession = null
+    this.activeRelayConnectedAt = null
     logical.suspendActiveSession()
   }
 
   setActiveSession(session: MobileRelayRpcSession): void {
     this.activeSession = session
+    this.activeRelayConnectedAt = this.dependencies.now()
     this.nextAttemptAt = 0
     this.recoveryGate = null
     this.clearTimer()
@@ -90,6 +93,7 @@ export class RelayReconnectController {
     const needsCredentialRefresh =
       this.recoveryGate === 'fresh-credential' || this.rejectedCredentialVersions.size > 0
     this.activeSession = null
+    this.activeRelayConnectedAt = null
     if (needsCredentialRefresh) {
       // Why: the rejected credential stays unusable until its replacement is durable.
       this.consecutiveFailures = 0
@@ -139,6 +143,8 @@ export class RelayReconnectController {
     if (failure) {
       // Why: active relay closes need the same cooldown as failed replacement dials.
       this.registerFailure(failure)
+    } else {
+      this.activeRelayConnectedAt = null
     }
   }
 
@@ -170,12 +176,15 @@ export class RelayReconnectController {
       return
     }
     const now = this.dependencies.now()
-    if (this.lastFailureAt != null && now - this.lastFailureAt >= RELAY_BACKOFF_CEILING_MS) {
+    if (
+      this.activeRelayConnectedAt != null &&
+      now - this.activeRelayConnectedAt >= RELAY_STABLE_CONNECTION_MS
+    ) {
       this.consecutiveFailures = 0
     }
-    // Why: a relay can authenticate and collapse immediately; only a quiet
-    // ceiling-length window proves the prior failure streak has ended.
-    this.lastFailureAt = now
+    // Why: elapsed time inside a slow failed dial is not evidence of recovery;
+    // only an authenticated relay that survived the stability window resets the streak.
+    this.activeRelayConnectedAt = null
     this.consecutiveFailures += 1
     const delay = this.delayMs()
     this.nextAttemptAt = now + delay
@@ -223,7 +232,7 @@ export class RelayReconnectController {
 
   reset(): void {
     this.consecutiveFailures = 0
-    this.lastFailureAt = null
+    this.activeRelayConnectedAt = null
     this.nextAttemptAt = 0
     this.recoveryGate = null
     this.clearTimer()
@@ -232,6 +241,7 @@ export class RelayReconnectController {
   clear(): void {
     this.clearTimer()
     this.activeSession = null
+    this.activeRelayConnectedAt = null
   }
 
   private clearTimer(): void {

@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MobileRelayRpcSession } from './mobile-relay-rpc-session'
 import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
 import { RelayOuterError } from './mobile-relay-e2ee-link'
 import { RelayReconnectController } from './mobile-relay-reconnect-controller'
+import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
 
 vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }))
 vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length) }))
@@ -78,7 +80,7 @@ describe('relay reconnect controller', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('starts a new failure streak after one ceiling without a failure', () => {
+  it('does not reset backoff merely because a failed attempt took one ceiling', () => {
     const onRetry = vi.fn()
     const reconnect = createController(onRetry)
 
@@ -88,6 +90,32 @@ describe('relay reconnect controller', () => {
 
     vi.advanceTimersByTime(30_000)
     reconnect.registerFailure(new RelayOuterError(4429))
+    vi.advanceTimersByTime(249)
+    expect(onRetry).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(1)
+    expect(onRetry).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(249)
+    expect(onRetry).toHaveBeenCalledOnce()
+    vi.advanceTimersByTime(1)
+    expect(onRetry).toHaveBeenCalledTimes(2)
+  })
+
+  it('resets backoff after an authenticated relay remains stable', () => {
+    const onRetry = vi.fn()
+    const reconnect = createController(onRetry)
+    const session = {
+      getFailure: () => new RelayOuterError(4408)
+    } as MobileRelayRpcSession
+    const logical = {
+      getActivePath: () => 'relay'
+    } as StableLogicalRpcClient
+
+    reconnect.registerFailure(new RelayOuterError(4429))
+    vi.advanceTimersByTime(250)
+    reconnect.setActiveSession(session)
+    vi.advanceTimersByTime(30_000)
+    reconnect.registerActiveFailure(logical)
+
     vi.advanceTimersByTime(249)
     expect(onRetry).toHaveBeenCalledOnce()
     vi.advanceTimersByTime(1)
