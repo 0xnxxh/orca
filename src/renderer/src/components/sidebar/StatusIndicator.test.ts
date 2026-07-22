@@ -32,11 +32,15 @@ describe('StatusIndicator', () => {
     expect(markup).not.toContain('animation:spin')
   })
 
-  it('renders permission as an amber attention dot', () => {
-    const classNames = renderDotClassNames('permission')
+  it('renders permission as an amber question glyph', () => {
+    const markup = renderMarkup('permission')
 
-    expect(classNames).toContain('bg-amber-500')
-    expect(classNames).not.toContain('bg-red-500')
+    // Why: the "needs permission / needs you" state renders the dashboard's
+    // MessageCircleQuestion glyph rather than a bare amber dot. Assert the
+    // lucide class hook + amber text color without coupling to the SVG path.
+    expect(markup).toContain('lucide-message-circle-question')
+    expect(markup).toContain('text-amber-500')
+    expect(markup).not.toContain('bg-amber-500')
   })
 
   it('renders active as full emerald dot', () => {

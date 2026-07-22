@@ -98,7 +98,10 @@ export const AgentKanbanCard = memo(
           >
             {card.worktreeName}
           </span>
-          <AgentStateDot state={card.dotState} className="ml-auto" />
+          {/* Why: a pending question already renders the amber
+              MessageCircleQuestion glyph in the summary pill below, so suppress
+              the header state glyph here to avoid showing "needs you" twice. */}
+          {card.askSummary ? null : <AgentStateDot state={card.dotState} className="ml-auto" />}
         </div>
 
         {card.lastUserMessage || card.lastAgentMessage ? (

@@ -47,12 +47,16 @@ describe('AgentStateDot', () => {
   })
 
   it.each(['permission', 'waiting'] satisfies AgentDotState[])(
-    'renders %s as an amber attention dot',
+    'renders %s as an amber question glyph',
     (state) => {
-      const classNames = renderDotClassNames(state)
+      const markup = renderMarkup(state)
 
-      expect(classNames).toContain('bg-amber-500')
-      expect(classNames).not.toContain('bg-red-500')
+      // Why: the "needs you" states share the dashboard's MessageCircleQuestion
+      // glyph rather than a bare dot. Assert the lucide class hook + amber text
+      // color without coupling to the exact SVG path lucide emits.
+      expect(markup).toContain('lucide-message-circle-question')
+      expect(markup).toContain('text-amber-500')
+      expect(markup).not.toContain('bg-amber-500')
     }
   )
 
