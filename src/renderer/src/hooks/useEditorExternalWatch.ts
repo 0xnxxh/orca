@@ -427,8 +427,7 @@ export function createExternalWatchEventHandler(
       target.runtimeEnvironmentId,
       openFilesAtStart
     )
-    // Only pay the per-id lookup to suppress a move's own source-delete when a move
-    // is actually in flight; otherwise the whole delete batch stays O(deletes).
+    // Only pay the per-id lookup to suppress a move's own source-delete while a move is live; else the batch stays O(deletes).
     const deletedOpenEditorIds = hasActiveEditorPathMoves()
       ? deletedOpenEditorIdsRaw.filter((fileId) => {
           const file = openFilesAtStart.find((f) => f.id === fileId)
@@ -560,14 +559,10 @@ export function createExternalWatchEventHandler(
       }
       const dirtyMatches = matching.filter((f) => f.isDirty)
       if (dirtyMatches.length > 0) {
-        // canAutoSaveOpenFile is the set of tabs that can hold unsaved edits —
-        // the tabs the changed-on-disk banner serves.
+        // canAutoSaveOpenFile is the set of tabs that can hold unsaved edits — the tabs the banner serves.
         const dirtyIds = dirtyMatches.filter((f) => canAutoSaveOpenFile(f)).map((f) => f.id)
-        // A tab carrying move-echo provenance for this path may be seeing the
-        // move's own echo — settle it by disk identity: an echo leaves disk ==
-        // the tab's baseline, a real external write does not. Only a tab WITH
-        // provenance can match, so skip the path normalize in the common
-        // external-write-to-dirty case where none carries it.
+        // A tab carrying move-echo provenance for this path may just be seeing the move's own echo; settle by
+        // disk identity below. Only a provenance-carrying tab can match, so skip the normalize when none has it.
         let isSelfMoveEcho = false
         if (dirtyMatches.some((f) => f.pendingSelfMoveEcho)) {
           const normalizedAbsolutePath = normalizeRuntimePathForComparison(absolutePath)
@@ -579,12 +574,10 @@ export function createExternalWatchEventHandler(
           )
         }
         if (isSelfMoveEcho) {
-          // A real destination fs event confirms the echo — consume the
-          // provenance so a later genuine write takes the normal path.
+          // Real destination fs event confirms the echo — consume the provenance so a later genuine write takes the normal path.
           scheduleSelfMoveEchoVerification(target, dirtyIds, true)
         } else {
-          // An external write on a dirty tab must not vanish silently (issue
-          // #7265); mark it so the editor shows the reload banner.
+          // An external write on a dirty tab must not vanish silently (issue #7265); mark it for the reload banner.
           scheduleChangedOnDiskMark(target, notification, dirtyIds)
         }
         if (dirtyMatches.length === matching.length) {
@@ -692,9 +685,7 @@ function scheduleChangedOnDiskMark(
     })
 }
 
-// Per-file generation for live self-move echo verification: a newer event's
-// read supersedes an older one so overlapping reads can't clear each other's
-// autosave gate or apply a stale verdict.
+// Per-file generation so a newer echo-verify read supersedes an older one — overlapping reads can't clear each other's autosave gate or apply a stale verdict.
 const liveMoveVerifyGeneration = new Map<string, number>()
 let liveMoveVerifyCounter = 0
 
@@ -702,14 +693,12 @@ type LiveMoveVerifyCandidate = {
   fileId: string
   baseline: string | undefined
   generation: number
-  /** The move that installed the provenance; a newer move (different op) that
-   * re-homes the tab supersedes this verification even across a rekey. */
+  /** The move that installed the provenance; a newer move re-homing the tab supersedes this verification, even across a rekey. */
   operationId?: string
 }
 
-// Resolves one candidate against the disk read. `diskSignature` is null for a
-// binary/unreadable target. Fails CLOSED — anything but a proven baseline match
-// surfaces the conflict, so a real external write is never silently swallowed.
+// Resolve one candidate against the disk read (`diskSignature` null = binary/unreadable).
+// Fails CLOSED: anything but a proven baseline match surfaces the conflict, so a real external write is never swallowed.
 function resolveLiveMoveVerification(
   candidate: LiveMoveVerifyCandidate,
   diskSignature: string | null,
@@ -724,9 +713,7 @@ function resolveLiveMoveVerification(
   const state = useAppStore.getState()
   state.setPendingLiveDiskVerification(fileId, false)
   const file = state.openFiles.find((f) => f.id === fileId)
-  // A save/reload/dismissal/newer-move in the interim owns the newer state: skip
-  // if the tab resolved, its baseline advanced, or a different move replaced the
-  // provenance we captured.
+  // Skip if the interim moved on: tab resolved, baseline advanced, or a different move replaced the provenance we captured.
   if (
     !file ||
     !file.isDirty ||
@@ -736,11 +723,8 @@ function resolveLiveMoveVerification(
   ) {
     return
   }
-  // Consume the provenance only when a real watcher event drove this check: the
-  // proactive post-commit verify is a safety net and must LEAVE the provenance,
-  // or the destination fs event (which on FSEvents/SSH lands after the faster
-  // local read) would fall through to the immediate changed-on-disk mark and
-  // raise a false conflict banner. Keeping it is safe — every consumer verifies.
+  // Consume only when a real watcher event drove this check. The proactive post-commit verify must LEAVE the provenance,
+  // else the destination fs event (on FSEvents/SSH it lands after the faster local read) would raise a false conflict banner.
   if (consumeProvenance) {
     state.clearSelfMoveEcho(fileId)
   }
@@ -751,9 +735,8 @@ function resolveLiveMoveVerification(
 }
 
 /**
- * Drives content verification for tabs whose destination echo was LATCHED before
- * the rekey installed them (the coordinator calls this after a successful move so
- * a pre-rekey event isn't lost and the autosave gate can't strand).
+ * Verify tabs whose destination echo was LATCHED before the rekey installed them: the coordinator calls this
+ * after a successful move so a pre-rekey event isn't lost and the autosave gate can't strand.
  */
 export function verifyLatchedMoveDestinations(
   worktreePath: string,
@@ -767,10 +750,8 @@ export function verifyLatchedMoveDestinations(
   if (gated.length === 0) {
     return
   }
-  // Owner/worktree are resolved per-tab inside the read; only connectionId is
-  // shared. worktreePath is unused here (each tab is read at its own filePath).
-  // consumeProvenance:false — this is the safety net; leave the provenance so a
-  // destination watcher event arriving after this read is still seen as an echo.
+  // consumeProvenance:false — safety net; leave the provenance so a destination watcher event after this read still reads as an echo.
+  // (Owner/worktree are resolved per-tab inside the read; worktreePath is unused, each tab reads at its own filePath.)
   scheduleSelfMoveEchoVerification(
     { worktreeId: '', worktreePath, connectionId, runtimeEnvironmentId: null },
     gated,
@@ -778,10 +759,8 @@ export function verifyLatchedMoveDestinations(
   )
 }
 
-// The move's own watcher echo leaves disk == the tab's disk baseline; a genuine
-// external write does not. Read the destination once and settle each dirty tab
-// by content identity. Autosave is suspended synchronously first so a write
-// landing mid-read can't be overwritten before we decide.
+// Settle each dirty tab by content identity: the move's own echo leaves disk == the tab's baseline, a genuine external write does not.
+// Autosave is suspended synchronously first so a write landing mid-read can't be overwritten before we decide.
 function scheduleSelfMoveEchoVerification(
   target: WatchedTarget,
   fileIds: string[],
@@ -805,10 +784,8 @@ function scheduleSelfMoveEchoVerification(
       generation,
       operationId: file.pendingSelfMoveEcho?.operationId
     }
-    // Read the tab's OWN absolute path: a cross-worktree/floating tab's
-    // relativePath is relative to its own root (can be `../…`) and must not be
-    // joined onto another worktree's path. readFileForEchoVerification dedups
-    // concurrent reads of the same path, so sibling tabs still share one read.
+    // Read the tab's OWN absolute path: a cross-worktree/floating tab's relativePath is relative to its own root (can be `../…`),
+    // never join it onto another worktree's path. readFileForEchoVerification dedups concurrent same-path reads, so siblings share one.
     void readFileForEchoVerification({
       runtimeEnvironmentId: file.runtimeEnvironmentId?.trim() || target.runtimeEnvironmentId,
       filePath: file.filePath,

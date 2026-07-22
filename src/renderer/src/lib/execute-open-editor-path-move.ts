@@ -24,8 +24,6 @@ let moveOperationCounter = 0
  * atomically rekey the open sessions in place (installing the content-verify
  * gate) and re-verify any destination echo that was latched before the rekey.
  * On failure the store is untouched — only the suppression scope is released.
- *
- * Replaces the old renameOpenTabsPathOnDisk (self-move TTL) + separate remap.
  */
 export async function executeOpenEditorPathMove(args: {
   context: RuntimeFileOperationArgs
@@ -47,9 +45,9 @@ export async function executeOpenEditorPathMove(args: {
       getExecutionHostIdForWorktree(moveState, f.worktreeId) === initiatingHostId
   )
 
-  // Register the move ROOT (prefix-matched) per scope, always including the
-  // initiating scope, so a file opened UNDER a moving directory mid-rename still has
-  // its own delete/rename echo suppressed even though it wasn't in `affected`.
+  // Suppress the move ROOT (prefix-matched) per scope, always including the
+  // initiating one, so a file opened UNDER a moving dir mid-rename is covered
+  // even though it wasn't in `affected`.
   const ownerSubOps: string[] = []
   const scopes = new Map<string, { worktreeId: string; owner: string | null }>()
   const addScope = (wtId: string, owner: string | null): void => {

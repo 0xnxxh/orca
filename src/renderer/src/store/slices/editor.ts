@@ -235,14 +235,9 @@ export type OpenFile = {
   lastKnownDiskSignature?: string
   /** Why: gates autosave for restored dirty tabs until the conflict scan compares disk vs baseline, else a slow SSH read loses the race. Not persisted. */
   pendingDiskBaselineVerification?: boolean
-  /** Suspends autosave while a live self-move echo verification reads disk.
-   * Separate owner from the restored scan's flag so the two can't clear each
-   * other's gate. Transient, not persisted, not carried across a re-home. */
+  /** Why: gates autosave during a live self-move echo's disk verification; separate flag from the restored scan's so the two can't clear each other's gate. Not persisted. */
   pendingLiveDiskVerification?: boolean
-  /** Routes the destination watcher echo of an Orca-owned move into content
-   * verification. Stored ON the tab so it (and its operationId token) survive
-   * the atomic rekey; the token also supersedes a stale in-flight verification
-   * when the tab is moved again. Transient, not persisted. */
+  /** Why: routes an Orca-owned move's destination-watcher echo into content verification. On the tab so it survives the atomic rekey; operationId supersedes a stale verification on re-move. Not persisted. */
   pendingSelfMoveEcho?: { operationId: string; targetPath: string }
   /** Why: diff bodies are cached in EditorPanel; bump this on re-select so the panel refetches instead of reusing a stale snapshot. */
   diffContentReloadNonce?: number
@@ -473,16 +468,11 @@ export type EditorSlice = {
   clearPendingDiskBaselineVerification: (fileId: string) => void
   setPendingDiskBaselineVerification: (fileId: string, value: boolean) => void
   setPendingLiveDiskVerification: (fileId: string, value: boolean) => void
-  /** Consumes the move-echo provenance once its verification has settled. */
   clearSelfMoveEcho: (fileId: string) => void
-  /** Atomically retargets open editor sessions across an Orca-owned move: one
-   * commit-only store update migrating every path-derived id + all id-keyed
-   * state, with no close/reopen lifecycle. Returns collision/stale without
-   * mutating. See design: preserve dirty editor sessions across moves. */
+  /** Atomically retargets open editor sessions across an Orca-owned move — one commit-only update migrating every path-derived id + all id-keyed state, no close/reopen. Returns collision/stale without mutating. */
   rekeyOpenFilesForPathChange: (args: {
     rekeys: readonly OpenFilePathRekey[]
-    /** When set, dirty autosave-capable destinations get a move-echo provenance
-     * + a synchronous autosave gate so the watcher can content-verify the echo. */
+    /** When set, dirty autosave-capable destinations get move-echo provenance + a synchronous autosave gate so the watcher can content-verify the echo. */
     moveOperationId?: string
   }) => RekeyOpenFilesResult
   clearUntitled: (fileId: string) => void
@@ -1184,9 +1174,7 @@ function migrateHydratedEditorTabsAndGroups(
     }
     const tabIdMigrations = new Map<string, string>()
     const nextTabs = tabs.map((tab) => {
-      // Why: hydration + live move rekey share this primitive; a move retargets
-      // every editor-family tab (edit/diff/conflict-review/check-details), not
-      // only plain 'editor'.
+      // Why: widened for the shared live-move rekey — a move retargets every editor-family tab (diff/conflict-review/check-details), not only plain 'editor'.
       if (!isEditorTabContentType(tab.contentType)) {
         return tab
       }
@@ -2534,17 +2522,12 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         if (!rekey) {
           return f
         }
-        // Spread the whole OpenFile so every field — including ones this action
-        // doesn't know about — survives; change only the path-derived ones.
-        // Install the move-echo gate atomically here so autosave is suspended
-        // before any watcher echo can be verified (only a dirty autosave-capable
-        // tab can be clobbered by autosave, so others need no gate).
+        // Spread the whole OpenFile so fields this action doesn't know about survive; change only the path-derived ones.
+        // Gate atomically here so autosave is suspended before any echo can be verified (only a dirty autosave-capable tab can be clobbered).
         const gatesEcho =
           moveOperationId !== undefined &&
           f.isDirty &&
-          // A tab already showing the changed-on-disk banner is autosave-suspended
-          // via externalMutation; gating it would strand the gate (verification
-          // skips a 'changed' tab), so leave the banner as the terminal state.
+          // A 'changed' tab is already autosave-suspended via externalMutation; gating it would strand the gate (verification skips a 'changed' tab), so leave the banner as terminal.
           f.externalMutation !== 'changed' &&
           (f.mode === 'edit' || (f.mode === 'diff' && f.diffSource === 'unstaged'))
         return {
@@ -2552,10 +2535,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           id: rekey.newFileId,
           filePath: rekey.newFilePath,
           relativePath: rekey.newRelativePath,
-          // A moved tab detaches from the host mirror: its id no longer matches
-          // the host snapshot, so leaving it host-owned would cull it (losing the
-          // draft). The coordinator close-notifies the host's old-path tab. (The
-          // full protocol that re-homes the host tab in place is a follow-up.)
+          // A moved tab's id no longer matches the host snapshot, so leaving it host-owned would cull it (losing the draft); the coordinator close-notifies the host's old-path tab. (Re-homing the host tab in place is a follow-up.)
           mirroredFromRuntimeSession: undefined,
           ...(rekey.newLanguage !== undefined ? { language: rekey.newLanguage } : {}),
           ...(rekey.newMarkdownPreviewSourceFileId !== undefined
@@ -2581,9 +2561,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         activeFileIdByWorktree[wtId] = activeId ? (migrations.get(activeId) ?? activeId) : activeId
       }
 
-      // Partition migrations by each moved file's OWN worktree: the same path can
-      // be open in more than one worktree (e.g. a floating workspace), and tab
-      // bar / unified-tab / group state is per-worktree.
+      // Partition by each moved file's OWN worktree: the same path can be open in more than one worktree (e.g. a floating workspace), and tab-bar / group state is per-worktree.
       const migrationsByWorktree: Record<string, Map<string, string>> = {}
       for (const rekey of rekeys) {
         const wtId = openById.get(rekey.oldFileId)!.worktreeId

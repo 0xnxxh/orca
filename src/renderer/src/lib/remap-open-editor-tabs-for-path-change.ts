@@ -91,12 +91,10 @@ function splitAbsolutePath(path: string): { prefix: string; segments: string[] }
   return { prefix: '', segments: normalized.split('/').filter(Boolean) }
 }
 
-// Rebuild a moved descendant's path WITHOUT raw-length slicing. The shared
-// containment check matches paths equal under normalization but differing in raw
-// length (wsl$ vs wsl.localhost aliases, duplicate/trailing separators), so
-// `slice(fromPath.length)` would fabricate a path. relativePathInsideRoot returns
-// the ORIGINAL-case suffix with `/` separators (POSIX backslashes preserved as
-// filename data), which we re-emit in the destination's flavor.
+// Rebuild via suffix, not `slice(fromPath.length)`: containment matches paths of
+// differing raw length (wsl$ vs wsl.localhost, duplicate separators), so a raw
+// splice would fabricate a path. relativePathInsideRoot gives the original-case
+// `/`-separated suffix (POSIX backslashes preserved) to re-emit in dest flavor.
 function computeMovedPath(fromPath: string, toPath: string, filePath: string): string {
   const suffix = relativePathInsideRoot(fromPath, filePath)
   if (suffix === null) {
@@ -233,9 +231,9 @@ export function remapOpenEditorTabsForPathChange({
       initiatingWorktreePath: worktreePath
     })
 
-  // The plain-path id goes to the first owner claiming a destination; other
-  // owners of the same path get an owner-qualified id (mirrors what sequential
-  // openFile did). An existing unaffected tab at the destination is honoured via
+  // First owner to claim a destination gets the plain-path id; other owners of
+  // the same path get an owner-qualified id (as sequential openFile did). An
+  // unaffected tab already at the destination is honoured via
   // resolveEditorFileIdForOwner; a same-owner conflict is a real collision the
   // rekey action rejects.
   const ownerKeyOf = (file: { worktreeId: string; runtimeEnvironmentId?: string | null }): string =>
@@ -306,11 +304,10 @@ export function remapOpenEditorTabsForPathChange({
       newMarkdownPreviewSourceFileId: newSourceFileId
     })
   }
-  // Single-file staged/unstaged diff tabs carry a purely path-derived id, so
-  // retarget them on a move. Other diff sources (branch/commit carry extra
-  // compare metadata in their id; combined "Changes" is worktree-rooted, not
-  // file-relative) are left alone — rebuilding them from path alone would
-  // produce the wrong id.
+  // Only single-file staged/unstaged diff ids are purely path-derived, so only
+  // they can be retargeted from path. Branch/commit diffs carry extra compare
+  // metadata and "Changes" is worktree-rooted — rebuilding those from path alone
+  // would produce the wrong id.
   for (const file of filesToMove) {
     if (file.mode !== 'diff' || (file.diffSource !== 'staged' && file.diffSource !== 'unstaged')) {
       continue

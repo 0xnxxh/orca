@@ -1,12 +1,8 @@
 import { normalizeAbsolutePathForComparison } from '@/components/right-sidebar/file-explorer-paths'
 
-// Tracks Orca-owned moves in flight (rename issued, not yet settled). Live only
-// for the rename + rekey duration — no TTL to race a slow SSH rename.
-//
-// Source side only: while live, a watcher delete under any source ROOT is the
-// move's own echo (prefix-matched so a file opened under a moving directory
-// mid-rename is covered too), not an external delete — don't tombstone. The
-// destination is content-verified by the coordinator after commit.
+// Tracks Orca-owned moves in flight, for the rename + rekey duration only — no TTL, which would race a slow SSH rename.
+// Source side only: while live, a watcher delete under any source ROOT is the move's own echo (prefix-matched so a file
+// opened under a moving directory is covered), not an external delete — don't tombstone. Destination is verified by the coordinator.
 
 type MoveOperation = {
   worktreeId: string
@@ -24,8 +20,7 @@ function normalize(absolutePath: string): string {
   return normalizeAbsolutePathForComparison(absolutePath)
 }
 
-// Both sides are normalized (separators folded, trailing slash trimmed), so a
-// single-separator prefix check is exact.
+// Both sides are normalized (separators folded, trailing slash trimmed), so a single-separator prefix check is exact.
 function isInsideOrEqual(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}/`)
 }
@@ -59,8 +54,7 @@ export function isActiveMoveSourcePath(
   runtimeEnvironmentId: string | null | undefined,
   absolutePath: string
 ): boolean {
-  // Fast path: this runs per deleted open-editor in the fs-watcher hot path, but a
-  // move is in flight only briefly and rarely. Skip the normalize regex when idle.
+  // Runs per deleted open-editor in the fs-watcher hot path; skip the normalize regex when no move is live.
   if (operations.size === 0) {
     return false
   }
