@@ -99,8 +99,8 @@ describe('Electron runtime package contract', () => {
     expect(scripts['build:linux']).toContain('pnpm run build:desktop')
     expect(scripts['build:linux']).not.toContain('pnpm run build ')
     expect(scripts['build:linux']).not.toContain('build:computer-macos')
-    expect(scripts['build:unpack']).toContain('pnpm run build:native -- --local-macos-package')
-    expect(scripts['build:mac']).toContain('pnpm run build:native -- --local-macos-package')
+    expect(scripts['build:unpack']).toContain('pnpm run build:native')
+    expect(scripts['build:mac']).toContain('pnpm run build:native')
     expect(scripts['build:mac:release']).not.toContain('com.stablyai.orca.local')
     expect(scripts['build:release']).toContain('pnpm run build:native')
     expect(scripts['build:release']).not.toContain('build:computer-macos')
@@ -129,6 +129,9 @@ describe('Electron runtime package contract', () => {
     const macReleaseCommand = macWorkflow.jobs['build-mac'].steps.find(
       (step) => step.name === 'Publish release artifacts (macOS)'
     ).with.command
+    const macBuildStep = macWorkflow.jobs['build-mac'].steps.find(
+      (step) => step.name === 'Build app'
+    )
 
     expect([...releaseCommands.keys()].sort()).toEqual(['linux-arm64', 'linux-x64', 'win'])
     for (const command of [...releaseCommands.values(), macReleaseCommand]) {
@@ -139,6 +142,7 @@ describe('Electron runtime package contract', () => {
       )
     }
     expect(macReleaseCommand).toContain(' && ORCA_MAC_RELEASE=1 ')
+    expect(macBuildStep.env.ORCA_MAC_RELEASE).toBe('1')
     expect(releaseCommands.get('linux-x64')).toContain(' && pnpm exec electron-builder ')
     expect(releaseCommands.get('linux-x64')).toContain('--linux AppImage deb rpm --x64')
     expect(releaseCommands.get('linux-arm64')).toContain('ORCA_LINUX_ARM64_RELEASE=1')

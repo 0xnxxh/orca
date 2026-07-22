@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process'
+import { resolveMacosPackageBundleIdentifiers } from './macos-package-bundle-identifiers.mjs'
 
-const isLocalMacPackage = process.argv.includes('--local-macos-package')
-const localMacAppBundleId = 'com.stablyai.orca.local'
+const { appBundleId, computerUseBundleId } = resolveMacosPackageBundleIdentifiers()
 
 if (process.platform === 'win32') {
   runNodeScript('config/scripts/build-windows-cli-launcher.mjs')
@@ -15,17 +15,11 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 
-runPnpmScript(
-  'build:computer-macos',
-  [],
-  isLocalMacPackage
-    ? { ...process.env, ORCA_COMPUTER_MACOS_BUNDLE_ID: `${localMacAppBundleId}.computer-use` }
-    : process.env
-)
-runPnpmScript(
-  'build:notification-status-macos',
-  isLocalMacPackage ? ['--bundle-id', localMacAppBundleId] : []
-)
+runPnpmScript('build:computer-macos', [], {
+  ...process.env,
+  ORCA_COMPUTER_MACOS_BUNDLE_ID: computerUseBundleId
+})
+runPnpmScript('build:notification-status-macos', ['--bundle-id', appBundleId])
 process.exit(0)
 
 function runPnpmScript(scriptName, scriptArgs = [], env = process.env) {

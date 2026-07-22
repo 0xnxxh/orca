@@ -3608,6 +3608,7 @@ private func isTrustedOrcaApplication(_ pid: pid_t) -> Bool {
     // still authorize these Orca-owned identities.
     return bundleId == "com.stablyai.orca" ||
         bundleId == "com.stablyai.orca.local" ||
+        bundleId == "com.stablyai.orca.dev" ||
         bundleId.hasPrefix("com.stablyai.orca.dev.") ||
         bundleId == "com.github.Electron"
 }

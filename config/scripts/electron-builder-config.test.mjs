@@ -3,6 +3,11 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import {
+  MACOS_LOCAL_APP_BUNDLE_ID,
+  MACOS_RELEASE_APP_BUNDLE_ID,
+  resolveMacosPackageBundleIdentifiers
+} from './macos-package-bundle-identifiers.mjs'
 
 const require = createRequire(import.meta.url)
 const electronBuilderConfig = require('../electron-builder.config.cjs')
@@ -26,14 +31,24 @@ describe('electron-builder config', () => {
       delete require.cache[configPath]
       delete process.env.ORCA_MAC_RELEASE
       const localConfig = require('../electron-builder.config.cjs')
-      expect(localConfig.appId).toBe('com.stablyai.orca')
-      expect(localConfig.mac.appId).toBe('com.stablyai.orca.local')
+      const localNativeIds = resolveMacosPackageBundleIdentifiers({})
+      expect(localConfig.appId).toBe(MACOS_RELEASE_APP_BUNDLE_ID)
+      expect(localConfig.mac.appId).toBe(MACOS_LOCAL_APP_BUNDLE_ID)
+      expect(localNativeIds).toEqual({
+        appBundleId: localConfig.mac.appId,
+        computerUseBundleId: `${localConfig.mac.appId}.computer-use`
+      })
 
       delete require.cache[configPath]
       process.env.ORCA_MAC_RELEASE = '1'
       const releaseConfig = require('../electron-builder.config.cjs')
-      expect(releaseConfig.appId).toBe('com.stablyai.orca')
+      const releaseNativeIds = resolveMacosPackageBundleIdentifiers({ ORCA_MAC_RELEASE: '1' })
+      expect(releaseConfig.appId).toBe(MACOS_RELEASE_APP_BUNDLE_ID)
       expect(releaseConfig.mac.appId).toBeUndefined()
+      expect(releaseNativeIds).toEqual({
+        appBundleId: releaseConfig.appId,
+        computerUseBundleId: `${releaseConfig.appId}.computer-use`
+      })
     } finally {
       if (original === undefined) {
         delete process.env.ORCA_MAC_RELEASE
