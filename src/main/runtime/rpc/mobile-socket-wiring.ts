@@ -90,12 +90,15 @@ export class MobileSocketWiring {
     getMetadata: (ws: WebSocket) => MobileSocketTransportMetadata = () => ({
       transport: 'direct'
     })
-  ): void {
+  ): () => void {
     this.transports.add(transport)
     transport.onMessage((message, _reply, ws) => {
       this.handleRawMessage(transport, ws, message, getMetadata(ws))
     })
     transport.onConnectionClose((_clientId, ws) => this.handleClose(ws))
+    return () => {
+      this.transports.delete(transport)
+    }
   }
 
   getConnectionId(ws: WebSocket): string | undefined {
