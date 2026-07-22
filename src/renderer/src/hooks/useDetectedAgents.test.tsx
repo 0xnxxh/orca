@@ -4,7 +4,11 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAppStore } from '@/store'
-import { useDetectedAgents, type AgentDetectionTarget } from './useDetectedAgents'
+import {
+  useDetectedAgents,
+  type AgentDetectionTarget,
+  type UseDetectedAgentsResult
+} from './useDetectedAgents'
 import {
   MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION,
   RUNTIME_PROTOCOL_VERSION
@@ -14,9 +18,10 @@ const detectRemoteAgents = vi.fn()
 const runtimeEnvironmentCall = vi.fn()
 const initialAppState = useAppStore.getInitialState()
 const roots: Root[] = []
+let latestHookResult: UseDetectedAgentsResult | null = null
 
 function HookProbe({ target }: { target: AgentDetectionTarget }): null {
-  useDetectedAgents(target)
+  latestHookResult = useDetectedAgents(target)
   return null
 }
 
@@ -41,6 +46,7 @@ async function renderProbe(target: AgentDetectionTarget): Promise<Root> {
 
 beforeEach(() => {
   useAppStore.setState(initialAppState, true)
+  latestHookResult = null
   detectRemoteAgents.mockReset().mockResolvedValue([])
   runtimeEnvironmentCall.mockReset().mockImplementation(({ method }: { method: string }) => {
     const result =
@@ -116,6 +122,59 @@ describe('useDetectedAgents (ssh call site)', () => {
 })
 
 describe('useDetectedAgents (runtime call site)', () => {
+  it('does not re-probe after an explicit refresh finds no agents', async () => {
+    useAppStore.setState({
+      runtimeDetectedAgentIds: { 'env-1': ['claude'] },
+      isDetectingRuntimeAgents: { 'env-1': false }
+    })
+    let detectCalls = 0
+    let refreshCalls = 0
+    runtimeEnvironmentCall.mockImplementation(({ method }: { method: string }) => {
+      let result: unknown
+      if (method === 'status.get') {
+        result = {
+          runtimeId: 'remote-runtime',
+          rendererGraphEpoch: 1,
+          graphStatus: 'ready',
+          authoritativeWindowId: null,
+          liveTabCount: 0,
+          liveLeafCount: 0,
+          runtimeProtocolVersion: RUNTIME_PROTOCOL_VERSION,
+          minCompatibleRuntimeClientVersion: MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION
+        }
+      } else if (method === 'preflight.refreshAgents') {
+        refreshCalls += 1
+        result = {
+          agents: [],
+          addedPathSegments: [],
+          shellHydrationOk: true,
+          pathSource: 'shell_hydrate',
+          pathFailureReason: 'none'
+        }
+      } else {
+        detectCalls += 1
+        result = ['claude']
+      }
+      return Promise.resolve({
+        id: method,
+        ok: true,
+        result,
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+    })
+
+    await renderProbe({ kind: 'runtime', environmentId: 'env-1' })
+    await renderProbe({ kind: 'runtime', environmentId: 'env-1' })
+    await act(async () => {
+      await latestHookResult?.refresh()
+    })
+    await flushEffects()
+
+    expect(refreshCalls).toBe(1)
+    expect(detectCalls).toBe(0)
+    expect(useAppStore.getState().runtimeDetectedAgentIds['env-1']).toEqual([])
+  })
+
   it('retries a cached empty runtime result when the launch surface is reopened', async () => {
     let detectCalls = 0
     runtimeEnvironmentCall.mockImplementation(({ method }: { method: string }) => {

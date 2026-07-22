@@ -50,6 +50,10 @@ export const createRuntimeDetectedAgentsSlice: StateCreator<
   isRefreshingRuntimeAgents: {},
 
   ensureRuntimeDetectedAgents: (environmentId: string) => {
+    const inflightRefresh = runtimeRefreshPromises.get(environmentId)
+    if (inflightRefresh) {
+      return inflightRefresh
+    }
     const existing = get().runtimeDetectedAgentIds[environmentId]
     // Why: an empty result ([]) is truthy, so a prior "no agents found" detection
     // must not be treated as cached — re-detect so a later install / PATH fix is
@@ -113,6 +117,9 @@ export const createRuntimeDetectedAgentsSlice: StateCreator<
       return inflight
     }
 
+    // Why: a refresh is newer and authoritative; detach an older detect so its
+    // late result cannot overwrite the freshly hydrated PATH result.
+    runtimeDetectPromises.delete(environmentId)
     set((s) => ({
       isRefreshingRuntimeAgents: { ...s.isRefreshingRuntimeAgents, [environmentId]: true }
     }))
@@ -140,6 +147,10 @@ export const createRuntimeDetectedAgentsSlice: StateCreator<
         if (runtimeRefreshPromises.get(environmentId) === pending) {
           set((s) => ({
             runtimeDetectedAgentIds: { ...s.runtimeDetectedAgentIds, [environmentId]: typed },
+            isDetectingRuntimeAgents: {
+              ...s.isDetectingRuntimeAgents,
+              [environmentId]: false
+            },
             isRefreshingRuntimeAgents: { ...s.isRefreshingRuntimeAgents, [environmentId]: false }
           }))
         }
@@ -150,6 +161,10 @@ export const createRuntimeDetectedAgentsSlice: StateCreator<
         // wipe the last known agent list.
         if (runtimeRefreshPromises.get(environmentId) === pending) {
           set((s) => ({
+            isDetectingRuntimeAgents: {
+              ...s.isDetectingRuntimeAgents,
+              [environmentId]: false
+            },
             isRefreshingRuntimeAgents: { ...s.isRefreshingRuntimeAgents, [environmentId]: false }
           }))
         }

@@ -51,7 +51,7 @@ export function useDetectedAgents(
   connectionId: AgentDetectionTarget | string | null | undefined = null
 ): UseDetectedAgentsResult {
   const target = normalizeAgentDetectionTarget(connectionId)
-  const retriedEmptyTargetRef = useRef<string | null>(null)
+  const observedRemoteTargetRef = useRef<string | null>(null)
   // Why: undefined means "store not yet hydrated" — we don't know if the
   // worktree is local or remote yet. This prevents flashing local agents for
   // remote worktrees during hydration.
@@ -62,6 +62,12 @@ export function useDetectedAgents(
       ? target.connectionId
       : target?.kind === 'runtime'
         ? target.environmentId
+        : null
+  const remoteTargetKey =
+    targetKind === 'ssh' && targetId
+      ? `ssh:${targetId}`
+      : targetKind === 'runtime' && targetId
+        ? `runtime:${targetId}`
         : null
 
   const detectedIds = useAppStore((s) => {
@@ -119,30 +125,24 @@ export function useDetectedAgents(
     if (isUnknown) {
       return
     }
-    const emptyRetryKey =
-      targetKind === 'ssh' && targetId
-        ? `ssh:${targetId}`
-        : targetKind === 'runtime' && targetId
-          ? `runtime:${targetId}`
-          : null
+    const isNewRemoteTarget =
+      remoteTargetKey !== null && observedRemoteTargetRef.current !== remoteTargetKey
+    // Why: a later refresh to [] is not a newly opened surface and must not trigger another probe.
+    observedRemoteTargetRef.current = remoteTargetKey
     if (targetKind === 'ssh' && targetId) {
       if (detectedIds === null) {
-        retriedEmptyTargetRef.current = emptyRetryKey
         void ensureRemote(targetId)
-      } else if (detectedIds.length === 0 && retriedEmptyTargetRef.current !== emptyRetryKey) {
+      } else if (detectedIds.length === 0 && isNewRemoteTarget) {
         // Why: a newly opened remote launch surface should get one fresh probe
         // after a prior empty result, but must not spin while the host has no agents.
-        retriedEmptyTargetRef.current = emptyRetryKey
         void ensureRemote(targetId)
       }
     } else if (targetKind === 'runtime' && targetId) {
       if (detectedIds === null) {
-        retriedEmptyTargetRef.current = emptyRetryKey
         void ensureRuntime(targetId)
-      } else if (detectedIds.length === 0 && retriedEmptyTargetRef.current !== emptyRetryKey) {
+      } else if (detectedIds.length === 0 && isNewRemoteTarget) {
         // Why: remote `orca serve` users can install/fix PATH without reconnecting;
         // retry once per mounted surface so the menu can pick that up.
-        retriedEmptyTargetRef.current = emptyRetryKey
         void ensureRuntime(targetId)
       }
     } else {
@@ -150,7 +150,16 @@ export function useDetectedAgents(
         void ensureLocal()
       }
     }
-  }, [isUnknown, targetKind, targetId, detectedIds, ensureLocal, ensureRemote, ensureRuntime])
+  }, [
+    isUnknown,
+    targetKind,
+    targetId,
+    remoteTargetKey,
+    detectedIds,
+    ensureLocal,
+    ensureRemote,
+    ensureRuntime
+  ])
 
   return { detectedIds, isLoading, isRefreshing, refresh }
 }
