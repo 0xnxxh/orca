@@ -6,10 +6,6 @@ import type { SystemResolverHealth } from './types'
 // rejection storm (PAM db reload, OS update) from retiring a daemon whose login
 // session is still alive; a real logout rejects conclusively on every probe.
 const REQUIRED_CONSECUTIVE_REJECTIONS = 3
-// Why: a healthy session answers the PAM probe in milliseconds; probes that die by
-// timeout repeatedly are a hang-shaped death signature (PAM blocking on a torn-down
-// session). Higher threshold than rejections because load can also slow probes.
-const REQUIRED_CONSECUTIVE_TIMEOUTS = 5
 const PERIODIC_PROBE_MS = 120_000
 const REJECTION_RECHECK_MS = 10_000
 const PTY_EXIT_DEBOUNCE_MS = 2_000
@@ -29,7 +25,7 @@ export type MacosLoginSessionDeathWatchOptions = {
   probeLoginSession: () => Promise<LoginPreflightOutcome | null>
   readResolverHealth: () => Promise<SystemResolverHealth>
   onRetire: (details: {
-    cause: 'pam-rejections' | 'probe-timeouts'
+    cause: 'pam-rejections'
     rejections: number
     resolverHealth: SystemResolverHealth
   }) => void
@@ -57,11 +53,9 @@ export type MacosLoginSessionDeathWatchOptions = {
  *
  * The oracle is the existing TCC login-shell PAM probe: it conclusively accepts
  * while the session is valid — including fast-user-switched-away sessions — and
- * conclusively rejects once the session is destroyed. A hang-shaped death
- * (probes repeatedly dying by timeout, which a live session never does) is a
- * second, higher-threshold trigger. Retirement additionally requires the
- * in-process system resolver to be degraded, so a PAM anomaly alone can never
- * kill a healthy daemon.
+ * conclusively rejects once the session is destroyed. Retirement additionally
+ * requires the in-process system resolver to be explicitly degraded, so an
+ * inconclusive probe or PAM anomaly alone can never kill a healthy daemon.
  */
 export class MacosLoginSessionDeathWatch {
   private readonly probeLoginSession: MacosLoginSessionDeathWatchOptions['probeLoginSession']
@@ -79,7 +73,6 @@ export class MacosLoginSessionDeathWatch {
   // a host where the wrapper never worked has no death signal to trust.
   private armed = false
   private consecutiveRejections = 0
-  private consecutiveTimeouts = 0
   private lastProbeStartedAtMs: number | null = null
   private probeInFlight = false
   private stopped = false
@@ -129,8 +122,11 @@ export class MacosLoginSessionDeathWatch {
 
   /** A mass PTY-exit burst is what a logout's SIGHUP sweep looks like from inside the daemon. */
   notifyPtyExit(): void {
-    if (this.stopped || this.ptyExitDebounceTimer !== null) {
+    if (this.stopped) {
       return
+    }
+    if (this.ptyExitDebounceTimer !== null) {
+      this.clock.clearTimeout(this.ptyExitDebounceTimer)
     }
     this.ptyExitDebounceTimer = this.clock.setTimeout(() => {
       this.ptyExitDebounceTimer = null
@@ -189,28 +185,11 @@ export class MacosLoginSessionDeathWatch {
         return
       }
       if (!outcome.conclusive) {
-        if (this.armed && outcome.reason === 'timeout') {
-          // Why: healthy sessions answer in milliseconds even under load; a streak of
-          // SIGKILL-by-bound probes is PAM blocking on a torn-down session (the one
-          // failure shape a conclusive-verdict trigger would miss).
-          this.consecutiveTimeouts++
-          this.log.log('login-session-probe-timeout', {
-            trigger,
-            timeouts: this.consecutiveTimeouts
-          })
-          if (this.consecutiveTimeouts >= REQUIRED_CONSECUTIVE_TIMEOUTS) {
-            await this.retireIfResolverDegraded('probe-timeouts', () => {
-              this.consecutiveTimeouts = REQUIRED_CONSECUTIVE_TIMEOUTS - 1
-            })
-            return
-          }
-          this.scheduleNextProbe(this.rejectionRecheckMs)
-          return
-        }
+        // Why: repeated timeouts are still ambiguous on slow/offline PAM hosts;
+        // never turn an inconclusive probe into authority to orphan live PTYs.
         this.scheduleNextProbe(this.periodicProbeMs)
         return
       }
-      this.consecutiveTimeouts = 0
       if (outcome.ok) {
         if (!this.armed) {
           this.log.log('login-session-watch-armed', { trigger })
@@ -234,7 +213,7 @@ export class MacosLoginSessionDeathWatch {
         this.scheduleNextProbe(this.rejectionRecheckMs)
         return
       }
-      await this.retireIfResolverDegraded('pam-rejections', () => {
+      await this.retireIfResolverDegraded(() => {
         this.consecutiveRejections = REQUIRED_CONSECUTIVE_REJECTIONS - 1
       })
     } catch (error) {
@@ -247,23 +226,27 @@ export class MacosLoginSessionDeathWatch {
     }
   }
 
-  private async retireIfResolverDegraded(
-    cause: 'pam-rejections' | 'probe-timeouts',
-    holdAtThreshold: () => void
-  ): Promise<void> {
+  private async retireIfResolverDegraded(holdAtThreshold: () => void): Promise<void> {
     const resolverHealth = await this.readResolverHealth()
     if (this.stopped || this.retired) {
       return
     }
-    if (resolverHealth === 'healthy') {
-      // Why: a live session always has DNS configuration; the PAM anomaly alone must
-      // hold at the threshold and keep re-verdicting instead of killing live terminals.
-      this.log.log('login-session-retire-suppressed', { cause, resolverHealth })
+    if (resolverHealth !== 'unhealthy') {
+      // Why: only explicit resolver degradation corroborates session death; unknown
+      // probe failures must preserve terminals and avoid a permanent fast retry loop.
+      this.log.log('login-session-retire-suppressed', {
+        cause: 'pam-rejections',
+        resolverHealth
+      })
       holdAtThreshold()
-      this.scheduleNextProbe(this.rejectionRecheckMs)
+      this.scheduleNextProbe(this.periodicProbeMs)
       return
     }
     this.retired = true
-    this.onRetire({ cause, rejections: this.consecutiveRejections, resolverHealth })
+    this.onRetire({
+      cause: 'pam-rejections',
+      rejections: this.consecutiveRejections,
+      resolverHealth
+    })
   }
 }

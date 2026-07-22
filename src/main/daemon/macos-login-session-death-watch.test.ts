@@ -154,120 +154,67 @@ describe('MacosLoginSessionDeathWatch', () => {
     watch.start()
     await drainMicrotasks()
     await clock.advance(120_000) // rejection 1
-    await clock.advance(10_000) // inconclusive timeout — streak holds, fast recheck
-    await clock.advance(10_000) // rejection 2
+    await clock.advance(10_000) // inconclusive timeout — rejection streak holds
+    await clock.advance(120_000) // rejection 2
     await clock.advance(10_000) // inconclusive
-    await clock.advance(10_000) // rejection 3 → retire
+    await clock.advance(120_000) // rejection 3 → retire
     expect(onRetire).toHaveBeenCalledTimes(1)
     expect(onRetire.mock.calls[0][0].rejections).toBe(3)
     expect(onRetire.mock.calls[0][0].cause).toBe('pam-rejections')
   })
 
-  it('retires on a hang-shaped timeout streak once armed, with a degraded resolver', async () => {
-    const { watch, clock, onRetire } = createWatch({
-      outcomes: [ACCEPTED, INCONCLUSIVE, INCONCLUSIVE, INCONCLUSIVE, INCONCLUSIVE, INCONCLUSIVE]
-    })
-    watch.start()
-    await drainMicrotasks()
-    await clock.advance(120_000) // timeout 1 → fast recheck
-    await clock.advance(10_000) // timeout 2
-    await clock.advance(10_000) // timeout 3
-    await clock.advance(10_000) // timeout 4
-    expect(onRetire).not.toHaveBeenCalled()
-    await clock.advance(10_000) // timeout 5 → retire
-    expect(onRetire).toHaveBeenCalledWith({
-      cause: 'probe-timeouts',
-      rejections: 0,
-      resolverHealth: 'unhealthy'
-    })
-  })
-
-  it('never counts timeouts toward retirement while unarmed', async () => {
+  it('keeps repeated inconclusive timeouts on the bounded periodic cadence', async () => {
+    const readResolverHealth = vi.fn(async () => 'unhealthy' as const)
     const { watch, clock, onRetire, probe } = createWatch({
-      outcomes: Array.from({ length: 8 }, () => INCONCLUSIVE)
+      outcomes: [ACCEPTED, ...Array.from({ length: 10 }, () => INCONCLUSIVE)],
+      readResolverHealth
     })
     watch.start()
     await drainMicrotasks()
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 10; i++) {
       await clock.advance(120_000)
     }
-    expect(probe.mock.calls.length).toBeGreaterThanOrEqual(7)
+    expect(probe).toHaveBeenCalledTimes(11)
+    expect(readResolverHealth).not.toHaveBeenCalled()
     expect(onRetire).not.toHaveBeenCalled()
   })
 
-  it('resets the timeout streak on any conclusive verdict', async () => {
-    const { watch, clock, onRetire } = createWatch({
-      outcomes: [
-        ACCEPTED,
-        INCONCLUSIVE,
-        INCONCLUSIVE,
-        INCONCLUSIVE,
-        INCONCLUSIVE,
-        ACCEPTED,
-        INCONCLUSIVE,
-        INCONCLUSIVE,
-        INCONCLUSIVE,
-        INCONCLUSIVE
-      ]
-    })
-    watch.start()
-    await drainMicrotasks()
-    await clock.advance(120_000) // timeout 1
-    for (let i = 0; i < 3; i++) {
-      await clock.advance(10_000) // timeouts 2-4
+  it.each(['healthy', 'unknown'] as const)(
+    'suppresses retirement while resolver health is %s, then retires on explicit degradation',
+    async (initialResolverHealth) => {
+      const { watch, clock, onRetire, probe, setResolverHealth } = createWatch({
+        outcomes: [ACCEPTED, REJECTED, REJECTED, REJECTED, REJECTED]
+      })
+      setResolverHealth(initialResolverHealth)
+      watch.start()
+      await drainMicrotasks()
+      await clock.advance(120_000)
+      await clock.advance(10_000)
+      await clock.advance(10_000) // threshold reached but resolver did not corroborate death
+      expect(onRetire).not.toHaveBeenCalled()
+      const probesAtSuppression = probe.mock.calls.length
+      setResolverHealth('unhealthy')
+      await clock.advance(10_000)
+      expect(probe).toHaveBeenCalledTimes(probesAtSuppression)
+      await clock.advance(110_000) // suppressed states return to the bounded periodic cadence
+      expect(onRetire).toHaveBeenCalledTimes(1)
     }
-    await clock.advance(10_000) // acceptance → both streaks reset
-    await clock.advance(120_000) // timeout 1 again
-    for (let i = 0; i < 3; i++) {
-      await clock.advance(10_000) // timeouts 2-4
-    }
-    expect(onRetire).not.toHaveBeenCalled()
-  })
+  )
 
-  it('suppresses timeout-streak retirement while the resolver is healthy', async () => {
-    const { watch, clock, onRetire, setResolverHealth } = createWatch({
-      outcomes: [ACCEPTED, ...Array.from({ length: 8 }, () => INCONCLUSIVE)]
-    })
-    setResolverHealth('healthy')
-    watch.start()
-    await drainMicrotasks()
-    await clock.advance(120_000) // timeout 1
-    for (let i = 0; i < 4; i++) {
-      await clock.advance(10_000) // timeouts 2-5 → threshold, suppressed
-    }
-    expect(onRetire).not.toHaveBeenCalled()
-    setResolverHealth('unhealthy')
-    await clock.advance(10_000) // held at threshold → next timeout re-verdicts → retire
-    expect(onRetire).toHaveBeenCalledTimes(1)
-    expect(onRetire.mock.calls[0][0].cause).toBe('probe-timeouts')
-  })
-
-  it('suppresses retirement while the system resolver is healthy, then retires when it degrades', async () => {
-    const { watch, clock, onRetire, setResolverHealth } = createWatch({
-      outcomes: [ACCEPTED, REJECTED, REJECTED, REJECTED, REJECTED]
-    })
-    setResolverHealth('healthy')
-    watch.start()
-    await drainMicrotasks()
-    await clock.advance(120_000)
-    await clock.advance(10_000)
-    await clock.advance(10_000) // threshold reached but resolver healthy → suppressed
-    expect(onRetire).not.toHaveBeenCalled()
-    setResolverHealth('unhealthy')
-    await clock.advance(10_000) // re-verdict → retire
-    expect(onRetire).toHaveBeenCalledTimes(1)
-  })
-
-  it('debounces PTY-exit bursts into one probe', async () => {
+  it('debounces a sustained PTY-exit burst into one trailing probe', async () => {
     const { watch, clock, probe } = createWatch({ outcomes: [ACCEPTED, ACCEPTED] })
     watch.start()
     await drainMicrotasks()
     await clock.advance(60_000)
     const before = probe.mock.calls.length
     watch.notifyPtyExit()
+    await clock.advance(1_500)
     watch.notifyPtyExit()
+    await clock.advance(1_500)
     watch.notifyPtyExit()
-    await clock.advance(2_000)
+    await clock.advance(1_999)
+    expect(probe).toHaveBeenCalledTimes(before)
+    await clock.advance(1)
     expect(probe.mock.calls.length).toBe(before + 1)
   })
 
