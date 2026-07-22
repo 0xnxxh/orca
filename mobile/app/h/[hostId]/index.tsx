@@ -58,7 +58,7 @@ import { buildWorktreeNavigationActions } from '../../../src/agent-history/workt
 import { floatingWorkspaceSessionPath } from '../../../src/session/floating-workspace'
 import { ConfirmModal } from '../../../src/components/ConfirmModal'
 import { BottomDrawer } from '../../../src/components/BottomDrawer'
-import { ProtocolBlockScreen } from '../../../src/components/ProtocolBlockScreen'
+import { useHostProtocolGates } from '../../../src/components/HostProtocolGate'
 import { AuthFailedBanner } from '../../../src/components/AuthFailedBanner'
 import { UpdateNudgeBanner } from '../../../src/components/UpdateNudgeBanner'
 import { MobileSearchField } from '../../../src/components/MobileSearchField'
@@ -68,7 +68,6 @@ import { setCachedRepos } from '../../../src/cache/repo-cache'
 import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
 import { useResponsiveLayout } from '../../../src/layout/responsive-layout'
 import { leaveHostRoute } from '../../../src/host-route-exit'
-import { useHostStatusGates } from '../../../src/transport/host-status-gates'
 import { loadPinnedIds, savePinnedIds } from '../../../src/storage/preferences'
 import {
   createInitialHostRouteActionState,
@@ -170,9 +169,8 @@ export function HostScreen({
   const [showGroupPicker, setShowGroupPicker] = useState(false)
   const [showFilterModal, setShowFilterModal] = useState(false)
   const [actionTarget, setActionTarget] = useState<Worktree | null>(null)
-  const hostStatus = useHostStatusGates({ hostId, client, connState })
-  const { hostCapabilities, floatingWorkspaceEnabled, compatVerdict } = hostStatus
-  const recommendedMobileAppVersions = hostStatus.recommendedMobileAppVersions
+  const { hostCapabilities, floatingWorkspaceEnabled, recommendedMobileAppVersions } =
+    useHostProtocolGates()
   const [confirmDelete, setConfirmDelete] = useState<Worktree | null>(null)
   const [confirmRemoveHost, setConfirmRemoveHost] = useState(false)
   const [routeActionState, setRouteActionState] = useState(() =>
@@ -770,10 +768,6 @@ export function HostScreen({
         <Text style={styles.errorText}>{error}</Text>
       </View>
     )
-  }
-
-  if (compatVerdict.kind === 'blocked') {
-    return <ProtocolBlockScreen verdict={compatVerdict} />
   }
 
   return (

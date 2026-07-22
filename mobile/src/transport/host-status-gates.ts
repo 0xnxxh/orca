@@ -8,6 +8,7 @@ export type HostStatusGates = {
   hostCapabilities: string[]
   floatingWorkspaceEnabled: boolean
   compatVerdict: CompatVerdict
+  statusPending: boolean
   // Why: null when the host predates the field — callers show no update nudge.
   recommendedMobileAppVersions: DesktopStatus['recommendedMobileAppVersions'] | null
 }
@@ -44,6 +45,15 @@ export function useHostStatusGates(args: {
           return
         }
         if (!response.ok) {
+          setLoaded({
+            hostId,
+            client: requestClient,
+            hostCapabilities: [],
+            floatingWorkspaceEnabled: false,
+            compatVerdict: { kind: 'ok' },
+            statusPending: false,
+            recommendedMobileAppVersions: null
+          })
           return
         }
         const status = (response as RpcSuccess).result as DesktopStatus & {
@@ -59,6 +69,7 @@ export function useHostStatusGates(args: {
           hostCapabilities: status.capabilities ?? [],
           floatingWorkspaceEnabled: status.floatingWorkspaceEnabled === true,
           compatVerdict: verdict,
+          statusPending: false,
           recommendedMobileAppVersions: readRecommendedMobileAppVersions(status)
         })
         if (verdict.kind === 'blocked') {
@@ -71,7 +82,18 @@ export function useHostStatusGates(args: {
           })
         }
       } catch {
-        // Why: sendRequest can throw on transport tear-down; the fail-closed return below keeps gated actions hidden.
+        // Why: a transient status failure must not trap navigation; conservative feature gates remain disabled.
+        if (!cancelled) {
+          setLoaded({
+            hostId,
+            client: requestClient,
+            hostCapabilities: [],
+            floatingWorkspaceEnabled: false,
+            compatVerdict: { kind: 'ok' },
+            statusPending: false,
+            recommendedMobileAppVersions: null
+          })
+        }
       }
     })()
     return () => {
@@ -91,6 +113,7 @@ export function useHostStatusGates(args: {
       hostCapabilities: EMPTY_HOST_CAPABILITIES,
       floatingWorkspaceEnabled: false,
       compatVerdict: { kind: 'ok' },
+      statusPending: connState === 'connected' && client !== null,
       recommendedMobileAppVersions: null
     }
   }
@@ -98,6 +121,7 @@ export function useHostStatusGates(args: {
     hostCapabilities: loaded.hostCapabilities,
     floatingWorkspaceEnabled: loaded.floatingWorkspaceEnabled,
     compatVerdict: loaded.compatVerdict,
+    statusPending: false,
     recommendedMobileAppVersions: loaded.recommendedMobileAppVersions
   }
 }

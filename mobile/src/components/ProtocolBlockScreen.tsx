@@ -12,17 +12,22 @@ type Props = {
 
 export function ProtocolBlockScreen({ verdict }: Props) {
   const isMobileTooOld = verdict.reason === 'mobile-too-old'
-  const mobileUpdateUrl = getMobileAppUpdateUrl(Platform.OS)
+  // Why: version-agnostic per-platform update surface (App Store / mobile-filtered
+  // GitHub Releases); ?? RELEASES_URL only narrows the type — ios/android never null.
   const mobileUpdateTarget =
     Platform.OS === 'ios'
-      ? { label: 'Open App Store', url: mobileUpdateUrl, storeName: 'the App Store' }
-      : Platform.OS === 'android'
-        ? { label: 'Open GitHub Releases', url: mobileUpdateUrl, storeName: 'GitHub Releases' }
-        : { label: null, url: null, storeName: 'your mobile app store' }
+      ? {
+          label: 'Open App Store',
+          url: getMobileAppUpdateUrl('ios') ?? RELEASES_URL,
+          storeName: 'the App Store'
+        }
+      : {
+          label: 'Open GitHub Releases',
+          url: getMobileAppUpdateUrl('android') ?? RELEASES_URL,
+          storeName: 'GitHub Releases'
+        }
   const primaryAction = isMobileTooOld
-    ? mobileUpdateTarget.url && mobileUpdateTarget.label
-      ? { label: mobileUpdateTarget.label, url: mobileUpdateTarget.url }
-      : null
+    ? { label: mobileUpdateTarget.label, url: mobileUpdateTarget.url }
     : { label: 'Open GitHub Releases', url: RELEASES_URL }
 
   const title = isMobileTooOld ? 'Update Orca Mobile' : 'Update Orca on your computer'
@@ -37,18 +42,14 @@ export function ProtocolBlockScreen({ verdict }: Props) {
       <View style={styles.card}>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.body}>{body}</Text>
-        {/* Why: desktop updates come from GitHub; mobile update links depend
-            on the native store available for this platform. */}
-        {primaryAction ? (
-          <Pressable
-            style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
-            onPress={() => {
-              void Linking.openURL(primaryAction.url)
-            }}
-          >
-            <Text style={styles.primaryButtonText}>{primaryAction.label}</Text>
-          </Pressable>
-        ) : null}
+        <Pressable
+          style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
+          onPress={() => {
+            void Linking.openURL(primaryAction.url)
+          }}
+        >
+          <Text style={styles.primaryButtonText}>{primaryAction.label}</Text>
+        </Pressable>
         <Pressable
           style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
           onPress={() => {

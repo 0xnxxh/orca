@@ -2714,6 +2714,13 @@
             "removedTitle": "SSH 主机已移除",
             "removedBody": "此工作区的 SSH 主机已被移除，无法再连接。请移除工作区以清理 — 远程文件不会受影响。",
             "removeWorkspaceButton": "移除工作区"
+          },
+          "TerminalRemoteRuntimeReconnectBanner": {
+            "retryingTitle": "Reconnecting to remote runtime",
+            "disconnectedTitle": "Remote runtime disconnected",
+            "retryingBody": "Orca will retry for up to one minute. This terminal will resume if the connection returns.",
+            "disconnectedBody": "Automatic retries stopped. Reconnect to resume this terminal session.",
+            "reconnectButton": "Reconnect"
           }
         }
       },
@@ -9759,7 +9766,8 @@
               "834cb3f23d": "使用 AI 修复",
               "783a808870": "关闭"
             },
-            "97e7124eac": "无法刷新 Source Control。请重试。"
+            "97e7124eac": "无法刷新 Source Control。请重试。",
+            "a4e93c21d7": "当前分支：{{value0}}"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "无法启动选定的智能体。",
@@ -10329,7 +10337,8 @@
             "worktreeUnavailable": "工作树不再可用。",
             "openSupportedWorkspace": "在恢复会话之前，请先打开一个工作区。",
             "localSessionSshWorkspaceUnsupported": "此会话的历史记录存储在本机上，因此无法在 SSH 工作区中恢复。请改为打开一个本地工作区。",
-            "sessionHostMismatchUnsupported": "此会话属于其他主机。请打开同一主机上的工作区以恢复它。"
+            "sessionHostMismatchUnsupported": "此会话属于其他主机。请打开同一主机上的工作区以恢复它。",
+            "prepareSessionResumeFailed": "Could not prepare this session for resume."
           },
           "AiVaultPanelControls": {
             "scanningSessions": "正在扫描会话",
@@ -13440,6 +13449,11 @@
           "91b5c8d7e6": "GitLab"
         }
       }
+    },
+    "runtime": {
+      "webRuntimeSession": {
+        "remoteHostDisconnected": "The workspace is not connected to a remote Orca host."
+      }
     }
   },
   "components": {
@@ -13576,6 +13590,32 @@
           "githubPullRequestNumber": "PR #{{value0}}"
         }
       }
+    },
+    "agentSessionContinuation": {
+      "continueInNewSession": "在新会话中继续…",
+      "dialogTitle": "在新会话中继续",
+      "dialogDescription": "从当前进度启动一个新的智能体会话，原会话保持不变。",
+      "untitledSession": "当前会话",
+      "originalAgent": "原智能体：{{agent}}",
+      "agent": "智能体",
+      "selectAgent": "选择智能体",
+      "detectingAgents": "正在此工作区主机上检测智能体…",
+      "detectionFailed": "无法检测此工作区主机上的智能体。",
+      "noAgents": "未在此工作区主机上检测到已启用的智能体。",
+      "context": "上下文",
+      "modeFocused": "聚焦续接（推荐）",
+      "modeFocusedDescription": "使用最新进度和当前工作区，仅在需要时读取更早的会话细节。",
+      "modeFull": "完整会话记录",
+      "modeFullDescription": "让新智能体在继续前读取完整的已保存会话。这可能需要更长时间，并消耗大量上下文、套餐用量或 API 额度。",
+      "startsIn": "启动目录：",
+      "startSession": "启动新会话",
+      "starting": "正在启动…",
+      "noContext": "没有可用于在新会话中继续的上下文。",
+      "agentDisabled": "{{agent}} 已在智能体设置中停用。",
+      "agentUnavailable": "未在此工作区主机上检测到 {{agent}}。",
+      "sent": "已将会话上下文发送到新的 {{agent}} 会话。",
+      "deliveryFailed": "新的 {{agent}} 会话已启动，但无法发送上下文。",
+      "launchFailed": "无法启动新的 {{agent}} 会话。"
     }
   },
   "dashboardPopout": {
@@ -13606,7 +13646,8 @@
     },
     "terminal": {
       "closed": "No live terminal — this agent's pane has closed.",
-      "focusWorktree": "Focus worktree"
+      "focusWorktree": "Focus worktree",
+      "close": "Close"
     }
   },
   "dashboard": {
