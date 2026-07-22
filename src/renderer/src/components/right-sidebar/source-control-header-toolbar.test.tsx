@@ -59,6 +59,7 @@ describe('SourceControlHeaderToolbar', () => {
     expect(branchIndex).toBeGreaterThan(-1)
     expect(filterIndex).toBeGreaterThan(branchIndex)
     expect(markup).toContain('aria-label="Current branch: brennanb2025/source-control-branch-name"')
+    expect(markup).toContain('tabindex="0"')
     expect(markup).toContain('min-w-0 truncate')
   })
 
@@ -79,6 +80,7 @@ describe('SourceControlHeaderToolbar', () => {
     expect(markup).toContain(
       'aria-label="Detached HEAD at 8cec248. You are viewing a commit, not a branch."'
     )
+    expect(markup).toContain('tabindex="0"')
     expect(markup).toContain('lucide-git-commit-horizontal')
   })
 

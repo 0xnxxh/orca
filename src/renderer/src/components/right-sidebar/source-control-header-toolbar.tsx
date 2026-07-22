@@ -50,7 +50,12 @@ function SourceControlGitIdentityLabel({
   if (display.kind === 'detached') {
     return (
       <span className="flex min-w-0 flex-1 items-center">
-        <DetachedHeadBadge display={display} side="bottom" className="min-w-0 max-w-full shrink" />
+        <DetachedHeadBadge
+          display={display}
+          side="bottom"
+          className="min-w-0 max-w-full shrink"
+          tabIndex={0}
+        />
       </span>
     )
   }
@@ -66,8 +71,9 @@ function SourceControlGitIdentityLabel({
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className="flex min-w-0 flex-1 items-center gap-1 font-mono text-xs font-medium leading-none text-foreground/90"
+          className="flex min-w-0 flex-1 items-center gap-1 rounded-sm font-mono text-xs font-medium leading-none text-foreground/90 outline-none focus-visible:ring-1 focus-visible:ring-ring"
           aria-label={label}
+          tabIndex={0}
         >
           <GitBranch className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span className="min-w-0 truncate">{branchName}</span>
