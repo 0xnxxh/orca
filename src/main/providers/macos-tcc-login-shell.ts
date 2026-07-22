@@ -1,11 +1,17 @@
-import { execFile, type ExecFileException } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { userInfo } from 'node:os'
+import {
+  classifyLoginPreflightError,
+  runMacosLoginSessionPtyProbe,
+  type LoginPreflightOutcome
+} from './macos-login-session-pty-probe'
+
+export type { LoginPreflightOutcome } from './macos-login-session-pty-probe'
 
 const MACOS_LOGIN_PATH = '/usr/bin/login'
 const MACOS_ENV_PATH = '/usr/bin/env'
 const MACOS_PRINTF_PATH = '/usr/bin/printf'
-const MACOS_SCRIPT_PATH = '/usr/bin/script'
 const LOGIN_PREFLIGHT_TIMEOUT_MS = 500
 // Why: the death-watch probe runs off the spawn path, so it can afford a bound
 // that outlasts a PAM stack answering slowly rather than misreading it as a hang.
@@ -27,12 +33,6 @@ const DISABLE_ENV_VAR = 'ORCA_DISABLE_MACOS_LOGIN_SHELL'
  * reject) that may be cached; an inconclusive probe (our own timeout/SIGKILL,
  * maxBuffer, or spawn error) proves nothing about PAM and must not stick.
  */
-export type LoginPreflightOutcome = {
-  ok: boolean
-  conclusive: boolean
-  reason: 'accepted' | 'rejected' | 'timeout' | 'error'
-}
-
 let cachedLoginPreflightResult: boolean | null = null
 let loginPreflightInFlight: Promise<LoginPreflightOutcome> | null = null
 let transientLoginPreflightFailure: { failureCount: number; retryAtMs: number } | null = null
@@ -47,21 +47,6 @@ function loginPreflightRetryDelayMs(failureCount: number): number {
     LOGIN_PREFLIGHT_RETRY_MAX_MS,
     LOGIN_PREFLIGHT_RETRY_BASE_MS * 2 ** Math.max(0, failureCount - 1)
   )
-}
-
-function classifyPreflightError(error: ExecFileException): LoginPreflightOutcome {
-  // Why: our SIGKILL timeout cap (and maxBuffer, which also kills) is an
-  // environmental slow-path, not a PAM verdict — retry, don't cache (F1).
-  if (error.killed || error.code === 'ETIMEDOUT') {
-    return { ok: false, conclusive: false, reason: 'timeout' }
-  }
-  // A numeric exit code means login(1) ran to completion and rejected the user
-  // (it exits immediately on EOF-driven rejection); that verdict is cacheable.
-  if (typeof error.code === 'number') {
-    return { ok: false, conclusive: true, reason: 'rejected' }
-  }
-  // Spawn/EOF/other failure: inconclusive, fail open for this spawn but retry.
-  return { ok: false, conclusive: false, reason: 'error' }
 }
 
 // Fidelity limit: the probe runs over pipes while production shells run under a
@@ -99,59 +84,11 @@ function runLoginPreflight(
             )
             return
           }
-          resolve(classifyPreflightError(error))
+          resolve(classifyLoginPreflightError(error))
         }
       )
       // Why: login(1) must see immediate EOF, not an interactive pipe, so a PAM
       // rejection exits instead of waiting at `login:` until the timeout.
-      child.stdin?.end()
-    } catch {
-      resolve({ ok: false, conclusive: false, reason: 'error' })
-    }
-  })
-}
-
-// Why: a dead login session's PAM stack may only misbehave under a real tty
-// (the pipe-vs-PTY fidelity limit above), so death detection can escalate to
-// running login(1) under script(1)'s PTY when the pipe probe is inconclusive.
-function runPtyLoginProbe(
-  username: string,
-  accountHome: string,
-  timeoutMs: number
-): Promise<LoginPreflightOutcome> {
-  return new Promise((resolve) => {
-    try {
-      const child = execFile(
-        MACOS_SCRIPT_PATH,
-        [
-          '-q',
-          '/dev/null',
-          MACOS_LOGIN_PATH,
-          '-flpq',
-          username,
-          MACOS_PRINTF_PATH,
-          LOGIN_PREFLIGHT_MARKER
-        ],
-        {
-          cwd: accountHome,
-          encoding: 'utf8',
-          killSignal: 'SIGKILL',
-          maxBuffer: LOGIN_PREFLIGHT_MAX_BUFFER_BYTES,
-          timeout: timeoutMs
-        },
-        (error, stdout) => {
-          if (error === null) {
-            // Why includes(): the PTY echoes control sequences around the marker.
-            resolve(
-              stdout.includes(LOGIN_PREFLIGHT_MARKER)
-                ? { ok: true, conclusive: true, reason: 'accepted' }
-                : { ok: false, conclusive: true, reason: 'rejected' }
-            )
-            return
-          }
-          resolve(classifyPreflightError(error))
-        }
-      )
       child.stdin?.end()
     } catch {
       resolve({ ok: false, conclusive: false, reason: 'error' })
@@ -276,8 +213,13 @@ export async function probeMacosLoginSessionAlive(): Promise<LoginPreflightOutco
     return null
   }
   let outcome = await runLoginPreflight(username, accountHome, LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS)
-  if (!outcome.conclusive && existsSync(MACOS_SCRIPT_PATH)) {
-    outcome = await runPtyLoginProbe(username, accountHome, LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS)
+  if (!outcome.conclusive) {
+    outcome = await runMacosLoginSessionPtyProbe(
+      username,
+      accountHome,
+      LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS,
+      LOGIN_PREFLIGHT_MAX_BUFFER_BYTES
+    )
   }
   if (outcome.conclusive) {
     cachedLoginPreflightResult = outcome.ok
