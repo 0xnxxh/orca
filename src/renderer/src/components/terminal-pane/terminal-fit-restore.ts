@@ -15,9 +15,28 @@ type TerminalFitRestoreSettings = Pick<GlobalSettings, 'activeRuntimeEnvironment
 // round-trip, so a modest pool keeps latency low without overwhelming it.
 const RESTORE_FIT_CONCURRENCY = 8
 
+const RESTORE_FIT_TIMEOUT_MS = 15_000
+
 const restoreFailedResult = (): { restored: boolean } => {
   // Why: terminal fit restore is best-effort when mobile/remote transports disappear.
   return { restored: false }
+}
+
+// Why: a wedged runtime/daemon after system sleep can leave the invoke pending
+// forever, which pins the held-fit modal's buttons disabled (#9447). Fail the
+// restore instead so the user can retry.
+const withRestoreFitTimeout = async (
+  pending: Promise<{ restored: boolean }>
+): Promise<{ restored: boolean }> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timedOut = new Promise<{ restored: boolean }>((resolve) => {
+    timer = setTimeout(() => resolve(restoreFailedResult()), RESTORE_FIT_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([pending, timedOut])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function restoreTerminalFitToDesktop(
@@ -33,9 +52,11 @@ export async function restoreTerminalFitToDesktop(
           { kind: 'environment', environmentId },
           'terminal.restoreFit',
           { terminal: remoteHandle },
-          { timeoutMs: 15_000 }
+          { timeoutMs: RESTORE_FIT_TIMEOUT_MS }
         ).catch(restoreFailedResult)
-      : await window.api.runtime.restoreTerminalFit(ptyId).catch(restoreFailedResult)
+      : await withRestoreFitTimeout(
+          window.api.runtime.restoreTerminalFit(ptyId).catch(restoreFailedResult)
+        )
 
   return result.restored
 }

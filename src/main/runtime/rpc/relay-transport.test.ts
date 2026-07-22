@@ -93,6 +93,61 @@ describe('CloudRelayTransport', () => {
     await vi.waitFor(() => expect(onConnectionClosed).toHaveBeenCalledWith('conn/with spaces'))
   })
 
+  it('stop() resolves after the close timeout when a socket never emits close', async () => {
+    vi.useFakeTimers()
+    try {
+      const listeners = new Map<string, ((...args: unknown[]) => void)[]>()
+      const addListener = (event: string, fn: (...args: unknown[]) => void): void => {
+        const existing = listeners.get(event) ?? []
+        existing.push(fn)
+        listeners.set(event, existing)
+      }
+      const emit = (event: string, ...args: unknown[]): void => {
+        for (const fn of listeners.get(event) ?? []) {
+          fn(...args)
+        }
+      }
+      // Why: models a half-open post-sleep relay socket — terminate() never
+      // produces a 'close' event, which previously hung stop() forever.
+      const fakeSocket = {
+        readyState: 1,
+        OPEN: 1,
+        CLOSED: 3,
+        on: addListener,
+        once: addListener,
+        send: () => {},
+        terminate: () => {}
+      }
+      const transport = new CloudRelayTransport({
+        cellUrl: 'http://127.0.0.1:9',
+        relayHostId: 'AbCdEf0123_-xyZ9',
+        generation: 1,
+        createSocket: () => fakeSocket as unknown as WebSocketClient
+      })
+      const opening = transport.openConnection({
+        connId: 'conn-1',
+        connTicket: 'ticket-1',
+        kind: 'resume',
+        relayDeviceId: 'device-1',
+        attachDeadlineMs: 1_000
+      })
+      emit('open')
+      await opening
+
+      let stopped = false
+      const stopPromise = transport.stop().then(() => {
+        stopped = true
+      })
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(stopped).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await stopPromise
+      expect(stopped).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects non-origin cell URLs before opening a socket', () => {
     expect(
       () =>

@@ -99,6 +99,28 @@ describe('terminal-fit-restore', () => {
     await expect(restoreTerminalFitToDesktop('pty-local', undefined)).resolves.toBe(false)
   })
 
+  it('fails a local restore whose invoke never resolves instead of hanging', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(getRemoteRuntimeTerminalHandle).mockReturnValue(null)
+      // Why: models a wedged runtime/daemon after system sleep (#9447) — the
+      // IPC invoke stays pending forever.
+      restoreTerminalFit.mockReturnValue(new Promise(() => {}))
+
+      let settled: boolean | null = null
+      const pending = restoreTerminalFitToDesktop('pty-local', undefined).then((restored) => {
+        settled = restored
+      })
+      await vi.advanceTimersByTimeAsync(14_999)
+      expect(settled).toBeNull()
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+      expect(settled).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('treats failed remote RPC restore transport as not restored', async () => {
     vi.mocked(getRemoteRuntimeTerminalHandle).mockReturnValue('terminal-fail')
     vi.mocked(getRemoteRuntimePtyEnvironmentId).mockReturnValue('env-fail')

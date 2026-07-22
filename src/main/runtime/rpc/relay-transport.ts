@@ -3,6 +3,9 @@ import type { RpcTransport } from './transport'
 import type { MobileSocketTransport, MobileSocketTransportMetadata } from './mobile-socket-wiring'
 
 const MAX_RELAY_MESSAGE_BYTES = 1024 * 1024
+// Why: terminate() normally emits 'close' within one tick; 5s covers slow
+// teardown without letting a dead socket hold stop() (and app quit) hostage.
+export const RELAY_SOCKET_CLOSE_TIMEOUT_MS = 5_000
 
 type RelayMessagePayload = string | Uint8Array<ArrayBufferLike>
 
@@ -212,6 +215,14 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
     if (socket.readyState === socket.CLOSED) {
       return Promise.resolve()
     }
-    return new Promise((resolve) => socket.once('close', resolve))
+    // Why: a half-open relay socket after system sleep can never emit 'close';
+    // an unbounded wait here wedges stop() and blocks app quit (#9447).
+    return new Promise((resolve) => {
+      const deadline = setTimeout(resolve, RELAY_SOCKET_CLOSE_TIMEOUT_MS)
+      socket.once('close', () => {
+        clearTimeout(deadline)
+        resolve()
+      })
+    })
   }
 }
