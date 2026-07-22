@@ -1364,7 +1364,12 @@ export default function ChecksPanel(): React.JSX.Element {
         const refreshRequest = resolveChecksPanelPRRefreshRequest({
           cachedHasPR: prCachedHasPR,
           cachedFetchedAt: prFetchedAt ?? null,
-          panelVisibleSince: panelVisibleSinceRef.current
+          panelVisibleSince: panelVisibleSinceRef.current,
+          // A known-but-unrendered review must foreground-fetch so the panel
+          // resolves to the review instead of stalling on a transient card.
+          hasUnrenderedReviewEvidence:
+            checksPanelReviewLookup === 'positive_unresolved' ||
+            hostedReviewCreation?.blockedReason === 'existing_review'
         })
         enqueueGitHubPRRefresh(activeWorktreeId, refreshRequest.reason, refreshRequest.priority)
       }
@@ -1372,9 +1377,11 @@ export default function ChecksPanel(): React.JSX.Element {
   }, [
     activeWorktreeId,
     branch,
+    checksPanelReviewLookup,
     enqueueGitHubPRRefresh,
     fallbackGitHubPRNumber,
     fetchHostedReviewForBranch,
+    hostedReviewCreation?.blockedReason,
     isFolder,
     isGitHubReviewContext,
     isPanelVisible,

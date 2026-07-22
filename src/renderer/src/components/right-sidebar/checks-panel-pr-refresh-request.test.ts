@@ -22,6 +22,17 @@ describe('resolveChecksPanelPRRefreshRequest', () => {
     ).toEqual({ reason: 'swr', priority: 30 })
   })
 
+  it('foreground-fetches a known-but-unrendered review so the panel resolves off the transient card', () => {
+    expect(
+      resolveChecksPanelPRRefreshRequest({
+        cachedHasPR: null,
+        cachedFetchedAt: null,
+        panelVisibleSince: 200,
+        hasUnrenderedReviewEvidence: true
+      })
+    ).toEqual({ reason: 'active', priority: 80 })
+  })
+
   it('keeps populated or unknown cache entries on the background path', () => {
     expect(
       resolveChecksPanelPRRefreshRequest({
