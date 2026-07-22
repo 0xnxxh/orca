@@ -101,6 +101,7 @@ describe('electron-builder config', () => {
   // Why: the detached PTY daemon runs inside the Electron helper bundle, so the
   // helper needs the same TCC usage descriptions as the main app (#9756).
   it('keeps the main-app extendInfo privacy strings in the shared helper-bundle map', () => {
+    expect(macPrivacyUsageDescriptions.NSAppDataUsageDescription).toBeTruthy()
     expect(electronBuilderConfig.mac.extendInfo).toMatchObject(macPrivacyUsageDescriptions)
     const extendInfoUsageKeys = Object.keys(electronBuilderConfig.mac.extendInfo).filter((key) =>
       key.endsWith('UsageDescription')

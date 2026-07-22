@@ -8,6 +8,8 @@ const { join } = require('node:path')
 // the effective requesting app and needs the same strings as the main app —
 // otherwise TCC denies with a silent EPERM and no dialog (#9756).
 const macPrivacyUsageDescriptions = {
+  NSAppDataUsageDescription:
+    "Orca allows terminal-launched developer tools to access other apps' data when you request it.",
   NSAppleEventsUsageDescription:
     'Orca allows terminal-launched developer tools to automate local apps when you request it.',
   NSBluetoothAlwaysUsageDescription:
