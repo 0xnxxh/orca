@@ -50,7 +50,7 @@ export function getWorktreeIncludeGlobStepCount(
   pattern: CompiledWorktreeIncludeGlob,
   value: string
 ): number {
-  return pattern.regExp === null ? pattern.tokens.length * (value.length + 1) : 1
+  return pattern.regExp === null ? pattern.tokens.length * (value.length + 1) : value.length + 1
 }
 
 export function matchesWorktreeIncludeGlob(

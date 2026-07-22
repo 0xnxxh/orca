@@ -6,13 +6,14 @@ import {
   lstatSync,
   readlinkSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   existsSync,
   chmodSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createWorktreeCopiedPaths,
@@ -302,7 +303,7 @@ describe('createWorktreeSymlinks', () => {
       apfsCloneDeps: deps
     })
 
-    expect(cpArgs).toEqual(['-n', '-c', '-R', source, worktree])
+    expect(cpArgs).toEqual(['-n', '-c', '-R', `${source}${sep}.`, target])
     expect(readFileSync(join(target, 'primary-marker'), 'utf8')).toBe('USER\n')
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('[worktree-symlinks] APFS clone-copy unavailable'),
@@ -449,7 +450,7 @@ describe('createWorktreeCopiedPaths', () => {
     expect(readFileSync(join(primary, '.env.shared'), 'utf8')).toBe('SECRET=1\n')
   })
 
-  posixIt('dereferences nested symlinks so copied directories remain independent', async () => {
+  posixIt('preserves nested symlinks instead of expanding external trees', async () => {
     mkdirSync(join(primary, 'config'))
     writeFileSync(join(primary, 'shared.json'), '{"owner":"primary"}')
     symlinkSync(join(primary, 'shared.json'), join(primary, 'config', 'settings.json'))
@@ -457,9 +458,8 @@ describe('createWorktreeCopiedPaths', () => {
     await createWorktreeCopiedPaths(primary, worktree, ['config'], { platform: 'linux' })
 
     const copiedSettings = join(worktree, 'config', 'settings.json')
-    expect(lstatSync(copiedSettings).isSymbolicLink()).toBe(false)
-    writeFileSync(copiedSettings, '{"owner":"worktree"}')
-    expect(readFileSync(join(primary, 'shared.json'), 'utf8')).toBe('{"owner":"primary"}')
+    expect(lstatSync(copiedSettings).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(copiedSettings)).toBe(join(primary, 'shared.json'))
   })
 
   it('creates parent directories lazily for nested paths', async () => {
@@ -545,6 +545,30 @@ describe('createWorktreeCopiedPaths', () => {
     expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('CLONED=1\n')
   })
 
+  posixIt('copies a symlinked directory to its requested APFS destination', async () => {
+    const realSource = join(primary, 'shared-config')
+    mkdirSync(realSource)
+    writeFileSync(join(realSource, 'settings.json'), '{}')
+    symlinkSync(realSource, join(primary, 'config'), 'dir')
+    const target = join(worktree, 'config')
+    let cpArgs: readonly string[] | undefined
+    const deps = createApfsCloneDeps({
+      onCp: (args) => {
+        cpArgs = args
+        writeFileSync(join(target, 'settings.json'), '{}')
+      }
+    })
+
+    await createWorktreeCopiedPaths(primary, worktree, ['config'], {
+      platform: 'darwin',
+      apfsCloneDeps: deps
+    })
+
+    expect(cpArgs).toEqual(['-n', '-c', '-R', `${realpathSync(realSource)}${sep}.`, target])
+    expect(readFileSync(join(target, 'settings.json'), 'utf8')).toBe('{}')
+    expect(existsSync(join(worktree, 'shared-config'))).toBe(false)
+  })
+
   it('probes an APFS volume once when copying multiple paths', async () => {
     mkdirSync(join(primary, 'config'))
     mkdirSync(join(primary, 'secrets'))
@@ -562,7 +586,7 @@ describe('createWorktreeCopiedPaths', () => {
     expect(filesystemProbeCalls).toHaveLength(2)
     const copyCalls = execFileAsyncMock.mock.calls.filter(([file]) => file === '/bin/cp')
     expect(copyCalls).toHaveLength(2)
-    expect(copyCalls.every(([, args]) => args.includes('-L'))).toBe(true)
+    expect(copyCalls.every(([, args]) => !args.includes('-L'))).toBe(true)
   })
 })
 

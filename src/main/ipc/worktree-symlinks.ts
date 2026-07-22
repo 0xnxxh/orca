@@ -95,7 +95,7 @@ async function copyWorktreePath(
         recursive: true,
         force: false,
         errorOnExist: false,
-        dereference: true
+        dereference: false
       })
       if (process.platform !== 'win32') {
         await chmod(target, sourceMode)
@@ -113,7 +113,7 @@ async function copyWorktreePath(
     recursive: true,
     force: false,
     errorOnExist: false,
-    dereference: true
+    dereference: false
   })
 }
 
@@ -140,8 +140,7 @@ async function createWorktreeLinkedPath(
             cloneSourceIsDirectory,
             options.apfsCloneDeps ?? defaultApfsCloneDeps,
             {
-              filesystemCache: apfsFilesystemCache,
-              dereferenceSymlinks: mode === 'copy'
+              filesystemCache: apfsFilesystemCache
             }
           ))
       await cloneWorktreePath(copySource, target, sourceIsDirectory)

@@ -175,12 +175,16 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
   })
 
   it('lists collapsed directories and targeted nested files for worktree includes', async () => {
-    await writeFile(join(repoPath, '.gitignore'), '.env\ncache/\n')
+    await writeFile(join(repoPath, '.gitignore'), '.env\ncache/\nbuild/\nparent/\n')
     await writeFile(join(repoPath, '.env'), 'ROOT=1\n')
     await mkdir(join(repoPath, 'apps', 'web'), { recursive: true })
     await writeFile(join(repoPath, 'apps', 'web', '.env'), 'NESTED=1\n')
     await mkdir(join(repoPath, 'cache'))
     await writeFile(join(repoPath, 'cache', 'artifact'), 'ignored\n')
+    await mkdir(join(repoPath, 'build'))
+    await writeFile(join(repoPath, 'build', 'root-artifact'), 'ignored\n')
+    await mkdir(join(repoPath, 'parent', 'build'), { recursive: true })
+    await writeFile(join(repoPath, 'parent', 'build', 'nested-artifact'), 'ignored\n')
 
     const collapsed = await runGit([
       '-c',
@@ -209,5 +213,21 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
       ':(glob)**/.env'
     ])
     expect(targeted.stdout.split('\0').filter(Boolean)).toEqual(['.env', 'apps/web/.env'])
+
+    const targetedDirectory = await runGit([
+      '-c',
+      'core.quotePath=false',
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '-z',
+      '--',
+      ':(glob)**/build/**',
+      ':(exclude,literal)build'
+    ])
+    expect(targetedDirectory.stdout.split('\0').filter(Boolean)).toEqual([
+      'parent/build/nested-artifact'
+    ])
   })
 })

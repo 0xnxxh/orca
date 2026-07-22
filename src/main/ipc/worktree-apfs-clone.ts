@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, stat, rm, link, rmdir, chmod } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 type ExecFileAsync = (
@@ -29,7 +29,6 @@ type DarwinFilesystemInfo = {
 export type ApfsCloneFilesystemCache = Map<number, Promise<DarwinFilesystemInfo>>
 
 export type ApfsCloneOptions = {
-  dereferenceSymlinks?: boolean
   filesystemCache?: ApfsCloneFilesystemCache
 }
 
@@ -141,8 +140,7 @@ async function cloneFileWithApfs(
 async function cloneDirectoryWithApfs(
   source: string,
   target: string,
-  deps: ApfsCloneDeps,
-  dereferenceSymlinks: boolean
+  deps: ApfsCloneDeps
 ): Promise<void> {
   const sourceMode = (await stat(source)).mode & 0o777
   try {
@@ -159,14 +157,9 @@ async function cloneDirectoryWithApfs(
   try {
     // Why: the top-level directory is reserved before cp runs, so use `-n`
     // to keep a raced nested file from being overwritten during the copy.
-    await deps.execFileAsync('/bin/cp', [
-      '-n',
-      '-c',
-      '-R',
-      ...(dereferenceSymlinks ? ['-L'] : []),
-      source,
-      dirname(target)
-    ])
+    // Why: copy into the reserved target so a resolved top-level symlink whose
+    // target has another basename still lands at the requested path.
+    await deps.execFileAsync('/bin/cp', ['-n', '-c', '-R', `${source}${sep}.`, target])
     await chmod(target, sourceMode)
   } catch (error) {
     // Why: remove only the empty reservation. If cp wrote anything, or another
@@ -190,6 +183,6 @@ export async function cloneWorktreePathWithApfs(
   // while Darwin's cp exposes APFS clonefile via -c. Preflight the volume so
   // cp's non-APFS full-copy fallback cannot surprise users.
   await (sourceIsDirectory
-    ? cloneDirectoryWithApfs(source, target, deps, options.dereferenceSymlinks === true)
+    ? cloneDirectoryWithApfs(source, target, deps)
     : cloneFileWithApfs(source, target, deps))
 }
