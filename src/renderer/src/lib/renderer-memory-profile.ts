@@ -17,6 +17,8 @@ const contributors = new Map<string, RendererMemoryProfileContributor>()
 const MAX_COUNTS_PER_CONTRIBUTOR = 32
 // Why: individually bounded contributors can still create unbounded near-OOM work in aggregate.
 const MAX_PROFILE_COUNTS = 64
+// Why: empty contributors do not consume the count budget but must not make collection unbounded.
+const MAX_PROFILE_CONTRIBUTORS = 64
 
 export function registerRendererMemoryProfileContributor(
   name: string,
@@ -33,10 +35,12 @@ export function registerRendererMemoryProfileContributor(
 export function collectRendererMemoryProfileCounts(): RendererMemoryProfileCounts {
   const counts: RendererMemoryProfileCounts = {}
   let collected = 0
+  let visited = 0
   for (const [name, contributor] of contributors) {
-    if (collected >= MAX_PROFILE_COUNTS) {
+    if (collected >= MAX_PROFILE_COUNTS || visited >= MAX_PROFILE_CONTRIBUTORS) {
       break
     }
+    visited += 1
     // Why: a broken contributor must never take down memory reporting itself.
     try {
       const contribution = contributor()

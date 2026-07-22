@@ -88,6 +88,14 @@ describe('collectRendererMemoryProfileCounts', () => {
     expect(Object.keys(collectRendererMemoryProfileCounts())).toHaveLength(64)
     expect(skippedContributor).not.toHaveBeenCalled()
   })
+
+  it('caps contributor calls when contributors return no counts', () => {
+    const contributors = Array.from({ length: 100 }, () => vi.fn(() => ({})))
+    contributors.forEach((contributor, index) => register(`empty-${index}`, contributor))
+
+    expect(collectRendererMemoryProfileCounts()).toEqual({})
+    expect(contributors.filter((contributor) => contributor.mock.calls.length > 0)).toHaveLength(64)
+  })
 })
 
 describe('summarizeStateCollectionSizes', () => {
