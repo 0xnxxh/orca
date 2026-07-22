@@ -2,14 +2,20 @@ import { lstat, readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { checkIgnoredPaths } from './check-ignored-paths'
 import type { GitRuntimeOptions } from './git-runtime-options'
-import { gitOptionsForWorktree } from './git-runtime-options'
-import { gitExecFileAsync } from './runner'
+import {
+  chunkWorktreeIncludePathspecs,
+  listGitignoredEntries,
+  worktreeIncludePatternToGitDescendantPathspec,
+  worktreeIncludePatternToGitPathspec,
+  type GitignoredEntry
+} from './worktree-include-git-enumeration'
 import {
   isIncludedByWorktreePatterns,
   parseWorktreeIncludePatterns,
   WORKTREE_INCLUDE_MATCH_STEP_BUDGET,
   type WorktreeIncludePattern
 } from './worktree-include-pattern'
+import { mapWithConcurrency } from '../../shared/map-with-concurrency'
 
 /** Project-level list of gitignored paths to copy into each new worktree.
  *  Cross-tool convention (gitignore syntax); see issue #7549. */
@@ -21,9 +27,7 @@ const WORKTREE_INCLUDE_GIT_TIMEOUT_MS = 15_000
 const WORKTREE_INCLUDE_MAX_FILE_BYTES = 256 * 1024
 const WORKTREE_INCLUDE_MAX_CANDIDATES = 10_000
 const WORKTREE_INCLUDE_MAX_CANDIDATE_BYTES = 1024 * 1024
-// Why: Windows limits native command lines to 32K UTF-16 code units; leave
-// room for Git's executable, fixed arguments, and the repository path.
-const WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH = 12 * 1024
+const WORKTREE_INCLUDE_STAT_CONCURRENCY = 8
 
 function isSafeIncludeCandidate(relativePath: string): boolean {
   if (!relativePath || isAbsolute(relativePath)) {
@@ -33,12 +37,6 @@ function isSafeIncludeCandidate(relativePath: string): boolean {
   return !segments.includes('..') && segments[0] !== '.git'
 }
 
-type GitignoredEntry = {
-  relativePath: string
-  isDirectory: boolean
-  fromIgnoredScan: boolean
-}
-
 function hasCandidateDirectoryAncestor(
   candidates: ReadonlyMap<string, GitignoredEntry>,
   relativePath: string
@@ -46,99 +44,12 @@ function hasCandidateDirectoryAncestor(
   let separatorIndex = relativePath.indexOf('/')
   while (separatorIndex !== -1) {
     const ancestor = candidates.get(relativePath.slice(0, separatorIndex))
-    if (ancestor?.isDirectory && ancestor.fromIgnoredScan) {
+    if (ancestor?.isDirectory && ancestor.coversDescendants) {
       return true
     }
     separatorIndex = relativePath.indexOf('/', separatorIndex + 1)
   }
   return false
-}
-
-type ListGitignoredEntriesOptions = {
-  collapseDirectories: boolean
-  pathspecs?: readonly string[]
-  timeout: number
-}
-
-async function listGitignoredEntries(
-  repoPath: string,
-  options: GitRuntimeOptions,
-  listOptions: ListGitignoredEntriesOptions
-): Promise<GitignoredEntry[]> {
-  const args = [
-    '-c',
-    'core.quotePath=false',
-    'ls-files',
-    '--others',
-    '--ignored',
-    '--exclude-standard',
-    ...(listOptions.collapseDirectories ? ['--directory'] : []),
-    '-z',
-    ...(listOptions.pathspecs ? ['--', ...listOptions.pathspecs] : [])
-  ]
-  const { stdout } = await gitExecFileAsync(args, {
-    ...gitOptionsForWorktree(repoPath, options),
-    timeout: listOptions.timeout
-  })
-  const entries: GitignoredEntry[] = []
-  for (const rawEntry of stdout.split('\0')) {
-    if (!rawEntry) {
-      continue
-    }
-    const isDirectory = rawEntry.endsWith('/')
-    entries.push({
-      relativePath: isDirectory ? rawEntry.replace(/\/+$/, '') : rawEntry,
-      isDirectory,
-      fromIgnoredScan: true
-    })
-  }
-  return entries
-}
-
-function patternToGitPathspec(pattern: WorktreeIncludePattern): string {
-  // Why: our supported matcher treats `[` literally, while Git pathspec globs
-  // treat it as a character class opener.
-  const body = pattern.body.replaceAll('[', '[[]')
-  return `:(glob)${pattern.anchored ? '' : '**/'}${body}`
-}
-
-function patternToGitDescendantPathspec(pattern: WorktreeIncludePattern): string {
-  return `${patternToGitPathspec(pattern)}/**`
-}
-
-function chunkPathspecs(
-  pathspecs: readonly string[],
-  sharedPathspecs: readonly string[] = []
-): string[][] {
-  const chunks: string[][] = []
-  let chunk: string[] = []
-  const shared = Array.from(new Set(sharedPathspecs))
-  const sharedLength = shared.reduce((length, pathspec) => length + pathspec.length, 0)
-  if (sharedLength >= WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH) {
-    return chunks
-  }
-  let chunkLength = sharedLength
-  for (const pathspec of new Set(pathspecs)) {
-    // A single impossible-to-match pattern must not exceed Windows' process
-    // command-line limit; the collapsed scan still provides safe fallback.
-    if (pathspec.length + sharedLength > WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH) {
-      continue
-    }
-    if (
-      chunk.length > 0 &&
-      chunkLength + pathspec.length > WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH
-    ) {
-      chunks.push([...chunk, ...shared])
-      chunk = []
-      chunkLength = sharedLength
-    }
-    chunk.push(pathspec)
-    chunkLength += pathspec.length
-  }
-  if (chunk.length > 0) {
-    chunks.push([...chunk, ...shared])
-  }
-  return chunks
 }
 
 async function readWorktreeIncludeFile(repoPath: string): Promise<string | null> {
@@ -201,7 +112,7 @@ export async function resolveWorktreeIncludePaths(
 
     // Why: anchored literals cannot be discovered more cheaply than a direct probe;
     // broad literals use the bounded Git scans below instead of serial filesystem I/O.
-    const anchoredLiteralPaths = new Set(
+    const anchoredLiteralPatterns = new Map(
       patterns
         .filter(
           (pattern) =>
@@ -210,18 +121,33 @@ export async function resolveWorktreeIncludePaths(
             pattern.anchored &&
             isSafeIncludeCandidate(pattern.body)
         )
-        .map((pattern) => pattern.body)
+        .map((pattern) => [pattern.body, pattern] as const)
     )
-    for (const relativePath of anchoredLiteralPaths) {
-      try {
-        const stats = await lstat(join(repoPath, relativePath))
+    const anchoredLiteralDirectories = new Map<string, WorktreeIncludePattern>()
+    // Why: thousands of serial UNC/WSL stats can stall creation, while unbounded fanout can swamp the filesystem.
+    const anchoredLiteralStats = await mapWithConcurrency(
+      Array.from(anchoredLiteralPatterns),
+      WORKTREE_INCLUDE_STAT_CONCURRENCY,
+      async ([relativePath, pattern]) => {
+        try {
+          const stats = await lstat(join(repoPath, relativePath))
+          return { relativePath, pattern, isDirectory: stats.isDirectory() }
+        } catch {
+          return null
+        }
+      }
+    )
+    for (const result of anchoredLiteralStats) {
+      if (result) {
+        const { relativePath, pattern, isDirectory } = result
         addCandidate({
           relativePath,
-          isDirectory: stats.isDirectory(),
-          fromIgnoredScan: false
+          isDirectory,
+          coversDescendants: false
         })
-      } catch {
-        // Absent in the primary checkout — nothing to copy.
+        if (isDirectory && candidates.has(relativePath)) {
+          anchoredLiteralDirectories.set(relativePath, pattern)
+        }
       }
     }
 
@@ -237,22 +163,60 @@ export async function resolveWorktreeIncludePaths(
       })) {
         addCandidate(entry)
       }
+    }
 
-      // Why: Git 2.25's directory collapsing can stop at an untracked parent
-      // before discovering nested ignored files; targeted scans preserve the
-      // cross-version behavior without expanding unrelated ignored trees.
-      const filePathspecs = broadPatterns.flatMap((pattern) => [
-        ...(pattern.dirOnly ? [] : [patternToGitPathspec(pattern)]),
+    // Why: an anchored directory can contain tracked files while only some descendants are ignored; only fully ignored directories are safe to copy as one unit.
+    const checkedAnchoredDirectories = new Set(anchoredLiteralDirectories.keys())
+    const ignoredAnchoredDirectories = new Set<string>()
+    const anchoredDirectoriesToCheck: string[] = []
+    for (const relativePath of checkedAnchoredDirectories) {
+      if (candidates.get(relativePath)?.coversDescendants) {
+        ignoredAnchoredDirectories.add(relativePath)
+      } else {
+        anchoredDirectoriesToCheck.push(relativePath)
+      }
+    }
+    if (anchoredDirectoriesToCheck.length > 0) {
+      const timeout = deadline - Date.now()
+      if (timeout <= 0) {
+        throw new Error(`${WORKTREE_INCLUDE_FILE} resolution timed out`)
+      }
+      for (const relativePath of await checkIgnoredPaths(
+        repoPath,
+        anchoredDirectoriesToCheck,
+        options,
+        timeout
+      )) {
+        ignoredAnchoredDirectories.add(relativePath)
+        const candidate = candidates.get(relativePath)
+        if (candidate?.isDirectory) {
+          candidate.coversDescendants = true
+        }
+      }
+    }
+
+    // Why: Git 2.25's directory collapsing can stop at an untracked parent, so targeted scans preserve nested matches without expanding unrelated ignored trees.
+    const filePathspecs = [
+      ...broadPatterns.flatMap((pattern) => [
+        ...(pattern.dirOnly ? [] : [worktreeIncludePatternToGitPathspec(pattern)]),
         // Why: files beneath a matching directory expose directory matches that
         // Git 2.25 otherwise hides behind a collapsed ignored parent.
-        patternToGitDescendantPathspec(pattern)
-      ])
+        worktreeIncludePatternToGitDescendantPathspec(pattern)
+      ]),
+      ...Array.from(anchoredLiteralDirectories.entries())
+        .filter(([relativePath]) => !ignoredAnchoredDirectories.has(relativePath))
+        .map(([, pattern]) => worktreeIncludePatternToGitDescendantPathspec(pattern))
+    ]
+    if (filePathspecs.length > 0) {
       // Why: collapsed directories are already copied as units; excluding them
       // keeps a targeted nested scan from expanding node_modules-scale trees.
       const coveredDirectoryPathspecs = Array.from(candidates.values())
-        .filter((entry) => entry.isDirectory && entry.fromIgnoredScan)
+        .filter((entry) => entry.isDirectory && entry.coversDescendants)
         .map((entry) => `:(exclude,literal)${entry.relativePath}`)
-      for (const pathspecs of chunkPathspecs(filePathspecs, coveredDirectoryPathspecs)) {
+      for (const pathspecs of chunkWorktreeIncludePathspecs(
+        filePathspecs,
+        coveredDirectoryPathspecs
+      )) {
         const timeout = deadline - Date.now()
         if (timeout <= 0) {
           throw new Error(`${WORKTREE_INCLUDE_FILE} Git enumeration timed out`)
@@ -279,16 +243,26 @@ export async function resolveWorktreeIncludePaths(
     ) {
       throw new Error(`${WORKTREE_INCLUDE_FILE} matched paths exceed its byte budget`)
     }
-    const checkIgnoreTimeout = deadline - Date.now()
-    if (checkIgnoreTimeout <= 0) {
-      throw new Error(`${WORKTREE_INCLUDE_FILE} resolution timed out`)
-    }
-
     // Why: enforce the gitignored-only contract for literal-derived candidates
     // too — a listed-but-not-ignored path must not be copied (issue #7549).
-    const ignored = new Set(
-      await checkIgnoredPaths(repoPath, candidatePaths, options, checkIgnoreTimeout)
+    const ignored = new Set(ignoredAnchoredDirectories)
+    const uncheckedCandidatePaths = candidatePaths.filter(
+      (relativePath) => !checkedAnchoredDirectories.has(relativePath)
     )
+    if (uncheckedCandidatePaths.length > 0) {
+      const timeout = deadline - Date.now()
+      if (timeout <= 0) {
+        throw new Error(`${WORKTREE_INCLUDE_FILE} resolution timed out`)
+      }
+      for (const relativePath of await checkIgnoredPaths(
+        repoPath,
+        uncheckedCandidatePaths,
+        options,
+        timeout
+      )) {
+        ignored.add(relativePath)
+      }
+    }
     return candidatePaths.filter((relativePath) => ignored.has(relativePath)).sort()
   } catch (error) {
     console.warn(`[worktree-include] Failed to resolve ${WORKTREE_INCLUDE_FILE} patterns:`, error)

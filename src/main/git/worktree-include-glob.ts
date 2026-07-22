@@ -8,6 +8,7 @@ type WorktreeIncludeGlobToken =
 export type CompiledWorktreeIncludeGlob = {
   regExp: RegExp | null
   tokens: readonly WorktreeIncludeGlobToken[]
+  variableWidthSuffixLength: number | null
 }
 
 export function compileWorktreeIncludeGlob(pattern: string): CompiledWorktreeIncludeGlob {
@@ -39,10 +40,15 @@ export function compileWorktreeIncludeGlob(pattern: string): CompiledWorktreeInc
       regex += char.replace(/[.+^${}()|[\]\\]/, '\\$&')
     }
   }
+  const variableWidthIndex = tokens.findIndex(
+    (token) => token.kind === 'segment-star' || token.kind === 'recursive-star'
+  )
   return {
     // Why: multiple variable-width groups can make JS regex backtracking exponential.
     regExp: starCount <= 1 ? new RegExp(`^${regex}$`) : null,
-    tokens
+    tokens,
+    variableWidthSuffixLength:
+      variableWidthIndex === -1 ? null : tokens.length - variableWidthIndex - 1
   }
 }
 
@@ -50,7 +56,14 @@ export function getWorktreeIncludeGlobStepCount(
   pattern: CompiledWorktreeIncludeGlob,
   value: string
 ): number {
-  return pattern.regExp === null ? pattern.tokens.length * (value.length + 1) : value.length + 1
+  if (pattern.regExp === null) {
+    return pattern.tokens.length * (value.length + 1)
+  }
+  if (pattern.variableWidthSuffixLength !== null) {
+    const prefixLength = pattern.tokens.length - pattern.variableWidthSuffixLength - 1
+    return prefixLength + (pattern.variableWidthSuffixLength + 1) * (value.length + 1)
+  }
+  return pattern.tokens.length + value.length + 1
 }
 
 export function matchesWorktreeIncludeGlob(

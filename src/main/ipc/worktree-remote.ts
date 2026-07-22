@@ -2461,7 +2461,9 @@ export async function createLocalWorktree(
 
   // Why: project-level `.worktreeinclude` travels with the repo (issue #7549); copy semantics
   // (never symlink) so each worktree owns its files. Paths already linked above are skipped.
-  const includePaths = await resolveWorktreeIncludePaths(repo.path, localWorktreeGitOptions)
+  const includePaths = await timing.time('resolve_worktreeinclude', () =>
+    resolveWorktreeIncludePaths(repo.path, localWorktreeGitOptions)
+  )
   if (includePaths.length > 0) {
     await timing.time('copy_worktreeinclude', async () => {
       await createWorktreeCopiedPaths(repo.path, created.path, includePaths, {

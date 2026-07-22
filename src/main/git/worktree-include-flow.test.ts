@@ -33,8 +33,11 @@ describe('worktree include creation flow', () => {
   })
 
   it('copies only matched ignored paths and leaves ordinary removal clean', async () => {
-    await writeFile(join(primary, '.gitignore'), '.env\ncache/\nparent/\n')
-    await writeFile(join(primary, '.worktreeinclude'), '.env\ncache/\nbuild/\ntracked.txt\n')
+    await writeFile(join(primary, '.gitignore'), '.env\ncache/\nparent/\nmixed/local.txt\n')
+    await writeFile(
+      join(primary, '.worktreeinclude'),
+      '.env\ncache/\nbuild/\n/mixed/\ntracked.txt\n'
+    )
     await writeFile(join(primary, 'tracked.txt'), 'tracked\n')
     await writeFile(join(primary, '.env'), 'ROOT=1\n')
     await mkdir(join(primary, 'apps', 'web'), { recursive: true })
@@ -43,18 +46,29 @@ describe('worktree include creation flow', () => {
     await writeFile(join(primary, 'cache', 'artifact'), 'cached\n')
     await mkdir(join(primary, 'parent', 'build'), { recursive: true })
     await writeFile(join(primary, 'parent', 'build', 'marker'), 'built\n')
-    await git(['add', '.gitignore', '.worktreeinclude', 'tracked.txt'])
+    await mkdir(join(primary, 'mixed'))
+    await writeFile(join(primary, 'mixed', 'tracked.txt'), 'tracked\n')
+    await writeFile(join(primary, 'mixed', 'local.txt'), 'local\n')
+    await git(['add', '.gitignore', '.worktreeinclude', 'tracked.txt', 'mixed/tracked.txt'])
     await git(['commit', '-qm', 'initial'])
     await git(['worktree', 'add', '-q', '-b', 'feature', worktree])
 
     const includePaths = await resolveWorktreeIncludePaths(primary)
-    expect(includePaths).toEqual(['.env', 'apps/web/.env', 'cache', 'parent/build/marker'])
+    expect(includePaths).toEqual([
+      '.env',
+      'apps/web/.env',
+      'cache',
+      'mixed/local.txt',
+      'parent/build/marker'
+    ])
 
     await createWorktreeCopiedPaths(primary, worktree, includePaths, { platform: 'linux' })
 
     expect(await readFile(join(worktree, '.env'), 'utf8')).toBe('ROOT=1\n')
     expect(await readFile(join(worktree, 'apps', 'web', '.env'), 'utf8')).toBe('NESTED=1\n')
     expect(await readFile(join(worktree, 'cache', 'artifact'), 'utf8')).toBe('cached\n')
+    expect(await readFile(join(worktree, 'mixed', 'local.txt'), 'utf8')).toBe('local\n')
+    expect(await readFile(join(worktree, 'mixed', 'tracked.txt'), 'utf8')).toBe('tracked\n')
     expect(await readFile(join(worktree, 'parent', 'build', 'marker'), 'utf8')).toBe('built\n')
     expect((await lstat(join(worktree, 'tracked.txt'))).isFile()).toBe(true)
 

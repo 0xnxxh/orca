@@ -1115,6 +1115,7 @@ describe('registerWorktreeHandlers', () => {
       expect.arrayContaining([
         'git_worktree_add',
         'list_created_worktree',
+        'resolve_worktreeinclude',
         'prepare_setup',
         'spawn_startup_terminal'
       ])
