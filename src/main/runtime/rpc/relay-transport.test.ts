@@ -109,7 +109,11 @@ describe('CloudRelayTransport', () => {
         )
       }
       const emit = (event: string, ...args: unknown[]): void => {
-        for (const fn of listeners.get(event) ?? []) {
+        const eventListeners = listeners.get(event) ?? []
+        if (event === 'error' && eventListeners.length === 0) {
+          throw args[0]
+        }
+        for (const fn of eventListeners) {
           fn(...args)
         }
       }
@@ -122,7 +126,7 @@ describe('CloudRelayTransport', () => {
         on: addListener,
         once: addListener,
         off: removeListener,
-        send: () => {},
+        send: vi.fn(),
         terminate: () => {}
       }
       const onConnectionClosed = vi.fn()
@@ -133,6 +137,13 @@ describe('CloudRelayTransport', () => {
         createSocket: () => fakeSocket as unknown as WebSocketClient,
         onConnectionClosed
       })
+      let reply: ((response: string) => void) | null = null
+      const onMessage = vi.fn(
+        (_message: string | Uint8Array<ArrayBufferLike>, respond: (response: string) => void) => {
+          reply = respond
+        }
+      )
+      transport.onMessage(onMessage)
       const opening = transport.openConnection({
         connId: 'conn-1',
         connTicket: 'ticket-1',
@@ -142,11 +153,16 @@ describe('CloudRelayTransport', () => {
       })
       emit('open')
       await opening
+      vi.mocked(fakeSocket.send).mockClear()
+      emit('message', 'before-stop', false)
+      expect(onMessage).toHaveBeenCalledOnce()
 
       let stopped = false
       const stopPromise = transport.stop().then(() => {
         stopped = true
       })
+      emit('message', 'during-stop', false)
+      expect(onMessage).toHaveBeenCalledOnce()
       await vi.advanceTimersByTimeAsync(4_999)
       expect(stopped).toBe(false)
       await vi.advanceTimersByTimeAsync(1)
@@ -165,6 +181,14 @@ describe('CloudRelayTransport', () => {
       // late frames must not reach wiring after their metadata was released.
       expect(() => emit('message', 'late-after-stop', false)).not.toThrow()
       expect(onLateMessage).not.toHaveBeenCalled()
+      expect(reply).not.toBeNull()
+      await transport.start()
+      reply!('late-reply')
+      expect(fakeSocket.send).not.toHaveBeenCalled()
+      expect(() => emit('error', new Error('late socket failure'))).not.toThrow()
+      emit('close')
+      expect(listeners.get('error')).toHaveLength(0)
+      expect(listeners.get('close')).toHaveLength(0)
       expect(() => transport.setGeneration(2)).not.toThrow()
     } finally {
       vi.useRealTimers()

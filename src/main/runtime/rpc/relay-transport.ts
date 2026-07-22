@@ -163,6 +163,9 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
         this.finalizeConnection(connection.connId, socket)
       }
       const onMessage = (raw: RawData, isBinary: boolean): void => {
+        if (this.stopped || finalized) {
+          return
+        }
         if (!attached) {
           attached = true
           clearTimeout(deadline)
@@ -173,7 +176,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
         this.messageHandler?.(
           message,
           (response) => {
-            if (socket.readyState === socket.OPEN) {
+            if (!this.stopped && !finalized && socket.readyState === socket.OPEN) {
               socket.send(response)
             }
           },
@@ -203,6 +206,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
         }
       }
       this.detachListenersBySocket.set(socket, () => {
+        finalized = true
         socket.off('message', onMessage)
         socket.off('open', onOpen)
         socket.off('error', onError)
@@ -236,6 +240,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
         if (connectionId) {
           this.finalizeConnection(connectionId, socket)
         }
+        this.quarantineDetachedSocket(socket)
         resolve()
       }, RELAY_SOCKET_CLOSE_TIMEOUT_MS)
       socket.once('close', onClose)
@@ -248,6 +253,20 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
   private connectionIdForSocket(socket: WebSocket): string | undefined {
     const metadata = this.metadataBySocket.get(socket)
     return metadata?.transport === 'relay' ? metadata.basisConnId : undefined
+  }
+
+  private quarantineDetachedSocket(socket: WebSocket): void {
+    if (socket.readyState === socket.CLOSED) {
+      return
+    }
+    // Why: forced cleanup can precede ws's terminal error/close event.
+    const swallowLateError = (): void => {}
+    const clearQuarantine = (): void => {
+      socket.off('error', swallowLateError)
+      socket.off('close', clearQuarantine)
+    }
+    socket.on('error', swallowLateError)
+    socket.once('close', clearQuarantine)
   }
 
   private finalizeConnection(connectionId: string, socket: WebSocket): void {
