@@ -264,6 +264,14 @@ function classifyErrorCode(message: string): string {
   return 'browser_error'
 }
 
+function isAbortedNavigationError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false
+  }
+  const { code, errno } = error as { code?: unknown; errno?: unknown }
+  return code === 'ERR_ABORTED' || errno === -3
+}
+
 function isTabClosedTransportError(message: string): boolean {
   return /session destroyed while command|session destroyed while commands|connection refused|cdp discovery methods failed|websocket connect failed/i.test(
     message
@@ -798,10 +806,13 @@ export class AgentBrowserBridge {
           if (!this.getWebContents(target.webContentsId)) {
             throw this.createPageUnavailableError(`orca-tab-${target.browserPageId}`)
           }
-          throw new BrowserError(
-            'browser_error',
-            `Failed to navigate browser page ${target.browserPageId}: ${error instanceof Error ? error.message : String(error)}`
-          )
+          // Why: loadURL rejects ERR_ABORTED (-3) on redirects/SPA navigations and downloads; the page is still usable (see offscreen-browser-backend), so report where it landed instead of failing.
+          if (!isAbortedNavigationError(error)) {
+            throw new BrowserError(
+              'browser_error',
+              `Failed to navigate browser page ${target.browserPageId}: ${error instanceof Error ? error.message : String(error)}`
+            )
+          }
         } finally {
           if (navigationTimeout) {
             clearTimeout(navigationTimeout)

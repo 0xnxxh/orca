@@ -1667,16 +1667,47 @@ describe('AgentBrowserBridge', () => {
     }
   })
 
-  it('fails closed when direct navigation is aborted', async () => {
-    const wc = mockWebContents(100, 'https://example.com/current', 'Current')
+  it('reports the landed page when a client-side redirect aborts direct navigation', async () => {
+    const wc = mockWebContents(100, 'https://example.com/current', 'Example')
+    wc.loadURL.mockImplementation(async () => {
+      // Mimic Electron: the target commits, a JS/meta redirect supersedes the load, loadURL rejects.
+      wc.getURL = () => 'https://example.com/login'
+      throw Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 })
+    })
+    webContentsFromIdMock.mockReturnValue(wc)
+
+    await expect(bridge.goto('https://example.com/sso')).resolves.toEqual({
+      url: 'https://example.com/login',
+      title: 'Example'
+    })
+    expect(execFileMock).not.toHaveBeenCalled()
+  })
+
+  it('resolves with the unchanged page when a download-triggered load aborts', async () => {
+    const wc = mockWebContents(100, 'https://example.com/current', 'Example')
+    wc.loadURL.mockRejectedValue(Object.assign(new Error('ERR_ABORTED (-3)'), { errno: -3 }))
+    webContentsFromIdMock.mockReturnValue(wc)
+
+    await expect(bridge.goto('https://example.com/download')).resolves.toEqual({
+      url: 'https://example.com/current',
+      title: 'Example'
+    })
+    expect(execFileMock).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when direct navigation fails for a non-abort reason', async () => {
+    const wc = mockWebContents(100, 'https://example.com/current', 'Example')
     wc.loadURL.mockRejectedValue(
-      Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED' })
+      Object.assign(new Error('ERR_NAME_NOT_RESOLVED (-105)'), {
+        code: 'ERR_NAME_NOT_RESOLVED',
+        errno: -105
+      })
     )
     webContentsFromIdMock.mockReturnValue(wc)
 
-    await expect(bridge.goto('https://example.com/download')).rejects.toMatchObject({
+    await expect(bridge.goto('https://nxdomain.example')).rejects.toMatchObject({
       code: 'browser_error',
-      message: 'Failed to navigate browser page tab-1: ERR_ABORTED (-3)'
+      message: 'Failed to navigate browser page tab-1: ERR_NAME_NOT_RESOLVED (-105)'
     })
     expect(execFileMock).not.toHaveBeenCalled()
   })
