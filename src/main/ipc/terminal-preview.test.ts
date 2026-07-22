@@ -24,11 +24,15 @@ type Listener = (data: string, meta?: OutputMeta) => void
 
 function makeRuntime() {
   const listeners: Listener[] = []
+  const resizeListeners: (() => void)[] = []
   const unsubscribe = vi.fn()
+  const unsubscribeResize = vi.fn()
   const releaseRawView = vi.fn()
   return {
     listeners,
+    resizeListeners,
     unsubscribe,
+    unsubscribeResize,
     releaseRawView,
     serializeTerminalBuffer: vi.fn(
       async (): Promise<{ data: string; cols: number; rows: number; seq: number } | null> => ({
@@ -42,8 +46,15 @@ function makeRuntime() {
       listeners.push(listener)
       return unsubscribe
     }),
+    subscribeToTerminalResize: vi.fn((_ptyId: string, listener: () => void) => {
+      resizeListeners.push(listener)
+      return unsubscribeResize
+    }),
     registerRawTerminalViewSubscriber: vi.fn(() => releaseRawView),
-    writeTerminalPreviewInput: vi.fn(async () => true)
+    writeTerminalPreviewInput: vi.fn(async () => true),
+    updateRemoteDesktopViewer: vi.fn(async () => true),
+    unregisterRemoteDesktopViewer: vi.fn(async () => true),
+    getTerminalSize: vi.fn((): { cols: number; rows: number } | null => ({ cols: 132, rows: 40 }))
   }
 }
 
@@ -267,6 +278,88 @@ describe('registerTerminalPreviewHandlers', () => {
     expect(runtime.serializeTerminalBuffer).not.toHaveBeenCalled()
     expect(runtime.subscribeToTerminalData).not.toHaveBeenCalled()
     expect(runtime.writeTerminalPreviewInput).not.toHaveBeenCalled()
+  })
+
+  it('pushes a resync when the PTY grid changes under a live stream', async () => {
+    const runtime = makeRuntime()
+    registerTerminalPreviewHandlers(runtime as never)
+    const sender = makeSender()
+    await handlers.get('terminalPreview:connect')!(eventFor(sender), { ptyId: 'p1' })
+    expect(runtime.subscribeToTerminalResize).toHaveBeenCalledWith('p1', expect.any(Function))
+
+    runtime.resizeListeners[0]!()
+    expect(sender.send).toHaveBeenCalledWith('terminalPreview:data', {
+      type: 'resync',
+      ptyId: 'p1'
+    })
+
+    handlers.get('terminalPreview:unsubscribe')!(eventFor(sender), { ptyId: 'p1' })
+    expect(runtime.unsubscribeResize).toHaveBeenCalledTimes(1)
+  })
+
+  it('claims the PTY grid on fit and reports the size actually in effect', async () => {
+    const runtime = makeRuntime()
+    registerTerminalPreviewHandlers(runtime as never)
+    const sender = makeSender()
+
+    await expect(
+      handlers.get('terminalPreview:fit')!(eventFor(sender), { ptyId: 'p1', cols: 132, rows: 40 })
+    ).resolves.toEqual({ cols: 132, rows: 40 })
+    expect(runtime.updateRemoteDesktopViewer).toHaveBeenCalledWith(
+      'p1',
+      'dashboard-popout:1',
+      'dashboard-popout:1',
+      132,
+      40
+    )
+
+    await expect(
+      handlers.get('terminalPreview:fit')!(eventFor(sender), {
+        ptyId: 'p1',
+        cols: Infinity,
+        rows: 40
+      })
+    ).resolves.toBeNull()
+    expect(runtime.updateRemoteDesktopViewer).toHaveBeenCalledTimes(1)
+  })
+
+  it('releases the fit claim on unsubscribe and on sender destruction', async () => {
+    const runtime = makeRuntime()
+    registerTerminalPreviewHandlers(runtime as never)
+    const sender = makeSender()
+
+    await handlers.get('terminalPreview:fit')!(eventFor(sender), {
+      ptyId: 'p1',
+      cols: 132,
+      rows: 40
+    })
+    handlers.get('terminalPreview:unsubscribe')!(eventFor(sender), { ptyId: 'p1' })
+    expect(runtime.unregisterRemoteDesktopViewer).toHaveBeenCalledWith('p1', 'dashboard-popout:1')
+
+    // A release is one-shot per claim.
+    handlers.get('terminalPreview:unsubscribe')!(eventFor(sender), { ptyId: 'p1' })
+    expect(runtime.unregisterRemoteDesktopViewer).toHaveBeenCalledTimes(1)
+
+    await handlers.get('terminalPreview:fit')!(eventFor(sender), {
+      ptyId: 'p2',
+      cols: 90,
+      rows: 30
+    })
+    sender.fireDestroyed()
+    expect(runtime.unregisterRemoteDesktopViewer).toHaveBeenCalledWith('p2', 'dashboard-popout:1')
+    expect(runtime.unregisterRemoteDesktopViewer).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects fit calls from non-dashboard senders', async () => {
+    const runtime = makeRuntime()
+    registerTerminalPreviewHandlers(runtime as never)
+    const sender = makeSender()
+    isDashboardPopoutRendererMock.mockReturnValue(false)
+
+    await expect(
+      handlers.get('terminalPreview:fit')!(eventFor(sender), { ptyId: 'p1', cols: 132, rows: 40 })
+    ).resolves.toBeNull()
+    expect(runtime.updateRemoteDesktopViewer).not.toHaveBeenCalled()
   })
 
   it('validates input before routing it to the runtime', async () => {
