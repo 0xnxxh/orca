@@ -19,6 +19,7 @@ type LoadedHostStatusGates = HostStatusGates & {
 }
 
 const EMPTY_HOST_CAPABILITIES: string[] = []
+const RECOMMENDATION_REFRESH_DELAY_MS = 6_000
 
 // Reads status.get on connect for capabilities, protocol-compat verdict, and the
 // floating-workspace flag. Compat constants are wide-open today so this never blocks yet.
@@ -37,23 +38,29 @@ export function useHostStatusGates(args: {
       return
     }
     let cancelled = false
+    let recommendationRefreshTimer: ReturnType<typeof setTimeout> | null = null
     const requestClient = client
-    void (async () => {
+    const setFallbackGates = () => {
+      setLoaded({
+        hostId,
+        client: requestClient,
+        hostCapabilities: [],
+        floatingWorkspaceEnabled: false,
+        compatVerdict: { kind: 'ok' },
+        statusPending: false,
+        recommendedMobileAppVersions: null
+      })
+    }
+    const loadStatus = async (recommendationRefresh: boolean): Promise<void> => {
       try {
         const response = await requestClient.sendRequest('status.get')
         if (cancelled) {
           return
         }
         if (!response.ok) {
-          setLoaded({
-            hostId,
-            client: requestClient,
-            hostCapabilities: [],
-            floatingWorkspaceEnabled: false,
-            compatVerdict: { kind: 'ok' },
-            statusPending: false,
-            recommendedMobileAppVersions: null
-          })
+          if (!recommendationRefresh) {
+            setFallbackGates()
+          }
           return
         }
         const status = (response as RpcSuccess).result as DesktopStatus & {
@@ -63,6 +70,7 @@ export function useHostStatusGates(args: {
           desktopProtocolVersion: status.protocolVersion,
           desktopMinCompatibleMobileVersion: status.minCompatibleMobileVersion
         })
+        const recommendedMobileAppVersions = readRecommendedMobileAppVersions(status)
         setLoaded({
           hostId,
           client: requestClient,
@@ -70,7 +78,7 @@ export function useHostStatusGates(args: {
           floatingWorkspaceEnabled: status.floatingWorkspaceEnabled === true,
           compatVerdict: verdict,
           statusPending: false,
-          recommendedMobileAppVersions: readRecommendedMobileAppVersions(status)
+          recommendedMobileAppVersions
         })
         if (verdict.kind === 'blocked') {
           // Why: support breadcrumb to confirm a block fired vs a render bug; no PII, just version ints.
@@ -81,23 +89,32 @@ export function useHostStatusGates(args: {
             requiredDesktopVersion: verdict.requiredDesktopVersion
           })
         }
+        if (
+          !recommendationRefresh &&
+          verdict.kind !== 'blocked' &&
+          !recommendedMobileAppVersions &&
+          status.recommendedMobileAppVersionsPending === true
+        ) {
+          // The desktop fetch has a 5s deadline; one delayed read observes its cache
+          // without polling or adding work for older hosts.
+          recommendationRefreshTimer = setTimeout(() => {
+            recommendationRefreshTimer = null
+            void loadStatus(true)
+          }, RECOMMENDATION_REFRESH_DELAY_MS)
+        }
       } catch {
         // Why: a transient status failure must not trap navigation; conservative feature gates remain disabled.
-        if (!cancelled) {
-          setLoaded({
-            hostId,
-            client: requestClient,
-            hostCapabilities: [],
-            floatingWorkspaceEnabled: false,
-            compatVerdict: { kind: 'ok' },
-            statusPending: false,
-            recommendedMobileAppVersions: null
-          })
+        if (!cancelled && !recommendationRefresh) {
+          setFallbackGates()
         }
       }
-    })()
+    }
+    void loadStatus(false)
     return () => {
       cancelled = true
+      if (recommendationRefreshTimer) {
+        clearTimeout(recommendationRefreshTimer)
+      }
     }
   }, [client, connState, hostId])
 

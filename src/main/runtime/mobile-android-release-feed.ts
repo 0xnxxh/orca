@@ -12,8 +12,7 @@ const FETCH_TIMEOUT_MS = 5000
 // Why: a mobile build ships ~monthly, so a long TTL keeps this to a few
 // unauthenticated GitHub calls per day per host while staying fresh enough.
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
-// Why: only stable Android tags count as a recommendation; skip anything with a
-// prerelease suffix so an rc APK never nudges stable users.
+// Why: only exact Android release tags count, so suffixed RC builds never nudge stable users.
 const ANDROID_TAG_RE = /^mobile-android-v(\d+\.\d+\.\d+)$/
 
 type ReleaseFeedEntry = {
@@ -27,14 +26,26 @@ type CacheState = {
   fetchedAt: number
 }
 
+type ReleaseFeedResponse = Pick<Response, 'ok' | 'json'>
+type ReleaseFeedFetcher = () => Promise<ReleaseFeedResponse>
+
+const defaultReleaseFeedFetcher: ReleaseFeedFetcher = () =>
+  net.fetch(RELEASES_API_URL, {
+    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'orca-runtime' },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+  })
+
 // Module-level cache shared across every status.get on this host.
 let cache: CacheState | null = null
 let inFlight: Promise<void> | null = null
+let releaseFeedFetcher = defaultReleaseFeedFetcher
 
 export function extractLatestAndroidVersion(entries: ReleaseFeedEntry[]): string | null {
   let latest: string | null = null
   for (const entry of entries) {
-    if (entry.draft === true || entry.prerelease === true) {
+    // Mobile releases intentionally use GitHub's prerelease flag so they do not
+    // replace the desktop's latest release; the strict tag defines this channel.
+    if (entry.draft === true) {
       continue
     }
     if (typeof entry.tag_name !== 'string') {
@@ -54,10 +65,7 @@ export function extractLatestAndroidVersion(entries: ReleaseFeedEntry[]): string
 
 async function fetchLatestAndroidVersion(): Promise<string | null> {
   try {
-    const response = await net.fetch(RELEASES_API_URL, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'orca-runtime' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-    })
+    const response = await releaseFeedFetcher()
     if (!response.ok) {
       return null
     }
@@ -103,10 +111,15 @@ export function getRecommendedAndroidVersion(nowMs: number): string | null {
   return cache?.version ?? null
 }
 
+export function isAndroidReleaseFeedRefreshPending(): boolean {
+  return inFlight !== null
+}
+
 // Test-only: reset module cache between cases.
 export function __resetAndroidReleaseFeedCacheForTests(): void {
   cache = null
   inFlight = null
+  releaseFeedFetcher = defaultReleaseFeedFetcher
 }
 
 // Test-only: seed the cache with a fresh value so status.get reads it without
@@ -114,4 +127,8 @@ export function __resetAndroidReleaseFeedCacheForTests(): void {
 export function __setAndroidReleaseFeedCacheForTests(version: string | null): void {
   cache = { version, fetchedAt: Date.now() }
   inFlight = null
+}
+
+export function __setAndroidReleaseFeedFetcherForTests(fetcher: ReleaseFeedFetcher): void {
+  releaseFeedFetcher = fetcher
 }

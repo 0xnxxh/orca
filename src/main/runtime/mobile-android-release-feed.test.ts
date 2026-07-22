@@ -1,5 +1,16 @@
-import { describe, expect, it } from 'vitest'
-import { extractLatestAndroidVersion } from './mobile-android-release-feed'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  __resetAndroidReleaseFeedCacheForTests,
+  __setAndroidReleaseFeedFetcherForTests,
+  extractLatestAndroidVersion,
+  getRecommendedAndroidVersion,
+  isAndroidReleaseFeedRefreshPending
+} from './mobile-android-release-feed'
+
+afterEach(() => {
+  __resetAndroidReleaseFeedCacheForTests()
+  vi.restoreAllMocks()
+})
 
 describe('extractLatestAndroidVersion', () => {
   it('picks the newest stable mobile-android tag', () => {
@@ -14,13 +25,14 @@ describe('extractLatestAndroidVersion', () => {
     expect(version).toBe('0.0.31')
   })
 
-  it('skips drafts and prereleases', () => {
+  it('accepts the published mobile channel while skipping drafts', () => {
     const version = extractLatestAndroidVersion([
       { tag_name: 'mobile-android-v0.0.40', prerelease: true },
       { tag_name: 'mobile-android-v0.0.41', draft: true },
       { tag_name: 'mobile-android-v0.0.31' }
     ])
-    expect(version).toBe('0.0.31')
+    // Android workflow releases use --prerelease to avoid replacing desktop latest.
+    expect(version).toBe('0.0.40')
   })
 
   it('rejects non-semver and malformed tags, failing open to null', () => {
@@ -33,5 +45,26 @@ describe('extractLatestAndroidVersion', () => {
       ])
     ).toBeNull()
     expect(extractLatestAndroidVersion([])).toBeNull()
+  })
+
+  it('deduplicates a cold refresh and exposes its completion without blocking callers', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ tag_name: 'mobile-android-v0.0.40', prerelease: true }]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    )
+    __setAndroidReleaseFeedFetcherForTests(fetchMock)
+
+    expect(getRecommendedAndroidVersion(1_000)).toBeNull()
+    expect(getRecommendedAndroidVersion(1_000)).toBeNull()
+    expect(isAndroidReleaseFeedRefreshPending()).toBe(true)
+    expect(fetchMock).toHaveBeenCalledOnce()
+
+    await vi.waitFor(() => {
+      expect(isAndroidReleaseFeedRefreshPending()).toBe(false)
+    })
+    expect(getRecommendedAndroidVersion(1_000)).toBe('0.0.40')
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 })

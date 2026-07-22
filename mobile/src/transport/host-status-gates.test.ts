@@ -123,6 +123,65 @@ describe('useHostStatusGates', () => {
     }
   })
 
+  it('observes a cold recommendation with one bounded follow-up request', async () => {
+    vi.useFakeTimers()
+    const sendRequest = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          protocolVersion: 3,
+          minCompatibleMobileVersion: 2,
+          capabilities: ['mobile.tasks.v1'],
+          recommendedMobileAppVersionsPending: true
+        }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          protocolVersion: 3,
+          minCompatibleMobileVersion: 2,
+          capabilities: ['mobile.tasks.v1'],
+          recommendedMobileAppVersions: { android: '0.0.40' }
+        }
+      })
+    const client = { sendRequest } as unknown as RpcClient
+    let gates: HostStatusGates | null = null
+    let renderer: ReactTestRenderer | null = null
+
+    function Probe(): null {
+      gates = useHostStatusGates({ hostId: 'host-1', client, connState: 'connected' })
+      return null
+    }
+
+    const restore = suppressReactTestRendererDeprecationWarning()
+    try {
+      await act(async () => {
+        renderer = create(createElement(Probe))
+        await Promise.resolve()
+      })
+      expect(gates).toMatchObject({
+        hostCapabilities: ['mobile.tasks.v1'],
+        recommendedMobileAppVersions: null,
+        statusPending: false
+      })
+      expect(sendRequest).toHaveBeenCalledOnce()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(6_000)
+      })
+      expect(gates?.recommendedMobileAppVersions).toEqual({ android: '0.0.40' })
+      expect(sendRequest).toHaveBeenCalledTimes(2)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(sendRequest).toHaveBeenCalledTimes(2)
+    } finally {
+      restore()
+      renderer?.unmount()
+      vi.useRealTimers()
+    }
+  })
+
   it('fails closed while the same client reconnects', async () => {
     let resolveReconnect: ((response: unknown) => void) | null = null
     const pendingReconnect = new Promise((resolve) => {

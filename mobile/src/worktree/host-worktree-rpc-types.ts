@@ -16,6 +16,8 @@ export type DesktopStatus = {
     ios?: string
     android?: string
   }
+  // Why: new hosts use this to request one post-refresh status update; old hosts omit it.
+  recommendedMobileAppVersionsPending?: boolean
 }
 
 export type RepoSummary = {
