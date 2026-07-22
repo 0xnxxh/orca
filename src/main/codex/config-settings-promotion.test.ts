@@ -19,7 +19,7 @@ import type * as CodexFsUtils from '../codex-accounts/fs-utils'
 
 const { homedirMock, promotionTestState } = vi.hoisted(() => ({
   homedirMock: vi.fn<() => string>(),
-  promotionTestState: { failAtomicWrite: false }
+  promotionTestState: { failAtomicWrite: false, atomicWritePaths: [] as string[] }
 }))
 
 vi.mock('node:os', async (importOriginal) => {
@@ -35,6 +35,7 @@ vi.mock('../codex-accounts/fs-utils', async (importOriginal) => {
   return {
     ...actual,
     writeFileAtomically: (...args: Parameters<typeof actual.writeFileAtomically>) => {
+      promotionTestState.atomicWritePaths.push(args[0])
       if (promotionTestState.failAtomicWrite) {
         throw new Error('injected atomic write failure')
       }
@@ -65,6 +66,7 @@ beforeEach(() => {
   process.env.ORCA_USER_DATA_PATH = userDataDir
   homedirMock.mockReturnValue(tmpHome)
   promotionTestState.failAtomicWrite = false
+  promotionTestState.atomicWritePaths.length = 0
   // Why: promotion writes into homedir()/.codex — if the mock ever fails to
   // intercept, these tests would rewrite the developer's real Codex config.
   if (homedir() !== tmpHome) {
@@ -600,9 +602,11 @@ describe('codex [tui] settings write-back promotion', () => {
     // is dropped instead.
     setRuntimeConfig('model = "gpt-5"\n\n[tui]\ntheme = "dark-photon"\n')
     writeSystemConfig('model = "gpt-5"\ntui = { animations = false }\n')
+    promotionTestState.atomicWritePaths.length = 0
     syncSystemConfigIntoManagedCodexHome()
 
     expect(readSystemConfig()).toBe('model = "gpt-5"\ntui = { animations = false }\n')
+    expect(promotionTestState.atomicWritePaths).not.toContain(systemConfigPath())
   })
 
   it('ignores an allowlisted key nested under a [tui.*] subtable', () => {
@@ -691,6 +695,24 @@ describe('upsertPromotedSettingsInContent', () => {
         new Map([['tui.theme', '"dark"']])
       )
     ).toBe('[tui.notifications]\nenabled = true\n\n[tui]\ntheme = "dark"\n')
+  })
+
+  it('drops an absent scalar that would redefine an existing tui key table', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        '[tui."theme"]\nvariant = "dark"\n',
+        new Map([['tui.theme', '"light"']])
+      )
+    ).toBe('[tui."theme"]\nvariant = "dark"\n')
+  })
+
+  it('drops an absent scalar that would redefine a dotted tui key table', () => {
+    expect(
+      upsertPromotedSettingsInContent(
+        'tui.theme.variant = "dark"\n',
+        new Map([['tui.theme', '"light"']])
+      )
+    ).toBe('tui.theme.variant = "dark"\n')
   })
 
   it('does not mistake a dotted tui key inside an array table for a root key', () => {

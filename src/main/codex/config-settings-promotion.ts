@@ -18,7 +18,7 @@ import {
   isTomlStructuralLine,
   updateTomlLineScanState
 } from './config-toml-line-scan'
-import { getTomlTableName, parseTomlKeyPath } from './config-toml-key-path'
+import { parseTomlKeyPath, parseTomlTableHeaderPath } from './config-toml-key-path'
 import { tuiStructuredKey, upsertPromotedSettingsInContent } from './codex-config-settings-upsert'
 
 // Why: the mirror reverts in-Codex config changes each launch; promotion salvages them by diffing the last baseline.
@@ -151,7 +151,13 @@ function readPromotedSettingValues(configPath: string): Map<string, TopLevelSett
     if (isTomlStructuralLine(state)) {
       const header = getTomlTableHeader(line)
       if (header) {
-        tuiBodyActive = getTomlTableName(header) === 'tui' && !tuiTableSeen
+        const table = parseTomlTableHeaderPath(header)
+        tuiBodyActive =
+          table !== null &&
+          !table.isArray &&
+          table.segments.length === 1 &&
+          table.segments[0] === 'tui' &&
+          !tuiTableSeen
         if (tuiBodyActive) {
           tuiTableSeen = true
         }
@@ -252,8 +258,7 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
     return
   }
   const runtimeValues = readPromotedSettingValues(runtimeTomlPath)
-  const systemValues = readPromotedSettingValues(systemTomlPath)
-  const updates = new Map<string, string>()
+  const changedRuntimeValues = new Map<string, string>()
   for (const key of PROMOTED_STRUCTURED_KEYS) {
     const runtime = runtimeValues.get(key)
     if (!runtime || runtime.multiline) {
@@ -263,6 +268,14 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
       // Orca mirrored this value and nothing touched it since — not a change.
       continue
     }
+    changedRuntimeValues.set(key, runtime.raw)
+  }
+  if (changedRuntimeValues.size === 0) {
+    return
+  }
+  const systemValues = readPromotedSettingValues(systemTomlPath)
+  const updates = new Map<string, string>()
+  for (const [key, runtimeRaw] of changedRuntimeValues) {
     const system = systemValues.get(key)
     if (system?.multiline) {
       continue
@@ -271,7 +284,7 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
     if (system?.raw !== baseline.get(key)) {
       continue
     }
-    updates.set(key, runtime.raw)
+    updates.set(key, runtimeRaw)
   }
   if (updates.size === 0) {
     return
@@ -284,6 +297,9 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
   const targetExists = existsSync(writeTarget.path)
   const systemContent = targetExists ? readFileSync(writeTarget.path, 'utf-8') : ''
   const nextContent = upsertPromotedSettingsInContent(systemContent, updates)
+  if (nextContent === systemContent) {
+    return
+  }
   if (targetExists && parseWslUncPath(writeTarget.path)) {
     // Why: \\wsl$ 9P symlink metadata is unreliable; write through the existing file to preserve the WSL-side inode.
     writeFileSync(writeTarget.path, nextContent, 'utf-8')

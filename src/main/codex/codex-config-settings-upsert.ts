@@ -4,7 +4,7 @@ import {
   isTomlStructuralLine,
   updateTomlLineScanState
 } from './config-toml-line-scan'
-import { getTomlTableName, parseTomlKeyPath } from './config-toml-key-path'
+import { parseTomlKeyPath, parseTomlTableHeaderPath } from './config-toml-key-path'
 
 const TUI_STRUCTURED_PREFIX = 'tui.'
 
@@ -105,6 +105,7 @@ type TuiPlacementScan = {
   hasBareTuiTable: boolean
   hasDottedTuiKey: boolean
   blocksNewTuiTable: boolean
+  blockedAbsentKeys: Set<string>
   bareBodyInsertIndex: number
   lastDottedTuiIndex: number
 }
@@ -135,6 +136,10 @@ export function upsertTuiSettingsInContent(content: string, updates: Map<string,
     const bareIndex = scan.bareKeyIndexes.get(key)
     if (bareIndex !== undefined) {
       lines[bareIndex] = withTrailingCr(lines[bareIndex]!, `${key} = ${raw}`)
+      continue
+    }
+    // Why: adding a scalar beside an existing tui.<key> descendant would turn valid TOML invalid.
+    if (scan.blockedAbsentKeys.has(key)) {
       continue
     }
     if (scan.hasBareTuiTable) {
@@ -183,6 +188,7 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
   let lastDottedTuiIndex = -1
   const bareKeyIndexes = new Map<string, number>()
   const dottedKeyIndexes = new Map<string, number>()
+  const blockedAbsentKeys = new Set<string>()
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? ''
@@ -193,16 +199,27 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
           tuiBodyEndIndex = index
           tuiBodyActive = false
         }
-        const tableName = getTomlTableName(header)
-        if (tableName === 'tui' && !tuiTableSeen) {
+        const table = parseTomlTableHeaderPath(header)
+        if (
+          table &&
+          !table.isArray &&
+          table.segments.length === 1 &&
+          table.segments[0] === 'tui' &&
+          !tuiTableSeen
+        ) {
           tuiTableSeen = true
           tuiBodyActive = true
           tuiBodyHeaderIndex = index
         }
         // Why: a root [[tui]] is already an array, so appending [tui] would
         // redefine it and make an otherwise valid config unparseable.
-        if (isRootTuiArrayTableHeader(header)) {
+        if (table?.isArray && table.segments.length === 1 && table.segments[0] === 'tui') {
           blocksNewTuiTable = true
+        }
+        const descendantKey =
+          table?.segments[0] === 'tui' && table.segments.length > 1 ? table.segments[1] : null
+        if (descendantKey && updates.has(descendantKey)) {
+          blockedAbsentKeys.add(descendantKey)
         }
         inPreamble = false
         state = updateTomlLineScanState(state, line)
@@ -220,6 +237,10 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
           if (promotedKey && updates.has(promotedKey)) {
             dottedKeyIndexes.set(promotedKey, index)
           }
+          const descendantKey = parsed.segments.length > 2 ? parsed.segments[1] : null
+          if (descendantKey && updates.has(descendantKey)) {
+            blockedAbsentKeys.add(descendantKey)
+          }
         } else if (isAssignment && parsed.segments.length === 1 && parsed.segments[0] === 'tui') {
           blocksNewTuiTable = true
         }
@@ -228,6 +249,10 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
         const key = parsed?.segments.length === 1 ? parsed.segments[0] : null
         if (parsed && line[parsed.end] === '=' && key && updates.has(key)) {
           bareKeyIndexes.set(key, index)
+        }
+        const descendantKey = parsed && parsed.segments.length > 1 ? parsed.segments[0] : null
+        if (descendantKey && updates.has(descendantKey)) {
+          blockedAbsentKeys.add(descendantKey)
         }
       }
     }
@@ -243,20 +268,10 @@ function scanTuiPlacement(lines: string[], updates: Map<string, string>): TuiPla
     hasBareTuiTable: tuiTableSeen,
     hasDottedTuiKey,
     blocksNewTuiTable,
+    blockedAbsentKeys,
     bareBodyInsertIndex: computeBareBodyInsertIndex(lines, tuiBodyHeaderIndex, tuiBodyEndIndex),
     lastDottedTuiIndex
   }
-}
-
-function isRootTuiArrayTableHeader(header: string): boolean {
-  const match = /^\[\[(.+)\]\]$/.exec(header.trim())
-  if (!match) {
-    return false
-  }
-  const parsed = parseTomlKeyPath(match[1]!)
-  return (
-    parsed?.end === match[1]!.length && parsed.segments.length === 1 && parsed.segments[0] === 'tui'
-  )
 }
 
 // Why: TOML forbids adding bare keys to `[tui]` after a `[tui.*]` subtable opens,

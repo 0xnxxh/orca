@@ -5,17 +5,32 @@ export type ParsedTomlKeyPath = {
   end: number
 }
 
-export function getTomlTableName(header: string): string | null {
+export type ParsedTomlTableHeaderPath = ParsedTomlKeyPath & {
+  isArray: boolean
+}
+
+export function parseTomlTableHeaderPath(header: string): ParsedTomlTableHeaderPath | null {
   const trimmed = header.trim()
+  let source: string
+  let isArray: boolean
   if (trimmed.startsWith('[[')) {
+    if (!trimmed.endsWith(']]')) {
+      return null
+    }
+    source = trimmed.slice(2, -2)
+    isArray = true
+  } else {
+    if (!trimmed.startsWith('[') || !trimmed.endsWith(']') || trimmed.endsWith(']]')) {
+      return null
+    }
+    source = trimmed.slice(1, -1)
+    isArray = false
+  }
+  const parsed = parseTomlKeyPath(source)
+  if (!parsed || parsed.end !== source.length) {
     return null
   }
-  const match = /^\[(.+)\]$/.exec(trimmed)
-  if (!match) {
-    return null
-  }
-  const parsed = parseTomlKeyPath(match[1]!)
-  return parsed && parsed.end === match[1]!.length ? parsed.segments.join('.') : null
+  return { ...parsed, isArray }
 }
 
 export function parseTomlKeyPath(source: string, offset = 0): ParsedTomlKeyPath | null {
