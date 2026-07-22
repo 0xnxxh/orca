@@ -16,12 +16,13 @@ import {
 import { clearRuntimeCompatibilityCacheForTests } from '@/runtime/runtime-rpc-client'
 
 const detectRemoteAgents = vi.fn()
+const refreshLocalAgents = vi.fn()
 const runtimeEnvironmentCall = vi.fn()
 const initialAppState = useAppStore.getInitialState()
 const roots: Root[] = []
 let latestHookResult: UseDetectedAgentsResult | null = null
 
-function HookProbe({ target }: { target: AgentDetectionTarget }): null {
+function HookProbe({ target }: { target: AgentDetectionTarget | undefined }): null {
   latestHookResult = useDetectedAgents(target)
   return null
 }
@@ -33,7 +34,7 @@ async function flushEffects(): Promise<void> {
   })
 }
 
-async function renderProbe(target: AgentDetectionTarget): Promise<Root> {
+async function renderProbe(target: AgentDetectionTarget | undefined): Promise<Root> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
@@ -50,6 +51,13 @@ beforeEach(() => {
   useAppStore.setState(initialAppState, true)
   latestHookResult = null
   detectRemoteAgents.mockReset().mockResolvedValue([])
+  refreshLocalAgents.mockReset().mockResolvedValue({
+    agents: [],
+    addedPathSegments: [],
+    shellHydrationOk: true,
+    pathSource: 'process_env',
+    pathFailureReason: 'none'
+  })
   runtimeEnvironmentCall.mockReset().mockImplementation(({ method }: { method: string }) => {
     const result =
       method === 'status.get'
@@ -72,7 +80,7 @@ beforeEach(() => {
     })
   })
   globalThis.window.api = {
-    preflight: { detectRemoteAgents },
+    preflight: { detectRemoteAgents, refreshAgents: refreshLocalAgents },
     runtimeEnvironments: { call: runtimeEnvironmentCall }
   } as unknown as Window['api']
 })
@@ -120,6 +128,20 @@ describe('useDetectedAgents (ssh call site)', () => {
 
     expect(detectRemoteAgents).toHaveBeenCalledTimes(2)
     expect(useAppStore.getState().remoteDetectedAgentIds['ssh-1']).toEqual(['kilo'])
+  })
+})
+
+describe('useDetectedAgents (unresolved target)', () => {
+  it('does not fall back to detecting or refreshing the local client', async () => {
+    await renderProbe(undefined)
+
+    expect(latestHookResult?.detectedIds).toBeNull()
+    expect(latestHookResult?.isLoading).toBe(true)
+    await expect(latestHookResult?.refresh()).resolves.toEqual([])
+
+    expect(refreshLocalAgents).not.toHaveBeenCalled()
+    expect(detectRemoteAgents).not.toHaveBeenCalled()
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
   })
 })
 

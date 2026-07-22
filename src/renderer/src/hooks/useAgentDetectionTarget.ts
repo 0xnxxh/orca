@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useAppStore } from '@/store'
 import { getConnectionIdFromState } from '@/lib/connection-owner-resolution'
 import {
+  getExplicitRuntimeEnvironmentIdForWorktree,
   getExecutionHostIdForWorktree,
   type WorktreeRuntimeOwnerState
 } from '@/lib/worktree-runtime-owner'
@@ -26,6 +27,12 @@ export function getAgentDetectionTargetKeyForWorktree(
   state: AgentDetectionOwnerState,
   worktreeId: string | null
 ): string | undefined {
+  // Why: a paired-runtime owner is authoritative even when its server-side
+  // child repos span SSH transports; avoid both ambiguity and a broad repo scan.
+  const explicitRuntimeEnvironmentId = getExplicitRuntimeEnvironmentIdForWorktree(state, worktreeId)
+  if (explicitRuntimeEnvironmentId) {
+    return `runtime:${explicitRuntimeEnvironmentId}`
+  }
   const connectionId = getConnectionIdFromState(state, worktreeId)
   if (connectionId === undefined) {
     return undefined

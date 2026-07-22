@@ -50,7 +50,7 @@ function normalizeAgentDetectionTarget(
  * (store not hydrated) — returns loading state.
  */
 export function useDetectedAgents(
-  connectionId: AgentDetectionTarget | string | null | undefined = null
+  connectionId: AgentDetectionTarget | string | null | undefined
 ): UseDetectedAgentsResult {
   const target = normalizeAgentDetectionTarget(connectionId)
   const observedRemoteTargetKeysRef = useRef<Set<string>>(new Set())
@@ -114,6 +114,9 @@ export function useDetectedAgents(
   // Why: refresh must hit the same host the list came from — refreshing the
   // local PATH while showing a remote server's agents is a silent no-op.
   const refresh = useCallback((): Promise<TuiAgent[]> => {
+    if (isUnknown) {
+      return Promise.resolve([])
+    }
     // Why: retained tab bars stay mounted; imperative action reads avoid six
     // no-op Zustand subscriptions per hook during unrelated store churn.
     const state = useAppStore.getState()
@@ -124,7 +127,7 @@ export function useDetectedAgents(
       return state.refreshRemoteDetectedAgents(targetId)
     }
     return state.refreshDetectedAgents()
-  }, [targetKind, targetId])
+  }, [isUnknown, targetKind, targetId])
 
   useEffect(() => {
     if (isUnknown) {
