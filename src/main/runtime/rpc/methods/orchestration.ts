@@ -231,7 +231,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         // immediately dispatch to the same terminal, which fails if the lock
         // is still held.
         if (msg.type === 'worker_done' || msg.type === 'heartbeat') {
-          const reconciled = reconcileLifecycleMessage(db, msg)
+          const reconciled = reconcileLifecycleMessage(db, msg, undefined, {
+            isAssigneeHandleLive: (handle) => runtime.getTerminalPaneKey(handle) != null
+          })
           // Why: a suppressed message is already read; waking a `check --wait`
           // waiter for it would return an empty result before the deadline.
           if (reconciled.action === 'suppressed') {
@@ -319,7 +321,9 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
           // the coordinator loop sees them, but unread `check` is still an
           // authoritative read path for worker_done/heartbeat.
           visibleMessages = messages.map((message) => {
-            const reconciled = reconcileLifecycleMessage(db, message)
+            const reconciled = reconcileLifecycleMessage(db, message, undefined, {
+              isAssigneeHandleLive: (handle) => runtime.getTerminalPaneKey(handle) != null
+            })
             return reconciled.action === 'rejected'
               ? (db.getMessageById(message.id) ?? message)
               : message

@@ -87,6 +87,54 @@ describe('orchestration lineage survives a restart handle remint', () => {
     expect(d.getActiveDispatchForTerminal('term_before_restart')).toBeUndefined()
   })
 
+  it('does not let a same-pane sender steal the assignee while it is still live', () => {
+    // Why: rebind is a restart self-heal, not an ownership transfer. A nested
+    // agent inheriting the pane key must not silence strict crash detection
+    // for the genuine worker by rebinding assignee_handle to itself.
+    const d = createDb()
+    const task = d.createTask({ spec: 'work' })
+    const ctx = d.createDispatchContext(task.id, 'term_worker', `tab_worker:${LEAF_B}`)
+
+    const heartbeat = d.insertMessage({
+      from: 'term_impostor',
+      to: 'coordinator',
+      subject: 'hb',
+      type: 'heartbeat',
+      payload: JSON.stringify({ dispatchId: ctx.id }),
+      senderPaneKey: `tab_worker:${LEAF_B}`
+    })
+    const result = reconcileLifecycleMessage(d, heartbeat, undefined, {
+      isAssigneeHandleLive: (handle) => handle === 'term_worker'
+    })
+
+    // Pane authority still records liveness (pre-existing v6 behavior)…
+    expect(result.action).toBe('heartbeat_recorded')
+    // …but the binding stays with the live worker.
+    expect(d.getDispatchContextById(ctx.id)?.assignee_handle).toBe('term_worker')
+    expect(d.getActiveDispatchForTerminal('term_worker')?.id).toBe(ctx.id)
+  })
+
+  it('still rebinds after a restart when the stored assignee handle is dead', () => {
+    const d = createDb()
+    const task = d.createTask({ spec: 'work' })
+    const ctx = d.createDispatchContext(task.id, 'term_before_restart', `tab_before:${LEAF_B}`)
+
+    const heartbeat = d.insertMessage({
+      from: 'term_after_restart',
+      to: 'coordinator',
+      subject: 'hb',
+      type: 'heartbeat',
+      payload: JSON.stringify({ dispatchId: ctx.id }),
+      senderPaneKey: `tab_after:${LEAF_B}`
+    })
+    const result = reconcileLifecycleMessage(d, heartbeat, undefined, {
+      isAssigneeHandleLive: () => false
+    })
+
+    expect(result.action).toBe('heartbeat_recorded')
+    expect(d.getDispatchContextById(ctx.id)?.assignee_handle).toBe('term_after_restart')
+  })
+
   it('does not rebind a closed dispatch from a late heartbeat', () => {
     // Why: rebind is scoped to live dispatches — a straggler heartbeat after
     // completion must not resurrect assignee identity on a done row.

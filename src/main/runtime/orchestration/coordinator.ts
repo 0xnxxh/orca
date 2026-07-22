@@ -281,7 +281,11 @@ export class Coordinator {
   }
 
   private handleLifecycleMessage(msg: MessageRow): void {
-    const result = reconcileLifecycleMessage(this.db, msg, this.opts.onLog)
+    const result = reconcileLifecycleMessage(this.db, msg, this.opts.onLog, {
+      // Why: a handle that still resolves to a pane is live; lightweight fakes
+      // without getTerminalPaneKey fail open to the rebind self-heal.
+      isAssigneeHandleLive: (handle) => this.runtime.getTerminalPaneKey?.(handle) != null
+    })
     if (result.action === 'completed') {
       if (!this.state.completedTasks.includes(result.taskId)) {
         this.state.completedTasks.push(result.taskId)

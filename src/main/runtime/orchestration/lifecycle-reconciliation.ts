@@ -45,6 +45,12 @@ export type LifecycleRejectionResult = {
 
 type LogFn = (msg: string) => void
 
+export type LifecycleReconcileOptions = {
+  // Why: gates assignee rebind on the stored handle being dead. Optional so
+  // DB-only callers/fakes keep working; absent means fail-open to rebind.
+  isAssigneeHandleLive?: (handle: string) => boolean
+}
+
 const noopLog: LogFn = () => {}
 
 function parseObjectPayload(msg: MessageRow, onInvalidJson: () => void): Record<string, unknown> {
@@ -85,13 +91,14 @@ function getPersistedLifecycleRejection(
 export function reconcileLifecycleMessage(
   db: OrchestrationDb,
   msg: MessageRow,
-  onLog: LogFn = noopLog
+  onLog: LogFn = noopLog,
+  opts?: LifecycleReconcileOptions
 ): LifecycleReconciliationResult {
   switch (msg.type) {
     case 'worker_done':
       return reconcileWorkerDoneMessage(db, msg, onLog)
     case 'heartbeat':
-      return reconcileHeartbeatMessage(db, msg, onLog)
+      return reconcileHeartbeatMessage(db, msg, onLog, opts)
     case 'status':
     case 'dispatch':
     case 'merge_ready':
@@ -105,7 +112,8 @@ export function reconcileLifecycleMessage(
 function reconcileHeartbeatMessage(
   db: OrchestrationDb,
   msg: MessageRow,
-  onLog: LogFn
+  onLog: LogFn,
+  opts?: LifecycleReconcileOptions
 ): LifecycleReconciliationResult {
   if (!msg.payload) {
     onLog(`Heartbeat from ${msg.from_handle} missing payload; ignored`)
@@ -150,8 +158,18 @@ function reconcileHeartbeatMessage(
   // dispatch, so re-anchor the assignee here. This is the durable self-heal
   // after a restart remints the worker's handle — handle-based resolution and
   // strict crash detection work again from the first post-restart heartbeat,
-  // with no in-memory tracking.
-  db.rebindDispatchAssignee(dispatchId, msg.from_handle, msg.sender_pane_key ?? undefined)
+  // with no in-memory tracking. Rebind is a self-heal, not an ownership
+  // transfer: while the stored assignee handle is still live, a same-pane
+  // sender under a different handle (e.g. a nested agent inheriting
+  // ORCA_PANE_KEY) must not steal the binding — that would silence strict
+  // crash detection for the genuine worker.
+  const assigneeStillLiveElsewhere =
+    msg.from_handle !== dispatch.assignee_handle &&
+    dispatch.assignee_handle != null &&
+    opts?.isAssigneeHandleLive?.(dispatch.assignee_handle) === true
+  if (!assigneeStillLiveElsewhere) {
+    db.rebindDispatchAssignee(dispatchId, msg.from_handle, msg.sender_pane_key ?? undefined)
+  }
 
   // Why: dispatchId-specific writes let the DB ignore late heartbeats for
   // completed/failed retries without masking a newer hung dispatch.
