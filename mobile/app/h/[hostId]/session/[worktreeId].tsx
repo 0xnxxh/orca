@@ -4514,19 +4514,24 @@ export default function SessionScreen() {
               >
                 <Plus size={16} color={colors.textSecondary} strokeWidth={2.2} />
               </Pressable>
-              {/* Why: render during the capability probe (null) so the tab row doesn't shift as it loads; hide only when the host confirms no support. Disabled until confirmed — pre-quick-commands hosts strip agentPrompt, so an eager run would launch the agent without its prompt. */}
-              {quickCommandsSupported !== false ? (
-                <QuickCommandsTabButton
-                  disabled={
-                    creating ||
-                    creatingBrowser ||
-                    creatingMarkdown ||
-                    connState !== 'connected' ||
-                    quickCommandsSupported !== true
+              {/* Why: always render so the tab row never shifts while capabilities load; the tap explains unsupported/probing hosts instead. Old hosts strip agentPrompt, so the sheet only opens once support is confirmed. */}
+              <QuickCommandsTabButton
+                disabled={
+                  creating || creatingBrowser || creatingMarkdown || connState !== 'connected'
+                }
+                onPress={() => {
+                  if (quickCommandsSupported === true) {
+                    setShowQuickCommands(true)
+                    return
                   }
-                  onPress={() => setShowQuickCommands(true)}
-                />
-              ) : null}
+                  showToast(
+                    quickCommandsSupported === false
+                      ? 'Desktop update required for quick commands'
+                      : 'Checking desktop capabilities — try again in a moment',
+                    1600
+                  )
+                }}
+              />
             </View>
           )}
         </SafeAreaView>
