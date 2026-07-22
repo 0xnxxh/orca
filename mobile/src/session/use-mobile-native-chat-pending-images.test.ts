@@ -168,4 +168,81 @@ describe('useMobileNativeChatPendingImages', () => {
     expect(state!.pendingChatImages).toEqual([])
     expect(state!.getReadyChatImages()).toEqual([])
   })
+
+  it('does not attach a picker result to a terminal selected while the picker was open', async () => {
+    let resolvePick: (image: { base64: string; uri: string }) => void = () => {}
+    pickMobileImage.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePick = resolve
+      })
+    )
+    render('t1')
+
+    let attachDone: Promise<void> = Promise.resolve()
+    act(() => {
+      attachDone = state!.attachPendingChatImage('library')
+      renderer!.update(createElement(Harness, { activeHandle: 't2' }))
+    })
+    await act(async () => {
+      resolvePick({ base64: 'AAAA', uri: 'file:///a.jpg' })
+      await attachDone
+    })
+
+    expect(state!.pendingChatImages).toEqual([])
+    expect(saveMobileClipboardImageAsTempFile).not.toHaveBeenCalled()
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  it('does not report upload success after the pending image was removed', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    let resolveUpload: (path: string) => void = () => {}
+    saveMobileClipboardImageAsTempFile.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveUpload = resolve
+      })
+    )
+    render()
+
+    let attachDone: Promise<void> = Promise.resolve()
+    await act(async () => {
+      attachDone = state!.attachPendingChatImage('library')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() => state!.removePendingChatImage('chat-image-1'))
+    await act(async () => {
+      resolveUpload('/tmp/a.png')
+      await attachDone
+    })
+
+    expect(state!.pendingChatImages).toEqual([])
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
+
+  it('releases pending state and ignores upload completion after unmount', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    let resolveUpload: (path: string) => void = () => {}
+    saveMobileClipboardImageAsTempFile.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveUpload = resolve
+      })
+    )
+    render()
+
+    let attachDone: Promise<void> = Promise.resolve()
+    await act(async () => {
+      attachDone = state!.attachPendingChatImage('library')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    act(() => renderer!.unmount())
+    renderer = null
+    await act(async () => {
+      resolveUpload('/tmp/a.png')
+      await attachDone
+    })
+
+    expect(onSuccess).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  })
 })

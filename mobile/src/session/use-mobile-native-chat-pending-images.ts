@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { saveMobileClipboardImageAsTempFile } from './mobile-clipboard-image'
@@ -58,14 +58,26 @@ export function useMobileNativeChatPendingImages({
   const [entries, setEntries] = useState<readonly PendingImageEntry[]>([])
   const entriesRef = useRef(entries)
   const idCounter = useRef(0)
+  const mountedRef = useRef(false)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      // Why: release thumbnail data captured by in-flight uploads instead of retaining it until RPC timeout.
+      entriesRef.current = []
+    }
+  }, [])
 
   const updateEntries = useCallback(
     (updater: (previous: readonly PendingImageEntry[]) => readonly PendingImageEntry[]) => {
-      setEntries((previous) => {
-        const next = updater(previous)
-        entriesRef.current = next
-        return next
-      })
+      const previous = entriesRef.current
+      const next = updater(previous)
+      if (next === previous) {
+        return
+      }
+      entriesRef.current = next
+      setEntries(next)
     },
     []
   )
@@ -87,11 +99,12 @@ export function useMobileNativeChatPendingImages({
       if (!client || !activeHandle || !canAttach) {
         return
       }
+      const targetHandle = activeHandle
       let entryId: string | null = null
       try {
         const picked = await pickMobileImage(source)
         // Cancelled picker: no entry, no toast.
-        if (!picked) {
+        if (!picked || !mountedRef.current || lastHandle.current !== targetHandle) {
           return
         }
         idCounter.current += 1
@@ -109,18 +122,39 @@ export function useMobileNativeChatPendingImages({
           }
         ])
         const connectionId = await getConnectionId()
+        if (!mountedRef.current || lastHandle.current !== targetHandle) {
+          return
+        }
         const hostPath = await saveMobileClipboardImageAsTempFile(client, picked.base64, {
           connectionId
         })
-        // A handle switch mid-upload cleared the entry; the orphaned host temp
-        // file is covered by the upload TTL.
-        updateEntries((previous) =>
-          previous.map((entry) =>
-            entry.id === id ? { ...entry, status: 'ready' as const, hostPath } : entry
-          )
-        )
-        onSuccess()
+        if (!mountedRef.current || lastHandle.current !== targetHandle) {
+          return
+        }
+        let completed = false
+        updateEntries((previous) => {
+          const index = previous.findIndex((entry) => entry.id === id)
+          if (index < 0) {
+            return previous
+          }
+          completed = true
+          const next = previous.slice()
+          next[index] = { ...previous[index], status: 'ready', hostPath }
+          return next
+        })
+        if (completed) {
+          onSuccess()
+        }
       } catch (error) {
+        // Why: switching targets or removing the tile cancels this attachment;
+        // late failures must not surface against the current composer.
+        if (
+          !mountedRef.current ||
+          lastHandle.current !== targetHandle ||
+          (entryId !== null && !entriesRef.current.some((entry) => entry.id === entryId))
+        ) {
+          return
+        }
         if (entryId !== null) {
           const failedId = entryId
           updateEntries((previous) => previous.filter((entry) => entry.id !== failedId))

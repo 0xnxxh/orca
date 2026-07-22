@@ -7,6 +7,7 @@ vi.mock('react-native', async () => {
   const React = await import('react')
   return {
     ActivityIndicator: 'ActivityIndicator',
+    Image: 'Image',
     Pressable: 'Pressable',
     ScrollView: ({ children, ...props }: { children?: unknown }) =>
       React.createElement('ScrollView', props, children),
@@ -24,7 +25,8 @@ vi.mock('lucide-react-native', () => ({
   ArrowUp: 'ArrowUp',
   ImagePlus: 'ImagePlus',
   Mic: 'Mic',
-  Square: 'Square'
+  Square: 'Square',
+  X: 'X'
 }))
 
 function suppressRendererWarning(): () => void {
@@ -106,6 +108,54 @@ describe('MobileNativeChatComposer', () => {
   it('disables send while an attachment path is still being injected', async () => {
     const onSend = vi.fn().mockResolvedValue(true)
     await render(onSend, vi.fn(), true)
+
+    expect(sendButton().props).toMatchObject({ disabled: true })
+    await act(async () => sendButton().props.onPress())
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('allows an image-only send once its upload is ready', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(MobileNativeChatComposer, {
+            value: '',
+            onChangeText: vi.fn(),
+            onSend,
+            pendingImages: [{ id: 'image-1', thumbnailUri: 'file:///image.png', status: 'ready' }]
+          })
+        )
+      })
+    } finally {
+      restore()
+    }
+
+    expect(sendButton().props).toMatchObject({ disabled: false })
+    await act(async () => sendButton().props.onPress())
+    expect(onSend).toHaveBeenCalledWith('')
+  })
+
+  it('blocks send while any pending image is still uploading', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(MobileNativeChatComposer, {
+            value: 'caption',
+            onChangeText: vi.fn(),
+            onSend,
+            pendingImages: [
+              { id: 'image-1', thumbnailUri: 'file:///image.png', status: 'uploading' }
+            ]
+          })
+        )
+      })
+    } finally {
+      restore()
+    }
 
     expect(sendButton().props).toMatchObject({ disabled: true })
     await act(async () => sendButton().props.onPress())

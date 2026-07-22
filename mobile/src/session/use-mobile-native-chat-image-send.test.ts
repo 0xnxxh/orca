@@ -13,6 +13,7 @@ const onSendError = vi.fn()
 
 let readyImages: readonly MobileNativeChatReadyImage[] = []
 let leaseReady = true
+let activeHandle = 'term-1'
 
 describe('useMobileNativeChatImageSend', () => {
   let renderer: ReactTestRenderer | null = null
@@ -23,6 +24,7 @@ describe('useMobileNativeChatImageSend', () => {
     vi.clearAllMocks()
     readyImages = []
     leaseReady = true
+    activeHandle = 'term-1'
     sendRequest.mockResolvedValue({ ok: true, result: { send: { accepted: true } } })
     sendText.mockResolvedValue(true)
   })
@@ -36,7 +38,11 @@ describe('useMobileNativeChatImageSend', () => {
   function Harness(): null {
     send = useMobileNativeChatImageSend({
       clientRef: { current: client },
-      activeHandleRef: { current: 'term-1' },
+      activeHandleRef: {
+        get current() {
+          return activeHandle
+        }
+      },
       deviceTokenRef: { current: 'device-9' },
       inputLeaseReadyRef: {
         get current() {
@@ -129,5 +135,37 @@ describe('useMobileNativeChatImageSend', () => {
     expect(sendRequest).not.toHaveBeenCalled()
     expect(consumeImages).not.toHaveBeenCalled()
     expect(onSendError).toHaveBeenCalledWith('Message not sent (disconnected)')
+  })
+
+  it('does not send the caption to a terminal selected while image paths were being pasted', async () => {
+    readyImages = [{ id: 'a', hostPath: '/tmp/a.png' }]
+    sendRequest.mockImplementation(async () => {
+      activeHandle = 'term-2'
+      return { ok: true, result: { send: { accepted: true } } }
+    })
+    render()
+
+    await expect(send!('caption')).resolves.toBe(false)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(consumeImages).toHaveBeenCalledWith(['a'])
+    expect(sendText).not.toHaveBeenCalled()
+    expect(onSendError).toHaveBeenCalledWith('Message not sent (disconnected)')
+  })
+
+  it('does not continue pasting images after the target terminal changes', async () => {
+    readyImages = [
+      { id: 'a', hostPath: '/tmp/a.png' },
+      { id: 'b', hostPath: '/tmp/b.png' }
+    ]
+    sendRequest.mockImplementation(async () => {
+      activeHandle = 'term-2'
+      return { ok: true, result: { send: { accepted: true } } }
+    })
+    render()
+
+    await expect(send!('caption')).resolves.toBe(false)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(consumeImages.mock.calls).toEqual([[['a']]])
+    expect(sendText).not.toHaveBeenCalled()
   })
 })

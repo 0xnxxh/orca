@@ -46,10 +46,18 @@ export function useMobileNativeChatImageSend({
         onSendError('Message not sent (disconnected)')
         return false
       }
+      const targetIsCurrent = (): boolean =>
+        clientRef.current === client &&
+        activeHandleRef.current === terminal &&
+        inputLeaseReadyRef.current
       const mobileClient = deviceTokenRef.current
         ? { id: deviceTokenRef.current, type: 'mobile' as const }
         : undefined
       for (const image of images) {
+        if (!targetIsCurrent()) {
+          onSendError('Message not sent (disconnected)')
+          return false
+        }
         const accepted = await sendMobileNativeChatMessage({
           client,
           terminal,
@@ -66,9 +74,19 @@ export function useMobileNativeChatImageSend({
         consumeImages([image.id])
       }
       if (text.trim().length > 0) {
+        // Why: image RPCs can outlive a tab switch; never send the caption to a
+        // different terminal than the one that received the image paths.
+        if (!targetIsCurrent()) {
+          onSendError('Message not sent (disconnected)')
+          return false
+        }
         return sendText(text)
       }
       // Image-only send: the paths are in the TUI input; submit with Enter.
+      if (!targetIsCurrent()) {
+        onSendError('Message not sent (disconnected)')
+        return false
+      }
       const submitted = await sendMobileNativeChatMessage({
         client,
         terminal,
