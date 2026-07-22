@@ -58,8 +58,10 @@ describe('getManagedStatusLineScript (win32 local)', () => {
   it('posts the buffered payload file and deletes it afterwards', () => {
     stubPlatform('win32')
     const script = getManagedStatusLineScript('local')
-    // Why: the stable leaf UUID stays filename-safe even when a host-supplied tab id does not.
+    // Why: the stable leaf UUID stays filename-safe even when a host-supplied tab id does not,
+    // while the delimiter replacement keeps a surviving legacy numeric key valid on Windows.
     expect(script).toContain('set "ORCA_STATUSLINE_PANE_ID=%ORCA_PANE_KEY:~-36%"')
+    expect(script).toContain('set "ORCA_STATUSLINE_PANE_ID=%ORCA_STATUSLINE_PANE_ID::=_%"')
     expect(script).toContain(
       'set "ORCA_STATUSLINE_PAYLOAD_FILE=%TEMP%\\orca-claude-statusline-%ORCA_STATUSLINE_PANE_ID%.tmp"'
     )
@@ -122,6 +124,9 @@ describe('getManagedStatusLineScript (win32 local)', () => {
     expect(script).toContain('if not defined ORCA_STATUSLINE_ELAPSED goto :orca_statusline_probe')
     expect(script).toContain(
       'for /f "delims=0123456789" %%d in ("%ORCA_STATUSLINE_LAST%") do set "ORCA_STATUSLINE_LAST="'
+    )
+    expect(script).toContain(
+      'if defined ORCA_STATUSLINE_NOW if defined ORCA_STATUSLINE_LAST set /a "ORCA_STATUSLINE_ELAPSED=ORCA_STATUSLINE_NOW-ORCA_STATUSLINE_LAST" 2>nul'
     )
     // cmd parses leading-zero numbers as octal; 1%%x %% 100 defuses 08/09.
     expect(script).toContain('(1%%a %% 100)*3600+(1%%b %% 100)*60+(1%%c %% 100)')
@@ -273,6 +278,15 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     await runScript(scriptPath, dir, rateLimitPayload(2_000), paneKey)
     expect(lineCount(curlLog)).toBe(1)
     expect(readFileSync(stampPathFor(dir), 'utf8')).toBe('1')
+  })
+
+  it('keeps legacy numeric pane ids isolated by tab', async () => {
+    const { scriptPath, dir, curlLog } = makeHarness()
+    await runScript(scriptPath, dir, rateLimitPayload(1_000), 'legacy-tab-a:1')
+    await runScript(scriptPath, dir, rateLimitPayload(1_000), 'legacy-tab-b:1')
+    expect(lineCount(curlLog)).toBe(2)
+    expect(readFileSync(stampPathFor(dir, 'legacy-tab-a_1'), 'utf8')).toBe('1')
+    expect(readFileSync(stampPathFor(dir, 'legacy-tab-b_1'), 'utf8')).toBe('1')
   })
 
   it('never touches curl or the stamp for payloads without rate_limits', async () => {

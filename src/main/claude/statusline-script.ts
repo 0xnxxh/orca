@@ -22,21 +22,23 @@ export function getManagedStatusLineScript(target: 'local' | 'posix' = 'local'):
       'setlocal',
       // Why: pane key is static PTY env (the endpoint file never sets it), so it can gate before stdin is consumed.
       `if "%ORCA_PANE_KEY%"=="" goto :${WINDOWS_HOOK_STDIN_DRAIN_LABEL}`,
-      // Why: tab ids may contain path characters or exceed filename limits; the stable leaf UUID is safe and globally unique.
+      // Why: current keys end in a UUID; replacing the legacy delimiter also keeps surviving numeric-pane keys filename-safe.
       'set "ORCA_STATUSLINE_PANE_ID=%ORCA_PANE_KEY:~-36%"',
+      'set "ORCA_STATUSLINE_PANE_ID=%ORCA_STATUSLINE_PANE_ID::=_%"',
       // Why: cmd has no builtin stdin capture, so buffer the payload in a per-pane temp file
       // (%RANDOM% collides across same-second cmd spawns) to guard before any curl spawn.
       'set "ORCA_STATUSLINE_PAYLOAD_FILE=%TEMP%\\orca-claude-statusline-%ORCA_STATUSLINE_PANE_ID%.tmp"',
       `${WINDOWS_HOOK_STDIN_READER} >"%ORCA_STATUSLINE_PAYLOAD_FILE%" 2>nul`,
       // Why: an all-builtin seconds-of-day throttle avoids spawning findstr+curl on every streaming tick.
       'set "ORCA_STATUSLINE_STAMP_FILE=%TEMP%\\orca-claude-statusline-last-%ORCA_STATUSLINE_PANE_ID%.tmp"',
+      'set "ORCA_STATUSLINE_NOW="',
       'set "ORCA_STATUSLINE_TIME=%TIME: =0%"',
       'for /f "tokens=1-3 delims=:.," %%a in ("%ORCA_STATUSLINE_TIME%") do set /a "ORCA_STATUSLINE_NOW=(1%%a %% 100)*3600+(1%%b %% 100)*60+(1%%c %% 100)" 2>nul',
       'set "ORCA_STATUSLINE_LAST="',
       'set "ORCA_STATUSLINE_ELAPSED="',
       'if exist "%ORCA_STATUSLINE_STAMP_FILE%" set /p ORCA_STATUSLINE_LAST=<"%ORCA_STATUSLINE_STAMP_FILE%"',
       'if defined ORCA_STATUSLINE_LAST for /f "delims=0123456789" %%d in ("%ORCA_STATUSLINE_LAST%") do set "ORCA_STATUSLINE_LAST="',
-      'if defined ORCA_STATUSLINE_LAST set /a "ORCA_STATUSLINE_ELAPSED=ORCA_STATUSLINE_NOW-ORCA_STATUSLINE_LAST" 2>nul',
+      'if defined ORCA_STATUSLINE_NOW if defined ORCA_STATUSLINE_LAST set /a "ORCA_STATUSLINE_ELAPSED=ORCA_STATUSLINE_NOW-ORCA_STATUSLINE_LAST" 2>nul',
       `if not defined ORCA_STATUSLINE_ELAPSED goto :${STATUSLINE_PROBE_LABEL}`,
       `if %ORCA_STATUSLINE_ELAPSED% GEQ 0 if %ORCA_STATUSLINE_ELAPSED% LSS ${CLAUDE_STATUSLINE_MIN_POST_INTERVAL_SECONDS} goto :${STATUSLINE_CLEANUP_LABEL}`,
       `:${STATUSLINE_PROBE_LABEL}`,
@@ -92,6 +94,17 @@ export function getManagedStatusLineScript(target: 'local' | 'posix' = 'local'):
     'fi',
     // Why: the stable leaf UUID avoids path-unsafe and overlong user-supplied tab ids.
     'orca_statusline_pane_id=${ORCA_PANE_KEY##*:}',
+    // Why: pre-migration numeric leaf ids were tab-local, so include a safe tab id to avoid cross-pane throttle collisions after upgrade.
+    'case "$orca_statusline_pane_id" in',
+    "  ''|*[!0-9]*) ;;",
+    '  *)',
+    '    orca_statusline_tab_id=${ORCA_PANE_KEY%:*}',
+    '    case "$orca_statusline_tab_id" in',
+    "      ''|*[!A-Za-z0-9._-]*) ;;",
+    '      *) orca_statusline_pane_id="${orca_statusline_tab_id}_${orca_statusline_pane_id}" ;;',
+    '    esac',
+    '    ;;',
+    'esac',
     'orca_statusline_stamp="${TMPDIR:-/tmp}/orca-claude-statusline-last-${orca_statusline_pane_id}"',
     // Why: the payload clock keeps throttled ticks free of subprocesses; date is only a schema-drift fallback.
     'orca_statusline_now=',
