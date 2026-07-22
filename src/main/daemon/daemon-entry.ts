@@ -12,13 +12,20 @@ import { warmWindowsConptyOnce } from './windows-conpty-warmup'
 import { warmPwshAvailabilityCache } from '../pwsh'
 import { createDaemonFileLog, createNoopDaemonFileLog } from './daemon-file-log'
 import { PROTOCOL_VERSION } from './types'
-import { prepareMacosTccLoginShell } from '../providers/macos-tcc-login-shell'
+import {
+  prepareMacosTccLoginShell,
+  probeMacosLoginSessionAlive
+} from '../providers/macos-tcc-login-shell'
+import { MacosLoginSessionDeathWatch } from './macos-login-session-death-watch'
+import { readCurrentProcessMacSystemResolverHealth } from '../network/macos-system-resolver-health'
 
 export type ParsedDaemonArgs = {
   socketPath: string
   tokenPath: string
   pidPath?: string
   launchNonce?: string
+  /** GUI-spawned daemons only — headless serve/SSH daemons must survive session loss. */
+  loginSessionWatch?: boolean
   /** Optional — absent for adopted old daemons and tests, which log nothing. */
   logFilePath?: string
 }
@@ -29,6 +36,7 @@ export function parseArgs(argv: string[]): ParsedDaemonArgs {
   let logFilePath = ''
   let pidPath = ''
   let launchNonce = ''
+  let loginSessionWatch = false
 
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--socket' && argv[i + 1]) {
@@ -46,6 +54,8 @@ export function parseArgs(argv: string[]): ParsedDaemonArgs {
     } else if (argv[i] === '--launch-nonce' && argv[i + 1]) {
       launchNonce = argv[i + 1]
       i++
+    } else if (argv[i] === '--login-session-watch') {
+      loginSessionWatch = true
     }
   }
 
@@ -61,6 +71,7 @@ export function parseArgs(argv: string[]): ParsedDaemonArgs {
     socketPath,
     tokenPath,
     ...(pidPath ? { pidPath, launchNonce } : {}),
+    ...(loginSessionWatch ? { loginSessionWatch } : {}),
     ...(logFilePath ? { logFilePath } : {})
   }
 }
@@ -73,7 +84,7 @@ async function main(): Promise<void> {
   // an otherwise healthy detached daemon. Swallow it: stderr is diagnostic only.
   process.stderr.on('error', () => {})
 
-  const { socketPath, tokenPath, pidPath, launchNonce, logFilePath } = parseArgs(
+  const { socketPath, tokenPath, pidPath, launchNonce, loginSessionWatch, logFilePath } = parseArgs(
     process.argv.slice(2)
   )
   const startedAtMs = Date.now() - process.uptime() * 1000
@@ -157,6 +168,24 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
   process.on('SIGINT', () => void shutdown('SIGINT'))
 
+  const deathWatch =
+    loginSessionWatch && process.platform === 'darwin'
+      ? new MacosLoginSessionDeathWatch({
+          probeLoginSession: probeMacosLoginSessionAlive,
+          readResolverHealth: readCurrentProcessMacSystemResolverHealth,
+          log: daemonLog,
+          onRetire: (details) => {
+            shuttingDown = true
+            daemonLog.log('login-session-dead-retire', details)
+            daemonLog.close()
+            // Why: crash-style exit (no PTY teardown) keeps session meta unclean so the
+            // replacement daemon cold-restores scrollback; stale socket/pid files ride
+            // the existing dead-endpoint recovery.
+            process.exit(1)
+          }
+        })
+      : null
+
   daemon = await startDaemon({
     socketPath,
     tokenPath,
@@ -165,6 +194,12 @@ async function main(): Promise<void> {
     ...(pidPath ? { startedAtMs } : {}),
     log: daemonLog,
     preparePtySpawn: runMacosLoginPreflight,
+    ...(deathWatch
+      ? {
+          onPtySessionExit: () => deathWatch.notifyPtyExit(),
+          onClientHello: () => deathWatch.notifyClientActivity()
+        }
+      : {}),
     spawnSubprocess: (opts) => createPtySubprocess(opts),
     onIdleShutdown: () => {
       shuttingDown = true
@@ -173,6 +208,7 @@ async function main(): Promise<void> {
       process.exit(0)
     }
   })
+  deathWatch?.start()
 
   // Signal readiness to parent via IPC (if available)
   if (process.send) {

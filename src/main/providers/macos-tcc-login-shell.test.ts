@@ -13,6 +13,7 @@ vi.mock('node:child_process', () => ({ execFile: execFileMock }))
 
 import {
   prepareMacosTccLoginShell,
+  probeMacosLoginSessionAlive,
   resetMacosLoginShellPreflightForTests,
   wrapShellSpawnForMacosTccAttribution
 } from './macos-tcc-login-shell'
@@ -337,6 +338,92 @@ describe('wrapShellSpawnForMacosTccAttribution', () => {
       file: '/bin/zsh',
       args: ['-l']
     })
+    expect(execFileMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('probeMacosLoginSessionAlive', () => {
+  let origPlatform: PropertyDescriptor | undefined
+  let origDisable: string | undefined
+
+  function setPlatform(value: string): void {
+    Object.defineProperty(process, 'platform', { configurable: true, value })
+  }
+
+  beforeEach(() => {
+    origPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    origDisable = process.env.ORCA_DISABLE_MACOS_LOGIN_SHELL
+    delete process.env.ORCA_DISABLE_MACOS_LOGIN_SHELL
+    existsSyncMock.mockReturnValue(true)
+    userInfoMock.mockReturnValue({ username: 'ada', homedir: '/Users/ada' })
+    execFileMock.mockImplementation(
+      (_file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
+        callback(null, 'ORCA_LOGIN_PREFLIGHT_OK', '')
+        return { stdin: { end: stdinEndMock } }
+      }
+    )
+    resetMacosLoginShellPreflightForTests()
+  })
+
+  afterEach(() => {
+    if (origPlatform) {
+      Object.defineProperty(process, 'platform', origPlatform)
+    }
+    if (origDisable === undefined) {
+      delete process.env.ORCA_DISABLE_MACOS_LOGIN_SHELL
+    } else {
+      process.env.ORCA_DISABLE_MACOS_LOGIN_SHELL = origDisable
+    }
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+  })
+
+  it('re-probes even after a cached acceptance', async () => {
+    setPlatform('darwin')
+    await prepareMacosTccLoginShell()
+    expect(execFileMock).toHaveBeenCalledTimes(1)
+    const outcome = await probeMacosLoginSessionAlive()
+    expect(outcome).toEqual({ ok: true, conclusive: true, reason: 'accepted' })
+    expect(execFileMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('flips the spawn wrapper off when a fresh probe conclusively rejects (dead login session)', async () => {
+    setPlatform('darwin')
+    await prepareMacosTccLoginShell()
+    expect(wrapShellSpawnForMacosTccAttribution('/bin/zsh', ['-l']).file).toBe('/usr/bin/login')
+
+    execFileMock.mockImplementation(
+      (_file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
+        callback(Object.assign(new Error('login incorrect'), { code: 1 }), '', '')
+        return { stdin: { end: stdinEndMock } }
+      }
+    )
+    const outcome = await probeMacosLoginSessionAlive()
+    expect(outcome).toEqual({ ok: false, conclusive: true, reason: 'rejected' })
+    // The dead-session daemon must stop minting login(1) prompt zombies (#7936).
+    expect(wrapShellSpawnForMacosTccAttribution('/bin/zsh', ['-l']).file).toBe('/bin/zsh')
+  })
+
+  it('does not overwrite the cached verdict on an inconclusive probe', async () => {
+    setPlatform('darwin')
+    await prepareMacosTccLoginShell()
+    execFileMock.mockImplementation(
+      (_file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
+        callback(Object.assign(new Error('killed'), { killed: true }), '', '')
+        return { stdin: { end: stdinEndMock } }
+      }
+    )
+    const outcome = await probeMacosLoginSessionAlive()
+    expect(outcome).toEqual({ ok: false, conclusive: false, reason: 'timeout' })
+    expect(wrapShellSpawnForMacosTccAttribution('/bin/zsh', ['-l']).file).toBe('/usr/bin/login')
+  })
+
+  it('returns null off macOS and when disabled', async () => {
+    setPlatform('linux')
+    expect(await probeMacosLoginSessionAlive()).toBeNull()
+    setPlatform('darwin')
+    process.env.ORCA_DISABLE_MACOS_LOGIN_SHELL = '1'
+    expect(await probeMacosLoginSessionAlive()).toBeNull()
     expect(execFileMock).not.toHaveBeenCalled()
   })
 })

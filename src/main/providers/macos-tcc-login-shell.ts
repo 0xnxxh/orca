@@ -195,6 +195,37 @@ export function resetMacosLoginShellPreflightForTests(): void {
 }
 
 /**
+ * Fresh PAM probe for login-session death detection (#7936): bypasses the
+ * cached verdict and the transient backoff, and writes any conclusive verdict
+ * back into the cache — so a daemon whose login session died stops wrapping
+ * spawns in `login(1)` (which would only mint "Login incorrect" zombies) even
+ * before retirement completes. Returns null when the wrapper doesn't apply.
+ */
+export async function probeMacosLoginSessionAlive(): Promise<LoginPreflightOutcome | null> {
+  if (process.platform !== 'darwin' || isDisabledByEnv() || !existsSync(MACOS_LOGIN_PATH)) {
+    return null
+  }
+  let username: string
+  let accountHome: string
+  try {
+    const account = userInfo()
+    username = account.username
+    accountHome = account.homedir
+  } catch {
+    return null
+  }
+  if (!username || !accountHome) {
+    return null
+  }
+  const outcome = await runLoginPreflight(username, accountHome)
+  if (outcome.conclusive) {
+    cachedLoginPreflightResult = outcome.ok
+    transientLoginPreflightFailure = null
+  }
+  return outcome
+}
+
+/**
  * Wrap a macOS shell spawn in `/usr/bin/login -flpq <user> …` so terminal children
  * get their own TCC identity instead of collapsing into Orca's bundle id — signed
  * CLIs like `op` otherwise re-prompt every launch because tccd attributes the grant

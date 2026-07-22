@@ -53,6 +53,9 @@ export type DaemonServerOptions = {
   }
   ptySpawnHealthCheck?: () => Promise<void>
   preparePtySpawn?: () => Promise<void>
+  // Why: login-session death detection (#7936) probes on PTY-exit bursts and fresh client hellos.
+  onPtySessionExit?: (sessionId: string) => void
+  onClientHello?: () => void
   log?: DaemonFileLog
   spawnSubprocess: (opts: {
     sessionId: string
@@ -97,6 +100,7 @@ export class DaemonServer {
   private startedAtMs: number | null
   private protocolVersion: number
   private onIdleShutdown: () => void
+  private onClientHello: () => void
   private ptySpawnHealthCheck: () => Promise<void>
   private preparePtySpawn: () => Promise<void>
   private log: DaemonFileLog
@@ -176,7 +180,11 @@ export class DaemonServer {
       now: () => Date.now()
     }
     this.token = randomUUID()
-    this.host = new TerminalHost({ spawnSubprocess: opts.spawnSubprocess })
+    this.onClientHello = opts.onClientHello ?? (() => {})
+    this.host = new TerminalHost({
+      spawnSubprocess: opts.spawnSubprocess,
+      ...(opts.onPtySessionExit ? { onSessionReaped: opts.onPtySessionExit } : {})
+    })
     this.ptySpawnHealthCheck = opts.ptySpawnHealthCheck ?? checkPtySpawnHealth
     this.preparePtySpawn = opts.preparePtySpawn ?? (() => Promise.resolve())
     this.stopStreamBacklogProbe = startDaemonStreamBacklogProbe(() => ({
@@ -434,6 +442,7 @@ export class DaemonServer {
     }
 
     this.log.log('client-hello-accepted', { role: hello.role, clientId: hello.clientId })
+    this.onClientHello()
     socket.write(
       encodeNdjson({
         type: 'hello',
