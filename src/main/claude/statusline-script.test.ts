@@ -177,24 +177,38 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     })
   }
 
-  function makeHarness(): { scriptPath: string; dir: string; curlLog: string; dateLog: string } {
+  function makeHarness(): {
+    scriptPath: string
+    dir: string
+    curlLog: string
+    payloadLog: string
+    dateLog: string
+    catLog: string
+  } {
     const dir = mkdtempSync(join(tmpdir(), 'orca-statusline-throttle-'))
     dirs.push(dir)
     const curlLog = join(dir, 'curl.log')
+    const payloadLog = join(dir, 'payload.log')
     const dateLog = join(dir, 'date.log')
+    const catLog = join(dir, 'cat.log')
     const scriptPath = join(dir, 'statusline.sh')
     writeFileSync(scriptPath, getManagedStatusLineScript('posix'))
     const binDir = join(dir, 'stub-bin')
     mkdirSync(binDir, { recursive: true })
-    writeFileSync(join(binDir, 'curl'), `#!/bin/sh\nprintf 'x\\n' >> "${curlLog}"\nexit 0\n`, {
-      mode: 0o755
-    })
+    writeFileSync(
+      join(binDir, 'curl'),
+      `#!/bin/sh\n/bin/cat > "${payloadLog}"\nprintf 'x\\n' >> "${curlLog}"\nexit 0\n`,
+      { mode: 0o755 }
+    )
     writeFileSync(
       join(binDir, 'date'),
       `#!/bin/sh\nprintf 'x\\n' >> "${dateLog}"\nprintf '2000000000\\n'\n`,
       { mode: 0o755 }
     )
-    return { scriptPath, dir, curlLog, dateLog }
+    writeFileSync(join(binDir, 'cat'), `#!/bin/sh\nprintf 'x\\n' >> "${catLog}"\n/bin/cat "$@"\n`, {
+      mode: 0o755
+    })
+    return { scriptPath, dir, curlLog, payloadLog, dateLog, catLog }
   }
 
   function runScript(
@@ -243,13 +257,14 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     return join(dir, `orca-claude-statusline-last-${leafId}`)
   }
 
-  it('spawns one curl and no clock subprocesses across 30 rapid ticks', async () => {
-    const { scriptPath, dir, curlLog, dateLog } = makeHarness()
+  it('spawns one curl and no capture or clock subprocesses across 30 rapid ticks', async () => {
+    const { scriptPath, dir, curlLog, dateLog, catLog } = makeHarness()
     for (let index = 0; index < 30; index += 1) {
       await runScript(scriptPath, dir, rateLimitPayload(1_000 + index * 100))
     }
     expect(lineCount(curlLog)).toBe(1)
     expect(lineCount(dateLog)).toBe(0)
+    expect(lineCount(catLog)).toBe(0)
     expect(readFileSync(stampPathFor(dir), 'utf8')).toMatch(/^[0-9]+$/)
   })
 
@@ -258,6 +273,13 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     await runScript(scriptPath, dir, rateLimitPayload(1_000))
     await runScript(scriptPath, dir, rateLimitPayload(16_000))
     expect(lineCount(curlLog)).toBe(2)
+  })
+
+  it('preserves multiline payloads while capturing stdin with shell builtins', async () => {
+    const { scriptPath, dir, payloadLog } = makeHarness()
+    const payload = JSON.stringify(JSON.parse(rateLimitPayload(1_000)), null, 2)
+    await runScript(scriptPath, dir, payload)
+    expect(readFileSync(payloadLog, 'utf8')).toBe(payload)
   })
 
   it('fails open on a garbage stamp even early in a session', async () => {

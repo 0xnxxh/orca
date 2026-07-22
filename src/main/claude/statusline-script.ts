@@ -1,5 +1,4 @@
 import {
-  buildPosixHookPayloadCapture,
   buildWindowsHookStdinDrainEpilogue,
   WINDOWS_HOOK_STDIN_DRAIN_LABEL,
   WINDOWS_HOOK_STDIN_READER
@@ -80,7 +79,15 @@ export function getManagedStatusLineScript(target: 'local' | 'posix' = 'local'):
 
   return [
     '#!/bin/sh',
-    ...buildPosixHookPayloadCapture(),
+    // Why: this runs on every statusline tick; builtin capture avoids replacing curl churn with cat churn.
+    'payload=',
+    'while IFS= read -r orca_statusline_line || [ -n "$orca_statusline_line" ]; do',
+    '  payload="${payload}${orca_statusline_line}\n"',
+    'done',
+    'payload=${payload%?}',
+    'if [ -z "$payload" ]; then',
+    '  exit 0',
+    'fi',
     // Why: rate_limits appears only for Claude.ai-subscriber sessions after the first API response; skip the post (and its curl spawn) otherwise.
     'case "$payload" in',
     '  *\'"rate_limits"\'*) ;;',
