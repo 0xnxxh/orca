@@ -21,7 +21,7 @@ const SESSION_TERMINAL_CREATE_CUTOVER_MAX_RETRIES = 5
 
 export async function sendSessionTerminalCreateResilient(
   client: RpcClient,
-  params: Record<string, unknown>,
+  params: Record<string, unknown> & { clientMutationId: string },
   opts: { supportsIdempotentCutoverRetry: boolean }
 ): Promise<RpcResponse> {
   for (let migrationRetry = 0; ; migrationRetry += 1) {
