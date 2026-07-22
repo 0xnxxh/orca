@@ -2,6 +2,7 @@ import type {
   RuntimeMobileSessionClientTab,
   RuntimeMobileSessionTabsResult
 } from '../../shared/runtime-types'
+import type { PersistedMobileClientTabSelections } from '../../shared/types'
 
 export type ClientSessionTabSelection = {
   activeTabId: string | null
@@ -124,8 +125,90 @@ export function projectClientSessionTabSelection(
   }
 }
 
+function normalizeClientSessionTabSelection(raw: unknown): ClientSessionTabSelection | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null
+  }
+  const candidate = raw as Partial<ClientSessionTabSelection>
+  const activeTabId = typeof candidate.activeTabId === 'string' ? candidate.activeTabId : null
+  const activeGroupId = typeof candidate.activeGroupId === 'string' ? candidate.activeGroupId : null
+  const activeTabIdByGroupId: Record<string, string> = {}
+  if (typeof candidate.activeTabIdByGroupId === 'object' && candidate.activeTabIdByGroupId) {
+    for (const [groupId, tabId] of Object.entries(candidate.activeTabIdByGroupId)) {
+      if (typeof tabId === 'string') {
+        activeTabIdByGroupId[groupId] = tabId
+      }
+    }
+  }
+  if (!activeTabId && !activeGroupId && Object.keys(activeTabIdByGroupId).length === 0) {
+    return null
+  }
+  return { activeTabId, activeGroupId, activeTabIdByGroupId }
+}
+
+// Why: this state comes off disk (and, for remote runtimes, another machine); a bad payload must degrade to "no selection", not throw.
+export function normalizePersistedMobileClientTabSelections(
+  raw: unknown
+): PersistedMobileClientTabSelections {
+  const normalized: PersistedMobileClientTabSelections = {}
+  if (typeof raw !== 'object' || raw === null) {
+    return normalized
+  }
+  for (const [clientNavigationId, selectionsByWorktree] of Object.entries(raw)) {
+    if (typeof selectionsByWorktree !== 'object' || selectionsByWorktree === null) {
+      continue
+    }
+    const entries: Record<string, ClientSessionTabSelection> = {}
+    for (const [worktreeId, selection] of Object.entries(selectionsByWorktree)) {
+      const normalizedSelection = normalizeClientSessionTabSelection(selection)
+      if (normalizedSelection) {
+        entries[worktreeId] = normalizedSelection
+      }
+    }
+    if (Object.keys(entries).length > 0) {
+      normalized[clientNavigationId] = entries
+    }
+  }
+  return normalized
+}
+
 export class ClientSessionTabSelectionStore {
   private statesByClient = new Map<string, Map<string, StoredClientSessionTabSelection>>()
+  private persistListener: ((state: PersistedMobileClientTabSelections) => void) | null = null
+
+  // Why: selections previously died with the process, so a host restart snapped every phone back to the first tab (deterministic-topology fallback).
+  hydrate(persisted: PersistedMobileClientTabSelections): void {
+    for (const [clientNavigationId, selectionsByWorktree] of Object.entries(
+      normalizePersistedMobileClientTabSelections(persisted)
+    )) {
+      const statesByWorktree = this.getStatesByWorktree(clientNavigationId)
+      for (const [worktreeId, selection] of Object.entries(selectionsByWorktree)) {
+        statesByWorktree.set(worktreeId, { selection, revision: 0 })
+      }
+    }
+  }
+
+  setPersistListener(listener: (state: PersistedMobileClientTabSelections) => void): void {
+    this.persistListener = listener
+  }
+
+  serialize(): PersistedMobileClientTabSelections {
+    const persisted: PersistedMobileClientTabSelections = {}
+    for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
+      const entries: Record<string, ClientSessionTabSelection> = {}
+      for (const [worktreeId, state] of statesByWorktree) {
+        entries[worktreeId] = state.selection
+      }
+      if (Object.keys(entries).length > 0) {
+        persisted[clientNavigationId] = entries
+      }
+    }
+    return persisted
+  }
+
+  private persistNow(): void {
+    this.persistListener?.(this.serialize())
+  }
 
   private getStatesByWorktree(
     clientNavigationId: string
@@ -150,6 +233,14 @@ export class ClientSessionTabSelectionStore {
       // Why: host focus is private navigation; a new paired device starts from deterministic topology instead of inheriting it.
       selection: emptyClientSessionTabSelection(),
       revision: 0
+    }
+    if (snapshot.tabs.length === 0) {
+      // Why: an empty snapshot has no topology to project; writing it back would wipe a restart-hydrated selection before tabs arrive.
+      return {
+        ...snapshot,
+        publicationEpoch: `${snapshot.publicationEpoch}:client-navigation`,
+        snapshotVersion: snapshot.snapshotVersion + state.revision
+      }
     }
     const projected = projectClientSessionTabSelection(snapshot, state.selection)
     statesByWorktree.set(snapshot.worktree, {
@@ -177,19 +268,26 @@ export class ClientSessionTabSelectionStore {
       selection: activateClientSessionTabSelection(snapshot, state.selection, activeTabId),
       revision: state.revision + 1
     })
+    this.persistNow()
     return this.project(snapshot, clientNavigationId)
   }
 
   forgetClient(clientNavigationId: string): void {
-    this.statesByClient.delete(clientNavigationId)
+    if (this.statesByClient.delete(clientNavigationId)) {
+      this.persistNow()
+    }
   }
 
   forgetWorktree(worktreeId: string): void {
+    let changed = false
     for (const [clientNavigationId, statesByWorktree] of this.statesByClient) {
-      statesByWorktree.delete(worktreeId)
+      changed = statesByWorktree.delete(worktreeId) || changed
       if (statesByWorktree.size === 0) {
         this.statesByClient.delete(clientNavigationId)
       }
+    }
+    if (changed) {
+      this.persistNow()
     }
   }
 }

@@ -913,6 +913,8 @@ type RuntimeStore = {
   deleteAutomation?: Store['deleteAutomation']
   getSparsePresets?: Store['getSparsePresets']
   saveSparsePreset?: Store['saveSparsePreset']
+  getMobileClientTabSelections?: Store['getMobileClientTabSelections']
+  setMobileClientTabSelections?: Store['setMobileClientTabSelections']
   getSettings(): {
     workspaceDir: string
     nestWorkspaces: boolean
@@ -2766,6 +2768,14 @@ export class OrcaRuntimeService {
     }
   ) {
     this.store = store
+    // Why: per-device tab selections must survive host restarts, or every phone snaps back to the first tab on return.
+    const persistedClientTabSelections = store?.getMobileClientTabSelections?.()
+    if (persistedClientTabSelections) {
+      this.clientSessionTabSelections.hydrate(persistedClientTabSelections)
+    }
+    this.clientSessionTabSelections.setPersistListener((state) => {
+      this.store?.setMobileClientTabSelections?.(state)
+    })
     if (stats) {
       this.stats = stats
       this.agentDetector = new AgentDetector(stats)

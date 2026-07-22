@@ -9377,6 +9377,58 @@ describe('Store', () => {
 
   // ── Live Claude PTY session ids (STA-1246) ─────────────────────────
 
+  describe('mobileClientTabSelectionsByDeviceId', () => {
+    it('persists device tab selections across reloads and drops malformed payloads', async () => {
+      const store = await createStore()
+      store.setMobileClientTabSelections({
+        'device-a': {
+          'repo-1::/tmp/wt': { activeTabId: 'tab-1', activeGroupId: 'g1', activeTabIdByGroupId: {} }
+        }
+      })
+      store.flush()
+
+      const reloaded = await createStore()
+      expect(reloaded.getMobileClientTabSelections()['device-a']?.['repo-1::/tmp/wt']).toEqual({
+        activeTabId: 'tab-1',
+        activeGroupId: 'g1',
+        activeTabIdByGroupId: {}
+      })
+
+      writeDataFile({ mobileClientTabSelectionsByDeviceId: { 'device-a': 'corrupt' } })
+      const corrupted = await createStore()
+      expect(corrupted.getMobileClientTabSelections()).toEqual({})
+    })
+
+    it('prunes selections for a removed repo worktree', async () => {
+      const store = await createStore()
+      store.addRepo(makeRepo())
+      store.setMobileClientTabSelections({
+        'device-a': {
+          'r1::/tmp/wt': {
+            activeTabId: 'tab-1',
+            activeGroupId: null,
+            activeTabIdByGroupId: {}
+          },
+          'other-repo::/tmp/wt': {
+            activeTabId: 'tab-2',
+            activeGroupId: null,
+            activeTabIdByGroupId: {}
+          }
+        }
+      })
+
+      store.removeProject('r1')
+
+      expect(store.getMobileClientTabSelections()['device-a']).toEqual({
+        'other-repo::/tmp/wt': {
+          activeTabId: 'tab-2',
+          activeGroupId: null,
+          activeTabIdByGroupId: {}
+        }
+      })
+    })
+  })
+
   describe('claudeLivePtySessionIds', () => {
     it('persists added ids across reloads and removes them durably', async () => {
       const store = await createStore()

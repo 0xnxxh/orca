@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { RuntimeMobileSessionTabsResult } from '../../shared/runtime-types'
+import type { PersistedMobileClientTabSelections } from '../../shared/types'
 import {
   activateClientSessionTabSelection,
   ClientSessionTabSelectionStore,
   deriveClientSessionTabSelection,
+  normalizePersistedMobileClientTabSelections,
   projectClientSessionTabSelection
 } from './client-session-tab-selection'
 
@@ -137,5 +139,76 @@ describe('client session-tab selection', () => {
     expect(projected.activeTabId).toBe('terminal-a::leaf-a')
     expect(projected.activeGroupId).toBe('group-left')
     expect(projected.tabs.find((tab) => tab.isActive)?.id).toBe('terminal-a::leaf-a')
+  })
+
+  it('persists activations and restores them across a store rebuild (host restart)', () => {
+    const persisted: PersistedMobileClientTabSelections[] = []
+    const store = new ClientSessionTabSelectionStore()
+    store.setPersistListener((state) => persisted.push(state))
+
+    store.activate(snapshot(), 'device-a', 'browser-unified')
+
+    expect(persisted).toHaveLength(1)
+    expect(persisted[0]?.['device-a']?.['wt-1']?.activeTabId).toBe('browser-unified')
+
+    const restarted = new ClientSessionTabSelectionStore()
+    restarted.hydrate(persisted[0]!)
+    const projected = restarted.project(snapshot(), 'device-a')
+
+    expect(projected.activeTabId).toBe('browser-unified')
+    expect(projected.tabs.find((tab) => tab.isActive)?.id).toBe('browser-unified')
+    expect(restarted.project(snapshot(), 'device-b').activeTabId).toBe('terminal-a::leaf-a')
+  })
+
+  it('persists forgetClient and forgetWorktree removals', () => {
+    const persisted: PersistedMobileClientTabSelections[] = []
+    const store = new ClientSessionTabSelectionStore()
+    store.activate(snapshot(), 'device-a', 'browser-unified')
+    store.setPersistListener((state) => persisted.push(state))
+
+    store.forgetWorktree('wt-1')
+    expect(persisted.at(-1)).toEqual({})
+
+    store.activate(snapshot(), 'device-a', 'browser-unified')
+    store.forgetClient('device-a')
+    expect(persisted.at(-1)).toEqual({})
+    // Why: forgetting state that is already gone must not rewrite the persisted file.
+    const writes = persisted.length
+    store.forgetClient('device-a')
+    store.forgetWorktree('wt-1')
+    expect(persisted.length).toBe(writes)
+  })
+
+  it('does not let an empty snapshot wipe a hydrated selection before tabs arrive', () => {
+    const store = new ClientSessionTabSelectionStore()
+    store.hydrate({
+      'device-a': {
+        'wt-1': { activeTabId: 'browser-unified', activeGroupId: null, activeTabIdByGroupId: {} }
+      }
+    })
+
+    const empty = { ...snapshot(), tabGroups: [], tabs: [] }
+    expect(store.project(empty, 'device-a').activeTabId).toBe('terminal-a::leaf-a')
+
+    expect(store.project(snapshot(), 'device-a').activeTabId).toBe('browser-unified')
+  })
+
+  it('drops malformed persisted payloads instead of hydrating them', () => {
+    expect(
+      normalizePersistedMobileClientTabSelections({
+        'device-a': {
+          'wt-1': { activeTabId: 'tab-1', activeGroupId: null, activeTabIdByGroupId: { g: 'tab' } },
+          'wt-bad': { activeTabId: 42, activeGroupId: null, activeTabIdByGroupId: { g: 7 } }
+        },
+        'device-bad': 'nope',
+        'device-empty': {}
+      })
+    ).toEqual({
+      'device-a': {
+        'wt-1': { activeTabId: 'tab-1', activeGroupId: null, activeTabIdByGroupId: { g: 'tab' } }
+      }
+    })
+    expect(normalizePersistedMobileClientTabSelections(null)).toEqual({})
+    expect(normalizePersistedMobileClientTabSelections('garbage')).toEqual({})
   })
 })

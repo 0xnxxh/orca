@@ -48,6 +48,7 @@ import type {
   ProjectGroup,
   FolderWorkspace,
   SparsePreset,
+  PersistedMobileClientTabSelections,
   WorktreeMeta,
   WorktreeLineage,
   WorkspaceLineage,
@@ -77,6 +78,7 @@ import {
 } from '../shared/task-source-context'
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
+import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection'
 import { hardenExistingSecureFile } from '../shared/secure-file'
 import {
   LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS,
@@ -3004,6 +3006,9 @@ export class Store {
             normalizedProjectGroups
           ),
           worktreeLineageById: parsed.worktreeLineageById ?? {},
+          mobileClientTabSelectionsByDeviceId: normalizePersistedMobileClientTabSelections(
+            parsed.mobileClientTabSelectionsByDeviceId
+          ),
           workspaceLineageByChildKey: normalizeWorkspaceLineageByChildKey(
             parsed.workspaceLineageByChildKey
           ),
@@ -4199,6 +4204,15 @@ export class Store {
         delete this.state.workspaceLineageByChildKey[childKey as WorkspaceKey]
       }
     }
+    for (const selectionsByWorktree of Object.values(
+      this.state.mobileClientTabSelectionsByDeviceId ?? {}
+    )) {
+      for (const key of Object.keys(selectionsByWorktree)) {
+        if (belongsToHost(key)) {
+          delete selectionsByWorktree[key]
+        }
+      }
+    }
   }
 
   updateRepo(
@@ -4437,6 +4451,17 @@ export class Store {
   }
 
   // ── Sparse Presets ─────────────────────────────────────────────────
+
+  // ── Mobile client tab selections ──────────────────────────────────
+
+  getMobileClientTabSelections(): PersistedMobileClientTabSelections {
+    return this.state.mobileClientTabSelectionsByDeviceId ?? {}
+  }
+
+  setMobileClientTabSelections(next: PersistedMobileClientTabSelections): void {
+    this.state.mobileClientTabSelectionsByDeviceId = next
+    this.scheduleSave()
+  }
 
   getSparsePresets(repoId: string): SparsePreset[] {
     return [...(this.state.sparsePresetsByRepo[repoId] ?? [])].sort((left, right) =>
