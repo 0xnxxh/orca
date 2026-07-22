@@ -1,0 +1,171 @@
+import { createElement } from 'react'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const pickMobileImage = vi.fn()
+// Fully mocked (no importOriginal): the real module imports expo pickers, whose
+// react-native dependency chain doesn't parse under vitest.
+vi.mock('./mobile-image-source-picker', () => ({
+  pickMobileImage: (...args: unknown[]) => pickMobileImage(...args),
+  ImageLibraryPermissionError: class ImageLibraryPermissionError extends Error {}
+}))
+
+const saveMobileClipboardImageAsTempFile = vi.fn()
+vi.mock('./mobile-clipboard-image', () => ({
+  saveMobileClipboardImageAsTempFile: (...args: unknown[]) =>
+    saveMobileClipboardImageAsTempFile(...args),
+  buildMobileImagePastePayload: (filePath: string) => filePath
+}))
+
+import type { RpcClient } from '../transport/rpc-client'
+import { useMobileNativeChatPendingImages } from './use-mobile-native-chat-pending-images'
+
+type PendingImagesState = ReturnType<typeof useMobileNativeChatPendingImages>
+
+const client = { sendRequest: vi.fn() } as unknown as RpcClient
+const showToast = vi.fn()
+const onSuccess = vi.fn()
+const onError = vi.fn()
+
+describe('useMobileNativeChatPendingImages', () => {
+  let renderer: ReactTestRenderer | null = null
+  let state: PendingImagesState | null = null
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+    state = null
+  })
+
+  function Harness({ activeHandle = 't1' }: { activeHandle?: string | null }): null {
+    state = useMobileNativeChatPendingImages({
+      client,
+      activeHandle,
+      canAttach: true,
+      connState: 'connected',
+      getConnectionId: async () => null,
+      showToast,
+      onSuccess,
+      onError
+    })
+    return null
+  }
+
+  function render(activeHandle?: string | null): void {
+    act(() => {
+      renderer = create(createElement(Harness, { activeHandle }))
+    })
+  }
+
+  it('adds an uploading entry on pick and flips it ready after the host upload', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///pick.jpg' })
+    let resolveUpload: (path: string) => void = () => {}
+    saveMobileClipboardImageAsTempFile.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveUpload = resolve
+      })
+    )
+    render()
+
+    let attachDone: Promise<void> = Promise.resolve()
+    await act(async () => {
+      attachDone = state!.attachPendingChatImage('library')
+      // Let the pick resolve and the uploading entry land.
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(state!.pendingChatImages).toEqual([
+      { id: 'chat-image-1', thumbnailUri: 'file:///pick.jpg', status: 'uploading', hostPath: null }
+    ])
+    expect(state!.getReadyChatImages()).toEqual([])
+
+    await act(async () => {
+      resolveUpload('/tmp/orca-img.png')
+      await attachDone
+    })
+    expect(state!.pendingChatImages[0]).toMatchObject({ id: 'chat-image-1', status: 'ready' })
+    expect(state!.getReadyChatImages()).toEqual([
+      { id: 'chat-image-1', hostPath: '/tmp/orca-img.png' }
+    ])
+    expect(onSuccess).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to a data URI thumbnail when the picker has no file URI', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA' })
+    saveMobileClipboardImageAsTempFile.mockResolvedValue('/tmp/a.png')
+    render()
+
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+    })
+    expect(state!.pendingChatImages[0]?.thumbnailUri).toBe('data:image/png;base64,AAAA')
+  })
+
+  it('adds nothing when the picker is cancelled', async () => {
+    pickMobileImage.mockResolvedValue(null)
+    render()
+
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+    })
+    expect(state!.pendingChatImages).toEqual([])
+    expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it('removes the entry and toasts when the upload fails', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///pick.jpg' })
+    saveMobileClipboardImageAsTempFile.mockRejectedValue(new Error('upload broke'))
+    render()
+
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+    })
+    expect(state!.pendingChatImages).toEqual([])
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(showToast).toHaveBeenCalledWith('Attach failed', 1500)
+  })
+
+  it('removes a pending image and consumes delivered ones', async () => {
+    pickMobileImage
+      .mockResolvedValueOnce({ base64: 'AAAA', uri: 'file:///a.jpg' })
+      .mockResolvedValueOnce({ base64: 'BBBB', uri: 'file:///b.jpg' })
+    saveMobileClipboardImageAsTempFile
+      .mockResolvedValueOnce('/tmp/a.png')
+      .mockResolvedValueOnce('/tmp/b.png')
+    render()
+
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+      await state!.attachPendingChatImage('library')
+    })
+    expect(state!.getReadyChatImages()).toHaveLength(2)
+
+    act(() => state!.removePendingChatImage('chat-image-1'))
+    expect(state!.getReadyChatImages()).toEqual([{ id: 'chat-image-2', hostPath: '/tmp/b.png' }])
+
+    act(() => state!.consumePendingChatImages(['chat-image-2']))
+    expect(state!.pendingChatImages).toEqual([])
+  })
+
+  it('drops pending images when the active terminal handle changes', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    saveMobileClipboardImageAsTempFile.mockResolvedValue('/tmp/a.png')
+    render('t1')
+
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+    })
+    expect(state!.pendingChatImages).toHaveLength(1)
+
+    act(() => {
+      renderer!.update(createElement(Harness, { activeHandle: 't2' }))
+    })
+    expect(state!.pendingChatImages).toEqual([])
+    expect(state!.getReadyChatImages()).toEqual([])
+  })
+})

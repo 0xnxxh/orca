@@ -23,6 +23,7 @@ import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dism
 import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-gesture'
 import { MobileAgentWorkingIndicator } from './MobileAgentWorkingIndicator'
 import { MobileNativeChatComposer } from './MobileNativeChatComposer'
+import type { MobileNativeChatPendingImage } from './use-mobile-native-chat-pending-images'
 import { MobileNativeChatMessage } from './MobileNativeChatMessage'
 import { MobileNativeChatAsk } from './MobileNativeChatAsk'
 import type { AskAnswerSelection, AskPrompt } from './mobile-native-chat-ask'
@@ -59,6 +60,8 @@ type Props = {
   onComposerTextChange: (text: string) => void
   onAttachImage?: () => void
   isAttaching?: boolean
+  pendingImages?: readonly MobileNativeChatPendingImage[]
+  onRemovePendingImage?: (id: string) => void
   onMicPress?: () => void
   micActive?: boolean
   dictationMode?: 'toggle' | 'hold'
@@ -104,6 +107,8 @@ export function MobileNativeChatView({
   onComposerTextChange,
   onAttachImage,
   isAttaching,
+  pendingImages,
+  onRemovePendingImage,
   onMicPress,
   micActive,
   dictationMode,
@@ -404,6 +409,8 @@ export function MobileNativeChatView({
         onSend={handleSend}
         onAttachImage={onAttachImage}
         isAttaching={isAttaching}
+        pendingImages={pendingImages}
+        onRemovePendingImage={onRemovePendingImage}
         onMicPress={onMicPress}
         micActive={micActive}
         dictationMode={dictationMode}

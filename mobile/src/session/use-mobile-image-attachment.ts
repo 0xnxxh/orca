@@ -38,6 +38,21 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** Shared toast copy for a failed image attach — used by the immediate
+ *  terminal-paste flow here and the native-chat pending-attachment flow. */
+export function mobileImageAttachToastMessage(error: unknown, connected: boolean): string {
+  if (!connected) {
+    return 'Attach failed (disconnected)'
+  }
+  if (error instanceof ImageLibraryPermissionError) {
+    return 'Photo permission denied'
+  }
+  if (getErrorMessage(error) === 'Clipboard image is too large') {
+    return 'Image too large to attach'
+  }
+  return 'Attach failed'
+}
+
 export function useMobileImageAttachment({
   client,
   activeHandle,
@@ -72,19 +87,7 @@ export function useMobileImageAttachment({
         }
       } catch (error) {
         onError()
-        if (connState !== 'connected') {
-          showToast('Attach failed (disconnected)', 1500)
-          return
-        }
-        if (error instanceof ImageLibraryPermissionError) {
-          showToast('Photo permission denied', 1500)
-          return
-        }
-        if (getErrorMessage(error) === 'Clipboard image is too large') {
-          showToast('Image too large to attach', 1500)
-          return
-        }
-        showToast('Attach failed', 1500)
+        showToast(mobileImageAttachToastMessage(error, connState === 'connected'), 1500)
       } finally {
         setIsAttaching(false)
       }

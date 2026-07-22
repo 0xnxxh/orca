@@ -9,6 +9,9 @@ export type MobileImageSource = 'library' | 'files'
 export type PickedMobileImage = {
   // Raw base64 (no data: prefix); fed straight into the existing upload pipeline.
   readonly base64: string
+  // Local asset URI (file://…) when the picker provides one — lets the composer
+  // render a thumbnail without holding a second base64 copy in memory.
+  readonly uri?: string
 }
 
 export class ImageLibraryPermissionError extends Error {
@@ -50,7 +53,7 @@ async function pickFromLibrary(
   if (!base64) {
     return null
   }
-  return { base64 }
+  return { base64, ...(asset?.uri ? { uri: asset.uri } : {}) }
 }
 
 async function pickFromFiles(
@@ -68,7 +71,7 @@ async function pickFromFiles(
   if (!asset?.uri) {
     return null
   }
-  return { base64: await readUriAsBase64(asset.uri) }
+  return { base64: await readUriAsBase64(asset.uri), uri: asset.uri }
 }
 
 export async function pickMobileImage(

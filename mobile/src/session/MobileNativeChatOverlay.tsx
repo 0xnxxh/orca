@@ -1,11 +1,17 @@
 import { StyleSheet, View } from 'react-native'
 import { MobileNativeChatView, type MobileNativeChatInputLockReason } from './MobileNativeChatView'
 import type { MobileNativeChatController } from './use-mobile-native-chat-controller'
+import type { MobileNativeChatPendingImage } from './use-mobile-native-chat-pending-images'
 
 type Props = {
   controller: MobileNativeChatController
   onAttachImage: () => void
   isAttaching: boolean
+  /** Overrides the controller's plain-text send (e.g. to deliver pending image
+   *  attachments first). Falls back to controller.handleNativeChatSend. */
+  onSend?: (text: string) => Promise<boolean>
+  pendingImages?: readonly MobileNativeChatPendingImage[]
+  onRemovePendingImage?: (id: string) => void
   onMicPress: () => void
   micActive: boolean
   dictationMode: 'toggle' | 'hold'
@@ -21,6 +27,9 @@ export function MobileNativeChatOverlay({
   controller,
   onAttachImage,
   isAttaching,
+  onSend,
+  pendingImages,
+  onRemovePendingImage,
   onMicPress,
   micActive,
   dictationMode,
@@ -54,12 +63,14 @@ export function MobileNativeChatOverlay({
         hasMore={session.hasMore}
         loadingEarlier={session.loadingEarlier}
         onLoadEarlier={session.loadEarlier}
-        onSend={controller.handleNativeChatSend}
+        onSend={onSend ?? controller.handleNativeChatSend}
         pending={controller.chatPending}
         composerText={controller.chatComposerText}
         onComposerTextChange={controller.setChatComposerText}
         onAttachImage={onAttachImage}
         isAttaching={isAttaching}
+        pendingImages={pendingImages}
+        onRemovePendingImage={onRemovePendingImage}
         onMicPress={onMicPress}
         micActive={micActive}
         dictationMode={dictationMode}

@@ -176,6 +176,8 @@ import {
 import type { MobileNewTabAgentOption } from '../../../../src/session/mobile-new-tab-agent-options'
 import { loadMobileNewTabAgentOptions } from '../../../../src/session/mobile-new-tab-agent-loader'
 import { useMobileImageAttachment } from '../../../../src/session/use-mobile-image-attachment'
+import { useMobileNativeChatPendingImages } from '../../../../src/session/use-mobile-native-chat-pending-images'
+import { useMobileNativeChatImageSend } from '../../../../src/session/use-mobile-native-chat-image-send'
 import { useMobileAttachmentInputLeaseGate } from '../../../../src/session/use-mobile-attachment-input-lease-gate'
 import { useMobileTerminalPaste } from '../../../../src/session/use-mobile-terminal-paste'
 import { useTerminalLiveInputModePreference } from '../../../../src/session/use-terminal-live-input-mode-preference'
@@ -3637,6 +3639,37 @@ export default function SessionScreen() {
     onError: triggerError
   })
 
+  // Native-chat attachments defer the TUI paste to send time so the composer
+  // thumbnail stays removable; the terminal surface keeps the immediate paste
+  // (the TUI's own input line is the visible feedback there).
+  const {
+    pendingChatImages,
+    attachPendingChatImage,
+    removePendingChatImage,
+    getReadyChatImages,
+    consumePendingChatImages
+  } = useMobileNativeChatPendingImages({
+    client,
+    activeHandle,
+    canAttach: canSend,
+    connState,
+    getConnectionId: getActiveWorktreeConnectionId,
+    showToast,
+    onSuccess: triggerSelection,
+    onError: triggerError
+  })
+
+  const sendNativeChatWithImages = useMobileNativeChatImageSend({
+    clientRef,
+    activeHandleRef,
+    deviceTokenRef,
+    inputLeaseReadyRef: nativeChatInputLeaseReadyRef,
+    sendText: nativeChatController.handleNativeChatSend,
+    getReadyImages: getReadyChatImages,
+    consumeImages: consumePendingChatImages,
+    onSendError: showNativeChatSendError
+  })
+
   // Why: refresh canPaste on mount, AppState active, after paste.
   useEffect(() => {
     let mounted = true
@@ -4687,8 +4720,11 @@ export default function SessionScreen() {
                 ))}
                 <MobileNativeChatOverlay
                   controller={nativeChatController}
-                  onAttachImage={() => void attachImage('library')}
+                  onAttachImage={() => void attachPendingChatImage('library')}
                   isAttaching={isAttaching}
+                  onSend={sendNativeChatWithImages}
+                  pendingImages={pendingChatImages}
+                  onRemovePendingImage={removePendingChatImage}
                   onMicPress={handleDictationToggle}
                   micActive={dictation.isRecording}
                   dictationMode={dictationMode}

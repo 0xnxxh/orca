@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -8,8 +9,9 @@ import {
   TextInput,
   View
 } from 'react-native'
-import { ArrowUp, ImagePlus, Mic, Square } from 'lucide-react-native'
+import { ArrowUp, ImagePlus, Mic, Square, X } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
+import type { MobileNativeChatPendingImage } from './use-mobile-native-chat-pending-images'
 import {
   applyAutocomplete,
   detectAutocompleteTrigger,
@@ -30,6 +32,7 @@ const SLASH_COMMANDS = [
 ]
 
 const NO_FILE_PATHS: string[] = []
+const NO_PENDING_IMAGES: MobileNativeChatPendingImage[] = []
 
 type Props = {
   /** Controlled composer text — owned by the parent so dictation can write to it. */
@@ -38,6 +41,9 @@ type Props = {
   onSend: (text: string) => Promise<boolean>
   onAttachImage?: () => void
   isAttaching?: boolean
+  /** Picked-but-unsent images shown as removable thumbnails above the input. */
+  pendingImages?: readonly MobileNativeChatPendingImage[]
+  onRemovePendingImage?: (id: string) => void
   onMicPress?: () => void
   micActive?: boolean
   /** Dictation trigger style — 'hold' uses press-in/out, 'toggle' uses tap. */
@@ -56,6 +62,8 @@ export function MobileNativeChatComposer({
   onSend,
   onAttachImage,
   isAttaching = false,
+  pendingImages = NO_PENDING_IMAGES,
+  onRemovePendingImage,
   onMicPress,
   micActive = false,
   dictationMode = 'toggle',
@@ -76,7 +84,15 @@ export function MobileNativeChatComposer({
   const sendingRef = useRef(false)
   const [sending, setSending] = useState(false)
   const trimmed = value.trim()
-  const canSend = trimmed.length > 0 && !disabled && !sending && !isAttaching
+  const readyImageCount = pendingImages.filter((image) => image.status === 'ready').length
+  const uploadingImages = pendingImages.length > readyImageCount
+  // Image-only sends are allowed; uploads must finish so send can't race them.
+  const canSend =
+    (trimmed.length > 0 || readyImageCount > 0) &&
+    !disabled &&
+    !sending &&
+    !isAttaching &&
+    !uploadingImages
 
   const trigger = useMemo(() => detectAutocompleteTrigger(value, cursor), [value, cursor])
   const suggestions = useMemo(() => {
@@ -145,72 +161,106 @@ export function MobileNativeChatComposer({
           </ScrollView>
         </View>
       ) : null}
-      <View style={styles.bar}>
-        {onAttachImage ? (
-          <Pressable
-            accessibilityLabel="Attach image"
-            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            onPress={onAttachImage}
-            disabled={isAttaching || disabled}
-          >
-            {isAttaching ? (
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-            ) : (
-              <ImagePlus size={20} color={colors.textSecondary} strokeWidth={2} />
-            )}
-          </Pressable>
+      <View style={styles.composerSurface}>
+        {pendingImages.length > 0 ? (
+          <View style={styles.attachmentTray}>
+            {pendingImages.map((image) => (
+              <View key={image.id} style={styles.attachmentTile}>
+                <Image
+                  source={{ uri: image.thumbnailUri }}
+                  style={styles.attachmentImage}
+                  resizeMode="cover"
+                />
+                {image.status === 'uploading' ? (
+                  <View style={styles.attachmentUploadingOverlay}>
+                    <ActivityIndicator size="small" color={colors.textPrimary} />
+                  </View>
+                ) : null}
+                {onRemovePendingImage ? (
+                  <Pressable
+                    style={({ pressed }) => [styles.attachmentRemove, pressed && styles.pressed]}
+                    onPress={() => onRemovePendingImage(image.id)}
+                    hitSlop={8}
+                    accessibilityLabel="Remove attached image"
+                  >
+                    <X size={14} color={colors.textPrimary} strokeWidth={2.4} />
+                  </Pressable>
+                ) : null}
+              </View>
+            ))}
+          </View>
         ) : null}
-        <TextInput
-          style={styles.input}
-          value={value}
-          onChangeText={handleChange}
-          // Controlled only transiently right after an autocomplete insert.
-          selection={pendingSelection ?? undefined}
-          onSelectionChange={(e) => {
-            setCursor(e.nativeEvent.selection.end)
-            setPendingSelection(null)
-          }}
-          placeholder={placeholder}
-          placeholderTextColor={colors.textMuted}
-          selectionColor={colors.accentBlue}
-          multiline
-          editable={!disabled}
-          textAlignVertical="top"
-        />
-        {onMicPress ? (
+        <View style={styles.bar}>
+          {onAttachImage ? (
+            <Pressable
+              accessibilityLabel="Attach image"
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+              onPress={onAttachImage}
+              disabled={isAttaching || disabled}
+            >
+              {isAttaching ? (
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              ) : (
+                <ImagePlus size={20} color={colors.textSecondary} strokeWidth={2} />
+              )}
+            </Pressable>
+          ) : null}
+          <TextInput
+            style={styles.input}
+            value={value}
+            onChangeText={handleChange}
+            // Controlled only transiently right after an autocomplete insert.
+            selection={pendingSelection ?? undefined}
+            onSelectionChange={(e) => {
+              setCursor(e.nativeEvent.selection.end)
+              setPendingSelection(null)
+            }}
+            placeholder={placeholder}
+            placeholderTextColor={colors.textMuted}
+            selectionColor={colors.accentBlue}
+            multiline
+            editable={!disabled}
+            textAlignVertical="top"
+          />
+          {onMicPress ? (
+            <Pressable
+              accessibilityLabel={micActive ? 'Stop dictation' : 'Dictate'}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
+              // Hold mode is walkie-talkie (press-in/out); toggle mode taps.
+              onPress={dictationMode === 'hold' ? undefined : onMicPress}
+              onPressIn={dictationMode === 'hold' ? onMicPressIn : undefined}
+              onPressOut={dictationMode === 'hold' ? onMicPressOut : undefined}
+              disabled={disabled}
+            >
+              {micActive ? (
+                <Square
+                  size={18}
+                  color={colors.statusRed}
+                  strokeWidth={2.4}
+                  fill={colors.statusRed}
+                />
+              ) : (
+                <Mic size={20} color={colors.textSecondary} strokeWidth={2} />
+              )}
+            </Pressable>
+          ) : null}
           <Pressable
-            accessibilityLabel={micActive ? 'Stop dictation' : 'Dictate'}
-            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-            // Hold mode is walkie-talkie (press-in/out); toggle mode taps.
-            onPress={dictationMode === 'hold' ? undefined : onMicPress}
-            onPressIn={dictationMode === 'hold' ? onMicPressIn : undefined}
-            onPressOut={dictationMode === 'hold' ? onMicPressOut : undefined}
-            disabled={disabled}
+            accessibilityLabel="Send message"
+            style={({ pressed }) => [
+              styles.sendButton,
+              !canSend && styles.sendButtonDisabled,
+              pressed && canSend && styles.pressed
+            ]}
+            onPress={handleSend}
+            disabled={!canSend}
           >
-            {micActive ? (
-              <Square
-                size={18}
-                color={colors.statusRed}
-                strokeWidth={2.4}
-                fill={colors.statusRed}
-              />
-            ) : (
-              <Mic size={20} color={colors.textSecondary} strokeWidth={2} />
-            )}
+            <ArrowUp
+              size={20}
+              color={canSend ? colors.bgBase : colors.textMuted}
+              strokeWidth={2.6}
+            />
           </Pressable>
-        ) : null}
-        <Pressable
-          accessibilityLabel="Send message"
-          style={({ pressed }) => [
-            styles.sendButton,
-            !canSend && styles.sendButtonDisabled,
-            pressed && canSend && styles.pressed
-          ]}
-          onPress={handleSend}
-          disabled={!canSend}
-        >
-          <ArrowUp size={20} color={canSend ? colors.bgBase : colors.textMuted} strokeWidth={2.6} />
-        </Pressable>
+        </View>
       </View>
     </View>
   )
@@ -239,15 +289,54 @@ const styles = StyleSheet.create({
     fontFamily: typography.monoFamily,
     fontSize: typography.metaSize
   },
+  // Hairline + panel background live on the surface so the attachment tray and
+  // input bar read as one composer block (no divider between them).
+  composerSurface: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderSubtle,
+    backgroundColor: colors.bgPanel
+  },
+  attachmentTray: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm
+  },
+  attachmentTile: {
+    width: 88,
+    height: 88,
+    borderRadius: radii.card,
+    overflow: 'hidden',
+    backgroundColor: colors.bgRaised
+  },
+  attachmentImage: {
+    width: '100%',
+    height: '100%'
+  },
+  attachmentUploadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(17, 17, 17, 0.45)'
+  },
+  attachmentRemove: {
+    position: 'absolute',
+    top: spacing.xs,
+    right: spacing.xs,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(17, 17, 17, 0.72)'
+  },
   bar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.borderSubtle,
-    backgroundColor: colors.bgPanel
+    paddingVertical: spacing.sm
   },
   input: {
     flex: 1,
