@@ -81,6 +81,9 @@ export class TerminalPreviewOutputStream {
   }
 
   append(data: string, meta?: TerminalPreviewOutputMeta): void {
+    if (this.isDisposed || this.awaitingReconnect || this.resyncPending) {
+      return
+    }
     if (this.bufferingSnapshot) {
       this.appendInitial(data, meta)
     } else {

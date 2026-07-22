@@ -70,8 +70,11 @@ export function createPreviewGridClaim(args: {
   }
 
   const schedule = (): void => {
-    if (timer || disposed) {
+    if (disposed) {
       return
+    }
+    if (timer) {
+      clearTimeout(timer)
     }
     timer = setTimeout(() => {
       timer = null

@@ -301,6 +301,29 @@ describe('registerTerminalPreviewHandlers', () => {
     expect(runtime.unsubscribeResize).toHaveBeenCalledTimes(1)
   })
 
+  it('stops batching changed-grid output while an earlier frame drains before resync', async () => {
+    vi.useFakeTimers()
+    const runtime = makeRuntime()
+    registerTerminalPreviewHandlers(runtime as never)
+    const sender = makeSender()
+    await handlers.get('terminalPreview:connect')!(eventFor(sender), { ptyId: 'p1' })
+
+    runtime.listeners[0]!('old')
+    await vi.advanceTimersByTimeAsync(5)
+    runtime.resizeListeners[0]!({ cols: 100, rows: 30 })
+    expect(sender.send).toHaveBeenCalledTimes(1)
+
+    runtime.listeners[0]!('captured by the replacement snapshot')
+    expect(vi.getTimerCount()).toBe(0)
+
+    handlers.get('terminalPreview:ack')!(eventFor(sender), { ptyId: 'p1', bytes: 3 })
+    expect(sender.send).toHaveBeenLastCalledWith('terminalPreview:data', {
+      type: 'resync',
+      ptyId: 'p1'
+    })
+    expect(sender.send).toHaveBeenCalledTimes(2)
+  })
+
   it('claims the PTY grid on fit and reports the size actually in effect', async () => {
     const runtime = makeRuntime()
     runtime.getTerminalSize.mockReturnValue({ cols: 132, rows: 40 })
