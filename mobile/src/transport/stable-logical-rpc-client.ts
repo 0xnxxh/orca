@@ -9,8 +9,7 @@ export class LogicalClientCutoverError extends Error {
   }
 }
 
-// Why: cutover errors can cross module boundaries as plain Errors (re-thrown or
-// serialized), so callers match on the message as well as the instance.
+// Why: instanceof can miss across bundle copies, so also match by message.
 export function isLogicalClientCutoverError(error: unknown): boolean {
   return (
     error instanceof LogicalClientCutoverError ||
