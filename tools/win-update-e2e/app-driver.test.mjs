@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { dismissOverlays, ensureTerminal } from './app-driver.mjs'
+import { buildFreshProfile } from './onboarding-profile.mjs'
 
 function hiddenButton() {
   return {
@@ -85,18 +86,12 @@ describe('dismissOverlays', () => {
     }
   })
 
-  it('submits within the composer without reopening the selected Blank Terminal picker', async () => {
+  it('submits within the composer without dismissing and reopening it', async () => {
     const newWorkspace = {
       first: vi.fn(),
       click: vi.fn().mockResolvedValue(undefined)
     }
     newWorkspace.first.mockReturnValue(newWorkspace)
-    const agentPicker = {
-      first: vi.fn(),
-      innerText: vi.fn().mockResolvedValue('Blank Terminal'),
-      click: vi.fn()
-    }
-    agentPicker.first.mockReturnValue(agentPicker)
     const createWorktree = {
       last: vi.fn(),
       click: vi
@@ -108,7 +103,6 @@ describe('dismissOverlays', () => {
     const composer = {
       last: vi.fn(),
       waitFor: vi.fn().mockResolvedValue(undefined),
-      locator: vi.fn().mockReturnValue(agentPicker),
       getByRole: vi.fn().mockReturnValue(createWorktree)
     }
     composer.last.mockReturnValue(composer)
@@ -146,9 +140,12 @@ describe('dismissOverlays', () => {
 
     await ensureTerminal(page)
 
-    expect(agentPicker.click).not.toHaveBeenCalled()
     expect(composer.getByRole).toHaveBeenCalledWith('button', { name: /^Create worktree/ })
     expect(unintendedDialogClose.click).not.toHaveBeenCalled()
     expect(createWorktree.click).toHaveBeenCalledTimes(2)
+  })
+
+  it('pins fresh harness profiles to a blank terminal', () => {
+    expect(buildFreshProfile().settings.defaultTuiAgent).toBe('blank')
   })
 })

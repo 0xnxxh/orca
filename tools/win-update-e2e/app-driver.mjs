@@ -277,22 +277,6 @@ async function createWorkspaceFromSeededRepo(page, timeoutMs) {
   }
   const composer = page.getByRole('dialog', { name: 'Create worktree' }).last()
   await composer.waitFor({ state: 'visible', timeout: 15_000 })
-  const agentPicker = composer
-    .locator('[data-agent-combobox-root="true"] button[role="combobox"]')
-    .first()
-  const selectedAgent = await agentPicker.innerText({ timeout: 15_000 }).catch(() => '')
-  if (!selectedAgent.includes('Blank Terminal')) {
-    if (!(await tryClickWithKnownOverlayRetry(page, agentPicker, 15_000))) {
-      await agentPicker.click({ timeout: 1 })
-    }
-    const blankTerminalOption = page
-      .locator('[data-agent-combobox-root="true"] [data-slot="command-item"]:visible')
-      .filter({ hasText: 'Blank Terminal' })
-      .first()
-    if (!(await tryClickWithKnownOverlayRetry(page, blankTerminalOption, 15_000))) {
-      await blankTerminalOption.click({ timeout: 1 })
-    }
-  }
   // Submit. The create button's accessible name carries the shortcut hint
   // ("Create worktreeCtrl"), so match by prefix; fall back to the documented
   // Ctrl+Enter shortcut if the button is not directly clickable.
