@@ -4,6 +4,7 @@ import {
   mobileRelayRecoveryFor
 } from '../../../src/shared/mobile-relay-close-codes'
 import type { MobileRelayRpcSession } from './mobile-relay-rpc-session'
+import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
 import { RelayOuterError } from './mobile-relay-e2ee-link'
 import type { StableLogicalRpcClient } from './stable-logical-rpc-client'
 import type { ConnectionState } from './types'
@@ -21,7 +22,7 @@ export type RelayReconnectDependencies = {
   clearTimer: typeof clearTimeout
 }
 
-type RecoveryGate = 'host-revival' | 'fresh-credential'
+type RecoveryGate = 'external-signal' | 'fresh-credential'
 
 export class RelayReconnectController {
   private consecutiveFailures = 0
@@ -43,7 +44,7 @@ export class RelayReconnectController {
       if (this.recoveryGate !== 'fresh-credential') {
         this.reset()
       }
-    } else if (this.recoveryGate === 'host-revival') {
+    } else if (this.recoveryGate === 'external-signal') {
       this.recoveryGate = null
     }
     if (
@@ -162,7 +163,7 @@ export class RelayReconnectController {
         : null
     if (
       this.recoveryGate === 'fresh-credential' ||
-      (this.recoveryGate === 'host-revival' && recovery?.kind !== 'disable-relay-credential')
+      (this.recoveryGate === 'external-signal' && recovery?.kind !== 'disable-relay-credential')
     ) {
       // Why: only the gate's external signal can make a known-fatal recovery retryable.
       this.clearTimer()
@@ -178,9 +179,15 @@ export class RelayReconnectController {
     this.consecutiveFailures += 1
     const delay = this.delayMs()
     this.nextAttemptAt = now + delay
+    if (error instanceof MobileE2EEAuthenticationError) {
+      // Why: pairing state cannot change on a timer; polling only wakes the radio.
+      this.recoveryGate = 'external-signal'
+      this.clearTimer()
+      return
+    }
     if (recovery?.kind === 'wait-for-host-revival') {
       // Why: retrying HOST_OFFLINE without a revival signal is polling a known-negative state.
-      this.recoveryGate = 'host-revival'
+      this.recoveryGate = 'external-signal'
       this.clearTimer()
       return
     }

@@ -190,7 +190,8 @@ export class MobileEndpointSupervisor {
     token: string
     version: number
   }): Promise<{ ok: true } | { ok: false; error: Error }> {
-    if (!this.host.relay || !this.bundle) {
+    // Why: director resolution and grace fallback can finish after background/stop.
+    if (this.stopped || !this.foreground || !this.host.relay || !this.bundle) {
       return { ok: false, error: new Error('relay state missing') }
     }
     const session = this.dependencies.openRelay(
@@ -299,7 +300,8 @@ export class MobileEndpointSupervisor {
         randomBytes: this.dependencies.randomBytes
       })
       this.bundle = result.bundle
-      credentialRefreshed = force
+      // Why: a scheduled rotation can finish after the old credential enters the rejection gate.
+      credentialRefreshed = true
       this.host = await persistRelayHost(this.host, result.relay, this.dependencies.saveHost)
     } catch {
       // Why: pending material remains durable; the next authenticated direct

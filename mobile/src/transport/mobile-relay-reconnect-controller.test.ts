@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
 import { RelayOuterError } from './mobile-relay-e2ee-link'
 import { RelayReconnectController } from './mobile-relay-reconnect-controller'
 
@@ -40,6 +41,18 @@ describe('relay reconnect controller', () => {
     reconnect.resetForDirectConnection()
     expect(vi.getTimerCount()).toBe(0)
     vi.runAllTimers()
+    expect(onRetry).not.toHaveBeenCalled()
+  })
+
+  it('waits for an external signal after rejected E2EE authentication', () => {
+    const onRetry = vi.fn()
+    const reconnect = createController(onRetry)
+
+    reconnect.registerFailure(new MobileE2EEAuthenticationError())
+
+    expect(reconnect.shouldDefer()).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+    vi.advanceTimersByTime(60_000)
     expect(onRetry).not.toHaveBeenCalled()
   })
 

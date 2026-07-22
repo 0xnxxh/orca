@@ -143,6 +143,36 @@ function dependencies(
   }
 }
 
+function mockCredentialRotation(logical: FakeLogicalClient): void {
+  let installResult: Record<string, unknown> | null = null
+  logical.sendRequest.mockImplementation(async (method, params) => {
+    const request = params as { installReqId?: string; reqId?: string }
+    if (method === 'pairing.provisionRelay') {
+      installResult = {
+        v: 1,
+        reqId: request.reqId,
+        authorizationMode: 'authenticated-direct',
+        currentVersion: 3,
+        resumeExpiresAt: Date.now() + 300_000,
+        graceExpiresAt: Date.now() + 60_000
+      }
+      return { id: 'rpc-2', ok: true, result: installResult, _meta: { runtimeId: 'runtime-1' } }
+    }
+    return {
+      id: 'rpc-1',
+      ok: true,
+      result: {
+        v: 1,
+        relay,
+        installStatus: installResult
+          ? { v: 1, reqId: request.installReqId, state: 'committed', result: installResult }
+          : { v: 1, reqId: request.installReqId, state: 'not-found' }
+      },
+      _meta: { runtimeId: 'runtime-1' }
+    }
+  })
+}
+
 describe('mobile endpoint supervisor', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -604,33 +634,7 @@ describe('mobile endpoint supervisor', () => {
       .mockResolvedValue()
       .mockResolvedValueOnce()
       .mockReturnValueOnce(credentialWritePending)
-    let installResult: Record<string, unknown> | null = null
-    logical.sendRequest.mockImplementation(async (method, params) => {
-      const request = params as { installReqId?: string; reqId?: string }
-      if (method === 'pairing.provisionRelay') {
-        installResult = {
-          v: 1,
-          reqId: request.reqId,
-          authorizationMode: 'authenticated-direct',
-          currentVersion: 3,
-          resumeExpiresAt: Date.now() + 300_000,
-          graceExpiresAt: Date.now() + 60_000
-        }
-        return { id: 'rpc-2', ok: true, result: installResult, _meta: { runtimeId: 'runtime-1' } }
-      }
-      return {
-        id: 'rpc-1',
-        ok: true,
-        result: {
-          v: 1,
-          relay,
-          installStatus: installResult
-            ? { v: 1, reqId: request.installReqId, state: 'committed', result: installResult }
-            : { v: 1, reqId: request.installReqId, state: 'not-found' }
-        },
-        _meta: { runtimeId: 'runtime-1' }
-      }
-    })
+    mockCredentialRotation(logical)
     const deps = dependencies({ openRelay, writeBundle })
     const supervisor = new MobileEndpointSupervisor(logical, host, deps)
 
@@ -654,7 +658,54 @@ describe('mobile endpoint supervisor', () => {
     supervisor.stop()
   })
 
-  it('does not recreate a relay retry after an in-flight dial is backgrounded', async () => {
+  it('uses a scheduled credential rotation that finishes after relay rejection', async () => {
+    const logical = new FakeLogicalClient('connected', 'lan')
+    let finishCredentialWrite: (() => void) | undefined
+    const credentialWritePending = new Promise<void>((resolve) => {
+      finishCredentialWrite = resolve
+    })
+    const writeBundle = vi
+      .fn<(value: MobileRelayCredentialBundle) => Promise<void>>()
+      .mockResolvedValue()
+      .mockResolvedValueOnce()
+      .mockReturnValueOnce(credentialWritePending)
+    mockCredentialRotation(logical)
+    const openRelay = vi.fn(
+      (_relay, credential: { version: number }) =>
+        new FakeRelaySession(
+          credential.version === bundle.current.version ? 'disconnected' : 'connected',
+          credential.version === bundle.current.version ? new RelayOuterError(4401) : null
+        )
+    )
+    const deps = dependencies({
+      readBundle: vi.fn(async () => ({
+        ...bundle,
+        current: { ...bundle.current, expiresAt: Date.now() + 60_000 }
+      })),
+      openRelay,
+      writeBundle
+    })
+    const supervisor = new MobileEndpointSupervisor(logical, host, deps)
+
+    await supervisor.start()
+    logical.publishState('connected')
+    await vi.waitFor(() => expect(writeBundle).toHaveBeenCalledTimes(2))
+
+    // The expiring credential can be rejected while its replacement is waiting on SecureStore.
+    logical.publishState('disconnected')
+    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledOnce())
+    finishCredentialWrite?.()
+
+    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledTimes(2))
+    expect(openRelay).toHaveBeenLastCalledWith(
+      relay,
+      expect.objectContaining({ version: 3 }),
+      expect.any(String)
+    )
+    supervisor.stop()
+  })
+
+  it('does not open a resolved relay replacement after backgrounding', async () => {
     const logical = new FakeLogicalClient('disconnected', 'lan')
     let finishResolve: ((value: typeof relay) => void) | undefined
     const resolvePending = new Promise<typeof relay>((resolve) => {
@@ -676,7 +727,7 @@ describe('mobile endpoint supervisor', () => {
     finishResolve?.(relay)
     await starting
 
-    expect(openRelay).toHaveBeenCalledTimes(2)
+    expect(openRelay).toHaveBeenCalledOnce()
     expect(vi.getTimerCount()).toBe(0)
     supervisor.stop()
   })
@@ -703,8 +754,10 @@ describe('mobile endpoint supervisor', () => {
     await vi.waitFor(() => expect(deps.resolveRelay).toHaveBeenCalledOnce())
     supervisor.setForeground(false)
     finishResolve?.(relay)
-    await vi.waitFor(() => expect(openRelay).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(deps.saveHost).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(0)
 
+    expect(openRelay).toHaveBeenCalledTimes(2)
     expect(vi.getTimerCount()).toBe(0)
     supervisor.stop()
   })
