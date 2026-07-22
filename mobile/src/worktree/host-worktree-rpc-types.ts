@@ -10,9 +10,12 @@ export type DesktopStatus = {
   floatingWorkspaceEnabled?: boolean
   // Why: the desktop's own app version (semver); informational only.
   appVersion?: string
-  // Why: newest shipped mobile app version per the desktop; absent on older
-  // hosts — fail open and show no update nudge.
-  recommendedMobileAppVersion?: string
+  // Why: release trains can diverge; absent on older hosts — fail open and
+  // show no update nudge.
+  recommendedMobileAppVersions?: {
+    ios?: string
+    android?: string
+  }
 }
 
 export type RepoSummary = {

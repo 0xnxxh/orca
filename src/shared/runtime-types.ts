@@ -30,7 +30,7 @@ import type {
   RuntimeMarkdownReadTabResult,
   RuntimeMarkdownSaveTabResult
 } from './mobile-markdown-document'
-import type { RuntimeCapability } from './protocol-version'
+import type { RecommendedMobileAppVersions, RuntimeCapability } from './protocol-version'
 import type { RemoteRuntimeSharedConnectionDiagnostics } from './remote-runtime-shared-control-types'
 import type {
   AgentProviderSessionMetadata,
@@ -85,9 +85,9 @@ export type RuntimeStatus = {
   floatingWorkspaceEnabled?: boolean
   // Why: this host's own app version (semver); informational only, never gating.
   appVersion?: string
-  // Why: mobile shows a soft "update your app" nudge when it runs older than
-  // this; absent on older hosts and mobile fails open (no nudge).
-  recommendedMobileAppVersion?: string
+  // Why: per-platform release trains can diverge; absent on older hosts and
+  // mobile fails open (no update nudge).
+  recommendedMobileAppVersions?: RecommendedMobileAppVersions
   // COMPAT(runtimeStatusMobileAliases): added 2026-05-15 for mobile builds
   // that still read these names; new desktop/CLI code uses the fields above.
   protocolVersion?: number

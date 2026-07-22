@@ -21,12 +21,17 @@ export const RUNTIME_PROTOCOL_VERSION = 3
 export const MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION = 2
 export const MIN_COMPATIBLE_RUNTIME_SERVER_VERSION = 2
 
-// Why: newest SHIPPED mobile app version (semver) — bumped in the release PR
-// when a new mobile build actually ships, never ahead of it, or every
-// up-to-date phone gets nudged toward an update that doesn't exist. Purely
-// advisory — mobile compares its own version against this to show a soft
-// update nudge; it never blocks, unlike the protocol range above.
-export const RECOMMENDED_MOBILE_APP_VERSION = '0.0.31'
+export type RecommendedMobileAppVersions = {
+  readonly ios: string
+  readonly android: string
+}
+
+// Why: iOS and Android ship independently; track the newest version actually
+// available on each platform so a release delay never advertises a missing build.
+export const RECOMMENDED_MOBILE_APP_VERSIONS: RecommendedMobileAppVersions = {
+  ios: '0.0.31',
+  android: '0.0.31'
+}
 
 export const PROJECT_HOST_SETUP_RUNTIME_CAPABILITY = 'project-host-setup.v1' as const
 export const TASK_SOURCE_CONTEXT_RUNTIME_CAPABILITY = 'task-source-context.v1' as const

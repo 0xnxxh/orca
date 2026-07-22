@@ -2,7 +2,7 @@ import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-nati
 import { router } from 'expo-router'
 import { colors, radii, spacing, typography } from '../theme/mobile-theme'
 import type { CompatVerdict } from '../transport/protocol-compat'
-import { IOS_APP_STORE_URL } from './mobile-app-store-link'
+import { getMobileAppUpdateUrl } from './mobile-app-update-link'
 
 const RELEASES_URL = 'https://github.com/stablyai/orca/releases'
 
@@ -12,10 +12,13 @@ type Props = {
 
 export function ProtocolBlockScreen({ verdict }: Props) {
   const isMobileTooOld = verdict.reason === 'mobile-too-old'
+  const mobileUpdateUrl = getMobileAppUpdateUrl(Platform.OS)
   const mobileUpdateTarget =
     Platform.OS === 'ios'
-      ? { label: 'Open App Store', url: IOS_APP_STORE_URL, storeName: 'the App Store' }
-      : { label: null, url: null, storeName: 'your mobile app store' }
+      ? { label: 'Open App Store', url: mobileUpdateUrl, storeName: 'the App Store' }
+      : Platform.OS === 'android'
+        ? { label: 'Open GitHub Releases', url: mobileUpdateUrl, storeName: 'GitHub Releases' }
+        : { label: null, url: null, storeName: 'your mobile app store' }
   const primaryAction = isMobileTooOld
     ? mobileUpdateTarget.url && mobileUpdateTarget.label
       ? { label: mobileUpdateTarget.label, url: mobileUpdateTarget.url }

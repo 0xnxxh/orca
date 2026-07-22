@@ -170,12 +170,9 @@ export function HostScreen({
   const [showGroupPicker, setShowGroupPicker] = useState(false)
   const [showFilterModal, setShowFilterModal] = useState(false)
   const [actionTarget, setActionTarget] = useState<Worktree | null>(null)
-  const { hostCapabilities, floatingWorkspaceEnabled, compatVerdict, recommendedMobileAppVersion } =
-    useHostStatusGates({
-      hostId,
-      client,
-      connState
-    })
+  const hostStatus = useHostStatusGates({ hostId, client, connState })
+  const { hostCapabilities, floatingWorkspaceEnabled, compatVerdict } = hostStatus
+  const recommendedMobileAppVersions = hostStatus.recommendedMobileAppVersions
   const [confirmDelete, setConfirmDelete] = useState<Worktree | null>(null)
   const [confirmRemoveHost, setConfirmRemoveHost] = useState(false)
   const [routeActionState, setRouteActionState] = useState(() =>
@@ -1076,8 +1073,8 @@ export function HostScreen({
       </View>
 
       {/* Soft update-your-app nudge; renders null unless this build is older than the host's recommendation. */}
-      {connState === 'connected' && (
-        <UpdateNudgeBanner recommendedVersion={recommendedMobileAppVersion} />
+      {connState === 'connected' && recommendedMobileAppVersions && (
+        <UpdateNudgeBanner recommendedVersions={recommendedMobileAppVersions} />
       )}
 
       {/* Auth failed banner */}

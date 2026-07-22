@@ -9,7 +9,7 @@ export type HostStatusGates = {
   floatingWorkspaceEnabled: boolean
   compatVerdict: CompatVerdict
   // Why: null when the host predates the field — callers show no update nudge.
-  recommendedMobileAppVersion: string | null
+  recommendedMobileAppVersions: DesktopStatus['recommendedMobileAppVersions'] | null
 }
 
 type LoadedHostStatusGates = HostStatusGates & {
@@ -59,10 +59,7 @@ export function useHostStatusGates(args: {
           hostCapabilities: status.capabilities ?? [],
           floatingWorkspaceEnabled: status.floatingWorkspaceEnabled === true,
           compatVerdict: verdict,
-          recommendedMobileAppVersion:
-            typeof status.recommendedMobileAppVersion === 'string'
-              ? status.recommendedMobileAppVersion
-              : null
+          recommendedMobileAppVersions: readRecommendedMobileAppVersions(status)
         })
         if (verdict.kind === 'blocked') {
           // Why: support breadcrumb to confirm a block fired vs a render bug; no PII, just version ints.
@@ -94,13 +91,25 @@ export function useHostStatusGates(args: {
       hostCapabilities: EMPTY_HOST_CAPABILITIES,
       floatingWorkspaceEnabled: false,
       compatVerdict: { kind: 'ok' },
-      recommendedMobileAppVersion: null
+      recommendedMobileAppVersions: null
     }
   }
   return {
     hostCapabilities: loaded.hostCapabilities,
     floatingWorkspaceEnabled: loaded.floatingWorkspaceEnabled,
     compatVerdict: loaded.compatVerdict,
-    recommendedMobileAppVersion: loaded.recommendedMobileAppVersion
+    recommendedMobileAppVersions: loaded.recommendedMobileAppVersions
   }
+}
+
+function readRecommendedMobileAppVersions(
+  status: DesktopStatus
+): DesktopStatus['recommendedMobileAppVersions'] | null {
+  const versions = status.recommendedMobileAppVersions
+  if (!versions || typeof versions !== 'object') {
+    return null
+  }
+  const ios = typeof versions.ios === 'string' ? versions.ios : undefined
+  const android = typeof versions.android === 'string' ? versions.android : undefined
+  return ios || android ? { ios, android } : null
 }

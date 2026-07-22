@@ -57,7 +57,7 @@ describe('useHostStatusGates', () => {
         hostCapabilities: [],
         floatingWorkspaceEnabled: false,
         compatVerdict: { kind: 'ok' },
-        recommendedMobileAppVersion: null
+        recommendedMobileAppVersions: null
       })
       expect(gates).toMatchObject({
         hostCapabilities: ['terminal.quick-commands.v1'],
@@ -92,7 +92,7 @@ describe('useHostStatusGates', () => {
       result: {
         capabilities: ['browser.screencast.v1'],
         floatingWorkspaceEnabled: true,
-        recommendedMobileAppVersion: '0.0.33'
+        recommendedMobileAppVersions: { ios: '0.0.33', android: '0.0.32' }
       }
     })
     const client = { sendRequest } as unknown as RpcClient
@@ -113,7 +113,7 @@ describe('useHostStatusGates', () => {
       expect(gates).toMatchObject({
         hostCapabilities: ['browser.screencast.v1'],
         floatingWorkspaceEnabled: true,
-        recommendedMobileAppVersion: '0.0.33'
+        recommendedMobileAppVersions: { ios: '0.0.33', android: '0.0.32' }
       })
 
       expect(sendRequest).toHaveBeenCalledOnce()
@@ -161,7 +161,7 @@ describe('useHostStatusGates', () => {
       expect(gates).toMatchObject({
         hostCapabilities: [],
         floatingWorkspaceEnabled: false,
-        recommendedMobileAppVersion: null
+        recommendedMobileAppVersions: null
       })
 
       await act(async () => {

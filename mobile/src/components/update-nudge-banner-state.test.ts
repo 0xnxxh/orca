@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { isAppVersionOlder, shouldShowUpdateNudge } from './update-nudge-banner-state'
+import {
+  getRecommendedVersionForPlatform,
+  isAppVersionOlder,
+  shouldShowUpdateNudge
+} from './update-nudge-banner-state'
+
+describe('getRecommendedVersionForPlatform', () => {
+  const versions = { ios: '0.0.33', android: '0.0.32' }
+
+  it('selects the independently shipped version for the running platform', () => {
+    expect(getRecommendedVersionForPlatform('ios', versions)).toBe('0.0.33')
+    expect(getRecommendedVersionForPlatform('android', versions)).toBe('0.0.32')
+  })
+
+  it('fails open for an unsupported platform or absent recommendation', () => {
+    expect(getRecommendedVersionForPlatform('web', versions)).toBeNull()
+    expect(getRecommendedVersionForPlatform('ios', null)).toBeNull()
+  })
+})
 
 describe('isAppVersionOlder', () => {
   it('compares segments numerically, not lexically', () => {
@@ -52,9 +70,19 @@ describe('shouldShowUpdateNudge', () => {
     expect(shouldShowUpdateNudge({ ...base, dismissedLoaded: false })).toBe(false)
   })
 
-  it('honors a dismissal only for the dismissed version', () => {
+  it('resurfaces only recommendations newer than the dismissed version', () => {
     expect(shouldShowUpdateNudge({ ...base, dismissedVersion: '0.0.33' })).toBe(false)
     // Why: a newer recommendation must resurface the nudge after an old dismissal.
     expect(shouldShowUpdateNudge({ ...base, dismissedVersion: '0.0.32' })).toBe(true)
+    // Why: switching to a stale host must not resurrect a recommendation the user already surpassed.
+    expect(
+      shouldShowUpdateNudge({
+        ...base,
+        recommendedVersion: '0.0.32',
+        installedVersion: '0.0.31',
+        dismissedVersion: '0.0.33'
+      })
+    ).toBe(false)
+    expect(shouldShowUpdateNudge({ ...base, dismissedVersion: 'invalid' })).toBe(true)
   })
 })

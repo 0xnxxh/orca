@@ -21,7 +21,7 @@ import type {
   WorkspaceSessionState
 } from '../../shared/types'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../shared/agent-status-types'
-import { RECOMMENDED_MOBILE_APP_VERSION } from '../../shared/protocol-version'
+import { RECOMMENDED_MOBILE_APP_VERSIONS } from '../../shared/protocol-version'
 import { detectAgentStatusFromTitle, MAX_OSC_TITLE_CHARS } from '../../shared/agent-detection'
 import {
   addWorktree,
@@ -1711,9 +1711,11 @@ describe('OrcaRuntimeService', () => {
     try {
       const status = createRuntime().getStatus()
       expect(status.appVersion).toBe('9.9.9-test')
-      expect(status.recommendedMobileAppVersion).toBe(RECOMMENDED_MOBILE_APP_VERSION)
-      // Why: the nudge constant must stay a plain semver string mobile can compare.
-      expect(RECOMMENDED_MOBILE_APP_VERSION).toMatch(/^\d+\.\d+\.\d+$/)
+      expect(status.recommendedMobileAppVersions).toBe(RECOMMENDED_MOBILE_APP_VERSIONS)
+      // Why: the nudge constants must stay plain semver strings mobile can compare.
+      for (const version of Object.values(RECOMMENDED_MOBILE_APP_VERSIONS)) {
+        expect(version).toMatch(/^\d+\.\d+\.\d+$/)
+      }
     } finally {
       vi.unstubAllEnvs()
     }

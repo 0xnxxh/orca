@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native'
+import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
 import Constants from 'expo-constants'
 import { X } from 'lucide-react-native'
 import { colors, spacing } from '../theme/mobile-theme'
-import { getMobileAppStoreUrl } from './mobile-app-store-link'
-import { shouldShowUpdateNudge } from './update-nudge-banner-state'
+import { getMobileAppUpdateUrl } from './mobile-app-update-link'
+import {
+  getRecommendedVersionForPlatform,
+  shouldShowUpdateNudge
+} from './update-nudge-banner-state'
 import {
   readUpdateNudgeDismissal,
   saveUpdateNudgeDismissedVersion,
@@ -13,8 +16,13 @@ import {
 
 // Why: soft nudge only — version skew degrades features silently, so surface a
 // dismissible hint instead of escalating to the hard ProtocolBlockScreen.
-export function UpdateNudgeBanner({ recommendedVersion }: { recommendedVersion: string | null }) {
+export function UpdateNudgeBanner({
+  recommendedVersions
+}: {
+  recommendedVersions: { ios?: string; android?: string }
+}) {
   const [dismissal, setDismissal] = useState<UpdateNudgeDismissalPreference | null>(null)
+  const recommendedVersion = getRecommendedVersionForPlatform(Platform.OS, recommendedVersions)
 
   useEffect(() => {
     let cancelled = false
@@ -38,7 +46,7 @@ export function UpdateNudgeBanner({ recommendedVersion }: { recommendedVersion: 
     return null
   }
 
-  const storeUrl = getMobileAppStoreUrl()
+  const storeUrl = getMobileAppUpdateUrl(Platform.OS, recommendedVersion)
   return (
     <View style={styles.banner}>
       <Text style={styles.text}>Update the Orca app for the best experience</Text>
