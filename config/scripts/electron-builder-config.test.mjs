@@ -95,7 +95,7 @@ describe('electron-builder config', () => {
 
   it('declares why the main app may access data in other app containers', () => {
     expect(electronBuilderConfig.mac.extendInfo.NSAppDataUsageDescription).toBe(
-      "Orca allows terminal-launched developer tools to access other apps' data when you request it."
+      "Orca uses access to other apps' data for terminal tools, browser cookie imports, and files you choose to open."
     )
   })
 
