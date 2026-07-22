@@ -4514,10 +4514,15 @@ export default function SessionScreen() {
               >
                 <Plus size={16} color={colors.textSecondary} strokeWidth={2.2} />
               </Pressable>
-              {quickCommandsSupported === true ? (
+              {/* Why: render during the capability probe (null) so the tab row doesn't shift as it loads; hide only when the host confirms no support. Disabled until confirmed — pre-quick-commands hosts strip agentPrompt, so an eager run would launch the agent without its prompt. */}
+              {quickCommandsSupported !== false ? (
                 <QuickCommandsTabButton
                   disabled={
-                    creating || creatingBrowser || creatingMarkdown || connState !== 'connected'
+                    creating ||
+                    creatingBrowser ||
+                    creatingMarkdown ||
+                    connState !== 'connected' ||
+                    quickCommandsSupported !== true
                   }
                   onPress={() => setShowQuickCommands(true)}
                 />
