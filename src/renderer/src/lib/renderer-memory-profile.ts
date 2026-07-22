@@ -15,6 +15,8 @@ const contributors = new Map<string, RendererMemoryProfileContributor>()
 // Why: breadcrumbs are retained per session; a misbehaving contributor must not
 // bloat every crash report. 32 counts is plenty to name a leaking subsystem.
 const MAX_COUNTS_PER_CONTRIBUTOR = 32
+// Why: individually bounded contributors can still create unbounded near-OOM work in aggregate.
+const MAX_PROFILE_COUNTS = 64
 
 export function registerRendererMemoryProfileContributor(
   name: string,
@@ -30,26 +32,34 @@ export function registerRendererMemoryProfileContributor(
 
 export function collectRendererMemoryProfileCounts(): RendererMemoryProfileCounts {
   const counts: RendererMemoryProfileCounts = {}
+  let collected = 0
   for (const [name, contributor] of contributors) {
+    if (collected >= MAX_PROFILE_COUNTS) {
+      break
+    }
     // Why: a broken contributor must never take down memory reporting itself.
     try {
       const contribution = contributor()
       let inspected = 0
       for (const key in contribution) {
-        if (inspected >= MAX_COUNTS_PER_CONTRIBUTOR) {
+        if (inspected >= MAX_COUNTS_PER_CONTRIBUTOR || collected >= MAX_PROFILE_COUNTS) {
           break
         }
-        inspected += 1
         if (!Object.hasOwn(contribution, key)) {
           continue
         }
+        inspected += 1
         const value = contribution[key]
         if (typeof value === 'number' && Number.isFinite(value)) {
           counts[`${name}.${key}`] = value
+          collected += 1
         }
       }
     } catch {
-      counts[`${name}.error`] = 1
+      if (collected < MAX_PROFILE_COUNTS) {
+        counts[`${name}.error`] = 1
+        collected += 1
+      }
     }
   }
   return counts

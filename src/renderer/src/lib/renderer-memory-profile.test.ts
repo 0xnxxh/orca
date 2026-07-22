@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   collectRendererMemoryProfileCounts,
   registerRendererMemoryProfileContributor,
@@ -73,6 +73,20 @@ describe('collectRendererMemoryProfileCounts', () => {
 
     expect(Object.keys(collectRendererMemoryProfileCounts())).toHaveLength(32)
     expect(reads).toBe(32)
+  })
+
+  it('caps aggregate counts and skips contributors after the profile budget', () => {
+    register('first', () =>
+      Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`key${index}`, index]))
+    )
+    register('second', () =>
+      Object.fromEntries(Array.from({ length: 32 }, (_, index) => [`key${index}`, index]))
+    )
+    const skippedContributor = vi.fn(() => ({ shouldNotRun: 1 }))
+    register('skipped', skippedContributor)
+
+    expect(Object.keys(collectRendererMemoryProfileCounts())).toHaveLength(64)
+    expect(skippedContributor).not.toHaveBeenCalled()
   })
 })
 
