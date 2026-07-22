@@ -65,6 +65,26 @@ describe('claude-subagent-roster', () => {
     expect(roster.has('alane-hooks-6d3cb5b5')).toBe(false)
   })
 
+  it('restores a parked workflow lane to working when the inventory reports it running', () => {
+    const roster: ClaudeSubagentRoster = new Map()
+    upsertWorkingClaudeSubagent(roster, 'alane-hooks-6d3cb5b5', { agentType: 'lane-hooks' }, 100)
+    stopClaudeSubagent(roster, 'alane-hooks-6d3cb5b5')
+
+    // Why: lifecycle hooks and the lead Stop inventory can arrive around the
+    // same boundary; an authoritative running task must keep the pane gated.
+    foldClaudeBackgroundTasksIntoRoster(
+      roster,
+      [task({ id: 'alane-hooks-6d3cb5b5', agentType: 'lane-hooks' })],
+      150
+    )
+
+    expect(roster.get('alane-hooks-6d3cb5b5')).toMatchObject({
+      state: 'working',
+      listedAsSubagentTask: true
+    })
+    expect(claudeRosterHasWorkingSubagent(roster)).toBe(true)
+  })
+
   it('revives an idle teammate as working while keeping its first-observed startedAt', () => {
     const roster: ClaudeSubagentRoster = new Map()
     upsertWorkingClaudeSubagent(roster, 'aprobe1-6d3cb5b5', { agentType: 'probe1' }, 100)

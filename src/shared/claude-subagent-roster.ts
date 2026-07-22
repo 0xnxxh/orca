@@ -221,6 +221,9 @@ export function foldClaudeBackgroundTasksIntoRoster(
         pendingRunningTasks.delete(task.id)
         continue
       }
+      // Why: a Stop can park the row before the lead inventory confirms the
+      // same workflow lane is still running; the authoritative task wins.
+      existing.state = 'working'
       existing.agentType = task.agentType ?? existing.agentType
       existing.description = task.description ?? existing.description
       existing.listedAsSubagentTask = true
