@@ -2,9 +2,10 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
-import { HostProtocolGate } from './HostProtocolGate'
+import { HostProtocolGate, useHostProtocolGates } from './HostProtocolGate'
 
 vi.mock('react-native', () => ({
+  ActivityIndicator: 'ActivityIndicator',
   Linking: { openURL: vi.fn() },
   Platform: { OS: 'ios' },
   Pressable: 'Pressable',
@@ -30,12 +31,23 @@ function clientWithStatus(result: Record<string, unknown>): RpcClient {
   return { sendRequest: vi.fn().mockResolvedValue({ ok: true, result }) } as unknown as RpcClient
 }
 
+function GateConsumer() {
+  const { hostCapabilities } = useHostProtocolGates()
+  return createElement('GateStatus', null, hostCapabilities.join(','))
+}
+
+function gateElement() {
+  return createElement(
+    HostProtocolGate,
+    { hostId: 'host-1' },
+    createElement('HostContent', null, createElement(GateConsumer))
+  )
+}
+
 async function renderGate(): Promise<ReactTestRenderer> {
   let renderer: ReactTestRenderer | null = null
   await act(async () => {
-    renderer = create(
-      createElement(HostProtocolGate, { hostId: 'host-1' }, createElement('HostContent'))
-    )
+    renderer = create(gateElement())
     await Promise.resolve()
   })
   return renderer as unknown as ReactTestRenderer
@@ -86,18 +98,75 @@ describe('HostProtocolGate', () => {
   })
 
   it('renders the host UI when the verdict is ok', async () => {
+    const client = clientWithStatus({
+      protocolVersion: 5,
+      minCompatibleMobileVersion: 0,
+      capabilities: ['browser.screencast.v1']
+    })
     hostClient.current = {
-      client: clientWithStatus({ protocolVersion: 5, minCompatibleMobileVersion: 0 }),
+      client,
       state: 'connected'
     }
     renderer = await renderGate()
     const output = renderedText(renderer)
     expect(output).toContain('HostContent')
+    expect(output).toContain('browser.screencast.v1')
     expect(output).not.toContain('Update Orca')
+    expect(client.sendRequest).toHaveBeenCalledOnce()
   })
 
-  it('renders the host UI while the status probe is still pending (fail-open on verdict, gates fail closed)', async () => {
+  it('renders the host UI while the host connection is still pending', async () => {
     hostClient.current = { client: null, state: 'connecting' }
+    renderer = await renderGate()
+    expect(renderedText(renderer)).toContain('HostContent')
+  })
+
+  it('does not mount host routes before a connected host passes the compatibility probe', async () => {
+    const client = {
+      sendRequest: vi.fn().mockReturnValue(new Promise(() => {}))
+    } as unknown as RpcClient
+    hostClient.current = { client, state: 'connected' }
+    renderer = await renderGate()
+    const output = renderedText(renderer)
+    expect(output).toContain('Checking host compatibility')
+    expect(output).not.toContain('HostContent')
+    expect(client.sendRequest).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an already-validated host route mounted while reconnect status is pending', async () => {
+    const client = {
+      sendRequest: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          result: { protocolVersion: 5, minCompatibleMobileVersion: 0 }
+        })
+        .mockReturnValueOnce(new Promise(() => {}))
+    } as unknown as RpcClient
+    hostClient.current = { client, state: 'connected' }
+    renderer = await renderGate()
+
+    await act(async () => {
+      hostClient.current = { client, state: 'disconnected' }
+      renderer?.update(gateElement())
+    })
+    await act(async () => {
+      hostClient.current = { client, state: 'connected' }
+      renderer?.update(gateElement())
+      await Promise.resolve()
+    })
+
+    expect(renderedText(renderer)).toContain('HostContent')
+    expect(client.sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('fails open when a connected host cannot answer the status probe', async () => {
+    hostClient.current = {
+      client: {
+        sendRequest: vi.fn().mockResolvedValue({ ok: false, error: { message: 'unavailable' } })
+      } as unknown as RpcClient,
+      state: 'connected'
+    }
     renderer = await renderGate()
     expect(renderedText(renderer)).toContain('HostContent')
   })
