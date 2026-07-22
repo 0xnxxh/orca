@@ -10,6 +10,11 @@ const LOGIN_PREFLIGHT_MARKER = 'ORCA_LOGIN_PREFLIGHT_OK'
 const LOGIN_PREFLIGHT_MAX_BUFFER_BYTES = 1024
 const LOGIN_PREFLIGHT_RETRY_BASE_MS = 5_000
 const LOGIN_PREFLIGHT_RETRY_MAX_MS = 5 * 60_000
+// Why: daemons live for weeks across app updates, so one false PAM rejection (probe
+// runs over pipes, not a PTY) must not disable TCC attribution forever (#9756);
+// re-verify on a slow cadence — a genuinely rejecting host only re-pays one 500ms
+// probe per window, while an accepted verdict stays cached for the process lifetime.
+const LOGIN_PREFLIGHT_REJECTED_REVALIDATE_MS = 30 * 60_000
 
 /**
  * Env escape hatch to force the plain (unwrapped) spawn. Set to `1`/`true` if a
@@ -30,6 +35,7 @@ export type LoginPreflightOutcome = {
 }
 
 let cachedLoginPreflightResult: boolean | null = null
+let cachedRejectionAtMs: number | null = null
 let loginPreflightInFlight: Promise<LoginPreflightOutcome> | null = null
 let transientLoginPreflightFailure: { failureCount: number; retryAtMs: number } | null = null
 
@@ -103,6 +109,17 @@ function runLoginPreflight(username: string, accountHome: string): Promise<Login
   })
 }
 
+function expireStaleRejectedVerdict(): void {
+  if (
+    cachedLoginPreflightResult === false &&
+    cachedRejectionAtMs !== null &&
+    Date.now() - cachedRejectionAtMs >= LOGIN_PREFLIGHT_REJECTED_REVALIDATE_MS
+  ) {
+    cachedLoginPreflightResult = null
+    cachedRejectionAtMs = null
+  }
+}
+
 function cachedOutcome(): LoginPreflightOutcome | null {
   if (cachedLoginPreflightResult === null) {
     return null
@@ -128,6 +145,7 @@ function loginPreflightSucceeds(
       // environmental and must be retried next spawn, not stuck forever (F1).
       if (outcome.conclusive) {
         cachedLoginPreflightResult = outcome.ok
+        cachedRejectionAtMs = outcome.ok ? null : Date.now()
         transientLoginPreflightFailure = null
       } else {
         const failureCount = (transientLoginPreflightFailure?.failureCount ?? 0) + 1
@@ -149,7 +167,9 @@ function loginPreflightSucceeds(
 }
 
 /**
- * Resolves the one-time PAM capability check before a fresh PTY is spawned.
+ * Resolves the cached PAM capability check before a fresh PTY is spawned.
+ * Accepted verdicts stick for the process lifetime; rejected verdicts are
+ * re-verified after {@link LOGIN_PREFLIGHT_REJECTED_REVALIDATE_MS}.
  * Callers await this at their async request boundary so existing terminals and
  * the Electron main thread remain responsive while login(1) runs.
  *
@@ -162,6 +182,7 @@ export async function prepareMacosTccLoginShell(): Promise<LoginPreflightOutcome
   if (process.platform !== 'darwin' || isDisabledByEnv()) {
     return null
   }
+  expireStaleRejectedVerdict()
   if (cachedLoginPreflightResult !== null) {
     return null
   }
@@ -190,6 +211,7 @@ export async function prepareMacosTccLoginShell(): Promise<LoginPreflightOutcome
 
 export function resetMacosLoginShellPreflightForTests(): void {
   cachedLoginPreflightResult = null
+  cachedRejectionAtMs = null
   loginPreflightInFlight = null
   transientLoginPreflightFailure = null
 }
