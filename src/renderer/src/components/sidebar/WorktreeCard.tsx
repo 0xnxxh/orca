@@ -486,6 +486,13 @@ const WorktreeCard = React.memo(function WorktreeCard({
   const cachedBranchReview = useCachedBranchReview
     ? hostedReviewInfoFromGitHubPRInfo(cachedBranchPR)
     : hostedReview
+  // Why: branch provenance does not supersede the head-ownership gate for merged PRs.
+  const branchLookupGitHubPRNumber =
+    hostedReview?.provider === 'github' &&
+    hostedReview.state === 'merged' &&
+    !isCachedMergedBranchPRCurrentForWorktree(hostedReview, worktree)
+      ? null
+      : hostedReviewEntry?.branchLookupGitHubPRNumber
   const prDisplay = getWorktreeCardPrDisplay(
     cachedBranchReview,
     linkedGitHubPR,
@@ -498,7 +505,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
         (useCachedBranchReview || cachedMergedBranchPRMatchesCurrentHead) && !hasLinkedReview
           ? ''
           : hostedReviewEntry?.linkedReviewHintKey,
-      branchLookupGitHubPRNumber: hostedReviewEntry?.branchLookupGitHubPRNumber
+      branchLookupGitHubPRNumber
     }
   )
   const issue: IssueInfo | null | undefined = worktree.linkedIssue

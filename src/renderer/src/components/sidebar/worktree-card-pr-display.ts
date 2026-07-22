@@ -4,7 +4,7 @@ import type { PRInfo, Worktree } from '../../../../shared/types'
 type LinkedReviewMetadataProvider = Exclude<HostedReviewInfo['provider'], 'unsupported'>
 
 export function isCachedMergedBranchPRCurrentForWorktree(
-  cachedPR: PRInfo | null | undefined,
+  cachedPR: PRInfo | HostedReviewInfo | null | undefined,
   worktree: Pick<Worktree, 'head'>
 ): boolean {
   return (
