@@ -831,6 +831,10 @@ const TerminalFocus = TerminalHandle.extend({
 const TerminalListParams = z.object({
   worktree: OptionalString,
   limit: OptionalFiniteNumber,
+  handles: z
+    .array(requiredString('Missing terminal handle').pipe(z.string().max(256)))
+    .max(64)
+    .optional(),
   requireFreshPtyLiveness: z.boolean().optional()
 })
 
@@ -1103,6 +1107,7 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
     params: TerminalListParams,
     handler: async (params, { runtime }) =>
       runtime.listTerminals(params.worktree, params.limit, {
+        handles: params.handles,
         requireFreshPtyLiveness: params.requireFreshPtyLiveness
       })
   }),

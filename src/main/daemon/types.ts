@@ -355,6 +355,7 @@ export type SessionInfo = {
   shellState: ShellReadyState
   isAlive: boolean
   terminalHandle?: string
+  wslDistro?: string | null
   pid: number | null
   cwd: string | null
   cols: number

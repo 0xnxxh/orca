@@ -1323,7 +1323,8 @@ export class LocalPtyProvider implements IPtyProvider {
       cwd: ptyInitialCwd.get(id) ?? '',
       title: proc.process || ptyShellName.get(id) || 'shell',
       ...(ptyWorktreeId.get(id) ? { worktreeId: ptyWorktreeId.get(id) } : {}),
-      ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {})
+      ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {}),
+      ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {})
     }))
   }
 

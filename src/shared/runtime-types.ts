@@ -417,6 +417,8 @@ export type RuntimeFileReadChunkResult = {
 export type RuntimeTerminalSummary = {
   handle: string
   ptyId: string | null
+  incarnationId?: string | null
+  orphaned?: boolean
   worktreeId: string
   worktreePath: string
   branch: string
@@ -480,8 +482,52 @@ export type RuntimeTerminalVisualLayout = {
 export type RuntimeTerminalListResult = {
   terminals: RuntimeTerminalSummary[]
   visualLayouts?: RuntimeTerminalVisualLayout[]
+  topologyRevisions?: Record<string, number>
   totalCount: number
   truncated: boolean
+}
+
+export type RuntimeTerminalOrphanAdoptionClaim = {
+  terminal: string
+  ptyId: string
+  incarnationId: string
+  tabId: string
+  leafId: string
+}
+
+export type RuntimeTerminalOrphanTopologyTab = {
+  tabId: string
+  root: TerminalPaneLayoutNode
+  activeLeafId: string
+  expandedLeafId: string | null
+}
+
+export type RuntimeTerminalOrphanTopologyGroup = {
+  id: string
+  activeTabId: string
+  tabOrder: string[]
+  recentTabIds?: string[]
+}
+
+export type RuntimeTerminalOrphanTopology = {
+  tabs: RuntimeTerminalOrphanTopologyTab[]
+  groups: RuntimeTerminalOrphanTopologyGroup[]
+  groupLayout?: TabGroupLayoutNode
+}
+
+export type RuntimeTerminalOrphanAdoptionRequest = {
+  worktree: string
+  expectedTopologyRevision: number
+  claims: RuntimeTerminalOrphanAdoptionClaim[]
+  activeTabId?: string
+  activeGroupId?: string
+  topology?: RuntimeTerminalOrphanTopology
+}
+
+export type RuntimeTerminalOrphanAdoptionResult = {
+  adopted: boolean
+  topologyRevision: number
+  snapshot: RuntimeMobileSessionTabsResult
 }
 
 export type RuntimeWorktreeTerminalSleepFailure =
