@@ -189,6 +189,7 @@ describe('CloudRelayTransport', () => {
       emit('close')
       expect(listeners.get('error')).toHaveLength(0)
       expect(listeners.get('close')).toHaveLength(0)
+      expect(vi.getTimerCount()).toBe(0)
       expect(() => transport.setGeneration(2)).not.toThrow()
     } finally {
       vi.useRealTimers()
@@ -236,6 +237,74 @@ describe('CloudRelayTransport', () => {
       await transport.stop()
 
       expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases an expired attach even when terminate never emits close', async () => {
+    vi.useFakeTimers()
+    try {
+      const listeners = new Map<string, ((...args: unknown[]) => void)[]>()
+      const addListener = (event: string, fn: (...args: unknown[]) => void): void => {
+        listeners.set(event, [...(listeners.get(event) ?? []), fn])
+      }
+      const removeListener = (event: string, fn: (...args: unknown[]) => void): void => {
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter((listener) => listener !== fn)
+        )
+      }
+      const emit = (event: string, ...args: unknown[]): void => {
+        const eventListeners = listeners.get(event) ?? []
+        if (event === 'error' && eventListeners.length === 0) {
+          throw args[0]
+        }
+        for (const fn of eventListeners) {
+          fn(...args)
+        }
+      }
+      const fakeSocket = {
+        readyState: 0,
+        OPEN: 1,
+        CLOSED: 3,
+        on: addListener,
+        once: addListener,
+        off: removeListener,
+        send: vi.fn(),
+        terminate: vi.fn()
+      }
+      const onConnectionClosed = vi.fn()
+      const transport = new CloudRelayTransport({
+        cellUrl: 'http://127.0.0.1:9',
+        relayHostId: 'AbCdEf0123_-xyZ9',
+        generation: 1,
+        createSocket: () => fakeSocket as unknown as WebSocketClient,
+        onConnectionClosed
+      })
+      const opening = transport.openConnection({
+        connId: 'conn-attach-timeout',
+        connTicket: 'ticket-1',
+        kind: 'resume',
+        relayDeviceId: 'device-1',
+        attachDeadlineMs: 1_000
+      })
+      const rejectedOpening = expect(opening).rejects.toThrow('relay_host_data_attach_timeout')
+
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      await rejectedOpening
+      expect(fakeSocket.terminate).toHaveBeenCalledOnce()
+      expect(onConnectionClosed).toHaveBeenCalledWith('conn-attach-timeout')
+      expect(() => transport.metadataFor(fakeSocket as unknown as WebSocketClient)).toThrow(
+        'unknown_relay_socket'
+      )
+      expect(() => transport.setGeneration(2)).not.toThrow()
+      expect(() => emit('message', 'late-after-attach-timeout', false)).not.toThrow()
+      expect(() => emit('error', new Error('late attach socket failure'))).not.toThrow()
+      emit('close')
+      expect(listeners.get('error')).toHaveLength(0)
+      expect(listeners.get('close')).toHaveLength(0)
     } finally {
       vi.useRealTimers()
     }

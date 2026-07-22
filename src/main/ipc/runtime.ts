@@ -11,6 +11,7 @@ import type { RuntimeRpcResponse } from '../../shared/runtime-rpc-envelope'
 import { RpcDispatcher } from '../runtime/rpc/dispatcher'
 
 export function registerRuntimeHandlers(runtime: OrcaRuntimeService): void {
+  const pendingTerminalFitRestores = new Map<string, Promise<boolean>>()
   ipcMain.removeHandler('runtime:syncWindowGraph')
   ipcMain.removeHandler('runtime:getStatus')
   ipcMain.removeHandler('runtime:call')
@@ -101,11 +102,25 @@ export function registerRuntimeHandlers(runtime: OrcaRuntimeService): void {
     // Electron try to structured-clone a Promise — "An object could not
     // be cloned" error — and the renderer's restoreTerminalFit() rejected
     // with no useful info.
+    // Why: renderer timeouts must not turn retries into duplicate waiters behind one stuck reclaim.
+    let pending = pendingTerminalFitRestores.get(args.ptyId)
+    if (!pending) {
+      try {
+        pending = runtime.reclaimTerminalForDesktop(args.ptyId)
+        pendingTerminalFitRestores.set(args.ptyId, pending)
+      } catch {
+        return { restored: false }
+      }
+    }
     try {
-      const reclaimed = await runtime.reclaimTerminalForDesktop(args.ptyId)
+      const reclaimed = await pending
       return { restored: reclaimed }
     } catch {
       return { restored: false }
+    } finally {
+      if (pendingTerminalFitRestores.get(args.ptyId) === pending) {
+        pendingTerminalFitRestores.delete(args.ptyId)
+      }
     }
   })
 

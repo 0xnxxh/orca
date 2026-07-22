@@ -150,6 +150,9 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
       let finalized = false
       const deadline = setTimeout(() => {
         socket.terminate()
+        // Why: attach expiry makes the socket unusable; release it even if terminate never emits close.
+        finalize()
+        this.quarantineDetachedSocket(socket)
         if (!opened) {
           reject(new Error('relay_host_data_attach_timeout'))
         }

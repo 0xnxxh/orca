@@ -99,4 +99,44 @@ describe('registerRuntimeHandlers', () => {
       _meta: { runtimeId: 'runtime-1' }
     })
   })
+
+  it('deduplicates retries while a terminal fit restore is still pending', async () => {
+    const finishRestoreByPtyId = new Map<string, (restored: boolean) => void>()
+    const reclaimTerminalForDesktop = vi.fn(
+      (ptyId: string) =>
+        new Promise<boolean>((resolve) => {
+          finishRestoreByPtyId.set(ptyId, resolve)
+        })
+    )
+    const runtime = {
+      syncWindowGraph: vi.fn(),
+      getStatus: vi.fn(),
+      reclaimTerminalForDesktop
+    }
+    registerRuntimeHandlers(runtime as never)
+    const restoreRegistration = handleMock.mock.calls.find(
+      ([channel]) => channel === 'runtime:restoreTerminalFit'
+    )
+    expect(restoreRegistration).toBeTruthy()
+    const handler = restoreRegistration![1]
+
+    const first = handler({ sender: {} }, { ptyId: 'pty-1' })
+    const retry = handler({ sender: {} }, { ptyId: 'pty-1' })
+    const otherTerminal = handler({ sender: {} }, { ptyId: 'pty-2' })
+
+    expect(reclaimTerminalForDesktop).toHaveBeenCalledTimes(2)
+    expect(reclaimTerminalForDesktop).toHaveBeenNthCalledWith(1, 'pty-1')
+    expect(reclaimTerminalForDesktop).toHaveBeenNthCalledWith(2, 'pty-2')
+    finishRestoreByPtyId.get('pty-1')?.(true)
+    finishRestoreByPtyId.get('pty-2')?.(true)
+    await expect(otherTerminal).resolves.toEqual({ restored: true })
+    await expect(first).resolves.toEqual({ restored: true })
+    await expect(retry).resolves.toEqual({ restored: true })
+    expect(reclaimTerminalForDesktop).toHaveBeenCalledTimes(2)
+
+    const afterSettlement = handler({ sender: {} }, { ptyId: 'pty-1' })
+    expect(reclaimTerminalForDesktop).toHaveBeenCalledTimes(3)
+    finishRestoreByPtyId.get('pty-1')?.(false)
+    await expect(afterSettlement).resolves.toEqual({ restored: false })
+  })
 })
