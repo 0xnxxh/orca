@@ -272,17 +272,21 @@ function isAbortedNavigationError(error: unknown): boolean {
   return code === 'ERR_ABORTED' || errno === -3
 }
 
+function isWebContentsLoading(wc: WebContents): boolean {
+  try {
+    return wc.isLoading()
+  } catch {
+    // Why: destruction races are resolved against the authoritative page registration after the wait.
+    return false
+  }
+}
+
 function waitForAbortedNavigationReplacement(
   wc: WebContents,
   browserPageId: string,
   timeoutMs: number
 ): Promise<void> {
-  try {
-    if (!wc.isLoading()) {
-      return Promise.resolve()
-    }
-  } catch {
-    // A destroyed guest is resolved against the authoritative page registration below.
+  if (!isWebContentsLoading(wc)) {
     return Promise.resolve()
   }
 
@@ -323,7 +327,7 @@ function waitForAbortedNavigationReplacement(
     timeout.unref?.()
 
     // Why: the replacement can finish between loadURL rejecting and listener attachment.
-    if (!wc.isLoading()) {
+    if (!isWebContentsLoading(wc)) {
       finish()
     }
   })

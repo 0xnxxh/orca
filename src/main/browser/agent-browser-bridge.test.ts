@@ -1620,6 +1620,7 @@ describe('AgentBrowserBridge', () => {
     })
 
     expect(wc.loadURL).toHaveBeenCalledWith('https://example.com/next')
+    expect(wc.isLoading).not.toHaveBeenCalled()
     expect(execFileMock).not.toHaveBeenCalled()
   })
 
@@ -1713,6 +1714,8 @@ describe('AgentBrowserBridge', () => {
       url: 'https://example.com/current',
       title: 'Example'
     })
+    expect(wc.isLoading).toHaveBeenCalledTimes(1)
+    expect(wc.on).not.toHaveBeenCalledWith('did-stop-loading', expect.any(Function))
     expect(execFileMock).not.toHaveBeenCalled()
   })
 
@@ -1783,6 +1786,39 @@ describe('AgentBrowserBridge', () => {
       const destroyed = wc.on.mock.calls.find(([event]) => event === 'destroyed')?.[1]
       expect(wc.removeListener).toHaveBeenCalledWith('did-stop-loading', stopLoading)
       expect(wc.removeListener).toHaveBeenCalledWith('destroyed', destroyed)
+      expect(vi.getTimerCount()).toBe(0)
+      expect(
+        (bridge as unknown as { commandQueues: Map<string, unknown[]> }).commandQueues.size
+      ).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cleans up when the guest is destroyed while attaching the replacement wait', async () => {
+    vi.useFakeTimers()
+    try {
+      const wc = mockWebContents(100, 'https://example.com/current', 'Example')
+      let destroyed = false
+      wc.isDestroyed = () => destroyed
+      wc.isLoading.mockReturnValueOnce(true).mockImplementationOnce(() => {
+        destroyed = true
+        throw new Error('Object has been destroyed')
+      })
+      wc.loadURL.mockRejectedValue(
+        Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 })
+      )
+      webContentsFromIdMock.mockReturnValue(wc)
+
+      await expect(bridge.goto('https://example.com/redirect')).rejects.toMatchObject({
+        code: 'browser_tab_not_found',
+        message: 'Browser page tab-1 is no longer available'
+      })
+
+      const stopLoading = wc.on.mock.calls.find(([event]) => event === 'did-stop-loading')?.[1]
+      const destroyedListener = wc.on.mock.calls.find(([event]) => event === 'destroyed')?.[1]
+      expect(wc.removeListener).toHaveBeenCalledWith('did-stop-loading', stopLoading)
+      expect(wc.removeListener).toHaveBeenCalledWith('destroyed', destroyedListener)
       expect(vi.getTimerCount()).toBe(0)
       expect(
         (bridge as unknown as { commandQueues: Map<string, unknown[]> }).commandQueues.size
