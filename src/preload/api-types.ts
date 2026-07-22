@@ -1442,7 +1442,9 @@ export type PreloadApi = {
     onSideEffect: (callback: (batch: TerminalSideEffectBatch) => void) => () => void
     /** Title-only replay snapshot for (re)attach; attention facts never replay. */
     getSideEffectSnapshot: (id: string) => Promise<TerminalSideEffectBatch | null>
-    onExit: (callback: (data: { id: string; code: number }) => void) => () => void
+    onExit: (
+      callback: (data: { id: string; code: number; preserveRendererBinding?: boolean }) => void
+    ) => () => void
     onSerializeBufferRequest: (
       callback: (data: {
         requestId: string
@@ -3277,6 +3279,10 @@ export type PreloadApi = {
     isWebSocketReady: () => Promise<{ ready: boolean; endpoint: string | null }>
     getRelayStatus: () => Promise<{ status: MobileRelayStatus }>
     onRelayStatusChanged: (callback: (status: MobileRelayStatus) => void) => () => void
+    /** Consumes an auth-failure notification that arrived before the renderer listener mounted. */
+    consumePendingUnpairedDeviceAuthFailure?: () => Promise<boolean>
+    /** Fires (throttled, once per session) when an unpaired phone repeatedly fails direct-transport auth. */
+    onUnpairedDeviceAuthFailure?: (callback: () => void) => () => void
   }
   speech: {
     getCatalog: () => Promise<SpeechModelManifest[]>
