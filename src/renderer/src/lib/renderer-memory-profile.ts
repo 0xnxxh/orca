@@ -33,14 +33,19 @@ export function collectRendererMemoryProfileCounts(): RendererMemoryProfileCount
   for (const [name, contributor] of contributors) {
     // Why: a broken contributor must never take down memory reporting itself.
     try {
-      let kept = 0
-      for (const [key, value] of Object.entries(contributor())) {
-        if (kept >= MAX_COUNTS_PER_CONTRIBUTOR) {
+      const contribution = contributor()
+      let inspected = 0
+      for (const key in contribution) {
+        if (inspected >= MAX_COUNTS_PER_CONTRIBUTOR) {
           break
         }
+        inspected += 1
+        if (!Object.hasOwn(contribution, key)) {
+          continue
+        }
+        const value = contribution[key]
         if (typeof value === 'number' && Number.isFinite(value)) {
           counts[`${name}.${key}`] = value
-          kept += 1
         }
       }
     } catch {
@@ -80,7 +85,14 @@ function collectionSize(value: unknown): number | null {
     return value.size
   }
   if (typeof value === 'object' && value !== null) {
-    return Object.keys(value).length
+    let size = 0
+    // Why: Object.keys allocates an array proportional to the leaking collection.
+    for (const key in value) {
+      if (Object.hasOwn(value, key)) {
+        size += 1
+      }
+    }
+    return size
   }
   return null
 }

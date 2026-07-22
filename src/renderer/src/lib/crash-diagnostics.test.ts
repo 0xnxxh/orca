@@ -174,11 +174,13 @@ describe('renderer crash diagnostics', () => {
   })
 
   it('emits one-shot renderer_memory_highwater breadcrumbs with profile counts', async () => {
-    const memory = (window.performance as { memory: Record<string, number> }).memory
+    const memory = (window.performance as unknown as { memory: Record<string, number> }).memory
     memory.usedJSHeapSize = 0.7 * memory.jsHeapSizeLimit
+    const getElementsByTagName = vi.fn(() => ({ length: 4321 }))
+    const querySelectorAll = vi.fn(() => ({ length: 6 }))
     vi.stubGlobal('document', {
-      getElementsByTagName: () => ({ length: 4321 }),
-      querySelectorAll: () => ({ length: 6 })
+      getElementsByTagName,
+      querySelectorAll
     })
     const profile = await import('./renderer-memory-profile')
     const unregister = profile.registerRendererMemoryProfileContributor('store', () => ({
@@ -195,6 +197,7 @@ describe('renderer crash diagnostics', () => {
       name: 'renderer_memory_highwater',
       data: expect.objectContaining({
         thresholdPct: 60,
+        rendererSurface: 'main',
         domNodes: 4321,
         terminalElements: 6,
         'store.worktrees': 12
@@ -219,12 +222,14 @@ describe('renderer crash diagnostics', () => {
     recordBreadcrumbMock.mockClear()
     diagnostics.installRendererCrashDiagnostics()
     expect(highwaterCalls()).toHaveLength(2)
+    expect(getElementsByTagName).toHaveBeenCalledTimes(3)
+    expect(querySelectorAll).toHaveBeenCalledTimes(3)
 
     unregister()
   })
 
   it('skips highwater emission when heap readings are not finite', () => {
-    const memory = (window.performance as { memory: Record<string, number> }).memory
+    const memory = (window.performance as unknown as { memory: Record<string, number> }).memory
     memory.usedJSHeapSize = Number.NaN
 
     diagnostics.installRendererCrashDiagnostics()

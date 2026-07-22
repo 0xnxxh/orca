@@ -8,10 +8,10 @@ import { collectRendererMemoryProfileCounts } from './renderer-memory-profile'
 
 const RENDERER_MEMORY_SAMPLE_INTERVAL_MS = 60_000
 const BYTES_PER_MEGABYTE = 1024 * 1024
-// Why: OOM crash reports show the heap pinned at the limit with no clue what
-// grew; a one-shot detailed breadcrumb per threshold names the leaking
-// subsystem while costing nothing in healthy sessions.
+// Why: one detailed breadcrumb per threshold names what grew before an OOM.
 const RENDERER_MEMORY_HIGHWATER_RATIOS = [0.6, 0.8] as const
+
+type RendererSurface = 'main' | 'dashboard-popout'
 
 type BrowserPerformanceMemory = {
   usedJSHeapSize?: number
@@ -21,6 +21,7 @@ type BrowserPerformanceMemory = {
 
 let rendererCrashDiagnosticsInstalled = false
 let rendererMemoryInterval: number | null = null
+let rendererSurface: RendererSurface = 'main'
 const emittedHighwaterRatios = new Set<number>()
 
 // Why re-exported from a leaf module: terminal modules and their e2e-visible
@@ -28,12 +29,13 @@ const emittedHighwaterRatios = new Set<number>()
 // webview-registry baggage. See crash-breadcrumb-recorder.ts.
 export { recordRendererCrashBreadcrumb } from './crash-breadcrumb-recorder'
 
-export function installRendererCrashDiagnostics(): void {
+export function installRendererCrashDiagnostics(surface: RendererSurface = 'main'): void {
   if (rendererCrashDiagnosticsInstalled || typeof window === 'undefined') {
     return
   }
 
   rendererCrashDiagnosticsInstalled = true
+  rendererSurface = surface
   window.addEventListener('error', recordRendererError)
   window.addEventListener('unhandledrejection', recordRendererUnhandledRejection)
 
@@ -62,6 +64,7 @@ function disposeRendererCrashDiagnostics(): void {
     rendererMemoryInterval = null
   }
   emittedHighwaterRatios.clear()
+  rendererSurface = 'main'
 }
 
 if (typeof import.meta !== 'undefined' && import.meta.hot) {
@@ -131,24 +134,35 @@ function recordRendererMemoryHighwater(memory: BrowserPerformanceMemory): void {
     return
   }
   const ratio = used / limit
+  let crossedThreshold = false
+  for (const threshold of RENDERER_MEMORY_HIGHWATER_RATIOS) {
+    if (ratio >= threshold && !emittedHighwaterRatios.has(threshold)) {
+      crossedThreshold = true
+      break
+    }
+  }
+  if (!crossedThreshold) {
+    return
+  }
+  // Why: a single sample can cross both thresholds; profile the large heap once.
+  const profile = compactBreadcrumbData({
+    rendererSurface,
+    usedHeapMB: toMegabytes(used),
+    totalHeapMB: toMegabytes(memory.totalJSHeapSize),
+    heapLimitMB: toMegabytes(limit),
+    domNodes: document.getElementsByTagName('*').length,
+    terminalElements: document.querySelectorAll('.xterm').length,
+    ...collectRendererMemoryProfileCounts()
+  })
   for (const threshold of RENDERER_MEMORY_HIGHWATER_RATIOS) {
     if (ratio < threshold || emittedHighwaterRatios.has(threshold)) {
       continue
     }
     emittedHighwaterRatios.add(threshold)
-    recordRendererCrashBreadcrumb(
-      'renderer_memory_highwater',
-      compactBreadcrumbData({
-        thresholdPct: Math.round(threshold * 100),
-        usedHeapMB: toMegabytes(used),
-        totalHeapMB: toMegabytes(memory.totalJSHeapSize),
-        heapLimitMB: toMegabytes(limit),
-        // Why: DOM census is O(nodes); acceptable at most twice per session.
-        domNodes: document.getElementsByTagName('*').length,
-        terminalElements: document.querySelectorAll('.xterm').length,
-        ...collectRendererMemoryProfileCounts()
-      })
-    )
+    recordRendererCrashBreadcrumb('renderer_memory_highwater', {
+      ...profile,
+      thresholdPct: Math.round(threshold * 100)
+    })
   }
 }
 

@@ -53,6 +53,27 @@ describe('collectRendererMemoryProfileCounts', () => {
 
     expect(Object.keys(collectRendererMemoryProfileCounts())).toHaveLength(32)
   })
+
+  it('stops reading a runaway contributor after the output budget', () => {
+    let reads = 0
+    const contribution = Object.fromEntries(
+      Array.from({ length: 500 }, (_, index) => [
+        `key${index}`,
+        {
+          enumerable: true,
+          get: () => {
+            reads += 1
+            return index
+          }
+        }
+      ])
+    )
+    const counts = Object.defineProperties({}, contribution) as Record<string, number>
+    register('runaway', () => counts)
+
+    expect(Object.keys(collectRendererMemoryProfileCounts())).toHaveLength(32)
+    expect(reads).toBe(32)
+  })
 })
 
 describe('summarizeStateCollectionSizes', () => {
