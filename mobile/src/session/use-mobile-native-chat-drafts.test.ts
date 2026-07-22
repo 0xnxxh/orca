@@ -242,7 +242,9 @@ describe('useMobileNativeChatDrafts', () => {
         }
       })
 
-      act(() => vi.advanceTimersByTime(30_000))
+      act(() => vi.advanceTimersByTime(19_999))
+      expect(onUnconfirmed).not.toHaveBeenCalled()
+      act(() => vi.advanceTimersByTime(1))
       expect(onUnconfirmed).toHaveBeenCalledTimes(1)
       expect(state?.composerText).toBe('ping')
     } finally {
