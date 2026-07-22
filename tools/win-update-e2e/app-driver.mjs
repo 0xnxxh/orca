@@ -267,55 +267,80 @@ export async function ensureTerminal(page, { allowCreate = true, timeoutMs = 60_
  * plain terminal (not an agent), then submit "Create worktree".
  */
 async function createWorkspaceFromSeededRepo(page, timeoutMs) {
-  // Why: an overlay (e.g. the agent-CLI feature wall) can appear between the
-  // dismissal rounds and this first click; retry with a dismissal pass instead
-  // of force-clicking through whatever is on top.
   const newWorkspace = page
     .getByRole(NEW_WORKSPACE_BUTTON.role, { name: NEW_WORKSPACE_BUTTON.name })
     .first()
-  let clicked = false
-  for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
-    clicked = await newWorkspace
-      .click({ timeout: 15_000 })
-      .then(() => true)
-      .catch(() => false)
-    if (!clicked) {
-      await dismissOverlays(page)
-    }
-  }
-  if (!clicked) {
-    await newWorkspace.click({ timeout: timeoutMs })
+  if (!(await tryClickWithKnownOverlayRetry(page, newWorkspace, timeoutMs))) {
+    // Preserve Playwright's locator diagnostics without exceeding the caller's
+    // timeout by another full click attempt.
+    await newWorkspace.click({ timeout: 1 })
   }
   // Choose the plain-terminal mode (best-effort — if it is already the default
   // or the label differs, the create below still produces a worktree).
-  await page
-    .getByRole('button', { name: 'Blank Terminal' })
-    .first()
-    .click({ timeout: 15_000 })
-    .catch(() => {})
+  await tryClickWithKnownOverlayRetry(
+    page,
+    page.getByRole('button', { name: 'Blank Terminal' }).first(),
+    15_000
+  )
   // Submit. The create button's accessible name carries the shortcut hint
   // ("Create worktreeCtrl"), so match by prefix; fall back to the documented
   // Ctrl+Enter shortcut if the button is not directly clickable.
-  const created = await page
-    .getByRole('button', { name: /^Create worktree/ })
-    .last()
-    .click({ timeout: 15_000 })
-    .then(() => true)
-    .catch(() => false)
+  const created = await tryClickWithKnownOverlayRetry(
+    page,
+    page.getByRole('button', { name: /^Create worktree/ }).last(),
+    15_000
+  )
   if (!created) {
     await page.keyboard.press('Control+Enter')
   }
 }
 
-// Why 'Close': the agent-CLI feature-wall modal ("Let agents drive Orca with the Orca CLI")
-// can render after an async capability check, mid-run, and swallows all clicks until closed.
-const OVERLAY_DISMISS_LABELS = [
-  'Got it',
-  'Dismiss setup scripts',
-  'Dismiss tip',
-  'Dismiss update',
-  'Close'
-]
+const OVERLAY_DISMISS_LABELS = ['Got it', 'Dismiss setup scripts', 'Dismiss tip', 'Dismiss update']
+const DIALOG_CLOSE_BUTTON = '[data-slot="dialog-content"]:visible [data-slot="dialog-close"]'
+
+async function dismissKnownOverlays(page) {
+  let acted = false
+  // Why: a global "Close" role also matches the Windows/Linux title-bar button.
+  const dialogClose = page.locator(DIALOG_CLOSE_BUTTON).first()
+  if (await dialogClose.isVisible().catch(() => false)) {
+    const clicked = await dialogClose
+      .click({ timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false)
+    acted ||= clicked
+  }
+  for (const name of OVERLAY_DISMISS_LABELS) {
+    const btn = page.getByRole('button', { name }).first()
+    if (await btn.isVisible().catch(() => false)) {
+      const clicked = await btn
+        .click({ timeout: 3_000 })
+        .then(() => true)
+        .catch(() => false)
+      acted ||= clicked
+    }
+  }
+  return acted
+}
+
+async function tryClickWithKnownOverlayRetry(page, locator, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  do {
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) {
+      return false
+    }
+    try {
+      await locator.click({ timeout: Math.min(5_000, remainingMs) })
+      return true
+    } catch (error) {
+      if (page.isClosed()) {
+        throw error
+      }
+      await dismissKnownOverlays(page)
+    }
+  } while (Date.now() < deadline)
+  return false
+}
 
 /**
  * Best-effort dismissal of the modals/banners that appear after creating a
@@ -325,14 +350,7 @@ const OVERLAY_DISMISS_LABELS = [
  */
 export async function dismissOverlays(page, rounds = 3) {
   for (let i = 0; i < rounds; i++) {
-    let acted = false
-    for (const name of OVERLAY_DISMISS_LABELS) {
-      const btn = page.getByRole('button', { name }).first()
-      if (await btn.isVisible().catch(() => false)) {
-        await btn.click({ timeout: 3_000 }).catch(() => {})
-        acted = true
-      }
-    }
+    const acted = await dismissKnownOverlays(page)
     await page.keyboard.press('Escape').catch(() => {})
     if (!acted) {
       return
@@ -377,12 +395,7 @@ export async function listTabIds(page) {
 export async function focusActiveTerminal(page, terminalTabId = null) {
   // A feature-tip modal can appear late and swallow keystrokes; clear any before
   // focusing so typed commands actually reach the shell.
-  for (const name of OVERLAY_DISMISS_LABELS) {
-    const btn = page.getByRole('button', { name }).first()
-    if (await btn.isVisible().catch(() => false)) {
-      await btn.click({ timeout: 2_000 }).catch(() => {})
-    }
-  }
+  await dismissKnownOverlays(page)
   const selector = terminalTabId
     ? `[data-terminal-tab-id="${terminalTabId}"]:visible`
     : TERMINAL_SURFACE_VISIBLE
