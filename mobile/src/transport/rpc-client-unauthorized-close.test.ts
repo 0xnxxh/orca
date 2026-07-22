@@ -100,6 +100,11 @@ describe('unauthorized close-code mapping (silent 4001)', () => {
     }
 
     expect(client.getState()).toBe('auth-failed')
+    expect(mockSockets).toHaveLength(3)
+    expect(vi.getTimerCount()).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(mockSockets).toHaveLength(3)
 
     client.close()
   })
