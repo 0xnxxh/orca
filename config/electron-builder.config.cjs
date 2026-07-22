@@ -11,6 +11,10 @@ const {
   prunePackagedRuntimeNodeModules,
   verifyPackagedMainRuntimeDeps
 } = require('./packaged-runtime-node-modules.cjs')
+const {
+  extendMacHelperBundleInfoPlists,
+  macPrivacyUsageDescriptions
+} = require('./mac-privacy-usage-descriptions.cjs')
 
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1'
 const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
@@ -177,6 +181,12 @@ module.exports = {
       chmodSync(join(resourcesDir, filename), 0o755)
     }
     if (context.electronPlatformName === 'darwin') {
+      // Why: the detached PTY daemon outlives the main app inside the Electron
+      // helper bundle, which TCC then treats as the requesting app (#9756).
+      // afterPack runs before electron-builder signs, so the edits get sealed.
+      extendMacHelperBundleInfoPlists(
+        join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
+      )
       await signMacComputerUseHelper(join(resourcesDir, 'Orca Computer Use.app'), context.packager)
       await signMacNotificationStatusHelper(
         join(resourcesDir, '..', 'MacOS', 'orca-notification-status'),
@@ -229,25 +239,8 @@ module.exports = {
     entitlements: 'resources/build/entitlements.mac.plist',
     entitlementsInherit: 'resources/build/entitlements.mac.plist',
     extendInfo: {
-      NSAppleEventsUsageDescription:
-        'Orca allows terminal-launched developer tools to automate local apps when you request it.',
-      NSBluetoothAlwaysUsageDescription:
-        'Orca allows terminal-launched developer tools to access Bluetooth devices when you request it.',
-      NSBluetoothPeripheralUsageDescription:
-        'Orca allows terminal-launched developer tools to access Bluetooth devices when you request it.',
-      NSCameraUsageDescription: "Application requests access to the device's camera.",
-      NSLocationUsageDescription:
-        'Orca allows terminal-launched developer tools to access location when you request it.',
-      NSLocalNetworkUsageDescription:
-        'Orca allows terminal-launched developer tools to discover and connect to local development servers when you request it.',
-      NSMicrophoneUsageDescription: "Application requests access to the device's microphone.",
-      NSAudioCaptureUsageDescription:
-        'Orca allows terminal-launched developer tools to capture desktop audio when you request it.',
-      NSBonjourServices: ['_http._tcp', '_https._tcp'],
-      NSDocumentsFolderUsageDescription:
-        "Application requests access to the user's Documents folder.",
-      NSDownloadsFolderUsageDescription:
-        "Application requests access to the user's Downloads folder."
+      ...macPrivacyUsageDescriptions,
+      NSBonjourServices: ['_http._tcp', '_https._tcp']
     },
     // Why: local macOS validation builds should launch without Apple release
     // credentials. Hardened runtime + notarization stay enabled only on the
