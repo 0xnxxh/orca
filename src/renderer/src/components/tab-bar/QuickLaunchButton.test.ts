@@ -163,6 +163,26 @@ describe('QuickLaunchAgentMenuItems', () => {
     })
   })
 
+  it('prefers the paired runtime owner over its server-side SSH connection', () => {
+    storeState.worktreesByRepo = {
+      'repo-1': [{ id: 'worktree-1', repoId: 'repo-1' }]
+    }
+    storeState.repos = [
+      {
+        id: 'repo-1',
+        connectionId: 'server-only-ssh-target',
+        executionHostId: 'runtime:env-1'
+      }
+    ]
+
+    renderAgentMenuItems()
+
+    expect(useDetectedAgentsMock).toHaveBeenLastCalledWith({
+      kind: 'runtime',
+      environmentId: 'env-1'
+    })
+  })
+
   it('routes agent detection to the owning SSH host', () => {
     storeState.worktreesByRepo = {
       'repo-1': [{ id: 'worktree-1', repoId: 'repo-1' }]

@@ -2,9 +2,10 @@ import { useMemo } from 'react'
 import { useAppStore } from '@/store'
 import { getConnectionIdFromState } from '@/lib/connection-owner-resolution'
 import {
-  getRuntimeEnvironmentIdForWorktree,
+  getExecutionHostIdForWorktree,
   type WorktreeRuntimeOwnerState
 } from '@/lib/worktree-runtime-owner'
+import { parseExecutionHostId } from '../../../shared/execution-host'
 import type { AgentDetectionTarget } from './useDetectedAgents'
 
 export const AGENT_DETECTION_LOCAL_TARGET_KEY = 'local'
@@ -29,13 +30,14 @@ export function getAgentDetectionTargetKeyForWorktree(
   if (connectionId === undefined) {
     return undefined
   }
-  const normalizedConnectionId = connectionId?.trim()
-  if (normalizedConnectionId) {
-    return `ssh:${normalizedConnectionId}`
+  // Why: runtime-owned repo rows can retain a server-side SSH connectionId;
+  // the explicit execution host is authoritative over that transport detail.
+  const executionHost = parseExecutionHostId(getExecutionHostIdForWorktree(state, worktreeId))
+  if (executionHost?.kind === 'ssh') {
+    return `ssh:${executionHost.targetId}`
   }
-  const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(state, worktreeId)?.trim()
-  if (runtimeEnvironmentId) {
-    return `runtime:${runtimeEnvironmentId}`
+  if (executionHost?.kind === 'runtime') {
+    return `runtime:${executionHost.environmentId}`
   }
   return AGENT_DETECTION_LOCAL_TARGET_KEY
 }

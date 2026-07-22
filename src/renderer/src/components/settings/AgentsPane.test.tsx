@@ -10,6 +10,7 @@ import { getAgentStatusHooksTitle } from './agent-status-hooks-copy'
 import { getAgentAwakeDescription, getAgentAwakeTitle } from './agent-awake-copy'
 import { AgentAwakeSetting } from './AgentAwakeSetting'
 import { AgentRuntimeSetting } from './AgentRuntimeSetting'
+import type * as AgentRuntimeSettingModule from './AgentRuntimeSetting'
 import {
   AgentAvailabilityControl,
   AgentPermissionsSetting,
@@ -28,6 +29,9 @@ const detectedAgentsMock = vi.hoisted(() => ({
   refresh: vi.fn(),
   lastTarget: undefined as unknown
 }))
+const agentRuntimeSettingMock = vi.hoisted(() => ({
+  lastRefresh: null as (() => Promise<unknown>) | null
+}))
 
 vi.mock('@/hooks/useDetectedAgents', () => ({
   useDetectedAgents: (target: unknown) => {
@@ -40,6 +44,17 @@ vi.mock('@/hooks/useDetectedAgents', () => ({
     }
   }
 }))
+
+vi.mock('./AgentRuntimeSetting', async (importOriginal) => {
+  const actual = await importOriginal<typeof AgentRuntimeSettingModule>()
+  return {
+    ...actual,
+    AgentRuntimeSetting: (props: React.ComponentProps<typeof actual.AgentRuntimeSetting>) => {
+      agentRuntimeSettingMock.lastRefresh = props.refresh
+      return actual.AgentRuntimeSetting(props)
+    }
+  }
+})
 
 type ReactElementLike = {
   type: unknown
@@ -147,6 +162,7 @@ describe('AgentsPane', () => {
     detectedAgentsMock.detectedIds = ['claude']
     detectedAgentsMock.refresh.mockReset()
     detectedAgentsMock.lastTarget = undefined
+    agentRuntimeSettingMock.lastRefresh = null
     useAppStore.setState({
       settingsSearchQuery: '',
       detectedAgentIds: ['claude'],
@@ -185,6 +201,21 @@ describe('AgentsPane', () => {
     } finally {
       initialState.runtimeEnvironments = priorRuntimeEnvironments
     }
+  })
+
+  it('keeps Windows runtime changes scoped to the local agent refresh', () => {
+    renderPane(
+      {
+        ...getDefaultSettings('/tmp'),
+        activeRuntimeEnvironmentId: 'env-1'
+      },
+      { wslSupportedPlatform: true, wslAvailable: true, wslDistros: ['Ubuntu'] }
+    )
+
+    expect(agentRuntimeSettingMock.lastRefresh).toBe(
+      useAppStore.getInitialState().refreshDetectedAgents
+    )
+    expect(agentRuntimeSettingMock.lastRefresh).not.toBe(detectedAgentsMock.refresh)
   })
 
   it('renders the keep-awake toggle from settings', () => {

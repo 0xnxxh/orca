@@ -694,8 +694,9 @@ export function AgentsPane({
   const {
     detectedIds: detectedList,
     isRefreshing,
-    refresh
+    refresh: refreshTargetAgents
   } = useDetectedAgents(agentDetectionTarget)
+  const refreshLocalAgents = useAppStore((s) => s.refreshDetectedAgents)
   const activeServerName = useAppStore((s) =>
     activeServerEnvironmentId
       ? (s.runtimeEnvironments.find((environment) => environment.id === activeServerEnvironmentId)
@@ -706,7 +707,7 @@ export function AgentsPane({
   // (preflight:refreshAgents). This handles the "installed a new CLI, Orca
   // doesn't see it yet" case without a restart.
   const handleRefresh = (): void => {
-    void refresh()
+    void refreshTargetAgents()
   }
   const detectedIds = useMemo<Set<string> | null>(
     () => (detectedList ? new Set(detectedList) : null),
@@ -844,7 +845,9 @@ export function AgentsPane({
       <AgentRuntimeSetting
         settings={settings}
         updateSettings={updateSettings}
-        refresh={refresh}
+        // Why: this control changes the client-local Windows/WSL runtime even
+        // while the Installed list is scoped to an active remote server.
+        refresh={refreshLocalAgents}
         wslSupportedPlatform={wslSupportedPlatform}
         wslAvailable={wslAvailable}
         wslDistros={wslDistros}
