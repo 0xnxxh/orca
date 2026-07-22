@@ -46,7 +46,7 @@ export function UpdateNudgeBanner({
     return null
   }
 
-  const storeUrl = getMobileAppUpdateUrl(Platform.OS, recommendedVersion)
+  const storeUrl = getMobileAppUpdateUrl(Platform.OS)
   return (
     <View style={styles.banner}>
       <Text style={styles.text}>Update the Orca app for the best experience</Text>
