@@ -258,6 +258,20 @@ describe('resolveTabAgentFromSignals', () => {
     ).toBe('claude')
   })
 
+  // Why: #8478 — OpenCode native `OC | …` titles must reclaim a stale Claude
+  // launch identity so the tab icon is OpenCode, not Claude.
+  it('uses OpenCode native session titles to replace stale Claude launch identity', () => {
+    expect(
+      resolveTabAgentFromSignals({
+        hasObservedAgentSignal: true,
+        isRemote: false,
+        title: 'OC | Understand about the plugin',
+        hookAgent: null,
+        launchAgent: 'claude'
+      })
+    ).toBe('opencode')
+  })
+
   it('does not let an explicit title override launch identity before any activity is observed', () => {
     expect(
       resolveTabAgentFromSignals({
@@ -271,80 +285,8 @@ describe('resolveTabAgentFromSignals', () => {
     ).toBe('codex')
   })
 
-  it('keeps OMP launch identity over Pi-compatible wrapper titles after activity', () => {
-    expect(
-      resolveTabAgentFromSignals({
-        hasObservedAgentSignal: true,
-        isRemote: true,
-        title: '⠋ Pi',
-        hookAgent: null,
-        launchAgent: 'omp'
-      })
-    ).toBe('omp')
-
-    expect(
-      resolveTabAgentFromSignals({
-        hasObservedAgentSignal: true,
-        isRemote: true,
-        title: '⠋ Pi',
-        hookAgent: 'pi',
-        launchAgent: 'omp'
-      })
-    ).toBe('omp')
-
-    expect(
-      resolveTabAgentFromSignals({
-        hasObservedAgentSignal: true,
-        isRemote: false,
-        title: '⠋ Pi',
-        hookAgent: 'pi',
-        launchAgent: 'omp'
-      })
-    ).toBe('omp')
-
-    expect(
-      resolveTabAgentFromSignals({
-        hasObservedAgentSignal: true,
-        isRemote: true,
-        title: 'Terminal 1',
-        hookAgent: null,
-        siblingHookAgent: 'pi',
-        launchAgent: 'omp'
-      })
-    ).toBe('omp')
-
-    expect(
-      resolveTabAgentFromSignals({
-        hasObservedAgentSignal: true,
-        isRemote: true,
-        title: '⠋ OMP',
-        hookAgent: 'omp',
-        launchAgent: 'pi'
-      })
-    ).toBe('pi')
-
-    expect(
-      resolveTabAgentFromSignals({
-        hasObservedAgentSignal: true,
-        isRemote: true,
-        title: 'zsh',
-        hookAgent: null,
-        focusedCompletedHookAgent: 'pi',
-        launchAgent: 'omp'
-      })
-    ).toBe('omp')
-
-    expect(
-      resolveTabAgentFromSignals({
-        hasObservedAgentSignal: true,
-        isRemote: false,
-        title: 'zsh',
-        hookAgent: null,
-        siblingCompletedHookAgent: 'pi',
-        launchAgent: 'omp'
-      })
-    ).toBe('omp')
-  })
+  // Pi/OMP identity (shared title-identity group, launchAgent-loss flicker)
+  // lives in use-tab-agent-pi-identity.test.ts.
 
   it('prefers explicit hook identity over a conflicting title mention', () => {
     expect(

@@ -39,7 +39,7 @@ export class HistoryReader {
 
   detectColdRestore(
     sessionId: string,
-    opts?: { ignoreCleanEnd?: boolean }
+    opts?: { ignoreCleanEnd?: boolean; wslDistro?: string }
   ): ColdRestoreInfo | null {
     const meta = this.readMeta(sessionId)
     if (!meta) {
@@ -69,7 +69,7 @@ export class HistoryReader {
     // byte-exact output up to ~5s before the crash (up to the full-snapshot
     // cooldown, ~45s, for a streaming session mid-deferral), while the
     // checkpoint can be a full log-cap (~5MB of output) stale.
-    const logRestore = this.restoreFromIncrementalLog(sessionDir, meta, checkpoint)
+    const logRestore = this.restoreFromIncrementalLog(sessionDir, meta, checkpoint, opts?.wslDistro)
     if (logRestore) {
       return logRestore
     }
@@ -122,7 +122,8 @@ export class HistoryReader {
   private restoreFromIncrementalLog(
     sessionDir: string,
     meta: SessionMeta,
-    checkpoint: TerminalCheckpointFile | null
+    checkpoint: TerminalCheckpointFile | null,
+    wslDistro?: string
   ): ColdRestoreInfo | null {
     let logBuffer: Buffer
     try {
@@ -148,11 +149,18 @@ export class HistoryReader {
 
     const emulator = new HeadlessEmulator({
       cols: checkpoint?.cols ?? meta.cols,
-      rows: checkpoint?.rows ?? meta.rows
+      rows: checkpoint?.rows ?? meta.rows,
+      wslDistro
     })
     try {
       if (checkpoint) {
-        if (!emulator.writeSync(checkpoint.rehydrateSequences + checkpoint.snapshotAnsi)) {
+        if (
+          !emulator.writeSync(
+            (checkpoint.scrollbackAnsi ?? '') +
+              checkpoint.rehydrateSequences +
+              checkpoint.snapshotAnsi
+          )
+        ) {
           return null
         }
         emulator.setRestoredOscLinks(checkpoint.oscLinks)
@@ -198,12 +206,8 @@ export class HistoryReader {
     cwd: string | null,
     meta: SessionMeta
   ): ColdRestoreInfo {
-    // Why: HeadlessEmulator.getSnapshot() doesn't populate scrollbackAnsi
-    // (it's always ''). For non-alt-screen snapshots, snapshotAnsi IS the
-    // normal buffer content and is safe to use as scrollback. For alt-screen
-    // snapshots, snapshotAnsi is the serialized TUI buffer (not raw PTY
-    // stream); return empty instead — the adapter skips cold restore when
-    // scrollbackAnsi is falsy.
+    // Why: legacy normal snapshots stored their buffer only in snapshotAnsi;
+    // current alt snapshots carry their normal buffer in scrollbackAnsi.
     const scrollbackAnsi =
       snapshot.scrollbackAnsi || (snapshot.modes?.alternateScreen ? '' : snapshot.snapshotAnsi)
     return {

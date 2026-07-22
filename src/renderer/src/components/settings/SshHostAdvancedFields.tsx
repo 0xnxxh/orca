@@ -100,6 +100,7 @@ export function SshHostAdvancedFields({
             </div>
             <SettingsSwitch
               checked={form.systemSshConnectionReuse}
+              disabled={disabled}
               onChange={() =>
                 onFormChange((f) => ({
                   ...f,
@@ -129,6 +130,7 @@ export function SshHostAdvancedFields({
             </div>
             <SettingsSwitch
               checked={form.relayKeepAliveUntilReset}
+              disabled={disabled}
               onChange={() =>
                 onFormChange((f) => ({
                   ...f,

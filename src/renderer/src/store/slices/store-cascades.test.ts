@@ -130,7 +130,12 @@ describe('removeWorktree cascade', () => {
         tab2: makeLayout()
       },
       deleteStateByWorktreeId: {
-        [worktreeId]: { isDeleting: false, error: null, canForceDelete: false }
+        [worktreeId]: {
+          isDeleting: false,
+          error: null,
+          canForceDelete: false,
+          forceDeleteReason: null
+        }
       },
       fileSearchStateByWorktree: {
         [worktreeId]: {
@@ -141,6 +146,7 @@ describe('removeWorktree cascade', () => {
           includePattern: '*.ts',
           excludePattern: 'dist/**',
           results: { files: [], totalMatches: 0, truncated: false },
+          resultOwner: null,
           loading: false,
           collapsedFiles: new Set(['/path/wt1/file.ts'])
         }
@@ -216,6 +222,37 @@ describe('removeWorktree cascade', () => {
     })
   })
 
+  it('can suppress preserved branch warning toasts for batched cleanup removal', async () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/path/wt1'
+    mockApi.worktrees.remove.mockResolvedValueOnce({
+      preservedBranch: { branchName: 'feature/test', head: 'def456' }
+    })
+
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [
+          makeWorktree({
+            id: worktreeId,
+            repoId: 'repo1',
+            path: '/path/wt1',
+            displayName: 'Review cleanup'
+          })
+        ]
+      }
+    })
+
+    const result = await store
+      .getState()
+      .removeWorktree(worktreeId, false, { suppressPreservedBranchToast: true })
+
+    expect(result).toEqual({
+      ok: true,
+      preservedBranch: { branchName: 'feature/test', head: 'def456' }
+    })
+    expect(toast.warning).not.toHaveBeenCalled()
+  })
+
   it('sets delete state with dirty/untracked error and canForceDelete=true on failure', async () => {
     const store = createTestStore()
     const worktreeId = 'repo1::/path/wt1'
@@ -241,7 +278,8 @@ describe('removeWorktree cascade', () => {
     expect(s.deleteStateByWorktreeId[worktreeId]).toEqual({
       isDeleting: false,
       error,
-      canForceDelete: true
+      canForceDelete: true,
+      forceDeleteReason: 'dirty'
     })
     // State NOT cleaned up
     expect(s.worktreesByRepo['repo1']).toHaveLength(1)
@@ -258,7 +296,12 @@ describe('removeWorktree cascade', () => {
 
     seedStore(store, {
       deleteStateByWorktreeId: {
-        [first]: { isDeleting: false, error: 'old failure', canForceDelete: true }
+        [first]: {
+          isDeleting: false,
+          error: 'old failure',
+          canForceDelete: true,
+          forceDeleteReason: 'dirty'
+        }
       }
     })
 
@@ -267,6 +310,55 @@ describe('removeWorktree cascade', () => {
     expect(store.getState().deleteStateByWorktreeId).toMatchObject({
       [first]: { isDeleting: true, error: null, canForceDelete: false },
       [second]: { isDeleting: true, error: null, canForceDelete: false }
+    })
+  })
+
+  it('marks multiple worktrees queued for deletion in one optimistic state update', () => {
+    const store = createTestStore()
+    const first = 'repo1::/path/wt1'
+    const second = 'repo1::/path/wt2'
+
+    seedStore(store, {
+      deleteStateByWorktreeId: {
+        [first]: {
+          isDeleting: false,
+          error: 'old failure',
+          canForceDelete: true,
+          forceDeleteReason: 'dirty'
+        }
+      }
+    })
+
+    store.getState().markWorktreesQueuedForDeletion([first, second, first])
+
+    expect(store.getState().deleteStateByWorktreeId).toMatchObject({
+      [first]: { isDeleting: true, phase: 'queued', error: null, canForceDelete: false },
+      [second]: { isDeleting: true, phase: 'queued', error: null, canForceDelete: false }
+    })
+  })
+
+  it('keeps active deletion state when cleanup queues stale rows', () => {
+    const store = createTestStore()
+    const active = 'repo1::/path/deleting'
+    const queued = 'repo1::/path/queued'
+
+    seedStore(store, {
+      deleteStateByWorktreeId: {
+        [active]: {
+          isDeleting: true,
+          phase: 'deleting',
+          error: null,
+          canForceDelete: false,
+          forceDeleteReason: null
+        }
+      }
+    })
+
+    store.getState().markWorktreesQueuedForDeletion([active, queued])
+
+    expect(store.getState().deleteStateByWorktreeId).toMatchObject({
+      [active]: { isDeleting: true, phase: 'deleting', error: null, canForceDelete: false },
+      [queued]: { isDeleting: true, phase: 'queued', error: null, canForceDelete: false }
     })
   })
 
@@ -293,7 +385,8 @@ describe('removeWorktree cascade', () => {
     expect(store.getState().deleteStateByWorktreeId[worktreeId]).toEqual({
       isDeleting: false,
       error,
-      canForceDelete: true
+      canForceDelete: true,
+      forceDeleteReason: 'dirty'
     })
   })
 
@@ -320,7 +413,37 @@ describe('removeWorktree cascade', () => {
     expect(store.getState().deleteStateByWorktreeId[worktreeId]).toEqual({
       isDeleting: false,
       error,
-      canForceDelete: true
+      canForceDelete: true,
+      forceDeleteReason: 'dirty'
+    })
+  })
+
+  it('does not offer force delete for locked worktree removal errors', async () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/workspace/feature-wt'
+    const error =
+      "fatal: cannot remove a locked working tree, lock reason: claude session\nuse 'remove -f -f' to override or unlock first"
+
+    mockApi.worktrees.remove.mockRejectedValueOnce(new Error(error))
+
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1' })]
+      },
+      tabsByWorktree: {},
+      ptyIdsByTabId: {},
+      terminalLayoutsByTabId: {}
+    })
+
+    const result = await store.getState().removeWorktree(worktreeId)
+
+    expect(result).toEqual({ ok: false, error })
+    expect(store.getState().deleteStateByWorktreeId[worktreeId]).toEqual({
+      isDeleting: false,
+      error,
+      canForceDelete: false,
+      forceDeleteReason: null,
+      lockReason: null
     })
   })
 
@@ -347,7 +470,8 @@ describe('removeWorktree cascade', () => {
     expect(store.getState().deleteStateByWorktreeId[worktreeId]).toEqual({
       isDeleting: false,
       error,
-      canForceDelete: true
+      canForceDelete: true,
+      forceDeleteReason: 'missing-registration'
     })
   })
 
@@ -373,7 +497,8 @@ describe('removeWorktree cascade', () => {
     expect(s.deleteStateByWorktreeId[worktreeId]).toEqual({
       isDeleting: false,
       error: 'fatal error',
-      canForceDelete: false
+      canForceDelete: false,
+      forceDeleteReason: null
     })
   })
 
@@ -407,7 +532,8 @@ describe('removeWorktree cascade', () => {
       isDeleting: false,
       error:
         'Refusing to delete worktree because it contains another registered worktree: /path/wt1/child',
-      canForceDelete: false
+      canForceDelete: false,
+      forceDeleteReason: null
     })
   })
 
@@ -459,7 +585,8 @@ describe('removeWorktree cascade', () => {
     expect(store.getState().deleteStateByWorktreeId[worktreeId]).toEqual({
       isDeleting: false,
       error,
-      canForceDelete: false
+      canForceDelete: false,
+      forceDeleteReason: null
     })
   })
 
@@ -493,7 +620,7 @@ describe('removeWorktree cascade', () => {
       seedStore(store, {
         settings: { ...getDefaultSettings('/tmp'), activeRuntimeEnvironmentId: 'env-1' },
         worktreesByRepo: {
-          repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1' })]
+          repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', hostId: 'runtime:env-1' })]
         },
         tabsByWorktree: {},
         ptyIdsByTabId: {},
@@ -506,7 +633,8 @@ describe('removeWorktree cascade', () => {
       expect(store.getState().deleteStateByWorktreeId[worktreeId]).toEqual({
         isDeleting: false,
         error,
-        canForceDelete: false
+        canForceDelete: false,
+        forceDeleteReason: null
       })
       expect(mockApi.worktrees.remove).not.toHaveBeenCalled()
     }
@@ -570,6 +698,7 @@ describe('removeWorktree cascade', () => {
           includePattern: '',
           excludePattern: '',
           results: { files: [], totalMatches: 0, truncated: false },
+          resultOwner: null,
           loading: false,
           collapsedFiles: new Set()
         },
@@ -581,6 +710,7 @@ describe('removeWorktree cascade', () => {
           includePattern: '*.md',
           excludePattern: '',
           results: { files: [], totalMatches: 1, truncated: false },
+          resultOwner: null,
           loading: false,
           collapsedFiles: new Set(['/path/wt2/notes.md'])
         }
@@ -675,8 +805,7 @@ describe('setActiveWorktree', () => {
     const worktree = store.getState().worktreesByRepo.repo1[0]
     expect(worktree.sortOrder).toBe(123)
     expect(worktree.lastActivityAt).toBe(lastActivityAt)
-    // Why: selecting a worktree should not manufacture smart-sort activity.
-    // Persisted ordering signals come from real background work or edits, not focus.
+    // Why: selecting a worktree must not manufacture smart-sort activity; ordering comes from real work, not focus.
     expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
   })
 
@@ -1144,6 +1273,7 @@ describe('setActiveWorktree', () => {
     })
 
     store.getState().syncPaneDetachPtyOwnership({
+      detachedLeafId: '11111111-1111-4111-8111-111111111111',
       detachedPtyId: 'pty-detached',
       sourceLayout: {
         root: { type: 'leaf', leafId: 'survivor-leaf' },
@@ -1577,9 +1707,7 @@ describe('setActiveWorktree', () => {
     store.getState().createTab(wt)
     unsubscribe()
 
-    // Why: task-page launches queue startup/setup commands before React mounts.
-    // A terminal-only intermediate state can mount the legacy host and race
-    // the split-group host, duplicating setup panes and PTYs.
+    // Why: a terminal-only intermediate state mounts the legacy host and races the split-group host, duplicating setup panes and PTYs.
     expect(snapshots).toEqual([{ terminalCount: 1, unifiedCount: 1, groupCount: 1 }])
   })
 
@@ -2292,10 +2420,7 @@ describe('setActiveWorktree', () => {
     })
   })
 
-  // Why: unread flags are ephemeral UI state — they must not linger past the
-  // lifetime of the tab/pane they point at. A stale flag on a closed tab
-  // would render a bell the user can never dismiss because the tab (and
-  // therefore every focus path that clears it) is gone.
+  // Why: a stale unread flag on a closed tab renders a bell the user can never dismiss, since the tab is gone.
   it('drops unreadTerminalTabs for a closed tab', () => {
     const store = createTestStore()
     const wt = 'repo1::/path/wt1'
@@ -2309,9 +2434,7 @@ describe('setActiveWorktree', () => {
     const closing = store.getState().createTab(wt)
     const surviving = store.getState().createTab(wt)
 
-    // Seed flags directly — the self-guarded mark actions intentionally
-    // refuse the currently-active tab, but this test's subject is closeTab's
-    // cleanup behavior, not the guards.
+    // Seed directly: mark actions refuse the active tab, but this test targets closeTab's cleanup, not the guards.
     store.setState({
       unreadTerminalTabs: {
         [closing.id]: true as const,
@@ -2327,10 +2450,7 @@ describe('setActiveWorktree', () => {
     expect(s.unreadTerminalTabs[surviving.id]).toBe(true)
   })
 
-  // Why: shutdownWorktreeTerminals tears down every PTY in the worktree. The
-  // focus events that would normally clear unread (bell-in-focused-pane,
-  // activate-tab) never arrive for dead PTYs, so the flags have to be
-  // dropped by the shutdown path itself.
+  // Why: focus events that normally clear unread never arrive for dead PTYs, so the shutdown path must drop the flags itself.
   it('drops unread flags for every tab in a shutdown worktree', async () => {
     const store = createTestStore()
     const wt = 'repo1::/path/wt1'
@@ -2359,11 +2479,7 @@ describe('setActiveWorktree', () => {
     expect(s.unreadTerminalTabs[tabB.id]).toBeUndefined()
   })
 
-  // Why: ownership regression (design §1.3). shutdownWorktreeTerminals used to
-  // delete browserTabsByWorktree[worktreeId] and reset
-  // activeBrowserTabId/activeTabType as a side effect — now those mutations
-  // belong exclusively to shutdownWorktreeBrowsers. If a refactor reintroduces
-  // the side effect, both thunks will write the same keys and race.
+  // Why: browser-state mutations belong to shutdownWorktreeBrowsers only (design §1.3); reintroducing them here races both thunks.
   it('leaves browser state untouched when shutting down terminals', async () => {
     const store = createTestStore()
     const wt = 'repo1::/path/wt1'
@@ -2794,14 +2910,7 @@ describe('setActiveWorktree', () => {
   })
 })
 
-// Why: sleep (`shutdownWorktreeTerminals(wt, { keepIdentifiers: true })`)
-// kills the PTYs but preserves wake hints (tab.ptyId, ptyIdsByLeafId, the
-// runtime pane titles) so wake can reattach to the same daemon-history dir
-// or relay session. Before the sleep-statuses fix, the live agent-status
-// rows were also preserved — so a Claude that was mid-turn at sleep time
-// kept its row in the inline agents list as "working" until the 30-min
-// stale TTL decayed it. Sleep now drops live entries and retained `done`
-// snapshots for the whole worktree, so the card folds to a single grey signal.
+// Why: sleep must drop live + retained agent-status rows, else a mid-turn agent stays "working" until the 30-min stale TTL.
 describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -2916,11 +3025,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
   })
 
   it('aborts pane hibernation without side effects when no resume record can be captured', async () => {
-    // The prod ghost pane was killed with NO sleeping record captured, so
-    // nothing could ever wake it. Planner eligibility can go stale between
-    // ticks, so the shutdown must throw before any suppression or kill when the
-    // capture comes back empty (a done agent with no resumable provider
-    // session), leaving the pane fully intact for a later retry.
+    // No capturable resume record means the pane could never wake, so shutdown throws before any suppression or kill.
     const store = createTestStore()
     const wt = 'repo1::/path/wt1'
     const targetLeaf = '11111111-1111-4111-8111-111111111111'
@@ -2979,10 +3084,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
   })
 
   it('rolls back the sleeping record and suppression when the hibernation kill fails', async () => {
-    // The sleeping record must be visible to the pane's exit handler BEFORE the
-    // kill (pty:exit can beat the kill promise back to the renderer), so it is
-    // written alongside the suppression — and both must roll back if the kill
-    // fails, or a live pane would carry a stale wake record.
+    // Record written before the kill (pty:exit can beat it back); both it and the suppression must roll back if the kill fails.
     const store = createTestStore()
     const wt = 'repo1::/path/wt1'
     const targetLeaf = '11111111-1111-4111-8111-111111111111'
@@ -3033,11 +3135,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
   })
 
   it('persists the sleeping record and suppression before issuing the hibernation kill', async () => {
-    // pty:exit can beat the kill promise back to the renderer, and the pane's
-    // exit handler arms the hibernation wake only if the sleeping record is
-    // already in the store. A record written after the kill resolves passes
-    // every end-state assertion while still losing that race, so this test
-    // observes the store at the moment the kill is issued.
+    // pty:exit can beat the kill promise back; the record must be in the store before the kill or the wake never arms.
     const store = createTestStore()
     const wt = 'repo1::/path/wt1'
     const targetLeaf = '11111111-1111-4111-8111-111111111111'
@@ -3091,8 +3189,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
       providerSession: { key: 'session_id', id: 'sess-ordering-1' }
     })
     expect(suppressionAtKillTime).toBe(true)
-    // The record must survive the successful kill so the reveal-time wake can
-    // consume it.
+    // The record must survive the successful kill so the reveal-time wake can consume it.
     const state = store.getState()
     expect(state.sleepingAgentSessionsByPaneKey[targetPaneKey]).toBeDefined()
   })
@@ -3228,7 +3325,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
         }
       },
       ptyIdsByTabId: {
-        'tab-1': ['remote:env-1@@terminal-1', 'remote:env-1@@terminal-2']
+        'tab-1': ['remote:env-1@@terminal-1', 'remote:env-1@@terminal-2', 'terminal-1']
       }
     })
     store
@@ -3264,7 +3361,15 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
     expect(mockApi.runtimeEnvironments.call).not.toHaveBeenCalledWith(
       expect.objectContaining({ method: 'terminal.stop' })
     )
-    expect(store.getState().ptyIdsByTabId['tab-1']).toEqual(['remote:env-1@@terminal-2'])
+    expect(store.getState().ptyIdsByTabId['tab-1']).toEqual([
+      'remote:env-1@@terminal-2',
+      'terminal-1'
+    ])
+    expect(mockUnregisterPtyDataHandlers).toHaveBeenCalledWith(['remote:env-1@@terminal-1'])
+    expect(mockUnregisterPtyDataHandlers).not.toHaveBeenCalledWith(['terminal-1'])
+    expect(store.getState().suppressedPtyExitIds['remote:env-1@@terminal-1']).toBe(true)
+    expect(store.getState().suppressedPtyExitIds['remote:runtime-1@@terminal-1']).toBeUndefined()
+    expect(store.getState().suppressedPtyExitIds['terminal-1']).toBeUndefined()
     expect(mockApi.pty.kill).not.toHaveBeenCalled()
   })
 
@@ -3795,7 +3900,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
       tabsByWorktree: {
         [wt]: [makeTab({ id: 'tab-1', worktreeId: wt, title: 'Codex' })]
       },
-      ptyIdsByTabId: { 'tab-1': [] }
+      ptyIdsByTabId: { 'tab-1': ['remote:runtime-1@@pty-1'] }
     })
     store.getState().setAgentStatus(
       'tab-1:live',
@@ -3815,14 +3920,15 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
       sleepingPaneKeys: ['tab-1:live'],
       expectedRuntimePtyIds: ['pty-1']
     })
-    expect(store.getState().suppressedPtyExitIds['pty-1']).toBe(true)
-
-    store.getState().updateTabPtyId('tab-1', 'pty-1')
-
+    expect(store.getState().suppressedPtyExitIds['remote:runtime-1@@pty-1']).toBe(true)
     expect(store.getState().suppressedPtyExitIds['pty-1']).toBeUndefined()
+
+    store.getState().updateTabPtyId('tab-1', 'remote:runtime-1@@pty-1')
+
+    expect(store.getState().suppressedPtyExitIds['remote:runtime-1@@pty-1']).toBeUndefined()
   })
 
-  it('suppresses wrapped remote PTY exits before exact runtime stop resolves', async () => {
+  it('suppresses only the scoped remote PTY identity before exact runtime stop resolves', async () => {
     const store = createTestStore()
     const wt = 'repo1::/path/wt1'
     let sawWrappedSuppressedDuringStop = false
@@ -3886,10 +3992,57 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
     })
 
     expect(sawWrappedSuppressedDuringStop).toBe(true)
-    expect(sawRawSuppressedDuringStop).toBe(true)
+    expect(store.getState().suppressedPtyExitIds['remote:runtime-1@@terminal-1']).toBeUndefined()
+    expect(sawRawSuppressedDuringStop).toBe(false)
+    expect(mockUnregisterPtyDataHandlers).toHaveBeenCalledWith(['remote:env-1@@terminal-1'])
+    expect(mockUnregisterPtyDataHandlers).not.toHaveBeenCalledWith(['terminal-1'])
   })
 
-  it('clears raw and wrapped remote exit suppression when a remote PTY wakes live again', () => {
+  it('still kills a local renderer PTY whose id matches a remote exact-stop handle', async () => {
+    const store = createTestStore()
+    const wt = 'repo1::/path/wt1'
+    mockApi.runtimeEnvironments.call.mockImplementation((args: { method: string }) =>
+      Promise.resolve(
+        createCompatibleRuntimeStatusResponseIfNeeded(args) ?? {
+          id: 'rpc-default',
+          ok: true,
+          result:
+            args.method === 'terminal.stopExact'
+              ? {
+                  stoppedPtyIds: ['terminal-1'],
+                  livePtyIds: ['terminal-1'],
+                  postStopVerified: true
+                }
+              : {},
+          _meta: { runtimeId: 'remote-runtime' }
+        }
+      )
+    )
+    seedStore(store, {
+      settings: { ...getDefaultSettings('/tmp'), activeRuntimeEnvironmentId: 'runtime-1' },
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: wt, repoId: 'repo1', path: '/path/wt1' })]
+      },
+      tabsByWorktree: {
+        [wt]: [makeTab({ id: 'tab-1', worktreeId: wt })]
+      },
+      ptyIdsByTabId: {
+        'tab-1': ['remote:runtime-1@@terminal-1', 'terminal-1']
+      }
+    })
+
+    await store.getState().shutdownWorktreeTerminals(wt, {
+      expectedRuntimePtyIds: ['terminal-1']
+    })
+
+    expect(mockApi.pty.kill).toHaveBeenCalledWith('terminal-1', { keepHistory: false })
+    expect(mockUnregisterPtyDataHandlers).toHaveBeenCalledWith([
+      'remote:runtime-1@@terminal-1',
+      'terminal-1'
+    ])
+  })
+
+  it('does not consume a colliding raw PTY guard when a scoped remote PTY wakes', () => {
     const store = createTestStore()
     const wt = 'repo1::/path/wt1'
 
@@ -3908,7 +4061,51 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
     store.getState().updateTabPtyId('tab-1', 'remote:env-1@@terminal-1')
 
     expect(store.getState().suppressedPtyExitIds['remote:env-1@@terminal-1']).toBeUndefined()
-    expect(store.getState().suppressedPtyExitIds['terminal-1']).toBeUndefined()
+    expect(store.getState().suppressedPtyExitIds['terminal-1']).toBe(true)
+  })
+
+  it('migrates legacy remote lifecycle state to the scoped PTY identity on attach', () => {
+    const store = createTestStore()
+    const wt = 'repo1::/path/wt1'
+    const legacyPtyId = 'remote:terminal-1'
+    const scopedPtyId = 'remote:env-1@@terminal-1'
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: wt, repoId: 'repo1', path: '/path/wt1' })]
+      },
+      tabsByWorktree: {
+        [wt]: [makeTab({ id: 'tab-1', worktreeId: wt, ptyId: legacyPtyId })]
+      },
+      ptyIdsByTabId: { 'tab-1': [legacyPtyId] },
+      suppressedPtyExitIds: { [legacyPtyId]: true },
+      pendingCodexPaneRestartIds: { [legacyPtyId]: true },
+      codexRestartNoticeByPtyId: {
+        [legacyPtyId]: { previousAccountLabel: 'old', nextAccountLabel: 'new' }
+      },
+      migrationUnsupportedByPtyId: {
+        [legacyPtyId]: {
+          ptyId: legacyPtyId,
+          paneKey: 'tab-1:leaf-1',
+          reason: 'legacy-numeric-pane-key',
+          source: 'local',
+          updatedAt: 1
+        }
+      }
+    })
+
+    store.getState().updateTabPtyId('tab-1', scopedPtyId)
+    const state = store.getState()
+
+    expect(state.ptyIdsByTabId['tab-1']).toEqual([scopedPtyId])
+    expect(state.tabsByWorktree[wt][0]?.ptyId).toBe(scopedPtyId)
+    expect(state.suppressedPtyExitIds[legacyPtyId]).toBeUndefined()
+    expect(state.suppressedPtyExitIds[scopedPtyId]).toBeUndefined()
+    expect(state.pendingCodexPaneRestartIds).toEqual({ [scopedPtyId]: true })
+    expect(state.codexRestartNoticeByPtyId[scopedPtyId]).toEqual({
+      previousAccountLabel: 'old',
+      nextAccountLabel: 'new'
+    })
+    expect(state.migrationUnsupportedByPtyId[scopedPtyId]?.ptyId).toBe(scopedPtyId)
   })
 
   it('commits the pre-stop sleeping record when exact-stop exit clears live status', async () => {
@@ -4607,8 +4804,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
       ptyIdsByTabId: { 'tab-1': ['pty-1'] }
     })
 
-    // Plant one current-tab row and one orphan row. Retained rows render by
-    // worktreeId, so sleep must sweep both instead of only tab prefixes.
+    // Retained rows render by worktreeId, so sleep must sweep the orphan row too, not just tab prefixes.
     store.getState().retainAgents([
       {
         entry: {
@@ -4728,8 +4924,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
 
     await store.getState().shutdownWorktreeTerminals(wt, { keepIdentifiers: true })
 
-    // Why: sleep folds retained rows too, so the next retention sync must not
-    // recreate a `done` row from the previous render after the user slept it.
+    // Why: sleep folds retained rows too, so the next retention sync must not recreate a slept `done` row.
     expect(store.getState().retentionSuppressedPaneKeys['tab-1:0']).toBe(true)
   })
 
@@ -4752,8 +4947,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
 
     await store.getState().shutdownWorktreeTerminals(wt, { keepIdentifiers: true })
 
-    // Why: an existing suppressor was planted by a prior dismissal flow; sleep
-    // must not erase it (would resurface a row the user already dismissed).
+    // Why: a suppressor planted by a prior dismissal must survive sleep, else the dismissed row resurfaces.
     expect(store.getState().retentionSuppressedPaneKeys['tab-1:0']).toBe(true)
   })
 
@@ -4807,9 +5001,7 @@ describe('shutdownWorktreeTerminals (sleep) — agent status hygiene', () => {
   })
 })
 
-// Why: CLI-spawned background terminals stamp ORCA_PANE_KEY into the PTY env
-// at spawn time. The renderer must adopt the tab under the same id so hook
-// events route to the correct slot.
+// Why: CLI-spawned terminals stamp ORCA_PANE_KEY at spawn; renderer must adopt the tab under that id so hook events route correctly.
 describe('createTab tabId hint', () => {
   it('uses the supplied id when no collision exists', () => {
     const store = createTestStore()

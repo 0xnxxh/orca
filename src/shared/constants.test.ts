@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   getDefaultNotificationSettings,
   getDefaultPrimarySelectionMiddleClickPaste,
+  getDefaultTerminalRightClickToPaste,
   getDefaultSettings
 } from './constants'
 
@@ -47,8 +48,16 @@ describe('getDefaultSettings', () => {
     expect(getDefaultSettings('/tmp').uiLanguage).toBe('system')
   })
 
+  it('defaults the menu bar icon on so the value round-trips across platforms', () => {
+    expect(getDefaultSettings('/tmp').showMenuBarIcon).toBe(true)
+  })
+
   it('confirms before closing pinned tabs by default', () => {
     expect(getDefaultSettings('/tmp').confirmClosePinnedTab).toBe(true)
+  })
+
+  it('keeps file-editor word wrapping enabled by default', () => {
+    expect(getDefaultSettings('/tmp').editorWordWrap).toBe(true)
   })
 
   it('keeps rich Markdown spellcheck enabled by default', () => {
@@ -80,6 +89,12 @@ describe('getDefaultSettings', () => {
   it('keeps per-workspace environments disabled by default', () => {
     expect(getDefaultSettings('/tmp').experimentalEphemeralVms).toBe(false)
   })
+
+  it('keeps the agent dashboard popout disabled by default', () => {
+    expect(getDefaultSettings('/tmp').experimentalAgentDashboardPopout).toBe(false)
+  })
+
+  it('routes fresh Codex profiles through the real-home rollout by default', () => {})
 
   it('defaults local Windows projects to the host runtime', () => {
     expect(getDefaultSettings('/tmp').localWindowsRuntimeDefault).toEqual({
@@ -123,6 +138,14 @@ describe('getDefaultPrimarySelectionMiddleClickPaste', () => {
 
   it('leaves primary selection paste opt-in on Windows', () => {
     expect(getDefaultPrimarySelectionMiddleClickPaste('win32')).toBe(false)
+  })
+})
+
+describe('getDefaultTerminalRightClickToPaste', () => {
+  it('defaults on only for Windows', () => {
+    expect(getDefaultTerminalRightClickToPaste('win32')).toBe(true)
+    expect(getDefaultTerminalRightClickToPaste('darwin')).toBe(false)
+    expect(getDefaultTerminalRightClickToPaste('linux')).toBe(false)
   })
 })
 

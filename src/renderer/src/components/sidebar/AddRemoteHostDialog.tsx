@@ -46,6 +46,7 @@ export function AddRemoteHostDialog({
   const [isSaving, setIsSaving] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const setSshTargetsMetadata = useAppStore((s) => s.setSshTargetsMetadata)
+  const recordSshRepoReadoptions = useAppStore((s) => s.recordSshRepoReadoptions)
   const setRuntimeEnvironments = useAppStore((s) => s.setRuntimeEnvironments)
   const refreshRuntimeEnvironmentStatus = useAppStore((s) => s.refreshRuntimeEnvironmentStatus)
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
@@ -101,6 +102,9 @@ export function AddRemoteHostDialog({
     }
 
     const identityFile = sshForm.identityFile.trim() || undefined
+    const proxyCommand = sshForm.proxyCommand.trim() || undefined
+    const jumpHost = sshForm.jumpHost.trim() || undefined
+    const systemSshConnectionReuse = sshForm.systemSshConnectionReuse ? undefined : false
     const target = {
       label: sshForm.label.trim() || (username ? `${username}@${host}` : configHost),
       configHost,
@@ -108,12 +112,16 @@ export function AddRemoteHostDialog({
       port,
       username,
       relayGracePeriodSeconds: graceSeconds,
-      ...(identityFile ? { identityFile } : {})
+      ...(identityFile ? { identityFile } : {}),
+      ...(proxyCommand ? { proxyCommand } : {}),
+      ...(jumpHost ? { jumpHost } : {}),
+      ...(systemSshConnectionReuse === false ? { systemSshConnectionReuse } : {})
     }
 
     setIsSaving(true)
     try {
-      await window.api.ssh.addTarget({ target })
+      const result = await window.api.ssh.addTarget({ target })
+      recordSshRepoReadoptions(result.repoReadoptions)
       await refreshSshTargetMetadata()
       recordFeatureInteraction('ssh')
       toast.success(
@@ -138,7 +146,9 @@ export function AddRemoteHostDialog({
   const importSshConfig = async () => {
     setIsImporting(true)
     try {
-      const synced = (await window.api.ssh.importConfig()) as SshTarget[]
+      const result = await window.api.ssh.importConfig()
+      const synced = result.targets
+      recordSshRepoReadoptions(result.repoReadoptions)
       await refreshSshTargetMetadata()
       recordFeatureInteraction('ssh')
       if (synced.length === 0) {

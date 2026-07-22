@@ -11,7 +11,9 @@ function readSkill() {
 
 function getSection(markdown, heading) {
   const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = markdown.match(new RegExp(`## ${escapedHeading}\\n([\\s\\S]*?)(?=\\n## |$)`))
+  const match = markdown.match(
+    new RegExp(`## ${escapedHeading}\\r?\\n([\\s\\S]*?)(?=\\r?\\n## |$)`)
+  )
 
   expect(match).not.toBeNull()
 
@@ -142,23 +144,22 @@ describe('orchestration skill guidance', () => {
       'Sidebar lineage and orchestration lifecycle are related but not identical.'
     )
     expect(workerTerminals).toContain(
-      'A same-worktree worker created with `orca terminal create --worktree active` may appear as a peer terminal/agent'
+      'A same-worktree worker may appear as a peer under that worktree in the sidebar'
+    )
+    expect(workerTerminals).toContain('while remaining a child dispatch in orchestration state')
+    expect(workerTerminals).toContain(
+      'only an actual child worktree creates visible parent/child worktree lineage'
     )
     expect(workerTerminals).toContain(
-      'even though it is a child dispatch in Orca orchestration state'
+      'Create a new worktree only when the user explicitly requests one or a concrete checkout or filesystem conflict makes sharing unsafe or impossible'
     )
     expect(workerTerminals).toContain(
-      'A visible parent/child worktree relationship requires creating a child worktree'
+      'Independent tasks, parallel execution, convenience, or a preference for separate checkouts are not isolation requirements.'
     )
     expect(workerTerminals).toContain(
-      'only when the task can safely run from an isolated checkout and does not need uncommitted artifacts from the current working tree'
+      'When a new worktree is allowed, use child lineage for isolated work that is stacked under or dependent on the active worktree'
     )
-    expect(workerTerminals).toContain(
-      'For supervised new-worktree workers, decide the desired Orca lineage before creation'
-    )
-    expect(workerTerminals).toContain(
-      'use `--no-parent` for independent repo-wide fixes, standalone feature work, or unrelated follow-up tasks'
-    )
+    expect(workerTerminals).toContain('use `--no-parent` when it is not stacked')
   })
 
   it('keeps review-only completions and named next-owner fixes in their lanes', () => {
@@ -187,5 +188,49 @@ describe('orchestration skill guidance', () => {
     expect(agentGuidance).toContain('fresh preamble + TASK block delivered as new terminal input')
     expect(skill).not.toContain('post-completion polling messages')
     expect(skill).not.toContain('every 2 minutes')
+  })
+
+  it('documents @grok in the Messaging group address list', () => {
+    const skill = readSkill()
+    const messaging = getSection(skill, 'Messaging')
+
+    expect(messaging).toContain('`@grok`')
+  })
+
+  it('documents @cursor in the Messaging group address list', () => {
+    const skill = readSkill()
+    const messaging = getSection(skill, 'Messaging')
+
+    expect(messaging).toContain('`@cursor`')
+  })
+
+  it('keeps agent-first launch, handle recovery, and inbox injection distinct', () => {
+    const skill = readSkill()
+    const messaging = getSection(skill, 'Messaging')
+    const workerTerminals = getSection(skill, 'Worker Terminals')
+    const agentFirstExample = workerTerminals.match(
+      /```bash\norca worktree create --name <task-name> --agent codex --json\n[\s\S]*?```/
+    )?.[0]
+
+    expect(workerTerminals).toContain('For an allowed new worktree, use agent-first:')
+    expect(workerTerminals).toContain('fallback shell + agent pair')
+    expect(workerTerminals).toContain(
+      'Repo setup or default-terminal settings may still add tabs or splits'
+    )
+    expect(workerTerminals).toContain('without configured default tabs')
+    expect(workerTerminals).toContain(
+      'only after `terminal list` or `terminal show` confirms it is an unused shell'
+    )
+    expect(workerTerminals).not.toContain('bare create opens a default shell')
+    expect(workerTerminals).not.toContain('ends with **one** agent tab')
+    expect(agentFirstExample).toBeDefined()
+    expect(agentFirstExample).not.toContain('orca terminal list')
+    expect(agentFirstExample).toContain('startupTerminal.handle')
+    expect(messaging).toContain(
+      'Use `startupTerminal.handle` from the create response when present'
+    )
+    expect(messaging).toContain('continue with the replacement only')
+    expect(messaging).toContain('it does not remotely wake another terminal')
+    expect(messaging).toContain('Use `orchestration dispatch --inject` to deliver a tracked task')
   })
 })

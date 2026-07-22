@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   AI_VAULT_AGENTS,
+  AI_VAULT_SCOPE_PATHS_MAX_COUNT,
   type AiVaultListArgs,
   type AiVaultListResult,
   type AiVaultSession
@@ -8,6 +9,10 @@ import {
 import { normalizeExecutionHostId, toRuntimeExecutionHostId } from '../../shared/execution-host'
 import { listEnvironments } from '../../shared/runtime-environment-store'
 import { callRuntimeEnvironment } from '../ipc/runtime-environment-transport-routing'
+import type {
+  AiVaultPrepareSessionResumeArgs,
+  AiVaultPrepareSessionResumeResult
+} from '../../shared/ai-vault-resume-preparation'
 
 export type RuntimeAiVaultHostInfo = {
   environmentId: string
@@ -70,7 +75,23 @@ const aiVaultListResultSchema = z.object({
       messageCount: z.number(),
       totalTokens: z.number(),
       previewMessages: z.array(aiVaultSessionPreviewMessageSchema),
-      resumeCommand: z.string()
+      // Optional keeps paired hosts on older builds compatible.
+      lastUserPrompt: z.string().nullable().optional(),
+      // Default keeps remote hosts running an older build (no recoverable-signal
+      // fields) parseable; they simply report no recoverable-empty sessions.
+      queuedMessageCount: z.number().default(0),
+      subagentTranscriptCount: z.number().default(0),
+      resumeCommand: z.string(),
+      // The default keeps remote hosts running an older build (no subagent
+      // field) parseable; scanned top-level sessions carry null anyway.
+      subagent: z
+        .object({
+          parentSessionId: z.string(),
+          agentType: z.string().nullable(),
+          status: z.enum(['running', 'completed', 'failed', 'stopped']).nullable()
+        })
+        .nullable()
+        .default(null)
     })
   ),
   issues: z.array(
@@ -83,6 +104,8 @@ const aiVaultListResultSchema = z.object({
   ),
   scannedAt: z.string()
 })
+
+const aiVaultPrepareSessionResumeResultSchema = z.object({ useRealCodexHome: z.boolean() })
 
 export function getSavedRuntimeAiVaultHostInfos(
   userDataPath: string
@@ -107,7 +130,11 @@ export async function scanRuntimeAiVaultSessions(
     {
       limit: args.limit,
       force: args.force,
-      scopePaths: args.scopePaths,
+      // Why: cap here so the set of scanned paths is explicit on this side —
+      // the RPC schema CLAMPS to the same bound anyway (older hosts had no
+      // cap). Dropped paths only lose the older-than-recency-cap guarantee,
+      // never the recent sessions themselves.
+      scopePaths: args.scopePaths?.slice(0, AI_VAULT_SCOPE_PATHS_MAX_COUNT),
       executionHostId
     },
     options.timeoutMs
@@ -130,6 +157,29 @@ export async function scanRuntimeAiVaultSessions(
     environmentId,
     message: response.error.message
   })
+}
+
+export async function prepareRuntimeAiVaultSessionResume(
+  userDataPath: string,
+  environmentId: string,
+  args: AiVaultPrepareSessionResumeArgs
+): Promise<AiVaultPrepareSessionResumeResult> {
+  const response = await callRuntimeEnvironment(
+    userDataPath,
+    environmentId,
+    'aiVault.prepareSessionResume',
+    args
+  )
+  if (response.ok !== true) {
+    throw new Error(response.error.message)
+  }
+  const parsed = aiVaultPrepareSessionResumeResultSchema.safeParse(response.result)
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid aiVault.prepareSessionResume response: ${parsed.error.issues[0]?.message ?? 'unexpected result shape'}`
+    )
+  }
+  return parsed.data
 }
 
 function withRuntimeExecutionHost(

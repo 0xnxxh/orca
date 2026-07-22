@@ -124,6 +124,8 @@ export type ScrollState = {
   viewportY: number
   baseY: number
   firstVisibleLineMarker?: IMarker
+  firstVisibleLogicalLineMarker?: IMarker
+  firstVisibleLogicalCellOffset?: number
 }
 
 export type ManagedPaneInternal = {
@@ -161,6 +163,12 @@ export type ManagedPaneInternal = {
   focusClassSyncCleanup?: (() => void) | null
   // Stored so disposePane() can remove user-scroll intent listeners.
   terminalScrollIntentDisposable?: IDisposable | null
+  // Stored so disposePane() can detach the streamed-output hover-cache reset
+  // that keeps freshly printed links linkifiable without a scroll.
+  linkifierHoverResetDisposable?: IDisposable | null
+  // Stored so disposePane() can deregister the joiner; terminal.dispose()
+  // does not remove registered character joiners.
+  arabicShapingJoinerCleanup?: (() => void) | null
   // Why: splitPane reparents DOM; its delayed restore owns scroll until the
   // browser settles, so intermediate fits must not compete with it.
   pendingSplitScrollState: ScrollState | null
