@@ -6,6 +6,12 @@ import type { DashboardAgentRow } from './useDashboardData'
 export function useAgentRowConversationName(agent: DashboardAgentRow): string | null {
   const enabled = useAppStore((s) => s.settings?.agentRowsUseConversationName === true)
   const generatedTitlesEnabled = useAppStore((s) => s.settings?.tabAutoGenerateTitle === true)
+  // Why: row data patches live entries in place and keeps the tab snapshot from
+  // row creation, so renames/agent titles landing after that would never show.
+  // Read the current tab from the store; retained rows fall back to the snapshot.
+  const liveTab = useAppStore((s) =>
+    s.tabsByWorktree[agent.tab.worktreeId]?.find((tab) => tab.id === agent.tab.id)
+  )
   if (!enabled) {
     return null
   }
@@ -14,5 +20,5 @@ export function useAgentRowConversationName(agent: DashboardAgentRow): string | 
   if (agent.rowSource === 'subagent') {
     return null
   }
-  return getAgentRowConversationName(agent.tab, agent.agentType, generatedTitlesEnabled)
+  return getAgentRowConversationName(liveTab ?? agent.tab, agent.agentType, generatedTitlesEnabled)
 }
