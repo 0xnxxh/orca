@@ -175,7 +175,7 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
   })
 
   it('lists collapsed directories and targeted nested files for worktree includes', async () => {
-    await writeFile(join(repoPath, '.gitignore'), '.env\ncache/\nbuild/\nparent/\n')
+    await writeFile(join(repoPath, '.gitignore'), '.env\ncache/\nbuild/\nparent/\ncase/\n')
     await writeFile(join(repoPath, '.env'), 'ROOT=1\n')
     await mkdir(join(repoPath, 'apps', 'web'), { recursive: true })
     await writeFile(join(repoPath, 'apps', 'web', '.env'), 'NESTED=1\n')
@@ -185,6 +185,8 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
     await writeFile(join(repoPath, 'build', 'root-artifact'), 'ignored\n')
     await mkdir(join(repoPath, 'parent', 'build'), { recursive: true })
     await writeFile(join(repoPath, 'parent', 'build', 'nested-artifact'), 'ignored\n')
+    await mkdir(join(repoPath, 'case'))
+    await writeFile(join(repoPath, 'case', '.ENV'), 'CASE=1\n')
 
     const collapsed = await runGit([
       '-c',
@@ -213,6 +215,19 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
       ':(glob)**/.env'
     ])
     expect(targeted.stdout.split('\0').filter(Boolean)).toEqual(['.env', 'apps/web/.env'])
+
+    const caseInsensitiveTargeted = await runGit([
+      '-c',
+      'core.quotePath=false',
+      'ls-files',
+      '--others',
+      '--ignored',
+      '--exclude-standard',
+      '-z',
+      '--',
+      ':(icase,glob)**/.env'
+    ])
+    expect(caseInsensitiveTargeted.stdout.split('\0').filter(Boolean)).toContain('case/.ENV')
 
     const targetedDirectory = await runGit([
       '-c',

@@ -33,6 +33,7 @@ describe('worktree include creation flow', () => {
   })
 
   it('copies only matched ignored paths and leaves ordinary removal clean', async () => {
+    await git(['config', 'core.ignoreCase', 'true'])
     await writeFile(join(primary, '.gitignore'), '.env\ncache/\nparent/\nmixed/local.txt\n')
     await writeFile(
       join(primary, '.worktreeinclude'),
@@ -42,6 +43,8 @@ describe('worktree include creation flow', () => {
     await writeFile(join(primary, '.env'), 'ROOT=1\n')
     await mkdir(join(primary, 'apps', 'web'), { recursive: true })
     await writeFile(join(primary, 'apps', 'web', '.env'), 'NESTED=1\n')
+    await mkdir(join(primary, 'case'))
+    await writeFile(join(primary, 'case', '.ENV'), 'CASE=1\n')
     await mkdir(join(primary, 'cache'))
     await writeFile(join(primary, 'cache', 'artifact'), 'cached\n')
     await mkdir(join(primary, 'parent', 'build'), { recursive: true })
@@ -58,6 +61,7 @@ describe('worktree include creation flow', () => {
       '.env',
       'apps/web/.env',
       'cache',
+      'case/.ENV',
       'mixed/local.txt',
       'parent/build/marker'
     ])
@@ -67,6 +71,7 @@ describe('worktree include creation flow', () => {
     expect(await readFile(join(worktree, '.env'), 'utf8')).toBe('ROOT=1\n')
     expect(await readFile(join(worktree, 'apps', 'web', '.env'), 'utf8')).toBe('NESTED=1\n')
     expect(await readFile(join(worktree, 'cache', 'artifact'), 'utf8')).toBe('cached\n')
+    expect(await readFile(join(worktree, 'case', '.ENV'), 'utf8')).toBe('CASE=1\n')
     expect(await readFile(join(worktree, 'mixed', 'local.txt'), 'utf8')).toBe('local\n')
     expect(await readFile(join(worktree, 'mixed', 'tracked.txt'), 'utf8')).toBe('tracked\n')
     expect(await readFile(join(worktree, 'parent', 'build', 'marker'), 'utf8')).toBe('built\n')

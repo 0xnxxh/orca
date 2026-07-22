@@ -18,6 +18,28 @@ type ListGitignoredEntriesOptions = {
   timeout: number
 }
 
+type GitExecError = Error & { code?: number | string }
+
+export async function getWorktreeIncludeIgnoreCase(
+  repoPath: string,
+  options: GitRuntimeOptions,
+  timeout: number
+): Promise<boolean> {
+  try {
+    const { stdout } = await gitExecFileAsync(['config', '--bool', 'core.ignoreCase'], {
+      ...gitOptionsForWorktree(repoPath, options),
+      timeout
+    })
+    return stdout.trim() === 'true'
+  } catch (error) {
+    const code = (error as GitExecError).code
+    if (code === 1 || code === '1') {
+      return false
+    }
+    throw error
+  }
+}
+
 export async function listGitignoredEntries(
   repoPath: string,
   options: GitRuntimeOptions,
@@ -53,16 +75,20 @@ export async function listGitignoredEntries(
   return entries
 }
 
-export function worktreeIncludePatternToGitPathspec(pattern: WorktreeIncludePattern): string {
+export function worktreeIncludePatternToGitPathspec(
+  pattern: WorktreeIncludePattern,
+  ignoreCase: boolean = false
+): string {
   // Why: our matcher treats `[` literally, while Git pathspec globs treat it as a character class opener.
   const body = pattern.body.replaceAll('[', '[[]')
-  return `:(glob)${pattern.anchored ? '' : '**/'}${body}`
+  return `:(${ignoreCase ? 'icase,' : ''}glob)${pattern.anchored ? '' : '**/'}${body}`
 }
 
 export function worktreeIncludePatternToGitDescendantPathspec(
-  pattern: WorktreeIncludePattern
+  pattern: WorktreeIncludePattern,
+  ignoreCase: boolean = false
 ): string {
-  return `${worktreeIncludePatternToGitPathspec(pattern)}/**`
+  return `${worktreeIncludePatternToGitPathspec(pattern, ignoreCase)}/**`
 }
 
 export function chunkWorktreeIncludePathspecs(

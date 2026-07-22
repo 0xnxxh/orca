@@ -8,7 +8,10 @@ import {
   getWorktreeIncludeGlobStepCount,
   matchesWorktreeIncludeGlob
 } from './worktree-include-glob'
-import { parseWorktreeIncludePatterns } from './worktree-include-pattern'
+import {
+  isIncludedByWorktreePatterns,
+  parseWorktreeIncludePatterns
+} from './worktree-include-pattern'
 import { gitExecFileAsync } from './runner'
 
 vi.mock('./runner', () => ({
@@ -23,8 +26,15 @@ function mockGit(options: {
   collapsedEntries?: string[]
   targetedEntries?: string[]
   ignored?: string[]
+  ignoreCase?: boolean
 }): void {
   gitExecFileAsyncMock.mockImplementation(async (args, execOptions) => {
+    if (args.includes('config')) {
+      if (options.ignoreCase === undefined) {
+        throw Object.assign(new Error('unset'), { code: 1 })
+      }
+      return { stdout: `${options.ignoreCase}\n`, stderr: '' }
+    }
     if (args.includes('ls-files')) {
       const entries = args.includes('--directory')
         ? (options.collapsedEntries ?? options.entries ?? [])
@@ -79,11 +89,37 @@ describe('parseWorktreeIncludePatterns', () => {
     expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, longNonMatch)).toBe(false)
   })
 
+  it('matches literals and globs case-insensitively when the repository requires it', () => {
+    const literal = parseWorktreeIncludePatterns('.env\n')
+    const glob = parseWorktreeIncludePatterns('config/**/secret.json\n')
+
+    expect(isIncludedByWorktreePatterns(literal, '.ENV', false, { remaining: 100 }, true)).toBe(
+      true
+    )
+    expect(
+      isIncludedByWorktreePatterns(
+        glob,
+        'CONFIG/LOCAL/SECRET.JSON',
+        false,
+        { remaining: 1_000 },
+        true
+      )
+    ).toBe(true)
+  })
+
   it('charges variable-width regex backtracking against the literal suffix', () => {
     const glob = compileWorktreeIncludeGlob(`*${'a'.repeat(1_000)}`)
 
     expect(getWorktreeIncludeGlobStepCount(glob, 'short')).toBe(6_006)
     expect(getWorktreeIncludeGlobStepCount(compileWorktreeIncludeGlob('prefix*'), 'short')).toBe(12)
+  })
+
+  it('charges directory-only rules that reject a root file before glob evaluation', () => {
+    const patterns = parseWorktreeIncludePatterns('dir-*/\n')
+
+    expect(() =>
+      isIncludedByWorktreePatterns(patterns, 'root-file', false, { remaining: 1 })
+    ).toThrow('matching exceeded its CPU budget')
   })
 
   it('rejects pathological pattern counts before worktree creation can fan out', () => {
@@ -153,7 +189,7 @@ describe('resolveWorktreeIncludePaths', () => {
       'cache'
     ])
 
-    expect(gitExecFileAsyncMock).toHaveBeenCalledTimes(3)
+    expect(gitExecFileAsyncMock).toHaveBeenCalledTimes(4)
     expect(
       gitExecFileAsyncMock.mock.calls.every(([, options]) => options.wslDistro === 'Ubuntu')
     ).toBe(true)
@@ -211,6 +247,22 @@ describe('resolveWorktreeIncludePaths', () => {
       '.env.production',
       'apps/web/.env.local'
     ])
+  })
+
+  it('uses Git case-folding for collapsed and targeted matches', async () => {
+    writeInclude('.env\n')
+    mockGit({
+      collapsedEntries: ['.ENV'],
+      targetedEntries: ['parent/.ENV'],
+      ignored: ['.ENV', 'parent/.ENV'],
+      ignoreCase: true
+    })
+
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.ENV', 'parent/.ENV'])
+    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
+      ([args]) => args.includes('ls-files') && !args.includes('--directory')
+    )?.[0]
+    expect(targetedArgs).toContain(':(icase,glob)**/.env')
   })
 
   it('honors dir-only patterns against directory entries', async () => {

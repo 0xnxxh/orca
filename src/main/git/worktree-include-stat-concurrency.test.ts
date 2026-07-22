@@ -49,7 +49,7 @@ describe('worktree include stat concurrency', () => {
 
     expect(peak).toBe(8)
     expect(lstatMock).toHaveBeenCalledTimes(25)
-    expect(gitExecFileAsync).toHaveBeenCalledTimes(1)
+    expect(gitExecFileAsync).toHaveBeenCalledTimes(2)
   })
 
   it('stops starting filesystem probes when the resolution deadline expires', async () => {
@@ -63,12 +63,13 @@ describe('worktree include stat concurrency', () => {
       }
       return new Promise(() => {})
     })
+    vi.mocked(gitExecFileAsync).mockRejectedValue(Object.assign(new Error('unset'), { code: 1 }))
 
     const resolution = resolveWorktreeIncludePaths('/repo')
     await vi.advanceTimersByTimeAsync(15_000)
 
     await expect(resolution).resolves.toEqual([])
     expect(lstatMock).toHaveBeenCalledTimes(9)
-    expect(gitExecFileAsync).not.toHaveBeenCalled()
+    expect(gitExecFileAsync).toHaveBeenCalledTimes(1)
   })
 })

@@ -4,6 +4,7 @@ import { checkIgnoredPaths } from './check-ignored-paths'
 import type { GitRuntimeOptions } from './git-runtime-options'
 import {
   chunkWorktreeIncludePathspecs,
+  getWorktreeIncludeIgnoreCase,
   listGitignoredEntries,
   worktreeIncludePatternToGitDescendantPathspec,
   worktreeIncludePatternToGitPathspec,
@@ -113,6 +114,11 @@ export async function resolveWorktreeIncludePaths(
     if (!patterns.some((pattern) => !pattern.negated)) {
       return []
     }
+    const ignoreCaseTimeout = deadline - Date.now()
+    if (ignoreCaseTimeout <= 0) {
+      throw new Error(`${WORKTREE_INCLUDE_FILE} resolution timed out`)
+    }
+    const ignoreCase = await getWorktreeIncludeIgnoreCase(repoPath, options, ignoreCaseTimeout)
 
     const candidates = new Map<string, GitignoredEntry>()
     let candidateBytes = 0
@@ -134,7 +140,13 @@ export async function resolveWorktreeIncludePaths(
     const addCandidate = (entry: GitignoredEntry): void => {
       if (
         isSafeIncludeCandidate(entry.relativePath) &&
-        isIncludedByWorktreePatterns(patterns, entry.relativePath, entry.isDirectory, matchBudget)
+        isIncludedByWorktreePatterns(
+          patterns,
+          entry.relativePath,
+          entry.isDirectory,
+          matchBudget,
+          ignoreCase
+        )
       ) {
         if (hasCandidateDirectoryAncestor(candidates, entry.relativePath)) {
           return
@@ -246,14 +258,14 @@ export async function resolveWorktreeIncludePaths(
     // Why: Git 2.25's directory collapsing can stop at an untracked parent, so targeted scans preserve nested matches without expanding unrelated ignored trees.
     const filePathspecs = [
       ...broadPatterns.flatMap((pattern) => [
-        ...(pattern.dirOnly ? [] : [worktreeIncludePatternToGitPathspec(pattern)]),
+        ...(pattern.dirOnly ? [] : [worktreeIncludePatternToGitPathspec(pattern, ignoreCase)]),
         // Why: files beneath a matching directory expose directory matches that
         // Git 2.25 otherwise hides behind a collapsed ignored parent.
-        worktreeIncludePatternToGitDescendantPathspec(pattern)
+        worktreeIncludePatternToGitDescendantPathspec(pattern, ignoreCase)
       ]),
       ...Array.from(anchoredLiteralDirectories.entries())
         .filter(([relativePath]) => !ignoredAnchoredDirectories.has(relativePath))
-        .map(([, pattern]) => worktreeIncludePatternToGitDescendantPathspec(pattern))
+        .map(([, pattern]) => worktreeIncludePatternToGitDescendantPathspec(pattern, ignoreCase))
     ]
     if (filePathspecs.length > 0) {
       // Why: collapsed directories are already copied as units; excluding them

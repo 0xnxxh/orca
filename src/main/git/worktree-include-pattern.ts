@@ -13,6 +13,7 @@ export type WorktreeIncludePattern = {
   negated: boolean
   /** Pattern with `!`, leading `/`, and trailing `/` stripped. */
   body: string
+  caseFoldedBody: string
   dirOnly: boolean
   anchored: boolean
   hasGlob: boolean
@@ -41,6 +42,7 @@ export function parseWorktreeIncludePatterns(content: string): WorktreeIncludePa
     patterns.push({
       negated,
       body: trimmed,
+      caseFoldedBody: trimmed.toLowerCase(),
       dirOnly,
       anchored,
       hasGlob,
@@ -63,34 +65,39 @@ function spendMatchBudget(budget: WorktreeIncludeMatchBudget, steps: number): vo
 function globMatches(
   pattern: WorktreeIncludePattern,
   subject: string,
-  budget: WorktreeIncludeMatchBudget
+  budget: WorktreeIncludeMatchBudget,
+  ignoreCase: boolean
 ): boolean {
   if (pattern.glob === null) {
     return false
   }
   spendMatchBudget(budget, getWorktreeIncludeGlobStepCount(pattern.glob, subject))
-  return matchesWorktreeIncludeGlob(pattern.glob, subject)
+  return matchesWorktreeIncludeGlob(pattern.glob, subject, ignoreCase)
 }
 
 function patternMatches(
   pattern: WorktreeIncludePattern,
   relativePath: string,
+  caseFoldedRelativePath: string,
   isDirectory: boolean,
-  budget: WorktreeIncludeMatchBudget
+  budget: WorktreeIncludeMatchBudget,
+  ignoreCase: boolean
 ): boolean {
+  // Why: directory-only rules can reject root files before glob evaluation, so charge the otherwise-free scan.
+  spendMatchBudget(budget, relativePath.length + 1)
   if (!pattern.hasGlob) {
+    const matchPath = ignoreCase ? caseFoldedRelativePath : relativePath
+    const matchBody = ignoreCase ? pattern.caseFoldedBody : pattern.body
     if (pattern.anchored) {
-      spendMatchBudget(budget, relativePath.length + 1)
       return (
-        (relativePath === pattern.body && (!pattern.dirOnly || isDirectory)) ||
-        relativePath.startsWith(`${pattern.body}/`)
+        (matchPath === matchBody && (!pattern.dirOnly || isDirectory)) ||
+        matchPath.startsWith(`${matchBody}/`)
       )
     }
-    const segments = relativePath.split('/')
+    const segments = matchPath.split('/')
     const lastMatchableIndex =
       pattern.dirOnly && !isDirectory ? segments.length - 2 : segments.length - 1
-    spendMatchBudget(budget, relativePath.length + 1)
-    return segments.slice(0, lastMatchableIndex + 1).includes(pattern.body)
+    return segments.slice(0, lastMatchableIndex + 1).includes(matchBody)
   }
 
   const segments = relativePath.split('/')
@@ -101,7 +108,7 @@ function patternMatches(
   }
   if (!pattern.anchored) {
     for (let index = 0; index <= lastMatchableIndex; index++) {
-      if (globMatches(pattern, segments[index], budget)) {
+      if (globMatches(pattern, segments[index], budget, ignoreCase)) {
         return true
       }
     }
@@ -111,7 +118,7 @@ function patternMatches(
   let prefix = ''
   for (let index = 0; index <= lastMatchableIndex; index++) {
     prefix = prefix ? `${prefix}/${segments[index]}` : segments[index]
-    if (globMatches(pattern, prefix, budget)) {
+    if (globMatches(pattern, prefix, budget, ignoreCase)) {
       return true
     }
   }
@@ -122,12 +129,16 @@ export function isIncludedByWorktreePatterns(
   patterns: readonly WorktreeIncludePattern[],
   relativePath: string,
   isDirectory: boolean,
-  budget: WorktreeIncludeMatchBudget
+  budget: WorktreeIncludeMatchBudget,
+  ignoreCase: boolean = false
 ): boolean {
   // Why: gitignore patterns are order-sensitive, so negations must use last-match-wins.
   let included = false
+  const caseFoldedRelativePath = ignoreCase ? relativePath.toLowerCase() : relativePath
   for (const pattern of patterns) {
-    if (patternMatches(pattern, relativePath, isDirectory, budget)) {
+    if (
+      patternMatches(pattern, relativePath, caseFoldedRelativePath, isDirectory, budget, ignoreCase)
+    ) {
       included = !pattern.negated
     }
   }
