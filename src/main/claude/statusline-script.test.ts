@@ -148,8 +148,14 @@ describe('statusline curl throttle (posix)', () => {
     expect(durationIndex).toBeLessThan(intervalIndex)
     expect(intervalIndex).toBeLessThan(curlIndex)
     // Fail-open shape: non-numeric date output or stamp content must never suppress the post.
-    expect(script).toContain('case "$orca_statusline_now" in \'\'|*[!0-9]*) orca_statusline_now=')
-    expect(script).toContain('case "$orca_statusline_last" in \'\'|*[!0-9]*) orca_statusline_last=')
+    // Why: the allow-list (not a mere digits check) matters — leading-zero values like 008 are
+    // invalid octal inside $(( )) and abort the whole script under dash, wedging the stamp.
+    expect(script).toContain(
+      'case "$orca_statusline_now" in 0|[1-9]|[1-9][0-9]*) ;; *) orca_statusline_now='
+    )
+    expect(script).toContain(
+      'case "$orca_statusline_last" in 0|[1-9]|[1-9][0-9]*) ;; *) orca_statusline_last='
+    )
   })
 })
 
@@ -260,6 +266,16 @@ describe.skipIf(process.platform === 'win32')('statusline curl throttle (posix b
     await runScript(scriptPath, dir, rateLimitPayload(1_000))
     expect(lineCount(curlLog)).toBe(1)
     expect(readFileSync(stampPathFor(dir), 'utf8')).toMatch(/^[0-9]+$/)
+  })
+
+  it('fails open and repairs a leading-zero stamp instead of dying in arithmetic', async () => {
+    const { scriptPath, dir, curlLog } = makeHarness()
+    // Why: 008 is all-digits but invalid octal inside $(( )) — under dash the old digits-only
+    // check made the script abort before rewriting the stamp, wedging this pane's feed dark.
+    writeFileSync(stampPathFor(dir), '008')
+    await runScript(scriptPath, dir, rateLimitPayload(1_000))
+    expect(lineCount(curlLog)).toBe(1)
+    expect(readFileSync(stampPathFor(dir), 'utf8')).toBe('1')
   })
 
   it('uses the clock fallback when the payload omits session duration', async () => {

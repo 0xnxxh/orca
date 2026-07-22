@@ -126,11 +126,14 @@ export function getManagedStatusLineScript(target: 'local' | 'posix' = 'local'):
     'if [ -z "$orca_statusline_now" ]; then',
     '  orca_statusline_now=$(date +%s 2>/dev/null) || orca_statusline_now=',
     'fi',
-    'case "$orca_statusline_now" in \'\'|*[!0-9]*) orca_statusline_now= ;; esac',
+    // Why: leading zeros read as octal inside $(( )), and a bad constant (008) is FATAL in dash —
+    // the script would die before rewriting the stamp, wedging the pane dark. Allow-list canonical
+    // decimals so any malformed value fails open to posting instead.
+    'case "$orca_statusline_now" in 0|[1-9]|[1-9][0-9]*) ;; *) orca_statusline_now= ;; esac',
     'if [ -n "$orca_statusline_now" ] && [ -f "$orca_statusline_stamp" ]; then',
     '  orca_statusline_last=',
     '  IFS= read -r orca_statusline_last <"$orca_statusline_stamp" 2>/dev/null || :',
-    '  case "$orca_statusline_last" in \'\'|*[!0-9]*) orca_statusline_last= ;; esac',
+    '  case "$orca_statusline_last" in 0|[1-9]|[1-9][0-9]*) ;; *) orca_statusline_last= ;; esac',
     '  if [ "${#orca_statusline_last}" -gt 15 ]; then orca_statusline_last=; fi',
     '  if [ -n "$orca_statusline_last" ]; then',
     '    orca_statusline_elapsed=$((orca_statusline_now - orca_statusline_last))',
