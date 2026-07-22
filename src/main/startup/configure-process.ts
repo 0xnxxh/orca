@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { getVersionManagerBinPaths } from '../codex-cli/command'
+import { recordDurableCrashBreadcrumb } from '../crash-reporting/durable-crash-breadcrumb'
 import { getMainE2EConfig } from '../e2e-config'
 
 const DEV_PARENT_SHUTDOWN_GRACE_MS = 3000
@@ -90,6 +91,26 @@ export function resetDevParentShutdownRequestForTests(): void {
   devParentShutdownRequested = false
 }
 
+/** Durably record a main-process fatal/near-fatal error before default handling runs. Exported for tests. */
+export function recordFatalMainProcessError(kind: string, error: unknown): void {
+  try {
+    const err = error instanceof Error ? error : null
+    recordDurableCrashBreadcrumb(
+      kind,
+      {
+        errorName: err?.name ?? typeof error,
+        errorMessage: (err?.message ?? String(error)).slice(0, 500),
+        errorStack: (err?.stack ?? '').split('\n').slice(0, 12).join('\n'),
+        errorCode: String((error as NodeJS.ErrnoException | null)?.code ?? '')
+      },
+      kind
+    )
+  } catch {
+    // Why: diagnostics must never turn a fatal-error report into a second fault.
+  }
+  console.error(`[${kind}]`, error)
+}
+
 export function installUncaughtPipeErrorGuard(): void {
   const onUncaughtException = (error: unknown): void => {
     if (
@@ -102,6 +123,8 @@ export function installUncaughtPipeErrorGuard(): void {
       return
     }
 
+    // Why (issue #9441): the re-throw below exits with a clean code and no macOS crash report; record durably first or the death is undiagnosable in the field.
+    recordFatalMainProcessError('main_uncaught_exception', error)
     process.off('uncaughtException', onUncaughtException)
     // Why: throwing inside an uncaughtException handler exits with status 7 and hides the fault; re-throw next tick for the real stack.
     setImmediate(() => {
@@ -110,6 +133,19 @@ export function installUncaughtPipeErrorGuard(): void {
   }
 
   process.on('uncaughtException', onUncaughtException)
+}
+
+/** Keep one failed background promise from silently killing the whole app.
+ *
+ * Node's default kills the process on an unhandled rejection. Large-profile startup restore runs
+ * hundreds of concurrent async chains (worktree scans, terminal reconnects) in main; a single
+ * rejection in any of them exited the app with no crash report (issue #9441). Log it durably and
+ * stay alive — dying cannot be less disruptive than continuing with one failed background task.
+ */
+export function installUnhandledRejectionLogging(): void {
+  process.on('unhandledRejection', (reason) => {
+    recordFatalMainProcessError('main_unhandled_rejection', reason)
+  })
 }
 
 export function patchPackagedProcessPath(): void {

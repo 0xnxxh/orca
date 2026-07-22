@@ -596,3 +596,74 @@ describe('enableMainProcessGpuFeatures', () => {
     expect(app.commandLine.appendSwitch).toHaveBeenCalledWith('enable-features', 'ExistingFeature')
   })
 })
+
+describe('main-process fatal error guards (issue #9441)', () => {
+  it('installUnhandledRejectionLogging records durably and keeps the process alive', async () => {
+    vi.resetModules()
+    const record = vi.fn()
+    vi.doMock('../crash-reporting/durable-crash-breadcrumb', () => ({
+      recordDurableCrashBreadcrumb: record
+    }))
+    const { installUnhandledRejectionLogging } = await import('./configure-process')
+    const before = process.listeners('unhandledRejection').length
+    installUnhandledRejectionLogging()
+    const listeners = process.listeners('unhandledRejection')
+    expect(listeners.length).toBe(before + 1)
+    const listener = listeners.at(-1) as (reason: unknown, p: Promise<unknown>) => void
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // Why: invoking the listener directly must not throw — a throwing handler would still kill main.
+      expect(() =>
+        listener(Object.assign(new Error('spawn EAGAIN'), { code: 'EAGAIN' }), Promise.resolve())
+      ).not.toThrow()
+    } finally {
+      process.removeListener('unhandledRejection', listener as never)
+      consoleError.mockRestore()
+    }
+    expect(record).toHaveBeenCalledWith(
+      'main_unhandled_rejection',
+      expect.objectContaining({ errorMessage: 'spawn EAGAIN', errorCode: 'EAGAIN' }),
+      'main_unhandled_rejection'
+    )
+  })
+
+  it('recordFatalMainProcessError never throws even when the breadcrumb sink fails', async () => {
+    vi.resetModules()
+    vi.doMock('../crash-reporting/durable-crash-breadcrumb', () => ({
+      recordDurableCrashBreadcrumb: vi.fn(() => {
+        throw new Error('sink offline')
+      })
+    }))
+    const { recordFatalMainProcessError } = await import('./configure-process')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      expect(() =>
+        recordFatalMainProcessError('main_uncaught_exception', 'not-an-error')
+      ).not.toThrow()
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it('uncaught pipe errors stay swallowed without a durable record', async () => {
+    vi.resetModules()
+    const record = vi.fn()
+    vi.doMock('../crash-reporting/durable-crash-breadcrumb', () => ({
+      recordDurableCrashBreadcrumb: record
+    }))
+    const { installUncaughtPipeErrorGuard } = await import('./configure-process')
+    const before = process.listeners('uncaughtException').length
+    installUncaughtPipeErrorGuard()
+    const listeners = process.listeners('uncaughtException')
+    expect(listeners.length).toBe(before + 1)
+    const listener = listeners.at(-1) as (error: unknown) => void
+    try {
+      listener(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))
+    } finally {
+      process.removeListener('uncaughtException', listener as never)
+    }
+    // Why: EPIPE/EIO are expected pipe churn; recording them would flood the breadcrumb store.
+    expect(record).not.toHaveBeenCalled()
+    // The guard must still be installed after a swallowed pipe error (only real errors detach it).
+  })
+})
