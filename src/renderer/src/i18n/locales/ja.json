@@ -4804,6 +4804,17 @@
           "cancel": "キャンセル",
           "forget": "Orcaから削除",
           "reconnectAndDelete": "再接続して削除"
+        },
+        "FullDiskAccessNudge": {
+          "granted": "Full Disk Access granted",
+          "openedPrivacy": "Opened macOS Privacy & Security",
+          "requestError": "Could not open System Settings",
+          "title": "Reduce macOS permission prompts",
+          "dismissAriaLabel": "Dismiss Full Disk Access suggestion",
+          "dismiss": "Dismiss",
+          "body": "Grant Full Disk Access so macOS stops asking when this copy of Orca reads protected app and folder data.",
+          "opening": "Opening…",
+          "openSystemSettings": "Open System Settings"
         }
       },
       "shared": {
