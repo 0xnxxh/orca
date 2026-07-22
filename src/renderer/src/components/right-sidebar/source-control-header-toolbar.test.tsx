@@ -32,10 +32,6 @@ function renderToolbar(
       filterExpanded={false}
       onFilterQueryChange={vi.fn()}
       onFilterExpandedChange={vi.fn()}
-      visibleCreatePrHeaderAction={null}
-      isCreatePrIntentInFlight={false}
-      isCreatingPr={false}
-      onCreatePrHeaderClick={vi.fn()}
       sourceControlViewMode="list"
       viewModeToggleDisabled={false}
       onToggleViewMode={vi.fn()}
@@ -61,6 +57,7 @@ describe('SourceControlHeaderToolbar', () => {
     expect(markup).toContain('aria-label="Current branch: brennanb2025/source-control-branch-name"')
     expect(markup).toContain('tabindex="0"')
     expect(markup).toContain('min-w-0 truncate')
+    expect(markup).not.toContain('Create PR')
   })
 
   it('renders detached HEAD in the same identity slot', () => {

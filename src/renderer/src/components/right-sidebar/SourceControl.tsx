@@ -264,7 +264,6 @@ import {
   resolveCreatePrIntentRemoteStep,
   type CreatePrIntentRunToken
 } from './source-control-create-pr-intent-flow'
-import { resolveVisibleCreatePrHeaderAction } from './source-control-create-pr-intent-state'
 import { resolveBlockedCreateReviewNoticeMessage } from './source-control-create-review-blocked-action'
 import {
   buildLoadingHostedReviewCreationEligibility,
@@ -4231,10 +4230,6 @@ function SourceControlInner(): React.JSX.Element {
     (!createPrHeaderAction.disabled || isCreatingPr || prGenerating)
       ? createPrHeaderAction
       : null
-  const visibleCreatePrHeaderAction = resolveVisibleCreatePrHeaderAction({
-    createPrHeaderAction
-  })
-
   const dropdownItems: DropdownEntry[] = useMemo(
     () =>
       resolveDropdownItems({
@@ -4701,19 +4696,6 @@ function SourceControlInner(): React.JSX.Element {
     remoteStatusForActions,
     runCreatePrIntent
   ])
-
-  const handleCreatePrHeaderClick = useCallback((): void => {
-    if (!createPrHeaderAction || createPrHeaderAction.disabled) {
-      return
-    }
-    if (createPrHeaderAction.kind === 'create_pr') {
-      void handleCreatePullRequest()
-      return
-    }
-    if (createPrHeaderAction.kind === 'create_pr_intent') {
-      void runCreatePrIntent()
-    }
-  }, [createPrHeaderAction, handleCreatePullRequest, runCreatePrIntent])
 
   const branchCompareInFlightRef = useRef(false)
   const branchCompareRerunRef = useRef(false)
@@ -5449,10 +5431,6 @@ function SourceControlInner(): React.JSX.Element {
           filterExpanded={filterExpanded}
           onFilterQueryChange={setFilterQuery}
           onFilterExpandedChange={setFilterExpanded}
-          visibleCreatePrHeaderAction={visibleCreatePrHeaderAction}
-          isCreatePrIntentInFlight={isCreatePrIntentInFlight}
-          isCreatingPr={isCreatingPr || prGenerating}
-          onCreatePrHeaderClick={handleCreatePrHeaderClick}
           sourceControlViewMode={sourceControlViewMode}
           viewModeToggleDisabled={settings === null}
           onToggleViewMode={handleToggleSourceControlViewMode}
