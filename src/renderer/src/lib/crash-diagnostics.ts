@@ -4,9 +4,14 @@ import type {
 } from '../../../shared/crash-reporting'
 import { getBrowserWebviewMemoryProfile } from '../components/browser-pane/webview-registry'
 import { recordRendererCrashBreadcrumb } from './crash-breadcrumb-recorder'
+import { collectRendererMemoryProfileCounts } from './renderer-memory-profile'
 
 const RENDERER_MEMORY_SAMPLE_INTERVAL_MS = 60_000
 const BYTES_PER_MEGABYTE = 1024 * 1024
+// Why: OOM crash reports show the heap pinned at the limit with no clue what
+// grew; a one-shot detailed breadcrumb per threshold names the leaking
+// subsystem while costing nothing in healthy sessions.
+const RENDERER_MEMORY_HIGHWATER_RATIOS = [0.6, 0.8] as const
 
 type BrowserPerformanceMemory = {
   usedJSHeapSize?: number
@@ -16,6 +21,7 @@ type BrowserPerformanceMemory = {
 
 let rendererCrashDiagnosticsInstalled = false
 let rendererMemoryInterval: number | null = null
+const emittedHighwaterRatios = new Set<number>()
 
 // Why re-exported from a leaf module: terminal modules and their e2e-visible
 // import chains need breadcrumb recording without this file's import.meta /
@@ -55,6 +61,7 @@ function disposeRendererCrashDiagnostics(): void {
     window.clearInterval(rendererMemoryInterval)
     rendererMemoryInterval = null
   }
+  emittedHighwaterRatios.clear()
 }
 
 if (typeof import.meta !== 'undefined' && import.meta.hot) {
@@ -112,6 +119,41 @@ function recordRendererMemory(reason: string): void {
       registeredBrowserGuests: browserWebviews.registeredBrowserGuestCount
     })
   )
+  recordRendererMemoryHighwater(memory)
+}
+
+function recordRendererMemoryHighwater(memory: BrowserPerformanceMemory): void {
+  const used = memory.usedJSHeapSize
+  const limit = memory.jsHeapSizeLimit
+  // Why: NaN would satisfy `ratio < threshold` for nothing, emitting both
+  // levels spuriously and disarming the one-shot for the session.
+  if (!isFiniteHeapBytes(used) || !isFiniteHeapBytes(limit) || limit <= 0) {
+    return
+  }
+  const ratio = used / limit
+  for (const threshold of RENDERER_MEMORY_HIGHWATER_RATIOS) {
+    if (ratio < threshold || emittedHighwaterRatios.has(threshold)) {
+      continue
+    }
+    emittedHighwaterRatios.add(threshold)
+    recordRendererCrashBreadcrumb(
+      'renderer_memory_highwater',
+      compactBreadcrumbData({
+        thresholdPct: Math.round(threshold * 100),
+        usedHeapMB: toMegabytes(used),
+        totalHeapMB: toMegabytes(memory.totalJSHeapSize),
+        heapLimitMB: toMegabytes(limit),
+        // Why: DOM census is O(nodes); acceptable at most twice per session.
+        domNodes: document.getElementsByTagName('*').length,
+        terminalElements: document.querySelectorAll('.xterm').length,
+        ...collectRendererMemoryProfileCounts()
+      })
+    )
+  }
+}
+
+function isFiniteHeapBytes(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
 
 function getPerformanceMemory(): BrowserPerformanceMemory | undefined {
