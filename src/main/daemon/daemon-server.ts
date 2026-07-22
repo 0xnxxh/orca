@@ -57,9 +57,9 @@ export type DaemonServerOptions = {
   }
   ptySpawnHealthCheck?: () => Promise<void>
   preparePtySpawn?: () => Promise<void>
-  // Why: login-session death detection (#7936) probes on PTY-exit bursts and fresh client hellos.
+  // Why: login-session death detection (#7936) probes on PTY-exit bursts and fresh app connections.
   onPtySessionExit?: (sessionId: string) => void
-  onClientHello?: () => void
+  onAuthenticatedClientPair?: () => void
   log?: DaemonFileLog
   spawnSubprocess: (opts: {
     sessionId: string
@@ -104,7 +104,7 @@ export class DaemonServer {
   private startedAtMs: number | null
   private protocolVersion: number
   private onIdleShutdown: () => void
-  private onClientHello: () => void
+  private onAuthenticatedClientPair: () => void
   private ptySpawnHealthCheck: () => Promise<void>
   private preparePtySpawn: () => Promise<void>
   private log: DaemonFileLog
@@ -184,7 +184,7 @@ export class DaemonServer {
       now: () => Date.now()
     }
     this.token = randomUUID()
-    this.onClientHello = opts.onClientHello ?? (() => {})
+    this.onAuthenticatedClientPair = opts.onAuthenticatedClientPair ?? (() => {})
     this.host = new TerminalHost({
       spawnSubprocess: opts.spawnSubprocess,
       ...(opts.onPtySessionExit ? { onSessionReaped: opts.onPtySessionExit } : {})
@@ -446,7 +446,6 @@ export class DaemonServer {
     }
 
     this.log.log('client-hello-accepted', { role: hello.role, clientId: hello.clientId })
-    this.onClientHello()
     socket.write(
       encodeNdjson({
         type: 'hello',
@@ -490,6 +489,8 @@ export class DaemonServer {
       }
       this.setupStreamSocket(socket, client)
       client.authenticatedPairEstablished = true
+      // Why: one-shot health probes authenticate only a control socket; they are not fresh app activity.
+      this.onAuthenticatedClientPair()
       // A complete app connection (unlike a probe) re-owns the endpoint and cancels pending retirement.
       this.initialAdoptionDeadlineMs = null
       this.retirementRequested = false

@@ -239,7 +239,7 @@ async function main(): Promise<void> {
     ...(deathWatch
       ? {
           onPtySessionExit: () => deathWatch.notifyPtyExit(),
-          onClientHello: () => deathWatch.notifyClientActivity()
+          onAuthenticatedClientPair: () => deathWatch.notifyClientActivity()
         }
       : {}),
     spawnSubprocess: (opts) => createPtySubprocess(opts),
