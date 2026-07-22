@@ -1,24 +1,30 @@
 import { net } from 'electron'
 import { compareVersions, isValidVersion } from '../updater-fallback'
 
-// Why: the Android app is distributed as an APK from GitHub Releases, so the
-// release list IS the source of truth for "latest Android build" — never a
-// hand-maintained constant. iOS is deliberately absent: it ships through the
+// Why: published GitHub releases with APK assets are the Android source of truth,
+// never a hand-maintained constant. iOS is deliberately absent: it ships through the
 // App Store, which auto-updates, and the hard minimum-version cutoff is handled
 // separately by ProtocolBlockScreen, so no soft iOS nudge is derived here.
 
-const RELEASES_API_URL = 'https://api.github.com/repos/stablyai/orca/releases?per_page=100'
+const GITHUB_API_ROOT = 'https://api.github.com/repos/stablyai/orca'
+const ANDROID_TAG_REFS_URL = `${GITHUB_API_ROOT}/git/matching-refs/tags/mobile-android-v`
 const FETCH_TIMEOUT_MS = 5000
 // Why: a mobile build ships ~monthly, so a long TTL keeps this to a few
 // unauthenticated GitHub calls per day per host while staying fresh enough.
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
 // Why: only exact Android release tags count, so suffixed RC builds never nudge stable users.
-const ANDROID_TAG_RE = /^mobile-android-v(\d+\.\d+\.\d+)$/
+const ANDROID_TAG_REF_RE = /^refs\/tags\/mobile-android-v(\d+\.\d+\.\d+)$/
+// Why: malformed/orphaned tags must not turn one refresh into unbounded API fanout.
+const MAX_RELEASE_CANDIDATES = 3
 
-type ReleaseFeedEntry = {
+type AndroidTagRef = {
+  ref?: unknown
+}
+
+type AndroidRelease = {
   tag_name?: unknown
   draft?: unknown
-  prerelease?: unknown
+  assets?: unknown
 }
 
 type CacheState = {
@@ -26,54 +32,92 @@ type CacheState = {
   fetchedAt: number
 }
 
-type ReleaseFeedResponse = Pick<Response, 'ok' | 'json'>
-type ReleaseFeedFetcher = () => Promise<ReleaseFeedResponse>
+type GitHubResponse = Pick<Response, 'ok' | 'status' | 'json'>
+type GitHubFetcher = (url: string, signal: AbortSignal) => Promise<GitHubResponse>
 
-const defaultReleaseFeedFetcher: ReleaseFeedFetcher = () =>
-  net.fetch(RELEASES_API_URL, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'orca-runtime' },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+const defaultGitHubFetcher: GitHubFetcher = (url, signal) =>
+  net.fetch(url, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'orca-runtime',
+      'X-GitHub-Api-Version': '2022-11-28'
+    },
+    signal
   })
 
 // Module-level cache shared across every status.get on this host.
 let cache: CacheState | null = null
 let inFlight: Promise<void> | null = null
-let releaseFeedFetcher = defaultReleaseFeedFetcher
+let githubFetcher = defaultGitHubFetcher
 
-export function extractLatestAndroidVersion(entries: ReleaseFeedEntry[]): string | null {
-  let latest: string | null = null
+export function extractAndroidVersionCandidates(entries: AndroidTagRef[]): string[] {
+  const versions = new Set<string>()
   for (const entry of entries) {
-    // Mobile releases intentionally use GitHub's prerelease flag so they do not
-    // replace the desktop's latest release; the strict tag defines this channel.
-    if (entry.draft === true) {
+    if (typeof entry.ref !== 'string') {
       continue
     }
-    if (typeof entry.tag_name !== 'string') {
-      continue
-    }
-    const match = entry.tag_name.match(ANDROID_TAG_RE)
+    const match = entry.ref.match(ANDROID_TAG_REF_RE)
     const version = match?.[1]
     if (!version || !isValidVersion(version)) {
       continue
     }
-    if (latest === null || compareVersions(version, latest) > 0) {
-      latest = version
-    }
+    versions.add(version)
   }
-  return latest
+  return [...versions].sort((left, right) => compareVersions(right, left))
+}
+
+function releaseHasAndroidApk(release: AndroidRelease, version: string): boolean {
+  if (release.draft !== false || release.tag_name !== `mobile-android-v${version}`) {
+    return false
+  }
+  if (!Array.isArray(release.assets)) {
+    return false
+  }
+  return release.assets.some((asset) => {
+    if (typeof asset !== 'object' || asset === null) {
+      return false
+    }
+    const name = (asset as { name?: unknown }).name
+    return typeof name === 'string' && name.toLowerCase().endsWith('.apk')
+  })
 }
 
 async function fetchLatestAndroidVersion(): Promise<string | null> {
+  const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS)
   try {
-    const response = await releaseFeedFetcher()
-    if (!response.ok) {
+    const refsResponse = await githubFetcher(ANDROID_TAG_REFS_URL, signal)
+    if (!refsResponse.ok) {
       return null
     }
-    const body = (await response.json()) as unknown
-    if (!Array.isArray(body)) {
+    const refsBody = (await refsResponse.json()) as unknown
+    if (!Array.isArray(refsBody)) {
       return null
     }
-    return extractLatestAndroidVersion(body as ReleaseFeedEntry[])
+    const candidates = extractAndroidVersionCandidates(refsBody as AndroidTagRef[]).slice(
+      0,
+      MAX_RELEASE_CANDIDATES
+    )
+    for (const version of candidates) {
+      const tag = `mobile-android-v${version}`
+      const releaseUrl = `${GITHUB_API_ROOT}/releases/tags/${encodeURIComponent(tag)}`
+      const releaseResponse = await githubFetcher(releaseUrl, signal)
+      if (!releaseResponse.ok) {
+        // A tag can briefly precede its release; other failures should not fan out requests.
+        if (releaseResponse.status === 404) {
+          continue
+        }
+        return null
+      }
+      const release = (await releaseResponse.json()) as unknown
+      if (
+        typeof release === 'object' &&
+        release !== null &&
+        releaseHasAndroidApk(release as AndroidRelease, version)
+      ) {
+        return version
+      }
+    }
+    return null
   } catch {
     // Why: fail open — an unreachable/rate-limited/offline host simply advertises
     // no recommendation, and mobile shows no banner.
@@ -119,7 +163,7 @@ export function isAndroidReleaseFeedRefreshPending(): boolean {
 export function __resetAndroidReleaseFeedCacheForTests(): void {
   cache = null
   inFlight = null
-  releaseFeedFetcher = defaultReleaseFeedFetcher
+  githubFetcher = defaultGitHubFetcher
 }
 
 // Test-only: seed the cache with a fresh value so status.get reads it without
@@ -129,6 +173,6 @@ export function __setAndroidReleaseFeedCacheForTests(version: string | null): vo
   inFlight = null
 }
 
-export function __setAndroidReleaseFeedFetcherForTests(fetcher: ReleaseFeedFetcher): void {
-  releaseFeedFetcher = fetcher
+export function __setAndroidReleaseFeedFetcherForTests(fetcher: GitHubFetcher): void {
+  githubFetcher = fetcher
 }

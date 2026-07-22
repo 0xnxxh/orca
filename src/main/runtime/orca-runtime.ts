@@ -3397,7 +3397,7 @@ export class OrcaRuntimeService {
       // omit rather than fabricate when running outside that bootstrap (tests).
       appVersion: process.env.ORCA_APP_VERSION,
       // Why: derived live from GitHub Releases (cached, fail-open) instead of a
-      // hand-bumped constant, so the Android nudge can never go stale; omitted
+      // hand-bumped constant, so releases need no recommendation bookkeeping; omitted
       // entirely when unknown. iOS defers to the App Store (no soft nudge).
       recommendedMobileAppVersions: mobileRecommendation.versions,
       recommendedMobileAppVersionsPending: mobileRecommendation.pending,
