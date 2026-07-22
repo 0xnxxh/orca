@@ -89,6 +89,21 @@ describe('parseWorktreeIncludePatterns', () => {
     expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, longNonMatch)).toBe(false)
   })
 
+  it('keeps recursive directory globs on segment boundaries', () => {
+    const leading = compileWorktreeIncludeGlob('**/.env')
+    const nested = compileWorktreeIncludeGlob('foo/**/bar')
+    const adjacent = compileWorktreeIncludeGlob('foo/**bar')
+
+    expect(matchesWorktreeIncludeGlob(leading, '.env')).toBe(true)
+    expect(matchesWorktreeIncludeGlob(leading, 'nested/.env')).toBe(true)
+    expect(matchesWorktreeIncludeGlob(leading, 'my.env')).toBe(false)
+    expect(matchesWorktreeIncludeGlob(nested, 'foo/bar')).toBe(true)
+    expect(matchesWorktreeIncludeGlob(nested, 'foo/nested/bar')).toBe(true)
+    expect(matchesWorktreeIncludeGlob(nested, 'foo/xbar')).toBe(false)
+    expect(matchesWorktreeIncludeGlob(adjacent, 'foo/xbar')).toBe(true)
+    expect(matchesWorktreeIncludeGlob(adjacent, 'foo/x/bar')).toBe(false)
+  })
+
   it('matches literals and globs case-insensitively when the repository requires it', () => {
     const literal = parseWorktreeIncludePatterns('.env\n')
     const glob = parseWorktreeIncludePatterns('config/**/secret.json\n')
@@ -302,6 +317,32 @@ describe('resolveWorktreeIncludePaths', () => {
     )?.[0]
     expect(targetedArgs).toContain(':(glob)**/node_modules/**')
     expect(targetedArgs).toContain(':(exclude,literal)node_modules')
+  })
+
+  it('does not expand a collapsed directory excluded by trailing negation', async () => {
+    writeInclude('*\n!node_modules/\n')
+    mockGit({ collapsedEntries: ['node_modules/', 'cache/'], ignored: ['cache'] })
+
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['cache'])
+    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
+      ([args]) => args.includes('ls-files') && !args.includes('--directory')
+    )?.[0]
+    expect(targetedArgs).toContain(':(exclude,literal)node_modules')
+  })
+
+  it('scans an excluded directory when a later include can restore a descendant', async () => {
+    writeInclude('*\n!node_modules/\n.env\n')
+    mockGit({
+      collapsedEntries: ['node_modules/'],
+      targetedEntries: ['node_modules/pkg/.env'],
+      ignored: ['node_modules/pkg/.env']
+    })
+
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['node_modules/pkg/.env'])
+    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
+      ([args]) => args.includes('ls-files') && !args.includes('--directory')
+    )?.[0]
+    expect(targetedArgs).not.toContain(':(exclude,literal)node_modules')
   })
 
   it('preserves nested matches when covered-directory exclusions exceed the command budget', async () => {

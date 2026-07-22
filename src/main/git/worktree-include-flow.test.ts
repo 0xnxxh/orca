@@ -34,13 +34,14 @@ describe('worktree include creation flow', () => {
 
   it('copies only matched ignored paths and leaves ordinary removal clean', async () => {
     await git(['config', 'core.ignoreCase', 'true'])
-    await writeFile(join(primary, '.gitignore'), '.env\ncache/\nparent/\nmixed/local.txt\n')
+    await writeFile(join(primary, '.gitignore'), '.env\nmy.env\ncache/\nparent/\nmixed/local.txt\n')
     await writeFile(
       join(primary, '.worktreeinclude'),
-      '.env\ncache/\nbuild/\n/mixed/\ntracked.txt\n'
+      '**/.env\ncache/\nbuild/\n/mixed/\ntracked.txt\n'
     )
     await writeFile(join(primary, 'tracked.txt'), 'tracked\n')
     await writeFile(join(primary, '.env'), 'ROOT=1\n')
+    await writeFile(join(primary, 'my.env'), 'NOT_INCLUDED=1\n')
     await mkdir(join(primary, 'apps', 'web'), { recursive: true })
     await writeFile(join(primary, 'apps', 'web', '.env'), 'NESTED=1\n')
     await mkdir(join(primary, 'case'))

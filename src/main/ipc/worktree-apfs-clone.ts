@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, type ExecFileOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, stat, lstat, rm, link, rmdir, chmod } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
@@ -6,10 +6,12 @@ import { promisify } from 'node:util'
 
 type ExecFileAsync = (
   file: string,
-  args: readonly string[]
+  args: readonly string[],
+  options?: Pick<ExecFileOptions, 'timeout'>
 ) => Promise<{ stdout: string; stderr: string }>
 
 const execFileAsync = promisify(execFile) as ExecFileAsync
+const APFS_FILESYSTEM_PROBE_TIMEOUT_MS = 5_000
 
 export type ApfsCloneDeps = {
   execFileAsync: ExecFileAsync
@@ -55,16 +57,18 @@ async function getDarwinFilesystemInfo(
   path: string,
   deps: ApfsCloneDeps
 ): Promise<DarwinFilesystemInfo> {
-  const { stdout: dfOutput } = await deps.execFileAsync('/bin/df', ['-P', path])
+  const { stdout: dfOutput } = await deps.execFileAsync('/bin/df', ['-P', path], {
+    timeout: APFS_FILESYSTEM_PROBE_TIMEOUT_MS
+  })
   const device = dfOutput.trim().split(/\r?\n/)[1]?.trim().split(/\s+/)[0]
   if (!device) {
     throw new Error(`Could not resolve filesystem device for ${path}`)
   }
-  const { stdout: diskutilOutput } = await deps.execFileAsync('/usr/sbin/diskutil', [
-    'info',
-    '-plist',
-    device
-  ])
+  const { stdout: diskutilOutput } = await deps.execFileAsync(
+    '/usr/sbin/diskutil',
+    ['info', '-plist', device],
+    { timeout: APFS_FILESYSTEM_PROBE_TIMEOUT_MS }
+  )
   const filesystemNameMatch = /<key>FilesystemName<\/key>\s*<string>([^<]+)<\/string>/u.exec(
     diskutilOutput
   )

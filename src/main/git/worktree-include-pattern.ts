@@ -22,6 +22,11 @@ export type WorktreeIncludePattern = {
 
 export type WorktreeIncludeMatchBudget = { remaining: number }
 
+export type WorktreeIncludePatternDecision = {
+  included: boolean
+  excludesDescendants: boolean
+}
+
 export function parseWorktreeIncludePatterns(content: string): WorktreeIncludePattern[] {
   const patterns: WorktreeIncludePattern[] = []
   for (const rawLine of content.split(/\r?\n/)) {
@@ -125,6 +130,40 @@ function patternMatches(
   return false
 }
 
+export function getWorktreeIncludePatternDecision(
+  patterns: readonly WorktreeIncludePattern[],
+  relativePath: string,
+  isDirectory: boolean,
+  budget: WorktreeIncludeMatchBudget,
+  ignoreCase: boolean = false
+): WorktreeIncludePatternDecision {
+  // Why: gitignore patterns are order-sensitive, so negations must use last-match-wins.
+  let included = false
+  let lastMatchedIndex = -1
+  let lastPositiveIndex = -1
+  const caseFoldedRelativePath = ignoreCase ? relativePath.toLowerCase() : relativePath
+  for (let index = 0; index < patterns.length; index++) {
+    const pattern = patterns[index]
+    if (!pattern.negated) {
+      lastPositiveIndex = index
+    }
+    if (
+      patternMatches(pattern, relativePath, caseFoldedRelativePath, isDirectory, budget, ignoreCase)
+    ) {
+      included = !pattern.negated
+      lastMatchedIndex = index
+    }
+  }
+  return {
+    included,
+    // Why: a final directory exclusion covers descendants too, so Git need not expand the collapsed tree.
+    excludesDescendants:
+      lastMatchedIndex >= 0 &&
+      patterns[lastMatchedIndex].negated &&
+      lastMatchedIndex > lastPositiveIndex
+  }
+}
+
 export function isIncludedByWorktreePatterns(
   patterns: readonly WorktreeIncludePattern[],
   relativePath: string,
@@ -132,15 +171,6 @@ export function isIncludedByWorktreePatterns(
   budget: WorktreeIncludeMatchBudget,
   ignoreCase: boolean = false
 ): boolean {
-  // Why: gitignore patterns are order-sensitive, so negations must use last-match-wins.
-  let included = false
-  const caseFoldedRelativePath = ignoreCase ? relativePath.toLowerCase() : relativePath
-  for (const pattern of patterns) {
-    if (
-      patternMatches(pattern, relativePath, caseFoldedRelativePath, isDirectory, budget, ignoreCase)
-    ) {
-      included = !pattern.negated
-    }
-  }
-  return included
+  return getWorktreeIncludePatternDecision(patterns, relativePath, isDirectory, budget, ignoreCase)
+    .included
 }

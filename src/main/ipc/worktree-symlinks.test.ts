@@ -617,6 +617,9 @@ describe('createWorktreeCopiedPaths', () => {
         ([file]) => file === '/bin/df' || file === '/usr/sbin/diskutil'
       )
       expect(filesystemProbeCalls).toHaveLength(2)
+      expect(
+        filesystemProbeCalls.every(([, , execOptions]) => execOptions?.timeout === 5_000)
+      ).toBe(true)
       const copyCalls = execFileAsyncMock.mock.calls.filter(([file]) => file === '/bin/cp')
       expect(copyCalls).toHaveLength(diskutilError ? 0 : 2)
       expect(copyCalls.every(([, args]) => !args.includes('-L'))).toBe(true)

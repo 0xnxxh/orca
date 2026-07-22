@@ -3,7 +3,7 @@ type WorktreeIncludeGlobToken =
   | { kind: 'one' }
   | { kind: 'segment-star' }
   | { kind: 'recursive-star' }
-  | { kind: 'optional-slash' }
+  | { kind: 'recursive-directory' }
 
 export type CompiledWorktreeIncludeGlob = {
   regExp: RegExp | null
@@ -20,18 +20,24 @@ export function compileWorktreeIncludeGlob(pattern: string): CompiledWorktreeInc
     const char = pattern[index]
     if (char === '*') {
       starCount++
-      if (pattern[index + 1] === '*') {
+      let starEnd = index
+      while (pattern[starEnd + 1] === '*') {
+        starEnd++
+      }
+      if (starEnd > index && pattern[starEnd + 1] === '/') {
+        // Why: `**/` consumes complete directory prefixes; making only the slash
+        // optional incorrectly lets `foo/**/bar` match `foo/xbar`.
+        tokens.push({ kind: 'recursive-directory' })
+        regex += '(?:.*/)?'
+        index = starEnd + 1
+      } else if (starEnd > index && starEnd === pattern.length - 1) {
         tokens.push({ kind: 'recursive-star' })
         regex += '.*'
-        index++
-        if (pattern[index + 1] === '/') {
-          tokens.push({ kind: 'optional-slash' })
-          regex += '/?'
-          index++
-        }
+        index = starEnd
       } else {
         tokens.push({ kind: 'segment-star' })
         regex += '[^/]*'
+        index = starEnd
       }
     } else if (char === '?') {
       tokens.push({ kind: 'one' })
@@ -42,7 +48,10 @@ export function compileWorktreeIncludeGlob(pattern: string): CompiledWorktreeInc
     }
   }
   const variableWidthIndex = tokens.findIndex(
-    (token) => token.kind === 'segment-star' || token.kind === 'recursive-star'
+    (token) =>
+      token.kind === 'segment-star' ||
+      token.kind === 'recursive-star' ||
+      token.kind === 'recursive-directory'
   )
   return {
     // Why: multiple variable-width groups can make JS regex backtracking exponential.
@@ -92,11 +101,13 @@ export function matchesWorktreeIncludeGlob(
         const canConsume = token.kind === 'recursive-star' || comparableValue[index - 1] !== '/'
         current[index] = previous[index] || (canConsume && current[index - 1]) ? 1 : 0
       }
-    } else if (token.kind === 'optional-slash') {
+    } else if (token.kind === 'recursive-directory') {
       current[0] = previous[0]
+      let canConsume = previous[0] === 1
       for (let index = 1; index <= value.length; index++) {
+        canConsume ||= previous[index - 1] === 1
         current[index] =
-          previous[index] || (comparableValue[index - 1] === '/' && previous[index - 1]) ? 1 : 0
+          previous[index] || (canConsume && comparableValue[index - 1] === '/') ? 1 : 0
       }
     } else {
       for (let index = 1; index <= value.length; index++) {

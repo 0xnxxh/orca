@@ -11,7 +11,7 @@ import {
   type GitignoredEntry
 } from './worktree-include-git-enumeration'
 import {
-  isIncludedByWorktreePatterns,
+  getWorktreeIncludePatternDecision,
   parseWorktreeIncludePatterns,
   WORKTREE_INCLUDE_MATCH_STEP_BUDGET,
   type WorktreeIncludePattern
@@ -121,6 +121,7 @@ export async function resolveWorktreeIncludePaths(
     const ignoreCase = await getWorktreeIncludeIgnoreCase(repoPath, options, ignoreCaseTimeout)
 
     const candidates = new Map<string, GitignoredEntry>()
+    const excludedCoveredDirectories = new Set<string>()
     let candidateBytes = 0
     const matchBudget = { remaining: WORKTREE_INCLUDE_MATCH_STEP_BUDGET }
     const pruneCoveredCandidateDescendants = (): void => {
@@ -138,33 +139,39 @@ export async function resolveWorktreeIncludePaths(
       }
     }
     const addCandidate = (entry: GitignoredEntry): void => {
-      if (
-        isSafeIncludeCandidate(entry.relativePath) &&
-        isIncludedByWorktreePatterns(
-          patterns,
-          entry.relativePath,
-          entry.isDirectory,
-          matchBudget,
-          ignoreCase
-        )
-      ) {
-        if (hasCandidateDirectoryAncestor(candidates, entry.relativePath)) {
-          return
-        }
-        if (
-          !candidates.has(entry.relativePath) &&
-          candidates.size >= WORKTREE_INCLUDE_MAX_CANDIDATES
-        ) {
-          throw new Error(`${WORKTREE_INCLUDE_FILE} matched too many paths`)
-        }
-        if (!candidates.has(entry.relativePath)) {
-          candidateBytes += Buffer.byteLength(entry.relativePath) + 1
-          if (candidateBytes > WORKTREE_INCLUDE_MAX_CANDIDATE_BYTES) {
-            throw new Error(`${WORKTREE_INCLUDE_FILE} matched paths exceed its byte budget`)
-          }
-        }
-        candidates.set(entry.relativePath, entry)
+      if (!isSafeIncludeCandidate(entry.relativePath)) {
+        return
       }
+      const decision = getWorktreeIncludePatternDecision(
+        patterns,
+        entry.relativePath,
+        entry.isDirectory,
+        matchBudget,
+        ignoreCase
+      )
+      if (!decision.included) {
+        if (entry.isDirectory && entry.coversDescendants && decision.excludesDescendants) {
+          excludedCoveredDirectories.add(entry.relativePath)
+        }
+        return
+      }
+      excludedCoveredDirectories.delete(entry.relativePath)
+      if (hasCandidateDirectoryAncestor(candidates, entry.relativePath)) {
+        return
+      }
+      if (
+        !candidates.has(entry.relativePath) &&
+        candidates.size >= WORKTREE_INCLUDE_MAX_CANDIDATES
+      ) {
+        throw new Error(`${WORKTREE_INCLUDE_FILE} matched too many paths`)
+      }
+      if (!candidates.has(entry.relativePath)) {
+        candidateBytes += Buffer.byteLength(entry.relativePath) + 1
+        if (candidateBytes > WORKTREE_INCLUDE_MAX_CANDIDATE_BYTES) {
+          throw new Error(`${WORKTREE_INCLUDE_FILE} matched paths exceed its byte budget`)
+        }
+      }
+      candidates.set(entry.relativePath, entry)
     }
 
     // Why: anchored literals cannot be discovered more cheaply than a direct probe;
@@ -273,6 +280,12 @@ export async function resolveWorktreeIncludePaths(
       const coveredDirectoryPathspecs = Array.from(candidates.values())
         .filter((entry) => entry.isDirectory && entry.coversDescendants)
         .map((entry) => `:(exclude,literal)${entry.relativePath}`)
+      coveredDirectoryPathspecs.push(
+        ...Array.from(
+          excludedCoveredDirectories,
+          (relativePath) => `:(exclude,literal)${relativePath}`
+        )
+      )
       for (const pathspecs of chunkWorktreeIncludePathspecs(
         filePathspecs,
         coveredDirectoryPathspecs
