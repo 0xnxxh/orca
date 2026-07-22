@@ -52,9 +52,13 @@ import {
   registerAppMenu,
   rebuildAppMenu
 } from './menu/register-app-menu'
-import { checkForUpdatesFromMenu, isQuittingForUpdate } from './updater'
+import { checkForUpdatesFromMenu, isQuittingForUpdate, resolveUpdateInstallMode } from './updater'
 import type { TuiAgent, UpdateCheckOptions } from '../shared/types'
 import { recordUpdaterLifecycle } from './updater-lifecycle-diagnostics'
+import {
+  installServeSupervisorDisconnectQuit,
+  notifyServeSupervisorReady
+} from './serve-update-handoff'
 import {
   configureElectronNetworkCompatibility,
   configureDevUserDataPath,
@@ -452,6 +456,7 @@ if (app.isPackaged && process.platform !== 'win32') {
 }
 configureDevUserDataPath(is.dev)
 configureOrcaUserDataPathEnv()
+installServeSupervisorDisconnectQuit(isServeMode)
 
 // Why: just past createMainWindow's 10s ready-to-show fallback, so a window revealed that way still gets its tray icon.
 const TRAY_CREATE_FALLBACK_MS = 12_000
@@ -1145,7 +1150,8 @@ function openMainWindow(): BrowserWindow {
       // Why: let the PTY layer skip its orphan sweep on the recovery reload that re-fires did-finish-load, so live local sessions survive (#5787).
       isRecoveryReloadInFlight,
       onBeforeUpdateQuit: () =>
-        preserveAgentAuthBeforeRestart({ codexRuntimeHome, claudeRuntimeAuth, store })
+        preserveAgentAuthBeforeRestart({ codexRuntimeHome, claudeRuntimeAuth, store }),
+      updateInstallMode: resolveUpdateInstallMode(isServeMode)
     }
   )
   rateLimits.attach(window)
@@ -1521,6 +1527,7 @@ async function printServeReady(options: ServeOptions): Promise<void> {
     }
   }
   const endpoint = runtimeRpc.getWebSocketEndpoint()
+  notifyServeSupervisorReady(runtime.getRuntimeId())
   const pairing = options.noPairing
     ? ({ available: false } as const)
     : runtimeRpc.createPairingOffer({
