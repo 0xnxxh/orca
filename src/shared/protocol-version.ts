@@ -21,16 +21,13 @@ export const RUNTIME_PROTOCOL_VERSION = 3
 export const MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION = 2
 export const MIN_COMPATIBLE_RUNTIME_SERVER_VERSION = 2
 
+// Why: advisory "update your app" recommendation carried on status.get. Only
+// Android is populated — it ships as an APK from GitHub Releases, derived live
+// by the desktop (see mobile-android-release-feed.ts) rather than hand-bumped.
+// iOS defers to App Store auto-update, so it is optional and normally absent.
 export type RecommendedMobileAppVersions = {
-  readonly ios: string
-  readonly android: string
-}
-
-// Why: iOS and Android ship independently; track the newest version actually
-// available on each platform so a release delay never advertises a missing build.
-export const RECOMMENDED_MOBILE_APP_VERSIONS: RecommendedMobileAppVersions = {
-  ios: '0.0.31',
-  android: '0.0.31'
+  readonly android?: string
+  readonly ios?: string
 }
 
 export const PROJECT_HOST_SETUP_RUNTIME_CAPABILITY = 'project-host-setup.v1' as const

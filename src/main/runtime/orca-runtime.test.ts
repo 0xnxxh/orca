@@ -21,7 +21,10 @@ import type {
   WorkspaceSessionState
 } from '../../shared/types'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../shared/agent-status-types'
-import { RECOMMENDED_MOBILE_APP_VERSIONS } from '../../shared/protocol-version'
+import {
+  __resetAndroidReleaseFeedCacheForTests,
+  __setAndroidReleaseFeedCacheForTests
+} from './mobile-android-release-feed'
 import { detectAgentStatusFromTitle, MAX_OSC_TITLE_CHARS } from '../../shared/agent-detection'
 import {
   addWorktree,
@@ -1706,19 +1709,30 @@ describe('OrcaRuntimeService', () => {
     expect(status.minCompatibleMobileVersion).toBeGreaterThanOrEqual(0)
   })
 
-  it('reports app version and the recommended mobile app version on status', () => {
+  it('reports app version on status', () => {
     vi.stubEnv('ORCA_APP_VERSION', '9.9.9-test')
     try {
       const status = createRuntime().getStatus()
       expect(status.appVersion).toBe('9.9.9-test')
-      expect(status.recommendedMobileAppVersions).toBe(RECOMMENDED_MOBILE_APP_VERSIONS)
-      // Why: the nudge constants must stay plain semver strings mobile can compare.
-      for (const version of Object.values(RECOMMENDED_MOBILE_APP_VERSIONS)) {
-        expect(version).toMatch(/^\d+\.\d+\.\d+$/)
-      }
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+
+  it('omits the mobile recommendation until the release feed resolves, then reports Android', () => {
+    __resetAndroidReleaseFeedCacheForTests()
+    // Why: the feed is fetched lazily and fail-open, so a cold host advertises
+    // nothing (no banner) rather than a fabricated version.
+    expect(createRuntime().getStatus().recommendedMobileAppVersions).toBeUndefined()
+
+    // Once the feed has a value, status.get carries only Android — iOS defers to
+    // the App Store, so it is never populated.
+    __setAndroidReleaseFeedCacheForTests('0.0.42')
+    const status = createRuntime().getStatus()
+    expect(status.recommendedMobileAppVersions).toEqual({ android: '0.0.42' })
+    expect(status.recommendedMobileAppVersions?.ios).toBeUndefined()
+    expect(status.recommendedMobileAppVersions?.android).toMatch(/^\d+\.\d+\.\d+$/)
+    __resetAndroidReleaseFeedCacheForTests()
   })
 
   it('reports the configured Windows terminal shell on status', () => {
