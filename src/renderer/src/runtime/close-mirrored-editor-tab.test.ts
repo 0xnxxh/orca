@@ -46,7 +46,9 @@ describe('notifyHostOfMirroredEditorClose', () => {
     // host snapshot in the dynamic-import gap can't flash the old-path tab back.
     notifyHostOfMirroredEditorClose(buildState(), 'wt-1', 'file-1')
 
-    expect(isWebSessionCloseIntentPending('wt-1', toHostSessionTabId('host-tab-1'), now)).toBe(true)
+    expect(
+      isWebSessionCloseIntentPending('env-1', 'wt-1', toHostSessionTabId('host-tab-1'), now)
+    ).toBe(true)
   })
 
   it('closes the mirrored editor tab on the host using the host tab id', async () => {
