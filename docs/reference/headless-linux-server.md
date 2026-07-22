@@ -51,6 +51,19 @@ LIBGL_ALWAYS_SOFTWARE=1 /opt/orca/orca-linux.AppImage serve \
   --pairing-address 100.64.1.20
 ```
 
+`--pairing-address` accepts a bare host, `host:port`, or a full `ws://` /
+`wss://` URL. Use the URL form when clients reach the server through a TLS
+reverse proxy — scheme, port, and path are preserved in the pairing offer:
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 /opt/orca/orca-linux.AppImage serve \
+  --port 6768 \
+  --pairing-address wss://orca.example.com/orca/runtime
+```
+
+The proxy must forward WebSocket upgrade requests for that path to the
+`--port` the server listens on.
+
 The command prints the runtime endpoint and pairing URL. Stop it with `Ctrl+C`.
 
 ## Systemd Service
@@ -611,6 +624,10 @@ is resolved.
   `orca` user and that `/opt/orca` is readable by that user.
 - Clients cannot connect: make sure `--pairing-address` is an address reachable
   from the client, and make sure firewalls allow the selected `--port`.
+- Clients cannot connect through a reverse proxy: confirm the proxy forwards
+  WebSocket upgrade requests (`Upgrade`/`Connection` headers) for the pairing
+  path, and that `--pairing-address` is the full `wss://` URL the client dials —
+  not the server's internal address.
 - Service crash-loops right after an upgrade: use [Roll back](#roll-back) with
   the pre-upgrade `.ready` bundle. Do not rerun the upgrade first; doing so would
   make the crashing version the next rollback binary.
