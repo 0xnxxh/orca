@@ -21,16 +21,9 @@ import {
 } from './config-toml-line-scan'
 import { tuiStructuredKey, upsertPromotedSettingsInContent } from './codex-config-settings-upsert'
 
-// Why: the config mirror rewrites the runtime config.toml from ~/.codex on
-// every launch (and on background rate-limit fetches), so settings the user
-// changes inside Orca-launched Codex silently revert. Promotion diffs the
-// runtime file against a baseline of what Orca last wrote — anything that
-// differs is a change Codex persisted for the user and belongs in ~/.codex.
+// Why: the mirror reverts in-Codex config changes each launch; promotion salvages them by diffing the last baseline.
 
-// Why: only the user-preference scalars the Codex TUI itself persists
-// (/model writes model + model_reasoning_effort, /approvals writes
-// approval_policy + sandbox_mode). Every key added here gets written into the
-// user's real ~/.codex/config.toml, so grow this list deliberately.
+// Why: only scalars the Codex TUI persists; each key here is written to the user's real ~/.codex, so grow deliberately.
 export const PROMOTED_CODEX_SETTING_KEYS = [
   'model',
   'model_reasoning_effort',
@@ -78,8 +71,7 @@ function matchTuiStructuredKey(
 
 type TopLevelSettingValue = {
   raw: string
-  // Why: a value that opens a multiline string/array cannot be replaced or
-  // copied line-by-line safely, so it is excluded from promotion entirely.
+  // Why: a multiline string/array value can't be replaced line-by-line, so it's excluded from promotion.
   multiline: boolean
 }
 
@@ -179,19 +171,16 @@ function readPromotedSettingValues(configPath: string): Map<string, TopLevelSett
 }
 
 /**
- * Records the promotable top-level settings the runtime config.toml holds
- * after a mirror, so the next promotion can tell "value Orca mirrored" apart
- * from "value Codex wrote for the user". Call after a successful mirror only —
- * advancing the baseline past an unpromoted change would strand it forever.
+ * Records the promotable settings the runtime config.toml holds after a mirror, so the next
+ * promotion can tell "value Orca mirrored" from "value Codex wrote for the user".
+ * Call after a successful mirror only — advancing past an unpromoted change strands it forever.
  */
 export function snapshotCodexRuntimeSettingsBaseline(
   runtimeHomePath = getOrcaManagedCodexHomePath()
 ): void {
   try {
     const runtimeTomlPath = join(runtimeHomePath, 'config.toml')
-    // Why: a missing runtime config still records an empty baseline — when
-    // Codex later creates the file for a user with no ~/.codex/config.toml,
-    // that first change must diff against "Orca left nothing" and promote.
+    // Why: record an empty baseline even for a missing runtime config, so Codex's first write still diffs and promotes.
     const settings: Record<string, string> = {}
     for (const [key, value] of readPromotedSettingValues(runtimeTomlPath)) {
       if (!value.multiline) {
@@ -201,8 +190,7 @@ export function snapshotCodexRuntimeSettingsBaseline(
     const file: SettingsBaselineFile = { version: 1, settings }
     const baselinePath = getSettingsBaselinePath(runtimeHomePath)
     const serialized = `${JSON.stringify(file, null, 2)}\n`
-    // Why: launch preparation can run repeatedly; skip byte-identical rewrites
-    // so an unchanged pass does no disk writes.
+    // Why: launch prep runs repeatedly; skip byte-identical rewrites to avoid needless disk writes.
     if (existsSync(baselinePath) && readFileSync(baselinePath, 'utf-8') === serialized) {
       return
     }
@@ -228,19 +216,16 @@ function getHostPromotionHomes(): CodexSettingsPromotionHomes {
 }
 
 /**
- * Promotes setting changes the user made inside Orca-launched Codex (written
- * by Codex into the runtime config.toml) into ~/.codex/config.toml. Runs
- * before the config mirror so the promoted values survive the same mirror
- * pass instead of reverting. WSL callers pass explicit per-distro homes; the
- * default is the host runtime home and host ~/.codex.
+ * Promotes in-Codex setting changes from the runtime config.toml into ~/.codex/config.toml.
+ * Runs before the config mirror so promoted values survive it instead of reverting.
+ * WSL callers pass explicit per-distro homes; default is the host runtime home and ~/.codex.
  */
 export function promoteCodexRuntimeSettingsToSystem(homes?: CodexSettingsPromotionHomes): boolean {
   try {
     promoteCodexRuntimeSettingsToSystemUnsafe(homes ?? getHostPromotionHomes())
     return true
   } catch (error) {
-    // Why: promotion is best-effort launch prep; callers preserve the runtime
-    // for retry, while a malformed file must not block Codex launch itself.
+    // Why: promotion is best-effort launch prep; a malformed file must not block Codex launch.
     console.warn('[codex-settings-promotion] failed to promote runtime settings', error)
     return false
   }
@@ -256,11 +241,7 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
   if (!existsSync(runtimeTomlPath)) {
     return
   }
-  // Why: without a baseline of what Orca last mirrored (first launch after
-  // upgrading to a build with promotion, or a corrupted snapshot), a stale
-  // runtime value is indistinguishable from a fresh in-Codex change. Skip
-  // this pass — the mirror writes the first baseline and promotion starts on
-  // the next one.
+  // Why: without a baseline, a stale runtime value looks like a fresh in-Codex change; skip until the mirror writes one.
   const baseline = readSettingsBaseline(runtimeHomePath)
   if (!baseline) {
     return
@@ -281,8 +262,7 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
     if (system?.multiline) {
       continue
     }
-    // Why: ~/.codex stays source of truth — if the user also edited it there
-    // since the baseline, the outside edit wins over the in-Codex change.
+    // Why: ~/.codex is source of truth — an outside edit since the baseline wins over the in-Codex change.
     if (system?.raw !== baseline.get(key)) {
       continue
     }
@@ -291,23 +271,16 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
   if (updates.size === 0) {
     return
   }
-  // Why: a genuinely fresh host has no ~/.codex yet; without the directory
-  // the atomic write ENOENTs and the following mirror wipes the setting.
-  // Owner-only: the directory holds auth.json and the full user config.
+  // Why: a fresh host has no ~/.codex; create it owner-only (holds auth.json) or the atomic write ENOENTs and the mirror wipes it.
   mkdirSync(systemHomePath, { recursive: true, mode: 0o700 })
   const writeTarget = resolvePromotionWriteTarget(systemTomlPath)
-  // Why: a dangling dotfile-manager symlink can point into a directory tree
-  // that has not been materialized yet; preserve the link and create its real
-  // parent so the atomic temp file can be written beside the target.
+  // Why: a dangling symlink may target an unmade dir tree; create its real parent so the atomic temp write has a home.
   mkdirSync(dirname(writeTarget.path), { recursive: true, mode: 0o700 })
   const targetExists = existsSync(writeTarget.path)
   const systemContent = targetExists ? readFileSync(writeTarget.path, 'utf-8') : ''
   const nextContent = upsertPromotedSettingsInContent(systemContent, updates)
   if (targetExists && parseWslUncPath(writeTarget.path)) {
-    // Why: symlink metadata through the \\wsl$ 9P provider is not reliable
-    // enough for realpath/lstat detection, and an atomic rename would replace
-    // a WSL-side dotfile symlink with a plain file. Writing through the
-    // existing file preserves the Linux-side inode (and its mode).
+    // Why: \\wsl$ 9P symlink metadata is unreliable; write through the existing file to preserve the WSL-side inode.
     writeFileSync(writeTarget.path, nextContent, 'utf-8')
     return
   }
@@ -316,11 +289,7 @@ function promoteCodexRuntimeSettingsToSystemUnsafe(homes: CodexSettingsPromotion
   })
 }
 
-// Why: promotion rewrites the user's real config.toml. Follow an existing
-// symlink (dotfile managers) instead of replacing the link with a plain file,
-// and carry the real file's mode forward — an atomic write without a mode
-// would widen a user-restricted 0600 config to the process umask default.
-// A new or unreadable target is created owner-only.
+// Why: follow an existing dotfile-manager symlink and carry its mode forward so an atomic write can't widen a 0600 config.
 function resolvePromotionWriteTarget(systemTomlPath: string): { path: string; mode: number } {
   try {
     const realPath = realpathSync(systemTomlPath)
@@ -353,7 +322,6 @@ function resolveDanglingSymlinkTarget(linkPath: string): string {
       return currentPath
     }
   }
-  // Why: replacing any link in a cycle would destroy dotfile-manager state;
-  // abort promotion and leave the runtime/baseline intact for manual repair.
+  // Why: replacing any link in a cycle would destroy dotfile-manager state; abort instead.
   throw new Error(`Codex config symlink cycle at ${linkPath}`)
 }
