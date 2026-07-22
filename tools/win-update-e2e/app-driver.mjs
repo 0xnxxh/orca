@@ -237,6 +237,9 @@ export async function waitForTerminalReady(page, timeoutMs = 60_000, terminalTab
  *     workspace (which would mask a broken restore).
  */
 export async function ensureTerminal(page, { allowCreate = true, timeoutMs = 60_000 } = {}) {
+  // Why: the agent-CLI feature-wall modal can already be up at first interaction
+  // (it renders off an async capability check that races app launch).
+  await dismissOverlays(page)
   const visibleTerminal = page.locator(TERMINAL_SURFACE_VISIBLE).first()
   if (await visibleTerminal.isVisible().catch(() => false)) {
     await waitForTerminalReady(page, timeoutMs)
@@ -264,10 +267,25 @@ export async function ensureTerminal(page, { allowCreate = true, timeoutMs = 60_
  * plain terminal (not an agent), then submit "Create worktree".
  */
 async function createWorkspaceFromSeededRepo(page, timeoutMs) {
-  await page
+  // Why: an overlay (e.g. the agent-CLI feature wall) can appear between the
+  // dismissal rounds and this first click; retry with a dismissal pass instead
+  // of force-clicking through whatever is on top.
+  const newWorkspace = page
     .getByRole(NEW_WORKSPACE_BUTTON.role, { name: NEW_WORKSPACE_BUTTON.name })
     .first()
-    .click({ timeout: timeoutMs })
+  let clicked = false
+  for (let attempt = 0; attempt < 3 && !clicked; attempt++) {
+    clicked = await newWorkspace
+      .click({ timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false)
+    if (!clicked) {
+      await dismissOverlays(page)
+    }
+  }
+  if (!clicked) {
+    await newWorkspace.click({ timeout: timeoutMs })
+  }
   // Choose the plain-terminal mode (best-effort — if it is already the default
   // or the label differs, the create below still produces a worktree).
   await page
@@ -289,7 +307,15 @@ async function createWorkspaceFromSeededRepo(page, timeoutMs) {
   }
 }
 
-const OVERLAY_DISMISS_LABELS = ['Got it', 'Dismiss setup scripts', 'Dismiss tip', 'Dismiss update']
+// Why 'Close': the agent-CLI feature-wall modal ("Let agents drive Orca with the Orca CLI")
+// can render after an async capability check, mid-run, and swallows all clicks until closed.
+const OVERLAY_DISMISS_LABELS = [
+  'Got it',
+  'Dismiss setup scripts',
+  'Dismiss tip',
+  'Dismiss update',
+  'Close'
+]
 
 /**
  * Best-effort dismissal of the modals/banners that appear after creating a
