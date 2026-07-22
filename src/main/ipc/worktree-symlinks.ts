@@ -155,7 +155,7 @@ async function createWorktreeLinkedPath(
   mode: WorktreeMaterializeMode,
   options: WorktreeLinkedPathOptions,
   apfsFilesystemCache: ApfsCloneFilesystemCache,
-  warnedApfsErrors: Set<unknown>,
+  warnedApfsErrors: Set<string>,
   mergeExistingDirectory: boolean
 ): Promise<void> {
   // Why: copy mode promises independent contents; copying the link itself
@@ -185,8 +185,12 @@ async function createWorktreeLinkedPath(
       // Why: APFS clone-copy can fail across volumes or on non-APFS disks.
       // Fall back per mode without touching any target path that may have
       // appeared after our preflight.
-      if (!(error instanceof ApfsCloneUnavailableError) && !warnedApfsErrors.has(error)) {
-        warnedApfsErrors.add(error)
+      const errorKey =
+        error instanceof Error
+          ? `${error.name}:${(error as NodeJS.ErrnoException).code ?? ''}:${error.message}`
+          : String(error)
+      if (!(error instanceof ApfsCloneUnavailableError) && !warnedApfsErrors.has(errorKey)) {
+        warnedApfsErrors.add(errorKey)
         console.warn(`[worktree-symlinks] APFS clone-copy unavailable for "${target}":`, error)
       }
     }
@@ -208,7 +212,7 @@ async function materializeWorktreePaths(
   const effectiveOptions = { platform: process.platform, ...options }
   // Why: probing APFS via df+diskutil once per copied path multiplies subprocesses in large includes.
   const apfsFilesystemCache: ApfsCloneFilesystemCache = new Map()
-  const warnedApfsErrors = new Set<unknown>()
+  const warnedApfsErrors = new Set<string>()
   const normalizedLinkedPaths = (options.existingLinkedPaths ?? []).flatMap((rawPath) => {
     const linkedPath = getSafeRelativePath(rawPath)
     return linkedPath.safe

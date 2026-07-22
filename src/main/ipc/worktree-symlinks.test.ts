@@ -623,6 +623,24 @@ describe('createWorktreeCopiedPaths', () => {
       expect(warn).toHaveBeenCalledTimes(diskutilError ? 1 : 0)
     }
   )
+
+  it('logs repeated APFS clone failures once while copying every path', async () => {
+    writeFileSync(join(primary, '.env'), 'SECRET=1\n')
+    writeFileSync(join(primary, '.env.local'), 'LOCAL=1\n')
+    const cloneWorktreePath = vi.fn(async () => {
+      throw Object.assign(new Error('clonefile unsupported'), { code: 'ENOTSUP' })
+    })
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.env', '.env.local'], {
+      platform: 'darwin',
+      cloneWorktreePath
+    })
+
+    expect(cloneWorktreePath).toHaveBeenCalledTimes(2)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('SECRET=1\n')
+    expect(readFileSync(join(worktree, '.env.local'), 'utf8')).toBe('LOCAL=1\n')
+  })
 })
 
 describe('removeWorktreeSymlinks', () => {

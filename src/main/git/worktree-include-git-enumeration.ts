@@ -73,28 +73,38 @@ export function chunkWorktreeIncludePathspecs(
   let chunk: string[] = []
   const shared = Array.from(new Set(sharedPathspecs))
   const sharedLength = shared.reduce((length, pathspec) => length + pathspec.length, 0)
-  if (sharedLength >= WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH) {
-    return chunks
-  }
-  let chunkLength = sharedLength
-  for (const pathspec of new Set(pathspecs)) {
+  const uniquePathspecs = Array.from(new Set(pathspecs))
+  // Why: dropping exclusions can cost a bounded rescan, but dropping the scan silently misses nested config files.
+  const effectiveShared =
+    sharedLength < WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH &&
+    uniquePathspecs.every(
+      (pathspec) => pathspec.length + sharedLength <= WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH
+    )
+      ? shared
+      : []
+  const effectiveSharedLength = effectiveShared.reduce(
+    (length, pathspec) => length + pathspec.length,
+    0
+  )
+  let chunkLength = effectiveSharedLength
+  for (const pathspec of uniquePathspecs) {
     // Why: the collapsed scan remains a safe fallback when one pattern cannot fit the Windows command line.
-    if (pathspec.length + sharedLength > WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH) {
+    if (pathspec.length + effectiveSharedLength > WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH) {
       continue
     }
     if (
       chunk.length > 0 &&
       chunkLength + pathspec.length > WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH
     ) {
-      chunks.push([...chunk, ...shared])
+      chunks.push([...chunk, ...effectiveShared])
       chunk = []
-      chunkLength = sharedLength
+      chunkLength = effectiveSharedLength
     }
     chunk.push(pathspec)
     chunkLength += pathspec.length
   }
   if (chunk.length > 0) {
-    chunks.push([...chunk, ...shared])
+    chunks.push([...chunk, ...effectiveShared])
   }
   return chunks
 }

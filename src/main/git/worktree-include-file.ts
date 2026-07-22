@@ -90,6 +90,7 @@ export async function resolveWorktreeIncludePaths(
     }
 
     const candidates = new Map<string, GitignoredEntry>()
+    let candidateBytes = 0
     const matchBudget = { remaining: WORKTREE_INCLUDE_MATCH_STEP_BUDGET }
     const deadline = Date.now() + WORKTREE_INCLUDE_GIT_TIMEOUT_MS
     const addCandidate = (entry: GitignoredEntry): void => {
@@ -105,6 +106,12 @@ export async function resolveWorktreeIncludePaths(
           candidates.size >= WORKTREE_INCLUDE_MAX_CANDIDATES
         ) {
           throw new Error(`${WORKTREE_INCLUDE_FILE} matched too many paths`)
+        }
+        if (!candidates.has(entry.relativePath)) {
+          candidateBytes += Buffer.byteLength(entry.relativePath) + 1
+          if (candidateBytes > WORKTREE_INCLUDE_MAX_CANDIDATE_BYTES) {
+            throw new Error(`${WORKTREE_INCLUDE_FILE} matched paths exceed its byte budget`)
+          }
         }
         candidates.set(entry.relativePath, entry)
       }
@@ -235,14 +242,6 @@ export async function resolveWorktreeIncludePaths(
     }
 
     const candidatePaths = Array.from(candidates.keys())
-    if (
-      candidatePaths.reduce(
-        (bytes, relativePath) => bytes + Buffer.byteLength(relativePath) + 1,
-        0
-      ) > WORKTREE_INCLUDE_MAX_CANDIDATE_BYTES
-    ) {
-      throw new Error(`${WORKTREE_INCLUDE_FILE} matched paths exceed its byte budget`)
-    }
     // Why: enforce the gitignored-only contract for literal-derived candidates
     // too — a listed-but-not-ignored path must not be copied (issue #7549).
     const ignored = new Set(ignoredAnchoredDirectories)

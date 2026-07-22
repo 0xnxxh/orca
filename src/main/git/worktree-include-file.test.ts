@@ -243,6 +243,27 @@ describe('resolveWorktreeIncludePaths', () => {
     expect(targetedArgs).toContain(':(exclude,literal)node_modules')
   })
 
+  it('preserves nested matches when covered-directory exclusions exceed the command budget', async () => {
+    writeInclude('covered-*/\n.env\n')
+    const coveredDirectories = Array.from(
+      { length: 500 },
+      (_, index) => `covered-${index.toString().padStart(4, '0')}`
+    )
+    mockGit({
+      collapsedEntries: coveredDirectories.map((path) => `${path}/`),
+      targetedEntries: ['hidden/.env']
+    })
+
+    const resolved = await resolveWorktreeIncludePaths(repo)
+
+    expect(resolved).toContain('hidden/.env')
+    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
+      ([args]) => args.includes('ls-files') && !args.includes('--directory')
+    )?.[0]
+    expect(targetedArgs).toContain(':(glob)**/.env')
+    expect(targetedArgs?.some((arg) => arg.startsWith(':(exclude,literal)'))).toBe(false)
+  })
+
   it('does not let an unignored literal parent hide an ignored nested match', async () => {
     writeInclude('/config\n.env\n')
     mkdirSync(join(repo, 'config'))
@@ -266,6 +287,28 @@ describe('resolveWorktreeIncludePaths', () => {
     expect(gitExecFileAsyncMock.mock.calls.some(([args]) => args.includes('check-ignore'))).toBe(
       false
     )
+    warn.mockRestore()
+  })
+
+  it('stops enumeration as soon as candidate paths exceed the byte budget', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    writeInclude('*\n')
+    mockGit({
+      collapsedEntries: Array.from(
+        { length: 100 },
+        (_, index) => `ignored-${index}-${'a'.repeat(11_000)}`
+      ),
+      targetedEntries: []
+    })
+
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual([])
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to resolve'),
+      expect.objectContaining({ message: expect.stringContaining('byte budget') })
+    )
+    expect(
+      gitExecFileAsyncMock.mock.calls.filter(([args]) => args.includes('ls-files'))
+    ).toHaveLength(1)
     warn.mockRestore()
   })
 
