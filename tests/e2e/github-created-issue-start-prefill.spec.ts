@@ -41,14 +41,14 @@ if (args[0] === 'api' && args.includes('-X') && args.includes('POST') && joined.
   console.log(JSON.stringify(issue))
   process.exit(0)
 }
-if (args[0] === 'api' && joined.includes('repos/acme/repo/issues/${ISSUE_NUMBER}')) {
-  console.log(JSON.stringify(issue))
-  process.exit(0)
-}
 if (args[0] === 'api' && joined.includes('/labels')) {
   process.exit(0)
 }
 if (args[0] === 'api' && joined.includes('/assignees')) {
+  process.exit(0)
+}
+if (args[0] === 'api' && joined.includes('repos/acme/repo/issues/${ISSUE_NUMBER}')) {
+  console.log(JSON.stringify(issue))
   process.exit(0)
 }
 if (args[0] === 'api' && joined.includes('search/issues')) {
@@ -161,19 +161,25 @@ test('starting a just-created GitHub issue launches Claude with its URL prefille
   await createDialog.getByRole('button', { name: 'Create issue' }).click()
 
   await expect(createDialog).toBeHidden({ timeout: 10_000 })
-  await expect(orcaPage.getByRole('heading', { name: new RegExp(ISSUE_TITLE) })).toBeVisible({
+  await expect(orcaPage.getByRole('heading', { name: ISSUE_TITLE })).toBeVisible({
     timeout: 10_000
   })
 
   await orcaPage.getByRole('button', { name: 'Start workspace from issue' }).click()
 
+  let terminalText = ''
   await expect
-    .poll(() => getTerminalContent(orcaPage, 12_000), {
-      timeout: 30_000,
-      message: 'Claude prefill command did not reach the active terminal buffer'
-    })
+    .poll(
+      async () => {
+        terminalText = await getTerminalContent(orcaPage, 12_000)
+        return terminalText
+      },
+      {
+        timeout: 30_000,
+        message: 'Claude prefill command did not reach the active terminal buffer'
+      }
+    )
     .toContain('--prefill')
-  const terminalText = await getTerminalContent(orcaPage, 12_000)
   expect(terminalText).toContain('--dangerously-skip-permissions')
   expect(terminalText).toContain('--prefill')
   expect(terminalText).toContain(ISSUE_URL)
