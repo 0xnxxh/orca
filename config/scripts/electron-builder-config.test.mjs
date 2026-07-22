@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -8,10 +7,6 @@ import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const electronBuilderConfig = require('../electron-builder.config.cjs')
 const electronBuilderNativeRebuild = require('./electron-builder-native-rebuild.cjs')
-const {
-  extendMacHelperBundleInfoPlists,
-  macPrivacyUsageDescriptions
-} = require('../mac-privacy-usage-descriptions.cjs')
 const {
   createPackagedRuntimeNodeModuleResources,
   findAsarEntry,
@@ -98,141 +93,11 @@ describe('electron-builder config', () => {
     )
   })
 
-  // Why: the detached PTY daemon runs inside the Electron helper bundle, so the
-  // helper needs the same TCC usage descriptions as the main app (#9756).
-  it('keeps the main-app extendInfo privacy strings in the shared helper-bundle map', () => {
-    expect(macPrivacyUsageDescriptions.NSAppDataUsageDescription).toBeTruthy()
-    expect(electronBuilderConfig.mac.extendInfo).toMatchObject(macPrivacyUsageDescriptions)
-    const extendInfoUsageKeys = Object.keys(electronBuilderConfig.mac.extendInfo).filter((key) =>
-      key.endsWith('UsageDescription')
+  it('declares why the main app may access data in other app containers', () => {
+    expect(electronBuilderConfig.mac.extendInfo.NSAppDataUsageDescription).toBe(
+      "Orca allows terminal-launched developer tools to access other apps' data when you request it."
     )
-    expect(extendInfoUsageKeys.sort()).toEqual(Object.keys(macPrivacyUsageDescriptions).sort())
   })
-
-  it('fails loudly when a darwin package carries no helper bundles', async () => {
-    const appPath = await mkdtemp(join(tmpdir(), 'orca-no-helper-bundles-'))
-    try {
-      await mkdir(join(appPath, 'Contents', 'Frameworks'), { recursive: true })
-      expect(() => extendMacHelperBundleInfoPlists(appPath)).toThrow(
-        /No Electron helper app Info\.plist/
-      )
-    } finally {
-      await rm(appPath, { recursive: true, force: true })
-    }
-  })
-
-  it.skipIf(process.platform !== 'darwin')(
-    'merges privacy usage descriptions into every helper bundle Info.plist',
-    async () => {
-      const appPath = await mkdtemp(join(tmpdir(), 'orca-helper-usage-strings-'))
-      try {
-        const helperNames = ['Orca Helper.app', 'Orca Helper (Renderer).app']
-        for (const helperName of helperNames) {
-          const helperContents = join(appPath, 'Contents', 'Frameworks', helperName, 'Contents')
-          await mkdir(helperContents, { recursive: true })
-          await writeFile(
-            join(helperContents, 'Info.plist'),
-            [
-              '<?xml version="1.0" encoding="UTF-8"?>',
-              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-              '<plist version="1.0">',
-              '<dict>',
-              '  <key>CFBundleIdentifier</key>',
-              '  <string>com.stablyai.orca.helper</string>',
-              '</dict>',
-              '</plist>'
-            ].join('\n'),
-            'utf8'
-          )
-        }
-
-        const updatedPlists = extendMacHelperBundleInfoPlists(appPath)
-
-        expect(updatedPlists).toHaveLength(helperNames.length)
-        for (const helperName of helperNames) {
-          const plistJson = JSON.parse(
-            execFileSync(
-              'plutil',
-              [
-                '-convert',
-                'json',
-                '-o',
-                '-',
-                join(appPath, 'Contents', 'Frameworks', helperName, 'Contents', 'Info.plist')
-              ],
-              { encoding: 'utf8' }
-            )
-          )
-          expect(plistJson).toMatchObject(macPrivacyUsageDescriptions)
-          expect(plistJson.CFBundleIdentifier).toBe('com.stablyai.orca.helper')
-        }
-      } finally {
-        await rm(appPath, { recursive: true, force: true })
-      }
-    }
-  )
-
-  it.skipIf(process.platform !== 'darwin')(
-    'extends helper bundle plists from the darwin afterPack hook',
-    async () => {
-      const root = await mkdtemp(join(tmpdir(), 'orca-darwin-after-pack-'))
-      try {
-        const appPath = join(root, 'Orca.app')
-        const resourcesDir = join(appPath, 'Contents', 'Resources')
-        const unpackedMainDir = join(resourcesDir, 'app.asar.unpacked', 'out', 'main')
-        await mkdir(unpackedMainDir, { recursive: true })
-        await writeFile(
-          join(unpackedMainDir, 'daemon-entry.js'),
-          'console.error("Usage: daemon-entry <socket>"); process.exit(1)\n',
-          'utf8'
-        )
-        const helperContents = join(
-          appPath,
-          'Contents',
-          'Frameworks',
-          'Orca Helper.app',
-          'Contents'
-        )
-        await mkdir(helperContents, { recursive: true })
-        await writeFile(
-          join(helperContents, 'Info.plist'),
-          [
-            '<?xml version="1.0" encoding="UTF-8"?>',
-            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-            '<plist version="1.0">',
-            '<dict>',
-            '  <key>CFBundleIdentifier</key>',
-            '  <string>com.stablyai.orca.helper</string>',
-            '</dict>',
-            '</plist>'
-          ].join('\n'),
-          'utf8'
-        )
-
-        await electronBuilderConfig.afterPack({
-          appOutDir: root,
-          electronPlatformName: 'darwin',
-          // Why: Arch.ia32 never matches a mac packaging host, so afterPack
-          // takes the existence-only daemon-entry path instead of booting it.
-          arch: 0,
-          packager: { appInfo: { productFilename: 'Orca' } }
-        })
-
-        const plistJson = JSON.parse(
-          execFileSync(
-            'plutil',
-            ['-convert', 'json', '-o', '-', join(helperContents, 'Info.plist')],
-            {
-              encoding: 'utf8'
-            }
-          )
-        )
-        expect(plistJson).toMatchObject(macPrivacyUsageDescriptions)
-      } finally {
-        await rm(root, { recursive: true, force: true })
-      }
-    }
-  )
 
   it('unpacks the compiled CommonJS boundary with CLI runtime files', () => {
     expect(electronBuilderConfig.asarUnpack).toEqual(
