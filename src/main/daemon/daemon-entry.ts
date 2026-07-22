@@ -6,6 +6,7 @@
  * Signals readiness to parent via IPC: { type: 'ready' }
  * Shuts down cleanly on SIGTERM.
  */
+import { readFileSync } from 'node:fs'
 import { startDaemon, type DaemonHandle } from './daemon-main'
 import { createPtySubprocess } from './pty-subprocess'
 import { warmWindowsConptyOnce } from './windows-conpty-warmup'
@@ -168,11 +169,46 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'))
   process.on('SIGINT', () => void shutdown('SIGINT'))
 
+  // Why: a dead macOS login session cannot be fabricated without root (PAM owns
+  // audit-session teardown), so e2e drives the oracles from a verdict file:
+  // 'alive' → accepted/healthy, 'dead' → rejected/unhealthy, else inconclusive.
+  const e2eProbeFile = process.env.ORCA_E2E_LOGIN_SESSION_PROBE_FILE
+  const readE2eVerdict = (): string => {
+    try {
+      return readFileSync(e2eProbeFile as string, 'utf8').trim()
+    } catch {
+      return ''
+    }
+  }
   const deathWatch =
     loginSessionWatch && process.platform === 'darwin'
       ? new MacosLoginSessionDeathWatch({
-          probeLoginSession: probeMacosLoginSessionAlive,
-          readResolverHealth: readCurrentProcessMacSystemResolverHealth,
+          probeLoginSession: e2eProbeFile
+            ? async () => {
+                const verdict = readE2eVerdict()
+                if (verdict === 'alive') {
+                  return { ok: true, conclusive: true, reason: 'accepted' }
+                }
+                if (verdict === 'dead') {
+                  return { ok: false, conclusive: true, reason: 'rejected' }
+                }
+                return { ok: false, conclusive: false, reason: 'timeout' }
+              }
+            : probeMacosLoginSessionAlive,
+          readResolverHealth: e2eProbeFile
+            ? async () => (readE2eVerdict() === 'dead' ? 'unhealthy' : 'healthy')
+            : readCurrentProcessMacSystemResolverHealth,
+          ...(e2eProbeFile
+            ? {
+                timing: {
+                  periodicProbeMs: 2_000,
+                  rejectionRecheckMs: 500,
+                  ptyExitDebounceMs: 200,
+                  clientActivityMinGapMs: 1_000,
+                  minProbeGapMs: 100
+                }
+              }
+            : {}),
           log: daemonLog,
           onRetire: (details) => {
             shuttingDown = true
