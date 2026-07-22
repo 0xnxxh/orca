@@ -1910,9 +1910,12 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
       linkedPRNumber: 12
     })
 
-    expect(store.getState().hostedReviewCache[hostedReviewCacheKey]).toEqual(
-      expect.not.objectContaining({ branchLookupGitHubPRNumber: expect.anything() })
-    )
+    const cacheEntry = store.getState().hostedReviewCache[hostedReviewCacheKey]
+    expect(cacheEntry).toMatchObject({
+      data: expect.objectContaining({ provider: 'github', number: 12 }),
+      linkedReviewHintKey: 'github:12'
+    })
+    expect(cacheEntry).not.toHaveProperty('branchLookupGitHubPRNumber')
   })
 
   it('does not let an older direct PR refresh overwrite a newer hosted-review cache entry', async () => {
