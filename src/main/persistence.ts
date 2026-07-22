@@ -78,7 +78,7 @@ import {
 } from '../shared/task-source-context'
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
-import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection'
+import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
 import { sanitizeWorkspaceSessionTerminalRetirements } from './runtime/mobile-session-terminal-persistence-retirement'
 import {
   removeRepoFromHostWorkspaceSessions,
@@ -5070,6 +5070,11 @@ export class Store {
     changed = migrateSession(this.state.workspaceSession) || changed
     for (const session of Object.values(this.state.workspaceSessionsByHostId ?? {})) {
       changed = migrateSession(session) || changed
+    }
+    for (const selectionsByWorktree of Object.values(
+      this.state.mobileClientTabSelectionsByDeviceId ?? {}
+    )) {
+      changed = moveKey(selectionsByWorktree) || changed
     }
     const showDotfiles = this.state.ui?.showDotfilesByWorktree
     if (showDotfiles) {

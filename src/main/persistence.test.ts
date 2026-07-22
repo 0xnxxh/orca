@@ -10464,6 +10464,22 @@ describe('Store.migrateWorktreeIdentity', () => {
     expect(store.getWorktreeLineage(CHILD)?.parentWorktreeId).toBe(NEW)
   })
 
+  it('moves persisted mobile selections across reloads', async () => {
+    const store = await createStore()
+    store.setMobileClientTabSelections({
+      'device-a': {
+        [OLD]: { activeTabId: 'tab-1', activeGroupId: null, activeTabIdByGroupId: {} }
+      }
+    })
+
+    store.migrateWorktreeIdentity(OLD, NEW)
+    store.flush()
+
+    expect(store.getMobileClientTabSelections()['device-a']?.[OLD]).toBeUndefined()
+    const reloaded = await createStore()
+    expect(reloaded.getMobileClientTabSelections()['device-a']?.[NEW]?.activeTabId).toBe('tab-1')
+  })
+
   it('accumulates prior ids across chained renames', async () => {
     const store = await createStore()
     store.setWorktreeMeta(OLD, { displayName: 'Cunner' })

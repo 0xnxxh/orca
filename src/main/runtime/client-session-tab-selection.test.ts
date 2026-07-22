@@ -5,9 +5,9 @@ import {
   activateClientSessionTabSelection,
   ClientSessionTabSelectionStore,
   deriveClientSessionTabSelection,
-  normalizePersistedMobileClientTabSelections,
   projectClientSessionTabSelection
 } from './client-session-tab-selection'
+import { normalizePersistedMobileClientTabSelections } from './client-session-tab-selection-persistence'
 
 function snapshot(activeTabId = 'terminal-a::leaf-a'): RuntimeMobileSessionTabsResult {
   const tabs = [
@@ -177,6 +177,33 @@ describe('client session-tab selection', () => {
     store.forgetClient('device-a')
     store.forgetWorktree('wt-1')
     expect(persisted.length).toBe(writes)
+  })
+
+  it('moves persisted selections when a worktree identity changes', () => {
+    const persisted: PersistedMobileClientTabSelections[] = []
+    const store = new ClientSessionTabSelectionStore()
+    store.activate(snapshot(), 'device-a', 'browser-unified')
+    store.setPersistListener((state) => persisted.push(state))
+
+    store.migrateWorktree('wt-1', 'wt-renamed')
+
+    expect(persisted).toEqual([
+      {
+        'device-a': {
+          'wt-renamed': {
+            activeTabId: 'browser-unified',
+            activeGroupId: 'group-right',
+            activeTabIdByGroupId: {
+              'group-left': 'terminal-a',
+              'group-right': 'browser-unified'
+            }
+          }
+        }
+      }
+    ])
+    expect(store.project({ ...snapshot(), worktree: 'wt-renamed' }, 'device-a').activeTabId).toBe(
+      'browser-unified'
+    )
   })
 
   it('does not persist topology-only projections from unrelated worktrees', () => {
