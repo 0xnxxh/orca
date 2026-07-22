@@ -116,6 +116,7 @@ export function useTerminalViewportRefit(
             expectedHandle: handle,
             currentRef: terminalRefs.current.get(handle),
             expectedRef: ref,
+            nativeChatCovered: nativeChatCoveredRef.current,
             disposed: disposedRef.current,
             runSeq,
             currentRunSeq: refitRunSeqRef.current

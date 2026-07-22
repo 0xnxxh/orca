@@ -2540,7 +2540,8 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           .then(() => runtime.cleanupSubscription(subscriptionId))
           .catch(() => runtime.cleanupSubscription(subscriptionId))
         try {
-          await runtime.handleMobileSubscribe(ptyId, clientId, params.viewport)
+          // Why: a lease-only subscriber has no terminal view, so its cached viewport must never phone-fit the PTY.
+          await runtime.handleMobileSubscribe(ptyId, clientId, undefined)
           if (closed || signal?.aborted) {
             // Why: a disconnect can win the awaited subscribe and resurrect mobile presence after cleanup already released it.
             runtime.handleMobileUnsubscribe(ptyId, clientId)

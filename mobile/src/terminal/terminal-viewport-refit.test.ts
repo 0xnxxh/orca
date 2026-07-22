@@ -313,6 +313,7 @@ describe('terminal viewport refit', () => {
       expectedHandle: 'term-1',
       currentRef: expectedRef,
       expectedRef,
+      nativeChatCovered: false,
       disposed: false,
       runSeq: 2,
       currentRunSeq: 2
@@ -325,5 +326,8 @@ describe('terminal viewport refit', () => {
     ).toBe(false)
     expect(isTerminalViewportRefitTargetCurrent({ ...current, currentRunSeq: 3 })).toBe(false)
     expect(isTerminalViewportRefitTargetCurrent({ ...current, disposed: true })).toBe(false)
+    expect(isTerminalViewportRefitTargetCurrent({ ...current, nativeChatCovered: true })).toBe(
+      false
+    )
   })
 })
