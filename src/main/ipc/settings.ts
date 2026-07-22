@@ -92,6 +92,9 @@ export function registerSettingsHandlers(
 
   ipcMain.handle('settings:set', async (event, args: Partial<GlobalSettings>) => {
     const sanitizedArgs = sanitizeRendererSettingsUpdate(args)
+    // Why: connection/navigation code receives the generic settings writer; the
+    // durable server preference has a dedicated Advanced-control boundary.
+    delete sanitizedArgs.activeRuntimeEnvironmentId
     // Why: Floating Workspace grants are trusted only when written by the
     // main-process directory picker, never by renderer-provided settings IPC.
     delete sanitizedArgs.floatingTerminalTrustedCwds
@@ -204,6 +207,21 @@ export function registerSettingsHandlers(
 
     return result
   })
+
+  ipcMain.handle(
+    'settings:set-active-runtime-environment-preference',
+    (event, args: { environmentId?: unknown }): GlobalSettings => {
+      const requestedEnvironmentId = args?.environmentId
+      if (requestedEnvironmentId !== null && typeof requestedEnvironmentId !== 'string') {
+        throw new Error('Invalid Active Server preference')
+      }
+      const environmentId = requestedEnvironmentId?.trim() || null
+      return store.updateSettings(
+        { activeRuntimeEnvironmentId: environmentId },
+        { notifyListeners: true, originWebContentsId: event.sender.id }
+      )
+    }
+  )
 
   ipcMain.handle('settings:listFonts', () => {
     return listSystemFontFamilies()

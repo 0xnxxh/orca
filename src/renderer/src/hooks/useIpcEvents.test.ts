@@ -1824,7 +1824,7 @@ describe('useIpcEvents updater integration', () => {
       tabsByWorktree: {} as Record<string, { id: string; ptyId?: string | null; title?: string }[]>,
       folderWorkspaces: [],
       projectGroups: [],
-      repos: [{ id: 'repo-1', connectionId: null }],
+      repos: [{ id: 'repo-1', connectionId: null, executionHostId: 'local' }],
       worktreesByRepo: { 'repo-1': [{ id: 'wt-2', repoId: 'repo-1' }] },
       openFiles: [],
       browserTabsByWorktree: {},
@@ -2179,13 +2179,51 @@ describe('useIpcEvents updater integration', () => {
     expect(createTab).toHaveBeenCalledWith('wt-1')
     expect(setActiveTabType).toHaveBeenCalledWith('terminal')
 
+    // Exact regression sequence: Local default -> connect/navigate Windows 2 ->
+    // reveal a local terminal -> restart. Connection and navigation are transient.
+    storeState.repos.push({
+      id: 'windows-2-repo',
+      connectionId: null,
+      executionHostId: 'runtime:windows-2'
+    })
+    storeState.worktreesByRepo['windows-2-repo'] = [
+      { id: 'windows-2-worktree', repoId: 'windows-2-repo' }
+    ]
+    storeState.activeWorktreeId = 'windows-2-worktree'
+    createTab.mockClear()
+    replyTerminalCreate.mockClear()
+    createTerminalListenerRef.current({
+      requestId: 'local-reveal-after-remote-navigation',
+      worktreeId: 'wt-2',
+      title: 'Local shell',
+      presentation: 'focused'
+    })
+    expect(createTab).toHaveBeenCalledWith('wt-2', undefined, undefined, undefined)
+    expect(replyTerminalCreate).toHaveBeenCalledWith({
+      requestId: 'local-reveal-after-remote-navigation',
+      tabId: 'tab-new',
+      title: 'Local shell'
+    })
+    expect(storeState.settings.activeRuntimeEnvironmentId).toBeUndefined()
+    delete storeState.worktreesByRepo['windows-2-repo']
+    storeState.repos = storeState.repos.filter((repo) => repo.id !== 'windows-2-repo')
+    storeState.activeWorktreeId = 'wt-1'
+    expect(storeState.settings.activeRuntimeEnvironmentId).toBeUndefined()
+
     createWebRuntimeSessionTerminal.mockClear()
     createTab.mockClear()
     setActiveView.mockClear()
     setActiveWorktree.mockClear()
+    markWorktreeVisited.mockClear()
+    recordWorktreeVisit.mockClear()
     setActiveTabType.mockClear()
     setActiveTab.mockClear()
     revealWorktreeInSidebar.mockClear()
+
+    storeState.settings = {
+      ...storeState.settings,
+      activeRuntimeEnvironmentId: 'windows-2'
+    }
 
     createTerminalListenerRef.current({
       worktreeId: 'wt-2',
@@ -2210,6 +2248,12 @@ describe('useIpcEvents updater integration', () => {
       recordInteraction: false
     })
     expect(queueTabStartupCommand).toHaveBeenCalledWith('tab-new', { command: 'opencode' })
+    expect(storeState.settings.activeRuntimeEnvironmentId).toBe('windows-2')
+
+    storeState.settings = {
+      ...storeState.settings,
+      activeRuntimeEnvironmentId: undefined
+    }
 
     createTab.mockClear()
     setActiveView.mockClear()
@@ -2391,9 +2435,29 @@ describe('useIpcEvents updater integration', () => {
       title: 'Blocked Local Terminal'
     })
 
-    expect(createTab).not.toHaveBeenCalled()
+    expect(createTab).toHaveBeenCalled()
     expect(replyTerminalCreate).toHaveBeenCalledWith({
       requestId: 'req-runtime-blocked',
+      tabId: 'tab-new',
+      title: 'Blocked Local Terminal'
+    })
+
+    createTab.mockClear()
+    replyTerminalCreate.mockClear()
+    storeState.repos.push({
+      id: 'repo-remote',
+      connectionId: null,
+      executionHostId: 'runtime:focused-runtime'
+    })
+    storeState.worktreesByRepo['repo-remote'] = [{ id: 'wt-remote', repoId: 'repo-remote' }]
+    requestTerminalCreateListenerRef.current({
+      requestId: 'req-remote-owner-blocked',
+      worktreeId: 'wt-remote',
+      title: 'Remote-owned Terminal'
+    })
+    expect(createTab).not.toHaveBeenCalled()
+    expect(replyTerminalCreate).toHaveBeenCalledWith({
+      requestId: 'req-remote-owner-blocked',
       error: 'Local terminal creation is unavailable while a remote runtime is active'
     })
     storeState.settings.activeRuntimeEnvironmentId = undefined

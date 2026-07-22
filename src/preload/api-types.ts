@@ -2144,6 +2144,9 @@ export type PreloadApi = {
     /** Synchronous persisted-settings read for startup decisions that can't wait for async hydration. Blocking IPC — call sparingly. */
     getSync: () => GlobalSettings | null
     set: (args: Partial<GlobalSettings>) => Promise<GlobalSettings>
+    setActiveRuntimeEnvironmentPreference: (args: {
+      environmentId: string | null
+    }) => Promise<GlobalSettings>
     updatePRBotAuthorOverride: (args: { author: string; isBot: boolean }) => Promise<GlobalSettings>
     listFonts: () => Promise<string[]>
     previewGhosttyImport: () => Promise<GhosttyImportPreview>

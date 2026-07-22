@@ -1839,6 +1839,11 @@ const api = {
     set: (args: Record<string, unknown>): Promise<unknown> =>
       ipcRenderer.invoke('settings:set', args),
 
+    setActiveRuntimeEnvironmentPreference: (args: {
+      environmentId: string | null
+    }): Promise<unknown> =>
+      ipcRenderer.invoke('settings:set-active-runtime-environment-preference', args),
+
     updatePRBotAuthorOverride: (args: { author: string; isBot: boolean }): Promise<unknown> =>
       ipcRenderer.invoke('settings:update-pr-bot-author-override', args),
 
