@@ -86,7 +86,11 @@ export function serveOrcaApp(
   } = {}
 ): Promise<number> {
   const executable = resolveForegroundOrcaExecutable()
-  const childArgs = [...getExecutableAppArgs(), '--serve']
+  const childArgs = [...getExecutableAppArgs()]
+  if (process.env.ORCA_APPIMAGE_NO_SANDBOX === '1') {
+    childArgs.push('--no-sandbox')
+  }
+  childArgs.push('--serve')
   if (args.json) {
     childArgs.push('--serve-json')
   }
@@ -117,6 +121,7 @@ export function serveOrcaApp(
       ? getServeUpdateHandoffPath(getDefaultUserDataPath())
       : null
   const childEnv = stripElectronRunAsNode(process.env)
+  delete childEnv.ORCA_APPIMAGE_NO_SANDBOX
   if (handoffPath) {
     childEnv[SERVE_UPDATE_HANDOFF_PATH_ENV] = handoffPath
   }

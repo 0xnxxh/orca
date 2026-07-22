@@ -41,7 +41,11 @@ import { initOnboardingCohortClassifier } from './telemetry/onboarding-cohort-cl
 import { resolveConsent } from './telemetry/consent'
 import { triggerStartupNotificationRegistration } from './ipc/notifications'
 import { OrcaRuntimeService } from './runtime/orca-runtime'
+import { loadAgentSessionClaimSigner } from './runtime/agent-session-claim-identity'
 import { OrcaRuntimeRpcServer } from './runtime/runtime-rpc'
+import { resolveAdvertisedPairingEndpoint } from './runtime/pairing-endpoint'
+import { ServeReadinessPublisher } from './server/serve-readiness'
+import { reserveServeStdoutForReadiness } from './server/serve-stdout-boundary'
 import { DesktopRelayService } from './runtime/relay/desktop-relay-service'
 import type { RelayBrokerStatus } from './runtime/relay/relay-session-broker'
 import { awaitRuntimeFileWatcherUnsubscribes } from './runtime/orca-runtime-files'
@@ -246,6 +250,7 @@ let claudeRuntimeAuth: ClaudeRuntimeAuthService | null = null
 let runtime: OrcaRuntimeService | null = null
 let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
+const serveReadinessPublisher = new ServeReadinessPublisher()
 let desktopRelayService: DesktopRelayService | null = null
 let desktopRelayStatus: RelayBrokerStatus = 'offline'
 // Why: gates whether headless serve installs the offscreen browser backend (and advertises browser pane support).
@@ -281,6 +286,9 @@ let localPtyStartupReady: Promise<void> = Promise.resolve()
 let localPtyProviderStartupReady: Promise<void> = Promise.resolve()
 const AGENT_STATE_CRASH_BREADCRUMB_MIN_INTERVAL_MS = 30_000
 const isServeMode = process.argv.includes('--serve')
+if (isServeMode) {
+  reserveServeStdoutForReadiness()
+}
 const desktopActivationGate = createServeDesktopActivationGate({
   initialState: isServeMode ? 'initializing' : 'ready',
   activateWindow: () => {
@@ -1530,10 +1538,16 @@ async function printServeReady(options: ServeOptions): Promise<void> {
       throw new Error(`--serve-project-root must be a directory: ${options.projectRoot}`)
     }
   }
-  const endpoint = runtimeRpc.getWebSocketEndpoint()
-  notifyServeSupervisorReady(runtime.getRuntimeId())
+  const boundEndpoint = runtimeRpc.getWebSocketEndpoint()
+  const advertised = boundEndpoint
+    ? resolveAdvertisedPairingEndpoint(boundEndpoint, options.pairingAddress)
+    : null
   const pairing = options.noPairing
-    ? ({ available: false } as const)
+    ? ({
+        available: false,
+        reason: 'disabled_by_operator',
+        guidance: 'Restart without --no-pairing to create a client pairing offer.'
+      } as const)
     : runtimeRpc.createPairingOffer({
         address: options.pairingAddress,
         name: `${options.mobilePairing ? 'Mobile' : 'CLI'} ${new Date().toLocaleDateString()}`,
@@ -1543,51 +1557,30 @@ async function printServeReady(options: ServeOptions): Promise<void> {
     pairing.available && options.mobilePairing
       ? await renderTerminalPairingQr(pairing.pairingUrl)
       : null
-  if (options.recipeJson) {
-    if (!pairing.available) {
-      throw new Error('Recipe JSON output requires runtime pairing to be available')
-    }
-    console.log(
-      JSON.stringify({
-        schemaVersion: 1,
-        pairingCode: pairing.pairingUrl,
-        projectRoot: options.projectRoot
-      })
-    )
-    return
-  }
-  if (options.json) {
-    console.log(
-      JSON.stringify({
-        type: 'orca_server_ready',
-        runtimeId: runtime.getRuntimeId(),
-        endpoint,
-        // Why: the WSL reconciliation barrier fails open, so 'pending' warns a WSL PTY launch may still race a repair.
-        managedWslCliReconciliation: managedWslCliReconciliationStatus,
-        pairing: pairing.available
-          ? {
-              url: pairing.pairingUrl,
-              endpoint: pairing.endpoint,
-              deviceId: pairing.deviceId,
-              webClientUrl: pairing.webClientUrl,
-              scope: options.mobilePairing ? 'mobile' : 'runtime',
-              qr: pairingQr
-            }
-          : null
-      })
-    )
-    return
-  }
-  console.log(`Orca server ready: ${endpoint ?? 'websocket unavailable'}`)
-  if (pairing.available) {
-    if (pairing.webClientUrl) {
-      console.log(`Web client URL: ${pairing.webClientUrl}`)
-    }
-    if (options.mobilePairing && pairingQr) {
-      console.log(`Mobile pairing QR:\n${pairingQr}`)
-    }
-    console.log(`Pairing URL: ${pairing.pairingUrl}`)
-  }
+  await serveReadinessPublisher.publish(
+    {
+      runtimeId: runtime.getRuntimeId(),
+      boundEndpoint,
+      advertisedEndpoint: advertised?.ok ? advertised.endpoint : null,
+      // Why: the WSL reconciliation barrier fails open, so 'pending' warns a WSL PTY launch may still race a repair.
+      managedWslCliReconciliation: managedWslCliReconciliationStatus,
+      pairing: pairing.available
+        ? {
+            available: true,
+            url: pairing.pairingUrl,
+            endpoint: pairing.endpoint,
+            deviceId: pairing.deviceId,
+            webClientUrl: pairing.webClientUrl,
+            scope: options.mobilePairing ? 'mobile' : 'runtime',
+            qr: pairingQr
+          }
+        : pairing
+    },
+    options.recipeJson
+      ? { mode: 'recipe-json', projectRoot: options.projectRoot! }
+      : { mode: options.json ? 'json' : 'human' }
+  )
+  notifyServeSupervisorReady(runtime.getRuntimeId())
 }
 
 function installServeSignalHandlers(): void {
@@ -1997,6 +1990,10 @@ app.whenReady().then(async () => {
       .map((account) => ({ id: account.id, managedHomePath: account.managedHomePath }))
   })
   const runtimeService = new OrcaRuntimeService(store, stats, {
+    agentSessionClaimSigner: loadAgentSessionClaimSigner(
+      getProfileUserDataPath(),
+      getProfileUserDataPath()
+    ),
     // Why: resolve the PTY provider lazily — a daemon swap happens later, so an eager reference would freeze the pre-daemon provider (design §4.3).
     getLocalProvider: () => getLocalPtyProvider(),
     // Why: SSH relay providers register after construction and may reconnect, so destructive cleanup must resolve the current generation.
