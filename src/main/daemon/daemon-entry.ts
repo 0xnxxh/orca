@@ -171,7 +171,8 @@ async function main(): Promise<void> {
 
   // Why: a dead macOS login session cannot be fabricated without root (PAM owns
   // audit-session teardown), so e2e drives the oracles from a verdict file:
-  // 'alive' → accepted/healthy, 'dead' → rejected/unhealthy, else inconclusive.
+  // 'alive' → accepted/healthy, 'dead' → rejected/unhealthy, 'hang' →
+  // timeout-inconclusive/unhealthy (the hang-shaped trigger), else inconclusive.
   const e2eProbeFile = process.env.ORCA_E2E_LOGIN_SESSION_PROBE_FILE
   const readE2eVerdict = (): string => {
     try {
@@ -196,7 +197,10 @@ async function main(): Promise<void> {
               }
             : probeMacosLoginSessionAlive,
           readResolverHealth: e2eProbeFile
-            ? async () => (readE2eVerdict() === 'dead' ? 'unhealthy' : 'healthy')
+            ? async () => {
+                const verdict = readE2eVerdict()
+                return verdict === 'dead' || verdict === 'hang' ? 'unhealthy' : 'healthy'
+              }
             : readCurrentProcessMacSystemResolverHealth,
           ...(e2eProbeFile
             ? {

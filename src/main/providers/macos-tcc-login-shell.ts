@@ -5,7 +5,11 @@ import { userInfo } from 'node:os'
 const MACOS_LOGIN_PATH = '/usr/bin/login'
 const MACOS_ENV_PATH = '/usr/bin/env'
 const MACOS_PRINTF_PATH = '/usr/bin/printf'
+const MACOS_SCRIPT_PATH = '/usr/bin/script'
 const LOGIN_PREFLIGHT_TIMEOUT_MS = 500
+// Why: the death-watch probe runs off the spawn path, so it can afford a bound
+// that outlasts a PAM stack answering slowly rather than misreading it as a hang.
+const LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS = 4_000
 const LOGIN_PREFLIGHT_MARKER = 'ORCA_LOGIN_PREFLIGHT_OK'
 const LOGIN_PREFLIGHT_MAX_BUFFER_BYTES = 1024
 const LOGIN_PREFLIGHT_RETRY_BASE_MS = 5_000
@@ -63,7 +67,11 @@ function classifyPreflightError(error: ExecFileException): LoginPreflightOutcome
 // Fidelity limit: the probe runs over pipes while production shells run under a
 // real PTY, so a tty-sensitive PAM stack could diverge. It fails safe — a probe
 // pass with a prod failure only degrades to today's direct spawn (no wrapper).
-function runLoginPreflight(username: string, accountHome: string): Promise<LoginPreflightOutcome> {
+function runLoginPreflight(
+  username: string,
+  accountHome: string,
+  timeoutMs = LOGIN_PREFLIGHT_TIMEOUT_MS
+): Promise<LoginPreflightOutcome> {
   return new Promise((resolve) => {
     try {
       const child = execFile(
@@ -78,7 +86,7 @@ function runLoginPreflight(username: string, accountHome: string): Promise<Login
           // captured diagnostics without blocking the PTY host's event loop.
           killSignal: 'SIGKILL',
           maxBuffer: LOGIN_PREFLIGHT_MAX_BUFFER_BYTES,
-          timeout: LOGIN_PREFLIGHT_TIMEOUT_MS
+          timeout: timeoutMs
         },
         (error, stdout) => {
           if (error === null) {
@@ -96,6 +104,54 @@ function runLoginPreflight(username: string, accountHome: string): Promise<Login
       )
       // Why: login(1) must see immediate EOF, not an interactive pipe, so a PAM
       // rejection exits instead of waiting at `login:` until the timeout.
+      child.stdin?.end()
+    } catch {
+      resolve({ ok: false, conclusive: false, reason: 'error' })
+    }
+  })
+}
+
+// Why: a dead login session's PAM stack may only misbehave under a real tty
+// (the pipe-vs-PTY fidelity limit above), so death detection can escalate to
+// running login(1) under script(1)'s PTY when the pipe probe is inconclusive.
+function runPtyLoginProbe(
+  username: string,
+  accountHome: string,
+  timeoutMs: number
+): Promise<LoginPreflightOutcome> {
+  return new Promise((resolve) => {
+    try {
+      const child = execFile(
+        MACOS_SCRIPT_PATH,
+        [
+          '-q',
+          '/dev/null',
+          MACOS_LOGIN_PATH,
+          '-flpq',
+          username,
+          MACOS_PRINTF_PATH,
+          LOGIN_PREFLIGHT_MARKER
+        ],
+        {
+          cwd: accountHome,
+          encoding: 'utf8',
+          killSignal: 'SIGKILL',
+          maxBuffer: LOGIN_PREFLIGHT_MAX_BUFFER_BYTES,
+          timeout: timeoutMs
+        },
+        (error, stdout) => {
+          if (error === null) {
+            // Why includes(): the PTY echoes control sequences around the marker.
+            resolve(
+              stdout.includes(LOGIN_PREFLIGHT_MARKER)
+                ? { ok: true, conclusive: true, reason: 'accepted' }
+                : { ok: false, conclusive: true, reason: 'rejected' }
+            )
+            return
+          }
+          resolve(classifyPreflightError(error))
+        }
+      )
       child.stdin?.end()
     } catch {
       resolve({ ok: false, conclusive: false, reason: 'error' })
@@ -199,7 +255,9 @@ export function resetMacosLoginShellPreflightForTests(): void {
  * cached verdict and the transient backoff, and writes any conclusive verdict
  * back into the cache — so a daemon whose login session died stops wrapping
  * spawns in `login(1)` (which would only mint "Login incorrect" zombies) even
- * before retirement completes. Returns null when the wrapper doesn't apply.
+ * before retirement completes. Escalates to a PTY-hosted probe when the pipe
+ * probe is inconclusive, since a dead session's PAM stack may only misbehave
+ * under a real tty. Returns null when the wrapper doesn't apply.
  */
 export async function probeMacosLoginSessionAlive(): Promise<LoginPreflightOutcome | null> {
   if (process.platform !== 'darwin' || isDisabledByEnv() || !existsSync(MACOS_LOGIN_PATH)) {
@@ -217,7 +275,10 @@ export async function probeMacosLoginSessionAlive(): Promise<LoginPreflightOutco
   if (!username || !accountHome) {
     return null
   }
-  const outcome = await runLoginPreflight(username, accountHome)
+  let outcome = await runLoginPreflight(username, accountHome, LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS)
+  if (!outcome.conclusive && existsSync(MACOS_SCRIPT_PATH)) {
+    outcome = await runPtyLoginProbe(username, accountHome, LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS)
+  }
   if (outcome.conclusive) {
     cachedLoginPreflightResult = outcome.ok
     transientLoginPreflightFailure = null

@@ -426,4 +426,56 @@ describe('probeMacosLoginSessionAlive', () => {
     expect(await probeMacosLoginSessionAlive()).toBeNull()
     expect(execFileMock).not.toHaveBeenCalled()
   })
+
+  it('escalates an inconclusive pipe probe to a PTY probe and accepts its verdict', async () => {
+    setPlatform('darwin')
+    execFileMock.mockImplementation(
+      (file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
+        if (file === '/usr/bin/script') {
+          // PTYs echo control sequences around the marker.
+          callback(null, '[?1049h\r\nORCA_LOGIN_PREFLIGHT_OK\r\n', '')
+        } else {
+          callback(Object.assign(new Error('killed'), { killed: true }), '', '')
+        }
+        return { stdin: { end: stdinEndMock } }
+      }
+    )
+    const outcome = await probeMacosLoginSessionAlive()
+    expect(outcome).toEqual({ ok: true, conclusive: true, reason: 'accepted' })
+    expect(execFileMock.mock.calls.map((c) => c[0])).toEqual(['/usr/bin/login', '/usr/bin/script'])
+    expect(wrapShellSpawnForMacosTccAttribution('/bin/zsh', ['-l']).file).toBe('/usr/bin/login')
+  })
+
+  it('treats a PTY-probe rejection as conclusive and flips the wrapper off', async () => {
+    setPlatform('darwin')
+    await prepareMacosTccLoginShell()
+    execFileMock.mockImplementation(
+      (file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
+        if (file === '/usr/bin/script') {
+          callback(Object.assign(new Error('login incorrect'), { code: 1 }), '', '')
+        } else {
+          callback(Object.assign(new Error('killed'), { killed: true }), '', '')
+        }
+        return { stdin: { end: stdinEndMock } }
+      }
+    )
+    const outcome = await probeMacosLoginSessionAlive()
+    expect(outcome).toEqual({ ok: false, conclusive: true, reason: 'rejected' })
+    expect(wrapShellSpawnForMacosTccAttribution('/bin/zsh', ['-l']).file).toBe('/bin/zsh')
+  })
+
+  it('stays inconclusive when both pipe and PTY probes time out', async () => {
+    setPlatform('darwin')
+    await prepareMacosTccLoginShell()
+    execFileMock.mockImplementation(
+      (_file: string, _args: string[], _options: unknown, callback: ExecFileCallback) => {
+        callback(Object.assign(new Error('killed'), { killed: true }), '', '')
+        return { stdin: { end: stdinEndMock } }
+      }
+    )
+    const outcome = await probeMacosLoginSessionAlive()
+    expect(outcome).toEqual({ ok: false, conclusive: false, reason: 'timeout' })
+    // Inconclusive must not disturb the cached acceptance.
+    expect(wrapShellSpawnForMacosTccAttribution('/bin/zsh', ['-l']).file).toBe('/usr/bin/login')
+  })
 })
