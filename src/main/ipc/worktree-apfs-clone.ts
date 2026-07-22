@@ -26,6 +26,13 @@ type DarwinFilesystemInfo = {
   filesystemName: string
 }
 
+export type ApfsCloneFilesystemCache = Map<number, Promise<DarwinFilesystemInfo>>
+
+export type ApfsCloneOptions = {
+  dereferenceSymlinks?: boolean
+  filesystemCache?: ApfsCloneFilesystemCache
+}
+
 export class ApfsCloneUnavailableError extends Error {
   constructor(message: string) {
     super(message)
@@ -67,14 +74,35 @@ async function getDarwinFilesystemInfo(
   }
 }
 
+async function getCachedDarwinFilesystemInfo(
+  path: string,
+  deps: ApfsCloneDeps,
+  cache: ApfsCloneFilesystemCache
+): Promise<DarwinFilesystemInfo> {
+  const deviceId = (await stat(path)).dev
+  const cached = cache.get(deviceId)
+  if (cached) {
+    return cached
+  }
+  const pending = getDarwinFilesystemInfo(path, deps)
+  cache.set(deviceId, pending)
+  try {
+    return await pending
+  } catch (error) {
+    cache.delete(deviceId)
+    throw error
+  }
+}
+
 async function assertSameApfsVolume(
   source: string,
   target: string,
-  deps: ApfsCloneDeps
+  deps: ApfsCloneDeps,
+  cache: ApfsCloneFilesystemCache
 ): Promise<void> {
   const [sourceInfo, targetInfo] = await Promise.all([
-    getDarwinFilesystemInfo(source, deps),
-    getDarwinFilesystemInfo(dirname(target), deps)
+    getCachedDarwinFilesystemInfo(source, deps, cache),
+    getCachedDarwinFilesystemInfo(dirname(target), deps, cache)
   ])
   if (
     sourceInfo.device !== targetInfo.device ||
@@ -113,7 +141,8 @@ async function cloneFileWithApfs(
 async function cloneDirectoryWithApfs(
   source: string,
   target: string,
-  deps: ApfsCloneDeps
+  deps: ApfsCloneDeps,
+  dereferenceSymlinks: boolean
 ): Promise<void> {
   const sourceMode = (await stat(source)).mode & 0o777
   try {
@@ -130,7 +159,14 @@ async function cloneDirectoryWithApfs(
   try {
     // Why: the top-level directory is reserved before cp runs, so use `-n`
     // to keep a raced nested file from being overwritten during the copy.
-    await deps.execFileAsync('/bin/cp', ['-n', '-c', '-R', source, dirname(target)])
+    await deps.execFileAsync('/bin/cp', [
+      '-n',
+      '-c',
+      '-R',
+      ...(dereferenceSymlinks ? ['-L'] : []),
+      source,
+      dirname(target)
+    ])
     await chmod(target, sourceMode)
   } catch (error) {
     // Why: remove only the empty reservation. If cp wrote anything, or another
@@ -144,13 +180,16 @@ export async function cloneWorktreePathWithApfs(
   source: string,
   target: string,
   sourceIsDirectory: boolean,
-  deps: ApfsCloneDeps = defaultApfsCloneDeps
+  deps: ApfsCloneDeps = defaultApfsCloneDeps,
+  options: ApfsCloneOptions = {}
 ): Promise<void> {
   const targetParent = dirname(target)
   await mkdir(targetParent, { recursive: true })
-  await assertSameApfsVolume(source, target, deps)
+  await assertSameApfsVolume(source, target, deps, options.filesystemCache ?? new Map())
   // Why: Node's COPYFILE_FICLONE_FORCE returns ENOSYS on macOS in our runtime,
   // while Darwin's cp exposes APFS clonefile via -c. Preflight the volume so
   // cp's non-APFS full-copy fallback cannot surprise users.
-  await (sourceIsDirectory ? cloneDirectoryWithApfs : cloneFileWithApfs)(source, target, deps)
+  await (sourceIsDirectory
+    ? cloneDirectoryWithApfs(source, target, deps, options.dereferenceSymlinks === true)
+    : cloneFileWithApfs(source, target, deps))
 }

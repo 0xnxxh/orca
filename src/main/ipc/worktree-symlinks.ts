@@ -5,6 +5,7 @@ import {
   cloneWorktreePathWithApfs,
   defaultApfsCloneDeps,
   WorktreeLinkedPathTargetExistsError,
+  type ApfsCloneFilesystemCache,
   type ApfsCloneDeps
 } from './worktree-apfs-clone'
 
@@ -90,7 +91,12 @@ async function copyWorktreePath(
       throw error
     }
     try {
-      await cp(source, target, { recursive: true, force: false, errorOnExist: false })
+      await cp(source, target, {
+        recursive: true,
+        force: false,
+        errorOnExist: false,
+        dereference: true
+      })
       if (process.platform !== 'win32') {
         await chmod(target, sourceMode)
       }
@@ -103,7 +109,12 @@ async function copyWorktreePath(
   }
   // Why: force=false + errorOnExist=false skips (not clobbers) anything a racing
   // process placed at the target after the earlier existence preflight.
-  await cp(source, target, { recursive: true, force: false, errorOnExist: false })
+  await cp(source, target, {
+    recursive: true,
+    force: false,
+    errorOnExist: false,
+    dereference: true
+  })
 }
 
 async function createWorktreeLinkedPath(
@@ -112,7 +123,8 @@ async function createWorktreeLinkedPath(
   sourceIsDirectory: boolean,
   sourceIsSymbolicLink: boolean,
   mode: WorktreeMaterializeMode,
-  options: WorktreeLinkedPathOptions
+  options: WorktreeLinkedPathOptions,
+  apfsFilesystemCache: ApfsCloneFilesystemCache
 ): Promise<void> {
   // Why: copy mode promises independent contents; copying the link itself
   // would let edits in the worktree mutate its shared target.
@@ -126,7 +138,11 @@ async function createWorktreeLinkedPath(
             cloneSource,
             cloneTarget,
             cloneSourceIsDirectory,
-            options.apfsCloneDeps ?? defaultApfsCloneDeps
+            options.apfsCloneDeps ?? defaultApfsCloneDeps,
+            {
+              filesystemCache: apfsFilesystemCache,
+              dereferenceSymlinks: mode === 'copy'
+            }
           ))
       await cloneWorktreePath(copySource, target, sourceIsDirectory)
       return
@@ -157,6 +173,8 @@ async function materializeWorktreePaths(
   options: WorktreeLinkedPathOptions = {}
 ): Promise<void> {
   const effectiveOptions = { platform: process.platform, ...options }
+  // Why: probing APFS via df+diskutil once per copied path multiplies subprocesses in large includes.
+  const apfsFilesystemCache: ApfsCloneFilesystemCache = new Map()
 
   for (const rawPath of paths) {
     const safePath = getSafeRelativePath(rawPath)
@@ -194,7 +212,8 @@ async function materializeWorktreePaths(
         sourceIsDirectory,
         sourceIsSymbolicLink,
         mode,
-        effectiveOptions
+        effectiveOptions,
+        apfsFilesystemCache
       )
     } catch (error) {
       console.error(

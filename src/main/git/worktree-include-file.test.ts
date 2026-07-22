@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parseWorktreeIncludePatterns, resolveWorktreeIncludePaths } from './worktree-include-file'
+import { matchesWorktreeIncludeGlob } from './worktree-include-glob'
 import { gitExecFileAsync } from './runner'
 
 vi.mock('./runner', () => ({
@@ -50,8 +51,20 @@ describe('parseWorktreeIncludePatterns', () => {
   it('marks glob patterns and compiles their matcher', () => {
     const [glob] = parseWorktreeIncludePatterns('.env.*\n')
     expect(glob.hasGlob).toBe(true)
-    expect(glob.regExp?.test('.env.local')).toBe(true)
-    expect(glob.regExp?.test('.envrc')).toBe(false)
+    expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, '.env.local')).toBe(true)
+    expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, '.envrc')).toBe(false)
+  })
+
+  it('matches repeated recursive globs without regex backtracking', () => {
+    const [glob] = parseWorktreeIncludePatterns(`${'**/'.repeat(30)}secrets.json\n`)
+    const longNonMatch = `${'nested/'.repeat(500)}other.json`
+
+    expect(glob.glob?.regExp).toBeNull()
+    expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, 'secrets.json')).toBe(true)
+    expect(
+      glob.glob && matchesWorktreeIncludeGlob(glob.glob, `${'nested/'.repeat(500)}secrets.json`)
+    ).toBe(true)
+    expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, longNonMatch)).toBe(false)
   })
 })
 

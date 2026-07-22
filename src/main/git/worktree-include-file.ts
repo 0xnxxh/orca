@@ -4,6 +4,12 @@ import { checkIgnoredPaths } from './check-ignored-paths'
 import type { GitRuntimeOptions } from './git-runtime-options'
 import { gitOptionsForWorktree } from './git-runtime-options'
 import { gitExecFileAsync } from './runner'
+import {
+  compileWorktreeIncludeGlob,
+  getWorktreeIncludeGlobStepCount,
+  matchesWorktreeIncludeGlob,
+  type CompiledWorktreeIncludeGlob
+} from './worktree-include-glob'
 
 /** Project-level list of gitignored paths to copy into each new worktree.
  *  Cross-tool convention (gitignore syntax); see issue #7549. */
@@ -13,6 +19,8 @@ export const WORKTREE_INCLUDE_FILE = '.worktreeinclude'
 // filesystem or a pathological repo; bail and create the worktree without it.
 const WORKTREE_INCLUDE_GIT_TIMEOUT_MS = 15_000
 const WORKTREE_INCLUDE_MAX_FILE_BYTES = 256 * 1024
+// Why: glob filtering runs on the main process outside the Git subprocess deadline.
+const WORKTREE_INCLUDE_GLOB_STEP_BUDGET = 5_000_000
 // Why: Windows limits native command lines to 32K UTF-16 code units; leave
 // room for Git's executable, fixed arguments, and the repository path.
 const WORKTREE_INCLUDE_PATHSPEC_CHUNK_LENGTH = 12 * 1024
@@ -24,7 +32,7 @@ type WorktreeIncludePattern = {
   dirOnly: boolean
   anchored: boolean
   hasGlob: boolean
-  regExp: RegExp | null
+  glob: CompiledWorktreeIncludeGlob | null
 }
 
 export function parseWorktreeIncludePatterns(content: string): WorktreeIncludePattern[] {
@@ -51,49 +59,17 @@ export function parseWorktreeIncludePatterns(content: string): WorktreeIncludePa
       dirOnly,
       anchored,
       hasGlob,
-      regExp: hasGlob ? gitignoreGlobToRegExp(trimmed) : null
+      glob: hasGlob ? compileWorktreeIncludeGlob(trimmed) : null
     })
   }
   return patterns
 }
 
-// Why: `[...]` character classes are intentionally treated as literals — the
-// glob subset here mirrors what git itself matches for the overwhelmingly
-// common `.env.*` / `**/secrets` shapes without risking a bad user pattern
-// becoming an invalid or pathological RegExp.
-function gitignoreGlobToRegExp(pattern: string): RegExp | null {
-  let regex = ''
-  for (let index = 0; index < pattern.length; index++) {
-    const char = pattern[index]
-    if (char === '*') {
-      if (pattern[index + 1] === '*') {
-        regex += '.*'
-        index++
-        // Collapse `**/` so `foo/**/bar` also matches `foo/bar`.
-        if (pattern[index + 1] === '/') {
-          regex += '/?'
-          index++
-        }
-      } else {
-        regex += '[^/]*'
-      }
-    } else if (char === '?') {
-      regex += '[^/]'
-    } else {
-      regex += char.replace(/[.+^${}()|[\]\\]/, '\\$&')
-    }
-  }
-  try {
-    return new RegExp(`^${regex}$`)
-  } catch {
-    return null
-  }
-}
-
 function patternMatches(
   pattern: WorktreeIncludePattern,
   relativePath: string,
-  isDirectory: boolean
+  isDirectory: boolean,
+  globBudget: { remaining: number }
 ): boolean {
   if (pattern.dirOnly && !isDirectory) {
     return false
@@ -106,19 +82,27 @@ function patternMatches(
       subject === pattern.body || (pattern.anchored && relativePath.startsWith(`${pattern.body}/`))
     )
   }
-  return pattern.regExp !== null && pattern.regExp.test(subject)
+  if (pattern.glob === null) {
+    return false
+  }
+  globBudget.remaining -= getWorktreeIncludeGlobStepCount(pattern.glob, subject)
+  if (globBudget.remaining < 0) {
+    throw new Error(`${WORKTREE_INCLUDE_FILE} glob matching exceeded its CPU budget`)
+  }
+  return matchesWorktreeIncludeGlob(pattern.glob, subject)
 }
 
 function isIncludedByPatterns(
   patterns: readonly WorktreeIncludePattern[],
   relativePath: string,
-  isDirectory: boolean
+  isDirectory: boolean,
+  globBudget: { remaining: number }
 ): boolean {
   // Why: gitignore semantics — the last matching pattern wins, so `!` lines
   // can carve exceptions out of an earlier broad include.
   let included = false
   for (const pattern of patterns) {
-    if (patternMatches(pattern, relativePath, isDirectory)) {
+    if (patternMatches(pattern, relativePath, isDirectory, globBudget)) {
       included = !pattern.negated
     }
   }
@@ -250,10 +234,11 @@ export async function resolveWorktreeIncludePaths(
     }
 
     const candidates = new Map<string, GitignoredEntry>()
+    const globBudget = { remaining: WORKTREE_INCLUDE_GLOB_STEP_BUDGET }
     const addCandidate = (entry: GitignoredEntry): void => {
       if (
         isSafeIncludeCandidate(entry.relativePath) &&
-        isIncludedByPatterns(patterns, entry.relativePath, entry.isDirectory)
+        isIncludedByPatterns(patterns, entry.relativePath, entry.isDirectory, globBudget)
       ) {
         candidates.set(entry.relativePath, entry)
       }

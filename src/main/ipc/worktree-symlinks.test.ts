@@ -449,6 +449,19 @@ describe('createWorktreeCopiedPaths', () => {
     expect(readFileSync(join(primary, '.env.shared'), 'utf8')).toBe('SECRET=1\n')
   })
 
+  posixIt('dereferences nested symlinks so copied directories remain independent', async () => {
+    mkdirSync(join(primary, 'config'))
+    writeFileSync(join(primary, 'shared.json'), '{"owner":"primary"}')
+    symlinkSync(join(primary, 'shared.json'), join(primary, 'config', 'settings.json'))
+
+    await createWorktreeCopiedPaths(primary, worktree, ['config'], { platform: 'linux' })
+
+    const copiedSettings = join(worktree, 'config', 'settings.json')
+    expect(lstatSync(copiedSettings).isSymbolicLink()).toBe(false)
+    writeFileSync(copiedSettings, '{"owner":"worktree"}')
+    expect(readFileSync(join(primary, 'shared.json'), 'utf8')).toBe('{"owner":"primary"}')
+  })
+
   it('creates parent directories lazily for nested paths', async () => {
     mkdirSync(join(primary, 'apps', 'web'), { recursive: true })
     writeFileSync(join(primary, 'apps', 'web', '.env'), 'A=1')
@@ -530,6 +543,26 @@ describe('createWorktreeCopiedPaths', () => {
       false
     )
     expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('CLONED=1\n')
+  })
+
+  it('probes an APFS volume once when copying multiple paths', async () => {
+    mkdirSync(join(primary, 'config'))
+    mkdirSync(join(primary, 'secrets'))
+    const deps = createApfsCloneDeps({})
+
+    await createWorktreeCopiedPaths(primary, worktree, ['config', 'secrets'], {
+      platform: 'darwin',
+      apfsCloneDeps: deps
+    })
+
+    const execFileAsyncMock = vi.mocked(deps.execFileAsync)
+    const filesystemProbeCalls = execFileAsyncMock.mock.calls.filter(
+      ([file]) => file === '/bin/df' || file === '/usr/sbin/diskutil'
+    )
+    expect(filesystemProbeCalls).toHaveLength(2)
+    const copyCalls = execFileAsyncMock.mock.calls.filter(([file]) => file === '/bin/cp')
+    expect(copyCalls).toHaveLength(2)
+    expect(copyCalls.every(([, args]) => args.includes('-L'))).toBe(true)
   })
 })
 
