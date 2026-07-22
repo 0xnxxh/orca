@@ -2,6 +2,9 @@
 
 import { spawnSync } from 'node:child_process'
 
+const isLocalMacPackage = process.argv.includes('--local-macos-package')
+const localMacAppBundleId = 'com.stablyai.orca.local'
+
 if (process.platform === 'win32') {
   runNodeScript('config/scripts/build-windows-cli-launcher.mjs')
   process.exit(0)
@@ -12,19 +15,30 @@ if (process.platform !== 'darwin') {
   process.exit(0)
 }
 
-runPnpmScript('build:computer-macos')
-runPnpmScript('build:notification-status-macos')
+runPnpmScript(
+  'build:computer-macos',
+  [],
+  isLocalMacPackage
+    ? { ...process.env, ORCA_COMPUTER_MACOS_BUNDLE_ID: `${localMacAppBundleId}.computer-use` }
+    : process.env
+)
+runPnpmScript(
+  'build:notification-status-macos',
+  isLocalMacPackage ? ['--bundle-id', localMacAppBundleId] : []
+)
 process.exit(0)
 
-function runPnpmScript(scriptName) {
+function runPnpmScript(scriptName, scriptArgs = [], env = process.env) {
   const npmExecPath = process.env.npm_execpath
   const command = npmExecPath
     ? process.execPath
     : process.platform === 'win32'
       ? 'pnpm.cmd'
       : 'pnpm'
-  const args = npmExecPath ? [npmExecPath, 'run', scriptName] : ['run', scriptName]
-  const result = spawnSync(command, args, { stdio: 'inherit' })
+  const args = npmExecPath
+    ? [npmExecPath, 'run', scriptName, ...scriptArgs]
+    : ['run', scriptName, ...scriptArgs]
+  const result = spawnSync(command, args, { env, stdio: 'inherit' })
 
   if (result.signal) {
     process.kill(process.pid, result.signal)

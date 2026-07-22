@@ -19,6 +19,32 @@ const {
 } = require('../packaged-runtime-node-modules.cjs')
 
 describe('electron-builder config', () => {
+  it('changes only the non-release macOS app id', () => {
+    const configPath = require.resolve('../electron-builder.config.cjs')
+    const original = process.env.ORCA_MAC_RELEASE
+    try {
+      delete require.cache[configPath]
+      delete process.env.ORCA_MAC_RELEASE
+      const localConfig = require('../electron-builder.config.cjs')
+      expect(localConfig.appId).toBe('com.stablyai.orca')
+      expect(localConfig.mac.appId).toBe('com.stablyai.orca.local')
+
+      delete require.cache[configPath]
+      process.env.ORCA_MAC_RELEASE = '1'
+      const releaseConfig = require('../electron-builder.config.cjs')
+      expect(releaseConfig.appId).toBe('com.stablyai.orca')
+      expect(releaseConfig.mac.appId).toBeUndefined()
+    } finally {
+      if (original === undefined) {
+        delete process.env.ORCA_MAC_RELEASE
+      } else {
+        process.env.ORCA_MAC_RELEASE = original
+      }
+      delete require.cache[configPath]
+      require('../electron-builder.config.cjs')
+    }
+  })
+
   it('excludes repo-only source trees from app.asar', () => {
     expect(electronBuilderConfig.files).toEqual(
       expect.arrayContaining([

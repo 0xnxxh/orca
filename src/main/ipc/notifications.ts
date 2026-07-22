@@ -1,7 +1,8 @@
 /* eslint-disable max-lines -- Why: notification IPC keeps permission, dispatch, custom sound asset, and sound-loading handlers colocated so renderer/main contracts stay auditable. */
 import { app, BrowserWindow, Notification, ipcMain, shell } from 'electron'
+import { execFileSync } from 'node:child_process'
 import { readFile, stat } from 'node:fs/promises'
-import { extname, isAbsolute, normalize } from 'node:path'
+import { dirname, extname, isAbsolute, join, normalize } from 'node:path'
 import beepSoundPath from '../../../resources/notification-sounds/beep.mp3?asset'
 import blipSoundPath from '../../../resources/notification-sounds/blip.mp3?asset'
 import blopSoundPath from '../../../resources/notification-sounds/blop.mp3?asset'
@@ -186,11 +187,29 @@ function probeNotificationDelivery(): Promise<NotificationDeliveryProbeResult> {
   return deliveryProbeInFlight
 }
 
+function readPackagedMacBundleId(): string | null {
+  if (!app.isPackaged) {
+    return null
+  }
+  try {
+    const infoPlistPath = join(dirname(app.getPath('exe')), '..', 'Info.plist')
+    return (
+      execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', infoPlistPath], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim() || null
+    )
+  } catch {
+    return null
+  }
+}
+
 function getMacNotificationSettingsUrl(): string {
-  // Why: local packaging uses com.stablyai.orca.local (#9756), so trust the
-  // launchd-provided id before falling back to the release id.
+  // Why: direct executable launches do not reliably receive launchd's private
+  // bundle-id environment variable, so packaged apps read their own plist.
   const bundleId =
     process.env.ORCA_DEV_MACOS_BUNDLE_ID ??
+    readPackagedMacBundleId() ??
     process.env.__CFBundleIdentifier ??
     MACOS_PACKAGED_BUNDLE_ID
   return `${MACOS_NOTIFICATION_SETTINGS_URL}?id=${encodeURIComponent(bundleId)}`
