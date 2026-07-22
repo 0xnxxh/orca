@@ -23,10 +23,20 @@ describe('dismissOverlays', () => {
       click: vi.fn().mockRejectedValue(new Error('window closed'))
     }
     windowClose.first.mockReturnValue(windowClose)
+    const featureTipDialog = {
+      first: vi.fn(),
+      isVisible: vi.fn().mockResolvedValue(true),
+      locator: vi.fn().mockReturnValue(dialogClose)
+    }
+    featureTipDialog.first.mockReturnValue(featureTipDialog)
 
     const page = {
-      locator: vi.fn().mockReturnValue(dialogClose),
-      getByRole: vi.fn((_role, { name }) => (name === 'Close' ? windowClose : hiddenButton())),
+      getByRole: vi.fn((role, { name }) => {
+        if (role === 'dialog') {
+          return featureTipDialog
+        }
+        return name === 'Close' ? windowClose : hiddenButton()
+      }),
       keyboard: { press: vi.fn().mockResolvedValue(undefined) },
       waitForTimeout: vi.fn().mockResolvedValue(undefined)
     }
@@ -35,9 +45,9 @@ describe('dismissOverlays', () => {
 
     expect(dialogClose.click).toHaveBeenCalledOnce()
     expect(windowClose.click).not.toHaveBeenCalled()
-    expect(page.locator).toHaveBeenCalledWith(
-      '[data-slot="dialog-content"]:visible [data-slot="dialog-close"]'
-    )
+    expect(page.getByRole).toHaveBeenCalledWith('dialog', {
+      name: 'Let agents drive Orca with the Orca CLI'
+    })
   })
 
   it('keeps overlay retries within the caller timeout budget', async () => {
@@ -53,9 +63,12 @@ describe('dismissOverlays', () => {
       newWorkspace.first.mockReturnValue(newWorkspace)
       const page = {
         locator: vi.fn().mockImplementation(() => hiddenButton()),
-        getByRole: vi.fn((_role, { name }) =>
-          name === 'New workspace' ? newWorkspace : hiddenButton()
-        ),
+        getByRole: vi.fn((role, { name }) => {
+          if (role === 'dialog') {
+            return hiddenButton()
+          }
+          return name === 'New workspace' ? newWorkspace : hiddenButton()
+        }),
         keyboard: { press: vi.fn().mockResolvedValue(undefined) },
         isClosed: vi.fn().mockReturnValue(false)
       }
@@ -70,5 +83,72 @@ describe('dismissOverlays', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('submits within the composer without reopening the selected Blank Terminal picker', async () => {
+    const newWorkspace = {
+      first: vi.fn(),
+      click: vi.fn().mockResolvedValue(undefined)
+    }
+    newWorkspace.first.mockReturnValue(newWorkspace)
+    const agentPicker = {
+      first: vi.fn(),
+      innerText: vi.fn().mockResolvedValue('Blank Terminal'),
+      click: vi.fn()
+    }
+    agentPicker.first.mockReturnValue(agentPicker)
+    const createWorktree = {
+      last: vi.fn(),
+      click: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('submit was briefly intercepted'))
+        .mockResolvedValueOnce(undefined)
+    }
+    createWorktree.last.mockReturnValue(createWorktree)
+    const composer = {
+      last: vi.fn(),
+      waitFor: vi.fn().mockResolvedValue(undefined),
+      locator: vi.fn().mockReturnValue(agentPicker),
+      getByRole: vi.fn().mockReturnValue(createWorktree)
+    }
+    composer.last.mockReturnValue(composer)
+    const xterm = {
+      first: vi.fn(),
+      waitFor: vi.fn().mockResolvedValue(undefined)
+    }
+    xterm.first.mockReturnValue(xterm)
+    const terminalSurface = {
+      first: vi.fn(),
+      isVisible: vi.fn().mockResolvedValue(false),
+      waitFor: vi.fn().mockResolvedValue(undefined),
+      locator: vi.fn().mockReturnValue(xterm)
+    }
+    terminalSurface.first.mockReturnValue(terminalSurface)
+    const unintendedDialogClose = {
+      first: vi.fn(),
+      isVisible: vi.fn().mockResolvedValue(true),
+      click: vi.fn().mockResolvedValue(undefined)
+    }
+    unintendedDialogClose.first.mockReturnValue(unintendedDialogClose)
+    const page = {
+      locator: vi.fn((selector) =>
+        selector.includes('dialog-close') ? unintendedDialogClose : terminalSurface
+      ),
+      getByRole: vi.fn((role, { name }) => {
+        if (role === 'dialog') {
+          return name === 'Create worktree' ? composer : hiddenButton()
+        }
+        return name === 'New workspace' ? newWorkspace : hiddenButton()
+      }),
+      keyboard: { press: vi.fn().mockResolvedValue(undefined) },
+      isClosed: vi.fn().mockReturnValue(false)
+    }
+
+    await ensureTerminal(page)
+
+    expect(agentPicker.click).not.toHaveBeenCalled()
+    expect(composer.getByRole).toHaveBeenCalledWith('button', { name: /^Create worktree/ })
+    expect(unintendedDialogClose.click).not.toHaveBeenCalled()
+    expect(createWorktree.click).toHaveBeenCalledTimes(2)
   })
 })

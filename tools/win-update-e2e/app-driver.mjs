@@ -275,19 +275,30 @@ async function createWorkspaceFromSeededRepo(page, timeoutMs) {
     // timeout by another full click attempt.
     await newWorkspace.click({ timeout: 1 })
   }
-  // Choose the plain-terminal mode (best-effort — if it is already the default
-  // or the label differs, the create below still produces a worktree).
-  await tryClickWithKnownOverlayRetry(
-    page,
-    page.getByRole('button', { name: 'Blank Terminal' }).first(),
-    15_000
-  )
+  const composer = page.getByRole('dialog', { name: 'Create worktree' }).last()
+  await composer.waitFor({ state: 'visible', timeout: 15_000 })
+  const agentPicker = composer
+    .locator('[data-agent-combobox-root="true"] button[role="combobox"]')
+    .first()
+  const selectedAgent = await agentPicker.innerText({ timeout: 15_000 }).catch(() => '')
+  if (!selectedAgent.includes('Blank Terminal')) {
+    if (!(await tryClickWithKnownOverlayRetry(page, agentPicker, 15_000))) {
+      await agentPicker.click({ timeout: 1 })
+    }
+    const blankTerminalOption = page
+      .locator('[data-agent-combobox-root="true"] [data-slot="command-item"]:visible')
+      .filter({ hasText: 'Blank Terminal' })
+      .first()
+    if (!(await tryClickWithKnownOverlayRetry(page, blankTerminalOption, 15_000))) {
+      await blankTerminalOption.click({ timeout: 1 })
+    }
+  }
   // Submit. The create button's accessible name carries the shortcut hint
   // ("Create worktreeCtrl"), so match by prefix; fall back to the documented
   // Ctrl+Enter shortcut if the button is not directly clickable.
   const created = await tryClickWithKnownOverlayRetry(
     page,
-    page.getByRole('button', { name: /^Create worktree/ }).last(),
+    composer.getByRole('button', { name: /^Create worktree/ }).last(),
     15_000
   )
   if (!created) {
@@ -296,18 +307,21 @@ async function createWorkspaceFromSeededRepo(page, timeoutMs) {
 }
 
 const OVERLAY_DISMISS_LABELS = ['Got it', 'Dismiss setup scripts', 'Dismiss tip', 'Dismiss update']
-const DIALOG_CLOSE_BUTTON = '[data-slot="dialog-content"]:visible [data-slot="dialog-close"]'
+const CLI_FEATURE_TIP_TITLE = 'Let agents drive Orca with the Orca CLI'
 
 async function dismissKnownOverlays(page) {
   let acted = false
-  // Why: a global "Close" role also matches the Windows/Linux title-bar button.
-  const dialogClose = page.locator(DIALOG_CLOSE_BUTTON).first()
-  if (await dialogClose.isVisible().catch(() => false)) {
-    const clicked = await dialogClose
-      .click({ timeout: 3_000 })
-      .then(() => true)
-      .catch(() => false)
-    acted ||= clicked
+  const cliFeatureTip = page.getByRole('dialog', { name: CLI_FEATURE_TIP_TITLE }).first()
+  if (await cliFeatureTip.isVisible().catch(() => false)) {
+    // Why: a global "Close" role also matches the Windows/Linux title-bar button.
+    const dialogClose = cliFeatureTip.locator('[data-slot="dialog-close"]').first()
+    if (await dialogClose.isVisible().catch(() => false)) {
+      const clicked = await dialogClose
+        .click({ timeout: 3_000 })
+        .then(() => true)
+        .catch(() => false)
+      acted ||= clicked
+    }
   }
   for (const name of OVERLAY_DISMISS_LABELS) {
     const btn = page.getByRole('button', { name }).first()
