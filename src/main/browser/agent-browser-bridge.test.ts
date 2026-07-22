@@ -98,6 +98,9 @@ function mockWebContents(id: number, url = 'https://example.com', title = 'Examp
     loadURL: vi.fn(async (nextUrl: string) => {
       currentUrl = nextUrl
     }),
+    isLoading: vi.fn(() => false),
+    on: vi.fn(),
+    removeListener: vi.fn(),
     isDestroyed: () => false,
     invalidate: vi.fn(),
     focus: vi.fn(),
@@ -1667,19 +1670,37 @@ describe('AgentBrowserBridge', () => {
     }
   })
 
-  it('reports the landed page when a client-side redirect aborts direct navigation', async () => {
+  it('waits for a superseding navigation to land after direct navigation aborts', async () => {
     const wc = mockWebContents(100, 'https://example.com/current', 'Example')
-    wc.loadURL.mockImplementation(async () => {
-      // Mimic Electron: the target commits, a JS/meta redirect supersedes the load, loadURL rejects.
-      wc.getURL = () => 'https://example.com/login'
-      throw Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 })
+    let currentUrl = 'https://example.com/current'
+    let loading = true
+    const listeners = new Map<string, () => void>()
+    wc.getURL = () => currentUrl
+    wc.isLoading.mockImplementation(() => loading)
+    wc.on.mockImplementation((event: string, listener: () => void) => {
+      listeners.set(event, listener)
     })
+    wc.loadURL.mockRejectedValue(
+      Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 })
+    )
     webContentsFromIdMock.mockReturnValue(wc)
 
-    await expect(bridge.goto('https://example.com/sso')).resolves.toEqual({
+    const navigation = bridge.goto('https://example.com/sso')
+    await vi.waitFor(() => expect(listeners.get('did-stop-loading')).toBeDefined())
+
+    currentUrl = 'https://example.com/login'
+    loading = false
+    listeners.get('did-stop-loading')!()
+
+    await expect(navigation).resolves.toEqual({
       url: 'https://example.com/login',
       title: 'Example'
     })
+    expect(wc.removeListener).toHaveBeenCalledWith(
+      'did-stop-loading',
+      listeners.get('did-stop-loading')
+    )
+    expect(wc.removeListener).toHaveBeenCalledWith('destroyed', listeners.get('destroyed'))
     expect(execFileMock).not.toHaveBeenCalled()
   })
 
@@ -1693,6 +1714,82 @@ describe('AgentBrowserBridge', () => {
       title: 'Example'
     })
     expect(execFileMock).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the page prevents direct navigation', async () => {
+    const wc = mockWebContents(100, 'https://example.com/unsaved', 'Unsaved changes')
+    wc.loadURL.mockImplementation(async () => {
+      const preventUnload = wc.on.mock.calls.find(
+        ([event]) => event === 'will-prevent-unload'
+      )?.[1] as ((event: { defaultPrevented: boolean }) => void) | undefined
+      preventUnload!({ defaultPrevented: false })
+      throw Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 })
+    })
+    webContentsFromIdMock.mockReturnValue(wc)
+
+    await expect(bridge.goto('https://example.com/next')).rejects.toMatchObject({
+      code: 'browser_error',
+      message: 'Failed to navigate browser page tab-1: ERR_ABORTED (-3)'
+    })
+    const preventUnload = wc.on.mock.calls.find(([event]) => event === 'will-prevent-unload')?.[1]
+    expect(wc.removeListener).toHaveBeenCalledWith('will-prevent-unload', preventUnload)
+    expect(execFileMock).not.toHaveBeenCalled()
+  })
+
+  it('fails closed when the navigation superseding an abort fails', async () => {
+    const wc = mockWebContents(100, 'https://example.com/current', 'Example')
+    wc.loadURL.mockRejectedValue(
+      Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 })
+    )
+    webContentsFromIdMock.mockReturnValue(wc)
+    const getBrowserPageLoadError = vi.fn(() => ({
+      code: -105,
+      description: 'Name not resolved',
+      validatedUrl: 'https://nxdomain.example/'
+    }))
+    const b = new AgentBrowserBridge(
+      mockBrowserManager(new Map([['tab-1', 100]]), undefined, {
+        getBrowserPageLoadError
+      })
+    )
+    b.setActiveTab(100)
+
+    await expect(b.goto('https://example.com/redirect')).rejects.toMatchObject({
+      code: 'browser_error',
+      message: 'Failed to navigate browser page tab-1: Name not resolved (-105)'
+    })
+    expect(execFileMock).not.toHaveBeenCalled()
+  })
+
+  it('bounds and cleans up a superseding navigation that never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const wc = mockWebContents(100, 'https://example.com/current', 'Example')
+      wc.isLoading.mockReturnValue(true)
+      wc.loadURL.mockRejectedValue(
+        Object.assign(new Error('ERR_ABORTED (-3)'), { code: 'ERR_ABORTED', errno: -3 })
+      )
+      webContentsFromIdMock.mockReturnValue(wc)
+
+      const navigation = bridge.goto('https://example.com/redirect')
+      const rejection = expect(navigation).rejects.toMatchObject({
+        code: 'browser_error',
+        message: 'Failed to navigate browser page tab-1: Browser navigation timed out after 30000ms'
+      })
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      await rejection
+      const stopLoading = wc.on.mock.calls.find(([event]) => event === 'did-stop-loading')?.[1]
+      const destroyed = wc.on.mock.calls.find(([event]) => event === 'destroyed')?.[1]
+      expect(wc.removeListener).toHaveBeenCalledWith('did-stop-loading', stopLoading)
+      expect(wc.removeListener).toHaveBeenCalledWith('destroyed', destroyed)
+      expect(vi.getTimerCount()).toBe(0)
+      expect(
+        (bridge as unknown as { commandQueues: Map<string, unknown[]> }).commandQueues.size
+      ).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('fails closed when direct navigation fails for a non-abort reason', async () => {

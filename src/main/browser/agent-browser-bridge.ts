@@ -272,6 +272,63 @@ function isAbortedNavigationError(error: unknown): boolean {
   return code === 'ERR_ABORTED' || errno === -3
 }
 
+function waitForAbortedNavigationReplacement(
+  wc: WebContents,
+  browserPageId: string,
+  timeoutMs: number
+): Promise<void> {
+  try {
+    if (!wc.isLoading()) {
+      return Promise.resolve()
+    }
+  } catch {
+    // A destroyed guest is resolved against the authoritative page registration below.
+    return Promise.resolve()
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    const finish = (error?: BrowserError): void => {
+      if (settled) {
+        return
+      }
+      settled = true
+      wc.removeListener('did-stop-loading', onDidStopLoading)
+      wc.removeListener('destroyed', onDestroyed)
+      if (timeout) {
+        clearTimeout(timeout)
+      }
+      if (error) {
+        reject(error)
+      } else {
+        resolve()
+      }
+    }
+    const onDidStopLoading = (): void => finish()
+    const onDestroyed = (): void => finish()
+
+    wc.on('did-stop-loading', onDidStopLoading)
+    wc.on('destroyed', onDestroyed)
+    timeout = setTimeout(
+      () =>
+        finish(
+          new BrowserError(
+            'browser_error',
+            `Failed to navigate browser page ${browserPageId}: Browser navigation timed out after ${EMBEDDED_NAVIGATION_TIMEOUT_MS}ms`
+          )
+        ),
+      timeoutMs
+    )
+    timeout.unref?.()
+
+    // Why: the replacement can finish between loadURL rejecting and listener attachment.
+    if (!wc.isLoading()) {
+      finish()
+    }
+  })
+}
+
 function isTabClosedTransportError(message: string): boolean {
   return /session destroyed while command|session destroyed while commands|connection refused|cdp discovery methods failed|websocket connect failed/i.test(
     message
@@ -785,6 +842,15 @@ export class AgentBrowserBridge {
         if (!navigationUrl) {
           throw new BrowserError('invalid_argument', `Unsupported browser URL: ${url}`)
         }
+        const navigationState: { preventUnloadEvent: Electron.Event | null } = {
+          preventUnloadEvent: null
+        }
+        const onWillPreventUnload = (event: Electron.Event): void => {
+          navigationState.preventUnloadEvent = event
+        }
+        wc.on('will-prevent-unload', onWillPreventUnload)
+        let navigationAborted = false
+        const navigationDeadline = Date.now() + EMBEDDED_NAVIGATION_TIMEOUT_MS
         let navigationTimeout: ReturnType<typeof setTimeout> | null = null
         try {
           await Promise.race([
@@ -803,17 +869,33 @@ export class AgentBrowserBridge {
             })
           ])
         } catch (error) {
+          if (navigationTimeout) {
+            clearTimeout(navigationTimeout)
+            navigationTimeout = null
+          }
           if (!this.getWebContents(target.webContentsId)) {
             throw this.createPageUnavailableError(`orca-tab-${target.browserPageId}`)
           }
-          // Why: loadURL rejects ERR_ABORTED (-3) on redirects/SPA navigations and downloads; the page is still usable (see offscreen-browser-backend), so report where it landed instead of failing.
-          if (!isAbortedNavigationError(error)) {
+          // Why: ERR_ABORTED also covers a page vetoing unload; that navigation did not succeed.
+          if (
+            !isAbortedNavigationError(error) ||
+            (navigationState.preventUnloadEvent !== null &&
+              !navigationState.preventUnloadEvent.defaultPrevented)
+          ) {
             throw new BrowserError(
               'browser_error',
               `Failed to navigate browser page ${target.browserPageId}: ${error instanceof Error ? error.message : String(error)}`
             )
           }
+          navigationAborted = true
+          // Why: a superseding navigation rejects the first load before its replacement has landed.
+          await waitForAbortedNavigationReplacement(
+            wc,
+            target.browserPageId,
+            Math.max(0, navigationDeadline - Date.now())
+          )
         } finally {
+          wc.removeListener('will-prevent-unload', onWillPreventUnload)
           if (navigationTimeout) {
             clearTimeout(navigationTimeout)
           }
@@ -822,6 +904,15 @@ export class AgentBrowserBridge {
         // Why: cross-process navigation can replace the guest while retaining the same authoritative page id.
         const navigatedTarget = this.resolveCommandTarget(worktreeId, target.browserPageId)
         const navigatedWebContents = this.requireTargetWebContents(navigatedTarget)
+        const loadError = navigationAborted
+          ? this.browserManager.getBrowserPageLoadError(target.browserPageId)
+          : null
+        if (loadError) {
+          throw new BrowserError(
+            'browser_error',
+            `Failed to navigate browser page ${target.browserPageId}: ${loadError.description} (${loadError.code})`
+          )
+        }
         return { url: navigatedWebContents.getURL(), title: navigatedWebContents.getTitle() }
       },
       { ensureSession: false }
