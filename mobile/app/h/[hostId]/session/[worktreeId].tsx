@@ -4072,7 +4072,10 @@ export default function SessionScreen() {
     try {
       const response = await client.sendRequest('session.tabs.close', {
         worktree: `id:${worktreeId}`,
-        tabId: tab.id
+        tabId: tab.id,
+        // Why: a tapped tab close is explicit user intent; older hosts strip
+        // the unknown field and keep their legacy behavior.
+        reason: 'user'
       })
       if (response.ok) {
         if (tab.type === 'terminal' && typeof tab.terminal === 'string') {
