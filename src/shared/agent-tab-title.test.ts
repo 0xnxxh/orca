@@ -16,10 +16,12 @@ describe('deriveGeneratedTabTitle', () => {
     ).toBe('Refactor the auth middleware to use JWT')
   })
 
-  it('strips markup, links, emoji, and punctuation from generated titles', () => {
+  it('strips markup, links, emoji, and punctuation without promoting incidental markers', () => {
     expect(
-      deriveGeneratedTabTitle('Please fix `src/auth.ts`!!! https://example.com 🔥 then add tests')
-    ).toBe('Fix src auth')
+      deriveGeneratedTabTitle(
+        'Please fix auth note #1 with `src/auth.ts`!!! https://example.com 🔥'
+      )
+    ).toBe('Fix auth note 1 with src auth')
   })
 
   it('preserves non-ASCII title text while folding Unicode whitespace', () => {
