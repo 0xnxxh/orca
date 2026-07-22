@@ -320,6 +320,7 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'runtime.clientEvents.unsubscribe',
   'session.tabs.activate',
   'session.tabs.close',
+  'session.tabs.closeLifecycle',
   'session.tabs.createTerminal',
   'session.tabs.list',
   'session.tabs.listAll',

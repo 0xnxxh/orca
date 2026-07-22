@@ -3,9 +3,11 @@ import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
 import type {
   BrowserTabCreateResult,
   RuntimeMobileSessionCreateTerminalResult,
+  RuntimeMobileSessionTabCloseResult,
   RuntimeMobileSessionTabMove,
   RuntimeMobileSessionTabMoveResult,
   RuntimeMobileSessionTabsResult,
+  RuntimeSessionTabCloseReason,
   RuntimeTerminalClose,
   RuntimeTerminalSplit
 } from '../../../shared/runtime-types'
@@ -20,7 +22,7 @@ import { unwrapRuntimeRpcResult } from './runtime-rpc-client'
 import { parseRemoteRuntimePtyId } from './runtime-terminal-stream'
 import { toRuntimeWorktreeSelector } from './runtime-worktree-selector'
 import { recordWebSessionFocusIntent } from './web-session-focus-intent'
-import { recordWebSessionCloseIntent } from './web-session-close-intent'
+import { clearWebSessionCloseIntent, recordWebSessionCloseIntent } from './web-session-close-intent'
 import { recordWebSessionReorderIntent } from './web-session-reorder-intent'
 import {
   isWebTerminalSurfaceTabId,
@@ -28,6 +30,7 @@ import {
   toWebTerminalSurfaceTabId
 } from './web-terminal-surface-id'
 import { deliverLaunchPromptToAgentTab } from '../lib/agent-launch-prompt-delivery'
+import { listRemoteRuntimeSessionTabsDeduped } from './remote-runtime-session-tabs-inflight'
 
 export {
   HOST_TERMINAL_SURFACE_SEPARATOR,
@@ -292,17 +295,23 @@ async function refreshWebRuntimeSessionTabsSnapshot(
   worktreeId: string
 ): Promise<void> {
   try {
-    const response = await window.api.runtimeEnvironments.call({
-      selector: environmentId,
-      method: 'session.tabs.list',
-      params: {
-        worktree: toRuntimeWorktreeSelector(worktreeId)
-      },
-      timeoutMs: 15_000
+    const snapshot = await listRemoteRuntimeSessionTabsDeduped({
+      environmentId,
+      worktreeId,
+      load: async () => {
+        const response = await window.api.runtimeEnvironments.call({
+          selector: environmentId,
+          method: 'session.tabs.list',
+          params: {
+            worktree: toRuntimeWorktreeSelector(worktreeId)
+          },
+          timeoutMs: 15_000
+        })
+        return unwrapRuntimeRpcResult(
+          response as RuntimeRpcResponse<RuntimeMobileSessionTabsResult>
+        )
+      }
     })
-    const snapshot = unwrapRuntimeRpcResult(
-      response as RuntimeRpcResponse<RuntimeMobileSessionTabsResult>
-    )
     const { applyFreshWebSessionTabsSnapshot, applyWebSessionTabsStorePatch } =
       await import('./web-session-tabs-sync')
     applyWebSessionTabsStorePatch((state) => {
@@ -366,6 +375,9 @@ export async function closeWebRuntimeSessionTab(args: {
   worktreeId: string
   tabId: string
   environmentId?: string | null
+  reason: RuntimeSessionTabCloseReason
+  publicationEpoch?: string | null
+  terminalHandle?: string | null
 }): Promise<boolean> {
   return callWebRuntimeSessionTabMethod('session.tabs.close', args)
 }
@@ -471,6 +483,9 @@ async function callWebRuntimeSessionTabMethod(
     worktreeId: string
     tabId: string
     environmentId?: string | null
+    reason?: RuntimeSessionTabCloseReason
+    publicationEpoch?: string | null
+    terminalHandle?: string | null
   }
 ): Promise<boolean> {
   const environmentId =
@@ -481,9 +496,25 @@ async function callWebRuntimeSessionTabMethod(
     return false
   }
 
-  if (method === 'session.tabs.close') {
-    // Why: sync best-effort intent before the async id resolution, so a snapshot in that gap can't flash the closed tab back.
-    recordWebSessionCloseIntent(args.worktreeId, toHostSessionTabId(args.tabId), Date.now())
+  const isClose = method === 'session.tabs.close'
+  const isLifecycleClose = isClose && args.reason !== 'user'
+  if (isLifecycleClose && (!args.publicationEpoch || !args.terminalHandle)) {
+    // Why: missing host-generation or terminal-incarnation evidence means keep;
+    // a tab id alone can be stale or reused after reconnect.
+    const { acceptReplayedWebSessionTabsSnapshot } = await import('./web-session-tabs-sync')
+    acceptReplayedWebSessionTabsSnapshot(environmentId, args.worktreeId)
+    await refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId)
+    console.warn('[web-runtime-session] suppressed lifecycle close without incarnation evidence', {
+      closeReason: args.reason
+    })
+    return false
+  }
+
+  const immediateHostTabId = toHostSessionTabId(args.tabId)
+  let resolvedHostTabId = immediateHostTabId
+  if (isClose) {
+    // Why: record before async id resolution so a stale snapshot cannot flash the closed tab back.
+    recordWebSessionCloseIntent(environmentId, args.worktreeId, immediateHostTabId, Date.now())
   }
 
   try {
@@ -495,13 +526,16 @@ async function callWebRuntimeSessionTabMethod(
         worktreeId: args.worktreeId,
         tabId: args.tabId
       }) ?? toHostSessionTabId(args.tabId)
-    if (method === 'session.tabs.close') {
+    resolvedHostTabId = hostTabId
+    if (isClose) {
       // Why: suppress until the host confirms removal, else an in-flight pre-close snapshot flashes the tab back.
-      recordWebSessionCloseIntent(args.worktreeId, hostTabId, Date.now())
+      recordWebSessionCloseIntent(environmentId, args.worktreeId, hostTabId, Date.now())
     }
     const response = await window.api.runtimeEnvironments.call({
       selector: environmentId,
-      method,
+      // Why: old hosts cannot route this additive method, so a generation
+      // cutover fails closed before their destructive legacy close handler.
+      method: isLifecycleClose ? 'session.tabs.closeLifecycle' : method,
       params: {
         worktree: toRuntimeWorktreeSelector(args.worktreeId),
         tabId: hostTabId,
@@ -511,18 +545,44 @@ async function callWebRuntimeSessionTabMethod(
               notifyClients: false,
               navigation: 'caller' as const
             }
-          : {})
+          : {}),
+        ...(isLifecycleClose
+          ? {
+              reason: args.reason,
+              publicationEpoch: args.publicationEpoch,
+              terminal: args.terminalHandle
+            }
+          : isClose
+            ? { reason: args.reason }
+            : {})
       },
       timeoutMs: 15_000
     })
-    unwrapRuntimeRpcResult(response as RuntimeRpcResponse<unknown>)
-    if (method === 'session.tabs.close') {
+    const result = unwrapRuntimeRpcResult(
+      response as RuntimeRpcResponse<RuntimeMobileSessionTabCloseResult | undefined>
+    )
+    if (isClose) {
+      if (result?.refused === true && result.snapshotRepublished === true) {
+        // Why: the host kept an authoritative live PTY. Stop hiding its mirror
+        // only when it republished; dead-leaf refusals must stay suppressed.
+        clearWebSessionCloseIntent(environmentId, args.worktreeId, immediateHostTabId)
+        clearWebSessionCloseIntent(environmentId, args.worktreeId, hostTabId)
+        const { acceptReplayedWebSessionTabsSnapshot } = await import('./web-session-tabs-sync')
+        acceptReplayedWebSessionTabsSnapshot(environmentId, args.worktreeId)
+      }
       await refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId)
     }
     return true
   } catch (error) {
+    if (isLifecycleClose) {
+      clearWebSessionCloseIntent(environmentId, args.worktreeId, immediateHostTabId)
+      clearWebSessionCloseIntent(environmentId, args.worktreeId, resolvedHostTabId)
+      const { acceptReplayedWebSessionTabsSnapshot } = await import('./web-session-tabs-sync')
+      acceptReplayedWebSessionTabsSnapshot(environmentId, args.worktreeId)
+      await refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId)
+    }
     console.warn(
-      `[web-runtime-session] failed to ${method === 'session.tabs.close' ? 'close' : 'activate'} tab:`,
+      `[web-runtime-session] failed to ${isClose ? 'close' : 'activate'} tab:`,
       error instanceof Error ? error.message : String(error)
     )
     return false
