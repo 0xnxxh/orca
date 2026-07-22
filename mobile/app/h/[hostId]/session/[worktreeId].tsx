@@ -4514,7 +4514,7 @@ export default function SessionScreen() {
               >
                 <Plus size={16} color={colors.textSecondary} strokeWidth={2.2} />
               </Pressable>
-              {/* Why: always render so the tab row never shifts while capabilities load; the tap explains unsupported/probing hosts instead. Old hosts strip agentPrompt, so the sheet only opens once support is confirmed. */}
+              {/* Why: stable placement matters, while old hosts must stay gated because they strip agentPrompt. */}
               <QuickCommandsTabButton
                 disabled={
                   creating || creatingBrowser || creatingMarkdown || connState !== 'connected'
