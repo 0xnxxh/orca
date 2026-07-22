@@ -20,10 +20,8 @@ const LOGIN_PREFLIGHT_MARKER = 'ORCA_LOGIN_PREFLIGHT_OK'
 const LOGIN_PREFLIGHT_MAX_BUFFER_BYTES = 1024
 const LOGIN_PREFLIGHT_RETRY_BASE_MS = 5_000
 const LOGIN_PREFLIGHT_RETRY_MAX_MS = 5 * 60_000
-// Why: daemons live for weeks across app updates, so one false PAM rejection (probe
-// runs over pipes, not a PTY) must not disable TCC attribution forever (#9756);
-// re-verify on a slow cadence — a genuinely rejecting host only re-pays one 500ms
-// probe per window, while an accepted verdict stays cached for the process lifetime.
+// Why: daemons live for weeks across app updates, so a rejected verdict must not
+// disable TCC attribution forever; re-verify on a slow cadence (#9756).
 const LOGIN_PREFLIGHT_REJECTED_REVALIDATE_MS = 30 * 60_000
 
 /**
@@ -44,6 +42,7 @@ let loginPreflightInFlight: Promise<LoginPreflightOutcome> | null = null
 let transientLoginPreflightFailure: { failureCount: number; retryAtMs: number } | null = null
 let loginPreflightCacheEpoch = 0
 let loginSessionProbeInFlight = false
+let loginSessionAcceptedInProcess = false
 
 function isDisabledByEnv(): boolean {
   const value = process.env[DISABLE_ENV_VAR]
@@ -106,6 +105,24 @@ function runLoginPreflight(
   })
 }
 
+async function verifyRejectedLoginPreflightUnderPty(
+  username: string,
+  accountHome: string,
+  outcome: LoginPreflightOutcome
+): Promise<LoginPreflightOutcome> {
+  if (outcome.ok || !outcome.conclusive) {
+    return outcome
+  }
+  const ptyOutcome = await runMacosLoginSessionPtyProbe(
+    username,
+    accountHome,
+    LOGIN_PREFLIGHT_TIMEOUT_MS,
+    LOGIN_PREFLIGHT_MAX_BUFFER_BYTES
+  )
+  // Why: a pipe-sensitive PAM stack must not override the production-shaped PTY oracle.
+  return ptyOutcome.conclusive ? ptyOutcome : outcome
+}
+
 function expireStaleRejectedVerdict(): void {
   if (
     cachedLoginPreflightResult === false &&
@@ -126,6 +143,18 @@ function cachedOutcome(): LoginPreflightOutcome | null {
     : { ok: false, conclusive: true, reason: 'rejected' }
 }
 
+function cacheConclusiveLoginPreflightOutcome(outcome: LoginPreflightOutcome): void {
+  if (outcome.ok) {
+    cachedRejectionAtMs = null
+    loginSessionAcceptedInProcess = true
+  } else if (cachedLoginPreflightResult !== false || cachedRejectionAtMs === null) {
+    // Why: periodic health probes must not extend one rejected verdict forever.
+    cachedRejectionAtMs = Date.now()
+  }
+  cachedLoginPreflightResult = outcome.ok
+  transientLoginPreflightFailure = null
+}
+
 function loginPreflightSucceeds(
   username: string,
   accountHome: string
@@ -138,14 +167,13 @@ function loginPreflightSucceeds(
     const cacheEpoch = loginPreflightCacheEpoch
     // Why: simultaneous pane restores share one PAM child instead of multiplying
     // subprocesses at exactly the point terminal startup is already busiest.
-    loginPreflightInFlight = runLoginPreflight(username, accountHome).then((outcome) => {
+    loginPreflightInFlight = runLoginPreflight(username, accountHome).then(async (pipeOutcome) => {
+      const outcome = await verifyRejectedLoginPreflightUnderPty(username, accountHome, pipeOutcome)
       // Why: cache only a conclusive PAM verdict; a killed/timed-out probe is
       // environmental and must be retried next spawn, not stuck forever (F1).
       const mayUpdateCache = !loginSessionProbeInFlight && cacheEpoch === loginPreflightCacheEpoch
       if (outcome.conclusive && mayUpdateCache) {
-        cachedLoginPreflightResult = outcome.ok
-        cachedRejectionAtMs = outcome.ok ? null : Date.now()
-        transientLoginPreflightFailure = null
+        cacheConclusiveLoginPreflightOutcome(outcome)
       } else if (!outcome.conclusive && mayUpdateCache) {
         const failureCount = (transientLoginPreflightFailure?.failureCount ?? 0) + 1
         transientLoginPreflightFailure = {
@@ -167,8 +195,9 @@ function loginPreflightSucceeds(
 
 /**
  * Resolves the cached PAM capability check before a fresh PTY is spawned.
- * Accepted verdicts stick for the process lifetime; rejected verdicts are
- * re-verified after {@link LOGIN_PREFLIGHT_REJECTED_REVALIDATE_MS}.
+ * Accepted spawn verdicts stay cached unless the login-session watch observes
+ * a newer state; rejected verdicts are re-verified after
+ * {@link LOGIN_PREFLIGHT_REJECTED_REVALIDATE_MS}.
  * Callers await this at their async request boundary so existing terminals and
  * the Electron main thread remain responsive while login(1) runs.
  *
@@ -215,6 +244,7 @@ export function resetMacosLoginShellPreflightForTests(): void {
   transientLoginPreflightFailure = null
   loginPreflightCacheEpoch = 0
   loginSessionProbeInFlight = false
+  loginSessionAcceptedInProcess = false
 }
 
 /**
@@ -222,9 +252,9 @@ export function resetMacosLoginShellPreflightForTests(): void {
  * cached verdict and the transient backoff, and writes any conclusive verdict
  * back into the cache — so a daemon whose login session died stops wrapping
  * spawns in `login(1)` (which would only mint "Login incorrect" zombies) even
- * before retirement completes. Escalates to a PTY-hosted probe when the pipe
- * probe is inconclusive, since a dead session's PAM stack may only misbehave
- * under a real tty. Returns null when the wrapper doesn't apply.
+ * before retirement completes. Escalates ambiguous probes—and negative probes
+ * after this process accepted a login session—to the production-shaped PTY
+ * oracle. Returns null when the wrapper doesn't apply.
  */
 export async function probeMacosLoginSessionAlive(
   signal?: AbortSignal
@@ -252,7 +282,7 @@ export async function probeMacosLoginSessionAlive(
   try {
     outcome = await (existingPreflight ??
       runLoginPreflight(username, accountHome, LOGIN_SESSION_WATCH_PROBE_TIMEOUT_MS, signal))
-    if (!outcome.conclusive && !signal?.aborted) {
+    if (!outcome.ok && !signal?.aborted && (!outcome.conclusive || loginSessionAcceptedInProcess)) {
       outcome = await runMacosLoginSessionPtyProbe(
         username,
         accountHome,
@@ -267,8 +297,7 @@ export async function probeMacosLoginSessionAlive(
     loginSessionProbeInFlight = false
   }
   if (outcome.conclusive) {
-    cachedLoginPreflightResult = outcome.ok
-    transientLoginPreflightFailure = null
+    cacheConclusiveLoginPreflightOutcome(outcome)
   }
   return outcome
 }
