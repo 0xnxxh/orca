@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises'
+import type { Stats } from 'node:fs'
 import type { Repo } from '../../shared/types'
 import {
   getRuntimePathBasename,
@@ -7,7 +8,7 @@ import {
 } from '../../shared/cross-platform-path'
 import type { FileStat } from '../providers/types'
 
-type GitDirectoryStat = Awaited<ReturnType<typeof stat>> | FileStat
+type GitDirectoryStat = Stats | FileStat
 
 type GitDirectoryAccess = {
   stat?: (path: string) => Promise<GitDirectoryStat>
