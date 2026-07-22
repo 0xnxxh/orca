@@ -185,12 +185,22 @@ describe('useMobileNativeChatAnswerSend', () => {
     expect(sendRequest.mock.calls[0]?.[1]).toMatchObject({ text: '2', enter: false })
   })
 
-  it('submits a non-Claude answer as pasted label text with a single Enter', async () => {
+  it('submits a Codex answer by option-number keystroke like Claude', async () => {
     const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
     await mount({ sendRequest } as unknown as RpcClient, vi.fn(), 'codex')
 
     await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(true)
-    // Codex's question tool commits the pasted answer: label text + one Enter.
+    // Codex's request_user_input card ignores pasted labels; the digit selects AND commits.
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendRequest.mock.calls[0]?.[1]).toMatchObject({ text: '2', enter: false })
+  })
+
+  it('submits a non-selector answer as pasted label text with a single Enter', async () => {
+    const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn(), 'grok')
+
+    await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(true)
+    // Grok's question tool commits the pasted answer: label text + one Enter.
     expect(sendRequest).toHaveBeenCalledTimes(1)
     expect(sendRequest.mock.calls[0]?.[1]).toMatchObject({ text: 'Spaces', enter: true })
   })
