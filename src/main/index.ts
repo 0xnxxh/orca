@@ -41,6 +41,7 @@ import { initOnboardingCohortClassifier } from './telemetry/onboarding-cohort-cl
 import { resolveConsent } from './telemetry/consent'
 import { triggerStartupNotificationRegistration } from './ipc/notifications'
 import { OrcaRuntimeService } from './runtime/orca-runtime'
+import { loadAgentSessionClaimSigner } from './runtime/agent-session-claim-identity'
 import { OrcaRuntimeRpcServer } from './runtime/runtime-rpc'
 import { resolveAdvertisedPairingEndpoint } from './runtime/pairing-endpoint'
 import { ServeReadinessPublisher } from './server/serve-readiness'
@@ -252,6 +253,7 @@ let runtimeRpc: OrcaRuntimeRpcServer | null = null
 const serveReadinessPublisher = new ServeReadinessPublisher()
 let desktopRelayService: DesktopRelayService | null = null
 let desktopRelayStatus: RelayBrokerStatus = 'offline'
+let pendingUnpairedDeviceAuthFailure = false
 // Why: gates whether headless serve installs the offscreen browser backend (and advertises browser pane support).
 let headlessBrowserDisplayAvailable = false
 
@@ -672,7 +674,11 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
     // Why: both desktop and headless serve must adopt the same persistent provider before creating terminals or a renderer.
     startDaemonPtyProvider: async (signal) => {
       logStartupMilestone('startup-service-start', { service: 'daemon-pty-provider' })
-      await initDaemonPtyProvider(signal)
+      // Why: only GUI-spawned macOS daemons watch for login-session death; a headless
+      // serve daemon must survive its spawning session ending (SSH disconnect).
+      await initDaemonPtyProvider(signal, {
+        macosLoginSessionWatch: process.platform === 'darwin' && !isServeMode
+      })
       logStartupMilestone('startup-service-done', { service: 'daemon-pty-provider' })
     },
     // Why: PTY spawn env reads ORCA_AGENT_HOOK_* from live server state, so the renderer awaits this before restored terminals reconnect.
@@ -1985,6 +1991,10 @@ app.whenReady().then(async () => {
       .map((account) => ({ id: account.id, managedHomePath: account.managedHomePath }))
   })
   const runtimeService = new OrcaRuntimeService(store, stats, {
+    agentSessionClaimSigner: loadAgentSessionClaimSigner(
+      getProfileUserDataPath(),
+      getProfileUserDataPath()
+    ),
     // Why: resolve the PTY provider lazily — a daemon swap happens later, so an eager reference would freeze the pre-daemon provider (design §4.3).
     getLocalProvider: () => getLocalPtyProvider(),
     // Why: SSH relay providers register after construction and may reconnect, so destructive cleanup must resolve the current generation.
@@ -2276,7 +2286,29 @@ app.whenReady().then(async () => {
       : {}),
     webClientRoot: getBundledWebClientRoot()
   })
-  registerMobileHandlers(runtimeRpc, { getRelayStatus: () => desktopRelayStatus })
+  registerMobileHandlers(runtimeRpc, {
+    getRelayStatus: () => desktopRelayStatus,
+    consumePendingUnpairedDeviceAuthFailure: (webContentsId) => {
+      if (
+        !mainWindow ||
+        mainWindow.isDestroyed() ||
+        mainWindow.webContents.id !== webContentsId ||
+        !pendingUnpairedDeviceAuthFailure
+      ) {
+        return false
+      }
+      pendingUnpairedDeviceAuthFailure = false
+      return true
+    }
+  })
+  // Why: repeated direct auth failures otherwise look like a client that never connects; point users to re-pairing.
+  runtimeRpc.setOnUnpairedDeviceAuthFailure(() => {
+    // Why: runtime startup races renderer mount; retain the one-shot until the listener consumes it.
+    pendingUnpairedDeviceAuthFailure = true
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('mobile:unpairedDeviceAuthFailure')
+    }
+  })
 
   startTerminalRuntimeStartupServices()
   app.on('activate', requestDesktopActivation)
