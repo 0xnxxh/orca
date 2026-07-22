@@ -238,6 +238,46 @@ describe('registerNotificationHandlers', () => {
     }
   })
 
+  it('falls back to the launchd bundle id for packaged local builds', async () => {
+    const originalPlatform = process.platform
+    const originalDevBundleId = process.env.ORCA_DEV_MACOS_BUNDLE_ID
+    const originalLaunchdBundleId = process.env.__CFBundleIdentifier
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    delete process.env.ORCA_DEV_MACOS_BUNDLE_ID
+    process.env.__CFBundleIdentifier = 'com.stablyai.orca.local'
+    try {
+      registerNotificationHandlers({
+        getSettings: () => ({
+          notifications: {
+            enabled: true,
+            agentTaskComplete: true,
+            terminalBell: true,
+            suppressWhenFocused: true
+          }
+        })
+      } as never)
+
+      const handler = getOpenSystemSettingsHandler()
+      handler({})
+
+      expect(shellOpenExternalMock).toHaveBeenCalledWith(
+        'x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.stablyai.orca.local'
+      )
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+      if (originalDevBundleId === undefined) {
+        delete process.env.ORCA_DEV_MACOS_BUNDLE_ID
+      } else {
+        process.env.ORCA_DEV_MACOS_BUNDLE_ID = originalDevBundleId
+      }
+      if (originalLaunchdBundleId === undefined) {
+        delete process.env.__CFBundleIdentifier
+      } else {
+        process.env.__CFBundleIdentifier = originalLaunchdBundleId
+      }
+    }
+  })
+
   it('opens Windows notification settings', async () => {
     const originalPlatform = process.platform
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })

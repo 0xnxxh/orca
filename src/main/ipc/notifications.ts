@@ -187,7 +187,12 @@ function probeNotificationDelivery(): Promise<NotificationDeliveryProbeResult> {
 }
 
 function getMacNotificationSettingsUrl(): string {
-  const bundleId = process.env.ORCA_DEV_MACOS_BUNDLE_ID ?? MACOS_PACKAGED_BUNDLE_ID
+  // Why: local packaging uses com.stablyai.orca.local (#9756), so trust the
+  // launchd-provided id before falling back to the release id.
+  const bundleId =
+    process.env.ORCA_DEV_MACOS_BUNDLE_ID ??
+    process.env.__CFBundleIdentifier ??
+    MACOS_PACKAGED_BUNDLE_ID
   return `${MACOS_NOTIFICATION_SETTINGS_URL}?id=${encodeURIComponent(bundleId)}`
 }
 
