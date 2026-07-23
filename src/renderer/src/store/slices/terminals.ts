@@ -105,6 +105,10 @@ import {
   type WorkspaceSessionHydrationOptions
 } from '@/lib/workspace-session-hydration-keys'
 import {
+  buildValidWorktreeIdsForSessionHydration,
+  collectPersistedWorktreeIdsForSessionHydration
+} from './degraded-repo-worktree-validity'
+import {
   collectHibernatedCompletionEvidenceForWorktree,
   collectSleepingAgentSessionRecordsForWorktree,
   removeSleepingRecordsReplacedByManualWorktreeSleep,
@@ -3074,45 +3078,21 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         runtimeHostIdByWorkspaceSessionKey: options?.runtimeHostIdByWorkspaceSessionKey ?? {},
         worktreesByRepo: s.worktreesByRepo
       })
-      const validWorktreeIds = new Set(
-        Object.values(runtimeSessionPlaceholders.worktreesByRepo)
-          .flat()
-          .map((worktree) => worktree.id)
+      const validWorktreeIds = buildValidWorktreeIdsForSessionHydration(
+        {
+          repos: runtimeSessionPlaceholders.repos,
+          worktreesByRepo: runtimeSessionPlaceholders.worktreesByRepo,
+          detectedWorktreesByRepo: s.detectedWorktreesByRepo
+        },
+        collectPersistedWorktreeIdsForSessionHydration(session)
       )
       const knownRepoIds = new Set(runtimeSessionPlaceholders.repos.map((r) => r.id))
-      const repoIdsWithLoadedWorktrees = new Set(
-        Object.entries(runtimeSessionPlaceholders.worktreesByRepo)
-          .filter(([, worktrees]) => worktrees.length > 0)
-          .map(([repoId]) => repoId)
-      )
-      const repoIdsWithAuthoritativeDetectedWorktrees = new Set(
-        Object.entries(s.detectedWorktreesByRepo)
-          .filter(([, detected]) => detected.authoritative)
-          .map(([repoId]) => repoId)
-      )
       // Why: the Floating Workspace isn't a repo worktree, but its tabs use the normal session pipeline so daemon PTYs survive app restart.
       validWorktreeIds.add(FLOATING_TERMINAL_WORKTREE_ID)
       for (const workspace of s.folderWorkspaces) {
         validWorktreeIds.add(folderWorkspaceKey(workspace.id))
       }
       addAdditionalValidWorkspaceKeys(validWorktreeIds, options)
-      for (const worktreeId of Object.keys(session.tabsByWorktree)) {
-        const parsedWorkspaceKey = parseWorkspaceKey(worktreeId)
-        if (parsedWorkspaceKey?.type === 'folder') {
-          continue
-        }
-        if (!validWorktreeIds.has(worktreeId)) {
-          const repoId = getRepoIdFromWorktreeId(worktreeId)
-          // Why (#1158): an empty/missing list can mean degraded hydration; a non-empty repo list is authoritative for deleted-worktree cleanup.
-          if (
-            knownRepoIds.has(repoId) &&
-            !repoIdsWithLoadedWorktrees.has(repoId) &&
-            !repoIdsWithAuthoritativeDetectedWorktrees.has(repoId)
-          ) {
-            validWorktreeIds.add(worktreeId)
-          }
-        }
-      }
       // Why pendingActivationSpawn: a restored worktree's first mount calls updateTabPtyId, which would bump lastActivityAt and bounce it to the top of Recent; the tag (consumed on the first pty update) suppresses that so only real activity bumps.
       const tabsByWorktree: Record<string, TerminalTab[]> = Object.fromEntries(
         Object.entries(session.tabsByWorktree)
