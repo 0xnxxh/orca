@@ -17989,9 +17989,7 @@ export class OrcaRuntimeService {
       localWorktreeGitOptions
     )
     if (worktreeIncludePaths.length > 0) {
-      await createWorktreeCopiedPaths(repo.path, created.path, worktreeIncludePaths, {
-        existingLinkedPaths: symlinkPaths
-      })
+      await createWorktreeCopiedPaths(repo.path, created.path, worktreeIncludePaths)
     }
 
     let setup: CreateWorktreeResult['setup']

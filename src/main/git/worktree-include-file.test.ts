@@ -1,17 +1,8 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { resolveWorktreeIncludePaths } from './worktree-include-file'
-import {
-  compileWorktreeIncludeGlob,
-  getWorktreeIncludeGlobStepCount,
-  matchesWorktreeIncludeGlob
-} from './worktree-include-glob'
-import {
-  isIncludedByWorktreePatterns,
-  parseWorktreeIncludePatterns
-} from './worktree-include-pattern'
+import { parseWorktreeIncludeFile, resolveWorktreeIncludePaths } from './worktree-include-file'
 import { gitExecFileAsync } from './runner'
 
 vi.mock('./runner', () => ({
@@ -20,139 +11,48 @@ vi.mock('./runner', () => ({
 
 const gitExecFileAsyncMock = vi.mocked(gitExecFileAsync)
 
-/** Dispatch on subcommand: check-ignore echoes every stdin path present in `ignored`. */
-function mockGit(options: {
-  entries?: string[]
-  collapsedEntries?: string[]
-  targetedEntries?: string[]
-  ignored?: string[]
-  ignoreCase?: boolean
-}): void {
+/** check-ignore echoes back every stdin path present in `ignored` (all requested
+ *  when unset); exit code 1 with empty stdout means "none ignored". */
+function mockCheckIgnore(ignored?: string[]): void {
   gitExecFileAsyncMock.mockImplementation(async (args, execOptions) => {
-    if (args.includes('config')) {
-      if (options.ignoreCase === undefined) {
-        throw Object.assign(new Error('unset'), { code: 1 })
-      }
-      return { stdout: `${options.ignoreCase}\n`, stderr: '' }
+    if (!args.includes('check-ignore')) {
+      throw new Error(`Unexpected git args: ${args.join(' ')}`)
     }
-    if (args.includes('ls-files')) {
-      const entries = args.includes('--directory')
-        ? (options.collapsedEntries ?? options.entries ?? [])
-        : (options.targetedEntries ?? options.entries ?? [])
-      return { stdout: entries.map((entry) => `${entry}\0`).join(''), stderr: '' }
+    const requested = (execOptions.stdin ?? '').split('\0').filter(Boolean)
+    const ignoredSet = new Set(ignored ?? requested)
+    const matched = requested.filter((path) => ignoredSet.has(path))
+    if (matched.length === 0) {
+      throw Object.assign(new Error('no matches'), { code: 1 })
     }
-    if (args.includes('check-ignore')) {
-      const requested = (execOptions.stdin ?? '').split('\0').filter(Boolean)
-      const ignored = new Set(options.ignored ?? requested)
-      const matched = requested.filter((path) => ignored.has(path))
-      if (matched.length === 0) {
-        throw Object.assign(new Error('no matches'), { code: 1 })
-      }
-      return { stdout: matched.map((path) => `${path}\0`).join(''), stderr: '' }
-    }
-    throw new Error(`Unexpected git args: ${args.join(' ')}`)
+    return { stdout: matched.map((path) => `${path}\0`).join(''), stderr: '' }
   })
 }
 
-describe('parseWorktreeIncludePatterns', () => {
-  it('skips blank lines and comments', () => {
-    const patterns = parseWorktreeIncludePatterns('# secrets\n\n.env\n  \n# more\n.env.local\n')
-    expect(patterns.map((pattern) => pattern.body)).toEqual(['.env', '.env.local'])
-  })
-
-  it('parses negation, anchoring, and dir-only markers', () => {
-    const [negated, anchored, dirOnly, bare] = parseWorktreeIncludePatterns(
-      '!.env.production\n/config/secrets.json\n.vscode/\nbuild\n'
+describe('parseWorktreeIncludeFile', () => {
+  it('skips blank lines and comments, dedupes, strips ./ and trailing slash', () => {
+    const entries = parseWorktreeIncludeFile(
+      '# secrets\n\n.env\n  \n# more\n./config/secrets.json\n.vscode/\n.env\n'
     )
-    expect(negated).toMatchObject({ negated: true, body: '.env.production', anchored: false })
-    expect(anchored).toMatchObject({ negated: false, body: 'config/secrets.json', anchored: true })
-    expect(dirOnly).toMatchObject({ dirOnly: true, body: '.vscode', anchored: false })
-    expect(bare).toMatchObject({ dirOnly: false, anchored: false, hasGlob: false })
+    expect(entries).toEqual(['.env', 'config/secrets.json', '.vscode'])
   })
 
-  it('marks glob patterns and compiles their matcher', () => {
-    const [glob] = parseWorktreeIncludePatterns('.env.*\n')
-    expect(glob.hasGlob).toBe(true)
-    expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, '.env.local')).toBe(true)
-    expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, '.envrc')).toBe(false)
-  })
-
-  it('matches repeated recursive globs without regex backtracking', () => {
-    const [glob] = parseWorktreeIncludePatterns(`${'**/'.repeat(30)}secrets.json\n`)
-    const longNonMatch = `${'nested/'.repeat(500)}other.json`
-
-    expect(glob.glob?.regExp).toBeNull()
-    expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, 'secrets.json')).toBe(true)
-    expect(
-      glob.glob && matchesWorktreeIncludeGlob(glob.glob, `${'nested/'.repeat(500)}secrets.json`)
-    ).toBe(true)
-    expect(glob.glob && matchesWorktreeIncludeGlob(glob.glob, longNonMatch)).toBe(false)
-  })
-
-  it('keeps recursive directory globs on segment boundaries', () => {
-    const leading = compileWorktreeIncludeGlob('**/.env')
-    const nested = compileWorktreeIncludeGlob('foo/**/bar')
-    const adjacent = compileWorktreeIncludeGlob('foo/**bar')
-
-    expect(matchesWorktreeIncludeGlob(leading, '.env')).toBe(true)
-    expect(matchesWorktreeIncludeGlob(leading, 'nested/.env')).toBe(true)
-    expect(matchesWorktreeIncludeGlob(leading, 'my.env')).toBe(false)
-    expect(matchesWorktreeIncludeGlob(nested, 'foo/bar')).toBe(true)
-    expect(matchesWorktreeIncludeGlob(nested, 'foo/nested/bar')).toBe(true)
-    expect(matchesWorktreeIncludeGlob(nested, 'foo/xbar')).toBe(false)
-    expect(matchesWorktreeIncludeGlob(adjacent, 'foo/xbar')).toBe(true)
-    expect(matchesWorktreeIncludeGlob(adjacent, 'foo/x/bar')).toBe(false)
-  })
-
-  it('matches literals and globs case-insensitively when the repository requires it', () => {
-    const literal = parseWorktreeIncludePatterns('.env\n')
-    const glob = parseWorktreeIncludePatterns('config/**/secret.json\n')
-
-    expect(isIncludedByWorktreePatterns(literal, '.ENV', false, { remaining: 100 }, true)).toBe(
-      true
-    )
-    expect(
-      isIncludedByWorktreePatterns(
-        glob,
-        'CONFIG/LOCAL/SECRET.JSON',
-        false,
-        { remaining: 1_000 },
-        true
-      )
-    ).toBe(true)
-  })
-
-  it('charges variable-width regex backtracking against the literal suffix', () => {
-    const glob = compileWorktreeIncludeGlob(`*${'a'.repeat(1_000)}`)
-
-    expect(getWorktreeIncludeGlobStepCount(glob, 'short')).toBe(6_006)
-    expect(getWorktreeIncludeGlobStepCount(compileWorktreeIncludeGlob('prefix*'), 'short')).toBe(12)
-  })
-
-  it('charges directory-only rules that reject a root file before glob evaluation', () => {
-    const patterns = parseWorktreeIncludePatterns('dir-*/\n')
-
-    expect(() =>
-      isIncludedByWorktreePatterns(patterns, 'root-file', false, { remaining: 1 })
-    ).toThrow('matching exceeded its CPU budget')
-  })
-
-  it('rejects pathological pattern counts before worktree creation can fan out', () => {
-    expect(() => parseWorktreeIncludePatterns(`${'.env\n'.repeat(4_097)}`)).toThrow(
-      'contains too many patterns'
-    )
+  it('normalizes backslashes to forward slashes', () => {
+    expect(parseWorktreeIncludeFile('apps\\web\\.env\n')).toEqual(['apps/web/.env'])
   })
 })
 
 describe('resolveWorktreeIncludePaths', () => {
   let repo: string
+  let warn: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
     repo = mkdtempSync(join(tmpdir(), 'orca-worktreeinclude-'))
     gitExecFileAsyncMock.mockReset()
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
   afterEach(() => {
+    warn.mockRestore()
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -165,281 +65,75 @@ describe('resolveWorktreeIncludePaths', () => {
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
   })
 
-  it('resolves literal patterns to existing gitignored paths', async () => {
-    writeInclude('.env\nconfig/secrets.json\nmissing.txt\n')
+  it('resolves existing gitignored literal files and directories', async () => {
+    writeInclude('.env\nconfig/secrets.json\n.vscode/\nmissing.txt\n')
     writeFileSync(join(repo, '.env'), 'A=1')
     mkdirSync(join(repo, 'config'))
     writeFileSync(join(repo, 'config', 'secrets.json'), '{}')
-    mockGit({ entries: ['.env'], ignored: ['.env', 'config/secrets.json'] })
+    mkdirSync(join(repo, '.vscode'))
+    mockCheckIgnore(['.env', 'config/secrets.json', '.vscode'])
 
     await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual([
       '.env',
+      '.vscode',
       'config/secrets.json'
     ])
-    expect(gitExecFileAsyncMock.mock.calls.some(([args]) => args.includes('ls-files'))).toBe(true)
   })
 
-  it('resolves bare literal patterns at any depth', async () => {
-    writeInclude('.env\n')
-    writeFileSync(join(repo, '.env'), 'ROOT=1')
-    mockGit({ entries: ['.env', 'apps/web/.env'], ignored: ['.env', 'apps/web/.env'] })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env', 'apps/web/.env'])
-    const lsFilesCalls = gitExecFileAsyncMock.mock.calls.filter(([args]) =>
-      args.includes('ls-files')
-    )
-    expect(lsFilesCalls).toHaveLength(2)
-    expect(lsFilesCalls[0][0]).toContain('--directory')
-    expect(lsFilesCalls[1][0]).not.toContain('--directory')
-    expect(lsFilesCalls[1][0]).toContain(':(glob)**/.env')
-  })
-
-  it('routes every Git probe through the selected WSL runtime', async () => {
-    writeInclude('/cache/\n.env\n')
-    mkdirSync(join(repo, 'cache'))
-    mockGit({ collapsedEntries: ['cache/', '.env'], targetedEntries: ['.env'] })
-
-    await expect(resolveWorktreeIncludePaths(repo, { wslDistro: 'Ubuntu' })).resolves.toEqual([
-      '.env',
-      'cache'
-    ])
-
-    expect(gitExecFileAsyncMock).toHaveBeenCalledTimes(4)
-    expect(
-      gitExecFileAsyncMock.mock.calls.every(([, options]) => options.wslDistro === 'Ubuntu')
-    ).toBe(true)
-  })
-
-  it('avoids enumeration for a fully ignored root-anchored directory', async () => {
-    writeInclude('/cache/\n')
-    mkdirSync(join(repo, 'cache'))
-    mockGit({ ignored: ['cache'] })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['cache'])
-    expect(gitExecFileAsyncMock.mock.calls.every(([args]) => !args.includes('ls-files'))).toBe(true)
-  })
-
-  it('removes child candidates when an ignored directory covers them', async () => {
-    writeInclude('/ignored/child\n/ignored/\n')
-    mkdirSync(join(repo, 'ignored'))
-    writeFileSync(join(repo, 'ignored', 'child'), 'local')
-    mockGit({ ignored: ['ignored', 'ignored/child'] })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['ignored'])
-  })
-
-  it('finds ignored descendants when a root-anchored directory is not itself ignored', async () => {
-    writeInclude('/config/\n')
-    mkdirSync(join(repo, 'config'))
-    mockGit({ targetedEntries: ['config/local.json'], ignored: ['config/local.json'] })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['config/local.json'])
-    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
-      ([args]) => args.includes('ls-files') && !args.includes('--directory')
-    )?.[0]
-    expect(targetedArgs).toContain(':(glob)config/**')
-  })
-
-  it('drops listed paths that are not actually gitignored', async () => {
+  it('drops listed paths that exist but are not gitignored', async () => {
     writeInclude('.env\ntracked.json\n')
     writeFileSync(join(repo, '.env'), 'A=1')
     writeFileSync(join(repo, 'tracked.json'), '{}')
-    mockGit({ entries: ['.env'], ignored: ['.env'] })
+    mockCheckIgnore(['.env'])
 
     await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env'])
   })
 
-  it('expands glob patterns against collapsed gitignored entries', async () => {
-    writeInclude('.env.*\n')
-    mockGit({
-      entries: ['.env.local', '.env.production', '.envrc', 'node_modules/', 'apps/web/.env.local'],
-      ignored: ['.env.local', '.env.production', 'apps/web/.env.local']
-    })
+  it('skips a listed path that is absent from the primary checkout', async () => {
+    writeInclude('.env\nnode_modules\n')
+    writeFileSync(join(repo, '.env'), 'A=1')
+    mockCheckIgnore(['.env'])
 
-    // Unanchored patterns match by basename at any depth, like gitignore.
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual([
-      '.env.local',
-      '.env.production',
-      'apps/web/.env.local'
-    ])
+    // node_modules absent (not installed yet) → not stat-able → not requested from git.
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env'])
   })
 
-  it('uses Git case-folding for collapsed and targeted matches', async () => {
+  it('resolves a gitignored symlink entry without following it', async () => {
     writeInclude('.env\n')
-    mockGit({
-      collapsedEntries: ['.ENV'],
-      targetedEntries: ['parent/.ENV'],
-      ignored: ['.ENV', 'parent/.ENV'],
-      ignoreCase: true
-    })
+    writeFileSync(join(repo, '.env.real'), 'A=1')
+    symlinkSync(join(repo, '.env.real'), join(repo, '.env'))
+    mockCheckIgnore(['.env'])
 
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.ENV', 'parent/.ENV'])
-    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
-      ([args]) => args.includes('ls-files') && !args.includes('--directory')
-    )?.[0]
-    expect(targetedArgs).toContain(':(icase,glob)**/.env')
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env'])
   })
 
-  it('honors dir-only patterns against directory entries', async () => {
-    writeInclude('logs/\n')
-    writeFileSync(join(repo, 'logs'), 'not a dir')
-    mockGit({ ignored: [] })
+  it('skips glob and negation entries with a warning', async () => {
+    writeInclude('.env.*\n!.env.production\n.env\n')
+    writeFileSync(join(repo, '.env'), 'A=1')
+    mockCheckIgnore(['.env'])
 
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual([])
-    rmSync(join(repo, 'logs'))
-    mkdirSync(join(repo, 'logs'))
-    mockGit({ collapsedEntries: ['logs/'], ignored: ['logs'] })
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['logs'])
+    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env'])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unsupported'))
   })
 
-  it('finds a matching directory beneath a collapsed ignored parent', async () => {
-    writeInclude('build/\n')
-    mockGit({
-      collapsedEntries: ['parent/'],
-      targetedEntries: ['parent/build/marker'],
-      ignored: ['parent/build/marker']
-    })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['parent/build/marker'])
-    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
-      ([args]) => args.includes('ls-files') && !args.includes('--directory')
-    )?.[0]
-    expect(targetedArgs).toContain(':(glob)**/build/**')
-  })
-
-  it('does not expand a matched directory during the targeted scan', async () => {
-    writeInclude('node_modules/\n')
-    mockGit({ collapsedEntries: ['node_modules/'], ignored: ['node_modules'] })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['node_modules'])
-    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
-      ([args]) => args.includes('ls-files') && !args.includes('--directory')
-    )?.[0]
-    expect(targetedArgs).toContain(':(glob)**/node_modules/**')
-    expect(targetedArgs).toContain(':(exclude,literal)node_modules')
-  })
-
-  it('does not expand a collapsed directory excluded by trailing negation', async () => {
-    writeInclude('*\n!node_modules/\n')
-    mockGit({ collapsedEntries: ['node_modules/', 'cache/'], ignored: ['cache'] })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['cache'])
-    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
-      ([args]) => args.includes('ls-files') && !args.includes('--directory')
-    )?.[0]
-    expect(targetedArgs).toContain(':(exclude,literal)node_modules')
-  })
-
-  it('scans an excluded directory when a later include can restore a descendant', async () => {
-    writeInclude('*\n!node_modules/\n.env\n')
-    mockGit({
-      collapsedEntries: ['node_modules/'],
-      targetedEntries: ['node_modules/pkg/.env'],
-      ignored: ['node_modules/pkg/.env']
-    })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['node_modules/pkg/.env'])
-    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
-      ([args]) => args.includes('ls-files') && !args.includes('--directory')
-    )?.[0]
-    expect(targetedArgs).not.toContain(':(exclude,literal)node_modules')
-  })
-
-  it('preserves nested matches when covered-directory exclusions exceed the command budget', async () => {
-    writeInclude('covered-*/\n.env\n')
-    const coveredDirectories = Array.from(
-      { length: 500 },
-      (_, index) => `covered-${index.toString().padStart(4, '0')}`
-    )
-    mockGit({
-      collapsedEntries: coveredDirectories.map((path) => `${path}/`),
-      targetedEntries: ['hidden/.env']
-    })
-
-    const resolved = await resolveWorktreeIncludePaths(repo)
-
-    expect(resolved).toContain('hidden/.env')
-    const targetedArgs = gitExecFileAsyncMock.mock.calls.find(
-      ([args]) => args.includes('ls-files') && !args.includes('--directory')
-    )?.[0]
-    expect(targetedArgs).toContain(':(glob)**/.env')
-    expect(targetedArgs?.some((arg) => arg.startsWith(':(exclude,literal)'))).toBe(false)
-  })
-
-  it('does not let an unignored literal parent hide an ignored nested match', async () => {
-    writeInclude('/config\n.env\n')
-    mkdirSync(join(repo, 'config'))
-    mockGit({ entries: ['config/.env'], ignored: ['config/.env'] })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['config/.env'])
-  })
-
-  it('bounds the number of paths that can reach copy materialization', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    writeInclude('*\n')
-    mockGit({
-      collapsedEntries: Array.from({ length: 10_001 }, (_, index) => `ignored-${index}`)
-    })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual([])
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to resolve'),
-      expect.objectContaining({ message: expect.stringContaining('matched too many paths') })
-    )
-    expect(gitExecFileAsyncMock.mock.calls.some(([args]) => args.includes('check-ignore'))).toBe(
-      false
-    )
-    warn.mockRestore()
-  })
-
-  it('stops enumeration as soon as candidate paths exceed the byte budget', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    writeInclude('*\n')
-    mockGit({
-      collapsedEntries: Array.from(
-        { length: 100 },
-        (_, index) => `ignored-${index}-${'a'.repeat(11_000)}`
-      ),
-      targetedEntries: []
-    })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual([])
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to resolve'),
-      expect.objectContaining({ message: expect.stringContaining('byte budget') })
-    )
-    expect(
-      gitExecFileAsyncMock.mock.calls.filter(([args]) => args.includes('ls-files'))
-    ).toHaveLength(1)
-    warn.mockRestore()
-  })
-
-  it('applies negations with last-match-wins semantics', async () => {
-    writeInclude('.env.*\n!.env.production\n')
-    mockGit({
-      entries: ['.env.local', '.env.production'],
-      ignored: ['.env.local', '.env.production']
-    })
-
-    await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env.local'])
-  })
-
-  it('rejects traversal, absolute, and .git patterns', async () => {
+  it('rejects traversal, absolute, and .git entries', async () => {
     writeInclude('../outside\n/etc/passwd\n.git/config\n.env\n')
     writeFileSync(join(repo, '.env'), 'A=1')
-    mockGit({ entries: ['.env'], ignored: ['.env'] })
+    mockCheckIgnore(['.env'])
 
     await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual(['.env'])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unsafe'))
   })
 
   it('resolves to [] when git fails instead of throwing', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     writeInclude('.env\n')
     writeFileSync(join(repo, '.env'), 'A=1')
     gitExecFileAsyncMock.mockRejectedValue(new Error('git exploded'))
 
     await expect(resolveWorktreeIncludePaths(repo)).resolves.toEqual([])
-    expect(warn).toHaveBeenCalled()
-    warn.mockRestore()
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to resolve'),
+      expect.any(Error)
+    )
   })
 })

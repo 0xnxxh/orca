@@ -44,14 +44,6 @@ describe('checkIgnoredPaths', () => {
     expect(gitExecFileAsyncMock.mock.calls[0]?.[1].stdin?.split('\0')).toHaveLength(10_001)
   })
 
-  it('accepts a shorter caller-owned deadline', async () => {
-    gitExecFileAsyncMock.mockResolvedValue({ stdout: '.env\0', stderr: '' })
-
-    await expect(checkIgnoredPaths('/repo', ['.env'], {}, 250)).resolves.toEqual(['.env'])
-
-    expect(gitExecFileAsyncMock.mock.calls[0]?.[1]).toMatchObject({ timeout: 250 })
-  })
-
   it('treats exit code 1 as no ignored paths', async () => {
     gitExecFileAsyncMock.mockRejectedValue(Object.assign(new Error('no matches'), { code: 1 }))
 

@@ -11,6 +11,7 @@ type ExecFileAsync = (
 ) => Promise<{ stdout: string; stderr: string }>
 
 const execFileAsync = promisify(execFile) as ExecFileAsync
+// Why: bound the df/diskutil volume probes so a wedged mount can't stall worktree creation.
 const APFS_FILESYSTEM_PROBE_TIMEOUT_MS = 5_000
 
 export type ApfsCloneDeps = {
@@ -26,12 +27,6 @@ export const defaultApfsCloneDeps: ApfsCloneDeps = {
 type DarwinFilesystemInfo = {
   device: string
   filesystemName: string
-}
-
-export type ApfsCloneFilesystemCache = Map<number, Promise<DarwinFilesystemInfo>>
-
-export type ApfsCloneOptions = {
-  filesystemCache?: ApfsCloneFilesystemCache
 }
 
 export class ApfsCloneUnavailableError extends Error {
@@ -77,31 +72,14 @@ async function getDarwinFilesystemInfo(
   }
 }
 
-async function getCachedDarwinFilesystemInfo(
-  path: string,
-  deps: ApfsCloneDeps,
-  cache: ApfsCloneFilesystemCache
-): Promise<DarwinFilesystemInfo> {
-  const deviceId = (await stat(path)).dev
-  const cached = cache.get(deviceId)
-  if (cached) {
-    return cached
-  }
-  const pending = getDarwinFilesystemInfo(path, deps)
-  cache.set(deviceId, pending)
-  // Why: cache probe failures for this materialization so fallback doesn't respawn df/diskutil per path.
-  return pending
-}
-
 async function assertSameApfsVolume(
   source: string,
   target: string,
-  deps: ApfsCloneDeps,
-  cache: ApfsCloneFilesystemCache
+  deps: ApfsCloneDeps
 ): Promise<void> {
   const [sourceInfo, targetInfo] = await Promise.all([
-    getCachedDarwinFilesystemInfo(source, deps, cache),
-    getCachedDarwinFilesystemInfo(dirname(target), deps, cache)
+    getDarwinFilesystemInfo(source, deps),
+    getDarwinFilesystemInfo(dirname(target), deps)
   ])
   if (
     sourceInfo.device !== targetInfo.device ||
@@ -143,12 +121,10 @@ async function cloneDirectoryWithApfs(
   deps: ApfsCloneDeps
 ): Promise<void> {
   const sourceMode = (await stat(source)).mode & 0o777
-  let createdTarget = false
   try {
     // Why: reserve the final directory path before copying into it so a raced
     // user-created directory cannot be replaced by a final rename.
     await mkdir(target)
-    createdTarget = true
   } catch (error) {
     if (isAlreadyExistsError(error)) {
       throw new WorktreeLinkedPathTargetExistsError(target)
@@ -159,18 +135,14 @@ async function cloneDirectoryWithApfs(
   try {
     // Why: the top-level directory is reserved before cp runs, so use `-n`
     // to keep a raced nested file from being overwritten during the copy.
-    // Why: copy into the reserved target so a resolved top-level symlink whose
-    // target has another basename still lands at the requested path.
+    // Why: copy `source/.` into the reserved target so contents land at the
+    // requested path even when the source is a symlinked directory.
     await deps.execFileAsync('/bin/cp', ['-n', '-c', '-R', `${source}${sep}.`, target])
-    if (createdTarget) {
-      await chmod(target, sourceMode)
-    }
+    await chmod(target, sourceMode)
   } catch (error) {
     // Why: remove only the empty reservation. If cp wrote anything, or another
     // process raced files into the directory, leave it for Git/user review.
-    if (createdTarget) {
-      await rmdir(target).catch(() => undefined)
-    }
+    await rmdir(target).catch(() => undefined)
     throw error
   }
 }
@@ -179,12 +151,10 @@ export async function cloneWorktreePathWithApfs(
   source: string,
   target: string,
   sourceIsDirectory: boolean,
-  deps: ApfsCloneDeps = defaultApfsCloneDeps,
-  options: ApfsCloneOptions = {}
+  deps: ApfsCloneDeps = defaultApfsCloneDeps
 ): Promise<void> {
-  const targetParent = dirname(target)
-  await mkdir(targetParent, { recursive: true })
-  await assertSameApfsVolume(source, target, deps, options.filesystemCache ?? new Map())
+  await mkdir(dirname(target), { recursive: true })
+  await assertSameApfsVolume(source, target, deps)
   // Why: Node's COPYFILE_FICLONE_FORCE returns ENOSYS on macOS in our runtime,
   // while Darwin's cp exposes APFS clonefile via -c. Preflight the volume so
   // cp's non-APFS full-copy fallback cannot surprise users.

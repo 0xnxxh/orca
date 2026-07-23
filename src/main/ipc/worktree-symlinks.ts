@@ -1,28 +1,23 @@
-import { symlink, mkdir, stat, lstat, unlink, realpath } from 'node:fs/promises'
+import { symlink, mkdir, stat, lstat, unlink, cp } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import {
   ApfsCloneUnavailableError,
   cloneWorktreePathWithApfs,
   defaultApfsCloneDeps,
   WorktreeLinkedPathTargetExistsError,
-  type ApfsCloneFilesystemCache,
   type ApfsCloneDeps
 } from './worktree-apfs-clone'
-import { ensureSafeWorktreeTargetParent, worktreeTargetExists } from './worktree-target-safety'
-import { copyWorktreePath, normalizeWorktreeRelativePath } from './worktree-path-copy'
 
 type WorktreeLinkedPathOptions = {
   platform?: NodeJS.Platform
   cloneWorktreePath?: (source: string, target: string, sourceIsDirectory: boolean) => Promise<void>
   apfsCloneDeps?: ApfsCloneDeps
-  existingLinkedPaths?: readonly string[]
 }
 
 // 'link': symlink when APFS clone is unavailable (user-configured shared paths).
 // 'copy': real copy when APFS clone is unavailable (.worktreeinclude paths, which
 // are per-worktree copies by cross-tool convention — edits must not leak back).
 type WorktreeMaterializeMode = 'link' | 'copy'
-const NO_LINKED_DESCENDANTS: ReadonlySet<string> = new Set()
 
 type SafeRelativePathResult =
   | {
@@ -61,17 +56,11 @@ async function symlinkWorktreePath(
   await symlink(source, target, sourceIsDirectory ? 'dir' : 'file')
 }
 
-function getExistingLinkedDescendants(
-  relativePath: string,
-  normalizedLinkedPaths: readonly string[],
-  platform: NodeJS.Platform
-): ReadonlySet<string> {
-  const directoryPrefix = `${normalizeWorktreeRelativePath(relativePath, platform)}/`
-  return new Set(
-    normalizedLinkedPaths.flatMap((linkedPath) =>
-      linkedPath.startsWith(directoryPrefix) ? [linkedPath.slice(directoryPrefix.length)] : []
-    )
-  )
+async function copyWorktreePath(source: string, target: string): Promise<void> {
+  await mkdir(dirname(target), { recursive: true })
+  // Why: force=false + errorOnExist=false skips (not clobbers) anything a racing
+  // process placed at the target after the earlier existence preflight.
+  await cp(source, target, { recursive: true, force: false, errorOnExist: false })
 }
 
 async function createWorktreeLinkedPath(
@@ -80,19 +69,9 @@ async function createWorktreeLinkedPath(
   sourceIsDirectory: boolean,
   sourceIsSymbolicLink: boolean,
   mode: WorktreeMaterializeMode,
-  options: WorktreeLinkedPathOptions,
-  apfsFilesystemCache: ApfsCloneFilesystemCache,
-  warnedApfsErrors: Set<string>,
-  existingLinkedDescendants: ReadonlySet<string>
+  options: WorktreeLinkedPathOptions
 ): Promise<void> {
-  // Why: copy mode promises independent contents; copying the link itself
-  // would let edits in the worktree mutate its shared target.
-  const copySource = mode === 'copy' && sourceIsSymbolicLink ? await realpath(source) : source
-  if (
-    options.platform === 'darwin' &&
-    (!sourceIsSymbolicLink || mode === 'copy') &&
-    existingLinkedDescendants.size === 0
-  ) {
+  if (options.platform === 'darwin' && !sourceIsSymbolicLink) {
     try {
       const cloneWorktreePath =
         options.cloneWorktreePath ??
@@ -101,12 +80,9 @@ async function createWorktreeLinkedPath(
             cloneSource,
             cloneTarget,
             cloneSourceIsDirectory,
-            options.apfsCloneDeps ?? defaultApfsCloneDeps,
-            {
-              filesystemCache: apfsFilesystemCache
-            }
+            options.apfsCloneDeps ?? defaultApfsCloneDeps
           ))
-      await cloneWorktreePath(copySource, target, sourceIsDirectory)
+      await cloneWorktreePath(source, target, sourceIsDirectory)
       return
     } catch (error) {
       if (error instanceof WorktreeLinkedPathTargetExistsError) {
@@ -115,24 +91,27 @@ async function createWorktreeLinkedPath(
       // Why: APFS clone-copy can fail across volumes or on non-APFS disks.
       // Fall back per mode without touching any target path that may have
       // appeared after our preflight.
-      const errorKey =
-        error instanceof Error
-          ? `${error.name}:${(error as NodeJS.ErrnoException).code ?? ''}:${error.message}`
-          : String(error)
-      if (!(error instanceof ApfsCloneUnavailableError) && !warnedApfsErrors.has(errorKey)) {
-        warnedApfsErrors.add(errorKey)
+      if (!(error instanceof ApfsCloneUnavailableError)) {
         console.warn(`[worktree-symlinks] APFS clone-copy unavailable for "${target}":`, error)
       }
     }
   }
   if (mode === 'copy') {
-    await copyWorktreePath(copySource, target, sourceIsDirectory, {
-      existingLinkedDescendants,
-      platform: options.platform ?? process.platform
-    })
+    await copyWorktreePath(source, target)
     return
   }
   await symlinkWorktreePath(source, target, sourceIsDirectory)
+}
+
+async function targetExists(target: string): Promise<boolean> {
+  try {
+    // Why: lstat so a pre-existing symlink (even a broken one) is detected and
+    // preserved rather than overwritten.
+    await lstat(target)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function materializeWorktreePaths(
@@ -143,16 +122,6 @@ async function materializeWorktreePaths(
   options: WorktreeLinkedPathOptions = {}
 ): Promise<void> {
   const effectiveOptions = { platform: process.platform, ...options }
-  // Why: probing APFS via df+diskutil once per copied path multiplies subprocesses in large includes.
-  const apfsFilesystemCache: ApfsCloneFilesystemCache = new Map()
-  const warnedApfsErrors = new Set<string>()
-  const verifiedTargetDirectories = new Set([resolve(worktreePath)])
-  const normalizedLinkedPaths = (options.existingLinkedPaths ?? []).flatMap((rawPath) => {
-    const linkedPath = getSafeRelativePath(rawPath)
-    return linkedPath.safe
-      ? [normalizeWorktreeRelativePath(linkedPath.rel, effectiveOptions.platform)]
-      : []
-  })
 
   for (const rawPath of paths) {
     const safePath = getSafeRelativePath(rawPath)
@@ -179,23 +148,7 @@ async function materializeWorktreePaths(
       continue
     }
 
-    // Why: a target branch can contain an ancestor symlink absent from the primary;
-    // following it would write included files outside the new worktree.
-    if (!(await ensureSafeWorktreeTargetParent(worktreePath, target, verifiedTargetDirectories))) {
-      console.warn(`[worktree-symlinks] Skipping path with unsafe target parent "${safePath.rel}"`)
-      continue
-    }
-
-    const targetAlreadyExists = await worktreeTargetExists(target)
-    const existingLinkedDescendants =
-      targetAlreadyExists && mode === 'copy' && sourceIsDirectory
-        ? getExistingLinkedDescendants(
-            safePath.rel,
-            normalizedLinkedPaths,
-            effectiveOptions.platform
-          )
-        : NO_LINKED_DESCENDANTS
-    if (targetAlreadyExists && existingLinkedDescendants.size === 0) {
+    if (await targetExists(target)) {
       continue
     }
 
@@ -206,10 +159,7 @@ async function materializeWorktreePaths(
         sourceIsDirectory,
         sourceIsSymbolicLink,
         mode,
-        effectiveOptions,
-        apfsFilesystemCache,
-        warnedApfsErrors,
-        existingLinkedDescendants
+        effectiveOptions
       )
     } catch (error) {
       console.error(
