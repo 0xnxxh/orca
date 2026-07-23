@@ -74,6 +74,7 @@ describe('SourceControlHeaderToolbar branch identity', () => {
     const createPrIndex = markup.indexOf('Create PR')
 
     // Why: the #9787 revert regression — identity must not evict Create PR.
+    expect(markup).toContain('data-testid="source-control-git-identity-row"')
     expect(branchIndex).toBeGreaterThan(-1)
     expect(createPrIndex).toBeGreaterThan(-1)
     // Identity row renders above the toolbar row that hosts Create PR.
@@ -94,13 +95,20 @@ describe('SourceControlHeaderToolbar branch identity', () => {
     })
 
     expect(markup).not.toContain('aria-label="Current branch:')
+    expect(markup).toContain('data-testid="source-control-git-identity-row"')
     expect(markup).toContain('Detached HEAD · 8cec248')
+    // Detached badge stays keyboard-reachable and exposes the full tooltip as its label.
+    expect(markup).toContain(
+      'aria-label="Detached HEAD at 8cec248. You are viewing a commit, not a branch."'
+    )
+    expect(markup).toContain('tabindex="0"')
     expect(markup).toContain('Create PR')
   })
 
   it('omits the identity row when there is no git identity', () => {
     const markup = renderToolbar({ gitIdentityDisplay: null })
 
+    expect(markup).not.toContain('data-testid="source-control-git-identity-row"')
     expect(markup).not.toContain('aria-label="Current branch:')
     expect(markup).toContain('Create PR')
   })

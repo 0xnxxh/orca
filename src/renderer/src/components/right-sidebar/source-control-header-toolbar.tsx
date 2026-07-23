@@ -55,7 +55,7 @@ function SourceControlGitIdentityRow({
 }): React.JSX.Element {
   if (display.kind === 'detached') {
     return (
-      <div className="mb-1 flex min-w-0 items-center">
+      <div data-testid="source-control-git-identity-row" className="mb-1 flex min-w-0 items-center">
         <DetachedHeadBadge
           display={display}
           side="bottom"
@@ -74,7 +74,7 @@ function SourceControlGitIdentityRow({
   )
 
   return (
-    <div className="mb-1 flex min-w-0 items-center">
+    <div data-testid="source-control-git-identity-row" className="mb-1 flex min-w-0 items-center">
       <Tooltip>
         <TooltipTrigger asChild>
           <span
