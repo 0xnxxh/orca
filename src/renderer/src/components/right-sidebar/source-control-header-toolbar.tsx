@@ -78,12 +78,15 @@ function SourceControlGitIdentityRow({
       <Tooltip>
         <TooltipTrigger asChild>
           <span
-            className="flex min-w-0 items-center gap-1 rounded-sm font-mono text-xs font-medium leading-none text-foreground/90 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="flex min-w-0 items-center gap-1 rounded-sm font-mono text-[10.5px] font-medium leading-none text-foreground/90 outline-none focus-visible:ring-1 focus-visible:ring-ring"
             aria-label={label}
             tabIndex={0}
           >
             <GitBranch className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="min-w-0 truncate">{branchName}</span>
+            {/* Why: match the 'vs main' base-ref typography exactly (font/size/underline). */}
+            <span className="min-w-0 truncate underline decoration-border underline-offset-2">
+              {branchName}
+            </span>
           </span>
         </TooltipTrigger>
         <TooltipContent side="bottom" sideOffset={6} className="max-w-72 break-all font-mono">
