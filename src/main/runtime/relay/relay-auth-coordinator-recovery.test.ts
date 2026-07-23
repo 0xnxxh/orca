@@ -80,6 +80,75 @@ describe('RelayAuthCoordinator transient recovery', () => {
     expect(coordinator.getActiveBroker()).toBeNull()
   })
 
+  it('re-reads demand when the retry fires and stops without opening again', async () => {
+    vi.useFakeTimers()
+    let demanded = true
+    const statuses: string[] = []
+    const openBroker = vi.fn().mockRejectedValue(new Error('temporary control open failure'))
+    const coordinator = new RelayAuthCoordinator({
+      readContext: async () => context,
+      hasDemand: () => demanded,
+      openBroker,
+      onStatus: (status) => statuses.push(status),
+      random: () => 0.5
+    })
+
+    coordinator.reconcile()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(openBroker).toHaveBeenCalledOnce()
+
+    demanded = false
+    await vi.advanceTimersByTimeAsync(501)
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(openBroker).toHaveBeenCalledOnce()
+    expect(statuses.at(-1)).toBe('standby')
+  })
+
+  it('re-reads entitlement when the retry fires and stops after removal', async () => {
+    vi.useFakeTimers()
+    let current = context
+    const openBroker = vi.fn().mockRejectedValue(new RelayHttpError('assignment', 500))
+    const coordinator = new RelayAuthCoordinator({
+      readContext: async () => current,
+      openBroker,
+      onStatus: vi.fn(),
+      random: () => 0.5
+    })
+
+    coordinator.reconcile()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(openBroker).toHaveBeenCalledOnce()
+
+    current = { ...context, relayEntitled: false }
+    await vi.advanceTimersByTimeAsync(501)
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(openBroker).toHaveBeenCalledOnce()
+    expect(coordinator.getActiveBroker()).toBeNull()
+  })
+
+  it('cancels a pending retry immediately when the coordinator is fenced', async () => {
+    vi.useFakeTimers()
+    const openBroker = vi.fn().mockRejectedValue(new Error('temporary control open failure'))
+    const coordinator = new RelayAuthCoordinator({
+      readContext: async () => context,
+      openBroker,
+      onStatus: vi.fn(),
+      random: () => 0.5
+    })
+
+    coordinator.reconcile()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(openBroker).toHaveBeenCalledOnce()
+
+    coordinator.fenceAndCloseNow()
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(openBroker).toHaveBeenCalledOnce()
+    expect(coordinator.getActiveBroker()).toBeNull()
+  })
+
   it('does not carry a pending retry across an identity switch', async () => {
     vi.useFakeTimers()
     let current = context
