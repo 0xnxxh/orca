@@ -418,6 +418,40 @@ describe('RuntimeEmulatorCommands attach lifecycle', () => {
     )
   })
 
+  it('reads ax for an explicit device when the worktree has no active session', async () => {
+    const tree = [{ type: 'Application', children: [] }]
+    netFetchMock.mockResolvedValue(new Response(JSON.stringify(tree), { status: 200 }))
+    listSimulatorDevicesMock.mockResolvedValue([
+      {
+        name: 'iPhone elsewhere',
+        udid: 'device-1',
+        state: 'Booted',
+        runtime: 'iOS 26.0'
+      }
+    ])
+    const bridge = new EmulatorBridge()
+    // The session lives under another worktree; the CLI still resolves the
+    // caller's cwd worktree, which has nothing attached.
+    bridge.registerActiveEmulator('wt-other', session('device-1'), { managed: true })
+    const commands = new RuntimeEmulatorCommands({
+      getEmulatorBridge: () => bridge,
+      resolveWorktreeSelector: vi.fn(async () => ({ id: 'wt-1' })),
+      getAuthoritativeWindow: () => ({ webContents: { send: vi.fn() } }) as never,
+      getSettings: () => ({
+        mobileEmulatorEnabled: true,
+        mobileEmulatorDefaultDeviceUdid: null
+      })
+    })
+
+    await expect(
+      commands.emulatorAx({ device: 'device-1', worktree: 'wt-1' })
+    ).resolves.toMatchObject([{ type: 'Application' }])
+    expect(netFetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:3100/device-1/ax',
+      expect.any(Object)
+    )
+  })
+
   it('reports when the requested iOS device differs from the active session', async () => {
     listSimulatorDevicesMock.mockResolvedValue([
       {

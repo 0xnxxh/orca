@@ -207,9 +207,12 @@ export class EmulatorBridge {
       }
       const udid = await backend.resolveDeviceId(device)
       const worktreeId = opts?.worktreeId
-      const session = worktreeId
-        ? this.getActiveForWorktree(worktreeId)
-        : this.sessionRegistry.getSession(udid)
+      // Fall back to the udid-keyed session so an explicit --device read works
+      // from a worktree with no active emulator (matching tap/type reachability);
+      // sessions are stored once per udid, so both lookups hit the same state.
+      const session =
+        (worktreeId ? this.getActiveForWorktree(worktreeId) : null) ??
+        this.sessionRegistry.getSession(udid)
       if (worktreeId && session && session.deviceUdid !== udid) {
         throw new EmulatorError(
           'emulator_no_active',
