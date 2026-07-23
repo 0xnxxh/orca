@@ -90,8 +90,10 @@ type RemoteRuntimeMultiplexedTerminalState = {
   // Track it so a gap triggers a self-healing snapshot resync instead of
   // silently rendering corrupt/missing output (frame-drop resync).
   expectedSeq: number | undefined
+  recoverySnapshotSeq: number | undefined
   resyncInFlight: boolean
   resyncPendingSend: boolean
+  resyncTimer: ReturnType<typeof setTimeout> | null
 }
 
 type RemoteRuntimeSnapshotInfo = {
@@ -126,6 +128,7 @@ type RemoteRuntimeSnapshotRequest = {
 const CONTROL_STREAM_ID = 0
 const MAX_REMOTE_TERMINAL_SNAPSHOT_BYTES = 2 * 1024 * 1024
 const REMOTE_TERMINAL_SNAPSHOT_REQUEST_TIMEOUT_MS = 10_000
+const REMOTE_TERMINAL_RESYNC_TIMEOUT_MS = 10_000
 // Why: exported so the transport can classify it as benign — the snapshot was
 // skipped but live output continues, so it must not surface a fatal red banner.
 export const REMOTE_TERMINAL_SNAPSHOT_TOO_LARGE =
@@ -247,8 +250,10 @@ class RemoteRuntimeTerminalMultiplexer {
       initialSnapshotReceived: false,
       pendingSnapshotRequest: null,
       expectedSeq: undefined,
+      recoverySnapshotSeq: undefined,
       resyncInFlight: false,
-      resyncPendingSend: false
+      resyncPendingSend: false,
+      resyncTimer: null
     }
     this.streams.set(streamId, state)
 
@@ -282,6 +287,7 @@ class RemoteRuntimeTerminalMultiplexer {
       close: () => {
         if (this.streams.get(streamId) === state) {
           this.sendFrame(streamId, TerminalStreamOpcode.Unsubscribe)
+          clearResyncTimer(state)
           rejectPendingSnapshotRequest(state, 'Remote terminal stream closed.')
           this.streams.delete(streamId)
           this.closeIfIdle()
@@ -418,12 +424,14 @@ class RemoteRuntimeTerminalMultiplexer {
     }
     if (event.type === 'end') {
       clearSnapshot(stream)
+      clearResyncTimer(stream)
       rejectPendingSnapshotRequest(stream, 'Remote terminal stream ended.')
       this.streams.delete(event.streamId)
       stream.callbacks.onEnd?.()
       this.closeIfIdle()
     } else if (event.type === 'error') {
       clearSnapshot(stream)
+      clearResyncTimer(stream)
       rejectPendingSnapshotRequest(
         stream,
         typeof event.message === 'string' ? event.message : 'Remote terminal stream failed.'
@@ -509,6 +517,15 @@ class RemoteRuntimeTerminalMultiplexer {
           return
         }
         const seq = typeof frame.seq === 'number' && frame.seq > 0 ? frame.seq : undefined
+        // Why: older servers replay snapshot-covered buffered chunks after a
+        // requested recovery; rendering them would duplicate the recovered tail.
+        if (
+          typeof seq === 'number' &&
+          typeof stream.recoverySnapshotSeq === 'number' &&
+          seq <= stream.recoverySnapshotSeq
+        ) {
+          return
+        }
         if (this.detectOutputGap(stream, seq, rawLength)) {
           this.requestResyncSnapshot(stream)
           return
@@ -570,13 +587,14 @@ class RemoteRuntimeTerminalMultiplexer {
       const target = stream.snapshotTarget
       const info = stream.snapshotInfo
       const pendingRequest = stream.pendingSnapshotRequest
+      const snapshotApplied = !stream.snapshotOverflowed && info?.truncated !== true
       const matchesPendingRequest =
         target === 'request' &&
         pendingRequest &&
         (typeof info?.requestId === 'number'
           ? info.requestId === pendingRequest.requestId
           : stream.initialSnapshotReceived)
-      if (!stream.snapshotOverflowed && info?.truncated !== true) {
+      if (snapshotApplied) {
         if (matchesPendingRequest) {
           pendingRequest.resolve({
             data: data ?? '',
@@ -605,16 +623,23 @@ class RemoteRuntimeTerminalMultiplexer {
         clearPendingSnapshotRequest(stream)
       }
       clearSnapshot(stream)
-      // Why: initial and recovery snapshots are authoritative output
-      // high-waters; align the gap detector and re-open the live path.
-      if (target === 'initial' || target === 'recovery') {
+      if (target === 'initial') {
+        clearResyncTimer(stream)
         stream.expectedSeq = typeof info?.seq === 'number' ? info.seq : undefined
         stream.resyncInFlight = false
         stream.resyncPendingSend = false
-        if (target === 'initial') {
-          stream.initialSnapshotReceived = true
-          stream.callbacks.onSubscribed?.()
+        stream.initialSnapshotReceived = true
+        stream.callbacks.onSubscribed?.()
+      } else if (target === 'recovery') {
+        clearResyncTimer(stream)
+        // Why: only an applied recovery is authoritative; retaining the prior
+        // high-water after a discarded snapshot makes live output retry the gap.
+        if (snapshotApplied) {
+          stream.expectedSeq = typeof info?.seq === 'number' ? info.seq : undefined
+          stream.recoverySnapshotSeq = typeof info?.seq === 'number' ? info.seq : undefined
         }
+        stream.resyncInFlight = false
+        stream.resyncPendingSend = false
       } else {
         this.sendDeferredResyncSnapshot(stream)
       }
@@ -630,6 +655,7 @@ class RemoteRuntimeTerminalMultiplexer {
         return
       }
       // Why: a failed resync must re-open the live path or output stalls forever.
+      clearResyncTimer(stream)
       stream.resyncInFlight = false
       stream.resyncPendingSend = false
       stream.callbacks.onError?.(decodeTerminalStreamText(frame.payload))
@@ -661,7 +687,6 @@ class RemoteRuntimeTerminalMultiplexer {
       return
     }
     stream.resyncInFlight = true
-    stream.expectedSeq = undefined
     if (stream.pendingSnapshotRequest) {
       // Why: snapshot frame groups are not multiplexed; wait for the manual
       // snapshot to finish so its response cannot be mistaken for recovery.
@@ -680,6 +705,7 @@ class RemoteRuntimeTerminalMultiplexer {
 
   private sendResyncSnapshot(stream: RemoteRuntimeMultiplexedTerminalState): void {
     stream.resyncPendingSend = false
+    this.startResyncTimer(stream)
     const sent = this.sendFrame(
       stream.streamId,
       TerminalStreamOpcode.SnapshotRequest,
@@ -687,8 +713,29 @@ class RemoteRuntimeTerminalMultiplexer {
     )
     if (!sent) {
       // Transport is down; the reconnect path re-subscribes from scratch.
+      clearResyncTimer(stream)
       stream.resyncInFlight = false
     }
+  }
+
+  private startResyncTimer(stream: RemoteRuntimeMultiplexedTerminalState): void {
+    clearResyncTimer(stream)
+    const timer = setTimeout(() => {
+      if (
+        stream.resyncTimer !== timer ||
+        this.streams.get(stream.streamId) !== stream ||
+        !stream.resyncInFlight
+      ) {
+        return
+      }
+      stream.resyncTimer = null
+      stream.resyncInFlight = false
+      stream.resyncPendingSend = false
+    }, REMOTE_TERMINAL_RESYNC_TIMEOUT_MS)
+    if (typeof timer.unref === 'function') {
+      timer.unref()
+    }
+    stream.resyncTimer = timer
   }
 
   private requestSnapshot(
@@ -821,6 +868,7 @@ class RemoteRuntimeTerminalMultiplexer {
     this.releaseIfCurrent(this.environmentId, this)
     for (const stream of streams) {
       clearSnapshot(stream)
+      clearResyncTimer(stream)
       rejectPendingSnapshotRequest(stream, message ?? 'Remote runtime connection closed.')
       const canHandleClose = Boolean(stream.callbacks.onTransportClose)
       stream.callbacks.onTransportClose?.({ recoverable })
@@ -907,6 +955,14 @@ function clearPendingSnapshotRequest(stream: RemoteRuntimeMultiplexedTerminalSta
   stream.pendingSnapshotRequest = null
   if (request) {
     clearTimeout(request.timer)
+  }
+}
+
+function clearResyncTimer(stream: RemoteRuntimeMultiplexedTerminalState): void {
+  const timer = stream.resyncTimer
+  stream.resyncTimer = null
+  if (timer) {
+    clearTimeout(timer)
   }
 }
 

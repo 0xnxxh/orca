@@ -39,6 +39,8 @@ class FakeMultiplexServer {
   dropNextOutput = false
   droppedFrames = 0
   holdNextManualSnapshot = false
+  truncateNextRecoverySnapshot = false
+  dropNextRecoverySnapshotEnd = false
   snapshotRequests: (number | undefined)[] = []
   private heldManualRequestId: number | null = null
   private snapshotData = 'INITIAL'
@@ -71,6 +73,16 @@ class FakeMultiplexServer {
       // Resync request: the server serializes the *current* buffer, so recovery
       // includes everything the client missed.
       this.snapshotData = 'RECOVERED'
+      if (typeof payload?.requestId !== 'number' && this.truncateNextRecoverySnapshot) {
+        this.truncateNextRecoverySnapshot = false
+        this.sendSnapshot(undefined, { truncated: true })
+        return
+      }
+      if (typeof payload?.requestId !== 'number' && this.dropNextRecoverySnapshotEnd) {
+        this.dropNextRecoverySnapshotEnd = false
+        this.sendSnapshot(undefined, { omitEnd: true })
+        return
+      }
       this.sendSnapshot(payload?.requestId)
     }
   }
@@ -79,14 +91,27 @@ class FakeMultiplexServer {
     this.toClient(encodeTerminalStreamFrame({ opcode, streamId: this.streamId, seq, payload }))
   }
 
-  private sendSnapshot(requestId?: number): void {
+  private sendSnapshot(
+    requestId?: number,
+    options?: { truncated?: boolean; omitEnd?: boolean }
+  ): void {
     this.send(
       TerminalStreamOpcode.SnapshotStart,
-      encodeTerminalStreamJson({ cols: 80, rows: 24, seq: this.cursorUnits, requestId }),
+      encodeTerminalStreamJson({
+        cols: 80,
+        rows: 24,
+        seq: options?.truncated ? undefined : this.cursorUnits,
+        requestId,
+        truncated: options?.truncated
+      }),
       0
     )
-    this.send(TerminalStreamOpcode.SnapshotChunk, encodeTerminalStreamText(this.snapshotData), 0)
-    this.send(TerminalStreamOpcode.SnapshotEnd, new Uint8Array(), 0)
+    if (!options?.truncated) {
+      this.send(TerminalStreamOpcode.SnapshotChunk, encodeTerminalStreamText(this.snapshotData), 0)
+    }
+    if (!options?.omitEnd) {
+      this.send(TerminalStreamOpcode.SnapshotEnd, new Uint8Array(), 0)
+    }
   }
 
   /** Emit an Output chunk, honoring simulated websocket backpressure. */
@@ -121,6 +146,10 @@ class FakeMultiplexServer {
       encodeTerminalStreamJson({ data: 'framing must not render' }),
       this.cursorUnits
     )
+  }
+
+  replaySnapshotCoveredOutput(text: string): void {
+    this.send(TerminalStreamOpcode.Output, encodeTerminalStreamText(text), this.cursorUnits)
   }
 
   flushHeldManualSnapshot(): void {
@@ -210,8 +239,47 @@ describe('remote terminal frame-drop resync', () => {
     // Instead, a fresh authoritative snapshot recovers the terminal.
     expect(snapshots).toEqual(['INITIAL', '\x1b[2J\x1b[3J\x1b[HRECOVERED'])
 
+    server.replaySnapshotCoveredOutput('ccc')
     server.output('ddd')
     expect(data).toEqual(['aaa', 'ddd'])
+  })
+
+  it('retries after a truncated recovery without accepting output across the gap', async () => {
+    const { data, snapshots } = await subscribeClient()
+    server.truncateNextRecoverySnapshot = true
+
+    server.output('aaa')
+    server.dropNextOutput = true
+    server.output('bbb')
+    server.output('ccc')
+    server.output('ddd')
+    server.output('eee')
+
+    expect(server.snapshotRequests).toEqual([undefined, undefined])
+    expect(snapshots).toEqual(['INITIAL', '\x1b[2J\x1b[3J\x1b[HRECOVERED'])
+    expect(data).toEqual(['aaa', 'eee'])
+  })
+
+  it('times out a dropped recovery end and retries on the next sequence gap', async () => {
+    vi.useFakeTimers()
+    try {
+      const { data, snapshots } = await subscribeClient()
+      server.dropNextRecoverySnapshotEnd = true
+
+      server.output('aaa')
+      server.dropNextOutput = true
+      server.output('bbb')
+      server.output('ccc')
+      await vi.advanceTimersByTimeAsync(10_000)
+      server.output('ddd')
+      server.output('eee')
+
+      expect(server.snapshotRequests).toEqual([undefined, undefined])
+      expect(snapshots).toEqual(['INITIAL', '\x1b[2J\x1b[3J\x1b[HRECOVERED'])
+      expect(data).toEqual(['aaa', 'eee'])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('passes contiguous output straight through without resyncing', async () => {
