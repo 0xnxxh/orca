@@ -2287,6 +2287,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   everActivatedWorktreeIds: new Set<string>(),
   lastVisitedAtByWorktreeId: {},
   hasHydratedWorktreePurge: false,
+  startupWorktreeRefreshCompleted: false,
 
   fetchDetectedWorktrees: async (repoId) => {
     try {
@@ -2337,7 +2338,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       // the local owner without redirecting runtime/SSH-only repos.
       const useLocalOwner =
         options?.forceLocalOwner === true && (hasLocalOwner || repoOwners.length === 0)
-      const hostId = useLocalOwner ? LOCAL_EXECUTION_HOST_ID : repoHostId(ownerState, repoId)
+      const hostId = useLocalOwner
+        ? LOCAL_EXECUTION_HOST_ID
+        : repoHostId(ownerState, repoId, options?.executionHostId)
       const ownerWasMissingAtStart = repoOwners.length === 0
       const setup = getProjectHostSetupForRepoHost(ownerState, repoId, hostId)
       const ownerSettings = settingsForRepoOwner(ownerState, repoId, hostId)
