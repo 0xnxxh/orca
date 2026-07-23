@@ -22,21 +22,19 @@ function getIndexedTab(
   return tabIndex.get(tabId)
 }
 
-/** The row's conversation name, or null when the mode is off or nothing usable exists. */
+/** The row's conversation name, or null when nothing usable exists. */
 export function useAgentRowConversationName(agent: DashboardAgentRow): string | null {
-  const mode = useAppStore((s) => {
-    if (agent.rowSource === 'subagent' || s.settings?.agentRowsUseConversationName !== true) {
-      return 0
-    }
-    return s.settings?.tabAutoGenerateTitle === true ? 2 : 1
-  })
-  // Why: the opt-in gate keeps inactive rows off the hot tab map entirely.
-  const liveTab = useAppStore((s) =>
-    mode === 0 ? undefined : getIndexedTab(s.tabsByWorktree[agent.tab.worktreeId], agent.tab.id)
+  const isSubagent = agent.rowSource === 'subagent'
+  const generatedTitlesEnabled = useAppStore(
+    (s) => !isSubagent && s.settings?.tabAutoGenerateTitle === true
   )
-  if (mode === 0) {
+  // Why: child rows describe the child, so the parent tab would mislabel them.
+  const liveTab = useAppStore((s) =>
+    isSubagent ? undefined : getIndexedTab(s.tabsByWorktree[agent.tab.worktreeId], agent.tab.id)
+  )
+  if (isSubagent) {
     return null
   }
   // Why: retained row snapshots need a fallback after their live tab disappears.
-  return getAgentRowConversationName(liveTab ?? agent.tab, agent.agentType, mode === 2)
+  return getAgentRowConversationName(liveTab ?? agent.tab, agent.agentType, generatedTitlesEnabled)
 }

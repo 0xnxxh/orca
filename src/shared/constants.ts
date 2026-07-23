@@ -321,7 +321,6 @@ export function getDefaultSettings(homedir: string): GlobalSettings {
     agentYoloDefaultsMigrated: true,
     agentStatusHooksEnabled: true,
     tabAutoGenerateTitle: false,
-    agentRowsUseConversationName: false,
     confirmClosePinnedTab: true,
     keepComputerAwakeWhileAgentsRun: false,
     // Why: 'auto' probes keyboard layout so non-US users can type Option chars like @/€/[ out of the box (issue #903). See src/renderer/src/lib/keyboard-layout/*.

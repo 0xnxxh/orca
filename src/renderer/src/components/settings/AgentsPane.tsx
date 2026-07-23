@@ -22,10 +22,6 @@ import {
   getAgentGeneratedTabTitlesDescription,
   getAgentGeneratedTabTitlesTitle
 } from './agent-generated-tab-title-copy'
-import {
-  getAgentRowConversationNamesDescription,
-  getAgentRowConversationNamesTitle
-} from './agent-row-conversation-name-copy'
 import { getAgentStatusHooksDescription, getAgentStatusHooksTitle } from './agent-status-hooks-copy'
 import {
   SettingsBadge,
@@ -837,8 +833,6 @@ export function AgentsPane({
 
       <AgentGeneratedTabTitlesSetting settings={settings} updateSettings={updateSettings} />
 
-      <AgentRowConversationNamesSetting settings={settings} updateSettings={updateSettings} />
-
       <AgentAwakeSetting settings={settings} updateSettings={updateSettings} />
 
       <AgentCacheTimerSection settings={settings} updateSettings={updateSettings} />
@@ -1005,28 +999,6 @@ export function AgentGeneratedTabTitlesSetting({
           })
         }
         ariaLabel={getAgentGeneratedTabTitlesTitle()}
-      />
-    </section>
-  )
-}
-
-export function AgentRowConversationNamesSetting({
-  settings,
-  updateSettings
-}: AgentsPaneProps): React.JSX.Element {
-  const enabled = settings.agentRowsUseConversationName === true
-  return (
-    <section className="space-y-3">
-      <SettingsSwitchRow
-        label={getAgentRowConversationNamesTitle()}
-        description={getAgentRowConversationNamesDescription()}
-        checked={enabled}
-        onChange={() =>
-          updateSettings({
-            agentRowsUseConversationName: !enabled
-          })
-        }
-        ariaLabel={getAgentRowConversationNamesTitle()}
       />
     </section>
   )

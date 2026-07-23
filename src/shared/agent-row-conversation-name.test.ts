@@ -117,6 +117,9 @@ describe('getAgentRowConversationName', () => {
     expect(getAgentRowConversationName(makeTab(), 'claude', false)).toBeNull()
     expect(getAgentRowConversationName(makeTab({ title: '✳' }), 'claude', false)).toBeNull()
     expect(
+      getAgentRowConversationName(makeTab({ title: 'Terminal 1' }), 'claude', false)
+    ).toBeNull()
+    expect(
       getAgentRowConversationName(
         makeTab({ title: 'Terminal 2', defaultTitle: 'Terminal 2' }),
         'claude',

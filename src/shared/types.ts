@@ -2868,10 +2868,6 @@ export type GlobalSettings = {
   dismissedSkillFreshnessNudges?: string[]
   /** Why: generated tab titles are subjective, so they stay opt-in and manual renames win. */
   tabAutoGenerateTitle: boolean
-  /** Sidebar/dashboard agent rows label with the conversation name (tab rename or
-   *  agent-set title) instead of the last message; rows without a usable name
-   *  keep the last-message label. Opt-in: the live prompt stays the default. */
-  agentRowsUseConversationName?: boolean
   /** Why: pinned tabs can still be closed via keyboard/native-menu; this gates that behind a confirmation. Defaults on. */
   confirmClosePinnedTab: boolean
   /** When true, Orca requests local awake assertions while hook-reported agents are working. */

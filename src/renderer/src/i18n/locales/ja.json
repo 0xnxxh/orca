@@ -7263,14 +7263,7 @@
             "agentPermissions": "Agent Permissions",
             "agentPermissionsDescription": "Switch agent permission defaults between Yolo and Manual.",
             "agentRuntime": "Agent のランタイム",
-            "agentRuntimeDescription": "デフォルトで agents を Windows または WSL のどちらで検出および起動するかを選択します。",
-            "conversation": "conversation",
-            "conversationName": "conversation name",
-            "sidebar": "sidebar",
-            "dashboard": "dashboard",
-            "activityRow": "activity",
-            "lastMessage": "last message",
-            "rowLabel": "label"
+            "agentRuntimeDescription": "デフォルトで agents を Windows または WSL のどちらで検出および起動するかを選択します。"
           }
         },
         "appearance": {
@@ -9292,10 +9285,6 @@
           "title": "Editor Font Family",
           "description": "Font used by file editors and diff views. Leave empty to follow the terminal font.",
           "placeholder": "Same as terminal font"
-        },
-        "agent-row-conversation-name-copy": {
-          "title": "Label agent rows with conversation names",
-          "description": "Show conversation names on sidebar and dashboard agent rows instead of the last message. Rows without a usable name keep the last message."
         }
       },
       "right": {

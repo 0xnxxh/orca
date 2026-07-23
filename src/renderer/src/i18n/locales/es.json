@@ -7241,14 +7241,7 @@
             "agentPermissions": "Permisos de agentes",
             "agentPermissionsDescription": "Cambia los permisos predeterminados de los agentes entre Yolo y Manual.",
             "agentRuntime": "Runtime del agente",
-            "agentRuntimeDescription": "Elige si los agentes se detectan y ejecutan en Windows o en WSL de forma predeterminada.",
-            "conversation": "conversation",
-            "conversationName": "conversation name",
-            "sidebar": "sidebar",
-            "dashboard": "dashboard",
-            "activityRow": "activity",
-            "lastMessage": "last message",
-            "rowLabel": "label"
+            "agentRuntimeDescription": "Elige si los agentes se detectan y ejecutan en Windows o en WSL de forma predeterminada."
           }
         },
         "appearance": {
@@ -9292,10 +9285,6 @@
           "title": "Editor Font Family",
           "description": "Font used by file editors and diff views. Leave empty to follow the terminal font.",
           "placeholder": "Same as terminal font"
-        },
-        "agent-row-conversation-name-copy": {
-          "title": "Label agent rows with conversation names",
-          "description": "Show conversation names on sidebar and dashboard agent rows instead of the last message. Rows without a usable name keep the last message."
         }
       },
       "right": {

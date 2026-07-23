@@ -38,6 +38,7 @@ const AGENT_IDENTITY_ALIASES_LOWER: Readonly<Record<string, readonly string[]>> 
 }
 
 const STATUS_WITH_CONTEXT_RE = /^(?:ready|idle|done)(?:\s+\([^)]*\))?$/i
+const DEFAULT_TERMINAL_TITLE_RE = /^terminal \d+$/i
 
 function isIdentityStatusTitle(titleLower: string, identityLower: string): boolean {
   return (
@@ -93,6 +94,7 @@ function conversationNameFromLiveTitle(
     lower === FALLBACK_TAB_TITLE_LOWER ||
     isAgentIdentityStatusTitle(lower, agentType, agentTypeLabelLower) ||
     STATUS_WITH_CONTEXT_RE.test(stripped) ||
+    DEFAULT_TERMINAL_TITLE_RE.test(stripped) ||
     isClaudeManagementTitle(stripped) ||
     isCwdLikeTitle(stripped)
   ) {

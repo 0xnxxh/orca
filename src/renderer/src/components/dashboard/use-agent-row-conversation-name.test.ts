@@ -34,21 +34,12 @@ beforeEach(() => {
 })
 
 describe('useAgentRowConversationName', () => {
-  it('returns null without reading the tab map while the setting is off', () => {
-    const tabsByWorktree = new Proxy(
-      {},
-      {
-        get: () => {
-          throw new Error('inactive rows must not read the tab map')
-        }
-      }
-    )
-    storeState.current = { settings: {}, tabsByWorktree }
-    expect(useAgentRowConversationName(makeAgent())).toBeNull()
+  it('returns the conversation name by default', () => {
+    expect(useAgentRowConversationName(makeAgent())).toBe('Patient sync spike')
   })
 
-  it('returns the conversation name when the setting is on', () => {
-    storeState.current = { settings: { agentRowsUseConversationName: true }, tabsByWorktree: {} }
+  it('ignores a retired stored opt-out value', () => {
+    storeState.current = { settings: { agentRowsUseConversationName: false }, tabsByWorktree: {} }
     expect(useAgentRowConversationName(makeAgent())).toBe('Patient sync spike')
   })
 
@@ -61,7 +52,7 @@ describe('useAgentRowConversationName', () => {
         }
       }
     )
-    storeState.current = { settings: { agentRowsUseConversationName: true }, tabsByWorktree }
+    storeState.current = { settings: {}, tabsByWorktree }
     expect(useAgentRowConversationName(makeAgent({ rowSource: 'subagent' }))).toBeNull()
   })
 
@@ -82,7 +73,7 @@ describe('useAgentRowConversationName', () => {
       }
     )
     storeState.current = {
-      settings: { agentRowsUseConversationName: true },
+      settings: {},
       tabsByWorktree: { 'wt-1': tabs }
     }
 
@@ -102,7 +93,7 @@ describe('useAgentRowConversationName', () => {
 
   it('prefers the live store tab over the stale row snapshot', () => {
     storeState.current = {
-      settings: { agentRowsUseConversationName: true },
+      settings: {},
       // Why: row data patches entries in place and keeps the creation-time tab
       // snapshot; a rename landing after that must still surface.
       tabsByWorktree: {
@@ -116,10 +107,10 @@ describe('useAgentRowConversationName', () => {
     const agent = makeAgent({
       tab: { customTitle: null, title: '', generatedTitle: 'Fix intake flow' }
     } as Partial<DashboardAgentRow>)
-    storeState.current = { settings: { agentRowsUseConversationName: true }, tabsByWorktree: {} }
+    storeState.current = { settings: {}, tabsByWorktree: {} }
     expect(useAgentRowConversationName(agent)).toBeNull()
     storeState.current = {
-      settings: { agentRowsUseConversationName: true, tabAutoGenerateTitle: true },
+      settings: { tabAutoGenerateTitle: true },
       tabsByWorktree: {}
     }
     expect(useAgentRowConversationName(agent)).toBe('Fix intake flow')
