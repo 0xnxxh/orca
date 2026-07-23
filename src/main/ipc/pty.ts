@@ -1705,6 +1705,7 @@ export function registerPtyHandlers(
   }
 
   const pendingData = new Map<string, PendingPtyData>()
+  let pendingDataTotalChars = 0
   // Why: one restore marker per overflow episode — cleared on full drain so a later overflow re-marks exactly once.
   const pendingOverflowMarkedPtys = new Set<string>()
   // Why: TCP-style cumulative accounting — monotonic sent/acked totals self-heal on any later ACK, where relative in-flight counters would make each lost ACK a permanent debt.
@@ -1814,6 +1815,41 @@ export function registerPtyHandlers(
   function getRendererInFlightCharsForPty(id: string): number {
     const accounting = rendererDeliveryAccountingByPty.get(id)
     return accounting ? accounting.sentChars - accounting.ackedChars : 0
+  }
+
+  // Why touched PTY only: pressure peaks are monotonic between explicit resets.
+  function recordPtyRendererDeliveryPressure(id: string): void {
+    peakPendingChars = Math.max(peakPendingChars, pendingDataTotalChars)
+    peakMaxPendingCharsByPty = Math.max(
+      peakMaxPendingCharsByPty,
+      pendingData.get(id)?.data.length ?? 0
+    )
+    peakRendererInFlightChars = Math.max(peakRendererInFlightChars, rendererInFlightTotalChars)
+    peakMaxRendererInFlightCharsByPty = Math.max(
+      peakMaxRendererInFlightCharsByPty,
+      getRendererInFlightCharsForPty(id)
+    )
+  }
+
+  function setPendingPtyData(id: string, pending: PendingPtyData): void {
+    const previousChars = pendingData.get(id)?.data.length ?? 0
+    pendingData.set(id, pending)
+    pendingDataTotalChars += pending.data.length - previousChars
+    recordPtyRendererDeliveryPressure(id)
+  }
+
+  function deletePendingPtyData(id: string): boolean {
+    const previousChars = pendingData.get(id)?.data.length
+    if (previousChars === undefined) {
+      return false
+    }
+    pendingDataTotalChars -= previousChars
+    return pendingData.delete(id)
+  }
+
+  function clearPendingPtyData(): void {
+    pendingData.clear()
+    pendingDataTotalChars = 0
   }
 
   function readCurrentPtyRendererDeliveryDebugSnapshot(): PtyRendererDeliveryDebugSnapshot {
@@ -1942,8 +1978,7 @@ export function registerPtyHandlers(
     })
   }
 
-  function recordPtyRendererDeliveryPressure(): void {
-    // Why update peaks directly: this fires on every delivery event, so avoid allocating a full 13-field snapshot object per call (only needed when the debug getter is read).
+  function seedPtyRendererDeliveryPeaksFromCurrentState(): void {
     let pendingChars = 0
     let maxPendingCharsByPty = 0
     for (const pending of pendingData.values()) {
@@ -1951,10 +1986,9 @@ export function registerPtyHandlers(
       pendingChars += chars
       maxPendingCharsByPty = Math.max(maxPendingCharsByPty, chars)
     }
-    peakPendingChars = Math.max(peakPendingChars, pendingChars)
-    peakMaxPendingCharsByPty = Math.max(peakMaxPendingCharsByPty, maxPendingCharsByPty)
-    peakRendererInFlightChars = Math.max(peakRendererInFlightChars, rendererInFlightTotalChars)
-    // Why derived per entry: this tracks cumulative sent/acked totals (TCP-style), not a per-pty in-flight map — in-flight is the difference.
+    peakPendingChars = pendingChars
+    peakMaxPendingCharsByPty = maxPendingCharsByPty
+    peakRendererInFlightChars = rendererInFlightTotalChars
     let maxRendererInFlightCharsByPty = 0
     for (const accounting of rendererDeliveryAccountingByPty.values()) {
       maxRendererInFlightCharsByPty = Math.max(
@@ -1962,10 +1996,7 @@ export function registerPtyHandlers(
         accounting.sentChars - accounting.ackedChars
       )
     }
-    peakMaxRendererInFlightCharsByPty = Math.max(
-      peakMaxRendererInFlightCharsByPty,
-      maxRendererInFlightCharsByPty
-    )
+    peakMaxRendererInFlightCharsByPty = maxRendererInFlightCharsByPty
   }
 
   readPtyRendererDeliveryDebugSnapshot = readCurrentPtyRendererDeliveryDebugSnapshot
@@ -1977,7 +2008,7 @@ export function registerPtyHandlers(
     ackGatedFlushSkipCount = 0
     pendingDroppedChars = 0
     resetHiddenRendererPtyDeliveryDebugCounters()
-    recordPtyRendererDeliveryPressure()
+    seedPtyRendererDeliveryPeaksFromCurrentState()
   }
   resetRendererDeliveryAccountingForLifecycleReset = () => {
     // Why lossless: pendingData bytes were bound for the dead page; the replacement repaints from main's authoritative sources, which superset it.
@@ -1989,13 +2020,12 @@ export function registerPtyHandlers(
     deliveryResyncUnansweredWarnLogged = false
     rendererDeliveryAccountingByPty.clear()
     rendererInFlightTotalChars = 0
-    pendingData.clear()
+    clearPendingPtyData()
     pendingOverflowMarkedPtys.clear()
     // Why hold sends: the reloading page's pty:data listener is gone until it re-registers/handshakes, so bytes would drop into a listener-less page and re-pin the gate.
     rendererPtyDispatcherReady = false
     // Why: arm the self-heal watchdog so a never-arriving handshake can't hold the gate forever; the real handshake cancels it.
     armDispatcherReadyWatchdog()
-    recordPtyRendererDeliveryPressure()
   }
   // Why the bridge: let a later re-registration cancel this closure's watchdog (armed via a hoisted fn, so this assignment can precede its definition).
   clearRendererDispatcherReadyWatchdog = clearDispatcherReadyWatchdog
@@ -2146,7 +2176,7 @@ export function registerPtyHandlers(
       const pending = pendingData.get(id)
       if (pending) {
         pendingDroppedChars += pending.data.length
-        pendingData.delete(id)
+        deletePendingPtyData(id)
         pendingOverflowMarkedPtys.delete(id)
         updateProducerFlowControl(id)
       }
@@ -2189,7 +2219,7 @@ export function registerPtyHandlers(
       })
     }
     rendererInFlightTotalChars += charCount
-    recordPtyRendererDeliveryPressure()
+    recordPtyRendererDeliveryPressure(id)
     mainWindow.webContents.send('pty:data', payload)
   }
 
@@ -2374,12 +2404,11 @@ export function registerPtyHandlers(
       // Why release now: bookkeeping is being wiped, so no future drain can resume these producers — local shells would wedge.
       producerFlowControl.releaseAll()
       clearDeliveryResyncProbe()
-      pendingData.clear()
+      clearPendingPtyData()
       pendingOverflowMarkedPtys.clear()
       rendererDeliveryAccountingByPty.clear()
       rendererInFlightTotalChars = 0
       clearDispatcherReadyWatchdog()
-      recordPtyRendererDeliveryPressure()
       return
     }
     // Why hold: the page's pty:data listener isn't registered yet; bytes accrue in pendingData (rebuilt losslessly) and the ready handshake reschedules this flush.
@@ -2394,7 +2423,7 @@ export function registerPtyHandlers(
       }
       // Why drop, never re-queue: the model already ingested hidden-gated bytes; reveal restores from the snapshot+seq machinery.
       if (shouldDropHiddenRendererPtyData(id, settings)) {
-        pendingData.delete(id)
+        deletePendingPtyData(id)
         pendingOverflowMarkedPtys.delete(id)
         updateProducerFlowControl(id)
         const drop = recordHiddenRendererPtyDataDrop(id, pending.data.length)
@@ -2407,7 +2436,7 @@ export function registerPtyHandlers(
       if (!canSendPtyDataToRenderer(id, { interactive: activeRendererPtys.has(id) })) {
         continue
       }
-      pendingData.delete(id)
+      deletePendingPtyData(id)
       if (pending.droppedOutput === true) {
         updateProducerFlowControl(id)
         // Why droppedOutput sentinel: pending-cap drop means the pane must repaint from the snapshot, not continue a gapped stream (data = carved query bytes only).
@@ -2427,7 +2456,7 @@ export function registerPtyHandlers(
         if (pending.containsBackgroundOutput === true) {
           nextPending.containsBackgroundOutput = true
         }
-        pendingData.set(id, nextPending)
+        setPendingPtyData(id, nextPending)
       } else {
         pendingOverflowMarkedPtys.delete(id)
       }
@@ -2448,7 +2477,6 @@ export function registerPtyHandlers(
     if (pendingData.size > 0 && writes === 0) {
       ackGatedFlushSkipCount++
     }
-    recordPtyRendererDeliveryPressure()
     if (pendingData.size > 0 && writes > 0) {
       // Why yield between slices: a background terminal can dump megabytes at once, and keystroke writes must not stall behind one flush.
       schedulePendingDataFlush(PTY_BATCH_DRAIN_CONTINUE_MS)
@@ -2516,7 +2544,7 @@ export function registerPtyHandlers(
           )
         )
       }
-      pendingData.delete(payload.id)
+      deletePendingPtyData(payload.id)
     }
     // Why resume a dead PTY (no-op): avoid leaving a stale paused mark behind for a reused id.
     producerFlowControl.release(payload.id)
@@ -2529,7 +2557,6 @@ export function registerPtyHandlers(
     )
     // Why: the renderer also drops its cumulative total on pty:exit, so a reused id restarts aligned at zero on both sides.
     rendererDeliveryAccountingByPty.delete(payload.id)
-    recordPtyRendererDeliveryPressure()
     mainWindow.webContents.send('pty:exit', {
       ...payload,
       ...(reversibleStopOwnersByPtyId.has(payload.id) ? { preserveRendererBinding: true } : {})
@@ -2609,12 +2636,11 @@ export function registerPtyHandlers(
         }
         producerFlowControl.releaseAll()
         clearDeliveryResyncProbe()
-        pendingData.clear()
+        clearPendingPtyData()
         pendingOverflowMarkedPtys.clear()
         rendererDeliveryAccountingByPty.clear()
         rendererInFlightTotalChars = 0
         clearDispatcherReadyWatchdog()
-        recordPtyRendererDeliveryPressure()
         return
       }
       const settings = getSettings?.()
@@ -2657,12 +2683,11 @@ export function registerPtyHandlers(
         // Why the reserve: keep input echo from being pinned behind unrelated bulk output; it's bounded and the per-PTY cap still prevents an active TUI runaway.
         if (!canSendPtyDataToRenderer(payload.id, { interactive: true })) {
           requestDeliveryResyncForGatedPty()
-          pendingData.set(payload.id, pending)
+          setPendingPtyData(payload.id, pending)
           updateProducerFlowControl(payload.id)
-          recordPtyRendererDeliveryPressure()
           return
         }
-        pendingData.delete(payload.id)
+        deletePendingPtyData(payload.id)
         updateProducerFlowControl(payload.id)
         pendingOverflowMarkedPtys.delete(payload.id)
         clearFlushTimerIfIdle()
@@ -2682,9 +2707,8 @@ export function registerPtyHandlers(
         })
         return
       }
-      pendingData.set(payload.id, pending)
+      setPendingPtyData(payload.id, pending)
       updateProducerFlowControl(payload.id)
-      recordPtyRendererDeliveryPressure()
       // Why probe on data arrival (not flush skips): new output for a fully gated PTY is the moment stuck delivery becomes observable.
       if (
         !canSendPtyDataToRenderer(payload.id, { interactive: activeRendererPtys.has(payload.id) })
@@ -4996,7 +5020,6 @@ export function registerPtyHandlers(
         acknowledged = accounting ? applyCumulativeAck(args.id, accounting.ackedChars + delta) : 0
       }
       tryGetProviderForPty(args.id)?.acknowledgeDataEvent(args.id, acknowledged)
-      recordPtyRendererDeliveryPressure()
       if (pendingData.size > 0 && !flushTimer) {
         schedulePendingDataFlush(0)
       }
@@ -5024,7 +5047,6 @@ export function registerPtyHandlers(
           tryGetProviderForPty(id)?.acknowledgeDataEvent(id, acknowledged)
         }
       }
-      recordPtyRendererDeliveryPressure()
       if (pendingData.size > 0 && !flushTimer) {
         schedulePendingDataFlush(0)
       }
@@ -5055,7 +5077,6 @@ export function registerPtyHandlers(
       ) {
         writtenOff = writeOffLostRendererDelivery(args)
       }
-      recordPtyRendererDeliveryPressure()
       if (pendingData.size > 0 && !flushTimer) {
         schedulePendingDataFlush(0)
       }
@@ -5137,7 +5158,7 @@ export function registerPtyHandlers(
       // Why: drop bytes queued for a newly hidden PTY instead of holding them under ACK starvation; reveal restores from the snapshot.
       const pending = pendingData.get(args.id)
       if (pending && shouldDropHiddenRendererPtyData(args.id, getSettings?.())) {
-        pendingData.delete(args.id)
+        deletePendingPtyData(args.id)
         updateProducerFlowControl(args.id)
         pendingOverflowMarkedPtys.delete(args.id)
         const drop = recordHiddenRendererPtyDataDrop(args.id, pending.data.length)
@@ -5148,7 +5169,6 @@ export function registerPtyHandlers(
             runtime?.getPtyOutputSequence(args.id)
           )
         }
-        recordPtyRendererDeliveryPressure()
       }
       syncPtyBackgroundedDelivery(args.id, 'gate-mark')
       return
