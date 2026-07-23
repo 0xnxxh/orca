@@ -200,6 +200,13 @@ export function getActiveServerModeDescription(allowLocalRuntime: boolean): stri
       )
 }
 
+export function isRuntimeEnvironmentRemovalBlocked(
+  activeRuntimeEnvironmentId: string | null | undefined,
+  environmentId: string
+): boolean {
+  return activeRuntimeEnvironmentId === environmentId
+}
+
 type RuntimeServerConnectionState = 'connected' | 'checking' | 'disconnected'
 
 export function getRuntimeServerConnectionState(
@@ -294,7 +301,9 @@ export function RuntimeEnvironmentsPane({
     switchingValue !== null ||
     removingId !== null ||
     disconnectingId !== null
-  const removingActiveServer = pendingRemove?.id === settings.activeRuntimeEnvironmentId
+  const removingActiveServer = pendingRemove
+    ? isRuntimeEnvironmentRemovalBlocked(settings.activeRuntimeEnvironmentId, pendingRemove.id)
+    : false
   const searchEntry = canGeneratePairingUrl
     ? getRuntimeEnvironmentsSearchEntry()
     : getWebRuntimeEnvironmentsSearchEntry()
@@ -510,7 +519,7 @@ export function RuntimeEnvironmentsPane({
     setRemovingId(environment.id)
     setRemoveError(null)
     try {
-      if (allowLocalRuntime && settings.activeRuntimeEnvironmentId === environment.id) {
+      if (isRuntimeEnvironmentRemovalBlocked(settings.activeRuntimeEnvironmentId, environment.id)) {
         if (mountedRef.current) {
           setRemoveError(
             translate(
@@ -1385,15 +1394,10 @@ export function RuntimeEnvironmentsPane({
             </DialogTitle>
             <DialogDescription>
               {removingActiveServer
-                ? allowLocalRuntime
-                  ? translate(
-                      'auto.components.settings.RuntimeEnvironmentsPane.removeActiveServerDescription',
-                      'Choose another Active Server in Advanced before removing this server. Existing host sessions are left alone.'
-                    )
-                  : translate(
-                      'auto.components.settings.RuntimeEnvironmentsPane.b2fda48c39',
-                      'Removing the active server disconnects this browser from that host. Existing host sessions are left alone.'
-                    )
+                ? translate(
+                    'auto.components.settings.RuntimeEnvironmentsPane.removeActiveServerDescription',
+                    'Choose another Active Server in Advanced before removing this server. Existing host sessions are left alone.'
+                  )
                 : translate(
                     'auto.components.settings.RuntimeEnvironmentsPane.ed3e3f069d',
                     'This removes the saved server from Orca. It does not change the active server.'

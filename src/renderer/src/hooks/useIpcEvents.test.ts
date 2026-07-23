@@ -1825,7 +1825,12 @@ describe('useIpcEvents updater integration', () => {
       folderWorkspaces: [],
       projectGroups: [],
       repos: [{ id: 'repo-1', connectionId: null, executionHostId: 'local' }],
-      worktreesByRepo: { 'repo-1': [{ id: 'wt-2', repoId: 'repo-1' }] },
+      worktreesByRepo: {
+        'repo-1': ['wt-1', 'wt-2', 'wt-3', 'wt-4', 'wt-history'].map((id) => ({
+          id,
+          repoId: 'repo-1'
+        }))
+      } as Record<string, { id: string; repoId: string }[]>,
       openFiles: [],
       browserTabsByWorktree: {},
       tabBarOrderByWorktree: {},
@@ -2444,12 +2449,18 @@ describe('useIpcEvents updater integration', () => {
 
     createTab.mockClear()
     replyTerminalCreate.mockClear()
-    storeState.repos.push({
-      id: 'repo-remote',
-      connectionId: null,
-      executionHostId: 'runtime:focused-runtime'
-    })
-    storeState.worktreesByRepo['repo-remote'] = [{ id: 'wt-remote', repoId: 'repo-remote' }]
+    storeState.repos = [
+      ...storeState.repos,
+      {
+        id: 'repo-remote',
+        connectionId: null,
+        executionHostId: 'runtime:focused-runtime'
+      }
+    ]
+    storeState.worktreesByRepo = {
+      ...storeState.worktreesByRepo,
+      'repo-remote': [{ id: 'wt-remote', repoId: 'repo-remote' }]
+    }
     requestTerminalCreateListenerRef.current({
       requestId: 'req-remote-owner-blocked',
       worktreeId: 'wt-remote',
@@ -2459,6 +2470,53 @@ describe('useIpcEvents updater integration', () => {
     expect(replyTerminalCreate).toHaveBeenCalledWith({
       requestId: 'req-remote-owner-blocked',
       error: 'Local terminal creation is unavailable while a remote runtime is active'
+    })
+    delete storeState.worktreesByRepo['repo-remote']
+    storeState.repos = storeState.repos.filter((repo) => repo.id !== 'repo-remote')
+
+    createTab.mockClear()
+    replyTerminalCreate.mockClear()
+    storeState.repos = [
+      ...storeState.repos,
+      {
+        id: 'repo-conflicting-owner',
+        connectionId: null,
+        executionHostId: 'runtime:focused-runtime'
+      }
+    ]
+    storeState.worktreesByRepo = {
+      ...storeState.worktreesByRepo,
+      'repo-1': [...storeState.worktreesByRepo['repo-1'], { id: 'wt-ambiguous', repoId: 'repo-1' }],
+      'repo-conflicting-owner': [{ id: 'wt-ambiguous', repoId: 'repo-conflicting-owner' }]
+    }
+    requestTerminalCreateListenerRef.current({
+      requestId: 'req-ambiguous-owner',
+      worktreeId: 'wt-ambiguous',
+      title: 'Ambiguous Terminal',
+      source: 'runtime-session'
+    })
+    expect(createTab).not.toHaveBeenCalled()
+    expect(replyTerminalCreate).toHaveBeenCalledWith({
+      requestId: 'req-ambiguous-owner',
+      error: 'Terminal creation is unavailable because the worktree owner could not be resolved'
+    })
+    storeState.worktreesByRepo['repo-1'] = storeState.worktreesByRepo['repo-1'].filter(
+      (worktree) => worktree.id !== 'wt-ambiguous'
+    )
+    delete storeState.worktreesByRepo['repo-conflicting-owner']
+    storeState.repos = storeState.repos.filter((repo) => repo.id !== 'repo-conflicting-owner')
+
+    createTab.mockClear()
+    replyTerminalCreate.mockClear()
+    requestTerminalCreateListenerRef.current({
+      requestId: 'req-missing-owner',
+      worktreeId: 'wt-missing',
+      title: 'Missing Terminal'
+    })
+    expect(createTab).not.toHaveBeenCalled()
+    expect(replyTerminalCreate).toHaveBeenCalledWith({
+      requestId: 'req-missing-owner',
+      error: 'Terminal creation is unavailable because the worktree owner could not be resolved'
     })
     storeState.settings.activeRuntimeEnvironmentId = undefined
 
