@@ -280,7 +280,10 @@ function toWorkspaceSpaceItem(stats: ScanStats): WorkspaceSpaceItem {
   }
 }
 
-function createBaseWorktreeRow(
+// Exported for regression coverage of the crash-99657ab1 displayName guard: the public
+// analyzeWorkspaceSpace entry always backfills displayName via mergeWorktree, so the
+// undefined path is only reachable by calling this row builder directly.
+export function createBaseWorktreeRow(
   repo: Repo,
   worktree: Worktree,
   scannedAt: number
