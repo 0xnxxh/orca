@@ -10,3 +10,4 @@
 /skill-stubs/*.md text eol=lf
 /skills/*/SKILL.md text eol=lf
 /src/cli/bundled-skill-guides.ts text eol=lf
+/resources/darwin/info-plist-localizations/**/InfoPlist.strings text eol=lf
