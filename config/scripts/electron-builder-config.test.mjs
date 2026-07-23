@@ -99,6 +99,23 @@ describe('electron-builder config', () => {
     )
   })
 
+  it('ships localized app-data purpose strings for supported macOS locales', async () => {
+    expect(electronBuilderConfig.mac.extraResources).toContainEqual({
+      from: 'resources/darwin/info-plist-localizations',
+      to: '.'
+    })
+    for (const locale of ['es', 'es_419', 'ja', 'ko', 'zh_CN', 'zh_TW']) {
+      const contents = await readFile(
+        new URL(
+          `../../resources/darwin/info-plist-localizations/${locale}.lproj/InfoPlist.strings`,
+          import.meta.url
+        ),
+        'utf8'
+      )
+      expect(contents).toMatch(/^"NSAppDataUsageDescription" = ".+";\n$/)
+    }
+  })
+
   it('unpacks the compiled CommonJS boundary with CLI runtime files', () => {
     expect(electronBuilderConfig.asarUnpack).toEqual(
       expect.arrayContaining(['out/package.json', 'out/cli/**', 'out/shared/**'])
