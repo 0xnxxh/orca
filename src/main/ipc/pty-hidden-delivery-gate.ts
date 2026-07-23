@@ -17,8 +17,8 @@ export type HiddenPtyDeliveryGateSettings = Pick<
 >
 
 const hiddenRendererPtys = new Set<string>()
-// Why: sidecar consumers (paste-draft pacing, background agent launches,
-// automation observers, and the kill-switch-off parked 2031 responder) need
+// Why: sidecar consumers (paste-draft pacing, background agent launches, and
+// automation observers) need
 // live bytes even while no visible view exists. Any
 // registered interest suppresses the gate for that PTY.
 const deliveryInterestRendererPtys = new Set<string>()

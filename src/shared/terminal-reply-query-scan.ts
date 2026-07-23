@@ -40,8 +40,7 @@ function isReplyElicitingCsi(sequence: string): boolean {
     sequence === '\x1b[14t' ||
     sequence === '\x1b[16t' ||
     sequence === '\x1b[18t' ||
-    sequence === '\x1b[?u' ||
-    sequence === '\x1b[?2031h'
+    sequence === '\x1b[?u'
   )
 }
 

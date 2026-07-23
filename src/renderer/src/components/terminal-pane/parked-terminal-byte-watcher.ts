@@ -5,18 +5,12 @@
 import { isClaudeAgent } from '../../../../shared/agent-detection'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { useAppStore } from '@/store'
-import {
-  mode2031SequenceFor,
-  resolveTerminalColorSchemeMode
-} from '../../../../shared/terminal-color-scheme-protocol'
 import { createTerminalGitHubPRLinkDetector } from '../../../../shared/terminal-github-pr-link-detector'
-import { getSystemPrefersDark } from '@/lib/terminal-theme'
 import {
   AGENT_TASK_COMPLETE_NOTIFICATION_GRACE_MS,
   isAgentTaskCompleteOsNotificationEnabledFromState,
   isAgentTaskCompleteTrackingEnabledFromState
 } from './agent-task-complete-policy'
-import { startParkedTerminalMode2031Responder } from './parked-terminal-mode2031-responder'
 import { subscribeToPtyData } from './pty-data-sidecar-subscriptions'
 import { createPtyOutputProcessor } from './pty-transport'
 import { isRendererHiddenPtyDeliveryGateEnabled } from './terminal-hidden-delivery-gate'
@@ -54,8 +48,6 @@ export type ParkedTerminalByteWatcherOptions = {
   initialTitle?: string
   /** Pull main's title-only snapshot when a watcher starts before its pane ever mounted (ordinary park cycles already have a title). */
   restoreTitleOnRegister?: boolean
-  /** Out-of-band reply channel to the PTY (mode-2031 color-scheme answers). */
-  sendInput: (data: string) => void
 }
 
 const parkedWatcherDisposersByPtyId = new Map<string, () => void>()
@@ -63,7 +55,7 @@ const parkedWatcherDisposersByPtyId = new Map<string, () => void>()
 export function startParkedTerminalByteWatcher(
   options: ParkedTerminalByteWatcherOptions
 ): () => void {
-  const { ptyId, tabId, worktreeId, paneId, sendInput } = options
+  const { ptyId, tabId, worktreeId, paneId } = options
   const drivesTabTitle = options.drivesTabTitle ?? true
   const paneKey = makePaneKey(tabId, options.leafId)
 
@@ -192,15 +184,9 @@ export function startParkedTerminalByteWatcher(
     settings: useAppStore.getState().settings,
     runtimeEnvironmentId: null
   })
-  // Why: decided once at watcher start — it picks which 2031 responder (byte sidecar vs fact reply) exists, so it must never flip per chunk.
   const hiddenDeliveryGateActive =
     mainSideEffectAuthority &&
     isRendererHiddenPtyDeliveryGateEnabled(useAppStore.getState().settings)
-
-  const sendMode2031Reply = (): void => {
-    const settings = useAppStore.getState().settings
-    sendInput(mode2031SequenceFor(resolveTerminalColorSchemeMode(settings, getSystemPrefersDark())))
-  }
 
   // Why (byte-parser mode only): reuse the transport's output processor to keep exact live-path parsing semantics.
   // initialAgentTitle: an agent already working at park time still produces a working→idle transition.
@@ -221,19 +207,12 @@ export function startParkedTerminalByteWatcher(
         callbacks: {
           ...sideEffectCallbacks,
           onPrLink: (link) =>
-            useAppStore.getState().observeTerminalGitHubPullRequestLink(worktreeId, link),
-          // Why (gate mode only): the 2031 subscribe arrives as a fact, but the reply stays here — query authority stays with the view/watcher (invariant 6).
-          ...(hiddenDeliveryGateActive ? { onMode2031Subscribe: sendMode2031Reply } : {})
+            useAppStore.getState().observeTerminalGitHubPullRequestLink(worktreeId, link)
         },
         // Why: activation-deferred tabs can start a watcher before any pane restored the title; ordinary parked tabs avoid this IPC.
         restoreTitleOnRegister: options.restoreTitleOnRegister === true
       })
     : null
-
-  // Why: no xterm answers DECSET 2031 while parked; with the gate ON, the responder's sidecar would force-feed bytes to the gated PTY, so skip it.
-  const stopMode2031Responder = hiddenDeliveryGateActive
-    ? null
-    : startParkedTerminalMode2031Responder({ ptyId, sendInput })
 
   // Why: parked tabs are the canonical hidden view — mark the PTY gated so main stops renderer byte delivery.
   const releaseHiddenDeliveryClaim = hiddenDeliveryGateActive
@@ -261,7 +240,6 @@ export function startParkedTerminalByteWatcher(
     disposed = true
     // Why: unhide BEFORE the reveal remount registers pane handlers, so main resumes delivery and emits the restore marker the pane consumes.
     releaseHiddenDeliveryClaim?.()
-    stopMode2031Responder?.()
     unsubscribeByteParsers?.()
     unregisterFactConsumer?.()
     // Why: clears tracker/timer/detector state so the watcher can't fire after the revealed pane's live parsers take over.

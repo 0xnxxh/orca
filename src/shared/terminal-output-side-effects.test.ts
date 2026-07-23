@@ -18,6 +18,7 @@ type RecordedEvent =
   | ['finished', number | null]
   | ['pr', string, number]
   | ['2031-subscribe']
+  | ['2031-unsubscribe']
 
 function createRecordingTracker(overrides: TerminalTitleTrackerCallbacks = {}): {
   events: RecordedEvent[]
@@ -30,6 +31,7 @@ function createRecordingTracker(overrides: TerminalTitleTrackerCallbacks = {}): 
     onCommandFinished: (exitCode) => events.push(['finished', exitCode]),
     onPrLink: (link) => events.push(['pr', link.url, link.number]),
     onMode2031Subscribe: () => events.push(['2031-subscribe']),
+    onMode2031Unsubscribe: () => events.push(['2031-unsubscribe']),
     ...overrides
   })
   return { events, tracker }
@@ -116,7 +118,7 @@ describe('createTerminalTitleTracker pr-link facts', () => {
   })
 })
 
-describe('createTerminalTitleTracker 2031-subscribe facts', () => {
+describe('createTerminalTitleTracker mode-2031 facts', () => {
   it('emits a fact per chunk containing a DECSET 2031 subscribe, before the bell', () => {
     const { events, tracker } = createRecordingTracker()
 
@@ -134,16 +136,27 @@ describe('createTerminalTitleTracker 2031-subscribe facts', () => {
     expect(events).toEqual([['2031-subscribe']])
   })
 
-  it('ignores DECSET 2031 unsubscribes', () => {
+  it('emits DECSET 2031 unsubscribes', () => {
     const { events, tracker } = createRecordingTracker()
 
     tracker.handleChunk(`${ESC}[?2031l`)
 
-    expect(events).toEqual([])
+    expect(events).toEqual([['2031-unsubscribe']])
+  })
+
+  it('emits only the final mode state from one chunk', () => {
+    const { events, tracker } = createRecordingTracker()
+
+    tracker.handleChunk(`${ESC}[?2031h${ESC}[?2031l`)
+
+    expect(events).toEqual([['2031-unsubscribe']])
   })
 
   it('skips the 2031 scan entirely when no consumer is registered', () => {
-    const { events, tracker } = createRecordingTracker({ onMode2031Subscribe: undefined })
+    const { events, tracker } = createRecordingTracker({
+      onMode2031Subscribe: undefined,
+      onMode2031Unsubscribe: undefined
+    })
 
     tracker.handleChunk(`${ESC}[?2031h`)
 

@@ -113,7 +113,6 @@ import { shouldUseShellReadyStartupDelivery } from '../../../../shared/codex-sta
 import { resolveSetupAgentSequenceLaunchCommand } from '../../../../shared/setup-agent-sequencing'
 import { getSystemPrefersDark } from '@/lib/terminal-theme'
 import {
-  mode2031SequenceFor,
   resolveTerminalColorSchemeMode,
   scanMode2031Sequences
 } from '../../../../shared/terminal-color-scheme-protocol'
@@ -463,13 +462,9 @@ type E2eTerminalHiddenSnapshotOverride = {
 
 const e2eTerminalHiddenSnapshotOverrides = new Map<string, E2eTerminalHiddenSnapshotOverride>()
 
-// Why: the per-chunk hidden-skip grammar is deleted (Phase 6) — hidden bytes
-// either never reach the renderer (delivery gate) or ride the background
-// scheduler queue. Only the mode-2031 fact-reply counter still has a producer.
 type E2eTerminalPtyOutputDebugSnapshot = {
   hiddenRendererSkipCount: number
   hiddenRendererSkippedChars: number
-  hiddenRendererMode2031ReplyCount: number
 }
 
 type E2eTerminalPtyOutputDebugApi = {
@@ -502,14 +497,12 @@ type ColdRestoreAgentResumeStartup = PendingStartupCommand & {
 
 const e2eTerminalPtyOutputDebugState: E2eTerminalPtyOutputDebugSnapshot = {
   hiddenRendererSkipCount: 0,
-  hiddenRendererSkippedChars: 0,
-  hiddenRendererMode2031ReplyCount: 0
+  hiddenRendererSkippedChars: 0
 }
 
 function resetE2eTerminalPtyOutputDebug(): void {
   e2eTerminalPtyOutputDebugState.hiddenRendererSkipCount = 0
   e2eTerminalPtyOutputDebugState.hiddenRendererSkippedChars = 0
-  e2eTerminalPtyOutputDebugState.hiddenRendererMode2031ReplyCount = 0
 }
 
 function exposeE2eTerminalPtyOutputDebug(): void {
@@ -530,14 +523,6 @@ function recordHiddenRendererSkip(chars: number): void {
   exposeE2eTerminalPtyOutputDebug()
   e2eTerminalPtyOutputDebugState.hiddenRendererSkipCount += 1
   e2eTerminalPtyOutputDebugState.hiddenRendererSkippedChars += chars
-}
-
-function recordHiddenMode2031Reply(): void {
-  if (!e2eConfig.exposeStore) {
-    return
-  }
-  exposeE2eTerminalPtyOutputDebug()
-  e2eTerminalPtyOutputDebugState.hiddenRendererMode2031ReplyCount += 1
 }
 
 function exposeE2eTerminalPtyDataInjection(): void {
@@ -653,11 +638,6 @@ type PanePtyBinding = IDisposable & {
   requestDroidReconfirmation: () => void
   reconcileIfSessionDead: (liveSessionIds: Set<string>, snapshotRequestedAt?: number) => void
   reconcileIfSessionMissing: (hasPty: HasPty, livenessRequestedAt?: number) => void
-  /** True when the hidden-delivery gate structurally manages the pane's
-   *  current PTY. The lifecycle's xterm CSI ?2031h observer consults this to
-   *  stay silent — main's '2031-subscribe' fact is the sole responder for
-   *  gate-managed PTYs. */
-  isHiddenDeliveryGateManagedPty: () => boolean
 }
 
 function isAgentTaskCompleteNotificationEnabled(): boolean {
@@ -2226,7 +2206,10 @@ export function connectPanePty(
         // Why: gated hidden panes never see the subscribe bytes; the fact
         // replaces the byte scan (and the old post-latch subscribe drop).
         ...(hiddenDeliveryGateActive
-          ? { onMode2031Subscribe: handleHiddenMode2031SubscribeFact }
+          ? {
+              onMode2031Subscribe: handleHiddenMode2031SubscribeFact,
+              onMode2031Unsubscribe: handleHiddenMode2031UnsubscribeFact
+            }
           : {})
       },
       restoreTitleOnRegister: true
@@ -3287,17 +3270,12 @@ export function connectPanePty(
     settings: state.settings,
     runtimeEnvironmentId
   })
-  // Why: Phase-4 hidden-delivery gate — only meaningful under main authority
-  // (renderer byte parsers need bytes otherwise). Decided once at pane
-  // creation: it picks the mode-2031 answer path (fact reply vs byte scan),
-  // which must have exactly one owner.
+  // The hidden-delivery gate only operates under main authority.
   const hiddenDeliveryGateActive =
     mainSideEffectAuthority && isRendererHiddenPtyDeliveryGateEnabled(state.settings)
   // Why: structural per-PTY gate predicate (authority on + gate on + bytes
   // transit local main, which implies snapshot-backed). Shared by the hidden
-  // mark sync and mode-2031 reply ownership so reply ownership can never
-  // disagree with what main may drop — and never depends on the racy hidden
-  // mark (a fact can outrun the pty:data task that sets it).
+  // mark sync and subscription tracking, independent of the racy hidden mark.
   const isHiddenDeliveryGateManagedPty = (ptyId: string | null): ptyId is string =>
     hiddenDeliveryGateActive && Boolean(ptyId) && !isRemoteRuntimePtyId(ptyId)
   // Why (byte-parser mode only): with main authority the Command Code scrape
@@ -3499,13 +3477,8 @@ export function connectPanePty(
   // desktop silent while the elected mobile xterm owns query replies.
   const sendDesktopQueryReplyImmediate = (data: string): boolean =>
     canSendDesktopQueryReply() && transport.sendInputImmediate(data)
-  // Why record-only (no reply): DECSET 2031 subscribe is silent per the kitty
-  // color-scheme protocol — the terminal answers the program's paired DSR
-  // `CSI ?996n` query (xterm-core on a visible pane, the headless
-  // view-attribute responder on a gated/parked one) and pushes on later
-  // changes. Seeding a reply on the subscribe too made fish's `?2031h;?996n`
-  // handshake answer twice — the doubled `^[[?997;1n^[[?997;1n` leak (STA-2385).
-  // We still register the subscription so theme flips push the CSI 997 update.
+  // DECSET 2031 subscribes to later updates; an immediate seed can outlive
+  // fish's read window and leak at the prompt (STA-2385).
   const handleHiddenMode2031SubscribeFact = (): void => {
     if (disposed || !isHiddenDeliveryGateManagedPty(transport.getPtyId())) {
       return
@@ -3514,7 +3487,15 @@ export function connectPanePty(
       useAppStore.getState().settings,
       getSystemPrefersDark()
     )
-    deps.recordPaneMode2031Subscription?.(pane.id, mode)
+    deps.paneMode2031Ref.current.set(pane.id, true)
+    deps.paneLastThemeModeRef.current.set(pane.id, mode)
+  }
+  const handleHiddenMode2031UnsubscribeFact = (): void => {
+    if (disposed || !isHiddenDeliveryGateManagedPty(transport.getPtyId())) {
+      return
+    }
+    deps.paneMode2031Ref.current.delete(pane.id)
+    deps.paneLastThemeModeRef.current.delete(pane.id)
   }
   deps.paneTransportsRef.current.set(pane.id, transport)
   const terminalCapabilityRepliesDisposable = installTerminalCapabilityReplyHandlers({
@@ -5692,7 +5673,7 @@ export function connectPanePty(
       }
     }
 
-    function respondToSkippedMode2031Subscribe(data: string): void {
+    function recordSkippedMode2031Subscription(data: string): void {
       const scan = scanMode2031Sequences(hiddenMode2031ScanTail, data)
       hiddenMode2031ScanTail = scan.tail
       if (scan.finalState === 'unsubscribed') {
@@ -5704,11 +5685,8 @@ export function connectPanePty(
       }
       const settings = useAppStore.getState().settings
       const mode = resolveTerminalColorSchemeMode(settings, getSystemPrefersDark())
-      // Why: hidden snapshot-backed panes skip xterm.write for PTY bytes; answer immediately so the reply can't outlive the program's read window.
       deps.paneMode2031Ref.current.set(pane.id, true)
-      sendDesktopQueryReplyImmediate(mode2031SequenceFor(mode))
       deps.paneLastThemeModeRef.current.set(pane.id, mode)
-      recordHiddenMode2031Reply()
     }
 
     function writePtyOutputToXterm(
@@ -5783,7 +5761,7 @@ export function connectPanePty(
         synchronizedForegroundOutput && synchronizedForegroundFrameInteractive
       synchronizedForegroundOutputActive = nextSynchronizedForegroundOutputActive
       if (!foreground && hiddenMode2031ScanTail) {
-        respondToSkippedMode2031Subscribe(data)
+        recordSkippedMode2031Subscription(data)
       }
       writeTerminalOutput(pane.terminal, data, {
         foreground: foregroundOutput,
@@ -5954,7 +5932,7 @@ export function connectPanePty(
 
     function skipHiddenRendererOutput(data: string): void {
       writeHiddenStartupRendererQueries(data)
-      respondToSkippedMode2031Subscribe(data)
+      recordSkippedMode2031Subscription(data)
       markHiddenOutputRestoreNeeded()
       hiddenRendererStateDirty = true
       if (hiddenOutputRestoreInFlight) {
@@ -6463,7 +6441,7 @@ export function connectPanePty(
 
     function skipBackgroundAlternateScreenOutput(data: string): void {
       writeHiddenStartupRendererQueries(data)
-      respondToSkippedMode2031Subscribe(data)
+      recordSkippedMode2031Subscription(data)
       resetSkippedHiddenRendererRiskState()
       hiddenRendererStateDirty = true
       recordHiddenRendererSkip(data.length)
@@ -6972,7 +6950,7 @@ export function connectPanePty(
         syncHiddenRendererPtyDelivery()
       }
       if (foreground && hiddenMode2031ScanTail) {
-        respondToSkippedMode2031Subscribe(data)
+        recordSkippedMode2031Subscription(data)
       }
       // Post-restore reconciliation: drop chunks the snapshot covers, force a fresh restore for unmappable seq gaps; runs after byte observers, before any xterm write.
       const reconciliation = reconcileChunkAgainstRestoredSnapshot(data, meta)
@@ -8105,9 +8083,6 @@ export function connectPanePty(
       agentCompletionCoordinator.startProcessTracking()
       // Why: the hidden-delivery gate must follow every pane visibility flip.
       syncHiddenRendererPtyDelivery()
-    },
-    isHiddenDeliveryGateManagedPty() {
-      return isHiddenDeliveryGateManagedPty(transport.getPtyId())
     },
     // Why: visible-resume size readback repairs dropped hidden resizes without refitting against xterm's transient hidden DOM fallback.
     noteVisibilityResume() {

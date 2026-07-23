@@ -103,7 +103,6 @@ import {
   syncParkedTerminalTabWatchers
 } from './terminal-parked-tab-watchers'
 
-const ptyWrite = vi.fn()
 const originalWindow = (globalThis as { window?: unknown }).window
 
 function capturePanes(
@@ -140,7 +139,7 @@ describe('terminal-parked-tab-watchers', () => {
       setTabLayout: vi.fn(),
       updateTabTitle: vi.fn()
     }
-    ;(globalThis as { window?: unknown }).window = { api: { pty: { write: ptyWrite } } }
+    ;(globalThis as { window?: unknown }).window = { api: { pty: {} } }
   })
 
   afterEach(() => {
@@ -183,14 +182,6 @@ describe('terminal-parked-tab-watchers', () => {
     syncParked({ restoreTitleOnStartTabIds: [TAB_ID] })
 
     expect(startedWatchers[0].options.restoreTitleOnRegister).toBe(true)
-  })
-
-  it('routes watcher sendInput to window.api.pty.write for the watched PTY', () => {
-    capturePanes([{ ptyId: PTY_ID, paneId: 1, leafId: LEAF_ID, drivesTabTitle: true }])
-    syncParked()
-
-    startedWatchers[0].options.sendInput('\x1b[?2031;1$y')
-    expect(ptyWrite).toHaveBeenCalledWith(PTY_ID, '\x1b[?2031;1$y')
   })
 
   it('skips legacy non-UUID leaf ids instead of throwing in makePaneKey', () => {

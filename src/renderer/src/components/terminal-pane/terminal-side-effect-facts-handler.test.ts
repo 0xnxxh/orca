@@ -255,32 +255,33 @@ describe('registerTerminalSideEffectFactConsumer', () => {
     expect(events).toEqual([['title', 'restored']])
   })
 
-  it('routes 2031-subscribe facts to the registered consumer but never replays them', () => {
-    // Why: the fact lets hidden-delivery-gated views answer the color-scheme
-    // query without byte access; a replayed subscribe would re-answer a query
-    // the snapshot already satisfied.
+  it('routes mode-2031 facts to the registered consumer but never replays them', () => {
     const events: unknown[][] = []
     registerTerminalSideEffectFactConsumer({
       ptyId: PTY_ID,
       callbacks: {
         onTitleChange: (normalizedTitle) => events.push(['title', normalizedTitle]),
-        onMode2031Subscribe: () => events.push(['2031-subscribe'])
+        onMode2031Subscribe: () => events.push(['2031-subscribe']),
+        onMode2031Unsubscribe: () => events.push(['2031-unsubscribe'])
       }
     })
 
-    _dispatchTerminalSideEffectBatchForTest(batch([{ kind: '2031-subscribe' }]))
-    expect(events).toEqual([['2031-subscribe']])
+    _dispatchTerminalSideEffectBatchForTest(
+      batch([{ kind: '2031-subscribe' }, { kind: '2031-unsubscribe' }])
+    )
+    expect(events).toEqual([['2031-subscribe'], ['2031-unsubscribe']])
 
     _dispatchTerminalSideEffectBatchForTest(
       batch(
         [
           { kind: 'title', normalizedTitle: 'restored', rawTitle: 'restored' },
-          { kind: '2031-subscribe' }
+          { kind: '2031-subscribe' },
+          { kind: '2031-unsubscribe' }
         ],
         { replay: true, seq: 5 }
       )
     )
-    expect(events).toEqual([['2031-subscribe'], ['title', 'restored']])
+    expect(events).toEqual([['2031-subscribe'], ['2031-unsubscribe'], ['title', 'restored']])
   })
 
   it('never replays command-finished or pr-link facts', () => {

@@ -55,11 +55,10 @@ export type TerminalTitleTrackerCallbacks = {
   onCommandFinished?: (bestEffortExitCode: number | null) => void
   /** Fired once per newly observed GitHub PR URL (chunk-boundary-safe, deduplicated per tracker). */
   onPrLink?: (link: TerminalGitHubPRLink) => void
-  /**
-   * Fired per chunk containing a DECSET 2031 subscribe (chunk-boundary-safe): lets
-   * hidden-delivery-gated renderer views answer the color-scheme query without byte access.
-   */
+  /** Fired when a chunk's final mode-2031 state is subscribed. */
   onMode2031Subscribe?: () => void
+  /** Fired when a chunk's final mode-2031 state is unsubscribed. */
+  onMode2031Unsubscribe?: () => void
 }
 
 export type TerminalTitleTracker = {
@@ -99,7 +98,8 @@ export function createTerminalTitleTracker(
     onBell,
     onCommandFinished,
     onPrLink,
-    onMode2031Subscribe
+    onMode2031Subscribe,
+    onMode2031Unsubscribe
   } = callbacks
   const bellDetector = onBell ? createBellDetector() : null
   // Why: created only when a consumer exists so headless serve never pays the per-chunk 133/URL scans.
@@ -187,7 +187,7 @@ export function createTerminalTitleTracker(
         }
       }, STALE_WORKING_TITLE_TIMEOUT_MS)
     }
-    // Fact order (matches renderer drain): titles → command-finished → pr-link → 2031-subscribe → bell; bell last.
+    // Fact order: titles → command-finished → pr-link → mode 2031 → bell.
     if (!transientFactScanningSuppressed) {
       commandFinishedScanner?.scan(data)
       if (prLinkDetector) {
@@ -195,11 +195,13 @@ export function createTerminalTitleTracker(
           onPrLink?.(link)
         }
       }
-      if (onMode2031Subscribe) {
+      if (onMode2031Subscribe || onMode2031Unsubscribe) {
         const mode2031Scan = scanMode2031Sequences(mode2031ScanTail, data)
         mode2031ScanTail = mode2031Scan.tail
-        if (mode2031Scan.subscribe) {
-          onMode2031Subscribe()
+        if (mode2031Scan.finalState === 'subscribed') {
+          onMode2031Subscribe?.()
+        } else if (mode2031Scan.finalState === 'unsubscribed') {
+          onMode2031Unsubscribe?.()
         }
       }
     }

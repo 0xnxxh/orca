@@ -153,7 +153,6 @@ describe('installMode2031Handlers', () => {
     term: Terminal
     pane: ManagedPane
     replayingPanesRef: ReplayingPanesRef
-    onSubscribe: ReturnType<typeof vi.fn>
     paneMode2031: Map<number, boolean>
     paneLastThemeMode: Map<number, 'dark' | 'light'>
     dispose: () => void
@@ -163,11 +162,10 @@ describe('installMode2031Handlers', () => {
     const replayingPanesRef = makeReplayingRef()
     const paneMode2031 = new Map<number, boolean>()
     const paneLastThemeMode = new Map<number, 'dark' | 'light'>()
-    const onSubscribe = vi.fn()
     const disposables = installMode2031Handlers({
       paneId,
       parser: term.parser,
-      onSubscribe,
+      getCurrentMode: () => 'dark',
       isReplaying: () => (replayingPanesRef.current.get(paneId) ?? 0) > 0,
       paneMode2031,
       paneLastThemeMode
@@ -176,7 +174,6 @@ describe('installMode2031Handlers', () => {
       term,
       pane,
       replayingPanesRef,
-      onSubscribe,
       paneMode2031,
       paneLastThemeMode,
       dispose: () => {
@@ -188,26 +185,32 @@ describe('installMode2031Handlers', () => {
     }
   }
 
-  it('records subscribe and fires onSubscribe on a live `CSI ?2031h`', async () => {
+  it('records a live `CSI ?2031h` without treating it as a query', async () => {
     const h = setup()
     try {
       await writeSync(h.term, '\x1b[?2031h')
       expect(h.paneMode2031.get(1)).toBe(true)
-      expect(h.onSubscribe).toHaveBeenCalledTimes(1)
+      expect(h.paneLastThemeMode.get(1)).toBe('dark')
+      const transport = {
+        isConnected: () => true,
+        sendInputImmediate: vi.fn(() => true)
+      }
+      expect(maybePushMode2031Flip(1, 'dark', transport, h.paneMode2031, h.paneLastThemeMode)).toBe(
+        false
+      )
+      expect(transport.sendInputImmediate).not.toHaveBeenCalled()
     } finally {
       h.dispose()
     }
   })
 
-  it('does NOT fire onSubscribe or record state when the sequence arrives during replay', async () => {
-    // On cold restore the replay guard is set before xterm parses, so the handler must skip both the push and the bookkeeping.
+  it('does not record state when the sequence arrives during replay', async () => {
     const h = setup()
     try {
       replayIntoTerminal(h.pane, h.replayingPanesRef, '\x1b[?2031h')
       // write() is async: the replay guard stays engaged until the write-completion callback fires.
       await new Promise<void>((resolve) => h.term.write('', resolve))
 
-      expect(h.onSubscribe).not.toHaveBeenCalled()
       expect(h.paneMode2031.has(1)).toBe(false)
       expect(h.paneLastThemeMode.has(1)).toBe(false)
       // Once the replay window closes, the pane is not marked replaying.
@@ -223,11 +226,9 @@ describe('installMode2031Handlers', () => {
     try {
       replayIntoTerminal(h.pane, h.replayingPanesRef, '\x1b[?2031h')
       await new Promise<void>((resolve) => h.term.write('', resolve))
-      expect(h.onSubscribe).not.toHaveBeenCalled()
 
       await writeSync(h.term, '\x1b[?2031h')
       expect(h.paneMode2031.get(1)).toBe(true)
-      expect(h.onSubscribe).toHaveBeenCalledTimes(1)
     } finally {
       h.dispose()
     }
@@ -265,7 +266,6 @@ describe('installMode2031Handlers', () => {
     const term = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
     const paneMode2031 = new Map<number, boolean>()
     const paneLastThemeMode = new Map<number, 'dark' | 'light'>()
-    const onSubscribe = vi.fn()
     const returnValues: boolean[] = []
     // Cast: parser cb returns plain `boolean` but `Mode2031Parser` reflects xterm's `boolean | Promise<boolean>` (handlers here are sync).
     const spyParser: Parameters<typeof installMode2031Handlers>[0]['parser'] = {
@@ -279,7 +279,7 @@ describe('installMode2031Handlers', () => {
     const disposables = installMode2031Handlers({
       paneId: 1,
       parser: spyParser,
-      onSubscribe,
+      getCurrentMode: () => 'dark',
       isReplaying: () => false,
       paneMode2031,
       paneLastThemeMode
@@ -287,9 +287,7 @@ describe('installMode2031Handlers', () => {
     try {
       // Compound: ?25 (cursor show) + ?2031 (color-scheme subscribe).
       await writeSync(term, '\x1b[?25;2031h')
-      // Our 2031 recording fired:
       expect(paneMode2031.get(1)).toBe(true)
-      expect(onSubscribe).toHaveBeenCalledTimes(1)
       // Every handler invocation returned `false`, so xterm's built-in DEC private mode handler still processes the sequence.
       expect(returnValues.length).toBeGreaterThan(0)
       expect(returnValues.every((v) => v === false)).toBe(true)
@@ -310,13 +308,11 @@ describe('installMode2031Handlers', () => {
     const term1 = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
     const term2 = new Terminal({ cols: 80, rows: 24, allowProposedApi: true })
     const pane1 = { id: 1, terminal: term1 } as unknown as ManagedPane
-    const onSub1 = vi.fn()
-    const onSub2 = vi.fn()
 
     const d1 = installMode2031Handlers({
       paneId: 1,
       parser: term1.parser,
-      onSubscribe: onSub1,
+      getCurrentMode: () => 'dark',
       isReplaying: () => (replayingPanesRef.current.get(1) ?? 0) > 0,
       paneMode2031: shared2031,
       paneLastThemeMode: sharedLast
@@ -324,7 +320,7 @@ describe('installMode2031Handlers', () => {
     const d2 = installMode2031Handlers({
       paneId: 2,
       parser: term2.parser,
-      onSubscribe: onSub2,
+      getCurrentMode: () => 'dark',
       isReplaying: () => (replayingPanesRef.current.get(2) ?? 0) > 0,
       paneMode2031: shared2031,
       paneLastThemeMode: sharedLast
@@ -334,12 +330,10 @@ describe('installMode2031Handlers', () => {
       // Replay on pane 1 must not subscribe.
       replayIntoTerminal(pane1, replayingPanesRef, '\x1b[?2031h')
       await new Promise<void>((resolve) => term1.write('', resolve))
-      expect(onSub1).not.toHaveBeenCalled()
       expect(shared2031.has(1)).toBe(false)
 
       // Live on pane 2 must subscribe normally.
       await writeSync(term2, '\x1b[?2031h')
-      expect(onSub2).toHaveBeenCalledTimes(1)
       expect(shared2031.get(2)).toBe(true)
     } finally {
       for (const d of [...d1, ...d2]) {

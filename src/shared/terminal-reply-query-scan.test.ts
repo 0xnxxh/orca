@@ -6,12 +6,12 @@ import {
 
 describe('terminal reply query scan', () => {
   it('records reply-eliciting queries with their output high-water sequence', () => {
-    const data = `before\x1b[6nafter\x1b[?2031h`
+    const data = `before\x1b[6nafter\x1b[?996n`
     const result = scanTerminalReplyQuerySequences(data, 100, EMPTY_TERMINAL_REPLY_QUERY_SCAN_STATE)
 
     expect(result.queries).toEqual([
       { data: '\x1b[6n', startSeq: 106, endSeq: 110 },
-      { data: '\x1b[?2031h', startSeq: 115, endSeq: 123 }
+      { data: '\x1b[?996n', startSeq: 115, endSeq: 122 }
     ])
     expect(result.state).toEqual(EMPTY_TERMINAL_REPLY_QUERY_SCAN_STATE)
   })
@@ -37,5 +37,15 @@ describe('terminal reply query scan', () => {
     const second = scanTerminalReplyQuerySequences('2026$p', 30, first.state)
 
     expect(second.queries).toEqual([])
+  })
+
+  it('does not classify mode 2031 subscription as a reply-eliciting query', () => {
+    const result = scanTerminalReplyQuerySequences(
+      '\x1b[?2031h',
+      0,
+      EMPTY_TERMINAL_REPLY_QUERY_SCAN_STATE
+    )
+
+    expect(result.queries).toEqual([])
   })
 })

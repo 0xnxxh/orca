@@ -32,9 +32,7 @@ type Mode2031Parser = Pick<IParser, 'registerCsiHandler'>
 type Mode2031HandlerDeps = {
   paneId: number
   parser: Mode2031Parser
-  /** Called when a real (non-replayed) `CSI ?2031h` arrives, after the subscribe flag is set.
-   *  A callback so the lifecycle hook keeps its transport-aware `pushMode2031ForPane` closure. */
-  onSubscribe: () => void
+  getCurrentMode: () => 'dark' | 'light' | null
   isReplaying: () => boolean
   paneMode2031: Map<number, boolean>
   paneLastThemeMode: Map<number, 'dark' | 'light'>
@@ -51,19 +49,20 @@ export function installMode2031Handlers(deps: Mode2031HandlerDeps): IDisposable[
       { prefix: '?', final: 'h' },
       guardParserHandler('csi-mode2031-subscribe', (params) => {
         if (hasMode2031(params)) {
-          // Why gate on isReplaying: a restored buffer's replayed `?2031h` would push `?997;1n` into a fresh shell with no
-          // TUI, which echoes it as literal text; pty-connection's guard covers only xterm auto-replies, not handler sends.
-          // Return early (before recording the subscribe bit) so a later theme flip won't push into a shell that isn't subscribed.
+          // A replayed subscribe no longer represents a live TUI that can consume later notifications.
           if (deps.isReplaying()) {
             return false
           }
           deps.paneMode2031.set(deps.paneId, true)
-          deps.onSubscribe()
+          const mode = deps.getCurrentMode()
+          if (mode) {
+            deps.paneLastThemeMode.set(deps.paneId, mode)
+          }
         }
         return false
       })
     ),
-    // Why no replay guard here: we only push CSI 997 on subscribe; unsubscribe just clears map entries, so replay is harmless.
+    // Clearing stale subscription state during replay is harmless.
     deps.parser.registerCsiHandler(
       { prefix: '?', final: 'l' },
       guardParserHandler('csi-mode2031-unsubscribe', (params) => {

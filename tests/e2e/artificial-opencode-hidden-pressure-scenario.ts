@@ -54,10 +54,9 @@ type HiddenPressureDeps<TMeasurement, TDebug, TScheduler, TMainPressure, TAckGat
   writeInteractivePromptScript: (scriptPath: string, runId: string) => void
 }
 
-// Why: the renderer hidden-skip counters are gone with the skip grammar —
-// withheld hidden output is observed via main's delivery-drop counters only.
 type HiddenPressureDebug = {
-  hiddenRendererMode2031ReplyCount: number
+  hiddenRendererSkipCount: number
+  hiddenRendererSkippedChars: number
 }
 
 type HiddenPressureMeasurement = {

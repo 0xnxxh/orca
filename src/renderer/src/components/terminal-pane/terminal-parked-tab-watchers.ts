@@ -138,9 +138,7 @@ function startParkedTabWatchers(
       drivesTabTitle: pane.drivesTabTitle,
       // Why: seed the agent tracker with the last title so an agent working at park time still notifies on finish.
       ...(initialTitle !== undefined ? { initialTitle } : {}),
-      ...(restoreTitleOnRegister ? { restoreTitleOnRegister: true } : {}),
-      // Why: no pane transport while parked, so write straight to the PTY (same channel as background launches).
-      sendInput: (data) => window.api.pty.write(ptyId, data)
+      ...(restoreTitleOnRegister ? { restoreTitleOnRegister: true } : {})
     })
     // Why: a PTY exiting while parked has no pane for cleanup, so its watcher must not outlive it.
     const unsubscribeExit = subscribeToPtyExit(ptyId, (_code, { hadPrimary }) => {

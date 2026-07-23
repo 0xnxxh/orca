@@ -91,19 +91,17 @@ describe('startParkedTerminalByteWatcher', () => {
 
   async function startWatcher(
     overrides: Partial<ParkedTerminalByteWatcherOptions> = {}
-  ): Promise<{ dispose: () => void; sendInput: ReturnType<typeof vi.fn> }> {
+  ): Promise<{ dispose: () => void }> {
     const { startParkedTerminalByteWatcher } = await import('./parked-terminal-byte-watcher')
-    const sendInput = vi.fn()
     const dispose = startParkedTerminalByteWatcher({
       ptyId: PTY_ID,
       tabId: TAB_ID,
       worktreeId: WORKTREE_ID,
       leafId: LEAF_ID,
       paneId: PANE_ID,
-      sendInput,
       ...overrides
     })
-    return { dispose, sendInput }
+    return { dispose }
   }
 
   beforeEach(() => {
@@ -328,31 +326,6 @@ describe('startParkedTerminalByteWatcher', () => {
     dispose()
   })
 
-  it('answers a DECSET 2031 subscribe split across chunks via sendInput', async () => {
-    const { dispose, sendInput } = await startWatcher()
-
-    emit('\x1b[?20')
-    expect(sendInput).not.toHaveBeenCalled()
-
-    emit('31h')
-    expect(sendInput).toHaveBeenCalledTimes(1)
-    // theme=system + prefers-dark → dark reply per terminal-color-scheme-protocol.
-    expect(sendInput).toHaveBeenCalledWith('\x1b[?997;1n')
-
-    emit('\x1b[?2031l')
-    expect(sendInput).toHaveBeenCalledTimes(1)
-    dispose()
-  })
-
-  it('stops answering DECSET 2031 after dispose', async () => {
-    const { dispose, sendInput } = await startWatcher()
-
-    dispose()
-    emit('\x1b[?2031h')
-
-    expect(sendInput).not.toHaveBeenCalled()
-  })
-
   it('observes GitHub PR links across chunk boundaries', async () => {
     const { dispose } = await startWatcher()
 
@@ -478,8 +451,7 @@ describe('startParkedTerminalByteWatcher', () => {
   //
   // With the kill switch on, the watcher must not register byte parsers —
   // main is the single byte parser and the watcher's policy block consumes
-  // pty:sideEffect facts instead. The byte sidecar stays ONLY for the 2031
-  // reply (query authority never moves to main); PR links arrive as facts.
+  // pty:sideEffect facts instead.
   describe('with main side-effect authority on', () => {
     function enableMainAuthority(): void {
       mockStoreState.settings = {
@@ -719,27 +691,6 @@ describe('startParkedTerminalByteWatcher', () => {
       dispose()
     })
 
-    it('answers DECSET 2031 from the main 2031-subscribe fact, never the byte scan', async () => {
-      // Why: with the hidden-delivery gate on (default), parked PTY bytes are
-      // dropped in main — the fact is the only 2031 signal, and the byte
-      // sidecar must NOT exist (its registration would re-enable delivery).
-      enableMainAuthority()
-      const { dispose, sendInput } = await startWatcher()
-
-      emit('\x1b[?2031h')
-      expect(sendInput).not.toHaveBeenCalled()
-
-      await dispatchFacts([{ kind: '2031-subscribe' }])
-      expect(sendInput).toHaveBeenCalledTimes(1)
-      expect(sendInput).toHaveBeenCalledWith('\x1b[?997;1n')
-
-      // Why: pr-link facts arrive on the channel; byte-scanning here too
-      // would observe every link twice.
-      emit('PR: https://github.com/orca-dev/orca/pull/42\r\n')
-      expect(mockStoreState.observeTerminalGitHubPullRequestLink).not.toHaveBeenCalled()
-      dispose()
-    })
-
     it('marks the PTY hidden for delivery on start and clears it on dispose', async () => {
       enableMainAuthority()
       const setHiddenRendererPty = vi.fn()
@@ -754,34 +705,6 @@ describe('startParkedTerminalByteWatcher', () => {
       // Why: the unhide must land before reveal re-registers pane handlers —
       // the watcher registry disposes watchers before the remount effect runs.
       expect(setHiddenRendererPty).toHaveBeenLastCalledWith(PTY_ID, false)
-    })
-
-    it('keeps the byte 2031 responder and no hidden bit when the gate kill switch is off', async () => {
-      enableMainAuthority()
-      mockStoreState.settings = {
-        ...mockStoreState.settings,
-        terminalHiddenDeliveryGate: false
-      } as MockStoreState['settings']
-      const setHiddenRendererPty = vi.fn()
-      ;(
-        window as unknown as { api: { pty: Record<string, unknown> } }
-      ).api.pty.setHiddenRendererPty = setHiddenRendererPty
-      const { dispose, sendInput } = await startWatcher()
-
-      // Gate off — bytes keep flowing, so the split-chunk byte scan answers.
-      emit('\x1b[?20')
-      expect(sendInput).not.toHaveBeenCalled()
-      emit('31h')
-      expect(sendInput).toHaveBeenCalledTimes(1)
-      expect(sendInput).toHaveBeenCalledWith('\x1b[?997;1n')
-
-      // Why: a 2031-subscribe fact must not double-fire the reply in byte
-      // mode — exactly one responder owns the answer at any time.
-      await dispatchFacts([{ kind: '2031-subscribe' }])
-      expect(sendInput).toHaveBeenCalledTimes(1)
-
-      expect(setHiddenRendererPty).not.toHaveBeenCalled()
-      dispose()
     })
 
     it('observes PR links from pr-link facts with worktree attribution', async () => {

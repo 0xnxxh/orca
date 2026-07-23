@@ -82,10 +82,10 @@ export type TerminalSideEffectFactConsumerCallbacks = {
    *  done is settle-checked by the pane policy before completing the turn. */
   onCommandCodeWorking?: (prompt: string) => void
   onCommandCodeDone?: (prompt: string) => void
-  /** DECSET 2031 subscribe observed by main's tracker. Registered only by
-   *  hidden-delivery-gated consumers (their bytes never arrive); the theme
-   *  reply is sent renderer-side — query authority stays with the view. */
+  /** DECSET 2031 subscribe observed for hidden-delivery-gated consumers. */
   onMode2031Subscribe?: () => void
+  /** DECRST 2031 unsubscribe observed for hidden-delivery-gated consumers. */
+  onMode2031Unsubscribe?: () => void
 }
 
 type ConsumerEntry = {
@@ -137,6 +137,9 @@ function applyLiveFact(entry: ConsumerEntry, fact: TerminalSideEffectFact, seq: 
       return
     case '2031-subscribe':
       entry.callbacks.onMode2031Subscribe?.()
+      return
+    case '2031-unsubscribe':
+      entry.callbacks.onMode2031Unsubscribe?.()
   }
 }
 

@@ -7551,6 +7551,9 @@ export class OrcaRuntimeService {
         return
       case '2031-subscribe':
         this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' })
+        return
+      case '2031-unsubscribe':
+        this.recordTerminalSideEffectFact(ptyId, { kind: '2031-unsubscribe' })
     }
   }
 
@@ -7793,11 +7796,12 @@ export class OrcaRuntimeService {
               onPrLink: (link: TerminalGitHubPRLink) => {
                 this.recordTerminalSideEffectFact(ptyId, { kind: 'pr-link', link })
               },
-              // Why: hidden-delivery-gated views never see the bytes, so main
-              // surfaces DECSET 2031 subscribes as facts; the theme reply is
-              // still sent by the renderer (query authority stays with the view).
+              // Gated views record subscriptions from facts because they never see the bytes.
               onMode2031Subscribe: () => {
                 this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' })
+              },
+              onMode2031Unsubscribe: () => {
+                this.recordTerminalSideEffectFact(ptyId, { kind: '2031-unsubscribe' })
               }
             }
           : {})

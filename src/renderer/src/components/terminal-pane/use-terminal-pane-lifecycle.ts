@@ -66,7 +66,6 @@ import { resolveTerminalLayoutActiveLeafId } from './terminal-layout-leaf-ids'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { applyExpandedLayoutTo, restoreExpandedLayoutFrom } from './expand-collapse'
 import { applyTerminalAppearance, installMode2031Handlers } from './terminal-appearance'
-import { pushMode2031SeedReply } from './terminal-mode-2031-replies'
 import { handleOsc52ClipboardRequest } from './osc52-clipboard'
 import { showOsc52ClipboardBlockedToast } from './osc52-clipboard-blocked-toast'
 import { parseOsc7 } from './parse-osc7'
@@ -572,7 +571,6 @@ export function useTerminalPaneLifecycle({
   const selectionDisposablesRef = useRef(new Map<number, IDisposable>())
   const selectionCaptureTimersRef = useRef(new Map<number, number>())
   const mode2031DisposablesRef = useRef(new Map<number, IDisposable[]>())
-  const mode2031SeedAttemptTokensRef = useRef(new Map<number, symbol>())
   const osc52DisposablesRef = useRef(new Map<number, IDisposable>())
   const osc7DisposablesRef = useRef(new Map<number, IDisposable>())
   const mouseHideDisposablesRef = useRef(new Map<number, IDisposable>())
@@ -596,30 +594,6 @@ export function useTerminalPaneLifecycle({
       paneMode2031Ref.current,
       paneLastThemeModeRef.current
     )
-  }
-
-  const pushMode2031ForPane = (paneId: number): void => {
-    const attemptToken = Symbol()
-    mode2031SeedAttemptTokensRef.current.set(paneId, attemptToken)
-    pushMode2031SeedReply(paneId, {
-      hasPane: (candidateId) =>
-        managerRef.current?.getPanes().some((pane) => pane.id === candidateId) === true,
-      isSubscribed: (candidateId) => paneMode2031Ref.current.get(candidateId) === true,
-      // Why: an older connect retry must not answer a later resubscription.
-      isCurrentAttempt: (candidateId) =>
-        mode2031SeedAttemptTokensRef.current.get(candidateId) === attemptToken,
-      getTransport: (candidateId) => paneTransportsRef.current.get(candidateId),
-      getMode: () => {
-        const currentSettings = settingsRef.current
-        return currentSettings
-          ? resolveEffectiveTerminalAppearance(currentSettings, systemPrefersDarkRef.current).mode
-          : null
-      },
-      recordMode: (candidateId, mode) => paneLastThemeModeRef.current.set(candidateId, mode),
-      schedule: (callback, delayMs) => {
-        window.setTimeout(callback, delayMs)
-      }
-    })
   }
 
   // Initialize PaneManager instance once
@@ -757,11 +731,6 @@ export function useTerminalPaneLifecycle({
       setCacheTimerStartedAt,
       syncPanePtyLayoutBinding,
       clearExitedPanePtyLayoutBinding,
-      // Why: record the main-answered 2031 subscribe in the CSI handler's registries, else theme flips never push CSI 997.
-      recordPaneMode2031Subscription: (paneId: number, repliedMode: 'dark' | 'light') => {
-        paneMode2031Ref.current.set(paneId, true)
-        paneLastThemeModeRef.current.set(paneId, repliedMode)
-      },
       restoredPtyIdByLeafId: initialLayoutRef.current.ptyIdsByLeafId ?? {}
     }
 
@@ -786,15 +755,12 @@ export function useTerminalPaneLifecycle({
         const mode2031Disposables = installMode2031Handlers({
           paneId: pane.id,
           parser: pane.terminal.parser,
-          onSubscribe: () => {
-            // Why: for hidden-delivery-gate PTYs, main's '2031-subscribe' fact is the sole responder — don't send a second reply.
-            const binding = panePtyBindings.get(pane.id) as
-              | (IDisposable & { isHiddenDeliveryGateManagedPty?: () => boolean })
-              | undefined
-            if (binding?.isHiddenDeliveryGateManagedPty?.()) {
-              return
-            }
-            pushMode2031ForPane(pane.id)
+          getCurrentMode: () => {
+            const currentSettings = settingsRef.current
+            return currentSettings
+              ? resolveEffectiveTerminalAppearance(currentSettings, systemPrefersDarkRef.current)
+                  .mode
+              : null
           },
           isReplaying: () => isPaneReplaying(replayingPanesRef, pane.id),
           paneMode2031: paneMode2031Ref.current,
@@ -1187,7 +1153,6 @@ export function useTerminalPaneLifecycle({
           mode2031DisposablesRef.current.delete(paneId)
         }
         paneMode2031Ref.current.delete(paneId)
-        mode2031SeedAttemptTokensRef.current.delete(paneId)
         paneKittyKeyboardModesRef.current.delete(paneId)
         paneLastThemeModeRef.current.delete(paneId)
         const osc52Disposable = osc52DisposablesRef.current.get(paneId)

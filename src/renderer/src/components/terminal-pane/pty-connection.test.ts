@@ -9073,14 +9073,14 @@ describe('connectPanePty', () => {
       dataCallback('startup probe output\r\n')
       expect(setHiddenRendererPty).toHaveBeenCalledWith('pty-id', true)
 
-      // STA-2385: the subscribe fact is record-only — the paired ?996n query
-      // is the sole responder, so the fact must not send a second CSI 997.
+      // DECSET 2031 only subscribes to later palette updates.
       factsHandler._dispatchTerminalSideEffectBatchForTest({
         ptyId: 'pty-id',
         seq: 8,
         facts: [{ kind: '2031-subscribe' }]
       })
       expect(transport.sendInput).not.toHaveBeenCalled()
+      expect(transport.sendInputImmediate).not.toHaveBeenCalled()
     })
 
     it('latches model restore from the out-of-band marker and restores on reveal', async () => {
@@ -9116,10 +9116,15 @@ describe('connectPanePty', () => {
       )
     })
 
-    it('records each 2031-subscribe fact without replying (STA-2385: ?996n is the sole responder)', async () => {
+    it('tracks gated mode-2031 facts without replying', async () => {
       enableMainAuthority()
-      const recordPaneMode2031Subscription = vi.fn()
-      const deps = createDeps({ isVisibleRef: { current: false }, recordPaneMode2031Subscription })
+      const paneMode2031Ref = { current: new Map<number, boolean>() }
+      const paneLastThemeModeRef = { current: new Map<number, 'dark' | 'light'>() }
+      const deps = createDeps({
+        isVisibleRef: { current: false },
+        paneMode2031Ref,
+        paneLastThemeModeRef
+      })
       const { transport } = await connectHiddenPane(deps)
       // Simulate spawn completion so the pane registers its fact consumer (mock transport never calls onPtySpawn).
       const transportOptions = createdTransportOptions.at(-1) as {
@@ -9128,62 +9133,28 @@ describe('connectPanePty', () => {
       transportOptions.onPtySpawn?.('pty-id')
       const factsHandler = await import('./terminal-side-effect-facts-handler')
 
-      // Why no reply: DECSET 2031 subscribe is silent per the kitty color-scheme
-      // protocol. Seeding it here plus the terminal's paired ?996n query answer
-      // doubled the CSI 997 into fish — the ^[[?997;1n^[[?997;1n leak (STA-2385).
+      // fish toggles mode 2031 around prompt ownership, so a seed can arrive
+      // after fish stops reading terminal responses (STA-2385).
       factsHandler._dispatchTerminalSideEffectBatchForTest({
         ptyId: 'pty-id',
         seq: 12,
         facts: [{ kind: '2031-subscribe' }]
       })
       expect(transport.sendInput).not.toHaveBeenCalled()
-      // But the subscription is still registered so later theme flips push CSI 997.
-      expect(recordPaneMode2031Subscription).toHaveBeenCalledWith(1, 'dark')
+      expect(transport.sendInputImmediate).not.toHaveBeenCalled()
+      expect(paneMode2031Ref.current.get(1)).toBe(true)
+      expect(paneLastThemeModeRef.current.get(1)).toBe('dark')
 
-      // A visible gated pane behaves identically — still no fact reply.
       ;(deps.isVisibleRef as { current: boolean }).current = true
       factsHandler._dispatchTerminalSideEffectBatchForTest({
         ptyId: 'pty-id',
         seq: 24,
-        facts: [{ kind: '2031-subscribe' }]
+        facts: [{ kind: '2031-unsubscribe' }]
       })
       expect(transport.sendInput).not.toHaveBeenCalled()
-    })
-
-    it('registers the 2031 subscription for later theme flips without replying', async () => {
-      enableMainAuthority()
-      const recordPaneMode2031Subscription = vi.fn()
-      const deps = createDeps({
-        isVisibleRef: { current: false },
-        recordPaneMode2031Subscription
-      })
-      const { transport } = await connectHiddenPane(deps)
-      const transportOptions = createdTransportOptions.at(-1) as {
-        onPtySpawn?: (ptyId: string) => void
-      }
-      transportOptions.onPtySpawn?.('pty-id')
-      const factsHandler = await import('./terminal-side-effect-facts-handler')
-
-      factsHandler._dispatchTerminalSideEffectBatchForTest({
-        ptyId: 'pty-id',
-        seq: 12,
-        facts: [{ kind: '2031-subscribe' }]
-      })
-
-      // STA-2385: no reply on subscribe (the ?996n query answers), but ...
-      expect(transport.sendInput).not.toHaveBeenCalled()
-      // ... the subscription is registered so maybePushMode2031Flip pushes CSI 997 after a theme change.
-      expect(recordPaneMode2031Subscription).toHaveBeenCalledWith(1, 'dark')
-    })
-
-    it('reports the gate-managed predicate on the binding for the xterm 2031 observer', async () => {
-      enableMainAuthority()
-      const deps = createDeps({ isVisibleRef: { current: false } })
-      const { binding } = await connectHiddenPane(deps)
-      const bindingWithPredicate = binding as typeof binding & {
-        isHiddenDeliveryGateManagedPty: () => boolean
-      }
-      expect(bindingWithPredicate.isHiddenDeliveryGateManagedPty()).toBe(true)
+      expect(transport.sendInputImmediate).not.toHaveBeenCalled()
+      expect(paneMode2031Ref.current.has(1)).toBe(false)
+      expect(paneLastThemeModeRef.current.has(1)).toBe(false)
     })
 
     it('declares hidden-at-spawn on connect for hidden panes', async () => {
@@ -9223,13 +9194,7 @@ describe('connectPanePty', () => {
         terminalHiddenDeliveryGate: false
       } as StoreState['settings']
       const deps = createDeps({ isVisibleRef: { current: false } })
-      const { transport, dataCallback, binding } = await connectHiddenPane(deps)
-      // Why: the lifecycle's xterm CSI observer consults this predicate — kill switch off keeps the legacy xterm reply path.
-      expect(
-        (
-          binding as typeof binding & { isHiddenDeliveryGateManagedPty: () => boolean }
-        ).isHiddenDeliveryGateManagedPty()
-      ).toBe(false)
+      const { transport, dataCallback } = await connectHiddenPane(deps)
       const transportOptions = createdTransportOptions.at(-1) as {
         onPtySpawn?: (ptyId: string) => void
       }
@@ -9239,7 +9204,6 @@ describe('connectPanePty', () => {
       dataCallback('hidden output\r\n')
       expect(setHiddenRendererPty).not.toHaveBeenCalled()
 
-      // Why: gate off keeps the byte-scan responder authoritative — the fact must not produce a second reply.
       const factsHandler = await import('./terminal-side-effect-facts-handler')
       factsHandler._dispatchTerminalSideEffectBatchForTest({
         ptyId: 'pty-id',
@@ -9247,6 +9211,7 @@ describe('connectPanePty', () => {
         facts: [{ kind: '2031-subscribe' }]
       })
       expect(transport.sendInput).not.toHaveBeenCalled()
+      expect(transport.sendInputImmediate).not.toHaveBeenCalled()
     })
 
     it('clears a marked-hidden PTY on dispose so a remount is never gated', async () => {
@@ -10277,7 +10242,7 @@ describe('connectPanePty', () => {
     binding.dispose()
   })
 
-  it('answers hidden Codex mode 2031 subscribes split across becoming visible', async () => {
+  it('records hidden Codex mode 2031 subscribes split across becoming visible', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
@@ -10312,7 +10277,7 @@ describe('connectPanePty', () => {
     isVisibleRef.current = true
     capturedDataCallback.current?.('31h')
 
-    expect(transport.sendInputImmediate).toHaveBeenCalledWith('\x1b[?997;2n')
+    expect(transport.sendInputImmediate).not.toHaveBeenCalled()
     expect(paneMode2031Ref.current.get(1)).toBe(true)
     expect(paneLastThemeModeRef.current.get(1)).toBe('light')
     expect(pane.terminal.write).not.toHaveBeenCalledWith('31h', expect.any(Function))

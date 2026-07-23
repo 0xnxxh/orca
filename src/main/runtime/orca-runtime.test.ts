@@ -7837,16 +7837,19 @@ describe('OrcaRuntimeService', () => {
       ])
     })
 
-    it('emits 2031-subscribe facts across chunk splits', () => {
-      // Why: hidden-delivery-gated views never get the bytes, so this fact is their only cue to send the DECSET 2031 color-scheme reply.
+    it('emits mode-2031 facts across chunk splits', () => {
       const { runtime, batches } = createSideEffectRuntime()
       syncSinglePty(runtime)
 
       runtime.onPtyData('pty-1', '\x1b[?20', 100)
       expect(batches).toEqual([])
       runtime.onPtyData('pty-1', '31h', 101)
+      runtime.onPtyData('pty-1', '\x1b[?2031l', 102)
 
-      expect(batches.flatMap((batch) => batch.facts)).toEqual([{ kind: '2031-subscribe' }])
+      expect(batches.flatMap((batch) => batch.facts)).toEqual([
+        { kind: '2031-subscribe' },
+        { kind: '2031-unsubscribe' }
+      ])
     })
 
     it('prefers the tracked title over the renderer snapshot lastTitle', async () => {

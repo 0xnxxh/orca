@@ -39,6 +39,19 @@ describe('BackgroundTransientFactRelay', () => {
     expect(emitted).toEqual([{ sessionId: 's1', fact: { kind: 'command-finished', exitCode: 0 } }])
   })
 
+  it('relays the final mode-2031 state across chunk boundaries', () => {
+    const { relay, emitted } = createRelay()
+    relay.setSessionBackground('s1', true)
+    relay.onSessionData('s1', '\x1b[?20')
+    relay.onSessionData('s1', '31h')
+    relay.onSessionData('s1', '\x1b[?2031l')
+
+    expect(emitted).toEqual([
+      { sessionId: 's1', fact: { kind: '2031-subscribe' } },
+      { sessionId: 's1', fact: { kind: '2031-unsubscribe' } }
+    ])
+  })
+
   it('stops emitting after un-background and reports the toggle as a state change', () => {
     const { relay, emitted } = createRelay()
     expect(relay.setSessionBackground('s1', true)).toBe(true)

@@ -27,11 +27,10 @@ export type TerminalSideEffectFact =
    *  against its live status row before completing the turn. */
   | { kind: 'command-code-working'; prompt: string }
   | { kind: 'command-code-done'; prompt: string }
-  /** DECSET 2031 color-scheme subscribe observed in the byte stream. Emitted
-   *  so hidden-delivery-gated views (whose bytes never arrive) can still send
-   *  the theme reply — the reply stays renderer-side because query authority
-   *  belongs to the view (model/view contract invariant 6). */
+  /** DECSET 2031 subscribe observed for gated views that cannot record the bytes. */
   | { kind: '2031-subscribe' }
+  /** DECRST 2031 unsubscribe observed for gated views that cannot record the bytes. */
+  | { kind: '2031-unsubscribe' }
 
 export type TerminalSideEffectBatch = {
   ptyId: string
