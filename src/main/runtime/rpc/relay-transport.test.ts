@@ -310,6 +310,72 @@ describe('CloudRelayTransport', () => {
     }
   })
 
+  it('bounds device termination cleanup and deduplicates its close waiter', async () => {
+    vi.useFakeTimers()
+    try {
+      const listeners = new Map<string, ((...args: unknown[]) => void)[]>()
+      const addListener = (event: string, fn: (...args: unknown[]) => void): void => {
+        listeners.set(event, [...(listeners.get(event) ?? []), fn])
+      }
+      const removeListener = (event: string, fn: (...args: unknown[]) => void): void => {
+        listeners.set(
+          event,
+          (listeners.get(event) ?? []).filter((listener) => listener !== fn)
+        )
+      }
+      const emit = (event: string, ...args: unknown[]): void => {
+        for (const fn of listeners.get(event) ?? []) {
+          fn(...args)
+        }
+      }
+      const fakeSocket = {
+        readyState: 1,
+        OPEN: 1,
+        CLOSED: 3,
+        on: addListener,
+        once: addListener,
+        off: removeListener,
+        send: vi.fn(),
+        terminate: vi.fn()
+      }
+      const onConnectionClosed = vi.fn()
+      const transport = new CloudRelayTransport({
+        cellUrl: 'http://127.0.0.1:9',
+        relayHostId: 'AbCdEf0123_-xyZ9',
+        generation: 1,
+        createSocket: () => fakeSocket as unknown as WebSocketClient,
+        onConnectionClosed
+      })
+      transport.onMessage(() => {})
+      const opening = transport.openConnection({
+        connId: 'conn-device-termination',
+        connTicket: 'ticket-1',
+        kind: 'resume',
+        relayDeviceId: 'device-1',
+        attachDeadlineMs: 10_000
+      })
+      emit('open')
+      await opening
+      emit('message', 'attached', false)
+      transport.setClientId(fakeSocket as unknown as WebSocketClient, 'client-1')
+
+      expect(transport.terminateClientConnections('client-1')).toBe(1)
+      expect(transport.terminateClientConnections('client-1')).toBe(1)
+      expect(fakeSocket.terminate).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      expect(onConnectionClosed).toHaveBeenCalledOnce()
+      expect(onConnectionClosed).toHaveBeenCalledWith('conn-device-termination')
+      expect(() => transport.metadataFor(fakeSocket as unknown as WebSocketClient)).toThrow(
+        'unknown_relay_socket'
+      )
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects non-origin cell URLs before opening a socket', () => {
     expect(
       () =>

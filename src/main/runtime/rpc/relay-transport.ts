@@ -50,6 +50,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
   private readonly metadataBySocket = new Map<WebSocket, MobileSocketTransportMetadata>()
   private readonly clientIds = new Map<WebSocket, string>()
   private readonly detachListenersBySocket = new Map<WebSocket, () => void>()
+  private readonly closeWaitsBySocket = new Map<WebSocket, Promise<void>>()
   private messageHandler: Parameters<MobileSocketTransport['onMessage']>[0] | null = null
   private closeHandler: Parameters<MobileSocketTransport['onConnectionClose']>[0] | null = null
   private stopped = false
@@ -106,7 +107,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
       .filter(([, candidate]) => candidate === clientId)
       .map(([socket]) => socket)
     for (const socket of sockets) {
-      socket.terminate()
+      void this.terminateWithinCloseDeadline(socket)
     }
     return sockets.length
   }
@@ -118,10 +119,7 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
   async stop(): Promise<void> {
     this.stopped = true
     const sockets = [...this.metadataBySocket.keys()]
-    const closePromises = sockets.map((socket) => this.waitForClose(socket))
-    for (const socket of sockets) {
-      socket.terminate()
-    }
+    const closePromises = sockets.map((socket) => this.terminateWithinCloseDeadline(socket))
     await Promise.all(closePromises)
   }
 
@@ -251,6 +249,23 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
         onClose()
       }
     })
+  }
+
+  private terminateWithinCloseDeadline(socket: WebSocket): Promise<void> {
+    const existing = this.closeWaitsBySocket.get(socket)
+    if (existing) {
+      return existing
+    }
+    const pending = this.waitForClose(socket)
+    this.closeWaitsBySocket.set(socket, pending)
+    void pending.then(() => {
+      if (this.closeWaitsBySocket.get(socket) === pending) {
+        this.closeWaitsBySocket.delete(socket)
+      }
+    })
+    // Why: install the close waiter first because test doubles and native wrappers can close synchronously.
+    socket.terminate()
+    return pending
   }
 
   private connectionIdForSocket(socket: WebSocket): string | undefined {
