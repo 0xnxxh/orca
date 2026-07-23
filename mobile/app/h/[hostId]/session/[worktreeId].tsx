@@ -117,9 +117,7 @@ import { createTerminalLiveAccessoryInput } from '../../../../src/terminal/termi
 import { getTerminalLiveAccessoryRawSendTarget } from '../../../../src/terminal/terminal-live-accessory-raw-send-target'
 import {
   clearTerminalLiveInputFocusTimer,
-  focusTerminalLiveInputTarget,
-  isTerminalLiveInputWithinByteLimit,
-  scheduleTerminalLiveInputFocus
+  isTerminalLiveInputWithinByteLimit
 } from '../../../../src/terminal/terminal-live-input'
 import { dismissTerminalKeyboard } from '../../../../src/terminal/terminal-keyboard-dismiss'
 import type { TerminalLiveInputSender } from '../../../../src/terminal/terminal-live-input-sender'
@@ -127,10 +125,9 @@ import { isTerminalSendRpcAccepted } from '../../../../src/terminal/terminal-sen
 import { sendMobileTerminalQueryReply } from '../../../../src/terminal/mobile-terminal-query-reply'
 import { TERMINAL_QUERY_REPLY_INPUT_RUNTIME_CAPABILITY } from '../../../../../src/shared/protocol-version'
 import { useTerminalLiveInputCommit } from '../../../../src/terminal/use-terminal-live-input-commit'
-import {
-  getTerminalCommandKeyboardType,
-  getTerminalLiveInputKeyboardType
-} from '../../../../src/terminal/terminal-keyboard-type'
+import { useTerminalLiveHardwareKeyboard } from '../../../../src/terminal/use-terminal-live-hardware-keyboard'
+import { MobileTerminalLiveInputBar } from '../../../../src/session/MobileTerminalLiveInputBar'
+import { getTerminalCommandKeyboardType } from '../../../../src/terminal/terminal-keyboard-type'
 import { normalizeTerminalTextInput } from '../../../../src/terminal/terminal-text-input-normalization'
 import {
   appendBufferedDictation,
@@ -186,7 +183,6 @@ import { useMobileSessionImageAttachments } from '../../../../src/session/use-mo
 import { useMobileAttachmentInputLeaseGate } from '../../../../src/session/use-mobile-attachment-input-lease-gate'
 import { useMobileTerminalPaste } from '../../../../src/session/use-mobile-terminal-paste'
 import { useTerminalLiveInputModePreference } from '../../../../src/session/use-terminal-live-input-mode-preference'
-import { MobileTerminalLiveInputStatus } from '../../../../src/session/MobileTerminalLiveInputStatus'
 import { MobileTerminalInputActions } from '../../../../src/session/MobileTerminalInputActions'
 import { resolveMobileFileTabDoc } from '../../../../src/files/mobile-file-tab-doc'
 import { captureMobileFileMutationOwnership } from '../../../../src/files/mobile-file-mutation-ownership'
@@ -1051,6 +1047,7 @@ export default function SessionScreen() {
     flushPendingLiveInputBeforeExternalSend,
     handleLiveInputAccessoryBytes,
     handleLiveInputChange,
+    handleLiveInputHardwareKey,
     handleLiveInputKeyPress,
     handleLiveInputSubmit
   } = useTerminalLiveInputCommit({
@@ -1071,6 +1068,37 @@ export default function SessionScreen() {
     activeSessionTab?.type !== 'file' &&
     activeSessionTab?.type !== 'browser'
   const liveInputEnabled = activeHandle ? liveInputTerminalHandles.has(activeHandle) : false
+  const hardwareKeyboardModalOpen =
+    showHeaderMoreActions ||
+    showQuickCommands ||
+    showCreateTabDrawer ||
+    pendingDiffNotesDelivery != null ||
+    actionTarget != null ||
+    markdownActionTarget != null ||
+    fileActionTarget != null ||
+    browserActionTarget != null ||
+    leaveDrafts != null ||
+    discardMarkdownTarget != null ||
+    renameTarget != null ||
+    showCreateBrowserModal ||
+    showCustomKeyModal ||
+    showDictationSetup ||
+    deleteKeyTarget != null
+  const {
+    showSoftInputOnFocus,
+    hardwareCaptureEnabled,
+    requestSoftKeyboardFocus,
+    clearSoftKeyboardRequest,
+    onHardwareKey
+  } = useTerminalLiveHardwareKeyboard({
+    focusScopeKey: activeHandle,
+    liveInputEnabled,
+    canSend,
+    liveInputRef,
+    liveInputFocusTimerRef,
+    modalOpen: hardwareKeyboardModalOpen,
+    handleLiveInputHardwareKey
+  })
   const [browserScreencastSupported, setBrowserScreencastSupported] = useState<boolean | null>(null)
   // Why: hosts without aiVault.v1 reject listSessions, so hide the header entry instead of a dead-end "update this host" panel.
   const [agentSessionHistorySupported, setAgentSessionHistorySupported] = useState<boolean | null>(
@@ -2559,6 +2587,7 @@ export default function SessionScreen() {
     const onHide = () => {
       notifyKeyboardVisibility(false)
       setKeyboardHeight(0)
+      clearSoftKeyboardRequest()
     }
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow'
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide'
@@ -2568,7 +2597,7 @@ export default function SessionScreen() {
       showSub.remove()
       hideSub.remove()
     }
-  }, [notifyKeyboardVisibility])
+  }, [clearSoftKeyboardRequest, notifyKeyboardVisibility])
 
   const scrollActiveTabIntoView = useCallback((tabId: string | null, animated: boolean) => {
     if (!tabId) {
@@ -3090,12 +3119,9 @@ export default function SessionScreen() {
     if (!canSend || !liveInputEnabled) {
       return
     }
-    focusTerminalLiveInputTarget(liveInputRef.current, {
-      keyboardHeight,
-      refocus: () =>
-        scheduleTerminalLiveInputFocus(liveInputFocusTimerRef, () => liveInputRef.current?.focus())
-    })
-  }, [canSend, keyboardHeight, liveInputEnabled])
+    // Why: defer focus until showSoftInputOnFocus commits; immediate focus races the latch.
+    requestSoftKeyboardFocus()
+  }, [canSend, liveInputEnabled, requestSoftKeyboardFocus])
 
   const clearSessionTabActionSheetKeyboardListener = useCallback(() => {
     sessionTabActionSheetKeyboardHideSubRef.current?.remove()
@@ -3127,6 +3153,7 @@ export default function SessionScreen() {
       sessionTabActionSheetRequestSeqRef.current += 1
       const requestSeq = sessionTabActionSheetRequestSeqRef.current
       clearSessionTabActionSheetKeyboardListener()
+      clearSoftKeyboardRequest()
       let didOpen = false
       const openAfterDismiss = () => {
         if (didOpen || requestSeq !== sessionTabActionSheetRequestSeqRef.current) {
@@ -3156,6 +3183,7 @@ export default function SessionScreen() {
     },
     [
       clearSessionTabActionSheetKeyboardListener,
+      clearSoftKeyboardRequest,
       keyboardHeight,
       openSessionTabActionSheet,
       scheduleDelayedAction
@@ -3163,13 +3191,14 @@ export default function SessionScreen() {
   )
 
   const dismissSoftwareKeyboard = useCallback(() => {
+    clearSoftKeyboardRequest()
     dismissTerminalKeyboard({
       clearPendingLiveInputFocus: () => clearTerminalLiveInputFocusTimer(liveInputFocusTimerRef),
       commandInput: commandInputRef.current,
       dismissKeyboard: () => Keyboard.dismiss(),
       liveInput: liveInputRef.current
     })
-  }, [])
+  }, [clearSoftKeyboardRequest])
 
   const handleTerminalTap = useCallback(
     (handle: string) => {
@@ -3282,12 +3311,19 @@ export default function SessionScreen() {
     const nextEnabled = toggleTerminalLiveInput(activeHandle)
     clearPendingLiveInputCommit()
     if (nextEnabled) {
-      scheduleTerminalLiveInputFocus(liveInputFocusTimerRef, () => liveInputRef.current?.focus())
+      requestSoftKeyboardFocus()
     } else {
+      clearSoftKeyboardRequest()
       clearTerminalLiveInputFocusTimer(liveInputFocusTimerRef)
       liveInputRef.current?.blur()
     }
-  }, [activeHandle, clearPendingLiveInputCommit, toggleTerminalLiveInput])
+  }, [
+    activeHandle,
+    clearPendingLiveInputCommit,
+    clearSoftKeyboardRequest,
+    requestSoftKeyboardFocus,
+    toggleTerminalLiveInput
+  ])
 
   const allowTerminalGestureInput = useCallback(
     (handle: string, sequenceCount: number): boolean => {
@@ -4974,62 +5010,28 @@ export default function SessionScreen() {
 
                 {/* Input bar */}
                 {liveInputEnabled ? (
-                  <View style={[styles.inputBar, styles.liveInputBar]}>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.liveInputFocusTarget,
-                        pressed && styles.liveInputFocusTargetPressed,
-                        !canSend && styles.liveInputFocusTargetDisabled
-                      ]}
-                      disabled={!canSend}
-                      onPress={focusLiveInput}
-                      accessibilityRole="button"
-                      accessibilityLabel="Show keyboard for live terminal input"
-                      accessibilityHint="Typed text is sent directly to the active terminal"
-                    >
-                      <KeyboardIcon size={16} color={colors.textSecondary} strokeWidth={2} />
-                      <MobileTerminalLiveInputStatus
-                        dictation={dictation}
-                        isAttaching={isAttaching}
-                      />
-                    </Pressable>
-                    <MobileTerminalInputActions
-                      canSend={canSend}
-                      isAttaching={isAttaching}
-                      dictation={dictation}
-                      dictationMode={dictationMode}
-                      buttonStyle={styles.dictationButton}
-                      activeButtonStyle={styles.dictationButtonActive}
-                      disabledButtonStyle={styles.sendButtonDisabled}
-                      onAttachImage={() => void attachImage('library')}
-                      onAttachFile={() => void attachImage('files')}
-                      onDictationToggle={handleDictationToggle}
-                      onDictationPressIn={handleDictationPressIn}
-                      onDictationPressOut={handleDictationPressOut}
-                      onDictationCancel={cancelDictation}
-                    />
-                    <TextInput
-                      ref={liveInputRef}
-                      style={styles.liveInputCapture}
-                      value={liveInputCapture}
-                      onChangeText={handleLiveInputChange}
-                      onKeyPress={handleLiveInputKeyPress}
-                      onSubmitEditing={handleLiveInputSubmit}
-                      placeholder=""
-                      showSoftInputOnFocus
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      spellCheck={false}
-                      smartInsertDelete={false}
-                      // Why: iOS textContentType overrides autoComplete and can narrow the keyboard; keep IME switching available.
-                      autoComplete="off"
-                      keyboardType={getTerminalLiveInputKeyboardType(Platform.OS)}
-                      returnKeyType="default"
-                      blurOnSubmit={false}
-                      editable={canSend}
-                      importantForAutofill="no"
-                    />
-                  </View>
+                  <MobileTerminalLiveInputBar
+                    canSend={canSend}
+                    liveInputCapture={liveInputCapture}
+                    liveInputRef={liveInputRef}
+                    hardwareCaptureEnabled={hardwareCaptureEnabled}
+                    showSoftInputOnFocus={showSoftInputOnFocus}
+                    isAttaching={isAttaching}
+                    dictation={dictation}
+                    dictationMode={dictationMode}
+                    styles={styles}
+                    onFocusPress={focusLiveInput}
+                    onChangeText={handleLiveInputChange}
+                    onKeyPress={handleLiveInputKeyPress}
+                    onSubmitEditing={handleLiveInputSubmit}
+                    onHardwareKey={onHardwareKey}
+                    onAttachImage={() => void attachImage('library')}
+                    onAttachFile={() => void attachImage('files')}
+                    onDictationToggle={handleDictationToggle}
+                    onDictationPressIn={handleDictationPressIn}
+                    onDictationPressOut={handleDictationPressOut}
+                    onDictationCancel={cancelDictation}
+                  />
                 ) : (
                   <View style={styles.inputBar}>
                     <TextInput
