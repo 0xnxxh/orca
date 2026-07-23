@@ -392,6 +392,24 @@ describe('daemon_lifecycle schema', () => {
       }).success
     ).toBe(false)
   })
+
+  it('rejects reasons and fields that do not belong to the transition', () => {
+    expect(
+      eventSchemas.daemon_lifecycle.safeParse({
+        transition: 'replaced',
+        reason: 'died_respawn',
+        live_session_count_bucket: 'unknown'
+      }).success
+    ).toBe(false)
+    expect(
+      eventSchemas.daemon_lifecycle.safeParse({
+        transition: 'retired',
+        reason: 'died_respawn',
+        live_session_count_bucket: 'unknown',
+        version_skew: true
+      }).success
+    ).toBe(false)
+  })
 })
 
 describe('workspace_created schema', () => {

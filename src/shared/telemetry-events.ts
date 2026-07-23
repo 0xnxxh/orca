@@ -22,9 +22,10 @@ import {
   getFeatureInteractionCategory
 } from './feature-interactions'
 import {
-  DAEMON_LIFECYCLE_REASONS,
   DAEMON_LIFECYCLE_SESSION_BUCKETS,
-  DAEMON_LIFECYCLE_TRANSITIONS
+  DAEMON_LIFECYCLE_TRANSITIONS,
+  DAEMON_REPLACE_REASONS,
+  DAEMON_RETIRE_REASONS
 } from './daemon-lifecycle-telemetry'
 import { SETUP_SCRIPT_IMPORT_PROVIDERS } from './setup-script-import-providers'
 import { WORKSPACE_SOURCE_VALUES, type WorkspaceSource } from './workspace-source'
@@ -372,14 +373,23 @@ const daemonStartFailedSchema = z.object({ error_class: errorClassSchema }).stri
 // Why: daemon replace/retire lifecycle signal — issue #7936 was undiagnosable without asking a user for daemon.log.
 // Enum-only + bucketed session count so no paths, raw versions, or exact counts reach the wire. `version_skew`
 // is optional (only replace-at-startup knows the pid-file appVersion vs current; a death→respawn does not).
-const daemonLifecycleSchema = z
-  .object({
-    transition: z.enum(DAEMON_LIFECYCLE_TRANSITIONS),
-    reason: z.enum(DAEMON_LIFECYCLE_REASONS),
-    live_session_count_bucket: z.enum(DAEMON_LIFECYCLE_SESSION_BUCKETS),
-    version_skew: z.boolean().optional()
-  })
-  .strict()
+const daemonLifecycleSchema = z.discriminatedUnion('transition', [
+  z
+    .object({
+      transition: z.literal(DAEMON_LIFECYCLE_TRANSITIONS[0]),
+      reason: z.enum(DAEMON_REPLACE_REASONS),
+      live_session_count_bucket: z.enum(DAEMON_LIFECYCLE_SESSION_BUCKETS),
+      version_skew: z.boolean().optional()
+    })
+    .strict(),
+  z
+    .object({
+      transition: z.literal(DAEMON_LIFECYCLE_TRANSITIONS[1]),
+      reason: z.enum(DAEMON_RETIRE_REASONS),
+      live_session_count_bucket: z.enum(DAEMON_LIFECYCLE_SESSION_BUCKETS)
+    })
+    .strict()
+])
 
 // Rollout signal for granting Codex hook trust via codex app-server RPCs
 // instead of Orca's self-computed trusted_hash. `fallback`/`verify_failed`

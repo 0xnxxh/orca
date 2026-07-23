@@ -16,7 +16,7 @@ import {
   type DaemonLauncher,
   type DaemonProcessHandle
 } from './daemon-spawner'
-import { DaemonPtyAdapter } from './daemon-pty-adapter'
+import { DaemonPtyAdapter, type DaemonRespawnReason } from './daemon-pty-adapter'
 import { DaemonPtyRouter } from './daemon-pty-router'
 import { DaemonClient } from './client'
 import {
@@ -330,6 +330,14 @@ function createOutOfProcessLauncher(
     const entryPath = getDaemonEntryPath()
     const pidPath = suppliedPidPath ?? getDaemonPidPath(runtimeDir)
     const launchNonce = suppliedLaunchNonce ?? randomUUID()
+    let pendingReplacement:
+      | {
+          reason: Parameters<typeof trackDaemonReplaced>[0]
+          liveSessionCount: number | null
+          versionSkew?: boolean
+        }
+      | undefined
+    let confirmedReplacement = false
     let adoptionClient: DaemonClient | null = new DaemonClient({ socketPath, tokenPath })
     try {
       // Why: acquire the full pair before control-only probes so an expired inherited deadline can't fire in the probe-to-adoption gap.
@@ -365,8 +373,9 @@ function createOutOfProcessLauncher(
             return preserveDaemon()
           }
           console.warn('[daemon] Replacing daemon with unavailable macOS system resolver')
-          trackDaemonReplaced('unhealthy_resolver', liveSessionCount)
-          await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION)
+          pendingReplacement = { reason: 'unhealthy_resolver', liveSessionCount }
+          confirmedReplacement = (await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION))
+            .cleaned
         } else {
           // Why: a protocol-healthy daemon can outlive its launching app bundle (dev worktree rebuild, or packaged update replacing the app path).
           const identity = await getDaemonLaunchIdentity(
@@ -398,13 +407,13 @@ function createOutOfProcessLauncher(
                 ? '[daemon] Replacing daemon launched before the current app bundle was installed'
                 : '[daemon] Replacing daemon launched from a different app path'
             )
-            // Live sessions were 0 here (preserve short-circuits otherwise); version_skew only when the bundle is stale.
-            trackDaemonReplaced(
-              stalePackagedBundle ? 'stale_bundle' : 'different_app_path',
-              0,
-              stalePackagedBundle || undefined
-            )
-            await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION)
+            pendingReplacement = {
+              reason: stalePackagedBundle ? 'stale_bundle' : 'different_app_path',
+              liveSessionCount: 0,
+              ...(stalePackagedBundle ? { versionSkew: true } : {})
+            }
+            confirmedReplacement = (await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION))
+              .cleaned
           } else {
             // Why: healthy daemon from a previous session answered a protocol ping — safe to reuse.
             return preserveDaemon()
@@ -436,14 +445,25 @@ function createOutOfProcessLauncher(
           )
           return preserveDaemon()
         }
-        // Fell through: no live sessions to preserve, so the unhealthy daemon is about to be replaced.
-        trackDaemonReplaced('failed_health_check', liveSessionCount)
+        pendingReplacement = { reason: 'failed_health_check', liveSessionCount }
       }
 
       // Why: a raw socket can outlive a broken daemon; kill by PID before respawn so the new daemon doesn't race the stale one.
       adoptionClient?.disconnect()
       adoptionClient = null
-      await killStaleDaemon(runtimeDir, socketPath, tokenPath)
+      confirmedReplacement =
+        (await killStaleDaemon(runtimeDir, socketPath, tokenPath)) || confirmedReplacement
+      if (pendingReplacement && confirmedReplacement) {
+        if (pendingReplacement.versionSkew === undefined) {
+          trackDaemonReplaced(pendingReplacement.reason, pendingReplacement.liveSessionCount)
+        } else {
+          trackDaemonReplaced(
+            pendingReplacement.reason,
+            pendingReplacement.liveSessionCount,
+            pendingReplacement.versionSkew
+          )
+        }
+      }
 
       const userDataPath = app.getPath('userData')
       // Why: on win32 packaged, stage a daemon-host copy in userData so its image escapes the NSIS updater's kill zone; lazy so it's off first-paint. Fail-open: null → in-dir host.
@@ -678,9 +698,11 @@ export async function initDaemonPtyProvider(
     tokenPath: info.tokenPath,
     historyPath: getHistoryDir(),
     // Why: on daemon death, ensureConnected() detects the dead socket and calls this to fork a replacement before retrying.
-    respawn: async () => {
-      console.warn('[daemon] Daemon process died — respawning')
-      trackDaemonRetired('died_respawn')
+    respawn: async (reason: DaemonRespawnReason) => {
+      if (reason === 'daemon_died') {
+        console.warn('[daemon] Daemon process died — respawning')
+        trackDaemonRetired('died_respawn')
+      }
       newSpawner.resetHandle()
       await newSpawner.ensureRunning()
       return takeDaemonAdoptionLeaseRelease(newSpawner.getHandle())
@@ -861,9 +883,11 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
     socketPath: info.socketPath,
     tokenPath: info.tokenPath,
     historyPath: getHistoryDir(),
-    respawn: async () => {
-      console.warn('[daemon] Daemon process died — respawning')
-      trackDaemonRetired('died_respawn')
+    respawn: async (reason: DaemonRespawnReason) => {
+      if (reason === 'daemon_died') {
+        console.warn('[daemon] Daemon process died — respawning')
+        trackDaemonRetired('died_respawn')
+      }
       currentSpawner.resetHandle()
       await currentSpawner.ensureRunning()
       return takeDaemonAdoptionLeaseRelease(currentSpawner.getHandle())

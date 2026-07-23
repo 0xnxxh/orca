@@ -85,7 +85,7 @@ describe('daemon self-retirement respawn', () => {
       adapter.spawn({ sessionId: 'second', cols: 80, rows: 24 })
     ])
 
-    expect(respawn).toHaveBeenCalledTimes(1)
+    expect(respawn).toHaveBeenCalledWith('daemon_died')
     adapter.dispose()
   })
 

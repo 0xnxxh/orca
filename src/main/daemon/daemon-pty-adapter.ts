@@ -82,9 +82,11 @@ export type DaemonPtyAdapterOptions = {
   protocolVersion?: number
   /** Directory for disk-based terminal history; when set, raw PTY output is written to disk for cold restore on daemon crash. */
   historyPath?: string
-  /** Called when the daemon socket is unreachable; forks a fresh daemon so the next connect can succeed. */
-  respawn?: () => Promise<void | (() => void)>
+  /** Forks a fresh daemon after endpoint death or a confirmed resolver-health replacement. */
+  respawn?: (reason: DaemonRespawnReason) => Promise<void | (() => void)>
 }
+
+export type DaemonRespawnReason = 'daemon_died' | 'unhealthy_resolver'
 
 const MAX_TOMBSTONES = 1000
 const MAX_CONCURRENT_CHECKPOINTS = 4
@@ -110,7 +112,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private client: DaemonClient
   private historyManager: HistoryManager | null
   private historyReader: HistoryReader | null
-  private respawnFn: (() => Promise<void | (() => void)>) | null
+  private respawnFn: DaemonPtyAdapterOptions['respawn'] | null
   private pendingRespawnAdoptionRelease: (() => void) | null = null
   private respawnAdoptionClosed = false
   // Why: concurrent spawn() calls hitting a dead daemon would each fork their own; this promise coalesces respawns so only the first forks and the rest await it.
@@ -1424,7 +1426,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.fanoutSyntheticExits(-1)
     if (!this.respawnPromise) {
       this.respawnPromise = this.doRespawn(
-        '[daemon] macOS system resolver unavailable - respawning daemon'
+        '[daemon] macOS system resolver unavailable - respawning daemon',
+        'unhealthy_resolver'
       ).finally(() => {
         this.respawnPromise = null
       })
@@ -1449,12 +1452,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
   }
 
-  private async doRespawn(message = '[daemon] Daemon died — respawning'): Promise<void> {
+  private async doRespawn(
+    message = '[daemon] Daemon died — respawning',
+    reason: DaemonRespawnReason = 'daemon_died'
+  ): Promise<void> {
     console.warn(message)
     this.removeEventListener?.()
     this.removeEventListener = null
     this.client.disconnect()
-    const releaseAdoptionLease = await this.respawnFn!()
+    const releaseAdoptionLease = await this.respawnFn!(reason)
     if (this.respawnAdoptionClosed) {
       // Why: app teardown may win mid-respawn; a late result must not reinstall a lease nobody owns.
       releaseAdoptionLease?.()
