@@ -11,6 +11,7 @@ import { inferFolderWorkspacePathConnection } from '../../../src/shared/folder-w
 import type { RuntimeStatus } from '../../../src/shared/runtime-types'
 import type { SshConnectionState } from '../../../src/shared/ssh-types'
 import { parseWorkspaceKey } from '../../../src/shared/workspace-scope'
+import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import type { RpcClient } from '../transport/rpc-client'
 import {
   isLogicalClientCutoverError,
@@ -123,6 +124,10 @@ async function captureMobileFileMutationOwnershipOnce(
     return response
   })
   const targetPromise = requestMutationTargetHost(client, worktree, deadline)
+  // Why: Promise.all settles on the first rejection; swallow the loser's late rejection so it
+  // never surfaces as an unhandled promise rejection after the other branch already failed.
+  statusPromise.catch(() => {})
+  targetPromise.catch(() => {})
   const [status, target] = await Promise.all([statusPromise, targetPromise])
   assertCaptureTransportCurrent(client, transportGeneration)
   for (const runtimeId of target.runtimeIds) {
@@ -276,10 +281,13 @@ function assertPreflightTimeRemaining(deadline: number): number {
 }
 
 function normalizePreflightError(error: unknown): Error {
+  // Why: relay timeouts and socket-drop reasons carry the delivery-unknown marker but not the
+  // direct-session timeout strings, so match the typed marker instead of substrings alone.
   if (
-    error instanceof Error &&
-    (error.message.includes('Request timed out:') ||
-      error.message.includes('Timed out while connecting'))
+    isRpcDeliveryUnknown(error) ||
+    (error instanceof Error &&
+      (error.message.includes('Request timed out:') ||
+        error.message.includes('Timed out while connecting')))
   ) {
     return new Error(PREFLIGHT_TIMEOUT_MESSAGE)
   }

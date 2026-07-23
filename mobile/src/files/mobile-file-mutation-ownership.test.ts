@@ -12,6 +12,7 @@ import {
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcFailure, RpcResponse } from '../transport/types'
 import { LogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
+import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import {
   buildMobileFileMutationOwnership,
   captureMobileFileMutationOwnership,
@@ -356,6 +357,21 @@ describe('mobile file mutation ownership', () => {
     ).rejects.toThrow('before the request timed out')
     expect(sendRequest.mock.calls[2]?.[2]).toEqual({ timeoutMs: 5_000 })
     expect(sendRequest).toHaveBeenCalledTimes(3)
+  })
+
+  it('normalizes a delivery-unknown transport drop to the preflight timeout message', async () => {
+    // Why: relay timeouts / socket drops carry the delivery-unknown marker, not the direct-session
+    // timeout strings, so they must still surface the actionable preflight message.
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] })
+      }
+      throw markRpcDeliveryUnknown(new Error('relay RPC timed out: worktree.show'))
+    })
+
+    await expect(
+      captureMobileFileMutationOwnership({ sendRequest }, 'id:worktree-1')
+    ).rejects.toThrow('before the request timed out')
   })
 
   it('routes folder workspaces through the folder record instead of worktree.show', async () => {
