@@ -16,6 +16,10 @@ type Props = {
   composer: MobileComposerSource
   label: string
   disabled?: boolean
+  // Why: only the active form view may focus this field. While the source drawer
+  // is open/closing this stays non-focusable so the drawer's dismiss (which
+  // restores native focus back here) can't re-fire onFocus and reopen the drawer.
+  interactive: boolean
   onBeforeOpen?: () => void
   onOpenDrawer: () => void
 }
@@ -40,6 +44,7 @@ export function SmartWorkspaceSourceField({
   composer,
   label,
   disabled,
+  interactive,
   onBeforeOpen,
   onOpenDrawer
 }: Props) {
@@ -85,7 +90,7 @@ export function SmartWorkspaceSourceField({
           value={composer.name}
           onChangeText={composer.setName}
           onFocus={openDrawer}
-          editable={!disabled}
+          editable={!disabled && interactive}
           placeholder="Type a name or search a source"
           placeholderTextColor={colors.textMuted}
           autoCapitalize="none"

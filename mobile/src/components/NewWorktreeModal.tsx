@@ -848,6 +848,7 @@ function NewWorktreeModalContent({
               composer={composer}
               label={selectedRepoIsGit ? "Name or 'Create From'" : 'Workspace name'}
               disabled={sshGate.requiresConnection}
+              interactive={formSheetInteractive}
               onBeforeOpen={() => setError('')}
               onOpenDrawer={openSourceDrawer}
             />
