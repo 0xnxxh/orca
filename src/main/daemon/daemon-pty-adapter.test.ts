@@ -525,16 +525,27 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       try {
         const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
         const client = (healingAdapter as unknown as { client: DaemonClient }).client
+        healingAdapter.setPtyBackgrounded(id, true)
+        const notifySpy = vi.spyOn(client, 'notify')
 
         // Kill the daemon out from under the attached pane: no exit fanout, so the session stays "active".
         await server.shutdown()
         await waitFor(() => !client.isConnected())
+        notifySpy.mockClear()
 
         // A keystroke on the frozen pane must trigger the dead-endpoint respawn, not silently drop.
         healingAdapter.write(id, 'ls\n')
 
         await waitFor(() => respawn.mock.calls.length > 0)
         expect(respawn).toHaveBeenCalledTimes(1)
+        await waitFor(() => client.isConnected())
+        await waitFor(() =>
+          notifySpy.mock.calls.some(
+            ([type, payload]) =>
+              type === 'setSessionBackground' &&
+              (payload as { sessionId?: string }).sessionId === id
+          )
+        )
       } finally {
         healingAdapter.dispose()
       }

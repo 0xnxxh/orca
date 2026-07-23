@@ -216,7 +216,7 @@ export class DaemonClient {
     })
   }
 
-  // Why: returns whether the notify reached the socket; a dropped fire-and-forget write to a dead endpoint has no rejection to feed the adapter's respawn path (STA-2373), so callers use this to detect the drop.
+  // Why: fire-and-forget writes need a local delivery signal to trigger dead-endpoint recovery.
   notify(type: string, payload: unknown): boolean {
     if (!this.connected || !this.controlSocket) {
       return false
