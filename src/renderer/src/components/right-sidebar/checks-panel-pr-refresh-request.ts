@@ -7,13 +7,64 @@ type ChecksPanelPRRefreshRequestInput = {
   panelVisibleSince: number | null
   // A known-but-unrendered review needs one foreground lookup to resolve its transient state.
   hasUnrenderedReviewEvidence?: boolean
-  reviewEvidenceProvider?: HostedReviewProvider
   hasRequestedForegroundRefresh?: boolean
 }
 
 type ChecksPanelPRRefreshRequest = {
   reason: GitHubPRRefreshReason
   priority: number
+}
+
+type ChecksPanelReviewEvidenceProviderInput = {
+  linkedGitHubPR: number | null
+  linkedGitLabMR: number | null
+  linkedBitbucketPR: number | null
+  linkedAzureDevOpsPR: number | null
+  linkedGiteaPR: number | null
+  eligibilityProvider?: HostedReviewProvider | undefined
+  cachedProvider?: HostedReviewProvider | undefined
+}
+
+type ChecksPanelForegroundReviewEvidenceKeyInput = {
+  refreshContextKey: string
+  reviewEvidenceIdentity: number | string
+  reviewEvidenceProvider?: HostedReviewProvider | undefined
+  hasUnrenderedReviewEvidence: boolean
+  isGitHubReviewContext: boolean
+}
+
+export function resolveChecksPanelReviewEvidenceProvider(
+  input: ChecksPanelReviewEvidenceProviderInput
+): HostedReviewProvider | undefined {
+  if (input.linkedGitHubPR !== null) {
+    return 'github'
+  }
+  if (input.linkedGitLabMR !== null) {
+    return 'gitlab'
+  }
+  if (input.linkedBitbucketPR !== null) {
+    return 'bitbucket'
+  }
+  if (input.linkedAzureDevOpsPR !== null) {
+    return 'azure-devops'
+  }
+  if (input.linkedGiteaPR !== null) {
+    return 'gitea'
+  }
+  return input.eligibilityProvider ?? input.cachedProvider
+}
+
+export function getChecksPanelForegroundReviewEvidenceKey(
+  input: ChecksPanelForegroundReviewEvidenceKeyInput
+): string | null {
+  if (
+    !input.hasUnrenderedReviewEvidence ||
+    !input.isGitHubReviewContext ||
+    (input.reviewEvidenceProvider !== undefined && input.reviewEvidenceProvider !== 'github')
+  ) {
+    return null
+  }
+  return `${input.refreshContextKey}::github::${input.reviewEvidenceIdentity}`
 }
 
 export function resolveChecksPanelPRRefreshRequest(
@@ -25,9 +76,7 @@ export function resolveChecksPanelPRRefreshRequest(
     input.panelVisibleSince !== null &&
     input.cachedFetchedAt < input.panelVisibleSince
   const unresolvedEvidenceNeedsForeground =
-    input.hasUnrenderedReviewEvidence &&
-    input.cachedHasPR !== true &&
-    (input.reviewEvidenceProvider === undefined || input.reviewEvidenceProvider === 'github')
+    input.hasUnrenderedReviewEvidence && input.cachedHasPR !== true
 
   if (
     !input.hasRequestedForegroundRefresh &&

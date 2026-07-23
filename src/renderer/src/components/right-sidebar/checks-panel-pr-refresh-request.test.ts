@@ -1,5 +1,73 @@
 import { describe, expect, it } from 'vitest'
-import { resolveChecksPanelPRRefreshRequest } from './checks-panel-pr-refresh-request'
+import {
+  getChecksPanelForegroundReviewEvidenceKey,
+  resolveChecksPanelPRRefreshRequest,
+  resolveChecksPanelReviewEvidenceProvider
+} from './checks-panel-pr-refresh-request'
+
+describe('resolveChecksPanelReviewEvidenceProvider', () => {
+  const noLinkedReviews = {
+    linkedGitHubPR: null,
+    linkedGitLabMR: null,
+    linkedBitbucketPR: null,
+    linkedAzureDevOpsPR: null,
+    linkedGiteaPR: null
+  }
+
+  it.each([
+    ['linkedGitHubPR', 'github'],
+    ['linkedGitLabMR', 'gitlab'],
+    ['linkedBitbucketPR', 'bitbucket'],
+    ['linkedAzureDevOpsPR', 'azure-devops'],
+    ['linkedGiteaPR', 'gitea']
+  ] as const)('lets an explicit %s link outrank stale cached metadata', (linkedField, provider) => {
+    expect(
+      resolveChecksPanelReviewEvidenceProvider({
+        ...noLinkedReviews,
+        [linkedField]: 42,
+        cachedProvider: 'unsupported'
+      })
+    ).toBe(provider)
+  })
+
+  it('uses eligibility before cached provider metadata when no review is linked', () => {
+    expect(
+      resolveChecksPanelReviewEvidenceProvider({
+        ...noLinkedReviews,
+        eligibilityProvider: 'bitbucket',
+        cachedProvider: 'gitlab'
+      })
+    ).toBe('bitbucket')
+  })
+})
+
+describe('getChecksPanelForegroundReviewEvidenceKey', () => {
+  const input = {
+    refreshContextKey: 'worktree::cache::branch',
+    reviewEvidenceIdentity: 42,
+    hasUnrenderedReviewEvidence: true,
+    isGitHubReviewContext: true
+  } as const
+
+  it('keeps optimistic and confirmed GitHub evidence on one request key', () => {
+    const optimisticKey = getChecksPanelForegroundReviewEvidenceKey(input)
+    const confirmedKey = getChecksPanelForegroundReviewEvidenceKey({
+      ...input,
+      reviewEvidenceProvider: 'github'
+    })
+    expect(optimisticKey).toBe('worktree::cache::branch::github::42')
+    expect(confirmedKey).toBe(optimisticKey)
+  })
+
+  it('clears the request key when evidence switches to another provider', () => {
+    expect(
+      getChecksPanelForegroundReviewEvidenceKey({
+        ...input,
+        reviewEvidenceProvider: 'gitlab'
+      })
+    ).toBeNull()
+  })
+})
 
 describe('resolveChecksPanelPRRefreshRequest', () => {
   it('uses an active refresh for a cached miss from before the checks panel became visible', () => {
@@ -52,18 +120,6 @@ describe('resolveChecksPanelPRRefreshRequest', () => {
         cachedFetchedAt: 100,
         panelVisibleSince: 200,
         hasUnrenderedReviewEvidence: true
-      })
-    ).toEqual({ reason: 'swr', priority: 30 })
-  })
-
-  it('does not promote non-GitHub review evidence into an active GitHub lookup', () => {
-    expect(
-      resolveChecksPanelPRRefreshRequest({
-        cachedHasPR: null,
-        cachedFetchedAt: null,
-        panelVisibleSince: 200,
-        hasUnrenderedReviewEvidence: true,
-        reviewEvidenceProvider: 'gitlab'
       })
     ).toEqual({ reason: 'swr', priority: 30 })
   })
