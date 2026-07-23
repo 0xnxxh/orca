@@ -37,6 +37,18 @@ export class RelayHttpError extends Error {
   }
 }
 
+export function shouldRetryRelayConnectionError(error: unknown): boolean {
+  if (!(error instanceof RelayHttpError)) {
+    return true
+  }
+  return (
+    error.statusCode >= 500 ||
+    error.statusCode === 408 ||
+    error.statusCode === 425 ||
+    error.statusCode === 429
+  )
+}
+
 export function deriveRelayHostId(publicKey: Uint8Array): string {
   return createHash('sha256').update(publicKey).digest('base64url').slice(0, 16)
 }
