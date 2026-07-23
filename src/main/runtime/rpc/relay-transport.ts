@@ -1,4 +1,5 @@
 import WebSocket, { type RawData } from 'ws'
+import { forEachWithConcurrency } from '../../../shared/map-with-concurrency'
 import type { RpcTransport } from './transport'
 import type { MobileSocketTransport, MobileSocketTransportMetadata } from './mobile-socket-wiring'
 
@@ -6,6 +7,7 @@ const MAX_RELAY_MESSAGE_BYTES = 1024 * 1024
 // Why: terminate() normally emits 'close' within one tick; 5s covers slow
 // teardown without letting a dead socket hold stop() (and app quit) hostage.
 export const RELAY_SOCKET_CLOSE_TIMEOUT_MS = 5_000
+const RELAY_SOCKET_CLOSE_WAIT_CONCURRENCY = 32
 
 type RelayMessagePayload = string | Uint8Array<ArrayBufferLike>
 
@@ -119,8 +121,9 @@ export class CloudRelayTransport implements RpcTransport, MobileSocketTransport 
   async stop(): Promise<void> {
     this.stopped = true
     const sockets = [...this.metadataBySocket.keys()]
-    const closePromises = sockets.map((socket) => this.terminateWithinCloseDeadline(socket))
-    await Promise.all(closePromises)
+    await forEachWithConcurrency(sockets, RELAY_SOCKET_CLOSE_WAIT_CONCURRENCY, (socket) =>
+      this.terminateWithinCloseDeadline(socket)
+    )
   }
 
   async openConnection(connection: RelayConnectionOpen): Promise<void> {

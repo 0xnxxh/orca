@@ -10,6 +10,7 @@ import { supportsPtyStartupBarrier } from './shell-ready'
 import { CODEX_SHELL_READY_TIMEOUT_MS } from './session'
 import {
   CLEAN_DISCONNECT_PROTOCOL_VERSION,
+  COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION,
   AGENT_SESSION_CLAIM_DAEMON_PROTOCOL_VERSION,
   AGENT_SESSION_CREATE_OPERATION_DAEMON_PROTOCOL_VERSION,
   GIT_CREDENTIAL_GUARD_HOST_PROTOCOL_VERSION,
@@ -27,6 +28,8 @@ import {
   isAgentSessionOwnerBinding,
   type AgentSessionOwnerBinding
 } from '../../shared/agent-session-host-authority'
+import { MAX_CLAIMED_AGENT_PTY_OWNER_ENTRIES } from '../../shared/claimed-agent-pty-owner'
+import { cloneAgentSessionOwnerBinding } from '../../shared/claimed-agent-pty-owner-snapshot'
 import type {
   IPtyProvider,
   PtyBackgroundStreamEvent,
@@ -43,6 +46,7 @@ import { shouldUseShellReadyStartupDelivery } from '../../shared/codex-startup-d
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import { resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
+import { PtyProcessListAdmission } from '../providers/pty-process-list-admission'
 
 type ColdRestorePayload = {
   scrollback: string
@@ -822,6 +826,18 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return foregroundProcess !== null && !isShellProcess(foregroundProcess)
   }
 
+  async inspectProcess(
+    id: string
+  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }> {
+    if (this.protocolVersion < COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION) {
+      throw new Error('terminal_liveness_unavailable')
+    }
+    return this.client.request<{
+      foregroundProcess: string | null
+      hasChildProcesses: boolean
+    }>('inspectProcess', { sessionId: id })
+  }
+
   async getForegroundProcess(id: string): Promise<string | null> {
     try {
       const result = await this.client.request<{ foregroundProcess: string | null }>(
@@ -909,21 +925,28 @@ export class DaemonPtyAdapter implements IPtyProvider {
       undefined,
       remainingRequestTimeoutMs(opts?.deadlineMs)
     )
-    return result.sessions
-      .filter((s) => s.isAlive)
-      .map((s) => {
-        const { worktreeId } = parsePtySessionId(s.sessionId)
-        return {
-          id: s.sessionId,
-          ...(s.incarnationId ? { incarnationId: s.incarnationId } : {}),
+    const admission = new PtyProcessListAdmission()
+    const processes: PtyProcessInfo[] = []
+    for (const session of result.sessions) {
+      if (!session.isAlive) {
+        continue
+      }
+      const { worktreeId } = parsePtySessionId(session.sessionId)
+      processes.push(
+        admission.admit({
+          id: session.sessionId,
+          ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
           // Why: OSC 7 may not arrive before cleanup; spawn cwd is authoritative until the daemon reports a live cwd.
-          cwd: s.cwd ?? this.initialCwds.get(s.sessionId) ?? '',
+          cwd: session.cwd ?? this.initialCwds.get(session.sessionId) ?? '',
           title: 'shell',
           ...(worktreeId ? { worktreeId } : {}),
-          ...(s.terminalHandle ? { terminalHandle: s.terminalHandle } : {}),
-          ...this.validatedAgentSessionOwners(s.agentSessionOwners)
-        }
-      })
+          ...(session.terminalHandle ? { terminalHandle: session.terminalHandle } : {}),
+          ...(session.wslDistro !== undefined ? { wslDistro: session.wslDistro } : {}),
+          ...this.validatedAgentSessionOwners(session.agentSessionOwners)
+        })
+      )
+    }
+    return processes
   }
 
   private validatedAgentSessionOwners(
@@ -932,10 +955,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (owners === undefined) {
       return {}
     }
-    if (!Array.isArray(owners) || !owners.every(isAgentSessionOwnerBinding)) {
+    if (
+      !Array.isArray(owners) ||
+      owners.length > MAX_CLAIMED_AGENT_PTY_OWNER_ENTRIES ||
+      !owners.every((owner) => isAgentSessionOwnerBinding(owner) && owner.phase === 'live')
+    ) {
       throw new Error('agent_session_ownership_unknown')
     }
-    return owners.length > 0 ? { agentSessionOwners: owners } : {}
+    return owners.length > 0
+      ? { agentSessionOwners: owners.map(cloneAgentSessionOwnerBinding) }
+      : {}
   }
 
   // Why: the Manage Sessions panel needs the full SessionInfo (pid, state,

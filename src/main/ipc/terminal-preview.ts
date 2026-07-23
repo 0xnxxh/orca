@@ -11,9 +11,30 @@ import {
 } from './terminal-preview-output-stream'
 
 const PREVIEW_ID_MAX_LENGTH = 4096
+export const TERMINAL_PREVIEW_MAX_ENTRIES_PER_CONTENTS = 64
+export const TERMINAL_PREVIEW_MAX_ENTRIES_TOTAL = 256
 
 function isValidPtyId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= PREVIEW_ID_MAX_LENGTH
+}
+
+function canRetainPreviewEntry<T>(
+  registry: Map<number, Map<string, T>>,
+  contentsId: number,
+  ptyId: string
+): boolean {
+  const retained = registry.get(contentsId)
+  if (retained?.has(ptyId)) {
+    return true
+  }
+  if ((retained?.size ?? 0) >= TERMINAL_PREVIEW_MAX_ENTRIES_PER_CONTENTS) {
+    return false
+  }
+  let total = 0
+  for (const perContents of registry.values()) {
+    total += perContents.size
+  }
+  return total < TERMINAL_PREVIEW_MAX_ENTRIES_TOTAL
 }
 
 /** Pop-out terminal transport with an atomic snapshot/live boundary. */
@@ -22,8 +43,29 @@ export function registerTerminalPreviewHandlers(runtime: OrcaRuntimeService): vo
   ipcMain.removeHandler('terminalPreview:unsubscribe')
   ipcMain.removeHandler('terminalPreview:input')
   ipcMain.removeHandler('terminalPreview:ack')
+  ipcMain.removeHandler('terminalPreview:fit')
 
   const subscriptionsByContents = new Map<number, Map<string, TerminalPreviewOutputStream>>()
+  // Why: the preview dialog claims the PTY grid through the remote-desktop
+  // viewer registry so the main-window pane parks and later reclaims its own
+  // geometry. Claims are tracked per popout webContents so an explicit
+  // unsubscribe or a destroyed window always releases the size floor.
+  const fitClaimsByContents = new Map<number, Map<string, symbol>>()
+
+  const previewViewerKey = (contentsId: number): string => `dashboard-popout:${contentsId}`
+
+  const releaseFitClaim = (contentsId: number, ptyId: string): void => {
+    const claimed = fitClaimsByContents.get(contentsId)
+    if (!claimed?.delete(ptyId)) {
+      return
+    }
+    if (claimed.size === 0) {
+      fitClaimsByContents.delete(contentsId)
+    }
+    void runtime
+      .unregisterRemoteDesktopViewer(ptyId, previewViewerKey(contentsId))
+      .catch(() => undefined)
+  }
 
   const removeSubscription = (subscription: TerminalPreviewOutputStream): void => {
     const perPty = subscriptionsByContents.get(subscription.contents.id)
@@ -34,13 +76,16 @@ export function registerTerminalPreviewHandlers(runtime: OrcaRuntimeService): vo
 
   const disposeContents = (contentsId: number): void => {
     const perPty = subscriptionsByContents.get(contentsId)
-    if (!perPty) {
-      return
+    if (perPty) {
+      for (const subscription of perPty.values()) {
+        subscription.dispose()
+      }
+      subscriptionsByContents.delete(contentsId)
     }
-    for (const subscription of perPty.values()) {
-      subscription.dispose()
+    // Why: releasing one claim mutates this map while the remaining claims still need teardown.
+    for (const ptyId of fitClaimsByContents.get(contentsId)?.keys() ?? []) {
+      releaseFitClaim(contentsId, ptyId)
     }
-    subscriptionsByContents.delete(contentsId)
   }
 
   const subscriptionsFor = (contents: WebContents): Map<string, TerminalPreviewOutputStream> => {
@@ -64,6 +109,9 @@ export function registerTerminalPreviewHandlers(runtime: OrcaRuntimeService): vo
       }
       const ptyId = args.ptyId
       const perPty = subscriptionsFor(event.sender)
+      if (!canRetainPreviewEntry(subscriptionsByContents, event.sender.id, ptyId)) {
+        return { snapshot: null, replay: [] }
+      }
       perPty.get(ptyId)?.dispose()
 
       const subscription = new TerminalPreviewOutputStream(
@@ -72,9 +120,24 @@ export function registerTerminalPreviewHandlers(runtime: OrcaRuntimeService): vo
         runtime.registerRawTerminalViewSubscriber(ptyId),
         removeSubscription
       )
-      subscription.setDataSubscription(
-        runtime.subscribeToTerminalData(ptyId, (data, meta) => subscription.append(data, meta))
+      const unsubscribeData = runtime.subscribeToTerminalData(ptyId, (data, meta) =>
+        subscription.append(data, meta)
       )
+      let previewSize = runtime.getTerminalSize(ptyId)
+      // Why: any grid change (dialog fit landing, host reclaim, phone takeover)
+      // invalidates bytes parsed at the old width — push a resync so the
+      // renderer reconnects and repaints from a snapshot at the new grid.
+      const unsubscribeResize = runtime.subscribeToTerminalResize(ptyId, (event) => {
+        if (previewSize?.cols === event.cols && previewSize.rows === event.rows) {
+          return
+        }
+        previewSize = { cols: event.cols, rows: event.rows }
+        subscription.requestResync()
+      })
+      subscription.setDataSubscription(() => {
+        unsubscribeData()
+        unsubscribeResize()
+      })
       perPty.set(ptyId, subscription)
 
       const requestedRows = args.opts?.scrollbackRows
@@ -105,6 +168,7 @@ export function registerTerminalPreviewHandlers(runtime: OrcaRuntimeService): vo
         subscription.dispose()
         return { snapshot: null, replay: [] }
       }
+      previewSize = { cols: snapshot.cols, rows: snapshot.rows }
 
       const replay = subscription.completeSnapshot(snapshot.seq)
       if (resyncRequired) {
@@ -146,10 +210,71 @@ export function registerTerminalPreviewHandlers(runtime: OrcaRuntimeService): vo
     }
   )
 
+  // Why: the dialog asks for a grid matching its own box; the PTY resizes to
+  // it through the remote-desktop viewer registry (host pane parks, phone
+  // still wins). Returns the size actually in effect so the renderer can keep
+  // its scale-to-fit fallback when the claim did not land.
+  ipcMain.handle(
+    'terminalPreview:fit',
+    async (
+      event,
+      args: { ptyId?: unknown; cols?: unknown; rows?: unknown }
+    ): Promise<{ cols: number; rows: number } | null> => {
+      if (
+        !isDashboardPopoutRenderer(event.sender) ||
+        !isValidPtyId(args?.ptyId) ||
+        typeof args.cols !== 'number' ||
+        typeof args.rows !== 'number' ||
+        !Number.isFinite(args.cols) ||
+        !Number.isFinite(args.rows)
+      ) {
+        return null
+      }
+      const ptyId = args.ptyId
+      // Why: guarantees the destroyed hook exists even if this claim outlives
+      // the current output stream across a resync reconnect.
+      subscriptionsFor(event.sender)
+      if (!canRetainPreviewEntry(fitClaimsByContents, event.sender.id, ptyId)) {
+        return null
+      }
+      let claimed = fitClaimsByContents.get(event.sender.id)
+      if (!claimed) {
+        claimed = new Map()
+        fitClaimsByContents.set(event.sender.id, claimed)
+      }
+      const claimToken = Symbol('terminal-preview-fit')
+      claimed.set(ptyId, claimToken)
+      const viewerKey = previewViewerKey(event.sender.id)
+      try {
+        const applied = await runtime.updateRemoteDesktopViewer(
+          ptyId,
+          viewerKey,
+          viewerKey,
+          args.cols,
+          args.rows
+        )
+        if (fitClaimsByContents.get(event.sender.id)?.get(ptyId) !== claimToken) {
+          return null
+        }
+        if (!applied) {
+          releaseFitClaim(event.sender.id, ptyId)
+          return null
+        }
+      } catch {
+        if (fitClaimsByContents.get(event.sender.id)?.get(ptyId) === claimToken) {
+          releaseFitClaim(event.sender.id, ptyId)
+        }
+        return null
+      }
+      return runtime.getTerminalSize(ptyId)
+    }
+  )
+
   ipcMain.handle('terminalPreview:unsubscribe', (event, args: { ptyId?: unknown }): void => {
     if (!isDashboardPopoutRenderer(event.sender) || !isValidPtyId(args?.ptyId)) {
       return
     }
     subscriptionsByContents.get(event.sender.id)?.get(args.ptyId)?.dispose()
+    releaseFitClaim(event.sender.id, args.ptyId)
   })
 }
