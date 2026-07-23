@@ -376,7 +376,10 @@ describe('RuntimeEmulatorCommands attach lifecycle', () => {
       })
     })
 
-    await expect(commands.emulatorAx({ worktree: 'wt-1' })).resolves.toEqual(tree)
+    // Routing test: normalization is covered in serve-sim-ax-normalization.test.ts.
+    await expect(commands.emulatorAx({ worktree: 'wt-1' })).resolves.toMatchObject([
+      { type: 'Application' }
+    ])
     expect(netFetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:3100/device-1/ax',
       expect.any(Object)
@@ -406,7 +409,9 @@ describe('RuntimeEmulatorCommands attach lifecycle', () => {
       })
     })
 
-    await expect(commands.emulatorAx({ device: 'device-1' })).resolves.toEqual(tree)
+    await expect(commands.emulatorAx({ device: 'device-1' })).resolves.toMatchObject([
+      { type: 'Application' }
+    ])
     expect(netFetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:3100/device-1/ax',
       expect.any(Object)
@@ -439,6 +444,68 @@ describe('RuntimeEmulatorCommands attach lifecycle', () => {
     ).rejects.toMatchObject({
       code: 'emulator_no_active',
       message: expect.stringContaining('active: device-active')
+    })
+    expect(netFetchMock).not.toHaveBeenCalled()
+  })
+
+  it('heals a session registered without an axUrl by deriving it from the stream url', async () => {
+    const tree = [{ type: 'Application', children: [] }]
+    netFetchMock.mockResolvedValue(new Response(JSON.stringify(tree), { status: 200 }))
+    const bridge = new EmulatorBridge()
+    // No axUrl on the registered session (e.g. reattach path predating derivation).
+    bridge.registerActiveEmulator(
+      'wt-1',
+      {
+        deviceUdid: 'device-1',
+        streamUrl: 'http://127.0.0.1:3100/helper/device-1/stream.mjpeg',
+        wsUrl: 'ws://127.0.0.1:3100/helper/device-1/ws',
+        streamCodec: 'mjpeg'
+      },
+      { managed: true }
+    )
+    const commands = new RuntimeEmulatorCommands({
+      getEmulatorBridge: () => bridge,
+      resolveWorktreeSelector: vi.fn(async () => ({ id: 'wt-1' })),
+      getAuthoritativeWindow: () => ({ webContents: { send: vi.fn() } }) as never,
+      getSettings: () => ({
+        mobileEmulatorEnabled: true,
+        mobileEmulatorDefaultDeviceUdid: null
+      })
+    })
+
+    await expect(commands.emulatorAx({ worktree: 'wt-1' })).resolves.toMatchObject([
+      { type: 'Application' }
+    ])
+    expect(netFetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:3100/helper/device-1/ax',
+      expect.any(Object)
+    )
+  })
+
+  it('does not fabricate an /ax endpoint from a non-mjpeg stream url', async () => {
+    const bridge = new EmulatorBridge()
+    bridge.registerActiveEmulator(
+      'wt-1',
+      {
+        deviceUdid: 'device-1',
+        streamUrl: 'http://127.0.0.1:3100/helper/device-1/stream.h264',
+        wsUrl: 'ws://127.0.0.1:3100/helper/device-1/ws',
+        streamCodec: 'mjpeg'
+      },
+      { managed: true }
+    )
+    const commands = new RuntimeEmulatorCommands({
+      getEmulatorBridge: () => bridge,
+      resolveWorktreeSelector: vi.fn(async () => ({ id: 'wt-1' })),
+      getAuthoritativeWindow: () => ({ webContents: { send: vi.fn() } }) as never,
+      getSettings: () => ({
+        mobileEmulatorEnabled: true,
+        mobileEmulatorDefaultDeviceUdid: null
+      })
+    })
+
+    await expect(commands.emulatorAx({ worktree: 'wt-1' })).rejects.toMatchObject({
+      code: 'emulator_no_active'
     })
     expect(netFetchMock).not.toHaveBeenCalled()
   })

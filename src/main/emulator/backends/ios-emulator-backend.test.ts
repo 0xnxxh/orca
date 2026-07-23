@@ -101,14 +101,53 @@ describe('IosEmulatorBackend', () => {
     })
   })
 
-  it('returns the raw serve-sim accessibility tree', async () => {
-    const tree = [{ type: 'Application', children: [{ AXLabel: 'Continue' }] }]
-    netFetchMock.mockResolvedValue(new Response(JSON.stringify(tree), { status: 200 }))
+  it('fetches and normalizes the serve-sim accessibility tree', async () => {
+    const raw = [
+      {
+        type: 'Application',
+        role_description: 'application',
+        AXLabel: 'Demo',
+        enabled: true,
+        frame: { x: 0, y: 0, width: 400, height: 800 },
+        children: [
+          {
+            type: 'Button',
+            role_description: 'button',
+            AXLabel: 'Continue',
+            AXValue: '',
+            enabled: true,
+            frame: { x: 100, y: 400, width: 200, height: 50 },
+            children: []
+          }
+        ]
+      }
+    ]
+    netFetchMock.mockResolvedValue(new Response(JSON.stringify(raw), { status: 200 }))
     const backend = new IosEmulatorBackend()
 
     await expect(
       backend.accessibilityTree('device-1', 'http://127.0.0.1:3100/ax')
-    ).resolves.toEqual(tree)
+    ).resolves.toEqual([
+      {
+        role: 'application',
+        type: 'Application',
+        label: 'Demo',
+        value: '',
+        enabled: true,
+        frame: { x: 0, y: 0, width: 1, height: 1 },
+        children: [
+          {
+            role: 'button',
+            type: 'Button',
+            label: 'Continue',
+            value: '',
+            enabled: true,
+            frame: { x: 0.25, y: 0.5, width: 0.5, height: 0.0625 },
+            children: []
+          }
+        ]
+      }
+    ])
     expect(netFetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:3100/ax',
       expect.objectContaining({ signal: expect.any(AbortSignal) })

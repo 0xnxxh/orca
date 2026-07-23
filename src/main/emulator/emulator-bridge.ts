@@ -5,6 +5,7 @@ import type { SimulatorDevice } from './simctl-simulator-devices'
 import type { EmulatorBridgeOptions } from './emulator-bridge-types'
 import type { EmulatorGesturePoint } from './emulator-gesture-sender'
 import { EmulatorSessionRegistry } from './emulator-session-registry'
+import { deriveAxUrlFromStreamUrl } from './serve-sim-detached-session'
 import { IosEmulatorBackend } from './backends/ios-emulator-backend'
 import { AndroidEmulatorBackend } from './backends/android-emulator-backend'
 import type {
@@ -215,7 +216,10 @@ export class EmulatorBridge {
           `iOS simulator ${udid} is not active for this worktree (active: ${session.deviceUdid}); attach the requested simulator first.`
         )
       }
-      return backend.accessibilityTree!(udid, session?.axUrl)
+      // Heal sessions registered without an axUrl (parse-time derivation only
+      // covers fresh --detach output) by deriving it from the mjpeg stream URL.
+      const axUrl = session?.axUrl ?? deriveAxUrlFromStreamUrl(session?.streamUrl)
+      return backend.accessibilityTree!(udid, axUrl)
     })
   }
 
