@@ -20,6 +20,28 @@ type ListGitignoredEntriesOptions = {
 
 type GitExecError = Error & { code?: number | string }
 
+function* parseGitignoredEntries(
+  stdout: string,
+  collapseDirectories: boolean
+): IterableIterator<GitignoredEntry> {
+  let start = 0
+  while (start < stdout.length) {
+    const separator = stdout.indexOf('\0', start)
+    const end = separator === -1 ? stdout.length : separator
+    const rawEntry = stdout.slice(start, end)
+    start = end + 1
+    if (!rawEntry) {
+      continue
+    }
+    const isDirectory = rawEntry.endsWith('/')
+    yield {
+      relativePath: isDirectory ? rawEntry.replace(/\/+$/, '') : rawEntry,
+      isDirectory,
+      coversDescendants: isDirectory && collapseDirectories
+    }
+  }
+}
+
 export async function getWorktreeIncludeIgnoreCase(
   repoPath: string,
   options: GitRuntimeOptions,
@@ -44,7 +66,7 @@ export async function listGitignoredEntries(
   repoPath: string,
   options: GitRuntimeOptions,
   listOptions: ListGitignoredEntriesOptions
-): Promise<GitignoredEntry[]> {
+): Promise<IterableIterator<GitignoredEntry>> {
   const args = [
     '-c',
     'core.quotePath=false',
@@ -60,19 +82,8 @@ export async function listGitignoredEntries(
     ...gitOptionsForWorktree(repoPath, options),
     timeout: listOptions.timeout
   })
-  const entries: GitignoredEntry[] = []
-  for (const rawEntry of stdout.split('\0')) {
-    if (!rawEntry) {
-      continue
-    }
-    const isDirectory = rawEntry.endsWith('/')
-    entries.push({
-      relativePath: isDirectory ? rawEntry.replace(/\/+$/, '') : rawEntry,
-      isDirectory,
-      coversDescendants: isDirectory && listOptions.collapseDirectories
-    })
-  }
-  return entries
+  // Why: lazy parsing lets caller budgets stop before large Git output becomes a large object array.
+  return parseGitignoredEntries(stdout, listOptions.collapseDirectories)
 }
 
 export function worktreeIncludePatternToGitPathspec(
