@@ -1801,13 +1801,17 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           ? registryEntry?.launchConfig
           : undefined
         const existingSleepingRecord = s.sleepingAgentSessionsByPaneKey[paneKey]
-        const retainsPiRecoveryIdentity =
+        // Why: a completed turn leaves the TUI session alive and resumable at its prompt for any
+        // resumable agent (Claude/Codex/Pi/…), not just Pi — so keep its persisted recovery anchor
+        // even when done. Else a cold restore after an abrupt app death (macOS logout, #9454) drops
+        // the pane to a bare shell instead of `--resume`-ing the agent logged in.
+        const retainsResumableRecoveryIdentity =
           payload.state === 'done' &&
-          identity.agentType === 'pi' &&
+          isResumableTuiAgent(identity.agentType) &&
           providerSession !== undefined &&
-          getAgentResumeArgv('pi', providerSession) !== null
+          getAgentResumeArgv(identity.agentType, providerSession) !== null
         const matchedSleepingLaunchConfig =
-          (payload.state !== 'done' || retainsPiRecoveryIdentity) &&
+          (payload.state !== 'done' || retainsResumableRecoveryIdentity) &&
           existingSleepingRecord?.launchConfig &&
           existingSleepingRecord.agent === identity.agentType &&
           providerSession &&
@@ -1935,14 +1939,14 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           (entry) => entry.paneKey === paneKey
         )
         const liveRecoveryWorktreeId =
-          entry.state === 'done' && !retainsPiRecoveryIdentity
+          entry.state === 'done' && !retainsResumableRecoveryIdentity
             ? null
             : (entry.worktreeId ?? findAgentPaneWorktreeId(s, entry.paneKey))
         const liveRecoveryRecord = liveRecoveryWorktreeId
           ? sleepingRecordFromEntry({
               state: s,
-              // Why: a completed Pi turn leaves the TUI session alive — keep resume identity active without representing done as pending work.
-              entry: retainsPiRecoveryIdentity
+              // Why: a completed resumable-agent turn leaves the TUI session alive — keep resume identity active without representing done as pending work.
+              entry: retainsResumableRecoveryIdentity
                 ? { ...entry, state: 'working', prompt: '', lastAssistantMessage: undefined }
                 : entry,
               worktreeId: liveRecoveryWorktreeId,
