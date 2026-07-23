@@ -847,7 +847,11 @@ export class LocalPtyProvider implements IPtyProvider {
     const proc = spawnResult.process
     const spawnedShellIsWsl =
       process.platform === 'win32' && pathWin32.basename(shellPath).toLowerCase() === 'wsl.exe'
-    const spawnedWslDistro = spawnedShellIsWsl ? (launchWslDistro ?? undefined) : null
+    const spawnedWslDistro = spawnedShellIsWsl
+      ? (launchWslDistro ?? undefined)
+      : process.platform === 'win32'
+        ? null
+        : undefined
     createPtyPhysicalExit(id)
     ptyProcesses.set(id, proc)
     ptyInitialCwd.set(id, cwd)

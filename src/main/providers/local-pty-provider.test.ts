@@ -231,7 +231,6 @@ describe('LocalPtyProvider', () => {
       expect(second).toEqual({
         id: 'serve-session-1',
         pid: 12345,
-        wslDistro: null,
         isReattach: true
       })
       expect(mockProc.resize).toHaveBeenCalledWith(120, 40)
@@ -1788,6 +1787,8 @@ describe('LocalPtyProvider', () => {
       expect(newEntries[0]).toHaveProperty('title', 'zsh')
       expect(newEntries[0]).toHaveProperty('cwd', '/tmp/owned-cwd')
       expect(newEntries[0]).toHaveProperty('worktreeId', 'repo::/tmp/owned-cwd')
+      expect(newEntries[0]).not.toHaveProperty('wslDistro')
+      expect(newEntries[1]).not.toHaveProperty('wslDistro')
     })
 
     it('reports native and WSL ownership explicitly on Windows', async () => {
