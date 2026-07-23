@@ -168,8 +168,6 @@ describe('registerRuntimeEnvironmentHandlers', () => {
     const added = await add(null, { name: 'desk', pairingCode: pairingCode() })
     expect(JSON.stringify(added)).not.toContain('device-token')
     expect(JSON.stringify(added)).not.toContain('publicKeyB64')
-    activeRuntimeEnvironmentId = added.environment.id
-
     const list = handler<undefined, { id: string; name: string }[]>('runtimeEnvironments:list')
     expect(await list(null, undefined)).toMatchObject([{ id: added.environment.id, name: 'desk' }])
     expect(JSON.stringify(await list(null, undefined))).not.toContain('device-token')
@@ -190,14 +188,29 @@ describe('registerRuntimeEnvironmentHandlers', () => {
     expect(removed).toMatchObject({
       removed: { id: added.environment.id, name: 'desk' }
     })
-    expect(store.updateSettings).toHaveBeenCalledWith(
-      { activeRuntimeEnvironmentId: null },
-      { notifyListeners: true }
-    )
     expect(activeRuntimeEnvironmentId).toBeNull()
     expect(closeRemoteRuntimeRequestConnectionMock).toHaveBeenCalledWith(added.environment.id)
     expect(JSON.stringify(removed)).not.toContain('device-token')
     expect(await list(null, undefined)).toEqual([])
+  })
+
+  it('requires an explicit Advanced selection before removing the Active Server', async () => {
+    registerRuntimeEnvironmentHandlers(store as never)
+    const add = handler<
+      { name: string; pairingCode: string },
+      { environment: { id: string; name: string } }
+    >('runtimeEnvironments:addFromPairingCode')
+    const added = await add(null, { name: 'desk', pairingCode: pairingCode() })
+    activeRuntimeEnvironmentId = added.environment.id
+    const remove = handler<{ selector: string }, { removed: { id: string } }>(
+      'runtimeEnvironments:remove'
+    )
+
+    expect(() => remove(null, { selector: added.environment.id })).toThrow(
+      'Choose another Active Server in Advanced'
+    )
+    expect(activeRuntimeEnvironmentId).toBe(added.environment.id)
+    expect(store.updateSettings).not.toHaveBeenCalled()
   })
 
   it('disconnects a saved runtime without removing it', async () => {
@@ -1366,6 +1379,56 @@ describe('registerRuntimeEnvironmentHandlers', () => {
     expect(close).toHaveBeenCalled()
     expect(destroyedListenerRemoved).toHaveBeenCalledWith('destroyed', expect.any(Function))
     markUsedSpy.mockRestore()
+  })
+
+  it('drops a queued old-peer frame after unsubscribe and transport invalidation', async () => {
+    registerRuntimeEnvironmentHandlers(store as never)
+    const close = vi.fn()
+    subscribeRemoteRuntimeRequestMock.mockResolvedValue({
+      requestId: 'queued-old-peer',
+      close,
+      sendBinary: vi.fn()
+    })
+
+    const add = handler<
+      { name: string; pairingCode: string },
+      { environment: { id: string; name: string } }
+    >('runtimeEnvironments:addFromPairingCode')
+    const added = await add(null, { name: 'desk', pairingCode: pairingCode() })
+    const senderSend = vi.fn()
+    const subscribe = handler<
+      { selector: string; method: string; subscriptionId: string },
+      { subscriptionId: string; requestId: string }
+    >('runtimeEnvironments:subscribe')
+    const result = await subscribe(
+      {
+        sender: {
+          id: 1,
+          isDestroyed: () => false,
+          send: senderSend,
+          once: vi.fn(),
+          removeListener: vi.fn()
+        }
+      },
+      {
+        selector: added.environment.id,
+        method: 'terminal.subscribe',
+        subscriptionId: 'queued-old-peer'
+      }
+    )
+    const callbacks = subscribeRemoteRuntimeRequestMock.mock.calls[0]![4] as {
+      onBinary: (bytes: Uint8Array<ArrayBufferLike>) => void
+    }
+    const unsubscribe = handler<{ subscriptionId: string }, { unsubscribed: boolean }>(
+      'runtimeEnvironments:unsubscribe'
+    )
+
+    expect(await unsubscribe({ sender: { id: 1 } }, result)).toEqual({ unsubscribed: true })
+    invalidateRuntimeEnvironmentTransport(added.environment.id)
+    callbacks.onBinary(new Uint8Array([1, 2, 3]))
+
+    expect(close).toHaveBeenCalledTimes(1)
+    expect(senderSend).not.toHaveBeenCalled()
   })
 
   it('closes streaming subscriptions when their saved runtime is removed', async () => {

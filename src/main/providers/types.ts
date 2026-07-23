@@ -21,6 +21,7 @@ import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-histo
 import type { PtyStartupIngressIntent } from '../../shared/pty-startup-ingress'
 import type { CommitMessageDraftContext } from '../../shared/commit-message-generation'
 import type { WorkspaceSpaceDirectoryScanResult } from '../../shared/workspace-space-types'
+import type { FilesystemPathListingProvider } from './filesystem-path-listing-provider'
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
 import type { GitProviderStatusOptions } from './git-provider-status-options'
@@ -29,9 +30,9 @@ import type { PtySpawnResult } from './pty-spawn-result'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import type {
   AgentSessionExecutionClaim,
-  AgentSessionOwnerBinding,
   AgentSessionSurfaceBinding
 } from '../../shared/agent-session-host-authority'
+import type { PtyProcessInfo } from './pty-process-info'
 
 export type {
   PtyBackgroundStreamEvent,
@@ -114,19 +115,7 @@ export type PtySpawnOptions = {
   signal?: AbortSignal
 }
 
-export type { PtySpawnResult }
-
-export type PtyProcessInfo = {
-  id: string
-  incarnationId?: PtyIncarnationId
-  cwd: string
-  title: string
-  /** Owning worktree when the provider can report it authoritatively. */
-  worktreeId?: string
-  /** Trusted ORCA_TERMINAL_HANDLE exported into this PTY, when known. */
-  terminalHandle?: string
-  agentSessionOwners?: AgentSessionOwnerBinding[]
-}
+export type { PtyProcessInfo, PtySpawnResult }
 
 type PtyProbeOptions = { signal?: AbortSignal }
 
@@ -237,10 +226,13 @@ export type FileReadResult = {
   isBinary: boolean
   isImage?: boolean
   mimeType?: string
+  imageDimensions?: { width: number; height: number }
 }
 
-export type IFilesystemProvider = {
-  readDir(dirPath: string): Promise<DirEntry[]>
+type FilesystemDirectoryReadOptions = { maxEntries?: number; maxRetainedBytes?: number }
+
+export type IFilesystemProvider = FilesystemPathListingProvider & {
+  readDir(dirPath: string, options?: FilesystemDirectoryReadOptions): Promise<DirEntry[]>
   readFile(filePath: string): Promise<FileReadResult>
   readTerminalArtifact?(
     filePath: string,
@@ -269,10 +261,6 @@ export type IFilesystemProvider = {
   copy(source: string, destination: string): Promise<void>
   realpath(filePath: string): Promise<string>
   search(opts: SearchOptions): Promise<SearchResult>
-  listFiles(
-    rootPath: string,
-    options?: { excludePaths?: string[]; signal?: AbortSignal; maxResults?: number }
-  ): Promise<string[]>
   scanWorkspaceSpace?(
     rootPath: string,
     options?: { signal?: AbortSignal }
@@ -393,10 +381,7 @@ export type IGitProvider = {
 
 // ─── Provider Registry ──────────────────────────────────────────────
 
-/**
- * Routes operations to the correct provider based on connectionId.
- * null/undefined connectionId = local provider.
- */
+/** Routes operations by connectionId; null/undefined selects the local provider. */
 export type IProviderRegistry = {
   getPtyProvider(connectionId: string | null | undefined): IPtyProvider
   getFilesystemProvider(connectionId: string | null | undefined): IFilesystemProvider
