@@ -1463,7 +1463,8 @@
         "4725b0e931": "Quick Open 스캔이 너무 큼(",
         "b227d88520": "{{value0}} 파일을 찾았습니다.",
         "995be8ea22": "복사",
-        "cf144856dc": "복사됨"
+        "cf144856dc": "복사됨",
+        "344f8a48dd": "on the host running the Quick Open scan to enable fast, gitignore-aware listing:"
       },
       "SelectedTextCopyMenu": {
         "9b40d7b018": "복사"
@@ -11922,7 +11923,10 @@
         "CsvViewer": {
           "eedd0d37a7": "열",
           "ac31d2cd60": "행",
-          "a233d55b77": "빈 파일"
+          "a233d55b77": "빈 파일",
+          "2b65aa2913": "이 CSV는 너무 커서 안전하게 표시할 수 없습니다.",
+          "59cfb175a2": "원본 텍스트를 확인하려면 소스 모드로 전환하세요.",
+          "d5e8a2b453": "표 보기는 {{rows}}개 행, {{columns}}개 열, {{cells}}개 셀로 제한됩니다."
         },
         "DiffNotesSendMenu": {
           "f1aa04b5cf": "이 파일",

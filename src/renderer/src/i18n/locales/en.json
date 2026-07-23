@@ -1486,7 +1486,8 @@
         "4725b0e931": "Quick Open scan too large (",
         "b227d88520": "{{value0}} files found",
         "995be8ea22": "Copy",
-        "cf144856dc": "Copied"
+        "cf144856dc": "Copied",
+        "344f8a48dd": "on the host running the Quick Open scan to enable fast, gitignore-aware listing:"
       },
       "SelectedTextCopyMenu": {
         "9b40d7b018": "Copy"
@@ -11945,7 +11946,10 @@
         "CsvViewer": {
           "eedd0d37a7": "columns",
           "ac31d2cd60": "rows",
-          "a233d55b77": "Empty file"
+          "a233d55b77": "Empty file",
+          "2b65aa2913": "This CSV is too large to display safely.",
+          "59cfb175a2": "Switch to source mode to inspect the raw text.",
+          "d5e8a2b453": "Table view is limited to {{rows}} rows, {{columns}} columns, and {{cells}} cells."
         },
         "DiffNotesSendMenu": {
           "f1aa04b5cf": "This file",
