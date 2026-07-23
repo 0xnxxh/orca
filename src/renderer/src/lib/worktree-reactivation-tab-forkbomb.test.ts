@@ -56,6 +56,7 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
     const worktree = { ...makeWorktree(), createdWithAgent: undefined }
     useAppStore.setState(baseState(worktree))
     const providerSession = { key: 'session_id' as const, id: 'codex-session-1' }
+    let resumedTabId: string | undefined
 
     for (let reopen = 0; reopen < 4; reopen++) {
       const paneKey = `slept-pane-${reopen}:0`
@@ -83,6 +84,8 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
       const tabs = state.tabsByWorktree[worktree.id] ?? []
 
       expect(tabs).toHaveLength(1)
+      resumedTabId ??= tabs[0]!.id
+      expect(tabs[0]!.id).toBe(resumedTabId)
       expect(state.automaticAgentResumeClaimsByTabId[tabs[0]!.id]?.providerSession).toEqual(
         providerSession
       )
