@@ -32,6 +32,16 @@ describe('SshPtyProvider', () => {
     provider = new SshPtyProvider('conn-1', mux as never)
   })
 
+  function emitRelayNotification(method: string, params: Record<string, unknown>): void {
+    const callback = mux.onNotification.mock.calls[0]?.[0] as
+      | ((method: string, params: Record<string, unknown>) => void)
+      | undefined
+    if (!callback) {
+      throw new Error('Notification listener was not registered')
+    }
+    callback(method, params)
+  }
+
   it('returns the connectionId', () => {
     expect(provider.getConnectionId()).toBe('conn-1')
   })
@@ -268,6 +278,16 @@ describe('SshPtyProvider', () => {
         env: { [POWERLEVEL10K_WIZARD_DISABLE_ENV]: 'true' }
       })
       expect(result).toEqual({ id: scopedPty1 })
+      expect(provider.hasPty(scopedPty1)).toBe(true)
+    })
+
+    it('keeps a spawned PTY live across an overlapping stale process list', async () => {
+      mux.request.mockResolvedValueOnce({ id: 'pty-new' }).mockResolvedValueOnce([])
+
+      const result = await provider.spawn({ cols: 80, rows: 24 })
+      await provider.listProcesses()
+
+      expect(provider.hasPty(result.id)).toBe(true)
     })
 
     it('gates fresh startup intent with the relay ingress capability version', async () => {
@@ -809,6 +829,47 @@ describe('SshPtyProvider', () => {
   it('acknowledgeDataEvent sends pty.ackData notification', () => {
     provider.acknowledgeDataEvent(scopedPty1, 1024)
     expect(mux.notify).toHaveBeenCalledWith('pty.ackData', { id: 'pty-1', charCount: 1024 })
+  })
+
+  it('defers tokenized relay output credit until downstream acknowledgement', () => {
+    const events: Parameters<Parameters<SshPtyProvider['onData']>[0]>[0][] = []
+    provider.onData((event) => {
+      events.push(event)
+    })
+
+    emitRelayNotification('pty.data', {
+      id: 'pty-1',
+      data: 'clean',
+      rawLength: 12,
+      deliveryToken: 'delivery-1'
+    })
+
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ id: scopedPty1, data: 'clean', sequenceChars: 12 })
+    expect(mux.notify).not.toHaveBeenCalled()
+
+    events[0]?.upstreamCredit?.acknowledge(12)
+
+    expect(mux.notify).toHaveBeenCalledOnce()
+    expect(mux.notify).toHaveBeenCalledWith('pty.ackData', {
+      id: 'pty-1',
+      charCount: 12,
+      deliveryToken: 'delivery-1'
+    })
+  })
+
+  it('restores legacy acknowledgements after tokenized PTY exit', () => {
+    emitRelayNotification('pty.data', {
+      id: 'pty-1',
+      data: 'output',
+      deliveryToken: 'delivery-3'
+    })
+    emitRelayNotification('pty.exit', { id: 'pty-1', code: 0 })
+    mux.notify.mockClear()
+
+    provider.acknowledgeDataEvent(scopedPty1, 6)
+
+    expect(mux.notify).toHaveBeenCalledWith('pty.ackData', { id: 'pty-1', charCount: 6 })
   })
 
   it('hasChildProcesses sends request and returns result', async () => {

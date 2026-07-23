@@ -122,6 +122,10 @@ import {
   setVisibleWorktreeIds,
   sidebarHasActiveFilters
 } from './visible-worktrees'
+import {
+  getCyclicProjectedWorktreeLineageIds,
+  getWorktreeLineageAncestors
+} from './worktree-lineage-projection'
 import { getWorktreeIdsWithLiveAgent } from '@/lib/worktree-activity-state'
 import { getEmptyProjectPlaceholderRepoIds } from './empty-project-placeholder-repos'
 import {
@@ -228,6 +232,7 @@ import { ProjectGroupNameDialog } from './ProjectGroupNameDialog'
 import { ProjectGroupDeleteDialog } from './ProjectGroupDeleteDialog'
 import { selectProjectGroupRemovalTargets } from '@/store/slices/project-group-removal-targets'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
+import { mapSettledWithConcurrency } from '../../../../shared/map-with-concurrency'
 import {
   effectiveExternalWorktreeVisibility,
   isLegacyRepoForExternalWorktreeVisibility
@@ -249,7 +254,7 @@ import {
   suppressNewExternalWorktreeInbox,
   type NewExternalWorktreesInboxActionState
 } from './new-external-worktrees-inbox-actions'
-import { getEligibleWorktreeParents } from './worktree-parent-candidates'
+import { isEligibleWorktreeParent } from './worktree-parent-candidates'
 import {
   buildImportedWorktreesCardCandidates,
   getHiddenImportedWorktrees
@@ -333,6 +338,7 @@ const EMPTY_TERMINAL_LAYOUTS_BY_TAB_ID: AppState['terminalLayoutsByTabId'] = {}
 const EMPTY_PTY_IDS_BY_TAB_ID: AppState['ptyIdsByTabId'] = {}
 const EMPTY_RUNTIME_PANE_TITLES_BY_TAB_ID: AppState['runtimePaneTitlesByTabId'] = {}
 const EXPANDING_CARD_MEASUREMENT_ADJUSTMENT_SUPPRESS_MS = 300
+const WORKTREE_LINEAGE_MUTATION_CONCURRENCY = 8
 const NOOP_WORKSPACE_BOARD_DRAG_PREVIEW_CALLBACK = (): void => {}
 const WORKTREE_SIDEBAR_SCROLL_STYLE: React.CSSProperties = {
   // Why: TanStack Virtual owns scroll correction; native overflow anchoring fights it and causes jumps.
@@ -340,6 +346,15 @@ const WORKTREE_SIDEBAR_SCROLL_STYLE: React.CSSProperties = {
 }
 
 const recordKeyCountCache = new WeakMap<Record<string, unknown>, number>()
+
+function rethrowFirstLineageFailure(results: readonly PromiseSettledResult<unknown>[]): void {
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected'
+  )
+  if (failure) {
+    throw failure.reason
+  }
+}
 
 export function countRecordKeysByReference(record: Record<string, unknown>): number {
   const cached = recordKeyCountCache.get(record)
@@ -1395,6 +1410,10 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   const setRenamingWorktreeId = useAppStore((s) => s.setRenamingWorktreeId)
   const assignWorktreeParent = useAppStore((s) => s.assignWorktreeParent)
   const updateWorktreeLineage = useAppStore((s) => s.updateWorktreeLineage)
+  const cyclicLineageIds = useMemo(
+    () => getCyclicProjectedWorktreeLineageIds(worktreeLineageById, worktreeMap),
+    [worktreeLineageById, worktreeMap]
+  )
   const worktreeDragSessionRef = useRef<WorktreeSidebarDragSession | null>(null)
   const worktreePointerDragRef = useRef<WorktreePointerDrag | null>(null)
   const worktreePointerAutoscrollFrameIdRef = useRef<number | null>(null)
@@ -2085,25 +2104,15 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
             toggleGroup(hostGroupKey)
           }
 
-          const seen = new Set<string>()
-          let current: Worktree | undefined = targetWorktree
-          while (current && !seen.has(current.id)) {
-            seen.add(current.id)
-            const lineage = worktreeLineageById[current.id]
-            const parent = lineage ? worktreeMap.get(lineage.parentWorktreeId) : undefined
-            if (
-              !lineage ||
-              !parent ||
-              current.instanceId !== lineage.worktreeInstanceId ||
-              parent.instanceId !== lineage.parentWorktreeInstanceId
-            ) {
-              break
-            }
+          for (const parent of getWorktreeLineageAncestors(
+            targetWorktree,
+            worktreeLineageById,
+            worktreeMap
+          )) {
             const lineageGroupKey = getLineageGroupKey(parent.id)
             if (collapsedGroups.has(lineageGroupKey)) {
               toggleGroup(lineageGroupKey)
             }
-            current = parent
           }
 
           const groupKeys =
@@ -2695,17 +2704,22 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
         if (!child) {
           return false
         }
-        return getEligibleWorktreeParents({
-          child,
-          worktrees,
-          lineageById: worktreeLineageById,
-          worktreeMap,
-          repoMap
-        }).some((candidate) => candidate.id === parentId)
+        const candidateParent = worktreeMap.get(parentId)
+        return Boolean(
+          candidateParent &&
+          isEligibleWorktreeParent({
+            child,
+            candidateParent,
+            lineageById: worktreeLineageById,
+            worktreeMap,
+            repoMap,
+            cyclicLineageIds
+          })
+        )
       })
       return canAssignAll ? target : { ...target, lineageParentId: null }
     },
-    [repoMap, worktreeLineageById, worktreeMap, worktrees]
+    [cyclicLineageIds, repoMap, worktreeLineageById, worktreeMap]
   )
 
   const commitWorktreeLineageParentDrop = useCallback(
@@ -2717,17 +2731,19 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       if (!target.lineageParentId) {
         return false
       }
-      void Promise.all(
-        draggedIds.map((id) => assignWorktreeParent(id, { parentWorktreeId: parentId }))
-      ).catch((err) => {
-        console.error('Failed to nest workspace:', err)
-        toast.error(
-          translate(
-            'auto.components.sidebar.WorktreeList.failedNestWorkspace',
-            'Failed to nest workspace'
+      void mapSettledWithConcurrency(draggedIds, WORKTREE_LINEAGE_MUTATION_CONCURRENCY, (id) =>
+        assignWorktreeParent(id, { parentWorktreeId: parentId })
+      )
+        .then(rethrowFirstLineageFailure)
+        .catch((err) => {
+          console.error('Failed to nest workspace:', err)
+          toast.error(
+            translate(
+              'auto.components.sidebar.WorktreeList.failedNestWorkspace',
+              'Failed to nest workspace'
+            )
           )
-        )
-      })
+        })
       return true
     },
     [assignWorktreeParent, getEligibleLineageDropTarget]
@@ -2742,14 +2758,19 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       const ids = getReorderedWorktreeIdsToUnnest({
         draggedIds: args.draggedIds,
         sourceGroupIds: sourceGroup.worktreeIds,
-        lineageById: worktreeLineageById
+        lineageById: worktreeLineageById,
+        worktreeMap,
+        cyclicLineageIds
       })
       if (ids.length === 0) {
         return
       }
       // Why: dropping a nested card on a reorder line is the un-nest escape hatch; clear only the dragged children.
-      void Promise.all(ids.map((id) => updateWorktreeLineage(id, { noParent: true }))).catch(
-        (err) => {
+      void mapSettledWithConcurrency(ids, WORKTREE_LINEAGE_MUTATION_CONCURRENCY, (id) =>
+        updateWorktreeLineage(id, { noParent: true })
+      )
+        .then(rethrowFirstLineageFailure)
+        .catch((err) => {
           console.error('Failed to unnest workspace:', err)
           toast.error(
             translate(
@@ -2757,10 +2778,9 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
               'Failed to unnest workspace'
             )
           )
-        }
-      )
+        })
     },
-    [updateWorktreeLineage, worktreeDragGroups, worktreeLineageById]
+    [cyclicLineageIds, updateWorktreeLineage, worktreeDragGroups, worktreeLineageById, worktreeMap]
   )
 
   const flushWorktreePointerDrag = useCallback(() => {
@@ -5496,16 +5516,9 @@ const WorktreeList = React.memo(function WorktreeList({
       workspaceHostScope,
       visibleWorkspaceHostIds,
       defaultHostId: getSettingsFocusedExecutionHostId(settings),
-      worktreeLineageById
+      worktreeLineageById,
+      forcedVisibleWorktreeIds: agentSendTargetWorktreeId ? [agentSendTargetWorktreeId] : undefined
     })
-    if (
-      agentSendTargetWorktreeId &&
-      !ids.includes(agentSendTargetWorktreeId) &&
-      worktreeMap.has(agentSendTargetWorktreeId)
-    ) {
-      // Why: send-target mode is a temporary picker; surface the target card without rewriting the user's filters.
-      ids.push(agentSendTargetWorktreeId)
-    }
     return ids.map((id) => worktreeMap.get(id)).filter((w): w is Worktree => w != null)
   }, [
     agentSendTargetWorktreeId,
@@ -5573,22 +5586,12 @@ const WorktreeList = React.memo(function WorktreeList({
       }
     }
 
-    const seen = new Set<string>()
-    let current: Worktree | undefined = targetWorktree
-    while (current && !seen.has(current.id)) {
-      seen.add(current.id)
-      const lineage = worktreeLineageById[current.id]
-      const parent = lineage ? worktreeMap.get(lineage.parentWorktreeId) : undefined
-      if (
-        !lineage ||
-        !parent ||
-        current.instanceId !== lineage.worktreeInstanceId ||
-        parent.instanceId !== lineage.parentWorktreeInstanceId
-      ) {
-        break
-      }
+    for (const parent of getWorktreeLineageAncestors(
+      targetWorktree,
+      worktreeLineageById,
+      worktreeMap
+    )) {
       next.delete(getLineageGroupKey(parent.id))
-      current = parent
     }
     return next
   }, [

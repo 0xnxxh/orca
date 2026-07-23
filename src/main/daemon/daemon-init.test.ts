@@ -235,6 +235,10 @@ vi.mock('fs', () => ({
   writeFileSync: writeFileSyncMock
 }))
 
+vi.mock('./daemon-control-file-reader', () => ({
+  readDaemonControlFileText: readFileSyncMock
+}))
+
 vi.mock('child_process', () => ({ fork: forkMock }))
 
 vi.mock('net', () => ({ connect: netConnectMock }))
@@ -1086,7 +1090,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
 
   it('respawns instead of reusing a healthy daemon launched from another app path', async () => {
     const mod = await importFresh()
-    await mod.initDaemonPtyProvider()
+    await mod.initDaemonPtyProvider(undefined, { macosLoginSessionWatch: true })
 
     const launcher = spawnerInstances[0].launcher as (
       socketPath: string,
@@ -1137,6 +1141,7 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
         '/fake/socket',
         '--token',
         '/fake/token',
+        '--login-session-watch',
         '--log-file',
         join(FAKE_USER_DATA_PATH, 'logs', 'daemon.log')
       ]),
@@ -1512,6 +1517,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     forkMock.mockReturnValueOnce(child)
 
     await launcher('/fake/socket', '/fake/token')
+
+    const launchedArgsWithoutWatch = forkMock.mock.calls.at(-1)?.[1] as string[]
+    expect(launchedArgsWithoutWatch).not.toContain('--login-session-watch')
 
     expect(offMock).toHaveBeenCalledWith('message', expect.any(Function))
     expect(offMock).toHaveBeenCalledWith('error', expect.any(Function))

@@ -3,7 +3,7 @@ restart, teardown); the "swap the provider atomically" invariant keeps restart +
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
-import { mkdirSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import { fork, type ChildProcess } from 'node:child_process'
 import { connect } from 'node:net'
 import {
@@ -51,6 +51,7 @@ import {
   confirmSeededClaudeLivePtys,
   hasSeededUnconfirmedClaudePtys
 } from '../claude-accounts/live-pty-gate'
+import { readDaemonControlFileText } from './daemon-control-file-reader'
 
 // Why: daemon init runs concurrent with window load, so an in-process t timestamp (not harness stderr timing) measures cold-start.
 function logDaemonMilestone(event: string, details: Record<string, unknown> = {}): void {
@@ -321,7 +322,10 @@ async function shouldPreserveDaemonWithLiveSessions(
   return true
 }
 
-function createOutOfProcessLauncher(runtimeDir: string): DaemonLauncher {
+function createOutOfProcessLauncher(
+  runtimeDir: string,
+  macosLoginSessionWatch = false
+): DaemonLauncher {
   return async (socketPath, tokenPath, suppliedPidPath, suppliedLaunchNonce) => {
     const entryPath = getDaemonEntryPath()
     const pidPath = suppliedPidPath ?? getDaemonPidPath(runtimeDir)
@@ -448,6 +452,7 @@ function createOutOfProcessLauncher(runtimeDir: string): DaemonLauncher {
           pidPath,
           '--launch-nonce',
           launchNonce,
+          ...(macosLoginSessionWatch ? ['--login-session-watch'] : []),
           ...daemonLogArgs()
         ],
         {
@@ -625,7 +630,10 @@ function createOutOfProcessLauncher(runtimeDir: string): DaemonLauncher {
   }
 }
 
-export async function initDaemonPtyProvider(signal?: AbortSignal): Promise<void> {
+export async function initDaemonPtyProvider(
+  signal?: AbortSignal,
+  options: { macosLoginSessionWatch?: boolean } = {}
+): Promise<void> {
   logDaemonMilestone('daemon-init-start')
   // Why: e2e coverage for the startup PTY gate (#5232) needs a daemon init that deterministically outlasts the first-window timeout.
   const e2eInitDelayMs = Number(process.env.ORCA_E2E_DAEMON_INIT_DELAY_MS)
@@ -636,7 +644,7 @@ export async function initDaemonPtyProvider(signal?: AbortSignal): Promise<void>
 
   const newSpawner = new DaemonSpawner({
     runtimeDir,
-    launcher: createOutOfProcessLauncher(runtimeDir)
+    launcher: createOutOfProcessLauncher(runtimeDir, options.macosLoginSessionWatch ?? false)
   })
 
   // Why: assign the module-level spawner/adapter only after both succeed, so a failed ensureRunning() leaves no stale spawner.
@@ -1008,7 +1016,7 @@ async function waitForDaemonEndpointExit(socketPath: string): Promise<boolean> {
 function legacyDaemonProcessMayBeAlive(runtimeDir: string, protocolVersion: number): boolean {
   try {
     const parsed = parseDaemonPidFile(
-      readFileSync(getDaemonPidPath(runtimeDir, protocolVersion), 'utf8')
+      readDaemonControlFileText(getDaemonPidPath(runtimeDir, protocolVersion))
     )
     if (!parsed) {
       return false

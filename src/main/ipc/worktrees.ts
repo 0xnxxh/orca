@@ -1,7 +1,7 @@
 /* oxlint-disable max-lines */
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
-import { readFile, stat } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import type { Store } from '../persistence'
 import { isFolderRepo } from '../../shared/repo-kind'
@@ -12,7 +12,9 @@ import {
   worktreeWorkspaceKey
 } from '../../shared/workspace-scope'
 import { inspectSetupScriptImportCandidates } from '../../shared/setup-script-imports'
+import { MAX_ORCA_YAML_BYTES, MAX_ORCA_YAML_CODE_UNITS } from '../../shared/orca-yaml-file-limit'
 import { getProjectHostSetupWorktreeMeta } from '../../shared/project-host-setup-projection'
+import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
 import { deleteWorktreeHistoryDir } from '../terminal-history'
 import type {
   AutomationWorkspaceProvenance,
@@ -59,6 +61,8 @@ import {
   getEffectiveHooks,
   getEffectiveHooksFromConfig,
   getSetupRunnerEnvVars,
+  MAX_HOOK_GITIGNORE_BYTES,
+  MAX_ISSUE_COMMAND_BYTES,
   loadHooks,
   parseOrcaYaml,
   readIssueCommand,
@@ -103,6 +107,12 @@ import {
   resolveAutomationWorkspaceProvenance
 } from '../automations/workspace-provenance'
 import { shouldEmitBoundedWarning } from './bounded-warning-dedupe'
+import { readFilesystemProviderBoundedText } from '../filesystem-provider-bounded-text'
+import {
+  readSetupScriptImportFile,
+  SETUP_SCRIPT_IMPORT_FILE_MAX_BYTES,
+  SETUP_SCRIPT_IMPORT_MAX_CODE_UNITS
+} from '../setup-script-import-file'
 
 type CreateWorktreeArgsWithSystemProvenance = CreateWorktreeArgs & {
   automationProvenance?: AutomationWorkspaceProvenance
@@ -348,8 +358,12 @@ async function getArchiveHooksForRemoval(repo: Repo): Promise<OrcaHooks | null> 
   }
 
   try {
-    const result = await fsProvider.readFile(joinWorktreeRelativePath(repo.path, 'orca.yaml'))
-    const yamlHooks = result.isBinary ? null : parseOrcaYaml(result.content)
+    const result = await readFilesystemProviderBoundedText(
+      fsProvider,
+      joinWorktreeRelativePath(repo.path, 'orca.yaml'),
+      { maxBytes: MAX_ORCA_YAML_BYTES, maxCodeUnits: MAX_ORCA_YAML_CODE_UNITS }
+    )
+    const yamlHooks = result.kind === 'text' ? parseOrcaYaml(result.content) : null
     return getEffectiveHooksFromConfig(repo, yamlHooks)
   } catch {
     return getEffectiveHooksFromConfig(repo, null)
@@ -738,7 +752,7 @@ function buildDetectedGitWorktrees(
     repo.path,
     ...liveWorktrees.map((worktree) => worktree.path)
   ])
-  return liveWorktrees.map((gitWorktree) => {
+  const detected = liveWorktrees.map((gitWorktree) => {
     const worktreeId = `${repo.id}::${gitWorktree.path}`
     let meta = store.getWorktreeMeta(worktreeId)
     const worktree = mergeWorktree(repo.id, gitWorktree, meta, repo.displayName)
@@ -766,6 +780,7 @@ function buildDetectedGitWorktrees(
       agentScratchWorktreePathMatcher
     })
   })
+  return projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
 }
 
 function stampAndMergeVisibleDetectedWorktree(
@@ -959,7 +974,7 @@ function buildDisconnectedDetectedWorktrees(
     repo.path,
     ...worktrees.map((worktree) => worktree.path)
   ])
-  return worktrees.map((worktree) => {
+  const detected = worktrees.map((worktree) => {
     const meta = store.getWorktreeMeta(worktree.id)
     const detected = toDetectedWorktree({
       repo,
@@ -972,6 +987,7 @@ function buildDisconnectedDetectedWorktrees(
     })
     return applyMetadataFallbackVisibility(detected)
   })
+  return projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
 }
 
 export function registerWorktreeHandlers(
@@ -1149,7 +1165,10 @@ export function registerWorktreeHandlers(
             repoId: repo.id,
             authoritative: true,
             source: 'git',
-            worktrees: buildFolderDetectedWorktrees(store, repo)
+            worktrees: projectResolvedWorktreeLineage(
+              buildFolderDetectedWorktrees(store, repo),
+              store.getAllWorktreeLineage?.() ?? {}
+            )
           }
         } else if (repo.connectionId) {
           const provider = getSshGitProvider(repo.connectionId)
@@ -2101,11 +2120,15 @@ export function registerWorktreeHandlers(
           return { status: 'error', hasHooks: false, hooks: null, mayNeedUpdate: false }
         }
         try {
-          const result = await fsProvider.readFile(joinWorktreeRelativePath(repo.path, 'orca.yaml'))
+          const result = await readFilesystemProviderBoundedText(
+            fsProvider,
+            joinWorktreeRelativePath(repo.path, 'orca.yaml'),
+            { maxBytes: MAX_ORCA_YAML_BYTES, maxCodeUnits: MAX_ORCA_YAML_CODE_UNITS }
+          )
           return {
             status: 'ok',
-            hasHooks: !result.isBinary,
-            hooks: result.isBinary ? null : parseOrcaYaml(result.content),
+            hasHooks: result.kind !== 'binary',
+            hooks: result.kind === 'text' ? parseOrcaYaml(result.content) : null,
             mayNeedUpdate: false
           }
         } catch (error) {
@@ -2163,15 +2186,18 @@ export function registerWorktreeHandlers(
             return null
           }
           try {
-            const result = await fsProvider.readFile(filePath)
-            return result.isBinary ? null : result.content
+            const result = await readFilesystemProviderBoundedText(fsProvider, filePath, {
+              maxBytes: SETUP_SCRIPT_IMPORT_FILE_MAX_BYTES,
+              maxCodeUnits: SETUP_SCRIPT_IMPORT_MAX_CODE_UNITS
+            })
+            return result.kind === 'text' ? result.content : null
           } catch {
             return null
           }
         }
 
         try {
-          return await readFile(filePath, 'utf-8')
+          return await readSetupScriptImportFile(filePath)
         } catch (error) {
           if (!isENOENT(error)) {
             console.warn('[hooks] Failed to inspect setup script import candidate:', error)
@@ -2241,18 +2267,26 @@ export function registerWorktreeHandlers(
         let localContent: string | null = null
         let sharedContent: string | null = null
         try {
-          const result = await fsProvider.readFile(issueCommandPath)
-          localContent = result.isBinary ? null : result.content.trim() || null
+          const result = await readFilesystemProviderBoundedText(fsProvider, issueCommandPath, {
+            maxBytes: MAX_ISSUE_COMMAND_BYTES,
+            maxCodeUnits: MAX_ISSUE_COMMAND_BYTES
+          })
+          localContent = result.kind === 'text' ? result.content.trim() || null : null
         } catch (error) {
           if (!isENOENT(error)) {
             status = 'error'
           }
         }
         try {
-          const result = await fsProvider.readFile(joinWorktreeRelativePath(repo.path, 'orca.yaml'))
-          sharedContent = result.isBinary
-            ? null
-            : parseOrcaYaml(result.content)?.issueCommand?.trim() || null
+          const result = await readFilesystemProviderBoundedText(
+            fsProvider,
+            joinWorktreeRelativePath(repo.path, 'orca.yaml'),
+            { maxBytes: MAX_ORCA_YAML_BYTES, maxCodeUnits: MAX_ORCA_YAML_CODE_UNITS }
+          )
+          sharedContent =
+            result.kind === 'text'
+              ? parseOrcaYaml(result.content)?.issueCommand?.trim() || null
+              : null
         } catch (error) {
           if (!isENOENT(error)) {
             status = 'error'
@@ -2303,8 +2337,14 @@ export function registerWorktreeHandlers(
         await fsProvider.createDir(joinWorktreeRelativePath(repo.path, '.orca'))
         const gitignorePath = joinWorktreeRelativePath(repo.path, '.gitignore')
         try {
-          const result = await fsProvider.readFile(gitignorePath)
-          if (!result.isBinary && !/^\.orca\/?$/m.test(result.content)) {
+          const result = await readFilesystemProviderBoundedText(fsProvider, gitignorePath, {
+            maxBytes: MAX_HOOK_GITIGNORE_BYTES,
+            maxCodeUnits: MAX_HOOK_GITIGNORE_BYTES
+          })
+          if (result.kind === 'oversized') {
+            throw new Error('Remote .gitignore exceeds the supported size limit')
+          }
+          if (result.kind === 'text' && !/^\.orca\/?$/m.test(result.content)) {
             const separator = result.content.endsWith('\n') ? '' : '\n'
             await fsProvider.writeFile(gitignorePath, `${result.content}${separator}.orca\n`)
           }

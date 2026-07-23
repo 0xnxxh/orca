@@ -77,6 +77,7 @@ import {
   resolveQuickCreateLinkedWorkItemPrompt
 } from '@/lib/linked-work-item-context'
 import { getLocalRepoProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
+import { captureDirectSshMutationExpectation } from '@/lib/ssh-mutation-expectation'
 import {
   buildLinearIssueLinkedWorkItem,
   getLinearLinkedWorkItemBranchName,
@@ -143,11 +144,13 @@ import {
   type ExecutionHostId
 } from '../../../shared/execution-host'
 import { getHostDisplayLabelOverrides } from '../../../shared/host-setting-overrides'
+import { mapWithConcurrency } from '../../../shared/map-with-concurrency'
 import { queueNewWorkspaceTerminalFocus } from '@/lib/new-workspace-terminal-focus'
 import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
 import { getSuggestedCreatureName } from '@/components/sidebar/worktree-name-suggestions'
 import type { SmartWorkspaceNameSelection } from '@/components/new-workspace/SmartWorkspaceNameField'
 import type { SmartNameMode } from '@/components/new-workspace/smart-workspace-source-results'
+
 import { getForkPushWarning } from './fork-push-warning'
 import {
   buildWorkspaceSourceSelection,
@@ -177,11 +180,14 @@ import {
   getComposerRepoWorktreeBranches
 } from './composer-branch-selection'
 import { isCurrentComposerDropOwner } from './composer-drop-owner'
+import { applyComposerNativeFileDrop } from './composer-native-file-drop'
 import {
   collectComposerDropUploadResult,
   shouldReportComposerDropUploadFailure
 } from './composer-drop-upload-result'
 import { translate } from '@/i18n/i18n'
+
+export const COMPOSER_PROJECT_LOOKUP_CONCURRENCY = 4
 
 export function canResolveFolderSmartGitHubSubmit({
   hasFolderSourceRepos
@@ -2064,8 +2070,10 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
 
       const item = isProjectGroupTarget
         ? (
-            await Promise.all(
-              folderSourceRepos.filter(isGitRepoKind).map((repo) =>
+            await mapWithConcurrency(
+              folderSourceRepos.filter(isGitRepoKind),
+              COMPOSER_PROJECT_LOOKUP_CONCURRENCY,
+              (repo) =>
                 lookupSmartGitHubSubmitItem({
                   repoPath: repo.path,
                   repoId: repo.id,
@@ -2078,7 +2086,6 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
                   workItem: lookupGitHubWorkItemForSource,
                   workItemByOwnerRepo: lookupGitHubWorkItemByOwnerRepoForSource
                 }).catch(() => null)
-              )
             )
           )
             .filter((candidate): candidate is GitHubWorkItem => candidate !== null)
@@ -2381,16 +2388,44 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         return { filePaths: [], folderPaths: [] }
       }
       const destinationDir = joinPath(targetRepoPath, '.orca/drops')
+      const sshExpectation = targetConnectionId
+        ? captureDirectSshMutationExpectation(
+            useAppStore.getState(),
+            targetConnectionId,
+            targetSettings?.activeRuntimeEnvironmentId
+          )
+        : {
+            expectedExecutionHostId: 'local' as const,
+            expectedSshTargetId: undefined,
+            expectedSshConnectionGeneration: undefined
+          }
+      const assertCurrent = targetConnectionId
+        ? () => {
+            const current = captureDirectSshMutationExpectation(
+              useAppStore.getState(),
+              targetConnectionId,
+              targetSettings?.activeRuntimeEnvironmentId
+            )
+            if (
+              current.expectedSshTargetId !== sshExpectation.expectedSshTargetId ||
+              current.expectedSshConnectionGeneration !==
+                sshExpectation.expectedSshConnectionGeneration
+            ) {
+              throw new Error('Attachment upload host changed; retry the upload.')
+            }
+          }
+        : undefined
       const { results } = await importExternalPathsToRuntime(
         {
           settings: targetSettings,
           worktreeId: targetRepoPath,
           worktreePath: targetRepoPath,
-          connectionId: targetConnectionId ?? undefined
+          connectionId: targetConnectionId ?? undefined,
+          ...sshExpectation
         },
         sourcePaths,
         destinationDir,
-        { ensureDestinationDir: true }
+        { ensureDestinationDir: true, assertCurrent }
       )
       const uploadResult = collectComposerDropUploadResult(results)
       if (shouldReportComposerDropUploadFailure(uploadResult, canReportFailure)) {
@@ -2473,26 +2508,25 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       if (!isCurrentComposerDropOwner(composerDropStack, instanceId)) {
         return
       }
-      void (async () => {
-        const isStillDropOwner = (): boolean =>
-          isCurrentComposerDropOwner(composerDropStack, instanceId)
-        const uploaded = await uploadComposerPathsRef.current(
-          data.paths,
-          selectedRepoSettingsRef.current,
-          connectionIdRef.current,
-          selectedRepoPathRef.current,
-          isStillDropOwner
-        )
-        if (!isStillDropOwner()) {
-          return
-        }
-        if (uploaded) {
-          addComposerAttachmentsRef.current(uploaded.filePaths)
-          insertComposerFolderPathsRef.current(uploaded.folderPaths)
-          return
-        }
-        await applyLocalComposerDropRef.current(data.paths, isStillDropOwner)
-      })()
+      const isStillDropOwner = (): boolean =>
+        isCurrentComposerDropOwner(composerDropStack, instanceId)
+      void applyComposerNativeFileDrop({
+        paths: data.paths,
+        isCurrentOwner: isStillDropOwner,
+        uploadPaths: (paths) =>
+          uploadComposerPathsRef.current(
+            paths,
+            selectedRepoSettingsRef.current,
+            connectionIdRef.current,
+            selectedRepoPathRef.current,
+            isStillDropOwner
+          ),
+        applyLocalPaths: applyLocalComposerDropRef.current,
+        addAttachments: addComposerAttachmentsRef.current,
+        insertFolderPaths: insertComposerFolderPathsRef.current,
+        onError: (error) =>
+          toast.error(error instanceof Error ? error.message : 'Failed to drop files.')
+      })
     })
     return () => {
       unsubscribe()

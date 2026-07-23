@@ -1,6 +1,6 @@
 import { join } from 'node:path'
-import { readFileSync, existsSync, readdirSync } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
+import { existsSync, opendirSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import type { SessionMeta } from './history-manager'
 import type { TerminalCheckpointFile, TerminalModes } from './types'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
@@ -9,6 +9,21 @@ import { decodeTerminalHistoryLog, LOG_HEADER_BYTES } from './terminal-history-l
 import { HeadlessEmulator } from './headless-emulator'
 import { PrioritySemaphore } from './priority-semaphore'
 import { ColdRestoreReplayWriter } from './cold-restore-replay-writer'
+import {
+  readTerminalHistoryBufferAsync,
+  readTerminalHistoryJson,
+  readTerminalHistoryJsonAsync
+} from './terminal-history-file-reader'
+import { detectColdRestoreFromLegacyScrollback } from './terminal-history-legacy-scrollback-restore'
+import {
+  TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES,
+  TERMINAL_HISTORY_LOG_MAX_BYTES,
+  TERMINAL_HISTORY_META_MAX_BYTES
+} from './terminal-history-file-limits'
+import {
+  retainNewestRestorableTerminalHistorySessions,
+  type RestorableTerminalHistorySession
+} from './terminal-history-restorable-retention'
 
 export type ColdRestoreInfo = {
   snapshotAnsi: string
@@ -21,8 +36,6 @@ export type ColdRestoreInfo = {
   modes: TerminalModes
 }
 
-const ALT_SCREEN_ON = '\x1b[?1049h'
-const ALT_SCREEN_OFF = '\x1b[?1049l'
 // Why: parallel pane mounts should interleave with main-process work without multiplying replay slices per turn.
 const coldRestoreReplaySemaphore = new PrioritySemaphore(1)
 
@@ -64,7 +77,10 @@ export class HistoryReader {
     let checkpoint: TerminalCheckpointFile | null = null
     if (checkpointExists) {
       try {
-        checkpoint = JSON.parse(await readFile(checkpointPath, 'utf-8'))
+        checkpoint = await readTerminalHistoryJsonAsync<TerminalCheckpointFile>(
+          checkpointPath,
+          TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES
+        )
       } catch {
         checkpoint = null
       }
@@ -87,7 +103,7 @@ export class HistoryReader {
     if (!checkpoint) {
       // Why: backward compatibility with pre-checkpoint sessions, and corrupt
       // checkpoints — the old scrollback.bin is the best remaining data.
-      return await this.detectColdRestoreFromScrollback(sessionId, meta)
+      return await detectColdRestoreFromLegacyScrollback(this.basePath, sessionId, meta)
     }
 
     return this.coldRestoreInfoFromSnapshot(checkpoint, checkpoint.cwd, meta)
@@ -98,31 +114,55 @@ export class HistoryReader {
       return []
     }
 
-    let entries: { isDirectory(): boolean; name: string }[]
+    let directory: ReturnType<typeof opendirSync>
     try {
-      entries = readdirSync(this.basePath, { withFileTypes: true })
+      directory = opendirSync(this.basePath)
     } catch {
       return []
     }
-    const restorable: string[] = []
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        continue
-      }
-      let sessionId: string
-      try {
-        sessionId = decodeURIComponent(entry.name)
-      } catch {
-        continue
-      }
-      const meta = this.readMeta(sessionId)
-      if (meta && meta.endedAt === null) {
-        restorable.push(sessionId)
+    const sessions = function* (
+      reader: HistoryReader
+    ): Generator<RestorableTerminalHistorySession> {
+      let order = 0
+      while (true) {
+        const entry = directory.readSync()
+        if (!entry) {
+          return
+        }
+        if (!entry.isDirectory()) {
+          continue
+        }
+        let sessionId: string
+        try {
+          sessionId = decodeURIComponent(entry.name)
+        } catch {
+          continue
+        }
+        const meta = reader.readMeta(sessionId)
+        if (meta && meta.endedAt === null) {
+          const parsedStartedAt = Date.parse(meta.startedAt)
+          yield {
+            sessionId,
+            startedAtMs: Number.isFinite(parsedStartedAt) ? parsedStartedAt : 0,
+            order
+          }
+          order += 1
+        }
       }
     }
 
-    return restorable
+    try {
+      return retainNewestRestorableTerminalHistorySessions(sessions(this))
+    } catch {
+      return []
+    } finally {
+      try {
+        directory.closeSync()
+      } catch {
+        // Best effort after a directory read failure.
+      }
+    }
   }
 
   // Why a scratch emulator: replaying base + raw records through the same
@@ -148,7 +188,7 @@ export class HistoryReader {
     try {
       let logBuffer: Buffer
       try {
-        logBuffer = await readFile(logPath)
+        logBuffer = await readTerminalHistoryBufferAsync(logPath, TERMINAL_HISTORY_LOG_MAX_BYTES)
       } catch {
         return null
       }
@@ -251,83 +291,9 @@ export class HistoryReader {
       return null
     }
     try {
-      return JSON.parse(readFileSync(metaPath, 'utf-8'))
+      return readTerminalHistoryJson<SessionMeta>(metaPath, TERMINAL_HISTORY_META_MAX_BYTES)
     } catch {
       return null
     }
-  }
-
-  // Why: handles the upgrade transition where sessions created before the
-  // checkpoint migration still have scrollback.bin but no checkpoint.json.
-  private async detectColdRestoreFromScrollback(
-    sessionId: string,
-    meta: SessionMeta
-  ): Promise<ColdRestoreInfo | null> {
-    const scrollbackPath = join(
-      this.basePath,
-      getHistorySessionDirName(sessionId),
-      'scrollback.bin'
-    )
-    if (!existsSync(scrollbackPath)) {
-      return null
-    }
-    try {
-      const scrollback = await readFile(scrollbackPath, 'utf-8')
-      const truncated = this.truncateAltScreen(scrollback)
-      return {
-        snapshotAnsi: truncated,
-        scrollbackAnsi: truncated,
-        rehydrateSequences: '',
-        cwd: meta.cwd,
-        cols: meta.cols,
-        rows: meta.rows,
-        modes: {
-          bracketedPaste: false,
-          mouseTracking: false,
-          applicationCursor: false,
-          alternateScreen: false
-        }
-      }
-    } catch {
-      return null
-    }
-  }
-
-  // Why: raw scrollback from TUI sessions (vim, less, htop) contains
-  // alternate-screen switches that produce garbled output when replayed.
-  // Truncate before the outermost unmatched alt-screen-on so only normal
-  // terminal output is restored.
-  private truncateAltScreen(data: string): string {
-    let depth = 0
-    let outermostUnmatchedOnIdx = -1
-
-    let searchFrom = 0
-    while (searchFrom < data.length) {
-      const onIdx = data.indexOf(ALT_SCREEN_ON, searchFrom)
-      const offIdx = data.indexOf(ALT_SCREEN_OFF, searchFrom)
-
-      if (onIdx === -1 && offIdx === -1) {
-        break
-      }
-
-      if (onIdx !== -1 && (offIdx === -1 || onIdx < offIdx)) {
-        if (depth === 0) {
-          outermostUnmatchedOnIdx = onIdx
-        }
-        depth++
-        searchFrom = onIdx + ALT_SCREEN_ON.length
-      } else {
-        if (depth > 0) {
-          depth--
-        }
-        searchFrom = offIdx + ALT_SCREEN_OFF.length
-      }
-    }
-
-    if (depth > 0 && outermostUnmatchedOnIdx !== -1) {
-      return data.slice(0, outermostUnmatchedOnIdx)
-    }
-
-    return data
   }
 }

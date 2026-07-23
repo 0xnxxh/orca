@@ -82,6 +82,7 @@ import {
 import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { keybindingMatchesAction } from '../../../../shared/keybindings'
+import { forEachWithConcurrency } from '../../../../shared/map-with-concurrency'
 import {
   isWebClientLocation,
   useSettingsNavigationMetadata
@@ -173,6 +174,7 @@ const SETTINGS_NAV_GROUP_BY_ID = new Map<string, SettingsNavGroupDefinition>(
 
 const SHORTCUTS_ESCAPE_CONFIRM_TOAST_ID = 'shortcuts-escape-confirm'
 const SHORTCUTS_ESCAPE_CONFIRM_WINDOW_MS = 2200
+const REPO_HOOK_PROBE_CONCURRENCY = 4
 
 function getSettingsSectionId(
   pane: SettingsNavTarget,
@@ -280,7 +282,9 @@ function Settings(): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
   const keybindings = useAppStore((s) => s.keybindings)
   const updateSettings = useAppStore((s) => s.updateSettings)
-  const switchRuntimeEnvironment = useAppStore((s) => s.switchRuntimeEnvironment)
+  const setActiveRuntimeEnvironmentPreference = useAppStore(
+    (s) => s.setActiveRuntimeEnvironmentPreference
+  )
   const fetchSettings = useAppStore((s) => s.fetchSettings)
   const fetchKeybindings = useAppStore((s) => s.fetchKeybindings)
   const closeSettingsPage = useAppStore((s) => s.closeSettingsPage)
@@ -293,6 +297,7 @@ function Settings(): React.JSX.Element {
   const settingsNavigationTarget = useAppStore((s) => s.settingsNavigationTarget)
   const clearSettingsTarget = useAppStore((s) => s.clearSettingsTarget)
   const settingsProjectHostSelection = useAppStore((s) => s.settingsProjectHostSelection)
+  const settingsProjectSetupSelection = useAppStore((s) => s.settingsProjectSetupSelection)
   const setSettingsProjectHostSelection = useAppStore((s) => s.setSettingsProjectHostSelection)
   const settingsSearchInputQuery = useAppStore((s) => s.settingsSearchInputQuery)
   const settingsSearchQuery = useAppStore((s) => s.settingsSearchQuery)
@@ -871,14 +876,21 @@ function Settings(): React.JSX.Element {
       const repo = getSettingsProjectHostRepo(
         settingsProject,
         repos,
-        settingsProjectHostSelection[settingsProject.projectId]
+        settingsProjectHostSelection[settingsProject.projectId],
+        settingsProjectSetupSelection[settingsProject.projectId]
       )
       if (repo) {
         reposByHostIdentity.set(getRepoHostIdentity(repo), repo)
       }
     }
     return [...reposByHostIdentity.values()]
-  }, [neededSectionIds, repos, settingsProjectHostSelection, settingsProjectList])
+  }, [
+    neededSectionIds,
+    repos,
+    settingsProjectHostSelection,
+    settingsProjectList,
+    settingsProjectSetupSelection
+  ])
 
   useEffect(() => {
     const repoHostIdentitySet = new Set(repos.map(getRepoHostIdentity))
@@ -899,61 +911,62 @@ function Settings(): React.JSX.Element {
     const requestSeq = ++repoHooksRequestSeqRef.current
     const liveRepoHostIdentities = new Set(repos.map(getRepoHostIdentity))
 
-    void Promise.all(
-      neededRepos.map(async (repo) => {
-        const repoHostIdentity = getRepoHostIdentity(repo)
-        if (isFolderRepo(repo)) {
-          setRepoHooksMap((previous) => {
-            if (previous[repoHostIdentity]) {
-              return previous
-            }
-            return {
-              ...previous,
-              [repoHostIdentity]: { hasHooks: false, hooks: null, mayNeedUpdate: false }
-            }
-          })
+    void forEachWithConcurrency(neededRepos, REPO_HOOK_PROBE_CONCURRENCY, async (repo) => {
+      if (stale || requestSeq !== repoHooksRequestSeqRef.current) {
+        return
+      }
+      const repoHostIdentity = getRepoHostIdentity(repo)
+      if (isFolderRepo(repo)) {
+        setRepoHooksMap((previous) => {
+          if (previous[repoHostIdentity]) {
+            return previous
+          }
+          return {
+            ...previous,
+            [repoHostIdentity]: { hasHooks: false, hooks: null, mayNeedUpdate: false }
+          }
+        })
+        return
+      }
+      try {
+        const hostId = getRepoExecutionHostId(repo)
+        const parsedHost = parseExecutionHostId(hostId)
+        const result = await checkRuntimeHooks(
+          {
+            activeRuntimeEnvironmentId:
+              parsedHost?.kind === 'runtime' ? parsedHost.environmentId : null
+          },
+          repo.id,
+          hostId
+        )
+        if (stale || requestSeq !== repoHooksRequestSeqRef.current) {
           return
         }
-        try {
-          const hostId = getRepoExecutionHostId(repo)
-          const parsedHost = parseExecutionHostId(hostId)
-          const result = await checkRuntimeHooks(
-            {
-              activeRuntimeEnvironmentId:
-                parsedHost?.kind === 'runtime' ? parsedHost.environmentId : null
-            },
-            repo.id,
-            hostId
-          )
-          if (stale || requestSeq !== repoHooksRequestSeqRef.current) {
-            return
+        setRepoHooksMap((previous) => {
+          if (!liveRepoHostIdentities.has(repoHostIdentity)) {
+            return previous
           }
-          setRepoHooksMap((previous) => {
-            if (!liveRepoHostIdentities.has(repoHostIdentity)) {
-              return previous
-            }
-            return { ...previous, [repoHostIdentity]: result }
-          })
-        } catch {
-          // Keep last known value on transient failures.
-          if (stale || requestSeq !== repoHooksRequestSeqRef.current) {
-            return
-          }
-          setRepoHooksMap((previous) => {
-            if (!liveRepoHostIdentities.has(repoHostIdentity)) {
-              return previous
-            }
-            if (previous[repoHostIdentity]) {
-              return previous
-            }
-            return {
-              ...previous,
-              [repoHostIdentity]: { hasHooks: false, hooks: null, mayNeedUpdate: false }
-            }
-          })
+          return { ...previous, [repoHostIdentity]: result }
+        })
+      } catch {
+        // Keep last known value on transient failures.
+        if (stale || requestSeq !== repoHooksRequestSeqRef.current) {
+          return
         }
-      })
-    )
+        setRepoHooksMap((previous) => {
+          if (!liveRepoHostIdentities.has(repoHostIdentity)) {
+            return previous
+          }
+          if (previous[repoHostIdentity]) {
+            return previous
+          }
+          return {
+            ...previous,
+            [repoHostIdentity]: { hasHooks: false, hooks: null, mayNeedUpdate: false }
+          }
+        })
+      }
+    })
 
     return () => {
       stale = true
@@ -1604,7 +1617,7 @@ function Settings(): React.JSX.Element {
                   {isSectionMounted('servers') ? (
                     <RuntimeEnvironmentsPane
                       settings={settings}
-                      switchRuntimeEnvironment={switchRuntimeEnvironment}
+                      setActiveRuntimeEnvironmentPreference={setActiveRuntimeEnvironmentPreference}
                       canGeneratePairingUrl={!isWebClient}
                       allowLocalRuntime={!isWebClient}
                       addServerIntentSignal={remoteServerAddIntentSignal}
@@ -1720,7 +1733,8 @@ function Settings(): React.JSX.Element {
                   const repo = getSettingsProjectHostRepo(
                     settingsProject,
                     repos,
-                    settingsProjectHostSelection[settingsProject.projectId]
+                    settingsProjectHostSelection[settingsProject.projectId],
+                    settingsProjectSetupSelection[settingsProject.projectId]
                   )
                   if (!repo) {
                     return null
@@ -1753,6 +1767,9 @@ function Settings(): React.JSX.Element {
                           updateRepo={updateRepo}
                           removeProject={() => void removeProjectAllHosts(settingsProject.setups)}
                           project={project}
+                          selectedProjectSetupId={
+                            settingsProjectSetupSelection[settingsProject.projectId]
+                          }
                           isLocalWindowsProject={
                             getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID &&
                             isWindowsTerminalHost
