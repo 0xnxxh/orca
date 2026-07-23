@@ -112,26 +112,34 @@ export function registerRuntimeHandlers(runtime: OrcaRuntimeService): void {
     // Electron try to structured-clone a Promise — "An object could not
     // be cloned" error — and the renderer's restoreTerminalFit() rejected
     // with no useful info.
-    // Why: dedupe concurrent clicks, but expire a wedged reclaim so a later retry can recover.
+    // Why: keep one underlying reclaim per PTY even after callers time out;
+    // layout serialization means a retry cannot bypass the wedged operation.
     let pending = pendingTerminalFitRestores.get(args.ptyId)
     if (!pending) {
       try {
-        pending = boundTerminalFitRestore(runtime.reclaimTerminalForDesktop(args.ptyId))
+        let tracked!: Promise<boolean>
+        const clearTrackedRestore = (): void => {
+          if (pendingTerminalFitRestores.get(args.ptyId) === tracked) {
+            pendingTerminalFitRestores.delete(args.ptyId)
+          }
+        }
+        tracked = runtime.reclaimTerminalForDesktop(args.ptyId).then(
+          (restored) => {
+            clearTrackedRestore()
+            return restored
+          },
+          () => {
+            clearTrackedRestore()
+            return false
+          }
+        )
+        pending = tracked
         pendingTerminalFitRestores.set(args.ptyId, pending)
       } catch {
         return { restored: false }
       }
     }
-    try {
-      const reclaimed = await pending
-      return { restored: reclaimed }
-    } catch {
-      return { restored: false }
-    } finally {
-      if (pendingTerminalFitRestores.get(args.ptyId) === pending) {
-        pendingTerminalFitRestores.delete(args.ptyId)
-      }
-    }
+    return { restored: await boundTerminalFitRestore(pending) }
   })
 
   ipcMain.removeHandler('runtime:reclaimBrowserForDesktop')

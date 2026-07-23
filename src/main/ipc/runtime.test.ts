@@ -141,13 +141,16 @@ describe('registerRuntimeHandlers', () => {
     await expect(afterSettlement).resolves.toEqual({ restored: false })
   })
 
-  it('expires a wedged reclaim so a later retry can recover', async () => {
+  it('bounds retries without accumulating reclaim waiters for one PTY', async () => {
     vi.useFakeTimers()
     try {
-      const reclaimTerminalForDesktop = vi
-        .fn<() => Promise<boolean>>()
-        .mockReturnValueOnce(new Promise(() => {}))
-        .mockResolvedValueOnce(true)
+      let finishRestore!: (restored: boolean) => void
+      const reclaimTerminalForDesktop = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishRestore = resolve
+          })
+      )
       registerRuntimeHandlers({
         syncWindowGraph: vi.fn(),
         getStatus: vi.fn(),
@@ -161,10 +164,15 @@ describe('registerRuntimeHandlers', () => {
       await vi.advanceTimersByTimeAsync(TERMINAL_FIT_RESTORE_DEADLINE_MS)
       await expect(first).resolves.toEqual({ restored: false })
 
-      await expect(handler({ sender: {} }, { ptyId: 'pty-wedged' })).resolves.toEqual({
-        restored: true
-      })
+      const retry = handler({ sender: {} }, { ptyId: 'pty-wedged' })
+      expect(reclaimTerminalForDesktop).toHaveBeenCalledTimes(1)
+      finishRestore(true)
+      await expect(retry).resolves.toEqual({ restored: true })
+
+      const afterSettlement = handler({ sender: {} }, { ptyId: 'pty-wedged' })
       expect(reclaimTerminalForDesktop).toHaveBeenCalledTimes(2)
+      finishRestore(false)
+      await expect(afterSettlement).resolves.toEqual({ restored: false })
       expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()
