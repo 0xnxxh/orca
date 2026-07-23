@@ -70,6 +70,7 @@ export function useMobileNativeChatImageAttachments({
     activeHandleRef,
     deviceTokenRef,
     inputLeaseReadyRef,
+    attachmentScopeKey,
     sendText,
     getSendableImages: getSendableChatImages,
     markImagesPasted: markPendingChatImagesPasted,

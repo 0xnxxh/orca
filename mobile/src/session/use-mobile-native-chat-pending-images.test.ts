@@ -243,6 +243,35 @@ describe('useMobileNativeChatPendingImages', () => {
     expect(onSuccess).not.toHaveBeenCalled()
   })
 
+  it('does not attach a picker result after switching away and back to the same target', async () => {
+    let resolvePick: (image: { base64: string; uri: string }) => void = () => {}
+    pickMobileImage.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePick = resolve
+      })
+    )
+    render('t1')
+
+    let attachDone: Promise<void> = Promise.resolve()
+    act(() => {
+      attachDone = state!.attachPendingChatImage('library')
+    })
+    act(() => {
+      renderer!.update(createElement(Harness, { activeHandle: 't2' }))
+    })
+    act(() => {
+      renderer!.update(createElement(Harness, { activeHandle: 't1' }))
+    })
+    await act(async () => {
+      resolvePick({ base64: 'AAAA', uri: 'file:///a.jpg' })
+      await attachDone
+    })
+
+    expect(state!.pendingChatImages).toEqual([])
+    expect(saveMobileClipboardImageAsTempFile).not.toHaveBeenCalled()
+    expect(onSuccess).not.toHaveBeenCalled()
+  })
+
   it('does not report upload success after the pending image was removed', async () => {
     pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
     let resolveUpload: (path: string) => void = () => {}

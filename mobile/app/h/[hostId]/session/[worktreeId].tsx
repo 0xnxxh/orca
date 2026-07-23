@@ -1126,10 +1126,7 @@ export default function SessionScreen() {
     },
     [clearToastHideTimer]
   )
-  const showNativeChatSendError = useCallback(
-    (message: string) => showToast(message, 1600),
-    [showToast]
-  )
+  const showChatSendError = useCallback((message: string) => showToast(message, 1600), [showToast])
   const getActiveWorktreeConnectionId = useCallback(async (): Promise<string | null> => {
     // Why: the floating workspace always runs on the paired host itself, never an SSH repo target.
     if (!client || isFloatingWorkspaceRoute) {
@@ -1174,7 +1171,7 @@ export default function SessionScreen() {
     },
     nativeChatTranscriptIsLocalReadable,
     nativeChatInputLeaseReady,
-    onSendError: showNativeChatSendError
+    onSendError: showChatSendError
   })
   const { toggleTabChatView, showNativeChat, showNativeChatRef } = nativeChatController
 

@@ -20,6 +20,7 @@ const onSendError = vi.fn()
 let sendableImages: MobileNativeChatSendImage[] = []
 let leaseReady = true
 let activeHandle = 'term-1'
+let attachmentScopeKey = 'scope-1'
 
 describe('useMobileNativeChatImageSend', () => {
   let renderer: ReactTestRenderer | null = null
@@ -32,6 +33,7 @@ describe('useMobileNativeChatImageSend', () => {
     sendableImages = []
     leaseReady = true
     activeHandle = 'term-1'
+    attachmentScopeKey = 'scope-1'
     sendRequest.mockResolvedValue({ ok: true, result: { send: { accepted: true } } })
     sendText.mockResolvedValue(true)
     markImagesPasted.mockImplementation((ids: readonly string[]) => {
@@ -67,6 +69,7 @@ describe('useMobileNativeChatImageSend', () => {
           return leaseReady
         }
       },
+      attachmentScopeKey,
       sendText,
       getSendableImages: () => sendableImages,
       markImagesPasted,
@@ -79,6 +82,13 @@ describe('useMobileNativeChatImageSend', () => {
   function render(): void {
     act(() => {
       renderer = create(createElement(Harness))
+    })
+  }
+
+  function switchScope(scopeKey: string): void {
+    attachmentScopeKey = scopeKey
+    act(() => {
+      renderer!.update(createElement(Harness))
     })
   }
 
@@ -198,6 +208,28 @@ describe('useMobileNativeChatImageSend', () => {
     expect(sendText).not.toHaveBeenCalled()
   })
 
+  it('does not resume an in-flight send after switching away and back to the same target', async () => {
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
+    let resolvePaste: (result: unknown) => void = () => {}
+    sendRequest.mockReturnValue(
+      new Promise((resolve) => {
+        resolvePaste = resolve
+      })
+    )
+    render()
+
+    const sendResult = send!('caption')
+    await vi.advanceTimersByTimeAsync(0)
+    switchScope('scope-2')
+    switchScope('scope-1')
+    resolvePaste({ ok: true, result: { send: { accepted: true } } })
+
+    await expect(sendResult).resolves.toBe(false)
+    expect(markImagesPasted).toHaveBeenCalledWith(['a'])
+    expect(sendText).not.toHaveBeenCalled()
+    expect(onSendError).toHaveBeenCalledWith('Message not sent (disconnected)')
+  })
+
   it('preserves ambiguous image state without reporting definite failure or pasting twice', async () => {
     sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
     sendRequest.mockRejectedValueOnce(markRpcDeliveryUnknown(new Error('ack lost')))
@@ -270,5 +302,21 @@ describe('useMobileNativeChatImageSend', () => {
 
     await expect(sendResult).resolves.toBe(true)
     expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not continue a delayed send or report against UI after unmount', async () => {
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
+    render()
+
+    const sendResult = send!('caption')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    act(() => renderer!.unmount())
+    renderer = null
+    await vi.runAllTimersAsync()
+
+    await expect(sendResult).resolves.toBe(false)
+    expect(sendText).not.toHaveBeenCalled()
+    expect(onSendError).not.toHaveBeenCalled()
   })
 })

@@ -105,12 +105,16 @@ export function useMobileNativeChatPendingImages({
   // Why: pending images target the active terminal's agent; a tab/worktree
   // switch would silently re-aim them, so drop instead (adjust during render,
   // not in an effect, so a send in the same frame can't read stale entries).
-  const lastTarget = useRef({ client, attachmentScopeKey })
+  const targetState = useRef({ client, attachmentScopeKey, generation: 0 })
   if (
-    lastTarget.current.client !== client ||
-    lastTarget.current.attachmentScopeKey !== attachmentScopeKey
+    targetState.current.client !== client ||
+    targetState.current.attachmentScopeKey !== attachmentScopeKey
   ) {
-    lastTarget.current = { client, attachmentScopeKey }
+    targetState.current = {
+      client,
+      attachmentScopeKey,
+      generation: targetState.current.generation + 1
+    }
     if (entriesRef.current.length > 0) {
       entriesRef.current = []
       setEntries([])
@@ -124,10 +128,12 @@ export function useMobileNativeChatPendingImages({
       }
       const targetClient = client
       const targetScopeKey = attachmentScopeKey
+      const targetGeneration = targetState.current.generation
       const targetIsCurrent = (): boolean =>
         mountedRef.current &&
-        lastTarget.current.client === targetClient &&
-        lastTarget.current.attachmentScopeKey === targetScopeKey
+        targetState.current.client === targetClient &&
+        targetState.current.attachmentScopeKey === targetScopeKey &&
+        targetState.current.generation === targetGeneration
       let entryId: string | null = null
       let uploadController: AbortController | null = null
       try {

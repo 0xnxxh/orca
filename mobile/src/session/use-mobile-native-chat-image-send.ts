@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import {
   NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS,
   NATIVE_CHAT_SUBMIT_DELAY_MS
@@ -17,6 +17,7 @@ type UseMobileNativeChatImageSendArgs = {
   readonly activeHandleRef: CurrentRef<string | null>
   readonly deviceTokenRef: CurrentRef<string | null>
   readonly inputLeaseReadyRef: CurrentRef<boolean>
+  readonly attachmentScopeKey: string
   /** The plain text send (controller-owned: optimistic bubble + draft clear). */
   readonly sendText: (text: string) => Promise<boolean>
   readonly getSendableImages: () => readonly MobileNativeChatSendImage[]
@@ -38,12 +39,36 @@ export function useMobileNativeChatImageSend({
   activeHandleRef,
   deviceTokenRef,
   inputLeaseReadyRef,
+  attachmentScopeKey,
   sendText,
   getSendableImages,
   markImagesPasted,
   consumeImages,
   onSendError
 }: UseMobileNativeChatImageSendArgs): (text: string) => Promise<boolean> {
+  const mountedRef = useRef(false)
+  const targetStateRef = useRef({
+    client: clientRef.current,
+    attachmentScopeKey,
+    generation: 0
+  })
+  if (
+    targetStateRef.current.client !== clientRef.current ||
+    targetStateRef.current.attachmentScopeKey !== attachmentScopeKey
+  ) {
+    targetStateRef.current = {
+      client: clientRef.current,
+      attachmentScopeKey,
+      generation: targetStateRef.current.generation + 1
+    }
+  }
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
   return useCallback(
     async (text: string): Promise<boolean> => {
       const images = getSendableImages()
@@ -53,14 +78,26 @@ export function useMobileNativeChatImageSend({
       const hasText = text.trim().length > 0
       const client = clientRef.current
       const terminal = activeHandleRef.current
+      const targetGeneration = targetStateRef.current.generation
+      if (!mountedRef.current) {
+        return false
+      }
       if (!client || !terminal || !inputLeaseReadyRef.current) {
         onSendError('Message not sent (disconnected)')
         return false
       }
-      const targetIsCurrent = (): boolean =>
+      const targetIdentityIsCurrent = (): boolean =>
+        mountedRef.current &&
+        targetStateRef.current.generation === targetGeneration &&
         clientRef.current === client &&
-        activeHandleRef.current === terminal &&
-        inputLeaseReadyRef.current
+        activeHandleRef.current === terminal
+      const targetIsReady = (): boolean => targetIdentityIsCurrent() && inputLeaseReadyRef.current
+      const reportTargetChanged = (): false => {
+        if (mountedRef.current) {
+          onSendError('Message not sent (disconnected)')
+        }
+        return false
+      }
       const mobileClient = deviceTokenRef.current
         ? { id: deviceTokenRef.current, type: 'mobile' as const }
         : undefined
@@ -72,9 +109,8 @@ export function useMobileNativeChatImageSend({
         if (image.status === 'pasted') {
           continue
         }
-        if (!targetIsCurrent()) {
-          onSendError('Message not sent (disconnected)')
-          return false
+        if (!targetIsReady()) {
+          return reportTargetChanged()
         }
         const outcome = await sendMobileNativeChatMessageWithOutcome({
           client,
@@ -84,7 +120,9 @@ export function useMobileNativeChatImageSend({
           ...(mobileClient ? { mobileClient } : {})
         })
         if (outcome === 'rejected') {
-          onSendError('Message not sent')
+          if (targetIdentityIsCurrent()) {
+            onSendError('Message not sent')
+          }
           return false
         }
         // Why: keep paths already written to the hidden TUI distinct from ready
@@ -92,10 +130,16 @@ export function useMobileNativeChatImageSend({
         markImagesPasted([image.id])
         pastedImageIds.push(image.id)
         pastedImageThisSend = true
+        if (!targetIdentityIsCurrent()) {
+          return reportTargetChanged()
+        }
         if (outcome === 'unknown') {
           await waitForNativeChatInputSettle(
             hasText ? NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS : NATIVE_CHAT_SUBMIT_DELAY_MS
           )
+          if (!targetIdentityIsCurrent()) {
+            return false
+          }
           onSendError('Image delivery unconfirmed — check terminal before retrying')
           // Match text-send ambiguity: preserve retry state without also showing
           // the contradictory inline "Message not sent" failure.
@@ -108,12 +152,11 @@ export function useMobileNativeChatImageSend({
         }
         // Why: image RPCs can outlive a tab switch; never send the caption to a
         // different terminal than the one that received the image paths.
-        if (!targetIsCurrent()) {
-          onSendError('Message not sent (disconnected)')
-          return false
+        if (!targetIsReady()) {
+          return reportTargetChanged()
         }
         const accepted = await sendText(text)
-        if (accepted) {
+        if (accepted && targetIdentityIsCurrent()) {
           consumeImages(pastedImageIds)
         }
         return accepted
@@ -122,9 +165,8 @@ export function useMobileNativeChatImageSend({
       if (pastedImageThisSend) {
         await waitForNativeChatInputSettle(NATIVE_CHAT_SUBMIT_DELAY_MS)
       }
-      if (!targetIsCurrent()) {
-        onSendError('Message not sent (disconnected)')
-        return false
+      if (!targetIsReady()) {
+        return reportTargetChanged()
       }
       const outcome = await sendMobileNativeChatMessageWithOutcome({
         client,
@@ -133,6 +175,9 @@ export function useMobileNativeChatImageSend({
         enter: true,
         ...(mobileClient ? { mobileClient } : {})
       })
+      if (!targetIdentityIsCurrent()) {
+        return false
+      }
       if (outcome === 'rejected') {
         onSendError('Message not sent')
         return false
@@ -145,6 +190,7 @@ export function useMobileNativeChatImageSend({
     },
     [
       activeHandleRef,
+      attachmentScopeKey,
       clientRef,
       consumeImages,
       deviceTokenRef,
