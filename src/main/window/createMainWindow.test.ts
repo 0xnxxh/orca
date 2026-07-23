@@ -375,6 +375,7 @@ describe('createMainWindow', () => {
 
   it('runs a full repaint when the renderer relays a genuine window reveal (STA-2383)', () => {
     vi.useFakeTimers()
+    const windowHandlers = new Map<string, ((...args: any[]) => void)[]>()
     let windowSize: [number, number] = [1200, 800]
     const webContents = {
       on: vi.fn(),
@@ -390,7 +391,11 @@ describe('createMainWindow', () => {
     }
     const browserWindowInstance = {
       webContents,
-      on: vi.fn(),
+      on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+        const handlers = windowHandlers.get(event) ?? []
+        handlers.push(handler)
+        windowHandlers.set(event, handlers)
+      }),
       isDestroyed: vi.fn(() => false),
       isMaximized: vi.fn(() => false),
       isFullScreen: vi.fn(() => false),
@@ -426,6 +431,21 @@ describe('createMainWindow', () => {
     expect(browserWindowInstance.setSize).toHaveBeenNthCalledWith(1, 1201, 800)
     vi.advanceTimersByTime(32)
     expect(browserWindowInstance.setSize).toHaveBeenNthCalledWith(2, 1200, 800)
+
+    // Repeated reveal signals while a jiggle is active repaint but do not multiply terminal resizes.
+    revealHandler?.({ sender: webContents } as never)
+    revealHandler?.({ sender: webContents } as never)
+    expect(webContents.invalidate).toHaveBeenCalledTimes(3)
+    expect(browserWindowInstance.setSize).toHaveBeenNthCalledWith(3, 1201, 800)
+    expect(browserWindowInstance.setSize).toHaveBeenCalledTimes(3)
+
+    // A user resize that lands during the jiggle must not be rolled back to stale bounds.
+    windowSize = [1400, 900]
+    vi.advanceTimersByTime(32)
+    expect(browserWindowInstance.setSize).toHaveBeenCalledTimes(3)
+
+    windowHandlers.get('closed')?.[0]?.()
+    expect(ipcMain.removeListener).toHaveBeenCalledWith('ui:window-revealed', revealHandler)
   })
 
   it('supports all minus key variants for terminal zoom out', () => {

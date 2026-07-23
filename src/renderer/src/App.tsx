@@ -1364,6 +1364,9 @@ function App(): React.JSX.Element {
   // is clipped off-screen until a manual resize. Relay the genuine hidden→visible reveal so main
   // runs the same full repaint (size jiggle) that show/restore/resume get, recomputing the layout.
   useEffect(() => {
+    if (!isMac || isPairedWebClientWindow()) {
+      return
+    }
     const handler = (): void => {
       if (document.visibilityState !== 'visible') {
         return

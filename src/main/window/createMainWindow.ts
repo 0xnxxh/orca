@@ -66,7 +66,11 @@ function forceRepaint(window: BrowserWindow): void {
   window.setSize(width + 1, height)
   setTimeout(() => {
     if (!window.isDestroyed()) {
-      window.setSize(width, height)
+      const [currentWidth, currentHeight] = window.getSize()
+      // Why: a real user resize during the jiggle owns the final bounds.
+      if (currentWidth === width + 1 && currentHeight === height) {
+        window.setSize(width, height)
+      }
     }
     activeRepaintJiggles.delete(window)
   }, 32)
