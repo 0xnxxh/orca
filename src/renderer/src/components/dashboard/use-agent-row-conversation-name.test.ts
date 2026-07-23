@@ -56,6 +56,44 @@ describe('useAgentRowConversationName', () => {
     expect(useAgentRowConversationName(makeAgent({ rowSource: 'subagent' }))).toBeNull()
   })
 
+  it('does not inherit a same-tab lineage parent conversation name', () => {
+    const tabsByWorktree = new Proxy(
+      {},
+      {
+        get: () => {
+          throw new Error('same-tab child rows must not read the parent tab')
+        }
+      }
+    )
+    storeState.current = { settings: {}, tabsByWorktree }
+    expect(
+      useAgentRowConversationName(
+        makeAgent({
+          entry: {
+            prompt: 'child prompt',
+            orchestration: {
+              parentPaneKey: 'tab-1:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+            }
+          },
+          lineage: { depth: 1, isFirstSibling: true, isLastSibling: true, childCount: 0 }
+        } as Partial<DashboardAgentRow>)
+      )
+    ).toBeNull()
+  })
+
+  it('uses a lineage child conversation name when it owns a separate tab', () => {
+    const agent = makeAgent({
+      entry: {
+        prompt: 'child prompt',
+        orchestration: {
+          parentPaneKey: 'parent-tab:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        }
+      },
+      lineage: { depth: 1, isFirstSibling: true, isLastSibling: true, childCount: 0 }
+    } as Partial<DashboardAgentRow>)
+    expect(useAgentRowConversationName(agent)).toBe('Patient sync spike')
+  })
+
   it('indexes one immutable tab array once across rows', () => {
     let tabReads = 0
     const tabs = new Proxy(
