@@ -8,6 +8,8 @@ import type { CreateWorktreeResult, GitWorktreeInfo, Worktree } from '../../shar
 import * as localWorktreeFilesystem from '../local-worktree-filesystem'
 
 const ORIGINAL_PLATFORM = process.platform
+const TEST_MAX_HOOK_GITIGNORE_BYTES = 4 * 1024 * 1024
+const TEST_MAX_ISSUE_COMMAND_BYTES = 1024 * 1024
 const removeWorktreeLinkedPathsMock = vi.hoisted(() => vi.fn())
 const findExistingWorktreeSymlinkPathsMock = vi.hoisted(() => vi.fn())
 
@@ -194,6 +196,8 @@ vi.mock('../hooks', () => ({
   getEffectiveHooksFromConfig: getEffectiveHooksFromConfigMock,
   getDefaultTabsLaunch: getDefaultTabsLaunchMock,
   getSetupRunnerEnvVars: getSetupRunnerEnvVarsMock,
+  MAX_HOOK_GITIGNORE_BYTES: 4 * 1024 * 1024,
+  MAX_ISSUE_COMMAND_BYTES: 1024 * 1024,
   loadHooks: loadHooksMock,
   parseOrcaYaml: parseOrcaYamlMock,
   runHook: runHookMock,
@@ -3699,6 +3703,12 @@ describe('registerWorktreeHandlers', () => {
       ])
     }
     const fsProvider = {
+      stat: vi.fn(async (filePath: string) => {
+        if (filePath.endsWith('orca.yaml')) {
+          return { size: 32, type: 'file', mtime: 0 }
+        }
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }),
       readFile: vi.fn().mockResolvedValue({
         content: 'scripts:\n  setup: pnpm install\n',
         isBinary: false
@@ -7088,6 +7098,7 @@ describe('registerWorktreeHandlers', () => {
       })
     }
     const fsProvider = {
+      stat: vi.fn().mockResolvedValue({ size: 36, type: 'file', mtime: 0 }),
       readFile: vi.fn().mockResolvedValue({
         content: 'scripts:\n  archive: echo archived\n',
         isBinary: false
@@ -7165,6 +7176,7 @@ describe('registerWorktreeHandlers', () => {
       })
     }
     const fsProvider = {
+      stat: vi.fn().mockResolvedValue({ size: 36, type: 'file', mtime: 0 }),
       readFile: vi.fn().mockResolvedValue({
         content: 'scripts:\n  archive: echo archived\n',
         isBinary: false
@@ -7224,6 +7236,7 @@ describe('registerWorktreeHandlers', () => {
       })
     }
     const fsProvider = {
+      stat: vi.fn().mockResolvedValue({ size: 36, type: 'file', mtime: 0 }),
       readFile: vi.fn().mockResolvedValue({
         content: 'scripts:\n  archive: echo archived\n',
         isBinary: false
@@ -7282,6 +7295,7 @@ describe('registerWorktreeHandlers', () => {
       })
     }
     const fsProvider = {
+      stat: vi.fn().mockResolvedValue({ size: 30, type: 'file', mtime: 0 }),
       readFile: vi.fn().mockResolvedValue({
         content: 'scripts:\n  archive: exit 7\n',
         isBinary: false
@@ -7340,6 +7354,7 @@ describe('registerWorktreeHandlers', () => {
       execNonInteractive: vi.fn().mockRejectedValue(new Error('relay disconnected'))
     }
     const fsProvider = {
+      stat: vi.fn().mockResolvedValue({ size: 36, type: 'file', mtime: 0 }),
       readFile: vi.fn().mockResolvedValue({
         content: 'scripts:\n  archive: echo archived\n',
         isBinary: false
@@ -7402,6 +7417,7 @@ describe('registerWorktreeHandlers', () => {
       })
     }
     const fsProvider = {
+      stat: vi.fn().mockResolvedValue({ size: 36, type: 'file', mtime: 0 }),
       readFile: vi.fn().mockResolvedValue({
         content: 'scripts:\n  archive: echo archived\n',
         isBinary: false
@@ -7562,6 +7578,7 @@ describe('registerWorktreeHandlers', () => {
     }
     const sshRepo = { ...localRepo, path: '/remote/repo', connectionId: 'conn-1' }
     const fsProvider = {
+      stat: vi.fn().mockResolvedValue({ size: 35, type: 'file', mtime: 0 }),
       readFile: vi.fn().mockResolvedValue({
         content: 'scripts:\n  archive: remote-cleanup',
         isBinary: false
@@ -8691,6 +8708,12 @@ describe('registerWorktreeHandlers', () => {
       worktreeBaseRef: null
     }
     const fsProvider = {
+      stat: vi.fn(async (filePath: string) => {
+        if (filePath.endsWith('/.orca/issue-command')) {
+          return { size: 14, type: 'file', mtime: 0 }
+        }
+        throw new Error('shared read failed')
+      }),
       readFile: vi.fn(async (filePath: string) => {
         if (filePath.endsWith('/.orca/issue-command')) {
           return { content: 'local command\n', isBinary: false }
@@ -8714,6 +8737,46 @@ describe('registerWorktreeHandlers', () => {
     })
   })
 
+  it('admits an exact-size SSH issue command and rejects +1 before reading', async () => {
+    const repo = {
+      id: 'repo-ssh',
+      path: '/remote/repo',
+      displayName: 'ssh',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'conn-1',
+      worktreeBaseRef: null
+    }
+    let issueCommandSize = TEST_MAX_ISSUE_COMMAND_BYTES
+    const exactContent = 'x'.repeat(TEST_MAX_ISSUE_COMMAND_BYTES)
+    const fsProvider = {
+      stat: vi.fn(async (filePath: string) => {
+        if (filePath.endsWith('/.orca/issue-command')) {
+          return { size: issueCommandSize, type: 'file', mtime: 0 }
+        }
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }),
+      readFile: vi.fn().mockResolvedValue({ content: exactContent, isBinary: false })
+    }
+    store.getRepo.mockReturnValue(repo)
+    getSshFilesystemProviderMock.mockReturnValue(fsProvider)
+
+    const exactResult = (await handlers['hooks:readIssueCommand'](null, {
+      repoId: 'repo-ssh'
+    })) as { localContent: string | null }
+    expect(exactResult.localContent).toHaveLength(TEST_MAX_ISSUE_COMMAND_BYTES)
+    expect(fsProvider.readFile).toHaveBeenCalledOnce()
+
+    issueCommandSize += 1
+    fsProvider.readFile.mockClear()
+    await expect(
+      handlers['hooks:readIssueCommand'](null, {
+        repoId: 'repo-ssh'
+      })
+    ).resolves.toMatchObject({ localContent: null, effectiveContent: null, source: 'none' })
+    expect(fsProvider.readFile).not.toHaveBeenCalled()
+  })
+
   it('writes SSH issue-command overrides without clobbering .gitignore on read failure', async () => {
     const repo = {
       id: 'repo-ssh',
@@ -8726,6 +8789,7 @@ describe('registerWorktreeHandlers', () => {
     }
     const fsProvider = {
       createDir: vi.fn().mockResolvedValue(undefined),
+      stat: vi.fn().mockRejectedValue(new Error('ssh read failed')),
       readFile: vi.fn().mockRejectedValue(new Error('ssh read failed')),
       writeFile: vi.fn().mockResolvedValue(undefined),
       deletePath: vi.fn().mockResolvedValue(undefined)
@@ -8758,6 +8822,12 @@ describe('registerWorktreeHandlers', () => {
       connectionId: 'conn-1'
     }
     const fsProvider = {
+      stat: vi.fn(async (filePath: string) => {
+        if (filePath.endsWith('/.orca/issue-command')) {
+          return { size: 15, type: 'file', mtime: 0 }
+        }
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      }),
       readFile: vi.fn(async (filePath: string) => {
         if (filePath.endsWith('/.orca/issue-command')) {
           return { content: 'remote command\n', isBinary: false }
@@ -8795,6 +8865,7 @@ describe('registerWorktreeHandlers', () => {
     const enoent = Object.assign(new Error('missing'), { code: 'ENOENT' })
     const fsProvider = {
       createDir: vi.fn().mockResolvedValue(undefined),
+      stat: vi.fn().mockRejectedValue(enoent),
       readFile: vi.fn().mockRejectedValue(enoent),
       writeFile: vi.fn().mockResolvedValue(undefined),
       deletePath: vi.fn().mockResolvedValue(undefined)
@@ -8813,6 +8884,56 @@ describe('registerWorktreeHandlers', () => {
       '/remote/repo/.orca/issue-command',
       'orca issue command\n'
     )
+  })
+
+  it('admits an exact-size SSH .gitignore and rejects +1 before reading', async () => {
+    const repo = {
+      id: 'repo-ssh',
+      path: '/remote/repo',
+      displayName: 'ssh',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'conn-1',
+      worktreeBaseRef: null
+    }
+    let gitignoreSize = TEST_MAX_HOOK_GITIGNORE_BYTES
+    const exactContent = 'x'.repeat(TEST_MAX_HOOK_GITIGNORE_BYTES)
+    const fsProvider = {
+      createDir: vi.fn().mockResolvedValue(undefined),
+      stat: vi.fn().mockImplementation(async () => ({
+        size: gitignoreSize,
+        type: 'file',
+        mtime: 0
+      })),
+      readFile: vi.fn().mockResolvedValue({ content: exactContent, isBinary: false }),
+      writeFile: vi.fn().mockResolvedValue(undefined),
+      deletePath: vi.fn().mockResolvedValue(undefined)
+    }
+    store.getRepo.mockReturnValue(repo)
+    getSshFilesystemProviderMock.mockReturnValue(fsProvider)
+
+    await handlers['hooks:writeIssueCommand'](null, {
+      repoId: 'repo-ssh',
+      content: 'orca issue command'
+    })
+    const gitignoreWrite = fsProvider.writeFile.mock.calls.find(([filePath]) =>
+      filePath.endsWith('/.gitignore')
+    )
+    expect(gitignoreWrite?.[1]).toHaveLength(TEST_MAX_HOOK_GITIGNORE_BYTES + 7)
+    expect(gitignoreWrite?.[1]).toMatch(/\n\.orca\n$/)
+    expect(fsProvider.readFile).toHaveBeenCalledOnce()
+
+    gitignoreSize += 1
+    fsProvider.readFile.mockClear()
+    fsProvider.writeFile.mockClear()
+    await expect(
+      handlers['hooks:writeIssueCommand'](null, {
+        repoId: 'repo-ssh',
+        content: 'orca issue command'
+      })
+    ).rejects.toThrow('Remote .gitignore exceeds the supported size limit')
+    expect(fsProvider.readFile).not.toHaveBeenCalled()
+    expect(fsProvider.writeFile).not.toHaveBeenCalled()
   })
 
   it('rejects SSH issue-command writes when the remote filesystem provider is unavailable', async () => {

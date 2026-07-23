@@ -10,10 +10,52 @@ import {
   patchWorkspaceSessionByHost,
   persistWorkspaceSessionByHost,
   persistWorkspaceSessionByHostSync,
+  WORKSPACE_SESSION_HOST_IO_CONCURRENCY,
   type HostPersistenceState
 } from './workspace-session-host-persistence'
 
 describe('fetchWorkspaceSessionFromHosts', () => {
+  it.each([
+    ['at the limit', WORKSPACE_SESSION_HOST_IO_CONCURRENCY],
+    ['above the limit', WORKSPACE_SESSION_HOST_IO_CONCURRENCY + 1]
+  ])('bounds runtime host partition reads %s', async (_, count) => {
+    let active = 0
+    let peak = 0
+    let started = 0
+    const releases: (() => void)[] = []
+    const get = vi.fn((hostId?: string) => {
+      if (!hostId) {
+        return Promise.resolve(getDefaultWorkspaceSession())
+      }
+      started++
+      active++
+      peak = Math.max(peak, active)
+      return new Promise<WorkspaceSessionState>((resolve) => {
+        releases.push(() => {
+          active--
+          resolve(getDefaultWorkspaceSession())
+        })
+      })
+    })
+    const hostIds = Array.from(
+      { length: count },
+      (_, index) => `runtime:env-${index}` as `runtime:${string}`
+    )
+
+    const read = fetchWorkspaceSessionFromHosts({ get }, [], hostIds)
+    await vi.waitFor(() =>
+      expect(started).toBe(Math.min(count, WORKSPACE_SESSION_HOST_IO_CONCURRENCY))
+    )
+    if (count > WORKSPACE_SESSION_HOST_IO_CONCURRENCY) {
+      releases.shift()?.()
+      await vi.waitFor(() => expect(started).toBe(count))
+    }
+    releases.splice(0).forEach((release) => release())
+    await read
+
+    expect(peak).toBe(Math.min(count, WORKSPACE_SESSION_HOST_IO_CONCURRENCY))
+  })
+
   it('reads saved runtime host partitions before runtime repos are loaded', async () => {
     const worktreeId = 'remote-repo::/srv/remote-wt'
     const localSession: WorkspaceSessionState = {
@@ -435,6 +477,33 @@ describe('fetchWorkspaceSessionFromHosts', () => {
     expect(setSync.mock.calls).toEqual(
       snapshots.map((snapshot) => [snapshot.state, snapshot.hostId])
     )
+  })
+})
+
+describe('buildHostIdByWorktreeId nested ownership', () => {
+  it('persists an SSH worktree in its paired HUB session partition', () => {
+    const worktreeId = 'nested-repo::/srv/remote-wt'
+    const owner = buildHostIdByWorktreeId({
+      repos: [
+        {
+          id: 'nested-repo',
+          connectionId: 'hub-private-ssh',
+          executionHostId: 'runtime:owner-hub'
+        }
+      ],
+      worktreesByRepo: {
+        'nested-repo': [
+          {
+            id: worktreeId,
+            repoId: 'nested-repo',
+            hostId: 'ssh:hub-private-ssh',
+            runtimeOwnerEnvironmentId: 'owner-hub'
+          }
+        ]
+      }
+    })
+
+    expect(owner(worktreeId)).toBe('runtime:owner-hub')
   })
 })
 

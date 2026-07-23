@@ -71,6 +71,7 @@ import {
   disposeParkedTerminalWatchersForPtyIds,
   retireParkedTerminalTab
 } from '@/components/terminal-pane/terminal-parked-watcher-registry'
+import { forgetRetiredTerminalPaneRecovery } from '@/components/terminal-pane/terminal-pane-recovery-retirement'
 import {
   clearCommittedPtyShutdownSettlements,
   hasCommittedPtyShutdownSettlement,
@@ -79,9 +80,11 @@ import {
   settleDeferredPtyShutdownExits
 } from '@/components/terminal-pane/pty-shutdown-exit-deferral'
 import {
+  collectTerminalLayoutLeafIds,
   normalizeTerminalLayoutSnapshot,
   resolvePtyBoundActiveLeafId
 } from '@/components/terminal-pane/terminal-layout-leaf-ids'
+import { releaseTerminalScrollIntentKeys } from '@/lib/pane-manager/terminal-scroll-intent'
 import { shutdownBufferCaptures } from '@/components/terminal-pane/shutdown-buffer-captures'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import { parseRemoteRuntimePtyId, toRemoteRuntimePtyId } from '@/runtime/runtime-terminal-stream'
@@ -93,6 +96,8 @@ import { hasWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
 import { sanitizeTerminalLayoutPaneTitles } from '@/lib/terminal-pane-title-sanitization'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
+import { resolveTerminalWorktreeRoute } from '@/lib/terminal-worktree-route'
+import { resolveWorktreeOperationRouteResult } from '@/lib/worktree-operation-route'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
 import type { NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
 import {
@@ -1102,7 +1107,17 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     if (!worktreeId) {
       return
     }
-    const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(state, worktreeId)
+    const workspaceScope = parseWorkspaceKey(worktreeId)
+    const worktreeRoute =
+      worktreeId === FLOATING_TERMINAL_WORKTREE_ID || workspaceScope?.type === 'folder'
+        ? null
+        : resolveWorktreeOperationRouteResult(state, worktreeId)
+    if (worktreeRoute && worktreeRoute.kind !== 'resolved') {
+      return
+    }
+    const runtimeEnvironmentId = worktreeRoute
+      ? worktreeRoute.route.runtimeEnvironmentId
+      : getRuntimeEnvironmentIdForWorktree(state, worktreeId)
     if (runtimeEnvironmentId) {
       const { createWebRuntimeSessionTerminal } = await import('@/runtime/web-runtime-session')
       await createWebRuntimeSessionTerminal({
@@ -1145,21 +1160,29 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       opts?.precomputedRetirementPlan?.tabId === tabId
         ? opts.precomputedRetirementPlan
         : buildTerminalTabRetirementPlan(get(), tabId)
+    const retiringScrollIntentLeafIds = collectTerminalLayoutLeafIds(
+      get().terminalLayoutsByTabId[tabId]
+    )
     let closingWorktreeId: string | null = null
 
     // Why: a parked tab has no mounted TerminalPane cleanup, so revoke its observer/candidate state before provider exit races.
     retireParkedTerminalTab(tabId)
+    forgetRetiredTerminalPaneRecovery(tabId)
     if (retiresSession) {
-      const fallbackRuntimeEnvironmentId = retirementPlan.worktreeId
-        ? getRuntimeEnvironmentIdForWorktree(get(), retirementPlan.worktreeId)
-        : null
+      const fallbackWorktreeRoute = retirementPlan.worktreeId
+        ? resolveTerminalWorktreeRoute(get(), retirementPlan.worktreeId)
+        : { runtimeEnvironmentId: null }
       const retirementTasks: Promise<unknown>[] = opts?.localPtyTeardownOwnedExternally
         ? []
         : retirementPlan.localOrSshPtyIds.map(async (ptyId) => window.api.pty.kill(ptyId))
       const localOrSshTaskCount = retirementTasks.length
       if (!opts?.remoteCloseOwnedByHost) {
         for (const terminal of retirementPlan.runtimeTerminals) {
-          const environmentId = terminal.environmentId ?? fallbackRuntimeEnvironmentId
+          if (!terminal.environmentId && !fallbackWorktreeRoute) {
+            continue
+          }
+          const environmentId =
+            terminal.environmentId ?? fallbackWorktreeRoute?.runtimeEnvironmentId
           retirementTasks.push(
             callRuntimeRpc(
               environmentId ? { kind: 'environment', environmentId } : { kind: 'local' },
@@ -1385,6 +1408,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           : {})
       }
     })
+    releaseTerminalScrollIntentKeys(retiringScrollIntentLeafIds)
     // Why: closing a tab sweeps live and retained agent-status for it; use dropAgentStatusByTabPrefix so retention suppressors block a same-frame live→gone re-snapshot.
     // Why: Pi can leave a completed row keyed under an already-missing tab id; pass the worktree to sweep that orphan while preserving active pre-render child rows.
     get().dropAgentStatusByTabPrefix(
@@ -1837,7 +1861,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const owningWorktreeId = Object.keys(state.unifiedTabsByWorktree).find((wId) =>
         (state.unifiedTabsByWorktree[wId] ?? []).some((entry) => entry.id === item.id)
       )
-      if (owningWorktreeId && getRuntimeEnvironmentIdForWorktree(state, owningWorktreeId)) {
+      if (
+        owningWorktreeId &&
+        resolveTerminalWorktreeRoute(state, owningWorktreeId)?.runtimeEnvironmentId
+      ) {
         void import('@/runtime/web-runtime-session').then(({ setWebRuntimeTabProps }) =>
           setWebRuntimeTabProps({ worktreeId: owningWorktreeId, tabId: item.id, color })
         )
@@ -2049,7 +2076,17 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // Why: a passed ptyId means the PTY actually exited — drop its lastKnown so restart won't reattach a dead relay; bulk clear (connection_lost) keeps it during relay grace.
       const nextLastKnownRelay = { ...s.lastKnownRelayPtyIdByTabId }
       if (ptyId && nextLastKnownRelay[tabId] === ptyId) {
-        delete nextLastKnownRelay[tabId]
+        // Why: the relay slot holds ONE id per tab (the last pane to bind). If
+        // that pane exits, promote a surviving pane instead of clearing — else the
+        // survivor is left visible only in the layout leaf map, and a later
+        // relay-drop bulk-clear lets the orphan sweep delete the still-live tab
+        // (the orphan predicate reads this map but not layout leaves) (#9911).
+        const survivingPtyId = remainingPtyIds.at(-1)
+        if (survivingPtyId) {
+          nextLastKnownRelay[tabId] = survivingPtyId
+        } else {
+          delete nextLastKnownRelay[tabId]
+        }
       }
 
       return {
@@ -3413,6 +3450,15 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const repoId = worktree?.repoId ?? getRepoIdFromWorktreeId(worktreeId)
       const repo = repoId ? get().repos.find((entry) => entry.id === repoId) : null
       if (!repo?.connectionId) {
+        continue
+      }
+      // Why: a repo can outlive its SSH target when the target was removed out of
+      // band (a crash between removal and cleanup, or edited out of the config).
+      // Once the authoritative target list has loaded, don't re-defer sessions for
+      // a target it no longer lists — a stranded deferred id reads as liveness and
+      // the orphan sweep could never remove the dead tab. Defer while the list is
+      // still unknown so a normal cold-start reconnect isn't dropped (#9911).
+      if (get().sshTargetsHydrated && !get().sshTargetLabels.has(repo.connectionId)) {
         continue
       }
       const sshConnected = get().sshConnectionStates.get(repo.connectionId)?.status === 'connected'
