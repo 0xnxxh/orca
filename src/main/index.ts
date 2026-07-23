@@ -302,6 +302,12 @@ const rendererSandboxCrashFallbackTracker = new RendererSandboxCrashFallbackTrac
   windowMs: DEFAULT_RENDERER_SANDBOX_FALLBACK_WINDOW_MS,
   threshold: DEFAULT_RENDERER_SANDBOX_FALLBACK_THRESHOLD
 })
+// Why: a launch-time STATUS_BREAKPOINT burst detected this launch (#9891) carries the context for the user-consent prompt shown when the recovery breaker gives up. Never acted on without explicit consent.
+let rendererSandboxBurst: {
+  reason: string
+  exitCode: number | null
+  crashesInWindow: number
+} | null = null
 let localPtyStartupReady: Promise<void> = Promise.resolve()
 let localPtyProviderStartupReady: Promise<void> = Promise.resolve()
 const AGENT_STATE_CRASH_BREADCRUMB_MIN_INTERVAL_MS = 30_000
@@ -1070,7 +1076,16 @@ function openMainWindow(): BrowserWindow {
         exitCode: details.exitCode ?? null,
         recentRecoveryCount
       })
-      void presentRendererRecoveryPrompt(recentRecoveryCount)
+      // Why: if the crash loop is the win32 renderer-sandbox signature (#9891), OFFER the user the unsandboxed-restart workaround instead of the generic dead-end dialog. Never auto-applied.
+      if (
+        rendererSandboxBurst &&
+        !isRendererSandboxFallbackActive() &&
+        process.platform === 'win32'
+      ) {
+        void presentRendererSandboxConsentPrompt()
+      } else {
+        void presentRendererRecoveryPrompt(recentRecoveryCount)
+      }
     },
     deferLoad: true,
     disableRendererSandbox: isRendererSandboxFallbackActive(),
@@ -1462,9 +1477,8 @@ function maybeApplyRendererSandboxFallbackForThisLaunch(): void {
   }
 }
 
-// Why: a burst of launch-time renderer STATUS_BREAKPOINT crashes means the sandboxed renderer is unusable on this build (#9891) — persist a build-scoped marker and relaunch with the top-level renderer unsandboxed, preempting the recovery breaker's dead-end dialog.
+// Why: detection only — a burst of launch-time renderer STATUS_BREAKPOINT crashes is the sandbox-incompatibility signature (#9891). Orca NEVER drops the sandbox automatically; it just remembers the burst so the recovery-exhausted handler can offer the workaround to the user.
 function handleRendererSandboxCrash(exitCode: number | null, reason: string): void {
-  // Already unsandboxed this launch, or shutting down: nothing more to do. If sandbox:false still crashes it degrades to the recovery-breaker dialog, never an infinite relaunch loop.
   if (isRendererSandboxFallbackActive() || isQuitting || isServeMode) {
     return
   }
@@ -1474,22 +1488,74 @@ function handleRendererSandboxCrash(exitCode: number | null, reason: string): vo
   if (!result.shouldEngageFallback) {
     return
   }
+  rendererSandboxBurst = { reason, exitCode, crashesInWindow: result.crashesInWindow }
+  recordDurableCrashBreadcrumb('renderer_sandbox_crash_burst_detected', {
+    reason,
+    exitCode,
+    crashesInWindow: result.crashesInWindow
+  })
+}
+
+// Why: the renderer cannot launch sandboxed on this build (#9891). Never auto-drop the sandbox — ASK the user whether to restart with it off. Shown when the recovery breaker gives up, replacing the generic "keeps failing to load" dialog for this signature.
+async function presentRendererSandboxConsentPrompt(): Promise<void> {
+  const burst = rendererSandboxBurst
+  if (!burst || isQuitting || isServeMode) {
+    return
+  }
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+  const options = {
+    type: 'warning' as const,
+    buttons: ['Disable the sandbox and restart', 'Quit'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Orca keeps crashing on startup',
+    message:
+      'Orca’s window crashed repeatedly right after launch, which looks like a security-sandbox incompatibility with this version of Windows.',
+    detail:
+      'Orca can restart with the renderer security sandbox turned off to work around it. This lowers one process-hardening layer for the app window only — your workspaces and data stay isolated, and Orca automatically tries the sandbox again after its next update. Nothing changes unless you choose to disable it.'
+  }
+  const { response } = parent
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options)
+  if (response === 0) {
+    recordDurableCrashBreadcrumb('renderer_sandbox_fallback_user_accepted', {
+      crashesInWindow: burst.crashesInWindow
+    })
+    engageRendererSandboxFallback(burst)
+  } else {
+    recordDurableCrashBreadcrumb('renderer_sandbox_fallback_user_declined', {
+      crashesInWindow: burst.crashesInWindow
+    })
+    isQuitting = true
+    app.quit()
+  }
+}
+
+// Why: only invoked AFTER explicit user consent — persist a build-scoped marker and relaunch with the top-level renderer unsandboxed for this build.
+function engageRendererSandboxFallback(burst: {
+  reason: string
+  exitCode: number | null
+  crashesInWindow: number
+}): void {
+  if (isRendererSandboxFallbackActive() || isServeMode) {
+    return
+  }
   const environment = getWindowsGpuFallbackEnvironment()
   if (!environment) {
     return
   }
   recordCrashBreadcrumb('renderer_sandbox_fallback_engaged', {
-    reason,
-    exitCode,
-    crashesInWindow: result.crashesInWindow
+    reason: burst.reason,
+    exitCode: burst.exitCode,
+    crashesInWindow: burst.crashesInWindow
   })
   try {
     writeRendererSandboxFallbackMarker(
       app.getPath('userData'),
       {
         engagedAt: Date.now(),
-        crashesInWindow: result.crashesInWindow,
-        exitCode: exitCode ?? STATUS_BREAKPOINT_EXIT_CODE
+        crashesInWindow: burst.crashesInWindow,
+        exitCode: burst.exitCode ?? STATUS_BREAKPOINT_EXIT_CODE
       },
       environment
     )
@@ -1499,9 +1565,9 @@ function handleRendererSandboxCrash(exitCode: number | null, reason: string): vo
   }
   isQuitting = true
   relaunchApp('renderer-sandbox-fallback', {
-    processReason: reason,
-    exitCode,
-    crashesInWindow: result.crashesInWindow
+    processReason: burst.reason,
+    exitCode: burst.exitCode,
+    crashesInWindow: burst.crashesInWindow
   })
   app.exit(0)
 }
