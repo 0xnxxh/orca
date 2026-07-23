@@ -9,3 +9,14 @@ export function resolveMacosPackageBundleIdentifiers(env = process.env) {
     computerUseBundleId: `${appBundleId}.computer-use`
   }
 }
+
+export function resolveMacosComputerUseBundleId(env = process.env) {
+  return (
+    env.ORCA_COMPUTER_MACOS_BUNDLE_ID ??
+    resolveMacosPackageBundleIdentifiers(env).computerUseBundleId
+  )
+}
+
+export function resolveMacosNotificationStatusBundleId(explicitBundleId, env = process.env) {
+  return explicitBundleId ?? resolveMacosPackageBundleIdentifiers(env).appBundleId
+}

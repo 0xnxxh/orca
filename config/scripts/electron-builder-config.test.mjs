@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest'
 import {
   MACOS_LOCAL_APP_BUNDLE_ID,
   MACOS_RELEASE_APP_BUNDLE_ID,
+  resolveMacosComputerUseBundleId,
+  resolveMacosNotificationStatusBundleId,
   resolveMacosPackageBundleIdentifiers
 } from './macos-package-bundle-identifiers.mjs'
 
@@ -58,6 +60,23 @@ describe('electron-builder config', () => {
       delete require.cache[configPath]
       require('../electron-builder.config.cjs')
     }
+  })
+
+  it('keeps standalone native builds off release identities by default', () => {
+    expect(resolveMacosComputerUseBundleId({})).toBe(`${MACOS_LOCAL_APP_BUNDLE_ID}.computer-use`)
+    expect(resolveMacosNotificationStatusBundleId(undefined, {})).toBe(MACOS_LOCAL_APP_BUNDLE_ID)
+    expect(resolveMacosComputerUseBundleId({ ORCA_MAC_RELEASE: '1' })).toBe(
+      `${MACOS_RELEASE_APP_BUNDLE_ID}.computer-use`
+    )
+    expect(resolveMacosNotificationStatusBundleId(undefined, { ORCA_MAC_RELEASE: '1' })).toBe(
+      MACOS_RELEASE_APP_BUNDLE_ID
+    )
+    expect(
+      resolveMacosComputerUseBundleId({ ORCA_COMPUTER_MACOS_BUNDLE_ID: 'com.example.computer' })
+    ).toBe('com.example.computer')
+    expect(resolveMacosNotificationStatusBundleId('com.example.notification', {})).toBe(
+      'com.example.notification'
+    )
   })
 
   it('excludes repo-only source trees from app.asar', () => {
