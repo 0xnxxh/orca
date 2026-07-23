@@ -187,6 +187,9 @@ export function SmartWorkspaceSourceDrawer({
       dragContentToDismiss={false}
       contentScrollable={false}
       fillAvailable
+      // Why: sit above the pinned create form so the outer content-sized sheet
+      // stays underneath and is revealed at its original height on dismiss.
+      zIndex={1100}
     >
       {/* Why: column with results flex:1 + dock flex-shrink:0 at the end.
           Fill sheet height + marginBottom place this column on the keyboard
@@ -305,6 +308,8 @@ export function SmartWorkspaceSourceDrawer({
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
+            // Still request native auto-focus; the delayed ref focus is the reliable path.
+            autoFocus
             returnKeyType="done"
             onSubmitEditing={onClose}
             blurOnSubmit={false}

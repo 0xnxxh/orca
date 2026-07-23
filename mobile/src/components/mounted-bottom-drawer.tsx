@@ -46,6 +46,9 @@ export type MountedBottomDrawerProps = {
   dragContentToDismiss?: boolean
   contentScrollable?: boolean
   fillAvailable?: boolean
+  // Why: outer sheets pinned under an inner fill picker stay laid out (size
+  // preserved) but must not take touches, stack backdrops, or keyboard-lift.
+  interactive?: boolean
   zIndex?: number
 }
 
@@ -57,6 +60,7 @@ export function MountedBottomDrawer({
   dragContentToDismiss = true,
   contentScrollable = true,
   fillAvailable = false,
+  interactive = true,
   zIndex = 1000
 }: MountedBottomDrawerProps) {
   const translateY = useSharedValue(0)
@@ -106,7 +110,11 @@ export function MountedBottomDrawer({
   // useAnimatedKeyboard). Keyboard event listeners work on both platforms
   // and give us the exact height to shift the drawer by.
   useEffect(() => {
-    if (!visible) {
+    // Pinned-under sheets stay visible for size but must not ride the keyboard —
+    // only the top interactive sheet owns inset/lift.
+    if (!visible || !interactive) {
+      keyboardOffset.value = 0
+      setKeyboardInset(0)
       return
     }
 
@@ -125,12 +133,14 @@ export function MountedBottomDrawer({
       }
     }
 
-    // Why: autoFocus can raise the keyboard before listeners attach (or the
-    // frame may open onto an already-visible keyboard). Seed from metrics so
-    // fill-mode height/margin aren't stuck at 0 with the dock under the keys.
-    const existing = Keyboard.metrics()
-    if (existing != null && existing.height > 0) {
-      applyKeyboardHeight(existing.height)
+    // Why: fill sheets dock to the true keyboard top; autoFocus can raise the
+    // keyboard before listeners attach. Seed only in fill mode so content-sized
+    // outer sheets do not inherit a stale metrics height after an inner dismiss.
+    if (fillAvailable) {
+      const existing = Keyboard.metrics()
+      if (existing != null && existing.height > 0) {
+        applyKeyboardHeight(existing.height)
+      }
     }
 
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow'
@@ -150,7 +160,7 @@ export function MountedBottomDrawer({
       keyboardOffset.value = 0
       setKeyboardInset(0)
     }
-  }, [visible, insets.bottom, fillAvailable])
+  }, [visible, interactive, insets.bottom, fillAvailable])
 
   const dismiss = useCallback(() => {
     Keyboard.dismiss()
@@ -162,7 +172,7 @@ export function MountedBottomDrawer({
   }, [onClose, progress])
 
   useEffect(() => {
-    if (!visible) {
+    if (!visible || !interactive) {
       return
     }
 
@@ -171,7 +181,7 @@ export function MountedBottomDrawer({
       return true
     })
     return () => sub.remove()
-  }, [visible, dismiss])
+  }, [visible, interactive, dismiss])
 
   const scrollHandler = useAnimatedScrollHandler((event) => {
     scrollOffsetY.value = Math.max(event.contentOffset.y, 0)
@@ -332,14 +342,18 @@ export function MountedBottomDrawer({
 
   const overlay = (
     <Animated.View
-      pointerEvents={visible ? 'auto' : 'none'}
+      pointerEvents={visible && interactive ? 'auto' : 'none'}
       style={[styles.overlay, { zIndex, elevation: zIndex }]}
-      accessibilityViewIsModal
-      aria-modal
+      accessibilityViewIsModal={interactive}
+      aria-modal={interactive}
     >
       <GestureHandlerRootView style={styles.root}>
-        <Animated.View style={[styles.backdrop, backdropStyle]}>
-          <Pressable style={styles.backdropPressable} onPress={dismiss} />
+        <Animated.View
+          // Why: pinned-under outer sheets keep progress=1 so size stays; hide
+          // their backdrop so only the top interactive drawer dims the canvas.
+          style={[styles.backdrop, interactive ? backdropStyle : { opacity: 0 }]}
+        >
+          {interactive ? <Pressable style={styles.backdropPressable} onPress={dismiss} /> : null}
         </Animated.View>
 
         <View style={[styles.anchor, isWideLayout && styles.anchorWide]} pointerEvents="box-none">

@@ -1,9 +1,6 @@
 import { type ReactNode, useState } from 'react'
 import { resolveBottomDrawerMounted } from './bottom-drawer-mount-state'
-import { BOTTOM_DRAWER_HIDE_DURATION_MS } from './bottom-drawer-constants'
 import { MountedBottomDrawer } from './mounted-bottom-drawer'
-
-export { BOTTOM_DRAWER_HIDE_DURATION_MS }
 
 type Props = {
   visible: boolean
@@ -16,6 +13,9 @@ type Props = {
   // TextInput can sit above the keyboard while results reflow in flex space
   // above it — content-sized sheets make that field ride every list change.
   fillAvailable?: boolean
+  // Why: pin an outer content-sized sheet under an inner fill picker without
+  // letting it take touches, draw a second backdrop, or keyboard-lift.
+  interactive?: boolean
   zIndex?: number
 }
 
@@ -27,6 +27,7 @@ export function BottomDrawer({
   dragContentToDismiss = true,
   contentScrollable = true,
   fillAvailable = false,
+  interactive = true,
   zIndex
 }: Props) {
   const [mounted, setMounted] = useState(visible)
@@ -55,6 +56,7 @@ export function BottomDrawer({
       dragContentToDismiss={dragContentToDismiss}
       contentScrollable={contentScrollable}
       fillAvailable={fillAvailable}
+      interactive={interactive}
       zIndex={zIndex}
     >
       {children}
