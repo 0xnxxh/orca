@@ -1676,14 +1676,23 @@ describe('terminal multiplex RPC', () => {
     await dispatchPromise
   })
 
-  it('ends a stream when ACK overflow recovery serialization fails', async () => {
+  it.each([
+    {
+      failure: 'throws',
+      recover: () => Promise.reject(new Error('snapshot unavailable'))
+    },
+    {
+      failure: 'returns no snapshot',
+      recover: () => Promise.resolve(null)
+    }
+  ])('ends a stream when ACK overflow recovery serialization $failure', async ({ recover }) => {
     const dataListenerRef: {
       current?: (data: string, meta?: { seq?: number; rawLength?: number }) => void
     } = {}
     const serializeTerminalBuffer = vi
       .fn()
       .mockResolvedValueOnce({ data: 'initial snapshot', cols: 120, rows: 40 })
-      .mockRejectedValue(new Error('snapshot unavailable'))
+      .mockImplementation(recover)
     const harness = startDesktopMultiplexSubscribe({
       serializeTerminalBuffer,
       subscribeToTerminalData: vi.fn(

@@ -1716,23 +1716,23 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           if (closed || streams.get(stream.streamId) !== stream) {
             return
           }
-          const size = runtime.getTerminalSize(stream.ptyId)
+          if (!serialized) {
+            throw new Error('Remote terminal recovery snapshot unavailable.')
+          }
           const displayMode = runtime.getMobileDisplayMode(stream.ptyId)
           // Why: dropped ACK-pending output breaks live replay; send a fresh snapshot before resuming output.
-          // Why: clients discard truncated snapshots, so mark truncated only when serialization actually failed.
           sendSnapshotFrames((opcode, payload) => sendFrame(stream.streamId, opcode, payload), {
             kind: 'scrollback',
-            cols: serialized?.cols ?? size?.cols ?? 80,
-            rows: serialized?.rows ?? size?.rows ?? 24,
+            cols: serialized.cols,
+            rows: serialized.rows,
             displayMode,
             reason: 'ack-pending-overflow',
-            seq: serialized?.seq,
-            source: serialized?.source,
-            truncated: !serialized,
-            truncatedByByteBudget: serialized?.truncatedByByteBudget,
-            data: serialized?.data ?? ''
+            seq: serialized.seq,
+            source: serialized.source,
+            truncatedByByteBudget: serialized.truncatedByByteBudget,
+            data: serialized.data
           })
-          if (serialized && typeof serialized.seq === 'number') {
+          if (typeof serialized.seq === 'number') {
             // Why: chunks queued before the snapshot serialized are already in it; replaying them would duplicate output.
             const snapshotSeq = serialized.seq
             const retained = stream.ackPendingOutput.filter(
