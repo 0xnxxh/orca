@@ -83,10 +83,9 @@ function SourceControlGitIdentityRow({
             tabIndex={0}
           >
             <GitBranch className="size-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-            {/* Why: match the 'vs main' base-ref typography exactly (font/size/underline). */}
-            <span className="min-w-0 truncate underline decoration-border underline-offset-2">
-              {branchName}
-            </span>
+            {/* Why: match the 'vs main' base-ref typography (font/size/color) but no
+                underline — this label isn't clickable, so the underline would mislead. */}
+            <span className="min-w-0 truncate">{branchName}</span>
           </span>
         </TooltipTrigger>
         <TooltipContent side="bottom" sideOffset={6} className="max-w-72 break-all font-mono">
