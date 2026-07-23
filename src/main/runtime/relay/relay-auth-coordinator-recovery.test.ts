@@ -39,6 +39,32 @@ describe('RelayAuthCoordinator transient recovery', () => {
     expect(statuses.at(-1)).toBe('registered')
   })
 
+  it('retries when cloud-session refresh fails before identity can be read', async () => {
+    vi.useFakeTimers()
+    const broker = { closeNow: vi.fn() }
+    const readContext = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporary cloud session refresh failure'))
+      .mockResolvedValueOnce(context)
+    const openBroker = vi.fn().mockResolvedValue(broker)
+    const coordinator = new RelayAuthCoordinator({
+      readContext,
+      openBroker,
+      onStatus: vi.fn(),
+      random: () => 0.5
+    })
+
+    coordinator.reconcile()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(readContext).toHaveBeenCalledOnce()
+    expect(openBroker).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(501)
+    expect(readContext).toHaveBeenCalledTimes(2)
+    expect(openBroker).toHaveBeenCalledOnce()
+    expect(coordinator.getActiveBroker()).toBe(broker)
+  })
+
   it('backs a sustained outage off to the five-minute jitter cap', async () => {
     vi.useFakeTimers()
     const openBroker = vi.fn().mockRejectedValue(new Error('temporary control open failure'))

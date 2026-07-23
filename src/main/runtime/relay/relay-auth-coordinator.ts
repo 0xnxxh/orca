@@ -112,7 +112,7 @@ export class RelayAuthCoordinator {
   }
 
   private async reconcileEpoch(epoch: number, expectedIdentityKey?: string): Promise<void> {
-    let retryIdentityKey: string | null = null
+    let retryIdentityKey: string | undefined
     try {
       const context = await this.options.readContext()
       if (!this.isEpochCurrent(epoch)) {
@@ -182,14 +182,14 @@ export class RelayAuthCoordinator {
     } catch (error) {
       if (this.isEpochCurrent(epoch)) {
         this.options.onStatus('offline')
-        if (retryIdentityKey && shouldRetryRelayConnectionError(error)) {
+        if (shouldRetryRelayConnectionError(error)) {
           this.scheduleRetry(epoch, retryIdentityKey)
         }
       }
     }
   }
 
-  private scheduleRetry(epoch: number, expectedIdentityKey: string): void {
+  private scheduleRetry(epoch: number, expectedIdentityKey?: string): void {
     if (this.retryTimer || !this.isEpochCurrent(epoch)) {
       return
     }
