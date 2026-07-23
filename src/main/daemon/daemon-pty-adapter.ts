@@ -598,7 +598,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   write(id: string, data: string): void {
     this.markSessionDirty(id)
-    this.client.notify('write', { sessionId: id, data })
+    const delivered = this.client.notify('write', { sessionId: id, data })
+    // Why: a fire-and-forget write dropped on a dead socket surfaces no rejection, so the request-path respawn (withDaemonRetry) never runs and the pane freezes (STA-2373). A live session whose write was dropped means the endpoint died; kick the shared respawn coalescer so it self-heals like the createOrAttach path. Complements the in-daemon write-throw fix in #8426.
+    if (!delivered && this.activeSessionIds.has(id)) {
+      this.triggerDeadEndpointRespawn()
+    }
   }
 
   resize(id: string, cols: number, rows: number): void {
@@ -1393,6 +1397,23 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.releasePendingRespawnAdoptionLease()
       }
     }
+  }
+
+  // Why: writes are fire-and-forget notifies with no rejection to feed withDaemonRetry; when one is dropped on a dead
+  // endpoint, fork a replacement daemon directly using the same coalescing + adoption-lease machinery the request path uses.
+  private triggerDeadEndpointRespawn(): void {
+    if (this.respawnAdoptionClosed || !this.respawnFn || this.respawnPromise) {
+      return
+    }
+    this.respawnPromise = this.doRespawn()
+      // Why: reconnect the permanent client before releasing the temporary adoption lease so the launcher's hold never
+      // drops into an adoption gap (mirrors withDaemonRetry's retry-then-release ordering).
+      .then(() => this.client.ensureConnected())
+      .catch((err) => console.warn('[daemon] respawn after dropped PTY write failed:', err))
+      .finally(() => {
+        this.releasePendingRespawnAdoptionLease()
+        this.respawnPromise = null
+      })
   }
 
   private async replaceUnhealthyMacResolverDaemonBeforeNewPty(): Promise<void> {

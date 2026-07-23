@@ -216,14 +216,16 @@ export class DaemonClient {
     })
   }
 
-  notify(type: string, payload: unknown): void {
+  // Why: returns whether the notify reached the socket; a dropped fire-and-forget write to a dead endpoint has no rejection to feed the adapter's respawn path (STA-2373), so callers use this to detect the drop.
+  notify(type: string, payload: unknown): boolean {
     if (!this.connected || !this.controlSocket) {
-      return
+      return false
     }
 
     const id = `${NOTIFY_PREFIX}${++this.requestCounter}`
     const msg = { id, type, ...(payload !== undefined ? { payload } : {}) }
     this.controlSocket.write(encodeNdjson(msg))
+    return true
   }
 
   onEvent(listener: (event: unknown) => void): () => void {

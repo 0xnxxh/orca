@@ -502,6 +502,67 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     })
   })
 
+  describe('dead-endpoint write respawn (STA-2373)', () => {
+    function restartServerOnRespawn(): void {
+      server = new DaemonServer({
+        socketPath,
+        tokenPath,
+        log: daemonLog,
+        spawnSubprocess: (opts) => {
+          lastSpawnOpts = opts
+          lastSubprocess = createMockSubprocess()
+          return lastSubprocess
+        }
+      })
+    }
+
+    it('respawns the daemon when a live pane write is dropped on a dead socket', async () => {
+      const respawn = vi.fn(async () => {
+        restartServerOnRespawn()
+        await server.start()
+      })
+      const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+      try {
+        const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
+        const client = (healingAdapter as unknown as { client: DaemonClient }).client
+
+        // Kill the daemon out from under the attached pane: no exit fanout, so the session stays "active".
+        await server.shutdown()
+        await waitFor(() => !client.isConnected())
+
+        // A keystroke on the frozen pane must trigger the dead-endpoint respawn, not silently drop.
+        healingAdapter.write(id, 'ls\n')
+
+        await waitFor(() => respawn.mock.calls.length > 0)
+        expect(respawn).toHaveBeenCalledTimes(1)
+      } finally {
+        healingAdapter.dispose()
+      }
+    })
+
+    it('does not respawn when a dropped write targets no active session', async () => {
+      const respawn = vi.fn(async () => {
+        restartServerOnRespawn()
+        await server.start()
+      })
+      const idleAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+      try {
+        const client = (idleAdapter as unknown as { client: DaemonClient }).client
+        await idleAdapter.listProcesses()
+
+        await server.shutdown()
+        await waitFor(() => !client.isConnected())
+
+        idleAdapter.write('never-attached-session', 'ls\n')
+
+        await new Promise((r) => setTimeout(r, 50))
+        expect(respawn).not.toHaveBeenCalled()
+      } finally {
+        idleAdapter.dispose()
+      }
+    })
+  })
+
   describe('background stream thinning compatibility', () => {
     it('reports authoritative snapshot support only for protocol v20 and newer', () => {
       const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 19 })
