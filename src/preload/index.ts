@@ -78,7 +78,11 @@ import type {
   WarpThemeImportSource
 } from '../shared/terminal-custom-themes'
 import type { GitHistoryOptions, GitHistoryResult } from '../shared/git-history'
-import type { ShellOpenLocalPathResult } from '../shared/shell-open-types'
+import type {
+  ShellOpenExternalEditorRequest,
+  ShellOpenExternalEditorResult,
+  ShellOpenLocalPathResult
+} from '../shared/shell-open-types'
 import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../shared/skills'
 import type { SkillFreshnessInventory } from '../shared/skill-freshness'
 import type {
@@ -2188,8 +2192,10 @@ const api = {
     openInFileManager: (path: string): Promise<ShellOpenLocalPathResult> =>
       ipcRenderer.invoke('shell:openInFileManager', path),
 
-    openInExternalEditor: (path: string, command?: string): Promise<ShellOpenLocalPathResult> =>
-      ipcRenderer.invoke('shell:openInExternalEditor', path, command),
+    openInExternalEditor: (
+      request: ShellOpenExternalEditorRequest
+    ): Promise<ShellOpenExternalEditorResult> =>
+      ipcRenderer.invoke('shell:openInExternalEditor', request),
 
     openUrl: (url: string): Promise<void> => ipcRenderer.invoke('shell:openUrl', url),
 
@@ -4374,6 +4380,16 @@ const api = {
         callback(status)
       ipcRenderer.on('mobile:relayStatusChanged', listener)
       return () => ipcRenderer.removeListener('mobile:relayStatusChanged', listener)
+    },
+
+    consumePendingUnpairedDeviceAuthFailure: (): Promise<boolean> =>
+      ipcRenderer.invoke('mobile:consumePendingUnpairedDeviceAuthFailure'),
+
+    /** Fires (throttled, once per session) when an unpaired phone repeatedly fails direct-transport auth. */
+    onUnpairedDeviceAuthFailure: (callback: () => void): (() => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('mobile:unpairedDeviceAuthFailure', listener)
+      return () => ipcRenderer.removeListener('mobile:unpairedDeviceAuthFailure', listener)
     }
   },
 
