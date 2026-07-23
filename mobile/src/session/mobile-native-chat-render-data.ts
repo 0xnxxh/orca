@@ -5,6 +5,7 @@ import {
 } from '../../../src/shared/native-chat-empty-state'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import { foldToolMessages } from './mobile-native-chat-blocks'
+import { normalizeImageTranscriptMessages } from './mobile-native-chat-image-transcript-markers'
 import { stripNoiseMessages } from './mobile-native-chat-noise'
 import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
 
@@ -34,10 +35,6 @@ export function mobileNativeChatEmptyState(
   }
 }
 
-/** Derive the list data from the raw transcript: fold tool turns into the
- *  assistant turn, optionally append a synthetic streaming bubble, then the
- *  route-owned optimistic "queued" messages at the tail. Returns the
- *  intermediate `folded`/`streaming` so the caller can memoize on them. */
 /** An optimistic user echo: the text and/or the local preview URIs of any images
  *  ridden along on the send, shown until the transcript catches up. */
 export type MobileNativeChatPendingItem = {
@@ -46,6 +43,10 @@ export type MobileNativeChatPendingItem = {
   images?: string[]
 }
 
+/** Derive the list data from the raw transcript: fold tool turns into the
+ *  assistant turn, optionally append a synthetic streaming bubble, then the
+ *  route-owned optimistic "queued" messages at the tail. Returns the
+ *  intermediate `folded`/`streaming` so the caller can memoize on them. */
 export function buildMobileNativeChatData({
   messages,
   streamingText,
@@ -60,7 +61,9 @@ export function buildMobileNativeChatData({
 }
 
 export function foldMobileNativeChatMessages(messages: NativeChatMessage[]): NativeChatMessage[] {
-  return foldToolMessages(stripNoiseMessages(messages))
+  // Normalize first (desktop assembler parity): image marker turns fold into
+  // image-ref blocks instead of rendering as raw `[Image: …]` text.
+  return foldToolMessages(stripNoiseMessages(normalizeImageTranscriptMessages(messages)))
 }
 
 export function buildMobileNativeChatTransientData({

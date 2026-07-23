@@ -147,9 +147,19 @@ describe('useMobileNativeChatImageAttachments', () => {
       order.push(`text:${t}`)
       return true
     })
+    // Record each terminal write so the paste-before-settle order is asserted,
+    // not just implied by the call counts.
+    const trackedClient: Pick<RpcClient, 'sendRequest'> = {
+      sendRequest: (method, params) => {
+        if (method === 'terminal.send') {
+          order.push((params as { text?: string }).text === '\x15' ? 'clear' : 'paste')
+        }
+        return client.sendRequest(method, params)
+      }
+    }
     mount(
       baseArgs({
-        client: client as unknown as RpcClient,
+        client: trackedClient as RpcClient,
         deviceTokenRef: { current: 'device-1' },
         baseSend,
         sleep
@@ -174,8 +184,8 @@ describe('useMobileNativeChatImageAttachments', () => {
       text: '\x1b[200~/tmp/a.png\x1b[201~',
       enter: false
     })
-    // Paste happens before the settle, which happens before the text send.
-    expect(order).toEqual(['settle', 'text:look at this'])
+    // Clear, then paste, then settle, then the text send — in that order.
+    expect(order).toEqual(['clear', 'paste', 'settle', 'text:look at this'])
     // The local preview URI rides along so the sent bubble shows the photo.
     expect(baseSend).toHaveBeenCalledWith('look at this', ['file:///a.jpg'])
     // Chips clear once the send is accepted.
@@ -312,6 +322,48 @@ describe('useMobileNativeChatImageAttachments', () => {
     expect(hook!.attachments).toHaveLength(1)
   })
 
+  it('keeps isAttaching true when a cancelled pick overlaps a genuine in-flight upload', async () => {
+    // Park a real upload right after onUploadStart (count -> 1, isAttaching true)
+    // by holding its getConnectionId, then fire a cancelled pick. The cancelled
+    // call never incremented, so its finally must not drop the shared counter.
+    let releaseConnection: ((id: string | null) => void) | null = null
+    const client = makeClient([methodNotFound('start'), ok('save', '/tmp/a.png')])
+    const args = baseArgs({
+      client: client as unknown as RpcClient,
+      getActiveWorktreeConnectionId: () =>
+        new Promise<string | null>((resolve) => {
+          releaseConnection = resolve
+        })
+    })
+    mount(args)
+
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    let firstAttach: Promise<void> | null = null
+    await act(async () => {
+      firstAttach = hook!.attachImage('library')
+      for (let i = 0; i < 50 && !releaseConnection; i++) {
+        await Promise.resolve()
+      }
+    })
+    expect(releaseConnection).not.toBeNull()
+    expect(hook!.isAttaching).toBe(true)
+
+    // A concurrent cancelled pick — its finally must leave the counter alone.
+    pick.mockResolvedValue(null)
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    expect(hook!.isAttaching).toBe(true)
+
+    // The real upload finishes and clears the flag on its own.
+    await act(async () => {
+      releaseConnection!('conn-1')
+      await firstAttach
+    })
+    expect(hook!.isAttaching).toBe(false)
+    expect(hook!.attachments).toHaveLength(1)
+  })
+
   it('clears only the chips that were sent, keeping one attached mid-send', async () => {
     pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
     const client = makeClient([
@@ -359,5 +411,122 @@ describe('useMobileNativeChatImageAttachments', () => {
     // Only the first (sent) image rode along; the mid-send chip survives.
     expect(baseSend).toHaveBeenCalledWith('hi', ['file:///a.jpg'])
     expect(hook!.attachments.map((a) => a.previewUri)).toEqual(['file:///b.jpg'])
+  })
+
+  it('aborts the send when the active terminal changes during the settle window', async () => {
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    const client = makeClient([
+      methodNotFound('start'),
+      ok('save', '/tmp/a.png'),
+      sendResult(true), // Ctrl+U clear
+      sendResult(true) // image paste — into term-1
+    ])
+    const baseSend = vi.fn().mockResolvedValue(true)
+    const showToast = vi.fn()
+    const activeHandleRef = { current: 'term-1' }
+    let releaseSettle: (() => void) | null = null
+    const args = baseArgs({
+      client: client as unknown as RpcClient,
+      activeHandleRef,
+      baseSend,
+      showToast,
+      sleep: () =>
+        new Promise<void>((resolve) => {
+          releaseSettle = resolve
+        })
+    })
+    mount(args)
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+
+    let sendPromise: Promise<boolean> | null = null
+    await act(async () => {
+      sendPromise = hook!.sendNativeChat('hi')
+      for (let i = 0; i < 50 && !releaseSettle; i++) {
+        await Promise.resolve()
+      }
+    })
+    expect(releaseSettle).not.toBeNull()
+    // The user switches tabs while the paste settles: the text + Enter must not
+    // land in term-2 when the images went to term-1.
+    activeHandleRef.current = 'term-2'
+    let accepted = true
+    await act(async () => {
+      releaseSettle!()
+      accepted = await sendPromise!
+    })
+    expect(accepted).toBe(false)
+    expect(baseSend).not.toHaveBeenCalled()
+    expect(showToast).toHaveBeenCalledWith('Message not sent', 1500)
+    expect(hook!.attachments).toHaveLength(1)
+  })
+
+  it('leads the next text-only send with Ctrl+U after a failed paste, even with the chip removed', async () => {
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    const client = makeClient([
+      methodNotFound('start'),
+      ok('save', '/tmp/a.png'),
+      sendResult(true), // Ctrl+U clear
+      sendResult(false), // image paste rejected — stale input left in term-1
+      sendResult(true) // healing Ctrl+U before the text-only send
+    ])
+    const baseSend = vi.fn().mockResolvedValue(true)
+    mount(baseArgs({ client: client as unknown as RpcClient, baseSend }))
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    await act(async () => {
+      await hook!.sendNativeChat('hi')
+    })
+    expect(baseSend).not.toHaveBeenCalled()
+
+    // The user gives up on the image and removes its chip, then sends plain text.
+    await act(async () => {
+      hook!.removeAttachment('img-1')
+    })
+    expect(hook!.attachments).toEqual([])
+    let accepted = false
+    await act(async () => {
+      accepted = await hook!.sendNativeChat('hi again')
+    })
+    expect(accepted).toBe(true)
+    const sendCalls = client.calls.filter((c) => c.method === 'terminal.send')
+    // Failed attempt's clear + rejected paste, then the healing clear.
+    expect(sendCalls).toHaveLength(3)
+    expect(sendCalls[2]?.params).toMatchObject({ text: '\x15', enter: false })
+    expect(baseSend).toHaveBeenCalledWith('hi again')
+  })
+
+  it('reports a disconnected attach failure via the live connection state', async () => {
+    const client = makeClient([])
+    const showToast = vi.fn()
+    let failUpload: ((error: Error) => void) | null = null
+    const args = baseArgs({
+      client: client as unknown as RpcClient,
+      showToast,
+      getActiveWorktreeConnectionId: () =>
+        new Promise<string | null>((_resolve, reject) => {
+          failUpload = reject
+        })
+    })
+    mount(args)
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    let attach: Promise<void> | null = null
+    await act(async () => {
+      attach = hook!.attachImage('library')
+      for (let i = 0; i < 50 && !failUpload; i++) {
+        await Promise.resolve()
+      }
+    })
+    expect(failUpload).not.toBeNull()
+    // The connection drops mid-upload, then the in-flight RPC fails. The closure
+    // captured 'connected' at call time — only a live read can toast accurately.
+    update({ ...args, connState: 'connecting' })
+    await act(async () => {
+      failUpload!(new Error('socket closed'))
+      await attach
+    })
+    expect(showToast).toHaveBeenCalledWith('Attach failed (disconnected)', 1500)
   })
 })

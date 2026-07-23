@@ -1,4 +1,8 @@
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import {
+  isImageSourceUserTurn,
+  stripImagePromptMarker
+} from './mobile-native-chat-image-transcript-markers'
 
 /** An ack-lost ('unknown' outcome) send held until its transcript echo lands or
  *  the deadline surfaces the uncertainty. */
@@ -19,8 +23,10 @@ export function normalizedUserText(message: NativeChatMessage): string | null {
     .filter((block) => block.type === 'text')
     .map((block) => (block.type === 'text' ? block.text : ''))
     .join('')
-    .trim()
-  return text || null
+  // Claude echoes a captioned image send as `[Image #1] caption` — the sent
+  // text must still match its echo, so strip the marker before comparing.
+  const stripped = stripImagePromptMarker(text).trim()
+  return stripped || null
 }
 
 export function countUserTextOccurrences(
@@ -36,18 +42,19 @@ export function countUserTextOccurrences(
   return count
 }
 
-/** Number of user turns strictly after `tailId` (or the whole transcript when the
- *  tail was paginated out). An image-only echo has no text to match, so it
- *  reconciles by ordinal against this count — ignoring agent replies and
- *  paginated-in history. */
-export function countUserTurnsAfter(
+/** Number of `[Image: source: …]` echo turns strictly after `tailId` (or the
+ *  whole transcript when the tail was paginated out). An image-only send has no
+ *  caption to match, so it reconciles by ordinal against this count — counting
+ *  only image echoes keeps an unrelated text send's echo from clearing it. */
+export function countImageSourceTurnsAfter(
   messages: readonly NativeChatMessage[],
   tailId: string | null
 ): number {
   const tailIndex = tailId ? messages.findIndex((message) => message.id === tailId) : -1
   let count = 0
   for (let i = tailIndex + 1; i < messages.length; i++) {
-    if (messages[i]?.role === 'user') {
+    const message = messages[i]
+    if (message && isImageSourceUserTurn(message)) {
       count++
     }
   }
@@ -59,8 +66,9 @@ export function findLandedUnconfirmedSends(
   entries: readonly UnconfirmedSend[]
 ): UnconfirmedSend[] {
   // Why: pagination prepends old equal text; only unclaimed matches after each
-  // captured tail prove new echoes. User turns are keyed by text; an image-only
-  // turn (no text) keys under '' so an empty-text send can claim it.
+  // captured tail prove new echoes. User turns are keyed by text; an image echo
+  // (`[Image: source: …]` or no text) keys under '' so an empty-text send can
+  // claim it.
   const messageIndexById = new Map<string, number>()
   const userMessagesByText = new Map<string, Array<{ id: string; index: number }>>()
   for (const [index, message] of messages.entries()) {
@@ -68,7 +76,7 @@ export function findLandedUnconfirmedSends(
     if (message.role !== 'user') {
       continue
     }
-    const key = normalizedUserText(message) ?? ''
+    const key = isImageSourceUserTurn(message) ? '' : (normalizedUserText(message) ?? '')
     const current = userMessagesByText.get(key) ?? []
     current.push({ id: message.id, index })
     userMessagesByText.set(key, current)

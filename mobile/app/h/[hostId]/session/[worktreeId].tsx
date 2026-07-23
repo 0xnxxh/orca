@@ -213,6 +213,7 @@ import { useMobileNativeChatReadability } from '../../../../src/session/use-mobi
 import { useMobileNativeChatInputLease } from '../../../../src/session/use-mobile-native-chat-input-lease'
 import { getMobileTerminalActionSheetActions } from '../../../../src/session/mobile-terminal-action-sheet-actions'
 import * as nativeChatTerminalStream from '../../../../src/session/mobile-native-chat-terminal-stream'
+import { mobileNativeChatScopeKey } from '../../../../src/session/mobile-native-chat-scope-key'
 import { useMobileNativeChatTerminalStream } from '../../../../src/session/use-mobile-native-chat-terminal-stream'
 import { subscribeMobileTerminalSafely } from '../../../../src/session/mobile-terminal-stream-subscribe'
 import { activateMobileSessionTab } from '../../../../src/session/mobile-session-tab-activation'
@@ -3636,10 +3637,7 @@ export default function SessionScreen() {
     canSend,
     connState,
     deviceTokenRef,
-    // Same key shape as the drafts hook, so chips follow the tab its draft does.
-    nativeChatScopeKey: activeSessionTabId
-      ? `${hostId}\0${worktreeId}\0${activeSessionTabId}`
-      : null,
+    nativeChatScopeKey: mobileNativeChatScopeKey(hostId, worktreeId, activeSessionTabId),
     nativeChatInputLeaseReady,
     getActiveWorktreeConnectionId,
     beforeTerminalSend: flushPendingLiveInputBeforeAttachmentSend,
@@ -4393,6 +4391,7 @@ export default function SessionScreen() {
     hostedChecksSupported: prIsGithubRepo
   })
   const showHeaderMoreButton = showAgentSessionHistoryAction || showChecksAction
+  const createTabBusy = creating || creatingBrowser || creatingMarkdown
 
   return (
     <View ref={setMobileSessionRootRef} style={styles.container}>
@@ -4595,24 +4594,16 @@ export default function SessionScreen() {
                   <Pressable
                     style={[
                       styles.createButton,
-                      (creating ||
-                        creatingBrowser ||
-                        creatingMarkdown ||
-                        connState !== 'connected') &&
-                        styles.createButtonDisabled
+                      (createTabBusy || connState !== 'connected') && styles.createButtonDisabled
                     ]}
-                    disabled={
-                      creating || creatingBrowser || creatingMarkdown || connState !== 'connected'
-                    }
+                    disabled={createTabBusy || connState !== 'connected'}
                     onPress={() => {
                       setCreateError('')
                       setShowCreateTabDrawer(true)
                     }}
                   >
                     <Text style={styles.createButtonText}>
-                      {creating || creatingBrowser || creatingMarkdown
-                        ? 'Creating...'
-                        : 'Create Tab'}
+                      {createTabBusy ? 'Creating...' : 'Create Tab'}
                     </Text>
                   </Pressable>
                 </View>

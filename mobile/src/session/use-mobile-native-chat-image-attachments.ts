@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
+import { CLIPBOARD_IMAGE_TOO_LARGE_ERROR } from '../../../src/shared/clipboard-image'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import {
@@ -94,6 +95,13 @@ export function useMobileNativeChatImageAttachments({
   const idCounter = useRef(0)
   // Count in-flight uploads so an overlapping attach can't clear the flag early.
   const attachingCount = useRef(0)
+  // Live connState for attachImage's catch: the closure's value was already
+  // checked 'connected' at entry, so only a ref can see a mid-upload disconnect.
+  const connStateRef = useRef(connState)
+  connStateRef.current = connState
+  // Terminal whose input line may hold a partial paste from a failed send; the
+  // next send TO THAT terminal must lead with Ctrl+U even if it has no images.
+  const staleInputTerminalRef = useRef<string | null>(null)
 
   const attachments = (scopeKey ? attachmentsByScope[scopeKey] : undefined) ?? NO_ATTACHMENTS
 
@@ -105,12 +113,17 @@ export function useMobileNativeChatImageAttachments({
       if (!client || !scope || !activeHandleRef.current || connState !== 'connected') {
         return
       }
+      // Only this call's own increment may be undone in `finally`; a cancelled
+      // pick or pre-upload error never ran `onUploadStart`, so decrementing the
+      // shared counter would clear a concurrent upload's in-flight flag early.
+      let started = false
       try {
         const uploaded = await uploadMobileNativeChatImage(source, {
           client,
           getConnectionId: getActiveWorktreeConnectionId,
           pickImage: pickMobileImage,
           onUploadStart: () => {
+            started = true
             attachingCount.current += 1
             setIsAttaching(true)
           }
@@ -125,7 +138,7 @@ export function useMobileNativeChatImageAttachments({
         onAttachSuccess?.()
       } catch (error) {
         onError?.()
-        if (connState !== 'connected') {
+        if (connStateRef.current !== 'connected') {
           showToast('Attach failed (disconnected)', 1500)
           return
         }
@@ -133,16 +146,18 @@ export function useMobileNativeChatImageAttachments({
           showToast('Photo permission denied', 1500)
           return
         }
-        if (getErrorMessage(error) === 'Clipboard image is too large') {
+        if (getErrorMessage(error) === CLIPBOARD_IMAGE_TOO_LARGE_ERROR) {
           showToast('Image too large to attach', 1500)
           return
         }
         showToast('Attach failed', 1500)
       } finally {
-        attachingCount.current -= 1
-        if (attachingCount.current <= 0) {
-          attachingCount.current = 0
-          setIsAttaching(false)
+        if (started) {
+          attachingCount.current -= 1
+          if (attachingCount.current <= 0) {
+            attachingCount.current = 0
+            setIsAttaching(false)
+          }
         }
       }
     },
@@ -180,6 +195,23 @@ export function useMobileNativeChatImageAttachments({
       const scope = scopeKey
       const pendingImages = (scope ? attachmentsByScope[scope] : undefined) ?? NO_ATTACHMENTS
       if (pendingImages.length === 0 || !scope) {
+        // Heal a previously failed paste: a text-only send to that terminal would
+        // otherwise glue the stale image paste onto this message. Best-effort —
+        // on failure the marker stays set and the send proceeds as before.
+        const staleTerminal = staleInputTerminalRef.current
+        if (staleTerminal && staleTerminal === activeHandleRef.current && client) {
+          try {
+            await pasteMobileNativeChatImagePaths({
+              client,
+              terminal: staleTerminal,
+              deviceToken: deviceTokenRef.current,
+              imagePaths: []
+            })
+            staleInputTerminalRef.current = null
+          } catch {
+            // Leave marked for the next attempt.
+          }
+        }
         return baseSend(text)
       }
       const handle = activeHandleRef.current
@@ -198,14 +230,28 @@ export function useMobileNativeChatImageAttachments({
         })
         if (!pasted) {
           // Keep the chips so the user can retry; the failed paste never submitted.
+          staleInputTerminalRef.current = handle
           onError?.()
           showToast('Message not sent', 1500)
           return false
+        }
+        // The paste's leading Ctrl+U cleared any earlier stale input in `handle`.
+        if (staleInputTerminalRef.current === handle) {
+          staleInputTerminalRef.current = null
         }
         // Let the TUI absorb the image paste before the text + Enter follow. The
         // preview URIs ride along to baseSend so the sent bubble shows the photo
         // immediately (empty text still submits a bare Enter through baseSend).
         await sleep(MOBILE_NATIVE_CHAT_IMAGE_SETTLE_MS)
+        // The paste above targeted `handle`; a tab switch during the settle would
+        // route the text + Enter to a different terminal than the images. Abort —
+        // the chips keep their scope and a retry's Ctrl+U clears the stale paste.
+        if (activeHandleRef.current !== handle) {
+          staleInputTerminalRef.current = handle
+          onError?.()
+          showToast('Message not sent', 1500)
+          return false
+        }
         const accepted = await baseSend(
           text,
           pendingImages.map((attachment) => attachment.previewUri)
@@ -227,6 +273,7 @@ export function useMobileNativeChatImageAttachments({
         // A thrown paste/send (network/RPC) keeps the chips and honors the
         // Promise<boolean> contract instead of rejecting. Retry-safe: the next
         // attempt's leading Ctrl+U clears whatever fraction of the paste landed.
+        staleInputTerminalRef.current = handle
         onError?.()
         showToast('Message not sent', 1500)
         return false

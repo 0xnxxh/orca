@@ -25,8 +25,8 @@ const AGENT_MSG: NativeChatMessage = {
 }
 
 // A tiny stand-in for the controller's handleNativeChatSend: capture the send
-// origin, hit the (faked) terminal.send, then record the optimistic echo — the
-// real drafts logic, so the sent bubble is produced by the code, not by us.
+// origin, hit the (faked) terminal.send, then record the optimistic echo
+// through the real drafts hook.
 function useMiniController(messages: NativeChatMessage[]) {
   const drafts = useMobileNativeChatDrafts({
     hostId: 'h',
@@ -127,8 +127,7 @@ function App(): React.ReactNode {
         onMicPress: () => {}
       })
     ),
-    // A live trace of what the real send pipeline actually wrote to the (faked)
-    // host socket — so the bytes are visible, not asserted.
+    // Renders every terminal.send the pipeline wrote to the faked host socket.
     h(
       View,
       { style: styles.trace },

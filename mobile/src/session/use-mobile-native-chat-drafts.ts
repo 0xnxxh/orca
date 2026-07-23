@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import {
+  countImageSourceTurnsAfter,
   countUserTextOccurrences,
-  countUserTurnsAfter,
   findLandedUnconfirmedSends,
   normalizedUserText,
   type UnconfirmedSend
 } from './mobile-native-chat-draft-reconcile'
+import { mobileNativeChatScopeKey } from './mobile-native-chat-scope-key'
 
 export type MobileNativeChatPendingMessage = {
   id: string
@@ -16,8 +17,8 @@ export type MobileNativeChatPendingMessage = {
    *  on the echo bubble so the sent photo shows before the transcript catches up. */
   images?: string[]
   /** Transcript tail when sent — an image-only echo (no text to match) reconciles
-   *  against the first new *user* turn after this id, so pagination or an agent
-   *  reply can't clear it early. */
+   *  against new `[Image: source: …]` echo turns after this id, so pagination,
+   *  agent replies, and unrelated text echoes can't clear it early. */
   baselineTailMessageId: string | null
 }
 export type MobileNativeChatSendOrigin = {
@@ -53,7 +54,7 @@ export function useMobileNativeChatDrafts(args: {
   ) => void
 } {
   const { hostId, worktreeId, tabId, sessionId, messages } = args
-  const draftKey = tabId ? `${hostId}\0${worktreeId}\0${tabId}` : null
+  const draftKey = mobileNativeChatScopeKey(hostId, worktreeId, tabId)
   const pendingKey = draftKey && sessionId ? `${draftKey}\0${sessionId}` : null
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [pendingBySession, setPendingBySession] = useState<
@@ -123,10 +124,22 @@ export function useMobileNativeChatDrafts(args: {
             pending.text.trim() === origin.normalizedText &&
             pending.expectedOccurrence > origin.baselineOccurrences
         ).length
+        // An empty-text send reconciles by image-echo ordinal: every outstanding
+        // send's ridden-along images echo as `[Image: source: …]` turns after
+        // this send's baseline tail, ahead of this send's own echo.
+        const expectedImageEchoOrdinal =
+          current.reduce(
+            (sum, pending) =>
+              sum + (pending.images?.length ?? (pending.text.trim() === '' ? 1 : 0)),
+            0
+          ) + 1
         const pending: MobileNativeChatPendingMessage = {
           id: `pending-${pendingCounterRef.current}`,
           text,
-          expectedOccurrence: origin.baselineOccurrences + earlierOutstanding + 1,
+          expectedOccurrence:
+            origin.normalizedText === ''
+              ? expectedImageEchoOrdinal
+              : origin.baselineOccurrences + earlierOutstanding + 1,
           baselineTailMessageId: origin.baselineTailMessageId,
           ...(images && images.length > 0 ? { images } : {})
         }
@@ -237,14 +250,15 @@ export function useMobileNativeChatDrafts(args: {
       }
       // Why: compare against the count captured before send; historical equal
       // turns cannot clear a new echo, while duplicates land one occurrence each.
-      // An image-only echo has no text to match, so it reconciles by ORDINAL against
-      // the count of new *user* turns after its baseline tail (its stored
-      // `expectedOccurrence` = 1,2,… like the text path). Ordinal-vs-count stays
-      // stable when the effect re-runs on the shrunken list, and ignores agent
-      // replies and paginated-in history.
+      // An image-only echo has no text to match, so it reconciles by ORDINAL
+      // against the count of new `[Image: source: …]` echo turns after its
+      // baseline tail — text echoes are excluded so an unrelated outstanding
+      // text send cannot clear it. Ordinal-vs-count stays stable when the effect
+      // re-runs on the shrunken list, and ignores paginated-in history.
       const next = current.filter((item) =>
         item.text.trim() === ''
-          ? countUserTurnsAfter(messages, item.baselineTailMessageId) < item.expectedOccurrence
+          ? countImageSourceTurnsAfter(messages, item.baselineTailMessageId) <
+            item.expectedOccurrence
           : (landedCounts.get(item.text.trim()) ?? 0) < item.expectedOccurrence
       )
       if (next.length === current.length) {

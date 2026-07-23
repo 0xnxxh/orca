@@ -85,6 +85,33 @@ describe('buildMobileNativeChatData', () => {
     expect(data[data.length - 1].blocks).toEqual([{ type: 'image-ref', url: 'file:///a.jpg' }])
   })
 
+  it('folds transcript image marker turns into image-ref blocks (desktop parity)', () => {
+    // Claude records an attached image as `[Image: source: /path]` + an
+    // `[Image #1] `-prefixed caption turn; the fold must merge them into one
+    // user turn with an image-ref block instead of showing raw marker text.
+    const { data } = buildMobileNativeChatData({
+      messages: [
+        user('u1', '[Image: source: /tmp/a.png]'),
+        user('u2', '[Image #1] look at this'),
+        assistant('a1', 'nice photo')
+      ],
+      pending: []
+    })
+    const merged = data.find((message) => message.role === 'user')
+    expect(merged?.blocks).toEqual([
+      { type: 'image-ref', path: '/tmp/a.png' },
+      { type: 'text', text: 'look at this' }
+    ])
+  })
+
+  it('renders a lone image marker turn (no caption) as an image-ref block', () => {
+    const { data } = buildMobileNativeChatData({
+      messages: [user('u1', '[Image: source: /tmp/a.png]')],
+      pending: []
+    })
+    expect(data[0]?.blocks).toEqual([{ type: 'image-ref', path: '/tmp/a.png' }])
+  })
+
   it('adds a synthetic streaming bubble while the partial text leads the transcript', () => {
     const { streaming, data } = buildMobileNativeChatData({
       messages: [user('u1', 'hi')],

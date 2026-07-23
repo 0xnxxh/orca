@@ -297,8 +297,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.button,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderSubtle,
-    backgroundColor: colors.bgRaised,
-    overflow: 'visible'
+    backgroundColor: colors.bgRaised
   },
   attachmentImage: {
     width: '100%',
@@ -306,9 +305,11 @@ const styles = StyleSheet.create({
     borderRadius: radii.button
   },
   attachmentRemove: {
+    // Inset inside the thumb: Android drops touches outside the parent's bounds,
+    // so an overhanging badge would lose part of its tap target.
     position: 'absolute',
-    top: -6,
-    right: -6,
+    top: 2,
+    right: 2,
     width: 20,
     height: 20,
     borderRadius: 10,

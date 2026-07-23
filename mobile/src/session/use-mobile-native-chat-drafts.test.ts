@@ -147,7 +147,8 @@ describe('useMobileNativeChatDrafts', () => {
     )
     expect(state?.pending.map((pending) => pending.images)).toEqual([['file:///a.jpg']])
 
-    // The user's own image turn landing (a new user message after the tail) clears it.
+    // The user's own image echo landing (Claude records it as an
+    // `[Image: source: …]` turn) clears it.
     await act(async () =>
       renderer?.update(
         createElement(Harness, {
@@ -155,7 +156,83 @@ describe('useMobileNativeChatDrafts', () => {
           messages: [
             assistantTextMessage('a1', 'hi'),
             assistantTextMessage('a2', 'nice photo'),
-            userTextMessage('u1', '')
+            userTextMessage('u1', '[Image: source: /tmp/a.png]')
+          ]
+        })
+      )
+    )
+    expect(state?.pending).toEqual([])
+  })
+
+  it("keeps an image-only echo when an unrelated text send's echo lands", async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
+      )
+    )
+    const textOrigin = state?.captureSendOrigin('ping')
+    const imageOrigin = state?.captureSendOrigin('')
+    act(() => {
+      if (textOrigin && imageOrigin) {
+        state?.acceptSend(textOrigin, 'ping')
+        state?.acceptSend(imageOrigin, '', ['file:///a.jpg'])
+      }
+    })
+    expect(state?.pending).toHaveLength(2)
+
+    // The text echo lands first: it must clear only the text pending — a user
+    // turn that is not an image echo cannot reconcile the photo.
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [assistantTextMessage('a1', 'hi'), userTextMessage('u1', 'ping')]
+        })
+      )
+    )
+    expect(state?.pending.map((pending) => pending.images)).toEqual([['file:///a.jpg']])
+
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [
+            assistantTextMessage('a1', 'hi'),
+            userTextMessage('u1', 'ping'),
+            userTextMessage('u2', '[Image: source: /tmp/a.png]')
+          ]
+        })
+      )
+    )
+    expect(state?.pending).toEqual([])
+  })
+
+  it('reconciles a captioned image echo that carries the [Image #N] marker', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
+      )
+    )
+    const origin = state?.captureSendOrigin('look at this')
+    act(() => {
+      if (origin) {
+        state?.acceptSend(origin, 'look at this', ['file:///a.jpg'])
+      }
+    })
+    expect(state?.pending).toHaveLength(1)
+
+    // Claude echoes a captioned image send as two turns: the source marker and
+    // the caption prefixed with `[Image #1] ` — the pending must still match.
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [
+            assistantTextMessage('a1', 'hi'),
+            userTextMessage('u1', '[Image: source: /tmp/a.png]'),
+            userTextMessage('u2', '[Image #1] look at this')
           ]
         })
       )
@@ -307,12 +384,15 @@ describe('useMobileNativeChatDrafts', () => {
     })
     expect(state?.pending).toHaveLength(2)
 
-    // Only one user turn has landed — exactly one echo reconciles.
+    // Only one image echo has landed — exactly one photo reconciles.
     await act(async () =>
       renderer?.update(
         createElement(Harness, {
           tabId: 'a',
-          messages: [assistantTextMessage('a1', 'hi'), userTextMessage('u1', '')]
+          messages: [
+            assistantTextMessage('a1', 'hi'),
+            userTextMessage('u1', '[Image: source: /tmp/a.png]')
+          ]
         })
       )
     )
