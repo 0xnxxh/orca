@@ -3,6 +3,10 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
+import {
+  NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS,
+  NATIVE_CHAT_SUBMIT_DELAY_MS
+} from '../../../src/shared/native-chat-answer-stepping'
 import { useMobileNativeChatImageSend } from './use-mobile-native-chat-image-send'
 import type { MobileNativeChatSendImage } from './use-mobile-native-chat-pending-images'
 
@@ -22,6 +26,7 @@ describe('useMobileNativeChatImageSend', () => {
   let send: ((text: string) => Promise<boolean>) | null = null
 
   beforeEach(() => {
+    vi.useFakeTimers()
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     vi.clearAllMocks()
     sendableImages = []
@@ -42,6 +47,7 @@ describe('useMobileNativeChatImageSend', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     act(() => renderer?.unmount())
     renderer = null
     send = null
@@ -76,6 +82,12 @@ describe('useMobileNativeChatImageSend', () => {
     })
   }
 
+  async function sendAndRunTimers(text: string): Promise<boolean> {
+    const result = send!(text)
+    await vi.runAllTimersAsync()
+    return result
+  }
+
   it('passes straight through to the text send when no images are pending', async () => {
     render()
     await expect(send!('hello')).resolves.toBe(true)
@@ -90,7 +102,7 @@ describe('useMobileNativeChatImageSend', () => {
     ]
     render()
 
-    await expect(send!('what is this?')).resolves.toBe(true)
+    await expect(sendAndRunTimers('what is this?')).resolves.toBe(true)
     expect(sendRequest).toHaveBeenCalledTimes(2)
     expect(sendRequest).toHaveBeenNthCalledWith(1, 'terminal.send', {
       terminal: 'term-1',
@@ -113,7 +125,7 @@ describe('useMobileNativeChatImageSend', () => {
     sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
     render()
 
-    await expect(send!('')).resolves.toBe(true)
+    await expect(sendAndRunTimers('')).resolves.toBe(true)
     expect(sendText).not.toHaveBeenCalled()
     expect(sendRequest).toHaveBeenLastCalledWith('terminal.send', {
       terminal: 'term-1',
@@ -134,7 +146,7 @@ describe('useMobileNativeChatImageSend', () => {
       .mockResolvedValueOnce({ ok: true, result: { send: { accepted: false } } })
     render()
 
-    await expect(send!('caption')).resolves.toBe(false)
+    await expect(sendAndRunTimers('caption')).resolves.toBe(false)
     // The first path stays marked as pasted; retry must not write it again.
     expect(markImagesPasted).toHaveBeenCalledWith(['a'])
     expect(consumeImages).not.toHaveBeenCalled()
@@ -147,7 +159,7 @@ describe('useMobileNativeChatImageSend', () => {
     leaseReady = false
     render()
 
-    await expect(send!('caption')).resolves.toBe(false)
+    await expect(sendAndRunTimers('caption')).resolves.toBe(false)
     expect(sendRequest).not.toHaveBeenCalled()
     expect(consumeImages).not.toHaveBeenCalled()
     expect(onSendError).toHaveBeenCalledWith('Message not sent (disconnected)')
@@ -161,7 +173,7 @@ describe('useMobileNativeChatImageSend', () => {
     })
     render()
 
-    await expect(send!('caption')).resolves.toBe(false)
+    await expect(sendAndRunTimers('caption')).resolves.toBe(false)
     expect(sendRequest).toHaveBeenCalledTimes(1)
     expect(markImagesPasted).toHaveBeenCalledWith(['a'])
     expect(consumeImages).not.toHaveBeenCalled()
@@ -180,25 +192,25 @@ describe('useMobileNativeChatImageSend', () => {
     })
     render()
 
-    await expect(send!('caption')).resolves.toBe(false)
+    await expect(sendAndRunTimers('caption')).resolves.toBe(false)
     expect(sendRequest).toHaveBeenCalledTimes(1)
     expect(markImagesPasted).toHaveBeenCalledWith(['a'])
     expect(sendText).not.toHaveBeenCalled()
   })
 
-  it('does not paste an image twice when its acknowledgement is lost', async () => {
+  it('preserves ambiguous image state without reporting definite failure or pasting twice', async () => {
     sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
     sendRequest.mockRejectedValueOnce(markRpcDeliveryUnknown(new Error('ack lost')))
     render()
 
-    await expect(send!('caption')).resolves.toBe(false)
+    await expect(sendAndRunTimers('caption')).resolves.toBe(true)
     expect(markImagesPasted).toHaveBeenCalledWith(['a'])
     expect(sendText).not.toHaveBeenCalled()
     expect(onSendError).toHaveBeenCalledWith(
       'Image delivery unconfirmed — check terminal before retrying'
     )
 
-    await expect(send!('caption')).resolves.toBe(true)
+    await expect(sendAndRunTimers('caption')).resolves.toBe(true)
     expect(sendRequest).toHaveBeenCalledTimes(1)
     expect(sendText).toHaveBeenCalledTimes(1)
     expect(consumeImages).toHaveBeenCalledWith(['a'])
@@ -212,11 +224,11 @@ describe('useMobileNativeChatImageSend', () => {
       .mockResolvedValueOnce({ ok: true, result: { send: { accepted: true } } })
     render()
 
-    await expect(send!('')).resolves.toBe(false)
+    await expect(sendAndRunTimers('')).resolves.toBe(false)
     expect(sendableImages).toEqual([{ id: 'a', status: 'pasted' }])
     expect(consumeImages).not.toHaveBeenCalled()
 
-    await expect(send!('')).resolves.toBe(true)
+    await expect(sendAndRunTimers('')).resolves.toBe(true)
     expect(sendRequest).toHaveBeenCalledTimes(3)
     expect(sendRequest).toHaveBeenNthCalledWith(3, 'terminal.send', {
       terminal: 'term-1',
@@ -225,5 +237,38 @@ describe('useMobileNativeChatImageSend', () => {
       client: { id: 'device-9', type: 'mobile' }
     })
     expect(consumeImages).toHaveBeenCalledWith(['a'])
+  })
+
+  it('waits for a newly pasted image to settle before sending its caption', async () => {
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
+    render()
+
+    const sendResult = send!('caption')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendText).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS - 1)
+    expect(sendText).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+
+    await expect(sendResult).resolves.toBe(true)
+    expect(sendText).toHaveBeenCalledWith('caption')
+  })
+
+  it('waits the normal submit gap before sending image-only Enter', async () => {
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
+    render()
+
+    const sendResult = send!('')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(NATIVE_CHAT_SUBMIT_DELAY_MS - 1)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+
+    await expect(sendResult).resolves.toBe(true)
+    expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 })

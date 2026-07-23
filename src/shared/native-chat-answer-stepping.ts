@@ -1,4 +1,6 @@
 export const NATIVE_CHAT_SUBMIT_DELAY_MS = 500
+// Agent TUIs need this gap to turn a bracket-pasted image path into a chip before caption bytes arrive.
+export const NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS = 300
 // 500ms (not a tighter cadence) so the next AskUserQuestion step still renders
 // before its body is written on slower machines / under SSH round-trip latency.
 export const NATIVE_CHAT_ADVANCE_BUFFER_MS = 500

@@ -10,6 +10,7 @@ import type { getSettingsForAgentTabRuntimeOwner } from '@/lib/agent-paste-draft
 import type { AskAnswerKeyGroup } from './native-chat-interactive-prompt'
 import {
   NATIVE_CHAT_ADVANCE_BUFFER_MS,
+  NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS,
   NATIVE_CHAT_QUESTION_STEP_MS,
   NATIVE_CHAT_SUBMIT_DELAY_MS
 } from '../../../../shared/native-chat-answer-stepping'
@@ -25,10 +26,13 @@ import {
   waitForNativeChatPtyIdle
 } from './native-chat-pty-send-queue'
 
-export { NATIVE_CHAT_ADVANCE_BUFFER_MS, NATIVE_CHAT_QUESTION_STEP_MS, NATIVE_CHAT_SUBMIT_DELAY_MS }
+export {
+  NATIVE_CHAT_ADVANCE_BUFFER_MS,
+  NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS,
+  NATIVE_CHAT_QUESTION_STEP_MS,
+  NATIVE_CHAT_SUBMIT_DELAY_MS
+}
 export { resetNativeChatPtySendQueuesForTests }
-
-export const NATIVE_CHAT_IMAGE_ATTACHMENT_SETTLE_MS = 300
 
 // Why: agent TUI composers treat Ctrl+U as kill-to-start-of-line. Chat sends
 // start from an empty line so a prior cancelled paste cannot glue onto the next
