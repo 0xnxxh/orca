@@ -56,6 +56,18 @@ describe('resolveChecksPanelPRRefreshRequest', () => {
     ).toEqual({ reason: 'swr', priority: 30 })
   })
 
+  it('does not promote non-GitHub review evidence into an active GitHub lookup', () => {
+    expect(
+      resolveChecksPanelPRRefreshRequest({
+        cachedHasPR: null,
+        cachedFetchedAt: null,
+        panelVisibleSince: 200,
+        hasUnrenderedReviewEvidence: true,
+        reviewEvidenceProvider: 'gitlab'
+      })
+    ).toEqual({ reason: 'swr', priority: 30 })
+  })
+
   it('keeps populated or unknown cache entries on the background path', () => {
     expect(
       resolveChecksPanelPRRefreshRequest({

@@ -1,3 +1,4 @@
+import type { HostedReviewProvider } from '../../../../shared/hosted-review'
 import type { GitHubPRRefreshReason } from '../../../../shared/types'
 
 type ChecksPanelPRRefreshRequestInput = {
@@ -6,6 +7,7 @@ type ChecksPanelPRRefreshRequestInput = {
   panelVisibleSince: number | null
   // A known-but-unrendered review needs one foreground lookup to resolve its transient state.
   hasUnrenderedReviewEvidence?: boolean
+  reviewEvidenceProvider?: HostedReviewProvider
   hasRequestedForegroundRefresh?: boolean
 }
 
@@ -23,7 +25,9 @@ export function resolveChecksPanelPRRefreshRequest(
     input.panelVisibleSince !== null &&
     input.cachedFetchedAt < input.panelVisibleSince
   const unresolvedEvidenceNeedsForeground =
-    input.hasUnrenderedReviewEvidence && input.cachedHasPR !== true
+    input.hasUnrenderedReviewEvidence &&
+    input.cachedHasPR !== true &&
+    (input.reviewEvidenceProvider === undefined || input.reviewEvidenceProvider === 'github')
 
   if (
     !input.hasRequestedForegroundRefresh &&
