@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { parseServeSimDetachedSession } from './serve-sim-detached-session'
+import { deriveServeSimAxUrl, parseServeSimDetachedSession } from './serve-sim-detached-session'
+
+describe('deriveServeSimAxUrl', () => {
+  it('swaps the mjpeg suffix for /ax, preserving the path prefix', () => {
+    expect(deriveServeSimAxUrl('http://127.0.0.1:3100/stream.mjpeg')).toBe(
+      'http://127.0.0.1:3100/ax'
+    )
+    expect(deriveServeSimAxUrl('http://127.0.0.1:3100/device-1/stream.mjpeg')).toBe(
+      'http://127.0.0.1:3100/device-1/ax'
+    )
+  })
+
+  it('does not derive from a non-mjpeg, query-tailed, or missing stream url', () => {
+    // A query string defeats the suffix match, so no /ax is fabricated.
+    expect(deriveServeSimAxUrl('http://127.0.0.1:3100/stream.mjpeg?token=x')).toBeUndefined()
+    expect(deriveServeSimAxUrl('http://127.0.0.1:3100/custom-stream')).toBeUndefined()
+    expect(deriveServeSimAxUrl(undefined)).toBeUndefined()
+  })
+})
 
 describe('parseServeSimDetachedSession', () => {
   it('uses serve-sim streamUrl when present', () => {

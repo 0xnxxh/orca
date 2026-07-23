@@ -420,6 +420,29 @@ describe('RuntimeEmulatorCommands attach lifecycle', () => {
     })
   })
 
+  it('routes emulatorAx through the bridge to the active session ax endpoint', async () => {
+    const fetchAccessibilityTree = vi.fn(async () => ({ elements: [{ label: 'Login' }] }))
+    const bridge = new EmulatorBridge({ fetchAccessibilityTree })
+    bridge.registerActiveEmulator('wt-1', {
+      ...session('device-1'),
+      axUrl: 'http://127.0.0.1:3100/device-1/ax'
+    })
+    const commands = new RuntimeEmulatorCommands({
+      getEmulatorBridge: () => bridge,
+      resolveWorktreeSelector: vi.fn(async () => ({ id: 'wt-1' })),
+      getAuthoritativeWindow: () => ({ webContents: { send: vi.fn() } }) as never,
+      getSettings: () => ({
+        mobileEmulatorEnabled: true,
+        mobileEmulatorDefaultDeviceUdid: null
+      })
+    })
+
+    await expect(commands.emulatorAx({ worktree: 'wt-1' })).resolves.toEqual({
+      elements: [{ label: 'Login' }]
+    })
+    expect(fetchAccessibilityTree).toHaveBeenCalledWith('http://127.0.0.1:3100/device-1/ax')
+  })
+
   it('rejects attach when mobile emulator is disabled', async () => {
     const bridge = new EmulatorBridge()
     const commands = new RuntimeEmulatorCommands({
