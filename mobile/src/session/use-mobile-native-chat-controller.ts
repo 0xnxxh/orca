@@ -110,6 +110,8 @@ export function useMobileNativeChatController(args: {
     setComposerText: setChatComposerText,
     pending: chatPending,
     captureSendOrigin,
+    clearDraftForSend,
+    restoreRejectedDraft,
     acceptSend,
     holdUnconfirmedSend
   } = useMobileNativeChatDrafts({
@@ -229,6 +231,10 @@ export function useMobileNativeChatController(args: {
         onSendError('Message not sent (disconnected)')
         return false
       }
+      // Why: empty the composer at send time, not on the ack — over relay the
+      // round trip is visible, and a lost ack must not strand the sent prompt
+      // in the box. Only a definite rejection puts the text back.
+      clearDraftForSend(origin, text)
       const outcome = await sendMobileNativeChatMessageWithOutcome({
         client,
         terminal: handle,
@@ -246,6 +252,7 @@ export function useMobileNativeChatController(args: {
         return true
       }
       if (outcome === 'rejected') {
+        restoreRejectedDraft(origin, text)
         onSendError('Message not sent')
         return false
       }
@@ -256,11 +263,13 @@ export function useMobileNativeChatController(args: {
       acceptSend,
       activeHandleRef,
       captureSendOrigin,
+      clearDraftForSend,
       client,
       deviceTokenRef,
       holdUnconfirmedSend,
       nativeChatInputLeaseReady,
-      onSendError
+      onSendError,
+      restoreRejectedDraft
     ]
   )
 
