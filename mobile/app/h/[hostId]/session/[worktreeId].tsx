@@ -3649,6 +3649,10 @@ export default function SessionScreen() {
     canSend,
     connState,
     deviceTokenRef,
+    // Same key shape as the drafts hook, so chips follow the tab its draft does.
+    nativeChatScopeKey: activeSessionTabId
+      ? `${hostId}\0${worktreeId}\0${activeSessionTabId}`
+      : null,
     nativeChatInputLeaseReady,
     getActiveWorktreeConnectionId,
     beforeTerminalSend: flushPendingLiveInputBeforeAttachmentSend,

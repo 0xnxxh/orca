@@ -70,6 +70,7 @@ function App(): React.ReactNode {
     deviceTokenRef,
     getActiveWorktreeConnectionId: async () => null,
     connState: 'connected',
+    scopeKey: 'h\0w\0t',
     enabled: true,
     showToast: () => {},
     baseSend,

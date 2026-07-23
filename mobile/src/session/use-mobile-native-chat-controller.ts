@@ -19,7 +19,10 @@ import { openMobileNativeChatFile } from './mobile-native-chat-open-file'
 import { useMobileNativeChatPermissionSend } from './mobile-native-chat-permission-send'
 import { sendMobileNativeChatMessageWithOutcome } from './mobile-native-chat-send'
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
-import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
+import {
+  useMobileNativeChatDrafts,
+  type MobileNativeChatPendingMessage
+} from './use-mobile-native-chat-drafts'
 import { useMobileNativeChatFileSearch } from './use-mobile-native-chat-file-search'
 import { useMobileNativeChatSession } from './use-mobile-native-chat-session'
 import { useMobileNativeChatPrompts } from './use-mobile-native-chat-prompts'
@@ -38,7 +41,7 @@ export type MobileNativeChatController = {
   nativeChatAgent: string | null
   chatComposerText: string
   setChatComposerText: Dispatch<SetStateAction<string>>
-  chatPending: Array<{ id: string; text: string }>
+  chatPending: MobileNativeChatPendingMessage[]
   nativeChatSession: ReturnType<typeof useMobileNativeChatSession>
   nativeChatAgentWorking: boolean
   nativeChatStreamingText?: string

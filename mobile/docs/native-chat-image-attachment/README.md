@@ -25,7 +25,7 @@ to the (faked) socket.
 
 Reproduce:
 
-```
+```shell
 cd mobile && npx vite --config rnw-preview/vite.config.ts   # then open http://localhost:5199
 ```
 

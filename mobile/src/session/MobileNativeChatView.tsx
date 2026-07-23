@@ -17,7 +17,8 @@ import { styles } from './mobile-native-chat-view-styles'
 import {
   buildMobileNativeChatTransientData,
   foldMobileNativeChatMessages,
-  mobileNativeChatEmptyState
+  mobileNativeChatEmptyState,
+  type MobileNativeChatPendingItem
 } from './mobile-native-chat-render-data'
 import { useMobileNativeChatAskDismiss } from './use-mobile-native-chat-ask-dismiss'
 import { useMobileNativeChatPinchGesture } from './use-mobile-native-chat-pinch-gesture'
@@ -54,7 +55,8 @@ type Props = {
   onLoadEarlier?: () => void
   onSend: (text: string) => Promise<boolean>
   /** Optimistic queued sends (owned by the route so they survive view switches). */
-  pending: Array<{ id: string; text: string }>
+  /** Optimistic user echoes, including any ridden-along image preview URIs. */
+  pending: MobileNativeChatPendingItem[]
   /** Controlled composer text (owned by the route so dictation can write to it). */
   composerText: string
   onComposerTextChange: (text: string) => void
