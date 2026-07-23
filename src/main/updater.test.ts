@@ -51,6 +51,7 @@ const {
     autoUpdaterMock.updateConfigPath = undefined
     autoUpdaterMock.allowPrerelease = false
     autoUpdaterMock.autoRunAppAfterInstall = true
+    autoUpdaterMock.disableDifferentialDownload = false
     delete (autoUpdaterMock as Record<string, unknown>).verifyUpdateCodeSignature
   }
 
@@ -58,6 +59,7 @@ const {
     autoDownload: false,
     autoInstallOnAppQuit: false,
     autoRunAppAfterInstall: true,
+    disableDifferentialDownload: false,
     allowPrerelease: false,
     on,
     checkForUpdates: vi.fn(),
@@ -194,6 +196,35 @@ describe('updater', () => {
     expect(autoUpdaterMock.setFeedURL).not.toHaveBeenCalled()
     expect(autoUpdaterMock.checkForUpdates).not.toHaveBeenCalled()
     expect(powerMonitorOnMock).not.toHaveBeenCalled()
+  })
+
+  it('disables differential update downloads on macOS (STA-2081)', async () => {
+    // Why: differential/blockmap reconstruction can ship an app.asar that no
+    // longer matches the notarized Info.plist ElectronAsarIntegrity hash,
+    // bricking Homebrew-cask installs that upgrade through the in-app updater.
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+    try {
+      const mainWindow = { webContents: { send: vi.fn() } }
+      const { setupAutoUpdater } = await import('./updater')
+      setupAutoUpdater(mainWindow as never)
+      expect(autoUpdaterMock.disableDifferentialDownload).toBe(true)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
+  })
+
+  it('keeps differential update downloads enabled off macOS', async () => {
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const mainWindow = { webContents: { send: vi.fn() } }
+      const { setupAutoUpdater } = await import('./updater')
+      setupAutoUpdater(mainWindow as never)
+      expect(autoUpdaterMock.disableDifferentialDownload).toBe(false)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+    }
   })
 
   it('deduplicates identical check errors from the event and rejected promise', async () => {

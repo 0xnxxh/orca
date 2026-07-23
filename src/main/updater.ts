@@ -1366,6 +1366,20 @@ export function setupAutoUpdater(
   autoUpdater.autoInstallOnAppQuit = updateInstallMode === 'interactive'
   // Why: MacUpdater ignores quitAndInstall arguments; the surviving CLI supervisor must be the only serve relaunch owner.
   autoUpdater.autoRunAppAfterInstall = updateInstallMode === 'interactive'
+  // Why (STA-2081): macOS MacUpdater reconstructs the update zip from blockmaps
+  // (differential download) before handing it to Squirrel.Mac. A reconstructed
+  // bundle whose app.asar no longer matches the notarized Info.plist
+  // ElectronAsarIntegrity hash fails both `codesign --verify` and Electron's
+  // runtime ASAR check, so the app will not launch and the bundled CLI/daemon
+  // SIGABRT. Homebrew-cask installs (`auto_updates true`) receive every upgrade
+  // through this in-app path, so they are the ones that end up bricked while a
+  // fresh DMG download stays pristine. Force full-zip downloads on macOS so each
+  // update swaps in the exact notarized bundle. Scoped to darwin: Windows (NSIS)
+  // and Linux (AppImage) differential paths are unaffected and keep their
+  // bandwidth savings.
+  if (process.platform === 'darwin') {
+    autoUpdater.disableDifferentialDownload = true
+  }
 
   // Why: our only on-machine window into electron-updater; otherwise an unexpected update-not-available or failed fetch is invisible.
   autoUpdater.logger = {
