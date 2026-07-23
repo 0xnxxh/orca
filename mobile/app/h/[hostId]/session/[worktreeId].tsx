@@ -213,6 +213,12 @@ import { useMobileNativeChatTerminalStream } from '../../../../src/session/use-m
 import { subscribeMobileTerminalSafely } from '../../../../src/session/mobile-terminal-stream-subscribe'
 import { activateMobileSessionTab } from '../../../../src/session/mobile-session-tab-activation'
 import { MobileTerminalDiagnostics } from '../../../../src/session/mobile-terminal-diagnostics'
+import { runAcceptedMobileSessionTabsEffects } from '../../../../src/session/mobile-session-tabs-accepted-effects'
+import type {
+  SessionTabsApplyOutcome,
+  SessionTabsStreamSource
+} from '../../../../src/session/mobile-session-tabs-stream-health'
+import { useMobileSessionTabsReconciliation } from '../../../../src/session/use-mobile-session-tabs-reconciliation'
 import {
   getRepoIdFromMobileWorktreeId,
   getActiveTabIdForHandle,
@@ -866,6 +872,7 @@ export default function SessionScreen() {
   const sessionTabsRef = useRef<MobileSessionTab[]>([])
   // Why: track the last applied (epoch, version) so a late older snapshot can't overwrite a newer one and resurrect closed tabs (session-tab-snapshot-gate).
   const appliedSnapshotMarkerRef = useRef<AppliedSnapshotMarker>({ epoch: null, version: -1 })
+  const appliedSessionTabsRevisionRef = useRef(0)
   // Why: after an optimistic close, suppress the tab (with expiry) until the publisher confirms, so an in-flight snapshot can't flash it back.
   const closedTabTombstonesRef = useRef<Map<string, number>>(new Map())
   const [terminalsLoaded, setTerminalsLoaded] = useState(false)
@@ -1689,12 +1696,13 @@ export default function SessionScreen() {
   )
 
   const applySessionTabs = useCallback(
-    (result: SessionTabsResult) => {
+    (result: SessionTabsResult): SessionTabsApplyOutcome<MobileSessionTab> => {
       const diagnostics = terminalDiagnosticsRef.current
       // Reject stale snapshots; suppress just-closed tabs until the publisher confirms absence — see session-tab-snapshot-gate.
       if (!acceptSessionSnapshot(result, appliedSnapshotMarkerRef.current)) {
-        return
+        return { accepted: false }
       }
+      const applicationRevision = ++appliedSessionTabsRevisionRef.current
       let nextTabs = applyClosedTabTombstones(
         result.tabs,
         closedTabTombstonesRef.current,
@@ -1739,6 +1747,11 @@ export default function SessionScreen() {
         terminalTabs.length
       )
       setTerminalsLoaded(true)
+      const outcome = {
+        accepted: true as const,
+        effectiveTabs: nextTabs,
+        applicationRevision
+      }
 
       const snapshotActive = nextTabs.find((tab) => tab.isActive) ?? nextTabs[0] ?? null
       const pendingActiveSessionTabId = pendingActiveSessionTabIdRef.current
@@ -1791,7 +1804,7 @@ export default function SessionScreen() {
           activeSessionTabTypeRef.current = 'terminal'
           setActiveHandle(pendingActiveTerminalHandle)
           subscribeToTerminal(pendingActiveTerminalHandle)
-          return
+          return outcome
         } else {
           pendingActiveTerminalHandleRef.current = null
         }
@@ -1809,7 +1822,7 @@ export default function SessionScreen() {
           }
           activeHandleRef.current = null
           setActiveHandle(null)
-          return
+          return outcome
         }
         const previous = activeHandleRef.current
         if (previous && previous !== active.terminal) {
@@ -1828,6 +1841,7 @@ export default function SessionScreen() {
         activeHandleRef.current = null
         setActiveHandle(null)
       }
+      return outcome
     },
     [defaultTerminalHandlesToLiveInput, subscribeToTerminal, unsubscribeTerminal]
   )
@@ -2252,48 +2266,70 @@ export default function SessionScreen() {
     [client, markdownDocs, showToast, worktreeId]
   )
 
-  const fetchSessionTabsInFlightRef = useRef(false)
-
-  const fetchSessionTabs = useCallback(async () => {
-    if (!client) {
-      terminalDiagnosticsRef.current.tabsFetchSkipped('no-client')
-      return
-    }
-    if (fetchSessionTabsInFlightRef.current) {
-      terminalDiagnosticsRef.current.tabsFetchSkipped('already-in-flight')
-      return
-    }
-    fetchSessionTabsInFlightRef.current = true
-    terminalDiagnosticsRef.current.tabsFetchStarted(worktreeId)
-    try {
-      const response = await client.sendRequest('session.tabs.list', {
-        worktree: `id:${worktreeId}`
-      })
-      if (!response.ok) {
-        terminalDiagnosticsRef.current.tabsFetchFailed((response as RpcFailure).error.code)
-        return
-      }
-      const result = (response as RpcSuccess).result as SessionTabsResult
-      terminalDiagnosticsRef.current.tabsFetchSucceeded(result)
-      applySessionTabs(result)
-      // Focus a just-opened browser tab when it appears, via the normal activate path so it sticks yet stays switchable.
-      const pendingPageId = pendingBrowserFocusPageIdRef.current
-      if (pendingPageId) {
-        const browserTab = result.tabs.find(
-          (tab) => tab.type === 'browser' && tab.browserPageId === pendingPageId
-        )
-        if (browserTab) {
-          pendingBrowserFocusPageIdRef.current = null
-          switchSessionTabRef.current?.(browserTab)
+  const consumeAcceptedSessionTabs = useCallback(
+    (
+      _result: SessionTabsResult,
+      effectiveTabs: readonly MobileSessionTab[],
+      source: SessionTabsStreamSource
+    ): void => {
+      runAcceptedMobileSessionTabsEffects<MobileSessionTab>({
+        effectiveTabs,
+        source,
+        getPendingBrowserPageId: () => pendingBrowserFocusPageIdRef.current,
+        clearPendingBrowserPageId: (pageId) => {
+          if (pendingBrowserFocusPageIdRef.current === pageId) {
+            pendingBrowserFocusPageIdRef.current = null
+          }
+        },
+        activateBrowserTab: (tab) => switchSessionTabRef.current?.(tab),
+        markActiveMarkdownStale: (tabId) => {
+          setMarkdownDocs((prev) => {
+            const current = prev.get(tabId)
+            if (current?.status !== 'ready' || current.isDirty) {
+              return prev
+            }
+            return new Map(prev).set(tabId, { ...current, stale: true })
+          })
         }
-      }
-    } catch (error) {
-      terminalDiagnosticsRef.current.tabsFetchErrored(error)
-      // Keep the last tab snapshot visible during reconnect/backoff.
-    } finally {
-      fetchSessionTabsInFlightRef.current = false
-    }
-  }, [applySessionTabs, client, worktreeId])
+      })
+    },
+    []
+  )
+  const hasSessionTabsRecoveryNeed = useCallback(
+    () => closedTabTombstonesRef.current.size > 0 || pendingBrowserFocusPageIdRef.current !== null,
+    []
+  )
+  const getSessionTabsApplicationRevision = useCallback(
+    () => appliedSessionTabsRevisionRef.current,
+    []
+  )
+  const reportSessionTabsFetchStarted = useCallback(() => {
+    terminalDiagnosticsRef.current.tabsFetchStarted(worktreeId)
+  }, [worktreeId])
+  const reportSessionTabsFetchSucceeded = useCallback((result: SessionTabsResult) => {
+    terminalDiagnosticsRef.current.tabsFetchSucceeded(result)
+  }, [])
+  const reportSessionTabsFetchFailed = useCallback((code: string) => {
+    terminalDiagnosticsRef.current.tabsFetchFailed(code)
+  }, [])
+  const reportSessionTabsFetchErrored = useCallback((error: unknown) => {
+    terminalDiagnosticsRef.current.tabsFetchErrored(error)
+  }, [])
+  const { fetchSessionTabs, ensureSessionTabs, fetchPendingBrowserSessionTabs } =
+    useMobileSessionTabsReconciliation<SessionTabsResult, MobileSessionTab>({
+      client,
+      connState,
+      worktreeId,
+      applySessionTabs,
+      consumeAcceptedSessionTabs,
+      fetchTerminals,
+      hasRecoveryNeed: hasSessionTabsRecoveryNeed,
+      getApplicationRevision: getSessionTabsApplicationRevision,
+      onFetchStarted: reportSessionTabsFetchStarted,
+      onFetchSucceeded: reportSessionTabsFetchSucceeded,
+      onFetchFailed: reportSessionTabsFetchFailed,
+      onFetchErrored: reportSessionTabsFetchErrored
+    })
 
   useEffect(() => {
     if (connState === 'connected') {
@@ -2624,7 +2660,7 @@ export default function SessionScreen() {
       if (disposed) {
         return
       }
-      await fetchSessionTabs().catch(() => null)
+      await ensureSessionTabs().catch(() => null)
       if (disposed) {
         return
       }
@@ -2667,71 +2703,12 @@ export default function SessionScreen() {
     client,
     connState,
     created,
-    fetchSessionTabs,
     fetchTerminals,
+    ensureSessionTabs,
     isFloatingWorkspaceRoute,
     showToast,
     worktreeId
   ])
-
-  useEffect(() => {
-    if (!client || connState !== 'connected') {
-      return
-    }
-    const unsubscribe = client.subscribe(
-      'session.tabs.subscribe',
-      { worktree: `id:${worktreeId}` },
-      (payload) => {
-        const event = payload as { type?: string } & SessionTabsResult
-        if (event.type === 'snapshot' || event.type === 'updated') {
-          applySessionTabs(event)
-          const activeMarkdown = event.tabs.find(
-            (tab): tab is Extract<MobileSessionTab, { type: 'markdown' }> =>
-              tab.type === 'markdown' && tab.isActive
-          )
-          if (activeMarkdown) {
-            setMarkdownDocs((prev) => {
-              const current = prev.get(activeMarkdown.id)
-              if (current?.status === 'ready' && activeMarkdown.isDirty && !current.isDirty) {
-                const next = new Map(prev)
-                next.set(activeMarkdown.id, { ...current, stale: true })
-                return next
-              }
-              return prev
-            })
-          }
-        }
-      }
-    )
-    return () => unsubscribe()
-  }, [applySessionTabs, client, connState, worktreeId])
-
-  useFocusEffect(
-    useCallback(() => {
-      if (connState !== 'connected') {
-        return
-      }
-      const refreshOnForeground = () => {
-        if (AppState.currentState !== 'active') {
-          return
-        }
-        void fetchSessionTabs()
-        void fetchTerminals()
-      }
-      const appStateSubscription = AppState.addEventListener('change', (state) => {
-        if (state === 'active') {
-          refreshOnForeground()
-        }
-      })
-      // Why: live subscription keeps stream ownership, but the fallback list poll should stop while this route is hidden or backgrounded.
-      const interval = setInterval(refreshOnForeground, 2000)
-      refreshOnForeground()
-      return () => {
-        clearInterval(interval)
-        appStateSubscription.remove()
-      }
-    }, [connState, fetchSessionTabs, fetchTerminals])
-  )
 
   // Why: pick up Settings → Terminal text size on return; panes stay mounted and update in place.
   useFocusEffect(
@@ -3978,8 +3955,8 @@ export default function SessionScreen() {
         pendingBrowserFocusPageIdRef.current = created.browserPageId
       }
       void fetchSessionTabs()
-      scheduleDelayedAction(() => void fetchSessionTabs(), 400)
-      scheduleDelayedAction(() => void fetchSessionTabs(), 1200)
+      scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 400)
+      scheduleDelayedAction(() => void fetchPendingBrowserSessionTabs(), 1200)
       return true
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to create browser'
@@ -4095,6 +4072,9 @@ export default function SessionScreen() {
         reason: 'user'
       })
       if (response.ok) {
+        if (tab.type === 'browser' && tab.browserPageId === pendingBrowserFocusPageIdRef.current) {
+          pendingBrowserFocusPageIdRef.current = null
+        }
         if (tab.type === 'terminal' && typeof tab.terminal === 'string') {
           const terminalHandle = tab.terminal
           unsubscribeTerminal(terminalHandle)
