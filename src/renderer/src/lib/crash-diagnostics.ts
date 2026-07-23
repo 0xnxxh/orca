@@ -2,7 +2,10 @@ import type {
   CrashReportBreadcrumbData,
   CrashReportDetailValue
 } from '../../../shared/crash-reporting'
-import { getBrowserWebviewMemoryProfile } from '../components/browser-pane/webview-registry'
+import {
+  getBrowserWebviewMemoryProfile,
+  type BrowserWebviewMemoryProfile
+} from '../components/browser-pane/webview-registry'
 import { recordRendererCrashBreadcrumb } from './crash-breadcrumb-recorder'
 import { collectRendererMemoryProfileCounts } from './renderer-memory-profile'
 
@@ -122,10 +125,13 @@ function recordRendererMemory(reason: string): void {
       registeredBrowserGuests: browserWebviews.registeredBrowserGuestCount
     })
   )
-  recordRendererMemoryHighwater(memory)
+  recordRendererMemoryHighwater(memory, browserWebviews)
 }
 
-function recordRendererMemoryHighwater(memory: BrowserPerformanceMemory): void {
+function recordRendererMemoryHighwater(
+  memory: BrowserPerformanceMemory,
+  browserWebviews: BrowserWebviewMemoryProfile
+): void {
   const used = memory.usedJSHeapSize
   const limit = memory.jsHeapSizeLimit
   // Why: NaN would satisfy `ratio < threshold` for nothing, emitting both
@@ -152,6 +158,8 @@ function recordRendererMemoryHighwater(memory: BrowserPerformanceMemory): void {
     heapLimitMB: toMegabytes(limit),
     domNodes: document.getElementsByTagName('*').length,
     terminalElements: document.querySelectorAll('.xterm').length,
+    browserWebviews: browserWebviews.browserWebviewCount,
+    registeredBrowserGuests: browserWebviews.registeredBrowserGuestCount,
     ...collectRendererMemoryProfileCounts()
   })
   for (const threshold of RENDERER_MEMORY_HIGHWATER_RATIOS) {

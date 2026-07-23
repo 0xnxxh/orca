@@ -200,6 +200,8 @@ describe('renderer crash diagnostics', () => {
         rendererSurface: 'main',
         domNodes: 4321,
         terminalElements: 6,
+        browserWebviews: 4,
+        registeredBrowserGuests: 3,
         'store.worktrees': 12
       })
     })
