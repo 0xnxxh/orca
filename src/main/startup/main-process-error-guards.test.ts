@@ -127,6 +127,32 @@ describe('main-process fatal error guards (issue #9441)', () => {
     expect(String(consoleError.mock.calls[0]?.[0]).length).toBeLessThan(5_000)
   })
 
+  it('caps a rejection storm and carries the suppressed count into the next window', async () => {
+    vi.resetModules()
+    const record = vi.fn()
+    vi.doMock('../crash-reporting/durable-crash-breadcrumb', () => ({
+      recordDurableCrashBreadcrumb: record
+    }))
+    const { recordFatalMainProcessError } = await import('./main-process-error-guards')
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+
+    for (let i = 0; i < 25; i++) {
+      recordFatalMainProcessError('main_unhandled_rejection', new Error(`storm ${i}`))
+    }
+    expect(record).toHaveBeenCalledTimes(20)
+
+    now += 60_000
+    recordFatalMainProcessError('main_unhandled_rejection', new Error('after window'))
+    expect(record).toHaveBeenCalledTimes(21)
+    expect(record).toHaveBeenLastCalledWith(
+      'main_unhandled_rejection',
+      expect.objectContaining({ errorMessage: 'after window', suppressedSinceLast: 5 }),
+      'main_unhandled_rejection'
+    )
+  })
+
   it('keeps uncaught pipe errors swallowed without a durable record', async () => {
     vi.resetModules()
     const record = vi.fn()

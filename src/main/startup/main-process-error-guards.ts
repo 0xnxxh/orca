@@ -52,11 +52,35 @@ function fatalMainProcessErrorDetails(error: unknown): FatalMainProcessErrorDeta
   }
 }
 
+// Why: one broken resource can reject hundreds of concurrent restore chains; each record does a
+// synchronous trace flush, so an uncapped storm stalls main and churns the trace-file rotation.
+const RECORD_WINDOW_MS = 60_000
+const RECORD_WINDOW_MAX = 20
+let recordWindowStartedAt = 0
+let recordWindowCount = 0
+let recordsSuppressed = 0
+
 /** Durably record a main-process fatal/near-fatal error before default handling runs. Exported for tests. */
 export function recordFatalMainProcessError(kind: FatalMainProcessErrorKind, error: unknown): void {
+  const now = Date.now()
+  if (now - recordWindowStartedAt >= RECORD_WINDOW_MS) {
+    recordWindowStartedAt = now
+    recordWindowCount = 0
+  }
+  if (recordWindowCount >= RECORD_WINDOW_MAX) {
+    recordsSuppressed += 1
+    return
+  }
+  recordWindowCount += 1
+  const suppressedSinceLast = recordsSuppressed
+  recordsSuppressed = 0
   const details = fatalMainProcessErrorDetails(error)
   try {
-    recordDurableCrashBreadcrumb(kind, details, kind)
+    recordDurableCrashBreadcrumb(
+      kind,
+      suppressedSinceLast > 0 ? { ...details, suppressedSinceLast } : details,
+      kind
+    )
   } catch {
     // Why: diagnostics must never turn a fatal-error report into a second fault.
   }
