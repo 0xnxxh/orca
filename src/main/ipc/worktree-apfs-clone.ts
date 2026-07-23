@@ -1,6 +1,6 @@
 import { execFile, type ExecFileOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat, lstat, rm, link, rmdir, chmod } from 'node:fs/promises'
+import { mkdir, stat, rm, link, rmdir, chmod } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
@@ -32,7 +32,6 @@ export type ApfsCloneFilesystemCache = Map<number, Promise<DarwinFilesystemInfo>
 
 export type ApfsCloneOptions = {
   filesystemCache?: ApfsCloneFilesystemCache
-  mergeExistingDirectory?: boolean
 }
 
 export class ApfsCloneUnavailableError extends Error {
@@ -141,8 +140,7 @@ async function cloneFileWithApfs(
 async function cloneDirectoryWithApfs(
   source: string,
   target: string,
-  deps: ApfsCloneDeps,
-  mergeExistingDirectory: boolean
+  deps: ApfsCloneDeps
 ): Promise<void> {
   const sourceMode = (await stat(source)).mode & 0o777
   let createdTarget = false
@@ -153,16 +151,9 @@ async function cloneDirectoryWithApfs(
     createdTarget = true
   } catch (error) {
     if (isAlreadyExistsError(error)) {
-      if (!mergeExistingDirectory) {
-        throw new WorktreeLinkedPathTargetExistsError(target)
-      }
-      const targetStats = await lstat(target)
-      if (!targetStats.isDirectory() || targetStats.isSymbolicLink()) {
-        throw new WorktreeLinkedPathTargetExistsError(target)
-      }
-    } else {
-      throw error
+      throw new WorktreeLinkedPathTargetExistsError(target)
     }
+    throw error
   }
 
   try {
@@ -198,6 +189,6 @@ export async function cloneWorktreePathWithApfs(
   // while Darwin's cp exposes APFS clonefile via -c. Preflight the volume so
   // cp's non-APFS full-copy fallback cannot surprise users.
   await (sourceIsDirectory
-    ? cloneDirectoryWithApfs(source, target, deps, options.mergeExistingDirectory === true)
+    ? cloneDirectoryWithApfs(source, target, deps)
     : cloneFileWithApfs(source, target, deps))
 }

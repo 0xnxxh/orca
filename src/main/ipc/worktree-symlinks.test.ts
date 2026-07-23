@@ -470,28 +470,41 @@ describe('createWorktreeCopiedPaths', () => {
   })
 
   it.each(['linux', 'darwin'] as const)(
-    'copies siblings when a linked path created the destination directory on %s',
+    'copies siblings while preserving a linked directory on %s',
     async (platform) => {
-      mkdirSync(join(primary, 'config'))
-      writeFileSync(join(primary, 'config', 'shared.json'), '{}')
+      mkdirSync(join(primary, 'config', 'shared'), { recursive: true })
+      writeFileSync(join(primary, 'config', 'shared', 'linked.json'), '{}')
       writeFileSync(join(primary, 'config', 'local.json'), '{"copied":true}')
-      await createWorktreeLinkedPaths(primary, worktree, ['config/shared.json'], {
+      await createWorktreeLinkedPaths(primary, worktree, ['config/shared'], {
         platform: 'linux'
       })
-      const apfsCloneDeps = createApfsCloneDeps({
-        onCp: () => writeFileSync(join(worktree, 'config', 'local.json'), '{"copied":true}')
-      })
+      const apfsCloneDeps = createApfsCloneDeps({})
 
       await createWorktreeCopiedPaths(primary, worktree, ['config'], {
         platform,
-        existingLinkedPaths: ['config/shared.json'],
+        existingLinkedPaths: ['config/shared'],
         ...(platform === 'darwin' ? { apfsCloneDeps } : {})
       })
 
-      expect(lstatSync(join(worktree, 'config', 'shared.json')).isSymbolicLink()).toBe(true)
+      expect(lstatSync(join(worktree, 'config', 'shared')).isSymbolicLink()).toBe(true)
+      expect(readFileSync(join(worktree, 'config', 'shared', 'linked.json'), 'utf8')).toBe('{}')
       expect(readFileSync(join(worktree, 'config', 'local.json'), 'utf8')).toBe('{"copied":true}')
+      expect(apfsCloneDeps.execFileAsync).not.toHaveBeenCalled()
     }
   )
+
+  it('copies an overlap when configured link materialization left no target', async () => {
+    mkdirSync(join(primary, 'config'))
+    writeFileSync(join(primary, 'config', 'shared.json'), '{"copied":true}')
+    mkdirSync(join(worktree, 'config'))
+
+    await createWorktreeCopiedPaths(primary, worktree, ['config'], {
+      platform: 'linux',
+      existingLinkedPaths: ['config/shared.json']
+    })
+
+    expect(readFileSync(join(worktree, 'config', 'shared.json'), 'utf8')).toBe('{"copied":true}')
+  })
 
   it('creates parent directories lazily for nested paths', async () => {
     mkdirSync(join(primary, 'apps', 'web'), { recursive: true })
@@ -509,6 +522,21 @@ describe('createWorktreeCopiedPaths', () => {
     await createWorktreeCopiedPaths(primary, worktree, ['.env'], { platform: 'linux' })
 
     expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('MINE=1\n')
+  })
+
+  posixIt('does not follow a target-branch ancestor symlink outside the worktree', async () => {
+    mkdirSync(join(primary, 'config'))
+    writeFileSync(join(primary, 'config', '.env'), 'SECRET=1\n')
+    const outside = join(root, 'outside')
+    mkdirSync(outside)
+    symlinkSync(outside, join(worktree, 'config'), 'dir')
+
+    await createWorktreeCopiedPaths(primary, worktree, ['config/.env'], { platform: 'linux' })
+
+    expect(existsSync(join(outside, '.env'))).toBe(false)
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Skipping path with unsafe target parent "config/.env"')
+    )
   })
 
   it('does not merge into a directory that appears during copy fallback', async () => {

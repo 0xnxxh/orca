@@ -1,4 +1,4 @@
-import { symlink, mkdir, stat, lstat, unlink, cp, realpath, rmdir, chmod } from 'node:fs/promises'
+import { symlink, mkdir, stat, lstat, unlink, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import {
   ApfsCloneUnavailableError,
@@ -8,6 +8,8 @@ import {
   type ApfsCloneFilesystemCache,
   type ApfsCloneDeps
 } from './worktree-apfs-clone'
+import { ensureSafeWorktreeTargetParent, worktreeTargetExists } from './worktree-target-safety'
+import { copyWorktreePath, normalizeWorktreeRelativePath } from './worktree-path-copy'
 
 type WorktreeLinkedPathOptions = {
   platform?: NodeJS.Platform
@@ -20,6 +22,7 @@ type WorktreeLinkedPathOptions = {
 // 'copy': real copy when APFS clone is unavailable (.worktreeinclude paths, which
 // are per-worktree copies by cross-tool convention — edits must not leak back).
 type WorktreeMaterializeMode = 'link' | 'copy'
+const NO_LINKED_DESCENDANTS: ReadonlySet<string> = new Set()
 
 type SafeRelativePathResult =
   | {
@@ -45,17 +48,6 @@ function getSafeRelativePath(rawPath: string): SafeRelativePathResult {
   return { safe: true, rel }
 }
 
-async function targetExists(target: string): Promise<boolean> {
-  try {
-    // Why: use lstat so a pre-existing symlink (including a broken one whose
-    // source has moved) is detected and skipped instead of overwritten.
-    await lstat(target)
-    return true
-  } catch {
-    return false
-  }
-}
-
 async function symlinkWorktreePath(
   source: string,
   target: string,
@@ -69,82 +61,17 @@ async function symlinkWorktreePath(
   await symlink(source, target, sourceIsDirectory ? 'dir' : 'file')
 }
 
-function isAlreadyExistsError(error: unknown): boolean {
-  return (error as { code?: unknown })?.code === 'EEXIST'
-}
-
-async function copyWorktreePath(
-  source: string,
-  target: string,
-  sourceIsDirectory: boolean,
-  mergeExistingDirectory: boolean
-): Promise<void> {
-  await mkdir(dirname(target), { recursive: true })
-  if (sourceIsDirectory) {
-    const sourceMode = (await stat(source)).mode & 0o777
-    let createdTarget = false
-    try {
-      // Why: owning the top-level directory prevents a raced directory from
-      // being merged with copied contents.
-      await mkdir(target, { mode: sourceMode })
-      createdTarget = true
-    } catch (error) {
-      if (isAlreadyExistsError(error)) {
-        if (!mergeExistingDirectory) {
-          return
-        }
-        const targetStats = await lstat(target)
-        if (!targetStats.isDirectory() || targetStats.isSymbolicLink()) {
-          return
-        }
-      } else {
-        throw error
-      }
-    }
-    try {
-      await cp(source, target, {
-        recursive: true,
-        force: false,
-        errorOnExist: false,
-        dereference: false,
-        // Why: Node otherwise rewrites relative links to absolute paths back into the primary.
-        verbatimSymlinks: true
-      })
-      if (createdTarget && process.platform !== 'win32') {
-        await chmod(target, sourceMode)
-      }
-    } catch (error) {
-      // Preserve partial output for diagnosis; remove only an empty reservation.
-      if (createdTarget) {
-        await rmdir(target).catch(() => undefined)
-      }
-      throw error
-    }
-    return
-  }
-  // Why: force=false + errorOnExist=false skips (not clobbers) anything a racing
-  // process placed at the target after the earlier existence preflight.
-  await cp(source, target, {
-    recursive: true,
-    force: false,
-    errorOnExist: false,
-    dereference: false,
-    verbatimSymlinks: true
-  })
-}
-
-function hasExistingLinkedDescendant(
+function getExistingLinkedDescendants(
   relativePath: string,
   normalizedLinkedPaths: readonly string[],
   platform: NodeJS.Platform
-): boolean {
+): ReadonlySet<string> {
   const directoryPrefix = `${normalizeWorktreeRelativePath(relativePath, platform)}/`
-  return normalizedLinkedPaths.some((linkedPath) => linkedPath.startsWith(directoryPrefix))
-}
-
-function normalizeWorktreeRelativePath(relativePath: string, platform: NodeJS.Platform): string {
-  const normalized = relativePath.replaceAll('\\', '/').replace(/^\/+|\/+$/g, '')
-  return platform === 'win32' ? normalized.toLowerCase() : normalized
+  return new Set(
+    normalizedLinkedPaths.flatMap((linkedPath) =>
+      linkedPath.startsWith(directoryPrefix) ? [linkedPath.slice(directoryPrefix.length)] : []
+    )
+  )
 }
 
 async function createWorktreeLinkedPath(
@@ -156,12 +83,16 @@ async function createWorktreeLinkedPath(
   options: WorktreeLinkedPathOptions,
   apfsFilesystemCache: ApfsCloneFilesystemCache,
   warnedApfsErrors: Set<string>,
-  mergeExistingDirectory: boolean
+  existingLinkedDescendants: ReadonlySet<string>
 ): Promise<void> {
   // Why: copy mode promises independent contents; copying the link itself
   // would let edits in the worktree mutate its shared target.
   const copySource = mode === 'copy' && sourceIsSymbolicLink ? await realpath(source) : source
-  if (options.platform === 'darwin' && (!sourceIsSymbolicLink || mode === 'copy')) {
+  if (
+    options.platform === 'darwin' &&
+    (!sourceIsSymbolicLink || mode === 'copy') &&
+    existingLinkedDescendants.size === 0
+  ) {
     try {
       const cloneWorktreePath =
         options.cloneWorktreePath ??
@@ -172,8 +103,7 @@ async function createWorktreeLinkedPath(
             cloneSourceIsDirectory,
             options.apfsCloneDeps ?? defaultApfsCloneDeps,
             {
-              filesystemCache: apfsFilesystemCache,
-              mergeExistingDirectory
+              filesystemCache: apfsFilesystemCache
             }
           ))
       await cloneWorktreePath(copySource, target, sourceIsDirectory)
@@ -196,7 +126,10 @@ async function createWorktreeLinkedPath(
     }
   }
   if (mode === 'copy') {
-    await copyWorktreePath(copySource, target, sourceIsDirectory, mergeExistingDirectory)
+    await copyWorktreePath(copySource, target, sourceIsDirectory, {
+      existingLinkedDescendants,
+      platform: options.platform ?? process.platform
+    })
     return
   }
   await symlinkWorktreePath(source, target, sourceIsDirectory)
@@ -213,6 +146,7 @@ async function materializeWorktreePaths(
   // Why: probing APFS via df+diskutil once per copied path multiplies subprocesses in large includes.
   const apfsFilesystemCache: ApfsCloneFilesystemCache = new Map()
   const warnedApfsErrors = new Set<string>()
+  const verifiedTargetDirectories = new Set([resolve(worktreePath)])
   const normalizedLinkedPaths = (options.existingLinkedPaths ?? []).flatMap((rawPath) => {
     const linkedPath = getSafeRelativePath(rawPath)
     return linkedPath.safe
@@ -245,13 +179,23 @@ async function materializeWorktreePaths(
       continue
     }
 
-    const targetAlreadyExists = await targetExists(target)
-    const mergeExistingDirectory =
-      targetAlreadyExists &&
-      mode === 'copy' &&
-      sourceIsDirectory &&
-      hasExistingLinkedDescendant(safePath.rel, normalizedLinkedPaths, effectiveOptions.platform)
-    if (targetAlreadyExists && !mergeExistingDirectory) {
+    // Why: a target branch can contain an ancestor symlink absent from the primary;
+    // following it would write included files outside the new worktree.
+    if (!(await ensureSafeWorktreeTargetParent(worktreePath, target, verifiedTargetDirectories))) {
+      console.warn(`[worktree-symlinks] Skipping path with unsafe target parent "${safePath.rel}"`)
+      continue
+    }
+
+    const targetAlreadyExists = await worktreeTargetExists(target)
+    const existingLinkedDescendants =
+      targetAlreadyExists && mode === 'copy' && sourceIsDirectory
+        ? getExistingLinkedDescendants(
+            safePath.rel,
+            normalizedLinkedPaths,
+            effectiveOptions.platform
+          )
+        : NO_LINKED_DESCENDANTS
+    if (targetAlreadyExists && existingLinkedDescendants.size === 0) {
       continue
     }
 
@@ -265,7 +209,7 @@ async function materializeWorktreePaths(
         effectiveOptions,
         apfsFilesystemCache,
         warnedApfsErrors,
-        mergeExistingDirectory
+        existingLinkedDescendants
       )
     } catch (error) {
       console.error(
