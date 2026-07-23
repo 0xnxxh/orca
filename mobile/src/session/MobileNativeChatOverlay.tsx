@@ -1,17 +1,10 @@
 import { StyleSheet, View } from 'react-native'
 import { MobileNativeChatView, type MobileNativeChatInputLockReason } from './MobileNativeChatView'
 import type { MobileNativeChatController } from './use-mobile-native-chat-controller'
-import type { MobileNativeChatPendingImage } from './use-mobile-native-chat-pending-images'
 
 type Props = {
   controller: MobileNativeChatController
-  onAttachImage: () => void
   isAttaching: boolean
-  /** Overrides the controller's plain-text send (e.g. to deliver pending image
-   *  attachments first). Falls back to controller.handleNativeChatSend. */
-  onSend?: (text: string) => Promise<boolean>
-  pendingImages?: readonly MobileNativeChatPendingImage[]
-  onRemovePendingImage?: (id: string) => void
   onMicPress: () => void
   micActive: boolean
   dictationMode: 'toggle' | 'hold'
@@ -25,11 +18,7 @@ type Props = {
  *  view toggles while the native surface owns the visible composer. */
 export function MobileNativeChatOverlay({
   controller,
-  onAttachImage,
   isAttaching,
-  onSend,
-  pendingImages,
-  onRemovePendingImage,
   onMicPress,
   micActive,
   dictationMode,
@@ -63,14 +52,14 @@ export function MobileNativeChatOverlay({
         hasMore={session.hasMore}
         loadingEarlier={session.loadingEarlier}
         onLoadEarlier={session.loadEarlier}
-        onSend={onSend ?? controller.handleNativeChatSend}
+        onSend={controller.handleNativeChatSendWithImages}
         pending={controller.chatPending}
         composerText={controller.chatComposerText}
         onComposerTextChange={controller.setChatComposerText}
-        onAttachImage={onAttachImage}
+        onAttachImage={() => void controller.attachPendingChatImage()}
         isAttaching={isAttaching}
-        pendingImages={pendingImages}
-        onRemovePendingImage={onRemovePendingImage}
+        pendingImages={controller.pendingChatImages}
+        onRemovePendingImage={controller.removePendingChatImage}
         onMicPress={onMicPress}
         micActive={micActive}
         dictationMode={dictationMode}

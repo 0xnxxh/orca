@@ -24,6 +24,11 @@ import {
 import { useMobileNativeChatAnswerSend } from './use-mobile-native-chat-answer-send'
 import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
 import { useMobileNativeChatFileSearch } from './use-mobile-native-chat-file-search'
+import {
+  useMobileNativeChatImageAttachments,
+  type MobileNativeChatImageAttachmentContext,
+  type MobileNativeChatImageAttachments
+} from './use-mobile-native-chat-image-attachments'
 import { useMobileNativeChatSession } from './use-mobile-native-chat-session'
 import { useMobileNativeChatPrompts } from './use-mobile-native-chat-prompts'
 import { useMobileNativeChatStop } from './use-mobile-native-chat-stop'
@@ -31,7 +36,7 @@ import { useThrottledLatestValue } from './use-throttled-latest-value'
 
 const NATIVE_CHAT_STREAM_THROTTLE_MS = 50
 
-export type MobileNativeChatController = {
+export type MobileNativeChatController = MobileNativeChatImageAttachments & {
   /** Whether a tab's effective view is chat (per-tab override, else the default). */
   isTabChatView: (tabId: string) => boolean
   toggleTabChatView: (tabId: string) => void
@@ -69,8 +74,10 @@ export function useMobileNativeChatController(args: {
   worktreeId: string
   activeSessionTab: MobileNativeChatTab | null
   activeSessionTabId: string | null
+  activeHandle: string | null
   activeHandleRef: MutableRefObject<string | null>
   deviceTokenRef: MutableRefObject<string | null>
+  imageAttachments: MobileNativeChatImageAttachmentContext
   nativeChatTranscriptIsLocalReadable: boolean
   nativeChatInputLeaseReady: boolean
   onSendError: (message: string) => void
@@ -81,8 +88,10 @@ export function useMobileNativeChatController(args: {
     worktreeId,
     activeSessionTab,
     activeSessionTabId,
+    activeHandle,
     activeHandleRef,
     deviceTokenRef,
+    imageAttachments,
     nativeChatTranscriptIsLocalReadable,
     nativeChatInputLeaseReady,
     onSendError
@@ -122,7 +131,6 @@ export function useMobileNativeChatController(args: {
     sessionId: activeChatSessionId,
     messages: nativeChatSession.messages
   })
-
   const nativeChatStatus = activeChatResolution ? activeSessionTab?.agentStatus : null
   const nativeChatAgentWorking = nativeChatStatus?.state === 'working'
   // Throttle the streaming bubble: OpenCode emits a status frame per streamed
@@ -262,6 +270,16 @@ export function useMobileNativeChatController(args: {
       onSendError
     ]
   )
+  const nativeChatImageAttachments = useMobileNativeChatImageAttachments({
+    client,
+    activeHandle,
+    activeHandleRef,
+    deviceTokenRef,
+    inputLeaseReady: nativeChatInputLeaseReady,
+    sendText: handleNativeChatSend,
+    onSendError,
+    ...imageAttachments
+  })
 
   return {
     isTabChatView,
@@ -285,6 +303,7 @@ export function useMobileNativeChatController(args: {
     handleNativeChatStop,
     nativeChatFilePaths,
     loadNativeChatFiles,
-    handleNativeChatSend
+    handleNativeChatSend,
+    ...nativeChatImageAttachments
   }
 }
