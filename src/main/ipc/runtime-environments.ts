@@ -79,9 +79,7 @@ export function registerRuntimeEnvironmentHandlers(store: Store): void {
   }
   ipcMain.removeAllListeners('runtimeEnvironments:subscriptionBinary')
 
-  ipcMain.handle('runtimeEnvironments:list', (): PublicKnownRuntimeEnvironment[] =>
-    listPublicRuntimeEnvironments()
-  )
+  ipcMain.handle('runtimeEnvironments:list', listPublicRuntimeEnvironments)
   ipcMain.handle(
     'runtimeEnvironments:addFromPairingCode',
     (
@@ -91,10 +89,8 @@ export function registerRuntimeEnvironmentHandlers(store: Store): void {
       environment: redactRuntimeEnvironment(addEnvironmentFromPairingCode(getUserDataPath(), args))
     })
   )
-  ipcMain.handle(
-    'runtimeEnvironments:resolve',
-    (_event, args: { selector: string }): PublicKnownRuntimeEnvironment =>
-      redactRuntimeEnvironment(resolveEnvironment(getUserDataPath(), args.selector))
+  ipcMain.handle('runtimeEnvironments:resolve', (_event, args: { selector: string }) =>
+    redactRuntimeEnvironment(resolveEnvironment(getUserDataPath(), args.selector))
   )
   ipcMain.handle(
     'runtimeEnvironments:remove',

@@ -2769,16 +2769,22 @@ export function useWebSessionTabsSync(): void {
                       environmentId
                     )
                   )
-                ).then((recovered) => {
-                  if (!disposed) {
-                    const applicable = recovered.filter(
-                      (snapshot): snapshot is RuntimeMobileSessionTabsResult => snapshot !== null
-                    )
-                    applyWebSessionTabsStorePatch((state) =>
-                      applyFreshWebSessionTabsSnapshots(state, applicable, environmentId)
-                    )
-                  }
-                })
+                )
+                  .then((recovered) => {
+                    if (!disposed) {
+                      const applicable = recovered.filter(
+                        (snapshot): snapshot is RuntimeMobileSessionTabsResult => snapshot !== null
+                      )
+                      applyWebSessionTabsStorePatch((state) =>
+                        applyFreshWebSessionTabsSnapshots(state, applicable, environmentId)
+                      )
+                    }
+                  })
+                  .catch((error) => {
+                    if (!disposed) {
+                      console.warn('[web-session-tabs-sync] snapshot recovery failed:', error)
+                    }
+                  })
                 return
               }
               if (event.type !== 'snapshot' && event.type !== 'updated') {
@@ -2791,13 +2797,19 @@ export function useWebSessionTabsSync(): void {
                 useAppStore.getState(),
                 event,
                 environmentId
-              ).then((recovered) => {
-                if (!disposed && recovered) {
-                  applyWebSessionTabsStorePatch((state) =>
-                    applyFreshWebSessionTabsSnapshot(state, recovered, environmentId)
-                  )
-                }
-              })
+              )
+                .then((recovered) => {
+                  if (!disposed && recovered) {
+                    applyWebSessionTabsStorePatch((state) =>
+                      applyFreshWebSessionTabsSnapshot(state, recovered, environmentId)
+                    )
+                  }
+                })
+                .catch((error) => {
+                  if (!disposed) {
+                    console.warn('[web-session-tabs-sync] snapshot recovery failed:', error)
+                  }
+                })
             },
             onError: (error) => {
               console.warn('[web-session-tabs-sync] global subscription error:', error.message)
@@ -2907,7 +2919,7 @@ export function useWebSessionTabsSync(): void {
       }
       if (!disposed && shouldBootstrapInitialTerminal) {
         requestedInitialTerminal = true
-        void createWebRuntimeSessionTerminal({
+        await createWebRuntimeSessionTerminal({
           worktreeId: activeWorktreeId,
           environmentId,
           activate: true
@@ -2918,14 +2930,12 @@ export function useWebSessionTabsSync(): void {
         beginWebRuntimeWakeTerminalRespawn(activeWorktreeId)
       ) {
         requestedRespawnAfterWake = true
-        void createWebRuntimeSessionTerminal({
+        await createWebRuntimeSessionTerminal({
           worktreeId: activeWorktreeId,
           environmentId,
           activate: true,
           selectWorktree: false
-        }).finally(() => {
-          endWebRuntimeWakeTerminalRespawn(activeWorktreeId)
-        })
+        }).finally(() => endWebRuntimeWakeTerminalRespawn(activeWorktreeId))
       }
     }
     void window.api.runtimeEnvironments
@@ -2953,7 +2963,11 @@ export function useWebSessionTabsSync(): void {
             if (event.type !== 'snapshot' && event.type !== 'updated') {
               return
             }
-            void applyActiveSnapshot(event, response)
+            void applyActiveSnapshot(event, response).catch((error) => {
+              if (!disposed) {
+                console.warn('[web-session-tabs-sync] active snapshot recovery failed:', error)
+              }
+            })
           },
           onError: (error) => {
             console.warn('[web-session-tabs-sync] subscription error:', error.message)

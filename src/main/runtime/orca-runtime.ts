@@ -13057,7 +13057,7 @@ export class OrcaRuntimeService {
     this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktree.id, {
       force: true,
       allowAttachedWindow: true,
-      onlyServeOwnedTerminals: true
+      onlyRuntimeOwnedTerminals: true
     })
     this.notifyMobileSessionTabsChanged(worktree.id)
     return {

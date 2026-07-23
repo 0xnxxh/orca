@@ -9,6 +9,7 @@ const {
   previewGhosttyImportMock,
   previewWarpThemeImportMock,
   prepareLocalWorktreeRootsForReposMock,
+  resolveEnvironmentMock,
   rebuildAppMenuMock
 } = vi.hoisted(() => ({
   applyAppIconMock: vi.fn(),
@@ -19,10 +20,12 @@ const {
   previewGhosttyImportMock: vi.fn(),
   previewWarpThemeImportMock: vi.fn(),
   prepareLocalWorktreeRootsForReposMock: vi.fn(),
+  resolveEnvironmentMock: vi.fn(),
   rebuildAppMenuMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
+  app: { getPath: vi.fn(() => '/test/user-data') },
   BrowserWindow: { getAllWindows: browserWindowGetAllWindowsMock },
   ipcMain: { handle: handleMock, on: onMock },
   nativeTheme: { themeSource: 'system' }
@@ -52,6 +55,10 @@ vi.mock('../menu/register-app-menu', () => ({
   rebuildAppMenu: rebuildAppMenuMock
 }))
 
+vi.mock('../../shared/runtime-environment-store', () => ({
+  resolveEnvironment: resolveEnvironmentMock
+}))
+
 import { registerSettingsHandlers } from './settings'
 
 const settingsInvokeEvent = { sender: { id: 1 } }
@@ -79,6 +86,12 @@ describe('registerSettingsHandlers', () => {
     previewGhosttyImportMock.mockClear()
     previewWarpThemeImportMock.mockClear()
     prepareLocalWorktreeRootsForReposMock.mockReset().mockResolvedValue(undefined)
+    resolveEnvironmentMock.mockReset().mockImplementation((_userDataPath, selector) => {
+      if (selector !== 'windows-2') {
+        throw new Error('Runtime environment not found')
+      }
+      return { id: selector }
+    })
     rebuildAppMenuMock.mockClear()
     browserWindowGetAllWindowsMock.mockReset()
     store.getSettings.mockReset()
@@ -143,6 +156,10 @@ describe('registerSettingsHandlers', () => {
     expect(() => handler(settingsInvokeEvent, { environmentId: 42 as never })).toThrow(
       'Invalid Active Server preference'
     )
+    expect(() => handler(settingsInvokeEvent, { environmentId: 'does-not-exist' })).toThrow(
+      'Runtime environment not found'
+    )
+    expect(store.updateSettings).toHaveBeenCalledTimes(1)
   })
 
   it('applies bot-author deltas against the authoritative settings snapshot', () => {

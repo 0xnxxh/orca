@@ -15942,7 +15942,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle,
           title,
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }))
     })
     const before = await runtime.listTerminals(`id:${TEST_WORKTREE_ID}`)
@@ -16113,7 +16114,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_new',
           title: 'Terminal 3',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         },
         {
           id: 'pty-agent',
@@ -16121,7 +16123,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_agent',
           title: 'Claude',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         },
         {
           id: 'pty-setup',
@@ -16129,7 +16132,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_setup',
           title: 'Setup',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         },
         {
           id: 'pty-shell',
@@ -16137,7 +16141,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_shell',
           title: 'Shell',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }
       ]
     })
@@ -16280,7 +16285,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_alias',
           title: 'Alias shell',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }
       ]
     })
@@ -16337,7 +16343,8 @@ describe('OrcaRuntimeService', () => {
                   terminalHandle: 'term_current',
                   title: 'Current shell',
                   cwd: TEST_WORKTREE_PATH,
-                  worktreeId: TEST_WORKTREE_ID
+                  worktreeId: TEST_WORKTREE_ID,
+                  wslDistro: null
                 }
               ]
             : []
@@ -16412,7 +16419,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_cas',
           title: 'shell',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }
       ]
     })
@@ -16456,7 +16464,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_wrong_owner',
           title: 'shell',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }
       ]
     })
@@ -16495,7 +16504,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_reused',
           title: 'shell',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         },
         {
           id: 'pty-second',
@@ -16503,7 +16513,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_reused',
           title: 'shell',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }
       ]
     })
@@ -16620,7 +16631,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle,
           title: id,
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }))
     })
 
@@ -16720,7 +16732,8 @@ describe('OrcaRuntimeService', () => {
       terminalHandle: 'term_old',
       title: 'old',
       cwd: TEST_WORKTREE_PATH,
-      worktreeId: TEST_WORKTREE_ID
+      worktreeId: TEST_WORKTREE_ID,
+      wslDistro: null
     }
     runtime.setPtyController({
       write: () => true,
@@ -16790,7 +16803,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_orphan',
           title: 'orphan',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }
       ]
     })
@@ -16859,7 +16873,8 @@ describe('OrcaRuntimeService', () => {
           terminalHandle: 'term_duplicate',
           title: 'duplicate',
           cwd: TEST_WORKTREE_PATH,
-          worktreeId: TEST_WORKTREE_ID
+          worktreeId: TEST_WORKTREE_ID,
+          wslDistro: null
         }
       ]
     })

@@ -1924,7 +1924,10 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
   importCookiesToProfile: async (profileId) => {
     const hostId = getBrowserSettingsHostId(get())
     if (getBrowserSettingsRuntimeEnvironmentId(get())) {
-      const reason = 'Manual cookie file import is unavailable while a remote runtime is active.'
+      const reason = translate(
+        'auto.store.slices.browser.remoteCookieImportUnavailable',
+        'Manual cookie file import is unavailable while a remote runtime is active.'
+      )
       set((state) =>
         browserImportStateForHostUpdate(state, hostId, {
           profileId,

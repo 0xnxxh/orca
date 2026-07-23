@@ -39,6 +39,7 @@ import type {
 import type { StartupCommandDelivery } from './codex-startup-delivery'
 import type { RemoteServerUpdateSupport } from './remote-server-update'
 import type { ExecutionHostId } from './execution-host'
+import type { PtyIncarnationId } from './pty-incarnation'
 
 export type { RuntimeMarkdownReadTabResult, RuntimeMarkdownSaveTabResult }
 
@@ -490,7 +491,7 @@ export type RuntimeTerminalListResult = {
 export type RuntimeTerminalOrphanAdoptionClaim = {
   terminal: string
   ptyId: string
-  incarnationId: string
+  incarnationId: PtyIncarnationId
   tabId: string
   leafId: string
 }

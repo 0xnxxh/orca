@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
 import type { Store } from '../persistence'
 import type { GlobalSettings, PersistedState } from '../../shared/types'
 import { listSystemFontFamilies } from '../system-fonts'
@@ -22,6 +22,7 @@ import { normalizeTerminalLineHeight } from '../../shared/terminal-line-height-s
 import { prepareLocalWorktreeRootsForRepos } from '../worktree-root-preparation'
 import { scheduleCurrentWorktreeBaseDirectoryWatcherSync } from './worktree-base-directory-watcher'
 import { applyPRBotAuthorOverride } from '../../shared/pr-bot-author-overrides'
+import { resolveEnvironment } from '../../shared/runtime-environment-store'
 
 // Why: the whitelist is the source-of-truth for which keys we emit on. Casting
 // to a Set once at module load lets the IPC handler's per-key membership
@@ -216,6 +217,9 @@ export function registerSettingsHandlers(
         throw new Error('Invalid Active Server preference')
       }
       const environmentId = requestedEnvironmentId?.trim() || null
+      if (environmentId !== null) {
+        resolveEnvironment(app.getPath('userData'), environmentId)
+      }
       return store.updateSettings(
         { activeRuntimeEnvironmentId: environmentId },
         { notifyListeners: true, originWebContentsId: event.sender.id }

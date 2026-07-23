@@ -512,7 +512,12 @@ export function RuntimeEnvironmentsPane({
     try {
       if (allowLocalRuntime && settings.activeRuntimeEnvironmentId === environment.id) {
         if (mountedRef.current) {
-          setRemoveError('Choose another Active Server in Advanced before removing this server.')
+          setRemoveError(
+            translate(
+              'auto.components.settings.RuntimeEnvironmentsPane.removeActiveServerBlocked',
+              'Choose another Active Server in Advanced before removing this server.'
+            )
+          )
         }
         return false
       }
@@ -1382,8 +1387,8 @@ export function RuntimeEnvironmentsPane({
               {removingActiveServer
                 ? allowLocalRuntime
                   ? translate(
-                      'auto.components.settings.RuntimeEnvironmentsPane.9f7665a01b',
-                      'Removing the active server first switches Orca back to Local desktop. Existing host sessions are left alone.'
+                      'auto.components.settings.RuntimeEnvironmentsPane.removeActiveServerDescription',
+                      'Choose another Active Server in Advanced before removing this server. Existing host sessions are left alone.'
                     )
                   : translate(
                       'auto.components.settings.RuntimeEnvironmentsPane.b2fda48c39',

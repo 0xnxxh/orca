@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { TabGroupLayoutNode } from '../../../../shared/types'
+import { isPtyIncarnationId, type PtyIncarnationId } from '../../../../shared/pty-incarnation'
 import { defineMethod, type RpcAnyMethod } from '../core'
 import { OptionalString, requiredString } from '../schemas'
 import { TerminalPaneLayoutNodeSchema } from './session-tabs-schemas'
@@ -78,6 +79,11 @@ const TerminalOrphanTopology = z.object({
   groupLayout: TerminalOrphanGroupLayout.optional()
 })
 
+const TerminalOrphanIncarnationId = z.custom<PtyIncarnationId>(
+  isPtyIncarnationId,
+  'Invalid PTY incarnation'
+)
+
 const TerminalAdoptOrphans = z.object({
   worktree: requiredString('Missing worktree selector').pipe(z.string().max(32_768)),
   expectedTopologyRevision: z.number().int().nonnegative(),
@@ -86,7 +92,7 @@ const TerminalAdoptOrphans = z.object({
       z.object({
         terminal: requiredString('Missing terminal handle').pipe(z.string().max(256)),
         ptyId: requiredString('Missing PTY id').pipe(z.string().max(8_192)),
-        incarnationId: requiredString('Missing PTY incarnation').pipe(z.string().max(256)),
+        incarnationId: TerminalOrphanIncarnationId,
         tabId: requiredString('Missing tab id').pipe(z.string().max(256)),
         leafId: requiredString('Missing leaf id').pipe(z.string().max(128))
       })

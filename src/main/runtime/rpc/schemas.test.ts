@@ -126,6 +126,11 @@ describe('RPC optional pipe schemas', () => {
     expectRejects(adopt, {
       worktree: 'id:repo::/worktree',
       expectedTopologyRevision: 4,
+      claims: [{ ...claim, incarnationId: 'i'.repeat(129) }]
+    })
+    expectRejects(adopt, {
+      worktree: 'id:repo::/worktree',
+      expectedTopologyRevision: 4,
       claims: []
     })
     expectRejects(adopt, {
