@@ -34,9 +34,19 @@ type LaunchedOrca = {
   page: Page
 }
 
+type LaunchOptions = {
+  /**
+   * Called for each chunk the relaunched main process writes to stderr. The
+   * listener is attached before `firstWindow()` resolves so main-process
+   * startup logs (e.g. the daemon health-check guard) can't be emitted before
+   * the test starts capturing.
+   */
+  onStderr?: (chunk: string) => void
+}
+
 type RestartSession = {
   userDataDir: string
-  launch: () => Promise<LaunchedOrca>
+  launch: (options?: LaunchOptions) => Promise<LaunchedOrca>
   /** Gracefully close a launch, letting beforeunload flush session state. */
   close: (app: ElectronApplication) => Promise<void>
   /** Remove the shared userDataDir after the test is done. */
@@ -137,7 +147,7 @@ export function createRestartSession(
     `${JSON.stringify(getE2ECompletedOnboardingProfile(), null, 2)}\n`
   )
 
-  const launch = async (): Promise<LaunchedOrca> => {
+  const launch = async (options?: LaunchOptions): Promise<LaunchedOrca> => {
     runtimeWsPort ??= await reserveRestartRuntimeWsPort()
     const app = await electron.launch({
       args: getOrcaElectronLaunchArgs(mainPath, headful),
@@ -146,6 +156,12 @@ export function createRestartSession(
         ORCA_E2E_RUNTIME_WS_PORT: String(runtimeWsPort)
       }
     })
+    // Why: attach before firstWindow — the main-process daemon guard can emit
+    // its decision line during startup, before the renderer window is ready.
+    if (options?.onStderr) {
+      const onStderr = options.onStderr
+      app.process().stderr?.on('data', (chunk: Buffer) => onStderr(chunk.toString()))
+    }
     try {
       const resolvedHome = await app.evaluate(({ app }) => app.getPath('home'))
       assertElectronResolvedIsolatedHome(resolvedHome, homeIsolation)
