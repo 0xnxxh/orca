@@ -373,6 +373,61 @@ describe('createMainWindow', () => {
     expect(browserWindowInstance.setSize).toHaveBeenCalledTimes(setSizeCalls)
   })
 
+  it('runs a full repaint when the renderer relays a genuine window reveal (STA-2383)', () => {
+    vi.useFakeTimers()
+    let windowSize: [number, number] = [1200, 800]
+    const webContents = {
+      on: vi.fn(),
+      setZoomLevel: vi.fn(),
+      setBackgroundThrottling: vi.fn(),
+      invalidate: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      setWindowOpenHandler: vi.fn(),
+      send: vi.fn(),
+      isDevToolsOpened: vi.fn(),
+      openDevTools: vi.fn(),
+      closeDevTools: vi.fn()
+    }
+    const browserWindowInstance = {
+      webContents,
+      on: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      isFullScreen: vi.fn(() => false),
+      getSize: vi.fn(() => windowSize),
+      setSize: vi.fn((width: number, height: number) => {
+        windowSize = [width, height]
+      }),
+      maximize: vi.fn(),
+      show: vi.fn(),
+      loadFile: vi.fn(),
+      loadURL: vi.fn()
+    }
+    browserWindowMock.mockImplementation(function () {
+      return browserWindowInstance
+    })
+
+    withPlatform('darwin', () => createMainWindow(null))
+
+    const revealHandler = vi
+      .mocked(ipcMain.on)
+      .mock.calls.find(([channel]) => channel === 'ui:window-revealed')?.[1]
+    expect(revealHandler).toBeTypeOf('function')
+
+    // Why: a reveal relayed by another window's webContents must not repaint this one.
+    revealHandler?.({ sender: {} } as never)
+    expect(browserWindowInstance.setSize).not.toHaveBeenCalled()
+    expect(webContents.invalidate).not.toHaveBeenCalled()
+
+    // The genuine reveal (matching sender) runs the full repaint: invalidate + the size jiggle
+    // that recomputes the stale dvh layout — the recovery bare focus/invalidate misses.
+    revealHandler?.({ sender: webContents } as never)
+    expect(webContents.invalidate).toHaveBeenCalledTimes(1)
+    expect(browserWindowInstance.setSize).toHaveBeenNthCalledWith(1, 1201, 800)
+    vi.advanceTimersByTime(32)
+    expect(browserWindowInstance.setSize).toHaveBeenNthCalledWith(2, 1200, 800)
+  })
+
   it('supports all minus key variants for terminal zoom out', () => {
     const windowHandlers: Record<string, (...args: any[]) => void> = {}
     const webContents = {

@@ -92,15 +92,33 @@ function installMacosVisibilityRepaint(window: BrowserWindow): void {
     }
   }
 
+  // Why (STA-2383): occlusion-uncover fires no restore/show, so the renderer relays its genuine
+  // hidden→visible reveal instead. Unlike a bare focus (every Cmd+Tab, window never hidden), this
+  // only fires when the window was actually occluded/throttled — exactly when the stale dvh layout
+  // stranded the bottom status bar off-screen — so the full repaint's size jiggle is warranted.
+  const onRendererRevealed = (event: Electron.IpcMainEvent): void => {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) {
+      return
+    }
+    if (event.sender !== window.webContents) {
+      return
+    }
+    forceRepaint(window)
+  }
+  ipcMain.on('ui:window-revealed', onRendererRevealed)
+
   window.on('restore', repaintAfterVisibilityTransition)
   window.on('show', repaintAfterVisibilityTransition)
-  // Why: occlusion-uncover fires no restore/show, only focus; invalidate only — the setSize jiggle would SIGWINCH every terminal on Cmd+Tab.
+  // Why: occlusion-uncover fires no restore/show, only focus; invalidate only — the setSize jiggle would SIGWINCH every terminal on Cmd+Tab. The renderer-reveal relay above covers the stale-layout recovery that invalidate alone misses.
   window.on('focus', () => {
     if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
       window.webContents.invalidate()
     }
   })
-  window.on('closed', clearDelayedRepaint)
+  window.on('closed', () => {
+    clearDelayedRepaint()
+    ipcMain.removeListener('ui:window-revealed', onRendererRevealed)
+  })
 }
 
 function isMacAppPasteInput(input: Electron.Input): boolean {
