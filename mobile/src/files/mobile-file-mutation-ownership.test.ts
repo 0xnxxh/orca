@@ -104,6 +104,19 @@ describe('mobile file mutation ownership', () => {
     })
   })
 
+  it('preserves runtime-owned SSH routing and its connection fence', () => {
+    expect(
+      buildMobileFileMutationOwnership(
+        'ssh:runtime-ssh-environment-1',
+        sshState('runtime-ssh-environment-1', 18)
+      )
+    ).toEqual({
+      expectedExecutionHostId: 'ssh:runtime-ssh-environment-1',
+      expectedSshTargetId: 'runtime-ssh-environment-1',
+      expectedSshConnectionGeneration: 18
+    })
+  })
+
   it.each([
     ['a missing SSH state', 'ssh:target-1', null],
     ['a reconnecting SSH state', 'ssh:target-1', sshState('target-1', 4, 'reconnecting')],

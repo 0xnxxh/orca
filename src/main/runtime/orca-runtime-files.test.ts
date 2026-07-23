@@ -104,6 +104,7 @@ import {
   setSshConnectionGeneration
 } from '../ssh/ssh-connection-generation'
 import { SEARCH_TIMEOUT_MS } from '../../shared/text-search'
+import type { Worktree } from '../../shared/types'
 
 type MockRuntimeSearchChild = EventEmitter & {
   stdout: EventEmitter & { setEncoding: ReturnType<typeof vi.fn> }
@@ -139,6 +140,7 @@ function mockLocalPathStats(entries: Record<string, [number, number]>) {
 }
 
 function createRuntimeFileCommands(options?: {
+  hostId?: Worktree['hostId']
   path?: string
   openFile?: ReturnType<typeof vi.fn>
   openDiff?: ReturnType<typeof vi.fn>
@@ -156,7 +158,8 @@ function createRuntimeFileCommands(options?: {
   const worktree = {
     id: 'wt-1',
     repoId: 'repo-1',
-    path
+    path,
+    hostId: options?.hostId
   }
   const commands = new RuntimeFileCommands({
     getRuntimeId: () => 'runtime-1',
@@ -430,8 +433,19 @@ describe('RuntimeFileCommands', () => {
     expect(renameMock).not.toHaveBeenCalled()
   })
 
+  it('rejects a HUB-local create when the worktree declares another runtime owner', async () => {
+    const { commands } = createRuntimeFileCommands({ hostId: 'runtime:environment-2' })
+
+    await expect(
+      commands.createFileExplorerFile('id:wt-1', 'unsafe.md', undefined, undefined, 'local')
+    ).rejects.toThrow('Workspace host changed')
+
+    expect(resolveAuthorizedPathMock).not.toHaveBeenCalled()
+    expect(getSshFilesystemProvider).not.toHaveBeenCalled()
+  })
+
   it('allows runtime-local case-only rename with IPC parity guard behavior', async () => {
-    const { commands } = createRuntimeFileCommands()
+    const { commands } = createRuntimeFileCommands({ hostId: 'local' })
     mockLocalPathStats({
       '/repo/README.md': [10, 100],
       '/repo/readme.md': [10, 100]
@@ -508,7 +522,7 @@ describe('RuntimeFileCommands', () => {
   it('routes runtime remote rename through the SSH no-clobber provider method', async () => {
     const renameNoClobber = vi.fn().mockResolvedValue(undefined)
     vi.mocked(getSshFilesystemProvider).mockReturnValue({ renameNoClobber } as never)
-    const { commands, store } = createRuntimeFileCommands()
+    const { commands, store } = createRuntimeFileCommands({ hostId: 'ssh:ssh-1' })
     store.getRepo.mockReturnValue({ connectionId: 'ssh-1' })
 
     await commands.renameFileExplorerPath('id:wt-1', 'old.ts', 'new.ts', 0, 'ssh-1', 'ssh:ssh-1')
