@@ -62,16 +62,20 @@ let recordsSuppressed = 0
 
 /** Durably record a main-process fatal/near-fatal error before default handling runs. Exported for tests. */
 export function recordFatalMainProcessError(kind: FatalMainProcessErrorKind, error: unknown): void {
-  const now = Date.now()
-  if (now - recordWindowStartedAt >= RECORD_WINDOW_MS) {
-    recordWindowStartedAt = now
-    recordWindowCount = 0
+  // Why: only rejections can storm; the one uncaught-exception record before the fatal re-throw
+  // must never be lost to a window a storm already exhausted.
+  if (kind === 'main_unhandled_rejection') {
+    const now = Date.now()
+    if (now - recordWindowStartedAt >= RECORD_WINDOW_MS) {
+      recordWindowStartedAt = now
+      recordWindowCount = 0
+    }
+    if (recordWindowCount >= RECORD_WINDOW_MAX) {
+      recordsSuppressed += 1
+      return
+    }
+    recordWindowCount += 1
   }
-  if (recordWindowCount >= RECORD_WINDOW_MAX) {
-    recordsSuppressed += 1
-    return
-  }
-  recordWindowCount += 1
   const suppressedSinceLast = recordsSuppressed
   recordsSuppressed = 0
   const details = fatalMainProcessErrorDetails(error)
