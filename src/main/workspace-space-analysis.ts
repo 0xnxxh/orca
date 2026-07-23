@@ -301,7 +301,9 @@ function createBaseWorktreeRow(
     repoId: repo.id,
     repoDisplayName: repo.displayName,
     repoPath: repo.path,
-    displayName: worktree.displayName,
+    // Why: displayName is typed non-optional but arrives undefined at runtime for
+    // persisted/discovered worktrees (crash 99657ab1); coalesce so the string-typed row is honest.
+    displayName: worktree.displayName ?? '',
     path: worktree.path,
     branch: worktree.branch,
     isMainWorktree: worktree.isMainWorktree,
@@ -944,7 +946,11 @@ export async function analyzeWorkspaceSpace(
   const repos = repoResults.map((result) => result.summary)
   const worktrees = repoResults
     .flatMap((result) => result.worktrees)
-    .sort((a, b) => b.sizeBytes - a.sizeBytes || a.displayName.localeCompare(b.displayName))
+    // Why: coalesce at the sort site too so an undefined displayName can't throw here (crash 99657ab1).
+    .sort(
+      (a, b) =>
+        b.sizeBytes - a.sizeBytes || (a.displayName ?? '').localeCompare(b.displayName ?? '')
+    )
   throwIfAborted(options.signal)
 
   return {
