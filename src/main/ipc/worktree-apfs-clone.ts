@@ -29,6 +29,12 @@ type DarwinFilesystemInfo = {
   filesystemName: string
 }
 
+/** Per-materialization cache keyed by `stat().dev`. Copying N `.worktreeinclude`
+ *  paths would otherwise re-run df+diskutil per path (4 subprocesses each) even
+ *  though source and worktree almost always share one volume; caching collapses
+ *  that to one probe per distinct volume. */
+export type DarwinFilesystemCache = Map<number, Promise<DarwinFilesystemInfo>>
+
 export class ApfsCloneUnavailableError extends Error {
   constructor(message: string) {
     super(message)
@@ -72,14 +78,32 @@ async function getDarwinFilesystemInfo(
   }
 }
 
+async function getCachedDarwinFilesystemInfo(
+  path: string,
+  deps: ApfsCloneDeps,
+  cache: DarwinFilesystemCache
+): Promise<DarwinFilesystemInfo> {
+  const deviceId = (await stat(path)).dev
+  const cached = cache.get(deviceId)
+  if (cached) {
+    return cached
+  }
+  // Why: cache the pending (or rejected) probe so every path on this volume
+  // reuses one df+diskutil pair instead of respawning them per copy.
+  const pending = getDarwinFilesystemInfo(path, deps)
+  cache.set(deviceId, pending)
+  return pending
+}
+
 async function assertSameApfsVolume(
   source: string,
   target: string,
-  deps: ApfsCloneDeps
+  deps: ApfsCloneDeps,
+  cache: DarwinFilesystemCache
 ): Promise<void> {
   const [sourceInfo, targetInfo] = await Promise.all([
-    getDarwinFilesystemInfo(source, deps),
-    getDarwinFilesystemInfo(dirname(target), deps)
+    getCachedDarwinFilesystemInfo(source, deps, cache),
+    getCachedDarwinFilesystemInfo(dirname(target), deps, cache)
   ])
   if (
     sourceInfo.device !== targetInfo.device ||
@@ -151,10 +175,11 @@ export async function cloneWorktreePathWithApfs(
   source: string,
   target: string,
   sourceIsDirectory: boolean,
-  deps: ApfsCloneDeps = defaultApfsCloneDeps
+  deps: ApfsCloneDeps = defaultApfsCloneDeps,
+  filesystemCache: DarwinFilesystemCache = new Map()
 ): Promise<void> {
   await mkdir(dirname(target), { recursive: true })
-  await assertSameApfsVolume(source, target, deps)
+  await assertSameApfsVolume(source, target, deps, filesystemCache)
   // Why: Node's COPYFILE_FICLONE_FORCE returns ENOSYS on macOS in our runtime,
   // while Darwin's cp exposes APFS clonefile via -c. Preflight the volume so
   // cp's non-APFS full-copy fallback cannot surprise users.

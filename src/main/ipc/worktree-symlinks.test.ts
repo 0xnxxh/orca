@@ -447,6 +447,31 @@ describe('createWorktreeCopiedPaths', () => {
     expect(readFileSync(join(worktree, 'apps', 'web', '.env'), 'utf8')).toBe('A=1')
   })
 
+  // Finding 1 regression: a symlinked include entry must become an independent
+  // copy, not a symlink, or worktree edits would leak back into the shared target.
+  posixIt('dereferences a symlinked file entry so edits do not leak to the primary', async () => {
+    writeFileSync(join(primary, '.env.shared'), 'SECRET=1\n')
+    symlinkSync(join(primary, '.env.shared'), join(primary, '.env'))
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.env'], { platform: 'linux' })
+
+    expect(lstatSync(join(worktree, '.env')).isSymbolicLink()).toBe(false)
+    writeFileSync(join(worktree, '.env'), 'SECRET=2\n')
+    expect(readFileSync(join(primary, '.env.shared'), 'utf8')).toBe('SECRET=1\n')
+  })
+
+  posixIt('dereferences a symlinked directory entry into an independent copy', async () => {
+    mkdirSync(join(primary, '.cache-real'))
+    writeFileSync(join(primary, '.cache-real', 'f'), 'ORIG\n')
+    symlinkSync(join(primary, '.cache-real'), join(primary, '.cache'), 'dir')
+
+    await createWorktreeCopiedPaths(primary, worktree, ['.cache'], { platform: 'linux' })
+
+    expect(lstatSync(join(worktree, '.cache')).isSymbolicLink()).toBe(false)
+    writeFileSync(join(worktree, '.cache', 'f'), 'CHANGED\n')
+    expect(readFileSync(join(primary, '.cache-real', 'f'), 'utf8')).toBe('ORIG\n')
+  })
+
   it('preserves a pre-existing target in the worktree (no clobber)', async () => {
     writeFileSync(join(primary, '.env'), 'SECRET=1\n')
     writeFileSync(join(worktree, '.env'), 'MINE=1\n')
@@ -501,6 +526,34 @@ describe('createWorktreeCopiedPaths', () => {
       false
     )
     expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('CLONED=1\n')
+  })
+
+  // Perf: the df+diskutil volume probe must not scale with the number of copied
+  // paths — one probe per distinct volume, cached across the materialization.
+  it('probes each APFS volume once regardless of how many paths are copied', async () => {
+    for (const name of ['.env', '.env.local', 'config.json', 'secrets.json']) {
+      writeFileSync(join(primary, name), `${name}\n`)
+    }
+    const deps = createApfsCloneDeps({ onCp: () => {} })
+
+    await createWorktreeCopiedPaths(
+      primary,
+      worktree,
+      ['.env', '.env.local', 'config.json', 'secrets.json'],
+      { platform: 'darwin', apfsCloneDeps: deps }
+    )
+
+    const execFileAsyncMock = vi.mocked(deps.execFileAsync)
+    const dfCalls = execFileAsyncMock.mock.calls.filter(([file]) => file === '/bin/df').length
+    const diskutilCalls = execFileAsyncMock.mock.calls.filter(
+      ([file]) => file === '/usr/sbin/diskutil'
+    ).length
+    // 4 paths would be 8 df + 8 diskutil un-cached; source+worktree share one
+    // tmp volume, so caching collapses this to a single probe pair.
+    expect(dfCalls).toBeLessThanOrEqual(2)
+    expect(diskutilCalls).toBeLessThanOrEqual(2)
+    // The copies themselves still happen per path.
+    expect(execFileAsyncMock.mock.calls.filter(([file]) => file === '/bin/cp')).toHaveLength(4)
   })
 })
 

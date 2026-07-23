@@ -1,11 +1,12 @@
-import { symlink, mkdir, stat, lstat, unlink, cp } from 'node:fs/promises'
+import { symlink, mkdir, stat, lstat, unlink, cp, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import {
   ApfsCloneUnavailableError,
   cloneWorktreePathWithApfs,
   defaultApfsCloneDeps,
   WorktreeLinkedPathTargetExistsError,
-  type ApfsCloneDeps
+  type ApfsCloneDeps,
+  type DarwinFilesystemCache
 } from './worktree-apfs-clone'
 
 type WorktreeLinkedPathOptions = {
@@ -69,9 +70,15 @@ async function createWorktreeLinkedPath(
   sourceIsDirectory: boolean,
   sourceIsSymbolicLink: boolean,
   mode: WorktreeMaterializeMode,
-  options: WorktreeLinkedPathOptions
+  options: WorktreeLinkedPathOptions,
+  apfsFilesystemCache: DarwinFilesystemCache
 ): Promise<void> {
-  if (options.platform === 'darwin' && !sourceIsSymbolicLink) {
+  // Why: copy mode promises each worktree an independent copy; copying the
+  // symlink itself would recreate a link to the shared target, so edits in the
+  // worktree would leak back into the primary checkout (or escape it entirely if
+  // the link points outside). Resolve the real source so we copy content.
+  const copySource = mode === 'copy' && sourceIsSymbolicLink ? await realpath(source) : source
+  if (options.platform === 'darwin' && (!sourceIsSymbolicLink || mode === 'copy')) {
     try {
       const cloneWorktreePath =
         options.cloneWorktreePath ??
@@ -80,9 +87,10 @@ async function createWorktreeLinkedPath(
             cloneSource,
             cloneTarget,
             cloneSourceIsDirectory,
-            options.apfsCloneDeps ?? defaultApfsCloneDeps
+            options.apfsCloneDeps ?? defaultApfsCloneDeps,
+            apfsFilesystemCache
           ))
-      await cloneWorktreePath(source, target, sourceIsDirectory)
+      await cloneWorktreePath(copySource, target, sourceIsDirectory)
       return
     } catch (error) {
       if (error instanceof WorktreeLinkedPathTargetExistsError) {
@@ -97,7 +105,7 @@ async function createWorktreeLinkedPath(
     }
   }
   if (mode === 'copy') {
-    await copyWorktreePath(source, target)
+    await copyWorktreePath(copySource, target)
     return
   }
   await symlinkWorktreePath(source, target, sourceIsDirectory)
@@ -122,6 +130,9 @@ async function materializeWorktreePaths(
   options: WorktreeLinkedPathOptions = {}
 ): Promise<void> {
   const effectiveOptions = { platform: process.platform, ...options }
+  // Why: one df+diskutil probe per distinct volume for the whole materialization,
+  // not per copied path — see DarwinFilesystemCache.
+  const apfsFilesystemCache: DarwinFilesystemCache = new Map()
 
   for (const rawPath of paths) {
     const safePath = getSafeRelativePath(rawPath)
@@ -159,7 +170,8 @@ async function materializeWorktreePaths(
         sourceIsDirectory,
         sourceIsSymbolicLink,
         mode,
-        effectiveOptions
+        effectiveOptions,
+        apfsFilesystemCache
       )
     } catch (error) {
       console.error(
