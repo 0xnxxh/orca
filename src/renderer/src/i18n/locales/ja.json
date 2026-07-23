@@ -5459,15 +5459,15 @@
             "toggleLabel": "新しいカードスタイルを切り替え"
           },
           "nativeChat": {
-            "title": "ネイティブチャット",
+            "title": "Chat UI",
             "description": "対応エージェントのターミナルセッション用デスクトップチャット画面をプレビューします。",
-            "copy": "対応エージェントのターミナルペインから切り替えられるネイティブチャットビューを追加します。トランスクリプトの忠実度、ストリーミング、ターミナルとの同等性を調整しているため、試験運用中です。",
-            "toggleLabel": "ネイティブチャットの切り替え",
+            "copy": "対応エージェントのターミナルペインから切り替えられる Chat UI ビューを追加します。トランスクリプトの忠実度、ストリーミング、ターミナルとの同等性を調整しているため、試験運用中です。",
+            "toggleLabel": "Chat UI の切り替え",
             "defaultTitle": "デフォルトのビュー",
             "defaultCopy": "対応エージェントの新しいターミナルタブを開く方法を選択します。",
-            "defaultViewLabel": "デフォルトのネイティブ チャット ビュー",
+            "defaultViewLabel": "デフォルトの Chat UI ビュー",
             "defaultViewTerminal": "Terminal チャット",
-            "defaultViewNative": "ネイティブチャット"
+            "defaultViewNative": "Chat UI"
           },
           "agentDashboard": {
             "title": "Agent Dashboard",
@@ -7684,7 +7684,7 @@
               "worktrees": "worktrees"
             },
             "nativeChat": {
-              "title": "ネイティブチャット",
+              "title": "Chat UI",
               "description": "対応エージェントのターミナルセッション用デスクトップチャット画面をプレビューします。",
               "grok": "grok"
             },

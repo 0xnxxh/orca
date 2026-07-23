@@ -5474,15 +5474,15 @@
             "toggleLabel": "Alternar nuevo estilo de tarjeta"
           },
           "nativeChat": {
-            "title": "Chat nativo",
+            "title": "Chat UI",
             "description": "Previsualiza la interfaz de chat de escritorio para sesiones de terminal de agentes compatibles.",
-            "copy": "Añade una vista de chat nativo a la que puedes cambiar desde paneles de terminal de agentes compatibles. Es experimental mientras ajustamos la fidelidad de las transcripciones, la transmisión y la paridad con el terminal.",
-            "toggleLabel": "Alternar chat nativo",
+            "copy": "Añade una vista de Chat UI a la que puedes cambiar desde paneles de terminal de agentes compatibles. Es experimental mientras ajustamos la fidelidad de las transcripciones, la transmisión y la paridad con el terminal.",
+            "toggleLabel": "Alternar Chat UI",
             "defaultTitle": "Vista predeterminada",
             "defaultCopy": "Elige cómo se abren las nuevas pestañas de terminal de agentes compatibles.",
-            "defaultViewLabel": "Vista predeterminada de chat nativo",
+            "defaultViewLabel": "Vista predeterminada de Chat UI",
             "defaultViewTerminal": "Chat en terminal",
-            "defaultViewNative": "Chat nativo"
+            "defaultViewNative": "Chat UI"
           },
           "agentDashboard": {
             "title": "Agent Dashboard",
@@ -7662,7 +7662,7 @@
               "worktrees": "worktrees"
             },
             "nativeChat": {
-              "title": "Chat nativo",
+              "title": "Chat UI",
               "description": "Previsualiza la interfaz de chat de escritorio para sesiones de terminal de agentes compatibles.",
               "grok": "grok"
             },
