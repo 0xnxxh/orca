@@ -86,6 +86,28 @@ describe('normalizeServeSimAxTree', () => {
     })
   })
 
+  it('caps the tree at 500 nodes and marks the parent whose children were cut', () => {
+    const child = (label: string) => ({
+      type: 'StaticText',
+      AXLabel: label,
+      frame: { x: 0, y: 0, width: 10, height: 10 },
+      children: []
+    })
+    const raw = [
+      {
+        type: 'Application',
+        frame: { x: 0, y: 0, width: 400, height: 800 },
+        children: Array.from({ length: 600 }, (_, i) => child(`row-${i}`))
+      }
+    ]
+
+    const [root] = normalizeServeSimAxTree(raw)
+    // Root consumes one slot of the 500-node budget.
+    expect(root.children).toHaveLength(499)
+    expect(root.truncated).toBe(true)
+    expect(root.children[0]!.truncated).toBeUndefined()
+  })
+
   it('falls back to a unit screen for malformed roots instead of dividing by zero', () => {
     const raw = [{ type: 'Application', children: [] }]
     expect(normalizeServeSimAxTree(raw)).toEqual([

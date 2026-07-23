@@ -7,6 +7,9 @@
 
 export type NormalizedAxFrame = { x: number; y: number; width: number; height: number }
 
+// Matches serve-sim's own snapshot cap; an unbounded tree can flood agent output.
+const MAX_AX_NODES = 500
+
 // One accessibility element, position normalized, children nested (raw tree shape).
 export type NormalizedAxNode = {
   role: string
@@ -17,6 +20,8 @@ export type NormalizedAxNode = {
   id?: string
   frame: NormalizedAxFrame
   children: NormalizedAxNode[]
+  // Present when children were dropped by the node cap.
+  truncated?: true
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -60,8 +65,21 @@ function normalizeFrame(frame: NormalizedAxFrame, screen: NormalizedAxFrame): No
   }
 }
 
-function normalizeNode(raw: unknown, screen: NormalizedAxFrame): NormalizedAxNode {
+function normalizeNode(
+  raw: unknown,
+  screen: NormalizedAxFrame,
+  budget: { remaining: number }
+): NormalizedAxNode {
+  budget.remaining -= 1
   const node = asRecord(raw)
+  const rawChildren = Array.isArray(node.children) ? node.children : []
+  const children: NormalizedAxNode[] = []
+  for (const child of rawChildren) {
+    if (budget.remaining <= 0) {
+      break
+    }
+    children.push(normalizeNode(child, screen, budget))
+  }
   const normalized: NormalizedAxNode = {
     role: asString(node.role_description),
     type: asString(node.type),
@@ -69,19 +87,28 @@ function normalizeNode(raw: unknown, screen: NormalizedAxFrame): NormalizedAxNod
     value: asString(node.AXValue),
     enabled: node.enabled !== false,
     frame: normalizeFrame(readFrame(node.frame), screen),
-    children: Array.isArray(node.children)
-      ? node.children.map((child) => normalizeNode(child, screen))
-      : []
+    children
   }
   // AXUniqueId is often null; only surface it when the helper provides one.
   const uniqueId = asString(node.AXUniqueId)
   if (uniqueId) {
     normalized.id = uniqueId
   }
+  if (children.length < rawChildren.length) {
+    normalized.truncated = true
+  }
   return normalized
 }
 
 export function normalizeServeSimAxTree(roots: unknown[]): NormalizedAxNode[] {
   const screen = screenFrame(roots)
-  return roots.map((root) => normalizeNode(root, screen))
+  const budget = { remaining: MAX_AX_NODES }
+  const normalized: NormalizedAxNode[] = []
+  for (const root of roots) {
+    if (budget.remaining <= 0) {
+      break
+    }
+    normalized.push(normalizeNode(root, screen, budget))
+  }
+  return normalized
 }
