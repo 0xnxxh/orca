@@ -153,6 +153,33 @@ describe('main-process fatal error guards (issue #9441)', () => {
     )
   })
 
+  it('reopens the window when the wall clock jumps backwards after exhaustion', async () => {
+    vi.resetModules()
+    const record = vi.fn()
+    vi.doMock('../crash-reporting/durable-crash-breadcrumb', () => ({
+      recordDurableCrashBreadcrumb: record
+    }))
+    const { recordFatalMainProcessError } = await import('./main-process-error-guards')
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+
+    for (let i = 0; i < 25; i++) {
+      recordFatalMainProcessError('main_unhandled_rejection', new Error(`storm ${i}`))
+    }
+    expect(record).toHaveBeenCalledTimes(20)
+
+    // Why: a backward jump must not trap the exhausted window and suppress every later breadcrumb.
+    now -= 3_600_000
+    recordFatalMainProcessError('main_unhandled_rejection', new Error('after backward jump'))
+    expect(record).toHaveBeenCalledTimes(21)
+    expect(record).toHaveBeenLastCalledWith(
+      'main_unhandled_rejection',
+      expect.objectContaining({ errorMessage: 'after backward jump', suppressedSinceLast: 5 }),
+      'main_unhandled_rejection'
+    )
+  })
+
   it('never suppresses the fatal uncaught-exception record after a rejection storm', async () => {
     vi.resetModules()
     const record = vi.fn()

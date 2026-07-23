@@ -66,7 +66,8 @@ export function recordFatalMainProcessError(kind: FatalMainProcessErrorKind, err
   // must never be lost to a window a storm already exhausted.
   if (kind === 'main_unhandled_rejection') {
     const now = Date.now()
-    if (now - recordWindowStartedAt >= RECORD_WINDOW_MS) {
+    // Why: a backward clock jump (sleep/resume, NTP) would otherwise trap an exhausted window and suppress every breadcrumb until wall time catches up.
+    if (now < recordWindowStartedAt || now - recordWindowStartedAt >= RECORD_WINDOW_MS) {
       recordWindowStartedAt = now
       recordWindowCount = 0
     }
