@@ -33,6 +33,7 @@ import type {
 import type { MobileRelayStatus } from '../shared/mobile-relay-status'
 import type { MobilePairingConnectionMode } from '../shared/mobile-pairing-connection-mode'
 import type { SshMutationExpectation } from '../shared/ssh-types'
+import type { RasterImageDimensions } from '../shared/raster-image-dimensions'
 import type {
   CreateLocalOrcaProfileArgs,
   CreateLocalOrcaProfileResult,
@@ -1373,6 +1374,9 @@ export type PreloadApi = {
     publishTerminalViewAttributes: (attributes: TerminalViewAttributes) => void
     hasChildProcesses: (id: string) => Promise<boolean>
     getForegroundProcess: (id: string) => Promise<string | null>
+    inspectProcess: (
+      id: string
+    ) => Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }>
     confirmForegroundProcess: (id: string) => Promise<string | null>
     getCwd: (id: string) => Promise<string>
     getSize: (id: string) => Promise<{ cols: number; rows: number } | null>
@@ -2144,6 +2148,9 @@ export type PreloadApi = {
     /** Synchronous persisted-settings read for startup decisions that can't wait for async hydration. Blocking IPC — call sparingly. */
     getSync: () => GlobalSettings | null
     set: (args: Partial<GlobalSettings>) => Promise<GlobalSettings>
+    setActiveRuntimeEnvironmentPreference: (args: {
+      environmentId: string | null
+    }) => Promise<GlobalSettings>
     updatePRBotAuthorOverride: (args: { author: string; isBot: boolean }) => Promise<GlobalSettings>
     listFonts: () => Promise<string[]>
     previewGhosttyImport: () => Promise<GhosttyImportPreview>
@@ -2262,6 +2269,12 @@ export type PreloadApi = {
       opts?: { scrollbackRows?: number }
     ) => Promise<TerminalPreviewConnectResult>
     input: (ptyId: string, data: string) => Promise<boolean>
+    /** Claim the PTY grid for the preview dialog; resolves to the size actually in effect. */
+    fit: (
+      ptyId: string,
+      cols: number,
+      rows: number
+    ) => Promise<{ cols: number; rows: number } | null>
     ack: (ptyId: string, bytes: number) => Promise<void>
     unsubscribe: (ptyId: string) => Promise<void>
     onData: (callback: (payload: TerminalPreviewDataPayload) => void) => () => void
@@ -2468,6 +2481,7 @@ export type PreloadApi = {
       isBinary: boolean
       isImage?: boolean
       mimeType?: string
+      imageDimensions?: RasterImageDimensions
       fileIdentity?: string
     }>
     readLocalLogTail: (args: LocalLogTailReadArgs) => Promise<LocalLogTailReadResult>

@@ -204,7 +204,8 @@
       "slices": {
         "browser": {
           "d175274b6d": "New Browser Tab",
-          "08fc23631d": "Browser"
+          "08fc23631d": "Browser",
+          "remoteCookieImportUnavailable": "Manual cookie file import is unavailable while a remote runtime is active."
         },
         "editor": {
           "dcb521ed29": "This file is in a conflict state, but no working-tree file is available to edit.",
@@ -683,7 +684,8 @@
         "4f78ba5885": "Workspace synced",
         "ef223fbb6b": "A device tried to connect but is not paired",
         "11992d0337": "If this was your phone or another Orca client, re-pair it from Settings → Mobile.",
-        "6573cfe955": "Open Mobile Settings"
+        "6573cfe955": "Open Mobile Settings",
+        "unresolvedTerminalWorktreeOwner": "Terminal creation is unavailable because the worktree owner could not be resolved"
       },
       "useSettingsNavigationMetadata": {
         "4a728cd56b": "New features that are still taking shape. Give them a try.",
@@ -1273,7 +1275,17 @@
         "noRunTargets": "No run targets are ready for this project.",
         "perWorkspaceEnvHint": "Provision an on-demand environment from a recipe",
         "branchName": "Branch name",
-        "branchNamePlaceholder": "feature/my-branch"
+        "branchNamePlaceholder": "feature/my-branch",
+        "connectTimedOut": "Connection timed out. It may still be connecting in the background.",
+        "connectingHost": "Connecting…",
+        "connectHost": "Connect",
+        "addHost": "Add host",
+        "addHostHint": "Register another machine or Orca server",
+        "addSshHost": "Add SSH host",
+        "addSshHostHint": "Use an existing machine over SSH",
+        "addRemoteOrcaServer": "Add Remote Orca Server",
+        "addRemoteOrcaServerHint": "Pair another Orca runtime",
+        "hostConnectionFailed": "Connection failed"
       },
       "NewWorkspaceComposerModal": {
         "createWorktree": "Create worktree",
@@ -1474,7 +1486,8 @@
         "4725b0e931": "Quick Open scan too large (",
         "b227d88520": "{{value0}} files found",
         "995be8ea22": "Copy",
-        "cf144856dc": "Copied"
+        "cf144856dc": "Copied",
+        "344f8a48dd": "on the host running the Quick Open scan to enable fast, gitignore-aware listing:"
       },
       "SelectedTextCopyMenu": {
         "9b40d7b018": "Copy"
@@ -4581,7 +4594,14 @@
           "worktree": {
             "flow": {
               "c460fecc4a": "Failed to sleep some workspaces",
-              "8bc3fc0671": "Failed to sleep workspace"
+              "8bc3fc0671": "Failed to sleep workspace",
+              "legacy": {
+                "unverified": "The older host runtime could not confirm terminal shutdown. The workspace was kept open; update the host and try again."
+              },
+              "host": {
+                "unverified": "The host could not confirm terminal shutdown. The workspace was kept open; check the connection and try again."
+              },
+              "retry": "The workspace was kept open. Try again; if the problem continues, check the host connection."
             }
           }
         },
@@ -4848,7 +4868,8 @@
           "sshImportSynced": "Synced {{value0}} host{{value1}}.",
           "sshImportFailed": "Failed to import SSH config.",
           "importing": "Importing...",
-          "importSshConfig": "Import ~/.ssh/config"
+          "importSshConfig": "Import ~/.ssh/config",
+          "advanced": "Advanced"
         },
         "ForgetSshWorkspaceDialog": {
           "reconnectFailed": "Reconnection failed",
@@ -5090,6 +5111,10 @@
           "024bd95089": "agents",
           "e8da2af684": "Available to install",
           "ed3e110e61": "detected",
+          "03e1a5081a": "on {{value0}}",
+          "25a41a9aad": "Re-detect agents installed on the active server",
+          "remoteDetectionFailed": "Couldn’t detect installed agents. Check the host connection and try again.",
+          "retryDetection": "Retry",
           "02e0143be5": "Installed",
           "110b74b022": "No agent (blank terminal)",
           "92033495ff": "Auto",
@@ -6468,7 +6493,6 @@
           "b5b5114cb0": "Removed {{value0}}.",
           "6cb6eae14f": "Failed to save runtime environment.",
           "7b5986c8df": "Saved {{value0}}. Use Active Server to switch when ready.",
-          "a5b58465b6": "Connected to {{value0}}.",
           "5ef712f407": "A server named \"{{value0}}\" already exists.",
           "0c55a47480": "Name and pairing code are required.",
           "e6410d72c3": "Failed to load runtime environments.",
@@ -6510,7 +6534,9 @@
           "updateServer": "Update",
           "reviewServerUpdates": "Check for Server Updates",
           "updatingServers": "Updating servers…",
-          "orcaVersion": "Orca v{{value0}}"
+          "orcaVersion": "Orca v{{value0}}",
+          "removeActiveServerBlocked": "Choose another Active Server in Advanced before removing this server.",
+          "removeActiveServerDescription": "Choose another Active Server in Advanced before removing this server. Existing host sessions are left alone."
         },
         "RuntimePairingGeneratedUrlRows": {
           "0495f68959": "Copy {{value0}}"
@@ -11920,7 +11946,10 @@
         "CsvViewer": {
           "eedd0d37a7": "columns",
           "ac31d2cd60": "rows",
-          "a233d55b77": "Empty file"
+          "a233d55b77": "Empty file",
+          "2b65aa2913": "This CSV is too large to display safely.",
+          "59cfb175a2": "Switch to source mode to inspect the raw text.",
+          "d5e8a2b453": "Table view is limited to {{rows}} rows, {{columns}} columns, and {{cells}} cells."
         },
         "DiffNotesSendMenu": {
           "f1aa04b5cf": "This file",
