@@ -21,6 +21,11 @@ import {
   FEATURE_INTERACTION_USAGE_BUCKETS,
   getFeatureInteractionCategory
 } from './feature-interactions'
+import {
+  DAEMON_LIFECYCLE_REASONS,
+  DAEMON_LIFECYCLE_SESSION_BUCKETS,
+  DAEMON_LIFECYCLE_TRANSITIONS
+} from './daemon-lifecycle-telemetry'
 import { SETUP_SCRIPT_IMPORT_PROVIDERS } from './setup-script-import-providers'
 import { WORKSPACE_SOURCE_VALUES, type WorkspaceSource } from './workspace-source'
 import { appStarSourceSchema } from './gh-star-source'
@@ -363,6 +368,18 @@ const agentErrorSchema = z
 
 // Why: daemon start-failure signal (fleet-wide outage like v1.4.129-rc.1); enum-only so raw stderr never reaches the wire.
 const daemonStartFailedSchema = z.object({ error_class: errorClassSchema }).strict()
+
+// Why: daemon replace/retire lifecycle signal — issue #7936 was undiagnosable without asking a user for daemon.log.
+// Enum-only + bucketed session count so no paths, raw versions, or exact counts reach the wire. `version_skew`
+// is optional (only replace-at-startup knows the pid-file appVersion vs current; a death→respawn does not).
+const daemonLifecycleSchema = z
+  .object({
+    transition: z.enum(DAEMON_LIFECYCLE_TRANSITIONS),
+    reason: z.enum(DAEMON_LIFECYCLE_REASONS),
+    live_session_count_bucket: z.enum(DAEMON_LIFECYCLE_SESSION_BUCKETS),
+    version_skew: z.boolean().optional()
+  })
+  .strict()
 
 // Rollout signal for granting Codex hook trust via codex app-server RPCs
 // instead of Orca's self-computed trusted_hash. `fallback`/`verify_failed`
@@ -1283,6 +1300,7 @@ export const eventSchemas = {
   agent_hook_unattributed: agentHookUnattributedSchema,
 
   daemon_start_failed: daemonStartFailedSchema,
+  daemon_lifecycle: daemonLifecycleSchema,
 
   codex_trust_grant: codexTrustGrantSchema,
 

@@ -44,7 +44,9 @@ const {
   localFallbackProvider,
   setLocalPtyProviderMock,
   unbindLocalProviderListenersMock,
-  rebindLocalProviderListenersMock
+  rebindLocalProviderListenersMock,
+  trackDaemonReplacedMock,
+  trackDaemonRetiredMock
 } = vi.hoisted(() => {
   const getPathMock = vi.fn(() => '/fake/userData')
   const getAppPathMock = vi.fn(() => '/fake/app')
@@ -147,6 +149,8 @@ const {
   const setLocalPtyProviderMock = vi.fn()
   const unbindLocalProviderListenersMock = vi.fn()
   const rebindLocalProviderListenersMock = vi.fn()
+  const trackDaemonReplacedMock = vi.fn()
+  const trackDaemonRetiredMock = vi.fn()
 
   return {
     getPathMock,
@@ -181,7 +185,9 @@ const {
     localFallbackProvider,
     setLocalPtyProviderMock,
     unbindLocalProviderListenersMock,
-    rebindLocalProviderListenersMock
+    rebindLocalProviderListenersMock,
+    trackDaemonReplacedMock,
+    trackDaemonRetiredMock
   }
 })
 
@@ -251,6 +257,11 @@ vi.mock('./daemon-health', () => ({
 }))
 
 vi.mock('./client', () => ({ DaemonClient: daemonClientMock }))
+
+vi.mock('./daemon-lifecycle-event', () => ({
+  trackDaemonReplaced: trackDaemonReplacedMock,
+  trackDaemonRetired: trackDaemonRetiredMock
+}))
 
 vi.mock('./daemon-spawner', () => ({
   DaemonSpawner: class MockDaemonSpawner {
@@ -391,6 +402,8 @@ async function importFresh() {
   setLocalPtyProviderMock.mockClear()
   unbindLocalProviderListenersMock.mockClear()
   rebindLocalProviderListenersMock.mockClear()
+  trackDaemonReplacedMock.mockClear()
+  trackDaemonRetiredMock.mockClear()
   checkDaemonHealthMock.mockClear()
   checkDaemonHealthMock.mockResolvedValue('healthy')
   healthCheckDaemonMock.mockClear()
@@ -794,6 +807,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     await replacementAdapter.options.respawn?.()
     expect(originalSpawner.resetHandle).toHaveBeenCalledTimes(1)
     expect(originalSpawner.ensureRunning).toHaveBeenCalledTimes(1)
+    // STA-2376: an observed daemon death → respawn emits the retirement lifecycle event.
+    expect(trackDaemonRetiredMock).toHaveBeenCalledWith('died_respawn')
     // Still only one spawner in the whole test — nobody new was constructed.
     expect(spawnerInstances).toHaveLength(1)
   })
@@ -1143,6 +1158,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       ]),
       expect.objectContaining({ cwd: '/fake/userData', detached: true })
     )
+    // STA-2376: different-app-path replacement, no version_skew (path differs, not version).
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('different_app_path', 0, undefined)
   })
 
   it('holds a full adoption pair before a healthy launcher resolves', async () => {
@@ -1351,6 +1368,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       ]),
       expect.objectContaining({ cwd: '/fake/userData', detached: true })
     )
+    // STA-2376: replacing the resolver-unhealthy daemon fires the lifecycle event.
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('unhealthy_resolver', 0)
   })
 
   it('preserves a resolver-unhealthy daemon when it owns live sessions', async () => {
@@ -1392,6 +1411,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(getDaemonLaunchIdentityMock).not.toHaveBeenCalled()
     expect(killStaleDaemonMock).not.toHaveBeenCalled()
     expect(forkMock).not.toHaveBeenCalled()
+    // STA-2376: preserving a daemon is not a lifecycle transition — no event.
+    expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
   })
 
   it('preserves a resolver-unhealthy daemon when live session state cannot be verified', async () => {
@@ -1477,6 +1498,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       ]),
       expect.objectContaining({ detached: true })
     )
+    // STA-2376: an unreachable daemon with no live sessions is replaced via the failed-health path.
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('failed_health_check', 0)
   })
 
   it('removes detached daemon startup listeners after readiness', async () => {
@@ -2625,6 +2648,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       ]),
       expect.objectContaining({ detached: true })
     )
+    // STA-2376: stale-bundle replacement carries version_skew=true.
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('stale_bundle', 0, true)
   })
 
   it('preserves a packaged daemon that predates the current app bundle when it owns live sessions', async () => {

@@ -39,6 +39,7 @@ import {
   pruneOldDaemonHosts
 } from './daemon-host-relocation'
 import { DegradedDaemonPtyProvider } from './degraded-daemon-pty-provider'
+import { trackDaemonReplaced, trackDaemonRetired } from './daemon-lifecycle-event'
 import {
   getLocalPtyProvider,
   setLocalPtyProvider,
@@ -364,6 +365,7 @@ function createOutOfProcessLauncher(
             return preserveDaemon()
           }
           console.warn('[daemon] Replacing daemon with unavailable macOS system resolver')
+          trackDaemonReplaced('unhealthy_resolver', liveSessionCount)
           await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION)
         } else {
           // Why: a protocol-healthy daemon can outlive its launching app bundle (dev worktree rebuild, or packaged update replacing the app path).
@@ -395,6 +397,12 @@ function createOutOfProcessLauncher(
               stalePackagedBundle
                 ? '[daemon] Replacing daemon launched before the current app bundle was installed'
                 : '[daemon] Replacing daemon launched from a different app path'
+            )
+            // Live sessions were 0 here (preserve short-circuits otherwise); version_skew only when the bundle is stale.
+            trackDaemonReplaced(
+              stalePackagedBundle ? 'stale_bundle' : 'different_app_path',
+              0,
+              stalePackagedBundle || undefined
             )
             await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION)
           } else {
@@ -428,6 +436,8 @@ function createOutOfProcessLauncher(
           )
           return preserveDaemon()
         }
+        // Fell through: no live sessions to preserve, so the unhealthy daemon is about to be replaced.
+        trackDaemonReplaced('failed_health_check', liveSessionCount)
       }
 
       // Why: a raw socket can outlive a broken daemon; kill by PID before respawn so the new daemon doesn't race the stale one.
@@ -670,6 +680,7 @@ export async function initDaemonPtyProvider(
     // Why: on daemon death, ensureConnected() detects the dead socket and calls this to fork a replacement before retrying.
     respawn: async () => {
       console.warn('[daemon] Daemon process died — respawning')
+      trackDaemonRetired('died_respawn')
       newSpawner.resetHandle()
       await newSpawner.ensureRunning()
       return takeDaemonAdoptionLeaseRelease(newSpawner.getHandle())
@@ -852,6 +863,7 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
     historyPath: getHistoryDir(),
     respawn: async () => {
       console.warn('[daemon] Daemon process died — respawning')
+      trackDaemonRetired('died_respawn')
       currentSpawner.resetHandle()
       await currentSpawner.ensureRunning()
       return takeDaemonAdoptionLeaseRelease(currentSpawner.getHandle())

@@ -338,6 +338,62 @@ describe('agent_error schema', () => {
   })
 })
 
+describe('daemon_lifecycle schema', () => {
+  it('round-trips a startup replace payload with version skew', () => {
+    const parsed = eventSchemas.daemon_lifecycle.safeParse({
+      transition: 'replaced',
+      reason: 'stale_bundle',
+      live_session_count_bucket: '0',
+      version_skew: true
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('round-trips a retirement payload without version skew', () => {
+    const parsed = eventSchemas.daemon_lifecycle.safeParse({
+      transition: 'retired',
+      reason: 'died_respawn',
+      live_session_count_bucket: 'unknown'
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  // Core privacy invariant: enum-only + bucketed counts. If this flips, the lane is leaking
+  // paths/versions/exact counts — revert the offending schema change (STA-2376).
+  it('rejects raw paths, versions, and unbucketed counts via .strict()', () => {
+    for (const leak of [
+      { daemon_path: '/Users/alice/Orca.app' },
+      { daemon_app_version: '1.4.129' },
+      { live_session_count: 3 }
+    ]) {
+      const parsed = eventSchemas.daemon_lifecycle.safeParse({
+        transition: 'replaced',
+        reason: 'failed_health_check',
+        live_session_count_bucket: '2-5',
+        ...leak
+      })
+      expect(parsed.success).toBe(false)
+    }
+  })
+
+  it('rejects unknown reason and bucket enum values', () => {
+    expect(
+      eventSchemas.daemon_lifecycle.safeParse({
+        transition: 'replaced',
+        reason: 'made_up_reason',
+        live_session_count_bucket: '0'
+      }).success
+    ).toBe(false)
+    expect(
+      eventSchemas.daemon_lifecycle.safeParse({
+        transition: 'replaced',
+        reason: 'stale_bundle',
+        live_session_count_bucket: '99'
+      }).success
+    ).toBe(false)
+  })
+})
+
 describe('workspace_created schema', () => {
   it('rejects unknown source', () => {
     const parsed = eventSchemas.workspace_created.safeParse({
