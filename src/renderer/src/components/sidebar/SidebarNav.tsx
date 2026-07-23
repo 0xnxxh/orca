@@ -40,6 +40,14 @@ export function shouldShowAgentDashboardButton(
   return settings?.experimentalAgentDashboardPopout === true
 }
 
+// Why: in-window is the default surface; only an explicit 'popout' choice opens
+// the separate OS window.
+function isAgentDashboardPopoutMode(
+  settings: Pick<GlobalSettings, 'experimentalAgentDashboardMode'> | null | undefined
+): boolean {
+  return settings?.experimentalAgentDashboardMode === 'popout'
+}
+
 export function shouldShowMobileButton(
   settings: Pick<GlobalSettings, 'showMobileButton'> | null | undefined
 ): boolean {
@@ -101,12 +109,18 @@ function DashboardBucketCounts({
 // agent-status churn only updates this opt-in row, not the full navigation.
 function AgentDashboardSidebarEntry(): React.JSX.Element {
   const dashboardBucketCounts = useAgentBucketCounts()
+  const openAsPopout = useAppStore((s) => isAgentDashboardPopoutMode(s.settings))
+  const setAgentDashboardOverlayOpen = useAppStore((s) => s.setAgentDashboardOverlayOpen)
 
   return (
     <button
       type="button"
       onClick={() => {
-        void window.api.dashboard.openPopout()
+        if (openAsPopout) {
+          void window.api.dashboard.openPopout()
+        } else {
+          setAgentDashboardOverlayOpen(true)
+        }
       }}
       className={cn(
         'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] font-medium tracking-tight transition-colors',

@@ -887,6 +887,9 @@ export type UISlice = {
   setWorkspaceBoardColumnWidth: (width: number) => void
   syncTaskStatusFromWorkspaceBoard: boolean
   setSyncTaskStatusFromWorkspaceBoard: (enabled: boolean) => void
+  /** Transient: the in-window Agent Dashboard screen popover is open. Not persisted. */
+  agentDashboardOverlayOpen: boolean
+  setAgentDashboardOverlayOpen: (open: boolean) => void
   statusBarItems: StatusBarItem[]
   toggleStatusBarItem: (item: StatusBarItem) => void
   statusBarVisible: boolean
@@ -2144,6 +2147,8 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       return { statusBarItems: updated }
     }),
 
+  agentDashboardOverlayOpen: false,
+  setAgentDashboardOverlayOpen: (open) => set({ agentDashboardOverlayOpen: open }),
   statusBarVisible: true,
   setStatusBarVisible: (v) => {
     window.api.ui.set({ statusBarVisible: v }).catch(console.error)
