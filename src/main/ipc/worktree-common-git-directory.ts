@@ -1,5 +1,5 @@
-import { readFile, stat } from 'node:fs/promises'
 import type { Stats } from 'node:fs'
+import { readFile, stat } from 'node:fs/promises'
 import type { Repo } from '../../shared/types'
 import {
   getRuntimePathBasename,
