@@ -3230,13 +3230,17 @@ function normalizeCodexEvent(
     return normalizeCodexSubagentLifecycleEvent(state, eventName, paneKey, hookPayload)
   }
 
+  // Why: Codex's request_user_input (0.145+) is auto-allowed, so it fires PreToolUse while blocked on a human answer; map to waiting like grok's ask_user_question.
+  const isUserInputPreTool =
+    eventName === 'PreToolUse' &&
+    isAskUserQuestionTool(readString(hookPayload, 'tool_name') ?? readString(hookPayload, 'name'))
   const stateName =
     eventName === 'SessionStart' ||
     eventName === 'UserPromptSubmit' ||
-    eventName === 'PreToolUse' ||
+    (eventName === 'PreToolUse' && !isUserInputPreTool) ||
     eventName === 'PostToolUse'
       ? 'working'
-      : eventName === 'PermissionRequest'
+      : eventName === 'PermissionRequest' || isUserInputPreTool
         ? 'waiting'
         : eventName === 'Stop'
           ? 'done'
