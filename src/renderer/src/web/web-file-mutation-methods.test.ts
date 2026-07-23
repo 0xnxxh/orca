@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE,
+  FILE_MUTATION_SSH_UNVERIFIED_MESSAGE
+} from '../../../shared/file-mutation-ownership'
 import type { SshConnectionState } from '../../../shared/ssh-types'
 import type { Worktree } from '../../../shared/types'
 import { createWebFileMutationMethods } from './web-file-mutation-methods'
@@ -222,19 +226,21 @@ describe('paired web file mutation methods', () => {
 
     await expect(
       methods.writeFile({ filePath: '/ssh/repo/source.md', content: 'unsafe' })
-    ).rejects.toThrow("Couldn't verify the SSH connection")
+    ).rejects.toThrow(FILE_MUTATION_SSH_UNVERIFIED_MESSAGE)
     expect(callRuntimeResult).not.toHaveBeenCalled()
   })
 
-  it('fails closed when the worktree publishes an invalid execution host', async () => {
-    resolveFilePath.mockResolvedValueOnce(
-      resolvedFile('wt-invalid', 'runtime:' as Worktree['hostId'], 'source.md')
-    )
+  it.each([
+    ['missing', undefined],
+    ['invalid', 'runtime:' as Worktree['hostId']]
+  ])('fails closed when the worktree publishes a %s execution host', async (_name, hostId) => {
+    resolveFilePath.mockResolvedValueOnce(resolvedFile('wt-invalid', hostId, 'source.md'))
     const methods = createWebFileMutationMethods({ captureSession })
 
     await expect(
       methods.writeFile({ filePath: '/invalid/source.md', content: 'unsafe' })
-    ).rejects.toThrow("Couldn't verify the SSH connection")
+    ).rejects.toThrow(FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE)
+    expect(getSshState).not.toHaveBeenCalled()
     expect(callRuntimeResult).not.toHaveBeenCalled()
   })
 

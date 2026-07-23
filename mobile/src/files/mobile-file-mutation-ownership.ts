@@ -1,38 +1,32 @@
 import { parseExecutionHostId } from '../../../src/shared/execution-host'
-import { assertFileMutationOwnershipCapability } from '../../../src/shared/file-mutation-ownership'
+import {
+  assertFileMutationOwnershipCapability,
+  buildFileMutationOwnership,
+  FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE,
+  type FileMutationOwnership
+} from '../../../src/shared/file-mutation-ownership'
 import type { RuntimeStatus } from '../../../src/shared/runtime-types'
-import type { SshConnectionState, SshMutationExpectation } from '../../../src/shared/ssh-types'
+import type { SshConnectionState } from '../../../src/shared/ssh-types'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcFailure, RpcSuccess } from '../transport/types'
 
 const FILE_MUTATION_TIMEOUT_MS = 15_000
-const SSH_OWNER_CHANGED_MESSAGE =
-  "Couldn't verify the SSH connection. Reconnect the host and try again."
+export const MOBILE_WORKTREE_NOT_FOUND_MESSAGE =
+  'This workspace is no longer available. Return to the workspace list and try again.'
 
-export type MobileFileMutationOwnership = SshMutationExpectation & {
-  expectedExecutionHostId: 'local' | `ssh:${string}`
+export type MobileFileMutationOwnership = FileMutationOwnership
+
+export function getMobileFileMutationFailureMessage(failure: RpcFailure): string {
+  if (
+    failure.error.code === 'selector_not_found' ||
+    failure.error.message === 'selector_not_found'
+  ) {
+    return MOBILE_WORKTREE_NOT_FOUND_MESSAGE
+  }
+  return failure.error.message || 'Failed to update workspace files'
 }
 
-export function buildMobileFileMutationOwnership(
-  worktreeHostId: string | null | undefined,
-  sshState: SshConnectionState | null = null
-): MobileFileMutationOwnership {
-  const host = parseExecutionHostId(worktreeHostId)
-  if (worktreeHostId !== undefined && !host) {
-    throw new Error(SSH_OWNER_CHANGED_MESSAGE)
-  }
-  if (!host || host.kind === 'local' || host.kind === 'runtime') {
-    return { expectedExecutionHostId: 'local' }
-  }
-  if (sshState?.targetId !== host.targetId || sshState.connectionGeneration === undefined) {
-    throw new Error(SSH_OWNER_CHANGED_MESSAGE)
-  }
-  return {
-    expectedExecutionHostId: host.id,
-    expectedSshTargetId: host.targetId,
-    expectedSshConnectionGeneration: sshState.connectionGeneration
-  }
-}
+export const buildMobileFileMutationOwnership = buildFileMutationOwnership
 
 export async function captureMobileFileMutationOwnership(
   client: Pick<RpcClient, 'sendRequest'>,
@@ -51,7 +45,7 @@ export async function captureMobileFileMutationOwnership(
     { worktree }
   )
   if (!result.worktree) {
-    throw new Error(SSH_OWNER_CHANGED_MESSAGE)
+    throw new Error(FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE)
   }
 
   const host = parseExecutionHostId(result.worktree.hostId)
@@ -75,7 +69,7 @@ async function requestResult<TResult>(
     timeoutMs: FILE_MUTATION_TIMEOUT_MS
   })
   if (!response.ok) {
-    throw new Error((response as RpcFailure).error.message)
+    throw new Error(getMobileFileMutationFailureMessage(response as RpcFailure))
   }
   return (response as RpcSuccess).result as TResult
 }

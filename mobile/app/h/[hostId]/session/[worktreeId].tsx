@@ -182,7 +182,10 @@ import { useTerminalLiveInputModePreference } from '../../../../src/session/use-
 import { MobileTerminalLiveInputStatus } from '../../../../src/session/MobileTerminalLiveInputStatus'
 import { MobileTerminalInputActions } from '../../../../src/session/MobileTerminalInputActions'
 import { resolveMobileFileTabDoc } from '../../../../src/files/mobile-file-tab-doc'
-import { captureMobileFileMutationOwnership } from '../../../../src/files/mobile-file-mutation-ownership'
+import {
+  captureMobileFileMutationOwnership,
+  getMobileFileMutationFailureMessage
+} from '../../../../src/files/mobile-file-mutation-ownership'
 import { openMobileTerminalFileTap } from '../../../../src/session/mobile-terminal-file-tap-open'
 import { useLiveWorktreeName } from '../../../../src/session/use-live-worktree-name'
 import {
@@ -3911,7 +3914,7 @@ export default function SessionScreen() {
           { timeoutMs: 15_000 }
         )
         if (!createResponse.ok) {
-          const message = (createResponse as RpcFailure).error.message
+          const message = getMobileFileMutationFailureMessage(createResponse as RpcFailure)
           if (isFileExistsErrorMessage(message) && attempt < 100) {
             continue
           }
@@ -3924,7 +3927,7 @@ export default function SessionScreen() {
           { timeoutMs: 15_000 }
         )
         if (!openResponse.ok) {
-          throw new Error((openResponse as RpcFailure).error.message)
+          throw new Error(getMobileFileMutationFailureMessage(openResponse as RpcFailure))
         }
         scheduleDelayedAction(() => void fetchSessionTabs(), 300)
         return
