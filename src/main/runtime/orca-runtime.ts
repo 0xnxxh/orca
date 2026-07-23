@@ -8632,7 +8632,19 @@ export class OrcaRuntimeService {
     if ((this.remoteTerminalViewSubscriberCounts.get(ptyId) ?? 0) > 0) {
       return true
     }
-    return (this.mobileSubscribers.get(ptyId)?.size ?? 0) > 0
+    const subscribers = this.mobileSubscribers.get(ptyId)
+    if (!subscribers || subscribers.size === 0) {
+      return false
+    }
+    // Why: lease-only chat owns send authority without an xterm; counting it as
+    // a view subscriber would silence main-side query replies while nobody can
+    // answer them (lease-only is also excluded from mobile query authority).
+    for (const subscriber of subscribers.values()) {
+      if (!subscriber.leaseOnly) {
+        return true
+      }
+    }
+    return false
   }
 
   isMobileTerminalQueryReplyAuthority(ptyId: string, clientId: string): boolean {
@@ -12163,6 +12175,11 @@ export class OrcaRuntimeService {
           if (heir) {
             heir.previousCols = subscriber.previousCols
             heir.previousRows = subscriber.previousRows
+            // Why: restore on last-leave is gated by wasResizedToPhone; donating
+            // dims alone leaves a lease-only heir unable to schedule restore.
+            if (wasResizedToPhone) {
+              heir.wasResizedToPhone = true
+            }
           }
         }
       }
