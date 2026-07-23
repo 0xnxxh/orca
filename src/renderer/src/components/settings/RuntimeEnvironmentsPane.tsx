@@ -472,15 +472,6 @@ export function RuntimeEnvironmentsPane({
           await loadEnvironments()
           return
         }
-        if (mountedRef.current) {
-          toast.success(
-            translate(
-              'auto.components.settings.RuntimeEnvironmentsPane.a5b58465b6',
-              'Connected to {{value0}}.',
-              { value0: result.environment.name }
-            )
-          )
-        }
       } else {
         if (mountedRef.current) {
           toast.success(

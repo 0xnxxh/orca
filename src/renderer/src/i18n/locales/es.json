@@ -6425,7 +6425,6 @@
           "b5b5114cb0": "Se eliminó {{value0}}.",
           "6cb6eae14f": "No se pudo guardar el runtime.",
           "7b5986c8df": "Se guardó {{value0}}. Usa Servidor activo para cambiar cuando esté listo.",
-          "a5b58465b6": "Conectado a {{value0}}.",
           "5ef712f407": "Ya existe un servidor llamado \"{{value0}}\".",
           "0c55a47480": "Se requieren nombre y código de emparejamiento.",
           "e6410d72c3": "No se pudieron cargar los runtimes.",
