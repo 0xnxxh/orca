@@ -9,8 +9,8 @@ export function compareDisplayName(
   return (a ?? '').localeCompare(b ?? '')
 }
 
-// Row models (WorkspaceSpaceWorktree, WorkspaceCleanupCandidate) copy this same
-// runtime-undefined displayName into string-typed fields, so they share the guard.
+// Row models copy this same runtime-undefined displayName into string-typed
+// fields, so they share the guard.
 export function compareWorktreeDisplayName(a: Worktree, b: Worktree): number {
   return compareDisplayName(a.displayName, b.displayName)
 }
