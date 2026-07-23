@@ -4,8 +4,14 @@ import type { PublicKnownRuntimeEnvironment } from '../../../../shared/runtime-e
 import type { RuntimeStatus } from '../../../../shared/runtime-types'
 import {
   clearRecentRuntimeCompatibilityFailure,
+  clearRuntimeCompatibilityCache,
   unwrapRuntimeRpcResult
 } from '@/runtime/runtime-rpc-client'
+import { replaceRuntimeEnvironmentRevisions } from '@/runtime/runtime-environment-revision'
+import { mapSettledWithConcurrency } from '../../../../shared/map-with-concurrency'
+import { OperationGenerationRegistry } from '@/lib/operation-generation-registry'
+
+const RUNTIME_STATUS_PROBE_CONCURRENCY = 4
 
 /** Live status for one saved runtime environment, as last observed by the
  * renderer. `status === null` records a probe that failed or timed out so the
@@ -14,12 +20,15 @@ export type RuntimeEnvironmentStatus = {
   status: RuntimeStatus | null
   appVersion?: string | null
   checkedAt: number
+  connectionGeneration?: number
 }
 
 export type RuntimeStatusSlice = {
   /** Saved remote Orca servers. Host pickers use this to show user-chosen names
    * instead of opaque runtime ids. */
   runtimeEnvironments: PublicKnownRuntimeEnvironment[]
+  /** True only after the saved-runtime catalog has loaded successfully. */
+  runtimeEnvironmentCatalogHydrated: boolean
   /** Keyed by runtime environment id. Fed into buildExecutionHostRegistry so
    * compat verdicts/blocked health show live in the sidebar host pickers. */
   runtimeStatusByEnvironmentId: Map<string, RuntimeEnvironmentStatus>
@@ -45,15 +54,42 @@ export type RuntimeStatusSlice = {
   hydrateRuntimeEnvironmentStatuses: () => Promise<void>
 }
 
+const connectionGenerations = new OperationGenerationRegistry()
+
+export function getRuntimeEnvironmentConnectionGeneration(environmentId: string): number {
+  return connectionGenerations.get(environmentId)
+}
+
+function advanceRuntimeEnvironmentConnectionGeneration(environmentId: string): number {
+  return connectionGenerations.advance(environmentId)
+}
+
 export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeStatusSlice> = (
   set,
   get
 ) => ({
   runtimeEnvironments: [],
+  runtimeEnvironmentCatalogHydrated: false,
   runtimeStatusByEnvironmentId: new Map(),
   removedRuntimeEnvironmentIds: new Set(),
 
   setRuntimeEnvironments: (environments) => {
+    const previousRevisionById = new Map(
+      get().runtimeEnvironments.map((environment) => [
+        environment.id,
+        environment.pairingRevision ?? environment.createdAt
+      ])
+    )
+    const replacedEnvironmentIds = environments
+      .filter((environment) => {
+        const previousRevision = previousRevisionById.get(environment.id)
+        return (
+          previousRevision !== undefined &&
+          previousRevision !== (environment.pairingRevision ?? environment.createdAt)
+        )
+      })
+      .map((environment) => environment.id)
+    replaceRuntimeEnvironmentRevisions(environments)
     // Why: diff against the accumulated in-memory saved list (not a second disk
     // read) so a main-initiated removal that never calls setRuntimeEnvironments
     // still enters the diff on the next list read. #8881.
@@ -68,8 +104,15 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
       for (const id of nextStatuses.keys()) {
         if (!keep.has(id)) {
           nextStatuses.delete(id)
+          advanceRuntimeEnvironmentConnectionGeneration(id)
           statusesChanged = true
         }
+      }
+      for (const id of replacedEnvironmentIds) {
+        if (nextStatuses.delete(id)) {
+          statusesChanged = true
+        }
+        advanceRuntimeEnvironmentConnectionGeneration(id)
       }
       // Add just-removed ids as tombstones and clear any that were re-added, so an
       // in-flight catalog merge for a removed env can be dropped without mistaking a
@@ -89,6 +132,7 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
       }
       return {
         runtimeEnvironments: environments,
+        runtimeEnvironmentCatalogHydrated: true,
         ...(statusesChanged ? { runtimeStatusByEnvironmentId: nextStatuses } : {}),
         ...(removedChanged ? { removedRuntimeEnvironmentIds: nextRemoved } : {})
       }
@@ -100,12 +144,14 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
     get().retainRuntimeDetectedAgents?.(environments.map((environment) => environment.id))
     // A detached environment's mirrored SSH state must not outlive it.
     get().retainEnvironmentSshState?.(environments.map((environment) => environment.id))
-    // Retire repos/setups/worktree rows owned by a just-removed runtime identity so
-    // the same checkout stops duplicating in the sidebar. Scoped to the removal diff
-    // (not an absolute keep-set) to spare a serving instance's local runtime-stamped
-    // repos, whose env id was never in this instance's saved list.
-    if (removedIds.length > 0) {
-      get().purgeStaleRuntimeHostState?.(removedIds)
+    for (const id of replacedEnvironmentIds) {
+      clearRuntimeCompatibilityCache(id)
+      get().markEnvironmentSshStateStale?.(id)
+    }
+    // Why: same-id re-pair publications belong to the retired peer just as surely as removed ids.
+    const retiredEnvironmentIds = [...new Set([...removedIds, ...replacedEnvironmentIds])]
+    if (retiredEnvironmentIds.length > 0) {
+      get().purgeStaleRuntimeHostState?.(retiredEnvironmentIds)
     }
   },
 
@@ -118,13 +164,26 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
     }
     set((s) => {
       const next = new Map(s.runtimeStatusByEnvironmentId)
-      next.set(environmentId, status)
+      const previous = next.get(environmentId)
+      const connectionChanged =
+        status.status !== null &&
+        (previous?.status == null || previous.status.runtimeId !== status.status.runtimeId)
+      if (connectionChanged) {
+        advanceRuntimeEnvironmentConnectionGeneration(environmentId)
+      }
+      next.set(environmentId, {
+        ...status,
+        connectionGeneration: connectionChanged
+          ? (previous?.connectionGeneration ?? 0) + 1
+          : (previous?.connectionGeneration ?? status.connectionGeneration ?? 0)
+      })
       return { runtimeStatusByEnvironmentId: next }
     })
   },
 
   clearRuntimeEnvironmentStatus: (environmentId) =>
     set((s) => {
+      advanceRuntimeEnvironmentConnectionGeneration(environmentId)
       if (!s.runtimeStatusByEnvironmentId.has(environmentId)) {
         return s
       }
@@ -176,10 +235,9 @@ export const createRuntimeStatusSlice: StateCreator<AppState, [], [], RuntimeSta
       return
     }
     get().setRuntimeEnvironments(environments)
-    // Why: fire-and-forget per env; one unreachable server must not block the
-    // others, and a failure records a null status rather than nothing.
-    await Promise.allSettled(
-      environments.map((environment) => get().refreshRuntimeEnvironmentStatus(environment.id))
+    // Why: bound slow remote probes; each failure still records null independently.
+    await mapSettledWithConcurrency(environments, RUNTIME_STATUS_PROBE_CONCURRENCY, (environment) =>
+      get().refreshRuntimeEnvironmentStatus(environment.id)
     )
   }
 })
