@@ -1652,13 +1652,14 @@
       "invariant": "Only an explicit user change in Settings > Remote Orca Servers > Advanced > Active Server may mutate activeRuntimeEnvironmentId. Connecting, pairing, disconnecting, selecting or revealing a workspace or terminal, browser/mobile handoff, remote navigation, and reconnect must use transient or target-owner routing and must never rewrite the durable preference. Generic settings mutation cannot bypass the dedicated preference IPC.",
       "oracle": "Start with Active Server=Local desktop, connect and navigate Windows 2, then reveal a local terminal and assert it succeeds while the persisted preference remains local before and after restart. Repeat with multiple clients and servers, browser host switches, remote-owned and local-owned workspaces, pairing/connect/disconnect, and generic settings writes. Assert only the dedicated validated preference method changes activeRuntimeEnvironmentId and stale host-operation completions cannot overwrite the newly selected transient host.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/settings.test.ts src/main/ipc/runtime-environments.test.ts src/renderer/src/store/slices/settings.test.ts src/renderer/src/store/slices/browser.test.ts src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts src/renderer/src/components/status-bar/SshStatusSegment.test.ts src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts src/renderer/src/hooks/useIpcEvents.test.ts src/renderer/src/web/web-preload-api.test.ts --maxWorkers=1"
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/settings.test.ts src/main/ipc/runtime-environments.test.ts src/renderer/src/store/slices/settings.test.ts src/renderer/src/store/slices/browser.test.ts src/renderer/src/components/settings/browser-session-host-selection.test.ts src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts src/renderer/src/components/status-bar/SshStatusSegment.test.ts src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts src/renderer/src/hooks/useIpcEvents.test.ts src/renderer/src/web/web-preload-api.test.ts --maxWorkers=1"
       ],
       "testFiles": [
         "src/main/ipc/settings.test.ts",
         "src/main/ipc/runtime-environments.test.ts",
         "src/renderer/src/store/slices/settings.test.ts",
         "src/renderer/src/store/slices/browser.test.ts",
+        "src/renderer/src/components/settings/browser-session-host-selection.test.ts",
         "src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts",
         "src/renderer/src/components/status-bar/SshStatusSegment.test.ts",
         "src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts",
@@ -1689,6 +1690,12 @@
           ]
         },
         {
+          "file": "src/renderer/src/components/settings/browser-session-host-selection.test.ts",
+          "assertions": [
+            "a removed transient server override falls back to an available host instead of leaving browser settings on an invalid option"
+          ]
+        },
+        {
           "file": "src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts",
           "assertions": [
             "connection status and the Advanced default-host selection are distinct concepts"
@@ -1707,10 +1714,10 @@
           "date": "2026-07-22",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/settings.test.ts src/main/ipc/runtime-environments.test.ts src/renderer/src/store/slices/settings.test.ts src/renderer/src/store/slices/browser.test.ts src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts src/renderer/src/components/status-bar/SshStatusSegment.test.ts src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts src/renderer/src/hooks/useIpcEvents.test.ts src/renderer/src/web/web-preload-api.test.ts --maxWorkers=1",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/settings.test.ts src/main/ipc/runtime-environments.test.ts src/renderer/src/store/slices/settings.test.ts src/renderer/src/store/slices/browser.test.ts src/renderer/src/components/settings/browser-session-host-selection.test.ts src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts src/renderer/src/components/status-bar/SshStatusSegment.test.ts src/renderer/src/components/sidebar/use-add-repo-host-selection.test.ts src/renderer/src/hooks/useIpcEvents.test.ts src/renderer/src/web/web-preload-api.test.ts --maxWorkers=1",
           "result": "passed",
           "durationSeconds": 6.55,
-          "summary": "Nine files and 271 tests passed, including the composed Local -> Windows 2 navigation -> local reveal -> restart regression, dedicated-only preference persistence, multi-client browser routing, late host-operation suppression, and web pairing/preference separation."
+          "summary": "Ten files and 282 tests passed, including the composed Local -> Windows 2 navigation -> local reveal -> restart regression, dedicated-only preference persistence, removed transient-host fallback, multi-client browser routing, late host-operation suppression, and web pairing/preference separation."
         }
       ],
       "runtimeBudget": {

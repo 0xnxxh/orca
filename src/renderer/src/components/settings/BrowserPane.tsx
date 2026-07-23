@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import type { GlobalSettings } from '../../../../shared/types'
 import { useAppStore } from '../../store'
 import { matchesSettingsSearch } from './settings-search'
@@ -25,6 +25,7 @@ import {
 } from '../../../../shared/execution-host'
 import { isMacUserAgent } from '@/components/terminal-pane/pane-helpers'
 import { translate } from '@/i18n/i18n'
+import { resolveAvailableBrowserSessionHostId } from './browser-session-host-selection'
 export { getBrowserPaneCombinedSearchEntries }
 
 type BrowserPaneProps = {
@@ -137,8 +138,23 @@ export function BrowserPane({
       hostLabelOverrides
     ]
   )
-  const selectedBrowserSessionHostId =
-    browserSessionHostIdOverride ?? getSettingsFocusedExecutionHostId(settings)
+  const settingsFocusedHostId = getSettingsFocusedExecutionHostId(settings)
+  const selectedBrowserSessionHostId = resolveAvailableBrowserSessionHostId(
+    browserSessionHostOptions,
+    browserSessionHostIdOverride,
+    settingsFocusedHostId
+  )
+  useEffect(() => {
+    const requestedHostId = browserSessionHostIdOverride ?? settingsFocusedHostId
+    if (selectedBrowserSessionHostId !== requestedHostId) {
+      void setBrowserSessionHostId(selectedBrowserSessionHostId)
+    }
+  }, [
+    browserSessionHostIdOverride,
+    selectedBrowserSessionHostId,
+    setBrowserSessionHostId,
+    settingsFocusedHostId
+  ])
   const selectBrowserSessionHost = useCallback(
     (hostId: ExecutionHostId) => {
       void setBrowserSessionHostId(hostId)
