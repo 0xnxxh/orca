@@ -268,23 +268,26 @@ export async function ensureTerminal(page, { allowCreate = true, timeoutMs = 60_
  * plain terminal (not an agent), then submit "Create worktree".
  */
 async function createWorkspaceFromSeededRepo(page, timeoutMs) {
+  // One shared deadline so the whole create path stays within the caller's
+  // budget instead of granting each later step a fresh fixed window.
+  const deadline = Date.now() + timeoutMs
   const newWorkspace = page
     .getByRole(NEW_WORKSPACE_BUTTON.role, { name: NEW_WORKSPACE_BUTTON.name })
     .first()
-  if (!(await tryClickWithKnownOverlayRetry(page, newWorkspace, timeoutMs))) {
+  if (!(await tryClickWithKnownOverlayRetry(page, newWorkspace, deadline - Date.now()))) {
     // Preserve Playwright's locator diagnostics without exceeding the caller's
     // timeout by another full click attempt.
     await newWorkspace.click({ timeout: 1 })
   }
   const composer = page.getByRole('dialog', { name: 'Create worktree' }).last()
-  await composer.waitFor({ state: 'visible', timeout: 15_000 })
+  await composer.waitFor({ state: 'visible', timeout: Math.max(1, deadline - Date.now()) })
   // Submit. The create button's accessible name carries the shortcut hint
   // ("Create worktreeCtrl"), so match by prefix; fall back to the documented
   // Ctrl+Enter shortcut if the button is not directly clickable.
   const created = await tryClickWithKnownOverlayRetry(
     page,
     composer.getByRole('button', { name: /^Create worktree/ }).last(),
-    15_000
+    Math.max(0, deadline - Date.now())
   )
   if (!created) {
     await page.keyboard.press('Control+Enter')

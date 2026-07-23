@@ -86,6 +86,65 @@ describe('dismissOverlays', () => {
     }
   })
 
+  it('bounds a blocked create submission by the remaining budget after a fast first click', async () => {
+    vi.useFakeTimers()
+    try {
+      const newWorkspace = {
+        first: vi.fn(),
+        click: vi.fn().mockResolvedValue(undefined)
+      }
+      newWorkspace.first.mockReturnValue(newWorkspace)
+      const createWorktree = {
+        last: vi.fn(),
+        click: vi.fn(async ({ timeout }) => {
+          await vi.advanceTimersByTimeAsync(timeout)
+          throw new Error('submit remained blocked')
+        })
+      }
+      createWorktree.last.mockReturnValue(createWorktree)
+      const composer = {
+        last: vi.fn(),
+        waitFor: vi.fn().mockResolvedValue(undefined),
+        getByRole: vi.fn().mockReturnValue(createWorktree)
+      }
+      composer.last.mockReturnValue(composer)
+      const xterm = {
+        first: vi.fn(),
+        waitFor: vi.fn().mockResolvedValue(undefined)
+      }
+      xterm.first.mockReturnValue(xterm)
+      const terminalSurface = {
+        first: vi.fn(),
+        isVisible: vi.fn().mockResolvedValue(false),
+        waitFor: vi.fn().mockResolvedValue(undefined),
+        locator: vi.fn().mockReturnValue(xterm)
+      }
+      terminalSurface.first.mockReturnValue(terminalSurface)
+      const page = {
+        locator: vi.fn().mockImplementation(() => terminalSurface),
+        getByRole: vi.fn((role, { name }) => {
+          if (role === 'dialog') {
+            return name === 'Create worktree' ? composer : hiddenButton()
+          }
+          return name === 'New workspace' ? newWorkspace : hiddenButton()
+        }),
+        keyboard: { press: vi.fn().mockResolvedValue(undefined) },
+        isClosed: vi.fn().mockReturnValue(false)
+      }
+
+      await ensureTerminal(page, { timeoutMs: 12_000 })
+
+      // First click is instant, so the create retry must spend only the remaining
+      // 12s (last window shrinks to 2s) — not a fresh fixed 15s — then fall back.
+      expect(createWorktree.click.mock.calls.map(([options]) => options.timeout)).toEqual([
+        5_000, 5_000, 2_000
+      ])
+      expect(page.keyboard.press).toHaveBeenCalledWith('Control+Enter')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('dismisses the CLI tip without sending Escape into an already-restored terminal', async () => {
     const dialogClose = {
       first: vi.fn(),
