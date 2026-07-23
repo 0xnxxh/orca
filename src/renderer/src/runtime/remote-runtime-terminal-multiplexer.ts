@@ -605,15 +605,16 @@ class RemoteRuntimeTerminalMultiplexer {
         clearPendingSnapshotRequest(stream)
       }
       clearSnapshot(stream)
-      // Why: the snapshot is the new authoritative output high-water; align the
-      // gap detector to it and re-open the live path (used by both the initial
-      // snapshot and a frame-drop resync, which reuses the 'initial' target).
-      if (target === 'initial') {
+      // Why: initial and recovery snapshots are authoritative output
+      // high-waters; align the gap detector and re-open the live path.
+      if (target === 'initial' || target === 'recovery') {
         stream.expectedSeq = typeof info?.seq === 'number' ? info.seq : undefined
         stream.resyncInFlight = false
         stream.resyncPendingSend = false
-        stream.initialSnapshotReceived = true
-        stream.callbacks.onSubscribed?.()
+        if (target === 'initial') {
+          stream.initialSnapshotReceived = true
+          stream.callbacks.onSubscribed?.()
+        }
       } else {
         this.sendDeferredResyncSnapshot(stream)
       }
