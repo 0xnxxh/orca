@@ -41,6 +41,7 @@ class FakeMultiplexServer {
   holdNextManualSnapshot = false
   truncateNextRecoverySnapshot = false
   dropNextRecoverySnapshotEnd = false
+  holdNextRecoverySnapshot = false
   snapshotRequests: (number | undefined)[] = []
   private heldManualRequestId: number | null = null
   private snapshotData = 'INITIAL'
@@ -73,6 +74,11 @@ class FakeMultiplexServer {
       // Resync request: the server serializes the *current* buffer, so recovery
       // includes everything the client missed.
       this.snapshotData = 'RECOVERED'
+      if (typeof payload?.requestId !== 'number' && this.holdNextRecoverySnapshot) {
+        // The reply's binary frames were all dropped under backpressure.
+        this.holdNextRecoverySnapshot = false
+        return
+      }
       if (typeof payload?.requestId !== 'number' && this.truncateNextRecoverySnapshot) {
         this.truncateNextRecoverySnapshot = false
         this.sendSnapshot(undefined, { truncated: true })
@@ -244,20 +250,81 @@ describe('remote terminal frame-drop resync', () => {
     expect(data).toEqual(['aaa', 'ddd'])
   })
 
-  it('retries after a truncated recovery without accepting output across the gap', async () => {
-    const { data, snapshots } = await subscribeClient()
-    server.truncateNextRecoverySnapshot = true
+  it('retries a truncated recovery on a backoff without accepting output across the gap', async () => {
+    vi.useFakeTimers()
+    try {
+      const { data, snapshots } = await subscribeClient()
+      server.truncateNextRecoverySnapshot = true
+
+      server.output('aaa')
+      server.dropNextOutput = true
+      server.output('bbb')
+      server.output('ccc')
+      // The gate stays shut across the backoff: the post-gap tail is corrupt,
+      // and retrying once per chunk would stampede a flooded server.
+      server.output('ddd')
+      expect(server.snapshotRequests).toEqual([undefined])
+
+      // The retry fires from the backoff timer alone — no further output needed.
+      await vi.advanceTimersByTimeAsync(500)
+      expect(server.snapshotRequests).toEqual([undefined, undefined])
+
+      server.output('eee')
+      expect(snapshots).toEqual(['INITIAL', '\x1b[2J\x1b[3J\x1b[HRECOVERED'])
+      expect(data).toEqual(['aaa', 'eee'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('re-opens the live path when only the JSON error event for a resync survives', async () => {
+    const { data, snapshots, stream } = await subscribeClient()
+    server.holdNextRecoverySnapshot = true
 
     server.output('aaa')
     server.dropNextOutput = true
     server.output('bbb')
     server.output('ccc')
+    expect(server.snapshotRequests).toEqual([undefined])
+
+    // The paired binary Error frame was dropped under backpressure; only the
+    // reliable JSON error event arrives. It must release the resync gate.
+    subscriptionCallbacks.onResponse({
+      ok: true,
+      result: { type: 'error', streamId: stream.streamId, message: 'snapshot failed' }
+    })
+
     server.output('ddd')
     server.output('eee')
 
     expect(server.snapshotRequests).toEqual([undefined, undefined])
     expect(snapshots).toEqual(['INITIAL', '\x1b[2J\x1b[3J\x1b[HRECOVERED'])
     expect(data).toEqual(['aaa', 'eee'])
+  })
+
+  it('dispatches the deferred resync when a JSON error consumes the manual snapshot', async () => {
+    const { data, snapshots, stream } = await subscribeClient()
+    server.holdNextManualSnapshot = true
+    const manualSnapshot = stream.serializeBuffer({ scrollbackRows: 100 })
+    await Promise.resolve()
+
+    server.output('aaa')
+    server.dropNextOutput = true
+    server.output('bbb')
+    server.output('ccc')
+    expect(server.snapshotRequests).toHaveLength(1)
+
+    subscriptionCallbacks.onResponse({
+      ok: true,
+      result: { type: 'error', streamId: stream.streamId, message: 'stream failed' }
+    })
+    await expect(manualSnapshot).rejects.toThrow('stream failed')
+
+    expect(server.snapshotRequests).toEqual([expect.any(Number), undefined])
+    expect(snapshots).toEqual(['INITIAL', '\x1b[2J\x1b[3J\x1b[HRECOVERED'])
+
+    server.output('ddd')
+    expect(data).toEqual(['aaa', 'ddd'])
   })
 
   it('times out a dropped recovery end and retries on the next sequence gap', async () => {
