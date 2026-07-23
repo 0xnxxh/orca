@@ -877,7 +877,17 @@ function NewWorktreeModalContent({
               label={selectedRepoIsGit ? "Name or 'Create From'" : 'Workspace name'}
               disabled={sshGate.requiresConnection}
               onBeforeOpen={() => setError('')}
-              onOpenDrawer={() => transitionDrawer('source')}
+              onOpenDrawer={() => {
+                // Why: source drawer hosts a continuous name field; skip the
+                // sequential hide→show delay so the docked input appears in the
+                // same beat (shared ModalHost makes parallel safe). Repo/agent
+                // pickers still use transitionDrawer.
+                if (drawerTransitionTimerRef.current) {
+                  clearTimeout(drawerTransitionTimerRef.current)
+                  drawerTransitionTimerRef.current = null
+                }
+                setDrawerView('source')
+              }}
             />
 
             {composer.forkPushWarning ? (
