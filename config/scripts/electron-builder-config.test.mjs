@@ -72,11 +72,18 @@ describe('electron-builder config', () => {
       MACOS_RELEASE_APP_BUNDLE_ID
     )
     expect(
-      resolveMacosComputerUseBundleId({ ORCA_COMPUTER_MACOS_BUNDLE_ID: 'com.example.computer' })
+      resolveMacosComputerUseBundleId({ ORCA_COMPUTER_MACOS_BUNDLE_ID: ' com.example.computer ' })
     ).toBe('com.example.computer')
-    expect(resolveMacosNotificationStatusBundleId('com.example.notification', {})).toBe(
+    expect(resolveMacosNotificationStatusBundleId(' com.example.notification ', {})).toBe(
       'com.example.notification'
     )
+    expect(
+      resolveMacosComputerUseBundleId({
+        ORCA_COMPUTER_MACOS_BUNDLE_ID: '  ',
+        ORCA_MAC_RELEASE: '1'
+      })
+    ).toBe(`${MACOS_RELEASE_APP_BUNDLE_ID}.computer-use`)
+    expect(resolveMacosNotificationStatusBundleId('', {})).toBe(MACOS_LOCAL_APP_BUNDLE_ID)
   })
 
   it('excludes repo-only source trees from app.asar', () => {
