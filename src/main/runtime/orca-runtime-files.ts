@@ -87,7 +87,7 @@ import {
 } from './runtime-mobile-file-path-search'
 import { beginWatcherInstall } from '../ipc/watcher-removal-gate'
 import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
-import { parseExecutionHostId, toSshExecutionHostId } from '../../shared/execution-host'
+import { parseExecutionHostId } from '../../shared/execution-host'
 
 const MOBILE_FILE_LIST_LIMIT = 5000
 const MOBILE_FILE_PATH_SEARCH_CACHE_LIMIT = 20_000
@@ -102,6 +102,16 @@ const OPEN_NOFOLLOW = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOF
 const RUNTIME_FILE_MUTATION_UPDATE_REQUIRED =
   'Remote file changes require a newer Orca client. Update the paired client and try again.'
 
+function executionHostMatchesFileRoute(
+  hostId: string | null | undefined,
+  connectionId: string | undefined
+): boolean {
+  const host = parseExecutionHostId(hostId)
+  return connectionId
+    ? host?.kind === 'ssh' && host.targetId === connectionId
+    : host?.kind === 'local'
+}
+
 function assertRuntimeFileMutationExpectation(
   worktreeHostId: Worktree['hostId'],
   connectionId: string | undefined,
@@ -112,12 +122,12 @@ function assertRuntimeFileMutationExpectation(
   if (!expectedExecutionHostId) {
     throw new Error(RUNTIME_FILE_MUTATION_UPDATE_REQUIRED)
   }
-  const actualExecutionHostId = connectionId ? toSshExecutionHostId(connectionId) : 'local'
-  // Why: this process cannot prove runtime:* ownership; stored metadata must match its concrete I/O route.
-  const declaredExecutionHost = parseExecutionHostId(worktreeHostId)
+  // Why: compare decoded SSH targets for legacy encoding compatibility without admitting runtime:*.
+  const declaredMatchesRoute =
+    worktreeHostId === undefined || executionHostMatchesFileRoute(worktreeHostId, connectionId)
   if (
-    (worktreeHostId !== undefined && declaredExecutionHost?.id !== actualExecutionHostId) ||
-    expectedExecutionHostId !== actualExecutionHostId
+    !declaredMatchesRoute ||
+    !executionHostMatchesFileRoute(expectedExecutionHostId, connectionId)
   ) {
     throw new Error('Workspace host changed; refresh and try again')
   }

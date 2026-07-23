@@ -104,6 +104,14 @@ describe('mobile file mutation ownership', () => {
     })
   })
 
+  it('canonicalizes equivalent legacy SSH owner encodings', () => {
+    expect(buildMobileFileMutationOwnership('ssh:ssh%2D1', sshState('ssh-1', 7))).toEqual({
+      expectedExecutionHostId: 'ssh:ssh-1',
+      expectedSshTargetId: 'ssh-1',
+      expectedSshConnectionGeneration: 7
+    })
+  })
+
   it('preserves runtime-owned SSH routing and its connection fence', () => {
     expect(
       buildMobileFileMutationOwnership(
@@ -329,6 +337,148 @@ describe('mobile file mutation ownership', () => {
     ).rejects.toThrow('before the request timed out')
     expect(sendRequest.mock.calls[2]?.[2]).toEqual({ timeoutMs: 5_000 })
     expect(sendRequest).toHaveBeenCalledTimes(3)
+  })
+
+  it('routes folder workspaces through the folder record instead of worktree.show', async () => {
+    const { client, sendRequest } = clientWithResponses([
+      success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] }),
+      success({ folderWorkspaces: [{ id: 'folder-1', folderPath: '/f', connectionId: null }] }),
+      success({ repos: [] }),
+      success({ groups: [] })
+    ])
+
+    await expect(captureMobileFileMutationOwnership(client, 'id:folder:folder-1')).resolves.toEqual(
+      {
+        ownership: { expectedExecutionHostId: 'local' },
+        runtimeId: 'runtime-1',
+        transportGeneration: null
+      }
+    )
+    expect(sendRequest.mock.calls).toEqual([
+      ['status.get', undefined, { timeoutMs: expect.any(Number) }],
+      ['folderWorkspace.list', undefined, { timeoutMs: expect.any(Number) }],
+      ['repo.list', undefined, { timeoutMs: expect.any(Number) }],
+      ['projectGroup.list', undefined, { timeoutMs: expect.any(Number) }]
+    ])
+  })
+
+  it('rejects folder routing metadata returned by a replacement runtime', async () => {
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return success(
+          { capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] },
+          'runtime-old'
+        )
+      }
+      if (method === 'folderWorkspace.list') {
+        return success(
+          { folderWorkspaces: [{ id: 'folder-1', folderPath: '/f', connectionId: null }] },
+          'runtime-old'
+        )
+      }
+      if (method === 'repo.list') {
+        return success({ repos: [] }, 'runtime-old')
+      }
+      return success({ groups: [] }, 'runtime-new')
+    })
+
+    await expect(
+      captureMobileFileMutationOwnership({ sendRequest }, 'id:folder:folder-1')
+    ).rejects.toThrow('Orca server changed')
+    expect(sendRequest).toHaveBeenCalledTimes(4)
+  })
+
+  it('binds remote folder workspaces to their SSH connection fence', async () => {
+    const { client, sendRequest } = clientWithResponses([
+      success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] }),
+      success({
+        folderWorkspaces: [{ id: 'folder-1', folderPath: '/f', connectionId: 'target one' }]
+      }),
+      success({ repos: [] }),
+      success({ groups: [] }),
+      success({ state: sshState('target one', 12) })
+    ])
+
+    await expect(captureMobileFileMutationOwnership(client, 'id:folder:folder-1')).resolves.toEqual(
+      {
+        ownership: {
+          expectedExecutionHostId: 'ssh:target%20one',
+          expectedSshTargetId: 'target one',
+          expectedSshConnectionGeneration: 12
+        },
+        runtimeId: 'runtime-1',
+        transportGeneration: null
+      }
+    )
+    expect(sendRequest.mock.calls[4]).toEqual([
+      'ssh.getState',
+      { targetId: 'target one' },
+      { timeoutMs: expect.any(Number) }
+    ])
+  })
+
+  it('follows the SSH route the host infers for group-scoped folder workspaces', async () => {
+    // Why: legacy/group-derived folders inherit their group repos' shared SSH connection.
+    const { client } = clientWithResponses([
+      success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] }),
+      success({
+        folderWorkspaces: [
+          { id: 'folder-1', folderPath: '/remote/f', projectGroupId: 'group-1', connectionId: null }
+        ]
+      }),
+      success({
+        repos: [{ projectGroupId: 'group-1', path: '/remote', connectionId: 'target-1' }]
+      }),
+      success({ groups: [{ id: 'group-1', parentGroupId: null }] }),
+      success({ state: sshState('target-1', 3) })
+    ])
+
+    await expect(captureMobileFileMutationOwnership(client, 'id:folder:folder-1')).resolves.toEqual(
+      {
+        ownership: {
+          expectedExecutionHostId: 'ssh:target-1',
+          expectedSshTargetId: 'target-1',
+          expectedSshConnectionGeneration: 3
+        },
+        runtimeId: 'runtime-1',
+        transportGeneration: null
+      }
+    )
+  })
+
+  it('rejects folder workspaces whose group spans local and SSH routes', async () => {
+    const { client, sendRequest } = clientWithResponses([
+      success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] }),
+      success({
+        folderWorkspaces: [
+          { id: 'folder-1', folderPath: '/mixed', projectGroupId: 'group-1', connectionId: null }
+        ]
+      }),
+      success({
+        repos: [
+          { projectGroupId: 'group-1', path: '/mixed/local', connectionId: null },
+          { projectGroupId: 'group-1', path: '/mixed/remote', connectionId: 'target-1' }
+        ]
+      }),
+      success({ groups: [{ id: 'group-1', parentGroupId: null }] })
+    ])
+
+    await expect(captureMobileFileMutationOwnership(client, 'id:folder:folder-1')).rejects.toThrow(
+      FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE
+    )
+    expect(sendRequest).toHaveBeenCalledTimes(4)
+  })
+
+  it('rejects a folder workspace that no longer exists on the host', async () => {
+    const { client, sendRequest } = clientWithResponses([
+      success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] }),
+      success({ folderWorkspaces: [{ id: 'folder-other', folderPath: '/f', connectionId: null }] })
+    ])
+
+    await expect(captureMobileFileMutationOwnership(client, 'id:folder:folder-1')).rejects.toThrow(
+      MOBILE_WORKTREE_NOT_FOUND_MESSAGE
+    )
+    expect(sendRequest).toHaveBeenCalledTimes(2)
   })
 
   it('fails closed when a capability-advertising runtime omits the worktree owner', async () => {

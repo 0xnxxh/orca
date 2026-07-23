@@ -1,4 +1,4 @@
-import { parseExecutionHostId } from '../../../src/shared/execution-host'
+import { parseExecutionHostId, toSshExecutionHostId } from '../../../src/shared/execution-host'
 import {
   assertFileMutationOwnershipCapability,
   buildFileMutationOwnership,
@@ -6,8 +6,10 @@ import {
   FILE_MUTATION_SSH_UNVERIFIED_MESSAGE,
   type FileMutationOwnership
 } from '../../../src/shared/file-mutation-ownership'
+import { inferFolderWorkspacePathConnection } from '../../../src/shared/folder-workspace-path-connection'
 import type { RuntimeStatus } from '../../../src/shared/runtime-types'
 import type { SshConnectionState } from '../../../src/shared/ssh-types'
+import { parseWorkspaceKey } from '../../../src/shared/workspace-scope'
 import type { RpcClient } from '../transport/rpc-client'
 import {
   isLogicalClientCutoverError,
@@ -27,6 +29,17 @@ export const MOBILE_WORKTREE_NOT_FOUND_MESSAGE =
 
 export type MobileFileMutationOwnership = FileMutationOwnership
 
+export type MobileFileMutationFence = {
+  ownership: MobileFileMutationOwnership
+  runtimeId: string
+  transportGeneration: number | null
+}
+
+type MutationTargetHost = {
+  hostId: string | null | undefined
+  runtimeIds: string[]
+}
+
 export function getMobileFileMutationFailureMessage(failure: RpcFailure): string {
   if (
     failure.error.code === 'selector_not_found' ||
@@ -35,12 +48,6 @@ export function getMobileFileMutationFailureMessage(failure: RpcFailure): string
     return MOBILE_WORKTREE_NOT_FOUND_MESSAGE
   }
   return failure.error.message || 'Failed to update workspace files'
-}
-
-export type MobileFileMutationFence = {
-  ownership: MobileFileMutationOwnership
-  runtimeId: string
-  transportGeneration: number | null
 }
 
 export function buildMobileFileMutationOwnership(
@@ -55,7 +62,10 @@ export function buildMobileFileMutationOwnership(
   if (host?.kind === 'ssh' && sshState?.status !== 'connected') {
     throw new Error(FILE_MUTATION_SSH_UNVERIFIED_MESSAGE)
   }
-  return buildFileMutationOwnership(worktreeHostId, sshState)
+  const ownership = buildFileMutationOwnership(worktreeHostId, sshState)
+  return host?.kind === 'ssh'
+    ? { ...ownership, expectedExecutionHostId: toSshExecutionHostId(host.targetId) }
+    : ownership
 }
 
 export async function captureMobileFileMutationOwnership(
@@ -114,21 +124,14 @@ async function captureMobileFileMutationOwnershipOnce(
     assertFileMutationOwnershipCapability(response.result)
     return response
   })
-  const worktreePromise = requestResult<{ worktree?: { hostId?: string | null } }>(
-    client,
-    'worktree.show',
-    { worktree },
-    deadline
-  )
-  const [status, worktreeResult] = await Promise.all([statusPromise, worktreePromise])
+  const targetPromise = requestMutationTargetHost(client, worktree, deadline)
+  const [status, target] = await Promise.all([statusPromise, targetPromise])
   assertCaptureTransportCurrent(client, transportGeneration)
-  assertSameRuntime(status.runtimeId, worktreeResult.runtimeId)
-  if (!worktreeResult.result.worktree) {
-    throw new Error(FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE)
+  for (const runtimeId of target.runtimeIds) {
+    assertSameRuntime(status.runtimeId, runtimeId)
   }
 
-  const worktreeHostId = worktreeResult.result.worktree.hostId
-  const host = parseExecutionHostId(worktreeHostId)
+  const host = parseExecutionHostId(target.hostId)
   let sshState: SshConnectionState | null = null
   if (host?.kind === 'ssh') {
     const ssh = await requestResult<{ state: SshConnectionState | null }>(
@@ -145,9 +148,74 @@ async function captureMobileFileMutationOwnershipOnce(
   assertCaptureTransportCurrent(client, transportGeneration)
   assertPreflightTimeRemaining(deadline)
   return {
-    ownership: buildMobileFileMutationOwnership(worktreeHostId, sshState),
+    ownership: buildMobileFileMutationOwnership(target.hostId, sshState),
     runtimeId: status.runtimeId,
     transportGeneration
+  }
+}
+
+async function requestMutationTargetHost(
+  client: Pick<RpcClient, 'sendRequest'>,
+  worktree: string,
+  deadline: number
+): Promise<MutationTargetHost> {
+  const workspaceKey = parseWorkspaceKey(worktree.startsWith('id:') ? worktree.slice(3) : worktree)
+  if (workspaceKey?.type !== 'folder') {
+    const response = await requestResult<{ worktree?: { hostId?: string | null } }>(
+      client,
+      'worktree.show',
+      { worktree },
+      deadline
+    )
+    if (!response.result.worktree) {
+      throw new Error(FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE)
+    }
+    return {
+      hostId: response.result.worktree.hostId,
+      runtimeIds: [response.runtimeId]
+    }
+  }
+
+  // worktree.show cannot resolve folder scopes, so mirror the server's route inference.
+  const folderResponse = await requestResult<{
+    folderWorkspaces?: {
+      id?: string
+      folderPath?: string
+      projectGroupId?: string | null
+      connectionId?: string | null
+    }[]
+  }>(client, 'folderWorkspace.list', undefined, deadline)
+  const folderWorkspace = folderResponse.result.folderWorkspaces?.find(
+    (workspace) => workspace.id === workspaceKey.folderWorkspaceId
+  )
+  if (!folderWorkspace?.folderPath) {
+    throw new Error(MOBILE_WORKTREE_NOT_FOUND_MESSAGE)
+  }
+
+  const [reposResponse, groupsResponse] = await Promise.all([
+    requestResult<{
+      repos?: { projectGroupId?: string | null; path: string; connectionId?: string | null }[]
+    }>(client, 'repo.list', undefined, deadline),
+    requestResult<{
+      groups?: { id: string; parentGroupId?: string | null }[]
+    }>(client, 'projectGroup.list', undefined, deadline)
+  ])
+  const connection = inferFolderWorkspacePathConnection({
+    folderPath: folderWorkspace.folderPath,
+    projectGroupId: folderWorkspace.projectGroupId ?? null,
+    connectionId: folderWorkspace.connectionId ?? null,
+    projectGroups: (groupsResponse.result.groups ?? []).map((group) => ({
+      id: group.id,
+      parentGroupId: group.parentGroupId ?? null
+    })),
+    repos: reposResponse.result.repos ?? []
+  })
+  if (connection.kind === 'ambiguous') {
+    throw new Error(FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE)
+  }
+  return {
+    hostId: connection.kind === 'ssh' ? toSshExecutionHostId(connection.connectionId) : 'local',
+    runtimeIds: [folderResponse.runtimeId, reposResponse.runtimeId, groupsResponse.runtimeId]
   }
 }
 

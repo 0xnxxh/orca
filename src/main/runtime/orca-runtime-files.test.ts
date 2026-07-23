@@ -444,6 +444,30 @@ describe('RuntimeFileCommands', () => {
     expect(getSshFilesystemProvider).not.toHaveBeenCalled()
   })
 
+  it('rejects an SSH mutation when the worktree declares a different SSH owner', async () => {
+    const { commands, store } = createRuntimeFileCommands({ hostId: 'ssh:ssh-2' })
+    store.getRepo.mockReturnValue({ connectionId: 'ssh-1' })
+
+    await expect(
+      commands.renameFileExplorerPath('id:wt-1', 'old.ts', 'new.ts', 0, 'ssh-1', 'ssh:ssh-1')
+    ).rejects.toThrow('Workspace host changed')
+
+    expect(getSshFilesystemProvider).not.toHaveBeenCalled()
+    expect(renameMock).not.toHaveBeenCalled()
+  })
+
+  it('accepts semantically matching non-canonical SSH owners', async () => {
+    const renameNoClobber = vi.fn().mockResolvedValue(undefined)
+    vi.mocked(getSshFilesystemProvider).mockReturnValue({ renameNoClobber } as never)
+    // Why: legacy hostIds may encode the same target differently from current clients.
+    const { commands, store } = createRuntimeFileCommands({ hostId: 'ssh:ssh%2D1' })
+    store.getRepo.mockReturnValue({ connectionId: 'ssh-1' })
+
+    await commands.renameFileExplorerPath('id:wt-1', 'old.ts', 'new.ts', 0, 'ssh-1', 'ssh:ssh%2D1')
+
+    expect(renameNoClobber).toHaveBeenCalledWith('/repo/old.ts', '/repo/new.ts')
+  })
+
   it('allows runtime-local case-only rename with IPC parity guard behavior', async () => {
     const { commands } = createRuntimeFileCommands({ hostId: 'local' })
     mockLocalPathStats({
