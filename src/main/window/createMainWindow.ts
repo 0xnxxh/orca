@@ -851,14 +851,18 @@ export function createMainWindow(
   let windowCloseConfirmed = false
   const confirmCloseChannel = 'window:confirm-close'
   const closeRequestReceivedChannel = 'window:close-request-received'
+  let closeRequestSequence = 0
+  let quitRendererAckRequestId: number | null = null
   let quitRendererAckTimer: ReturnType<typeof setTimeout> | null = null
   const clearQuitRendererAckTimer = (): void => {
+    quitRendererAckRequestId = null
     if (quitRendererAckTimer) {
       clearTimeout(quitRendererAckTimer)
       quitRendererAckTimer = null
     }
   }
-  const armQuitRendererAckTimer = (): void => {
+  const armQuitRendererAckTimer = (requestId: number): void => {
+    quitRendererAckRequestId = requestId
     if (quitRendererAckTimer) {
       return
     }
@@ -866,6 +870,7 @@ export function createMainWindow(
     // already-frozen renderer otherwise makes Force Quit the only escape.
     quitRendererAckTimer = setTimeout(() => {
       quitRendererAckTimer = null
+      quitRendererAckRequestId = null
       if (mainWindow.isDestroyed()) {
         return
       }
@@ -875,8 +880,8 @@ export function createMainWindow(
     }, WINDOW_QUIT_RENDERER_ACK_TIMEOUT_MS)
     quitRendererAckTimer.unref?.()
   }
-  const onCloseRequestReceived = (event: Electron.IpcMainEvent): void => {
-    if (event.sender.id === rendererWebContentsId) {
+  const onCloseRequestReceived = (event: Electron.IpcMainEvent, requestId: number): void => {
+    if (event.sender.id === rendererWebContentsId && requestId === quitRendererAckRequestId) {
       clearQuitRendererAckTimer()
     }
   }
@@ -941,12 +946,14 @@ export function createMainWindow(
     }
     e.preventDefault()
     const isQuitting = opts?.getIsQuitting?.() ?? false
+    const requestId = ++closeRequestSequence
     if (isQuitting) {
-      armQuitRendererAckTimer()
+      armQuitRendererAckTimer(requestId)
     }
     // Why: renderer owns the close decision; the always-mounted App root subscription lets even pre-workspace states reply (#5144).
     mainWindow.webContents.send('window:close-requested', {
-      isQuitting
+      isQuitting,
+      requestId
     })
   })
   mainWindow.webContents.on('will-prevent-unload', () => {

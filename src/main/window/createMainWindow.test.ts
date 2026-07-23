@@ -1484,7 +1484,10 @@ describe('createMainWindow', () => {
     const preventDefault = vi.fn()
     windowHandlers.close({ preventDefault } as never)
     expect(preventDefault).toHaveBeenCalledTimes(1)
-    expect(webContents.send).toHaveBeenCalledWith('window:close-requested', { isQuitting: true })
+    expect(webContents.send).toHaveBeenCalledWith('window:close-requested', {
+      isQuitting: true,
+      requestId: expect.any(Number)
+    })
 
     windowHandlers['will-prevent-unload']()
     expect(onQuitAborted).toHaveBeenCalledTimes(1)
@@ -1537,9 +1540,10 @@ describe('createMainWindow', () => {
     windowHandlers.close({ preventDefault } as never)
 
     expect(preventDefault).not.toHaveBeenCalled()
-    expect(webContents.send).not.toHaveBeenCalledWith('window:close-requested', {
-      isQuitting: true
-    })
+    expect(webContents.send).not.toHaveBeenCalledWith(
+      'window:close-requested',
+      expect.objectContaining({ isQuitting: true })
+    )
 
     consoleError.mockRestore()
   })
@@ -1711,7 +1715,8 @@ describe('createMainWindow', () => {
 
     expect(preventDefault).toHaveBeenCalledTimes(1)
     expect(webContents.send).toHaveBeenCalledWith('window:close-requested', {
-      isQuitting: true
+      isQuitting: true,
+      requestId: expect.any(Number)
     })
 
     consoleError.mockRestore()
@@ -1755,9 +1760,10 @@ describe('createMainWindow', () => {
     windowHandlers.close({ preventDefault } as never)
 
     expect(preventDefault).not.toHaveBeenCalled()
-    expect(webContents.send).not.toHaveBeenCalledWith('window:close-requested', {
-      isQuitting: true
-    })
+    expect(webContents.send).not.toHaveBeenCalledWith(
+      'window:close-requested',
+      expect.objectContaining({ isQuitting: true })
+    )
   })
 
   // Why (#5787): a hung-but-ALIVE renderer (never gone, never crashed) must NOT
@@ -1804,7 +1810,8 @@ describe('createMainWindow', () => {
 
     expect(preventDefault).toHaveBeenCalledTimes(1)
     expect(webContents.send).toHaveBeenCalledWith('window:close-requested', {
-      isQuitting: false
+      isQuitting: false,
+      requestId: expect.any(Number)
     })
   })
 
@@ -1894,10 +1901,18 @@ describe('createMainWindow', () => {
     createMainWindow(null, { getIsQuitting: () => true })
 
     windowHandlers.close({ preventDefault: vi.fn() } as never)
-    ipcHandlers['window:close-request-received']?.({ sender: { id: 99 } })
+    windowHandlers.close({ preventDefault: vi.fn() } as never)
+    const closeRequests = vi
+      .mocked(webContents.send)
+      .mock.calls.filter(([channel]) => channel === 'window:close-requested')
+      .map(([, request]) => request as { requestId: number })
+    expect(closeRequests).toHaveLength(2)
+    const [staleRequest, currentRequest] = closeRequests
+    ipcHandlers['window:close-request-received']?.({ sender: { id: 99 } }, currentRequest.requestId)
+    ipcHandlers['window:close-request-received']?.({ sender: { id: 42 } }, staleRequest.requestId)
     await vi.advanceTimersByTimeAsync(WINDOW_QUIT_RENDERER_ACK_TIMEOUT_MS - 1)
     expect(destroy).not.toHaveBeenCalled()
-    ipcHandlers['window:close-request-received']?.({ sender: { id: 42 } })
+    ipcHandlers['window:close-request-received']?.({ sender: { id: 42 } }, currentRequest.requestId)
     await vi.advanceTimersByTimeAsync(1)
 
     expect(destroy).not.toHaveBeenCalled()
@@ -3339,7 +3354,8 @@ describe('createMainWindow', () => {
 
       expect(instance.hide).not.toHaveBeenCalled()
       expect(webContents.send).toHaveBeenCalledWith('window:close-requested', {
-        isQuitting: false
+        isQuitting: false,
+        requestId: expect.any(Number)
       })
     })
 
@@ -3353,7 +3369,8 @@ describe('createMainWindow', () => {
 
       expect(instance.hide).not.toHaveBeenCalled()
       expect(webContents.send).toHaveBeenCalledWith('window:close-requested', {
-        isQuitting: true
+        isQuitting: true,
+        requestId: expect.any(Number)
       })
     })
 
@@ -3399,7 +3416,8 @@ describe('createMainWindow', () => {
 
       expect(instance.hide).not.toHaveBeenCalled()
       expect(webContents.send).toHaveBeenCalledWith('window:close-requested', {
-        isQuitting: false
+        isQuitting: false,
+        requestId: expect.any(Number)
       })
     })
 
