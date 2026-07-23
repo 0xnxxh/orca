@@ -64,7 +64,7 @@ type TerminalOverlaySlotProps = {
   leaveWorktreeIfEmpty: () => void
 }
 
-const TerminalOverlaySlot = memo(function TerminalOverlaySlot({
+export const TerminalOverlaySlot = memo(function TerminalOverlaySlot({
   terminalTabId,
   terminalGeneration,
   worktreeId,
@@ -111,17 +111,31 @@ const TerminalOverlaySlot = memo(function TerminalOverlaySlot({
       const parent = overlay?.parentElement
       const body = findBody()
       if (!parent || !body) {
-        setMeasuredFallbackRect(null)
+        // Why: only commit the null reset when not already null, else an
+        // unmeasurable overlay keeps re-dispatching the fit loop (React #185).
+        setMeasuredFallbackRect((prev) => (prev === null ? prev : null))
         return
       }
       const parentRect = parent.getBoundingClientRect()
       const bodyRect = body.getBoundingClientRect()
-      setMeasuredFallbackRect({
-        top: bodyRect.top - parentRect.top,
-        left: bodyRect.left - parentRect.left,
-        width: bodyRect.width,
-        height: bodyRect.height
-      })
+      // Why: ResizeObserver + xterm fit() form a measure<->fit feedback loop.
+      // Rounding to integers kills sub-pixel jitter and returning `prev` on an
+      // unchanged rect makes React bail so the loop settles (React #185).
+      const next: MeasuredFallbackRect = {
+        top: Math.round(bodyRect.top - parentRect.top),
+        left: Math.round(bodyRect.left - parentRect.left),
+        width: Math.round(bodyRect.width),
+        height: Math.round(bodyRect.height)
+      }
+      setMeasuredFallbackRect((prev) =>
+        prev &&
+        prev.top === next.top &&
+        prev.left === next.left &&
+        prev.width === next.width &&
+        prev.height === next.height
+          ? prev
+          : next
+      )
     }
 
     updateRect()
