@@ -1,31 +1,10 @@
-/**
- * @vitest-environment happy-dom
- *
- * Regression for React error #185 ("Maximum update depth exceeded") reported
- * ONLY on Windows (Orca 1.4.148 / 1.4.149, boundary `terminal.workbench`,
- * reports f1783c09 / 5ff8a4e6 / 52aabedb).
- *
- * The overlay fallback-measurement path (taken when CSS anchor positioning is
- * unavailable) writes a BRAND-NEW rect object on every ResizeObserver tick with
- * no equality guard. A stable geometry therefore still "changes" state on every
- * measurement, re-running the fit effect -> SYNC_FIT -> xterm fit() -> resize ->
- * ResizeObserver -> ... an unbounded measure<->fit loop that never settles.
- *
- * This test forces the fallback path (`__ORCA_WEB_CLIENT__ = true`) and drives
- * the ResizeObserver callback with a CONSTANT rect. On buggy HEAD every tick
- * commits a fresh object, so the slot re-renders once per tick (render churn
- * grows unboundedly). With the equality guard the state bails out and the slot
- * settles after the first measurement.
- */
+/** @vitest-environment happy-dom */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Opt into React's act() testing environment so effect flushes are deterministic.
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-// Count TerminalPane renders as a proxy for slot commits: the slot re-creates
-// the TerminalPane element on every render, so each commit calls this mock once.
 let terminalPaneRenderCount = 0
 vi.mock('./TerminalPane', () => ({
   default: () => {
@@ -34,8 +13,6 @@ vi.mock('./TerminalPane', () => ({
   }
 }))
 
-// The slot only reads `useAppStore.getState().pendingStartupByTabId`; stub it so
-// the test never boots the real (heavy, side-effectful) app store.
 vi.mock('../../store', () => ({
   useAppStore: Object.assign(() => undefined, {
     getState: () => ({ pendingStartupByTabId: {} })
@@ -47,33 +24,31 @@ import { TerminalOverlaySlot } from './TerminalPaneOverlayLayer'
 const GROUP_ID = 'group-react185'
 const TAB_ID = 'tab-react185'
 
-const CONSTANT_PARENT_RECT: DOMRect = {
-  top: 0,
-  left: 0,
-  right: 800,
-  bottom: 600,
-  width: 800,
-  height: 600,
-  x: 0,
-  y: 0,
-  toJSON: () => ({})
+function createRect({
+  top = 0,
+  left = 0,
+  width = 800,
+  height = 600
+}: Partial<Pick<DOMRect, 'top' | 'left' | 'width' | 'height'>> = {}): DOMRect {
+  return {
+    top,
+    left,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    x: left,
+    y: top,
+    toJSON: () => ({})
+  }
 }
-// A stable body rect: sub-pixel-identical on every tick.
-const CONSTANT_BODY_RECT: DOMRect = {
-  top: 32,
-  left: 0,
-  right: 800,
-  bottom: 600,
-  width: 800,
-  height: 568,
-  x: 0,
-  y: 32,
-  toJSON: () => ({})
-}
+
+const PARENT_RECT = createRect()
 
 let capturedResizeCallback: (() => void) | null = null
 let container: HTMLDivElement
 let bodyEl: HTMLDivElement
+let bodyRect: DOMRect
 let root: Root
 
 class CapturingResizeObserver {
@@ -93,7 +68,7 @@ function renderSlot(): void {
         terminalTabId={TAB_ID}
         terminalGeneration={0}
         worktreeId="wt-1"
-        worktreePath="/tmp/wt-1"
+        worktreePath="wt-1"
         startupCwd={undefined}
         groupId={GROUP_ID}
         isWorktreeActive
@@ -115,12 +90,13 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', CapturingResizeObserver)
 
   container = document.createElement('div')
-  container.getBoundingClientRect = () => CONSTANT_PARENT_RECT
+  container.getBoundingClientRect = () => PARENT_RECT
   document.body.appendChild(container)
 
   bodyEl = document.createElement('div')
   bodyEl.setAttribute('data-tab-group-body-id', GROUP_ID)
-  bodyEl.getBoundingClientRect = () => CONSTANT_BODY_RECT
+  bodyRect = createRect({ top: 32, height: 568 })
+  bodyEl.getBoundingClientRect = () => bodyRect
   document.body.appendChild(bodyEl)
 })
 
@@ -137,25 +113,54 @@ afterEach(() => {
 describe('TerminalPaneOverlayLayer fallback measure<->fit loop (React #185)', () => {
   it('does not re-render on ResizeObserver ticks with an unchanged rect', () => {
     renderSlot()
-
-    // Sanity: the fallback measuring effect installed a ResizeObserver.
     expect(capturedResizeCallback).toBeTypeOf('function')
 
     const rendersAfterMount = terminalPaneRenderCount
-
-    // Drive the observer with the SAME geometry many times. A settled overlay
-    // must not keep committing new state for identical measurements.
-    const TICKS = 50
-    for (let i = 0; i < TICKS; i += 1) {
+    for (let i = 0; i < 50; i += 1) {
       act(() => {
         capturedResizeCallback?.()
       })
     }
 
-    const extraRenders = terminalPaneRenderCount - rendersAfterMount
+    expect(terminalPaneRenderCount - rendersAfterMount).toBe(0)
+  })
 
-    // Buggy HEAD: every tick writes a new rect object -> ~TICKS extra renders
-    // (unbounded churn -> React #185). Fixed: the equality guard bails -> 0.
-    expect(extraRenders).toBeLessThanOrEqual(1)
+  it('settles sub-pixel jitter across an integer boundary without losing precision', () => {
+    bodyRect = createRect({ top: 32.1, left: 0.1, width: 799.1, height: 567.1 })
+    renderSlot()
+    const overlay = container.querySelector<HTMLElement>('[data-terminal-overlay-tab-id]')
+    expect(overlay?.style.top).toBe('32.1px')
+    expect(overlay?.style.width).toBe('799.1px')
+
+    const rendersAfterMount = terminalPaneRenderCount
+    for (let i = 0; i < 50; i += 1) {
+      bodyRect = createRect({ top: 32.9, left: 0.9, width: 799.9, height: 567.9 })
+      act(() => {
+        capturedResizeCallback?.()
+      })
+      bodyRect = createRect({ top: 32.1, left: 0.1, width: 799.1, height: 567.1 })
+      act(() => {
+        capturedResizeCallback?.()
+      })
+    }
+
+    expect(terminalPaneRenderCount - rendersAfterMount).toBe(0)
+    expect(overlay?.style.top).toBe('32.1px')
+    expect(overlay?.style.width).toBe('799.1px')
+  })
+
+  it('commits a genuine geometry change', () => {
+    renderSlot()
+    const overlay = container.querySelector<HTMLElement>('[data-terminal-overlay-tab-id]')
+    const rendersAfterMount = terminalPaneRenderCount
+
+    bodyRect = createRect({ top: 34, width: 760, height: 566 })
+    act(() => {
+      capturedResizeCallback?.()
+    })
+
+    expect(terminalPaneRenderCount - rendersAfterMount).toBe(1)
+    expect(overlay?.style.top).toBe('34px')
+    expect(overlay?.style.width).toBe('760px')
   })
 })

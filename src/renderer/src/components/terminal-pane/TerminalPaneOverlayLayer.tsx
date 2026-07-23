@@ -33,6 +33,7 @@ const HAS_CSS_ANCHOR_POSITIONING =
   CSS.supports('width', 'anchor-size(--orca-terminal-overlay-probe width)')
 const MIN_OVERLAY_FIT_WIDTH_PX = 48
 const MIN_OVERLAY_FIT_HEIGHT_PX = 24
+const FALLBACK_RECT_MIN_CHANGE_PX = 1
 
 function shouldUseCssAnchorPositioning(): boolean {
   return (
@@ -111,28 +112,24 @@ export const TerminalOverlaySlot = memo(function TerminalOverlaySlot({
       const parent = overlay?.parentElement
       const body = findBody()
       if (!parent || !body) {
-        // Why: only commit the null reset when not already null, else an
-        // unmeasurable overlay keeps re-dispatching the fit loop (React #185).
-        setMeasuredFallbackRect((prev) => (prev === null ? prev : null))
+        setMeasuredFallbackRect(null)
         return
       }
       const parentRect = parent.getBoundingClientRect()
       const bodyRect = body.getBoundingClientRect()
-      // Why: ResizeObserver + xterm fit() form a measure<->fit feedback loop.
-      // Rounding to integers kills sub-pixel jitter and returning `prev` on an
-      // unchanged rect makes React bail so the loop settles (React #185).
       const next: MeasuredFallbackRect = {
-        top: Math.round(bodyRect.top - parentRect.top),
-        left: Math.round(bodyRect.left - parentRect.left),
-        width: Math.round(bodyRect.width),
-        height: Math.round(bodyRect.height)
+        top: bodyRect.top - parentRect.top,
+        left: bodyRect.left - parentRect.left,
+        width: bodyRect.width,
+        height: bodyRect.height
       }
+      // Why: ResizeObserver and xterm fit can otherwise amplify sub-pixel jitter forever.
       setMeasuredFallbackRect((prev) =>
         prev &&
-        prev.top === next.top &&
-        prev.left === next.left &&
-        prev.width === next.width &&
-        prev.height === next.height
+        Math.abs(prev.top - next.top) < FALLBACK_RECT_MIN_CHANGE_PX &&
+        Math.abs(prev.left - next.left) < FALLBACK_RECT_MIN_CHANGE_PX &&
+        Math.abs(prev.width - next.width) < FALLBACK_RECT_MIN_CHANGE_PX &&
+        Math.abs(prev.height - next.height) < FALLBACK_RECT_MIN_CHANGE_PX
           ? prev
           : next
       )
