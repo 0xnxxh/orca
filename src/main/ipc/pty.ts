@@ -58,6 +58,7 @@ import { detectPiAgentKindFromCommand, type PiAgentKind } from '../../shared/pi-
 import { isPwshAvailable } from '../pwsh'
 import { LocalPtyProvider } from '../providers/local-pty-provider'
 import type { IPtyProvider, PtySpawnOptions, PtySpawnResult } from '../providers/types'
+import { isPtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 import {
   SSH_SESSION_EXPIRED_ERROR,
@@ -4736,6 +4737,18 @@ export function registerPtyHandlers(
     }
   )
 
+  const reportUnavailablePtyWrite = (id: string, error: unknown): void => {
+    if (
+      !isPtyWriteUnavailableError(error) ||
+      mainWindow.isDestroyed() ||
+      (typeof mainWindow.webContents.isDestroyed === 'function' &&
+        mainWindow.webContents.isDestroyed())
+    ) {
+      return
+    }
+    mainWindow.webContents.send('pty:writeUnavailable', { id })
+  }
+
   const writePtyProviderInputWithinLimit = (
     provider: IPtyProvider,
     id: string,
@@ -4767,8 +4780,12 @@ export function registerPtyHandlers(
       }
       return tooLarge
         .then((result) => (result ? false : writePtyProviderInputWithinLimit(provider, id, data)))
-        .catch(() => false)
-    } catch {
+        .catch((error) => {
+          reportUnavailablePtyWrite(id, error)
+          return false
+        })
+    } catch (error) {
+      reportUnavailablePtyWrite(id, error)
       return false
     }
   }
@@ -4792,7 +4809,8 @@ export function registerPtyHandlers(
         nextChunk = chunks.next()
       }
       return true
-    } catch {
+    } catch (error) {
+      reportUnavailablePtyWrite(id, error)
       return false
     }
   }

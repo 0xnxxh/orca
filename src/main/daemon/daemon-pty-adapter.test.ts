@@ -14,6 +14,7 @@ import type { SubprocessHandle } from './session'
 import type { DaemonFileLog } from './daemon-file-log'
 import type * as DaemonHealthModule from './daemon-health'
 import { getDaemonSocketPath } from './daemon-spawner'
+import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 
 const { getMacDaemonSystemResolverHealthMock } = vi.hoisted(() => ({
   getMacDaemonSystemResolverHealthMock: vi.fn(async () => 'unknown')
@@ -517,71 +518,70 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       })
     }
 
-    it('respawns and exits a pane whose session died with the daemon', async () => {
+    it('rejects stale input until createOrAttach remounts the pane onto the new daemon', async () => {
+      let respawnServer: DaemonServer | undefined
+      let respawnSubprocess: ReturnType<typeof createMockSubprocess> | undefined
       const respawn = vi.fn(async () => {
-        restartServerOnRespawn()
-        await server.start()
+        respawnServer = new DaemonServer({
+          socketPath,
+          tokenPath,
+          spawnSubprocess: () => {
+            respawnSubprocess = createMockSubprocess()
+            return respawnSubprocess
+          }
+        })
+        await respawnServer.start()
       })
       const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
       try {
-        const exits: string[] = []
-        healingAdapter.onExit(({ id }) => exits.push(id))
         const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
-        const client = (healingAdapter as unknown as { client: DaemonClient }).client
-        healingAdapter.setPtyBackgrounded(id, true)
-        const notifySpy = vi.spyOn(client, 'notify')
+        const internals = healingAdapter as unknown as {
+          sessionsAwaitingDaemonRecovery: Set<string>
+        }
 
-        // Kill the daemon out from under the attached pane: no exit fanout, so the session stays "active".
         await server.shutdown()
-        await waitFor(() => !client.isConnected())
-        notifySpy.mockClear()
+        await waitFor(() => internals.sessionsAwaitingDaemonRecovery.has(id))
 
-        // A keystroke on the frozen pane must trigger the dead-endpoint respawn, not silently drop.
-        healingAdapter.write(id, 'ls\n')
+        expect(() => healingAdapter.write(id, 'first')).toThrow(PtyWriteUnavailableError)
+        expect(() => healingAdapter.write(id, 'second')).toThrow(PtyWriteUnavailableError)
+        await waitFor(() => respawn.mock.calls.length === 1)
 
-        await waitFor(() => respawn.mock.calls.length > 0)
-        expect(respawn).toHaveBeenCalledTimes(1)
-        await waitFor(() => client.isConnected())
-        await waitFor(() =>
-          notifySpy.mock.calls.some(
-            ([type, payload]) =>
-              type === 'setSessionBackground' &&
-              (payload as { sessionId?: string }).sessionId === id
-          )
+        expect(respawnSubprocess).toBeUndefined()
+        expect(() => healingAdapter.write(id, 'still-stale')).toThrow(PtyWriteUnavailableError)
+
+        await healingAdapter.spawn({ sessionId: id, cols: 80, rows: 24 })
+        expect(() => healingAdapter.write(id, 'rebound')).not.toThrow()
+        await waitFor(
+          () =>
+            respawnSubprocess !== undefined &&
+            vi.mocked(respawnSubprocess.write).mock.calls.length === 1
         )
-        await waitFor(() => exits.includes(id))
-        expect(healingAdapter.hasPty(id)).toBe(false)
+        expect(respawnSubprocess?.write).toHaveBeenCalledWith('rebound')
+        expect(respawn).toHaveBeenCalledTimes(1)
       } finally {
         healingAdapter.dispose()
+        await respawnServer?.shutdown()
       }
     })
 
-    it('replays ordered input when the daemon session survives a socket disconnect', async () => {
-      let releaseRespawn!: () => void
-      const respawn = vi.fn(
-        () =>
-          new Promise<void>((resolve) => {
-            releaseRespawn = resolve
-          })
-      )
+    it('requires createOrAttach before writing to a session that survives a socket disconnect', async () => {
+      const respawn = vi.fn(async () => {})
       const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
       try {
-        const exits: string[] = []
-        healingAdapter.onExit(({ id }) => exits.push(id))
         const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
         const client = (healingAdapter as unknown as { client: DaemonClient }).client
 
         client.disconnect()
-        healingAdapter.write(id, 'a')
-        healingAdapter.write(id, 'b')
-        healingAdapter.write(id, 'c')
-        releaseRespawn()
+        expect(() => healingAdapter.write(id, 'stale')).toThrow(PtyWriteUnavailableError)
+        await waitFor(() => client.isConnected())
+        expect(() => healingAdapter.write(id, 'still-stale')).toThrow(PtyWriteUnavailableError)
 
+        await healingAdapter.spawn({ sessionId: id, cols: 80, rows: 24 })
+        healingAdapter.write(id, 'rebound')
         await waitFor(() => lastSubprocess.write.mock.calls.length > 0)
-        expect(lastSubprocess.write.mock.calls).toEqual([['abc']])
-        expect(exits).toEqual([])
+        expect(lastSubprocess.write.mock.calls).toEqual([['rebound']])
         expect(healingAdapter.hasPty(id)).toBe(true)
-        expect(respawn).toHaveBeenCalledTimes(1)
+        expect(respawn).not.toHaveBeenCalled()
       } finally {
         healingAdapter.dispose()
       }
@@ -599,17 +599,10 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         await server.shutdown()
         await waitFor(() => !client.isConnected())
 
-        healingAdapter.write(id, 'a')
-        await waitFor(
-          () =>
-            (
-              healingAdapter as unknown as {
-                deadEndpointRespawnBlocked: boolean
-              }
-            ).deadEndpointRespawnBlocked
-        )
+        expect(() => healingAdapter.write(id, 'a')).toThrow(PtyWriteUnavailableError)
+        await waitFor(() => respawn.mock.calls.length === 1)
         for (let i = 0; i < 100; i += 1) {
-          healingAdapter.write(id, 'b')
+          expect(() => healingAdapter.write(id, 'b')).toThrow(PtyWriteUnavailableError)
         }
 
         expect(respawn).toHaveBeenCalledTimes(1)
@@ -630,8 +623,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       })
       const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
       try {
-        const exits: string[] = []
-        healingAdapter.onExit(({ id }) => exits.push(id))
         const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
         const client = (healingAdapter as unknown as { client: DaemonClient }).client
         await server.shutdown()
@@ -643,11 +634,10 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
           rows: 24
         })
         await waitFor(() => releaseRespawn !== undefined)
-        healingAdapter.write(id, 'queued')
+        expect(() => healingAdapter.write(id, 'queued')).toThrow(PtyWriteUnavailableError)
         releaseRespawn()
 
         await expect(newSpawn).resolves.toMatchObject({ id: 'request-path-session' })
-        await waitFor(() => exits.includes(id))
         expect(respawn).toHaveBeenCalledTimes(1)
       } finally {
         healingAdapter.dispose()
