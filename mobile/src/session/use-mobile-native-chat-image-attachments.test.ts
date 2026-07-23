@@ -48,11 +48,34 @@ function makeClient(responses: RpcResponse[]): Pick<RpcClient, 'sendRequest'> & 
   }
 }
 
+type HookArgs = Parameters<typeof useMobileNativeChatImageAttachments>[0]
 type Hook = ReturnType<typeof useMobileNativeChatImageAttachments>
+
+const SCOPE_A = 'h\0w\0tab-a'
+
+function baseArgs(overrides: Partial<HookArgs> & Pick<HookArgs, 'client'>): HookArgs {
+  return {
+    activeHandleRef: { current: 'term-1' },
+    deviceTokenRef: { current: null },
+    getActiveWorktreeConnectionId: async () => null,
+    connState: 'connected',
+    scopeKey: SCOPE_A,
+    enabled: true,
+    showToast: vi.fn(),
+    baseSend: vi.fn().mockResolvedValue(true),
+    sleep: async () => {},
+    ...overrides
+  }
+}
 
 describe('useMobileNativeChatImageAttachments', () => {
   let renderer: ReactTestRenderer | null = null
   let hook: Hook | null = null
+
+  function Harness({ args }: { args: HookArgs }): null {
+    hook = useMobileNativeChatImageAttachments(args)
+    return null
+  }
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -64,11 +87,7 @@ describe('useMobileNativeChatImageAttachments', () => {
     hook = null
   })
 
-  function mount(args: Parameters<typeof useMobileNativeChatImageAttachments>[0]): void {
-    function Harness(): null {
-      hook = useMobileNativeChatImageAttachments(args)
-      return null
-    }
+  function mount(args: HookArgs): void {
     const original = console.error
     const spy = vi.spyOn(console, 'error').mockImplementation((...a) => {
       if (typeof a[0] === 'string' && a[0].includes('react-test-renderer is deprecated')) {
@@ -78,28 +97,29 @@ describe('useMobileNativeChatImageAttachments', () => {
     })
     try {
       act(() => {
-        renderer = create(createElement(Harness))
+        renderer = create(createElement(Harness, { args }))
       })
     } finally {
       spy.mockRestore()
     }
   }
 
+  function update(args: HookArgs): void {
+    act(() => {
+      renderer!.update(createElement(Harness, { args }))
+    })
+  }
+
   it('adds an uploaded image as a chip without pasting to the terminal', async () => {
     pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
     const client = makeClient([methodNotFound('start'), ok('save', '/tmp/a.png')])
-    const baseSend = vi.fn().mockResolvedValue(true)
-    mount({
-      client: client as unknown as RpcClient,
-      activeHandleRef: { current: 'term-1' },
-      deviceTokenRef: { current: 'device-1' },
-      getActiveWorktreeConnectionId: async () => 'conn-1',
-      connState: 'connected',
-      enabled: true,
-      showToast: vi.fn(),
-      baseSend,
-      sleep: async () => {}
-    })
+    mount(
+      baseArgs({
+        client: client as unknown as RpcClient,
+        deviceTokenRef: { current: 'device-1' },
+        getActiveWorktreeConnectionId: async () => 'conn-1'
+      })
+    )
 
     await act(async () => {
       await hook!.attachImage('library')
@@ -119,26 +139,22 @@ describe('useMobileNativeChatImageAttachments', () => {
       sendResult(true), // Ctrl+U clear
       sendResult(true) // the image paste (enter:false)
     ])
-    const baseSend = vi.fn().mockResolvedValue(true)
     const order: string[] = []
     const sleep = vi.fn(async () => {
       order.push('settle')
     })
-    baseSend.mockImplementation(async (t: string) => {
+    const baseSend = vi.fn(async (t: string) => {
       order.push(`text:${t}`)
       return true
     })
-    mount({
-      client: client as unknown as RpcClient,
-      activeHandleRef: { current: 'term-1' },
-      deviceTokenRef: { current: 'device-1' },
-      getActiveWorktreeConnectionId: async () => null,
-      connState: 'connected',
-      enabled: true,
-      showToast: vi.fn(),
-      baseSend,
-      sleep
-    })
+    mount(
+      baseArgs({
+        client: client as unknown as RpcClient,
+        deviceTokenRef: { current: 'device-1' },
+        baseSend,
+        sleep
+      })
+    )
 
     await act(async () => {
       await hook!.attachImage('library')
@@ -175,17 +191,7 @@ describe('useMobileNativeChatImageAttachments', () => {
       sendResult(true) // image paste
     ])
     const baseSend = vi.fn().mockResolvedValue(true)
-    mount({
-      client: client as unknown as RpcClient,
-      activeHandleRef: { current: 'term-1' },
-      deviceTokenRef: { current: null },
-      getActiveWorktreeConnectionId: async () => null,
-      connState: 'connected',
-      enabled: true,
-      showToast: vi.fn(),
-      baseSend,
-      sleep: async () => {}
-    })
+    mount(baseArgs({ client: client as unknown as RpcClient, baseSend }))
 
     await act(async () => {
       await hook!.attachImage('library')
@@ -208,17 +214,7 @@ describe('useMobileNativeChatImageAttachments', () => {
   it('delegates straight to baseSend when there are no attachments', async () => {
     const client = makeClient([])
     const baseSend = vi.fn().mockResolvedValue(true)
-    mount({
-      client: client as unknown as RpcClient,
-      activeHandleRef: { current: 'term-1' },
-      deviceTokenRef: { current: null },
-      getActiveWorktreeConnectionId: async () => null,
-      connState: 'connected',
-      enabled: true,
-      showToast: vi.fn(),
-      baseSend,
-      sleep: async () => {}
-    })
+    mount(baseArgs({ client: client as unknown as RpcClient, baseSend }))
 
     await act(async () => {
       await hook!.sendNativeChat('just text')
@@ -236,17 +232,8 @@ describe('useMobileNativeChatImageAttachments', () => {
       sendResult(false) // image paste rejected
     ])
     const baseSend = vi.fn().mockResolvedValue(true)
-    mount({
-      client: client as unknown as RpcClient,
-      activeHandleRef: { current: 'term-1' },
-      deviceTokenRef: { current: null },
-      getActiveWorktreeConnectionId: async () => null,
-      connState: 'connected',
-      enabled: true,
-      showToast: vi.fn(),
-      baseSend,
-      sleep: async () => {}
-    })
+    const showToast = vi.fn()
+    mount(baseArgs({ client: client as unknown as RpcClient, baseSend, showToast }))
     await act(async () => {
       await hook!.attachImage('library')
     })
@@ -256,6 +243,121 @@ describe('useMobileNativeChatImageAttachments', () => {
     })
     expect(accepted).toBe(false)
     expect(baseSend).not.toHaveBeenCalled()
+    expect(showToast).toHaveBeenCalledWith('Message not sent', 1500)
     expect(hook!.attachments).toHaveLength(1)
+  })
+
+  it('keeps the chips and reports failure when the paste transport throws', async () => {
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    // No terminal.send responses queued: the clear write throws (dropped transport).
+    const client = makeClient([methodNotFound('start'), ok('save', '/tmp/a.png')])
+    const baseSend = vi.fn().mockResolvedValue(true)
+    const showToast = vi.fn()
+    mount(baseArgs({ client: client as unknown as RpcClient, baseSend, showToast }))
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    let accepted = true
+    await act(async () => {
+      accepted = await hook!.sendNativeChat('hi')
+    })
+    expect(accepted).toBe(false)
+    expect(baseSend).not.toHaveBeenCalled()
+    expect(showToast).toHaveBeenCalledWith('Message not sent', 1500)
+    expect(hook!.attachments).toHaveLength(1)
+  })
+
+  it('surfaces a toast instead of a silent no-op when the input lease gate is closed', async () => {
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    const client = makeClient([methodNotFound('start'), ok('save', '/tmp/a.png')])
+    const baseSend = vi.fn().mockResolvedValue(true)
+    const showToast = vi.fn()
+    // Attaching is allowed without the lease; only the send is gated on it.
+    mount(baseArgs({ client: client as unknown as RpcClient, enabled: false, baseSend, showToast }))
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    let accepted = true
+    await act(async () => {
+      accepted = await hook!.sendNativeChat('hi')
+    })
+    expect(accepted).toBe(false)
+    expect(baseSend).not.toHaveBeenCalled()
+    expect(showToast).toHaveBeenCalledWith('Message not sent (disconnected)', 1500)
+    expect(hook!.attachments).toHaveLength(1)
+  })
+
+  it('scopes chips to the tab that attached them', async () => {
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    const client = makeClient([methodNotFound('start'), ok('save', '/tmp/a.png')])
+    const baseSend = vi.fn().mockResolvedValue(true)
+    const args = baseArgs({ client: client as unknown as RpcClient, baseSend })
+    mount(args)
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    expect(hook!.attachments).toHaveLength(1)
+
+    // Another tab sees no chip, and a send there is plain text — no image paste.
+    update({ ...args, scopeKey: 'h\0w\0tab-b' })
+    expect(hook!.attachments).toEqual([])
+    await act(async () => {
+      await hook!.sendNativeChat('hi')
+    })
+    expect(baseSend).toHaveBeenCalledWith('hi')
+    expect(client.calls.some((c) => c.method === 'terminal.send')).toBe(false)
+
+    // Back on the original tab the chip is still pending.
+    update(args)
+    expect(hook!.attachments).toHaveLength(1)
+  })
+
+  it('clears only the chips that were sent, keeping one attached mid-send', async () => {
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    const client = makeClient([
+      methodNotFound('start'),
+      ok('save', '/tmp/a.png'), // first attach
+      sendResult(true), // Ctrl+U clear
+      sendResult(true), // first image paste
+      methodNotFound('start'),
+      ok('save', '/tmp/b.png') // second attach, while the send is parked on settle
+    ])
+    const baseSend = vi.fn().mockResolvedValue(true)
+    let releaseSettle: (() => void) | null = null
+    const args = baseArgs({
+      client: client as unknown as RpcClient,
+      baseSend,
+      sleep: () =>
+        new Promise<void>((resolve) => {
+          releaseSettle = resolve
+        })
+    })
+    mount(args)
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+
+    let sendPromise: Promise<boolean> | null = null
+    await act(async () => {
+      sendPromise = hook!.sendNativeChat('hi')
+      // Drain microtasks until the send parks on the settle sleep.
+      for (let i = 0; i < 50 && !releaseSettle; i++) {
+        await Promise.resolve()
+      }
+    })
+    expect(releaseSettle).not.toBeNull()
+
+    pick.mockResolvedValue({ base64: 'BBBB', uri: 'file:///b.jpg' })
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    await act(async () => {
+      releaseSettle!()
+      await sendPromise
+    })
+
+    // Only the first (sent) image rode along; the mid-send chip survives.
+    expect(baseSend).toHaveBeenCalledWith('hi', ['file:///a.jpg'])
+    expect(hook!.attachments.map((a) => a.previewUri)).toEqual(['file:///b.jpg'])
   })
 })
