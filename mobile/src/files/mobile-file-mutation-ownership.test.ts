@@ -6,6 +6,7 @@ import {
 } from '../../../src/shared/protocol-version'
 import {
   FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE,
+  FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE,
   FILE_MUTATION_SSH_UNVERIFIED_MESSAGE
 } from '../../../src/shared/file-mutation-ownership'
 import type { RpcClient } from '../transport/rpc-client'
@@ -20,6 +21,10 @@ import {
 
 function success(result: unknown, runtimeId = 'runtime-1'): RpcResponse {
   return { id: 'rpc-1', ok: true, result, _meta: { runtimeId } }
+}
+
+function successWithoutRuntimeMeta(result: unknown): RpcResponse {
+  return { id: 'rpc-1', ok: true, result } as RpcResponse
 }
 
 function failure(code: string, message: string): RpcFailure {
@@ -90,7 +95,7 @@ describe('mobile file mutation ownership', () => {
 
   it('rejects a runtime owner that mobile cannot verify against its paired HUB', () => {
     expect(() => buildMobileFileMutationOwnership('runtime:environment-1')).toThrow(
-      "Couldn't verify this workspace's runtime"
+      FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE
     )
   })
 
@@ -164,6 +169,20 @@ describe('mobile file mutation ownership', () => {
       runtimeId: 'runtime-1',
       transportGeneration: null
     })
+  })
+
+  it('rejects a pre-metadata runtime without surfacing a TypeError', async () => {
+    const sendRequest = vi.fn(async (method: string) =>
+      method === 'status.get'
+        ? successWithoutRuntimeMeta({
+            capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY]
+          })
+        : success({ worktree: { hostId: 'local' } })
+    )
+
+    await expect(
+      captureMobileFileMutationOwnership({ sendRequest }, 'id:worktree-1')
+    ).rejects.toThrow('Orca server changed')
   })
 
   it('captures SSH generation only after the concurrent owner checks', async () => {

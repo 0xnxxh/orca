@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE,
+  FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE,
   FILE_MUTATION_SSH_UNVERIFIED_MESSAGE
 } from '../../../shared/file-mutation-ownership'
 import type { SshConnectionState } from '../../../shared/ssh-types'
@@ -260,21 +261,17 @@ describe('paired web file mutation methods', () => {
     expect(callRuntimeResult).not.toHaveBeenCalled()
   })
 
-  it('treats the paired runtime transport as HUB-local execution', async () => {
+  it('fails closed before sending a runtime-owned worktree mutation', async () => {
     resolveFilePath.mockResolvedValueOnce(
       resolvedFile('wt-runtime', 'runtime:paired-hub', 'readme.md')
     )
     const methods = createWebFileMutationMethods({ captureSession })
 
-    await methods.writeFile({ filePath: '/runtime/repo/readme.md', content: 'updated' })
-
-    expect(callRuntimeResult).toHaveBeenCalledWith('files.write', {
-      worktree: 'id:wt-runtime',
-      relativePath: 'readme.md',
-      content: 'updated',
-      expectedExecutionHostId: 'local'
-    })
+    await expect(
+      methods.writeFile({ filePath: '/runtime/repo/readme.md', content: 'updated' })
+    ).rejects.toThrow(FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE)
     expect(getSshState).not.toHaveBeenCalled()
+    expect(callRuntimeResult).not.toHaveBeenCalled()
   })
 
   it('rejects an old HUB before reading SSH state or sending a mutation', async () => {

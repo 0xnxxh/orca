@@ -8,6 +8,8 @@ import type { SshConnectionState, SshMutationExpectation } from './ssh-types'
 
 export const FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE =
   "Couldn't verify where this workspace's files are stored. Refresh the workspace list and try again."
+export const FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE =
+  "Couldn't verify this runtime-owned workspace from this client. Open it in its owning environment and try again."
 export const FILE_MUTATION_SSH_UNVERIFIED_MESSAGE =
   "Couldn't verify this workspace's SSH connection. Reconnect the host and try again."
 
@@ -31,8 +33,11 @@ export function buildFileMutationOwnership(
   if (!host) {
     throw new Error(FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE)
   }
-  if (host.kind === 'local' || host.kind === 'runtime') {
+  if (host.kind === 'local') {
     return { expectedExecutionHostId: 'local' }
+  }
+  if (host.kind === 'runtime') {
+    throw new Error(FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE)
   }
   if (sshState?.targetId !== host.targetId || sshState.connectionGeneration === undefined) {
     throw new Error(FILE_MUTATION_SSH_UNVERIFIED_MESSAGE)

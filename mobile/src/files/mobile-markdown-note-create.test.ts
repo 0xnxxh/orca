@@ -17,6 +17,10 @@ function failure(message: string, runtimeId = 'runtime-1'): RpcResponse {
   }
 }
 
+function successWithoutRuntimeMeta(result: unknown): RpcResponse {
+  return { id: 'rpc-1', ok: true, result } as RpcResponse
+}
+
 function sshState(generation: number): SshConnectionState {
   return {
     targetId: 'target-1',
@@ -183,6 +187,26 @@ describe('mobile markdown note creation fence', () => {
       'Orca server changed'
     )
     expect(createAttempts).toBe(1)
+  })
+
+  it('rejects a mutation reply without runtime metadata', async () => {
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return statusResponse()
+      }
+      if (method === 'worktree.show') {
+        return success({ worktree: { hostId: 'local' } })
+      }
+      if (method === 'files.createFile') {
+        return successWithoutRuntimeMeta({ ok: true })
+      }
+      throw new Error(`Unexpected RPC request: ${method}`)
+    })
+
+    await expect(createAndOpenMobileMarkdownNote({ sendRequest }, 'id:worktree-1')).rejects.toThrow(
+      'Orca server changed'
+    )
+    expect(sendRequest.mock.calls.some(([method]) => method === 'files.open')).toBe(false)
   })
 
   it('does not retry an ambiguous mutation timeout as a filename collision', async () => {

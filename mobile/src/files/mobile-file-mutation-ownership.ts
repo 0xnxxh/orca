@@ -3,6 +3,7 @@ import {
   assertFileMutationOwnershipCapability,
   buildFileMutationOwnership,
   FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE,
+  FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE,
   FILE_MUTATION_SSH_UNVERIFIED_MESSAGE,
   type FileMutationOwnership
 } from '../../../src/shared/file-mutation-ownership'
@@ -19,8 +20,6 @@ import {
 import type { RpcFailure, RpcSuccess } from '../transport/types'
 
 const FILE_MUTATION_PREFLIGHT_TIMEOUT_MS = 15_000
-const RUNTIME_OWNER_UNVERIFIED_MESSAGE =
-  "Couldn't verify this workspace's runtime. Refresh the workspace list and try again."
 const RUNTIME_CHANGED_MESSAGE = 'The Orca server changed while verifying the workspace. Try again.'
 const PREFLIGHT_TIMEOUT_MESSAGE =
   "Couldn't verify the workspace before the request timed out. Check the connection and try again."
@@ -55,9 +54,8 @@ export function buildMobileFileMutationOwnership(
   sshState: SshConnectionState | null = null
 ): MobileFileMutationOwnership {
   const host = parseExecutionHostId(worktreeHostId)
-  // Mobile cannot prove that its paired HUB owns an environment-scoped runtime.
   if (host?.kind === 'runtime') {
-    throw new Error(RUNTIME_OWNER_UNVERIFIED_MESSAGE)
+    throw new Error(FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE)
   }
   if (host?.kind === 'ssh' && sshState?.status !== 'connected') {
     throw new Error(FILE_MUTATION_SSH_UNVERIFIED_MESSAGE)
@@ -104,7 +102,7 @@ export function assertMobileFileMutationResponseRuntime(
   fence: MobileFileMutationFence,
   response: RpcSuccess | RpcFailure
 ): void {
-  if (response._meta.runtimeId !== fence.runtimeId) {
+  if (getResponseRuntimeId(response) !== fence.runtimeId) {
     throw new Error(RUNTIME_CHANGED_MESSAGE)
   }
 }
@@ -232,11 +230,16 @@ async function requestResult<TResult>(
   if (!response.ok) {
     throw new Error(getMobileFileMutationFailureMessage(response))
   }
-  const runtimeId = response._meta.runtimeId.trim()
-  if (!runtimeId) {
+  const runtimeId = getResponseRuntimeId(response)
+  return { result: response.result as TResult, runtimeId }
+}
+
+function getResponseRuntimeId(response: RpcSuccess | RpcFailure): string {
+  const runtimeId = response._meta?.runtimeId
+  if (typeof runtimeId !== 'string' || !runtimeId.trim()) {
     throw new Error(RUNTIME_CHANGED_MESSAGE)
   }
-  return { result: response.result as TResult, runtimeId }
+  return runtimeId.trim()
 }
 
 function getTransportGeneration(client: Pick<RpcClient, 'sendRequest'>): number | null {
