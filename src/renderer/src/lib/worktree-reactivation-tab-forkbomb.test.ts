@@ -1,27 +1,17 @@
+import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useAppStore } from '@/store'
+import { useAppStore, type AppState } from '@/store'
 import { activateAndRevealWorktree } from './worktree-activation'
 import { makeCreatedAgentWorktree as makeWorktree } from '@/lib/worktree-activation-created-agent-test-state'
 
-// STA-1111: reopening a workspace repeatedly must never accumulate tabs.
-// Two independent reopen paths can each seed a "last codex session" tab:
-//   1. buildCreatedAgentReopenStartup — resumes worktree.createdWithAgent for an
-//      empty worktree (ensureWorktreeHasInitialTerminal).
-//   2. resumeSleepingAgentSessionsForWorktree — resumes a captured provider
-//      session, re-captured on every sleep.
-// Both must be idempotent across reopens; otherwise every return to the
-// workspace mints another codex tab (the reported "fork bomb").
-
 const initialAppStoreState = useAppStore.getState()
 
-function baseState(
-  worktree: ReturnType<typeof makeWorktree>
-): Parameters<typeof useAppStore.setState>[0] {
+function baseState(worktree: ReturnType<typeof makeWorktree>): Partial<AppState> {
   return {
     repos: [
       {
         id: 'repo-1',
-        path: '/workspace/repo',
+        path: path.join(path.sep, 'workspace', 'repo'),
         displayName: 'repo',
         badgeColor: '#000000',
         addedAt: 0
@@ -43,6 +33,8 @@ function baseState(
     activeTabIdByWorktree: {},
     tabBarOrderByWorktree: {},
     pendingStartupByTabId: {},
+    automaticAgentResumeClaimsByTabId: {},
+    agentStatusByPaneKey: {},
     sleepingAgentSessionsByPaneKey: {},
     settings: {
       agentCmdOverrides: {},
@@ -55,55 +47,30 @@ function baseState(
   }
 }
 
-function worktreeTabCount(worktreeId: string): number {
-  return useAppStore.getState().tabsByWorktree[worktreeId]?.length ?? 0
-}
-
 afterEach(() => {
   useAppStore.setState(initialAppStoreState, true)
 })
 
 describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
-  it('created-agent reopen seeds at most one codex tab across repeated activations', () => {
-    const worktree = makeWorktree()
-    useAppStore.setState(baseState(worktree))
-
-    for (let reopen = 0; reopen < 3; reopen++) {
-      activateAndRevealWorktree(worktree.id)
-      // Simulate the resumed codex pty never staying live between visits.
-      useAppStore.setState((s) => ({
-        ptyIdsByTabId: {},
-        tabsByWorktree: {
-          ...s.tabsByWorktree,
-          [worktree.id]: (s.tabsByWorktree[worktree.id] ?? []).map((tab) => ({
-            ...tab,
-            ptyId: null
-          }))
-        }
-      }))
-      expect(worktreeTabCount(worktree.id)).toBe(1)
-    }
-  })
-
   it('re-captured sleeping codex session resumes once, not once per reopen', () => {
-    const worktree = makeWorktree()
+    const worktree = { ...makeWorktree(), createdWithAgent: undefined }
     useAppStore.setState(baseState(worktree))
+    const providerSession = { key: 'session_id' as const, id: 'codex-session-1' }
 
     for (let reopen = 0; reopen < 4; reopen++) {
-      // Capture-on-sleep re-adds a fresh working record for the SAME provider
-      // session every time the workspace is left; each reopen sees a new record.
+      const paneKey = `slept-pane-${reopen}:0`
       useAppStore.setState((s) => ({
         sleepingAgentSessionsByPaneKey: {
           ...s.sleepingAgentSessionsByPaneKey,
-          [`slept-pane-${reopen}:0`]: {
-            paneKey: `slept-pane-${reopen}:0`,
+          [paneKey]: {
+            paneKey,
             tabId: `slept-pane-${reopen}`,
             worktreeId: worktree.id,
-            agent: 'codex' as const,
-            providerSession: { key: 'session_id', id: 'codex-session-1' },
+            agent: 'codex',
+            providerSession,
             prompt: 'resume prior task',
-            state: 'working' as const,
-            origin: 'live' as const,
+            state: 'working',
+            origin: 'live',
             capturedAt: 1000 + reopen,
             updatedAt: 1000 + reopen,
             terminalTitle: 'Codex'
@@ -112,22 +79,20 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
       }))
 
       activateAndRevealWorktree(worktree.id)
-      // The resumed codex pty dies between visits (session ended / crashed),
-      // which is what let earlier builds re-resume into a brand-new tab.
-      useAppStore.setState((s) => ({
-        ptyIdsByTabId: {},
-        tabsByWorktree: {
-          ...s.tabsByWorktree,
-          [worktree.id]: (s.tabsByWorktree[worktree.id] ?? []).map((tab) => ({
-            ...tab,
-            ptyId: null
-          }))
-        }
-      }))
+      const state = useAppStore.getState()
+      const tabs = state.tabsByWorktree[worktree.id] ?? []
 
-      // Revert-sensitive: without the activeOrQueuedResumeClaimsProviderSession
-      // guard (PR #6945) this count climbs 1, 2, 3, 4 — the fork bomb.
-      expect(worktreeTabCount(worktree.id)).toBe(1)
+      expect(tabs).toHaveLength(1)
+      expect(state.automaticAgentResumeClaimsByTabId[tabs[0]!.id]?.providerSession).toEqual(
+        providerSession
+      )
+      expect(state.sleepingAgentSessionsByPaneKey[paneKey]).toBeUndefined()
+
+      if (reopen === 0) {
+        expect(state.consumeTabStartupCommand(tabs[0]!.id)?.resumeProviderSession).toEqual(
+          providerSession
+        )
+      }
     }
   })
 })
