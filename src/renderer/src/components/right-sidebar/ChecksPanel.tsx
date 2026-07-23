@@ -957,7 +957,8 @@ export default function ChecksPanel(): React.JSX.Element {
   const checksPanelReviewLookup = checksPanelReviewLookupResult.state
   const hasUnrenderedReviewEvidence =
     checksPanelReviewLookup === 'positive_unresolved' ||
-    hostedReviewCreation?.blockedReason === 'existing_review'
+    (checksPanelReviewLookup !== 'found' &&
+      hostedReviewCreation?.blockedReason === 'existing_review')
   const unrenderedReviewEvidenceIdentity =
     linkedReviewNumber ??
     hostedReview?.number ??

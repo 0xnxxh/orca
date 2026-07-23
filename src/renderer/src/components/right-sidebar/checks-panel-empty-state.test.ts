@@ -167,6 +167,17 @@ describe('getChecksPanelReviewState — precedence', () => {
     expect(state.title).toBe('No upstream configured')
   })
 
+  it('a safety blocker still owns the copy over positive evidence and an in-flight fetch', () => {
+    const state = getChecksPanelReviewState(
+      input({
+        eligibilityBlockedReason: 'dirty',
+        reviewLookup: 'positive_unresolved',
+        refresh: { status: 'in-flight' }
+      })
+    )
+    expect(state.title).toBe('Commit changes first')
+  })
+
   it('hard refresh error hides the composer', () => {
     const state = getChecksPanelReviewState(
       input({ refresh: { status: 'error', errorType: 'auth' } })

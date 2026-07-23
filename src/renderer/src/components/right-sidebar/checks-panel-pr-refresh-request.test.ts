@@ -45,6 +45,17 @@ describe('resolveChecksPanelPRRefreshRequest', () => {
     ).toEqual({ reason: 'swr', priority: 30 })
   })
 
+  it('does not force provider work when review details are already cached', () => {
+    expect(
+      resolveChecksPanelPRRefreshRequest({
+        cachedHasPR: true,
+        cachedFetchedAt: 100,
+        panelVisibleSince: 200,
+        hasUnrenderedReviewEvidence: true
+      })
+    ).toEqual({ reason: 'swr', priority: 30 })
+  })
+
   it('keeps populated or unknown cache entries on the background path', () => {
     expect(
       resolveChecksPanelPRRefreshRequest({

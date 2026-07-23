@@ -74,12 +74,14 @@ export function getChecksPanelReviewState(
 
   const blockedReason = input.eligibilityBlockedReason
 
-  // 1.5 Keep active positive-review lookups self-updating; concurrent branch blockers still own their guidance.
+  // 1.5 Keep active positive-review lookups self-updating without hiding stronger safety guidance.
   const reviewFetchInFlight =
     input.refresh?.status === 'queued' || input.refresh?.status === 'in-flight'
   const hasPendingReviewEvidence =
     input.reviewLookup === 'positive_unresolved' || blockedReason === 'existing_review'
-  if (reviewFetchInFlight && hasPendingReviewEvidence && !isBranchBlocker(blockedReason)) {
+  const pendingReviewLookupOwnsState =
+    blockedReason === undefined || blockedReason === 'existing_review'
+  if (reviewFetchInFlight && hasPendingReviewEvidence && pendingReviewLookupOwnsState) {
     return {
       renderReview: false,
       title: translate(

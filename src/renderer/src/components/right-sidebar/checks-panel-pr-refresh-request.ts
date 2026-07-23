@@ -22,10 +22,12 @@ export function resolveChecksPanelPRRefreshRequest(
     input.cachedFetchedAt !== null &&
     input.panelVisibleSince !== null &&
     input.cachedFetchedAt < input.panelVisibleSince
+  const unresolvedEvidenceNeedsForeground =
+    input.hasUnrenderedReviewEvidence && input.cachedHasPR !== true
 
   if (
     !input.hasRequestedForegroundRefresh &&
-    (cachedMissPredatesVisiblePanel || input.hasUnrenderedReviewEvidence)
+    (cachedMissPredatesVisiblePanel || unresolvedEvidenceNeedsForeground)
   ) {
     // A stale miss or new positive evidence needs one foreground lookup to recover.
     return { reason: 'active', priority: 80 }
