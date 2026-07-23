@@ -18,6 +18,7 @@ vi.mock('./mobile-clipboard-image', () => ({
 }))
 
 import type { RpcClient } from '../transport/rpc-client'
+import { resetMobileNativeChatImageScopeCacheForTests } from './mobile-native-chat-image-scope-cache'
 import { useMobileNativeChatPendingImages } from './use-mobile-native-chat-pending-images'
 
 type PendingImagesState = ReturnType<typeof useMobileNativeChatPendingImages>
@@ -30,10 +31,13 @@ const onError = vi.fn()
 describe('useMobileNativeChatPendingImages', () => {
   let renderer: ReactTestRenderer | null = null
   let state: PendingImagesState | null = null
+  let renderCount = 0
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     vi.clearAllMocks()
+    resetMobileNativeChatImageScopeCacheForTests()
+    renderCount = 0
   })
 
   afterEach(() => {
@@ -51,6 +55,7 @@ describe('useMobileNativeChatPendingImages', () => {
     rpcClient?: RpcClient
     attachmentScopeKey?: string
   }): null {
+    renderCount += 1
     state = useMobileNativeChatPendingImages({
       client: rpcClient,
       activeHandle,
@@ -104,17 +109,6 @@ describe('useMobileNativeChatPendingImages', () => {
     expect(onSuccess).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to a data URI thumbnail when the picker has no file URI', async () => {
-    pickMobileImage.mockResolvedValue({ base64: 'AAAA' })
-    saveMobileClipboardImageAsTempFile.mockResolvedValue('/tmp/a.png')
-    render()
-
-    await act(async () => {
-      await state!.attachPendingChatImage('library')
-    })
-    expect(state!.pendingChatImages[0]?.thumbnailUri).toBe('data:image/png;base64,AAAA')
-  })
-
   it('adds nothing when the picker is cancelled', async () => {
     pickMobileImage.mockResolvedValue(null)
     render()
@@ -163,7 +157,7 @@ describe('useMobileNativeChatPendingImages', () => {
     expect(state!.pendingChatImages).toEqual([])
   })
 
-  it('drops pending images when the active terminal handle changes', async () => {
+  it('shows pending images only in their owning terminal and restores them on return', async () => {
     pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
     saveMobileClipboardImageAsTempFile.mockResolvedValue('/tmp/a.png')
     render('t1')
@@ -178,6 +172,38 @@ describe('useMobileNativeChatPendingImages', () => {
     })
     expect(state!.pendingChatImages).toEqual([])
     expect(state!.getSendableChatImages()).toEqual([])
+
+    act(() => {
+      renderer!.update(createElement(Harness, { activeHandle: 't1' }))
+    })
+    expect(state!.getSendableChatImages()).toEqual([
+      { id: 'chat-image-1', status: 'ready', hostPath: '/tmp/a.png' }
+    ])
+  })
+
+  it('restores pasted state when an acknowledgement lands after switching targets', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    saveMobileClipboardImageAsTempFile.mockResolvedValue('/tmp/a.png')
+    render('t1')
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+    })
+
+    act(() => {
+      renderer!.update(createElement(Harness, { activeHandle: 't2' }))
+    })
+    const rendersBeforeLateAck = renderCount
+    act(() => state!.markPendingChatImagesPasted(['chat-image-1']))
+    expect(state!.pendingChatImages).toEqual([])
+    expect(renderCount).toBe(rendersBeforeLateAck)
+
+    act(() => {
+      renderer!.update(createElement(Harness, { activeHandle: 't1' }))
+    })
+    expect(state!.pendingChatImages).toEqual([
+      { id: 'chat-image-1', thumbnailUri: 'file:///a.jpg', status: 'pasted', hostPath: null }
+    ])
+    expect(state!.getSendableChatImages()).toEqual([{ id: 'chat-image-1', status: 'pasted' }])
   })
 
   it('retains pasted images until submission and prevents removing them', async () => {
@@ -332,5 +358,22 @@ describe('useMobileNativeChatPendingImages', () => {
 
     expect(onSuccess).not.toHaveBeenCalled()
     expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('restores completed image state after the composer remounts', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    saveMobileClipboardImageAsTempFile.mockResolvedValue('/tmp/a.png')
+    render('t1')
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+    })
+
+    act(() => renderer!.unmount())
+    renderer = null
+    render('t1')
+
+    expect(state!.getSendableChatImages()).toEqual([
+      { id: 'chat-image-1', status: 'ready', hostPath: '/tmp/a.png' }
+    ])
   })
 })

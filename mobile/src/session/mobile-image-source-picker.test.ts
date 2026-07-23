@@ -81,6 +81,21 @@ describe('pickMobileImage', () => {
     expect(result).toBeNull()
   })
 
+  it('returns null when the library picker yields an empty file', async () => {
+    const file = fileFactory([])
+    const result = await pickMobileImage('library', {
+      requestLibraryPermission: vi.fn().mockResolvedValue(granted),
+      launchLibrary: vi.fn().mockResolvedValue({
+        canceled: false,
+        assets: [{ uri: 'file:///empty.jpg', fileSize: 0 }]
+      }),
+      createFile: file.createFile
+    })
+
+    expect(result).toBeNull()
+    expect(file.close).toHaveBeenCalledTimes(1)
+  })
+
   it('reads a picked file URI into base64 for the files source', async () => {
     const bytes = new Uint8Array([1, 2, 3, 4])
     const file = fileFactory([bytes])

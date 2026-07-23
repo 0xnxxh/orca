@@ -3,6 +3,12 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { saveMobileClipboardImageAsTempFile } from './mobile-clipboard-image'
 import { pickMobileImage, type MobileImageSource } from './mobile-image-source-picker'
+import {
+  nextMobileNativeChatImageId,
+  readMobileNativeChatImageScope,
+  updateMobileNativeChatImageScopeEntries,
+  writeMobileNativeChatImageScope
+} from './mobile-native-chat-image-scope-cache'
 import { mobileImageAttachToastMessage } from './use-mobile-image-attachment'
 
 /** A picked-but-unsent image shown as a removable thumbnail in the chat
@@ -57,11 +63,17 @@ export function useMobileNativeChatPendingImages({
   onSuccess,
   onError
 }: UseMobileNativeChatPendingImagesArgs): MobileNativeChatPendingImages {
-  const [entries, setEntries] = useState<readonly PendingImageEntry[]>([])
+  const [entries, setEntries] = useState<readonly PendingImageEntry[]>(() =>
+    readMobileNativeChatImageScope({ client, key: attachmentScopeKey })
+  )
   const entriesRef = useRef(entries)
-  const idCounter = useRef(0)
   const mountedRef = useRef(false)
   const uploadControllersRef = useRef(new Map<string, AbortController>())
+  const targetState = useRef({
+    client,
+    attachmentScopeKey,
+    generation: 0
+  })
 
   useEffect(() => {
     mountedRef.current = true
@@ -71,7 +83,10 @@ export function useMobileNativeChatPendingImages({
         controller.abort()
       }
       uploadControllersRef.current.clear()
-      // Why: release thumbnail data captured by in-flight uploads instead of retaining it until RPC timeout.
+      writeMobileNativeChatImageScope(
+        { client: targetState.current.client, key: targetState.current.attachmentScopeKey },
+        entriesRef.current
+      )
       entriesRef.current = []
     }
   }, [])
@@ -97,15 +112,17 @@ export function useMobileNativeChatPendingImages({
         return
       }
       entriesRef.current = next
+      writeMobileNativeChatImageScope(
+        { client: targetState.current.client, key: targetState.current.attachmentScopeKey },
+        next
+      )
       setEntries(next)
     },
     []
   )
 
-  // Why: pending images target the active terminal's agent; a tab/worktree
-  // switch would silently re-aim them, so drop instead (adjust during render,
-  // not in an effect, so a send in the same frame can't read stale entries).
-  const targetState = useRef({ client, attachmentScopeKey, generation: 0 })
+  // Why: a path accepted by a hidden TUI must remain visible only in its owning
+  // composer, including when its acknowledgement arrives during a tab switch.
   if (
     targetState.current.client !== client ||
     targetState.current.attachmentScopeKey !== attachmentScopeKey
@@ -115,10 +132,9 @@ export function useMobileNativeChatPendingImages({
       attachmentScopeKey,
       generation: targetState.current.generation + 1
     }
-    if (entriesRef.current.length > 0) {
-      entriesRef.current = []
-      setEntries([])
-    }
+    const restored = readMobileNativeChatImageScope({ client, key: attachmentScopeKey })
+    entriesRef.current = restored
+    setEntries(restored)
   }
 
   const attachPendingChatImage = useCallback(
@@ -142,8 +158,7 @@ export function useMobileNativeChatPendingImages({
         if (!picked || !targetIsCurrent()) {
           return
         }
-        idCounter.current += 1
-        const id = `chat-image-${idCounter.current}`
+        const id = nextMobileNativeChatImageId()
         entryId = id
         uploadController = new AbortController()
         uploadControllersRef.current.set(id, uploadController)
@@ -151,9 +166,7 @@ export function useMobileNativeChatPendingImages({
           ...previous,
           {
             id,
-            // Why: prefer the picker's file URI so the thumbnail doesn't hold a
-            // second base64 copy of the image in JS memory.
-            thumbnailUri: picked.uri ?? `data:image/png;base64,${picked.base64}`,
+            thumbnailUri: picked.uri,
             status: 'uploading',
             hostPath: null
           }
@@ -247,12 +260,19 @@ export function useMobileNativeChatPendingImages({
         return
       }
       const pasted = new Set(ids)
-      updateEntries((previous) =>
-        previous.map((entry) =>
-          pasted.has(entry.id) && entry.status === 'ready'
-            ? { ...entry, status: 'pasted', hostPath: null }
-            : entry
-        )
+      updateEntries((previous) => {
+        let changed = false
+        const next = previous.map((entry) => {
+          if (!pasted.has(entry.id) || entry.status !== 'ready') {
+            return entry
+          }
+          changed = true
+          return { ...entry, status: 'pasted' as const, hostPath: null }
+        })
+        return changed ? next : previous
+      })
+      updateMobileNativeChatImageScopeEntries(pasted, (entry) =>
+        entry.status === 'ready' ? { ...entry, status: 'pasted', hostPath: null } : entry
       )
     },
     [updateEntries]
@@ -264,7 +284,11 @@ export function useMobileNativeChatPendingImages({
         return
       }
       const consumed = new Set(ids)
-      updateEntries((previous) => previous.filter((entry) => !consumed.has(entry.id)))
+      updateEntries((previous) => {
+        const next = previous.filter((entry) => !consumed.has(entry.id))
+        return next.length === previous.length ? previous : next
+      })
+      updateMobileNativeChatImageScopeEntries(consumed, () => null)
     },
     [updateEntries]
   )
