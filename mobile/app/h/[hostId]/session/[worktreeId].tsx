@@ -1400,7 +1400,10 @@ export default function SessionScreen() {
         {
           terminal: handle,
           client: { id: deviceTokenRef.current!, type: 'mobile' as const },
-          viewport: viewportRef.current ?? undefined,
+          viewport: nativeChatTerminalStream.mobileNativeChatSubscribeViewport(
+            covered,
+            viewportRef.current
+          ),
           capabilities: nativeChatTerminalStream.mobileNativeChatTerminalCapabilities(covered)
         },
         (result) => {
@@ -2478,6 +2481,7 @@ export default function SessionScreen() {
     terminalFrameHeightRef,
     viewportRef,
     viewportMeasuredRef,
+    nativeChatCoveredRef: showNativeChatRef,
     clientRef,
     deviceTokenRef,
     initializedHandlesRef,
