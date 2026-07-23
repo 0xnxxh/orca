@@ -13,8 +13,9 @@ export const MAX_COLD_RESTORE_CACHE_BYTES = 16 * 1024 * 1024
 
 export function getColdRestorePayloadBytes(payload: ColdRestorePayload): number {
   const oscLinkBytes =
-    payload.oscLinks?.reduce((bytes, link) => bytes + Buffer.byteLength(link.uri) + 24, 0) ?? 0
-  return Buffer.byteLength(payload.scrollback) + Buffer.byteLength(payload.cwd) + oscLinkBytes + 16
+    payload.oscLinks?.reduce((bytes, link) => bytes + link.uri.length * 2 + 24, 0) ?? 0
+  // Why: code-unit sizing bounds V8 string storage without rescanning or flattening multi-MB ropes.
+  return payload.scrollback.length * 2 + payload.cwd.length * 2 + oscLinkBytes + 16
 }
 
 export class ColdRestorePayloadCache {
