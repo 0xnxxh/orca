@@ -43,6 +43,7 @@ import { shouldUseShellReadyStartupDelivery } from '../../shared/codex-startup-d
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
 import type { PtyIncarnationId } from '../../shared/pty-incarnation'
 import { resolveSafePtyDefaultCwd } from '../providers/pty-default-cwd'
+import { DaemonDroppedWriteBuffer } from './daemon-dropped-write-buffer'
 
 type ColdRestorePayload = {
   scrollback: string
@@ -115,6 +116,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private respawnAdoptionClosed = false
   // Why: concurrent spawn() calls hitting a dead daemon would each fork their own; this promise coalesces respawns so only the first forks and the rest await it.
   private respawnPromise: Promise<void> | null = null
+  private deadEndpointWriteRecoveryPromise: Promise<void> | null = null
+  private droppedWriteFlushPromise: Promise<void> | null = null
+  private droppedWriteBuffer = new DaemonDroppedWriteBuffer()
+  private droppedWriteBufferOverflowWarned = false
+  private deadEndpointRespawnBlocked = false
   private dataListeners: ((payload: {
     id: string
     data: string
@@ -598,9 +604,24 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   write(id: string, data: string): void {
     this.markSessionDirty(id)
+    if (
+      !this.respawnAdoptionClosed &&
+      this.activeSessionIds.has(id) &&
+      this.deadEndpointWriteRecoveryPromise
+    ) {
+      this.bufferDroppedWrite(id, data)
+      return
+    }
     const delivered = this.client.notify('write', { sessionId: id, data })
     // Why: dropped writes have no rejection to feed the request-path respawn.
-    if (!delivered && this.activeSessionIds.has(id)) {
+    if (
+      !delivered &&
+      this.activeSessionIds.has(id) &&
+      this.respawnFn &&
+      !this.respawnAdoptionClosed &&
+      !this.deadEndpointRespawnBlocked
+    ) {
+      this.bufferDroppedWrite(id, data)
       this.triggerDeadEndpointRespawn()
     }
   }
@@ -685,6 +706,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       remainingRequestTimeoutMs(opts.deadlineMs)
     )
     this.activeSessionIds.delete(id)
+    this.droppedWriteBuffer.delete(id)
     this.dirtySessionVersions.delete(id)
     if (!opts.keepHistory) {
       this.coldRestoreCache.delete(id)
@@ -966,6 +988,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
   fanoutSyntheticExits(code: number): void {
     const ids = [...this.activeSessionIds]
     this.activeSessionIds.clear()
+    this.droppedWriteBuffer.clear()
+    this.droppedWriteBufferOverflowWarned = false
     this.dirtySessionVersions.clear()
     this.lastFullCheckpointAt.clear()
     this.sessionsNeedingFullCheckpoint.clear()
@@ -1053,6 +1077,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   dispose(): void {
     this.respawnAdoptionClosed = true
+    this.droppedWriteBuffer.clear()
     this.releasePendingRespawnAdoptionLease()
     this.stopCheckpointTimer()
     this.dirtySessionVersions.clear()
@@ -1085,6 +1110,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // but still write a final checkpoint so a daemon crash while Orca is closed has recovery data.
   async disconnectOnly(): Promise<void> {
     this.respawnAdoptionClosed = true
+    this.droppedWriteBuffer.clear()
     this.releasePendingRespawnAdoptionLease()
     this.stopCheckpointTimer()
     // Why: wait out an in-flight timer pass; racing on the shared tmp file risks ENOENT on rename, disabling future writes.
@@ -1141,6 +1167,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
     if (isFreshConnection) {
       this.resyncBackgroundedSessions()
     }
+    await this.flushDroppedWrites()
+    this.deadEndpointRespawnBlocked = false
+    this.droppedWriteBufferOverflowWarned = false
   }
 
   private resyncBackgroundedSessions(): void {
@@ -1402,17 +1431,86 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // Why: writes are fire-and-forget notifies with no rejection to feed withDaemonRetry; when one is dropped on a dead
   // endpoint, fork a replacement daemon directly using the same coalescing + adoption-lease machinery the request path uses.
   private triggerDeadEndpointRespawn(): void {
-    if (this.respawnAdoptionClosed || !this.respawnFn || this.respawnPromise) {
+    if (
+      this.respawnAdoptionClosed ||
+      !this.respawnFn ||
+      this.deadEndpointRespawnBlocked ||
+      this.deadEndpointWriteRecoveryPromise
+    ) {
       return
     }
-    this.respawnPromise = this.doRespawn()
-      // Why: adapter reconnect also restores event routing and daemon-owned flow-control state.
+    let respawn = this.respawnPromise
+    if (!respawn) {
+      const attempt = this.doRespawn()
+      const tracked = attempt.finally(() => {
+        if (this.respawnPromise === tracked) {
+          this.respawnPromise = null
+        }
+      })
+      respawn = tracked
+      this.respawnPromise = tracked
+    }
+    const recovery = respawn
       .then(() => this.ensureConnected())
-      .catch((err) => console.warn('[daemon] respawn after dropped PTY write failed:', err))
+      .catch((err) => {
+        this.deadEndpointRespawnBlocked = true
+        this.droppedWriteBuffer.clear()
+        this.droppedWriteBufferOverflowWarned = false
+        console.warn('[daemon] respawn after dropped PTY write failed:', err)
+      })
       .finally(() => {
         this.releasePendingRespawnAdoptionLease()
-        this.respawnPromise = null
+        if (this.deadEndpointWriteRecoveryPromise === recovery) {
+          this.deadEndpointWriteRecoveryPromise = null
+        }
       })
+    this.deadEndpointWriteRecoveryPromise = recovery
+  }
+
+  private bufferDroppedWrite(sessionId: string, data: string): void {
+    if (this.droppedWriteBuffer.enqueue(sessionId, data)) {
+      return
+    }
+    if (!this.droppedWriteBufferOverflowWarned) {
+      this.droppedWriteBufferOverflowWarned = true
+      console.warn('[daemon] dropped-write recovery buffer reached its bounded capacity')
+    }
+  }
+
+  private flushDroppedWrites(): Promise<void> {
+    if (this.droppedWriteFlushPromise) {
+      return this.droppedWriteFlushPromise
+    }
+    if (!this.droppedWriteBuffer.hasWrites) {
+      return Promise.resolve()
+    }
+    const flush = this.doFlushDroppedWrites().finally(() => {
+      if (this.droppedWriteFlushPromise === flush) {
+        this.droppedWriteFlushPromise = null
+      }
+    })
+    this.droppedWriteFlushPromise = flush
+    return flush
+  }
+
+  private async doFlushDroppedWrites(): Promise<void> {
+    while (this.droppedWriteBuffer.hasWrites) {
+      const writes = this.droppedWriteBuffer.drain()
+      this.droppedWriteBufferOverflowWarned = false
+      for (const { sessionId, data } of writes) {
+        if (!this.activeSessionIds.has(sessionId)) {
+          continue
+        }
+        try {
+          await this.client.request('write', { sessionId, data })
+        } catch (error) {
+          if (isDaemonGoneError(error)) {
+            throw error
+          }
+          // SessionNotFound emits an ordered exit event; other write failures leave the live session intact.
+        }
+      }
+    }
   }
 
   private async replaceUnhealthyMacResolverDaemonBeforeNewPty(): Promise<void> {
@@ -1563,6 +1661,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
           return
         }
         this.activeSessionIds.delete(event.sessionId)
+        this.droppedWriteBuffer.delete(event.sessionId)
         this.dirtySessionVersions.delete(event.sessionId)
         // Why: a reused sessionId must not inherit the dead session's owed resume (stray resumePty) or backgrounded/thinned state.
         this.pausedProducerSessionIds.delete(event.sessionId)

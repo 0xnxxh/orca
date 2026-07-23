@@ -34,6 +34,7 @@ function createTestDir(): string {
 }
 
 function createMockSubprocess(dataOnSubscribe?: string): SubprocessHandle & {
+  write: ReturnType<typeof vi.fn<(data: string) => void>>
   pause: ReturnType<typeof vi.fn<() => void>>
   resume: ReturnType<typeof vi.fn<() => void>>
   _simulateData: (data: string) => void
@@ -516,13 +517,15 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       })
     }
 
-    it('respawns the daemon when a live pane write is dropped on a dead socket', async () => {
+    it('respawns and exits a pane whose session died with the daemon', async () => {
       const respawn = vi.fn(async () => {
         restartServerOnRespawn()
         await server.start()
       })
       const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
       try {
+        const exits: string[] = []
+        healingAdapter.onExit(({ id }) => exits.push(id))
         const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
         const client = (healingAdapter as unknown as { client: DaemonClient }).client
         healingAdapter.setPtyBackgrounded(id, true)
@@ -546,6 +549,106 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
               (payload as { sessionId?: string }).sessionId === id
           )
         )
+        await waitFor(() => exits.includes(id))
+        expect(healingAdapter.hasPty(id)).toBe(false)
+      } finally {
+        healingAdapter.dispose()
+      }
+    })
+
+    it('replays ordered input when the daemon session survives a socket disconnect', async () => {
+      let releaseRespawn!: () => void
+      const respawn = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseRespawn = resolve
+          })
+      )
+      const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+      try {
+        const exits: string[] = []
+        healingAdapter.onExit(({ id }) => exits.push(id))
+        const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
+        const client = (healingAdapter as unknown as { client: DaemonClient }).client
+
+        client.disconnect()
+        healingAdapter.write(id, 'a')
+        healingAdapter.write(id, 'b')
+        healingAdapter.write(id, 'c')
+        releaseRespawn()
+
+        await waitFor(() => lastSubprocess.write.mock.calls.length > 0)
+        expect(lastSubprocess.write.mock.calls).toEqual([['abc']])
+        expect(exits).toEqual([])
+        expect(healingAdapter.hasPty(id)).toBe(true)
+        expect(respawn).toHaveBeenCalledTimes(1)
+      } finally {
+        healingAdapter.dispose()
+      }
+    })
+
+    it('does not spawn a daemon per keystroke after respawn fails', async () => {
+      const respawn = vi.fn(async () => {
+        throw new Error('daemon unavailable')
+      })
+      const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
+        const client = (healingAdapter as unknown as { client: DaemonClient }).client
+        await server.shutdown()
+        await waitFor(() => !client.isConnected())
+
+        healingAdapter.write(id, 'a')
+        await waitFor(
+          () =>
+            (
+              healingAdapter as unknown as {
+                deadEndpointRespawnBlocked: boolean
+              }
+            ).deadEndpointRespawnBlocked
+        )
+        for (let i = 0; i < 100; i += 1) {
+          healingAdapter.write(id, 'b')
+        }
+
+        expect(respawn).toHaveBeenCalledTimes(1)
+      } finally {
+        warn.mockRestore()
+        healingAdapter.dispose()
+      }
+    })
+
+    it('joins a request-path respawn instead of forking a second daemon', async () => {
+      let releaseRespawn!: () => void
+      const respawn = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          releaseRespawn = resolve
+        })
+        restartServerOnRespawn()
+        await server.start()
+      })
+      const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+      try {
+        const exits: string[] = []
+        healingAdapter.onExit(({ id }) => exits.push(id))
+        const { id } = await healingAdapter.spawn({ cols: 80, rows: 24 })
+        const client = (healingAdapter as unknown as { client: DaemonClient }).client
+        await server.shutdown()
+        await waitFor(() => !client.isConnected())
+
+        const newSpawn = healingAdapter.spawn({
+          sessionId: 'request-path-session',
+          cols: 80,
+          rows: 24
+        })
+        await waitFor(() => releaseRespawn !== undefined)
+        healingAdapter.write(id, 'queued')
+        releaseRespawn()
+
+        await expect(newSpawn).resolves.toMatchObject({ id: 'request-path-session' })
+        await waitFor(() => exits.includes(id))
+        expect(respawn).toHaveBeenCalledTimes(1)
       } finally {
         healingAdapter.dispose()
       }
