@@ -239,7 +239,7 @@ export async function waitForTerminalReady(page, timeoutMs = 60_000, terminalTab
 export async function ensureTerminal(page, { allowCreate = true, timeoutMs = 60_000 } = {}) {
   // Why: the agent-CLI feature-wall modal can already be up at first interaction
   // (it renders off an async capability check that races app launch).
-  await dismissOverlays(page)
+  await dismissKnownOverlays(page)
   const visibleTerminal = page.locator(TERMINAL_SURFACE_VISIBLE).first()
   if (await visibleTerminal.isVisible().catch(() => false)) {
     await waitForTerminalReady(page, timeoutMs)

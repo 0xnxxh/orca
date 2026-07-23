@@ -86,6 +86,43 @@ describe('dismissOverlays', () => {
     }
   })
 
+  it('dismisses the CLI tip without sending Escape into an already-restored terminal', async () => {
+    const dialogClose = {
+      first: vi.fn(),
+      isVisible: vi.fn().mockResolvedValue(true),
+      click: vi.fn().mockResolvedValue(undefined)
+    }
+    dialogClose.first.mockReturnValue(dialogClose)
+    const featureTipDialog = {
+      first: vi.fn(),
+      isVisible: vi.fn().mockResolvedValue(true),
+      locator: vi.fn().mockReturnValue(dialogClose)
+    }
+    featureTipDialog.first.mockReturnValue(featureTipDialog)
+    const xterm = {
+      first: vi.fn(),
+      waitFor: vi.fn().mockResolvedValue(undefined)
+    }
+    xterm.first.mockReturnValue(xterm)
+    const terminalSurface = {
+      first: vi.fn(),
+      isVisible: vi.fn().mockResolvedValue(true),
+      waitFor: vi.fn().mockResolvedValue(undefined),
+      locator: vi.fn().mockReturnValue(xterm)
+    }
+    terminalSurface.first.mockReturnValue(terminalSurface)
+    const page = {
+      locator: vi.fn().mockReturnValue(terminalSurface),
+      getByRole: vi.fn((role) => (role === 'dialog' ? featureTipDialog : hiddenButton())),
+      keyboard: { press: vi.fn().mockResolvedValue(undefined) }
+    }
+
+    await ensureTerminal(page, { allowCreate: false })
+
+    expect(dialogClose.click).toHaveBeenCalledOnce()
+    expect(page.keyboard.press).not.toHaveBeenCalled()
+  })
+
   it('submits within the composer without dismissing and reopening it', async () => {
     const newWorkspace = {
       first: vi.fn(),
