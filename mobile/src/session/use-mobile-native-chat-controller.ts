@@ -55,7 +55,7 @@ export type MobileNativeChatController = {
   handleNativeChatStop: () => void
   nativeChatFilePaths: string[]
   loadNativeChatFiles: (query: string) => void
-  handleNativeChatSend: (text: string) => Promise<boolean>
+  handleNativeChatSend: (text: string, images?: string[]) => Promise<boolean>
 }
 
 /** Owns mobile native-chat state and teardown outside the already dense session
@@ -222,7 +222,7 @@ export function useMobileNativeChatController(args: {
   })
 
   const handleNativeChatSend = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string, images?: string[]): Promise<boolean> => {
       const handle = activeHandleRef.current
       const origin = captureSendOrigin(text)
       if (!client || !handle || !origin || !nativeChatInputLeaseReady) {
@@ -249,7 +249,9 @@ export function useMobileNativeChatController(args: {
         onSendError('Message not sent')
         return false
       }
-      acceptSend(origin, text)
+      // `images` are local preview URIs for the optimistic echo only — the actual
+      // image bytes already rode along as a bracketed paste before this text send.
+      acceptSend(origin, text, images)
       return true
     },
     [

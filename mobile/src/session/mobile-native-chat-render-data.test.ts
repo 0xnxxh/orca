@@ -63,6 +63,28 @@ describe('buildMobileNativeChatData', () => {
     expect(last.blocks).toEqual([{ type: 'text', text: 'queued' }])
   })
 
+  it('renders a pending send with images as text followed by image-ref thumbnails', () => {
+    const { data } = buildMobileNativeChatData({
+      messages: [],
+      pending: [{ id: 'p1', text: 'look', images: ['file:///a.jpg', 'file:///b.jpg'] }]
+    })
+    const last = data[data.length - 1]
+    expect(last.role).toBe('user')
+    expect(last.blocks).toEqual([
+      { type: 'text', text: 'look' },
+      { type: 'image-ref', url: 'file:///a.jpg' },
+      { type: 'image-ref', url: 'file:///b.jpg' }
+    ])
+  })
+
+  it('renders an image-only pending send (no text) as just the thumbnail', () => {
+    const { data } = buildMobileNativeChatData({
+      messages: [],
+      pending: [{ id: 'p1', text: '', images: ['file:///a.jpg'] }]
+    })
+    expect(data[data.length - 1].blocks).toEqual([{ type: 'image-ref', url: 'file:///a.jpg' }])
+  })
+
   it('adds a synthetic streaming bubble while the partial text leads the transcript', () => {
     const { streaming, data } = buildMobileNativeChatData({
       messages: [user('u1', 'hi')],

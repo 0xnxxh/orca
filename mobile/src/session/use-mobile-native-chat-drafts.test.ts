@@ -120,6 +120,49 @@ describe('useMobileNativeChatDrafts', () => {
     expect(state?.pending.map((pending) => pending.text)).toEqual(['ping'])
   })
 
+  it('keeps an image-only echo through an agent reply, clearing only when the user turn lands', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
+      )
+    )
+    const origin = state?.captureSendOrigin('')
+    act(() => {
+      if (origin) {
+        state?.acceptSend(origin, '', ['file:///a.jpg'])
+      }
+    })
+    // The echo carries the preview thumbnail and has no text to match against.
+    expect(state?.pending.map((pending) => pending.images)).toEqual([['file:///a.jpg']])
+
+    // An agent reply grows the transcript but must NOT clear the photo echo early.
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [assistantTextMessage('a1', 'hi'), assistantTextMessage('a2', 'nice photo')]
+        })
+      )
+    )
+    expect(state?.pending.map((pending) => pending.images)).toEqual([['file:///a.jpg']])
+
+    // The user's own image turn landing (a new user message after the tail) clears it.
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [
+            assistantTextMessage('a1', 'hi'),
+            assistantTextMessage('a2', 'nice photo'),
+            userTextMessage('u1', '')
+          ]
+        })
+      )
+    )
+    expect(state?.pending).toEqual([])
+  })
+
   it('does not reconcile a repeated send against an older identical turn', async () => {
     await mount('a')
     await act(async () =>
@@ -199,6 +242,81 @@ describe('useMobileNativeChatDrafts', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('reconciles an image-only unconfirmed send against the next user turn (no false warning)', async () => {
+    vi.useFakeTimers()
+    try {
+      await mount('a')
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
+        )
+      )
+      // Image-only send: empty text, so it can only reconcile against a new user turn.
+      const origin = state?.captureSendOrigin('')
+      const onUnconfirmed = vi.fn()
+      act(() => {
+        if (origin) {
+          state?.holdUnconfirmedSend(origin, '', onUnconfirmed)
+        }
+      })
+
+      // An agent reply must not confirm it...
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, {
+            tabId: 'a',
+            messages: [assistantTextMessage('a1', 'hi'), assistantTextMessage('a2', 'ok')]
+          })
+        )
+      )
+      // ...but the user's own turn landing does, so the deadline never warns.
+      await act(async () =>
+        renderer?.update(
+          createElement(Harness, {
+            tabId: 'a',
+            messages: [
+              assistantTextMessage('a1', 'hi'),
+              assistantTextMessage('a2', 'ok'),
+              userTextMessage('u1', '')
+            ]
+          })
+        )
+      )
+      act(() => vi.advanceTimersByTime(30_000))
+      expect(onUnconfirmed).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears image-only echoes one per landed user turn, not all at once', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', messages: [assistantTextMessage('a1', 'hi')] })
+      )
+    )
+    const origin = state?.captureSendOrigin('')
+    act(() => {
+      if (origin) {
+        state?.acceptSend(origin, '', ['file:///a.jpg'])
+        state?.acceptSend(origin, '', ['file:///b.jpg'])
+      }
+    })
+    expect(state?.pending).toHaveLength(2)
+
+    // Only one user turn has landed — exactly one echo reconciles.
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          messages: [assistantTextMessage('a1', 'hi'), userTextMessage('u1', '')]
+        })
+      )
+    )
+    expect(state?.pending.map((pending) => pending.images)).toEqual([['file:///b.jpg']])
   })
 
   it('clears immediately when the transcript echo beat the ambiguous RPC rejection', async () => {

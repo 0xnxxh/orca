@@ -38,6 +38,14 @@ export function mobileNativeChatEmptyState(
  *  assistant turn, optionally append a synthetic streaming bubble, then the
  *  route-owned optimistic "queued" messages at the tail. Returns the
  *  intermediate `folded`/`streaming` so the caller can memoize on them. */
+/** An optimistic user echo: the text and/or the local preview URIs of any images
+ *  ridden along on the send, shown until the transcript catches up. */
+export type MobileNativeChatPendingItem = {
+  id: string
+  text: string
+  images?: string[]
+}
+
 export function buildMobileNativeChatData({
   messages,
   streamingText,
@@ -45,7 +53,7 @@ export function buildMobileNativeChatData({
 }: {
   messages: NativeChatMessage[]
   streamingText?: string
-  pending: Array<{ id: string; text: string }>
+  pending: MobileNativeChatPendingItem[]
 }): { folded: NativeChatMessage[]; streaming: string | null; data: NativeChatMessage[] } {
   const folded = foldMobileNativeChatMessages(messages)
   return buildMobileNativeChatTransientData({ folded, streamingText, pending })
@@ -62,7 +70,7 @@ export function buildMobileNativeChatTransientData({
 }: {
   folded: NativeChatMessage[]
   streamingText?: string
-  pending: Array<{ id: string; text: string }>
+  pending: MobileNativeChatPendingItem[]
 }): { folded: NativeChatMessage[]; streaming: string | null; data: NativeChatMessage[] } {
   // Only show the streaming bubble while its text leads the transcript — once the
   // real assistant turn lands with the same text, drop the synthetic one.
@@ -83,7 +91,12 @@ export function buildMobileNativeChatTransientData({
     ...pending.map((p) => ({
       id: p.id,
       role: 'user' as const,
-      blocks: [{ type: 'text' as const, text: p.text }],
+      // Text first (when present), then a thumbnail per ridden-along image so the
+      // sent photo shows immediately, before the transcript echo lands.
+      blocks: [
+        ...(p.text ? [{ type: 'text' as const, text: p.text }] : []),
+        ...(p.images ?? []).map((uri) => ({ type: 'image-ref' as const, url: uri }))
+      ],
       timestamp: null,
       source: 'transcript' as const
     }))

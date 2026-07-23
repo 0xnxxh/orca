@@ -175,7 +175,7 @@ import {
 } from '../../../../src/session/mobile-terminal-tab-agent'
 import type { MobileNewTabAgentOption } from '../../../../src/session/mobile-new-tab-agent-options'
 import { loadMobileNewTabAgentOptions } from '../../../../src/session/mobile-new-tab-agent-loader'
-import { useMobileImageAttachment } from '../../../../src/session/use-mobile-image-attachment'
+import { useMobileSessionImageAttachments } from '../../../../src/session/use-mobile-session-image-attachments'
 import { useMobileAttachmentInputLeaseGate } from '../../../../src/session/use-mobile-attachment-input-lease-gate'
 import { useMobileTerminalPaste } from '../../../../src/session/use-mobile-terminal-paste'
 import { useTerminalLiveInputModePreference } from '../../../../src/session/use-terminal-live-input-mode-preference'
@@ -3640,14 +3640,19 @@ export default function SessionScreen() {
     showToast
   })
 
-  const { attachImage, isAttaching } = useMobileImageAttachment({
+  // Terminal input pastes an attached image straight into the visible terminal;
+  // native chat instead holds it as a composer chip and rides it along on submit.
+  const { attachImage, isAttaching, nativeChatImages } = useMobileSessionImageAttachments({
     client,
     activeHandle,
+    activeHandleRef,
     canSend,
     connState,
     deviceTokenRef,
-    beforeTerminalSend: flushPendingLiveInputBeforeAttachmentSend,
+    nativeChatInputLeaseReady,
     getActiveWorktreeConnectionId,
+    beforeTerminalSend: flushPendingLiveInputBeforeAttachmentSend,
+    nativeChatBaseSend: nativeChatController.handleNativeChatSend,
     showToast,
     onSuccess: triggerSelection,
     onError: triggerError
@@ -4717,8 +4722,7 @@ export default function SessionScreen() {
                 ))}
                 <MobileNativeChatOverlay
                   controller={nativeChatController}
-                  onAttachImage={() => void attachImage('library')}
-                  isAttaching={isAttaching}
+                  images={nativeChatImages}
                   onMicPress={handleDictationToggle}
                   micActive={dictation.isRecording}
                   dictationMode={dictationMode}
