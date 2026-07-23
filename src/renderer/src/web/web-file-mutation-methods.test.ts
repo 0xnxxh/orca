@@ -231,6 +231,21 @@ describe('paired web file mutation methods', () => {
     expect(callRuntimeResult).not.toHaveBeenCalled()
   })
 
+  it('fails closed before mutation when the SSH connection is not connected', async () => {
+    // Why: a reconnecting connection can still report a stale-but-defined generation; the shared
+    // builder must fence it the same way for web as it does for mobile.
+    getSshState.mockResolvedValueOnce({
+      ...connectedSshState('hub-private-target', 17),
+      status: 'reconnecting'
+    })
+    const methods = createWebFileMutationMethods({ captureSession })
+
+    await expect(
+      methods.writeFile({ filePath: '/ssh/repo/source.md', content: 'unsafe' })
+    ).rejects.toThrow(FILE_MUTATION_SSH_UNVERIFIED_MESSAGE)
+    expect(callRuntimeResult).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['missing', undefined],
     ['invalid', 'runtime:' as Worktree['hostId']]

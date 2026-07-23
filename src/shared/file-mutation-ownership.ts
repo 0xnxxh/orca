@@ -2,7 +2,7 @@ import {
   FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY,
   FILE_MUTATION_OWNERSHIP_UPDATE_REQUIRED_MESSAGE
 } from './protocol-version'
-import { parseExecutionHostId } from './execution-host'
+import { parseExecutionHostId, toSshExecutionHostId } from './execution-host'
 import type { RuntimeStatus } from './runtime-types'
 import type { SshConnectionState, SshMutationExpectation } from './ssh-types'
 
@@ -39,11 +39,17 @@ export function buildFileMutationOwnership(
   if (host.kind === 'runtime') {
     throw new Error(FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE)
   }
-  if (sshState?.targetId !== host.targetId || sshState.connectionGeneration === undefined) {
+  // Why: every client (mobile + web) must fence SSH mutations to a live, matching connection and
+  // a canonical host id — a reconnecting state with a stale-but-defined generation fails closed.
+  if (
+    sshState?.status !== 'connected' ||
+    sshState.targetId !== host.targetId ||
+    sshState.connectionGeneration === undefined
+  ) {
     throw new Error(FILE_MUTATION_SSH_UNVERIFIED_MESSAGE)
   }
   return {
-    expectedExecutionHostId: host.id,
+    expectedExecutionHostId: toSshExecutionHostId(host.targetId),
     expectedSshTargetId: host.targetId,
     expectedSshConnectionGeneration: sshState.connectionGeneration
   }

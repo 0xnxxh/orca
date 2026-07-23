@@ -66,6 +66,73 @@ describe('mobile markdown note creation fence', () => {
     )
   })
 
+  it('surfaces a files.open failure after a successful create', async () => {
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return statusResponse()
+      }
+      if (method === 'worktree.show') {
+        return success({ worktree: { hostId: 'local' } })
+      }
+      if (method === 'files.createFile') {
+        return success({ ok: true })
+      }
+      if (method === 'files.open') {
+        return failure('Cannot open file')
+      }
+      throw new Error(`Unexpected RPC request: ${method}`)
+    })
+
+    await expect(createAndOpenMobileMarkdownNote({ sendRequest }, 'id:worktree-1')).rejects.toThrow(
+      'Cannot open file'
+    )
+  })
+
+  it('rejects a files.open reply from a replacement runtime', async () => {
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return statusResponse()
+      }
+      if (method === 'worktree.show') {
+        return success({ worktree: { hostId: 'local' } })
+      }
+      if (method === 'files.createFile') {
+        return success({ ok: true })
+      }
+      if (method === 'files.open') {
+        return success({ opened: true }, 'runtime-new')
+      }
+      throw new Error(`Unexpected RPC request: ${method}`)
+    })
+
+    await expect(createAndOpenMobileMarkdownNote({ sendRequest }, 'id:worktree-1')).rejects.toThrow(
+      'Orca server changed'
+    )
+  })
+
+  it('stops before opening when the transport cuts over after a successful create', async () => {
+    let transportGeneration = 1
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return statusResponse()
+      }
+      if (method === 'worktree.show') {
+        return success({ worktree: { hostId: 'local' } })
+      }
+      if (method === 'files.createFile') {
+        transportGeneration = 2
+        return success({ ok: true })
+      }
+      throw new Error(`Unexpected RPC request: ${method}`)
+    })
+    const client = { sendRequest, getGeneration: () => transportGeneration }
+
+    await expect(createAndOpenMobileMarkdownNote(client, 'id:worktree-1')).rejects.toThrow(
+      'Orca server changed'
+    )
+    expect(sendRequest.mock.calls.some(([method]) => method === 'files.open')).toBe(false)
+  })
+
   it('keeps one SSH ownership lease across name-collision retries', async () => {
     let createAttempts = 0
     const sendRequest = vi.fn(async (method: string) => {

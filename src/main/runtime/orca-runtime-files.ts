@@ -129,6 +129,14 @@ function assertRuntimeFileMutationExpectation(
     !declaredMatchesRoute ||
     !executionHostMatchesFileRoute(expectedExecutionHostId, connectionId)
   ) {
+    // Why: this is the strict ownership gate; leave an audit trail for stale clients, reconnect
+    // races, and any spoofed-ownership attempt, matching this file's other logged failure paths.
+    console.warn('[runtime-files.mutation] ownership route mismatch', {
+      worktreeHostId,
+      connectionId,
+      expectedExecutionHostId,
+      declaredMatchesRoute
+    })
     throw new Error('Workspace host changed; refresh and try again')
   }
   assertSshMutationExpectation(connectionId, expectedSshTargetId, expectedSshConnectionGeneration)

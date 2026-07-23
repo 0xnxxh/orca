@@ -3,8 +3,6 @@ import {
   assertFileMutationOwnershipCapability,
   buildFileMutationOwnership,
   FILE_MUTATION_OWNER_UNVERIFIED_MESSAGE,
-  FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE,
-  FILE_MUTATION_SSH_UNVERIFIED_MESSAGE,
   type FileMutationOwnership
 } from '../../../src/shared/file-mutation-ownership'
 import { inferFolderWorkspacePathConnection } from '../../../src/shared/folder-workspace-path-connection'
@@ -40,6 +38,13 @@ type MutationTargetHost = {
   runtimeIds: string[]
 }
 
+// Why: all fence rejections share one generic user message, so log the distinguishing cause
+// (mirroring the transport '[net]' convention) to keep a repeated failure diagnosable.
+function runtimeChangedError(cause: string, detail?: Record<string, unknown>): Error {
+  console.warn('[file-mutation-fence] runtime changed', { cause, ...detail })
+  return new Error(RUNTIME_CHANGED_MESSAGE)
+}
+
 export function getMobileFileMutationFailureMessage(failure: RpcFailure): string {
   if (
     failure.error.code === 'selector_not_found' ||
@@ -54,17 +59,9 @@ export function buildMobileFileMutationOwnership(
   worktreeHostId: string | null | undefined,
   sshState: SshConnectionState | null = null
 ): MobileFileMutationOwnership {
-  const host = parseExecutionHostId(worktreeHostId)
-  if (host?.kind === 'runtime') {
-    throw new Error(FILE_MUTATION_RUNTIME_UNVERIFIED_MESSAGE)
-  }
-  if (host?.kind === 'ssh' && sshState?.status !== 'connected') {
-    throw new Error(FILE_MUTATION_SSH_UNVERIFIED_MESSAGE)
-  }
-  const ownership = buildFileMutationOwnership(worktreeHostId, sshState)
-  return host?.kind === 'ssh'
-    ? { ...ownership, expectedExecutionHostId: toSshExecutionHostId(host.targetId) }
-    : ownership
+  // Ownership validation (runtime rejection, SSH liveness fence, canonical host id) lives in the
+  // shared builder so mobile and web stay identical.
+  return buildFileMutationOwnership(worktreeHostId, sshState)
 }
 
 export async function captureMobileFileMutationOwnership(
@@ -82,7 +79,7 @@ export async function captureMobileFileMutationOwnership(
       throw normalizePreflightError(error)
     }
   }
-  throw new Error(RUNTIME_CHANGED_MESSAGE)
+  throw runtimeChangedError('preflight-retry-exhausted')
 }
 
 export function assertMobileFileMutationFenceCurrent(
@@ -95,7 +92,10 @@ export function assertMobileFileMutationFenceCurrent(
     currentGeneration !== null &&
     currentGeneration !== fence.transportGeneration
   ) {
-    throw new Error(RUNTIME_CHANGED_MESSAGE)
+    throw runtimeChangedError('transport-generation-changed', {
+      expected: fence.transportGeneration,
+      current: currentGeneration
+    })
   }
 }
 
@@ -103,8 +103,12 @@ export function assertMobileFileMutationResponseRuntime(
   fence: MobileFileMutationFence,
   response: RpcSuccess | RpcFailure
 ): void {
-  if (getResponseRuntimeId(response) !== fence.runtimeId) {
-    throw new Error(RUNTIME_CHANGED_MESSAGE)
+  const runtimeId = getResponseRuntimeId(response)
+  if (runtimeId !== fence.runtimeId) {
+    throw runtimeChangedError('mutation-runtime-mismatch', {
+      expected: fence.runtimeId,
+      actual: runtimeId
+    })
   }
 }
 
@@ -242,7 +246,7 @@ async function requestResult<TResult>(
 function getResponseRuntimeId(response: RpcSuccess | RpcFailure): string {
   const runtimeId = response._meta?.runtimeId
   if (typeof runtimeId !== 'string' || !runtimeId.trim()) {
-    throw new Error(RUNTIME_CHANGED_MESSAGE)
+    throw runtimeChangedError('missing-response-runtime-id')
   }
   return runtimeId.trim()
 }
@@ -268,7 +272,10 @@ function assertCaptureTransportCurrent(
 
 function assertSameRuntime(expectedRuntimeId: string, actualRuntimeId: string): void {
   if (actualRuntimeId !== expectedRuntimeId) {
-    throw new Error(RUNTIME_CHANGED_MESSAGE)
+    throw runtimeChangedError('capture-runtime-mismatch', {
+      expected: expectedRuntimeId,
+      actual: actualRuntimeId
+    })
   }
 }
 
@@ -292,7 +299,7 @@ function normalizePreflightError(error: unknown): Error {
     return new Error(PREFLIGHT_TIMEOUT_MESSAGE)
   }
   if (isLogicalClientCutoverError(error)) {
-    return new Error(RUNTIME_CHANGED_MESSAGE)
+    return runtimeChangedError('logical-cutover')
   }
   return error instanceof Error ? error : new Error(String(error))
 }
