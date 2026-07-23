@@ -19,6 +19,20 @@ export function useNewWorktreeDrawerNavigation(modalVisible: boolean): {
   const formPinnedUnderSourceRef = useRef(false)
   const drawerTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Why: cancel any queued transition and reset when the modal closes, so a
+  // timer can't land after close and leave a stale drawer/pin for the next open.
+  useEffect(() => {
+    if (modalVisible) {
+      return
+    }
+    if (drawerTransitionTimerRef.current) {
+      clearTimeout(drawerTransitionTimerRef.current)
+      drawerTransitionTimerRef.current = null
+    }
+    formPinnedUnderSourceRef.current = false
+    setDrawerView('form')
+  }, [modalVisible])
+
   useEffect(() => {
     return () => {
       if (drawerTransitionTimerRef.current) {
