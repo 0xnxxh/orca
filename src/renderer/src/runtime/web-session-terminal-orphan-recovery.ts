@@ -53,11 +53,17 @@ async function recoverTerminalOrphans(
   environmentId: string,
   call: RuntimeCall
 ): Promise<RuntimeMobileSessionTabsResult | null> {
-  const hostTabIds = new Set(
-    snapshot.tabs.filter((tab) => tab.type === 'terminal').map((tab) => tab.parentTabId)
+  const hostSurfaceKeys = new Set(
+    snapshot.tabs
+      .filter((tab) => tab.type === 'terminal')
+      .map((tab) => `${tab.parentTabId}\0${tab.leafId}`)
   )
   const candidates = (state.tabsByWorktree[snapshot.worktree] ?? []).filter(
-    (tab) => isWebTerminalSurfaceTabId(tab.id) && !hostTabIds.has(toHostSessionTabId(tab.id))
+    (tab) =>
+      isWebTerminalSurfaceTabId(tab.id) &&
+      Object.keys(state.terminalLayoutsByTabId[tab.id]?.ptyIdsByLeafId ?? {}).some(
+        (leafId) => !hostSurfaceKeys.has(`${toHostSessionTabId(tab.id)}\0${leafId}`)
+      )
   )
   if (candidates.length === 0) {
     return snapshot
@@ -66,7 +72,8 @@ async function recoverTerminalOrphans(
     const layout = state.terminalLayoutsByTabId[tab.id]
     return Object.entries(layout?.ptyIdsByLeafId ?? {}).flatMap(([leafId, remotePtyId]) => {
       const remote = parseRemoteRuntimePtyId(remotePtyId)
-      return remote?.environmentId === environmentId
+      return remote?.environmentId === environmentId &&
+        !hostSurfaceKeys.has(`${toHostSessionTabId(tab.id)}\0${leafId}`)
         ? [{ tabId: toHostSessionTabId(tab.id), leafId, handle: remote.handle }]
         : []
     })

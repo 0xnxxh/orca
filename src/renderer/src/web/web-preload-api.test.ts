@@ -248,7 +248,7 @@ describe('web runtime environment identity', () => {
     })
 
     await globals.window.api.settings.setActiveRuntimeEnvironmentPreference({
-      environmentId: paired.environment.id
+      environmentId: 'Windows 2'
     })
     await globals.window.api.settings.set({ terminalFontSize: 15 })
     expect(JSON.parse(globals.storage.getItem('orca.web.settings.v1') ?? '{}')).toMatchObject({
@@ -263,6 +263,28 @@ describe('web runtime environment identity', () => {
     expect(JSON.parse(globals.storage.getItem('orca.web.settings.v1') ?? '{}')).toMatchObject({
       activeRuntimeEnvironmentId: null,
       terminalFontSize: 16
+    })
+  })
+
+  it('rejects an unknown explicit Active Server choice without corrupting the preference', async () => {
+    const globals = installBrowserGlobals('Linux')
+    const { installWebPreloadApi } = await import('./web-preload-api')
+    installWebPreloadApi()
+    const paired = await globals.window.api.runtimeEnvironments.addFromPairingCode({
+      name: 'Windows 2',
+      pairingCode: encodePairingCode({ publicKeyB64: 'windows-2-key' })
+    })
+    await globals.window.api.settings.setActiveRuntimeEnvironmentPreference({
+      environmentId: paired.environment.id
+    })
+
+    await expect(
+      globals.window.api.settings.setActiveRuntimeEnvironmentPreference({
+        environmentId: 'unknown-server'
+      })
+    ).rejects.toThrow('Unknown Orca runtime environment: unknown-server')
+    expect(JSON.parse(globals.storage.getItem('orca.web.settings.v1') ?? '{}')).toMatchObject({
+      activeRuntimeEnvironmentId: paired.environment.id
     })
   })
 

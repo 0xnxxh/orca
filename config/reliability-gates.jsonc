@@ -1519,7 +1519,8 @@
           "file": "src/renderer/src/runtime/web-session-terminal-orphan-recovery.test.ts",
           "assertions": [
             "absence stays pending until an exact live orphan adoption settles",
-            "client pane and group topology is pruned to exact orphan claims and translated to host tab identities"
+            "client pane and group topology is pruned to exact orphan claims and translated to host tab identities",
+            "a missing split leaf remains recoverable when another leaf in the same tab is already host-owned"
           ]
         },
         {
@@ -1691,6 +1692,13 @@
           "file": "src/renderer/src/components/settings/RuntimeEnvironmentsPane.test.ts",
           "assertions": [
             "connection status and the Advanced default-host selection are distinct concepts"
+          ]
+        },
+        {
+          "file": "src/renderer/src/web/web-preload-api.test.ts",
+          "assertions": [
+            "generic web settings writes cannot mutate Active Server",
+            "the dedicated web preference setter rejects unknown server identities without corrupting the saved choice"
           ]
         }
       ],

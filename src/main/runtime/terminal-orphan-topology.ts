@@ -113,12 +113,14 @@ export function mergeTerminalOrphanGroupLayout(args: {
     args.proposedGroupIds.filter((groupId) => !existingGroupIdSet.has(groupId))
   )
   if (newGroupIds.size > 0 && sharedGroupIds.length === 1) {
+    // One shared group identifies where the recovered subtree belonged without disturbing unrelated host layout.
     const anchorGroupId = sharedGroupIds[0]!
     const proposalAtAnchor = pruneLayout(proposed, new Set([anchorGroupId, ...newGroupIds]))
     if (proposalAtAnchor) {
       existing = replaceLeaf(existing, anchorGroupId, proposalAtAnchor)
     }
   } else if (newGroupIds.size > 0) {
+    // With no unique anchor, append the intact recovered subtree so ambiguous client metadata cannot rewrite host groups.
     const newSubtree = pruneLayout(proposed, newGroupIds)
     if (newSubtree) {
       existing = {

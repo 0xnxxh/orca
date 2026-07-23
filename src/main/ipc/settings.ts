@@ -216,10 +216,9 @@ export function registerSettingsHandlers(
       if (requestedEnvironmentId !== null && typeof requestedEnvironmentId !== 'string') {
         throw new Error('Invalid Active Server preference')
       }
-      const environmentId = requestedEnvironmentId?.trim() || null
-      if (environmentId !== null) {
-        resolveEnvironment(app.getPath('userData'), environmentId)
-      }
+      const requestedId = requestedEnvironmentId?.trim() || null
+      const environmentId =
+        requestedId === null ? null : resolveEnvironment(app.getPath('userData'), requestedId).id
       return store.updateSettings(
         { activeRuntimeEnvironmentId: environmentId },
         { notifyListeners: true, originWebContentsId: event.sender.id }

@@ -357,6 +357,115 @@ describe('web session terminal orphan recovery', () => {
     )
   })
 
+  it('recovers a missing split leaf when another leaf in the same tab is already host-owned', async () => {
+    const worktree = 'repo::/worktree'
+    const hostSnapshot = {
+      worktree,
+      publicationEpoch: 'partial',
+      snapshotVersion: 2,
+      activeGroupId: 'group-1',
+      activeTabId: 'host-tab::leaf-owned',
+      activeTabType: 'terminal' as const,
+      tabs: [
+        {
+          type: 'terminal' as const,
+          id: 'host-tab::leaf-owned',
+          parentTabId: 'host-tab',
+          leafId: 'leaf-owned',
+          title: 'Shell',
+          isActive: true,
+          status: 'ready' as const,
+          terminal: 'term_owned'
+        }
+      ]
+    }
+    const adoptedSnapshot = {
+      ...hostSnapshot,
+      publicationEpoch: 'adopted',
+      snapshotVersion: 3
+    }
+    const call = vi.fn(async ({ method }) =>
+      method === 'terminal.list'
+        ? {
+            ok: true as const,
+            result: {
+              terminals: [
+                {
+                  handle: 'term_orphan',
+                  ptyId: 'pty-orphan',
+                  incarnationId: 'inc-orphan',
+                  orphaned: true
+                }
+              ],
+              topologyRevisions: { [worktree]: 2 },
+              totalCount: 1,
+              truncated: false
+            }
+          }
+        : {
+            ok: true as const,
+            result: { adopted: true, topologyRevision: 3, snapshot: adoptedSnapshot }
+          }
+    )
+    const state = {
+      tabsByWorktree: {
+        [worktree]: [{ id: 'web-terminal-host-tab', worktreeId: worktree } as never]
+      },
+      terminalLayoutsByTabId: {
+        'web-terminal-host-tab': {
+          root: {
+            type: 'split' as const,
+            direction: 'vertical' as const,
+            ratio: 0.5,
+            first: { type: 'leaf' as const, leafId: 'leaf-owned' },
+            second: { type: 'leaf' as const, leafId: 'leaf-orphan' }
+          },
+          activeLeafId: 'leaf-owned',
+          expandedLeafId: null,
+          ptyIdsByLeafId: {
+            'leaf-owned': toRemoteRuntimePtyId('term_owned', 'windows-2'),
+            'leaf-orphan': toRemoteRuntimePtyId('term_orphan', 'windows-2')
+          }
+        }
+      },
+      activeTabIdByWorktree: { [worktree]: 'web-terminal-host-tab' },
+      activeGroupIdByWorktree: { [worktree]: 'group-1' }
+    }
+
+    await expect(
+      recoverWebSessionTerminalOrphansBeforeApply(state, hostSnapshot, 'windows-2', call as never)
+    ).resolves.toEqual(adoptedSnapshot)
+    expect(call).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        method: 'terminal.list',
+        params: expect.objectContaining({ handles: ['term_orphan'] })
+      })
+    )
+    expect(call).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        method: 'terminal.adoptOrphans',
+        params: expect.objectContaining({
+          claims: [
+            expect.objectContaining({
+              terminal: 'term_orphan',
+              tabId: 'host-tab',
+              leafId: 'leaf-orphan'
+            })
+          ],
+          topology: expect.objectContaining({
+            tabs: [
+              expect.objectContaining({
+                tabId: 'host-tab',
+                root: { type: 'leaf', leafId: 'leaf-orphan' }
+              })
+            ]
+          })
+        })
+      })
+    )
+  })
+
   it('serializes a newer convergence snapshot after an in-flight adoption conflict', async () => {
     const worktree = 'repo::/worktree'
     let rejectFirstAdoption: (() => void) | null = null

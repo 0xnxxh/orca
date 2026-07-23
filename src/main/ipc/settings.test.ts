@@ -87,10 +87,10 @@ describe('registerSettingsHandlers', () => {
     previewWarpThemeImportMock.mockClear()
     prepareLocalWorktreeRootsForReposMock.mockReset().mockResolvedValue(undefined)
     resolveEnvironmentMock.mockReset().mockImplementation((_userDataPath, selector) => {
-      if (selector !== 'windows-2') {
+      if (selector !== 'windows-2' && selector !== 'Windows 2') {
         throw new Error('Runtime environment not found')
       }
-      return { id: selector }
+      return { id: 'windows-2' }
     })
     rebuildAppMenuMock.mockClear()
     browserWindowGetAllWindowsMock.mockReset()
@@ -152,6 +152,11 @@ describe('registerSettingsHandlers', () => {
       { activeRuntimeEnvironmentId: 'windows-2' },
       { notifyListeners: true, originWebContentsId: 1 }
     )
+    handler(settingsInvokeEvent, { environmentId: 'Windows 2' })
+    expect(store.updateSettings).toHaveBeenLastCalledWith(
+      { activeRuntimeEnvironmentId: 'windows-2' },
+      { notifyListeners: true, originWebContentsId: 1 }
+    )
 
     expect(() => handler(settingsInvokeEvent, { environmentId: 42 as never })).toThrow(
       'Invalid Active Server preference'
@@ -159,7 +164,7 @@ describe('registerSettingsHandlers', () => {
     expect(() => handler(settingsInvokeEvent, { environmentId: 'does-not-exist' })).toThrow(
       'Runtime environment not found'
     )
-    expect(store.updateSettings).toHaveBeenCalledTimes(1)
+    expect(store.updateSettings).toHaveBeenCalledTimes(2)
   })
 
   it('applies bot-author deltas against the authoritative settings snapshot', () => {

@@ -2756,11 +2756,6 @@ export function useWebSessionTabsSync(): void {
               const event = response.result as SessionTabsStreamEvent
               const replayed = isRuntimeSubscriptionReplayResponse(response)
               if (event.type === 'snapshots') {
-                if (replayed) {
-                  for (const snapshot of event.snapshots) {
-                    acceptReplayedWebSessionTabsSnapshot(environmentId, snapshot.worktree)
-                  }
-                }
                 void Promise.all(
                   event.snapshots.map((snapshot) =>
                     recoverWebSessionTerminalOrphansBeforeApply(
@@ -2775,6 +2770,11 @@ export function useWebSessionTabsSync(): void {
                       const applicable = recovered.filter(
                         (snapshot): snapshot is RuntimeMobileSessionTabsResult => snapshot !== null
                       )
+                      if (replayed) {
+                        for (const snapshot of applicable) {
+                          acceptReplayedWebSessionTabsSnapshot(environmentId, snapshot.worktree)
+                        }
+                      }
                       applyWebSessionTabsStorePatch((state) =>
                         applyFreshWebSessionTabsSnapshots(state, applicable, environmentId)
                       )
@@ -2790,9 +2790,6 @@ export function useWebSessionTabsSync(): void {
               if (event.type !== 'snapshot' && event.type !== 'updated') {
                 return
               }
-              if (replayed) {
-                acceptReplayedWebSessionTabsSnapshot(environmentId, event.worktree)
-              }
               void recoverWebSessionTerminalOrphansBeforeApply(
                 useAppStore.getState(),
                 event,
@@ -2800,6 +2797,9 @@ export function useWebSessionTabsSync(): void {
               )
                 .then((recovered) => {
                   if (!disposed && recovered) {
+                    if (replayed) {
+                      acceptReplayedWebSessionTabsSnapshot(environmentId, recovered.worktree)
+                    }
                     applyWebSessionTabsStorePatch((state) =>
                       applyFreshWebSessionTabsSnapshot(state, recovered, environmentId)
                     )

@@ -641,7 +641,10 @@ function createWebPreloadApi(): Partial<PreloadApi> {
         return syncRuntimeBackedSettings(sanitizedUpdates, next)
       },
       setActiveRuntimeEnvironmentPreference: async ({ environmentId }) => {
-        const activeRuntimeEnvironmentId = environmentId?.trim() || null
+        const requestedEnvironmentId = environmentId?.trim() || null
+        const activeRuntimeEnvironmentId = requestedEnvironmentId
+          ? resolveEnvironment(requestedEnvironmentId).id
+          : null
         const next = mergeSettings(getStoredSettings(), {
           activeRuntimeEnvironmentId
         })
