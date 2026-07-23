@@ -12210,7 +12210,6 @@ describe('registerPtyHandlers', () => {
       expect(result).toEqual({
         id: expect.any(String),
         pid: 12345,
-        wslDistro: null,
         incarnationId: expect.any(String)
       })
       expect(spawnMock).toHaveBeenCalledTimes(1)
