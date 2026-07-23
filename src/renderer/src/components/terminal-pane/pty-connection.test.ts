@@ -1081,8 +1081,12 @@ describe('connectPanePty', () => {
     connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
     await flushAsyncTicks()
 
+    // Why: assert the callback was captured before invoking — optional invocation
+    // would let this test false-pass (not.toHaveBeenCalled trivially true) if the
+    // transport onError wiring ever broke, exercising no suppression at all.
+    expect(capturedOnError.current).toBeTypeOf('function')
     // Electron wraps the rejected ipcMain error with its own prefix; still swallowed.
-    capturedOnError.current?.(
+    capturedOnError.current!(
       `Error invoking remote method 'pty:spawn': Error: ${TERMINAL_REMOVAL_IN_PROGRESS_MESSAGE}`
     )
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
@@ -1102,7 +1106,8 @@ describe('connectPanePty', () => {
     connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
     await flushAsyncTicks()
 
-    capturedOnError.current?.('shell exited with code 1')
+    expect(capturedOnError.current).toBeTypeOf('function')
+    capturedOnError.current!('shell exited with code 1')
     expect(deps.onPtyErrorRef.current).toHaveBeenCalledWith(1, 'shell exited with code 1')
   })
 
