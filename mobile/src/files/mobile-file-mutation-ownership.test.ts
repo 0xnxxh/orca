@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SshConnectionState } from '../../../src/shared/ssh-types'
 import {
   FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY,
@@ -10,6 +10,7 @@ import {
 } from '../../../src/shared/file-mutation-ownership'
 import type { RpcClient } from '../transport/rpc-client'
 import type { RpcFailure, RpcResponse } from '../transport/types'
+import { LogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import {
   buildMobileFileMutationOwnership,
   captureMobileFileMutationOwnership,
@@ -17,8 +18,8 @@ import {
   MOBILE_WORKTREE_NOT_FOUND_MESSAGE
 } from './mobile-file-mutation-ownership'
 
-function success(result: unknown): RpcResponse {
-  return { id: 'rpc-1', ok: true, result, _meta: { runtimeId: 'runtime-1' } }
+function success(result: unknown, runtimeId = 'runtime-1'): RpcResponse {
+  return { id: 'rpc-1', ok: true, result, _meta: { runtimeId } }
 }
 
 function failure(code: string, message: string): RpcFailure {
@@ -44,25 +45,39 @@ function clientWithResponses(responses: RpcResponse[]): {
   return { client: { sendRequest }, sendRequest }
 }
 
-function sshState(targetId: string, connectionGeneration: number | undefined): SshConnectionState {
+function sshState(
+  targetId: string,
+  connectionGeneration: number | undefined,
+  status: SshConnectionState['status'] = 'connected'
+): SshConnectionState {
   return {
     targetId,
-    status: 'connected',
+    status,
     error: null,
     reconnectAttempt: 0,
     connectionGeneration
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('mobile file mutation ownership', () => {
-  it.each(['local', 'runtime:environment-1'])(
-    'binds %s worktrees to the runtime-local file host',
-    (hostId) => {
-      expect(buildMobileFileMutationOwnership(hostId)).toEqual({
-        expectedExecutionHostId: 'local'
-      })
-    }
-  )
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('binds a local worktree to the runtime-local file host', () => {
+    expect(buildMobileFileMutationOwnership('local')).toEqual({
+      expectedExecutionHostId: 'local'
+    })
+  })
 
   it.each([undefined, null, '', 'not-an-execution-host', 'ssh:', 'runtime:'])(
     'fails closed when the worktree owner is %s',
@@ -72,6 +87,12 @@ describe('mobile file mutation ownership', () => {
       )
     }
   )
+
+  it('rejects a runtime owner that mobile cannot verify against its paired HUB', () => {
+    expect(() => buildMobileFileMutationOwnership('runtime:environment-1')).toThrow(
+      "Couldn't verify this workspace's runtime"
+    )
+  })
 
   it('binds SSH worktrees to the target and live connection generation', () => {
     expect(
@@ -85,6 +106,7 @@ describe('mobile file mutation ownership', () => {
 
   it.each([
     ['a missing SSH state', 'ssh:target-1', null],
+    ['a reconnecting SSH state', 'ssh:target-1', sshState('target-1', 4, 'reconnecting')],
     ['a mismatched SSH target', 'ssh:target-1', sshState('target-2', 4)],
     ['a missing SSH generation', 'ssh:target-1', sshState('target-1', undefined)]
   ])('rejects %s', (_name, hostId, state) => {
@@ -93,48 +115,207 @@ describe('mobile file mutation ownership', () => {
     )
   })
 
-  it('captures local ownership only after verifying the runtime capability', async () => {
-    const { client, sendRequest } = clientWithResponses([
-      success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] }),
-      success({ worktree: { hostId: 'local' } })
-    ])
-
-    await expect(captureMobileFileMutationOwnership(client, 'id:worktree-1')).resolves.toEqual({
-      expectedExecutionHostId: 'local'
+  it('fetches fresh capability and local owner in parallel on one runtime', async () => {
+    const status = deferred<RpcResponse>()
+    const worktree = deferred<RpcResponse>()
+    const sendRequest = vi.fn((method: string) => {
+      if (method === 'status.get') {
+        return status.promise
+      }
+      if (method === 'worktree.show') {
+        return worktree.promise
+      }
+      throw new Error(`Unexpected RPC request: ${method}`)
     })
-    expect(sendRequest.mock.calls).toEqual([
-      ['status.get', undefined, { timeoutMs: 15_000 }],
-      ['worktree.show', { worktree: 'id:worktree-1' }, { timeoutMs: 15_000 }]
+    const capture = captureMobileFileMutationOwnership({ sendRequest }, 'id:worktree-1')
+
+    expect(sendRequest.mock.calls.map(([method]) => method)).toEqual([
+      'status.get',
+      'worktree.show'
     ])
+    worktree.resolve(success({ worktree: { hostId: 'local' } }))
+    await Promise.resolve()
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+    status.resolve(success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] }))
+
+    await expect(capture).resolves.toEqual({
+      ownership: { expectedExecutionHostId: 'local' },
+      runtimeId: 'runtime-1',
+      transportGeneration: null
+    })
   })
 
-  it('captures SSH generation from the HUB before building mutation params', async () => {
+  it('captures SSH generation only after the concurrent owner checks', async () => {
     const state = sshState('target-1', 9)
-    const { client, sendRequest } = clientWithResponses([
-      success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] }),
-      success({ worktree: { hostId: 'ssh:target-1' } }),
-      success({ state })
-    ])
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] })
+      }
+      if (method === 'worktree.show') {
+        return success({ worktree: { hostId: 'ssh:target-1' } })
+      }
+      if (method === 'ssh.getState') {
+        return success({ state })
+      }
+      throw new Error(`Unexpected RPC request: ${method}`)
+    })
 
-    await expect(captureMobileFileMutationOwnership(client, 'id:worktree-1')).resolves.toEqual({
-      expectedExecutionHostId: 'ssh:target-1',
-      expectedSshTargetId: 'target-1',
-      expectedSshConnectionGeneration: 9
+    await expect(
+      captureMobileFileMutationOwnership({ sendRequest }, 'id:worktree-1')
+    ).resolves.toEqual({
+      ownership: {
+        expectedExecutionHostId: 'ssh:target-1',
+        expectedSshTargetId: 'target-1',
+        expectedSshConnectionGeneration: 9
+      },
+      runtimeId: 'runtime-1',
+      transportGeneration: null
     })
     expect(sendRequest.mock.calls[2]).toEqual([
       'ssh.getState',
       { targetId: 'target-1' },
-      { timeoutMs: 15_000 }
+      { timeoutMs: expect.any(Number) }
     ])
   })
 
-  it('refuses older runtimes before reading or mutating workspace files', async () => {
-    const { client, sendRequest } = clientWithResponses([success({ capabilities: [] })])
+  it('refuses older runtimes promptly without reading SSH state', async () => {
+    const hangingWorktree = deferred<RpcResponse>()
+    const sendRequest = vi.fn((method: string) => {
+      if (method === 'status.get') {
+        return Promise.resolve(success({ capabilities: [] }))
+      }
+      if (method === 'worktree.show') {
+        return hangingWorktree.promise
+      }
+      throw new Error(`Unexpected RPC request: ${method}`)
+    })
 
-    await expect(captureMobileFileMutationOwnership(client, 'id:worktree-1')).rejects.toThrow(
-      FILE_MUTATION_OWNERSHIP_UPDATE_REQUIRED_MESSAGE
+    await expect(
+      captureMobileFileMutationOwnership({ sendRequest }, 'id:worktree-1')
+    ).rejects.toThrow(FILE_MUTATION_OWNERSHIP_UPDATE_REQUIRED_MESSAGE)
+    expect(sendRequest.mock.calls.map(([method]) => method)).toEqual([
+      'status.get',
+      'worktree.show'
+    ])
+  })
+
+  it('rejects mixed runtime identities before reading SSH state', async () => {
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return success(
+          { capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] },
+          'runtime-old'
+        )
+      }
+      return success({ worktree: { hostId: 'ssh:target-1' } }, 'runtime-new')
+    })
+
+    await expect(
+      captureMobileFileMutationOwnership({ sendRequest }, 'id:worktree-1')
+    ).rejects.toThrow('Orca server changed')
+    expect(sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects an SSH state returned by a replacement runtime', async () => {
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] })
+      }
+      if (method === 'worktree.show') {
+        return success({ worktree: { hostId: 'ssh:target-1' } })
+      }
+      return success({ state: sshState('target-1', 10) }, 'runtime-new')
+    })
+
+    await expect(
+      captureMobileFileMutationOwnership({ sendRequest }, 'id:worktree-1')
+    ).rejects.toThrow('Orca server changed')
+    expect(sendRequest).toHaveBeenCalledTimes(3)
+  })
+
+  it('restarts the whole read-only capture once after transport cutover', async () => {
+    let generation = 1
+    let statusCalls = 0
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        statusCalls += 1
+        return success(
+          { capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] },
+          `runtime-${generation}`
+        )
+      }
+      if (method === 'worktree.show' && generation === 1) {
+        generation = 2
+        throw new LogicalClientCutoverError()
+      }
+      return success({ worktree: { hostId: 'local' } }, `runtime-${generation}`)
+    })
+    const client = { sendRequest, getGeneration: () => generation }
+
+    await expect(captureMobileFileMutationOwnership(client, 'id:worktree-1')).resolves.toEqual({
+      ownership: { expectedExecutionHostId: 'local' },
+      runtimeId: 'runtime-2',
+      transportGeneration: 2
+    })
+    expect(statusCalls).toBe(2)
+    expect(sendRequest).toHaveBeenCalledTimes(4)
+  })
+
+  it('restarts capability and owner checks after cutover during SSH state', async () => {
+    let generation = 1
+    const callsByMethod = new Map<string, number>()
+    const sendRequest = vi.fn(async (method: string) => {
+      callsByMethod.set(method, (callsByMethod.get(method) ?? 0) + 1)
+      if (method === 'status.get') {
+        return success(
+          { capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] },
+          `runtime-${generation}`
+        )
+      }
+      if (method === 'worktree.show') {
+        return success(
+          { worktree: { hostId: generation === 1 ? 'ssh:target-1' : 'local' } },
+          `runtime-${generation}`
+        )
+      }
+      generation = 2
+      throw new LogicalClientCutoverError()
+    })
+    const client = { sendRequest, getGeneration: () => generation }
+
+    await expect(captureMobileFileMutationOwnership(client, 'id:worktree-1')).resolves.toEqual({
+      ownership: { expectedExecutionHostId: 'local' },
+      runtimeId: 'runtime-2',
+      transportGeneration: 2
+    })
+    expect(callsByMethod).toEqual(
+      new Map([
+        ['status.get', 2],
+        ['worktree.show', 2],
+        ['ssh.getState', 1]
+      ])
     )
-    expect(sendRequest).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry a timed-out preflight and shares one timeout budget', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    const sendRequest = vi.fn(async (method: string) => {
+      if (method === 'status.get') {
+        return success({ capabilities: [FILE_MUTATION_OWNERSHIP_RUNTIME_CAPABILITY] })
+      }
+      if (method === 'worktree.show') {
+        vi.setSystemTime(10_000)
+        return success({ worktree: { hostId: 'ssh:target-1' } })
+      }
+      throw new Error('Request timed out: ssh.getState')
+    })
+
+    await expect(
+      captureMobileFileMutationOwnership({ sendRequest }, 'id:worktree-1')
+    ).rejects.toThrow('before the request timed out')
+    expect(sendRequest.mock.calls[2]?.[2]).toEqual({ timeoutMs: 5_000 })
+    expect(sendRequest).toHaveBeenCalledTimes(3)
   })
 
   it('fails closed when a capability-advertising runtime omits the worktree owner', async () => {
