@@ -3499,13 +3499,13 @@ export function connectPanePty(
   // desktop silent while the elected mobile xterm owns query replies.
   const sendDesktopQueryReplyImmediate = (data: string): boolean =>
     canSendDesktopQueryReply() && transport.sendInputImmediate(data)
-  // Why (gate mode only): for gate-managed PTYs this fact is the SOLE 2031
-  // responder — visible, hidden, marked or not. Conditioning the reply on the
-  // hidden mark double-fired (mark set + bytes delivered live via interest →
-  // fact AND xterm both replied) or dropped the reply entirely (fact outran
-  // the pty:data task that set the mark). The xterm-side CSI reply and the
-  // skipped-byte scan are disabled for these panes (same structural
-  // predicate), so exactly one reply goes out.
+  // Why record-only (no reply): DECSET 2031 subscribe is silent per the kitty
+  // color-scheme protocol — the terminal answers the program's paired DSR
+  // `CSI ?996n` query (xterm-core on a visible pane, the headless
+  // view-attribute responder on a gated/parked one) and pushes on later
+  // changes. Seeding a reply on the subscribe too made fish's `?2031h;?996n`
+  // handshake answer twice — the doubled `^[[?997;1n^[[?997;1n` leak (STA-2385).
+  // We still register the subscription so theme flips push the CSI 997 update.
   const handleHiddenMode2031SubscribeFact = (): void => {
     if (disposed || !isHiddenDeliveryGateManagedPty(transport.getPtyId())) {
       return
@@ -3514,14 +3514,7 @@ export function connectPanePty(
       useAppStore.getState().settings,
       getSystemPrefersDark()
     )
-    // Why immediate: a mode-2031 query reply must beat the remote input debounce
-    // or it can miss the querying program's read window (#7329).
-    sendDesktopQueryReplyImmediate(mode2031SequenceFor(mode))
-    // Why: register the subscription exactly like the xterm CSI handler
-    // would — without the registry entry, later theme flips never push the
-    // CSI 997 update and the TUI keeps a stale theme after reveal.
     deps.recordPaneMode2031Subscription?.(pane.id, mode)
-    recordHiddenMode2031Reply()
   }
   deps.paneTransportsRef.current.set(pane.id, transport)
   const terminalCapabilityRepliesDisposable = installTerminalCapabilityReplyHandlers({

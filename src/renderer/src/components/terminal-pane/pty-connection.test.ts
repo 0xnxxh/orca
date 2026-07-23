@@ -9073,14 +9073,14 @@ describe('connectPanePty', () => {
       dataCallback('startup probe output\r\n')
       expect(setHiddenRendererPty).toHaveBeenCalledWith('pty-id', true)
 
-      // The fact stays the sole 2031 responder for gate-managed PTYs.
+      // STA-2385: the subscribe fact is record-only — the paired ?996n query
+      // is the sole responder, so the fact must not send a second CSI 997.
       factsHandler._dispatchTerminalSideEffectBatchForTest({
         ptyId: 'pty-id',
         seq: 8,
         facts: [{ kind: '2031-subscribe' }]
       })
-      expect(transport.sendInput).toHaveBeenCalledTimes(1)
-      expect(transport.sendInput).toHaveBeenCalledWith('\x1b[?997;1n')
+      expect(transport.sendInput).not.toHaveBeenCalled()
     })
 
     it('latches model restore from the out-of-band marker and restores on reveal', async () => {
@@ -9116,9 +9116,10 @@ describe('connectPanePty', () => {
       )
     })
 
-    it('answers each 2031-subscribe fact exactly once, before any hidden mark exists', async () => {
+    it('records each 2031-subscribe fact without replying (STA-2385: ?996n is the sole responder)', async () => {
       enableMainAuthority()
-      const deps = createDeps({ isVisibleRef: { current: false } })
+      const recordPaneMode2031Subscription = vi.fn()
+      const deps = createDeps({ isVisibleRef: { current: false }, recordPaneMode2031Subscription })
       const { transport } = await connectHiddenPane(deps)
       // Simulate spawn completion so the pane registers its fact consumer (mock transport never calls onPtySpawn).
       const transportOptions = createdTransportOptions.at(-1) as {
@@ -9127,27 +9128,29 @@ describe('connectPanePty', () => {
       transportOptions.onPtySpawn?.('pty-id')
       const factsHandler = await import('./terminal-side-effect-facts-handler')
 
-      // Why: the fact can outrun the hidden mark (codex startup race) and must still reply — ownership is structural, not mark-dependent.
+      // Why no reply: DECSET 2031 subscribe is silent per the kitty color-scheme
+      // protocol. Seeding it here plus the terminal's paired ?996n query answer
+      // doubled the CSI 997 into fish — the ^[[?997;1n^[[?997;1n leak (STA-2385).
       factsHandler._dispatchTerminalSideEffectBatchForTest({
         ptyId: 'pty-id',
         seq: 12,
         facts: [{ kind: '2031-subscribe' }]
       })
-      expect(transport.sendInput).toHaveBeenCalledTimes(1)
-      expect(transport.sendInput).toHaveBeenCalledWith('\x1b[?997;1n')
+      expect(transport.sendInput).not.toHaveBeenCalled()
+      // But the subscription is still registered so later theme flips push CSI 997.
+      expect(recordPaneMode2031Subscription).toHaveBeenCalledWith(1, 'dark')
 
-      // Why: a visible gated pane still answers via the fact — the lifecycle suppresses xterm's CSI reply for gate-managed panes.
+      // A visible gated pane behaves identically — still no fact reply.
       ;(deps.isVisibleRef as { current: boolean }).current = true
       factsHandler._dispatchTerminalSideEffectBatchForTest({
         ptyId: 'pty-id',
         seq: 24,
         facts: [{ kind: '2031-subscribe' }]
       })
-      expect(transport.sendInput).toHaveBeenCalledTimes(2)
-      expect(transport.sendInput).toHaveBeenLastCalledWith('\x1b[?997;1n')
+      expect(transport.sendInput).not.toHaveBeenCalled()
     })
 
-    it('registers the fact-answered 2031 subscription for later theme flips', async () => {
+    it('registers the 2031 subscription for later theme flips without replying', async () => {
       enableMainAuthority()
       const recordPaneMode2031Subscription = vi.fn()
       const deps = createDeps({
@@ -9167,8 +9170,9 @@ describe('connectPanePty', () => {
         facts: [{ kind: '2031-subscribe' }]
       })
 
-      expect(transport.sendInput).toHaveBeenCalledWith('\x1b[?997;1n')
-      // Why: without the registry write, maybePushMode2031Flip won't push CSI 997 after a theme change, so the TUI keeps a stale theme.
+      // STA-2385: no reply on subscribe (the ?996n query answers), but ...
+      expect(transport.sendInput).not.toHaveBeenCalled()
+      // ... the subscription is registered so maybePushMode2031Flip pushes CSI 997 after a theme change.
       expect(recordPaneMode2031Subscription).toHaveBeenCalledWith(1, 'dark')
     })
 
