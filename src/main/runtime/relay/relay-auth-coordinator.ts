@@ -41,8 +41,9 @@ function identityKey(identity: RelayAuthIdentity): string {
 }
 
 export class RelayAuthCoordinator {
+  // Why: recover brief failures quickly without turning a sustained outage into auth/director load.
   private static readonly RETRY_BASE_MS = 1_000
-  private static readonly RETRY_MAX_MS = 60_000
+  private static readonly RETRY_MAX_MS = 5 * 60_000
   private readonly options: RelayAuthCoordinatorOptions
   private authEpoch = 0
   private ownership: BrokerOwnership | null = null
@@ -192,9 +193,13 @@ export class RelayAuthCoordinator {
     if (this.retryTimer || !this.isEpochCurrent(epoch)) {
       return
     }
+    const exponent = Math.min(
+      this.retryAttempt,
+      Math.ceil(Math.log2(RelayAuthCoordinator.RETRY_MAX_MS / RelayAuthCoordinator.RETRY_BASE_MS))
+    )
     const capMs = Math.min(
       RelayAuthCoordinator.RETRY_MAX_MS,
-      RelayAuthCoordinator.RETRY_BASE_MS * 2 ** Math.min(this.retryAttempt, 6)
+      RelayAuthCoordinator.RETRY_BASE_MS * 2 ** exponent
     )
     this.retryAttempt++
     const random = this.options.random ?? Math.random

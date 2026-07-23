@@ -39,6 +39,34 @@ describe('RelayAuthCoordinator transient recovery', () => {
     expect(statuses.at(-1)).toBe('registered')
   })
 
+  it('backs a sustained outage off to the five-minute jitter cap', async () => {
+    vi.useFakeTimers()
+    const openBroker = vi.fn().mockRejectedValue(new Error('temporary control open failure'))
+    const coordinator = new RelayAuthCoordinator({
+      readContext: async () => context,
+      openBroker,
+      onStatus: vi.fn(),
+      random: () => 0.5
+    })
+
+    coordinator.reconcile()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(openBroker).toHaveBeenCalledOnce()
+
+    for (const delayMs of [500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000]) {
+      await vi.advanceTimersByTimeAsync(delayMs)
+    }
+    expect(openBroker).toHaveBeenCalledTimes(10)
+
+    await vi.advanceTimersByTimeAsync(149_999)
+    expect(openBroker).toHaveBeenCalledTimes(10)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(openBroker).toHaveBeenCalledTimes(11)
+
+    await vi.advanceTimersByTimeAsync(150_000)
+    expect(openBroker).toHaveBeenCalledTimes(12)
+  })
+
   it('does not retry a permanent authorization response', async () => {
     vi.useFakeTimers()
     const openBroker = vi.fn().mockRejectedValue(new RelayHttpError('token-exchange', 403))
