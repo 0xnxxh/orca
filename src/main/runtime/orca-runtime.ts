@@ -2619,6 +2619,12 @@ export class OrcaRuntimeService {
   // mobile the same inline agent rows the desktop sidebar renders. Cleared on pty
   // teardown so dead agents don't linger. See RuntimeAgentRowSnapshot.
   private latestAgentStatusByPaneKey = new Map<string, RuntimeAgentRowSnapshot>()
+  // Why: hook status lives outside the stored tab snapshot; track its last
+  // mobile projection so hook-only changes can mint a client-visible version.
+  private mobileAgentHookProjectionByPaneKey = new Map<
+    string,
+    { fingerprint: string; worktreeId: string | null }
+  >()
   // Why: per-PTY hydration state guards against double-hydration. Keys:
   //   'pending'  → maybeHydrateHeadlessFromRenderer is in flight
   //   'done'     → hydration completed (success or skip); never run again
@@ -7123,6 +7129,47 @@ export class OrcaRuntimeService {
       // subscriber closing mid-window still receives the latest settled state.
       this.mobileSessionTabsNotifyCoalescer.flushAll()
       this.mobileSessionTabListeners.delete(subscription)
+    }
+  }
+
+  /** Republish mobile tabs when the main-process hook cache changes without a renderer/tab mutation. */
+  notifyMobileAgentHookStatusChanged(): void {
+    const next = new Map<string, { fingerprint: string; worktreeId: string | null }>()
+    const changedWorktreeIds = new Set<string>()
+    for (const entry of this.getAgentStatusSnapshotFn?.() ?? []) {
+      const worktreeId = this.resolveMobileAgentHookWorktreeId(entry)
+      const projection = { fingerprint: JSON.stringify(entry), worktreeId }
+      next.set(entry.paneKey, projection)
+      const previous = this.mobileAgentHookProjectionByPaneKey.get(entry.paneKey)
+      if (
+        previous?.fingerprint === projection.fingerprint &&
+        previous.worktreeId === projection.worktreeId
+      ) {
+        continue
+      }
+      if (previous?.worktreeId) {
+        changedWorktreeIds.add(previous.worktreeId)
+      }
+      if (worktreeId) {
+        changedWorktreeIds.add(worktreeId)
+      }
+    }
+    for (const [paneKey, previous] of this.mobileAgentHookProjectionByPaneKey) {
+      if (!next.has(paneKey) && previous.worktreeId) {
+        changedWorktreeIds.add(previous.worktreeId)
+      }
+    }
+    this.mobileAgentHookProjectionByPaneKey = next
+    for (const worktreeId of changedWorktreeIds) {
+      const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+      if (!snapshot) {
+        continue
+      }
+      this.mobileSessionTabsByWorktree.set(worktreeId, {
+        ...snapshot,
+        snapshotVersion: snapshot.snapshotVersion + 1
+      })
+      this.mobileSessionTabsNotifyCoalescer.schedule(worktreeId)
     }
   }
 
@@ -13938,6 +13985,9 @@ export class OrcaRuntimeService {
     }
 
     for (const entry of this.getAgentStatusSnapshotFn?.() ?? []) {
+      if (entry.providerSessionOnly === true) {
+        continue
+      }
       if (entry.terminalHandle !== handle && (!paneKey || entry.paneKey !== paneKey)) {
         continue
       }
@@ -14690,6 +14740,9 @@ export class OrcaRuntimeService {
       })
     }
     for (const entry of this.getAgentStatusSnapshotFn?.() ?? []) {
+      if (entry.providerSessionOnly === true) {
+        continue
+      }
       const existing = rowSources.get(entry.paneKey)
       // Why: hook rows win ties, but an older cached hook must not replace a
       // fresh OSC status and make a running mobile workspace look inactive.
@@ -25977,11 +26030,18 @@ export class OrcaRuntimeService {
         ? makePaneKey(tab.parentTabId, tab.leafId)
         : `${tab.parentTabId}:${legacyPaneId ?? tab.leafId}`
       const mobileStatusPty = livePty ?? pty
+      const hookAgentStatus = this.getHookAgentStatusForMobileTab(paneKey)
+      const freshHookAgentStatus = hookAgentStatus?.isFresh ? hookAgentStatus.status : null
       // Why: headless hooks live only in main's retained rows; reuse this lookup
       // for both title ownership and status publication so the two cannot diverge.
-      const retainedAgentStatus = tab.agentStatus
-        ? null
-        : this.getFreshRetainedAgentStatusForMobileTab(paneKey, liveLeafPty ?? mobileStatusPty, tab)
+      const retainedAgentStatus =
+        tab.agentStatus || freshHookAgentStatus
+          ? null
+          : this.getFreshRetainedAgentStatusForMobileTab(
+              paneKey,
+              liveLeafPty ?? mobileStatusPty,
+              tab
+            )
       const leafTitle = leaf
         ? getLatestAgentCandidateTitle(
             { title: leaf.paneTitle, updatedAt: leaf.paneTitleUpdatedAt },
@@ -25999,7 +26059,11 @@ export class OrcaRuntimeService {
       const ownerAgent =
         resolvePaneAgentOwner({
           launchAgent,
-          hookAgent: tab.agentStatus?.agentType ?? retainedAgentStatus?.payload.agentType ?? null
+          hookAgent:
+            hookAgentStatus?.status.agentType ??
+            tab.agentStatus?.agentType ??
+            retainedAgentStatus?.payload.agentType ??
+            null
         }) ??
         liveLeafPty?.foregroundAgent ??
         pty?.foregroundAgent ??
@@ -26010,8 +26074,14 @@ export class OrcaRuntimeService {
       )
       const liveTitleEvidence = leafTitle ?? ptyTitle
       const liveTitleEvidenceClassification = classifyAgentTitle(liveTitleEvidence)
-      const normalizedTabAgentStatus = tab.agentStatus
-        ? normalizeCompatibleAgentStatusEntryForOwner(tab.agentStatus, ownerAgent)
+      const sourceAgentStatus =
+        tab.agentStatus && freshHookAgentStatus
+          ? freshHookAgentStatus.updatedAt > tab.agentStatus.updatedAt
+            ? { ...freshHookAgentStatus, stateHistory: tab.agentStatus.stateHistory }
+            : tab.agentStatus
+          : (freshHookAgentStatus ?? tab.agentStatus)
+      const normalizedTabAgentStatus = sourceAgentStatus
+        ? normalizeCompatibleAgentStatusEntryForOwner(sourceAgentStatus, ownerAgent)
         : null
       // Why: keep rich hook status on a live prompt/tool (authoritative even under a non-agent title), else interactivePrompt is lost.
       const hasLiveAgentSignal =
@@ -26053,6 +26123,19 @@ export class OrcaRuntimeService {
         : livePty
           ? this.issuePtyHandle(livePty)
           : null
+      const projectedAgentStatus =
+        agentStatus ??
+        this.buildPtyMobileAgentStatus(mobileStatusPty, tab, terminalHandle, retainedAgentStatus)
+      const agentStatusWithProviderSession = hookAgentStatus?.status.providerSession
+        ? {
+            agentStatus: {
+              ...('agentStatus' in projectedAgentStatus
+                ? projectedAgentStatus.agentStatus
+                : hookAgentStatus.status),
+              providerSession: hookAgentStatus.status.providerSession
+            }
+          }
+        : projectedAgentStatus
       tabs.push({
         type: 'terminal',
         id: tab.id,
@@ -26062,13 +26145,7 @@ export class OrcaRuntimeService {
         ...(tab.ptyId ? { ptyId: tab.ptyId } : {}),
         ...(tab.terminalTheme ? { terminalTheme: tab.terminalTheme } : {}),
         ...(launchAgent ? { launchAgent } : {}),
-        ...(agentStatus ??
-          this.buildPtyMobileAgentStatus(
-            mobileStatusPty,
-            tab,
-            terminalHandle,
-            retainedAgentStatus
-          )),
+        ...agentStatusWithProviderSession,
         ...(tab.parentLayout ? { parentLayout: tab.parentLayout } : {}),
         ...(tab.startupCwd ? { startupCwd: tab.startupCwd } : {}),
         ...(tab.color != null ? { color: tab.color } : {}),
@@ -26232,6 +26309,71 @@ export class OrcaRuntimeService {
       return null
     }
     return retained
+  }
+
+  /** Main hook-cache status for a mobile pane, including durable provider transcript identity. */
+  private getHookAgentStatusForMobileTab(
+    paneKey: string
+  ): { status: AgentStatusEntry; isFresh: boolean } | null {
+    const now = Date.now()
+    let freshest: AgentStatusIpcPayload | null = null
+    for (const entry of this.getAgentStatusSnapshotFn?.() ?? []) {
+      if (entry.paneKey !== paneKey) {
+        continue
+      }
+      if (!freshest || entry.receivedAt > freshest.receivedAt) {
+        freshest = entry
+      }
+    }
+    if (!freshest) {
+      return null
+    }
+    const isFresh =
+      freshest.providerSessionOnly !== true &&
+      now - freshest.receivedAt <= AGENT_STATUS_STALE_AFTER_MS
+    return {
+      isFresh,
+      status: {
+        state: isFresh ? freshest.state : 'done',
+        prompt: isFresh ? freshest.prompt : '',
+        updatedAt: freshest.receivedAt,
+        stateStartedAt: freshest.stateStartedAt,
+        paneKey,
+        stateHistory: [],
+        ...(freshest.terminalHandle ? { terminalHandle: freshest.terminalHandle } : {}),
+        ...(freshest.worktreeId ? { worktreeId: freshest.worktreeId } : {}),
+        ...(freshest.connectionId !== undefined ? { connectionId: freshest.connectionId } : {}),
+        ...(freshest.tabId ? { tabId: freshest.tabId } : {}),
+        ...(freshest.agentType ? { agentType: freshest.agentType } : {}),
+        ...(isFresh && freshest.toolName ? { toolName: freshest.toolName } : {}),
+        ...(isFresh && freshest.toolInput ? { toolInput: freshest.toolInput } : {}),
+        ...(isFresh && freshest.interactivePrompt
+          ? { interactivePrompt: freshest.interactivePrompt }
+          : {}),
+        ...(isFresh && freshest.lastAssistantMessage
+          ? { lastAssistantMessage: freshest.lastAssistantMessage }
+          : {}),
+        ...(isFresh && freshest.interrupted ? { interrupted: true } : {}),
+        ...(isFresh && freshest.orchestration ? { orchestration: freshest.orchestration } : {}),
+        ...(isFresh && freshest.subagents ? { subagents: freshest.subagents } : {}),
+        ...(freshest.providerSession ? { providerSession: freshest.providerSession } : {}),
+        ...(isFresh && freshest.promptInteractionKey
+          ? { promptInteractionKey: freshest.promptInteractionKey }
+          : {})
+      }
+    }
+  }
+
+  private resolveMobileAgentHookWorktreeId(entry: AgentStatusIpcPayload): string | null {
+    const tabId = entry.tabId ?? parsePaneKey(entry.paneKey)?.tabId
+    if (tabId) {
+      for (const snapshot of this.mobileSessionTabsByWorktree.values()) {
+        if (snapshot.tabs.some((tab) => tab.type === 'terminal' && tab.parentTabId === tabId)) {
+          return snapshot.worktree
+        }
+      }
+    }
+    return entry.worktreeId ?? null
   }
 
   private findPtyForMobileTerminalTab(

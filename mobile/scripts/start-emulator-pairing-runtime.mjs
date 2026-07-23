@@ -41,6 +41,9 @@ export async function startHeadlessPairingRuntime({
         isolatedHomeDir: homeDir,
         transcriptHomeDir
       }),
+      // Why: orca-dev synchronously owns the CLI and Electron descendants;
+      // a process group lets launcher shutdown reap the whole disposable tree.
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe']
     }
   )
@@ -58,6 +61,7 @@ export function buildHeadlessPairingRuntimeEnvironment({
     ...baseEnv,
     ORCA_E2E_USER_DATA_DIR: userData,
     ORCA_E2E_HOME_DIR: isolatedHomeDir,
+    ORCA_DEV_USER_DATA_PATH: userData,
     // Why: login-shell agents write transcripts outside the disposable runtime home.
     ORCA_NATIVE_CHAT_TRANSCRIPT_HOME_DIR: transcriptHomeDir,
     HOME: isolatedHomeDir,
@@ -88,7 +92,15 @@ async function waitForPairingRuntime({ child, userData, pairingAddress, logSucce
 
   const stop = () => {
     if (!exited) {
-      child.kill('SIGTERM')
+      if (process.platform !== 'win32' && child.pid) {
+        try {
+          process.kill(-child.pid, 'SIGTERM')
+        } catch {
+          child.kill('SIGTERM')
+        }
+      } else {
+        child.kill('SIGTERM')
+      }
     }
     rl?.close()
     rlErr?.close()
@@ -102,6 +114,7 @@ async function waitForPairingRuntime({ child, userData, pairingAddress, logSucce
     process: child,
     env: {
       ...process.env,
+      ORCA_DEV_USER_DATA_PATH: userData,
       ORCA_USER_DATA_PATH: userData
     },
     stop
