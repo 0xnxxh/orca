@@ -17,6 +17,7 @@ vi.mock('electron', () => ({
 }))
 
 import { registerRuntimeHandlers } from './runtime'
+import { TERMINAL_FIT_RESTORE_DEADLINE_MS } from '../../shared/terminal-fit-restore-deadline'
 
 describe('registerRuntimeHandlers', () => {
   beforeEach(() => {
@@ -138,5 +139,35 @@ describe('registerRuntimeHandlers', () => {
     expect(reclaimTerminalForDesktop).toHaveBeenCalledTimes(3)
     finishRestoreByPtyId.get('pty-1')?.(false)
     await expect(afterSettlement).resolves.toEqual({ restored: false })
+  })
+
+  it('expires a wedged reclaim so a later retry can recover', async () => {
+    vi.useFakeTimers()
+    try {
+      const reclaimTerminalForDesktop = vi
+        .fn<() => Promise<boolean>>()
+        .mockReturnValueOnce(new Promise(() => {}))
+        .mockResolvedValueOnce(true)
+      registerRuntimeHandlers({
+        syncWindowGraph: vi.fn(),
+        getStatus: vi.fn(),
+        reclaimTerminalForDesktop
+      } as never)
+      const handler = handleMock.mock.calls.find(
+        ([channel]) => channel === 'runtime:restoreTerminalFit'
+      )![1]
+
+      const first = handler({ sender: {} }, { ptyId: 'pty-wedged' })
+      await vi.advanceTimersByTimeAsync(TERMINAL_FIT_RESTORE_DEADLINE_MS)
+      await expect(first).resolves.toEqual({ restored: false })
+
+      await expect(handler({ sender: {} }, { ptyId: 'pty-wedged' })).resolves.toEqual({
+        restored: true
+      })
+      expect(reclaimTerminalForDesktop).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

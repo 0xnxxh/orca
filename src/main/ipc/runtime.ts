@@ -8,7 +8,17 @@ import type {
   RuntimeTerminalDriverState
 } from '../../shared/runtime-types'
 import type { RuntimeRpcResponse } from '../../shared/runtime-rpc-envelope'
+import { TERMINAL_FIT_RESTORE_DEADLINE_MS } from '../../shared/terminal-fit-restore-deadline'
 import { RpcDispatcher } from '../runtime/rpc/dispatcher'
+
+function boundTerminalFitRestore(pending: Promise<boolean>): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), TERMINAL_FIT_RESTORE_DEADLINE_MS)
+    timer.unref?.()
+  })
+  return Promise.race([pending, deadline]).finally(() => clearTimeout(timer))
+}
 
 export function registerRuntimeHandlers(runtime: OrcaRuntimeService): void {
   const pendingTerminalFitRestores = new Map<string, Promise<boolean>>()
@@ -102,11 +112,11 @@ export function registerRuntimeHandlers(runtime: OrcaRuntimeService): void {
     // Electron try to structured-clone a Promise — "An object could not
     // be cloned" error — and the renderer's restoreTerminalFit() rejected
     // with no useful info.
-    // Why: renderer timeouts must not turn retries into duplicate waiters behind one stuck reclaim.
+    // Why: dedupe concurrent clicks, but expire a wedged reclaim so a later retry can recover.
     let pending = pendingTerminalFitRestores.get(args.ptyId)
     if (!pending) {
       try {
-        pending = runtime.reclaimTerminalForDesktop(args.ptyId)
+        pending = boundTerminalFitRestore(runtime.reclaimTerminalForDesktop(args.ptyId))
         pendingTerminalFitRestores.set(args.ptyId, pending)
       } catch {
         return { restored: false }

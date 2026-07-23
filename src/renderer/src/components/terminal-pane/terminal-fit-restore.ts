@@ -1,5 +1,6 @@
 import type { GlobalSettings } from '../../../../shared/types'
 import { mapWithConcurrency } from '../../../../shared/map-with-concurrency'
+import { TERMINAL_FIT_RESTORE_DEADLINE_MS } from '../../../../shared/terminal-fit-restore-deadline'
 import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
 import {
   getRemoteRuntimePtyEnvironmentId,
@@ -14,8 +15,6 @@ type TerminalFitRestoreSettings = Pick<GlobalSettings, 'activeRuntimeEnvironment
 // steady throughput instead of a thundering herd. Each reclaim is a short
 // round-trip, so a modest pool keeps latency low without overwhelming it.
 const RESTORE_FIT_CONCURRENCY = 8
-
-const RESTORE_FIT_TIMEOUT_MS = 15_000
 
 const restoreFailedResult = (): { restored: boolean } => {
   // Why: terminal fit restore is best-effort when mobile/remote transports disappear.
@@ -73,7 +72,7 @@ export function restoreTerminalFitToDesktop(
   return restoreTerminalFitToDesktopWithinDeadline(
     ptyId,
     settings,
-    Date.now() + RESTORE_FIT_TIMEOUT_MS
+    Date.now() + TERMINAL_FIT_RESTORE_DEADLINE_MS
   )
 }
 
@@ -82,7 +81,7 @@ export async function restoreTerminalFitsToDesktop(
   settings: TerminalFitRestoreSettings
 ): Promise<boolean> {
   const uniquePtyIds = [...new Set(ptyIds)]
-  const deadlineAt = Date.now() + RESTORE_FIT_TIMEOUT_MS
+  const deadlineAt = Date.now() + TERMINAL_FIT_RESTORE_DEADLINE_MS
   const results = await mapWithConcurrency(uniquePtyIds, RESTORE_FIT_CONCURRENCY, (ptyId) =>
     restoreTerminalFitToDesktopWithinDeadline(ptyId, settings, deadlineAt)
   )
