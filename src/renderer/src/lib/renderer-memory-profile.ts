@@ -19,11 +19,20 @@ const MAX_COUNTS_PER_CONTRIBUTOR = 32
 const MAX_PROFILE_COUNTS = 64
 // Why: empty contributors do not consume the count budget but must not make collection unbounded.
 const MAX_PROFILE_CONTRIBUTORS = 64
+const MAX_CONTRIBUTOR_NAME_LENGTH = 64
+const MAX_COUNT_KEY_LENGTH = 80
 
 export function registerRendererMemoryProfileContributor(
   name: string,
   contributor: RendererMemoryProfileContributor
 ): () => void {
+  if (
+    name.length === 0 ||
+    name.length > MAX_CONTRIBUTOR_NAME_LENGTH ||
+    (!contributors.has(name) && contributors.size >= MAX_PROFILE_CONTRIBUTORS)
+  ) {
+    return () => undefined
+  }
   contributors.set(name, contributor)
   return () => {
     if (contributors.get(name) === contributor) {
@@ -49,10 +58,13 @@ export function collectRendererMemoryProfileCounts(): RendererMemoryProfileCount
         if (inspected >= MAX_COUNTS_PER_CONTRIBUTOR || collected >= MAX_PROFILE_COUNTS) {
           break
         }
+        inspected += 1
         if (!Object.hasOwn(contribution, key)) {
           continue
         }
-        inspected += 1
+        if (key.length === 0 || key.length > MAX_COUNT_KEY_LENGTH) {
+          continue
+        }
         const value = contribution[key]
         if (typeof value === 'number' && Number.isFinite(value)) {
           counts[`${name}.${key}`] = value

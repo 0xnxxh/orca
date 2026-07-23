@@ -15,6 +15,7 @@ afterEach(() => {
   while (unregisters.length > 0) {
     unregisters.pop()?.()
   }
+  vi.restoreAllMocks()
 })
 
 describe('collectRendererMemoryProfileCounts', () => {
@@ -95,6 +96,42 @@ describe('collectRendererMemoryProfileCounts', () => {
 
     expect(collectRendererMemoryProfileCounts()).toEqual({})
     expect(contributors.filter((contributor) => contributor.mock.calls.length > 0)).toHaveLength(64)
+  })
+
+  it('does not retain contributors beyond the registry budget', () => {
+    const firstUnregister = registerRendererMemoryProfileContributor('empty-0', () => ({}))
+    unregisters.push(firstUnregister)
+    for (let index = 1; index < 64; index += 1) {
+      register(`empty-${index}`, () => ({}))
+    }
+    const overflowContributor = vi.fn(() => ({ retained: 1 }))
+    register('overflow', overflowContributor)
+
+    firstUnregister()
+
+    expect(collectRendererMemoryProfileCounts()).toEqual({})
+    expect(overflowContributor).not.toHaveBeenCalled()
+  })
+
+  it('bounds inherited property inspection and oversized output keys', () => {
+    const inherited = Object.fromEntries(
+      Array.from({ length: 100 }, (_, index) => [`inherited${index}`, index])
+    )
+    register('inherited', () => Object.create(inherited) as Record<string, number>)
+    register('oversized-key', () => ({ ['x'.repeat(10_000)]: 1, valid: 2 }))
+    const hasOwnSpy = vi.spyOn(Object, 'hasOwn')
+
+    const counts = collectRendererMemoryProfileCounts()
+    expect(hasOwnSpy).toHaveBeenCalledTimes(34)
+    expect(counts).toEqual({ 'oversized-key.valid': 2 })
+  })
+
+  it('skips an oversized contributor namespace without invoking it', () => {
+    const contributor = vi.fn(() => ({ count: 1 }))
+    register('x'.repeat(65), contributor)
+
+    expect(collectRendererMemoryProfileCounts()).toEqual({})
+    expect(contributor).not.toHaveBeenCalled()
   })
 })
 
