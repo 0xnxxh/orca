@@ -110,6 +110,7 @@ export function useMobileNativeChatController(args: {
 
   const activeChatSessionId = activeChatResolution?.sessionId ?? null
   const streamIdentity = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}\0${activeChatSessionId ?? ''}\0${activeHandleRef.current ?? ''}`
+  const imageAttachmentScopeKey = `${hostId}\0${worktreeId}\0${activeSessionTabId ?? ''}\0${activeHandle ?? ''}`
 
   const nativeChatSession = useMobileNativeChatSession({
     client,
@@ -273,6 +274,7 @@ export function useMobileNativeChatController(args: {
   const nativeChatImageAttachments = useMobileNativeChatImageAttachments({
     client,
     activeHandle,
+    attachmentScopeKey: imageAttachmentScopeKey,
     activeHandleRef,
     deviceTokenRef,
     inputLeaseReady: nativeChatInputLeaseReady,

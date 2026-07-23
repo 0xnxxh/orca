@@ -18,6 +18,7 @@ export type MobileNativeChatImageAttachmentContext = {
 
 export type MobileNativeChatImageAttachments = {
   readonly pendingChatImages: readonly MobileNativeChatPendingImage[]
+  readonly isAttachingPendingChatImage: boolean
   readonly attachPendingChatImage: () => Promise<void>
   readonly removePendingChatImage: (id: string) => void
   readonly handleNativeChatSendWithImages: (text: string) => Promise<boolean>
@@ -26,6 +27,7 @@ export type MobileNativeChatImageAttachments = {
 type Args = MobileNativeChatImageAttachmentContext & {
   readonly client: RpcClient | null
   readonly activeHandle: string | null
+  readonly attachmentScopeKey: string
   readonly activeHandleRef: MutableRefObject<string | null>
   readonly deviceTokenRef: MutableRefObject<string | null>
   readonly inputLeaseReady: boolean
@@ -38,6 +40,7 @@ type Args = MobileNativeChatImageAttachmentContext & {
 export function useMobileNativeChatImageAttachments({
   client,
   activeHandle,
+  attachmentScopeKey,
   activeHandleRef,
   deviceTokenRef,
   inputLeaseReady,
@@ -53,11 +56,13 @@ export function useMobileNativeChatImageAttachments({
     pendingChatImages,
     attachPendingChatImage: attachPendingChatImageFromSource,
     removePendingChatImage,
-    getReadyChatImages,
+    getSendableChatImages,
+    markPendingChatImagesPasted,
     consumePendingChatImages
   } = useMobileNativeChatPendingImages({
     client,
     activeHandle,
+    attachmentScopeKey,
     ...pendingImageContext
   })
   const handleNativeChatSendWithImages = useMobileNativeChatImageSend({
@@ -66,7 +71,8 @@ export function useMobileNativeChatImageAttachments({
     deviceTokenRef,
     inputLeaseReadyRef,
     sendText,
-    getReadyImages: getReadyChatImages,
+    getSendableImages: getSendableChatImages,
+    markImagesPasted: markPendingChatImagesPasted,
     consumeImages: consumePendingChatImages,
     onSendError
   })
@@ -77,6 +83,7 @@ export function useMobileNativeChatImageAttachments({
 
   return {
     pendingChatImages,
+    isAttachingPendingChatImage: pendingChatImages.some((image) => image.status === 'uploading'),
     attachPendingChatImage,
     removePendingChatImage,
     handleNativeChatSendWithImages

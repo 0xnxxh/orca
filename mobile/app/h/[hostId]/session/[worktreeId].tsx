@@ -4719,7 +4719,6 @@ export default function SessionScreen() {
                 ))}
                 <MobileNativeChatOverlay
                   controller={nativeChatController}
-                  isAttaching={isAttaching}
                   onMicPress={handleDictationToggle}
                   micActive={dictation.isRecording}
                   dictationMode={dictationMode}

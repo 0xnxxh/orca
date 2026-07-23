@@ -124,6 +124,39 @@ describe('mobile clipboard image paste helpers', () => {
     })
   })
 
+  it('stops future chunks and aborts server state when upload is cancelled', async () => {
+    const controller = new AbortController()
+    const base64 = 'a'.repeat(MOBILE_CLIPBOARD_IMAGE_UPLOAD_CHUNK_BASE64_CHARS + 4)
+    const calls: string[] = []
+    const client = {
+      sendRequest: vi.fn(async (method: string) => {
+        calls.push(method)
+        if (method === 'clipboard.startImageUpload') {
+          return ok('start', { uploadId: 'upload-1' })
+        }
+        if (method === 'clipboard.appendImageUploadChunk') {
+          controller.abort()
+          return ok('append', {
+            receivedBase64Length: MOBILE_CLIPBOARD_IMAGE_UPLOAD_CHUNK_BASE64_CHARS
+          })
+        }
+        if (method === 'clipboard.abortImageUpload') {
+          return ok('abort', { aborted: true })
+        }
+        throw new Error(`unexpected request: ${method}`)
+      })
+    }
+
+    await expect(
+      saveMobileClipboardImageAsTempFile(client, base64, { signal: controller.signal })
+    ).rejects.toThrow('Image upload cancelled')
+    expect(calls).toEqual([
+      'clipboard.startImageUpload',
+      'clipboard.appendImageUploadChunk',
+      'clipboard.abortImageUpload'
+    ])
+  })
+
   it('brackets generated image paths before sending to the terminal', () => {
     expect(buildMobileImagePastePayload('/tmp/orca.png')).toBe('\x1b[200~/tmp/orca.png\x1b[201~')
     expect(buildMobileImagePastePayload('/tmp/\x1b.png')).toBe('\x1b[200~/tmp/\u241b.png\x1b[201~')

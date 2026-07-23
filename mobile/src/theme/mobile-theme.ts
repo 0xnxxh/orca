@@ -7,6 +7,8 @@ export const colors = {
   bgRaised: '#242424',
   borderSubtle: '#2a2a2a',
   editorSurface: '#1e1e1e',
+  imageLoadingScrim: 'rgba(17, 17, 17, 0.45)',
+  imageControlScrim: 'rgba(17, 17, 17, 0.72)',
 
   textPrimary: '#e0e0e0',
   textSecondary: '#888888',

@@ -4,7 +4,6 @@ import type { MobileNativeChatController } from './use-mobile-native-chat-contro
 
 type Props = {
   controller: MobileNativeChatController
-  isAttaching: boolean
   onMicPress: () => void
   micActive: boolean
   dictationMode: 'toggle' | 'hold'
@@ -18,7 +17,6 @@ type Props = {
  *  view toggles while the native surface owns the visible composer. */
 export function MobileNativeChatOverlay({
   controller,
-  isAttaching,
   onMicPress,
   micActive,
   dictationMode,
@@ -57,7 +55,7 @@ export function MobileNativeChatOverlay({
         composerText={controller.chatComposerText}
         onComposerTextChange={controller.setChatComposerText}
         onAttachImage={() => void controller.attachPendingChatImage()}
-        isAttaching={isAttaching}
+        isAttaching={controller.isAttachingPendingChatImage}
         pendingImages={controller.pendingChatImages}
         onRemovePendingImage={controller.removePendingChatImage}
         onMicPress={onMicPress}

@@ -2,16 +2,18 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
+import { markRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
 import { useMobileNativeChatImageSend } from './use-mobile-native-chat-image-send'
-import type { MobileNativeChatReadyImage } from './use-mobile-native-chat-pending-images'
+import type { MobileNativeChatSendImage } from './use-mobile-native-chat-pending-images'
 
 const sendRequest = vi.fn()
 const client = { sendRequest } as unknown as RpcClient
 const sendText = vi.fn()
+const markImagesPasted = vi.fn()
 const consumeImages = vi.fn()
 const onSendError = vi.fn()
 
-let readyImages: readonly MobileNativeChatReadyImage[] = []
+let sendableImages: MobileNativeChatSendImage[] = []
 let leaseReady = true
 let activeHandle = 'term-1'
 
@@ -22,11 +24,21 @@ describe('useMobileNativeChatImageSend', () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     vi.clearAllMocks()
-    readyImages = []
+    sendableImages = []
     leaseReady = true
     activeHandle = 'term-1'
     sendRequest.mockResolvedValue({ ok: true, result: { send: { accepted: true } } })
     sendText.mockResolvedValue(true)
+    markImagesPasted.mockImplementation((ids: readonly string[]) => {
+      const pasted = new Set(ids)
+      sendableImages = sendableImages.map((image) =>
+        pasted.has(image.id) ? { id: image.id, status: 'pasted' } : image
+      )
+    })
+    consumeImages.mockImplementation((ids: readonly string[]) => {
+      const consumed = new Set(ids)
+      sendableImages = sendableImages.filter((image) => !consumed.has(image.id))
+    })
   })
 
   afterEach(() => {
@@ -50,7 +62,8 @@ describe('useMobileNativeChatImageSend', () => {
         }
       },
       sendText,
-      getReadyImages: () => readyImages,
+      getSendableImages: () => sendableImages,
+      markImagesPasted,
       consumeImages,
       onSendError
     })
@@ -71,9 +84,9 @@ describe('useMobileNativeChatImageSend', () => {
   })
 
   it('pastes each image bracketed without enter, consumes it, then sends the text', async () => {
-    readyImages = [
-      { id: 'a', hostPath: '/tmp/a.png' },
-      { id: 'b', hostPath: '/tmp/b.png' }
+    sendableImages = [
+      { id: 'a', status: 'ready', hostPath: '/tmp/a.png' },
+      { id: 'b', status: 'ready', hostPath: '/tmp/b.png' }
     ]
     render()
 
@@ -91,12 +104,13 @@ describe('useMobileNativeChatImageSend', () => {
       enter: false,
       client: { id: 'device-9', type: 'mobile' }
     })
-    expect(consumeImages.mock.calls).toEqual([[['a']], [['b']]])
+    expect(markImagesPasted.mock.calls).toEqual([[['a']], [['b']]])
+    expect(consumeImages).toHaveBeenCalledWith(['a', 'b'])
     expect(sendText).toHaveBeenCalledWith('what is this?')
   })
 
   it('submits an image-only send with a bare Enter', async () => {
-    readyImages = [{ id: 'a', hostPath: '/tmp/a.png' }]
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
     render()
 
     await expect(send!('')).resolves.toBe(true)
@@ -107,12 +121,13 @@ describe('useMobileNativeChatImageSend', () => {
       enter: true,
       client: { id: 'device-9', type: 'mobile' }
     })
+    expect(consumeImages).toHaveBeenCalledWith(['a'])
   })
 
   it('stops and keeps undelivered images when a paste is rejected', async () => {
-    readyImages = [
-      { id: 'a', hostPath: '/tmp/a.png' },
-      { id: 'b', hostPath: '/tmp/b.png' }
+    sendableImages = [
+      { id: 'a', status: 'ready', hostPath: '/tmp/a.png' },
+      { id: 'b', status: 'ready', hostPath: '/tmp/b.png' }
     ]
     sendRequest
       .mockResolvedValueOnce({ ok: true, result: { send: { accepted: true } } })
@@ -120,14 +135,15 @@ describe('useMobileNativeChatImageSend', () => {
     render()
 
     await expect(send!('caption')).resolves.toBe(false)
-    // Only the delivered image is consumed; 'b' stays attached for retry.
-    expect(consumeImages.mock.calls).toEqual([[['a']]])
+    // The first path stays marked as pasted; retry must not write it again.
+    expect(markImagesPasted).toHaveBeenCalledWith(['a'])
+    expect(consumeImages).not.toHaveBeenCalled()
     expect(sendText).not.toHaveBeenCalled()
     expect(onSendError).toHaveBeenCalledWith('Message not sent')
   })
 
   it('fails before pasting anything when the input lease is not ready', async () => {
-    readyImages = [{ id: 'a', hostPath: '/tmp/a.png' }]
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
     leaseReady = false
     render()
 
@@ -138,7 +154,7 @@ describe('useMobileNativeChatImageSend', () => {
   })
 
   it('does not send the caption to a terminal selected while image paths were being pasted', async () => {
-    readyImages = [{ id: 'a', hostPath: '/tmp/a.png' }]
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
     sendRequest.mockImplementation(async () => {
       activeHandle = 'term-2'
       return { ok: true, result: { send: { accepted: true } } }
@@ -147,15 +163,16 @@ describe('useMobileNativeChatImageSend', () => {
 
     await expect(send!('caption')).resolves.toBe(false)
     expect(sendRequest).toHaveBeenCalledTimes(1)
-    expect(consumeImages).toHaveBeenCalledWith(['a'])
+    expect(markImagesPasted).toHaveBeenCalledWith(['a'])
+    expect(consumeImages).not.toHaveBeenCalled()
     expect(sendText).not.toHaveBeenCalled()
     expect(onSendError).toHaveBeenCalledWith('Message not sent (disconnected)')
   })
 
   it('does not continue pasting images after the target terminal changes', async () => {
-    readyImages = [
-      { id: 'a', hostPath: '/tmp/a.png' },
-      { id: 'b', hostPath: '/tmp/b.png' }
+    sendableImages = [
+      { id: 'a', status: 'ready', hostPath: '/tmp/a.png' },
+      { id: 'b', status: 'ready', hostPath: '/tmp/b.png' }
     ]
     sendRequest.mockImplementation(async () => {
       activeHandle = 'term-2'
@@ -165,7 +182,48 @@ describe('useMobileNativeChatImageSend', () => {
 
     await expect(send!('caption')).resolves.toBe(false)
     expect(sendRequest).toHaveBeenCalledTimes(1)
-    expect(consumeImages.mock.calls).toEqual([[['a']]])
+    expect(markImagesPasted).toHaveBeenCalledWith(['a'])
     expect(sendText).not.toHaveBeenCalled()
+  })
+
+  it('does not paste an image twice when its acknowledgement is lost', async () => {
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
+    sendRequest.mockRejectedValueOnce(markRpcDeliveryUnknown(new Error('ack lost')))
+    render()
+
+    await expect(send!('caption')).resolves.toBe(false)
+    expect(markImagesPasted).toHaveBeenCalledWith(['a'])
+    expect(sendText).not.toHaveBeenCalled()
+    expect(onSendError).toHaveBeenCalledWith(
+      'Image delivery unconfirmed — check terminal before retrying'
+    )
+
+    await expect(send!('caption')).resolves.toBe(true)
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendText).toHaveBeenCalledTimes(1)
+    expect(consumeImages).toHaveBeenCalledWith(['a'])
+  })
+
+  it('retries only the final Enter after an image-only submission is rejected', async () => {
+    sendableImages = [{ id: 'a', status: 'ready', hostPath: '/tmp/a.png' }]
+    sendRequest
+      .mockResolvedValueOnce({ ok: true, result: { send: { accepted: true } } })
+      .mockResolvedValueOnce({ ok: true, result: { send: { accepted: false } } })
+      .mockResolvedValueOnce({ ok: true, result: { send: { accepted: true } } })
+    render()
+
+    await expect(send!('')).resolves.toBe(false)
+    expect(sendableImages).toEqual([{ id: 'a', status: 'pasted' }])
+    expect(consumeImages).not.toHaveBeenCalled()
+
+    await expect(send!('')).resolves.toBe(true)
+    expect(sendRequest).toHaveBeenCalledTimes(3)
+    expect(sendRequest).toHaveBeenNthCalledWith(3, 'terminal.send', {
+      terminal: 'term-1',
+      text: '',
+      enter: true,
+      client: { id: 'device-9', type: 'mobile' }
+    })
+    expect(consumeImages).toHaveBeenCalledWith(['a'])
   })
 })

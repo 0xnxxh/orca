@@ -102,8 +102,14 @@ function assertSuccess<T>(response: RpcSuccess | RpcFailure): T {
 export async function saveMobileClipboardImageAsTempFile(
   client: Pick<RpcClient, 'sendRequest'>,
   imageData: string,
-  args?: { connectionId?: string | null }
+  args?: { connectionId?: string | null; signal?: AbortSignal }
 ): Promise<string> {
+  const assertActive = (): void => {
+    if (args?.signal?.aborted) {
+      throw new Error('Image upload cancelled')
+    }
+  }
+  assertActive()
   const contentBase64 = normalizeMobileClipboardImageBase64(imageData)
   const connectionId = args?.connectionId ?? null
   const startResponse = await client.sendRequest('clipboard.startImageUpload', {
@@ -116,6 +122,7 @@ export async function saveMobileClipboardImageAsTempFile(
       startResponse.error.code === 'method_not_found' &&
       contentBase64.length <= MOBILE_CLIPBOARD_IMAGE_SINGLE_FRAME_FALLBACK_BASE64_CHARS
     ) {
+      assertActive()
       return assertSuccess<string>(
         await client.sendRequest('clipboard.saveImageAsTempFile', { contentBase64, connectionId })
       )
@@ -125,11 +132,13 @@ export async function saveMobileClipboardImageAsTempFile(
 
   const { uploadId } = startResponse.result as { uploadId: string }
   try {
+    assertActive()
     for (
       let offset = 0;
       offset < contentBase64.length;
       offset += MOBILE_CLIPBOARD_IMAGE_UPLOAD_CHUNK_BASE64_CHARS
     ) {
+      assertActive()
       assertSuccess(
         await client.sendRequest('clipboard.appendImageUploadChunk', {
           uploadId,
@@ -140,7 +149,9 @@ export async function saveMobileClipboardImageAsTempFile(
           )
         })
       )
+      assertActive()
     }
+    assertActive()
     return assertSuccess<string>(
       await client.sendRequest('clipboard.commitImageUpload', { uploadId })
     )

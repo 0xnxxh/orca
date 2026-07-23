@@ -137,6 +137,34 @@ describe('MobileNativeChatComposer', () => {
     expect(onSend).toHaveBeenCalledWith('')
   })
 
+  it('keeps image-only retry available after the path was pasted without offering removal', async () => {
+    const onSend = vi.fn().mockResolvedValue(true)
+    const restore = suppressRendererWarning()
+    try {
+      await act(async () => {
+        renderer = create(
+          createElement(MobileNativeChatComposer, {
+            value: '',
+            onChangeText: vi.fn(),
+            onSend,
+            pendingImages: [{ id: 'image-1', thumbnailUri: 'file:///image.png', status: 'pasted' }],
+            onRemovePendingImage: vi.fn()
+          })
+        )
+      })
+    } finally {
+      restore()
+    }
+
+    expect(sendButton().props).toMatchObject({ disabled: false })
+    expect(
+      renderer!.root.findAll(
+        (node) =>
+          node.type === 'Pressable' && node.props.accessibilityLabel === 'Remove attached image'
+      )
+    ).toHaveLength(0)
+  })
+
   it('blocks send while any pending image is still uploading', async () => {
     const onSend = vi.fn().mockResolvedValue(true)
     const restore = suppressRendererWarning()

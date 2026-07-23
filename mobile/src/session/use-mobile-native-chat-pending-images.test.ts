@@ -42,10 +42,19 @@ describe('useMobileNativeChatPendingImages', () => {
     state = null
   })
 
-  function Harness({ activeHandle = 't1' }: { activeHandle?: string | null }): null {
+  function Harness({
+    activeHandle = 't1',
+    rpcClient = client,
+    attachmentScopeKey = activeHandle ?? 'none'
+  }: {
+    activeHandle?: string | null
+    rpcClient?: RpcClient
+    attachmentScopeKey?: string
+  }): null {
     state = useMobileNativeChatPendingImages({
-      client,
+      client: rpcClient,
       activeHandle,
+      attachmentScopeKey,
       canAttach: true,
       connState: 'connected',
       getConnectionId: async () => null,
@@ -82,15 +91,15 @@ describe('useMobileNativeChatPendingImages', () => {
     expect(state!.pendingChatImages).toEqual([
       { id: 'chat-image-1', thumbnailUri: 'file:///pick.jpg', status: 'uploading', hostPath: null }
     ])
-    expect(state!.getReadyChatImages()).toEqual([])
+    expect(state!.getSendableChatImages()).toEqual([])
 
     await act(async () => {
       resolveUpload('/tmp/orca-img.png')
       await attachDone
     })
     expect(state!.pendingChatImages[0]).toMatchObject({ id: 'chat-image-1', status: 'ready' })
-    expect(state!.getReadyChatImages()).toEqual([
-      { id: 'chat-image-1', hostPath: '/tmp/orca-img.png' }
+    expect(state!.getSendableChatImages()).toEqual([
+      { id: 'chat-image-1', status: 'ready', hostPath: '/tmp/orca-img.png' }
     ])
     expect(onSuccess).toHaveBeenCalledTimes(1)
   })
@@ -143,10 +152,12 @@ describe('useMobileNativeChatPendingImages', () => {
       await state!.attachPendingChatImage('library')
       await state!.attachPendingChatImage('library')
     })
-    expect(state!.getReadyChatImages()).toHaveLength(2)
+    expect(state!.getSendableChatImages()).toHaveLength(2)
 
     act(() => state!.removePendingChatImage('chat-image-1'))
-    expect(state!.getReadyChatImages()).toEqual([{ id: 'chat-image-2', hostPath: '/tmp/b.png' }])
+    expect(state!.getSendableChatImages()).toEqual([
+      { id: 'chat-image-2', status: 'ready', hostPath: '/tmp/b.png' }
+    ])
 
     act(() => state!.consumePendingChatImages(['chat-image-2']))
     expect(state!.pendingChatImages).toEqual([])
@@ -166,7 +177,46 @@ describe('useMobileNativeChatPendingImages', () => {
       renderer!.update(createElement(Harness, { activeHandle: 't2' }))
     })
     expect(state!.pendingChatImages).toEqual([])
-    expect(state!.getReadyChatImages()).toEqual([])
+    expect(state!.getSendableChatImages()).toEqual([])
+  })
+
+  it('retains pasted images until submission and prevents removing them', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    saveMobileClipboardImageAsTempFile.mockResolvedValue('/tmp/a.png')
+    render()
+
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+    })
+    act(() => state!.markPendingChatImagesPasted(['chat-image-1']))
+
+    expect(state!.getSendableChatImages()).toEqual([{ id: 'chat-image-1', status: 'pasted' }])
+    act(() => state!.removePendingChatImage('chat-image-1'))
+    expect(state!.pendingChatImages).toHaveLength(1)
+    act(() => state!.consumePendingChatImages(['chat-image-1']))
+    expect(state!.pendingChatImages).toEqual([])
+  })
+
+  it('drops pending images when the RPC client changes for the same terminal handle', async () => {
+    pickMobileImage.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    saveMobileClipboardImageAsTempFile.mockResolvedValue('/tmp/a.png')
+    render('t1')
+    await act(async () => {
+      await state!.attachPendingChatImage('library')
+    })
+
+    const nextClient = { sendRequest: vi.fn() } as unknown as RpcClient
+    act(() => {
+      renderer!.update(
+        createElement(Harness, {
+          activeHandle: 't1',
+          rpcClient: nextClient,
+          attachmentScopeKey: 't1'
+        })
+      )
+    })
+
+    expect(state!.pendingChatImages).toEqual([])
   })
 
   it('does not attach a picker result to a terminal selected while the picker was open', async () => {
@@ -209,7 +259,12 @@ describe('useMobileNativeChatPendingImages', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+    const uploadCall = saveMobileClipboardImageAsTempFile.mock.calls[0]
+    expect(uploadCall).toBeDefined()
+    const uploadSignal = (uploadCall![2] as { signal?: AbortSignal }).signal
+    expect(uploadSignal?.aborted).toBe(false)
     act(() => state!.removePendingChatImage('chat-image-1'))
+    expect(uploadSignal?.aborted).toBe(true)
     await act(async () => {
       resolveUpload('/tmp/a.png')
       await attachDone
@@ -235,8 +290,12 @@ describe('useMobileNativeChatPendingImages', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
+    const uploadCall = saveMobileClipboardImageAsTempFile.mock.calls[0]
+    expect(uploadCall).toBeDefined()
+    const uploadSignal = (uploadCall![2] as { signal?: AbortSignal }).signal
     act(() => renderer!.unmount())
     renderer = null
+    expect(uploadSignal?.aborted).toBe(true)
     await act(async () => {
       resolveUpload('/tmp/a.png')
       await attachDone

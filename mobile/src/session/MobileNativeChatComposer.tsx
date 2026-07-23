@@ -84,11 +84,11 @@ export function MobileNativeChatComposer({
   const sendingRef = useRef(false)
   const [sending, setSending] = useState(false)
   const trimmed = value.trim()
-  const readyImageCount = pendingImages.filter((image) => image.status === 'ready').length
-  const uploadingImages = pendingImages.length > readyImageCount
+  const sendableImageCount = pendingImages.filter((image) => image.status !== 'uploading').length
+  const uploadingImages = pendingImages.some((image) => image.status === 'uploading')
   // Image-only sends are allowed; uploads must finish so send can't race them.
   const canSend =
-    (trimmed.length > 0 || readyImageCount > 0) &&
+    (trimmed.length > 0 || sendableImageCount > 0) &&
     !disabled &&
     !sending &&
     !isAttaching &&
@@ -176,10 +176,15 @@ export function MobileNativeChatComposer({
                     <ActivityIndicator size="small" color={colors.textPrimary} />
                   </View>
                 ) : null}
-                {onRemovePendingImage ? (
+                {onRemovePendingImage && image.status !== 'pasted' ? (
                   <Pressable
                     style={({ pressed }) => [styles.attachmentRemove, pressed && styles.pressed]}
-                    onPress={() => onRemovePendingImage(image.id)}
+                    onPress={() => {
+                      if (!sendingRef.current) {
+                        onRemovePendingImage(image.id)
+                      }
+                    }}
+                    disabled={sending}
                     hitSlop={8}
                     accessibilityLabel="Remove attached image"
                   >
@@ -196,7 +201,7 @@ export function MobileNativeChatComposer({
               accessibilityLabel="Attach image"
               style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
               onPress={onAttachImage}
-              disabled={isAttaching || disabled}
+              disabled={isAttaching || disabled || sending}
             >
               {isAttaching ? (
                 <ActivityIndicator size="small" color={colors.textSecondary} />
@@ -318,7 +323,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(17, 17, 17, 0.45)'
+    backgroundColor: colors.imageLoadingScrim
   },
   attachmentRemove: {
     position: 'absolute',
@@ -329,7 +334,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(17, 17, 17, 0.72)'
+    backgroundColor: colors.imageControlScrim
   },
   bar: {
     flexDirection: 'row',
