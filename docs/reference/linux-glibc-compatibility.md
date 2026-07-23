@@ -59,9 +59,21 @@ native binary's version needs (`objdump -p` "Version References" — the
 authoritative load-time list, which also captures symbol-less markers like
 `GLIBC_ABI_DT_RELR`) and fails the build if any strong `GLIBC_`/`GLIBCXX_`/
 `CXXABI_` node is newer than stock Ubuntu 20.04 provides, naming the file and the
-offending node. Weak needs are ignored (the loader tolerates them). A future
-runner bump or a new native dependency therefore fails the release build instead
-of shipping a Linux app that crashes on launch.
+offending node. Weak needs are ignored (the loader tolerates them). It also
+asserts the flip side of the `.symver` fix: any binary that imports
+`openpty`/`forkpty` must keep `libutil.so.1` in `DT_NEEDED` — otherwise the
+pinned `openpty@GLIBC_2.2.5` resolves from libc's compat alias at build time (so
+the version check passes) yet fails to load on 20.04, where those functions live
+only in libutil. A future runner bump, a new native dependency, or a dropped
+ldflag therefore fails the release build instead of shipping a Linux app that
+crashes on launch.
+
+> The gate is a static invariant, not an integration test. The load path was
+> verified by hand for this fix (real Ubuntu 20.04, x64 + arm64: `require`
+> node-pty and spawn a shell). A CI smoke test that loads the packaged
+> `pty.node` in a glibc-2.31 container and spawns a shell is the recommended
+> follow-up — it would make the load path self-verifying and stay valid even if
+> the build ever moves to an old-glibc sysroot.
 
 The one carve-out is the `sherpa-onnx` speech prebuilt, which already requires
 `GLIBCXX_3.4.29` (GCC 11). It loads lazily in the speech worker

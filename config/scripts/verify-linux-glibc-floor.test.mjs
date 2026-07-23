@@ -9,8 +9,11 @@ const {
   parseGlibcVersion,
   compareGlibcVersions,
   parseVersionNeeds,
+  parseNeededLibraries,
+  parseImportedSymbols,
   isVersionNodeAboveFloor,
   findFloorViolations,
+  findMissingProviderDeps,
   collectNativeBinaries,
   verifyLinuxGlibcFloor
 } = require('./verify-linux-glibc-floor.cjs')
@@ -112,6 +115,48 @@ describe('verify-linux-glibc-floor parsing', () => {
   })
 })
 
+describe('DT_NEEDED provider check', () => {
+  const OBJDUMP_P_DYNAMIC = [
+    'Dynamic Section:',
+    '  NEEDED               libutil.so.1',
+    '  NEEDED               libpthread.so.0',
+    '  NEEDED               libc.so.6',
+    '',
+    'Version References:',
+    '  required from libc.so.6:',
+    '    0x0 0x00 02 GLIBC_2.2.5'
+  ].join('\n')
+
+  it('parses DT_NEEDED shared libraries from objdump -p', () => {
+    const needed = parseNeededLibraries(OBJDUMP_P_DYNAMIC)
+    expect([...needed].sort()).toEqual(['libc.so.6', 'libpthread.so.0', 'libutil.so.1'])
+  })
+
+  it('parses undefined imported symbols from objdump -T, stripping @VERSION', () => {
+    const output = [
+      '0000000000000000      DF *UND*\t0000000000000000 (GLIBC_2.2.5) openpty',
+      '0000000000000000  w   DF *UND*\t0000000000000000 __cxa_finalize@GLIBC_2.2.5',
+      '0000000000000000      DF .text\t0000000000000000 defined_symbol'
+    ].join('\n')
+    const imported = parseImportedSymbols(output)
+    expect(imported.has('openpty')).toBe(true)
+    expect(imported.has('__cxa_finalize')).toBe(true)
+    expect(imported.has('defined_symbol')).toBe(false) // not *UND*
+  })
+
+  it('flags a binary that imports openpty/forkpty without libutil.so.1 in DT_NEEDED', () => {
+    const importsPty = new Set(['openpty', 'forkpty', 'free'])
+    // Missing libutil.so.1 -> the pinned symbols would not resolve on the floor.
+    expect(
+      findMissingProviderDeps(importsPty, new Set(['libc.so.6'])).map((m) => m.symbol)
+    ).toEqual(['openpty', 'forkpty'])
+    // With libutil.so.1 present, no violation.
+    expect(findMissingProviderDeps(importsPty, new Set(['libc.so.6', 'libutil.so.1']))).toEqual([])
+    // A binary that doesn't import the relocated symbols is never flagged.
+    expect(findMissingProviderDeps(new Set(['free']), new Set(['libc.so.6']))).toEqual([])
+  })
+})
+
 describe('collectNativeBinaries', () => {
   it('collects only ELF .node/.so/executable files, skipping non-ELF and symlinks', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-glibc-collect-'))
@@ -146,9 +191,11 @@ describe('collectNativeBinaries', () => {
 })
 
 describe.skipIf(process.platform === 'win32')('verifyLinuxGlibcFloor', () => {
-  // A stub objdump that answers --version and emits canned `-p` Version
-  // References keyed on the inspected file's basename. `*fail*` exits non-zero
-  // to exercise the fail-closed branch.
+  // A stub objdump keyed on the inspected file's basename. Handles `-p` (Dynamic
+  // Section DT_NEEDED + Version References) and `-T` (undefined symbols).
+  // `*fail*` exits non-zero (fail-closed branch); `*noutil*` omits libutil.so.1
+  // from DT_NEEDED; `*pty*` imports openpty. Match on basename only so the
+  // (random) temp-dir path cannot collide.
   async function writeStubObjdump(dir) {
     const stubPath = join(dir, 'objdump-stub.sh')
     await writeFile(
@@ -156,13 +203,22 @@ describe.skipIf(process.platform === 'win32')('verifyLinuxGlibcFloor', () => {
       [
         '#!/bin/sh',
         'if [ "$1" = "--version" ]; then echo "GNU objdump (stub)"; exit 0; fi',
-        // Match on basename only so the (random) temp-dir path cannot collide.
         'f=$(basename "$2")',
         'case "$f" in',
         '  *fail*) echo "objdump: $f: File format not recognized" >&2; exit 1 ;;',
         'esac',
-        'printf "Version References:\\n"',
-        'printf "  required from libc.so.6:\\n"',
+        'if [ "$1" = "-T" ]; then',
+        '  case "$f" in',
+        '    *pty*) printf "0000 DF *UND* 0000 (GLIBC_2.2.5) openpty\\n" ;;',
+        '  esac',
+        '  exit 0',
+        'fi',
+        'printf "Dynamic Section:\\n  NEEDED               libc.so.6\\n"',
+        'case "$f" in',
+        '  *noutil*) : ;;',
+        '  *) printf "  NEEDED               libutil.so.1\\n  NEEDED               libpthread.so.0\\n" ;;',
+        'esac',
+        'printf "\\nVersion References:\\n  required from libc.so.6:\\n"',
         'case "$f" in',
         '  *bad*)      printf "    0x0 0x00 03 GLIBC_2.34\\n    0x0 0x00 04 GLIBC_2.2.5\\n" ;;',
         '  *relr*)     printf "    0x0 0x00 05 GLIBC_ABI_DT_RELR\\n    0x0 0x00 04 GLIBC_2.2.5\\n" ;;',
@@ -198,6 +254,23 @@ describe.skipIf(process.platform === 'win32')('verifyLinuxGlibcFloor', () => {
       expect(error.message).toMatch(/bad-pty\.node needs GLIBC_2\.34/)
       expect(error.message).toMatch(/relr-exe\.node needs GLIBC_ABI_DT_RELR/)
       expect(error.message).toMatch(/cxx-addon\.node needs GLIBCXX_3\.4\.29/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('throws when a pinned binary imports openpty without libutil.so.1 in DT_NEEDED', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-glibc-noutil-'))
+    try {
+      const objdumpPath = await writeStubObjdump(root)
+      await mkdir(join(root, 'app'), { recursive: true })
+      // Below the version floor (so the version check passes) but libutil.so.1
+      // is missing from DT_NEEDED — openpty would not resolve on Ubuntu 20.04.
+      await writeFile(join(root, 'app', 'noutil-pty.node'), ELF_HEADER)
+
+      expect(() => verifyLinuxGlibcFloor(join(root, 'app'), { objdumpPath })).toThrow(
+        /noutil-pty\.node imports openpty but libutil\.so\.1 is not in DT_NEEDED/
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }

@@ -136,6 +136,34 @@ function findFloorViolations(needs, filePath = '') {
   )
 }
 
+// On stock Ubuntu 20.04 (glibc 2.31) these symbols live ONLY in these DSOs —
+// glibc kept openpty/forkpty in libutil until the 2.34 merge. A binary that
+// imports them must keep the DSO in DT_NEEDED or they will not resolve on the
+// floor. This guards config/patches/node-pty@1.1.0.patch's forced
+// `-l:libutil.so.1`: if a toolchain change ever dropped that ldflag, the pinned
+// openpty@GLIBC_2.2.5 would still resolve from libc's compat alias at build time
+// (so the version-floor check passes) yet fail to load on 20.04. libpthread
+// (pthread_sigmask) is intentionally omitted — the Node/Electron host always
+// loads it, so it resolves regardless of this addon's DT_NEEDED.
+const RELOCATED_SYMBOL_PROVIDERS = Object.freeze({
+  openpty: 'libutil.so.1',
+  forkpty: 'libutil.so.1'
+})
+
+/**
+ * Relocated symbols the binary imports whose providing DSO is absent from
+ * DT_NEEDED — meaning they resolve at build time but not on the floor OS.
+ */
+function findMissingProviderDeps(importedSymbols, neededLibraries) {
+  const missing = []
+  for (const [symbol, library] of Object.entries(RELOCATED_SYMBOL_PROVIDERS)) {
+    if (importedSymbols.has(symbol) && !neededLibraries.has(library)) {
+      missing.push({ symbol, library })
+    }
+  }
+  return missing
+}
+
 function isElfFile(filePath) {
   let fd
   try {
@@ -209,13 +237,13 @@ function cLocaleEnv() {
 }
 
 /**
- * Read a binary's version needs via `objdump -p`. Fail-closed: an objdump spawn
- * error, non-zero exit, or signal throws, because a silently-unreadable binary
- * (truncated, corrupt, or an objdump that cannot decode its format) would let a
- * too-new binary slip past the gate.
+ * Run objdump with one flag on `filePath`. Fail-closed: a spawn error, non-zero
+ * exit, or signal throws, because a silently-unreadable binary (truncated,
+ * corrupt, or an objdump that cannot decode its format) would let a too-new
+ * binary slip past the gate.
  */
-function readVersionNeeds(filePath, objdumpPath) {
-  const result = spawnSync(objdumpPath, ['-p', filePath], {
+function runObjdump(objdumpPath, flag, filePath) {
+  const result = spawnSync(objdumpPath, [flag, filePath], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
     env: cLocaleEnv()
@@ -227,11 +255,53 @@ function readVersionNeeds(filePath, objdumpPath) {
   }
   if (result.signal || result.status !== 0) {
     throw new Error(
-      `[verify-linux-glibc-floor] objdump -p failed for ${filePath} ` +
+      `[verify-linux-glibc-floor] objdump ${flag} failed for ${filePath} ` +
         `(status ${result.status}, signal ${result.signal ?? 'none'}): ${(result.stderr || '').trim()}`
     )
   }
-  return parseVersionNeeds(result.stdout || '')
+  return result.stdout || ''
+}
+
+/** DT_NEEDED shared-library names from `objdump -p` (`  NEEDED  <lib>`). */
+function parseNeededLibraries(objdumpOutput) {
+  const needed = new Set()
+  for (const line of objdumpOutput.split('\n')) {
+    const match = line.match(/^\s+NEEDED\s+(\S+)/)
+    if (match) {
+      needed.add(match[1])
+    }
+  }
+  return needed
+}
+
+/** Undefined (imported) dynamic symbol base names from `objdump -T` (`*UND*`). */
+function parseImportedSymbols(objdumpOutput) {
+  const imported = new Set()
+  for (const line of objdumpOutput.split('\n')) {
+    if (!line.includes('*UND*')) {
+      continue
+    }
+    // The symbol name is the final token; strip any @VERSION suffix.
+    const token = line.trim().split(/\s+/).pop()
+    if (token) {
+      imported.add(token.split('@')[0])
+    }
+  }
+  return imported
+}
+
+/** Version needs + DT_NEEDED from a single `objdump -p` (fail-closed). */
+function readDynamicInfo(filePath, objdumpPath) {
+  const output = runObjdump(objdumpPath, '-p', filePath)
+  return {
+    versionNeeds: parseVersionNeeds(output),
+    neededLibraries: parseNeededLibraries(output)
+  }
+}
+
+/** Imported (undefined) dynamic symbols from `objdump -T` (fail-closed). */
+function readImportedSymbols(filePath, objdumpPath) {
+  return parseImportedSymbols(runObjdump(objdumpPath, '-T', filePath))
 }
 
 /**
@@ -259,24 +329,40 @@ function verifyLinuxGlibcFloor(rootDir, options = {}) {
 
   const offenders = []
   for (const filePath of binaries) {
-    const violations = findFloorViolations(readVersionNeeds(filePath, objdumpPath), filePath)
-    if (violations.length > 0) {
-      offenders.push({ filePath, violations })
+    const { versionNeeds, neededLibraries } = readDynamicInfo(filePath, objdumpPath)
+    const floorViolations = findFloorViolations(versionNeeds, filePath)
+    // Only pay for `objdump -T` when a relocated-symbol provider is not already
+    // in DT_NEEDED (the common, healthy case short-circuits without it).
+    const providerViolations = Object.values(RELOCATED_SYMBOL_PROVIDERS).some(
+      (library) => !neededLibraries.has(library)
+    )
+      ? findMissingProviderDeps(readImportedSymbols(filePath, objdumpPath), neededLibraries)
+      : []
+    if (floorViolations.length > 0 || providerViolations.length > 0) {
+      offenders.push({ filePath, floorViolations, providerViolations })
     }
   }
 
   if (offenders.length > 0) {
     const detail = offenders
-      .map(({ filePath, violations }) => {
-        const nodes = [...new Set(violations.map((v) => v.name))].sort()
-        const libraries = [...new Set(violations.map((v) => v.library).filter(Boolean))]
-        const from = libraries.length > 0 ? ` (from ${libraries.join(', ')})` : ''
-        return `  ${relative(rootDir, filePath) || filePath} needs ${nodes.join(', ')}${from}`
+      .map(({ filePath, floorViolations, providerViolations }) => {
+        const reasons = []
+        if (floorViolations.length > 0) {
+          const nodes = [...new Set(floorViolations.map((v) => v.name))].sort()
+          const libraries = [...new Set(floorViolations.map((v) => v.library).filter(Boolean))]
+          reasons.push(
+            `needs ${nodes.join(', ')}${libraries.length > 0 ? ` (from ${libraries.join(', ')})` : ''}`
+          )
+        }
+        for (const { symbol, library } of providerViolations) {
+          reasons.push(`imports ${symbol} but ${library} is not in DT_NEEDED`)
+        }
+        return `  ${relative(rootDir, filePath) || filePath} ${reasons.join('; ')}`
       })
       .join('\n')
     throw new Error(
       `[verify-linux-glibc-floor] ${offenders.length} bundled native binar${offenders.length === 1 ? 'y' : 'ies'} ` +
-        `require a symbol version newer than ${FLOOR_LABEL}, so the app will crash on startup there:\n${detail}\n` +
+        `will not load on ${FLOOR_LABEL}, so the app will crash on startup there:\n${detail}\n` +
         'See docs/reference/linux-glibc-compatibility.md — rebuild the offending module against an older ' +
         'toolchain or pin the relocated symbols (as config/patches/node-pty@1.1.0.patch does).'
     )
@@ -291,13 +377,18 @@ module.exports = {
   MIN_GLIBC,
   VERSION_FLOORS,
   FLOOR_LABEL,
+  RELOCATED_SYMBOL_PROVIDERS,
   parseGlibcVersion,
   compareGlibcVersions,
   parseVersionNeeds,
+  parseNeededLibraries,
+  parseImportedSymbols,
   isVersionNodeAboveFloor,
   isLibstdcxxNode,
   findFloorViolations,
+  findMissingProviderDeps,
   collectNativeBinaries,
-  readVersionNeeds,
+  readDynamicInfo,
+  readImportedSymbols,
   verifyLinuxGlibcFloor
 }
