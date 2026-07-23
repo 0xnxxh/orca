@@ -40,6 +40,8 @@ type FakeManager = {
   resumeRendering: ReturnType<typeof vi.fn>
   scheduleRevealRepaint: ReturnType<typeof vi.fn>
   scheduleRevealPresent: ReturnType<typeof vi.fn>
+  fitAllPanes: ReturnType<typeof vi.fn>
+  fitAllPanesStable: ReturnType<typeof vi.fn>
 }
 
 function createManager(order: string[] = []): FakeManager {
@@ -47,7 +49,12 @@ function createManager(order: string[] = []): FakeManager {
     getPanes: vi.fn(() => []),
     resumeRendering: vi.fn(() => order.push('resume-rendering')),
     scheduleRevealRepaint: vi.fn(() => order.push('reveal-repaint')),
-    scheduleRevealPresent: vi.fn(() => order.push('reveal-present'))
+    scheduleRevealPresent: vi.fn(() => order.push('reveal-present')),
+    // Why: the reveal must fit through the wobble-resistant stable path, never
+    // the synchronous fitAllPanes, so a transient cell-metric grid is not
+    // applied and reflow-garbled onto inline TUIs on minimize→restore.
+    fitAllPanes: vi.fn(() => order.push('fit-sync')),
+    fitAllPanesStable: vi.fn(() => order.push('fit-stable'))
   }
 }
 
@@ -114,7 +121,42 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     const manager = createManager(order)
     resumeTerminalVisibility(resumeArgs(manager, false))
 
-    expect(order).toEqual(['resume-rendering', 'reveal-repaint'])
+    expect(order).toEqual(['resume-rendering', 'fit-stable', 'reveal-repaint'])
+  })
+
+  it('fits a heavy reveal through the wobble-resistant stable path, not the sync fit', () => {
+    // Regression: minimize→restore garbled an inline TUI (grok) because the
+    // synchronous reveal fit applied a transient one-column DOM↔WebGL
+    // cell-metric grid, reflowing the buffer it then diff-painted over.
+    const manager = createManager()
+    resumeTerminalVisibility(resumeArgs(manager, false))
+
+    expect(manager.fitAllPanesStable).toHaveBeenCalledTimes(1)
+    expect(manager.fitAllPanes).not.toHaveBeenCalled()
+    // The stable fit must run only after WebGL resumes (metrics settle first).
+    expect(manager.fitAllPanesStable.mock.invocationCallOrder[0]).toBeGreaterThan(
+      manager.resumeRendering.mock.invocationCallOrder[0]
+    )
+  })
+
+  it('does not fit on a light tab reveal', () => {
+    const manager = createManager()
+    resumeTerminalVisibility(resumeArgs(manager, true))
+
+    expect(manager.fitAllPanesStable).not.toHaveBeenCalled()
+    expect(manager.fitAllPanes).not.toHaveBeenCalled()
+  })
+
+  it('fits window wake recovery through the stable path, not the sync fit', () => {
+    const manager = createManager()
+    recoverVisibleTerminalWindowWake({
+      manager: manager as never as PaneManager,
+      isActive: true,
+      clearGlyphAtlases: false
+    })
+
+    expect(manager.fitAllPanesStable).toHaveBeenCalledTimes(1)
+    expect(manager.fitAllPanes).not.toHaveBeenCalled()
   })
 
   it('resets each pane linkifier hover cache on window wake recovery so links recover without a scroll', () => {

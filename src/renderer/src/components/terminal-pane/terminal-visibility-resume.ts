@@ -13,7 +13,7 @@ import {
   isTerminalLinkifierHoverActive,
   resetTerminalLinkifierHoverState
 } from '@/lib/pane-manager/terminal-linkifier-hover-reset'
-import { fitAndFocusPanes, fitPanes, focusActivePane } from './pane-helpers'
+import { focusActivePane } from './pane-helpers'
 import { scheduleTabRevealWebglAtlasRecovery } from './terminal-webgl-atlas-recovery'
 
 const VISIBLE_RESUME_FLUSH_CHARS = 256 * 1024
@@ -156,10 +156,13 @@ export function recoverVisibleTerminalWindowWake({
   }
   syncTerminalViewportIntents(manager)
   manager.resumeRendering()
+  // Why: same reveal wobble guard as resumeTerminalVisibilityHeavy — a window
+  // wake re-attaches WebGL, so a raw fit can apply a transient cell-metric grid
+  // and reflow-garble inline TUIs. fitAllPanesStable fits an element whose pixels
+  // changed, repairs a grid that diverged at unchanged pixels, else leaves it be.
+  manager.fitAllPanesStable()
   if (isActive) {
-    fitAndFocusPanes(manager)
-  } else {
-    fitPanes(manager)
+    focusActivePane(manager)
   }
   enforceTerminalViewportIntents(manager)
   if (clearGlyphAtlases) {
@@ -198,13 +201,16 @@ function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean):
   // Windows (ANGLE -> D3D11) it can be 100-500 ms but a deferred resume
   // would paint a stretched DOM-fallback flash, which is worse UX.
   manager.resumeRendering()
-  // Single fit on resume. Background bytes have been pushed into xterm
-  // above, so this fit only absorbs container dimension changes that
-  // happened while hidden (e.g. sidebar toggle on another worktree).
+  // Why: resumeRendering just re-attached WebGL, whose cell metrics differ from
+  // the DOM renderer's, so a raw synchronous fit can propose a one-column-off
+  // grid and reflow xterm before the metrics settle, then snap back — a net-zero
+  // reflow "wiggle" that garbles inline TUIs that diff-paint over it (grok
+  // minimize→restore). fitAllPanesStable fits synchronously only when the fit
+  // element's pixels actually changed while hidden; an unchanged element is left
+  // alone (or repaired on a steady grid if its grid diverged while hidden).
+  manager.fitAllPanesStable()
   if (isActive) {
-    fitAndFocusPanes(manager)
-  } else {
-    fitPanes(manager)
+    focusActivePane(manager)
   }
 }
 
