@@ -867,7 +867,17 @@ function settingsForKnownRepoOwner(
 }
 
 function settingsForWorktreeOwner(
-  state: Pick<AppState, 'repos' | 'settings' | 'worktreesByRepo' | 'detectedWorktreesByRepo'>,
+  state: Pick<
+    AppState,
+    | 'repos'
+    | 'settings'
+    | 'worktreesByRepo'
+    | 'detectedWorktreesByRepo'
+    | 'folderWorkspaces'
+    | 'projectGroups'
+    | 'restoredRuntimeHostIdByWorkspaceSessionKey'
+    | 'runtimeEnvironments'
+  >,
   worktreeId: string
 ) {
   const route = resolveWorktreeOperationRoute(state, worktreeId)

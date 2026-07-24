@@ -5718,6 +5718,27 @@ describe('worktree remote runtime mutations', () => {
     expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
   })
 
+  it('persists activity locally for a local folder workspace instead of failing on owner routing (#10251)', async () => {
+    const store = createTestStore()
+    const folderWorkspace = makeFolderWorkspace({ id: 'folder-local' })
+    const folderKey = folderWorkspaceKey(folderWorkspace.id)
+    store.setState({
+      folderWorkspaces: [folderWorkspace],
+      worktreesByRepo: { repo1: [] }
+    } as Partial<AppState>)
+
+    expect(() => store.getState().bumpWorktreeActivity(folderKey)).not.toThrow()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
+    expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith(
+      expect.objectContaining({
+        worktreeId: folderKey,
+        updates: expect.objectContaining({ lastActivityAt: expect.any(Number) })
+      })
+    )
+  })
+
   it('persists activity for hidden detected worktrees', async () => {
     const store = createTestStore()
     const hidden = makeWorktree({
