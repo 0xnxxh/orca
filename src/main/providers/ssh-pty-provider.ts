@@ -13,7 +13,6 @@ import {
   assertSshAgentSessionCreateResult,
   requestSshAgentSessionCreate
 } from './ssh-agent-session-create-operation'
-import { isPtyIncarnationId } from '../../shared/pty-incarnation'
 import { mapSshPtyProcessList } from './ssh-agent-session-process-list'
 import {
   parseSshPtyAttachResult,
@@ -23,6 +22,9 @@ import {
 import { buildSshPtySpawnRequest } from './ssh-pty-spawn-request'
 import { SshPtySpawnExitRaceTracker } from './ssh-pty-spawn-exit-race'
 import { SshAgentSessionCapabilities } from './ssh-agent-session-capabilities'
+import { SshPtyProviderNotifications } from './ssh-pty-provider-notifications'
+import { SshPtyLiveRoster } from './ssh-pty-live-roster'
+import { isAdmittedSshRelayPtyId } from './ssh-pty-wire-admission'
 
 // Why: sequential relay teardown calls share one absolute budget; convert to the mux-relative timeout only at dispatch.
 function relayTimeoutOptions(deadlineMs: number | undefined): { timeoutMs: number } | undefined {
@@ -33,14 +35,11 @@ function relayTimeoutOptions(deadlineMs: number | undefined): { timeoutMs: numbe
 export class SshPtyProvider implements IPtyProvider {
   private mux: SshChannelMultiplexer
   private connectionId: string
-  private dataListeners = new Set<SshPtyDataCallback>()
-  private replayListeners = new Set<SshPtyReplayCallback>()
-  private exitListeners = new Set<SshPtyExitCallback>()
-  // Why: stale notification callbacks must not outlive a disconnected provider.
-  private unsubscribeNotifications: (() => void) | null = null
+  private readonly livePtys = new SshPtyLiveRoster()
   readonly getAppliedSize: NonNullable<IPtyProvider['getAppliedSize']>
   private readonly agentSessionCapabilities: SshAgentSessionCapabilities
   private spawnExitRaces = new SshPtySpawnExitRaceTracker()
+  private readonly notifications: SshPtyProviderNotifications
 
   constructor(
     connectionId: string,
@@ -51,53 +50,20 @@ export class SshPtyProvider implements IPtyProvider {
     this.mux = mux
     this.agentSessionCapabilities = new SshAgentSessionCapabilities(mux)
     this.getAppliedSize = createSshPtyAppliedSizeReader(mux, connectionId)
-
-    this.unsubscribeNotifications = mux.onNotification((method, params) => {
-      switch (method) {
-        case 'pty.data':
-          for (const cb of this.dataListeners) {
-            cb({
-              id: this.toAppPtyId(params.id as string),
-              data: params.data as string,
-              ...(typeof params.rawLength === 'number'
-                ? { sequenceChars: params.rawLength as number }
-                : {}),
-              ...(params.transformed === true ? { transformed: true } : {}),
-              ...(typeof params.seq === 'number' ? { seq: params.seq as number } : {})
-            })
-          }
-          break
-
-        case 'pty.replay':
-          for (const cb of this.replayListeners) {
-            cb({ id: this.toAppPtyId(params.id as string), data: params.data as string })
-          }
-          break
-
-        case 'pty.exit':
-          this.spawnExitRaces.recordExit(params.id as string, params.incarnationId)
-          for (const cb of this.exitListeners) {
-            cb({
-              id: this.toAppPtyId(params.id as string),
-              code: params.code as number,
-              ...(isPtyIncarnationId(params.incarnationId)
-                ? { incarnationId: params.incarnationId }
-                : {})
-            })
-          }
-          break
+    this.notifications = new SshPtyProviderNotifications(
+      mux,
+      (relayId) => this.toAppPtyId(relayId),
+      (relayId) => this.livePtys.recordNotification(this.toAppPtyId(relayId)),
+      (relayId, incarnationId) => {
+        this.spawnExitRaces.recordExit(relayId, incarnationId)
+        this.livePtys.recordExit(this.toAppPtyId(relayId))
       }
-    })
+    )
   }
 
   dispose(): void {
-    if (this.unsubscribeNotifications) {
-      this.unsubscribeNotifications()
-      this.unsubscribeNotifications = null
-    }
-    this.dataListeners.clear()
-    this.replayListeners.clear()
-    this.exitListeners.clear()
+    this.livePtys.clear()
+    this.notifications.dispose()
   }
 
   getConnectionId = (): string => this.connectionId
@@ -124,13 +90,15 @@ export class SshPtyProvider implements IPtyProvider {
       }
     }
     if (opts.sessionId) {
-      return await reattachSshPtySessionWithExitFence({
+      const result = await reattachSshPtySessionWithExitFence({
         mux: this.mux,
         connectionId: this.connectionId,
         sessionId: opts.sessionId,
         options: opts,
         exitRaceTracker: this.spawnExitRaces
       })
+      this.livePtys.recordSpawn(result.id)
+      return result
     }
 
     const supportsCreateOperation = opts.agentSessionCreateOperationId
@@ -159,6 +127,9 @@ export class SshPtyProvider implements IPtyProvider {
         assertSshAgentSessionCreateResult(result)
       }
       const spawnResult = result as PtySpawnResult
+      if (!isAdmittedSshRelayPtyId(spawnResult.id)) {
+        throw new Error('invalid_ssh_pty_id')
+      }
       if (this.spawnExitRaces.didMatchingExitArrive(operation, spawnResult)) {
         // Why: relay notification can share the response batch; no controller registration may follow.
         throw Object.assign(new Error('agent_session_exited_during_start'), {
@@ -181,9 +152,11 @@ export class SshPtyProvider implements IPtyProvider {
           throw new Error(validation.error)
         }
       }
+      const id = this.toAppPtyId(spawnResult.id)
+      this.livePtys.recordSpawn(id)
       return {
         ...spawnResult,
-        id: this.toAppPtyId(spawnResult.id),
+        id,
         ...(claimed
           ? {
               agentSessionEnsure: {
@@ -259,6 +232,7 @@ export class SshPtyProvider implements IPtyProvider {
       },
       relayTimeoutOptions(opts.deadlineMs)
     )
+    this.livePtys.recordExit(id)
   }
 
   async sendSignal(id: string, signal: string): Promise<void> {
@@ -287,7 +261,8 @@ export class SshPtyProvider implements IPtyProvider {
   }
 
   acknowledgeDataEvent(id: string, charCount: number): void {
-    this.mux.notify('pty.ackData', { id: this.toRelayPtyId(id), charCount })
+    const relayId = this.toRelayPtyId(id)
+    this.notifications.acknowledgeLegacy(relayId, charCount)
   }
 
   async hasChildProcesses(id: string): Promise<boolean> {
@@ -298,6 +273,14 @@ export class SshPtyProvider implements IPtyProvider {
   async getForegroundProcess(id: string): Promise<string | null> {
     const result = await this.mux.request('pty.getForegroundProcess', { id: this.toRelayPtyId(id) })
     return result as string | null
+  }
+
+  async inspectProcess(
+    id: string
+  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }> {
+    return (await this.mux.request('pty.inspectProcess', {
+      id: this.toRelayPtyId(id)
+    })) as { foregroundProcess: string | null; hasChildProcesses: boolean }
   }
 
   async serialize(ids: string[]): Promise<string> {
@@ -312,12 +295,22 @@ export class SshPtyProvider implements IPtyProvider {
   }
 
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
+    const listing = this.livePtys.beginListing()
     const result = await this.mux.request(
       'pty.listProcesses',
       undefined,
       relayTimeoutOptions(opts?.deadlineMs)
     )
-    return mapSshPtyProcessList(result as PtyProcessInfo[], (id) => this.toAppPtyId(id))
+    const processes = mapSshPtyProcessList(result, (id) => this.toAppPtyId(id))
+    this.livePtys.reconcileListing(
+      listing,
+      processes.map((process) => process.id)
+    )
+    return processes
+  }
+
+  hasPty(id: string): boolean {
+    return this.livePtys.has(id)
   }
 
   async getDefaultShell(): Promise<string> {
@@ -331,17 +324,14 @@ export class SshPtyProvider implements IPtyProvider {
   }
 
   onData(callback: SshPtyDataCallback): () => void {
-    this.dataListeners.add(callback)
-    return () => this.dataListeners.delete(callback)
+    return this.notifications.onData(callback)
   }
 
   onReplay(callback: SshPtyReplayCallback): () => void {
-    this.replayListeners.add(callback)
-    return () => this.replayListeners.delete(callback)
+    return this.notifications.onReplay(callback)
   }
 
   onExit(callback: SshPtyExitCallback): () => void {
-    this.exitListeners.add(callback)
-    return () => this.exitListeners.delete(callback)
+    return this.notifications.onExit(callback)
   }
 }

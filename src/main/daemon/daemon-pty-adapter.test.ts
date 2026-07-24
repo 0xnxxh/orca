@@ -868,6 +868,60 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
   })
 
   describe('listProcesses', () => {
+    it('strips unknown daemon owner payloads before publication', () => {
+      const normalize = (
+        adapter as unknown as {
+          validatedAgentSessionOwners(owners: unknown): {
+            agentSessionOwners?: unknown[]
+          }
+        }
+      ).validatedAgentSessionOwners.bind(adapter)
+      const owner = {
+        claim: {
+          digestVersion: 1,
+          keyId: 'key',
+          identityDigest: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          worktreeScopeDigest: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          agent: 'codex',
+          unknownPayload: 'claim payload'
+        },
+        generation: 'generation-1',
+        phase: 'live',
+        ptyId: 'pty-1',
+        surface: {
+          worktreeId: 'worktree',
+          tabId: 'tab',
+          leafId: '11111111-1111-4111-8111-111111111111',
+          terminalHandle: 'term_claimed',
+          unknownPayload: 'surface payload'
+        },
+        unknownPayload: 'owner payload'
+      }
+
+      expect(normalize([owner])).toEqual({
+        agentSessionOwners: [
+          {
+            claim: {
+              digestVersion: 1,
+              keyId: 'key',
+              identityDigest: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              worktreeScopeDigest: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+              agent: 'codex'
+            },
+            generation: 'generation-1',
+            phase: 'live',
+            ptyId: 'pty-1',
+            surface: {
+              worktreeId: 'worktree',
+              tabId: 'tab',
+              leafId: '11111111-1111-4111-8111-111111111111',
+              terminalHandle: 'term_claimed'
+            }
+          }
+        ]
+      })
+    })
+
     it('returns active sessions', async () => {
       await adapter.spawn({
         cols: 80,
@@ -884,6 +938,26 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(procs[0]).toHaveProperty('title')
       expect(procs[0].cwd).toBe('/repo/owned-before-osc7')
       expect(procs[0].worktreeId).toBe('repo::/repo/owned-before-osc7')
+    })
+
+    it('reports the daemon session WSL owner', async () => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      try {
+        const spawned = await adapter.spawn({
+          cols: 80,
+          rows: 24,
+          cwd: '\\\\wsl.localhost\\Ubuntu\\home\\jin\\repo'
+        })
+
+        const procs = await adapter.listProcesses()
+
+        expect(procs.find((process) => process.id === spawned.id)?.wslDistro).toBe('Ubuntu')
+      } finally {
+        if (platform) {
+          Object.defineProperty(process, 'platform', platform)
+        }
+      }
     })
   })
 
@@ -1292,7 +1366,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     it('does not schedule a checkpoint timer until a session is dirty', async () => {
       const adapterClass = DaemonPtyAdapter as unknown as { CHECKPOINT_INTERVAL_MS: number }
       const previousInterval = adapterClass.CHECKPOINT_INTERVAL_MS
-      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
       adapterClass.CHECKPOINT_INTERVAL_MS = 10_000
 
       try {
@@ -1303,14 +1376,16 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
           cwd: '/home/user',
           sessionId: 'idle-checkpoint'
         })
+        const internals = historyAdapter as unknown as {
+          checkpointTimer: ReturnType<typeof setTimeout> | null
+        }
 
-        expect(setTimeoutSpy.mock.calls.some(([, delay]) => delay === 10_000)).toBe(false)
+        expect(internals.checkpointTimer).toBeNull()
 
         lastSubprocess._simulateData('dirty after idle\r\n')
-        await waitFor(() => setTimeoutSpy.mock.calls.some(([, delay]) => delay === 10_000))
+        await waitFor(() => internals.checkpointTimer !== null)
       } finally {
         adapterClass.CHECKPOINT_INTERVAL_MS = previousInterval
-        setTimeoutSpy.mockRestore()
       }
     })
 
@@ -1994,9 +2069,13 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       writeFileSync(join(sessionDir, 'scrollback.bin'), 'cached output')
 
       historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const internals = historyAdapter as unknown as {
+        coldRestoreCache: { byteSize: number }
+      }
 
       const first = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
       expect(first.coldRestore).toBeDefined()
+      expect(internals.coldRestoreCache.byteSize).toBeGreaterThan(0)
 
       // Second call (StrictMode remount) should get cached data
       const second = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
@@ -2005,6 +2084,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       // After ack, cold restore should not be returned
       historyAdapter.ackColdRestore(sessionId)
+      expect(internals.coldRestoreCache.byteSize).toBe(0)
       const third = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
       expect(third.coldRestore).toBeUndefined()
     })

@@ -1,8 +1,9 @@
 /* eslint-disable max-lines -- Why: getStatus + install + remove all share the managed-command and trust-key derivation. Splitting would hide that the three operations must agree on group index, event label, and command bytes. */
-import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, statSync, unlinkSync } from 'node:fs'
 import { join, win32 as pathWin32 } from 'node:path'
 import type { SFTPWrapper } from 'ssh2'
 import type { AgentHookInstallState, AgentHookInstallStatus } from '../../shared/agent-hook-types'
+import { readAgentStateFileSync } from '../agent-state-file-reader'
 import {
   buildManagedCommandHook,
   createManagedCommandMatcher,
@@ -11,6 +12,7 @@ import {
   hookDefinitionHasManagedCommand,
   MANAGED_HOOK_TIMEOUT_SECONDS,
   readHooksJson,
+  readHooksJsonRawForGenerationCheck,
   readHooksJsonWithRaw,
   removeManagedCommands,
   wrapPosixHookCommand,
@@ -81,6 +83,7 @@ import {
 } from './codex-managed-trust-reconciliation'
 import type { CodexTrustGrantLedgerHome } from './codex-trust-grant-ledger'
 import { mutateRealHomeHooksPreservingUserTrust } from './codex-user-hook-trust-rebase'
+import { CodexWslReconciliationGenerations } from './codex-wsl-reconciliation-generations'
 
 // Why: Pre/PostToolUse feed the live in-flight-tool readout; PermissionRequest exits with no decision so Codex still shows its approval UI while Orca flips the pane to waiting.
 const CODEX_EVENTS = [
@@ -541,7 +544,7 @@ function applyMirroredRuntimeUserHookTrustStates(
     return
   }
 
-  const existing = readFileSync(tomlPath, 'utf-8')
+  const existing = readAgentStateFileSync(tomlPath)
   let updated = existing
   for (const { entry, enabled } of entries) {
     const headerKeyPattern = buildHookTrustHeaderKeyPattern(computeTrustKey(entry))
@@ -645,7 +648,7 @@ function cleanupLegacySystemManagedHooks(): void {
       afterHooks: nextHooks,
       writeHooks: () => {
         if (
-          readFileSync(legacyConfigPath, 'utf-8') !== previousRaw ||
+          readHooksJsonRawForGenerationCheck(legacyConfigPath) !== previousRaw ||
           resolveHooksJsonWritePath(legacyConfigPath) !== hooksWritePath
         ) {
           // Why: the pre-mutation RPC may overlap a user save; downgrade must
@@ -691,7 +694,7 @@ function cleanupLegacyCodexProfileHooks(): void {
     return
   }
 
-  const existing = readFileSync(profilePath, 'utf-8')
+  const existing = readAgentStateFileSync(profilePath)
   const next = stripLegacyManagedProfileBlock(existing)
   if (next === existing) {
     return
@@ -916,7 +919,8 @@ function installManagedHooksIntoWslRuntime(
       tomlPath: plan.tomlPath,
       managedCommand: command,
       managedEntries: trustEntries,
-      host: { kind: 'wsl', distro: plan.wslDistro, linuxRuntimeHome: plan.linuxRuntimeHome }
+      host: { kind: 'wsl', distro: plan.wslDistro, linuxRuntimeHome: plan.linuxRuntimeHome },
+      telemetryLane: 'managed'
     })
     if (grant.lane === 'fallback') {
       // Why: WSL runtime homes may carry user hook approvals we did not rebuild
@@ -1020,16 +1024,14 @@ function getWslReconciliationKey(runtimeHomePath: string): string {
 }
 
 export class CodexHookService {
-  private readonly wslReconciliationGeneration = new Map<string, number>()
+  private readonly wslReconciliationGenerations = new CodexWslReconciliationGenerations()
 
   private supersedeWslReconciliation(runtimeHomePath: string | null | undefined): number {
     if (!runtimeHomePath) {
       return 0
     }
     const key = getWslReconciliationKey(runtimeHomePath)
-    const generation = (this.wslReconciliationGeneration.get(key) ?? 0) + 1
-    this.wslReconciliationGeneration.set(key, generation)
-    return generation
+    return this.wslReconciliationGenerations.advance(key)
   }
 
   installForRuntimeHome(
@@ -1057,7 +1059,7 @@ export class CodexHookService {
           : null
       const action = getWslHookReconciliationAction({
         settlement,
-        isCurrentGeneration: this.wslReconciliationGeneration.get(key) === generation,
+        isCurrentGeneration: this.wslReconciliationGenerations.isCurrent(key, generation),
         installedTrustConfigPath,
         resolvedTrustConfigPath: resolvedPlan?.trustConfigPath ?? null,
         installSucceeded
@@ -1353,7 +1355,8 @@ export class CodexHookService {
         tomlPath,
         managedCommand: command,
         managedEntries: managedTrustEntries,
-        host: { kind: 'native' }
+        host: { kind: 'native' },
+        telemetryLane: 'managed'
       })
       if (grant.lane === 'rpc') {
         recentGrantEntries = grant.entries

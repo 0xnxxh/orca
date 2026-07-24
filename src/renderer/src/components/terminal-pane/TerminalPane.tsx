@@ -35,7 +35,6 @@ import {
   selectRuntimeAwareSshTargetRemoved
 } from '@/store/slices/runtime-environment-ssh'
 import { hydrateRuntimeEnvironmentSshState } from '@/runtime/runtime-environment-ssh-state'
-import { isPairedWebClientWindow } from '@/lib/desktop-window-chrome'
 import { handleInternalTerminalFileDrop } from './terminal-drop-handler'
 import { recordTerminalUserInputForLeaf } from './terminal-input-activity'
 import {
@@ -330,11 +329,8 @@ export default function TerminalPane({
     isNativeChatTranscriptLocalReadable(getConnectionIdFromState(store, worktreeId))
   )
   // Which machine's SSH store this target belongs to: a remote server's per-environment bucket, or null for this machine's local SSH maps.
-  // Why: paired web clients force null — they mirror their one host through the local maps, not an explicit environment bucket.
   const sshReconnectEnvironmentId = useAppStore((store) =>
-    sshReconnectTargetId && !isPairedWebClientWindow()
-      ? getExplicitRuntimeEnvironmentIdForWorktree(store, worktreeId)
-      : null
+    sshReconnectTargetId ? getExplicitRuntimeEnvironmentIdForWorktree(store, worktreeId) : null
   )
   const sshReconnectStatus = useAppStore((store) =>
     sshReconnectTargetId
@@ -2900,16 +2896,23 @@ export default function TerminalPane({
           onRestartDaemon={() => daemonActions.setPending('restart')}
         />
       )}
-      {showSshReconnectOverlay && sshReconnectTargetId && sshReconnectStatus ? (
-        <TerminalSshReconnectOverlay
-          targetId={sshReconnectTargetId}
-          targetLabel={sshReconnectTargetLabel}
-          status={sshReconnectStatus}
-          targetRemoved={sshReconnectTargetRemoved}
-          worktreeId={worktreeId}
-          sshOwnerEnvironmentId={sshReconnectEnvironmentId}
-        />
-      ) : null}
+      {/* Why: portal into the pane so the banner stacks above the xterm canvas (sibling mount painted under WebGL). */}
+      {showSshReconnectOverlay && sshReconnectTargetId && sshReconnectStatus
+        ? managedPanes.map((pane) =>
+            createPortal(
+              <TerminalSshReconnectOverlay
+                targetId={sshReconnectTargetId}
+                targetLabel={sshReconnectTargetLabel}
+                status={sshReconnectStatus}
+                targetRemoved={sshReconnectTargetRemoved}
+                worktreeId={worktreeId}
+                sshOwnerEnvironmentId={sshReconnectEnvironmentId}
+              />,
+              pane.container,
+              `ssh-reconnect-${pane.id}`
+            )
+          )
+        : null}
       <DaemonActionDialog api={daemonActions} />
       {isActive && (
         <TerminalSessionStateSaveFailureDialog
