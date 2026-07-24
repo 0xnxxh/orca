@@ -79,6 +79,17 @@ export function AgentDashboardDrawer({
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
   const close = useCallback(() => setOpen(false), [setOpen])
+  const handleSheetOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      // Why: Radix also requests dismissal for unguardable interactions (focus
+      // moving outside has no pointer coordinates), so like the workspace board
+      // only the drawer's own escape/outside/close paths may close it.
+      if (nextOpen) {
+        setOpen(true)
+      }
+    },
+    [setOpen]
+  )
   const boardRef = useRef<HTMLDivElement | null>(null)
 
   useWorkspaceKanbanOutsideDismiss({
@@ -138,7 +149,7 @@ export function AgentDashboardDrawer({
   }
 
   return (
-    <Sheet open={open} onOpenChange={setOpen} modal={false}>
+    <Sheet open={open} onOpenChange={handleSheetOpenChange} modal={false}>
       <SheetContent
         side="left"
         showCloseButton={false}
