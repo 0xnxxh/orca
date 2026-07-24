@@ -11,6 +11,7 @@ const {
   prunePackagedRuntimeNodeModules,
   verifyPackagedMainRuntimeDeps
 } = require('./packaged-runtime-node-modules.cjs')
+const { verifyLinuxGlibcFloor } = require('./scripts/verify-linux-glibc-floor.cjs')
 
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1'
 const isLinuxArm64Release = process.env.ORCA_LINUX_ARM64_RELEASE === '1'
@@ -85,7 +86,13 @@ module.exports = {
     // Why: feature-wall media is copied via extraResources so runtime can read
     // it from process.resourcesPath; exclude the source copy from app.asar.
     '!resources/onboarding/feature-wall/**',
-    '!resources/skills/**'
+    '!resources/skills/**',
+    // Why: the Windows CLI shim ships via extraResources to resources/bin/orca.cmd
+    // (beside the native resources/bin/orca.exe). Packing the source tree into
+    // app.asar too lets asarUnpack:['resources/**'] extract a second copy at
+    // app.asar.unpacked/resources/win32/bin/orca.cmd with no adjacent orca.exe,
+    // which fails to launch the CLI (#7351).
+    '!resources/win32{,/**/*}'
   ],
   // Why: the CLI entry-point lives in out/cli/ but imports shared modules
   // from out/shared/ and local hook mutators from out/main/. These paths must be
@@ -133,6 +140,12 @@ module.exports = {
     'node_modules/sherpa-onnx*/**'
   ],
   afterPack: async (context) => {
+    // Why: a Linux runner-image glibc bump silently shipped a node-pty pty.node
+    // requiring GLIBC_2.34, crashing the app on startup on Ubuntu 20.04 (#9902).
+    // Fail packaging if any bundled native binary exceeds the supported floor.
+    if (context.electronPlatformName === 'linux') {
+      verifyLinuxGlibcFloor(context.appOutDir)
+    }
     const resourcesDir =
       context.electronPlatformName === 'darwin'
         ? join(

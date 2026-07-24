@@ -141,7 +141,7 @@ export function registerCoreHandlers(
   registerClaudeAccountHandlers(claudeAccounts)
   registerMiniMaxCredentialsHandlers(rateLimits)
   registerGrokAccountHandlers()
-  registerRateLimitHandlers(rateLimits)
+  registerRateLimitHandlers(rateLimits, codexAccounts)
   registerGitHubHandlers(store, stats)
   registerGitLabHandlers(store)
   registerHostedReviewHandlers(store, stats)
@@ -182,7 +182,7 @@ export function registerCoreHandlers(
     onBeforeSignOut: lifecycleOptions.onBeforeOrcaProfileSignOut
   })
   registerBrowserHandlers()
-  registerShellHandlers()
+  registerShellHandlers(store)
   registerPetHandlers()
   registerSessionHandlers(store)
   registerUIHandlers(store)
