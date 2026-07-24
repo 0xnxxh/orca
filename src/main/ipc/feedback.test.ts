@@ -392,4 +392,96 @@ describe('submitFeedback', () => {
       githubEmail: null
     })
   })
+
+  describe('image attachments', () => {
+    function pngImage(bytes = 8): { contentType: string; data: Uint8Array } {
+      return { contentType: 'image/png', data: new Uint8Array(bytes).fill(1) }
+    }
+
+    function imageSubmitArgs(
+      images: { contentType: string; data: Uint8Array }[]
+    ): Parameters<typeof submitFeedback>[0] {
+      return {
+        feedback: 'images attached',
+        submissionType: 'feedback',
+        githubLogin: 'someone',
+        githubEmail: null,
+        images
+      }
+    }
+
+    function jsonResponse(body: unknown): Response {
+      return {
+        ok: true,
+        status: 202,
+        clone: () => ({ json: async () => body }) as unknown as Response
+      } as unknown as Response
+    }
+
+    it('sends attached images as multipart form parts', async () => {
+      await submitFeedback(imageSubmitArgs([pngImage(), pngImage()]))
+
+      const body = requestInit().body as FormData
+      expect(body).toBeInstanceOf(FormData)
+      expect(body.getAll('feedbackImage')).toHaveLength(2)
+      expect(body.get('feedback')).toBe('images attached')
+      // Why: multipart must not lose the enrichment fields the JSON lane sends.
+      expect(body.get('submissionType')).toBe('feedback')
+      expect(body.get('appVersion')).toBe('1.2.3-test')
+    })
+
+    it('keeps the JSON lane when nothing is attached', async () => {
+      await submitFeedback(imageSubmitArgs([]))
+
+      expect(requestInit().body).not.toBeInstanceOf(FormData)
+      expect(postedBody().feedback).toBe('images attached')
+    })
+
+    it('reports partial delivery when the server could not attach the images', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ ok: true, imagesDelivered: false }))
+
+      await expect(submitFeedback(imageSubmitArgs([pngImage()]))).resolves.toEqual({
+        ok: true,
+        imagesDelivered: false
+      })
+    })
+
+    it('treats a 2xx without the field as delivered so older servers still succeed', async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ ok: true }))
+
+      await expect(submitFeedback(imageSubmitArgs([pngImage()]))).resolves.toEqual({
+        ok: true,
+        imagesDelivered: true
+      })
+    })
+
+    it('rejects unsupported image types before any request is made', async () => {
+      const result = await submitFeedback(
+        imageSubmitArgs([{ contentType: 'application/pdf', data: new Uint8Array(4) }])
+      )
+
+      expect(result.ok).toBe(false)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('rejects more images than the supported count', async () => {
+      const result = await submitFeedback(
+        imageSubmitArgs(Array.from({ length: 5 }, () => pngImage()))
+      )
+
+      expect(result.ok).toBe(false)
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('drops images from crash submissions', async () => {
+      await submitFeedback({
+        ...diagnosticSubmitArgs(),
+        images: [pngImage()]
+      } as Parameters<typeof submitFeedback>[0])
+
+      const body = requestInit().body as FormData
+      expect(body.getAll('feedbackImage')).toHaveLength(0)
+      expect(body.get('diagnosticBundleSubmissionId')).toBe('bundleabcdefghijklmnop')
+    })
+  })
 })

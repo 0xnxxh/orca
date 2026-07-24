@@ -4038,7 +4038,8 @@
           "7a46c228b8": "フィードバックありがとうございます。",
           "a2fd890d9e": "送信する前にフィードバックを入力。",
           "f2e42e1307": "送信",
-          "69969ba364": "送信中…"
+          "69969ba364": "送信中…",
+          "imagesNotDelivered": "Feedback sent, but the images could not be attached."
         },
         "SidebarFilter": {
           "e3b3898218": "プロジェクトの追加",
@@ -4858,6 +4859,11 @@
           "cancel": "キャンセル",
           "forget": "Orcaから削除",
           "reconnectAndDelete": "再接続して削除"
+        },
+        "SidebarFeedbackImageAttachments": {
+          "screenshotsHint": "Screenshots help a lot — paste, drop, or attach up to {count}.",
+          "attachImages": "Attach",
+          "removeImage": "Remove image"
         }
       },
       "shared": {

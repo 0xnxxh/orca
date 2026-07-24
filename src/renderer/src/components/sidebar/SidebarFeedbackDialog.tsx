@@ -15,6 +15,13 @@ import { useMountedRef } from '@/hooks/useMountedRef'
 import { cn } from '@/lib/utils'
 import type { GitHubViewer } from '../../../../shared/types'
 import { translate } from '@/i18n/i18n'
+import {
+  extractImageFilesFromDataTransfer,
+  readFeedbackImageFiles,
+  releaseFeedbackImageDraft,
+  type FeedbackImageDraft
+} from '@/lib/feedback-image-attachments'
+import { SidebarFeedbackImageAttachments } from './SidebarFeedbackImageAttachments'
 
 const GITHUB_ISSUES_URL = 'https://github.com/stablyai/orca/issues/'
 const DISCORD_URL = 'https://discord.gg/fzjDKHxv8Q'
@@ -57,8 +64,60 @@ export function SidebarFeedbackDialog({
   const [viewer, setViewer] = useState<GitHubViewer | null>(null)
   const [isViewerLoading, setIsViewerLoading] = useState(false)
   const [submitAnonymously, setSubmitAnonymously] = useState(false)
+  const [images, setImages] = useState<FeedbackImageDraft[]>([])
+  const [isDragActive, setIsDragActive] = useState(false)
   const mountedRef = useMountedRef()
   const feedbackTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const dragDepthRef = useRef(0)
+
+  const clearImages = React.useCallback(() => {
+    setImages((current) => {
+      current.forEach(releaseFeedbackImageDraft)
+      return []
+    })
+  }, [])
+
+  // Why: object URLs for the thumbnails leak until revoked, so drop them when
+  // the dialog unmounts as well as when an attachment is removed.
+  React.useEffect(() => clearImages, [clearImages])
+
+  // Why: reading the count through a ref keeps the capacity check correct when
+  // several pastes land before React re-renders.
+  const imageCountRef = useRef(0)
+  imageCountRef.current = images.length
+
+  const handleAddFiles = React.useCallback(
+    (files: readonly File[]) => {
+      if (files.length === 0) {
+        return
+      }
+      void readFeedbackImageFiles(files, imageCountRef.current).then(
+        ({ images: added, errors }) => {
+          if (!mountedRef.current) {
+            added.forEach(releaseFeedbackImageDraft)
+            return
+          }
+          if (added.length > 0) {
+            setImages((existing) => [...existing, ...added])
+          }
+          // Why: never drop an attachment without telling the user — that
+          // silence is what made screenshots vanish in the first place.
+          errors.forEach((error) => toast.warning(error))
+        }
+      )
+    },
+    [mountedRef]
+  )
+
+  const handleRemoveImage = React.useCallback((id: string) => {
+    setImages((current) => {
+      const removed = current.find((image) => image.id === id)
+      if (removed) {
+        releaseFeedbackImageDraft(removed)
+      }
+      return current.filter((image) => image.id !== id)
+    })
+  }, [])
 
   React.useEffect(() => {
     if (!open) {
@@ -115,7 +174,11 @@ export function SidebarFeedbackDialog({
         feedback: trimmed,
         submitAnonymously,
         githubLogin: identity.githubLogin,
-        githubEmail: identity.githubEmail
+        githubEmail: identity.githubEmail,
+        images: images.map((image) => ({
+          contentType: image.contentType,
+          data: image.data
+        }))
       })
 
       if (!result.ok) {
@@ -123,14 +186,26 @@ export function SidebarFeedbackDialog({
       }
 
       if (mountedRef.current) {
-        toast.success(
-          translate(
-            'auto.components.sidebar.SidebarFeedbackDialog.7a46c228b8',
-            'Thanks for the feedback.'
+        // Why: the text reached us but the screenshots did not, so say that
+        // plainly instead of a blanket success the user would misread.
+        if (result.imagesDelivered === false) {
+          toast.warning(
+            translate(
+              'auto.components.sidebar.SidebarFeedbackDialog.imagesNotDelivered',
+              'Feedback sent, but the images could not be attached.'
+            )
           )
-        )
+        } else {
+          toast.success(
+            translate(
+              'auto.components.sidebar.SidebarFeedbackDialog.7a46c228b8',
+              'Thanks for the feedback.'
+            )
+          )
+        }
         setFeedback('')
         setSubmitAnonymously(false)
+        clearImages()
         onOpenChange(false)
       }
     } catch (err) {
@@ -157,6 +232,44 @@ export function SidebarFeedbackDialog({
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           feedbackTextareaRef.current?.focus()
+        }}
+        // Why: paste is bound on the dialog rather than the textarea so a
+        // screenshot lands whether or not the caret is in the message box.
+        onPaste={(event) => {
+          const pasted = extractImageFilesFromDataTransfer(event.clipboardData)
+          if (pasted.length > 0) {
+            event.preventDefault()
+            handleAddFiles(pasted)
+          }
+        }}
+        onDragEnter={(event) => {
+          if (extractImageFilesFromDataTransfer(event.dataTransfer).length === 0) {
+            return
+          }
+          dragDepthRef.current += 1
+          setIsDragActive(true)
+        }}
+        onDragOver={(event) => {
+          if (dragDepthRef.current > 0) {
+            event.preventDefault()
+          }
+        }}
+        onDragLeave={() => {
+          // Why: dragenter/leave fire per nested child; only clear the
+          // highlight once the pointer has left the dialog entirely.
+          dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+          if (dragDepthRef.current === 0) {
+            setIsDragActive(false)
+          }
+        }}
+        onDrop={(event) => {
+          const dropped = extractImageFilesFromDataTransfer(event.dataTransfer)
+          dragDepthRef.current = 0
+          setIsDragActive(false)
+          if (dropped.length > 0) {
+            event.preventDefault()
+            handleAddFiles(dropped)
+          }
         }}
       >
         <DialogHeader>
@@ -235,6 +348,14 @@ export function SidebarFeedbackDialog({
           )}
           rows={7}
           className="min-h-32 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        />
+
+        <SidebarFeedbackImageAttachments
+          images={images}
+          disabled={isSubmitting}
+          isDragActive={isDragActive}
+          onAddFiles={handleAddFiles}
+          onRemove={handleRemoveImage}
         />
 
         <div className="min-h-9 rounded-md border border-border/70 bg-muted/30 px-3 py-2">

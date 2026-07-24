@@ -4038,7 +4038,8 @@
           "7a46c228b8": "感谢您的反馈。",
           "a2fd890d9e": "请在提交前输入反馈。",
           "f2e42e1307": "发送",
-          "69969ba364": "正在发送..."
+          "69969ba364": "正在发送...",
+          "imagesNotDelivered": "Feedback sent, but the images could not be attached."
         },
         "SidebarFilter": {
           "e3b3898218": "添加项目",
@@ -4858,6 +4859,11 @@
           "cancel": "取消",
           "forget": "从 Orca 中移除",
           "reconnectAndDelete": "重新连接并删除"
+        },
+        "SidebarFeedbackImageAttachments": {
+          "screenshotsHint": "Screenshots help a lot — paste, drop, or attach up to {count}.",
+          "attachImages": "Attach",
+          "removeImage": "Remove image"
         }
       },
       "shared": {

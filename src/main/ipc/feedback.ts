@@ -1,5 +1,12 @@
 import os from 'node:os'
 import { app, ipcMain, net } from 'electron'
+import {
+  appendFeedbackImagesToFormData,
+  validateFeedbackImages,
+  type FeedbackImageAttachment
+} from './feedback-image-attachments'
+
+export type { FeedbackImageAttachment }
 
 // Why: the production Mac build loads the renderer from a file:// origin, so a
 // cross-origin POST from fetch() triggers a CORS preflight that the feedback
@@ -21,6 +28,7 @@ export type FeedbackSubmitArgs = {
   submitAnonymously?: boolean
   githubLogin: string | null
   githubEmail: string | null
+  images?: FeedbackImageAttachment[]
 }
 
 export type FeedbackDiagnosticBundleAttachment = {
@@ -40,6 +48,7 @@ type FeedbackSubmitBody = {
   osRelease: string
   arch: string
   diagnosticBundle?: FeedbackDiagnosticBundleAttachment
+  images?: FeedbackImageAttachment[]
 }
 
 export type FeedbackRequestFailure = {
@@ -48,7 +57,12 @@ export type FeedbackRequestFailure = {
 }
 
 export type FeedbackSubmitResult =
-  | { ok: true; diagnosticBundleFailure?: FeedbackRequestFailure }
+  | {
+      ok: true
+      diagnosticBundleFailure?: FeedbackRequestFailure
+      /** Absent when nothing was attached; false when the text landed but the images did not. */
+      imagesDelivered?: boolean
+    }
   | ({ ok: false } & FeedbackRequestFailure & {
         diagnosticBundleFailure?: FeedbackRequestFailure
       })
@@ -81,7 +95,10 @@ function buildSubmitBody(args: InternalFeedbackSubmitArgs): FeedbackSubmitBody {
     arch: process.arch,
     ...(args.submissionType === 'crash' && args.diagnosticBundle
       ? { diagnosticBundle: args.diagnosticBundle }
-      : {})
+      : {}),
+    // Why: images are a feedback-only affordance; crash reports already carry
+    // diagnostic bundles and the server rejects images on that lane.
+    ...(args.submissionType !== 'crash' && args.images?.length ? { images: args.images } : {})
   }
 }
 
@@ -114,7 +131,7 @@ async function postFeedback(
 }
 
 function feedbackRequestBodyInit(body: FeedbackSubmitBody): Pick<RequestInit, 'body' | 'headers'> {
-  if (!body.diagnosticBundle) {
+  if (!body.diagnosticBundle && !body.images?.length) {
     return {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -130,22 +147,25 @@ function feedbackRequestBodyInit(body: FeedbackSubmitBody): Pick<RequestInit, 'b
   appendFeedbackFormField(formData, 'platform', body.platform)
   appendFeedbackFormField(formData, 'osRelease', body.osRelease)
   appendFeedbackFormField(formData, 'arch', body.arch)
-  appendFeedbackFormField(
-    formData,
-    'diagnosticBundleSubmissionId',
-    body.diagnosticBundle.bundleSubmissionId
-  )
-  appendFeedbackFormField(formData, 'diagnosticBundleBytes', String(body.diagnosticBundle.bytes))
-  appendFeedbackFormField(
-    formData,
-    'diagnosticBundleSpanCount',
-    String(body.diagnosticBundle.spanCount)
-  )
-  formData.append(
-    'diagnosticBundleFile',
-    new Blob([body.diagnosticBundle.content], { type: DIAGNOSTIC_BUNDLE_CONTENT_TYPE }),
-    `orca-diagnostics-${body.diagnosticBundle.bundleSubmissionId}.ndjson`
-  )
+  if (body.diagnosticBundle) {
+    appendFeedbackFormField(
+      formData,
+      'diagnosticBundleSubmissionId',
+      body.diagnosticBundle.bundleSubmissionId
+    )
+    appendFeedbackFormField(formData, 'diagnosticBundleBytes', String(body.diagnosticBundle.bytes))
+    appendFeedbackFormField(
+      formData,
+      'diagnosticBundleSpanCount',
+      String(body.diagnosticBundle.spanCount)
+    )
+    formData.append(
+      'diagnosticBundleFile',
+      new Blob([body.diagnosticBundle.content], { type: DIAGNOSTIC_BUNDLE_CONTENT_TYPE }),
+      `orca-diagnostics-${body.diagnosticBundle.bundleSubmissionId}.ndjson`
+    )
+  }
+  appendFeedbackImagesToFormData(formData, body.images ?? [])
 
   // Why: multipart avoids JSON-escaping a near-cap NDJSON bundle over the
   // backend request limit while still submitting one feedback request.
@@ -250,10 +270,48 @@ async function submitFeedbackWithDiagnosticBundle(
   }
 }
 
+/**
+ * Reads the server's partial-delivery signal. A 2xx means the feedback text
+ * reached Slack, so a missing or unparseable field must not downgrade that to a
+ * failure — older servers simply answer `{ ok: true }`.
+ */
+async function readImagesDelivered(response: Response): Promise<boolean> {
+  try {
+    const parsed: unknown = await response.clone().json()
+    if (typeof parsed === 'object' && parsed !== null && 'imagesDelivered' in parsed) {
+      return (parsed as { imagesDelivered?: unknown }).imagesDelivered !== false
+    }
+  } catch {
+    // Why: a 2xx with a non-JSON body still means the text was accepted.
+  }
+  return true
+}
+
 export async function submitFeedback(
   args: InternalFeedbackSubmitArgs
 ): Promise<FeedbackSubmitResult> {
+  if (args.images?.length) {
+    const imageError = validateFeedbackImages(args.images)
+    if (imageError) {
+      return { ok: false, status: null, error: imageError }
+    }
+  }
   const body = buildSubmitBody(args)
+  if (body.images?.length) {
+    try {
+      const response = await postFeedback(
+        FEEDBACK_API_URL,
+        body,
+        FEEDBACK_ATTACHMENT_REQUEST_TIMEOUT_MS
+      )
+      if (response.ok) {
+        return { ok: true, imagesDelivered: await readImagesDelivered(response) }
+      }
+      return { ok: false, ...responseFailure(response) }
+    } catch (error) {
+      return { ok: false, ...errorFailure(error) }
+    }
+  }
   if (body.diagnosticBundle) {
     const bodyWithoutDiagnosticBundle =
       args.feedbackWithoutDiagnosticBundle !== undefined
@@ -286,6 +344,16 @@ export function registerFeedbackHandlers(): void {
   ipcMain.handle('feedback:submit', (_event, args: FeedbackSubmitArgs) =>
     // Why: crash submissions are main-only. A compromised renderer can invoke
     // this channel directly, so force the public feedback lane at the boundary.
-    submitFeedback({ ...args, submissionType: 'feedback' })
+    submitFeedback({
+      ...args,
+      submissionType: 'feedback',
+      // Why: structured clone can hand back ArrayBufferViews over a larger
+      // buffer; normalize so byteLength checks and Blob framing use the exact
+      // bytes the renderer selected.
+      images: args.images?.map((image) => ({
+        contentType: image.contentType,
+        data: new Uint8Array(image.data)
+      }))
+    })
   )
 }

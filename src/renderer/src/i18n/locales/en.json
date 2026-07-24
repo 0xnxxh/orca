@@ -4095,7 +4095,8 @@
           "7a46c228b8": "Thanks for the feedback.",
           "a2fd890d9e": "Please enter feedback before submitting.",
           "f2e42e1307": "Send",
-          "69969ba364": "Sending…"
+          "69969ba364": "Sending…",
+          "imagesNotDelivered": "Feedback sent, but the images could not be attached."
         },
         "SidebarFilter": {
           "e3b3898218": "Add project",
@@ -4881,6 +4882,11 @@
           "cancel": "Cancel",
           "forget": "Remove from Orca",
           "reconnectAndDelete": "Reconnect & Delete"
+        },
+        "SidebarFeedbackImageAttachments": {
+          "screenshotsHint": "Screenshots help a lot — paste, drop, or attach up to {count}.",
+          "attachImages": "Attach",
+          "removeImage": "Remove image"
         }
       },
       "shared": {
