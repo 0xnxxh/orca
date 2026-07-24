@@ -214,8 +214,7 @@ export function flushPendingSafeFitContinuations(pane: ManagedPane): void {
 export function safeFit(pane: ManagedPane): boolean {
   const completed = performSafeFit(pane)
   if (completed) {
-    // Why: record the container size this grid was fit for so the reveal fit can
-    // later tell a real resize from a metric-only wobble at the same size.
+    // Why: baseline for the reveal fit to tell a real resize from a metric wobble.
     recordPaneFitClientSize(pane)
     // Why: replay transactions may be waiting for renderer dimensions; any
     // successful ordinary fit is the event that makes their PTY grid authoritative.

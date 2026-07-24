@@ -39,7 +39,7 @@ function createPane(options: {
   const pane = {
     id: 3,
     lastFitClientSize: options.lastFitClientSize,
-    terminal: { cols: options.terminal.cols, rows: options.terminal.rows },
+    terminal: options.terminal,
     fitAddon: { proposeDimensions: vi.fn(() => options.proposed ?? undefined) }
   } as unknown as RevealTestPane
   mocks.readFitClientSize.mockImplementation(() => options.currentSize)

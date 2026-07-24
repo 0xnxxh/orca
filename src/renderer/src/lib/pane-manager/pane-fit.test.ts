@@ -29,8 +29,7 @@ function createPane(options: {
   proposed?: () => { cols: number; rows: number } | undefined
 }): TestPane {
   let rect = options.rect
-  // Why: the inner xterm host can differ from the outer .pane (title/banner,
-  // padding); the reveal gate measures this element, so tests can move it alone.
+  // Why: the reveal gate measures the inner xterm host, which can differ from the outer .pane.
   let xtermRect: { width: number; height: number } | null = null
   const leafId = '22222222-2222-4222-8222-222222222222'
   const pane = {

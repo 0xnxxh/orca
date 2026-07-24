@@ -152,7 +152,7 @@ function useMountForFileDrop(
     scheduleRevealPresent: ReturnType<typeof vi.fn>
     suspendRendering: ReturnType<typeof vi.fn>
     getActivePane: ReturnType<typeof vi.fn>
-    fitAllPanesStable: ReturnType<typeof vi.fn>
+    fitAllRevealedPanes: ReturnType<typeof vi.fn>
   }
   paneTransports: Map<number, never>
 } {
@@ -171,7 +171,7 @@ function useMountForFileDrop(
     scheduleRevealPresent: vi.fn(),
     suspendRendering: vi.fn(),
     getActivePane: vi.fn(() => null),
-    fitAllPanesStable: vi.fn()
+    fitAllRevealedPanes: vi.fn()
   }
   const paneTransports = new Map<number, never>()
 
@@ -252,7 +252,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       refreshAllPanes: vi.fn(() => order.push('refresh')),
       suspendRendering: vi.fn(),
       fitAllPanes: vi.fn(),
-      fitAllPanesStable: vi.fn(() => order.push('fit-stable')),
+      fitAllRevealedPanes: vi.fn(() => order.push('fit-reveal')),
       getActivePane: vi.fn(() => null),
       setActivePane: vi.fn()
     }
@@ -304,7 +304,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       'recover:terminal-b',
       'flush:terminal-b',
       'resume',
-      'fit-stable',
+      'fit-reveal',
       'intent:terminal-a',
       'intent:terminal-b',
       'reset-atlas',
@@ -342,7 +342,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       refreshAllPanes: vi.fn(),
       suspendRendering: vi.fn(),
       fitAllPanes: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null),
       setActivePane: vi.fn()
     }
@@ -424,7 +424,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       refreshAllPanes: vi.fn(),
       suspendRendering: vi.fn(),
       fitAllPanes: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null),
       setActivePane: vi.fn()
     }
@@ -488,7 +488,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       refreshAllPanes: vi.fn(),
       suspendRendering: vi.fn(),
       fitAllPanes: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null),
       setActivePane: vi.fn()
     }
@@ -544,7 +544,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       refreshAllPanes: vi.fn(),
       suspendRendering: vi.fn(),
       fitAllPanes: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null),
       setActivePane: vi.fn()
     }
@@ -594,7 +594,7 @@ describe('useTerminalPaneGlobalEffects', () => {
     manager.resumeRendering.mockClear()
     manager.resetWebglTextureAtlases.mockClear()
     manager.refreshAllPanes.mockClear()
-    manager.fitAllPanesStable.mockClear()
+    manager.fitAllRevealedPanes.mockClear()
     mocks.fitAndFocusPanes.mockClear()
     mocks.focusActivePane.mockClear()
     mocks.flushTerminalOutput.mockClear()
@@ -611,10 +611,8 @@ describe('useTerminalPaneGlobalEffects', () => {
     expect(mocks.requestTerminalBacklogRecovery).toHaveBeenCalledWith(terminal)
     expect(mocks.flushTerminalOutput).toHaveBeenCalledWith(terminal, { maxChars: 256 * 1024 })
     expect(manager.resumeRendering).toHaveBeenCalledTimes(1)
-    // Why: the reveal must fit through the wobble-resistant stable path (never
-    // the synchronous fitAllPanes) so a transient cell-metric grid is not
-    // reflow-garbled onto inline TUIs on minimize→restore.
-    expect(manager.fitAllPanesStable).toHaveBeenCalledTimes(1)
+    // Reveal must route through fitAllRevealedPanes, never the sync fitAllPanes.
+    expect(manager.fitAllRevealedPanes).toHaveBeenCalledTimes(1)
     expect(manager.fitAllPanes).not.toHaveBeenCalled()
     expect(mocks.focusActivePane).toHaveBeenCalledWith(manager)
     expect(mocks.fitAndFocusPanes).not.toHaveBeenCalled()
@@ -642,7 +640,7 @@ describe('useTerminalPaneGlobalEffects', () => {
     scheduleRevealRepaint: ReturnType<typeof vi.fn>
     scheduleRevealPresent: ReturnType<typeof vi.fn>
     suspendRendering: ReturnType<typeof vi.fn>
-    fitAllPanesStable: ReturnType<typeof vi.fn>
+    fitAllRevealedPanes: ReturnType<typeof vi.fn>
     getActivePane: ReturnType<typeof vi.fn>
   } {
     return {
@@ -652,7 +650,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealRepaint: vi.fn(),
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => ({ id: 1, terminal: { name: 'terminal-a' } }))
     }
   }
@@ -746,7 +744,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
       fitAllPanes: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null),
       setActivePane: vi.fn()
     }
@@ -806,7 +804,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealRepaint: vi.fn(),
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null)
     }
 
@@ -866,7 +864,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealPresent: vi.fn(),
       refreshAllPanes: vi.fn(),
       suspendRendering: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => ({ id: 1, terminal }))
     }
 
@@ -903,7 +901,7 @@ describe('useTerminalPaneGlobalEffects', () => {
     // focus event, not the initial visibility resume.
     manager.scheduleRevealRepaint.mockClear()
     manager.scheduleRevealPresent.mockClear()
-    manager.fitAllPanesStable.mockClear()
+    manager.fitAllRevealedPanes.mockClear()
     mocks.fitAndFocusPanes.mockClear()
     mocks.focusActivePane.mockClear()
     mocks.flushTerminalOutput.mockClear()
@@ -914,9 +912,8 @@ describe('useTerminalPaneGlobalEffects', () => {
     expect(mocks.requestTerminalBacklogRecovery).toHaveBeenCalledWith(terminal)
     expect(mocks.flushTerminalOutput).toHaveBeenCalledWith(terminal, { maxChars: 64 * 1024 })
     expect(manager.resumeRendering).toHaveBeenCalledTimes(1)
-    // Why: window refocus recovery fits through the same wobble-resistant stable
-    // path so a transient cell-metric grid never reflow-garbles inline TUIs.
-    expect(manager.fitAllPanesStable).toHaveBeenCalledTimes(1)
+    // Refocus recovery uses the same wobble-resistant reveal fit path.
+    expect(manager.fitAllRevealedPanes).toHaveBeenCalledTimes(1)
     expect(mocks.focusActivePane).toHaveBeenCalledWith(manager)
     expect(mocks.fitAndFocusPanes).not.toHaveBeenCalled()
     // Why: refocus recovery is atlas-preserving — no shared-atlas reset, no
@@ -937,7 +934,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealPresent: vi.fn(),
       refreshAllPanes: vi.fn(),
       suspendRendering: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null)
     }
     const captured: { onSystemResumed: (() => void) | null } = { onSystemResumed: null }
@@ -996,7 +993,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealRepaint: vi.fn(),
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null)
     }
     const siblingManager = {
@@ -1053,7 +1050,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealRepaint: vi.fn(),
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null)
     }
     const useMountForVisibilityRecovery = (options: {
@@ -1101,7 +1098,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealRepaint: vi.fn(),
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => pane)
     }
     const transport = {
@@ -1159,7 +1156,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealRepaint: vi.fn(),
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => pane)
     }
     const transport = {
@@ -1278,7 +1275,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
       fitAllPanes: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null)
     }
 
@@ -1314,7 +1311,7 @@ describe('useTerminalPaneGlobalEffects', () => {
       scheduleRevealPresent: vi.fn(),
       suspendRendering: vi.fn(),
       fitAllPanes: vi.fn(),
-      fitAllPanesStable: vi.fn(),
+      fitAllRevealedPanes: vi.fn(),
       getActivePane: vi.fn(() => null)
     }
 

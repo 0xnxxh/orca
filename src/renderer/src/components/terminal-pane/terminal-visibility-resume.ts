@@ -156,11 +156,8 @@ export function recoverVisibleTerminalWindowWake({
   }
   syncTerminalViewportIntents(manager)
   manager.resumeRendering()
-  // Why: same reveal wobble guard as resumeTerminalVisibilityHeavy — a window
-  // wake re-attaches WebGL, so a raw fit can apply a transient cell-metric grid
-  // and reflow-garble inline TUIs. fitAllPanesStable fits an element whose pixels
-  // changed, repairs a grid that diverged at unchanged pixels, else leaves it be.
-  manager.fitAllPanesStable()
+  // Why: wake re-attaches WebGL — same transient cell-metric wobble guard as the heavy resume.
+  manager.fitAllRevealedPanes()
   if (isActive) {
     focusActivePane(manager)
   }
@@ -201,14 +198,10 @@ function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean):
   // Windows (ANGLE -> D3D11) it can be 100-500 ms but a deferred resume
   // would paint a stretched DOM-fallback flash, which is worse UX.
   manager.resumeRendering()
-  // Why: resumeRendering just re-attached WebGL, whose cell metrics differ from
-  // the DOM renderer's, so a raw synchronous fit can propose a one-column-off
-  // grid and reflow xterm before the metrics settle, then snap back — a net-zero
-  // reflow "wiggle" that garbles inline TUIs that diff-paint over it (grok
-  // minimize→restore). fitAllPanesStable fits synchronously only when the fit
-  // element's pixels actually changed while hidden; an unchanged element is left
-  // alone (or repaired on a steady grid if its grid diverged while hidden).
-  manager.fitAllPanesStable()
+  // Why: resumeRendering just re-attached WebGL, whose cell metrics briefly differ
+  // from the DOM renderer's; a raw fit here reflows on a transient one-column-off
+  // grid and garbles diff-painting inline TUIs (grok minimize→restore).
+  manager.fitAllRevealedPanes()
   if (isActive) {
     focusActivePane(manager)
   }

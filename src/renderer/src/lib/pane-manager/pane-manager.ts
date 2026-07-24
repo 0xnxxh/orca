@@ -198,15 +198,9 @@ export class PaneManager {
     fitAllPanesInternal(this.panes)
   }
 
-  // Reveal fit (minimize→restore, worktree foreground, window wake). A raw
-  // synchronous fit here reflow-garbles inline TUIs (grok, Codex): resuming
-  // WebGL swaps cell metrics vs the DOM renderer, so proposeDimensions can
-  // momentarily return a one-column-off grid, reflow xterm, then snap back — and
-  // xterm's main-buffer wrap→unwrap is not a perfect inverse, so a diff-painting
-  // TUI is left corrupted. fitRevealedPane fits synchronously only when the fit
-  // element's pixels changed while hidden, repairs a grid that diverged at
-  // unchanged pixels on a steady grid, and otherwise leaves the pane alone.
-  fitAllPanesStable(): void {
+  // Why: a raw synchronous fit on reveal can apply a transient DOM<->WebGL
+  // cell-metric grid and reflow-garble diff-painting inline TUIs; see fitRevealedPane.
+  fitAllRevealedPanes(): void {
     for (const pane of this.panes.values()) {
       fitRevealedPane(pane)
     }

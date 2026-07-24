@@ -41,7 +41,7 @@ type FakeManager = {
   scheduleRevealRepaint: ReturnType<typeof vi.fn>
   scheduleRevealPresent: ReturnType<typeof vi.fn>
   fitAllPanes: ReturnType<typeof vi.fn>
-  fitAllPanesStable: ReturnType<typeof vi.fn>
+  fitAllRevealedPanes: ReturnType<typeof vi.fn>
 }
 
 function createManager(order: string[] = []): FakeManager {
@@ -50,11 +50,9 @@ function createManager(order: string[] = []): FakeManager {
     resumeRendering: vi.fn(() => order.push('resume-rendering')),
     scheduleRevealRepaint: vi.fn(() => order.push('reveal-repaint')),
     scheduleRevealPresent: vi.fn(() => order.push('reveal-present')),
-    // Why: the reveal must fit through the wobble-resistant stable path, never
-    // the synchronous fitAllPanes, so a transient cell-metric grid is not
-    // applied and reflow-garbled onto inline TUIs on minimize→restore.
+    // Stubbed to assert reveals route through fitAllRevealedPanes, never fitAllPanes.
     fitAllPanes: vi.fn(() => order.push('fit-sync')),
-    fitAllPanesStable: vi.fn(() => order.push('fit-stable'))
+    fitAllRevealedPanes: vi.fn(() => order.push('fit-reveal'))
   }
 }
 
@@ -121,29 +119,23 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     const manager = createManager(order)
     resumeTerminalVisibility(resumeArgs(manager, false))
 
-    expect(order).toEqual(['resume-rendering', 'fit-stable', 'reveal-repaint'])
+    expect(order).toEqual(['resume-rendering', 'fit-reveal', 'reveal-repaint'])
   })
 
-  it('fits a heavy reveal through the wobble-resistant stable path, not the sync fit', () => {
-    // Regression: minimize→restore garbled an inline TUI (grok) because the
-    // synchronous reveal fit applied a transient one-column DOM↔WebGL
-    // cell-metric grid, reflowing the buffer it then diff-painted over.
+  it('routes a heavy reveal through fitAllRevealedPanes, not the sync fit', () => {
+    // Regression: the sync reveal fit applied a transient one-column DOM↔WebGL grid, garbling grok on restore.
     const manager = createManager()
     resumeTerminalVisibility(resumeArgs(manager, false))
 
-    expect(manager.fitAllPanesStable).toHaveBeenCalledTimes(1)
+    expect(manager.fitAllRevealedPanes).toHaveBeenCalledTimes(1)
     expect(manager.fitAllPanes).not.toHaveBeenCalled()
-    // The stable fit must run only after WebGL resumes (metrics settle first).
-    expect(manager.fitAllPanesStable.mock.invocationCallOrder[0]).toBeGreaterThan(
-      manager.resumeRendering.mock.invocationCallOrder[0]
-    )
   })
 
   it('does not fit on a light tab reveal', () => {
     const manager = createManager()
     resumeTerminalVisibility(resumeArgs(manager, true))
 
-    expect(manager.fitAllPanesStable).not.toHaveBeenCalled()
+    expect(manager.fitAllRevealedPanes).not.toHaveBeenCalled()
     expect(manager.fitAllPanes).not.toHaveBeenCalled()
   })
 
@@ -155,7 +147,7 @@ describe('resumeTerminalVisibility reveal repaint', () => {
       clearGlyphAtlases: false
     })
 
-    expect(manager.fitAllPanesStable).toHaveBeenCalledTimes(1)
+    expect(manager.fitAllRevealedPanes).toHaveBeenCalledTimes(1)
     expect(manager.fitAllPanes).not.toHaveBeenCalled()
   })
 
