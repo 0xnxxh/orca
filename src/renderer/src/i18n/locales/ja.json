@@ -5719,6 +5719,11 @@
         "YamlThemeImportButton": {
           "label": "YAML からインポート"
         },
+        "BranchPrefixFeedback": {
+          "6c40c0908f": "プレフィックスにスペースや ~ ^ : ? * [ \\ などの特殊文字は使用できません",
+          "64d70b156a": "ブランチ名は {{example}} になります",
+          "808f9a726e": "プレフィックスは適用されません"
+        },
         "GitPane": {
           "d2eede4c54": "Orca の帰属を commits、PR、Issue に追加します。",
           "e02ea23a32": "Orca の帰属",
@@ -6634,8 +6639,8 @@
           "fbb428db98": "選択済み:",
           "fac59213fc": "組み込みテーマを検索する",
           "search_terminal_themes": "terminal テーマを検索",
-          "cb330ef7f8": "{{value0}}の",
-          "c822571b2e": "「{{value0}}」に一致",
+          "cb330ef7f8": "/{{value0}}",
+          "c822571b2e": " 「{{value0}}」に一致",
           "3119c012a5": "文字列"
         },
         "SettingsSidebar": {

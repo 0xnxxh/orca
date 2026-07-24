@@ -5682,6 +5682,11 @@
           "273e7e81fe": "配置",
           "1f744a72f4": "配置"
         },
+        "BranchPrefixFeedback": {
+          "6c40c0908f": "前缀不能包含空格或 ~ ^ : ? * [ \\ 等特殊字符",
+          "64d70b156a": "分支将命名为 {{example}}",
+          "808f9a726e": "不会应用前缀"
+        },
         "GitPane": {
           "d2eede4c54": "将 Orca 署名添加到 commits、PR 和议题。",
           "e02ea23a32": "Orca 署名",
@@ -6593,8 +6598,8 @@
           "4e11f87ca6": "显示中",
           "fbb428db98": "已选择：",
           "fac59213fc": "搜索内置主题",
-          "cb330ef7f8": "{{value0}} 的",
-          "c822571b2e": "匹配“{{value0}}”",
+          "cb330ef7f8": "/{{value0}}",
+          "c822571b2e": " 匹配“{{value0}}”",
           "3119c012a5": "字符串",
           "builtin_themes": "内置",
           "imported_from": "从 {{value0}} 导入",

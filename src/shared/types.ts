@@ -1066,6 +1066,8 @@ export type PersistedOpenFile = {
   language: string
   isPreview?: boolean
   runtimeEnvironmentId?: string | null
+  /** SSH target that owns an absolute path outside the worktree. */
+  externalSshTargetId?: string
   /** Unsaved editor buffer captured for hot exit; presence restores the tab dirty. */
   dirtyDraftContent?: string
   /** Signature of the disk content the dirty draft is based on; lets restore
@@ -2577,6 +2579,9 @@ export type SourceControlGroupOrder = 'changes-first' | 'staged-first' | 'untrac
 
 export type LeftSidebarAppearanceMode = 'default' | 'match-terminal' | 'tinted'
 
+/** Strategy for the prefix prepended to worktree branch names. */
+export type BranchPrefixStrategy = 'git-username' | 'custom' | 'none'
+
 export type FloatingTerminalCwdRequest = {
   path?: string
   requireTrusted?: boolean
@@ -2612,7 +2617,7 @@ export type GlobalSettings = {
   /** One-shot migration guard for the default-on rollout. Existing profiles
    *  without the guard are flipped on once; later explicit opt-outs stick. */
   autoRenameBranchFromWorkDefaultedOn?: boolean
-  branchPrefix: 'git-username' | 'custom' | 'none'
+  branchPrefix: BranchPrefixStrategy
   branchPrefixCustom: string
   enableGitHubAttribution: boolean
   theme: 'system' | 'dark' | 'light'

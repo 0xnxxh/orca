@@ -38,6 +38,7 @@ const runtimeEnvironmentTransportCallMock = vi.fn()
 const setActiveWorktreeMock = vi.fn()
 const createBrowserTabMock = vi.fn()
 const setPendingEditorRevealMock = vi.fn()
+const setMarkdownViewModeMock = vi.fn()
 
 const deps = { worktreeId: 'wt-1', worktreePath: '/tmp' }
 const storeState = {
@@ -52,6 +53,8 @@ const storeState = {
   createBrowserTab: createBrowserTabMock,
   openFile: openFileMock,
   setPendingEditorReveal: setPendingEditorRevealMock,
+  setMarkdownViewMode: setMarkdownViewModeMock,
+  activeFileIdByWorktree: {} as Record<string, string | null>,
   worktreesByRepo: {} as Record<string, { id: string; path: string }[]>
 }
 
@@ -62,7 +65,7 @@ vi.mock('@/store', () => ({
 }))
 
 vi.mock('@/lib/language-detect', () => ({
-  detectLanguage: () => 'plaintext'
+  detectLanguage: (filePath: string) => (filePath.endsWith('.md') ? 'markdown' : 'plaintext')
 }))
 
 // Why: the real helper reads worktreesByRepo/activeRepoId/etc. from the store
@@ -108,6 +111,7 @@ beforeEach(() => {
   vi.mocked(getConnectionId).mockReturnValue(null)
   openFilePathMock.mockResolvedValue(true)
   storeState.settings = undefined
+  storeState.activeFileIdByWorktree = {}
   storeState.worktreesByRepo = {}
   registerHttpLinkStoreAccessor(() => storeState)
   vi.stubGlobal('window', {
@@ -371,6 +375,7 @@ describe('handleOscLink', () => {
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(1, null)
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '/tmp/src/main.ts',
+      fileId: '/tmp/src/main.ts',
       line: 42,
       column: 1,
       matchLength: 0
@@ -388,11 +393,56 @@ describe('handleOscLink', () => {
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(1, null)
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '/tmp/src/main.ts',
+      fileId: '/tmp/src/main.ts',
       line: 42,
       column: 7,
       matchLength: 0
     })
     expect(openFilePathMock).not.toHaveBeenCalled()
+  })
+
+  it('opens terminal markdown line links in source mode so Monaco can reveal the line', async () => {
+    setPlatform('Macintosh')
+    const filePath = '/tmp/docs/terminal-scroll-intent-architecture.md'
+    const fileId = 'editor:wt-1:runtime-1:terminal-scroll-intent-architecture.md'
+    openFileMock.mockImplementationOnce(() => {
+      storeState.activeFileIdByWorktree['wt-1'] = fileId
+    })
+
+    openDetectedFilePath(filePath, 230, null, deps)
+    await flushAsyncWork()
+    await flushDoubleRaf()
+
+    expect(setMarkdownViewModeMock).toHaveBeenCalledWith(fileId, 'source')
+    expect(setPendingEditorRevealMock).toHaveBeenLastCalledWith({
+      filePath,
+      fileId,
+      line: 230,
+      column: 1,
+      matchLength: 0
+    })
+  })
+
+  it('scopes non-Markdown line reveals to the owner-qualified editor tab', async () => {
+    setPlatform('Macintosh')
+    const filePath = '/tmp/src/main.ts'
+    const fileId = 'editor:wt-1:runtime-1:main.ts'
+    openFileMock.mockImplementationOnce(() => {
+      storeState.activeFileIdByWorktree['wt-1'] = fileId
+    })
+
+    openDetectedFilePath(filePath, 42, 7, deps)
+    await flushAsyncWork()
+    await flushDoubleRaf()
+
+    expect(setMarkdownViewModeMock).not.toHaveBeenCalled()
+    expect(setPendingEditorRevealMock).toHaveBeenLastCalledWith({
+      filePath,
+      fileId,
+      line: 42,
+      column: 7,
+      matchLength: 0
+    })
   })
 
   it('uses the system default app for shift+cmd/ctrl-click file paths', async () => {
@@ -428,6 +478,7 @@ describe('handleOscLink', () => {
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(1, null)
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '/tmp/src/main.ts',
+      fileId: '/tmp/src/main.ts',
       line: 42,
       column: 7,
       matchLength: 0
@@ -526,6 +577,7 @@ describe('handleOscLink', () => {
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(1, null)
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: 'C:/repo/src/index.ts',
+      fileId: 'C:/repo/src/index.ts',
       line: 12,
       column: 3,
       matchLength: 0
@@ -587,6 +639,7 @@ describe('handleOscLink', () => {
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(1, null)
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '/tmp/test.txt',
+      fileId: '/tmp/test.txt',
       line: 42,
       column: 1,
       matchLength: 0
@@ -629,6 +682,7 @@ describe('handleOscLink', () => {
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(1, null)
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '/tmp/test.txt',
+      fileId: '/tmp/test.txt',
       line: 42,
       column: 7,
       matchLength: 0
@@ -662,6 +716,7 @@ describe('handleOscLink', () => {
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(1, null)
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '//server/Share/Repo/src/app.ts',
+      fileId: '//server/Share/Repo/src/app.ts',
       line: 12,
       column: 3,
       matchLength: 0
@@ -721,6 +776,7 @@ describe('handleOscLink', () => {
     )
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '//wsl.localhost/Ubuntu/root/workspace/myrepo/README.md',
+      fileId: '//wsl.localhost/Ubuntu/root/workspace/myrepo/README.md',
       line: 5,
       column: 3,
       matchLength: 0
@@ -752,6 +808,7 @@ describe('handleOscLink', () => {
     )
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '//wsl.localhost/Ubuntu/root/workspace/myrepo/README.md',
+      fileId: '//wsl.localhost/Ubuntu/root/workspace/myrepo/README.md',
       line: 5,
       column: 3,
       matchLength: 0
@@ -872,6 +929,54 @@ describe('handleOscLink', () => {
         filePath: '/home/me/repo/src/main.ts',
         relativePath: 'src/main.ts'
       }),
+      { forceContentReload: true }
+    )
+  })
+
+  it('pins SSH links outside the worktree to their target host', async () => {
+    setPlatform('Macintosh')
+    vi.mocked(getConnectionId).mockReturnValue('ssh-1')
+
+    openDetectedFilePath('/tmp/ssh-preview.png', null, null, {
+      worktreeId: 'wt-1',
+      worktreePath: '/home/me/repo'
+    })
+    await flushAsyncWork()
+
+    expect(authorizeExternalPathMock).not.toHaveBeenCalled()
+    expect(statMock).toHaveBeenCalledWith({
+      filePath: '/tmp/ssh-preview.png',
+      connectionId: 'ssh-1'
+    })
+    expect(openFileMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: '/tmp/ssh-preview.png',
+        relativePath: '/tmp/ssh-preview.png',
+        externalSshTargetId: 'ssh-1'
+      }),
+      { forceContentReload: true }
+    )
+  })
+
+  it('does not pin runtime-owned links to the worktree SSH target', async () => {
+    setPlatform('Windows')
+    vi.mocked(getConnectionId).mockReturnValue('ssh-1')
+    runtimeEnvironmentCallMock.mockResolvedValueOnce({
+      id: 'rpc-1',
+      ok: true,
+      result: { size: 1, isDirectory: false, mtime: 1 },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+
+    openDetectedFilePath('//wsl.localhost/ubuntu/home/Alice/repo/src/main.ts', null, null, {
+      worktreeId: 'wt-1',
+      worktreePath: '//wsl$/Ubuntu/home/Alice/repo',
+      runtimeEnvironmentId: 'env-1'
+    })
+    await flushAsyncWork()
+
+    expect(openFileMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ externalSshTargetId: expect.anything() }),
       { forceContentReload: true }
     )
   })
@@ -1048,6 +1153,7 @@ describe('handleOscLink', () => {
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(1, null)
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '/tmp/src/second.ts',
+      fileId: '/tmp/src/second.ts',
       line: 20,
       column: 3,
       matchLength: 0
@@ -1556,6 +1662,7 @@ describe('createFilePathLinkProvider range bounds', () => {
     )
     expect(setPendingEditorRevealMock).toHaveBeenNthCalledWith(2, {
       filePath: '//wsl.localhost/Ubuntu/root/workspace/myrepo/README.md',
+      fileId: '//wsl.localhost/Ubuntu/root/workspace/myrepo/README.md',
       line: 5,
       column: 3,
       matchLength: 0
@@ -1774,6 +1881,7 @@ describe('createFilePathLinkProvider range bounds', () => {
     })
     expect(setPendingEditorRevealMock).toHaveBeenLastCalledWith({
       filePath: mappedPath,
+      fileId: mappedPath,
       line: 5,
       column: 3,
       matchLength: 0
