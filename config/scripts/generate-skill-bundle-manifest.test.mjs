@@ -278,6 +278,43 @@ describe('skill bundle manifest generator', () => {
     expect(artifacts.releaseMapping.releases).toHaveLength(2)
   })
 
+  it('overwrites the trailing row when a failed cut is re-cut at the same version', () => {
+    const artifacts = {
+      currentManifest: { skills: [{ name: 'orca-cli', releaseRevision: 37 }] },
+      releaseMapping: {
+        schemaVersion: 1,
+        releases: [
+          { appVersion: '1.4.151', skills: { 'orca-cli': 35 } },
+          // The failed cut already pushed this row to main at revision 36.
+          { appVersion: '1.4.160', skills: { 'orca-cli': 36 } }
+        ]
+      }
+    }
+
+    appendReleaseRow(artifacts, '1.4.160')
+
+    // One row per version: the tag ships revision 37, so 36 must not linger.
+    expect(artifacts.releaseMapping.releases).toEqual([
+      { appVersion: '1.4.151', skills: { 'orca-cli': 35 } },
+      { appVersion: '1.4.160', skills: { 'orca-cli': 37 } }
+    ])
+  })
+
+  it('refuses to rewrite an already-shipped version behind the trailing row', () => {
+    const artifacts = {
+      currentManifest: { skills: [{ name: 'orca-cli', releaseRevision: 37 }] },
+      releaseMapping: {
+        schemaVersion: 1,
+        releases: [
+          { appVersion: '1.4.151', skills: { 'orca-cli': 35 } },
+          { appVersion: '1.4.160', skills: { 'orca-cli': 36 } }
+        ]
+      }
+    }
+
+    expect(() => appendReleaseRow(artifacts, '1.4.151')).toThrow(/already has a row for 1\.4\.151/)
+  })
+
   it.runIf(process.platform !== 'win32')(
     'rejects executable files in shipped skill packages',
     async () => {

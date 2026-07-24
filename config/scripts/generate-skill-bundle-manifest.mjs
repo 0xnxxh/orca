@@ -423,6 +423,19 @@ function appendReleaseRow(artifacts, version) {
   if (last && isDeepStrictEqual(last.skills, currentRevisions)) {
     return
   }
+  // Why: a cut that pushed the version bump to main but died before pushing the
+  // tag is re-cut at the same version. If skills changed in between, appending
+  // would leave two rows claiming this version and the stale one would name
+  // revisions that tag never ships — overwrite, since the tag ships these bytes.
+  if (last?.appVersion === appVersion) {
+    releases[releases.length - 1] = { appVersion, skills: currentRevisions }
+    return
+  }
+  // Why: an earlier row means re-cutting an already-shipped version, which the
+  // cut workflow refuses upstream. Fail rather than corrupt shipped provenance.
+  if (releases.some((release) => release.appVersion === appVersion)) {
+    throw new Error(`Release mapping already has a row for ${appVersion}.`)
+  }
   releases.push({ appVersion, skills: currentRevisions })
 }
 
