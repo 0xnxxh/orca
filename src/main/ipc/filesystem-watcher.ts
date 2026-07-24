@@ -904,7 +904,7 @@ const loggedUnavailableRemoteWatchers = new Set<string>()
 const pendingRemoteWatcherRetries = new Map<string, ReturnType<typeof setTimeout>>()
 const pendingRemoteWatcherRetryListeners = new Map<
   string,
-  { listeners: Map<number, WebContents>; startedAt: number }
+  { listeners: Map<number, WebContents>; startedAt: number; resyncOnInstall: boolean }
 >()
 // Why: last-listener cleanup aborts relay setup; late success is unwatched rather than installed after the renderer stopped watching.
 const inFlightRemoteInstalls = new Map<string, RemoteWatcherInstallToken>()
@@ -1268,7 +1268,10 @@ function scheduleRemoteWatcherRetry(
   sender: WebContents,
   connectionId: string,
   worktreePath: string,
-  startedAt = Date.now()
+  startedAt = Date.now(),
+  // Why: a retry that replaces a watch which was already live owes the renderer an overflow once it
+  // lands — the events lost while it was down are otherwise never signalled.
+  resyncOnInstall = false
 ): void {
   const key = remoteWatcherKey(connectionId, worktreePath)
   const existingRetry = pendingRemoteWatcherRetryListeners.get(key)
@@ -1276,12 +1279,14 @@ function scheduleRemoteWatcherRetry(
     if (!sender.isDestroyed()) {
       existingRetry.listeners.set(sender.id, sender)
     }
+    existingRetry.resyncOnInstall ||= resyncOnInstall
     return
   }
 
   const retry = {
     listeners: new Map(sender.isDestroyed() ? [] : [[sender.id, sender]]),
-    startedAt
+    startedAt,
+    resyncOnInstall
   }
   pendingRemoteWatcherRetryListeners.set(key, retry)
 
@@ -1315,10 +1320,26 @@ function scheduleRemoteWatcherRetry(
       listeners.map((listener) => installRemoteWatcher(listener, connectionId, worktreePath))
     )
       .then((results) => {
+        if (retry.resyncOnInstall) {
+          for (const [index, listener] of listeners.entries()) {
+            if (results[index] === 'installed' && !listener.isDestroyed()) {
+              listener.send('fs:changed', {
+                worktreePath,
+                events: [{ kind: 'overflow', absolutePath: worktreePath }]
+              } satisfies FsChangedPayload)
+            }
+          }
+        }
         // Why: don't re-arm on 'cancelled' (renderer stopped watching) — it would fire a stale overflow when the 60s window expires.
         if (results.some((result) => result === 'unavailable')) {
           for (const listener of listeners) {
-            scheduleRemoteWatcherRetry(listener, connectionId, worktreePath, retry.startedAt)
+            scheduleRemoteWatcherRetry(
+              listener,
+              connectionId,
+              worktreePath,
+              retry.startedAt,
+              retry.resyncOnInstall
+            )
           }
         }
       })
@@ -1327,7 +1348,13 @@ function scheduleRemoteWatcherRetry(
           return
         }
         for (const listener of listeners) {
-          scheduleRemoteWatcherRetry(listener, connectionId, worktreePath, retry.startedAt)
+          scheduleRemoteWatcherRetry(
+            listener,
+            connectionId,
+            worktreePath,
+            retry.startedAt,
+            retry.resyncOnInstall
+          )
         }
       })
   }, REMOTE_WATCH_RETRY_MS)
@@ -1513,7 +1540,13 @@ function reinstallRemoteWatchersForConnection(connectionId: string): void {
         }
         if (results.some((result) => result === 'unavailable')) {
           for (const listener of listeners) {
-            scheduleRemoteWatcherRetry(listener, desired.connectionId, desired.worktreePath)
+            scheduleRemoteWatcherRetry(
+              listener,
+              desired.connectionId,
+              desired.worktreePath,
+              Date.now(),
+              true
+            )
           }
         }
       })
@@ -1522,7 +1555,13 @@ function reinstallRemoteWatchersForConnection(connectionId: string): void {
           return
         }
         for (const listener of listeners) {
-          scheduleRemoteWatcherRetry(listener, desired.connectionId, desired.worktreePath)
+          scheduleRemoteWatcherRetry(
+            listener,
+            desired.connectionId,
+            desired.worktreePath,
+            Date.now(),
+            true
+          )
         }
       })
   }
@@ -1530,8 +1569,8 @@ function reinstallRemoteWatchersForConnection(connectionId: string): void {
 
 /** Tear down all watchers on app shutdown. */
 export async function closeAllWatchers(): Promise<void> {
-  // Why: keep the provider-registration subscription — a new fs:watchWorktree reopens the subsystem
-  // after this latch, and dropping it here would leave that reopened watch with no way to re-arm.
+  // Why: drop the intent with the rest of the state, but keep the provider-registration
+  // subscription — a new fs:watchWorktree reopens the subsystem and still needs the re-arm hook.
   desiredRemoteWatchers.clear()
   senderCleanupRegistered.clear()
   unwatchableRoots.clear()

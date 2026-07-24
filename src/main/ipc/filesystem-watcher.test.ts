@@ -397,6 +397,37 @@ describe('registerFilesystemWatcherHandlers', () => {
     await closeAllWatchers()
   })
 
+  it('resyncs after a reconnect whose reinstall only succeeded on a retry', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sender = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
+    getSshFilesystemProviderMock.mockReturnValue({ watch: vi.fn().mockResolvedValue(vi.fn()) })
+
+    await handlers['fs:watchWorktree'](
+      { sender },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+
+    // The relay is back, but its first fs.watch on the fresh transport still fails.
+    const retryWatchMock = vi.fn().mockResolvedValue(vi.fn())
+    getSshFilesystemProviderMock
+      .mockReturnValueOnce({ watch: vi.fn().mockRejectedValue(new Error('relay not ready')) })
+      .mockReturnValue({ watch: retryWatchMock })
+    sender.send.mockClear()
+    emitProviderRegistered('conn-1')
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(retryWatchMock).toHaveBeenCalledTimes(1)
+    expect(sender.send).toHaveBeenCalledWith('fs:changed', {
+      worktreePath: '/home/me/repo',
+      events: [{ kind: 'overflow', absolutePath: '/home/me/repo' }]
+    })
+
+    warnSpy.mockRestore()
+    await closeAllWatchers()
+    vi.useRealTimers()
+  })
+
   it('does not resurrect an SSH watch the renderer already unwatched', async () => {
     const sender = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
     const watchMock = vi.fn().mockResolvedValue(vi.fn())
