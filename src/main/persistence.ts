@@ -2499,7 +2499,9 @@ function removeWorkspaceSessionOwners(
   for (const ownerKey of ownerKeys) {
     deleteOwnerKeyedSessionFields(next, ownerKey, removedTabIds)
   }
-  deleteScannedSessionFieldsForOwners(next, removedTabIds, (worktreeId) => ownerKeys.has(worktreeId))
+  deleteScannedSessionFieldsForOwners(next, removedTabIds, (worktreeId) =>
+    ownerKeys.has(worktreeId)
+  )
   return next
 }
 
