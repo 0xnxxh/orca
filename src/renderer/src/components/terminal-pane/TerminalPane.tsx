@@ -56,7 +56,7 @@ import { useEffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/use-effective-
 import { useTerminalFontZoom } from './useTerminalFontZoom'
 import CloseTerminalDialog, { type CloseTerminalDialogCopyKind } from './CloseTerminalDialog'
 import { MobileDriverOverlay } from './MobileDriverOverlay'
-import { isSshReconnectOwnedTerminalError, TerminalErrorToast } from './TerminalErrorToast'
+import { stripSshReconnectOwnedErrorLines, TerminalErrorToast } from './TerminalErrorToast'
 import { TerminalSessionStateSaveFailureDialog } from './TerminalSessionStateSaveFailureDialog'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalPaneHeaderOverlay from './TerminalPaneHeaderOverlay'
@@ -2779,15 +2779,16 @@ export default function TerminalPane({
     sshReconnectStatus &&
     sshReconnectStatus !== 'connected'
   )
-  // Why: drop SSH toast text while the reconnect banner owns recovery, so a later
-  // successful connect doesn't flash the raw ssh:connect failure under the banner.
+  // Why: while the reconnect banner owns recovery, strip only the SSH-owned lines from the
+  // (possibly aggregated) error, so a later successful connect can't flash the raw ssh:connect
+  // failure and any unrelated error still surfaces after reconnect.
   useEffect(() => {
-    if (
-      showSshReconnectOverlay &&
-      terminalError != null &&
-      isSshReconnectOwnedTerminalError(terminalError)
-    ) {
-      setTerminalError(null)
+    if (!showSshReconnectOverlay || terminalError == null) {
+      return
+    }
+    const kept = stripSshReconnectOwnedErrorLines(terminalError)
+    if (kept !== terminalError) {
+      setTerminalError(kept)
     }
   }, [showSshReconnectOverlay, terminalError])
   const menuPaneHasCustomTitle =
