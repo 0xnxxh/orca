@@ -465,6 +465,10 @@ export class AgentHookServer {
   private onPaneStatusCleared: PaneStatusClearListener | null = null
   private statusChangeListeners = new Set<StatusChangeListener>()
   private providerSessionChangeListeners = new Set<ProviderSessionChangeListener>()
+  // Why: setListener is a single slot owned by the main-window fanout; the
+  // plugin event bus (and future consumers) need an additive subscription
+  // that also works in headless serve, where no window listener exists.
+  private enrichedStatusListeners = new Set<(payload: EnrichedAgentHookEventPayload) => void>()
   // Why: set via start()'s userDataPath so the class has no direct Electron dependency (mockable in vitest node env).
   private endpointDir: string | null = null
   private endpointFilePathCache: string | null = null
@@ -524,6 +528,15 @@ export class AgentHookServer {
       this.providerSessionChangeListeners.delete(listener)
     }
   }
+
+  /** Multi-subscriber tap on every enriched status change (no replay). */
+  subscribeEnrichedStatus(listener: (payload: EnrichedAgentHookEventPayload) => void): () => void {
+    this.enrichedStatusListeners.add(listener)
+    return () => {
+      this.enrichedStatusListeners.delete(listener)
+    }
+  }
+
 
   setPaneStatusClearListener(listener: PaneStatusClearListener | null): void {
     this.onPaneStatusCleared = listener
@@ -1003,6 +1016,13 @@ export class AgentHookServer {
     this.scheduleStatusPersist()
     this.notifyStatusChangeListeners()
     this.onAgentStatus?.(enriched)
+    for (const listener of this.enrichedStatusListeners) {
+      try {
+        listener(enriched)
+      } catch (err) {
+        console.error('[agent-hooks] enriched status listener threw', err)
+      }
+    }
     return enriched
   }
 

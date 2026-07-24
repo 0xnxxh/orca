@@ -473,7 +473,7 @@ import {
 } from '../../shared/claude-agent-teams-tmux-compat'
 import { joinWorktreeRelativePath } from './runtime-relative-paths'
 import { collectMemorySnapshot } from '../memory/collector'
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain, Notification } from 'electron'
 import type { AgentBrowserBridge } from '../browser/agent-browser-bridge'
 import type { BrowserBackend } from '../browser/browser-backend'
 import { BrowserError } from '../browser/cdp-bridge'
@@ -2347,13 +2347,17 @@ type ResolvedWorktreeInFlight = {
 // events after it — idempotent, no duplicate local pushes.
 export type MobileNotificationDispatchEvent = {
   type: 'notification'
-  source: 'agent-task-complete' | 'terminal-bell' | 'test'
+  source: 'agent-task-complete' | 'terminal-bell' | 'test' | 'plugin'
   title: string
   body: string
   worktreeId?: string
   notificationId?: string
   notificationSeq?: number
 }
+
+export type RuntimeWorktreeLifecycleEvent =
+  | { kind: 'created'; worktreeId: string; path: string; branch: string }
+  | { kind: 'removed'; worktreeId: string; path: string }
 
 export type MobileNotificationDismissEvent = {
   type: 'dismiss'
@@ -2527,6 +2531,7 @@ export class OrcaRuntimeService {
   private ptyController: RuntimePtyController | null = null
   private notifier: RuntimeNotifier | null = null
   private clientEventListeners = new Set<(event: RuntimeClientEvent) => void>()
+  private worktreeLifecycleListeners = new Set<(event: RuntimeWorktreeLifecycleEvent) => void>()
   private forkBackfillStarted = false
   private agentBrowserBridge: AgentBrowserBridge | null = null
   private offscreenBrowserBackend: BrowserBackend | null = null
@@ -3614,6 +3619,28 @@ export class OrcaRuntimeService {
   private notifyWorktreesChanged(repoId: string): void {
     this.notifier?.worktreesChanged(repoId)
     this.emitClientEvent({ type: 'worktreesChanged', repoId })
+  }
+
+  /** Detail-level worktree lifecycle tap (plugin event bus). The coarse
+   *  worktreesChanged client event carries only repoId, which is not enough
+   *  for subscribers that need the affected worktree's identity.
+   *  Removal payloads carry no branch: the removal target resolves before
+   *  the git worktree is torn down and only pins id + path. */
+  onWorktreeLifecycle(listener: (event: RuntimeWorktreeLifecycleEvent) => void): () => void {
+    this.worktreeLifecycleListeners.add(listener)
+    return () => {
+      this.worktreeLifecycleListeners.delete(listener)
+    }
+  }
+
+  private emitWorktreeLifecycle(event: RuntimeWorktreeLifecycleEvent): void {
+    for (const listener of this.worktreeLifecycleListeners) {
+      try {
+        listener(event)
+      } catch (err) {
+        console.error('[runtime] worktree lifecycle listener threw', err)
+      }
+    }
   }
 
   private notifyReposChanged(): void {
@@ -10021,6 +10048,31 @@ export class OrcaRuntimeService {
     this.dispatchMobileNotification({ type: 'dismiss', notificationId })
   }
 
+  /** Plugin panel action notifications.show. Native on desktop, relayed to
+   *  paired mobile clients either way (mirrors notifications:dispatch). */
+  async dispatchPluginNotification(input: {
+    pluginId: string
+    title: string
+    body?: string
+  }): Promise<{ delivered: boolean }> {
+    // Why: prefix with the plugin id so a plugin cannot spoof an Orca system
+    // notification or impersonate another plugin.
+    const title = `${input.pluginId}: ${input.title}`
+    const body = input.body ?? ''
+    let delivered = false
+    try {
+      if (Notification.isSupported()) {
+        new Notification({ title, body }).show()
+        delivered = true
+      }
+    } catch {
+      // Headless serve has no notification display; the mobile relay below
+      // still runs.
+    }
+    this.dispatchMobileNotification({ type: 'notification', source: 'plugin', title, body })
+    return { delivered }
+  }
+
   // ─── Account Services (mobile RPC bridge) ─────────────────────
 
   setAccountServices(services: RuntimeAccountServices): void {
@@ -13480,6 +13532,42 @@ export class OrcaRuntimeService {
     const leaf = parsed ? this.leaves.get(this.getLeafKey(parsed.tabId, parsed.leafId)) : null
     return leaf?.worktreeId ?? this.getPtyRecordForPaneKey(paneKey)?.worktreeId ?? null
   }
+
+  /** Read-only context of the worktree the user is focused on, for plugin
+   *  panels (workspace.readContext). Prefers the persisted session focus and
+   *  falls back to the last-focused pane's worktree; null when neither
+   *  resolves so panels degrade instead of erroring. */
+  async resolveActiveWorktreeContext(): Promise<{
+    worktreeId: string
+    path: string
+    branch: string
+    displayName: string
+  } | null> {
+    let worktreeId = this.store?.getWorkspaceSession?.()?.activeWorktreeId ?? null
+    if (!worktreeId && this.graphStatus === 'ready') {
+      for (const tab of this.tabs.values()) {
+        if (tab.activeLeafId && tab.worktreeId) {
+          worktreeId = tab.worktreeId
+          break
+        }
+      }
+    }
+    if (!worktreeId) {
+      return null
+    }
+    try {
+      const resolved = await this.resolveWorktreeSelector(`id:${worktreeId}`)
+      return {
+        worktreeId: resolved.id,
+        path: resolved.git.path,
+        branch: resolved.git.branch,
+        displayName: resolved.displayName
+      }
+    } catch {
+      return null
+    }
+  }
+
 
   resolveTerminalPane(paneKey: string, expectedWorktreeId?: string): RuntimeTerminalResolvePane {
     // Why: the renderer context menu only knows the stable pane key; main owns
@@ -18370,6 +18458,12 @@ export class OrcaRuntimeService {
       const worktree = mergeRuntimeFolderWorkspace(repo, worktreeId, meta)
       this.invalidateResolvedWorktreeCache()
       this.notifyWorktreesChanged(repo.id)
+      this.emitWorktreeLifecycle({
+        kind: 'created',
+        worktreeId: worktree.id,
+        path: worktree.path,
+        branch: worktree.branch
+      })
       const shouldActivate = args.activate === true || args.runHooks === true
       let warning: string | undefined
       let didSpawnStartup = false
@@ -18459,6 +18553,12 @@ export class OrcaRuntimeService {
         ...(effectiveDraftPaste ? { startupDraftPaste: effectiveDraftPaste } : {})
       })
       const recordedLineage = this.recordCreatedWorktreeLineage(result.worktree, lineageResolution)
+      this.emitWorktreeLifecycle({
+        kind: 'created',
+        worktreeId: result.worktree.id,
+        path: result.worktree.path,
+        branch: result.worktree.branch
+      })
       return {
         ...result,
         worktree: {
@@ -19232,6 +19332,12 @@ export class OrcaRuntimeService {
               : {})
           }
         : undefined
+    this.emitWorktreeLifecycle({
+      kind: 'created',
+      worktreeId: worktree.id,
+      path: worktree.path,
+      branch: worktree.branch
+    })
     return {
       worktree: {
         ...worktree,
@@ -21166,7 +21272,13 @@ export class OrcaRuntimeService {
     })()
     this.removeManagedWorktreeInFlight.set(removalTarget.id, { optionsKey, promise: removal })
     try {
-      return await removal
+      const result = await removal
+      this.emitWorktreeLifecycle({
+        kind: 'removed',
+        worktreeId: removalTarget.id,
+        path: removalTarget.path
+      })
+      return result
     } finally {
       if (this.removeManagedWorktreeInFlight.get(removalTarget.id)?.promise === removal) {
         this.removeManagedWorktreeInFlight.delete(removalTarget.id)
