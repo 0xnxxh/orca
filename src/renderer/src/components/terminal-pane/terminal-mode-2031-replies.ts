@@ -8,7 +8,8 @@ function sendMode2031Reply(
   transport: Mode2031ReplyTransport,
   mode: TerminalColorSchemeMode
 ): boolean {
-  // Theme-change notifications must bypass remote input batching.
+  // Why immediate: remote input batching can otherwise deliver this after the
+  // subscribing program stops reading terminal responses (#7329).
   return transport.sendInputImmediate(mode2031SequenceFor(mode))
 }
 

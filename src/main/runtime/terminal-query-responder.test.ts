@@ -553,6 +553,19 @@ describe('view-attribute bridge replies (after renderer push)', () => {
     expect(replies.map((reply) => reply.data)).toEqual(expectedReplies)
   })
 
+  it("answers fish's paired 2031-subscribe + ?996n probe exactly once (STA-2385)", async () => {
+    // fish 4.7.1 sends both; a seed on the silent subscribe doubled the report
+    // and leaked the second one as literal text at the prompt.
+    const { runtime, replies } = createResponderRuntime()
+    markHiddenRendererPty('pty-fish')
+    setTerminalViewAttributes(viewAttributes())
+
+    runtime.onPtyData('pty-fish', '\x1b[?2031h\x1b[?996n', Date.now())
+    await settle(runtime, 'pty-fish')
+
+    expect(replies.map((reply) => reply.data)).toEqual(['\x1b[?997;1n'])
+  })
+
   it('answers ?996n from palette luminance, not the pushed app mode (dark palette, light app mode)', async () => {
     const { runtime, replies } = createResponderRuntime()
     markHiddenRendererPty('pty-lum-dark')
