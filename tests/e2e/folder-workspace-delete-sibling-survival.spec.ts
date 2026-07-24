@@ -49,12 +49,13 @@ async function registerFolderRepoWithTwoInstances(
 
     await store.getState().createWorktree(repo.id, 'sibling-A')
     const a = instanceIds()[0]
-    if (!a) {
+    const instanceIdPrefix = `${rootId}::workspace:`
+    if (!a?.startsWith(instanceIdPrefix)) {
       throw new Error('first folder instance was not created')
     }
     await store.getState().createWorktree(repo.id, 'sibling-B')
     const b = instanceIds().find((id) => id !== a)
-    if (!b) {
+    if (!b?.startsWith(instanceIdPrefix)) {
       throw new Error('second folder instance was not created')
     }
     return { repoId: repo.id, a, b }
@@ -134,6 +135,9 @@ test('deleting a folder instance spares an untagged session in the shared folder
     },
     { a, b }
   )
+  expect(spawned.taggedA.startsWith(`${a}@@`)).toBe(true)
+  expect(spawned.taggedB.startsWith(`${b}@@`)).toBe(true)
+  expect(spawned.untagged).not.toContain('@@')
 
   // Drive the untagged shell into the shared folder path and have the daemon
   // track that cwd via OSC 7 — the real #10252 collateral scenario. Re-emit on
