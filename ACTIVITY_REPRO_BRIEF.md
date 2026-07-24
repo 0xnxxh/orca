@@ -1,0 +1,29 @@
+# Runtime-repro brief — Activity page React #185 (crash 36e6237d), Windows
+
+You are on the **awin Windows machine**, in the Orca repo worktree at the repo root here, branch `OrcaWin/activity-185-runtime-repro` (based on `origin/main`). You have a REAL Windows Electron environment — that is the whole point: this crash could NOT be reproduced in jsdom despite extensive effort, and almost certainly needs the real `Terminal` portal subscriber + real Windows layout timing.
+
+## The crash (production report 36e6237d, Windows, Orca 1.4.152)
+React error #185 "Maximum update depth exceeded" in error boundary `page.activity`. Stack: `dispatchSetState` inside `commitHookEffectListMount` → `commitLayoutEffectOnFiber` (a **useLayoutEffect** setState loop). The only app component in the stack is `ActivityPrototypePage` (`src/renderer/src/components/activity/ActivityPrototypePage.tsx`, ~2034 lines). The crashed v1.4.152 source is byte-identical to current main (this branch). It is Windows-only.
+
+## What we already RULED OUT (do not re-tread; it wastes time)
+- The portal-slot flip-flop at `ActivityPrototypePage.tsx:1607` (`setActivePortalSlotId(inactivePortalSlotId)`) — SETTLES in one commit (verified with real-component tests). Not it in isolation.
+- The Radix `Tooltip`+`DropdownMenu` `asChild` ref-loop (#7096) — the `<span>` wrapper fix is present (line ~881), and a real-Radix test of that composition is green on radix-ui 1.6.2 + react 19.2.7.
+- These jsdom tests all pass: `ActivityPrototypePage.react185.test.tsx`, `ActivityRadixTrigger.react185.test.tsx`, `ActivityThreadOptionsMenu.test.tsx`.
+
+## Leading hypothesis (test it on real Windows)
+A Windows/Electron-only **feedback loop**: `ActivityPrototypePage`'s layout effect at ~line 1635 does `setActivityTerminalPortals(portalDescriptors)` (publishes portal descriptors to an external store). The REAL `Terminal`/PaneManager portal subscriber reacts synchronously, mutating the portal target DOM / terminal readiness while Activity is still in its layout-commit. Activity's readiness hooks use a `MutationObserver` on the portal target (`useActivityTerminalPortalStatus`, ~line 298) — a DOM mutation re-fires readiness → Activity re-renders → recomputes `portalDescriptors` → if a portal **target element identity** churns (real Windows terminal DOM remount/reparent), `portalDescriptors` gets a new identity → re-publish → Terminal reacts again → loop → #185. The `forceUnavailable: migrationUnsupportedPtyId !== undefined` staged-portal path is likely involved (a staged terminal whose PTY can't migrate).
+
+## Your goal (in priority order)
+1. **Reproduce it live on real Windows Electron** and CAPTURE the exact churning state.
+2. If you reproduce it: pinpoint the exact effect + which state/identity churns each render, and propose the minimal elegant fix (bar: elegant + provably ~zero regression; do NOT defer the publish effect or remove `setDisplayedPaneKey` — that reintroduces wrong-terminal flashes; the likely-safe direction is an idempotence guard at the portal-store boundary keyed on descriptor VALUE identity, but only if it provably breaks the loop AND preserves genuine staged slot swaps).
+3. If you CANNOT cleanly reproduce after a genuine effort, DO NOT fabricate anything — instead leave a **safe render-loop diagnostic** (below) that will pin the cause on the next occurrence.
+
+## Concrete steps
+1. Build & run a dev Orca on Windows: `pnpm install` (if needed), then `pnpm run dev` (or the project's dev command — check package.json scripts). Confirm the app launches.
+2. Add a **render-loop detector** to `ActivityPrototypePage` (dev-instrumentation, temporary is fine): a `useRef` render counter + a per-commit `useEffect`/`useLayoutEffect` that, if renders exceed e.g. 50 within ~1 animation frame, `console.error`/persists a snapshot of: `activePortalSlotId`, `inactivePortalSlotId`, `displayedPaneKey`, `selectedThread?.paneKey`, `stagedThread?.paneKey`, `visibleThread?.paneKey`, `primaryPortalTargetEl`/`secondaryPortalTargetEl` identity (use a WeakMap→id), `stagedPortalStatus`, `visiblePortalStatus`, and a JSON of `portalDescriptors` (slotId/requestToken/paneKey/tabId + a target-el id). Also log WHICH of the three layout effects (298 / 1607 / 1635) fired last. This is what pins the cause.
+3. Figure out how to OPEN the experimental Activity page (grep for where `active_view === 'activity'` is set / the nav trigger / any feature flag; it may be a sidebar view or a command). Open it.
+4. Create the triggering state: you need a terminal/agent thread whose PTY is **migration-unsupported** so a staged portal is `forceUnavailable`. Investigate how `migrationUnsupportedByPtyId` gets populated (`store/slices/agent-status.ts` `setMigrationUnsupportedPty`, fed by IPC `agentStatus:migrationUnsupported` from `src/main/index.ts:1290`, sourced from persisted/legacy PTY entries in `src/main/persistence.ts`). If forcing it naturally is impractical, add a **dev-only** way to inject a migration-unsupported entry (e.g., call `useAppStore.getState().setMigrationUnsupportedPty(...)` from the devtools console for a live pane's ptyId) so you can drive the exact state. Then select that thread in the Activity view (and rapidly switch selection between a healthy and the unsupported thread) and watch for the #185 / loop-detector firing.
+5. Iterate until the loop detector fires or the boundary throws #185; capture the snapshot.
+
+## Report back
+Print your findings: whether you reproduced it (with the captured churning-state snapshot), the exact root-cause effect + the identity that churns, and the minimal fix proposal (or, if not reproduced, exactly what you tried, what the instrumentation showed, and the diagnostic you left). Do NOT open a PR yet — report to me first. If blocked (can't build/run/drive UI), say `ACTIVITY-REPRO BLOCKED <reason>` and stop.

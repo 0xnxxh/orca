@@ -72,6 +72,46 @@ import {
 } from '@/lib/activity-thread-display'
 import { getAgentRowPrimaryText } from '@/lib/agent-row-primary-text'
 
+// ---------------------------------------------------------------------------
+// TEMPORARY render-loop diagnostic for React #185 in `page.activity` (crash
+// 36e6237d, Windows). Safe + near-zero cost: only the counter bump runs on the
+// hot path; the heavy snapshot builds once per detected loop window. Publishes
+// to `globalThis.__ACTIVITY_185_*` and console.error so the churning state is
+// captured even if React throws before we can read it. Remove once fixed.
+// ---------------------------------------------------------------------------
+const activity185ElIdMap = new WeakMap<HTMLElement, number>()
+let activity185ElIdSeq = 0
+function activity185ElId(el: HTMLElement | null): number | null {
+  if (!el) {
+    return null
+  }
+  let id = activity185ElIdMap.get(el)
+  if (id === undefined) {
+    id = ++activity185ElIdSeq
+    activity185ElIdMap.set(el, id)
+  }
+  return id
+}
+// Which of the three layout effects (readiness/298, slot-swap/1607, publish/1635)
+// fired most recently before a loop snapshot — the prime clue for the culprit.
+let activity185LastLayoutEffect = 'none'
+// Rolling trace of the last renders so a tripped cascade shows what oscillates.
+const activity185Trace: unknown[] = []
+if (typeof globalThis !== 'undefined') {
+  ;(globalThis as unknown as { __ACTIVITY_185_TRACE?: unknown[] }).__ACTIVITY_185_TRACE =
+    activity185Trace
+}
+function activity185Record(entry: unknown): void {
+  activity185Trace.push(entry)
+  if (activity185Trace.length > 250) {
+    activity185Trace.shift()
+  }
+}
+const activity185Now = (): number =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : 0
+
 type ThreadReadFilter = 'all' | 'unread'
 type ActivityGroupBy = 'status' | 'project' | 'worktree' | 'agent'
 type ActivityEventState = Extract<AgentStatusState, 'done' | 'blocked' | 'waiting'>
@@ -296,6 +336,7 @@ function useActivityTerminalPortalStatus(
   })
 
   useLayoutEffect(() => {
+    activity185LastLayoutEffect = `298:readiness(${forceUnavailable ? 'forceUnavailable' : 'observe'})`
     if (!target || !paneKey) {
       setReadiness((prev) =>
         prev.target === null && prev.paneKey === null && prev.status === 'loading'
@@ -318,11 +359,14 @@ function useActivityTerminalPortalStatus(
     let sawUnreadySelectedRoot = false
 
     const updateReadiness = (status: ActivityTerminalPortalReadiness['status']): void => {
-      setReadiness((prev) =>
-        prev.target === target && prev.paneKey === paneKey && prev.status === status
-          ? prev
-          : { target, paneKey, status }
-      )
+      setReadiness((prev) => {
+        if (prev.target === target && prev.paneKey === paneKey && prev.status === status) {
+          return prev
+        }
+        // Why: a real readiness flip here is the DOM-mutation→re-render suspect.
+        activity185LastLayoutEffect = `298:readiness-change(${prev.status}->${status})`
+        return { target, paneKey, status }
+      })
     }
 
     const cancelReadyFrame = (): void => {
@@ -1605,6 +1649,7 @@ export default function ActivityPrototypePage(): React.JSX.Element {
   ])
 
   useLayoutEffect(() => {
+    activity185LastLayoutEffect = '1607:slot-swap'
     if (!selectedThread || !selectedHasLiveTab) {
       setDisplayedPaneKey(null)
       return
@@ -1633,8 +1678,101 @@ export default function ActivityPrototypePage(): React.JSX.Element {
   // Why no cleanup-to-null on each change: it forces the portal through null on every switch, flashing the workspace pane; null only on unmount (effect below).
   // oxlint-disable-next-line react-doctor/no-derived-state-effect -- Why: this publishes portal descriptors to Terminal's external portal store before paint.
   useLayoutEffect(() => {
+    activity185LastLayoutEffect = '1635:publish'
     setActivityTerminalPortals(portalDescriptors)
   }, [portalDescriptors])
+
+  // --- SAFE render-loop diagnostic for React #185 (crash 36e6237d) ---
+  // A genuine layout-effect setState cascade (what throws #185) re-renders
+  // sub-millisecond apart, hitting React's nested-update limit (~50) within a
+  // couple milliseconds. We count a "run" of renders <50ms apart, and only
+  // treat it as a loop when the run reaches 40 renders in under 120ms total —
+  // super-frame-rate, so it cannot be steady per-frame store churn (which the
+  // repro proved React settles) or spaced user input. Near-zero hot-path cost;
+  // the full snapshot builds once per detected loop, before the boundary throws.
+  const activity185RenderLoop = useRef({ count: 0, lastRenderMs: 0, runStartMs: 0, captured: false })
+  {
+    const nowMs = activity185Now()
+    const loop = activity185RenderLoop.current
+    if (nowMs - loop.lastRenderMs > 50) {
+      loop.count = 0
+      loop.runStartMs = nowMs
+      loop.captured = false
+    }
+    loop.lastRenderMs = nowMs
+    loop.count += 1
+    activity185Record({
+      n: loop.count,
+      t: Math.round(nowMs),
+      fx: activity185LastLayoutEffect,
+      slot: activePortalSlotId,
+      aTgt: activity185ElId(activePortalTargetEl),
+      iTgt: activity185ElId(inactivePortalTargetEl),
+      pTgt: activity185ElId(primaryPortalTargetEl),
+      sTgt: activity185ElId(secondaryPortalTargetEl),
+      disp: displayedPaneKey ? displayedPaneKey.slice(-8) : null,
+      sel: effectiveSelectedPaneKey ? effectiveSelectedPaneKey.slice(-8) : null,
+      vis: visibleThread ? visibleThread.paneKey.slice(-8) : null,
+      stg: stagedThread ? stagedThread.paneKey.slice(-8) : null,
+      selLive: selectedHasLiveTab,
+      dispLive: displayedHasLiveTab,
+      vSt: visiblePortalStatus,
+      sSt: stagedPortalStatus,
+      nDesc: portalDescriptors.length
+    })
+  }
+  useLayoutEffect(() => {
+    const loop = activity185RenderLoop.current
+    // 40 renders in <120ms = a synchronous cascade, not frame-rate churn; and
+    // 40 < React's nested-update limit (~50) so we capture BEFORE it throws.
+    if (loop.count < 40 || activity185Now() - loop.runStartMs > 120 || loop.captured) {
+      return
+    }
+    loop.captured = true
+    const snapshot = {
+      at: activity185Now(),
+      rendersInWindow: loop.count,
+      lastLayoutEffect: activity185LastLayoutEffect,
+      activePortalSlotId,
+      inactivePortalSlotId,
+      displayedPaneKey,
+      selectedPaneKey: effectiveSelectedPaneKey,
+      selectedThreadPaneKey: selectedThread?.paneKey ?? null,
+      stagedThreadPaneKey: stagedThread?.paneKey ?? null,
+      visibleThreadPaneKey: visibleThread?.paneKey ?? null,
+      selectedHasLiveTab,
+      displayedHasLiveTab,
+      stagedThreadMigrationUnsupportedPtyId: stagedThread?.migrationUnsupportedPtyId ?? null,
+      visibleThreadMigrationUnsupportedPtyId: visibleThread?.migrationUnsupportedPtyId ?? null,
+      selectedThreadMigrationUnsupportedPtyId: selectedThread?.migrationUnsupportedPtyId ?? null,
+      primaryPortalTargetElId: activity185ElId(primaryPortalTargetEl),
+      secondaryPortalTargetElId: activity185ElId(secondaryPortalTargetEl),
+      activePortalTargetElId: activity185ElId(activePortalTargetEl),
+      inactivePortalTargetElId: activity185ElId(inactivePortalTargetEl),
+      stagedPortalStatus,
+      visiblePortalStatus,
+      portalDescriptors: portalDescriptors.map((descriptor) => ({
+        slotId: descriptor.slotId,
+        requestToken: descriptor.requestToken,
+        paneKey: descriptor.paneKey,
+        tabId: descriptor.tabId,
+        worktreeId: descriptor.worktreeId,
+        forceUnavailable: descriptor.forceUnavailable ?? false,
+        active: descriptor.active,
+        targetElId: activity185ElId(descriptor.target)
+      })),
+      trace: activity185Trace.slice(-50)
+    }
+    try {
+      const globalRef = globalThis as unknown as {
+        __ACTIVITY_185_SNAPSHOT?: unknown
+        __ACTIVITY_185_SNAPSHOTS?: unknown[]
+      }
+      globalRef.__ACTIVITY_185_SNAPSHOT = snapshot
+      globalRef.__ACTIVITY_185_SNAPSHOTS = [...(globalRef.__ACTIVITY_185_SNAPSHOTS ?? []), snapshot]
+    } catch {}
+    console.error('[ACTIVITY-185-LOOP] render-loop detected', JSON.stringify(snapshot))
+  })
 
   const setActivityPageRef = useCallback((node: HTMLDivElement | null): void => {
     if (!node) {
