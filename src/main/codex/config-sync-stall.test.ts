@@ -143,7 +143,15 @@ describe('reportCodexConfigSyncOutcome', () => {
     // path reported it this stall logged the generic failure on every launch
     // and quota poll and never surfaced its reason.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    writeFileSync(runtimeConfigPath(), 'model = "runtime-model"\n', 'utf-8')
+    // Why: seed a baseline with one healthy pass first. Without it promotion
+    // no-ops before touching the source and the mirror is what throws — which
+    // is NOT the steady state every real install is in, where promotion reads
+    // the source first and throws there instead.
+    writeFileSync(systemConfigPath(), 'model = "gpt-5"\n', 'utf-8')
+    syncSystemConfigIntoManagedCodexHome(homes)
+    warn.mockClear()
+
+    rmSync(systemConfigPath())
     mkdirSync(systemConfigPath(), { recursive: true })
 
     for (let pass = 0; pass < 3; pass += 1) {

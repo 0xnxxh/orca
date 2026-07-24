@@ -40,6 +40,10 @@ export function syncSystemConfigIntoManagedCodexHome(
   if (!promotionPlan) {
     // Why: mirroring after a failed write-back would erase the runtime change;
     // leave both runtime and its old baseline intact so the next launch retries.
+    // Report first: once a baseline exists, an unreadable source throws inside
+    // promotion rather than the mirror, so reporting only later would leave the
+    // steady-state stall logging a reasonless failure on every pass forever.
+    reportCodexConfigSyncOutcome(homes.runtimeHomePath, getCodexConfigSyncStatus(homes))
     return
   }
   let mirrorResult: CodexConfigMirrorResult

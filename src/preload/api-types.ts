@@ -2211,11 +2211,13 @@ export type PreloadApi = {
     installWsl: (args?: { distro?: string | null }) => Promise<CliInstallStatus>
     removeWsl: (args?: { distro?: string | null }) => Promise<CliInstallStatus>
   }
+  codexConfigSync: {
+    status: () => Promise<CodexConfigSyncStatus>
+  }
   agentHooks: {
     claudeStatus: () => Promise<AgentHookInstallStatus>
     openClaudeStatus: () => Promise<AgentHookInstallStatus>
     codexStatus: () => Promise<AgentHookInstallStatus>
-    codexConfigSyncStatus: () => Promise<CodexConfigSyncStatus>
     geminiStatus: () => Promise<AgentHookInstallStatus>
     antigravityStatus: () => Promise<AgentHookInstallStatus>
     ampStatus: () => Promise<AgentHookInstallStatus>

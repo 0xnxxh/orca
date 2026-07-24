@@ -436,14 +436,16 @@ export function AccountsPane({
   // unusable, so without this the user only sees their edits being ignored.
   const [codexConfigSync, setCodexConfigSync] = useState<CodexConfigSyncStatus | null>(null)
   useEffect(() => {
-    if (isRemoteAccountScope) {
-      // Remote scopes own their own config; the desktop status says nothing about them.
+    // Why: the status resolves the host's own ~/.codex and shared runtime home.
+    // A WSL or remote scope mirrors different homes entirely, so showing it there
+    // would name a config file that has nothing to do with the selected runtime.
+    if (isRemoteAccountScope || accountRuntime.runtime !== 'host') {
       setCodexConfigSync(null)
       return
     }
     let cancelled = false
-    void window.api.agentHooks
-      .codexConfigSyncStatus()
+    void window.api.codexConfigSync
+      .status()
       .then((status) => {
         if (!cancelled) {
           setCodexConfigSync(status)
@@ -457,7 +459,7 @@ export function AccountsPane({
     return () => {
       cancelled = true
     }
-  }, [isRemoteAccountScope, codexAccountsLoaded])
+  }, [isRemoteAccountScope, accountRuntime.runtime, codexAccountsLoaded])
   const codexConfigSyncWarning = getCodexConfigSyncWarning(codexConfigSync)
   const systemCodexMissingSignIn = activeCodexAuthWarning === 'missing-sign-in'
   const systemCodexNeedsSignIn = activeCodexAccountId === null && Boolean(activeCodexAuthWarning)
