@@ -43,7 +43,13 @@ export function syncSystemConfigIntoManagedCodexHome(
     // Report first: once a baseline exists, an unreadable source throws inside
     // promotion rather than the mirror, so reporting only later would leave the
     // steady-state stall logging a reasonless failure on every pass forever.
-    reportCodexConfigSyncOutcome(homes.runtimeHomePath, getCodexConfigSyncStatus(homes))
+    // Only a stall, never a clear: promotion failing on a readable source still
+    // means no mirror ran, so clearing the latch here would claim a recovery
+    // that did not happen and silence every later pass.
+    const stalledStatus = getCodexConfigSyncStatus(homes)
+    if (stalledStatus.state === 'stalled') {
+      reportCodexConfigSyncOutcome(homes.runtimeHomePath, stalledStatus)
+    }
     return
   }
   let mirrorResult: CodexConfigMirrorResult

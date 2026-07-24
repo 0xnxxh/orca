@@ -454,7 +454,7 @@ describe('registerCoreHandlers', () => {
     const claudeUsage = { marker: 'claudeUsage' }
     const codexUsage = { marker: 'codexUsage' }
     const openCodeUsage = { marker: 'openCodeUsage' }
-    const codexAccounts = { marker: 'codexAccounts' }
+    const codexAccounts = { marker: 'codexAccounts', runtimeHomeService: { marker: 'runtimeHome' } }
     const claudeAccounts = { marker: 'claudeAccounts' }
     const rateLimits = { marker: 'rateLimits' }
     const agentAwakeService = { marker: 'agentAwakeService' }
@@ -496,7 +496,9 @@ describe('registerCoreHandlers', () => {
     expect(registerAgentHookHandlersMock).toHaveBeenCalledWith(runtime, {
       getPtyIdForPaneKey: expect.any(Function)
     })
-    expect(registerCodexConfigSyncHandlersMock).toHaveBeenCalled()
+    expect(registerCodexConfigSyncHandlersMock).toHaveBeenCalledWith(
+      codexAccounts.runtimeHomeService
+    )
     expect(registerPetHandlersMock).toHaveBeenCalled()
     expect(registerClaudeAccountHandlersMock).toHaveBeenCalledWith(claudeAccounts)
     expect(registerMiniMaxCredentialsHandlersMock).toHaveBeenCalledWith(rateLimits)

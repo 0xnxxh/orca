@@ -138,7 +138,7 @@ export function registerCoreHandlers(
   registerOpenCodeUsageHandlers(openCodeUsage)
   registerCodexAccountHandlers(codexAccounts)
   registerAgentHookHandlers(runtime, { getPtyIdForPaneKey })
-  registerCodexConfigSyncHandlers()
+  registerCodexConfigSyncHandlers(codexAccounts.runtimeHomeService)
   registerAgentTrustHandlers()
   registerClaudeAccountHandlers(claudeAccounts)
   registerMiniMaxCredentialsHandlers(rateLimits)
