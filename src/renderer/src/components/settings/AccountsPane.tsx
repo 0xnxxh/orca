@@ -459,7 +459,10 @@ export function AccountsPane({
     return () => {
       cancelled = true
     }
-  }, [isRemoteAccountScope, accountRuntime.runtime, codexAccountsLoaded])
+    // Why: the status resolves whichever home the ACTIVE selection mirrors into
+    // (per-account, shared, or none for the real-home lane), so switching
+    // accounts must refetch or the banner describes the previous account.
+  }, [isRemoteAccountScope, accountRuntime.runtime, activeCodexAccountId, codexAccountsLoaded])
   const codexConfigSyncWarning = getCodexConfigSyncWarning(codexConfigSync)
   const systemCodexMissingSignIn = activeCodexAuthWarning === 'missing-sign-in'
   const systemCodexNeedsSignIn = activeCodexAccountId === null && Boolean(activeCodexAuthWarning)

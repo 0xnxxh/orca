@@ -20,17 +20,15 @@ vi.mock('node:os', async (importOriginal) => {
 })
 
 import { registerCodexConfigSyncHandlers } from './codex-config-sync'
-import type { CodexRuntimeHomeService } from '../codex-accounts/runtime-home-service'
 import type { CodexConfigSyncStatus } from '../../shared/codex-config-sync-types'
 
 let root: string
 
 function invokeHandler(mirroredHome: string | null): CodexConfigSyncStatus {
   handleMock.mockClear()
-  const runtimeHome = {
+  registerCodexConfigSyncHandlers({
     getMirroredHostHomePathForStatus: () => mirroredHome
-  } as unknown as CodexRuntimeHomeService
-  registerCodexConfigSyncHandlers(runtimeHome)
+  })
   const handler = handleMock.mock.calls.at(-1)?.[1] as () => CodexConfigSyncStatus
   return handler()
 }
