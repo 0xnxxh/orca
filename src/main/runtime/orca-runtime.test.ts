@@ -1838,7 +1838,8 @@ describe('OrcaRuntimeService', () => {
     expect(hasPty).toHaveBeenCalledTimes(4)
     expect(hasPty).toHaveBeenCalledWith(floatingPtyId)
     expect(listProcesses).not.toHaveBeenCalled()
-    expect(getRepos).not.toHaveBeenCalled()
+    // Why: headless hydrate may consult getRepos to skip tabs for deleted repos;
+    // floating liveness must still avoid provider process inventory scans.
   })
 
   it('advertises browser screencast only when a renderer window is available', () => {
