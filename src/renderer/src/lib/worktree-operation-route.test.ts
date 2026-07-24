@@ -292,6 +292,40 @@ describe('resolveWorktreeOperationRouteResult', () => {
       })
     })
 
+    it('keeps a local folder workspace local when unrelated runtimes exist (#10251)', () => {
+      const state = {
+        folderWorkspaces: [folderWorkspace()],
+        projectGroups: [{ id: 'group-1', connectionId: null, executionHostId: null } as never],
+        settings: { activeRuntimeEnvironmentId: 'hub-a' } as never,
+        runtimeEnvironments: [{ id: 'hub-a' }, { id: 'hub-b' }],
+        runtimeEnvironmentCatalogHydrated: true
+      }
+      expect(resolveWorktreeOperationRouteResult(state, FOLDER_KEY)).toEqual({
+        kind: 'resolved',
+        route: { executionHostId: 'local', runtimeEnvironmentId: null }
+      })
+      // Why: the folder record is positive identity evidence, so it routes where an unknown
+      // worktree in the same multi-runtime state still fails closed.
+      expect(resolveWorktreeOperationRouteResult(state, 'repo-x::/tmp/unknown')).toEqual({
+        kind: 'missing'
+      })
+    })
+
+    it('routes a folder workspace to its restored runtime host during catalog hydration', () => {
+      expect(
+        resolveWorktreeOperationRouteResult(
+          {
+            folderWorkspaces: [folderWorkspace()],
+            restoredRuntimeHostIdByWorkspaceSessionKey: { [FOLDER_KEY]: 'runtime:hub-a' }
+          },
+          FOLDER_KEY
+        )
+      ).toEqual({
+        kind: 'resolved',
+        route: { executionHostId: 'runtime:hub-a', runtimeEnvironmentId: 'hub-a' }
+      })
+    })
+
     it('fails an unknown folder workspace id closed', () => {
       expect(resolveWorktreeOperationRouteResult({}, FOLDER_KEY)).toEqual({ kind: 'missing' })
     })

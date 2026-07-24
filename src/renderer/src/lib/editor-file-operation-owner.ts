@@ -1,5 +1,6 @@
 import { parseExecutionHostId } from '../../../shared/execution-host'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
+import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import type { AppState } from '@/store/types'
 import {
   assertWorktreeOperationGenerationSnapshotCurrent,
@@ -25,6 +26,9 @@ type EditorOwnerState = Pick<
   | 'repos'
   | 'worktreesByRepo'
   | 'detectedWorktreesByRepo'
+  | 'folderWorkspaces'
+  | 'projectGroups'
+  | 'restoredRuntimeHostIdByWorkspaceSessionKey'
   | 'runtimeEnvironments'
   | 'runtimeEnvironmentCatalogHydrated'
   | 'removedRuntimeEnvironmentIds'
@@ -98,6 +102,11 @@ function resolveCurrentEditorRoute(
   worktreeId: string,
   provenance: EditorFileOperationProvenance
 ): WorktreeOperationRoute | null {
+  // Why: folder workspaces never publish worktree rows, so the explicit/published checks below
+  // always fail them; re-resolve live like the default assert path so capture and assert agree (#10251).
+  if (parseWorkspaceKey(worktreeId)?.type === 'folder') {
+    return resolveWorktreeOperationRoute(state, worktreeId)
+  }
   const explicitResolution = resolveExplicitWorktreeOperationRouteResult(state, worktreeId)
   if (explicitResolution.kind === 'resolved') {
     return explicitResolution.route

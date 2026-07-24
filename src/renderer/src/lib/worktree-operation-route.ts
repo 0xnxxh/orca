@@ -30,12 +30,11 @@ type WorktreeOperationOwnerRecord = {
   runtimeOwnerEnvironmentId?: string
 }
 
+// settings/runtimeEnvironments come from FolderWorkspaceRuntimeOwnerState's legacy-owner base.
 type WorktreeOperationRouteState = FolderWorkspaceRuntimeOwnerState & {
   repos?: readonly Pick<AppState['repos'][number], 'id' | 'connectionId' | 'executionHostId'>[]
-  settings?: Pick<NonNullable<AppState['settings']>, 'activeRuntimeEnvironmentId'> | null
   worktreesByRepo?: Record<string, readonly WorktreeOperationOwnerRecord[]>
   detectedWorktreesByRepo?: Record<string, { worktrees: readonly WorktreeOperationOwnerRecord[] }>
-  runtimeEnvironments?: readonly { id: string }[]
   runtimeEnvironmentCatalogHydrated?: boolean
   removedRuntimeEnvironmentIds?: ReadonlySet<string>
 }
@@ -168,6 +167,9 @@ function resolveFolderWorkspaceOperationRoute(
     // Why: deleted/stale folder ids keep failing closed like unknown worktrees.
     return { kind: 'missing' }
   }
+  // Why: a found folder record is positive identity evidence, so keep terminal-owner parity;
+  // the worktree legacy hydration gates would fail local folders closed whenever unrelated
+  // runtimes exist — the exact #10251 symptom.
   const executionHostId = getExecutionHostIdForFolderWorkspace(state, folderWorkspaceId)
   const parsedHost = parseExecutionHostId(executionHostId)
   return {

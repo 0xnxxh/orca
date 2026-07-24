@@ -877,6 +877,8 @@ function settingsForWorktreeOwner(
     | 'projectGroups'
     | 'restoredRuntimeHostIdByWorkspaceSessionKey'
     | 'runtimeEnvironments'
+    | 'runtimeEnvironmentCatalogHydrated'
+    | 'removedRuntimeEnvironmentIds'
   >,
   worktreeId: string
 ) {
@@ -4082,8 +4084,28 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   markWorktreeUnread: (worktreeId) => {
     // Why: attention dot stays until the user engages the worktree; cleared by pane interaction or activation.
-    let shouldPersist = false
     const now = Date.now()
+    const workspaceScope = parseWorkspaceKey(worktreeId)
+    if (workspaceScope?.type === 'folder') {
+      const folderWorkspace = get().folderWorkspaces.find(
+        (workspace) => workspace.id === workspaceScope.folderWorkspaceId
+      )
+      if (!folderWorkspace || folderWorkspace.isUnread) {
+        return
+      }
+      void get()
+        .updateFolderWorkspace(workspaceScope.folderWorkspaceId, {
+          isUnread: true,
+          lastActivityAt: now
+        })
+        .then((updated) => {
+          if (updated) {
+            set((s) => ({ sortEpoch: s.sortEpoch + 1 }))
+          }
+        })
+      return
+    }
+    let shouldPersist = false
     set((s) => {
       const worktree = findKnownWorktreeById(s, worktreeId)
       if (!worktree || worktree.isUnread) {
@@ -4192,6 +4214,24 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   },
 
   clearWorktreeUnread: (worktreeId) => {
+    const workspaceScope = parseWorkspaceKey(worktreeId)
+    if (workspaceScope?.type === 'folder') {
+      const folderWorkspaceId = workspaceScope.folderWorkspaceId
+      const folderWorkspace = get().folderWorkspaces.find(
+        (workspace) => workspace.id === folderWorkspaceId
+      )
+      if (!folderWorkspace?.isUnread) {
+        return
+      }
+      // Why: flip locally first — this runs per keystroke, so the guard above must dedupe before the IPC round-trip lands.
+      set((s) => ({
+        folderWorkspaces: s.folderWorkspaces.map((workspace) =>
+          workspace.id === folderWorkspaceId ? { ...workspace, isUnread: false } : workspace
+        )
+      }))
+      void get().updateFolderWorkspace(folderWorkspaceId, { isUnread: false })
+      return
+    }
     let shouldPersist = false
     set((s) => {
       const worktree = findKnownWorktreeById(s, worktreeId)
@@ -4236,6 +4276,21 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   bumpWorktreeActivity: (worktreeId) => {
     const now = Date.now()
+    const workspaceScope = parseWorkspaceKey(worktreeId)
+    if (workspaceScope?.type === 'folder') {
+      // Why: folder meta lives on the FolderWorkspace record — persistWorktreeMeta would write a
+      // worktreeMeta['folder:…'] row that folderWorkspaces:list never reads back (#10251).
+      const isActive = get().activeWorktreeId === worktreeId
+      void get()
+        .updateFolderWorkspace(workspaceScope.folderWorkspaceId, { lastActivityAt: now })
+        .then((updated) => {
+          // Why: mirror the worktree path — active-workspace PTY events are click side-effects, no reorder.
+          if (updated && !isActive) {
+            set((s) => ({ sortEpoch: s.sortEpoch + 1 }))
+          }
+        })
+      return
+    }
     let shouldPersist = false
     set((s) => {
       const worktree = findKnownWorktreeById(s, worktreeId)
@@ -4668,6 +4723,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     }
 
     if (shouldClearUnread) {
+      const workspaceScope = parseWorkspaceKey(worktreeId)
+      if (workspaceScope?.type === 'folder') {
+        void get().updateFolderWorkspace(workspaceScope.folderWorkspaceId, { isUnread: false })
+        return
+      }
       const updates: Partial<WorktreeMeta> = {
         isUnread: false
       }

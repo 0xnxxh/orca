@@ -131,6 +131,7 @@ function createTestStore() {
         repos: [],
         projectHostSetups: [],
         deleteProjectHostSetup: vi.fn().mockResolvedValue(null),
+        updateFolderWorkspace: vi.fn().mockResolvedValue(true),
         updateSettings: vi.fn().mockResolvedValue(undefined),
         openModal: vi.fn(),
         shutdownWorktreeTerminals: vi.fn().mockResolvedValue(undefined),
@@ -5718,7 +5719,7 @@ describe('worktree remote runtime mutations', () => {
     expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
   })
 
-  it('persists activity locally for a local folder workspace instead of failing on owner routing (#10251)', async () => {
+  it('persists activity on the folder workspace record instead of failing on owner routing (#10251)', async () => {
     const store = createTestStore()
     const folderWorkspace = makeFolderWorkspace({ id: 'folder-local' })
     const folderKey = folderWorkspaceKey(folderWorkspace.id)
@@ -5726,17 +5727,73 @@ describe('worktree remote runtime mutations', () => {
       folderWorkspaces: [folderWorkspace],
       worktreesByRepo: { repo1: [] }
     } as Partial<AppState>)
+    const sortEpochBefore = store.getState().sortEpoch
 
     expect(() => store.getState().bumpWorktreeActivity(folderKey)).not.toThrow()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(runtimeEnvironmentCall).not.toHaveBeenCalled()
-    expect(mockApi.worktrees.updateMeta).toHaveBeenCalledWith(
-      expect.objectContaining({
-        worktreeId: folderKey,
-        updates: expect.objectContaining({ lastActivityAt: expect.any(Number) })
-      })
+    // Why: worktreeMeta['folder:…'] rows are write-only — folder meta must land on the FolderWorkspace record.
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+    expect(store.getState().updateFolderWorkspace).toHaveBeenCalledWith(
+      folderWorkspace.id,
+      expect.objectContaining({ lastActivityAt: expect.any(Number) })
     )
+    expect(store.getState().sortEpoch).toBe(sortEpochBefore + 1)
+  })
+
+  it('skips the sort-epoch bump when the active folder workspace reports activity', async () => {
+    const store = createTestStore()
+    const folderWorkspace = makeFolderWorkspace({ id: 'folder-active' })
+    const folderKey = folderWorkspaceKey(folderWorkspace.id)
+    store.setState({
+      folderWorkspaces: [folderWorkspace],
+      activeWorktreeId: folderKey
+    } as Partial<AppState>)
+    const sortEpochBefore = store.getState().sortEpoch
+
+    store.getState().bumpWorktreeActivity(folderKey)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.getState().updateFolderWorkspace).toHaveBeenCalledWith(
+      folderWorkspace.id,
+      expect.objectContaining({ lastActivityAt: expect.any(Number) })
+    )
+    expect(store.getState().sortEpoch).toBe(sortEpochBefore)
+  })
+
+  it('clears folder workspace unread on its record and dedupes repeat calls', async () => {
+    const store = createTestStore()
+    const folderWorkspace = makeFolderWorkspace({ id: 'folder-unread', isUnread: true })
+    const folderKey = folderWorkspaceKey(folderWorkspace.id)
+    store.setState({ folderWorkspaces: [folderWorkspace] } as Partial<AppState>)
+
+    store.getState().clearWorktreeUnread(folderKey)
+    store.getState().clearWorktreeUnread(folderKey)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.getState().folderWorkspaces[0]?.isUnread).toBe(false)
+    expect(store.getState().updateFolderWorkspace).toHaveBeenCalledTimes(1)
+    expect(store.getState().updateFolderWorkspace).toHaveBeenCalledWith(folderWorkspace.id, {
+      isUnread: false
+    })
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
+  })
+
+  it('marks a folder workspace unread on its record', async () => {
+    const store = createTestStore()
+    const folderWorkspace = makeFolderWorkspace({ id: 'folder-read' })
+    const folderKey = folderWorkspaceKey(folderWorkspace.id)
+    store.setState({ folderWorkspaces: [folderWorkspace] } as Partial<AppState>)
+
+    store.getState().markWorktreeUnread(folderKey)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(store.getState().updateFolderWorkspace).toHaveBeenCalledWith(
+      folderWorkspace.id,
+      expect.objectContaining({ isUnread: true, lastActivityAt: expect.any(Number) })
+    )
+    expect(mockApi.worktrees.updateMeta).not.toHaveBeenCalled()
   })
 
   it('persists activity for hidden detected worktrees', async () => {
