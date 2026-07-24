@@ -58,6 +58,7 @@ export type MobileNativeChatController = {
   handleNativeChatStop: () => void
   nativeChatFilePaths: string[]
   loadNativeChatFiles: (query: string) => void
+  handleNativeChatQuestionAnswer: (text: string) => Promise<boolean>
   handleNativeChatSend: (text: string, images?: string[]) => Promise<boolean>
 }
 
@@ -226,18 +227,17 @@ export function useMobileNativeChatController(args: {
     worktreeId
   })
 
-  const handleNativeChatSend = useCallback(
-    async (text: string, images?: string[]): Promise<boolean> => {
+  const sendNativeChatMessage = useCallback(
+    async (text: string, images: string[] | undefined, syncComposer: boolean): Promise<boolean> => {
       const handle = activeHandleRef.current
       const origin = captureSendOrigin(text)
       if (!client || !handle || !origin || !nativeChatInputLeaseReady) {
         onSendError('Message not sent (disconnected)')
         return false
       }
-      // Why: empty the composer at send time, not on the ack — over relay the
-      // round trip is visible, and a lost ack must not strand the sent prompt
-      // in the box. Only a definite rejection puts the text back.
-      clearDraftForSend(origin, text)
+      if (syncComposer) {
+        clearDraftForSend(origin, text)
+      }
       const outcome = await sendMobileNativeChatMessageWithOutcome({
         client,
         terminal: handle,
@@ -255,7 +255,9 @@ export function useMobileNativeChatController(args: {
         return true
       }
       if (outcome === 'rejected') {
-        restoreRejectedDraft(origin, text)
+        if (syncComposer) {
+          restoreRejectedDraft(origin, text)
+        }
         onSendError('Message not sent')
         return false
       }
@@ -276,6 +278,14 @@ export function useMobileNativeChatController(args: {
       onSendError,
       restoreRejectedDraft
     ]
+  )
+  const handleNativeChatQuestionAnswer = useCallback(
+    (text: string) => sendNativeChatMessage(text, undefined, false),
+    [sendNativeChatMessage]
+  )
+  const handleNativeChatSend = useCallback(
+    (text: string, images?: string[]) => sendNativeChatMessage(text, images, true),
+    [sendNativeChatMessage]
   )
 
   return {
@@ -300,6 +310,7 @@ export function useMobileNativeChatController(args: {
     handleNativeChatStop,
     nativeChatFilePaths,
     loadNativeChatFiles,
+    handleNativeChatQuestionAnswer,
     handleNativeChatSend
   }
 }

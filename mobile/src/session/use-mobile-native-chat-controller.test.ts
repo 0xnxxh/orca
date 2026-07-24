@@ -149,4 +149,17 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
     // A definite rejection puts the optimistically-cleared text back.
     expect(restoreRejectedDraft).toHaveBeenCalledWith(ORIGIN, 'look')
   })
+
+  it('does not restore a rejected question answer into the composer', async () => {
+    sendWithOutcome.mockResolvedValue('rejected')
+    let accepted = true
+    await act(async () => {
+      accepted = await controller!.handleNativeChatQuestionAnswer('1')
+    })
+
+    expect(accepted).toBe(false)
+    expect(clearDraftForSend).not.toHaveBeenCalled()
+    expect(restoreRejectedDraft).not.toHaveBeenCalled()
+    expect(onSendError).toHaveBeenCalledWith('Message not sent')
+  })
 })
