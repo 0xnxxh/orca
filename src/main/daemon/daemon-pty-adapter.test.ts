@@ -665,6 +665,33 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         idleAdapter.dispose()
       }
     })
+
+    it('signals every active pane to recover when one pane hits the dead endpoint', async () => {
+      const respawn = vi.fn(async () => {})
+      const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+      const recovered: string[] = []
+      healingAdapter.onWriteUnavailable(({ id }) => recovered.push(id))
+      try {
+        const { id: a } = await healingAdapter.spawn({ sessionId: 'pane-a', cols: 80, rows: 24 })
+        const { id: b } = await healingAdapter.spawn({ sessionId: 'pane-b', cols: 80, rows: 24 })
+        const client = (healingAdapter as unknown as { client: DaemonClient }).client
+
+        await server.shutdown()
+        await waitFor(() => !client.isConnected())
+
+        // Only pane A is written; pane B is a passive sibling the user never typed into.
+        expect(() => healingAdapter.write(a, 'typed-into-a')).toThrow(PtyWriteUnavailableError)
+
+        // Why revert-sensitive: a dead endpoint takes down EVERY session on the
+        // daemon, so both panes must be told to remount + re-attach. Without the
+        // fan-out, only the written pane (a) recovers and sibling b stays frozen
+        // with silently dropped input (STA-2373 sibling-freeze regression).
+        expect(recovered).toContain(a)
+        expect(recovered).toContain(b)
+      } finally {
+        healingAdapter.dispose()
+      }
+    })
   })
 
   describe('background stream thinning compatibility', () => {

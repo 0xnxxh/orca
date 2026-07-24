@@ -131,6 +131,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
     incarnationId?: PtyIncarnationId
   }) => void)[] = []
   private backgroundStreamListeners: ((payload: PtyBackgroundStreamEvent) => void)[] = []
+  // Why: lets main fan a dead-endpoint signal to every affected pane, not just the written one (STA-2373 sibling-freeze).
+  private writeUnavailableListeners: ((payload: { id: string }) => void)[] = []
   private removeEventListener: (() => void) | null = null
   private initialCwds = new Map<string, string>()
   private wslDistrosBySessionId = new Map<string, string>()
@@ -1075,6 +1077,23 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
   }
 
+  onWriteUnavailable(callback: (payload: { id: string }) => void): () => void {
+    this.writeUnavailableListeners.push(callback)
+    return () => {
+      const idx = this.writeUnavailableListeners.indexOf(callback)
+      if (idx !== -1) {
+        this.writeUnavailableListeners.splice(idx, 1)
+      }
+    }
+  }
+
+  private emitWriteUnavailable(id: string): void {
+    // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
+    for (const listener of [...this.writeUnavailableListeners]) {
+      listener({ id })
+    }
+  }
+
   dispose(): void {
     this.respawnAdoptionClosed = true
     this.sessionsAwaitingDaemonRecovery.clear()
@@ -1437,6 +1456,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
       return
     }
     this.writeRecoveryAttempted = true
+    // Why: the dead endpoint took down every session on this daemon. Signal all
+    // active panes now — while they are still in activeSessionIds, so the
+    // renderer's liveness gate still reads them live — so background panes
+    // remount + re-attach alongside the one that was written, instead of being
+    // left frozen with silently dropped input until each is typed into.
+    this.notifyActiveSessionsWriteUnavailable()
     const recovery = this.withDaemonRetry(() => this.ensureConnected())
       .catch((error) => console.warn('[daemon] Failed to recover after rejected PTY input:', error))
       .finally(() => {
@@ -1446,6 +1471,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
         }
       })
     this.writeRecoveryPromise = recovery
+  }
+
+  private notifyActiveSessionsWriteUnavailable(): void {
+    for (const id of this.activeSessionIds) {
+      this.sessionsAwaitingDaemonRecovery.add(id)
+      this.emitWriteUnavailable(id)
+    }
   }
 
   private clearSessionAwaitingDaemonRecovery(sessionId: string): void {
