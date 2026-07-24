@@ -81,6 +81,23 @@ describe('startup ordering', () => {
     expect(supervisorReady).toBeGreaterThan(readyStart)
   })
 
+  it('abandons ready-time startup when the single-instance lock was lost', () => {
+    // Why: app.quit() is async, so a losing launch still reaches ready; without this guard it
+    // republishes orca-runtime.json over the live instance and strands the CLI on a dead pid.
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const readyStart = source.indexOf('app.whenReady().then(async () => {')
+    const guard = source.indexOf('if (!hasSingleInstanceLock) {', readyStart)
+    const rpcStart = source.indexOf('runtimeRpc.start()', readyStart)
+    const startupServices = source.indexOf('startTerminalRuntimeStartupServices()', readyStart)
+
+    expect(readyStart).toBeGreaterThanOrEqual(0)
+    expect(guard).toBeGreaterThan(readyStart)
+    expect(rpcStart).toBeGreaterThan(guard)
+    expect(startupServices).toBeGreaterThan(guard)
+    // Why: the bail must precede every side effect in the handler, not merely the RPC publish.
+    expect(source.slice(readyStart, guard)).not.toContain('logStartupMilestone')
+  })
+
   it('does not run the rate-limit quota fetch before the first window can show results', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const attachIndex = source.indexOf('rateLimits.attach(window)')

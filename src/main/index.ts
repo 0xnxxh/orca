@@ -1777,6 +1777,11 @@ function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
 }
 
 app.whenReady().then(async () => {
+  // Why: app.quit() above is async, so a lock-losing launch still reaches ready; returning keeps it from
+  // republishing orca-runtime.json / agent-hooks endpoint files over the live instance's (STA-1513).
+  if (!hasSingleInstanceLock) {
+    return
+  }
   logStartupMilestone('app-ready')
   // Why: install certificate decisions before any webview or headless window issues its first TLS request.
   app.on(
