@@ -2247,6 +2247,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       // Next spawn should detect the dead socket, call respawn, and succeed
       const r2 = await respawnAdapter.spawn({ cols: 80, rows: 24 })
       expect(r2.id).toBeDefined()
+      expect(respawnFn).toHaveBeenCalledTimes(1)
       expect(respawnFn).toHaveBeenCalledWith('daemon_died')
 
       respawnAdapter.dispose()
@@ -2286,6 +2287,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       try {
         const result = await respawnAdapter.spawn({ cols: 80, rows: 24 })
         expect(result.id).toBeDefined()
+        expect(respawnFn).toHaveBeenCalledTimes(1)
         expect(respawnFn).toHaveBeenCalledWith('daemon_died')
       } finally {
         ensureConnectedSpy.mockRestore()
@@ -2319,6 +2321,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       ])
       expect(r1.id).toBeDefined()
       expect(r2.id).toBeDefined()
+      expect(respawnFn).toHaveBeenCalledTimes(1)
       expect(respawnFn).toHaveBeenCalledWith('daemon_died')
 
       respawnAdapter.dispose()
@@ -2394,6 +2397,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         tokenPath,
         respawnAdapter.protocolVersion
       )
+      expect(respawnFn).toHaveBeenCalledTimes(1)
       expect(respawnFn).toHaveBeenCalledWith('unhealthy_resolver')
       expect(exits).toEqual([])
       expect(replacement.id).toBeDefined()
