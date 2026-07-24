@@ -138,6 +138,11 @@ export function useEditorPanelContentState({
           activeSettings,
           restoredOpenFile?.runtimeEnvironmentId
         )
+        // Why: liveTail tabs are AI Vault logs discovered on this client, so the
+        // worktree's SSH owner must never be inferred for them (a stamp still routes).
+        const isLiveTailLogTab =
+          restoredOpenFile?.readOnly === true && restoredOpenFile.liveTail === true
+        let readConnectionId = connectionId
         if (
           resolvedConnectionId === undefined &&
           !readSettings?.activeRuntimeEnvironmentId?.trim() &&
@@ -152,7 +157,9 @@ export function useEditorPanelContentState({
           // Why: an out-of-worktree absolute path in an SSH workspace belongs to the
           // remote host, so the resolved connection owns it even when the tab predates
           // (or was opened outside) the terminal-link path that stamps the target id.
-          const externalSshOwnerId = restoredOpenFile.externalSshTargetId?.trim() || connectionId
+          const externalSshOwnerId =
+            restoredOpenFile.externalSshTargetId?.trim() ||
+            (isLiveTailLogTab ? undefined : connectionId)
           if (!externalSshOwnerId && readSettings?.activeRuntimeEnvironmentId?.trim()) {
             // Why: runtime file RPCs are worktree-scoped, so a client-local absolute
             // path has no route into a remote runtime workspace.
@@ -162,9 +169,12 @@ export function useEditorPanelContentState({
             // Why: client-local external tabs need their main-process path grant
             // refreshed because that authorization is only held in memory.
             await window.api.fs.authorizeExternalPath({ targetPath: filePath })
+            // Why: that grant covers the client path, so this read must stay off the
+            // worktree's SSH host.
+            readConnectionId = undefined
           }
         }
-        const readScope = getRuntimeFileReadScope(readSettings, connectionId)
+        const readScope = getRuntimeFileReadScope(readSettings, readConnectionId)
         const key = inFlightReadKey(readScope, filePath)
         if (options?.force) {
           // Why: forced reloads must not attach to a currently registered read
@@ -178,10 +188,9 @@ export function useEditorPanelContentState({
             filePath,
             relativePath: restoredOpenFile?.relativePath ?? relativePath,
             worktreeId,
-            connectionId,
+            connectionId: readConnectionId,
             expectedExternalSshTargetId: restoredOpenFile?.externalSshTargetId,
-            includeLocalLogMetadata:
-              restoredOpenFile?.readOnly === true && restoredOpenFile.liveTail === true
+            includeLocalLogMetadata: isLiveTailLogTab
           }) as Promise<FileContent>
           inFlightFileReads.set(key, pending)
           queueMicrotask(() => {

@@ -88,6 +88,9 @@ type ProbeProps = {
 }
 
 const authorizeExternalPath = vi.fn()
+// Why: opening any liveTail tab arms useLocalLogTail's change subscription.
+const onLocalLogTailChanged = vi.fn(() => () => {})
+const fsApi = { authorizeExternalPath, onLocalLogTailChanged }
 let latestFileContents: Record<string, FileContent> = {}
 let latestDiffContents: Record<string, DiffContent> = {}
 let latestReloadContent: (file: OpenFile) => void = () => {}
@@ -133,7 +136,8 @@ describe('useEditorPanelContentState', () => {
     latestDiffContents = {}
     authorizeExternalPath.mockReset()
     authorizeExternalPath.mockResolvedValue(undefined)
-    ;(window as unknown as { api: unknown }).api = { fs: { authorizeExternalPath } }
+    onLocalLogTailChanged.mockClear()
+    ;(window as unknown as { api: unknown }).api = { fs: fsApi }
     mocks.readRuntimeFileContent.mockReset()
     mocks.getRuntimeGitDiff.mockReset()
     mocks.getRuntimeGitBranchDiff.mockReset()
@@ -257,6 +261,30 @@ describe('useEditorPanelContentState', () => {
         connectionId: 'ssh-1',
         expectedExternalSshTargetId: undefined
       })
+    )
+  })
+
+  it('keeps a client-local live-tail log tab on the client inside an SSH workspace', async () => {
+    const logPath = '/Users/me/.codex/sessions/session.jsonl'
+    const worktreeId = 'repo-ssh::/work/demo-project'
+    const externalTab = { id: logPath, filePath: logPath, relativePath: logPath, worktreeId }
+    const activeFile = createOpenFile({ ...externalTab, readOnly: true, liveTail: true })
+    mocks.getConnectionIdForFile.mockReturnValue('ssh-1')
+    mocks.readRuntimeFileContent.mockResolvedValue({ content: 'log line', isBinary: false })
+
+    container = document.body.appendChild(document.createElement('div'))
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(<HookProbe activeFile={activeFile} openFiles={[activeFile]} />)
+    })
+
+    await vi.waitFor(() => expect(latestFileContents[activeFile.id]?.content).toBe('log line'))
+    // Why: AI Vault only surfaces client-local logs, so the worktree's SSH target must
+    // not capture this read — it stays a granted client-local path.
+    expect(authorizeExternalPath).toHaveBeenCalledWith({ targetPath: logPath })
+    expect(mocks.readRuntimeFileContent).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId: undefined, includeLocalLogMetadata: true })
     )
   })
 
