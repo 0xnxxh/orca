@@ -80,11 +80,14 @@ import {
   installDevParentDisconnectQuit,
   installDevParentSignalQuit,
   installDevParentWatchdog,
-  installUncaughtPipeErrorGuard,
   isDevParentShutdownRequested,
   patchPackagedProcessPath,
   shouldInstallManagedHooks
 } from './startup/configure-process'
+import {
+  installUncaughtPipeErrorGuard,
+  installUnhandledRejectionLogging
+} from './startup/main-process-error-guards'
 import { enableRendererHeapHeadroom } from './startup/renderer-heap-headroom'
 import { ensureVirtualDisplayForHeadlessServe } from './startup/ensure-virtual-display'
 import {
@@ -461,6 +464,8 @@ const devAgentHookEndpointNamespace = devInstanceIdentity.isDev
   : undefined
 
 installUncaughtPipeErrorGuard()
+// Why (issue #9441): without this, one rejected background promise during startup restore kills main silently (exit 1, no crash report).
+installUnhandledRejectionLogging()
 // Why: expose the app version via process.env so main and the forked daemon can set TERM_PROGRAM_VERSION without importing electron.
 process.env.ORCA_APP_VERSION = app.getVersion()
 configureRemoteServerUpdater({

@@ -11,7 +11,8 @@ const {
   notificationShowMock,
   powerMonitorOnMock,
   powerMonitorRemoveListenerMock,
-  isMock
+  isMock,
+  macosTahoeMock
 } = vi.hoisted(() => {
   const menuPopupMock = vi.fn()
   const notificationShowMock = vi.fn()
@@ -27,7 +28,8 @@ const {
     notificationShowMock,
     powerMonitorOnMock: vi.fn(),
     powerMonitorRemoveListenerMock: vi.fn(),
-    isMock: { dev: false }
+    isMock: { dev: false },
+    macosTahoeMock: { value: false }
   }
 })
 
@@ -47,6 +49,10 @@ vi.mock('electron', () => ({
 
 vi.mock('@electron-toolkit/utils', () => ({
   is: isMock
+}))
+
+vi.mock('./macos-tahoe-release', () => ({
+  isMacosTahoeOrNewer: vi.fn(() => macosTahoeMock.value)
 }))
 
 vi.mock('../app-icon', () => ({
@@ -90,6 +96,7 @@ describe('createMainWindow', () => {
     powerMonitorOnMock.mockReset()
     powerMonitorRemoveListenerMock.mockReset()
     isMock.dev = false
+    macosTahoeMock.value = false
     vi.mocked(ipcMain.on).mockReset()
     vi.mocked(ipcMain.removeListener).mockReset()
     vi.mocked(ipcMain.handle).mockReset()
@@ -357,6 +364,10 @@ describe('createMainWindow', () => {
     windowHandlers.get('restore')?.[0]?.()
 
     expect(webContents.invalidate).toHaveBeenCalledTimes(2)
+    // Why: the size nudge must never run inside the show/restore dispatch itself.
+    expect(browserWindowInstance.setSize).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(0)
     expect(browserWindowInstance.setSize).toHaveBeenNthCalledWith(1, 1201, 800)
     expect(browserWindowInstance.setSize).toHaveBeenCalledTimes(1)
 
@@ -375,6 +386,54 @@ describe('createMainWindow', () => {
     windowHandlers.get('focus')?.[0]?.()
     expect(webContents.invalidate).toHaveBeenCalledTimes(4)
     expect(browserWindowInstance.setSize).toHaveBeenCalledTimes(setSizeCalls)
+  })
+
+  it('repaints without the size nudge on macOS 26+ where re-entrant frame updates can deadlock AppKit', () => {
+    vi.useFakeTimers()
+    macosTahoeMock.value = true
+    const windowHandlers = new Map<string, ((...args: any[]) => void)[]>()
+    const webContents = {
+      on: vi.fn(),
+      setZoomLevel: vi.fn(),
+      setBackgroundThrottling: vi.fn(),
+      invalidate: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      setWindowOpenHandler: vi.fn(),
+      send: vi.fn(),
+      isDevToolsOpened: vi.fn(),
+      openDevTools: vi.fn(),
+      closeDevTools: vi.fn()
+    }
+    const browserWindowInstance = {
+      webContents,
+      on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+        const handlers = windowHandlers.get(event) ?? []
+        handlers.push(handler)
+        windowHandlers.set(event, handlers)
+      }),
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      isFullScreen: vi.fn(() => false),
+      getSize: vi.fn(() => [1200, 800]),
+      setSize: vi.fn(),
+      maximize: vi.fn(),
+      show: vi.fn(),
+      loadFile: vi.fn(),
+      loadURL: vi.fn()
+    }
+    browserWindowMock.mockImplementation(function () {
+      return browserWindowInstance
+    })
+
+    withPlatform('darwin', () => createMainWindow(null))
+
+    windowHandlers.get('show')?.[0]?.()
+    expect(webContents.invalidate).toHaveBeenCalledTimes(1)
+
+    // Why: the delayed second repaint must also stay setSize-free on Tahoe.
+    vi.advanceTimersByTime(300)
+    expect(webContents.invalidate).toHaveBeenCalledTimes(2)
+    expect(browserWindowInstance.setSize).not.toHaveBeenCalled()
   })
 
   it('supports all minus key variants for terminal zoom out', () => {

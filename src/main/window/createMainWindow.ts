@@ -48,6 +48,7 @@ import { resolveWindowCloseAction } from './window-close-decision'
 import { rectHasVisibleAreaOnAnyDisplay } from './window-bounds-validation'
 import { closeDashboardPopout } from './dashboard-popout-window'
 import { installPrivilegedWindowNavigationPolicy } from './privileged-window-navigation'
+import { isMacosTahoeOrNewer } from './macos-tahoe-release'
 
 // Why: show/restore/resume can overlap before the size nudge resets; never capture the temporary width as the next baseline.
 const activeRepaintJiggles = new WeakSet<BrowserWindow>()
@@ -62,15 +63,26 @@ function forceRepaint(window: BrowserWindow): void {
   if (window.isMaximized() || window.isFullScreen() || activeRepaintJiggles.has(window)) {
     return
   }
+  // Why: macOS 26 scene-backed windows can deadlock the main thread on re-entrant frame updates; invalidate alone recovers the compositor there.
+  if (isMacosTahoeOrNewer()) {
+    return
+  }
   activeRepaintJiggles.add(window)
-  const [width, height] = window.getSize()
-  window.setSize(width + 1, height)
+  // Why: show/restore fire from inside AppKit's window-state dispatch; mutating the frame there re-enters scene handling, so nudge on a fresh turn.
   setTimeout(() => {
-    if (!window.isDestroyed()) {
-      window.setSize(width, height)
+    if (window.isDestroyed()) {
+      activeRepaintJiggles.delete(window)
+      return
     }
-    activeRepaintJiggles.delete(window)
-  }, 32)
+    const [width, height] = window.getSize()
+    window.setSize(width + 1, height)
+    setTimeout(() => {
+      if (!window.isDestroyed()) {
+        window.setSize(width, height)
+      }
+      activeRepaintJiggles.delete(window)
+    }, 32)
+  }, 0)
 }
 
 function installMacosVisibilityRepaint(window: BrowserWindow): void {
