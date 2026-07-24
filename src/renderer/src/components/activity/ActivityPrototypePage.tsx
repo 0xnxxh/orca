@@ -1560,7 +1560,11 @@ export default function ActivityPrototypePage(): React.JSX.Element {
     selectedThread &&
     displayedThread &&
     displayedThread.worktree.id === selectedThread.worktree.id &&
-    displayedThread.tab.id === selectedThread.tab.id
+    displayedThread.tab.id === selectedThread.tab.id &&
+    // Two panes of the SAME tab are distinct terminals: require the pane match
+    // too, else stagedThread stays null and the readiness observer oscillates
+    // forever (React #185, Activity crash 36e6237d).
+    displayedThread.paneKey === selectedThread.paneKey
   const visibleThread =
     selectedThread && selectedHasLiveTab
       ? displayedThread && displayedHasLiveTab && displayedThread.paneKey !== selectedThread.paneKey
