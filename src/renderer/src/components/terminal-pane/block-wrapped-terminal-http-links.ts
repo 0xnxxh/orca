@@ -236,7 +236,8 @@ export function buildBlockWrappedHttpLogicalLineCandidates(
     let previousEndColumn = start.endColumn
     for (let rowY = startY + 1; rowY <= startY + MAX_BLOCK_WRAPPED_ROWS; rowY++) {
       // Why: without a wider sibling row the block never demonstrates room to
-      // the right of this URL, so nothing shows the break was a wrap.
+      // the right of this URL, so nothing shows the break was a wrap. Relaxing
+      // this to allow an equal-width row reopens #8832 for prose continuations.
       if (wrapColumn <= previousEndColumn) {
         break
       }

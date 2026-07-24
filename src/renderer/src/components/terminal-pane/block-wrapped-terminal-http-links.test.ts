@@ -167,6 +167,27 @@ describe('block-wrapped terminal HTTP links', () => {
       ).toBe(true)
       expect(openUrlMock).toHaveBeenCalledWith(`https://two.test/${continuation}`)
     })
+
+    it('leaves the URL truncated when no row proves the block runs wider', () => {
+      // Documented limitation: the URL row is itself the widest at its margin,
+      // so nothing shows there was room to spare and the break stays ambiguous.
+      // Accepting equal-width rows as evidence reopens #8832 for prose tails,
+      // so this degrades to the pre-fix behaviour rather than guessing.
+      const urlRow =
+        '10181 (https://github.com/stablyai/orca/pull/10181) · 10349 (https://github.com/stablyai/orca/'
+      const rows = [urlRow, 'pull/10349#issuecomment-5068238223)'].map((row) => makeBufferLine(row))
+      const buffer = { getLine: (y: number) => rows[y] }
+
+      expect(
+        openHttpLinkAtBufferPosition(
+          buffer,
+          { x: urlRow.lastIndexOf('https://') + 10, y: 1 },
+          COLS,
+          { worktreeId: 'wt-1', forceSystemBrowser: true }
+        )
+      ).toBe(true)
+      expect(openUrlMock).toHaveBeenCalledWith('https://github.com/stablyai/orca/')
+    })
   })
 
   // Regression guards for #8832 / PR #9100: that fix keyed on the URL row
