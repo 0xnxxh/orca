@@ -231,7 +231,6 @@ describe('LocalPtyProvider', () => {
       expect(second).toEqual({
         id: 'serve-session-1',
         pid: 12345,
-        wslDistro: null,
         isReattach: true
       })
       expect(mockProc.resize).toHaveBeenCalledWith(120, 40)
@@ -425,8 +424,24 @@ describe('LocalPtyProvider', () => {
     it('invokes onSpawned callback', async () => {
       const onSpawned = vi.fn()
       provider.configure({ onSpawned })
-      const { id } = await provider.spawn({ cols: 80, rows: 24 })
-      expect(onSpawned).toHaveBeenCalledWith(id)
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
+      expect(onSpawned).toHaveBeenCalledWith(id, incarnationId)
+    })
+
+    it('reports physical commit before post-spawn publication can fail', async () => {
+      spawnMock.mockClear()
+      const committed = vi.fn()
+      provider.configure({
+        onSpawned: () => {
+          throw new Error('post-spawn publication failed')
+        }
+      })
+
+      await expect(
+        provider.spawn({ cols: 80, rows: 24, onPtySpawnCommitted: committed })
+      ).rejects.toThrow('post-spawn publication failed')
+      expect(spawnMock).toHaveBeenCalledOnce()
+      expect(committed).toHaveBeenCalledOnce()
     })
 
     it('invokes buildSpawnEnv callback to customize environment', async () => {
@@ -1186,9 +1201,9 @@ describe('LocalPtyProvider', () => {
     it('invokes onExit callback via the node-pty exit handler', async () => {
       const onExit = vi.fn()
       provider.configure({ onExit })
-      const { id } = await provider.spawn({ cols: 80, rows: 24 })
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
       await provider.shutdown(id, { immediate: true })
-      expect(onExit).toHaveBeenCalledWith(id, -1)
+      expect(onExit).toHaveBeenCalledWith(id, -1, incarnationId)
     })
 
     it('does not destroy after an intentional Windows shutdown kill', async () => {
@@ -1734,12 +1749,12 @@ describe('LocalPtyProvider', () => {
     it('notifies exit listeners when PTY exits', async () => {
       const exitHandler = vi.fn()
       provider.onExit(exitHandler)
-      const { id } = await provider.spawn({ cols: 80, rows: 24 })
+      const { id, incarnationId } = await provider.spawn({ cols: 80, rows: 24 })
 
       // Simulate node-pty exit event
       exitCb?.({ exitCode: 0 })
 
-      expect(exitHandler).toHaveBeenCalledWith({ id, code: 0 })
+      expect(exitHandler).toHaveBeenCalledWith({ id, code: 0, incarnationId })
     })
 
     it('allows unsubscribing from events', async () => {
@@ -1758,7 +1773,12 @@ describe('LocalPtyProvider', () => {
   describe('listProcesses', () => {
     it('returns spawned PTYs', async () => {
       const before = await provider.listProcesses()
-      await provider.spawn({ cols: 80, rows: 24, cwd: '/tmp/owned-cwd' })
+      await provider.spawn({
+        cols: 80,
+        rows: 24,
+        cwd: '/tmp/owned-cwd',
+        worktreeId: 'repo::/tmp/owned-cwd'
+      })
       await provider.spawn({ cols: 80, rows: 24 })
       const after = await provider.listProcesses()
       expect(after.length - before.length).toBe(2)
@@ -1766,6 +1786,29 @@ describe('LocalPtyProvider', () => {
       expect(newEntries[0]).toHaveProperty('id')
       expect(newEntries[0]).toHaveProperty('title', 'zsh')
       expect(newEntries[0]).toHaveProperty('cwd', '/tmp/owned-cwd')
+      expect(newEntries[0]).toHaveProperty('worktreeId', 'repo::/tmp/owned-cwd')
+      expect(newEntries[0]).not.toHaveProperty('wslDistro')
+      expect(newEntries[1]).not.toHaveProperty('wslDistro')
+    })
+
+    it('reports native and WSL ownership explicitly on Windows', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const native = await provider.spawn({
+        cols: 80,
+        rows: 24,
+        cwd: 'C:\\repo',
+        shellOverride: 'powershell.exe'
+      })
+      const wsl = await provider.spawn({
+        cols: 80,
+        rows: 24,
+        cwd: '\\\\wsl.localhost\\Ubuntu\\home\\jin\\repo'
+      })
+
+      const processes = await provider.listProcesses()
+
+      expect(processes.find((process) => process.id === native.id)?.wslDistro).toBeNull()
+      expect(processes.find((process) => process.id === wsl.id)?.wslDistro).toBe('Ubuntu')
     })
   })
 

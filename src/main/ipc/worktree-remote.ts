@@ -79,9 +79,9 @@ import {
   getWorktreePathSettings,
   hasRepoWorktreeBasePath,
   shouldSetDisplayName,
-  mergeWorktree,
-  areWorktreePathsEqual
+  mergeWorktree
 } from './worktree-logic'
+import { findCreatedWorktree } from './created-worktree-reconciliation'
 import { getRepoIdFromWorktreeId } from '../../shared/worktree-id'
 import { parseWorkspaceKey, worktreeWorkspaceKey } from '../../shared/workspace-scope'
 import {
@@ -2378,7 +2378,8 @@ export async function createLocalWorktree(
       ? listWorktrees(repo.path, localWorktreeGitOptions)
       : listWorktrees(repo.path)
   )
-  const created = gitWorktrees.find((gw) => areWorktreePathsEqual(gw.path, worktreePath))
+  // Why: Git may canonicalize a symlinked create path; its exact branch identifies the listed row.
+  const created = findCreatedWorktree(gitWorktrees, worktreePath, branchName)
   if (!created) {
     throw new Error('Worktree created but not found in listing')
   }
