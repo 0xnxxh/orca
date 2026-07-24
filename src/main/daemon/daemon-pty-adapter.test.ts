@@ -2069,9 +2069,13 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       writeFileSync(join(sessionDir, 'scrollback.bin'), 'cached output')
 
       historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const internals = historyAdapter as unknown as {
+        coldRestoreCache: { byteSize: number }
+      }
 
       const first = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
       expect(first.coldRestore).toBeDefined()
+      expect(internals.coldRestoreCache.byteSize).toBeGreaterThan(0)
 
       // Second call (StrictMode remount) should get cached data
       const second = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
@@ -2080,6 +2084,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       // After ack, cold restore should not be returned
       historyAdapter.ackColdRestore(sessionId)
+      expect(internals.coldRestoreCache.byteSize).toBe(0)
       const third = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
       expect(third.coldRestore).toBeUndefined()
     })

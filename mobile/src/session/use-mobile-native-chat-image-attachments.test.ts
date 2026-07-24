@@ -31,7 +31,10 @@ function sendResult(accepted: boolean): RpcSuccess {
   return { id: 'send', ok: true, result: { send: { accepted } }, _meta: { runtimeId: 'r' } }
 }
 
-function makeClient(responses: RpcResponse[]): Pick<RpcClient, 'sendRequest'> & {
+function makeClient(responses: (RpcResponse | Promise<RpcResponse>)[]): Pick<
+  RpcClient,
+  'sendRequest'
+> & {
   calls: { method: string; params: Record<string, unknown> }[]
 } {
   const calls: { method: string; params: Record<string, unknown> }[] = []
@@ -52,6 +55,7 @@ type HookArgs = Parameters<typeof useMobileNativeChatImageAttachments>[0]
 type Hook = ReturnType<typeof useMobileNativeChatImageAttachments>
 
 const SCOPE_A = 'h\0w\0tab-a'
+const SCOPE_B = 'h\0w\0tab-b'
 
 function baseArgs(overrides: Partial<HookArgs> & Pick<HookArgs, 'client'>): HookArgs {
   return {
@@ -403,6 +407,14 @@ describe('useMobileNativeChatImageAttachments', () => {
     await act(async () => {
       await hook!.attachImage('library')
     })
+    let overlappingAccepted = true
+    await act(async () => {
+      overlappingAccepted = await hook!.sendNativeChat('too soon')
+    })
+    expect(overlappingAccepted).toBe(false)
+    expect(baseSend).not.toHaveBeenCalled()
+    expect(client.calls.filter((call) => call.method === 'terminal.send')).toHaveLength(2)
+
     await act(async () => {
       releaseSettle!()
       await sendPromise
@@ -496,6 +508,159 @@ describe('useMobileNativeChatImageAttachments', () => {
     expect(sendCalls).toHaveLength(3)
     expect(sendCalls[2]?.params).toMatchObject({ text: '\x15', enter: false })
     expect(baseSend).toHaveBeenCalledWith('hi again')
+  })
+
+  it('retains the stale marker when a rejected healing clear blocks text-only send', async () => {
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    const client = makeClient([
+      methodNotFound('start'),
+      ok('save', '/tmp/a.png'),
+      sendResult(true), // Ctrl+U clear
+      sendResult(true), // image paste accepted
+      sendResult(false), // first healing Ctrl+U rejected
+      sendResult(true) // retry healing Ctrl+U accepted
+    ])
+    const baseSend = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    mount(baseArgs({ client: client as unknown as RpcClient, baseSend }))
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    await act(async () => {
+      await hook!.sendNativeChat('hi')
+    })
+    expect(hook!.attachments).toHaveLength(1)
+
+    await act(async () => {
+      hook!.removeAttachment('img-1')
+    })
+    let accepted = true
+    await act(async () => {
+      accepted = await hook!.sendNativeChat('hi again')
+    })
+    expect(accepted).toBe(false)
+    expect(baseSend).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      accepted = await hook!.sendNativeChat('hi again')
+    })
+    expect(accepted).toBe(true)
+    const sendCalls = client.calls.filter((c) => c.method === 'terminal.send')
+    expect(sendCalls).toHaveLength(4)
+    expect(sendCalls[2]?.params).toMatchObject({ text: '\x15', enter: false })
+    expect(sendCalls[3]?.params).toMatchObject({ text: '\x15', enter: false })
+    expect(baseSend).toHaveBeenNthCalledWith(1, 'hi', ['file:///a.jpg'])
+    expect(baseSend).toHaveBeenNthCalledWith(2, 'hi again')
+  })
+
+  it('does not reroute text when the active terminal changes during a healing clear', async () => {
+    pick.mockResolvedValue({ base64: 'AAAA', uri: 'file:///a.jpg' })
+    let releaseClear: ((response: RpcResponse) => void) | null = null
+    const deferredClear = new Promise<RpcResponse>((resolve) => {
+      releaseClear = resolve
+    })
+    const client = makeClient([
+      methodNotFound('start'),
+      ok('save', '/tmp/a.png'),
+      sendResult(true),
+      sendResult(true),
+      deferredClear
+    ])
+    const baseSend = vi.fn().mockResolvedValueOnce(false)
+    const activeHandleRef = { current: 'term-1' }
+    mount(baseArgs({ client: client as unknown as RpcClient, activeHandleRef, baseSend }))
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    await act(async () => {
+      await hook!.sendNativeChat('hi')
+    })
+    await act(async () => {
+      hook!.removeAttachment('img-1')
+    })
+
+    let retry: Promise<boolean> | null = null
+    await act(async () => {
+      retry = hook!.sendNativeChat('hi again')
+      await Promise.resolve()
+    })
+    activeHandleRef.current = 'term-2'
+    let accepted = true
+    await act(async () => {
+      releaseClear!(sendResult(true))
+      accepted = await retry!
+    })
+
+    expect(accepted).toBe(false)
+    expect(baseSend).toHaveBeenCalledTimes(1)
+    const sendCalls = client.calls.filter((c) => c.method === 'terminal.send')
+    expect(sendCalls[2]?.params).toMatchObject({ terminal: 'term-1', text: '\x15', enter: false })
+  })
+
+  it('heals rejected image submits independently across terminals', async () => {
+    pick
+      .mockResolvedValueOnce({ base64: 'AAAA', uri: 'file:///a.jpg' })
+      .mockResolvedValueOnce({ base64: 'BBBB', uri: 'file:///b.jpg' })
+    const client = makeClient([
+      methodNotFound('start-a'),
+      ok('save-a', '/tmp/a.png'),
+      sendResult(true),
+      sendResult(true),
+      methodNotFound('start-b'),
+      ok('save-b', '/tmp/b.png'),
+      sendResult(true),
+      sendResult(true),
+      sendResult(true),
+      sendResult(true)
+    ])
+    const baseSend = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+    const activeHandleRef = { current: 'term-1' }
+    const args = baseArgs({ client: client as unknown as RpcClient, activeHandleRef, baseSend })
+    mount(args)
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    await act(async () => {
+      await hook!.sendNativeChat('first')
+    })
+
+    activeHandleRef.current = 'term-2'
+    update({ ...args, scopeKey: SCOPE_B })
+    await act(async () => {
+      await hook!.attachImage('library')
+    })
+    await act(async () => {
+      await hook!.sendNativeChat('second')
+    })
+    await act(async () => {
+      hook!.removeAttachment('img-2')
+    })
+
+    activeHandleRef.current = 'term-1'
+    update(args)
+    await act(async () => {
+      hook!.removeAttachment('img-1')
+    })
+    await act(async () => {
+      expect(await hook!.sendNativeChat('retry first')).toBe(true)
+    })
+
+    activeHandleRef.current = 'term-2'
+    update({ ...args, scopeKey: SCOPE_B })
+    await act(async () => {
+      expect(await hook!.sendNativeChat('retry second')).toBe(true)
+    })
+
+    const sendCalls = client.calls.filter((c) => c.method === 'terminal.send')
+    expect(sendCalls.slice(4).map((call) => call.params)).toMatchObject([
+      { terminal: 'term-1', text: '\x15', enter: false },
+      { terminal: 'term-2', text: '\x15', enter: false }
+    ])
+    expect(baseSend).toHaveBeenCalledTimes(4)
   })
 
   it('reports a disconnected attach failure via the live connection state', async () => {
