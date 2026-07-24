@@ -53,12 +53,15 @@ afterEach(() => {
 
 describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
   it('re-captured sleeping codex session resumes once, not once per reopen', () => {
+    // Isolate the sleeping-session path; created-agent reopen is a separate mechanism.
     const worktree = { ...makeWorktree(), createdWithAgent: undefined }
     useAppStore.setState(baseState(worktree))
     const providerSession = { key: 'session_id' as const, id: 'codex-session-1' }
     let resumedTabId: string | undefined
 
     for (let reopen = 0; reopen < 4; reopen++) {
+      // Capture-on-sleep mints a fresh record under a NEW pane key for the same
+      // provider session on every exit — the shape that fork-bombed tabs.
       const paneKey = `slept-pane-${reopen}:0`
       useAppStore.setState((s) => ({
         sleepingAgentSessionsByPaneKey: {
@@ -83,6 +86,8 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
       const state = useAppStore.getState()
       const tabs = state.tabsByWorktree[worktree.id] ?? []
 
+      // Revert-sensitive: without the #6945 activeOrQueuedResumeClaimsProviderSession
+      // guard this climbs 1, 2, 3, 4.
       expect(tabs).toHaveLength(1)
       resumedTabId ??= tabs[0]!.id
       expect(tabs[0]!.id).toBe(resumedTabId)
@@ -92,6 +97,8 @@ describe('STA-1111 worktree reopen does not fork-bomb tabs', () => {
       expect(state.sleepingAgentSessionsByPaneKey[paneKey]).toBeUndefined()
 
       if (reopen === 0) {
+        // Consume the queued startup once so later reopens must be blocked by the
+        // runtime claim alone, matching a tab that already launched.
         expect(state.consumeTabStartupCommand(tabs[0]!.id)?.resumeProviderSession).toEqual(
           providerSession
         )
