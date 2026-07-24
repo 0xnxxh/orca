@@ -21,9 +21,10 @@ function ackAgentViaPopoutRelay(paneKey: string): void {
 }
 
 /** Reveal an agent from the pop-out window: raise the main window and route it
- *  to the agent's pane via IPC. */
+ *  to the agent's pane via IPC. Same `?.` HMR-skew guard as the ack relay —
+ *  both channels ship together, so a stale preload lacks both. */
 function revealAgentViaPopoutRelay(args: AgentRevealArgs): void {
-  void window.api.dashboard.revealAgent(args)
+  void window.api.dashboard.revealAgent?.(args)
 }
 
 function bucketLabel(bucket: DashboardBucket): string {
