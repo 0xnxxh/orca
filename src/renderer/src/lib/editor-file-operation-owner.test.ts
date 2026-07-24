@@ -198,6 +198,26 @@ describe('editor file operation owner', () => {
       ).toEqual(provenance.generation.route)
     })
 
+    it('uses the folder root when a legacy caller passes an empty worktree path', () => {
+      useAppStore.setState({
+        folderWorkspaces: [
+          {
+            id: folderWorkspaceId,
+            projectGroupId: 'group-1',
+            connectionId: null,
+            folderPath: '/workspace/folder'
+          } as never
+        ]
+      })
+      const context = getEditorFileOperationContext(
+        useAppStore.getState(),
+        { worktreeId: folderKey },
+        ''
+      )
+
+      expect(context.worktreePath).toBe('/workspace/folder')
+    })
+
     it('fails closed when folder ownership changes between capture and assert', () => {
       const provenance = captureEditorFileOperationProvenance(
         useAppStore.getState(),

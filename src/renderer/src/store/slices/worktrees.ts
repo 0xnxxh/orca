@@ -101,6 +101,7 @@ import {
   getLockedWorktreeRemovalReason,
   isLockedWorktreeRemovalError
 } from '../../../../shared/worktree-removal'
+import { FolderWorkspaceActivityPersistence } from './folder-workspace-activity-persistence'
 export type { WorktreeSlice, WorktreeDeleteState } from './worktree-helpers'
 
 // Why: old runtime servers only have `worktree.list`; preserve the large-list UI hydration parity used before `worktree.detectedList` existed.
@@ -110,6 +111,7 @@ const WORKTREE_REMOVAL_AMBIGUOUS_ERROR =
 const ACTIVE_WORKTREE_TERMINAL_PREP_DELAY_MS = 300
 const ACTIVE_WORKTREE_TERMINAL_PREP_INPUT_QUIET_MS = 450
 const ACTIVE_WORKTREE_TERMINAL_PREP_IDLE_TIMEOUT_MS = 180
+const FOLDER_WORKSPACE_ACTIVITY_PERSIST_INTERVAL_MS = 1_000
 // Why: each repo's `git worktree list` is an independent main-process child; a higher ceiling cuts startup scan batches (#7225) while staying bounded against launching every git probe at once.
 export const WORKTREE_REFRESH_CONCURRENCY = 8
 const pendingActivationTerminalPrepCancels = new Map<string, () => void>()
@@ -117,6 +119,27 @@ const detachedHeadAutoDerivedDisplayNames = new Map<string, string>()
 const folderWorkspaceWorktreeCache = new WeakMap<FolderWorkspace, Worktree>()
 const hostedReviewPushTargetLookupsInFlight = new Set<string>()
 const detectedWorktreeRefreshesInFlight = new Map<string, Promise<DetectedWorktreeListResult>>()
+type WorktreeSliceGet = Parameters<StateCreator<AppState>>[1]
+const folderWorkspaceActivityPersistenceByStore = new WeakMap<
+  WorktreeSliceGet,
+  FolderWorkspaceActivityPersistence
+>()
+
+function getFolderWorkspaceActivityPersistence(
+  get: WorktreeSliceGet
+): FolderWorkspaceActivityPersistence {
+  const existing = folderWorkspaceActivityPersistenceByStore.get(get)
+  if (existing) {
+    return existing
+  }
+  const created = new FolderWorkspaceActivityPersistence((folderWorkspaceId, activityAt) => {
+    if (get().folderWorkspaces.some((workspace) => workspace.id === folderWorkspaceId)) {
+      void get().updateFolderWorkspace(folderWorkspaceId, { lastActivityAt: activityAt })
+    }
+  }, FOLDER_WORKSPACE_ACTIVITY_PERSIST_INTERVAL_MS)
+  folderWorkspaceActivityPersistenceByStore.set(get, created)
+  return created
+}
 
 type BackgroundRuntimeRefreshOptions = {
   reuseRecentCompatibilityFailure?: boolean
@@ -4087,22 +4110,32 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     const now = Date.now()
     const workspaceScope = parseWorkspaceKey(worktreeId)
     if (workspaceScope?.type === 'folder') {
-      const folderWorkspace = get().folderWorkspaces.find(
-        (workspace) => workspace.id === workspaceScope.folderWorkspaceId
-      )
-      if (!folderWorkspace || folderWorkspace.isUnread) {
+      const folderWorkspaceId = workspaceScope.folderWorkspaceId
+      let shouldPersist = false
+      set((s) => {
+        const folderWorkspace = s.folderWorkspaces.find(
+          (workspace) => workspace.id === folderWorkspaceId
+        )
+        if (!folderWorkspace || folderWorkspace.isUnread) {
+          return s
+        }
+        shouldPersist = true
+        return {
+          folderWorkspaces: s.folderWorkspaces.map((workspace) =>
+            workspace.id === folderWorkspaceId
+              ? { ...workspace, isUnread: true, lastActivityAt: now }
+              : workspace
+          ),
+          sortEpoch: s.sortEpoch + 1
+        }
+      })
+      if (!shouldPersist) {
         return
       }
-      void get()
-        .updateFolderWorkspace(workspaceScope.folderWorkspaceId, {
-          isUnread: true,
-          lastActivityAt: now
-        })
-        .then((updated) => {
-          if (updated) {
-            set((s) => ({ sortEpoch: s.sortEpoch + 1 }))
-          }
-        })
+      void get().updateFolderWorkspace(folderWorkspaceId, {
+        isUnread: true,
+        lastActivityAt: now
+      })
       return
     }
     let shouldPersist = false
@@ -4280,15 +4313,25 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     if (workspaceScope?.type === 'folder') {
       // Why: folder meta lives on the FolderWorkspace record — persistWorktreeMeta would write a
       // worktreeMeta['folder:…'] row that folderWorkspaces:list never reads back (#10251).
-      const isActive = get().activeWorktreeId === worktreeId
-      void get()
-        .updateFolderWorkspace(workspaceScope.folderWorkspaceId, { lastActivityAt: now })
-        .then((updated) => {
-          // Why: mirror the worktree path — active-workspace PTY events are click side-effects, no reorder.
-          if (updated && !isActive) {
-            set((s) => ({ sortEpoch: s.sortEpoch + 1 }))
-          }
-        })
+      const folderWorkspaceId = workspaceScope.folderWorkspaceId
+      let shouldPersist = false
+      set((s) => {
+        if (!s.folderWorkspaces.some((workspace) => workspace.id === folderWorkspaceId)) {
+          return s
+        }
+        shouldPersist = true
+        const isActive = s.activeWorktreeId === worktreeId
+        return {
+          folderWorkspaces: s.folderWorkspaces.map((workspace) =>
+            workspace.id === folderWorkspaceId ? { ...workspace, lastActivityAt: now } : workspace
+          ),
+          // Why: active-workspace PTY events are click side-effects, so they must not reorder it.
+          ...(isActive ? {} : { sortEpoch: s.sortEpoch + 1 })
+        }
+      })
+      if (shouldPersist) {
+        getFolderWorkspaceActivityPersistence(get).record(folderWorkspaceId, now)
+      }
       return
     }
     let shouldPersist = false
@@ -4448,6 +4491,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
   },
 
   setActiveWorktree: (worktreeId) => {
+    const workspaceScope = worktreeId ? parseWorkspaceKey(worktreeId) : null
     if (worktreeId && shouldDeferActivationTerminalPrep()) {
       markInputQuietSchedulerInput()
     }
@@ -4607,6 +4651,15 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       const nextDetectedWorktrees = shouldClearUnread
         ? applyDetectedWorktreeUpdates(s.detectedWorktreesByRepo, worktreeId, metaUpdates)
         : s.detectedWorktreesByRepo
+      const nextFolderWorkspaces =
+        shouldClearUnread && workspaceScope?.type === 'folder'
+          ? s.folderWorkspaces.map((workspace) =>
+              workspace.id === workspaceScope.folderWorkspaceId
+                ? { ...workspace, isUnread: false }
+                : workspace
+            )
+          : s.folderWorkspaces
+      const nextActiveRepoId = workspaceScope?.type === 'folder' ? null : s.activeRepoId
       const tabsByWorktreeUpdate =
         allDead && worktreeId != null
           ? {
@@ -4639,15 +4692,20 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         nextActiveTabTypeByWorktree !== s.activeTabTypeByWorktree ||
         nextEverActivated !== s.everActivatedWorktreeIds ||
         nextWorktrees !== s.worktreesByRepo ||
-        nextDetectedWorktrees !== s.detectedWorktreesByRepo
+        nextDetectedWorktrees !== s.detectedWorktreesByRepo ||
+        nextFolderWorkspaces !== s.folderWorkspaces ||
+        nextActiveRepoId !== s.activeRepoId
       if (!hasStateChange) {
         // Why: preserve the root Zustand reference on a no-op re-activation so session persistence/runtime sync don't fan out.
         return s
       }
 
       return {
+        activeRepoId: nextActiveRepoId,
         activeWorktreeId: worktreeId,
-        activeWorkspaceKey: worktreeWorkspaceKey(worktreeId),
+        activeWorkspaceKey: isWorkspaceKey(worktreeId)
+          ? worktreeId
+          : worktreeWorkspaceKey(worktreeId),
         activePendingCreationId: null,
         activeFileId,
         activeBrowserTabId,
@@ -4659,6 +4717,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         ...(nextWorktrees !== s.worktreesByRepo ? { worktreesByRepo: nextWorktrees } : {}),
         ...(nextDetectedWorktrees !== s.detectedWorktreesByRepo
           ? { detectedWorktreesByRepo: nextDetectedWorktrees }
+          : {}),
+        ...(nextFolderWorkspaces !== s.folderWorkspaces
+          ? { folderWorkspaces: nextFolderWorkspaces }
           : {}),
         ...tabsByWorktreeUpdate
       }
@@ -4723,7 +4784,6 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     }
 
     if (shouldClearUnread) {
-      const workspaceScope = parseWorkspaceKey(worktreeId)
       if (workspaceScope?.type === 'folder') {
         void get().updateFolderWorkspace(workspaceScope.folderWorkspaceId, { isUnread: false })
         return

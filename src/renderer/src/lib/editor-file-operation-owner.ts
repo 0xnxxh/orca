@@ -102,17 +102,17 @@ function resolveCurrentEditorRoute(
   worktreeId: string,
   provenance: EditorFileOperationProvenance
 ): WorktreeOperationRoute | null {
-  // Why: folder workspaces never publish worktree rows, so the explicit/published checks below
-  // always fail them; re-resolve live like the default assert path so capture and assert agree (#10251).
-  if (parseWorkspaceKey(worktreeId)?.type === 'folder') {
-    return resolveWorktreeOperationRoute(state, worktreeId)
-  }
   const explicitResolution = resolveExplicitWorktreeOperationRouteResult(state, worktreeId)
   if (explicitResolution.kind === 'resolved') {
     return explicitResolution.route
   }
   if (explicitResolution.kind === 'ambiguous' || provenance.ownershipProjection === 'explicit') {
     return null
+  }
+  // Why: ordinary folder workspaces have no published worktree row, so re-resolve their live
+  // folder owner after preserving the explicit-owner fail-closed contract above (#10251).
+  if (parseWorkspaceKey(worktreeId)?.type === 'folder') {
+    return resolveWorktreeOperationRoute(state, worktreeId)
   }
   return isWorktreePublished(state, worktreeId) ? provenance.generation.route : null
 }
@@ -157,6 +157,14 @@ export function getEditorFileOperationContext(
     ? assertEditorFileOperationCurrent(state, file.worktreeId, provenance)
     : provenance.generation.route
   const host = parseExecutionHostId(route.executionHostId)
+  const workspaceScope = parseWorkspaceKey(file.worktreeId)
+  const resolvedWorktreePath =
+    (worktreePath?.trim() ? worktreePath : null) ??
+    (workspaceScope?.type === 'folder'
+      ? (state.folderWorkspaces.find(
+          (workspace) => workspace.id === workspaceScope.folderWorkspaceId
+        )?.folderPath ?? null)
+      : null)
   if (!host) {
     throw new Error(OWNER_CHANGED_MESSAGE)
   }
@@ -167,7 +175,7 @@ export function getEditorFileOperationContext(
   return {
     settings: settingsForWorktreeOperationRoute(state.settings, route),
     worktreeId: file.worktreeId,
-    worktreePath,
+    worktreePath: resolvedWorktreePath,
     expectedExecutionHostId: host.kind === 'ssh' ? host.id : 'local',
     ...(route.runtimeEnvironmentId === null && host?.kind === 'ssh'
       ? { connectionId: host.targetId }
