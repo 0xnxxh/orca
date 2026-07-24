@@ -1,9 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { handleMock, getSshFilesystemProviderMock } = vi.hoisted(() => ({
-  handleMock: vi.fn(),
-  getSshFilesystemProviderMock: vi.fn()
-}))
+const { handleMock, getSshFilesystemProviderMock, providerRegistrationListeners } = vi.hoisted(
+  () => ({
+    handleMock: vi.fn(),
+    getSshFilesystemProviderMock: vi.fn(),
+    providerRegistrationListeners: new Set<(connectionId: string) => void>()
+  })
+)
+
+/** Drive the provider-registration hook the way a relay establish/reconnect would. */
+function emitProviderRegistered(connectionId: string): void {
+  for (const listener of providerRegistrationListeners) {
+    listener(connectionId)
+  }
+}
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -24,7 +34,11 @@ vi.mock('./filesystem-watcher-wsl', () => ({
 }))
 
 vi.mock('../providers/ssh-filesystem-dispatch', () => ({
-  getSshFilesystemProvider: getSshFilesystemProviderMock
+  getSshFilesystemProvider: getSshFilesystemProviderMock,
+  onSshFilesystemProviderRegistered: (listener: (connectionId: string) => void) => {
+    providerRegistrationListeners.add(listener)
+    return () => providerRegistrationListeners.delete(listener)
+  }
 }))
 
 import {
@@ -325,6 +339,101 @@ describe('registerFilesystemWatcherHandlers', () => {
     expect(watchMock).toHaveBeenCalledTimes(2)
     warnSpy.mockRestore()
     vi.useRealTimers()
+  })
+
+  it('reinstalls an SSH worktree watch when the provider is re-registered after a reconnect', async () => {
+    const sender = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
+    const staleUnwatch = vi.fn()
+    const watchMock = vi.fn().mockResolvedValue(staleUnwatch)
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock })
+
+    await handlers['fs:watchWorktree'](
+      { sender },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+    expect(watchMock).toHaveBeenCalledTimes(1)
+
+    // The reconnect replaces the provider; the watch made on the dead transport can never fire again.
+    emitProviderRegistered('conn-1')
+    await vi.waitFor(() => expect(watchMock).toHaveBeenCalledTimes(2))
+    expect(staleUnwatch).toHaveBeenCalledTimes(1)
+
+    // Events missed while the watch was down are unrecoverable, so consumers are told to resync.
+    await vi.waitFor(() =>
+      expect(sender.send).toHaveBeenCalledWith('fs:changed', {
+        worktreePath: '/home/me/repo',
+        events: [{ kind: 'overflow', absolutePath: '/home/me/repo' }]
+      })
+    )
+
+    const reinstalledEvents = watchMock.mock.calls[1][1] as (events: unknown[]) => void
+    reinstalledEvents([{ kind: 'update', absolutePath: '/home/me/repo/file.ts' }])
+    expect(sender.send).toHaveBeenCalledWith('fs:changed', {
+      worktreePath: '/home/me/repo',
+      events: [{ kind: 'update', absolutePath: '/home/me/repo/file.ts' }]
+    })
+
+    await closeAllWatchers()
+  })
+
+  it('re-arms an SSH watch whose first install found no provider yet', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sender = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
+    // A connect slower than the retry window leaves the renderer subscribed with nothing installed.
+    getSshFilesystemProviderMock.mockReturnValue(undefined)
+
+    await handlers['fs:watchWorktree'](
+      { sender },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+
+    const watchMock = vi.fn().mockResolvedValue(vi.fn())
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock })
+    emitProviderRegistered('conn-1')
+
+    await vi.waitFor(() => expect(watchMock).toHaveBeenCalledTimes(1))
+    warnSpy.mockRestore()
+    await closeAllWatchers()
+  })
+
+  it('does not resurrect an SSH watch the renderer already unwatched', async () => {
+    const sender = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
+    const watchMock = vi.fn().mockResolvedValue(vi.fn())
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock })
+
+    await handlers['fs:watchWorktree'](
+      { sender },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+    handlers['fs:unwatchWorktree'](
+      { sender },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+
+    emitProviderRegistered('conn-1')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(watchMock).toHaveBeenCalledTimes(1)
+    await closeAllWatchers()
+  })
+
+  it('leaves watches on other connections untouched when one provider re-registers', async () => {
+    const sender = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
+    const watchMock = vi.fn().mockResolvedValue(vi.fn())
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock })
+
+    await handlers['fs:watchWorktree'](
+      { sender },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+
+    emitProviderRegistered('conn-2')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(watchMock).toHaveBeenCalledTimes(1)
+    await closeAllWatchers()
   })
 
   it('shares SSH worktree watchers across renderer senders until the last unwatch', async () => {
