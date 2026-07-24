@@ -991,7 +991,11 @@ export function forgetRemoteWatcherRemovalSnapshot(
   connectionId: string,
   worktreePath: string
 ): void {
-  suspendedRemoteWatcherListeners.delete(remoteWatcherKey(connectionId, worktreePath))
+  const key = remoteWatcherKey(connectionId, worktreePath)
+  suspendedRemoteWatcherListeners.delete(key)
+  // Why: the worktree is gone — keeping the intent lets a reconnect landing before the renderer's
+  // unwatch re-watch a deleted path (60s of retries against the host, then a bogus overflow).
+  desiredRemoteWatchers.delete(key)
 }
 
 function addInFlightRemoteInstallListener(

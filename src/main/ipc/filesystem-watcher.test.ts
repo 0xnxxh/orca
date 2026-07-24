@@ -44,6 +44,7 @@ vi.mock('../providers/ssh-filesystem-dispatch', () => ({
 import {
   closeAllWatchers,
   closeRemoteWatcherForWorktreePath,
+  forgetRemoteWatcherRemovalSnapshot,
   registerFilesystemWatcherHandlers,
   restoreRemoteWatcherAfterFailedRemoval
 } from './filesystem-watcher'
@@ -436,6 +437,69 @@ describe('registerFilesystemWatcherHandlers', () => {
     await closeAllWatchers()
   })
 
+  it('reinstalls one shared watch when several senders share a re-registered connection', async () => {
+    const senderOne = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
+    const senderTwo = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 2 }
+    const watchMock = vi.fn().mockResolvedValue(vi.fn())
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock })
+
+    await handlers['fs:watchWorktree'](
+      { sender: senderOne },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+    await handlers['fs:watchWorktree'](
+      { sender: senderTwo },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+    expect(watchMock).toHaveBeenCalledTimes(1)
+
+    // Per-listener reinstall must still collapse onto one relay watch, and every listener resyncs.
+    emitProviderRegistered('conn-1')
+    await vi.waitFor(() => expect(senderTwo.send).toHaveBeenCalled())
+    expect(watchMock).toHaveBeenCalledTimes(2)
+    for (const sender of [senderOne, senderTwo]) {
+      expect(sender.send).toHaveBeenCalledWith('fs:changed', {
+        worktreePath: '/home/me/repo',
+        events: [{ kind: 'overflow', absolutePath: '/home/me/repo' }]
+      })
+    }
+
+    await closeAllWatchers()
+  })
+
+  it('does not reinstall an SSH watch for a renderer that was destroyed', async () => {
+    let destroyed = false
+    const destroyHandlers: (() => void)[] = []
+    const sender = {
+      isDestroyed: () => destroyed,
+      send: vi.fn(),
+      once: vi.fn((_event: string, handler: () => void) => {
+        destroyHandlers.push(handler)
+      }),
+      id: 1
+    }
+    const watchMock = vi.fn().mockResolvedValue(vi.fn())
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock })
+
+    await handlers['fs:watchWorktree'](
+      { sender },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+    expect(destroyHandlers).toHaveLength(1)
+
+    destroyed = true
+    for (const handler of destroyHandlers) {
+      handler()
+    }
+
+    emitProviderRegistered('conn-1')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(watchMock).toHaveBeenCalledTimes(1)
+    await closeAllWatchers()
+  })
+
   it('shares SSH worktree watchers across renderer senders until the last unwatch', async () => {
     const sendOne = vi.fn()
     const sendTwo = vi.fn()
@@ -530,6 +594,29 @@ describe('registerFilesystemWatcherHandlers', () => {
       worktreePath: '/home/me/repo',
       events: [{ kind: 'update', absolutePath: '/home/me/repo/file.ts' }]
     })
+  })
+
+  it('does not re-arm an SSH watch for a worktree that was successfully deleted', async () => {
+    const watchMock = vi.fn().mockResolvedValue(vi.fn())
+    const closeWatch = vi.fn().mockResolvedValue(undefined)
+    getSshFilesystemProviderMock.mockReturnValue({ watch: watchMock, closeWatch })
+    const sender = { isDestroyed: () => false, send: vi.fn(), once: vi.fn(), id: 1 }
+
+    await handlers['fs:watchWorktree'](
+      { sender },
+      { worktreePath: '/home/me/repo', connectionId: 'conn-1' }
+    )
+    await closeRemoteWatcherForWorktreePath('conn-1', '/home/me/repo')
+    forgetRemoteWatcherRemovalSnapshot('conn-1', '/home/me/repo')
+
+    // A reconnect can land before the renderer's unwatch; the path no longer exists on the host.
+    emitProviderRegistered('conn-1')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(watchMock).toHaveBeenCalledTimes(1)
+    expect(sender.send).not.toHaveBeenCalled()
+    await closeAllWatchers()
   })
 
   it('does not restore an SSH listener stopped while deletion is pending', async () => {
