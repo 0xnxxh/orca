@@ -73,7 +73,10 @@ import { GIT_FETCH_SKIP_AUTO_MAINTENANCE_CONFIG_ARGS } from '../shared/git-fetch
 import { GitCapabilityCache } from '../shared/git-capability-cache'
 import {
   githubPullRequestHeadLocalRef,
-  gitlabMergeRequestHeadLocalRef
+  gitlabMergeRequestHeadLocalRef,
+  isSafeReviewHeadFetchRemote,
+  isValidReviewHeadNumber,
+  REVIEW_HEAD_FETCH_TIMEOUT_MS
 } from '../shared/review-head-tracking-ref'
 import type { RelayFilesystemWatchRegistry } from './relay-filesystem-watch-registry'
 import {
@@ -89,8 +92,6 @@ import { streamRelayGitStdout } from './git-stdout-stream'
 const execFileAsync = promisify(execFile)
 const MAX_GIT_BUFFER = 10 * 1024 * 1024
 const BULK_CHUNK_SIZE = 100
-// Why: an unreachable remote must fail the PR/MR head fetch, not hold the RPC (and worktree create) open forever.
-const REVIEW_HEAD_FETCH_TIMEOUT_MS = 60_000
 
 function resolveSubmoduleStatusArea(
   params: Record<string, unknown>
@@ -952,14 +953,11 @@ export class GitHandler {
     const remote = params.remote
     const mrIid = params.mrIid
     try {
-      if (typeof remote !== 'string') {
-        throw new Error('Invalid GitLab merge request fetch request.')
-      }
-      if (typeof mrIid !== 'number' || !Number.isSafeInteger(mrIid) || mrIid <= 0) {
+      if (typeof remote !== 'string' || !isValidReviewHeadNumber(mrIid)) {
         throw new Error('Invalid GitLab merge request fetch request.')
       }
       const mergeRequestIid = mrIid
-      if (remote.startsWith('-')) {
+      if (!isSafeReviewHeadFetchRemote(remote)) {
         throw new Error('GitLab merge request fetch remote must not start with "-".')
       }
 
@@ -997,15 +995,10 @@ export class GitHandler {
     const remote = params.remote
     const prNumber = params.prNumber
     try {
-      if (
-        typeof remote !== 'string' ||
-        typeof prNumber !== 'number' ||
-        !Number.isSafeInteger(prNumber) ||
-        prNumber <= 0
-      ) {
+      if (typeof remote !== 'string' || !isValidReviewHeadNumber(prNumber)) {
         throw new Error('Invalid GitHub pull request fetch request.')
       }
-      if (remote.startsWith('-')) {
+      if (!isSafeReviewHeadFetchRemote(remote)) {
         throw new Error('GitHub pull request fetch remote must not start with "-".')
       }
 

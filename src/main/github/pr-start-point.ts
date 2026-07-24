@@ -1,7 +1,8 @@
 import type { GitHubPrStartPoint, GitPushTarget } from '../../shared/types'
+import { fetchCompareBaseRefWithLocalFallback } from '../git/compare-base-ref-fetch'
 import { isMissingRemoteRefGitError } from '../git/fetch-error-classification'
 import { getPullRequestPushTarget, getWorkItem } from './client'
-import { githubPullRequestHeadLocalRef } from './pr-head-tracking-ref'
+import { githubPullRequestHeadLocalRef } from '../../shared/review-head-tracking-ref'
 
 type GitExec = (args: string[]) => Promise<{ stdout: string; stderr: string }>
 
@@ -90,63 +91,49 @@ export async function resolveGitHubPrStartPoint(
 
   const compareBaseRef = baseRefName ? `refs/remotes/${remote}/${baseRefName}` : undefined
 
-  const compareBaseRefResolvesLocally = async (): Promise<boolean> => {
-    if (!compareBaseRef) {
-      return false
-    }
-    try {
-      const { stdout } = await args.gitExec(['rev-parse', '--verify', `${compareBaseRef}^{commit}`])
-      return stdout.trim().length > 0
-    } catch {
-      return false
-    }
-  }
-
-  const fetchCompareBaseRef = async (): Promise<boolean> => {
-    if (!baseRefName || !compareBaseRef) {
-      return false
-    }
-    try {
-      await args.fetchRemoteTrackingRef(remote, baseRefName)
-      return true
-    } catch (error) {
-      // Why: dropping compareBaseRef on any fetch failure makes create fall back
-      // to baseBranch — the PR head SHA for fork PRs — so Source Control diffs the
-      // worktree against itself. Keep the base whenever the local tracking ref
-      // already resolves; only true missing/absent-ref cases lose it.
-      const localBaseResolved = await compareBaseRefResolvesLocally()
-      console.warn('[github:resolvePrStartPoint] optional compare-base fetch failed', {
-        remote,
-        baseRefName,
-        prNumber: args.prNumber,
-        localBaseResolved,
-        error: error instanceof Error ? error.message.split('\n')[0] : String(error)
-      })
-      return localBaseResolved
-    }
-  }
+  const fetchCompareBaseRef = (): Promise<boolean> =>
+    fetchCompareBaseRefWithLocalFallback({
+      compareBaseRef,
+      fetchCompareBaseRef: () => args.fetchRemoteTrackingRef(remote, baseRefName),
+      gitExec: args.gitExec,
+      logLabel: '[github:resolvePrStartPoint]',
+      logContext: { remote, baseRefName, prNumber: args.prNumber }
+    })
 
   const fetchPullRequestHeadSha = async (): Promise<{ baseBranch: string } | { error: string }> => {
     const pullRef = `refs/pull/${args.prNumber}/head`
     // Why: the durable per-PR ref avoids shared FETCH_HEAD races and keeps the commit reachable through create.
     const localRef = githubPullRequestHeadLocalRef(args.prNumber)
+    const resolveDurableHeadSha = async (): Promise<string | null> => {
+      try {
+        const { stdout } = await args.gitExec(['rev-parse', '--verify', `${localRef}^{commit}`])
+        return stdout.trim() || null
+      } catch {
+        return null
+      }
+    }
     try {
       await args.fetchPullRequestHeadRef(remote, args.prNumber)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      // Why: mirror compare-base — a transient fetch failure must not fail the
+      // resolve when a prior fetch already pinned the durable head ref.
+      const localSha = await resolveDurableHeadSha()
+      if (localSha) {
+        console.warn('[github:resolvePrStartPoint] PR head fetch failed; using durable local ref', {
+          remote,
+          prNumber: args.prNumber,
+          error: message.split('\n')[0]
+        })
+        return { baseBranch: localSha }
+      }
       return {
         error: `Failed to fetch ${pullRef}: ${message.split('\n')[0]}`
       }
     }
-    let sha: string
-    try {
-      const { stdout } = await args.gitExec(['rev-parse', '--verify', localRef])
-      sha = stdout.trim()
-    } catch {
-      return { error: `Could not resolve fork PR #${args.prNumber} head after fetch.` }
-    }
+    const sha = await resolveDurableHeadSha()
     if (!sha) {
-      return { error: `Empty SHA resolving fork PR #${args.prNumber} head.` }
+      return { error: `Could not resolve fork PR #${args.prNumber} head after fetch.` }
     }
     return { baseBranch: sha }
   }

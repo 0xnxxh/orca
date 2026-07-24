@@ -169,7 +169,7 @@ describe('resolveGitHubPrStartPoint', () => {
         if (ref === 'FETCH_HEAD') {
           return { stdout: 'mainbranchtip000\n', stderr: '' }
         }
-        if (ref === 'refs/orca/pull/1849') {
+        if (ref === 'refs/orca/pull/1849^{commit}') {
           return { stdout: 'prheadsha111\n', stderr: '' }
         }
         throw new Error(`unexpected rev-parse ref: ${ref}`)
@@ -195,6 +195,49 @@ describe('resolveGitHubPrStartPoint', () => {
       headSha: 'prheadsha111',
       branchNameOverride: 'feat/onboarding-model-choice-782'
     })
+  })
+
+  it('keeps the durable PR head when the head fetch fails but the local ref resolves', async () => {
+    // Why: mirror compare-base soft-keep — a transient fetch failure must not
+    // fail the resolve when a prior fetch already pinned refs/orca/pull/<N>.
+    getPullRequestPushTargetMock.mockRejectedValue(new Error('head repo is unavailable'))
+    fetchPullRequestHeadRefMock.mockRejectedValue(
+      new Error('fatal: unable to access repo: Could not resolve host: github.com')
+    )
+    const fetchRemoteTrackingRef = vi.fn(async () => {})
+    const gitExec = vi.fn(async (args: string[]) => {
+      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/1849^{commit}') {
+        return { stdout: 'pinnedheadsha\n', stderr: '' }
+      }
+      if (args[0] === 'rev-parse' && args[2] === 'refs/remotes/origin/main^{commit}') {
+        return { stdout: 'base-commit-sha\n', stderr: '' }
+      }
+      return { stdout: '', stderr: '' }
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      const result = await resolveGitHubPrStartPoint({
+        repoPath: '/repo-root',
+        prNumber: 1849,
+        headRefName: 'contributor/fix',
+        baseRefName: 'main',
+        isCrossRepository: true,
+        gitExec,
+        fetchRemoteTrackingRef,
+        fetchPullRequestHeadRef: fetchPullRequestHeadRefMock,
+        resolveRemote: async () => 'origin'
+      })
+
+      expect(result).toEqual({
+        baseBranch: 'pinnedheadsha',
+        compareBaseRef: 'refs/remotes/origin/main',
+        headSha: 'pinnedheadsha',
+        branchNameOverride: 'contributor/fix'
+      })
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('uses PR metadata when the caller did not pass a head ref', async () => {

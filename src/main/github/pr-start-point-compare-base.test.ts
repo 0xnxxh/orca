@@ -26,7 +26,7 @@ describe('resolveGitHubPrStartPoint compare base', () => {
     const fetchPullRequestHeadRef = vi.fn(async () => {})
     // Why: durable ref for the head resolves; the compare base does not exist.
     const gitExec = vi.fn(async (args: string[]) => {
-      if (args[2] === 'refs/orca/pull/42') {
+      if (args[2] === 'refs/orca/pull/42^{commit}') {
         return { stdout: 'fork-head-sha\n', stderr: '' }
       }
       throw new Error('fatal: Needed a single revision')
@@ -45,7 +45,7 @@ describe('resolveGitHubPrStartPoint compare base', () => {
     })
 
     // Why: guards against a FETCH_HEAD regression — the head must resolve via the durable ref.
-    expect(gitExec).toHaveBeenCalledWith(['rev-parse', '--verify', 'refs/orca/pull/42'])
+    expect(gitExec).toHaveBeenCalledWith(['rev-parse', '--verify', 'refs/orca/pull/42^{commit}'])
     expect(result).toEqual({
       baseBranch: 'fork-head-sha',
       headSha: 'fork-head-sha',
@@ -64,7 +64,7 @@ describe('resolveGitHubPrStartPoint compare base', () => {
     })
     const fetchPullRequestHeadRef = vi.fn(async () => {})
     const gitExec = vi.fn(async (args: string[]) => {
-      if (args[2] === 'refs/orca/pull/42') {
+      if (args[2] === 'refs/orca/pull/42^{commit}') {
         return { stdout: 'fork-head-sha\n', stderr: '' }
       }
       if (args[2] === 'refs/remotes/origin/main^{commit}') {

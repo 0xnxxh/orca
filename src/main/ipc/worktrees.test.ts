@@ -254,7 +254,7 @@ import {
   notifyWorktreesChanged
 } from './worktree-remote'
 import { invalidateAuthorizedRootsCache, resolveRegisteredWorktreePath } from './filesystem-auth'
-import { REVIEW_HEAD_FETCH_TIMEOUT_MS } from '../github/pr-head-tracking-ref'
+import { REVIEW_HEAD_FETCH_TIMEOUT_MS } from '../../shared/review-head-tracking-ref'
 import {
   __getDetectedWorktreeScanCacheStatsForTests,
   __resetDetectedWorktreeScanCacheForTests,
@@ -3070,7 +3070,7 @@ describe('registerWorktreeHandlers', () => {
       if (args[0] === 'remote') {
         return { stdout: 'origin\n', stderr: '' }
       }
-      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42') {
+      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42^{commit}') {
         return { stdout: 'fork-head-sha\n', stderr: '' }
       }
       throw new Error(`unexpected git call: ${args.join(' ')}`)
@@ -3110,10 +3110,16 @@ describe('registerWorktreeHandlers', () => {
     const fetchGitHubPullRequestHead = vi.fn(async () => {})
     // Why: `fork` is listed first, but fork PR heads live on the hosting remote (origin).
     const exec = vi.fn(async (args: string[]) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return {
+          stdout: `git@github.com:org/${args[2] === 'origin' ? 'repo' : 'fork'}.git\n`,
+          stderr: ''
+        }
+      }
       if (args[0] === 'remote') {
         return { stdout: 'fork\norigin\n', stderr: '' }
       }
-      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42') {
+      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42^{commit}') {
         return { stdout: 'fork-head-sha\n', stderr: '' }
       }
       throw new Error(`unexpected git call: ${args.join(' ')}`)

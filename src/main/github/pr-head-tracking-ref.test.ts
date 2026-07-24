@@ -5,11 +5,10 @@ const { gitExecFileAsyncMock } = vi.hoisted(() => ({ gitExecFileAsyncMock: vi.fn
 vi.mock('../git/runner', () => ({ gitExecFileAsync: gitExecFileAsyncMock }))
 
 import {
-  fetchGitHubPullRequestHeadRef,
-  fetchPrHeadTrackingRef,
   githubPullRequestHeadLocalRef,
   REVIEW_HEAD_FETCH_TIMEOUT_MS
-} from './pr-head-tracking-ref'
+} from '../../shared/review-head-tracking-ref'
+import { fetchGitHubPullRequestHeadRef, fetchPrHeadTrackingRef } from './pr-head-tracking-ref'
 
 describe('fetchPrHeadTrackingRef', () => {
   beforeEach(() => {
@@ -92,6 +91,21 @@ describe('fetchPrHeadTrackingRef', () => {
     await expect(
       fetchGitHubPullRequestHeadRef({ path: '/repo', connectionId: 'conn-1' }, null, 'origin', 42)
     ).rejects.toThrow('SSH Git provider is not available')
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects invalid PR numbers and option-shaped remotes before running git', async () => {
+    await expect(
+      fetchGitHubPullRequestHeadRef({ path: '/repo', connectionId: null }, null, 'origin', 4.2)
+    ).rejects.toThrow('Invalid pull request number')
+    await expect(
+      fetchGitHubPullRequestHeadRef(
+        { path: '/repo', connectionId: null },
+        null,
+        '--upload-pack=x',
+        42
+      )
+    ).rejects.toThrow('must not start with "-"')
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
   })
 })

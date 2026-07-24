@@ -1,17 +1,16 @@
 import { gitExecFileAsync } from '../git/runner'
-import { githubPullRequestHeadLocalRef } from '../../shared/review-head-tracking-ref'
+import {
+  githubPullRequestHeadLocalRef,
+  isSafeReviewHeadFetchRemote,
+  isValidReviewHeadNumber,
+  REVIEW_HEAD_FETCH_TIMEOUT_MS
+} from '../../shared/review-head-tracking-ref'
 import type { SshGitProvider } from '../providers/ssh-git-provider'
-
-// Re-exported so existing github/* callers keep a single import site.
-export { githubPullRequestHeadLocalRef }
 
 type LocalGitExecOptions = {
   cwd: string
   wslDistro?: string
 }
-
-// Why: an unreachable or stalled remote must fail PR resolve/create, not hang it; matches the create-path remote fetch bound.
-export const REVIEW_HEAD_FETCH_TIMEOUT_MS = 60_000
 
 // Why: the relay's read-only git.exec channel rejects `fetch`, so SSH repos
 // must use the dedicated git.fetchRemoteTrackingRef RPC.
@@ -43,6 +42,12 @@ export async function fetchGitHubPullRequestHeadRef(
   prNumber: number,
   options: { localGitExecOptions?: LocalGitExecOptions } = {}
 ): Promise<void> {
+  if (!isValidReviewHeadNumber(prNumber)) {
+    throw new Error(`Invalid pull request number: ${prNumber}`)
+  }
+  if (!isSafeReviewHeadFetchRemote(remote)) {
+    throw new Error('Pull request fetch remote must not start with "-".')
+  }
   if (!repo.connectionId) {
     await gitExecFileAsync(
       [

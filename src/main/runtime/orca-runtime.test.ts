@@ -21,6 +21,7 @@ import type {
   WorkspaceSessionState
 } from '../../shared/types'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../shared/agent-status-types'
+import { REVIEW_HEAD_FETCH_TIMEOUT_MS } from '../../shared/review-head-tracking-ref'
 import { detectAgentStatusFromTitle, MAX_OSC_TITLE_CHARS } from '../../shared/agent-detection'
 import {
   addWorktree,
@@ -34398,6 +34399,9 @@ describe('OrcaRuntimeService', () => {
       if (args[0] === 'config') {
         return { stdout: 'origin\n', stderr: '' }
       }
+      if (args[0] === 'remote') {
+        return { stdout: 'origin\n', stderr: '' }
+      }
       if (args[0] === 'fetch') {
         return { stdout: '', stderr: '' }
       }
@@ -34465,7 +34469,7 @@ describe('OrcaRuntimeService', () => {
         if (args[0] === 'remote') {
           return { stdout: 'origin\n', stderr: '' }
         }
-        if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42') {
+        if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42^{commit}') {
           return { stdout: 'remote-fork-pr-sha\n', stderr: '' }
         }
         throw new Error(`unexpected git call: ${args.join(' ')}`)
@@ -34521,7 +34525,7 @@ describe('OrcaRuntimeService', () => {
       if (
         args[0] === 'rev-parse' &&
         args[1] === '--verify' &&
-        args[2] === 'refs/orca/merge-requests/42'
+        args[2] === 'refs/orca/merge-requests/42^{commit}'
       ) {
         return { stdout: 'fork-mr-sha\n', stderr: '' }
       }
@@ -34548,17 +34552,131 @@ describe('OrcaRuntimeService', () => {
           'origin',
           '+refs/merge-requests/42/head:refs/orca/merge-requests/42'
         ],
-        { cwd: TEST_REPO_PATH }
+        { cwd: TEST_REPO_PATH, timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
       )
       expect(gitSpy).toHaveBeenCalledWith(
         ['fetch', 'origin', '+refs/heads/main:refs/remotes/origin/main'],
         { cwd: TEST_REPO_PATH }
       )
       expect(gitSpy).toHaveBeenCalledWith(
-        ['rev-parse', '--verify', 'refs/orca/merge-requests/42'],
+        ['rev-parse', '--verify', 'refs/orca/merge-requests/42^{commit}'],
         { cwd: TEST_REPO_PATH }
       )
     } finally {
+      gitSpy.mockRestore()
+    }
+  })
+
+  it('captures the fork MR head from a dedicated ref, not the shared FETCH_HEAD', async () => {
+    const localRepo = {
+      id: TEST_REPO_ID,
+      path: TEST_REPO_PATH,
+      displayName: 'repo',
+      badgeColor: 'blue',
+      addedAt: 1,
+      issueSourcePreference: 'origin' as const
+    }
+    const runtimeStore = {
+      ...store,
+      getRepos: () => [localRepo],
+      getRepo: (id: string) => (id === localRepo.id ? localRepo : undefined)
+    }
+    getGitLabProjectRefForRemoteMock.mockResolvedValue({
+      host: 'gitlab.example',
+      path: 'group/repo'
+    })
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    // Why: simulate a concurrent `git fetch origin` clobbering FETCH_HEAD with the
+    // default-branch tip. The resolved base must come from refs/orca/merge-requests/<iid>.
+    const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockImplementation(async (args) => {
+      if (args[0] === 'fetch') {
+        return { stdout: '', stderr: '' }
+      }
+      if (args[0] === 'rev-parse') {
+        const ref = args.at(-1)
+        if (ref === 'FETCH_HEAD') {
+          return { stdout: 'mainbranchtip000\n', stderr: '' }
+        }
+        if (ref === 'refs/orca/merge-requests/42^{commit}') {
+          return { stdout: 'mrheadsha111\n', stderr: '' }
+        }
+        throw new Error(`unexpected rev-parse ref: ${ref}`)
+      }
+      throw new Error(`unexpected git call: ${args.join(' ')}`)
+    })
+    gitSpy.mockClear()
+    try {
+      const result = await runtime.resolveManagedMrBase({
+        repoSelector: 'id:repo-1',
+        mrIid: 42,
+        sourceBranch: 'contrib/fix',
+        targetBranch: 'main',
+        isCrossRepository: true
+      })
+
+      expect(result).toEqual({
+        baseBranch: 'mrheadsha111',
+        compareBaseRef: 'refs/remotes/origin/main'
+      })
+      expect(gitSpy).not.toHaveBeenCalledWith(
+        ['rev-parse', '--verify', 'FETCH_HEAD'],
+        expect.anything()
+      )
+    } finally {
+      gitSpy.mockRestore()
+    }
+  })
+
+  it('keeps the durable MR head when the head fetch fails but the local ref resolves', async () => {
+    // Why: mirror compare-base soft-keep — a transient fetch failure must not
+    // fail the resolve when a prior fetch already pinned refs/orca/merge-requests/<iid>.
+    const localRepo = {
+      id: TEST_REPO_ID,
+      path: TEST_REPO_PATH,
+      displayName: 'repo',
+      badgeColor: 'blue',
+      addedAt: 1,
+      issueSourcePreference: 'origin' as const
+    }
+    const runtimeStore = {
+      ...store,
+      getRepos: () => [localRepo],
+      getRepo: (id: string) => (id === localRepo.id ? localRepo : undefined)
+    }
+    getGitLabProjectRefForRemoteMock.mockResolvedValue({
+      host: 'gitlab.example',
+      path: 'group/repo'
+    })
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockImplementation(async (args) => {
+      if (args[0] === 'fetch' && args[1] === '--no-tags') {
+        throw new Error('fatal: unable to access repo: Could not resolve host: gitlab.example')
+      }
+      if (args[0] === 'fetch') {
+        return { stdout: '', stderr: '' }
+      }
+      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/merge-requests/42^{commit}') {
+        return { stdout: 'pinned-mr-sha\n', stderr: '' }
+      }
+      throw new Error(`unexpected git call: ${args.join(' ')}`)
+    })
+    gitSpy.mockClear()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const result = await runtime.resolveManagedMrBase({
+        repoSelector: 'id:repo-1',
+        mrIid: 42,
+        sourceBranch: 'contrib/fix',
+        targetBranch: 'main',
+        isCrossRepository: true
+      })
+
+      expect(result).toEqual({
+        baseBranch: 'pinned-mr-sha',
+        compareBaseRef: 'refs/remotes/origin/main'
+      })
+    } finally {
+      warnSpy.mockRestore()
       gitSpy.mockRestore()
     }
   })
@@ -34601,7 +34719,7 @@ describe('OrcaRuntimeService', () => {
       if (
         args[0] === 'rev-parse' &&
         args[1] === '--verify' &&
-        args[2] === 'refs/orca/merge-requests/42'
+        args[2] === 'refs/orca/merge-requests/42^{commit}'
       ) {
         return { stdout: 'fork-mr-sha\n', stderr: '' }
       }
@@ -34632,10 +34750,10 @@ describe('OrcaRuntimeService', () => {
           'origin',
           '+refs/merge-requests/42/head:refs/orca/merge-requests/42'
         ],
-        { cwd: TEST_REPO_PATH, wslDistro: 'Ubuntu' }
+        { cwd: TEST_REPO_PATH, wslDistro: 'Ubuntu', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
       )
       expect(gitSpy).toHaveBeenCalledWith(
-        ['rev-parse', '--verify', 'refs/orca/merge-requests/42'],
+        ['rev-parse', '--verify', 'refs/orca/merge-requests/42^{commit}'],
         { cwd: TEST_REPO_PATH, wslDistro: 'Ubuntu' }
       )
     } finally {
@@ -34663,7 +34781,7 @@ describe('OrcaRuntimeService', () => {
         if (
           args[0] === 'rev-parse' &&
           args[1] === '--verify' &&
-          args[2] === 'refs/orca/merge-requests/77'
+          args[2] === 'refs/orca/merge-requests/77^{commit}'
         ) {
           return { stdout: 'remote-fork-mr-sha\n', stderr: '' }
         }
@@ -34696,7 +34814,7 @@ describe('OrcaRuntimeService', () => {
       'refs/remotes/origin/main'
     )
     expect(provider.exec).toHaveBeenCalledWith(
-      ['rev-parse', '--verify', 'refs/orca/merge-requests/77'],
+      ['rev-parse', '--verify', 'refs/orca/merge-requests/77^{commit}'],
       '/remote/repo'
     )
     expect(getGitLabProjectRefForRemoteMock).toHaveBeenCalledWith(
@@ -34907,7 +35025,7 @@ describe('OrcaRuntimeService', () => {
     }
     const provider = {
       exec: vi.fn(async (args: string[]) => {
-        if (args[0] === 'rev-parse' && args[2] === 'refs/orca/merge-requests/77') {
+        if (args[0] === 'rev-parse' && args[2] === 'refs/orca/merge-requests/77^{commit}') {
           return { stdout: 'remote-fork-mr-sha\n', stderr: '' }
         }
         if (args[0] === 'rev-parse' && args[2] === 'refs/remotes/origin/main^{commit}') {

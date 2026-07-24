@@ -54,8 +54,7 @@ import {
   fetchPrHeadTrackingRef
 } from '../github/pr-head-tracking-ref'
 import { pruneWorktreePRRefreshAliases } from '../github/pr-refresh-coordinator'
-import { pickPreferredGitRemote } from '../../shared/preferred-git-remote'
-import { getDefaultRemote } from '../git/repo'
+import { resolveGitHubReviewHeadRemote } from '../github/review-head-remote'
 import { listRepoWorktrees } from '../repo-worktrees'
 import { getSshGitProvider, requireSshGitProvider } from '../providers/ssh-git-dispatch'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
@@ -1347,15 +1346,15 @@ export function registerWorktreeHandlers(
         gitExec,
         fetchRemoteTrackingRef,
         fetchPullRequestHeadRef,
-        resolveRemote: async () => {
-          if (repo.connectionId) {
-            // Why: fork PR heads live on the hosting remote (origin), not an
-            // arbitrary first remote like a contributor `fork`. Mirror runtime.
-            const { stdout } = await gitExec(['remote'])
-            return pickPreferredGitRemote(stdout.split('\n'))
-          }
-          return getDefaultRemote(repo.path, getLocalProjectWorktreeGitOptions(store, repo))
-        }
+        // Why: one shared resolver for local and SSH so origin-vs-upstream
+        // cannot diverge by surface; it prefers the remote hosting the PR's project.
+        resolveRemote: () =>
+          resolveGitHubReviewHeadRemote({
+            repoPath: repo.path,
+            connectionId: repo.connectionId ?? null,
+            localGitOptions: getLocalProjectWorktreeGitOptions(store, repo),
+            gitExec
+          })
       })
     }
   )
