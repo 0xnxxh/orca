@@ -87,14 +87,16 @@ test('source loader pins baseUrl /docs for stable public URLs', () => {
 })
 
 test('demoMedia poster/video helpers map docs and whats-new paths', async () => {
-  // Execute the real shipped module (TypeScript with ESM syntax).
+  // Real shipped pure helpers (JS); TS re-exports the same module for the app.
   const { posterFor, videoFor } = await import(
-    new URL('../src/lib/demoMedia.ts', import.meta.url).href
+    new URL('../src/lib/demoMedia.mjs', import.meta.url).href
   )
   assert.equal(posterFor('/docs/foo.gif'), '/docs/posters/foo.jpg')
   assert.equal(posterFor('/whats-new/bar.gif'), '/whats-new/posters/bar.jpg')
   assert.equal(videoFor('/docs/foo.gif'), '/docs/videos/foo.mp4')
   assert.equal(videoFor('/whats-new/bar.gif'), '/whats-new/videos/bar.mp4')
+  const reexport = readFileSync(join(pkgRoot, 'src/lib/demoMedia.ts'), 'utf8')
+  assert.match(reexport, /from ['"]\.\/demoMedia\.mjs['"]/)
 })
 
 test('production build output directory is non-empty after next build (when present)', () => {
