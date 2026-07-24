@@ -15,6 +15,9 @@ vi.mock('electron', () => ({ ipcMain: ipcMainMock }))
 vi.mock('../window/dashboard-popout-window', () => ({
   isDashboardPopoutRenderer: () => true
 }))
+vi.mock('./ui', () => ({
+  isTrustedUIRenderer: () => false
+}))
 
 import {
   registerTerminalPreviewHandlers,
