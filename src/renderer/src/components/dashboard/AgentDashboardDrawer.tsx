@@ -106,6 +106,14 @@ export function AgentDashboardDrawer({
     setMenuOpen(false)
     setOpen(false)
   }, [setOpen])
+  // Why: sidebar collapse (Cmd+B) and workspace-board exclusivity close the
+  // drawer through the store setter, bypassing close(); sync the flag so a
+  // menu unmounted that way can't block outside-dismiss on the next open.
+  useEffect(() => {
+    if (!open) {
+      setMenuOpen(false)
+    }
+  }, [open])
   const handleSheetOpenChange = useCallback(
     (nextOpen: boolean) => {
       // Why: Radix also requests dismissal for unguardable interactions (focus
