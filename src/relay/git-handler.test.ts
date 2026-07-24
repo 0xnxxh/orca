@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { MAX_RENDERED_DIFF_COMBINED_CHARACTERS } from '../shared/large-diff-render-limit'
+import { reviewHeadRemoteRefComponent } from '../shared/review-head-tracking-ref'
 import {
   createMockDispatcher,
   gitInit,
@@ -1832,13 +1833,17 @@ describe('GitHandler', () => {
           stdio: 'pipe'
         })
 
-        await dispatcher.callRequest('git.fetchGitHubPullRequestHead', {
+        const result = (await dispatcher.callRequest('git.fetchGitHubPullRequestHead', {
           worktreePath: tmpDir,
           remote: 'origin',
           prNumber: 42
-        })
+        })) as { localRef: string }
 
-        const actual = execFileSync('git', ['rev-parse', '--verify', 'refs/orca/pull/42'], {
+        // The ref is scoped by remote identity so soft-keep can never serve
+        // another project's PR #42 out of the same object database.
+        const component = reviewHeadRemoteRefComponent('origin', bareDir)
+        expect(result.localRef).toBe(`refs/orca/pull/${component}/42`)
+        const actual = execFileSync('git', ['rev-parse', '--verify', result.localRef], {
           cwd: tmpDir,
           encoding: 'utf-8'
         }).trim()
@@ -1882,22 +1887,20 @@ describe('GitHandler', () => {
           stdio: 'pipe'
         })
 
-        await dispatcher.callRequest('git.fetchGitLabMergeRequestHead', {
+        const result = (await dispatcher.callRequest('git.fetchGitLabMergeRequestHead', {
           worktreePath: tmpDir,
           remote: 'origin',
           mrIid: 42
-        })
+        })) as { localRef: string }
 
         // The head is fetched into a dedicated ref (not shared FETCH_HEAD) so a
         // concurrent fetch can't retarget the caller's rev-parse of the checkout.
-        const actual = execFileSync(
-          'git',
-          ['rev-parse', '--verify', 'refs/orca/merge-requests/42'],
-          {
-            cwd: tmpDir,
-            encoding: 'utf-8'
-          }
-        ).trim()
+        const component = reviewHeadRemoteRefComponent('origin', bareDir)
+        expect(result.localRef).toBe(`refs/orca/merge-requests/${component}/42`)
+        const actual = execFileSync('git', ['rev-parse', '--verify', result.localRef], {
+          cwd: tmpDir,
+          encoding: 'utf-8'
+        }).trim()
         expect(actual).toBe(expected)
         // Legacy contract: pre-durable-ref desktop clients call this method name
         // and then resolve FETCH_HEAD, which a refspec fetch still writes.
@@ -1929,20 +1932,18 @@ describe('GitHandler', () => {
         })
 
         // Why: new clients call the versioned name; old relays 404 it and prompt reconnect.
-        await dispatcher.callRequest('git.fetchGitLabMergeRequestHeadRef', {
+        const result = (await dispatcher.callRequest('git.fetchGitLabMergeRequestHeadRef', {
           worktreePath: tmpDir,
           remote: 'origin',
           mrIid: 77
-        })
+        })) as { localRef: string }
 
-        const actual = execFileSync(
-          'git',
-          ['rev-parse', '--verify', 'refs/orca/merge-requests/77'],
-          {
-            cwd: tmpDir,
-            encoding: 'utf-8'
-          }
-        ).trim()
+        const component = reviewHeadRemoteRefComponent('origin', bareDir)
+        expect(result.localRef).toBe(`refs/orca/merge-requests/${component}/77`)
+        const actual = execFileSync('git', ['rev-parse', '--verify', result.localRef], {
+          cwd: tmpDir,
+          encoding: 'utf-8'
+        }).trim()
         expect(actual).toBe(expected)
       } finally {
         await fs.rm(bareDir, { recursive: true, force: true })

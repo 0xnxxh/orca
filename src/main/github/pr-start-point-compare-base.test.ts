@@ -10,6 +10,11 @@ vi.mock('./client', () => ({
 }))
 
 import { resolveGitHubPrStartPoint } from './pr-start-point'
+import { reviewHeadRemoteRefComponent } from '../../shared/review-head-tracking-ref'
+
+const ORIGIN_URL = 'git@github.com:acme/orca.git'
+const durablePrLocalRef = `refs/orca/pull/${reviewHeadRemoteRefComponent('origin', ORIGIN_URL)}/42`
+const durablePrRev = `${durablePrLocalRef}^{commit}`
 
 describe('resolveGitHubPrStartPoint compare base', () => {
   beforeEach(() => {
@@ -23,10 +28,10 @@ describe('resolveGitHubPrStartPoint compare base', () => {
     const fetchRemoteTrackingRef = vi.fn(async () => {
       throw new Error("fatal: couldn't find remote ref refs/heads/main")
     })
-    const fetchPullRequestHeadRef = vi.fn(async () => {})
+    const fetchPullRequestHeadRef = vi.fn(async () => durablePrLocalRef)
     // Why: durable ref for the head resolves; the compare base does not exist.
     const gitExec = vi.fn(async (args: string[]) => {
-      if (args[2] === 'refs/orca/pull/42^{commit}') {
+      if (args[2] === durablePrRev) {
         return { stdout: 'fork-head-sha\n', stderr: '' }
       }
       throw new Error('fatal: Needed a single revision')
@@ -45,7 +50,7 @@ describe('resolveGitHubPrStartPoint compare base', () => {
     })
 
     // Why: guards against a FETCH_HEAD regression — the head must resolve via the durable ref.
-    expect(gitExec).toHaveBeenCalledWith(['rev-parse', '--verify', 'refs/orca/pull/42^{commit}'])
+    expect(gitExec).toHaveBeenCalledWith(['rev-parse', '--verify', durablePrRev])
     expect(result).toEqual({
       baseBranch: 'fork-head-sha',
       headSha: 'fork-head-sha',
@@ -62,9 +67,9 @@ describe('resolveGitHubPrStartPoint compare base', () => {
       // Why: transient network failure — the previously-fetched base is still on disk.
       throw new Error('fatal: unable to access repo: Could not resolve host: github.com')
     })
-    const fetchPullRequestHeadRef = vi.fn(async () => {})
+    const fetchPullRequestHeadRef = vi.fn(async () => durablePrLocalRef)
     const gitExec = vi.fn(async (args: string[]) => {
-      if (args[2] === 'refs/orca/pull/42^{commit}') {
+      if (args[2] === durablePrRev) {
         return { stdout: 'fork-head-sha\n', stderr: '' }
       }
       if (args[2] === 'refs/remotes/origin/main^{commit}') {
@@ -119,7 +124,7 @@ describe('resolveGitHubPrStartPoint compare base', () => {
       baseRefName: 'main',
       gitExec,
       fetchRemoteTrackingRef,
-      fetchPullRequestHeadRef: async () => {},
+      fetchPullRequestHeadRef: async () => durablePrLocalRef,
       resolveRemote: async () => 'origin'
     })
 
@@ -152,7 +157,7 @@ describe('resolveGitHubPrStartPoint compare base', () => {
       baseRefName: 'main',
       gitExec,
       fetchRemoteTrackingRef,
-      fetchPullRequestHeadRef: async () => {},
+      fetchPullRequestHeadRef: async () => durablePrLocalRef,
       resolveRemote: async () => 'origin'
     })
 

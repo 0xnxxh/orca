@@ -5,6 +5,7 @@ import {
   REVIEW_HEAD_FETCH_TIMEOUT_MS
 } from '../../shared/review-head-tracking-ref'
 import { gitExecFileAsync } from '../git/runner'
+import { getReviewHeadRemoteComponent } from '../git/review-head-remote-identity'
 import type { SshGitProvider } from '../providers/ssh-git-provider'
 
 type LocalGitExecOptions = {
@@ -22,7 +23,7 @@ export async function fetchGitLabMergeRequestHeadRef(
   remote: string,
   mrIid: number,
   options: { localGitExecOptions?: LocalGitExecOptions } = {}
-): Promise<void> {
+): Promise<string> {
   if (!isValidReviewHeadNumber(mrIid)) {
     throw new Error(`Invalid merge request iid: ${mrIid}`)
   }
@@ -30,22 +31,21 @@ export async function fetchGitLabMergeRequestHeadRef(
     throw new Error('Merge request fetch remote must not start with "-".')
   }
   if (!repo.connectionId) {
+    const localGitExecOptions = options.localGitExecOptions ?? { cwd: repo.path }
+    const remoteComponent = await getReviewHeadRemoteComponent(remote, localGitExecOptions)
+    // Why: return the same path the fetch wrote so callers don't re-resolve identity.
+    const localRef = gitlabMergeRequestHeadLocalRef(remoteComponent, mrIid)
     await gitExecFileAsync(
-      [
-        'fetch',
-        '--no-tags',
-        remote,
-        `+refs/merge-requests/${mrIid}/head:${gitlabMergeRequestHeadLocalRef(mrIid)}`
-      ],
+      ['fetch', '--no-tags', remote, `+refs/merge-requests/${mrIid}/head:${localRef}`],
       {
-        ...(options.localGitExecOptions ?? { cwd: repo.path }),
+        ...localGitExecOptions,
         timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS
       }
     )
-    return
+    return localRef
   }
   if (!sshGitProvider) {
     throw new Error('SSH Git provider is not available. Reconnect to this target and try again.')
   }
-  await sshGitProvider.fetchGitLabMergeRequestHead(repo.path, remote, mrIid)
+  return sshGitProvider.fetchGitLabMergeRequestHead(repo.path, remote, mrIid)
 }

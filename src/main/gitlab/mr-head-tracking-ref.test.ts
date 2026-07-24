@@ -6,25 +6,62 @@ vi.mock('../git/runner', () => ({ gitExecFileAsync: gitExecFileAsyncMock }))
 
 import {
   gitlabMergeRequestHeadLocalRef,
+  reviewHeadRemoteRefComponent,
   REVIEW_HEAD_FETCH_TIMEOUT_MS
 } from '../../shared/review-head-tracking-ref'
 import { fetchGitLabMergeRequestHeadRef } from './mr-head-tracking-ref'
 
+const ORIGIN_URL = 'https://gitlab.com/acme/widgets.git'
+const ORIGIN_COMPONENT = reviewHeadRemoteRefComponent('origin', ORIGIN_URL)
+
 describe('fetchGitLabMergeRequestHeadRef', () => {
   beforeEach(() => {
     gitExecFileAsyncMock.mockReset()
-    gitExecFileAsyncMock.mockResolvedValue({ stdout: '', stderr: '' })
+    gitExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_URL}\n`, stderr: '' }
+      }
+      return { stdout: '', stderr: '' }
+    })
   })
 
-  it('fetches a GitLab MR head into its Orca ref for local repos', async () => {
-    await fetchGitLabMergeRequestHeadRef({ path: '/repo', connectionId: null }, null, 'origin', 42)
+  it('fetches a GitLab MR head into its remote-scoped Orca ref for local repos', async () => {
+    const localRef = await fetchGitLabMergeRequestHeadRef(
+      { path: '/repo', connectionId: null },
+      null,
+      'origin',
+      42
+    )
 
     // The fetch is bounded so a stalled remote can't hang MR resolution.
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
-      ['fetch', '--no-tags', 'origin', '+refs/merge-requests/42/head:refs/orca/merge-requests/42'],
+      [
+        'fetch',
+        '--no-tags',
+        'origin',
+        `+refs/merge-requests/42/head:refs/orca/merge-requests/${ORIGIN_COMPONENT}/42`
+      ],
       { cwd: '/repo', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
-    expect(gitlabMergeRequestHeadLocalRef(42)).toBe('refs/orca/merge-requests/42')
+    expect(localRef).toBe(gitlabMergeRequestHeadLocalRef(ORIGIN_COMPONENT, 42))
+    expect(localRef).toBe(`refs/orca/merge-requests/${ORIGIN_COMPONENT}/42`)
+  })
+
+  it('fails the MR-head fetch when the remote is not configured', async () => {
+    gitExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        throw new Error("fatal: No such remote 'origin'")
+      }
+      return { stdout: '', stderr: '' }
+    })
+
+    await expect(
+      fetchGitLabMergeRequestHeadRef({ path: '/repo', connectionId: null }, null, 'origin', 42)
+    ).rejects.toThrow('Remote "origin" is not configured.')
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalledWith(
+      expect.arrayContaining(['fetch']),
+      expect.anything()
+    )
   })
 
   it('keeps WSL routing while bounding the MR-head fetch', async () => {
@@ -38,16 +75,26 @@ describe('fetchGitLabMergeRequestHeadRef', () => {
       }
     )
 
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(['remote', 'get-url', 'origin'], {
+      cwd: '/repo',
+      wslDistro: 'Ubuntu'
+    })
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
-      ['fetch', '--no-tags', 'origin', '+refs/merge-requests/42/head:refs/orca/merge-requests/42'],
+      [
+        'fetch',
+        '--no-tags',
+        'origin',
+        `+refs/merge-requests/42/head:refs/orca/merge-requests/${ORIGIN_COMPONENT}/42`
+      ],
       { cwd: '/repo', wslDistro: 'Ubuntu', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
   })
 
   it('uses the SSH GitLab MR-head RPC and never runs git directly', async () => {
-    const fetchGitLabMergeRequestHead = vi.fn(async () => {})
+    const expectedRef = `refs/orca/merge-requests/${ORIGIN_COMPONENT}/77`
+    const fetchGitLabMergeRequestHead = vi.fn(async () => expectedRef)
 
-    await fetchGitLabMergeRequestHeadRef(
+    const localRef = await fetchGitLabMergeRequestHeadRef(
       { path: '/repo', connectionId: 'conn-1' },
       { fetchGitLabMergeRequestHead } as unknown as SshGitProvider,
       'origin',
@@ -55,6 +102,7 @@ describe('fetchGitLabMergeRequestHeadRef', () => {
     )
 
     expect(fetchGitLabMergeRequestHead).toHaveBeenCalledWith('/repo', 'origin', 77)
+    expect(localRef).toBe(expectedRef)
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
   })
 

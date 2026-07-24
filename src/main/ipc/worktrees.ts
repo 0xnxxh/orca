@@ -1326,7 +1326,7 @@ export function registerWorktreeHandlers(
           branch,
           { localGitExecOptions: getLocalProjectGitExecOptions(store, repo) }
         )
-      const fetchPullRequestHeadRef = (remote: string, prNumber: number): Promise<void> =>
+      const fetchPullRequestHeadRef = (remote: string, prNumber: number): Promise<string> =>
         fetchGitHubPullRequestHeadRef(
           repo,
           repo.connectionId ? getSshGitProvider(repo.connectionId) : undefined,

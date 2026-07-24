@@ -254,7 +254,14 @@ import {
   notifyWorktreesChanged
 } from './worktree-remote'
 import { invalidateAuthorizedRootsCache, resolveRegisteredWorktreePath } from './filesystem-auth'
-import { REVIEW_HEAD_FETCH_TIMEOUT_MS } from '../../shared/review-head-tracking-ref'
+import {
+  reviewHeadRemoteRefComponent,
+  REVIEW_HEAD_FETCH_TIMEOUT_MS
+} from '../../shared/review-head-tracking-ref'
+
+// Why: durable review-head refs are scoped by remote identity (name + URL hash).
+const ORIGIN_REMOTE_URL = 'git@github.com:org/repo.git'
+const ORIGIN_HEAD_COMPONENT = reviewHeadRemoteRefComponent('origin', ORIGIN_REMOTE_URL)
 import {
   __getDetectedWorktreeScanCacheStatsForTests,
   __resetDetectedWorktreeScanCacheForTests,
@@ -2037,6 +2044,9 @@ describe('registerWorktreeHandlers', () => {
       }
     })
     gitExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+      }
       if (args[0] === 'rev-parse') {
         return { stdout: 'abc123\n', stderr: '' }
       }
@@ -2051,7 +2061,12 @@ describe('registerWorktreeHandlers', () => {
     })
 
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
-      ['fetch', '--no-tags', 'origin', '+refs/pull/1738/head:refs/orca/pull/1738'],
+      [
+        'fetch',
+        '--no-tags',
+        'origin',
+        `+refs/pull/1738/head:refs/orca/pull/${ORIGIN_HEAD_COMPONENT}/1738`
+      ],
       { cwd: '/workspace/repo', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
     expect(result).toMatchObject({
@@ -3081,12 +3096,13 @@ describe('registerWorktreeHandlers', () => {
   })
 
   it('fetches a fork PR head via the SSH pull-head RPC, not git.exec', async () => {
-    const fetchGitHubPullRequestHead = vi.fn(async () => {})
+    const durableLocalRef = `refs/orca/pull/${ORIGIN_HEAD_COMPONENT}/42`
+    const fetchGitHubPullRequestHead = vi.fn(async () => durableLocalRef)
     const exec = vi.fn(async (args: string[]) => {
       if (args[0] === 'remote') {
         return { stdout: 'origin\n', stderr: '' }
       }
-      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42^{commit}') {
+      if (args[0] === 'rev-parse' && args[2] === `${durableLocalRef}^{commit}`) {
         return { stdout: 'fork-head-sha\n', stderr: '' }
       }
       throw new Error(`unexpected git call: ${args.join(' ')}`)
@@ -3123,7 +3139,8 @@ describe('registerWorktreeHandlers', () => {
   })
 
   it('fetches a fork PR head from origin, not the first remote, over SSH', async () => {
-    const fetchGitHubPullRequestHead = vi.fn(async () => {})
+    const durableLocalRef = `refs/orca/pull/${ORIGIN_HEAD_COMPONENT}/42`
+    const fetchGitHubPullRequestHead = vi.fn(async () => durableLocalRef)
     // Why: `fork` is listed first, but fork PR heads live on the hosting remote (origin).
     const exec = vi.fn(async (args: string[]) => {
       if (args[0] === 'remote' && args[1] === 'get-url') {
@@ -3135,7 +3152,7 @@ describe('registerWorktreeHandlers', () => {
       if (args[0] === 'remote') {
         return { stdout: 'fork\norigin\n', stderr: '' }
       }
-      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42^{commit}') {
+      if (args[0] === 'rev-parse' && args[2] === `${durableLocalRef}^{commit}`) {
         return { stdout: 'fork-head-sha\n', stderr: '' }
       }
       throw new Error(`unexpected git call: ${args.join(' ')}`)
@@ -3173,6 +3190,9 @@ describe('registerWorktreeHandlers', () => {
   it('resolves a fork PR base even when push-target discovery fails', async () => {
     getPullRequestPushTargetMock.mockRejectedValueOnce(new Error('lookup failed'))
     gitExecFileAsyncMock.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+      }
       if (args[0] === 'rev-parse') {
         return { stdout: 'abc123\n', stderr: '' }
       }
@@ -3187,7 +3207,12 @@ describe('registerWorktreeHandlers', () => {
     })
 
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
-      ['fetch', '--no-tags', 'origin', '+refs/pull/1849/head:refs/orca/pull/1849'],
+      [
+        'fetch',
+        '--no-tags',
+        'origin',
+        `+refs/pull/1849/head:refs/orca/pull/${ORIGIN_HEAD_COMPONENT}/1849`
+      ],
       { cwd: '/workspace/repo', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
     expect(result).toEqual({
@@ -3207,6 +3232,9 @@ describe('registerWorktreeHandlers', () => {
         throw new Error(
           'fatal: could not find remote ref refs/heads/feat/onboarding-model-choice-782'
         )
+      }
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
       }
       if (args[0] === 'rev-parse') {
         return { stdout: 'abc123\n', stderr: '' }
@@ -3229,7 +3257,12 @@ describe('registerWorktreeHandlers', () => {
       { cwd: '/workspace/repo' }
     )
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
-      ['fetch', '--no-tags', 'origin', '+refs/pull/1849/head:refs/orca/pull/1849'],
+      [
+        'fetch',
+        '--no-tags',
+        'origin',
+        `+refs/pull/1849/head:refs/orca/pull/${ORIGIN_HEAD_COMPONENT}/1849`
+      ],
       { cwd: '/workspace/repo', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
     expect(result).toEqual({
@@ -3258,7 +3291,7 @@ describe('registerWorktreeHandlers', () => {
     })
 
     expect(gitExecFileAsyncMock).not.toHaveBeenCalledWith(
-      ['fetch', '--no-tags', 'origin', '+refs/pull/1849/head:refs/orca/pull/1849'],
+      expect.arrayContaining(['fetch', '--no-tags']),
       expect.anything()
     )
     expect(result).toMatchObject({

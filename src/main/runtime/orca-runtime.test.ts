@@ -21,7 +21,14 @@ import type {
   WorkspaceSessionState
 } from '../../shared/types'
 import { AGENT_STATUS_STALE_AFTER_MS } from '../../shared/agent-status-types'
-import { REVIEW_HEAD_FETCH_TIMEOUT_MS } from '../../shared/review-head-tracking-ref'
+import {
+  reviewHeadRemoteRefComponent,
+  REVIEW_HEAD_FETCH_TIMEOUT_MS
+} from '../../shared/review-head-tracking-ref'
+
+// Why: durable review-head refs are scoped by remote identity (name + URL hash).
+const ORIGIN_REMOTE_URL = 'git@example.com:group/repo.git'
+const ORIGIN_HEAD_COMPONENT = reviewHeadRemoteRefComponent('origin', ORIGIN_REMOTE_URL)
 import { detectAgentStatusFromTitle, MAX_OSC_TITLE_CHARS } from '../../shared/agent-detection'
 import {
   addWorktree,
@@ -34466,15 +34473,23 @@ describe('OrcaRuntimeService', () => {
     }
     const provider = {
       exec: vi.fn(async (args: string[]) => {
+        if (args[0] === 'remote' && args[1] === 'get-url') {
+          return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+        }
         if (args[0] === 'remote') {
           return { stdout: 'origin\n', stderr: '' }
         }
-        if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42^{commit}') {
+        if (
+          args[0] === 'rev-parse' &&
+          args[2] === `refs/orca/pull/${ORIGIN_HEAD_COMPONENT}/42^{commit}`
+        ) {
           return { stdout: 'remote-fork-pr-sha\n', stderr: '' }
         }
         throw new Error(`unexpected git call: ${args.join(' ')}`)
       }),
-      fetchGitHubPullRequestHead: vi.fn().mockResolvedValue(undefined),
+      fetchGitHubPullRequestHead: vi
+        .fn()
+        .mockResolvedValue(`refs/orca/pull/${ORIGIN_HEAD_COMPONENT}/42`),
       fetchRemoteTrackingRef: vi.fn().mockResolvedValue(undefined)
     }
     registerSshGitProvider('ssh-1', provider as never)
@@ -34519,13 +34534,16 @@ describe('OrcaRuntimeService', () => {
     })
     const runtime = new OrcaRuntimeService(runtimeStore as never)
     const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockImplementation(async (args) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+      }
       if (args[0] === 'fetch') {
         return { stdout: '', stderr: '' }
       }
       if (
         args[0] === 'rev-parse' &&
         args[1] === '--verify' &&
-        args[2] === 'refs/orca/merge-requests/42^{commit}'
+        args[2] === `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42^{commit}`
       ) {
         return { stdout: 'fork-mr-sha\n', stderr: '' }
       }
@@ -34550,7 +34568,7 @@ describe('OrcaRuntimeService', () => {
           'fetch',
           '--no-tags',
           'origin',
-          '+refs/merge-requests/42/head:refs/orca/merge-requests/42'
+          `+refs/merge-requests/42/head:refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42`
         ],
         { cwd: TEST_REPO_PATH, timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
       )
@@ -34559,7 +34577,7 @@ describe('OrcaRuntimeService', () => {
         { cwd: TEST_REPO_PATH }
       )
       expect(gitSpy).toHaveBeenCalledWith(
-        ['rev-parse', '--verify', 'refs/orca/merge-requests/42^{commit}'],
+        ['rev-parse', '--verify', `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42^{commit}`],
         { cwd: TEST_REPO_PATH }
       )
     } finally {
@@ -34587,8 +34605,11 @@ describe('OrcaRuntimeService', () => {
     })
     const runtime = new OrcaRuntimeService(runtimeStore as never)
     // Why: simulate a concurrent `git fetch origin` clobbering FETCH_HEAD with the
-    // default-branch tip. The resolved base must come from refs/orca/merge-requests/<iid>.
+    // default-branch tip. The resolved base must come from the durable Orca MR ref.
     const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockImplementation(async (args) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+      }
       if (args[0] === 'fetch') {
         return { stdout: '', stderr: '' }
       }
@@ -34597,7 +34618,7 @@ describe('OrcaRuntimeService', () => {
         if (ref === 'FETCH_HEAD') {
           return { stdout: 'mainbranchtip000\n', stderr: '' }
         }
-        if (ref === 'refs/orca/merge-requests/42^{commit}') {
+        if (ref === `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42^{commit}`) {
           return { stdout: 'mrheadsha111\n', stderr: '' }
         }
         throw new Error(`unexpected rev-parse ref: ${ref}`)
@@ -34649,13 +34670,19 @@ describe('OrcaRuntimeService', () => {
     })
     const runtime = new OrcaRuntimeService(runtimeStore as never)
     const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockImplementation(async (args) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+      }
       if (args[0] === 'fetch' && args[1] === '--no-tags') {
         throw new Error('fatal: unable to access repo: Could not resolve host: gitlab.example')
       }
       if (args[0] === 'fetch') {
         return { stdout: '', stderr: '' }
       }
-      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/merge-requests/42^{commit}') {
+      if (
+        args[0] === 'rev-parse' &&
+        args[2] === `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42^{commit}`
+      ) {
         return { stdout: 'pinned-mr-sha\n', stderr: '' }
       }
       throw new Error(`unexpected git call: ${args.join(' ')}`)
@@ -34677,6 +34704,74 @@ describe('OrcaRuntimeService', () => {
       })
     } finally {
       warnSpy.mockRestore()
+      gitSpy.mockRestore()
+    }
+  })
+
+  it.each([
+    ["fatal: couldn't find remote ref refs/merge-requests/42/head", 'deleted MR / cleaned fork'],
+    ['Authentication failed. Check your remote credentials.', 'auth failure'],
+    [
+      'This SSH host is running an older Orca relay that cannot fetch merge request heads. Reconnect to deploy the latest relay, then try again.',
+      'stale relay'
+    ]
+  ])('fails hard instead of soft-keeping the durable MR head on: %s', async (message) => {
+    // Why: soft-keep on a non-transient failure would check out a dead or
+    // unauthorized tip (or mask the reconnect prompt) with a success UX.
+    const localRepo = {
+      id: TEST_REPO_ID,
+      path: TEST_REPO_PATH,
+      displayName: 'repo',
+      badgeColor: 'blue',
+      addedAt: 1,
+      issueSourcePreference: 'origin' as const
+    }
+    const runtimeStore = {
+      ...store,
+      getRepos: () => [localRepo],
+      getRepo: (id: string) => (id === localRepo.id ? localRepo : undefined)
+    }
+    getGitLabProjectRefForRemoteMock.mockResolvedValue({
+      host: 'gitlab.example',
+      path: 'group/repo'
+    })
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockImplementation(async (args) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+      }
+      if (args[0] === 'fetch' && args[1] === '--no-tags') {
+        throw new Error(message)
+      }
+      if (args[0] === 'fetch') {
+        return { stdout: '', stderr: '' }
+      }
+      if (
+        args[0] === 'rev-parse' &&
+        args[2] === `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42^{commit}`
+      ) {
+        return { stdout: 'pinned-mr-sha\n', stderr: '' }
+      }
+      throw new Error(`unexpected git call: ${args.join(' ')}`)
+    })
+    gitSpy.mockClear()
+    try {
+      const result = await runtime.resolveManagedMrBase({
+        repoSelector: 'id:repo-1',
+        mrIid: 42,
+        sourceBranch: 'contrib/fix',
+        targetBranch: 'main',
+        isCrossRepository: true
+      })
+
+      expect(result).toEqual({
+        error: `Failed to fetch refs/merge-requests/42/head: ${message}`
+      })
+      expect(gitSpy).not.toHaveBeenCalledWith(
+        ['rev-parse', '--verify', `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42^{commit}`],
+        expect.anything()
+      )
+    } finally {
       gitSpy.mockRestore()
     }
   })
@@ -34713,13 +34808,16 @@ describe('OrcaRuntimeService', () => {
     }
     const runtime = new OrcaRuntimeService(runtimeStore as never)
     const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockImplementation(async (args) => {
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+      }
       if (args[0] === 'fetch') {
         return { stdout: '', stderr: '' }
       }
       if (
         args[0] === 'rev-parse' &&
         args[1] === '--verify' &&
-        args[2] === 'refs/orca/merge-requests/42^{commit}'
+        args[2] === `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42^{commit}`
       ) {
         return { stdout: 'fork-mr-sha\n', stderr: '' }
       }
@@ -34743,17 +34841,21 @@ describe('OrcaRuntimeService', () => {
         null,
         { wslDistro: 'Ubuntu' }
       )
+      expect(gitSpy).toHaveBeenCalledWith(['remote', 'get-url', 'origin'], {
+        cwd: TEST_REPO_PATH,
+        wslDistro: 'Ubuntu'
+      })
       expect(gitSpy).toHaveBeenCalledWith(
         [
           'fetch',
           '--no-tags',
           'origin',
-          '+refs/merge-requests/42/head:refs/orca/merge-requests/42'
+          `+refs/merge-requests/42/head:refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42`
         ],
         { cwd: TEST_REPO_PATH, wslDistro: 'Ubuntu', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
       )
       expect(gitSpy).toHaveBeenCalledWith(
-        ['rev-parse', '--verify', 'refs/orca/merge-requests/42^{commit}'],
+        ['rev-parse', '--verify', `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/42^{commit}`],
         { cwd: TEST_REPO_PATH, wslDistro: 'Ubuntu' }
       )
     } finally {
@@ -34778,16 +34880,21 @@ describe('OrcaRuntimeService', () => {
     }
     const provider = {
       exec: vi.fn(async (args: string[]) => {
+        if (args[0] === 'remote' && args[1] === 'get-url') {
+          return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
+        }
         if (
           args[0] === 'rev-parse' &&
           args[1] === '--verify' &&
-          args[2] === 'refs/orca/merge-requests/77^{commit}'
+          args[2] === `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/77^{commit}`
         ) {
           return { stdout: 'remote-fork-mr-sha\n', stderr: '' }
         }
         throw new Error(`unexpected git call: ${args.join(' ')}`)
       }),
-      fetchGitLabMergeRequestHead: vi.fn().mockResolvedValue(undefined),
+      fetchGitLabMergeRequestHead: vi
+        .fn()
+        .mockResolvedValue(`refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/77`),
       fetchRemoteTrackingRef: vi.fn().mockResolvedValue(undefined)
     }
     registerSshGitProvider('ssh-1', provider as never)
@@ -34814,7 +34921,7 @@ describe('OrcaRuntimeService', () => {
       'refs/remotes/origin/main'
     )
     expect(provider.exec).toHaveBeenCalledWith(
-      ['rev-parse', '--verify', 'refs/orca/merge-requests/77^{commit}'],
+      ['rev-parse', '--verify', `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/77^{commit}`],
       '/remote/repo'
     )
     expect(getGitLabProjectRefForRemoteMock).toHaveBeenCalledWith(
@@ -35023,9 +35130,10 @@ describe('OrcaRuntimeService', () => {
       getRepos: () => [remoteRepo],
       getRepo: (id: string) => (id === remoteRepo.id ? remoteRepo : undefined)
     }
+    const durableLocalRef = `refs/orca/merge-requests/${ORIGIN_HEAD_COMPONENT}/77`
     const provider = {
       exec: vi.fn(async (args: string[]) => {
-        if (args[0] === 'rev-parse' && args[2] === 'refs/orca/merge-requests/77^{commit}') {
+        if (args[0] === 'rev-parse' && args[2] === `${durableLocalRef}^{commit}`) {
           return { stdout: 'remote-fork-mr-sha\n', stderr: '' }
         }
         if (args[0] === 'rev-parse' && args[2] === 'refs/remotes/origin/main^{commit}') {
@@ -35033,7 +35141,7 @@ describe('OrcaRuntimeService', () => {
         }
         throw new Error(`unexpected git call: ${args.join(' ')}`)
       }),
-      fetchGitLabMergeRequestHead: vi.fn().mockResolvedValue(undefined),
+      fetchGitLabMergeRequestHead: vi.fn().mockResolvedValue(durableLocalRef),
       fetchRemoteTrackingRef: vi.fn(async () => {
         throw new Error('fatal: unable to access repo: Could not resolve host: gitlab.example')
       })

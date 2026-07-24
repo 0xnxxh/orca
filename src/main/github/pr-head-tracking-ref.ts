@@ -5,6 +5,7 @@ import {
   isValidReviewHeadNumber,
   REVIEW_HEAD_FETCH_TIMEOUT_MS
 } from '../../shared/review-head-tracking-ref'
+import { getReviewHeadRemoteComponent } from '../git/review-head-remote-identity'
 import type { SshGitProvider } from '../providers/ssh-git-provider'
 
 type LocalGitExecOptions = {
@@ -41,7 +42,7 @@ export async function fetchGitHubPullRequestHeadRef(
   remote: string,
   prNumber: number,
   options: { localGitExecOptions?: LocalGitExecOptions } = {}
-): Promise<void> {
+): Promise<string> {
   if (!isValidReviewHeadNumber(prNumber)) {
     throw new Error(`Invalid pull request number: ${prNumber}`)
   }
@@ -49,22 +50,21 @@ export async function fetchGitHubPullRequestHeadRef(
     throw new Error('Pull request fetch remote must not start with "-".')
   }
   if (!repo.connectionId) {
+    const localGitExecOptions = options.localGitExecOptions ?? { cwd: repo.path }
+    const remoteComponent = await getReviewHeadRemoteComponent(remote, localGitExecOptions)
+    // Why: return the same path the fetch wrote so callers don't re-resolve identity.
+    const localRef = githubPullRequestHeadLocalRef(remoteComponent, prNumber)
     await gitExecFileAsync(
-      [
-        'fetch',
-        '--no-tags',
-        remote,
-        `+refs/pull/${prNumber}/head:${githubPullRequestHeadLocalRef(prNumber)}`
-      ],
+      ['fetch', '--no-tags', remote, `+refs/pull/${prNumber}/head:${localRef}`],
       {
-        ...(options.localGitExecOptions ?? { cwd: repo.path }),
+        ...localGitExecOptions,
         timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS
       }
     )
-    return
+    return localRef
   }
   if (!sshGitProvider) {
     throw new Error('SSH Git provider is not available. Reconnect to this target and try again.')
   }
-  await sshGitProvider.fetchGitHubPullRequestHead(repo.path, remote, prNumber)
+  return sshGitProvider.fetchGitHubPullRequestHead(repo.path, remote, prNumber)
 }

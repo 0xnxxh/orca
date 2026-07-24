@@ -1,8 +1,14 @@
 import type { GitHubPrStartPoint, GitPushTarget } from '../../shared/types'
 import { fetchCompareBaseRefWithLocalFallback } from '../git/compare-base-ref-fetch'
-import { isMissingRemoteRefGitError } from '../git/fetch-error-classification'
+import {
+  isMissingRemoteRefGitError,
+  isTransientReviewHeadFetchError
+} from '../git/fetch-error-classification'
 import { getPullRequestPushTarget, getWorkItem } from './client'
-import { githubPullRequestHeadLocalRef } from '../../shared/review-head-tracking-ref'
+import {
+  githubPullRequestHeadLocalRef,
+  reviewHeadRemoteRefComponent
+} from '../../shared/review-head-tracking-ref'
 
 type GitExec = (args: string[]) => Promise<{ stdout: string; stderr: string }>
 
@@ -16,7 +22,9 @@ type ResolveGitHubPrStartPointArgs = {
   localGitOptions?: { wslDistro?: string }
   gitExec: GitExec
   fetchRemoteTrackingRef: (remote: string, branch: string) => Promise<void>
-  fetchPullRequestHeadRef: (remote: string, prNumber: number) => Promise<void>
+  // Why: returns the durable local ref the fetch wrote so resolve can rev-parse
+  // that exact path instead of re-hashing remote identity.
+  fetchPullRequestHeadRef: (remote: string, prNumber: number) => Promise<string>
   resolveRemote: () => Promise<string>
 }
 
@@ -102,9 +110,31 @@ export async function resolveGitHubPrStartPoint(
 
   const fetchPullRequestHeadSha = async (): Promise<{ baseBranch: string } | { error: string }> => {
     const pullRef = `refs/pull/${args.prNumber}/head`
-    // Why: the durable per-PR ref avoids shared FETCH_HEAD races and keeps the commit reachable through create.
-    const localRef = githubPullRequestHeadLocalRef(args.prNumber)
-    const resolveDurableHeadSha = async (): Promise<string | null> => {
+    // Why: soft-keep needs identity when the fetch throws before returning a path.
+    // Success uses the path returned by the fetch itself (writer-authoritative).
+    let softKeepLocalRefPromise: Promise<string | null> | undefined
+    const resolveSoftKeepLocalRef = (): Promise<string | null> => {
+      softKeepLocalRefPromise ??= (async () => {
+        try {
+          const { stdout } = await args.gitExec(['remote', 'get-url', remote])
+          const remoteUrl = stdout.trim()
+          if (!remoteUrl) {
+            return null
+          }
+          return githubPullRequestHeadLocalRef(
+            reviewHeadRemoteRefComponent(remote, remoteUrl),
+            args.prNumber
+          )
+        } catch {
+          return null
+        }
+      })()
+      return softKeepLocalRefPromise
+    }
+    const resolveDurableHeadSha = async (localRef: string | null): Promise<string | null> => {
+      if (!localRef) {
+        return null
+      }
       try {
         const { stdout } = await args.gitExec(['rev-parse', '--verify', `${localRef}^{commit}`])
         return stdout.trim() || null
@@ -113,29 +143,37 @@ export async function resolveGitHubPrStartPoint(
       }
     }
     try {
-      await args.fetchPullRequestHeadRef(remote, args.prNumber)
+      const localRef = await args.fetchPullRequestHeadRef(remote, args.prNumber)
+      const sha = await resolveDurableHeadSha(localRef)
+      if (!sha) {
+        return { error: `Could not resolve fork PR #${args.prNumber} head after fetch.` }
+      }
+      return { baseBranch: sha }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      // Why: mirror compare-base — a transient fetch failure must not fail the
-      // resolve when a prior fetch already pinned the durable head ref.
-      const localSha = await resolveDurableHeadSha()
-      if (localSha) {
-        console.warn('[github:resolvePrStartPoint] PR head fetch failed; using durable local ref', {
-          remote,
-          prNumber: args.prNumber,
-          error: message.split('\n')[0]
-        })
-        return { baseBranch: localSha }
+      // Why: mirror compare-base — a transient transport failure must not fail
+      // the resolve when a prior fetch already pinned the durable head ref. A
+      // missing remote ref (deleted PR/fork), auth failure, or stale-relay
+      // error must fail hard: serving the durable ref there would check out a
+      // dead or unauthorized tip and mask the actionable error.
+      if (isTransientReviewHeadFetchError(error)) {
+        const localSha = await resolveDurableHeadSha(await resolveSoftKeepLocalRef())
+        if (localSha) {
+          console.warn(
+            '[github:resolvePrStartPoint] PR head fetch failed; using durable local ref',
+            {
+              remote,
+              prNumber: args.prNumber,
+              error: message.split('\n')[0]
+            }
+          )
+          return { baseBranch: localSha }
+        }
       }
       return {
         error: `Failed to fetch ${pullRef}: ${message.split('\n')[0]}`
       }
     }
-    const sha = await resolveDurableHeadSha()
-    if (!sha) {
-      return { error: `Could not resolve fork PR #${args.prNumber} head after fetch.` }
-    }
-    return { baseBranch: sha }
   }
 
   // Why: fork PR heads live on a remote we don't have configured, so

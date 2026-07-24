@@ -896,13 +896,18 @@ describe('SshGitProvider', () => {
   })
 
   it('fetchGitLabMergeRequestHead sends the durable-ref git.fetchGitLabMergeRequestHeadRef request', async () => {
-    await provider.fetchGitLabMergeRequestHead('/home/user/repo', 'origin', 42)
+    mux.request.mockResolvedValueOnce({
+      localRef: 'refs/orca/merge-requests/origin-abc/42'
+    })
+
+    const localRef = await provider.fetchGitLabMergeRequestHead('/home/user/repo', 'origin', 42)
 
     expect(mux.request).toHaveBeenCalledWith('git.fetchGitLabMergeRequestHeadRef', {
       worktreePath: '/home/user/repo',
       remote: 'origin',
       mrIid: 42
     })
+    expect(localRef).toBe('refs/orca/merge-requests/origin-abc/42')
   })
 
   it('fetchGitLabMergeRequestHead maps old relays to the reconnect message', async () => {
@@ -929,13 +934,24 @@ describe('SshGitProvider', () => {
   })
 
   it('fetchGitHubPullRequestHead sends git.fetchGitHubPullRequestHead request', async () => {
-    await provider.fetchGitHubPullRequestHead('/home/user/repo', 'origin', 42)
+    mux.request.mockResolvedValueOnce({ localRef: 'refs/orca/pull/origin-abc/42' })
+
+    const localRef = await provider.fetchGitHubPullRequestHead('/home/user/repo', 'origin', 42)
 
     expect(mux.request).toHaveBeenCalledWith('git.fetchGitHubPullRequestHead', {
       worktreePath: '/home/user/repo',
       remote: 'origin',
       prNumber: 42
     })
+    expect(localRef).toBe('refs/orca/pull/origin-abc/42')
+  })
+
+  it('fetchGitHubPullRequestHead rejects relays that omit the durable localRef', async () => {
+    mux.request.mockResolvedValueOnce({})
+
+    await expect(
+      provider.fetchGitHubPullRequestHead('/home/user/repo', 'origin', 42)
+    ).rejects.toThrow('did not return the durable pull request head ref')
   })
 
   it('fetchGitHubPullRequestHead maps old relays to the reconnect message', async () => {

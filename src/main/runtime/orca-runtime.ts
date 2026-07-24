@@ -514,8 +514,12 @@ import {
   fetchGitHubPullRequestHeadRef,
   fetchPrHeadTrackingRef
 } from '../github/pr-head-tracking-ref'
-import { gitlabMergeRequestHeadLocalRef } from '../../shared/review-head-tracking-ref'
+import {
+  gitlabMergeRequestHeadLocalRef,
+  reviewHeadRemoteRefComponent
+} from '../../shared/review-head-tracking-ref'
 import { fetchGitLabMergeRequestHeadRef } from '../gitlab/mr-head-tracking-ref'
+import { isTransientReviewHeadFetchError } from '../git/fetch-error-classification'
 import { resolveGitHubReviewHeadRemote } from '../github/review-head-remote'
 import { fetchCompareBaseRefWithLocalFallback } from '../git/compare-base-ref-fetch'
 import { pickPreferredGitRemote } from '../../shared/preferred-git-remote'
@@ -20060,7 +20064,7 @@ export class OrcaRuntimeService {
         branch,
         localGitExecOptions ? { localGitExecOptions } : {}
       )
-    const fetchPullRequestHeadRef = (remote: string, prNumber: number): Promise<void> =>
+    const fetchPullRequestHeadRef = (remote: string, prNumber: number): Promise<string> =>
       fetchGitHubPullRequestHeadRef(
         repo,
         sshGitProvider,
@@ -20197,9 +20201,31 @@ export class OrcaRuntimeService {
 
     if (isCrossRepository) {
       const mrRef = `refs/merge-requests/${args.mrIid}/head`
-      // Why: GitLab exposes fork heads on the target; the durable ref avoids FETCH_HEAD races and bridges resolve→create.
-      const localRef = gitlabMergeRequestHeadLocalRef(args.mrIid)
-      const resolveDurableHeadSha = async (): Promise<string | null> => {
+      // Why: soft-keep needs identity when the fetch throws before returning a path.
+      // Success uses the path returned by the fetch itself (writer-authoritative).
+      let softKeepLocalRefPromise: Promise<string | null> | undefined
+      const resolveSoftKeepLocalRef = (): Promise<string | null> => {
+        softKeepLocalRefPromise ??= (async () => {
+          try {
+            const { stdout } = await gitExec(['remote', 'get-url', remote])
+            const remoteUrl = stdout.trim()
+            if (!remoteUrl) {
+              return null
+            }
+            return gitlabMergeRequestHeadLocalRef(
+              reviewHeadRemoteRefComponent(remote, remoteUrl),
+              args.mrIid
+            )
+          } catch {
+            return null
+          }
+        })()
+        return softKeepLocalRefPromise
+      }
+      const resolveDurableHeadSha = async (localRef: string | null): Promise<string | null> => {
+        if (!localRef) {
+          return null
+        }
         try {
           const { stdout } = await gitExec(['rev-parse', '--verify', `${localRef}^{commit}`])
           return stdout.trim() || null
@@ -20208,38 +20234,43 @@ export class OrcaRuntimeService {
         }
       }
       try {
-        await fetchGitLabMergeRequestHeadRef(
+        const localRef = await fetchGitLabMergeRequestHeadRef(
           repo,
           sshGitProvider,
           remote,
           args.mrIid,
           localGitExecOptions ? { localGitExecOptions } : {}
         )
+        const sha = await resolveDurableHeadSha(localRef)
+        if (!sha) {
+          return { error: `Could not resolve fork MR !${args.mrIid} head after fetch.` }
+        }
+        const compareBaseFetched = await fetchCompareBaseRef()
+        return { baseBranch: sha, ...(compareBaseFetched ? { compareBaseRef } : {}) }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        // Why: mirror compare-base — a transient fetch failure must not fail the
-        // resolve when a prior fetch already pinned the durable head ref.
-        const localSha = await resolveDurableHeadSha()
-        if (localSha) {
-          console.warn(
-            '[runtime:resolveManagedMrBase] MR head fetch failed; using durable local ref',
-            {
-              remote,
-              mrIid: args.mrIid,
-              error: message.split('\n')[0]
-            }
-          )
-          const compareBaseFetched = await fetchCompareBaseRef()
-          return { baseBranch: localSha, ...(compareBaseFetched ? { compareBaseRef } : {}) }
+        // Why: mirror compare-base — a transient transport failure must not fail
+        // the resolve when a prior fetch already pinned the durable head ref. A
+        // missing remote ref (deleted MR/fork), auth failure, or stale-relay
+        // error must fail hard: serving the durable ref there would check out a
+        // dead or unauthorized tip and mask the actionable error.
+        if (isTransientReviewHeadFetchError(error)) {
+          const localSha = await resolveDurableHeadSha(await resolveSoftKeepLocalRef())
+          if (localSha) {
+            console.warn(
+              '[runtime:resolveManagedMrBase] MR head fetch failed; using durable local ref',
+              {
+                remote,
+                mrIid: args.mrIid,
+                error: message.split('\n')[0]
+              }
+            )
+            const compareBaseFetched = await fetchCompareBaseRef()
+            return { baseBranch: localSha, ...(compareBaseFetched ? { compareBaseRef } : {}) }
+          }
         }
         return { error: `Failed to fetch ${mrRef}: ${message.split('\n')[0]}` }
       }
-      const sha = await resolveDurableHeadSha()
-      if (!sha) {
-        return { error: `Could not resolve fork MR !${args.mrIid} head after fetch.` }
-      }
-      const compareBaseFetched = await fetchCompareBaseRef()
-      return { baseBranch: sha, ...(compareBaseFetched ? { compareBaseRef } : {}) }
     }
 
     try {
