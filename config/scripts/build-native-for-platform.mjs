@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process'
-import { resolveMacosPackageBundleIdentifiers } from './macos-package-bundle-identifiers.mjs'
+import {
+  resolveMacosComputerUseBundleId,
+  resolveMacosPackageBundleIdentifiers
+} from './macos-package-bundle-identifiers.mjs'
 
-const { appBundleId, computerUseBundleId } = resolveMacosPackageBundleIdentifiers()
+const { appBundleId } = resolveMacosPackageBundleIdentifiers()
+// Why: resolves through the ORCA_COMPUTER_MACOS_BUNDLE_ID escape hatch so an
+// explicit override still wins over the derived package identity.
+const computerUseBundleId = resolveMacosComputerUseBundleId()
 
 if (process.platform === 'win32') {
   runNodeScript('config/scripts/build-windows-cli-launcher.mjs')
