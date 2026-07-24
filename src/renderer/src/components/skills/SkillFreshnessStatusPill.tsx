@@ -19,6 +19,16 @@ function statusPill(status: SkillFreshnessDisplayStatus): React.JSX.Element {
       </IntegrationStatusPill>
     )
   }
+  if (status === 'needs-attention') {
+    return (
+      <IntegrationStatusPill tone="attention">
+        {translate(
+          'auto.components.skills.SkillFreshnessStatusPill.needsAttention',
+          'Needs attention'
+        )}
+      </IntegrationStatusPill>
+    )
+  }
   if (status === 'up-to-date') {
     return (
       <IntegrationStatusPill tone="connected">
@@ -33,23 +43,20 @@ function statusPill(status: SkillFreshnessDisplayStatus): React.JSX.Element {
   )
 }
 
-// Why: the setup rails' Installed pill is presence-only; when freshness knows a
-// safe update exists (or that every copy is current) the pill should say so.
-// Falls back to plain Installed for blocked/unrecognized copies so an unsafe
-// placement is never advertised as updatable here.
+// Why: the setup rails' Installed pill is presence-only. Freshness knows more — that
+// a safe update exists, that every copy is current, or that a copy is out of date
+// somewhere the update cannot reach — and green must never stand in for that last
+// case, which is real drift the user would otherwise have no way to see.
 export function SkillFreshnessStatusPill({ skillName }: { skillName: string }): React.JSX.Element {
   const { inventory } = useSkillFreshness()
   const status = getSkillFreshnessDisplayStatus(inventory, skillName)
-  // Why: the review dialog only lists skills with an out-of-date copy, so Details
-  // appears exactly when it has something to show — including the blocked copies
-  // that hold the pill at plain Installed with no other explanation on this rail.
-  const hasOutdatedCopy = (inventory?.installations ?? []).some(
-    (installation) => installation.name === skillName && installation.status === 'outdated'
-  )
+  // Why: the dialog lists every placement, so Details is offered whenever a placement
+  // is what drove the status — an available update, or a copy that blocked one.
+  const hasDetails = status === 'update-available' || status === 'needs-attention'
   return (
     <span className="inline-flex items-center gap-2">
       {statusPill(status)}
-      {hasOutdatedCopy ? (
+      {hasDetails ? (
         <Button
           variant="link"
           size="xs"

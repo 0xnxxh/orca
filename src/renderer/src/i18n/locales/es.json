@@ -3748,7 +3748,8 @@
           "updateAvailable": "Actualización disponible",
           "upToDate": "Actualizado",
           "installed": "Instalado",
-          "details": "Details"
+          "details": "Details",
+          "needsAttention": "Needs attention"
         }
       },
       "sidebar": {

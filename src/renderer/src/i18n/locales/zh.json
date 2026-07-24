@@ -3748,7 +3748,8 @@
           "updateAvailable": "有可用更新",
           "upToDate": "已是最新",
           "installed": "已安装",
-          "details": "Details"
+          "details": "Details",
+          "needsAttention": "Needs attention"
         }
       },
       "sidebar": {

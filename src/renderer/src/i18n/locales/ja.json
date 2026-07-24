@@ -3748,7 +3748,8 @@
           "updateAvailable": "更新があります",
           "upToDate": "最新です",
           "installed": "インストール済み",
-          "details": "Details"
+          "details": "Details",
+          "needsAttention": "Needs attention"
         }
       },
       "sidebar": {

@@ -105,7 +105,7 @@ describe('SkillFreshnessStatusPill', () => {
     expect(detailsButton(rendered)).toBeNull()
   })
 
-  it('falls back to Installed for a blocked outdated placement', async () => {
+  it('flags a blocked outdated placement instead of reading as all-clear', async () => {
     mocks.inventory = inventory(
       [
         { name: 'orca-cli', status: 'outdated' },
@@ -115,8 +115,8 @@ describe('SkillFreshnessStatusPill', () => {
     )
 
     const rendered = await renderPill('orca-cli')
-    expect(pillText(rendered)).toBe('Installed')
-    // Why: the pill can't explain why a blocked copy stays stale; Details can.
+    // Why: a green pill over a copy the update cannot reach hides real drift.
+    expect(pillText(rendered)).toBe('Needs attention')
     expect(detailsButton(rendered)?.textContent).toBe('Details')
   })
 
