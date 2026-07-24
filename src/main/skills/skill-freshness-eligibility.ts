@@ -15,7 +15,12 @@ export function eligibleSkillUpdateNames(
 
   const eligible: string[] = []
   for (const [name, entries] of byName) {
-    const hasOutdated = entries.some((entry) => entry.status === 'outdated')
+    // Why: only a placement the rail actually converges may promise an update; a
+    // stale standalone duplicate is real drift the global command can never clear.
+    const hasOutdated = entries.some(
+      (entry) =>
+        entry.status === 'outdated' && SUPPORTED_GLOBAL_SKILL_TOPOLOGIES.has(entry.topology)
+    )
     const everyPlacementIsOfficialAndUpdatable = entries.every(
       (entry) =>
         (entry.status === 'current' || entry.status === 'outdated') &&

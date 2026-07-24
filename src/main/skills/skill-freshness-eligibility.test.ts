@@ -82,6 +82,26 @@ describe('skill freshness name-scoped update eligibility', () => {
     ).toEqual(['orca-cli'])
   })
 
+  it('does not promise an update when only an unreachable duplicate is outdated', () => {
+    // Why: `--global` converges the canonical copy and its aliases only. Offering the
+    // name here advertises an update the command reports as already up to date, so the
+    // badge could never clear; the dialog explains the duplicate as skipped instead.
+    expect(
+      eligibleSkillUpdateNames([
+        placement('orchestration', { status: 'current' }),
+        placement('orchestration', {
+          id: 'orchestration-factory',
+          rootId: 'home-factory',
+          unresolvedPath: '/home/.factory/skills/orchestration',
+          resolvedPath: '/home/.factory/skills/orchestration',
+          physicalIdentity: 'physical-orchestration-factory',
+          topology: 'independent-copy',
+          status: 'outdated'
+        })
+      ])
+    ).toEqual([])
+  })
+
   it('does not offer a skill that exists only as a standalone copy', () => {
     // Why: with no canonical or alias to anchor `--global`, the command has no
     // reliable target, so a duplicate-only skill stays unoffered.

@@ -92,7 +92,10 @@ const SKIPPED_REASON_PRIORITY: SkillLocationChip[] = [
   'in-a-repo',
   'plugin-cache',
   'external-link',
-  'broken-link'
+  'broken-link',
+  // Why: lowest priority — a stale duplicate only explains the skip once no
+  // harder blocker is present, since the others describe a more specific cause.
+  'duplicate'
 ]
 
 function skippedReason(locations: readonly SkillLocationRow[]): string {
@@ -134,10 +137,14 @@ function skippedReason(locations: readonly SkillLocationRow[]): string {
         'auto.components.skills.SkillFreshnessRow.skippedReasonBrokenLink',
         'This copy is a shortcut to something that no longer exists, so Orca left it out — you can safely delete it.'
       )
-    // Why: 'current'/'duplicate' are non-blocking chips, and an empty priority
-    // list is possible; all fall through to the generic skipped message.
-    case 'current':
     case 'duplicate':
+      return translate(
+        'auto.components.skills.SkillFreshnessRow.skippedReasonDuplicate',
+        'This is a separate copy, so the update won’t reach it — the command only refreshes the main copy. Remove this copy, then reinstall the skill so this location follows the main one.'
+      )
+    // Why: 'current' is non-blocking and an empty priority list is possible;
+    // both fall through to the generic skipped message.
+    case 'current':
     case undefined:
       return translate(
         'auto.components.skills.SkillFreshnessRow.cantUpdateReason',
