@@ -1,11 +1,13 @@
 import { AlertTriangle } from 'lucide-react'
 import { useSkillFreshness } from '@/hooks/useSkillFreshness'
 import { getSkillFreshnessDisplayStatus } from '@/lib/skill-freshness-display-status'
-import { skillFreshnessAttentionReason } from './skill-freshness-skipped-reason'
+import { skillFreshnessAttention } from './skill-freshness-skipped-reason'
 
-// Why: an amber pill says something is wrong but not what, and a Details link next to
-// a status chip is easy to miss. The rails that own the badge state the reason inline
-// so the user learns the cause without having to suspect there is more to read.
+// Why: an amber pill says something is wrong but not what, and a Details link next to a
+// status chip is easy to miss. The rails that own the badge state the cause inline so the
+// user learns it without having to suspect there is more to read. The paths lead because
+// the shared sentence says "this copy" — in the dialog its location rows supply that
+// referent, and here nothing else would.
 export function SkillFreshnessAttentionNotice({
   skillName
 }: {
@@ -15,14 +17,21 @@ export function SkillFreshnessAttentionNotice({
   if (getSkillFreshnessDisplayStatus(inventory, skillName) !== 'needs-attention') {
     return null
   }
-  const reason = skillFreshnessAttentionReason(inventory, skillName)
-  if (!reason) {
+  const attention = skillFreshnessAttention(inventory, skillName)
+  if (!attention) {
     return null
   }
   return (
-    <p className="mt-2 flex items-start gap-1.5 text-[12px] leading-snug text-muted-foreground">
+    <div className="mt-2 flex items-start gap-1.5 text-[12px] leading-snug text-muted-foreground">
       <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
-      <span>{reason}</span>
-    </p>
+      <div className="min-w-0 space-y-1">
+        {attention.paths.map((path) => (
+          <p key={path} className="font-mono text-[11px] break-all text-foreground/80">
+            {path}
+          </p>
+        ))}
+        <p>{attention.reason}</p>
+      </div>
+    </div>
   )
 }

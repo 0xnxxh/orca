@@ -22,13 +22,21 @@ const SKIPPED_REASON_PRIORITY: SkillLocationChip[] = [
   'duplicate'
 ]
 
+function blockingChip(locations: readonly SkillLocationRow[]): SkillLocationChip | undefined {
+  const present = new Set(locations.map((location) => location.chip))
+  return SKIPPED_REASON_PRIORITY.find((candidate) => present.has(candidate))
+}
+
 /**
  * The one sentence that explains why an update won't reach a skill. Shared by the
  * review dialog and the setup rails so the badge and the dialog can never disagree.
+ *
+ * The wording is deictic ("this copy") because it is always rendered next to the
+ * locations it describes — callers without location rows must supply that referent
+ * themselves, which is what `skillFreshnessAttention` returns the paths for.
  */
 export function skippedReason(locations: readonly SkillLocationRow[]): string {
-  const present = new Set(locations.map((location) => location.chip))
-  const chip = SKIPPED_REASON_PRIORITY.find((candidate) => present.has(candidate))
+  const chip = blockingChip(locations)
   switch (chip) {
     case 'unrecognized':
       return translate(
@@ -81,14 +89,22 @@ export function skippedReason(locations: readonly SkillLocationRow[]): string {
   }
 }
 
+export type SkillFreshnessAttention = {
+  // Why: the sentence says "this copy" — without the dialog's location rows a rail
+  // has nothing for that to point at, so it names the copies the reason is about.
+  paths: string[]
+  reason: string
+}
+
 /**
- * The same sentence, resolved for one skill straight from the inventory, so a rail
- * showing that skill's badge can explain itself without opening the review dialog.
+ * The same reason, resolved for one skill straight from the inventory and paired with
+ * the offending paths, so a rail showing that skill's badge can explain itself without
+ * opening the review dialog.
  */
-export function skillFreshnessAttentionReason(
+export function skillFreshnessAttention(
   inventory: SkillFreshnessInventory | null,
   skillName: string
-): string | null {
+): SkillFreshnessAttention | null {
   const locations = (inventory?.installations ?? [])
     .filter((installation) => installation.name === skillName)
     .map((installation) => ({
@@ -96,5 +112,14 @@ export function skillFreshnessAttentionReason(
       path: installation.unresolvedPath,
       chip: locationChip(installation)
     }))
-  return locations.length > 0 ? skippedReason(locations) : null
+  if (locations.length === 0) {
+    return null
+  }
+  const chip = blockingChip(locations)
+  // Why: every copy sharing the blocking chip is part of the same problem, so naming
+  // only the first would leave the badge unexplained once that one is resolved.
+  const blocking = locations.filter((location) =>
+    chip ? location.chip === chip : location.chip !== 'current'
+  )
+  return { paths: blocking.map((location) => location.path), reason: skippedReason(locations) }
 }

@@ -3,7 +3,7 @@ import type {
   SkillFreshnessInstallation,
   SkillFreshnessInventory
 } from '../../../../shared/skill-freshness'
-import { skillFreshnessAttentionReason } from './skill-freshness-skipped-reason'
+import { skillFreshnessAttention } from './skill-freshness-skipped-reason'
 
 function placement(
   overrides: Partial<SkillFreshnessInstallation> = {}
@@ -35,9 +35,9 @@ function inventory(installations: SkillFreshnessInstallation[]): SkillFreshnessI
   return { schemaVersion: 1, installations, eligibleUpdateNames: [], scannedAt: 1 }
 }
 
-describe('skillFreshnessAttentionReason', () => {
+describe('skillFreshnessAttention', () => {
   it('names the stale duplicate the global command cannot reach', () => {
-    const reason = skillFreshnessAttentionReason(
+    const attention = skillFreshnessAttention(
       inventory([
         placement(),
         placement({
@@ -50,13 +50,44 @@ describe('skillFreshnessAttentionReason', () => {
       ]),
       'orchestration'
     )
-    expect(reason).toContain('separate copy')
-    expect(reason).toContain('only refreshes the main copy')
+    expect(attention?.reason).toContain('separate copy')
+    expect(attention?.reason).toContain('only refreshes the main copy')
+    // Why: the sentence says "this copy" — off the dialog there are no location rows,
+    // so the offending path is the only thing that can give "this" a referent. The
+    // healthy main copy must stay out of it or it reads as the one to remove.
+    expect(attention?.paths).toEqual(['/home/.cursor/skills/orchestration'])
+  })
+
+  it('names every copy the reason covers, not just the first', () => {
+    const attention = skillFreshnessAttention(
+      inventory([
+        placement(),
+        placement({
+          unresolvedPath: '/home/.cursor/skills/orchestration',
+          physicalIdentity: 'physical-cursor',
+          topology: 'independent-copy',
+          status: 'outdated'
+        }),
+        placement({
+          unresolvedPath: '/home/.grok/skills/orchestration',
+          physicalIdentity: 'physical-grok',
+          topology: 'independent-copy',
+          status: 'outdated'
+        })
+      ]),
+      'orchestration'
+    )
+    // Why: naming one of two duplicates would leave the badge unexplained after the
+    // user resolves it, which is the loop this whole change exists to end.
+    expect(attention?.paths).toEqual([
+      '/home/.cursor/skills/orchestration',
+      '/home/.grok/skills/orchestration'
+    ])
   })
 
   it('leads with the harder blocker when several placements are off', () => {
     // Why: an edited copy is the real cause; the duplicate is the lesser symptom.
-    const reason = skillFreshnessAttentionReason(
+    const attention = skillFreshnessAttention(
       inventory([
         placement({
           unresolvedPath: '/home/.cursor/skills/orchestration',
@@ -73,11 +104,14 @@ describe('skillFreshnessAttentionReason', () => {
       ]),
       'orchestration'
     )
-    expect(reason).toContain('doesn’t match the official version')
+    expect(attention?.reason).toContain('doesn’t match the official version')
+    // Why: the paths must match the sentence that won, or the card would point at a
+    // copy the reason is not describing.
+    expect(attention?.paths).toEqual(['/home/.claude/skills/orchestration'])
   })
 
   it('has nothing to say about a skill it never found', () => {
-    expect(skillFreshnessAttentionReason(inventory([]), 'orchestration')).toBeNull()
-    expect(skillFreshnessAttentionReason(null, 'orchestration')).toBeNull()
+    expect(skillFreshnessAttention(inventory([]), 'orchestration')).toBeNull()
+    expect(skillFreshnessAttention(null, 'orchestration')).toBeNull()
   })
 })
