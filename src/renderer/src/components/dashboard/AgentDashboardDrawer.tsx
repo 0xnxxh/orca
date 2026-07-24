@@ -98,7 +98,14 @@ export function AgentDashboardDrawer({
   const setOpen = useAppStore((s) => s.setAgentDashboardDrawerOpen)
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
-  const close = useCallback(() => setOpen(false), [setOpen])
+  const [menuOpen, setMenuOpen] = useState(false)
+  // Why: like closeWorkspaceBoard, reset the menu flag on close — Radix never
+  // reports close for a menu unmounted with the sheet (e.g. the pop-out
+  // hand-off), and a stale true would block outside-dismiss on reopen.
+  const close = useCallback(() => {
+    setMenuOpen(false)
+    setOpen(false)
+  }, [setOpen])
   const handleSheetOpenChange = useCallback(
     (nextOpen: boolean) => {
       // Why: Radix also requests dismissal for unguardable interactions (focus
@@ -111,7 +118,6 @@ export function AgentDashboardDrawer({
     [setOpen]
   )
   const boardRef = useRef<HTMLDivElement | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
 
   useWorkspaceKanbanOutsideDismiss({
     open,
