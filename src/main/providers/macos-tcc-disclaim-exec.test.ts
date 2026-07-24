@@ -60,6 +60,7 @@ describe('wrapShellSpawnForMacosTccAttribution with ORCA_MACOS_TCC_DISCLAIM', ()
       }
     )
     ptyProbeMock.mockResolvedValue({ ok: false, conclusive: true, reason: 'rejected' })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     resetMacosLoginShellPreflightForTests()
     resetMacosTccDisclaimShimForTests()
   })
@@ -89,8 +90,9 @@ describe('wrapShellSpawnForMacosTccAttribution with ORCA_MACOS_TCC_DISCLAIM', ()
       file: '/usr/bin/login',
       args: ['-flpq', 'ada', '/usr/bin/env', 'SHELL=/bin/zsh', '/bin/zsh', '-l']
     })
-    // The default path never stats the shim binary.
+    // The default path never stats the shim binary and never logs about it.
     expect(existsSyncMock).not.toHaveBeenCalledWith(SHIM_PATH)
+    expect(console.log).not.toHaveBeenCalled()
   })
 
   it('swaps the login(1) wrap for the shim drop-in when the flag is on and the shim exists', async () => {
@@ -102,6 +104,11 @@ describe('wrapShellSpawnForMacosTccAttribution with ORCA_MACOS_TCC_DISCLAIM', ()
     })
     // No PAM preflight, subprocess, or env(1) interposition on the shim path.
     expect(execFileMock).not.toHaveBeenCalled()
+    // The rootless live signal that the disclaim path fired (SETEXEC leaves no
+    // process-tree trace to observe otherwise).
+    expect(console.log).toHaveBeenCalledWith(
+      `[pty] macOS TCC disclaim shim wrap engaged: ${SHIM_PATH}`
+    )
   })
 
   it('preserves trailing shell args behind the original file argument', async () => {

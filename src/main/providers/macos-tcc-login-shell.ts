@@ -339,6 +339,10 @@ export function wrapShellSpawnForMacosTccAttribution(
     if (file === disclaimShimPath) {
       return { file, args }
     }
+    // Why: SETEXEC leaves no process-tree trace and the responsible-process
+    // read needs root, so this line is the only rootless live signal that the
+    // rollout flag actually took the disclaim path.
+    console.log(`[pty] macOS TCC disclaim shim wrap engaged: ${disclaimShimPath}`)
     return { file: disclaimShimPath, args: [file, ...args] }
   }
   if (!existsSync(MACOS_LOGIN_PATH)) {
