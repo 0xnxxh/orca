@@ -1501,7 +1501,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   private notifyActiveSessionsWriteUnavailable(): void {
-    for (const id of this.activeSessionIds) {
+    // Snapshot first: a listener that kills a pane would mutate activeSessionIds
+    // mid-iteration and silently skip the sibling this fan-out exists to reach.
+    const ids = [...this.activeSessionIds]
+    for (const id of ids) {
       this.sessionsAwaitingDaemonRecovery.add(id)
       this.emitWriteUnavailable(id)
     }
