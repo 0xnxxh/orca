@@ -29,7 +29,6 @@ permissions:
 env:
   CI: true
   NODE_VERSION: '22.17.1'
-  PNPM_VERSION: '10.24.0'
 
 jobs:
   build:
@@ -41,9 +40,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      # Read packageManager from packages/docs/package.json (do not also pass version).
+      - uses: pnpm/action-setup@v6
         with:
-          version: ${{ env.PNPM_VERSION }}
+          package_json_file: packages/docs/package.json
           run_install: false
 
       - uses: actions/setup-node@v5
@@ -71,8 +71,6 @@ jobs:
     name: Deploy docs (Vercel)
     needs: build
     runs-on: ubuntu-latest
-    # Deploy on main pushes, or manual dispatch with deploy=true.
-    # Skips gracefully when Vercel secrets are not configured.
     if: >
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && inputs.deploy == 'true')
@@ -82,9 +80,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
-          version: ${{ env.PNPM_VERSION }}
+          package_json_file: packages/docs/package.json
           run_install: false
 
       - uses: actions/setup-node@v5
