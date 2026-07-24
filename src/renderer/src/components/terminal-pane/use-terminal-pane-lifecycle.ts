@@ -36,6 +36,7 @@ import type { LinkHandlerDeps } from './terminal-link-handlers'
 import { handleOscLink } from './terminal-osc-link-routing'
 import { handleTerminalWebLinkClick } from './terminal-web-link-click'
 import {
+  findHttpLinkAtTerminalMouseEvent,
   installHttpLinkClickFallback,
   type TerminalLinkRoutingPreferenceRequester
 } from './terminal-url-link-hit-testing'
@@ -1400,6 +1401,10 @@ export function useTerminalPaneLifecycle({
         })
       },
       formatLinkTooltip: (url, openLinkHint) => formatTerminalUrlTooltip(url, openLinkHint),
+      resolveHoveredLinkUrl: (paneId, event, uri) => {
+        const pane = managerRef.current?.getPanes().find((candidate) => candidate.id === paneId)
+        return pane ? findHttpLinkAtTerminalMouseEvent(pane.terminal, event) : uri
+      },
       // Why: hidden panes stay mounted so PTYs survive navigation, but their WebGL contexts drain Chromium's budget and can blank visible panes.
       initialRenderingSuspended: !isVisibleRef.current,
       // Why: remote-runtime panes honor the GPU setting too; late snapshots are handled by post-replay rebuildPaneWebgl in pty-connection.
