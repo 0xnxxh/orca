@@ -13794,6 +13794,8 @@
     "title": "Agents",
     "total": "{{count}} total",
     "close": "Close dashboard",
+    "settings": "Agent Dashboard settings",
+    "settingsTooltip": "Board settings",
     "card": {
       "you": "You",
       "time": {

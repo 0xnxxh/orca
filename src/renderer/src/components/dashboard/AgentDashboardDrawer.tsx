@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/store'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { activateTabAndFocusPane } from '@/lib/activate-tab-and-focus-pane'
@@ -12,6 +12,7 @@ import {
   STATUS_BAR_RESERVE_HEIGHT,
   WORKSPACE_TOP_CHROME_HEIGHT
 } from '../sidebar/workspace-chrome-metrics'
+import { AgentDashboardSettingsMenu } from './AgentDashboardSettingsMenu'
 import { useLiveDashboardSnapshot } from './useLiveDashboardSnapshot'
 import { translate } from '@/i18n/i18n'
 
@@ -30,7 +31,13 @@ const AGENT_BOARD_ESCAPE_BLOCKING_OVERLAY_SELECTOR = [
 
 /** The in-window Agent Dashboard body. Mounted only while open so the live
  *  snapshot derivation stays off the hot path when the drawer is closed. */
-function AgentDashboardDrawerBody({ onClose }: { onClose: () => void }): React.JSX.Element {
+function AgentDashboardDrawerBody({
+  onClose,
+  onMenuOpenChange
+}: {
+  onClose: () => void
+  onMenuOpenChange: (open: boolean) => void
+}): React.JSX.Element {
   const snapshot = useLiveDashboardSnapshot()
 
   // In-window ack/reveal act on the local store directly — the pop-out's IPC
@@ -47,6 +54,13 @@ function AgentDashboardDrawerBody({ onClose }: { onClose: () => void }): React.J
     [onClose]
   )
 
+  // Switching to pop-out from the board hands the surface over rather than
+  // leaving an in-window board that the setting says should be a window.
+  const handleSwitchToPopout = useCallback(() => {
+    onClose()
+    void window.api.dashboard.openPopout?.()
+  }, [onClose])
+
   return (
     <AgentKanbanBoard
       snapshot={snapshot}
@@ -56,6 +70,12 @@ function AgentDashboardDrawerBody({ onClose }: { onClose: () => void }): React.J
       onAckAgent={handleAckAgent}
       onRevealAgent={handleRevealAgent}
       onClose={onClose}
+      headerActions={
+        <AgentDashboardSettingsMenu
+          onSwitchToPopout={handleSwitchToPopout}
+          onOpenChange={onMenuOpenChange}
+        />
+      }
     />
   )
 }
@@ -91,11 +111,12 @@ export function AgentDashboardDrawer({
     [setOpen]
   )
   const boardRef = useRef<HTMLDivElement | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useWorkspaceKanbanOutsideDismiss({
     open,
     boardRef,
-    preserveOpenForMenu: false,
+    preserveOpenForMenu: menuOpen,
     onOpenChange: setOpen
   })
 
@@ -131,7 +152,9 @@ export function AgentDashboardDrawer({
     event: CustomEvent<{ originalEvent: PointerEvent | FocusEvent }>
   ): void => {
     const originalEvent = event.detail.originalEvent
-    if (isWorkspaceBoardKeepOpenTarget(originalEvent.target)) {
+    if (menuOpen || isWorkspaceBoardKeepOpenTarget(originalEvent.target)) {
+      // Why: the first outside click should close a board menu, not also
+      // dismiss the board that owns it.
       event.preventDefault()
       return
     }
@@ -186,7 +209,7 @@ export function AgentDashboardDrawer({
         {/* Radix unmounts SheetContent while closed, so the live snapshot
             derivation in the body stays off the closed path. */}
         <div ref={boardRef} className="flex min-h-0 flex-1 flex-col">
-          <AgentDashboardDrawerBody onClose={close} />
+          <AgentDashboardDrawerBody onClose={close} onMenuOpenChange={setMenuOpen} />
         </div>
       </SheetContent>
     </Sheet>

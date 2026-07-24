@@ -116,17 +116,21 @@ type AgentKanbanBoardProps = {
   /** When provided, renders a close control in the header (in-window mode). The
    *  pop-out relies on its native window controls, so it omits this. */
   onClose?: () => void
+  /** Header controls rendered before the close button. The in-window host
+   *  passes its settings menu; the pop-out renderer has no store to drive it. */
+  headerActions?: React.ReactNode
 }
 
 /** The agent board: status columns fed by a snapshot. Shared by the pop-out
- *  window and the in-window screen popover — the two differ only in sizing and
+ *  window and the in-window drawer — the two differ only in sizing and
  *  how ack/reveal are routed. */
 export function AgentKanbanBoard({
   snapshot,
   containerClassName = 'h-screen w-screen',
   onAckAgent = ackAgentViaPopoutRelay,
   onRevealAgent = revealAgentViaPopoutRelay,
-  onClose
+  onClose,
+  headerActions
 }: AgentKanbanBoardProps): React.JSX.Element {
   const grouped = useMemo(() => groupByBucket(snapshot.cards), [snapshot.cards])
   const hasRelativeTimestamps = useMemo(
@@ -198,15 +202,20 @@ export function AgentKanbanBoard({
             count: snapshot.cards.length
           })}
         </span>
-        {onClose ? (
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={translate('dashboardPopout.close', 'Close dashboard')}
-            className="ml-auto rounded-sm p-1 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          >
-            <XIcon className="size-4" />
-          </button>
+        {headerActions || onClose ? (
+          <div className="ml-auto flex items-center gap-1">
+            {headerActions}
+            {onClose ? (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label={translate('dashboardPopout.close', 'Close dashboard')}
+                className="rounded-sm p-1 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                <XIcon className="size-4" />
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
       <div className="scrollbar-sleek flex min-h-0 flex-1 overflow-x-auto p-3">
