@@ -13,6 +13,11 @@ function isSshError(error: string): boolean {
   return error.startsWith(SSH_PREFIX)
 }
 
+/** Toast text the SSH reconnect banner already covers — hide instead of stacking under/over it. */
+export function isSshReconnectOwnedTerminalError(error: string): boolean {
+  return error.startsWith('SSH connection failed') || error.startsWith(SSH_PREFIX)
+}
+
 export function shouldOfferDaemonRestart(error: string): boolean {
   return [STALE_NODE_PTY_DAEMON_MARKERS, STALE_DAEMON_CWD_MARKERS].some((markers) =>
     markers.every((marker) => error.includes(marker))
