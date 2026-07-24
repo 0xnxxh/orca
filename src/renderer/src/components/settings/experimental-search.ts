@@ -126,8 +126,8 @@ export const getExperimentalPaneSearchEntries = createLocalizedCatalog(
           'pop-out'
         ),
         ...translateSearchKeyword(
-          'auto.components.settings.experimental.search.agentDashboard.popover',
-          'popover'
+          'auto.components.settings.experimental.search.agentDashboard.board',
+          'board'
         ),
         ...translateSearchKeyword(
           'auto.components.settings.experimental.search.agentDashboard.inWindow',

@@ -104,7 +104,7 @@ function KanbanColumn({
 type AgentKanbanBoardProps = {
   snapshot: DashboardSnapshot
   /** Sizing for the outermost container. The pop-out fills the window
-   *  (h-screen w-screen); the in-window overlay fills its host (h-full w-full). */
+   *  (h-screen w-screen); the in-window drawer fills its host (h-full w-full). */
   containerClassName?: string
   /** Marks an agent as seen. Defaults to the pop-out IPC relay; the in-window
    *  host acks the store directly. */

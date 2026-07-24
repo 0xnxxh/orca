@@ -68,7 +68,7 @@ export function AgentDashboardExperimentalSetting({
               <p className="text-xs text-muted-foreground">
                 {translate(
                   'auto.components.settings.ExperimentalPane.agentDashboard.modeCopy',
-                  'Show the dashboard as an in-window screen popover or a separate pop-out window.'
+                  'Show the dashboard as an in-window board beside the sidebar or a separate pop-out window.'
                 )}
               </p>
             </div>

@@ -110,7 +110,8 @@ function DashboardBucketCounts({
 function AgentDashboardSidebarEntry(): React.JSX.Element {
   const dashboardBucketCounts = useAgentBucketCounts()
   const openAsPopout = useAppStore((s) => isAgentDashboardPopoutMode(s.settings))
-  const setAgentDashboardOverlayOpen = useAppStore((s) => s.setAgentDashboardOverlayOpen)
+  const drawerOpen = useAppStore((s) => s.agentDashboardDrawerOpen)
+  const setAgentDashboardDrawerOpen = useAppStore((s) => s.setAgentDashboardDrawerOpen)
 
   return (
     <button
@@ -119,7 +120,9 @@ function AgentDashboardSidebarEntry(): React.JSX.Element {
         if (openAsPopout) {
           void window.api.dashboard.openPopout()
         } else {
-          setAgentDashboardOverlayOpen(true)
+          // Why: like the workspace board trigger, the entry toggles its
+          // companion drawer — sidebar clicks do not auto-dismiss it.
+          setAgentDashboardDrawerOpen(!drawerOpen)
         }
       }}
       className={cn(
