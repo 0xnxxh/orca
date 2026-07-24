@@ -86,15 +86,43 @@ test('source loader pins baseUrl /docs for stable public URLs', () => {
   assert.match(sourceTs, /baseUrl:\s*['"]\/docs['"]/)
 })
 
-test('demoMedia poster/video helpers map docs and whats-new paths', async () => {
-  // Real shipped pure helpers (JS); TS re-exports the same module for the app.
+test('demoMedia poster/video resolve to shipped public files for every MDX GIF', async () => {
+  // Real shipped pure helpers (JS); AutoplayClip imports via TS re-export.
   const { posterFor, videoFor } = await import(
     new URL('../src/lib/demoMedia.mjs', import.meta.url).href
   )
-  assert.equal(posterFor('/docs/foo.gif'), '/docs/posters/foo.jpg')
-  assert.equal(posterFor('/whats-new/bar.gif'), '/whats-new/posters/bar.jpg')
-  assert.equal(videoFor('/docs/foo.gif'), '/docs/videos/foo.mp4')
-  assert.equal(videoFor('/whats-new/bar.gif'), '/whats-new/videos/bar.mp4')
+  // Marketing-compatible: GIF may live under /docs or /whats-new; encode always under /whats-new.
+  assert.equal(posterFor('/docs/orca-split-screen.gif'), '/whats-new/posters/orca-split-screen.jpg')
+  assert.equal(videoFor('/docs/orca-split-screen.gif'), '/whats-new/videos/orca-split-screen.mp4')
+  assert.equal(posterFor('/whats-new/tab-split.gif'), '/whats-new/posters/tab-split.jpg')
+  assert.equal(videoFor('/whats-new/tab-split.gif'), '/whats-new/videos/tab-split.mp4')
+
+  const contentRoot = join(pkgRoot, 'content/docs')
+  const mdxFiles = listFiles(contentRoot, (p) => p.endsWith('.mdx'))
+  const gifSrcs = new Set()
+  for (const file of mdxFiles) {
+    const text = readFileSync(file, 'utf8')
+    for (const m of text.matchAll(/src="(\/[^"]+\.gif)"/g)) {
+      gifSrcs.add(m[1])
+    }
+  }
+  assert.ok(gifSrcs.size > 0, 'expected GIF srcs in MDX for AutoplayClip')
+
+  const missing = []
+  for (const src of gifSrcs) {
+    const poster = posterFor(src)
+    const video = videoFor(src)
+    const posterAbs = join(pkgRoot, 'public', poster.slice(1))
+    const videoAbs = join(pkgRoot, 'public', video.slice(1))
+    if (!existsSync(posterAbs)) {
+      missing.push(`poster for ${src} -> ${poster}`)
+    }
+    if (!existsSync(videoAbs)) {
+      missing.push(`video for ${src} -> ${video}`)
+    }
+  }
+  assert.deepEqual(missing, [], `missing demo media:\n${missing.join('\n')}`)
+
   const reexport = readFileSync(join(pkgRoot, 'src/lib/demoMedia.ts'), 'utf8')
   assert.match(reexport, /from ['"]\.\/demoMedia\.mjs['"]/)
 })
