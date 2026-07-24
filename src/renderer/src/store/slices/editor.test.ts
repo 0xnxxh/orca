@@ -106,6 +106,30 @@ function mirroredEditorUnifiedTab(id: string, entityId: string, worktreeId: stri
 }
 
 describe('createEditorSlice right sidebar state', () => {
+  it('queues and safely consumes explicit editor focus requests', () => {
+    const store = createEditorStore()
+
+    store.getState().openFile(
+      {
+        filePath: '/repo/README.md',
+        relativePath: 'README.md',
+        worktreeId: 'wt-1',
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { focusEditor: true }
+    )
+
+    const request = store.getState().pendingEditorFocusRequest
+    expect(request).toMatchObject({ fileId: '/repo/README.md', worktreeId: 'wt-1' })
+
+    store.getState().consumeEditorFocusRequest((request?.token ?? 0) + 1)
+    expect(store.getState().pendingEditorFocusRequest).toBe(request)
+
+    store.getState().consumeEditorFocusRequest(request?.token ?? 0)
+    expect(store.getState().pendingEditorFocusRequest).toBeNull()
+  })
+
   it('does not record markdown-file-created when opening an existing markdown file', () => {
     const store = createEditorStore()
 
@@ -1147,6 +1171,35 @@ describe('createEditorSlice split-group editor routing', () => {
 
     expect(findUnifiedTabByEntity(store, '/repo/explicit.ts')?.groupId).toBe(terminalGroupId)
   })
+
+  it('opens implicit files in a focused browser split group instead of stealing an editor pane (#6891)', () => {
+    const store = createEditorTabsStore()
+    const { editorGroupId } = seedTerminalAndEditorGroups(store)
+
+    // Regression #6891: with a split like Agent | Browser, focusing the browser
+    // pane and opening a file sent it to another pane. A focused browser pane
+    // was treated like a focused agent terminal, so the open was stolen into an
+    // existing editor pane instead of the focused group.
+    const browserGroupId = store.getState().createEmptySplitGroup('wt-1', editorGroupId, 'right')
+    if (!browserGroupId) {
+      throw new Error('Expected split browser group')
+    }
+    store.getState().createUnifiedTab('wt-1', 'browser', {
+      id: 'browser-tab',
+      entityId: 'browser-tab',
+      label: 'Browser',
+      targetGroupId: browserGroupId
+    })
+    store.setState({
+      activeGroupIdByWorktree: { 'wt-1': browserGroupId },
+      activeTabType: 'browser',
+      activeTabTypeByWorktree: { 'wt-1': 'browser' }
+    } as Partial<AppState>)
+
+    openSourceFile(store, '/repo/from-browser.ts')
+
+    expect(findUnifiedTabByEntity(store, '/repo/from-browser.ts')?.groupId).toBe(browserGroupId)
+  })
 })
 
 describe('createEditorSlice untitled cleanup routing', () => {
@@ -1232,7 +1285,13 @@ describe('createEditorSlice untitled cleanup routing', () => {
       expect(runtimeEnvironmentCallMock).toHaveBeenCalledWith({
         selector: 'env-1',
         method: 'files.delete',
-        params: { worktree: 'id:wt-1', relativePath: 'untitled.md', recursive: undefined },
+        params: {
+          worktree: 'id:wt-1',
+          relativePath: 'untitled.md',
+          recursive: undefined,
+          expectedExecutionHostId: 'local'
+        },
+        expectedEnvironmentPairingRevision: undefined,
         timeoutMs: 15_000
       })
     })
@@ -1257,14 +1316,20 @@ describe('createEditorSlice untitled cleanup routing', () => {
       expect(runtimeEnvironmentCallMock).toHaveBeenCalledWith({
         selector: 'env-1',
         method: 'files.delete',
-        params: { worktree: 'id:wt-1', relativePath: 'untitled.md', recursive: undefined },
+        params: {
+          worktree: 'id:wt-1',
+          relativePath: 'untitled.md',
+          recursive: undefined,
+          expectedExecutionHostId: 'local'
+        },
+        expectedEnvironmentPairingRevision: undefined,
         timeoutMs: 15_000
       })
     })
     expect(localDeletePathMock).not.toHaveBeenCalled()
   })
 
-  it('closeFile uses relative remote delete when worktree metadata is missing', async () => {
+  it('closeFile does not delete when worktree ownership metadata is missing', async () => {
     const store = createEditorStore()
     store.setState({
       settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
@@ -1282,14 +1347,9 @@ describe('createEditorSlice untitled cleanup routing', () => {
 
     store.getState().closeFile('/remote/wt/untitled.md')
 
-    await vi.waitFor(() => {
-      expect(runtimeEnvironmentCallMock).toHaveBeenCalledWith({
-        selector: 'env-1',
-        method: 'files.delete',
-        params: { worktree: 'id:wt-1', relativePath: 'untitled.md', recursive: undefined },
-        timeoutMs: 15_000
-      })
-    })
+    await flushAsyncRemoteRefresh()
+
+    expect(runtimeEnvironmentCallMock).not.toHaveBeenCalled()
     expect(localDeletePathMock).not.toHaveBeenCalled()
   })
 
@@ -1312,7 +1372,13 @@ describe('createEditorSlice untitled cleanup routing', () => {
       expect(runtimeEnvironmentCallMock).toHaveBeenCalledWith({
         selector: 'env-1',
         method: 'files.delete',
-        params: { worktree: 'id:wt-1', relativePath: 'untitled.md', recursive: undefined },
+        params: {
+          worktree: 'id:wt-1',
+          relativePath: 'untitled.md',
+          recursive: undefined,
+          expectedExecutionHostId: 'local'
+        },
+        expectedEnvironmentPairingRevision: undefined,
         timeoutMs: 15_000
       })
     })
@@ -1338,7 +1404,13 @@ describe('createEditorSlice untitled cleanup routing', () => {
       expect(runtimeEnvironmentCallMock).toHaveBeenCalledWith({
         selector: 'env-1',
         method: 'files.delete',
-        params: { worktree: 'id:wt-1', relativePath: 'untitled.md', recursive: undefined },
+        params: {
+          worktree: 'id:wt-1',
+          relativePath: 'untitled.md',
+          recursive: undefined,
+          expectedExecutionHostId: 'local'
+        },
+        expectedEnvironmentPairingRevision: undefined,
         timeoutMs: 15_000
       })
     })

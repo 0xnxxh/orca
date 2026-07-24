@@ -148,6 +148,8 @@ export type ProjectHostSetup = {
   kind?: RepoKind
   connectionId?: string | null
   executionHostId?: ExecutionHostId | null
+  /** Renderer projection of the paired runtime that owns this setup's transport. */
+  runtimeOwnerEnvironmentId?: string
   worktreeBasePath?: string
   hookSettings?: RepoHookSettings
   gitUsername?: string
@@ -470,6 +472,8 @@ export type Worktree = {
   projectId?: string
   /** Execution host that owns the workspace. Optional for pre-project-host metadata. */
   hostId?: ExecutionHostId
+  /** Renderer projection of the paired runtime that transports operations to `hostId`. */
+  runtimeOwnerEnvironmentId?: string
   /** Host-specific setup used to create/run this workspace. */
   projectHostSetupId?: string
   displayName: string
@@ -2573,6 +2577,9 @@ export type SourceControlGroupOrder = 'changes-first' | 'staged-first' | 'untrac
 
 export type LeftSidebarAppearanceMode = 'default' | 'match-terminal' | 'tinted'
 
+/** Strategy for the prefix prepended to worktree branch names. */
+export type BranchPrefixStrategy = 'git-username' | 'custom' | 'none'
+
 export type FloatingTerminalCwdRequest = {
   path?: string
   requireTrusted?: boolean
@@ -2608,7 +2615,7 @@ export type GlobalSettings = {
   /** One-shot migration guard for the default-on rollout. Existing profiles
    *  without the guard are flipped on once; later explicit opt-outs stick. */
   autoRenameBranchFromWorkDefaultedOn?: boolean
-  branchPrefix: 'git-username' | 'custom' | 'none'
+  branchPrefix: BranchPrefixStrategy
   branchPrefixCustom: string
   enableGitHubAttribution: boolean
   theme: 'system' | 'dark' | 'light'
