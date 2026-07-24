@@ -48,6 +48,7 @@ import type {
   ProjectGroup,
   FolderWorkspace,
   SparsePreset,
+  PersistedMobileClientTabSelections,
   WorktreeMeta,
   WorktreeLineage,
   WorkspaceLineage,
@@ -77,6 +78,12 @@ import {
 } from '../shared/task-source-context'
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import { MOBILE_PAIRING_USERDATA_FILES } from './runtime/mobile-pairing-files'
+import { normalizePersistedMobileClientTabSelections } from './runtime/client-session-tab-selection-persistence'
+import { sanitizeWorkspaceSessionTerminalRetirements } from './runtime/mobile-session-terminal-persistence-retirement'
+import {
+  removeRepoFromHostWorkspaceSessions,
+  removeRepoFromWorkspaceSession
+} from './orca-profiles/profile-project-session-state'
 import { hardenExistingSecureFile } from '../shared/secure-file'
 import {
   LEGACY_DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS,
@@ -2341,25 +2348,36 @@ function cloneWorkspaceSessionState(session: WorkspaceSessionState): WorkspaceSe
   return structuredClone(session)
 }
 
-function removeWorkspaceSessionOwner(
-  session: WorkspaceSessionState | undefined,
-  ownerKey: string
-): WorkspaceSessionState | undefined {
-  if (!session) {
-    return session
-  }
-  const next = cloneWorkspaceSessionState(session)
+// Deletes the O(1) owner-keyed fields for `ownerKey` from an already-cloned
+// session in place, recording removed tab ids into `removedTabIds`. The
+// pane-key-scanned maps (pty incarnations, surface tombstones, sleeping agents)
+// and the shutdown list are handled by deleteScannedSessionFieldsForOwners so a
+// batch prune scans each collection once instead of once per owner.
+function deleteOwnerKeyedSessionFields(
+  next: WorkspaceSessionState,
+  ownerKey: string,
+  removedTabIds: Set<string>,
+  options: { advanceTerminalTopologyRevision?: boolean } = {}
+): void {
   const removedTerminalTabs = next.tabsByWorktree?.[ownerKey] ?? []
   if (next.tabsByWorktree) {
     delete next.tabsByWorktree[ownerKey]
   }
   for (const tab of removedTerminalTabs) {
+    removedTabIds.add(tab.id)
     delete next.terminalLayoutsByTabId[tab.id]
     if (next.activeTabId === tab.id) {
       next.activeTabId = null
     }
   }
-
+  if (options.advanceTerminalTopologyRevision) {
+    const repoId = getRepoIdFromWorktreeId(ownerKey)
+    const previousTopologyRevision = next.terminalTopologyRevisionByRepoId?.[repoId] ?? 0
+    next.terminalTopologyRevisionByRepoId = {
+      ...next.terminalTopologyRevisionByRepoId,
+      [repoId]: previousTopologyRevision + 1
+    }
+  }
   if (next.openFilesByWorktree) {
     delete next.openFilesByWorktree[ownerKey]
   }
@@ -2402,21 +2420,83 @@ function removeWorkspaceSessionOwner(
   if (next.defaultTerminalTabsAppliedByWorktreeId) {
     delete next.defaultTerminalTabsAppliedByWorktreeId[ownerKey]
   }
-  if (next.sleepingAgentSessionsByPaneKey) {
-    for (const [paneKey, record] of Object.entries(next.sleepingAgentSessionsByPaneKey)) {
-      if (record.worktreeId === ownerKey) {
-        delete next.sleepingAgentSessionsByPaneKey[paneKey]
-      }
-    }
-  }
   if (next.activeWorkspaceKey === ownerKey) {
     next.activeWorkspaceKey = null
   }
   if (next.activeWorktreeId === ownerKey) {
     next.activeWorktreeId = null
   }
+}
+
+// Scans the pane-key-keyed maps and the shutdown list once, removing every entry
+// owned by a key matched by `isRemovedOwner` (or, for pty incarnations, whose tab
+// was removed). Kept separate from the O(1) deletes so a batch prune scans each
+// collection a single time regardless of how many owners are being removed.
+function deleteScannedSessionFieldsForOwners(
+  next: WorkspaceSessionState,
+  removedTabIds: ReadonlySet<string>,
+  isRemovedOwner: (worktreeId: string) => boolean
+): void {
+  if (next.terminalPtyIncarnationsByPaneKey) {
+    next.terminalPtyIncarnationsByPaneKey = Object.fromEntries(
+      Object.entries(next.terminalPtyIncarnationsByPaneKey).filter(([paneKey]) => {
+        const separator = paneKey.lastIndexOf(':')
+        return separator < 1 || !removedTabIds.has(paneKey.slice(0, separator))
+      })
+    )
+  }
+  if (next.terminalSurfaceTombstonesByPaneKey) {
+    next.terminalSurfaceTombstonesByPaneKey = Object.fromEntries(
+      Object.entries(next.terminalSurfaceTombstonesByPaneKey).filter(
+        ([, tombstone]) => !isRemovedOwner(tombstone.worktreeId)
+      )
+    )
+  }
+  if (next.sleepingAgentSessionsByPaneKey) {
+    for (const [paneKey, record] of Object.entries(next.sleepingAgentSessionsByPaneKey)) {
+      if (isRemovedOwner(record.worktreeId)) {
+        delete next.sleepingAgentSessionsByPaneKey[paneKey]
+      }
+    }
+  }
   next.activeWorktreeIdsOnShutdown = next.activeWorktreeIdsOnShutdown?.filter(
-    (worktreeId) => worktreeId !== ownerKey
+    (worktreeId) => !isRemovedOwner(worktreeId)
+  )
+}
+
+function removeWorkspaceSessionOwner(
+  session: WorkspaceSessionState | undefined,
+  ownerKey: string,
+  options: { advanceTerminalTopologyRevision?: boolean } = {}
+): WorkspaceSessionState | undefined {
+  if (!session) {
+    return session
+  }
+  const next = cloneWorkspaceSessionState(session)
+  const removedTabIds = new Set<string>()
+  deleteOwnerKeyedSessionFields(next, ownerKey, removedTabIds, options)
+  deleteScannedSessionFieldsForOwners(next, removedTabIds, (worktreeId) => worktreeId === ownerKey)
+  return next
+}
+
+// Batch variant of removeWorkspaceSessionOwner: prunes every owner in `ownerKeys`
+// with a single structuredClone and a single scan of each collection, instead of
+// one clone+scan per owner. Project removal can touch many worktrees across many
+// host partitions, so the per-owner clones added up to O(worktrees × hosts).
+function removeWorkspaceSessionOwners(
+  session: WorkspaceSessionState | undefined,
+  ownerKeys: ReadonlySet<string>
+): WorkspaceSessionState | undefined {
+  if (!session || ownerKeys.size === 0) {
+    return session
+  }
+  const next = cloneWorkspaceSessionState(session)
+  const removedTabIds = new Set<string>()
+  for (const ownerKey of ownerKeys) {
+    deleteOwnerKeyedSessionFields(next, ownerKey, removedTabIds)
+  }
+  deleteScannedSessionFieldsForOwners(next, removedTabIds, (worktreeId) =>
+    ownerKeys.has(worktreeId)
   )
   return next
 }
@@ -3004,6 +3084,9 @@ export class Store {
             normalizedProjectGroups
           ),
           worktreeLineageById: parsed.worktreeLineageById ?? {},
+          mobileClientTabSelectionsByDeviceId: normalizePersistedMobileClientTabSelections(
+            parsed.mobileClientTabSelectionsByDeviceId
+          ),
           workspaceLineageByChildKey: normalizeWorkspaceLineageByChildKey(
             parsed.workspaceLineageByChildKey
           ),
@@ -3880,8 +3963,10 @@ export class Store {
         ? { ...repo, projectGroupId: null }
         : repo
     )
+    const removedFolderWorkspaceKeys = new Set<string>()
     for (const workspace of this.state.folderWorkspaces ?? []) {
       if (deletedGroupIds.has(workspace.projectGroupId)) {
+        removedFolderWorkspaceKeys.add(folderWorkspaceKey(workspace.id))
         this.state.workspaceSession = removeWorkspaceSessionOwner(
           this.state.workspaceSession,
           folderWorkspaceKey(workspace.id)
@@ -3892,6 +3977,7 @@ export class Store {
     this.state.folderWorkspaces = (this.state.folderWorkspaces ?? []).filter(
       (workspace) => !deletedGroupIds.has(workspace.projectGroupId)
     )
+    this.pruneMobileClientTabSelections((worktreeId) => removedFolderWorkspaceKeys.has(worktreeId))
     this.scheduleSave()
     return true
   }
@@ -4041,6 +4127,7 @@ export class Store {
       folderWorkspaceKey(id)
     )!
     this.removeWorkspaceLineageForFolderParent(id)
+    this.pruneMobileClientTabSelections((worktreeId) => worktreeId === folderWorkspaceKey(id))
     this.scheduleSave()
     return true
   }
@@ -4137,6 +4224,11 @@ export class Store {
     // Why: presets are repo-scoped and unreachable once the repo is gone, so drop them with it.
     delete this.state.sparsePresetsByRepo[id]
     this.pruneWorktreeStateForRepo(id, null)
+    this.state.workspaceSession = removeRepoFromWorkspaceSession(this.state.workspaceSession, id)
+    this.state.workspaceSessionsByHostId = removeRepoFromHostWorkspaceSessions(
+      this.state.workspaceSessionsByHostId,
+      id
+    )
     this.scheduleSave()
   }
 
@@ -4153,6 +4245,21 @@ export class Store {
     this.syncProjectHostSetupCompatibilityState()
     // Why: prune only this host's worktree metas if the id survives elsewhere; otherwise prune everything (matches removeProject).
     this.pruneWorktreeStateForRepo(id, idStillPresent ? hostId : null)
+    if (!idStillPresent) {
+      this.state.workspaceSession = removeRepoFromWorkspaceSession(this.state.workspaceSession, id)
+      this.state.workspaceSessionsByHostId = removeRepoFromHostWorkspaceSessions(
+        this.state.workspaceSessionsByHostId,
+        id
+      )
+    } else if (parseExecutionHostId(hostId)?.kind === 'runtime') {
+      const session = this.state.workspaceSessionsByHostId?.[hostId]
+      if (session) {
+        this.state.workspaceSessionsByHostId = {
+          ...this.state.workspaceSessionsByHostId,
+          [hostId]: removeRepoFromWorkspaceSession(session, id)
+        }
+      }
+    }
     this.scheduleSave()
   }
 
@@ -4178,9 +4285,63 @@ export class Store {
       hostMembership.set(key, result)
       return result
     }
+    // Why: session state (legacy blob + per-host partitions) references worktrees
+    // by the same `${repoId}::${path}` owner key; if it is not pruned here, a
+    // deleted project's worktrees stay in lastVisitedAtByWorktreeId /
+    // sleepingAgentSessionsByPaneKey and get re-materialized into worktreeMeta on
+    // the next launch, surfacing as an orphaned "unknown" workspace.
+    // worktreeMeta is host-classified via belongsToHost, but session partitions
+    // are keyed by host directly. A session owner key carries no host, and the
+    // same key can exist in multiple partitions (shared repo id/path across
+    // hosts). So for session cleanup we collect every prefix-matching owner key
+    // regardless of belongsToHost, and let the per-partition host gating below
+    // decide which partition to touch. (belongsToHost still governs
+    // worktreeMeta/lineage deletion. Collect before deleting worktreeMeta.)
+    const ownerKeysToPrune = new Set<string>()
+    const collectPrefixedKeys = (keys: Iterable<string>): void => {
+      for (const key of keys) {
+        if (key.startsWith(prefix)) {
+          ownerKeysToPrune.add(key)
+        }
+      }
+    }
+    collectPrefixedKeys(Object.keys(this.state.worktreeMeta))
+    collectPrefixedKeys(Object.keys(this.state.workspaceSession?.lastVisitedAtByWorktreeId ?? {}))
+    for (const session of Object.values(this.state.workspaceSessionsByHostId ?? {})) {
+      collectPrefixedKeys(Object.keys(session?.lastVisitedAtByWorktreeId ?? {}))
+    }
+
     for (const key of Object.keys(this.state.worktreeMeta)) {
       if (belongsToHost(key)) {
         delete this.state.worktreeMeta[key]
+      }
+    }
+    // Why: owner keys are `${repoId}::${path}` and do not carry a host, so a
+    // host-scoped prune (hostId != null) must only touch that host's session:
+    // the legacy blob is the local host's session, and each
+    // workspaceSessionsByHostId partition is one non-local host. Pruning every
+    // partition here would wipe a surviving host's tabs, sleeping-agent state,
+    // and active-worktree pointer for a shared repo id/path. A full removal
+    // (hostId === null) still clears every host.
+    const pruneLegacyLocalSession = hostId === null || hostId === LOCAL_EXECUTION_HOST_ID
+    const pruneAllHostPartitions = hostId === null
+    if (pruneLegacyLocalSession) {
+      this.state.workspaceSession = removeWorkspaceSessionOwners(
+        this.state.workspaceSession,
+        ownerKeysToPrune
+      )!
+    }
+    if (this.state.workspaceSessionsByHostId) {
+      for (const [partitionHostId, session] of Object.entries(
+        this.state.workspaceSessionsByHostId
+      )) {
+        if (!pruneAllHostPartitions && partitionHostId !== hostId) {
+          continue
+        }
+        const pruned = removeWorkspaceSessionOwners(session, ownerKeysToPrune)
+        if (pruned) {
+          this.state.workspaceSessionsByHostId[partitionHostId] = pruned
+        }
       }
     }
     for (const [childId, lineage] of Object.entries(this.state.worktreeLineageById)) {
@@ -4197,6 +4358,22 @@ export class Store {
       }
       if (parentScope?.type === 'worktree' && belongsToHost(parentScope.worktreeId)) {
         delete this.state.workspaceLineageByChildKey[childKey as WorkspaceKey]
+      }
+    }
+    this.pruneMobileClientTabSelections(belongsToHost)
+  }
+
+  private pruneMobileClientTabSelections(matchesWorktreeId: (worktreeId: string) => boolean): void {
+    for (const [clientNavigationId, selectionsByWorktree] of Object.entries(
+      this.state.mobileClientTabSelectionsByDeviceId ?? {}
+    )) {
+      for (const worktreeId of Object.keys(selectionsByWorktree)) {
+        if (matchesWorktreeId(worktreeId)) {
+          delete selectionsByWorktree[worktreeId]
+        }
+      }
+      if (Object.keys(selectionsByWorktree).length === 0) {
+        delete this.state.mobileClientTabSelectionsByDeviceId?.[clientNavigationId]
       }
     }
   }
@@ -4437,6 +4614,17 @@ export class Store {
   }
 
   // ── Sparse Presets ─────────────────────────────────────────────────
+
+  // ── Mobile client tab selections ──────────────────────────────────
+
+  getMobileClientTabSelections(): PersistedMobileClientTabSelections {
+    return this.state.mobileClientTabSelectionsByDeviceId ?? {}
+  }
+
+  setMobileClientTabSelections(next: PersistedMobileClientTabSelections): void {
+    this.state.mobileClientTabSelectionsByDeviceId = next
+    this.scheduleSave()
+  }
 
   getSparsePresets(repoId: string): SparsePreset[] {
     return [...(this.state.sparsePresetsByRepo[repoId] ?? [])].sort((left, right) =>
@@ -4772,6 +4960,11 @@ export class Store {
     delete this.state.worktreeMeta[worktreeId]
     delete this.state.worktreeLineageById[worktreeId]
     delete this.state.workspaceLineageByChildKey[worktreeWorkspaceKey(worktreeId)]
+    this.state.workspaceSession = removeWorkspaceSessionOwner(
+      this.state.workspaceSession,
+      worktreeId,
+      { advanceTerminalTopologyRevision: true }
+    )!
     this.scheduleSave()
   }
 
@@ -4915,6 +5108,21 @@ export class Store {
           sessionChanged = true
         }
       }
+      if (session.terminalSurfaceTombstonesByPaneKey) {
+        let tombstonesChanged = false
+        const nextTombstones = { ...session.terminalSurfaceTombstonesByPaneKey }
+        for (const [paneKey, tombstone] of Object.entries(nextTombstones)) {
+          if (tombstone.worktreeId !== oldWorktreeId) {
+            continue
+          }
+          nextTombstones[paneKey] = { ...tombstone, worktreeId: newWorktreeId }
+          tombstonesChanged = true
+        }
+        if (tombstonesChanged) {
+          session.terminalSurfaceTombstonesByPaneKey = nextTombstones
+          sessionChanged = true
+        }
+      }
       return sessionChanged
     }
 
@@ -4964,6 +5172,11 @@ export class Store {
     changed = migrateSession(this.state.workspaceSession) || changed
     for (const session of Object.values(this.state.workspaceSessionsByHostId ?? {})) {
       changed = migrateSession(session) || changed
+    }
+    for (const selectionsByWorktree of Object.values(
+      this.state.mobileClientTabSelectionsByDeviceId ?? {}
+    )) {
+      changed = moveKey(selectionsByWorktree) || changed
     }
     const showDotfiles = this.state.ui?.showDotfilesByWorktree
     if (showDotfiles) {
@@ -5502,6 +5715,11 @@ export class Store {
 
   /** Persist a non-'local' host partition; remote hosts skip setLocalWorkspaceSession's local-daemon PTY-binding race guards. */
   private setHostWorkspaceSession(hostId: ExecutionHostId, session: WorkspaceSessionState): void {
+    // Why: each partition owns its topology fence; renderer writes omit it and must rebase locally.
+    session = sanitizeWorkspaceSessionTerminalRetirements(
+      session,
+      this.state.workspaceSessionsByHostId?.[hostId]
+    )
     const pruned = pruneWorkspaceSessionBrowserHistory(
       pruneLocalTerminalScrollbackBuffers(session, this.state.repos)
     )
@@ -5513,12 +5731,13 @@ export class Store {
   }
 
   private setLocalWorkspaceSession(session: PersistedState['workspaceSession']): void {
+    const prior = this.state.workspaceSession
+    session = sanitizeWorkspaceSessionTerminalRetirements(session, prior)
     session = pruneWorkspaceSessionBrowserHistory(
       pruneLocalTerminalScrollbackBuffers(session, this.state.repos)
     )
 
     // Why (Issue #217): merge existing bindings when the incoming binding is empty, so a stale pre-spawn snapshot can't overwrite the durable PTY binding.
-    const prior = this.state.workspaceSession
     const normalized = normalizeWorkspaceSessionPaneIdentities(
       session,
       prior?.terminalLayoutsByTabId
@@ -5793,23 +6012,68 @@ export class Store {
   }
 
   // Why: sync-flush the pty binding before pty:spawn returns to close the spawn/persist SIGKILL race (Issue #217).
-  persistPtyBinding(args: {
-    worktreeId: string
-    tabId: string
-    leafId: string
-    ptyId: string
-    startupCwd?: string
-  }): void {
-    const session = this.state.workspaceSession
-    if (!session) {
-      return
+  persistPtyBinding(
+    args: {
+      worktreeId: string
+      tabId: string
+      leafId: string
+      ptyId: string
+      incarnationId?: string
+      startupCwd?: string
+    },
+    hostId?: string | null
+  ): void {
+    const resolvedHostId = this.resolveHostId(hostId)
+    const session = this.getWorkspaceSession(resolvedHostId)
+    if (resolvedHostId !== LOCAL_EXECUTION_HOST_ID) {
+      this.state.workspaceSessionsByHostId = {
+        ...this.state.workspaceSessionsByHostId,
+        [resolvedHostId]: session
+      }
     }
     const sessionBeforeBinding = cloneWorkspaceSessionState(session)
+    const paneKey = `${args.tabId}:${args.leafId}`
+    let terminalMembershipChanged = false
+    const advanceTopologyAfterMembershipChange = (): void => {
+      const repoId = getRepoIdFromWorktreeId(args.worktreeId)
+      const currentRevision = session.terminalTopologyRevisionByRepoId?.[repoId] ?? 0
+      if (!terminalMembershipChanged || currentRevision <= 0) {
+        return
+      }
+      // Why: a real host-admitted spawn after a retirement must be distinguishable from a stale renderer replay.
+      session.terminalTopologyRevisionByRepoId = {
+        ...session.terminalTopologyRevisionByRepoId,
+        [repoId]: currentRevision + 1
+      }
+    }
+    const restoreSession = (): void => {
+      if (resolvedHostId === LOCAL_EXECUTION_HOST_ID) {
+        this.state.workspaceSession = sessionBeforeBinding
+      } else {
+        this.state.workspaceSessionsByHostId = {
+          ...this.state.workspaceSessionsByHostId,
+          [resolvedHostId]: sessionBeforeBinding
+        }
+      }
+    }
+    if (args.incarnationId) {
+      session.terminalPtyIncarnationsByPaneKey = {
+        ...session.terminalPtyIncarnationsByPaneKey,
+        [paneKey]: args.incarnationId
+      }
+      if (session.terminalSurfaceTombstonesByPaneKey?.[paneKey]) {
+        session.terminalSurfaceTombstonesByPaneKey = {
+          ...session.terminalSurfaceTombstonesByPaneKey
+        }
+        delete session.terminalSurfaceTombstonesByPaneKey[paneKey]
+      }
+    }
     const tabs = session.tabsByWorktree?.[args.worktreeId]
     const tab = tabs?.find((t) => t.id === args.tabId)
     if (tab) {
       tab.ptyId = args.ptyId
     } else {
+      terminalMembershipChanged = true
       // Why: pty:spawn can beat the debounced writer; persist a minimal tab so hydration won't prune the binding as orphaned.
       const nextTabs = [
         ...(tabs ?? []),
@@ -5831,10 +6095,11 @@ export class Store {
     }
     if (!isTerminalLeafId(args.leafId)) {
       // Why: keep legacy renderer-local pane ids out of durable leaf-keyed layout state after the UUID migration.
+      advanceTopologyAfterMembershipChange()
       try {
         this.flushOrThrow()
       } catch (err) {
-        this.state.workspaceSession = sessionBeforeBinding
+        restoreSession()
         throw err
       }
       return
@@ -5842,11 +6107,13 @@ export class Store {
     const layout = session.terminalLayoutsByTabId?.[args.tabId]
     if (layout) {
       if (!layout.root) {
+        terminalMembershipChanged = true
         // Why: createTab can persist an empty layout before TerminalPane mounts; the sync binding still needs a durable root.
         layout.root = { type: 'leaf', leafId: args.leafId }
         layout.activeLeafId = args.leafId
         layout.expandedLeafId = null
       } else if (!layoutContainsLeafId(layout.root, args.leafId)) {
+        terminalMembershipChanged = true
         // Why: splitPane spawns before its snapshot reaches main; add a minimal leaf so a crash can't strand the pane's binding.
         layout.root = {
           type: 'split',
@@ -5864,6 +6131,7 @@ export class Store {
         [args.leafId]: args.ptyId
       }
     } else {
+      terminalMembershipChanged = true
       // Why: first tab spawn — persist a minimal layout so a SIGKILL before the renderer snapshot can't lose ptyIdsByLeafId.
       session.terminalLayoutsByTabId = {
         ...session.terminalLayoutsByTabId,
@@ -5875,10 +6143,11 @@ export class Store {
         }
       }
     }
+    advanceTopologyAfterMembershipChange()
     try {
       this.flushOrThrow()
     } catch (err) {
-      this.state.workspaceSession = sessionBeforeBinding
+      restoreSession()
       throw err
     }
   }
@@ -6243,54 +6512,61 @@ export class Store {
     targetId: string,
     leases: SshRemotePtyLease[]
   ): boolean {
-    const session = this.state.workspaceSession
-    if (!leases?.length || !session) {
+    if (!leases?.length) {
       return false
     }
     let changed = false
-    for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {
-      for (const tab of tabs) {
-        if (
-          tab.ptyId &&
-          leases.some((lease) =>
-            this.sshRemotePtyLeaseMayReferenceBinding(lease, {
-              ptyId: tab.ptyId!,
-              worktreeId,
-              targetId,
-              tabId: tab.id
-            })
-          )
-        ) {
-          tab.ptyId = null
-          changed = true
-        }
-      }
-    }
-    for (const [tabId, layout] of Object.entries(session.terminalLayoutsByTabId ?? {})) {
-      const bindings = layout.ptyIdsByLeafId
-      if (!bindings) {
-        continue
-      }
-      const worktreeId = Object.entries(session.tabsByWorktree ?? {}).find(([, tabs]) =>
-        tabs.some((tab) => tab.id === tabId)
-      )?.[0]
-      const nextBindings = Object.fromEntries(
-        Object.entries(bindings).filter(
-          ([leafId, ptyId]) =>
-            !leases.some((lease) =>
+    const sessions = new Set(
+      [
+        this.state.workspaceSession,
+        this.state.workspaceSessionsByHostId?.[toSshExecutionHostId(targetId)]
+      ].filter((session): session is WorkspaceSessionState => Boolean(session))
+    )
+    for (const session of sessions) {
+      for (const [worktreeId, tabs] of Object.entries(session.tabsByWorktree ?? {})) {
+        for (const tab of tabs) {
+          if (
+            tab.ptyId &&
+            leases.some((lease) =>
               this.sshRemotePtyLeaseMayReferenceBinding(lease, {
-                ptyId,
-                targetId,
+                ptyId: tab.ptyId!,
                 worktreeId,
-                tabId,
-                leafId
+                targetId,
+                tabId: tab.id
               })
             )
+          ) {
+            tab.ptyId = null
+            changed = true
+          }
+        }
+      }
+      for (const [tabId, layout] of Object.entries(session.terminalLayoutsByTabId ?? {})) {
+        const bindings = layout.ptyIdsByLeafId
+        if (!bindings) {
+          continue
+        }
+        const worktreeId = Object.entries(session.tabsByWorktree ?? {}).find(([, tabs]) =>
+          tabs.some((tab) => tab.id === tabId)
+        )?.[0]
+        const nextBindings = Object.fromEntries(
+          Object.entries(bindings).filter(
+            ([leafId, ptyId]) =>
+              !leases.some((lease) =>
+                this.sshRemotePtyLeaseMayReferenceBinding(lease, {
+                  ptyId,
+                  targetId,
+                  worktreeId,
+                  tabId,
+                  leafId
+                })
+              )
+          )
         )
-      )
-      if (Object.keys(nextBindings).length !== Object.keys(bindings).length) {
-        layout.ptyIdsByLeafId = nextBindings
-        changed = true
+        if (Object.keys(nextBindings).length !== Object.keys(bindings).length) {
+          layout.ptyIdsByLeafId = nextBindings
+          changed = true
+        }
       }
     }
     if (changed) {

@@ -13,6 +13,7 @@ import {
 } from '../../shared/workspace-scope'
 import { inspectSetupScriptImportCandidates } from '../../shared/setup-script-imports'
 import { getProjectHostSetupWorktreeMeta } from '../../shared/project-host-setup-projection'
+import { projectResolvedWorktreeLineage } from '../../shared/resolved-worktree-lineage'
 import { deleteWorktreeHistoryDir } from '../terminal-history'
 import type {
   AutomationWorkspaceProvenance,
@@ -738,7 +739,7 @@ function buildDetectedGitWorktrees(
     repo.path,
     ...liveWorktrees.map((worktree) => worktree.path)
   ])
-  return liveWorktrees.map((gitWorktree) => {
+  const detected = liveWorktrees.map((gitWorktree) => {
     const worktreeId = `${repo.id}::${gitWorktree.path}`
     let meta = store.getWorktreeMeta(worktreeId)
     const worktree = mergeWorktree(repo.id, gitWorktree, meta, repo.displayName)
@@ -766,6 +767,7 @@ function buildDetectedGitWorktrees(
       agentScratchWorktreePathMatcher
     })
   })
+  return projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
 }
 
 function stampAndMergeVisibleDetectedWorktree(
@@ -959,7 +961,7 @@ function buildDisconnectedDetectedWorktrees(
     repo.path,
     ...worktrees.map((worktree) => worktree.path)
   ])
-  return worktrees.map((worktree) => {
+  const detected = worktrees.map((worktree) => {
     const meta = store.getWorktreeMeta(worktree.id)
     const detected = toDetectedWorktree({
       repo,
@@ -972,6 +974,7 @@ function buildDisconnectedDetectedWorktrees(
     })
     return applyMetadataFallbackVisibility(detected)
   })
+  return projectResolvedWorktreeLineage(detected, store.getAllWorktreeLineage?.() ?? {})
 }
 
 export function registerWorktreeHandlers(
@@ -1149,7 +1152,10 @@ export function registerWorktreeHandlers(
             repoId: repo.id,
             authoritative: true,
             source: 'git',
-            worktrees: buildFolderDetectedWorktrees(store, repo)
+            worktrees: projectResolvedWorktreeLineage(
+              buildFolderDetectedWorktrees(store, repo),
+              store.getAllWorktreeLineage?.() ?? {}
+            )
           }
         } else if (repo.connectionId) {
           const provider = getSshGitProvider(repo.connectionId)
@@ -2061,6 +2067,14 @@ export function registerWorktreeHandlers(
     }
     const now = Date.now()
     for (let i = 0; i < args.orderedIds.length; i++) {
+      // Why: a sidebar-order snapshot must only reorder worktrees that already
+      // exist — it must never create one. Without this guard a stale id the
+      // renderer still lists (e.g. a removed repo's `${repoId}::${path}`) gets a
+      // fresh worktreeMeta entry minted here, resurrecting an orphan/duplicate
+      // workspace on the next launch. setWorktreeMeta has no repo-existence check.
+      if (!store.getWorktreeMeta(args.orderedIds[i])) {
+        continue
+      }
       // Descending timestamps: first item gets highest sortOrder so b - a sorts first-wins on cold start.
       store.setWorktreeMeta(args.orderedIds[i], { sortOrder: now - i * 1000 })
     }
