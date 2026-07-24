@@ -133,11 +133,60 @@ describe('fdroid app identity helpers', () => {
     expect(metadataYaml).toMatch(/SourceCode:\s*https:\/\/github\.com\/stablyai\/orca/)
     expect(metadataYaml).toMatch(/Repo:\s*https:\/\/github\.com\/stablyai\/orca\.git/)
     expect(metadataYaml).toContain('pnpm install')
-    expect(metadataYaml).toContain('prepare-fdroid-android-build.mjs')
+    // Inlined FOSS prep so Builds.commit can pin the release tag (which may predate packaging helpers).
+    expect(metadataYaml).toContain('npx expo prebuild --platform android --no-install')
+    expect(metadataYaml).toMatch(/sed -i -e '\/signingConfig \/d'/)
+    expect(metadataYaml).toContain('buildFromSource')
     expect(metadataYaml).toContain('assembleRelease')
     expect(metadataYaml).toMatch(/scanignore:[\s\S]*hermesc/)
     expect(metadataYaml).toMatch(/scandelete:[\s\S]*node_modules/)
+    // Recipe executable prebuild steps must not invoke an in-tree packaging helper
+    // that is absent on the pinned release tag (mobile-android-v0.0.32).
+    const prebuildSteps =
+      metadataYaml.match(/prebuild:\n([\s\S]*?)(?:\n    build:|\n\nAutoUpdateMode:)/)?.[1] ?? ''
+    expect(prebuildSteps).not.toMatch(/^\s+-\s+node\s+scripts\//m)
     assertFdroidMetadataAligned(identity, fields)
+  })
+
+  it('pinned Builds.commit is a real git rev that has mobile sources without needing packaging helpers', () => {
+    const metadataYaml = readFileSync(committedMetadataPath, 'utf8')
+    const commitMatch = metadataYaml.match(/^\s+commit:\s*(\S+)\s*$/m)
+    expect(commitMatch?.[1]).toBeTruthy()
+    const commit = commitMatch![1]
+
+    // Resolve the pinned rev (tag or SHA) and confirm mobile app identity files exist there.
+    const resolved = execFileSync('git', ['rev-parse', '--verify', `${commit}^{commit}`], {
+      encoding: 'utf8',
+      cwd: repoRoot
+    }).trim()
+    expect(resolved).toMatch(/^[0-9a-f]{40}$/)
+
+    const appJsonAtCommit = execFileSync('git', ['show', `${commit}:mobile/app.json`], {
+      encoding: 'utf8',
+      cwd: repoRoot
+    })
+    const identityAtCommit = readMobileAndroidAppIdentity(JSON.parse(appJsonAtCommit))
+    expect(identityAtCommit.packageId).toBe('com.stably.orca.mobile')
+    expect(identityAtCommit.versionName).toBe(
+      parseFdroidMetadataVersionFields(metadataYaml).versionName
+    )
+    expect(identityAtCommit.versionCode).toBe(
+      parseFdroidMetadataVersionFields(metadataYaml).versionCode
+    )
+
+    // Packaging helper is optional for the recipe (inlined prebuild); if the recipe ever
+    // reintroduces a tree-path script, that path must exist on the pinned commit.
+    const prebuildBlock =
+      metadataYaml.match(/prebuild:\n([\s\S]*?)(?:\n    build:|\n\nAutoUpdateMode:)/)?.[1] ?? ''
+    const scriptRefs = [...prebuildBlock.matchAll(/\b(?:node|bash|sh)\s+(scripts\/\S+)/g)].map(
+      (match) => match[1]
+    )
+    for (const scriptPath of scriptRefs) {
+      const result = spawnSync('git', ['cat-file', '-e', `${commit}:mobile/${scriptPath}`], {
+        cwd: repoRoot
+      })
+      expect(result.status, `missing ${scriptPath} on commit ${commit}`).toBe(0)
+    }
   })
 
   it('validate-fdroid-metadata.mjs exits 0 for the committed files', () => {

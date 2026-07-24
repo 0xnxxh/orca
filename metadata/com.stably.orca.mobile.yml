@@ -56,12 +56,17 @@ Builds:
       - node_modules/react-native-worklets/android/build.gradle
     scandelete:
       - node_modules
+    # Why: FOSS prep is inlined in this recipe so Builds.commit can pin the release
+    # tag mobile-android-v0.0.32 (that tag predates any in-tree packaging helper).
+    # Same path as CI: pnpm install → expo prebuild → assembleRelease.
     prebuild:
       - corepack prepare pnpm@10.24.0 --activate
       - pnpm install --frozen-lockfile
-      # Mirrors CI: install → expo prebuild → strip signingConfig for F-Droid re-sign.
-      # prepare-fdroid-android-build also enables expo autolinking buildFromSource.
-      - node scripts/prepare-fdroid-android-build.mjs
+      # Prefer compiling RN/Expo Android modules from source on F-Droid builders.
+      - node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));const expo={...(j.expo||{})};const autolinking={...(expo.autolinking||{})};const android={...(autolinking.android||{})};android.buildFromSource=['.*'];autolinking.android=android;expo.autolinking=autolinking;j.expo=expo;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n');"
+      - npx expo prebuild --platform android --no-install
+      # F-Droid re-signs; drop app signingConfig so assembleRelease needs no private keystore.
+      - sed -i -e '/signingConfig /d' android/app/build.gradle
     build:
       - cd android
       - gradle assembleRelease
