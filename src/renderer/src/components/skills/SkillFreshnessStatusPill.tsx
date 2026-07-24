@@ -2,8 +2,11 @@ import { useSkillFreshness } from '@/hooks/useSkillFreshness'
 import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import { IntegrationStatusPill } from '@/components/integration-status-pill'
+import { cn } from '@/lib/utils'
+import { AlertTriangle } from 'lucide-react'
 import {
   getSkillFreshnessDisplayStatus,
+  hasSkillCopyNeedingAttention,
   type SkillFreshnessDisplayStatus
 } from '@/lib/skill-freshness-display-status'
 import { requestSkillFreshnessUpdateDialog } from './skill-freshness-update-dialog'
@@ -53,6 +56,10 @@ export function SkillFreshnessStatusPill({ skillName }: { skillName: string }): 
   // Why: the dialog lists every placement, so Details is offered whenever a placement
   // is what drove the status — an available update, or a copy that blocked one.
   const hasDetails = status === 'update-available' || status === 'needs-attention'
+  // Why: the badge alone can't say which copies are wrong, and the reasons only read
+  // correctly beside the locations they describe. Marking the way in is enough here —
+  // the dialog does the explaining, with every location and cause it knows about.
+  const needsAttention = hasSkillCopyNeedingAttention(inventory, skillName)
   return (
     <span className="inline-flex items-center gap-2">
       {statusPill(status)}
@@ -60,9 +67,10 @@ export function SkillFreshnessStatusPill({ skillName }: { skillName: string }): 
         <Button
           variant="link"
           size="xs"
-          className="h-auto p-0 text-[11px]"
+          className={cn('h-auto gap-1 p-0 text-[11px]', needsAttention && 'text-amber-500')}
           onClick={() => requestSkillFreshnessUpdateDialog()}
         >
+          {needsAttention ? <AlertTriangle className="size-3" /> : null}
           {translate('auto.components.skills.SkillFreshnessStatusPill.details', 'Details')}
         </Button>
       ) : null}

@@ -1,4 +1,7 @@
-import type { SkillFreshnessInventory } from '../../../shared/skill-freshness'
+import {
+  SUPPORTED_GLOBAL_SKILL_TOPOLOGIES,
+  type SkillFreshnessInventory
+} from '../../../shared/skill-freshness'
 
 export type SkillFreshnessDisplayStatus =
   | 'installed'
@@ -34,4 +37,25 @@ export function getSkillFreshnessDisplayStatus(
   // is out of date somewhere the update command cannot reach. Saying "Installed" there
   // reads as all-clear and hides real drift, so that case gets its own attention state.
   return hasBlockedCopy ? 'needs-attention' : 'up-to-date'
+}
+
+/**
+ * Whether a copy needs the user's own hands — it is not current, and running the update
+ * would not resolve it. This is what marks the review affordance as carrying a problem
+ * rather than a routine update, so the badge can stay a badge and the dialog explains.
+ */
+export function hasSkillCopyNeedingAttention(
+  inventory: SkillFreshnessInventory | null,
+  skillName: string
+): boolean {
+  return (inventory?.installations ?? []).some(
+    (installation) =>
+      installation.name === skillName &&
+      installation.status !== 'current' &&
+      // Why: an out-of-date copy the command converges is ordinary work, not a problem.
+      !(
+        SUPPORTED_GLOBAL_SKILL_TOPOLOGIES.has(installation.topology) &&
+        installation.status === 'outdated'
+      )
+  )
 }

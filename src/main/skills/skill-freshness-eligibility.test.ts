@@ -55,14 +55,39 @@ describe('skill freshness name-scoped update eligibility', () => {
     ['current', 'read-only'],
     ['current', 'repo-scope'],
     ['current', 'plugin-cache']
-  ] as const)('poisons a name for a %s placement in %s topology', (status, topology) => {
-    expect(
-      eligibleSkillUpdateNames([
-        placement('orca-cli'),
-        placement('orca-cli', { id: `poison-${status}-${topology}`, status, topology })
-      ])
-    ).toEqual([])
-  })
+  ] as const)(
+    'still updates the canonical copy despite a %s placement in %s topology',
+    (status, topology) => {
+      // Why: `--global` provably never writes these placements, so withholding the
+      // update over one refuses work the command could do to a copy that is never at
+      // stake. The canonical copy converges and the outlier is reported separately.
+      expect(
+        eligibleSkillUpdateNames([
+          placement('orca-cli'),
+          placement('orca-cli', { id: `outlier-${status}-${topology}`, status, topology })
+        ])
+      ).toEqual(['orca-cli'])
+    }
+  )
+
+  it.each(['unrecognized', 'inaccessible', 'newer-known'] as const)(
+    'withholds the update when the convergent copy itself is %s',
+    (status) => {
+      // Why: this is the placement the command writes to, so overwriting it is the
+      // real data-loss case the rail exists to avoid.
+      expect(
+        eligibleSkillUpdateNames([
+          placement('orca-cli', { id: 'blocked-canonical', status }),
+          placement('orca-cli', {
+            id: 'orca-cli-claude',
+            rootId: 'home-claude',
+            topology: 'provider-alias',
+            status: 'outdated'
+          })
+        ])
+      ).toEqual([])
+    }
+  )
 
   it('still updates the canonical copy when a clean standalone duplicate exists', () => {
     // Why: a duplicate no longer omits the whole name — the canonical copy converges
@@ -118,7 +143,9 @@ describe('skill freshness name-scoped update eligibility', () => {
     ).toEqual([])
   })
 
-  it('does not offer an all-current name or let another safe name hide a poisoned one', () => {
+  it('scopes each name independently and leaves an all-current name alone', () => {
+    // Why: a project copy is never written by `--global`, so it does not speak for
+    // the global one — while a name whose convergent copy is current stays unoffered.
     expect(
       eligibleSkillUpdateNames([
         placement('computer-use', { status: 'current' }),
@@ -129,7 +156,7 @@ describe('skill freshness name-scoped update eligibility', () => {
           topology: 'repo-scope'
         })
       ])
-    ).toEqual([])
+    ).toEqual(['orchestration'])
   })
 
   it('builds only an explicit, deterministic global command', () => {

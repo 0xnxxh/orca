@@ -3,7 +3,6 @@ import { Copy, Loader2, RefreshCw, Terminal } from 'lucide-react'
 import { toast } from 'sonner'
 import { IntegrationStatusPill } from '../integration-status-pill'
 import { SkillFreshnessStatusPill } from '../skills/SkillFreshnessStatusPill'
-import { SkillFreshnessAttentionNotice } from '../skills/SkillFreshnessAttentionNotice'
 import { OnboardingInlineCommandTerminal } from '../onboarding/OnboardingInlineCommandTerminal'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
@@ -305,9 +304,6 @@ export function AgentSkillSetupPanel({
         )}
         <div className={cn('max-w-none', hideHeader ? null : 'mt-3')}>
           <p className="text-[13px] leading-snug text-muted-foreground">{description}</p>
-          {installed && freshnessSkillName ? (
-            <SkillFreshnessAttentionNotice skillName={freshnessSkillName} />
-          ) : null}
           {actionRow}
           {actionHint ? <div className="mt-2">{actionHint}</div> : null}
           {!installed && preInstallNotice && preInstallNoticeVisible ? (
