@@ -18,7 +18,9 @@ type WorktreeLinkedPathOptions = {
 // 'link': symlink when APFS clone is unavailable (user-configured shared paths).
 // 'copy': real copy when APFS clone is unavailable (.worktreeinclude paths, which
 // are per-worktree copies by cross-tool convention — edits must not leak back).
-type WorktreeMaterializeMode = 'link' | 'copy'
+// 'share': always symlink (orca.yaml sharedDirectories). An APFS clone would give
+// each worktree an independent node_modules, defeating one-install-serves-all.
+type WorktreeMaterializeMode = 'link' | 'copy' | 'share'
 
 type SafeRelativePathResult =
   | {
@@ -78,7 +80,11 @@ async function createWorktreeLinkedPath(
   // worktree would leak back into the primary checkout (or escape it entirely if
   // the link points outside). Resolve the real source so we copy content.
   const copySource = mode === 'copy' && sourceIsSymbolicLink ? await realpath(source) : source
-  if (options.platform === 'darwin' && (!sourceIsSymbolicLink || mode === 'copy')) {
+  if (
+    mode !== 'share' &&
+    options.platform === 'darwin' &&
+    (!sourceIsSymbolicLink || mode === 'copy')
+  ) {
     try {
       const cloneWorktreePath =
         options.cloneWorktreePath ??
@@ -202,6 +208,19 @@ export async function createWorktreeCopiedPaths(
   options: WorktreeLinkedPathOptions = {}
 ): Promise<void> {
   await materializeWorktreePaths(primaryPath, worktreePath, paths, 'copy', options)
+}
+
+/** Symlink `orca.yaml` `worktree.sharedDirectories` into a freshly-created
+ *  worktree. Unlike createWorktreeLinkedPaths this never APFS clone-copies: a
+ *  clone would give each worktree its own node_modules, and the point of a
+ *  shared directory is that one install serves every worktree. */
+export async function createWorktreeSharedPaths(
+  primaryPath: string,
+  worktreePath: string,
+  paths: readonly string[],
+  options: WorktreeLinkedPathOptions = {}
+): Promise<void> {
+  await materializeWorktreePaths(primaryPath, worktreePath, paths, 'share', options)
 }
 
 /** Create filesystem symlinks from the primary checkout into a freshly-created

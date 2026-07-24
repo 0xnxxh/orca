@@ -21,6 +21,40 @@ export const ORCA_VM_RECIPE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/
 export const ORCA_VM_RECIPE_ID_RULE =
   'Use 1-64 lowercase letters, numbers, dots, underscores, or hyphens, starting with a letter or number.'
 
+// Why: bound the work one repo file can request; entries beyond this are ignored.
+const MAX_SHARED_DIRECTORIES = 100
+
+/** Normalize `worktree.sharedDirectories` into deduped repo-root-relative paths.
+ *  `\` becomes `/`, a `./` prefix and trailing `/` are stripped. Absolute paths,
+ *  `..` traversal and `.git` are dropped here so callers get only safe entries. */
+function normalizeSharedDirectories(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seen = new Set<string>()
+  for (const entry of value.slice(0, MAX_SHARED_DIRECTORIES)) {
+    const raw = asTrimmedString(entry)
+    if (!raw) {
+      continue
+    }
+    const normalized = raw.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '')
+    const segments = normalized.split('/')
+    if (
+      !normalized ||
+      normalized.startsWith('/') ||
+      /^[a-zA-Z]:/.test(normalized) ||
+      segments.includes('..') ||
+      segments.includes('') ||
+      segments[0] === '.git'
+    ) {
+      continue
+    }
+    seen.add(normalized)
+  }
+  return Array.from(seen)
+}
+
 function normalizeDefaultTabs(value: unknown): OrcaDefaultTabTemplate[] {
   if (!Array.isArray(value)) {
     return []
@@ -146,6 +180,10 @@ export function parseOrcaYaml(content: string): OrcaHooks | null {
   const environmentRecipeParse = normalizeVmRecipes(record.environmentRecipes)
   const environmentRecipes = environmentRecipeParse.recipes
   const environmentRecipeDiagnostics = environmentRecipeParse.diagnostics
+  const worktreeRecord = asRecord(record.worktree)
+  const sharedDirectories = worktreeRecord
+    ? normalizeSharedDirectories(worktreeRecord.sharedDirectories)
+    : []
 
   if (
     !setup &&
@@ -153,7 +191,8 @@ export function parseOrcaYaml(content: string): OrcaHooks | null {
     !issueCommand &&
     defaultTabs.length === 0 &&
     environmentRecipes.length === 0 &&
-    environmentRecipeDiagnostics.length === 0
+    environmentRecipeDiagnostics.length === 0 &&
+    sharedDirectories.length === 0
   ) {
     return null
   }
@@ -166,6 +205,7 @@ export function parseOrcaYaml(content: string): OrcaHooks | null {
     ...(issueCommand ? { issueCommand } : {}),
     ...(defaultTabs.length > 0 ? { defaultTabs } : {}),
     ...(environmentRecipes.length > 0 ? { environmentRecipes } : {}),
-    ...(environmentRecipeDiagnostics.length > 0 ? { environmentRecipeDiagnostics } : {})
+    ...(environmentRecipeDiagnostics.length > 0 ? { environmentRecipeDiagnostics } : {}),
+    ...(sharedDirectories.length > 0 ? { worktree: { sharedDirectories } } : {})
   }
 }

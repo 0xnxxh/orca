@@ -789,10 +789,12 @@ import { listRepoWorktrees } from '../repo-worktrees'
 import {
   createWorktreeCopiedPaths,
   createWorktreeLinkedPaths,
+  createWorktreeSharedPaths,
   findExistingWorktreeSymlinkPaths,
   removeWorktreeLinkedPaths
 } from '../ipc/worktree-symlinks'
 import { resolveWorktreeIncludePaths } from '../git/worktree-include-file'
+import { resolveWorktreeSharedDirectories } from '../git/worktree-shared-directories'
 import { deleteWorktreeHistoryDir } from '../terminal-history'
 import {
   cleanupUnusedWorktreePushTargetRemote,
@@ -18922,6 +18924,16 @@ export class OrcaRuntimeService {
     const symlinkPaths = repo.symlinkPaths ?? []
     if (symlinkPaths.length > 0) {
       await createWorktreeLinkedPaths(repo.path, created.path, symlinkPaths)
+    }
+
+    // Why: project-level `orca.yaml` shared directories add to (never replace) the
+    // per-user setting, so a repo's shared dirs reach every teammate (issue #10451).
+    const sharedDirectories = await resolveWorktreeSharedDirectories(
+      repo.path,
+      localWorktreeGitOptions
+    )
+    if (sharedDirectories.length > 0) {
+      await createWorktreeSharedPaths(repo.path, created.path, sharedDirectories)
     }
 
     // Why: project-level `.worktreeinclude` travels with the repo (issue #7549); copy semantics
