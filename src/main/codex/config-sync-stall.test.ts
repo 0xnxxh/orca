@@ -107,6 +107,12 @@ describe('reportCodexConfigSyncOutcome', () => {
     resetCodexConfigSyncStallLatchForTests()
   })
 
+  // Why: a failing assertion skips an inline mockRestore, and a leaked
+  // console.warn spy makes every later case in this block fail spuriously.
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('logs a stall once per episode rather than on every sync pass', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     writeFileSync(runtimeConfigPath(), 'model = "runtime-model"\n', 'utf-8')
@@ -116,10 +122,9 @@ describe('reportCodexConfigSyncOutcome', () => {
     }
 
     expect(warn.mock.calls.filter((call) => String(call[0]).includes('stalled'))).toHaveLength(1)
-    warn.mockRestore()
   })
 
-  it('logs the recovery once the source config returns', () => {
+  it('logs once when the stall clears after the source config returns', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     writeFileSync(runtimeConfigPath(), 'model = "runtime-model"\n', 'utf-8')
     syncSystemConfigIntoManagedCodexHome(homes)
@@ -128,8 +133,41 @@ describe('reportCodexConfigSyncOutcome', () => {
     syncSystemConfigIntoManagedCodexHome(homes)
     syncSystemConfigIntoManagedCodexHome(homes)
 
-    expect(warn.mock.calls.filter((call) => String(call[0]).includes('recovered'))).toHaveLength(1)
-    warn.mockRestore()
+    expect(
+      warn.mock.calls.filter((call) => String(call[0]).includes('stall cleared'))
+    ).toHaveLength(1)
+  })
+
+  it('latches an unreadable source instead of logging the raw failure every pass', () => {
+    // Why: an unreadable source throws out of the mirror, so before the catch
+    // path reported it this stall logged the generic failure on every launch
+    // and quota poll and never surfaced its reason.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    writeFileSync(runtimeConfigPath(), 'model = "runtime-model"\n', 'utf-8')
+    mkdirSync(systemConfigPath(), { recursive: true })
+
+    for (let pass = 0; pass < 3; pass += 1) {
+      syncSystemConfigIntoManagedCodexHome(homes)
+    }
+
+    const stallLogs = warn.mock.calls.filter((call) => String(call[0]).includes('stalled'))
+    expect(stallLogs).toHaveLength(1)
+    expect(String(stallLogs[0]?.[0])).toContain('unreadable-source')
+  })
+
+  it('clears a stall without claiming the source became readable', () => {
+    // Why: a removed runtime config also reads as synced, so "readable again"
+    // would be a false claim about a source that is still gone.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    writeFileSync(runtimeConfigPath(), 'model = "runtime-model"\n', 'utf-8')
+    syncSystemConfigIntoManagedCodexHome(homes)
+
+    rmSync(runtimeConfigPath())
+    syncSystemConfigIntoManagedCodexHome(homes)
+
+    const cleared = warn.mock.calls.filter((call) => String(call[0]).includes('stall cleared'))
+    expect(cleared).toHaveLength(1)
+    expect(String(cleared[0]?.[0])).not.toContain('readable again')
   })
 
   it('logs again when the stall reason changes', () => {
@@ -143,6 +181,5 @@ describe('reportCodexConfigSyncOutcome', () => {
     const stallLogs = warn.mock.calls.filter((call) => String(call[0]).includes('stalled'))
     expect(stallLogs).toHaveLength(2)
     expect(String(stallLogs[1]?.[0])).toContain('blank-source')
-    warn.mockRestore()
   })
 })

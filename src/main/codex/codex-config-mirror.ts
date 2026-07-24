@@ -46,7 +46,11 @@ export function syncSystemConfigIntoManagedCodexHome(
   try {
     mirrorResult = syncSystemConfigIntoManagedCodexHomeUnsafe(homes, promotionPlan)
   } catch (error) {
-    console.warn('[codex-config] Failed to mirror system Codex config:', error)
+    // Why: an unreadable source throws out of the mirror, so reporting only on
+    // the success path would leave that stall latch-less — logging the generic
+    // failure on every launch and quota poll while the surfaced reason never
+    // reaches the user.
+    reportCodexConfigSyncOutcome(homes.runtimeHomePath, getCodexConfigSyncStatus(homes), error)
     return
   }
   // Why: report from the same pass that decided, so the surfaced status can
