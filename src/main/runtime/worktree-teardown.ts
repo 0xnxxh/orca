@@ -237,11 +237,7 @@ async function sweepProviderByPrefix(
   failClosed = false
 ): Promise<number> {
   const prefix = `${worktreeId}@@`
-  // Why (#10252): the cwd fallback only proves ownership when the filesystem path
-  // is the *whole* worktree path. A folder-workspace instance strips its
-  // `::workspace:<uuid>` suffix to a checkout dir shared with sibling instances,
-  // so leave the fallback unset whenever stripping shortened the path — else
-  // deleting one instance would sweep the others.
+  // Folder-workspace instances share a path, so cwd alone cannot prove ownership.
   const fullWorktreePath = splitWorktreeId(worktreeId)?.worktreePath
   const cwdFallbackPath =
     splitWorktreeIdForFilesystem(worktreeId)?.worktreePath === fullWorktreePath
