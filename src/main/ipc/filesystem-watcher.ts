@@ -900,6 +900,13 @@ const desiredRemoteWatchers = new Map<
   string,
   { connectionId: string; worktreePath: string; listeners: Map<number, WebContents> }
 >()
+// Why: provider registration only fires on reconnect, so a watch that dies while the SSH link stays
+// healthy (remote OOM, inotify/fd exhaustion, relay watcher killed) has no re-arm trigger at all
+// once the fast window gives up. Backoff keeps the recovery attempt without the 1s storm.
+const dormantRemoteWatchers = new Map<
+  string,
+  { delayMs: number; timer: ReturnType<typeof setTimeout> }
+>()
 const loggedUnavailableRemoteWatchers = new Set<string>()
 const pendingRemoteWatcherRetries = new Map<string, ReturnType<typeof setTimeout>>()
 const pendingRemoteWatcherRetryListeners = new Map<
@@ -917,6 +924,10 @@ let remoteWatcherLifecycleGeneration = 0
 let unsubscribeFromProviderRegistrations: (() => void) | null = null
 const REMOTE_WATCH_RETRY_MS = 1_000
 const REMOTE_WATCH_RETRY_TIMEOUT_MS = 60_000
+// Why: doubling from a minute to a half-hour ceiling costs a permanently broken remote ~7 fs.watch
+// calls in the first hour and 2/hour after, which a flapping link can absorb.
+const REMOTE_WATCH_DORMANT_RETRY_MS = 60_000
+const REMOTE_WATCH_DORMANT_RETRY_MAX_MS = 30 * 60_000
 
 export async function closeRemoteWatcherForWorktreePath(
   connectionId: string,
@@ -948,6 +959,8 @@ export async function closeRemoteWatcherForWorktreePath(
     pendingRemoteWatcherRetries.delete(key)
     pendingRemoteWatcherRetryListeners.delete(key)
   }
+  // Why: removal is deliberate — a backoff firing mid-removal would re-watch the path being deleted.
+  clearDormantRemoteWatcher(key)
   const inFlight = inFlightRemoteInstalls.get(key)
   if (inFlight) {
     inFlight.listeners.clear()
@@ -996,6 +1009,7 @@ export function forgetRemoteWatcherRemovalSnapshot(
   // Why: the worktree is gone — keeping the intent lets a reconnect landing before the renderer's
   // unwatch re-watch a deleted path (60s of retries against the host, then a bogus overflow).
   desiredRemoteWatchers.delete(key)
+  clearDormantRemoteWatcher(key)
 }
 
 function addInFlightRemoteInstallListener(
@@ -1307,6 +1321,8 @@ function scheduleRemoteWatcherRetry(
         events: [{ kind: 'overflow', absolutePath: worktreePath }]
       } satisfies FsChangedPayload)
     }
+    // Why: overflow only refreshes once — without this the watch stays dead until the app restarts.
+    scheduleDormantRemoteWatcherRearm(connectionId, worktreePath)
     return
   }
 
@@ -1472,7 +1488,98 @@ function forgetDesiredRemoteWatcher(key: string, senderId: number): void {
   desired.listeners.delete(senderId)
   if (desired.listeners.size === 0) {
     desiredRemoteWatchers.delete(key)
+    clearDormantRemoteWatcher(key)
   }
+}
+
+function clearDormantRemoteWatcher(key: string): void {
+  const dormant = dormantRemoteWatchers.get(key)
+  if (!dormant) {
+    return
+  }
+  clearTimeout(dormant.timer)
+  dormantRemoteWatchers.delete(key)
+}
+
+function scheduleDormantRemoteWatcherRearm(
+  connectionId: string,
+  worktreePath: string,
+  delayMs = REMOTE_WATCH_DORMANT_RETRY_MS
+): void {
+  const key = remoteWatcherKey(connectionId, worktreePath)
+  if (remoteWatchersClosed || !desiredRemoteWatchers.has(key) || dormantRemoteWatchers.has(key)) {
+    return
+  }
+  const timer = setTimeout(() => {
+    dormantRemoteWatchers.delete(key)
+    void rearmDormantRemoteWatcher(key, connectionId, worktreePath, delayMs)
+  }, delayMs)
+  // Why: a half-hour timer shouldn't be what keeps the process alive at quit.
+  timer.unref?.()
+  dormantRemoteWatchers.set(key, { delayMs, timer })
+}
+
+async function rearmDormantRemoteWatcher(
+  key: string,
+  connectionId: string,
+  worktreePath: string,
+  delayMs: number
+): Promise<void> {
+  const desired = desiredRemoteWatchers.get(key)
+  if (remoteWatchersClosed || !desired) {
+    return
+  }
+  for (const [senderId, sender] of Array.from(desired.listeners)) {
+    if (sender.isDestroyed()) {
+      desired.listeners.delete(senderId)
+    }
+  }
+  if (desired.listeners.size === 0) {
+    desiredRemoteWatchers.delete(key)
+    return
+  }
+  // Why: a live watch or an in-flight fast retry already owns this key; installing again would
+  // clobber the entry the running watch reads its listeners from.
+  if (remoteWatchers.has(key) || pendingRemoteWatcherRetries.has(key)) {
+    return
+  }
+  // Why: no provider means the connection itself is down, and its registration re-arms for free —
+  // polling would only add wire traffic to a link that is already being rebuilt.
+  if (!getSshFilesystemProvider(connectionId)) {
+    return
+  }
+
+  const listeners = Array.from(desired.listeners.values())
+  let results: RemoteWatcherInstallResult[]
+  try {
+    results = await Promise.all(
+      listeners.map((listener) => installRemoteWatcher(listener, connectionId, worktreePath))
+    )
+  } catch (error) {
+    if (isWatcherRemovalInProgressError(error)) {
+      // Why: removal owns the key now and either forgets the intent or restores the watch itself.
+      return
+    }
+    scheduleDormantRemoteWatcherRearm(connectionId, worktreePath, nextDormantDelayMs(delayMs))
+    return
+  }
+  for (const [index, listener] of listeners.entries()) {
+    if (results[index] !== 'installed' || listener.isDestroyed()) {
+      continue
+    }
+    listener.send('fs:changed', {
+      worktreePath,
+      events: [{ kind: 'overflow', absolutePath: worktreePath }]
+    } satisfies FsChangedPayload)
+  }
+  // Why: 'cancelled' means shutdown or the last listener left, so only 'unavailable' stays dormant.
+  if (results.some((result) => result === 'unavailable')) {
+    scheduleDormantRemoteWatcherRearm(connectionId, worktreePath, nextDormantDelayMs(delayMs))
+  }
+}
+
+function nextDormantDelayMs(delayMs: number): number {
+  return Math.min(delayMs * 2, REMOTE_WATCH_DORMANT_RETRY_MAX_MS)
 }
 
 /**
@@ -1518,6 +1625,8 @@ function reinstallRemoteWatchersForConnection(connectionId: string): void {
       pendingRemoteWatcherRetries.delete(key)
       pendingRemoteWatcherRetryListeners.delete(key)
     }
+    // Why: this reinstall supersedes the pending backoff; leaving it armed double-installs the key.
+    clearDormantRemoteWatcher(key)
     loggedUnavailableRemoteWatchers.delete(key)
 
     const listeners = Array.from(desired.listeners.values())
@@ -1592,6 +1701,10 @@ export async function closeAllWatchers(): Promise<void> {
   }
   pendingRemoteWatcherRetries.clear()
   pendingRemoteWatcherRetryListeners.clear()
+  for (const dormant of dormantRemoteWatchers.values()) {
+    clearTimeout(dormant.timer)
+  }
+  dormantRemoteWatchers.clear()
   loggedUnavailableRemoteWatchers.clear()
   // Why: latch both subsystems shut so late installs can't register; generation bumps reject older-lifecycle waiters.
   remoteWatchersClosed = true
