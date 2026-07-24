@@ -66,7 +66,9 @@ describe('firesNativePasteEvent', () => {
     expect(
       firesNativePasteEvent(makeKeyEvent({ key: 'v', ctrlKey: true, shiftKey: true }), false)
     ).toBe(true)
-    expect(firesNativePasteEvent(makeKeyEvent({ key: 'Insert', shiftKey: true }), false)).toBe(true)
+    expect(
+      firesNativePasteEvent(makeKeyEvent({ key: 'Insert', shiftKey: true }), false)
+    ).toBe(true)
   })
 
   it('does not treat a remapped non-clipboard chord as a native paste event', () => {

@@ -185,6 +185,11 @@ describe('useIssueMetadata Linear hooks', () => {
     await flushEffects()
 
     expect(linearMocks.linearTeamStates).toHaveBeenCalledTimes(2)
-    expect(states.map((s) => s.id).sort()).toEqual(['be-done', 'be-todo', 'fe-review', 'fe-todo'])
+    expect(states.map((s) => s.id).sort()).toEqual([
+      'be-done',
+      'be-todo',
+      'fe-review',
+      'fe-todo'
+    ])
   })
 })
