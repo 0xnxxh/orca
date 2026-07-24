@@ -87,6 +87,7 @@ type ProbeProps = {
   gitStatusByWorktree?: Record<string, GitStatusEntry[]>
 }
 
+const authorizeExternalPath = vi.fn()
 let latestFileContents: Record<string, FileContent> = {}
 let latestDiffContents: Record<string, DiffContent> = {}
 let latestReloadContent: (file: OpenFile) => void = () => {}
@@ -130,6 +131,9 @@ describe('useEditorPanelContentState', () => {
   beforeEach(() => {
     latestFileContents = {}
     latestDiffContents = {}
+    authorizeExternalPath.mockReset()
+    authorizeExternalPath.mockResolvedValue(undefined)
+    ;(window as unknown as { api: unknown }).api = { fs: { authorizeExternalPath } }
     mocks.readRuntimeFileContent.mockReset()
     mocks.getRuntimeGitDiff.mockReset()
     mocks.getRuntimeGitBranchDiff.mockReset()
@@ -224,6 +228,88 @@ describe('useEditorPanelContentState', () => {
         expectedExternalSshTargetId: 'ssh-1'
       })
     )
+  })
+
+  it('loads an unstamped external SSH-host tab through the resolved connection', async () => {
+    const activeFile = createOpenFile({
+      id: '/work/reports/audit.md',
+      filePath: '/work/reports/audit.md',
+      relativePath: '/work/reports/audit.md',
+      worktreeId: 'repo-ssh::/work/demo-project'
+    })
+    mocks.getConnectionIdForFile.mockReturnValue('ssh-1')
+    mocks.readRuntimeFileContent.mockResolvedValue({ content: '# remote', isBinary: false })
+
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(<HookProbe activeFile={activeFile} openFiles={[activeFile]} />)
+    })
+
+    await vi.waitFor(() => expect(latestFileContents[activeFile.id]?.content).toBe('# remote'))
+    // Why: the client-local grant must not be requested for a remote-owned path.
+    expect(authorizeExternalPath).not.toHaveBeenCalled()
+    expect(mocks.readRuntimeFileContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: '/work/reports/audit.md',
+        connectionId: 'ssh-1',
+        expectedExternalSshTargetId: undefined
+      })
+    )
+  })
+
+  it('re-authorizes a client-local external tab before reading it', async () => {
+    const activeFile = createOpenFile({
+      id: '/Users/me/notes/audit.md',
+      filePath: '/Users/me/notes/audit.md',
+      relativePath: '/Users/me/notes/audit.md',
+      worktreeId: 'repo-local::/Users/me/project'
+    })
+    mocks.getConnectionIdForFile.mockReturnValue(undefined)
+    mocks.readRuntimeFileContent.mockResolvedValue({ content: '# local', isBinary: false })
+
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(<HookProbe activeFile={activeFile} openFiles={[activeFile]} />)
+    })
+
+    await vi.waitFor(() => expect(latestFileContents[activeFile.id]?.content).toBe('# local'))
+    expect(authorizeExternalPath).toHaveBeenCalledWith({ targetPath: '/Users/me/notes/audit.md' })
+  })
+
+  it('rejects an unstamped external tab in a remote runtime workspace', async () => {
+    const activeFile = createOpenFile({
+      id: '/work/reports/audit.md',
+      filePath: '/work/reports/audit.md',
+      relativePath: '/work/reports/audit.md',
+      worktreeId: 'repo-runtime::/work/demo-project'
+    })
+    mocks.getConnectionIdForFile.mockReturnValue(undefined)
+    mocks.getState.mockReturnValue({
+      settings: { activeRuntimeEnvironmentId: 'runtime-1' },
+      openFiles: [],
+      setLastKnownDiskSignature: vi.fn()
+    })
+
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+
+    await act(async () => {
+      root?.render(<HookProbe activeFile={activeFile} openFiles={[activeFile]} />)
+    })
+
+    await vi.waitFor(() =>
+      expect(latestFileContents[activeFile.id]?.loadError).toBe(
+        'External local files are not available for remote workspaces.'
+      )
+    )
+    expect(mocks.readRuntimeFileContent).not.toHaveBeenCalled()
   })
 
   it('rejects an external SSH-host tab after its target owner changes', async () => {

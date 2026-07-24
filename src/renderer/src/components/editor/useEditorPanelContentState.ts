@@ -149,18 +149,17 @@ export function useEditorPanelContentState({
           throw new Error(WORKTREE_OWNER_NOT_READY_ERROR)
         }
         if (restoredOpenFile?.filePath === filePath && restoredOpenFile.relativePath === filePath) {
-          const externalSshTargetId = restoredOpenFile.externalSshTargetId?.trim()
-          if (
-            !externalSshTargetId &&
-            (readSettings?.activeRuntimeEnvironmentId?.trim() || connectionId)
-          ) {
-            // Why: restored external-file tabs contain client-local absolute
-            // paths. Remote runtime and SSH workspaces cannot read those paths
-            // without an explicit upload/import flow.
+          // Why: an out-of-worktree absolute path in an SSH workspace belongs to the
+          // remote host, so the resolved connection owns it even when the tab predates
+          // (or was opened outside) the terminal-link path that stamps the target id.
+          const externalSshOwnerId = restoredOpenFile.externalSshTargetId?.trim() || connectionId
+          if (!externalSshOwnerId && readSettings?.activeRuntimeEnvironmentId?.trim()) {
+            // Why: runtime file RPCs are worktree-scoped, so a client-local absolute
+            // path has no route into a remote runtime workspace.
             throw new Error('External local files are not available for remote workspaces.')
           }
-          if (!externalSshTargetId) {
-            // Why: restored external-file tabs need their main-process path grant
+          if (!externalSshOwnerId) {
+            // Why: client-local external tabs need their main-process path grant
             // refreshed because that authorization is only held in memory.
             await window.api.fs.authorizeExternalPath({ targetPath: filePath })
           }
