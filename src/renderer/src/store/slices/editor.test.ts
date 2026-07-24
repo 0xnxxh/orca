@@ -629,6 +629,25 @@ describe('createEditorSlice openDiff', () => {
     expect(store.getState().openFiles[0]?.fileContentReloadNonce).toBe(2)
   })
 
+  it('pins an existing external tab when it is reopened from its SSH host', () => {
+    const store = createEditorStore()
+    const file = {
+      filePath: '/tmp/ssh-preview.png',
+      relativePath: '/tmp/ssh-preview.png',
+      worktreeId: 'wt-1',
+      language: 'png',
+      mode: 'edit' as const
+    }
+
+    store.getState().openFile(file)
+    expect(store.getState().openFiles[0]?.externalSshTargetId).toBeUndefined()
+
+    store.getState().openFile({ ...file, externalSshTargetId: 'ssh-1' })
+
+    expect(store.getState().openFiles).toHaveLength(1)
+    expect(store.getState().openFiles[0]?.externalSshTargetId).toBe('ssh-1')
+  })
+
   it('does not bump fileContentReloadNonce when a dirty file is re-opened', () => {
     const store = createEditorStore()
 
@@ -4887,5 +4906,31 @@ describe('read-only editor tabs (AI Vault View Log)', () => {
     )
     expect(restored?.pendingDiskBaselineVerification).toBeUndefined()
     expect(store.getState().editorDrafts[LOG_PATH]).toBeUndefined()
+  })
+
+  it('restores the SSH target that owns an external host file', () => {
+    const store = createEditorStore()
+    store.setState({
+      worktreesByRepo: { 'repo-1': [{ id: 'wt-1' }] },
+      folderWorkspaces: []
+    } as never)
+
+    store.getState().hydrateEditorSession({
+      openFilesByWorktree: {
+        'wt-1': [
+          {
+            filePath: '/tmp/ssh-preview.png',
+            relativePath: '/tmp/ssh-preview.png',
+            worktreeId: 'wt-1',
+            language: 'png',
+            externalSshTargetId: 'ssh-1'
+          }
+        ]
+      }
+    } as never)
+
+    expect(store.getState().openFiles[0]).toEqual(
+      expect.objectContaining({ externalSshTargetId: 'ssh-1' })
+    )
   })
 })
