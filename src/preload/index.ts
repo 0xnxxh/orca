@@ -11,6 +11,7 @@ import type {
 } from '../shared/terminal-preview'
 import type { CliInstallStatus } from '../shared/cli-install-types'
 import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
+import type { CodexConfigSyncStatus } from '../shared/codex-config-sync-types'
 import type { TerminalPaneSplitSource } from '../shared/feature-education-telemetry'
 import type { ProjectExecutionRuntimeResolution } from '../shared/project-execution-runtime'
 import type { StartupCommandDelivery } from '../shared/codex-startup-delivery'
@@ -1951,6 +1952,8 @@ const api = {
       ipcRenderer.invoke('agentHooks:openClaudeStatus'),
     codexStatus: (): Promise<AgentHookInstallStatus> =>
       ipcRenderer.invoke('agentHooks:codexStatus'),
+    codexConfigSyncStatus: (): Promise<CodexConfigSyncStatus> =>
+      ipcRenderer.invoke('codexConfigSync:status'),
     geminiStatus: (): Promise<AgentHookInstallStatus> =>
       ipcRenderer.invoke('agentHooks:geminiStatus'),
     antigravityStatus: (): Promise<AgentHookInstallStatus> =>

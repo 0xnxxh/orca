@@ -2708,6 +2708,10 @@ function createAgentHooksApi(): NonNullable<Partial<PreloadApi>['agentHooks']> {
       detail: 'Agent hook status is only available on the Orca server.'
     } as const)
   return {
+    // Why: the desktop derives this from the host filesystem, which the web
+    // client has no view of; reporting synced keeps the warning banner silent.
+    codexConfigSyncStatus: () =>
+      Promise.resolve({ state: 'synced', reason: null, systemConfigPath: '' } as const),
     claudeStatus: () => status('claude'),
     openClaudeStatus: () => status('openclaude'),
     codexStatus: () => status('codex'),

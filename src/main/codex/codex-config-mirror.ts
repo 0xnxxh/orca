@@ -13,6 +13,7 @@ import {
   type CodexSettingsPromotionPlan
 } from './config-settings-promotion'
 import { readCodexSettingsBaseline } from './config-settings-baseline'
+import { getCodexConfigSyncStatus, reportCodexConfigSyncOutcome } from './config-sync-stall'
 import { preserveRuntimeConflictValues } from './codex-config-settings-preservation'
 import {
   deduplicateProjectTomlSections,
@@ -48,6 +49,9 @@ export function syncSystemConfigIntoManagedCodexHome(
     console.warn('[codex-config] Failed to mirror system Codex config:', error)
     return
   }
+  // Why: report from the same pass that decided, so the surfaced status can
+  // never disagree with what the mirror actually did.
+  reportCodexConfigSyncOutcome(homes.runtimeHomePath, getCodexConfigSyncStatus(homes))
   if (mirrorResult.status === 'skipped-missing-source') {
     // Why: advancing an existing baseline would mark the unmirrored runtime
     // change as promoted, so it could never retry once the source reappears.

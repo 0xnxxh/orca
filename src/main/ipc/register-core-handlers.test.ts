@@ -53,6 +53,7 @@ const {
   registerGitLabHandlersMock,
   registerHostedReviewHandlersMock,
   registerExportHandlersMock,
+  registerCodexConfigSyncHandlersMock,
   registerOnboardingHandlersMock,
   registerDashboardPopoutHandlersMock,
   registerTerminalPreviewHandlersMock,
@@ -117,6 +118,7 @@ const {
   registerGitLabHandlersMock: vi.fn(),
   registerHostedReviewHandlersMock: vi.fn(),
   registerExportHandlersMock: vi.fn(),
+  registerCodexConfigSyncHandlersMock: vi.fn(),
   registerOnboardingHandlersMock: vi.fn(),
   registerDashboardPopoutHandlersMock: vi.fn(),
   registerTerminalPreviewHandlersMock: vi.fn(),
@@ -142,6 +144,10 @@ vi.mock('../../shared/runtime-environment-store', () => ({
 
 vi.mock('./runtime-environment-transport-routing', () => ({
   callRuntimeEnvironment: callRuntimeEnvironmentMock
+}))
+
+vi.mock('./codex-config-sync', () => ({
+  registerCodexConfigSyncHandlers: registerCodexConfigSyncHandlersMock
 }))
 
 vi.mock('./onboarding', () => ({

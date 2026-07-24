@@ -313,6 +313,7 @@ import type { BrowserSetAnnotationViewportBridgeArgs } from '../shared/browser-a
 import type { CliInstallStatus } from '../shared/cli-install-types'
 import type { E2EConfig } from '../shared/e2e-config'
 import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
+import type { CodexConfigSyncStatus } from '../shared/codex-config-sync-types'
 import type {
   AgentStatusClearIpcPayload,
   AgentStatusIpcPayload,
@@ -2214,6 +2215,7 @@ export type PreloadApi = {
     claudeStatus: () => Promise<AgentHookInstallStatus>
     openClaudeStatus: () => Promise<AgentHookInstallStatus>
     codexStatus: () => Promise<AgentHookInstallStatus>
+    codexConfigSyncStatus: () => Promise<CodexConfigSyncStatus>
     geminiStatus: () => Promise<AgentHookInstallStatus>
     antigravityStatus: () => Promise<AgentHookInstallStatus>
     ampStatus: () => Promise<AgentHookInstallStatus>
