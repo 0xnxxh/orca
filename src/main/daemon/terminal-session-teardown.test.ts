@@ -13,6 +13,7 @@ function createPlainShellSession(overrides: Partial<Session> = {}): Session {
     pid: 4242,
     isAlive: true,
     forceKillAndWaitForExit: vi.fn(async () => {}),
+    beginTermination: vi.fn(() => true),
     kill: vi.fn(),
     ...overrides
   } as unknown as Session
@@ -55,6 +56,23 @@ describe('TerminalSessionTeardown plain-shell teardown', () => {
     // The sweep owns the taskkill; the killRoot callback is a no-op so force-kill drives exit.
     const killRoot = killWithDescendantSweepMock.mock.calls[0][1] as () => void
     expect(() => killRoot()).not.toThrow()
+  })
+
+  it('win32 immediate kill claims termination before awaiting the sweep', async () => {
+    // Why: createOrAttach rejects a doomed plain shell only via isTerminating, so the claim
+    // must land before the taskkill await or an attach can bind a pane to a dying session.
+    setPlatform('win32')
+    const session = createPlainShellSession()
+    const beginTermination = session.beginTermination as unknown as ReturnType<typeof vi.fn>
+    let claimedBeforeSweep = false
+    killWithDescendantSweepMock.mockImplementation(async () => {
+      claimedBeforeSweep = beginTermination.mock.calls.length === 1
+    })
+    const teardown = new TerminalSessionTeardown(new Map([['s1', session]]))
+
+    await teardown.killSession('s1', session, true)
+
+    expect(claimedBeforeSweep).toBe(true)
   })
 
   it('win32 sweep ownsRoot guard requires the live session to still own the id', async () => {

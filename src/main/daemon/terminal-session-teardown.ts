@@ -55,6 +55,9 @@ export class TerminalSessionTeardown {
    */
   private async forceKillPlainShellSession(sessionId: string, session: Session): Promise<void> {
     if (process.platform === 'win32') {
+      // Why: forceKillAndWaitForExit claims termination synchronously; awaiting the sweep
+      // ahead of it would leave attach open on a doomed session for the taskkill's duration.
+      session.beginTermination()
       await killWithDescendantSweep(session.pid, () => {}, {
         // Why: the descendant tree is only ours while this Session still owns the live root PID.
         ownsRoot: () => this.sessions.get(sessionId) === session && session.isAlive
