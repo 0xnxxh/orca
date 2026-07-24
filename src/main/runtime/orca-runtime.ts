@@ -509,7 +509,12 @@ import {
 } from '../github/client'
 import type { GitHubPRBranchLookupOptions } from '../github/client'
 import { resolveGitHubPrStartPoint } from '../github/pr-start-point'
-import { fetchPrHeadTrackingRef } from '../github/pr-head-tracking-ref'
+import {
+  fetchGitHubPullRequestHeadRef,
+  fetchPrHeadTrackingRef
+} from '../github/pr-head-tracking-ref'
+import { gitlabMergeRequestHeadLocalRef } from '../../shared/review-head-tracking-ref'
+import { pickPreferredGitRemote } from '../../shared/preferred-git-remote'
 import { getWorkItemDetails, getPRFileContents } from '../github/work-item-details'
 import { getRateLimit } from '../github/rate-limit'
 import {
@@ -20013,33 +20018,25 @@ export class OrcaRuntimeService {
     const resolveRemote = sshGitProvider
       ? async () => {
           const { stdout } = await sshGitProvider.exec(['remote'], repo.path)
-          const remotes = stdout
-            .split('\n')
-            .map((line) => line.trim())
-            .filter(Boolean)
-          if (remotes.includes('origin')) {
-            return 'origin'
-          }
-          if (remotes.length === 1) {
-            return remotes[0]!
-          }
-          if (remotes.length === 0) {
-            throw new Error('Repo has no configured git remotes.')
-          }
-          throw new Error(
-            `Repo has multiple remotes (${remotes.join(', ')}) and no default is configured.`
-          )
+          return pickPreferredGitRemote(stdout.split('\n'))
         }
       : () => getDefaultRemote(repo.path, localWorktreeGitOptions)
 
-    // Why: SSH repos can't fetch over the relay's read-only git.exec channel, so
-    // route the PR head fetch through the write-capable helper instead of gitExec.
+    // Why: SSH review-head fetches require narrow write-capable RPCs.
     const fetchRemoteTrackingRef = (remote: string, branch: string): Promise<void> =>
       fetchPrHeadTrackingRef(
         repo,
         sshGitProvider,
         remote,
         branch,
+        localGitExecOptions ? { localGitExecOptions } : {}
+      )
+    const fetchPullRequestHeadRef = (remote: string, prNumber: number): Promise<void> =>
+      fetchGitHubPullRequestHeadRef(
+        repo,
+        sshGitProvider,
+        remote,
+        prNumber,
         localGitExecOptions ? { localGitExecOptions } : {}
       )
 
@@ -20053,6 +20050,7 @@ export class OrcaRuntimeService {
       localGitOptions: localWorktreeGitOptions,
       gitExec,
       fetchRemoteTrackingRef,
+      fetchPullRequestHeadRef,
       resolveRemote
     })
   }
@@ -20159,6 +20157,17 @@ export class OrcaRuntimeService {
     // failure must NOT abort the whole resolution — that would discard the
     // already-verified source-branch base and silently fall back to the repo
     // default branch. Degrade gracefully by dropping compareBaseRef instead.
+    const compareBaseRefResolvesLocally = async (): Promise<boolean> => {
+      if (!compareBaseRef) {
+        return false
+      }
+      try {
+        const { stdout } = await gitExec(['rev-parse', '--verify', `${compareBaseRef}^{commit}`])
+        return stdout.trim().length > 0
+      } catch {
+        return false
+      }
+    }
     const fetchCompareBaseRef = async (): Promise<boolean> => {
       if (!targetBranch || !compareBaseRef) {
         return false
@@ -20167,31 +20176,35 @@ export class OrcaRuntimeService {
         await fetchRemoteTrackingRef(targetBranch, compareBaseRef)
         return true
       } catch (error) {
+        // Why: keep the compare base whenever the local tracking ref already
+        // resolves; dropping it would make create fall back to the default branch.
+        const localBaseResolved = await compareBaseRefResolvesLocally()
         console.warn('[runtime:resolveManagedMrBase] optional compare-base fetch failed', {
           remote,
           targetBranch,
           mrIid: args.mrIid,
+          localBaseResolved,
           error: error instanceof Error ? error.message.split('\n')[0] : String(error)
         })
-        return false
+        return localBaseResolved
       }
     }
 
     if (isCrossRepository) {
       const mrRef = `refs/merge-requests/${args.mrIid}/head`
-      // Why: GitLab exposes fork MR heads on the target project, so mobile/SSH
-      // can match desktop without adding the contributor fork as a remote.
+      // Why: GitLab exposes fork heads on the target; the durable ref avoids FETCH_HEAD races and bridges resolve→create.
+      const localRef = gitlabMergeRequestHeadLocalRef(args.mrIid)
       try {
         await (sshGitProvider
           ? sshGitProvider.fetchGitLabMergeRequestHead(repo.path, remote, args.mrIid)
-          : gitExec(['fetch', remote, mrRef]))
+          : gitExec(['fetch', '--no-tags', remote, `+${mrRef}:${localRef}`]))
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return { error: `Failed to fetch ${mrRef}: ${message.split('\n')[0]}` }
       }
       let sha: string
       try {
-        const { stdout } = await gitExec(['rev-parse', '--verify', 'FETCH_HEAD'])
+        const { stdout } = await gitExec(['rev-parse', '--verify', localRef])
         sha = stdout.trim()
       } catch {
         return { error: `Could not resolve fork MR !${args.mrIid} head after fetch.` }

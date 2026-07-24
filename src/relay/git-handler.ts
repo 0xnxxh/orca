@@ -71,6 +71,10 @@ import { syncForkDefaultBranch, validateGitForkSyncExpectedUpstream } from '../s
 import { InFlightPromiseDedupe, stableInFlightKey } from '../shared/in-flight-promise-dedupe'
 import { GIT_FETCH_SKIP_AUTO_MAINTENANCE_CONFIG_ARGS } from '../shared/git-fetch-auto-maintenance'
 import { GitCapabilityCache } from '../shared/git-capability-cache'
+import {
+  githubPullRequestHeadLocalRef,
+  gitlabMergeRequestHeadLocalRef
+} from '../shared/review-head-tracking-ref'
 import type { RelayFilesystemWatchRegistry } from './relay-filesystem-watch-registry'
 import {
   hasUnsupportedRevParsePathFormatEcho,
@@ -216,7 +220,17 @@ export class GitHandler {
     this.dispatcher.onRequest('git.fetch', (p) => this.fetch(p))
     this.dispatcher.onRequest('git.forkSync', (p, context) => this.forkSync(p, context))
     this.dispatcher.onRequest('git.fetchRemoteTrackingRef', (p) => this.fetchRemoteTrackingRef(p))
+    this.dispatcher.onRequest('git.fetchGitHubPullRequestHead', (p) =>
+      this.fetchGitHubPullRequestHead(p)
+    )
     this.dispatcher.onRequest('git.fetchGitLabMergeRequestHead', (p) =>
+      this.fetchGitLabMergeRequestHead(p)
+    )
+    // Why: the durable-ref variant is a distinct method name so an old relay
+    // (which only knows FETCH_HEAD-semantics git.fetchGitLabMergeRequestHead)
+    // returns -32601 and the client can prompt a reconnect instead of silently
+    // resolving a stale/missing ref. Both names share the durable handler.
+    this.dispatcher.onRequest('git.fetchGitLabMergeRequestHeadRef', (p) =>
       this.fetchGitLabMergeRequestHead(p)
     )
     this.dispatcher.onRequest('git.push', (p) => this.push(p))
@@ -955,9 +969,58 @@ export class GitHandler {
         if (!remotes.includes(remote)) {
           throw new Error(`Remote "${remote}" is not configured.`)
         }
-        // Why: GitLab MR heads aren't refs/heads/*, so the remote-tracking fetch RPC can't represent fork MRs; keep this write path MR-only.
+        // Why: GitLab fork heads need a dedicated write RPC and ref outside refs/heads/*.
         await this.git(
-          ['fetch', '--no-tags', remote, `refs/merge-requests/${mergeRequestIid}/head`],
+          [
+            'fetch',
+            '--no-tags',
+            remote,
+            `+refs/merge-requests/${mergeRequestIid}/head:${gitlabMergeRequestHeadLocalRef(mergeRequestIid)}`
+          ],
+          worktreePath
+        )
+      } catch (error) {
+        throw new Error(normalizeGitErrorMessage(error, 'fetch'))
+      }
+    } finally {
+      this.clearGitMutationReadCaches()
+    }
+  }
+
+  private async fetchGitHubPullRequestHead(params: Record<string, unknown>) {
+    this.clearGitMutationReadCaches()
+    const worktreePath = params.worktreePath as string
+    const remote = params.remote
+    const prNumber = params.prNumber
+    try {
+      if (
+        typeof remote !== 'string' ||
+        typeof prNumber !== 'number' ||
+        !Number.isSafeInteger(prNumber) ||
+        prNumber <= 0
+      ) {
+        throw new Error('Invalid GitHub pull request fetch request.')
+      }
+      if (remote.startsWith('-')) {
+        throw new Error('GitHub pull request fetch remote must not start with "-".')
+      }
+
+      try {
+        const { stdout } = await this.git(['remote'], worktreePath)
+        const remotes = stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+        if (!remotes.includes(remote)) {
+          throw new Error(`Remote "${remote}" is not configured.`)
+        }
+        await this.git(
+          [
+            'fetch',
+            '--no-tags',
+            remote,
+            `+refs/pull/${prNumber}/head:${githubPullRequestHeadLocalRef(prNumber)}`
+          ],
           worktreePath
         )
       } catch (error) {

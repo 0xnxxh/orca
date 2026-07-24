@@ -159,6 +159,30 @@ describeBinaryCompatibility('real Git binary compatibility', () => {
     }
   })
 
+  it('fetches hosted review heads into dedicated refs', async () => {
+    const head = (await runGit(['rev-parse', 'HEAD'])).stdout.trim()
+    await runGit(['update-ref', 'refs/pull/42/head', head])
+    await runGit(['update-ref', 'refs/merge-requests/42/head', head])
+
+    await expect(
+      runGit(['fetch', '--no-tags', '.', '+refs/pull/42/head:refs/orca/pull/42'])
+    ).resolves.toBeDefined()
+    await expect(
+      runGit([
+        'fetch',
+        '--no-tags',
+        '.',
+        '+refs/merge-requests/42/head:refs/orca/merge-requests/42'
+      ])
+    ).resolves.toBeDefined()
+    await expect(runGit(['rev-parse', '--verify', 'refs/orca/pull/42'])).resolves.toMatchObject({
+      stdout: `${head}\n`
+    })
+    await expect(
+      runGit(['rev-parse', '--verify', 'refs/orca/merge-requests/42'])
+    ).resolves.toMatchObject({ stdout: `${head}\n` })
+  })
+
   it('degrades indexed credential config safely at the Git 2.31 boundary', async () => {
     const guardEnv = gitCredentialPromptGuardEnv({}, 'linux')
     await expect(runGit(['status', '--short'], guardEnv)).resolves.toBeDefined()

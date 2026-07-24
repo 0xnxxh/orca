@@ -2033,9 +2033,10 @@ describe('registerWorktreeHandlers', () => {
       isCrossRepository: true
     })
 
-    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(['fetch', 'origin', 'refs/pull/1738/head'], {
-      cwd: '/workspace/repo'
-    })
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
+      ['fetch', '--no-tags', 'origin', '+refs/pull/1738/head:refs/orca/pull/1738'],
+      { cwd: '/workspace/repo' }
+    )
     expect(result).toMatchObject({
       baseBranch: 'abc123',
       headSha: 'abc123',
@@ -3062,6 +3063,90 @@ describe('registerWorktreeHandlers', () => {
     })
   })
 
+  it('fetches a fork PR head via the SSH pull-head RPC, not git.exec', async () => {
+    const fetchGitHubPullRequestHead = vi.fn(async () => {})
+    const exec = vi.fn(async (args: string[]) => {
+      if (args[0] === 'remote') {
+        return { stdout: 'origin\n', stderr: '' }
+      }
+      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42') {
+        return { stdout: 'fork-head-sha\n', stderr: '' }
+      }
+      throw new Error(`unexpected git call: ${args.join(' ')}`)
+    })
+    getSshGitProviderMock.mockReturnValue({
+      exec,
+      fetchGitHubPullRequestHead,
+      fetchRemoteTrackingRef: vi.fn()
+    })
+    store.getRepo.mockReturnValue({
+      id: 'repo-1',
+      path: '/workspace/repo',
+      displayName: 'repo',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'conn-1',
+      worktreeBaseRef: null
+    })
+
+    const result = await handlers['worktrees:resolvePrBase'](null, {
+      repoId: 'repo-1',
+      prNumber: 42,
+      headRefName: 'contributor/fix',
+      isCrossRepository: true
+    })
+
+    expect(fetchGitHubPullRequestHead).toHaveBeenCalledWith('/workspace/repo', 'origin', 42)
+    expect(exec).not.toHaveBeenCalledWith(expect.arrayContaining(['fetch']), expect.anything())
+    expect(result).toMatchObject({
+      baseBranch: 'fork-head-sha',
+      headSha: 'fork-head-sha',
+      branchNameOverride: 'contributor/fix'
+    })
+  })
+
+  it('fetches a fork PR head from origin, not the first remote, over SSH', async () => {
+    const fetchGitHubPullRequestHead = vi.fn(async () => {})
+    // Why: `fork` is listed first, but fork PR heads live on the hosting remote (origin).
+    const exec = vi.fn(async (args: string[]) => {
+      if (args[0] === 'remote') {
+        return { stdout: 'fork\norigin\n', stderr: '' }
+      }
+      if (args[0] === 'rev-parse' && args[2] === 'refs/orca/pull/42') {
+        return { stdout: 'fork-head-sha\n', stderr: '' }
+      }
+      throw new Error(`unexpected git call: ${args.join(' ')}`)
+    })
+    getSshGitProviderMock.mockReturnValue({
+      exec,
+      fetchGitHubPullRequestHead,
+      fetchRemoteTrackingRef: vi.fn()
+    })
+    store.getRepo.mockReturnValue({
+      id: 'repo-1',
+      path: '/workspace/repo',
+      displayName: 'repo',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'conn-1',
+      worktreeBaseRef: null
+    })
+
+    const result = await handlers['worktrees:resolvePrBase'](null, {
+      repoId: 'repo-1',
+      prNumber: 42,
+      headRefName: 'contributor/fix',
+      isCrossRepository: true
+    })
+
+    expect(fetchGitHubPullRequestHead).toHaveBeenCalledWith('/workspace/repo', 'origin', 42)
+    expect(result).toMatchObject({
+      baseBranch: 'fork-head-sha',
+      headSha: 'fork-head-sha',
+      branchNameOverride: 'contributor/fix'
+    })
+  })
+
   it('resolves a fork PR base even when push-target discovery fails', async () => {
     getPullRequestPushTargetMock.mockRejectedValueOnce(new Error('lookup failed'))
     gitExecFileAsyncMock.mockImplementation(async (args: string[]) => {
@@ -3078,9 +3163,10 @@ describe('registerWorktreeHandlers', () => {
       isCrossRepository: true
     })
 
-    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(['fetch', 'origin', 'refs/pull/1849/head'], {
-      cwd: '/workspace/repo'
-    })
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
+      ['fetch', '--no-tags', 'origin', '+refs/pull/1849/head:refs/orca/pull/1849'],
+      { cwd: '/workspace/repo' }
+    )
     expect(result).toEqual({
       baseBranch: 'abc123',
       headSha: 'abc123',
@@ -3119,9 +3205,10 @@ describe('registerWorktreeHandlers', () => {
       ],
       { cwd: '/workspace/repo' }
     )
-    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(['fetch', 'origin', 'refs/pull/1849/head'], {
-      cwd: '/workspace/repo'
-    })
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
+      ['fetch', '--no-tags', 'origin', '+refs/pull/1849/head:refs/orca/pull/1849'],
+      { cwd: '/workspace/repo' }
+    )
     expect(result).toEqual({
       baseBranch: 'abc123',
       headSha: 'abc123',
@@ -3148,7 +3235,7 @@ describe('registerWorktreeHandlers', () => {
     })
 
     expect(gitExecFileAsyncMock).not.toHaveBeenCalledWith(
-      ['fetch', 'origin', 'refs/pull/1849/head'],
+      ['fetch', '--no-tags', 'origin', '+refs/pull/1849/head:refs/orca/pull/1849'],
       expect.anything()
     )
     expect(result).toMatchObject({

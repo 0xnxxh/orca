@@ -576,13 +576,53 @@ export class SshGitProvider implements IGitProvider {
     remote: string,
     mrIid: number
   ): Promise<void> {
-    await this.runWithDiffDedupeClear(async () => {
-      await this.mux.request('git.fetchGitLabMergeRequestHead', {
-        worktreePath,
-        remote,
-        mrIid
+    try {
+      await this.runWithDiffDedupeClear(async () => {
+        // Why: the durable-ref RPC is a NEW method name. Old relays only implement
+        // FETCH_HEAD-semantics git.fetchGitLabMergeRequestHead, so calling the ref
+        // variant makes them return -32601 rather than silently no-op the durable
+        // ref (which would leave the client resolving a stale/missing MR head).
+        await this.mux.request('git.fetchGitLabMergeRequestHeadRef', {
+          worktreePath,
+          remote,
+          mrIid
+        })
       })
-    })
+    } catch (error) {
+      if (isJsonRpcMethodNotFoundError(error)) {
+        // Why: older SSH relays predate the durable-ref MR fetch; surface a
+        // reconnect prompt instead of a raw JSON-RPC method-not-found error.
+        throw new Error(
+          'This SSH host is running an older Orca relay that cannot fetch merge request heads. Reconnect to deploy the latest relay, then try again.'
+        )
+      }
+      throw error
+    }
+  }
+
+  async fetchGitHubPullRequestHead(
+    worktreePath: string,
+    remote: string,
+    prNumber: number
+  ): Promise<void> {
+    try {
+      await this.runWithDiffDedupeClear(async () => {
+        await this.mux.request('git.fetchGitHubPullRequestHead', {
+          worktreePath,
+          remote,
+          prNumber
+        })
+      })
+    } catch (error) {
+      if (isJsonRpcMethodNotFoundError(error)) {
+        // Why: older SSH relays predate git.fetchGitHubPullRequestHead; surface a
+        // reconnect prompt instead of a raw JSON-RPC method-not-found error.
+        throw new Error(
+          'This SSH host is running an older Orca relay that cannot fetch pull request heads. Reconnect to deploy the latest relay, then try again.'
+        )
+      }
+      throw error
+    }
   }
 
   async getBranchDiff(

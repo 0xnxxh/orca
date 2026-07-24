@@ -49,8 +49,12 @@ import {
 import { gitExecFileAsync } from '../git/runner'
 import { withWorktreeSpan } from '../observability/instrumentation'
 import { resolveGitHubPrStartPoint } from '../github/pr-start-point'
-import { fetchPrHeadTrackingRef } from '../github/pr-head-tracking-ref'
+import {
+  fetchGitHubPullRequestHeadRef,
+  fetchPrHeadTrackingRef
+} from '../github/pr-head-tracking-ref'
 import { pruneWorktreePRRefreshAliases } from '../github/pr-refresh-coordinator'
+import { pickPreferredGitRemote } from '../../shared/preferred-git-remote'
 import { getDefaultRemote } from '../git/repo'
 import { listRepoWorktrees } from '../repo-worktrees'
 import { getSshGitProvider, requireSshGitProvider } from '../providers/ssh-git-dispatch'
@@ -1314,13 +1318,21 @@ export function registerWorktreeHandlers(
         }
         return provider.exec(args, repo.path)
       }
-      // Why: SSH repos can't fetch over the relay's read-only git.exec channel; route the PR-head fetch through the write-capable helper.
+      // Why: SSH review-head fetches require narrow write-capable RPCs.
       const fetchRemoteTrackingRef = (remote: string, branch: string): Promise<void> =>
         fetchPrHeadTrackingRef(
           repo,
           repo.connectionId ? getSshGitProvider(repo.connectionId) : undefined,
           remote,
           branch,
+          { localGitExecOptions: getLocalProjectGitExecOptions(store, repo) }
+        )
+      const fetchPullRequestHeadRef = (remote: string, prNumber: number): Promise<void> =>
+        fetchGitHubPullRequestHeadRef(
+          repo,
+          repo.connectionId ? getSshGitProvider(repo.connectionId) : undefined,
+          remote,
+          prNumber,
           { localGitExecOptions: getLocalProjectGitExecOptions(store, repo) }
         )
 
@@ -1334,15 +1346,13 @@ export function registerWorktreeHandlers(
         localGitOptions: getLocalProjectWorktreeGitOptions(store, repo),
         gitExec,
         fetchRemoteTrackingRef,
+        fetchPullRequestHeadRef,
         resolveRemote: async () => {
           if (repo.connectionId) {
+            // Why: fork PR heads live on the hosting remote (origin), not an
+            // arbitrary first remote like a contributor `fork`. Mirror runtime.
             const { stdout } = await gitExec(['remote'])
-            return (
-              stdout
-                .split('\n')
-                .map((line) => line.trim())
-                .find(Boolean) ?? 'origin'
-            )
+            return pickPreferredGitRemote(stdout.split('\n'))
           }
           return getDefaultRemote(repo.path, getLocalProjectWorktreeGitOptions(store, repo))
         }

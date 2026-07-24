@@ -1,6 +1,7 @@
 import type { GitHubPrStartPoint, GitPushTarget } from '../../shared/types'
 import { isMissingRemoteRefGitError } from '../git/fetch-error-classification'
 import { getPullRequestPushTarget, getWorkItem } from './client'
+import { githubPullRequestHeadLocalRef } from './pr-head-tracking-ref'
 
 type GitExec = (args: string[]) => Promise<{ stdout: string; stderr: string }>
 
@@ -14,6 +15,7 @@ type ResolveGitHubPrStartPointArgs = {
   localGitOptions?: { wslDistro?: string }
   gitExec: GitExec
   fetchRemoteTrackingRef: (remote: string, branch: string) => Promise<void>
+  fetchPullRequestHeadRef: (remote: string, prNumber: number) => Promise<void>
   resolveRemote: () => Promise<string>
 }
 
@@ -88,23 +90,48 @@ export async function resolveGitHubPrStartPoint(
 
   const compareBaseRef = baseRefName ? `refs/remotes/${remote}/${baseRefName}` : undefined
 
-  const fetchCompareBaseRef = async (): Promise<{ error: string } | null> => {
-    if (!baseRefName) {
-      return null
+  const compareBaseRefResolvesLocally = async (): Promise<boolean> => {
+    if (!compareBaseRef) {
+      return false
+    }
+    try {
+      const { stdout } = await args.gitExec(['rev-parse', '--verify', `${compareBaseRef}^{commit}`])
+      return stdout.trim().length > 0
+    } catch {
+      return false
+    }
+  }
+
+  const fetchCompareBaseRef = async (): Promise<boolean> => {
+    if (!baseRefName || !compareBaseRef) {
+      return false
     }
     try {
       await args.fetchRemoteTrackingRef(remote, baseRefName)
+      return true
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return { error: `Failed to fetch ${remote}/${baseRefName}: ${message.split('\n')[0]}` }
+      // Why: dropping compareBaseRef on any fetch failure makes create fall back
+      // to baseBranch — the PR head SHA for fork PRs — so Source Control diffs the
+      // worktree against itself. Keep the base whenever the local tracking ref
+      // already resolves; only true missing/absent-ref cases lose it.
+      const localBaseResolved = await compareBaseRefResolvesLocally()
+      console.warn('[github:resolvePrStartPoint] optional compare-base fetch failed', {
+        remote,
+        baseRefName,
+        prNumber: args.prNumber,
+        localBaseResolved,
+        error: error instanceof Error ? error.message.split('\n')[0] : String(error)
+      })
+      return localBaseResolved
     }
-    return null
   }
 
   const fetchPullRequestHeadSha = async (): Promise<{ baseBranch: string } | { error: string }> => {
     const pullRef = `refs/pull/${args.prNumber}/head`
+    // Why: the durable per-PR ref avoids shared FETCH_HEAD races and keeps the commit reachable through create.
+    const localRef = githubPullRequestHeadLocalRef(args.prNumber)
     try {
-      await args.gitExec(['fetch', remote, pullRef])
+      await args.fetchPullRequestHeadRef(remote, args.prNumber)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return {
@@ -113,7 +140,7 @@ export async function resolveGitHubPrStartPoint(
     }
     let sha: string
     try {
-      const { stdout } = await args.gitExec(['rev-parse', '--verify', 'FETCH_HEAD'])
+      const { stdout } = await args.gitExec(['rev-parse', '--verify', localRef])
       sha = stdout.trim()
     } catch {
       return { error: `Could not resolve fork PR #${args.prNumber} head after fetch.` }
@@ -132,16 +159,13 @@ export async function resolveGitHubPrStartPoint(
     if ('error' in result) {
       return result
     }
-    const compareBaseFetchError = await fetchCompareBaseRef()
-    if (compareBaseFetchError) {
-      return compareBaseFetchError
-    }
+    const compareBaseFetched = await fetchCompareBaseRef()
     // Why: adopt the contributor's branch name locally (mirroring the same-repo
     // return below) so fork-PR worktrees aren't renamed with the maintainer's
     // branch prefix (e.g. `me/866`). The push refspec still targets the fork.
     return {
       ...result,
-      ...(compareBaseRef ? { compareBaseRef } : {}),
+      ...(compareBaseFetched && compareBaseRef ? { compareBaseRef } : {}),
       headSha: result.baseBranch,
       branchNameOverride: headRefName,
       ...(pushTarget ? { pushTarget } : {}),
@@ -159,19 +183,19 @@ export async function resolveGitHubPrStartPoint(
       const result = await fetchPullRequestHeadSha()
       if (!('error' in result)) {
         await resolvePushTarget()
-        const compareBaseFetchError = await fetchCompareBaseRef()
-        if (compareBaseFetchError) {
-          return compareBaseFetchError
-        }
+        const compareBaseFetched = await fetchCompareBaseRef()
         return {
           ...result,
-          ...(compareBaseRef ? { compareBaseRef } : {}),
+          ...(compareBaseFetched && compareBaseRef ? { compareBaseRef } : {}),
           headSha: result.baseBranch,
           branchNameOverride: headRefName,
           ...(pushTarget ? { pushTarget } : {}),
           ...(maintainerCanModify !== undefined ? { maintainerCanModify } : {})
         }
       }
+      // Why: the branch fetch missed and the pull-head fallback is what actually
+      // failed, so surface its (more actionable) error rather than the branch miss.
+      return result
     }
     return {
       error: `Failed to fetch ${remote}/${headRefName}: ${message.split('\n')[0]}`
@@ -189,14 +213,11 @@ export async function resolveGitHubPrStartPoint(
   if (!headSha) {
     return { error: `Empty SHA resolving PR #${args.prNumber} head.` }
   }
-  const compareBaseFetchError = await fetchCompareBaseRef()
-  if (compareBaseFetchError) {
-    return compareBaseFetchError
-  }
+  const compareBaseFetched = await fetchCompareBaseRef()
 
   return {
     baseBranch: headSha,
-    ...(compareBaseRef ? { compareBaseRef } : {}),
+    ...(compareBaseFetched && compareBaseRef ? { compareBaseRef } : {}),
     headSha,
     branchNameOverride: headRefName,
     pushTarget: { remoteName: remote, branchName: headRefName }

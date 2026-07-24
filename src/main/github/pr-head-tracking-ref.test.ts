@@ -4,7 +4,11 @@ import type { SshGitProvider } from '../providers/ssh-git-provider'
 const { gitExecFileAsyncMock } = vi.hoisted(() => ({ gitExecFileAsyncMock: vi.fn() }))
 vi.mock('../git/runner', () => ({ gitExecFileAsync: gitExecFileAsyncMock }))
 
-import { fetchPrHeadTrackingRef } from './pr-head-tracking-ref'
+import {
+  fetchGitHubPullRequestHeadRef,
+  fetchPrHeadTrackingRef,
+  githubPullRequestHeadLocalRef
+} from './pr-head-tracking-ref'
 
 describe('fetchPrHeadTrackingRef', () => {
   beforeEach(() => {
@@ -43,6 +47,37 @@ describe('fetchPrHeadTrackingRef', () => {
   it('throws when a connected repo has no available SSH provider', async () => {
     await expect(
       fetchPrHeadTrackingRef({ path: '/repo', connectionId: 'conn-1' }, null, 'origin', 'feature/x')
+    ).rejects.toThrow('SSH Git provider is not available')
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+  })
+
+  it('fetches a GitHub pull head into its Orca ref for local repos', async () => {
+    await fetchGitHubPullRequestHeadRef({ path: '/repo', connectionId: null }, null, 'origin', 42)
+
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
+      ['fetch', '--no-tags', 'origin', '+refs/pull/42/head:refs/orca/pull/42'],
+      { cwd: '/repo' }
+    )
+    expect(githubPullRequestHeadLocalRef(42)).toBe('refs/orca/pull/42')
+  })
+
+  it('uses the SSH GitHub pull-head RPC and never runs git directly', async () => {
+    const fetchGitHubPullRequestHead = vi.fn(async () => {})
+
+    await fetchGitHubPullRequestHeadRef(
+      { path: '/repo', connectionId: 'conn-1' },
+      { fetchGitHubPullRequestHead } as unknown as SshGitProvider,
+      'origin',
+      42
+    )
+
+    expect(fetchGitHubPullRequestHead).toHaveBeenCalledWith('/repo', 'origin', 42)
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a connected GitHub pull-head fetch without an SSH provider', async () => {
+    await expect(
+      fetchGitHubPullRequestHeadRef({ path: '/repo', connectionId: 'conn-1' }, null, 'origin', 42)
     ).rejects.toThrow('SSH Git provider is not available')
     expect(gitExecFileAsyncMock).not.toHaveBeenCalled()
   })
