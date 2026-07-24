@@ -9,8 +9,8 @@ import {
 } from '../../shared/daemon-lifecycle-telemetry'
 import { track } from '../telemetry/client'
 
-// Startup launcher replaced a still-connectable daemon. `versionSkew` = daemon's pid-file appVersion
-// differs from the current app (omit when the decision didn't hinge on version, e.g. a different app path).
+// Replaced a still-connectable daemon (startup launcher or runtime resolver-health path).
+// `versionSkew` = pid-file appVersion differs from current app (omit when not version-driven).
 export function trackDaemonReplaced(
   reason: DaemonReplaceReason,
   liveSessionCount: number | null,

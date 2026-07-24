@@ -702,6 +702,9 @@ export async function initDaemonPtyProvider(
       if (reason === 'daemon_died') {
         console.warn('[daemon] Daemon process died — respawning')
         trackDaemonRetired('died_respawn')
+      } else if (reason === 'unhealthy_resolver') {
+        // Runtime resolver replace (adapter only fires when live sessions are verified empty). Not a death.
+        trackDaemonReplaced('unhealthy_resolver', 0)
       }
       newSpawner.resetHandle()
       await newSpawner.ensureRunning()
@@ -887,6 +890,9 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
       if (reason === 'daemon_died') {
         console.warn('[daemon] Daemon process died — respawning')
         trackDaemonRetired('died_respawn')
+      } else if (reason === 'unhealthy_resolver') {
+        // Runtime resolver replace (adapter only fires when live sessions are verified empty). Not a death.
+        trackDaemonReplaced('unhealthy_resolver', 0)
       }
       currentSpawner.resetHandle()
       await currentSpawner.ensureRunning()

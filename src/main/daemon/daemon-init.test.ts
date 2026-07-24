@@ -807,11 +807,13 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     await replacementAdapter.options.respawn?.('daemon_died')
     expect(originalSpawner.resetHandle).toHaveBeenCalledTimes(1)
     expect(originalSpawner.ensureRunning).toHaveBeenCalledTimes(1)
-    // STA-2376: an observed daemon death → respawn emits the retirement lifecycle event.
+    // STA-2376: death → respawn retires; runtime unhealthy_resolver is a replace (not a false death).
     expect(trackDaemonRetiredMock).toHaveBeenCalledWith('died_respawn')
     trackDaemonRetiredMock.mockClear()
+    trackDaemonReplacedMock.mockClear()
     await replacementAdapter.options.respawn?.('unhealthy_resolver')
     expect(trackDaemonRetiredMock).not.toHaveBeenCalled()
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('unhealthy_resolver', 0)
     // Still only one spawner in the whole test — nobody new was constructed.
     expect(spawnerInstances).toHaveLength(1)
   })
