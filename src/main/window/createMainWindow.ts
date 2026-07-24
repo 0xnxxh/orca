@@ -54,6 +54,26 @@ import { isMacosTahoeOrNewer } from './macos-tahoe-release'
 const activeRepaintJiggles = new WeakSet<BrowserWindow>()
 export const WINDOW_QUIT_RENDERER_ACK_TIMEOUT_MS = 10_000
 
+// Why: macOS 26 can't take the size nudge (#10253) but needs a reflow (STA-2383), so override the
+// device metrics and restore — that recomputes dvh inside Blink, never touching NSWindow.
+function reflowRendererViewport(window: BrowserWindow): void {
+  const [width, height] = window.getContentSize()
+  window.webContents.enableDeviceEmulation({
+    screenPosition: 'desktop',
+    screenSize: { width, height },
+    viewPosition: { x: 0, y: 0 },
+    deviceScaleFactor: 0,
+    viewSize: { width, height: Math.max(1, height - 1) },
+    scale: 1
+  })
+  setTimeout(() => {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.disableDeviceEmulation()
+    }
+    activeRepaintJiggles.delete(window)
+  }, 32)
+}
+
 function forceRepaint(window: BrowserWindow): void {
   // Why: webContents can be destroyed a beat before the BrowserWindow during close, and this runs from timers/focus events in that gap.
   if (window.isDestroyed() || window.webContents.isDestroyed()) {
@@ -63,11 +83,11 @@ function forceRepaint(window: BrowserWindow): void {
   if (window.isMaximized() || window.isFullScreen() || activeRepaintJiggles.has(window)) {
     return
   }
-  // Why: macOS 26 scene-backed windows can deadlock the main thread on re-entrant frame updates; invalidate alone recovers the compositor there.
+  activeRepaintJiggles.add(window)
   if (isMacosTahoeOrNewer()) {
+    reflowRendererViewport(window)
     return
   }
-  activeRepaintJiggles.add(window)
   // Why: show/restore fire from inside AppKit's window-state dispatch; mutating the frame there re-enters scene handling, so nudge on a fresh turn.
   setTimeout(() => {
     if (window.isDestroyed()) {

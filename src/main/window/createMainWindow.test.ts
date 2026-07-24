@@ -467,7 +467,7 @@ describe('createMainWindow', () => {
     expect(ipcMain.removeListener).toHaveBeenCalledWith('ui:window-revealed', revealHandler)
   })
 
-  it('repaints without the size nudge on macOS 26+ where re-entrant frame updates can deadlock AppKit', () => {
+  it('reflows the renderer viewport instead of the native frame on macOS 26+ (STA-2383)', () => {
     vi.useFakeTimers()
     macosTahoeMock.value = true
     const windowHandlers = new Map<string, ((...args: any[]) => void)[]>()
@@ -481,7 +481,9 @@ describe('createMainWindow', () => {
       send: vi.fn(),
       isDevToolsOpened: vi.fn(),
       openDevTools: vi.fn(),
-      closeDevTools: vi.fn()
+      closeDevTools: vi.fn(),
+      enableDeviceEmulation: vi.fn(),
+      disableDeviceEmulation: vi.fn()
     }
     const browserWindowInstance = {
       webContents,
@@ -494,6 +496,7 @@ describe('createMainWindow', () => {
       isMaximized: vi.fn(() => false),
       isFullScreen: vi.fn(() => false),
       getSize: vi.fn(() => [1200, 800]),
+      getContentSize: vi.fn(() => [1200, 780]),
       setSize: vi.fn(),
       maximize: vi.fn(),
       show: vi.fn(),
@@ -509,10 +512,78 @@ describe('createMainWindow', () => {
     windowHandlers.get('show')?.[0]?.()
     expect(webContents.invalidate).toHaveBeenCalledTimes(1)
 
+    // Why: runs inline — it never reaches AppKit, so there is no frame mutation to deadlock on.
+    expect(webContents.enableDeviceEmulation).toHaveBeenCalledTimes(1)
+    expect(webContents.enableDeviceEmulation).toHaveBeenCalledWith(
+      expect.objectContaining({ viewSize: { width: 1200, height: 779 } })
+    )
+    expect(webContents.disableDeviceEmulation).not.toHaveBeenCalled()
+
+    // Why: the restore re-pushes the true viewport size — the paint the bottom bar needs.
+    vi.advanceTimersByTime(32)
+    expect(webContents.disableDeviceEmulation).toHaveBeenCalledTimes(1)
+
     // Why: the delayed second repaint must also stay setSize-free on Tahoe.
-    vi.advanceTimersByTime(300)
+    vi.advanceTimersByTime(268)
     expect(webContents.invalidate).toHaveBeenCalledTimes(2)
     expect(browserWindowInstance.setSize).not.toHaveBeenCalled()
+  })
+
+  it('does not stack viewport reflows while one is still active on macOS 26+', () => {
+    vi.useFakeTimers()
+    macosTahoeMock.value = true
+    const windowHandlers = new Map<string, ((...args: any[]) => void)[]>()
+    const webContents = {
+      on: vi.fn(),
+      setZoomLevel: vi.fn(),
+      setBackgroundThrottling: vi.fn(),
+      invalidate: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      setWindowOpenHandler: vi.fn(),
+      send: vi.fn(),
+      isDevToolsOpened: vi.fn(),
+      openDevTools: vi.fn(),
+      closeDevTools: vi.fn(),
+      enableDeviceEmulation: vi.fn(),
+      disableDeviceEmulation: vi.fn()
+    }
+    const browserWindowInstance = {
+      webContents,
+      on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+        const handlers = windowHandlers.get(event) ?? []
+        handlers.push(handler)
+        windowHandlers.set(event, handlers)
+      }),
+      isDestroyed: vi.fn(() => false),
+      isMaximized: vi.fn(() => false),
+      isFullScreen: vi.fn(() => false),
+      getSize: vi.fn(() => [1200, 800]),
+      getContentSize: vi.fn(() => [1200, 780]),
+      setSize: vi.fn(),
+      maximize: vi.fn(),
+      show: vi.fn(),
+      loadFile: vi.fn(),
+      loadURL: vi.fn()
+    }
+    browserWindowMock.mockImplementation(function () {
+      return browserWindowInstance
+    })
+
+    withPlatform('darwin', () => createMainWindow(null))
+
+    const revealHandler = vi
+      .mocked(ipcMain.on)
+      .mock.calls.find(([channel]) => channel === 'ui:window-revealed')?.[1]
+
+    // Why: burst reveals must not re-enter emulation and strand the viewport in the override.
+    revealHandler?.({ sender: webContents } as never)
+    revealHandler?.({ sender: webContents } as never)
+    revealHandler?.({ sender: webContents } as never)
+    expect(webContents.invalidate).toHaveBeenCalledTimes(3)
+    expect(webContents.enableDeviceEmulation).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(32)
+    expect(webContents.disableDeviceEmulation).toHaveBeenCalledTimes(1)
   })
 
   it('supports all minus key variants for terminal zoom out', () => {
