@@ -837,6 +837,29 @@ describe('handleOscLink', () => {
     )
   })
 
+  it('does not pin runtime-owned links to the worktree SSH target', async () => {
+    setPlatform('Windows')
+    vi.mocked(getConnectionId).mockReturnValue('ssh-1')
+    runtimeEnvironmentCallMock.mockResolvedValueOnce({
+      id: 'rpc-1',
+      ok: true,
+      result: { size: 1, isDirectory: false, mtime: 1 },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+
+    openDetectedFilePath('//wsl.localhost/ubuntu/home/Alice/repo/src/main.ts', null, null, {
+      worktreeId: 'wt-1',
+      worktreePath: '//wsl$/Ubuntu/home/Alice/repo',
+      runtimeEnvironmentId: 'env-1'
+    })
+    await flushAsyncWork()
+
+    expect(openFileMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ externalSshTargetId: expect.anything() }),
+      { forceContentReload: true }
+    )
+  })
+
   it('does not open SSH html file links as client-local file browser tabs', async () => {
     setPlatform('Macintosh')
     vi.mocked(getConnectionId).mockReturnValue('ssh-1')

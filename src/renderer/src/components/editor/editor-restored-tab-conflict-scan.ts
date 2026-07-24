@@ -65,7 +65,8 @@ export function attachRestoredTabConflictScan(store: AppStoreApi): () => void {
         filePath: file.filePath,
         relativePath: file.relativePath,
         worktreeId: file.worktreeId,
-        connectionId: getFileConnectionId(file)
+        connectionId: getFileConnectionId(file),
+        expectedExternalSshTargetId: file.externalSshTargetId
       })
       if (disposed) {
         return

@@ -220,7 +220,8 @@ describe('useEditorPanelContentState', () => {
         filePath: '/tmp/ssh-preview.png',
         relativePath: '/tmp/ssh-preview.png',
         worktreeId: 'repo-ssh::/home/user/project',
-        connectionId: 'ssh-1'
+        connectionId: 'ssh-1',
+        expectedExternalSshTargetId: 'ssh-1'
       })
     )
   })
@@ -234,6 +235,9 @@ describe('useEditorPanelContentState', () => {
       externalSshTargetId: 'ssh-original'
     } as never)
     mocks.getConnectionIdForFile.mockReturnValue('ssh-replacement')
+    mocks.readRuntimeFileContent.mockRejectedValue(
+      new Error('External SSH files are not available after the workspace host changes.')
+    )
 
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -248,7 +252,12 @@ describe('useEditorPanelContentState', () => {
         'External SSH files are not available after the workspace host changes.'
       )
     )
-    expect(mocks.readRuntimeFileContent).not.toHaveBeenCalled()
+    expect(mocks.readRuntimeFileContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: 'ssh-replacement',
+        expectedExternalSshTargetId: 'ssh-original'
+      })
+    )
   })
 
   it('loads folder workspace branch diffs through the path-specific SSH connection', async () => {

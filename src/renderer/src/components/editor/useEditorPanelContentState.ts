@@ -150,11 +150,6 @@ export function useEditorPanelContentState({
         }
         if (restoredOpenFile?.filePath === filePath && restoredOpenFile.relativePath === filePath) {
           const externalSshTargetId = restoredOpenFile.externalSshTargetId?.trim()
-          if (externalSshTargetId && connectionId !== externalSshTargetId) {
-            throw new Error(
-              'External SSH files are not available after the workspace host changes.'
-            )
-          }
           if (
             !externalSshTargetId &&
             (readSettings?.activeRuntimeEnvironmentId?.trim() || connectionId)
@@ -185,6 +180,7 @@ export function useEditorPanelContentState({
             relativePath: restoredOpenFile?.relativePath ?? relativePath,
             worktreeId,
             connectionId,
+            expectedExternalSshTargetId: restoredOpenFile?.externalSshTargetId,
             includeLocalLogMetadata:
               restoredOpenFile?.readOnly === true && restoredOpenFile.liveTail === true
           }) as Promise<FileContent>

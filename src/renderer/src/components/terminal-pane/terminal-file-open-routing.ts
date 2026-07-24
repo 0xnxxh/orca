@@ -180,7 +180,9 @@ export function openDetectedFilePath(
         runtimeEnvironmentId,
         // Why: absolute SSH paths outside the worktree otherwise look identical
         // to client-local external files when the editor reloads or restores.
-        ...(relativePath === filePath && fileContext.connectionId
+        ...(relativePath === filePath &&
+        !fileContext.settings?.activeRuntimeEnvironmentId?.trim() &&
+        fileContext.connectionId
           ? { externalSshTargetId: fileContext.connectionId }
           : {})
       },

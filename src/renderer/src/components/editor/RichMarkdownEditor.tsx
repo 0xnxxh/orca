@@ -35,6 +35,7 @@ type RichMarkdownEditorProps = {
   content: string
   filePath: string
   worktreeId: string
+  externalSshTargetId?: string
   runtimeEnvironmentId?: string | null
   scrollCacheKey: string
   onContentChange: (content: string) => void
@@ -59,6 +60,7 @@ export default function RichMarkdownEditor({
   content,
   filePath,
   worktreeId,
+  externalSshTargetId,
   runtimeEnvironmentId,
   scrollCacheKey,
   onContentChange,
@@ -158,6 +160,7 @@ export default function RichMarkdownEditor({
   const reconcileRoundTripRef = useRichMarkdownReconcileRoundTrip({
     htmlSuperscriptLinkContext,
     filePath,
+    externalSshTargetId,
     runtimeEnvironmentId,
     worktreeId,
     worktreeRoot
@@ -214,6 +217,7 @@ export default function RichMarkdownEditor({
     filePath,
     worktreeId,
     worktreeRoot,
+    externalSshTargetId,
     runtimeEnvironmentId,
     isMac,
     richMarkdownSpellcheckEnabled,
@@ -296,6 +300,7 @@ export default function RichMarkdownEditor({
     editor,
     fileId,
     filePath,
+    externalSshTargetId,
     isApplyingProgrammaticUpdateRef,
     lastCommittedMarkdownRef,
     originalSourceRef,

@@ -629,7 +629,7 @@ describe('createEditorSlice openDiff', () => {
     expect(store.getState().openFiles[0]?.fileContentReloadNonce).toBe(2)
   })
 
-  it('pins an existing external tab when it is reopened from its SSH host', () => {
+  it('rebinds an existing external tab when it is reopened from a new SSH host', () => {
     const store = createEditorStore()
     const file = {
       filePath: '/tmp/ssh-preview.png',
@@ -639,13 +639,50 @@ describe('createEditorSlice openDiff', () => {
       mode: 'edit' as const
     }
 
-    store.getState().openFile(file)
-    expect(store.getState().openFiles[0]?.externalSshTargetId).toBeUndefined()
-
+    store.setState({
+      repos: [{ id: 'repo-1', path: '/repo', connectionId: 'ssh-1' }],
+      sshConnectionStates: new Map([
+        [
+          'ssh-1',
+          {
+            targetId: 'ssh-1',
+            status: 'connected',
+            error: null,
+            reconnectAttempt: 0,
+            connectionGeneration: 1
+          }
+        ]
+      ])
+    } as never)
     store.getState().openFile({ ...file, externalSshTargetId: 'ssh-1' })
 
+    store.setState({
+      repos: [{ id: 'repo-1', path: '/repo', connectionId: 'ssh-2' }],
+      sshConnectionStates: new Map([
+        [
+          'ssh-2',
+          {
+            targetId: 'ssh-2',
+            status: 'connected',
+            error: null,
+            reconnectAttempt: 0,
+            connectionGeneration: 2
+          }
+        ]
+      ])
+    } as never)
+    store.getState().openFile({ ...file, externalSshTargetId: 'ssh-2' })
+
     expect(store.getState().openFiles).toHaveLength(1)
-    expect(store.getState().openFiles[0]?.externalSshTargetId).toBe('ssh-1')
+    expect(store.getState().openFiles[0]?.externalSshTargetId).toBe('ssh-2')
+    expect(store.getState().openFiles[0]?.operationProvenance).toEqual(
+      expect.objectContaining({
+        generation: expect.objectContaining({
+          route: { executionHostId: 'ssh:ssh-2', runtimeEnvironmentId: null }
+        }),
+        expectedSshConnectionGeneration: 2
+      })
+    )
   })
 
   it('does not bump fileContentReloadNonce when a dirty file is re-opened', () => {
@@ -1867,6 +1904,36 @@ describe('createEditorSlice markdown table of contents visibility', () => {
 })
 
 describe('createEditorSlice openMarkdownPreview', () => {
+  it('keeps external SSH ownership after the source edit tab closes', () => {
+    const store = createEditorStore()
+    store.getState().openFile({
+      filePath: '/tmp/notes.md',
+      relativePath: '/tmp/notes.md',
+      worktreeId: 'wt-1',
+      language: 'markdown',
+      mode: 'edit',
+      externalSshTargetId: 'ssh-1'
+    })
+
+    store.getState().openMarkdownPreview(
+      {
+        filePath: '/tmp/notes.md',
+        relativePath: '/tmp/notes.md',
+        worktreeId: 'wt-1',
+        language: 'markdown'
+      },
+      { sourceFileId: '/tmp/notes.md' }
+    )
+    store.getState().closeFile('/tmp/notes.md')
+
+    expect(store.getState().openFiles).toEqual([
+      expect.objectContaining({
+        id: 'markdown-preview::/tmp/notes.md',
+        externalSshTargetId: 'ssh-1'
+      })
+    ])
+  })
+
   it('opens markdown preview as a separate read-only tab', () => {
     const store = createEditorStore()
 

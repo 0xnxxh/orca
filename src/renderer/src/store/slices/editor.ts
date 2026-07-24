@@ -460,7 +460,12 @@ export type EditorSlice = {
   openMarkdownPreview: (
     file: Pick<
       OpenFile,
-      'filePath' | 'relativePath' | 'worktreeId' | 'language' | 'runtimeEnvironmentId'
+      | 'filePath'
+      | 'relativePath'
+      | 'worktreeId'
+      | 'language'
+      | 'runtimeEnvironmentId'
+      | 'externalSshTargetId'
     >,
     options?: { anchor?: string | null; targetGroupId?: string; sourceFileId?: string }
   ) => void
@@ -1645,6 +1650,8 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
       if (existing) {
         // If opening as non-preview, also pin the existing tab
         const updatedPreview = isPreview ? existing.isPreview : false
+        const nextExternalSshTargetId = file.externalSshTargetId ?? existing.externalSshTargetId
+        const refreshExternalSshProvenance = file.externalSshTargetId !== undefined
         const fileContentReloadNonce = shouldRequestExistingFileContentReload(
           existing,
           file.mode,
@@ -1666,7 +1673,8 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           existing.relativePath !== file.relativePath ||
           existing.worktreeId !== file.worktreeId ||
           existing.runtimeEnvironmentId !== runtimeEnvironmentId ||
-          existing.externalSshTargetId !== file.externalSshTargetId ||
+          existing.externalSshTargetId !== nextExternalSshTargetId ||
+          refreshExternalSshProvenance ||
           existing.fileContentReloadNonce !== fileContentReloadNonce
         if (!needsExistingUpdate) {
           return activeResult
@@ -1681,7 +1689,10 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                   worktreeId: file.worktreeId,
                   language: file.language,
                   runtimeEnvironmentId,
-                  externalSshTargetId: file.externalSshTargetId,
+                  externalSshTargetId: nextExternalSshTargetId,
+                  operationProvenance: refreshExternalSshProvenance
+                    ? operationProvenance
+                    : f.operationProvenance,
                   mode: file.mode,
                   diffSource: file.diffSource,
                   branchCompare: file.branchCompare,
@@ -1891,6 +1902,9 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         ['edit']
       )
     const id = `markdown-preview::${sourceFileId}`
+    const externalSshTargetId =
+      file.externalSshTargetId ??
+      initialState.openFiles.find((openFile) => openFile.id === sourceFileId)?.externalSshTargetId
     const anchor = options?.anchor || undefined
     set((s) => {
       const existing = s.openFiles.find((openFile) => openFile.id === id)
@@ -1903,6 +1917,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
           existing.relativePath !== file.relativePath ||
           existing.filePath !== file.filePath ||
           existing.language !== file.language ||
+          existing.externalSshTargetId !== externalSshTargetId ||
           existing.markdownPreviewSourceFileId !== sourceFileId ||
           existing.markdownPreviewAnchor !== anchor ||
           existing.mode !== 'markdown-preview'
@@ -1917,6 +1932,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
                       worktreeId: file.worktreeId,
                       language: file.language,
                       runtimeEnvironmentId,
+                      externalSshTargetId,
                       markdownPreviewSourceFileId: sourceFileId,
                       markdownPreviewAnchor: anchor,
                       mode: 'markdown-preview' as const
@@ -1936,6 +1952,7 @@ export const createEditorSlice: StateCreator<AppState, [], [], EditorSlice> = (s
         language: file.language,
         isDirty: false,
         runtimeEnvironmentId,
+        externalSshTargetId,
         markdownPreviewSourceFileId: sourceFileId,
         markdownPreviewAnchor: anchor,
         mode: 'markdown-preview'
