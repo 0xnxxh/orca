@@ -3,7 +3,7 @@ import { translate } from '@/i18n/i18n'
 import { Button } from '@/components/ui/button'
 import { IntegrationStatusPill } from '@/components/integration-status-pill'
 import { cn } from '@/lib/utils'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, ChevronRight } from 'lucide-react'
 import {
   getSkillFreshnessDisplayStatus,
   hasSkillCopyNeedingAttention,
@@ -65,13 +65,24 @@ export function SkillFreshnessStatusPill({ skillName }: { skillName: string }): 
       {statusPill(status)}
       {hasDetails ? (
         <Button
-          variant="link"
+          // Why: ghost, not link — this sits in a header row rather than inside a
+          // paragraph, and its hover/focus background is what makes it read as a
+          // control. No chevron: it opens the review dialog, and the chevron already
+          // means an in-place expander on that dialog's own details section.
+          variant="ghost"
           size="xs"
-          className={cn('h-auto gap-1 p-0 text-[11px]', needsAttention && 'text-amber-500')}
+          className={cn(
+            'gap-1 px-1.5 text-[11px]',
+            needsAttention && 'text-amber-500 hover:text-amber-500'
+          )}
           onClick={() => requestSkillFreshnessUpdateDialog()}
         >
           {needsAttention ? <AlertTriangle className="size-3" /> : null}
           {translate('auto.components.skills.SkillFreshnessStatusPill.details', 'Details')}
+          {/* Why: a chevron is what makes this read as a control at rest rather than a
+              label. It points right, not down — this opens the review dialog, and a
+              down chevron already means an in-place expander inside that dialog. */}
+          <ChevronRight className="size-3" />
         </Button>
       ) : null}
     </span>
