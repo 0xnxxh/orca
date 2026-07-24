@@ -7,7 +7,8 @@ vi.mock('../git/runner', () => ({ gitExecFileAsync: gitExecFileAsyncMock }))
 import {
   fetchGitHubPullRequestHeadRef,
   fetchPrHeadTrackingRef,
-  githubPullRequestHeadLocalRef
+  githubPullRequestHeadLocalRef,
+  REVIEW_HEAD_FETCH_TIMEOUT_MS
 } from './pr-head-tracking-ref'
 
 describe('fetchPrHeadTrackingRef', () => {
@@ -54,11 +55,23 @@ describe('fetchPrHeadTrackingRef', () => {
   it('fetches a GitHub pull head into its Orca ref for local repos', async () => {
     await fetchGitHubPullRequestHeadRef({ path: '/repo', connectionId: null }, null, 'origin', 42)
 
+    // The fetch is bounded so a stalled remote can't hang PR resolution.
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
       ['fetch', '--no-tags', 'origin', '+refs/pull/42/head:refs/orca/pull/42'],
-      { cwd: '/repo' }
+      { cwd: '/repo', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
     expect(githubPullRequestHeadLocalRef(42)).toBe('refs/orca/pull/42')
+  })
+
+  it('keeps WSL routing while bounding the pull-head fetch', async () => {
+    await fetchGitHubPullRequestHeadRef({ path: '/repo', connectionId: null }, null, 'origin', 42, {
+      localGitExecOptions: { cwd: '/repo', wslDistro: 'Ubuntu' }
+    })
+
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
+      ['fetch', '--no-tags', 'origin', '+refs/pull/42/head:refs/orca/pull/42'],
+      { cwd: '/repo', wslDistro: 'Ubuntu', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
+    )
   })
 
   it('uses the SSH GitHub pull-head RPC and never runs git directly', async () => {

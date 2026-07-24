@@ -254,6 +254,7 @@ import {
   notifyWorktreesChanged
 } from './worktree-remote'
 import { invalidateAuthorizedRootsCache, resolveRegisteredWorktreePath } from './filesystem-auth'
+import { REVIEW_HEAD_FETCH_TIMEOUT_MS } from '../github/pr-head-tracking-ref'
 import {
   __getDetectedWorktreeScanCacheStatsForTests,
   __resetDetectedWorktreeScanCacheForTests,
@@ -2035,7 +2036,7 @@ describe('registerWorktreeHandlers', () => {
 
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
       ['fetch', '--no-tags', 'origin', '+refs/pull/1738/head:refs/orca/pull/1738'],
-      { cwd: '/workspace/repo' }
+      { cwd: '/workspace/repo', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
     expect(result).toMatchObject({
       baseBranch: 'abc123',
@@ -3165,7 +3166,7 @@ describe('registerWorktreeHandlers', () => {
 
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
       ['fetch', '--no-tags', 'origin', '+refs/pull/1849/head:refs/orca/pull/1849'],
-      { cwd: '/workspace/repo' }
+      { cwd: '/workspace/repo', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
     expect(result).toEqual({
       baseBranch: 'abc123',
@@ -3207,7 +3208,7 @@ describe('registerWorktreeHandlers', () => {
     )
     expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
       ['fetch', '--no-tags', 'origin', '+refs/pull/1849/head:refs/orca/pull/1849'],
-      { cwd: '/workspace/repo' }
+      { cwd: '/workspace/repo', timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
     )
     expect(result).toEqual({
       baseBranch: 'abc123',

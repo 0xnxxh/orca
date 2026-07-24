@@ -1899,6 +1899,13 @@ describe('GitHandler', () => {
           }
         ).trim()
         expect(actual).toBe(expected)
+        // Legacy contract: pre-durable-ref desktop clients call this method name
+        // and then resolve FETCH_HEAD, which a refspec fetch still writes.
+        const fetchHead = execFileSync('git', ['rev-parse', '--verify', 'FETCH_HEAD'], {
+          cwd: tmpDir,
+          encoding: 'utf-8'
+        }).trim()
+        expect(fetchHead).toBe(expected)
       } finally {
         await fs.rm(bareDir, { recursive: true, force: true })
       }

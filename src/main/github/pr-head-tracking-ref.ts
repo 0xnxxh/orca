@@ -10,6 +10,9 @@ type LocalGitExecOptions = {
   wslDistro?: string
 }
 
+// Why: an unreachable or stalled remote must fail PR resolve/create, not hang it; matches the create-path remote fetch bound.
+export const REVIEW_HEAD_FETCH_TIMEOUT_MS = 60_000
+
 // Why: the relay's read-only git.exec channel rejects `fetch`, so SSH repos
 // must use the dedicated git.fetchRemoteTrackingRef RPC.
 export async function fetchPrHeadTrackingRef(
@@ -48,7 +51,10 @@ export async function fetchGitHubPullRequestHeadRef(
         remote,
         `+refs/pull/${prNumber}/head:${githubPullRequestHeadLocalRef(prNumber)}`
       ],
-      options.localGitExecOptions ?? { cwd: repo.path }
+      {
+        ...(options.localGitExecOptions ?? { cwd: repo.path }),
+        timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS
+      }
     )
     return
   }

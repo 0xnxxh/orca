@@ -89,6 +89,8 @@ import { streamRelayGitStdout } from './git-stdout-stream'
 const execFileAsync = promisify(execFile)
 const MAX_GIT_BUFFER = 10 * 1024 * 1024
 const BULK_CHUNK_SIZE = 100
+// Why: an unreachable remote must fail the PR/MR head fetch, not hold the RPC (and worktree create) open forever.
+const REVIEW_HEAD_FETCH_TIMEOUT_MS = 60_000
 
 function resolveSubmoduleStatusArea(
   params: Record<string, unknown>
@@ -229,7 +231,8 @@ export class GitHandler {
     // Why: the durable-ref variant is a distinct method name so an old relay
     // (which only knows FETCH_HEAD-semantics git.fetchGitLabMergeRequestHead)
     // returns -32601 and the client can prompt a reconnect instead of silently
-    // resolving a stale/missing ref. Both names share the durable handler.
+    // resolving a stale/missing ref. Both names share the durable handler: a
+    // refspec fetch still writes FETCH_HEAD, so old clients keep their semantics.
     this.dispatcher.onRequest('git.fetchGitLabMergeRequestHeadRef', (p) =>
       this.fetchGitLabMergeRequestHead(p)
     )
@@ -977,7 +980,8 @@ export class GitHandler {
             remote,
             `+refs/merge-requests/${mergeRequestIid}/head:${gitlabMergeRequestHeadLocalRef(mergeRequestIid)}`
           ],
-          worktreePath
+          worktreePath,
+          { timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
         )
       } catch (error) {
         throw new Error(normalizeGitErrorMessage(error, 'fetch'))
@@ -1021,7 +1025,8 @@ export class GitHandler {
             remote,
             `+refs/pull/${prNumber}/head:${githubPullRequestHeadLocalRef(prNumber)}`
           ],
-          worktreePath
+          worktreePath,
+          { timeout: REVIEW_HEAD_FETCH_TIMEOUT_MS }
         )
       } catch (error) {
         throw new Error(normalizeGitErrorMessage(error, 'fetch'))
