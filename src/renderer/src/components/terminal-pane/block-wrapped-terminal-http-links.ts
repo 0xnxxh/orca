@@ -20,8 +20,6 @@ const LABEL_ROW_PATTERN = /^[^\s:/?&=#%+-][^\s:]*:(?:\s|\S|$)/
 // (#8832); so is one holding characters a URL tail would have percent-encoded.
 const PATH_ROW_START_PATTERN = /^(?:[/\\~]|\.{1,2}[/\\]|[A-Za-z]:[/\\])/
 const URL_TAIL_CHARSET_PATTERN = /^[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/
-// A tail must carry the URL's own structure; bare prose must not qualify.
-const URL_STRUCTURE_PATTERN = /[/?&=#%]/
 const MAX_BLOCK_WRAPPED_ROWS = 30
 const BLOCK_WIDTH_SCAN_ROWS = 40
 // Why: a wrapper breaks a URL only once the row is nearly used up. A URL row
@@ -113,6 +111,12 @@ function urlRunReachesRowEnd(row: BlockRow, schemeIndex: number): boolean {
  * whitespace, at the row end, or at trailing punctuation followed by
  * whitespace — a token cut short by a URL-hostile character mid-word (a
  * Windows path's backslash, say) is not a wrapped URL continuation.
+ *
+ * Anything following the token must itself contain a URL. A wrapped tail is
+ * either the end of the line or is followed by the next link in a list, the way
+ * an agent prints one; plain prose after it means the row is its own sentence
+ * that merely opens with a slash-bearing word — a date, a path, an `and/or`
+ * (#8832).
  */
 function leadingUrlFragment(row: BlockRow): LeadingUrlFragment | null {
   const content = row.text.slice(row.contentStart, row.contentEnd)
@@ -123,7 +127,7 @@ function leadingUrlFragment(row: BlockRow): LeadingUrlFragment | null {
   const remainder = content.slice(runText.length)
   const tail = remainder.match(URL_TRAILING_PUNCTUATION_PATTERN)?.[0] ?? ''
   const after = remainder.slice(tail.length)
-  if (after !== '' && !/^\s/.test(after)) {
+  if (after.trim() !== '' && findHttpSchemeIndex(after) === -1) {
     return null
   }
 
@@ -192,24 +196,24 @@ export function buildBlockWrappedHttpLogicalLineCandidates(
     return row
   }
 
-  const wrapColumnByMargin = new Map<number, number>()
-  const wrapColumnForMargin = (marginColumn: number): number => {
-    const cached = wrapColumnByMargin.get(marginColumn)
-    if (cached !== undefined) {
-      return cached
-    }
-    // Why: the widest row at this margin is the best available evidence of how
-    // far the block may run. Prose rows rarely end on the same column, so a
-    // most-common-width estimate collapses on real output.
-    let wrapColumn = 0
-    for (let y = currentY - BLOCK_WIDTH_SCAN_ROWS; y <= currentY + BLOCK_WIDTH_SCAN_ROWS; y++) {
-      const row = getRow(y)
-      if (row && row.startColumn === marginColumn) {
-        wrapColumn = Math.max(wrapColumn, row.endColumn)
+  // Why: the block width is witnessed by the *nearest* row that runs past the
+  // URL row, not the widest row anywhere in the window. One unrelated wide line
+  // (a full-terminal-width log entry, say) would otherwise inflate the estimate
+  // until every genuine wrap looked like it had room to spare.
+  const wrapColumnFor = (marginColumn: number, urlEndColumn: number, urlRowY: number): number => {
+    for (let distance = 1; distance <= BLOCK_WIDTH_SCAN_ROWS; distance++) {
+      let nearest = 0
+      for (const y of [urlRowY - distance, urlRowY + distance]) {
+        const row = getRow(y)
+        if (row && row.startColumn === marginColumn && row.endColumn > urlEndColumn) {
+          nearest = Math.max(nearest, row.endColumn)
+        }
+      }
+      if (nearest > 0) {
+        return nearest
       }
     }
-    wrapColumnByMargin.set(marginColumn, wrapColumn)
-    return wrapColumn
+    return 0
   }
 
   const candidates: WrappedLogicalLine[] = []
@@ -223,7 +227,7 @@ export function buildBlockWrappedHttpLogicalLineCandidates(
     if (schemeIndex === -1 || !urlRunReachesRowEnd(start, schemeIndex)) {
       continue
     }
-    const wrapColumn = wrapColumnForMargin(start.startColumn)
+    const wrapColumn = wrapColumnFor(start.startColumn, start.endColumn, startY)
     // Why: a URL-aware wrapper splits only at a structural character. A row
     // ending mid-token ended because the URL ended, so joining the next row
     // would recreate #8832.
@@ -262,12 +266,10 @@ export function buildBlockWrappedHttpLogicalLineCandidates(
       if (!fragment || HTTP_SCHEME_START_PATTERN.test(fragment.runText)) {
         break
       }
-      // Why: a wrapped tail keeps to URL characters and carries the URL's own
-      // structure. A bare word is prose that happened to follow (#8832).
-      if (
-        !URL_TAIL_CHARSET_PATTERN.test(fragment.runText) ||
-        !URL_STRUCTURE_PATTERN.test(fragment.runText)
-      ) {
+      // Why: a wrapped tail keeps to URL characters. It need not contain URL
+      // punctuation — a bare last path segment is legal — because
+      // leadingUrlFragment has already established the token is the whole row.
+      if (!URL_TAIL_CHARSET_PATTERN.test(fragment.runText)) {
         break
       }
       // Why: a token spanning the block's full width would not have fit on any
