@@ -42,12 +42,12 @@ on:
         default: false
         type: boolean
       version_suffix:
-        description: Extra prerelease identifier appended to an rc version (e.g. "perf" -> 1.2.3-rc.4.perf). rc kind only.
+        description: Extra prerelease identifier appended to an rc version (e.g. "perf" -> 1.2.3-rc.4.perf). Applies to kind=rc, or to an explicit version that is a bare X.Y.Z-rc.N.
         required: false
         type: string
         default: ''
       version:
-        description: Exact version to cut (e.g. 1.4.155 or 1.4.155-rc.0), bypassing kind-based computation. Use to leapfrog a deleted/rolled-back stable that regressed the release list. Must be greater than the latest published stable.
+        description: Exact version to cut (e.g. 1.4.155 or 1.4.155-rc.4), bypassing kind-based computation. Use to leapfrog a deleted/rolled-back stable that regressed the release list. Must be greater than the latest published stable, and an -rc.N must be above the highest RC already cut for its own base.
         required: false
         type: string
         default: ''
@@ -388,6 +388,23 @@ jobs:
             node config/scripts/release-rc-history.mjs "$1"
           }
 
+          require_valid_version_suffix() {
+            # Why a dot-appended identifier (rc.N.perf): it sorts just
+            # above its own base rc.N but BELOW rc.N+1, so suffixed side-
+            # branch builds never outrank the main RC series and cannot
+            # hijack the update channel; clients find them by matching the
+            # identifier ("perf") in the prerelease components.
+            # Why the numeric alternation rather than plain [0-9A-Za-z]+:
+            # semver forbids a leading zero on an all-digit identifier, and
+            # `npm version` silently renormalizes rc.4.01 to rc.4.1 while the
+            # tag step keeps the literal input — so the shipped package.json
+            # version and its own release tag would name different releases.
+            if [[ ! "$1" =~ ^(0|[1-9][0-9]*|[0-9A-Za-z]*[A-Za-z][0-9A-Za-z]*)$ ]]; then
+              echo "::error::version_suffix (or the trailing .identifier in version) must be alphanumeric with no leading zero on an all-digit identifier, got: $1" >&2
+              exit 1
+            fi
+          }
+
           current_package_stable() {
             node -e '
               const { version } = require("./package.json");
@@ -498,9 +515,33 @@ jobs:
           new=""
           if [[ -n "${EXPLICIT_VERSION:-}" ]]; then
             explicit="${EXPLICIT_VERSION#v}"
-            if [[ ! "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
-              echo "::error::version must be X.Y.Z or X.Y.Z-rc.N, got: $EXPLICIT_VERSION" >&2
+            # Why the optional trailing identifier: it lets an operator name a
+            # suffixed side-branch RC (X.Y.Z-rc.N.perf) directly, the same shape
+            # the rc path cuts. Note this only ever admits one *above* the
+            # series head — the gate below refuses a suffixed rc at or below it
+            # just like a bare one, so this is a second spelling of
+            # `version=X.Y.Z-rc.N` + `version_suffix`, not a way back into a
+            # series that already shipped.
+            # Why rc.(0|[1-9][0-9]{0,8}): the `-le` below compares with bash's
+            # machine-width integers, so both ends of that range fall *open* on
+            # exactly the RCs this gate must catch. A leading zero (rc.08) is an
+            # invalid octal literal, and the failed test makes the `if` false.
+            # Past INTMAX the literal wraps two's-complement, so whether it
+            # reads as above or below the published rc depends on the value:
+            # rc.99999999999999999999 wraps to 7766279631452241919 and sails
+            # through. The cut then lands a tag that pins highest_rc_for_base
+            # at 1e20 forever, and every later cut wraps to a *lower* rc that
+            # sorts below it, so the fleet never updates again. Nine digits is
+            # far above any real series and exact in bash math either way.
+            if [[ ! "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.(0|[1-9][0-9]{0,8})(\.[0-9A-Za-z]+)?)?$ ]]; then
+              echo "::error::version must be X.Y.Z, X.Y.Z-rc.N, or X.Y.Z-rc.N.suffix, got: $EXPLICIT_VERSION" >&2
               exit 1
+            fi
+            # Why route the embedded identifier through the same validator the
+            # kind path uses: the regex above only checks shape, and rc.4.01
+            # is a shape-valid identifier that is not valid semver.
+            if [[ "$explicit" == *-rc.*.* ]]; then
+              require_valid_version_suffix "${explicit##*.}"
             fi
             # Same updater-safety gate the kind path enforces: stable line must
             # strictly increase over the latest published stable (prerelease
@@ -509,7 +550,44 @@ jobs:
               echo "::error::Refusing explicit version $explicit: not greater than latest stable $latest_stable." >&2
               exit 1
             fi
+            # Why a second gate for prereleases: semver_gt compares through
+            # strip_pre(), so the stable-line check reads 1.4.156-rc.0 as
+            # 1.4.156 and waves it past a 1.4.155 stable even when rc.0..rc.3
+            # already shipped — republishing an RC *below* what clients run,
+            # the same regression class as the rc.4 cut that orphaned live
+            # daemons. Anchor on the same rc history the kind path uses so the
+            # override can only ever advance the series it targets.
+            if [[ "$explicit" == *-rc.* ]]; then
+              explicit_base="${explicit%%-*}"
+              explicit_rc="${explicit#*-rc.}"
+              explicit_rc="${explicit_rc%%.*}"
+              highest_explicit_rc="$(highest_rc_for_base "$explicit_base")"
+              if [[ -n "$highest_explicit_rc" && "$explicit_rc" -le "$highest_explicit_rc" ]]; then
+                # Why the remedy is spelled this narrowly: kind=rc derives its
+                # base from bump(latest_stable, patch), so it can only resume a
+                # series on that base. A minor/major series (1.5.0-rc.N) exists
+                # only because this override created it, and pointing an
+                # operator at kind=rc there would cut an unrelated release.
+                echo "::error::Refusing explicit version $explicit: rc.$explicit_rc is not above rc.$highest_explicit_rc, the highest already cut for $explicit_base. Request rc.$((highest_explicit_rc + 1)) or higher. If you are resuming an unpublished tag and $explicit_base is the next patch after latest stable $latest_stable, dispatch kind=rc instead, which recovers that tag when it was cut from the ref you dispatch; otherwise cut rc.$((highest_explicit_rc + 1)) and leave the unpublished tag alone." >&2
+                exit 1
+              fi
+            fi
             new="$explicit"
+            # Why here too: the suffix append below lives in the kind path the
+            # override skips, so an operator passing both inputs used to get
+            # their suffix silently dropped. Only a bare rc can take one — a
+            # stable X.Y.Z.perf is not valid semver, and re-suffixing an
+            # already-suffixed rc would produce rc.N.perf.perf.
+            if [[ -n "${VERSION_SUFFIX:-}" ]]; then
+              # Same bounded rc pattern as the shape check above, so the two
+              # cannot drift apart under a later edit.
+              if [[ ! "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.(0|[1-9][0-9]{0,8})$ ]]; then
+                echo "::error::version_suffix applies only to a bare X.Y.Z-rc.N version, got: $explicit" >&2
+                exit 1
+              fi
+              require_valid_version_suffix "$VERSION_SUFFIX"
+              new="${new}.${VERSION_SUFFIX}"
+            fi
             echo "Explicit version override: $new"
           fi
 
@@ -539,15 +617,7 @@ jobs:
                 new="${base}-rc.$((highest_rc + 1))"
               fi
               if [[ -n "${VERSION_SUFFIX:-}" ]]; then
-                # Why a dot-appended identifier (rc.N.perf): it sorts just
-                # above its own base rc.N but BELOW rc.N+1, so suffixed side-
-                # branch builds never outrank the main RC series and cannot
-                # hijack the update channel; clients find them by matching the
-                # identifier ("perf") in the prerelease components.
-                if [[ ! "$VERSION_SUFFIX" =~ ^[0-9A-Za-z]+$ ]]; then
-                  echo "::error::version_suffix must be alphanumeric, got: $VERSION_SUFFIX" >&2
-                  exit 1
-                fi
+                require_valid_version_suffix "$VERSION_SUFFIX"
                 new="${new}.${VERSION_SUFFIX}"
               fi
               ;;
