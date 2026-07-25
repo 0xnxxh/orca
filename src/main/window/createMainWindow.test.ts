@@ -246,6 +246,7 @@ describe('createMainWindow', () => {
     )
     expect(allowBlankEvent.preventDefault).not.toHaveBeenCalled()
     expect(allowBlankPrefs).toMatchObject({
+      disableBlinkFeatures: 'PreciseMemoryInfo',
       disableHtmlFullscreenWindowResize: true,
       partition: 'persist:orca-browser',
       preload: expect.stringMatching(/browser-window-close-preload\.js$/),
