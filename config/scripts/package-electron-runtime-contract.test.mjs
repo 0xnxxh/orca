@@ -451,19 +451,22 @@ describe('Electron runtime package contract', () => {
       'node config/scripts/generate-skill-bundle-manifest.mjs --release "$VERSION"'
     )
     const stageIndex = bumpStep.run.indexOf('git add package.json')
-    const stagedPaths = [...bumpStep.run.matchAll(/^\s*git add (.+)$/gm)].flatMap((match) =>
+    const commands = bumpStep.run.replace(/^\s*#.*$/gm, '')
+    // Unanchored: a `git add` chained after `&&` stages just as effectively.
+    const stagedPaths = [...commands.matchAll(/\bgit add (.+)$/gm)].flatMap((match) =>
       match[1].trim().split(/\s+/)
     )
     expect(checkoutStep.with['fetch-depth']).toBe(0)
     expect(bumpIndex).toBeGreaterThanOrEqual(0)
-    // Why: the cut is the only point that advances the release ledger, so the
-    // revision this tag ships is never rebuilt over different bytes later. It
-    // may append that provenance row and nothing else — regenerating or staging
-    // the content-addressed artifacts is what made version bumps rewrite them.
+    // Why: the cut is the only point that advances the release ledger, so this
+    // tag's revision is never rebuilt later — it appends that row, nothing else.
     expect(generateIndex).toBeGreaterThan(bumpIndex)
     expect(stageIndex).toBeGreaterThan(generateIndex)
-    expect(bumpStep.run).not.toContain('--write')
     expect(stagedPaths).toEqual(['package.json', 'resources/skills/release-mapping.json'])
+    // Every mention must be staged, so a copy or redirect cannot reach the
+    // content-addressed artifacts; the alias and `commit -a` bypass them too.
+    expect(commands.match(/resources\/skills\/\S*/g)).toEqual(stagedPaths.slice(1))
+    expect(commands).not.toMatch(/--write|generate:skill-bundle-manifest|commit\s[^\n]*\s-a\b/)
     expect(bumpStep.run).toContain('git diff --cached --quiet')
     expect(bumpStep.run).toContain('git commit --allow-empty -m "$commit_message"')
   })
