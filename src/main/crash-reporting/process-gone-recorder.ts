@@ -35,6 +35,24 @@ export type ProcessGoneCrashEvent = {
 
 type CrashReportRecorderStore = Pick<CrashReportStore, 'record'>
 
+// Why: a GPU crash loop under the fallback would rewrite crash-reports.json every
+// dedupe window for the rest of the session; the first few reports carry all the
+// triage signal (driver identity, tier), the rest are pure disk churn.
+const MAX_GPU_FALLBACK_CRASH_REPORTS_PER_LAUNCH = 3
+let gpuFallbackCrashReportsThisLaunch = 0
+
+export function resetGpuFallbackCrashReportBudgetForTesting(): void {
+  gpuFallbackCrashReportsThisLaunch = 0
+}
+
+function countsAgainstGpuFallbackReportBudget(event: ProcessGoneCrashEvent): boolean {
+  return (
+    event.gpuFallbackActive === true &&
+    event.source === 'child' &&
+    event.processType.toLowerCase() === 'gpu'
+  )
+}
+
 function processGoneBreadcrumbData(event: ProcessGoneCrashEvent) {
   return buildSuppressedProcessGoneBreadcrumbData(event)
 }
@@ -84,10 +102,25 @@ export function recordProcessGoneCrash(
     return
   }
 
+  const gpuFallbackBudgeted = countsAgainstGpuFallbackReportBudget(event)
+  if (
+    gpuFallbackBudgeted &&
+    gpuFallbackCrashReportsThisLaunch >= MAX_GPU_FALLBACK_CRASH_REPORTS_PER_LAUNCH
+  ) {
+    recordDurableCrashBreadcrumb('process_gone_suppressed', {
+      ...processGoneBreadcrumbData(event),
+      suppressedBy: 'gpu_fallback_report_budget'
+    })
+    return
+  }
+
   const key = getProcessGoneDedupeKey(event.source, event.processType, event.reason, event.exitCode)
   const claim = dedupe.tryClaim(key)
   if (!claim) {
     return
+  }
+  if (gpuFallbackBudgeted) {
+    gpuFallbackCrashReportsThisLaunch += 1
   }
   const mainProcessLifecycle = getMainProcessLifecycleIdentity()
   // Why: GPU and renderer deaths are the ones triage needs driver identity for;
@@ -145,6 +178,9 @@ export function recordProcessGoneCrash(
     })
     .catch((error) => {
       dedupe.release(claim)
+      if (gpuFallbackBudgeted) {
+        gpuFallbackCrashReportsThisLaunch -= 1
+      }
       console.error('[crash-reporting] Failed to persist crash report:', error)
       const data = persistFailureData(event, error)
       recordDurableCrashBreadcrumb(
