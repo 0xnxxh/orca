@@ -236,6 +236,32 @@ describe('terminal write pipeline health', () => {
     _resetWritePipelineHealthForTests(terminal)
   })
 
+  it('keeps a requested probe alive while the pipeline makes parse progress', () => {
+    vi.useFakeTimers()
+    const terminal = makeTerminal()
+    terminal.dropCallbacks = true
+    const handler = vi.fn()
+    registerUndeliverableWriteHandler(terminal, handler)
+
+    requestTerminalWritePipelineProbe(terminal)
+    vi.advanceTimersByTime(WRITE_PIPELINE_STALL_CHECK_MS)
+    vi.advanceTimersByTime(WRITE_PIPELINE_STALL_CHECK_MS / 2)
+    settleTerminalWriteStallWatch(terminal)
+    vi.advanceTimersByTime(WRITE_PIPELINE_STALL_CHECK_MS / 2)
+    vi.advanceTimersByTime(WRITE_PIPELINE_STALL_CHECK_MS / 2)
+    settleTerminalWriteStallWatch(terminal)
+    vi.advanceTimersByTime(WRITE_PIPELINE_STALL_CHECK_MS / 2)
+
+    expect(handler).not.toHaveBeenCalled()
+    expect(isTerminalWritePipelineCertifiedDead(terminal)).toBe(false)
+
+    vi.advanceTimersByTime(WRITE_PIPELINE_STALL_CHECK_MS)
+
+    expect(handler).toHaveBeenCalledWith('write-stalled')
+    expect(isTerminalWritePipelineCertifiedDead(terminal)).toBe(true)
+    _resetWritePipelineHealthForTests(terminal)
+  })
+
   it('notifies at most once per terminal instance', () => {
     const terminal = makeTerminal()
     const handler = vi.fn()

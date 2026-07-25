@@ -3731,12 +3731,12 @@ export function connectPanePty(
         cancelSuspendedShellCommandInference()
       }
       clearPendingTerminalInputIntent()
-      markTerminalInputSent()
       const writePromise = transport
         .sendInputAccepted(data)
         .then((accepted) => {
           if (accepted) {
-            recordTerminalInputForHibernationFallback()
+            // Why: rejected writes use transport recovery and must not arm a parser probe.
+            markAcceptedTerminalInputSent()
             observeAcceptedShellCommandInput(data)
             observeAcceptedTerminalInput(data, acknowledgedIntent)
             interruptInference.observeInputIntent(acknowledgedIntent)

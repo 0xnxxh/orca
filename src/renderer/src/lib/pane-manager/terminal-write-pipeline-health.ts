@@ -6,10 +6,11 @@
 // delivery ack credits leak, and the pane becomes a fossil the user can only
 // cure by reloading the window. Detection here is probe-certified (mirroring
 // replay-guard.ts): a stalled completion triggers an empty probe write; xterm
-// parses in FIFO order, so a probe that also never completes proves the
-// pipeline is dead rather than slow. Certification notifies a per-terminal
-// handler (registered by the pane's PTY connection) that requests pane
-// recovery — a remount that rebuilds the xterm and reattaches the live PTY.
+// parses in FIFO order, so a completing probe proves preceding work drained. A
+// silent probe is only certified dead after a full interval without any parse
+// progress. Certification notifies a per-terminal handler (registered by the
+// pane's PTY connection) that requests pane recovery — a remount that rebuilds
+// the xterm and reattaches the live PTY.
 
 type WriteTarget = {
   write(data: string, callback?: () => void): void
@@ -109,9 +110,9 @@ export function isTerminalWritePipelineCertifiedDead(terminal: object): boolean 
  * Arm (or keep armed) the stall watch for a terminal that just had a write
  * issued. Cleared by settleTerminalWriteStallWatch from the write-completion
  * callback. If the completion never arrives, an empty probe write certifies
- * dead-vs-slow exactly like replay-guard.ts: probe completes → pipeline is
- * alive (slow parse), re-arm and keep waiting; probe silent for another
- * interval → dead, notify.
+ * dead-vs-slow conservatively like replay-guard.ts: probe completes → pipeline
+ * is alive (slow parse), re-arm and keep waiting; probe silent for another
+ * interval without any parse progress → dead, notify.
  */
 function armTerminalWritePipelineWatch(
   terminal: WriteTarget,
@@ -138,14 +139,25 @@ function armTerminalWritePipelineWatch(
     timer: setTimeout(probeForStall, stallCheckMs)
   }
   const certifyDead = (): void => certifyTerminalWritePipelineDead(terminal, watch)
+  function armProbeQuietWindow(quietSinceGeneration: number): void {
+    watch.timer = setTimeout(() => {
+      if (stallWatchByTerminal.get(terminal) !== watch) {
+        return
+      }
+      if (hasTerminalParseProgressSince(terminal, quietSinceGeneration)) {
+        armProbeQuietWindow(captureTerminalParseProgressGeneration(terminal))
+        return
+      }
+      certifyDead()
+    }, stallCheckMs)
+  }
   function probeForStall(): void {
     if (stallWatchByTerminal.get(terminal) !== watch) {
       return
     }
-    let probeParsed = false
+    const probeQueuedAtGeneration = captureTerminalParseProgressGeneration(terminal)
     try {
       terminal.write('', () => {
-        probeParsed = true
         // Why: replay guards share this terminal-scoped generation; even an
         // auxiliary FIFO probe proves the parser is alive and making progress.
         recordTerminalParseProgress(terminal)
@@ -161,11 +173,9 @@ function armTerminalWritePipelineWatch(
       certifyDead()
       return
     }
-    watch.timer = setTimeout(() => {
-      if (!probeParsed) {
-        certifyDead()
-      }
-    }, stallCheckMs)
+    if (stallWatchByTerminal.get(terminal) === watch) {
+      armProbeQuietWindow(probeQueuedAtGeneration)
+    }
   }
   stallWatchByTerminal.set(terminal, watch)
 }
