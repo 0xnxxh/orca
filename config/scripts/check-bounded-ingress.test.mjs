@@ -77,6 +77,17 @@ describe('check-bounded-ingress', () => {
     ).toEqual([])
   })
 
+  it('stays wired into pnpm lint', () => {
+    // A gate that can be unwired without any test failing WILL be unwired by a rebase — this one
+    // already was once, and the ratchet cannot detect its own removal.
+    const root = path.resolve(import.meta.dirname, '../..')
+    const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
+    expect(pkg.scripts['check:bounded-ingress']).toBe(
+      'node config/scripts/check-bounded-ingress.mjs'
+    )
+    expect(pkg.scripts.lint).toContain('check:bounded-ingress')
+  })
+
   it('every hint names a real export of the module it points at', () => {
     // The hint is the text an agent copies when blocked; a stale name is an immediate import error.
     const root = path.resolve(import.meta.dirname, '../..')

@@ -78,3 +78,14 @@ function isStructuralToken(character: string | undefined): boolean {
     character === ':'
   )
 }
+
+// Guard-then-parse in one call so a bare `JSON.parse` in review (and in the bounded-ingress ratchet)
+// genuinely means "unguarded", instead of every sanctioned call site needing a justification comment.
+export function parseJsonWithinStructureLimits<T>(
+  content: string,
+  limits: JsonTextStructureLimits
+): T {
+  assertJsonTextStructureWithinLimits(content, limits)
+  // bounded-by: structure asserted on the line above
+  return JSON.parse(content) as T
+}

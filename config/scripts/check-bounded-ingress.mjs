@@ -35,7 +35,7 @@ export const PATTERNS = [
   {
     id: 'json-parse',
     re: /\bJSON\.parse\s*\(/,
-    hint: 'guard with assertJsonTextStructureWithinLimits (memory-safety/json-text-structure-limit)'
+    hint: 'use parseJsonWithinStructureLimits (memory-safety/json-text-structure-limit)'
   },
   {
     id: 'json-stringify',
@@ -128,7 +128,8 @@ async function collect(root, dir, out = []) {
 export async function run(root, { updateBaseline = false } = {}) {
   const files = [
     ...(await collect(root, path.join(root, 'src'))),
-    ...(await collect(root, path.join(root, 'mobile/src')))
+    ...(await collect(root, path.join(root, 'mobile/src'))),
+    ...(await collect(root, path.join(root, 'mobile/app')))
   ]
   const violations = []
   for (const file of files) {
