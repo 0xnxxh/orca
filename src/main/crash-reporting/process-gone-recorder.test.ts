@@ -363,4 +363,33 @@ describe('recordProcessGoneCrash', () => {
 
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
   })
+
+  // Why: retained profiles carry no renderer generation, so without this the
+  // next renderer's bundle reports the dead one's heap as its own.
+  it('does not carry a dead renderer high-water profile into the next crash', () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report-1' })
+    recordCrashBreadcrumb('renderer_memory_highwater', {
+      rendererSurface: 'main',
+      thresholdPct: 85,
+      usedHeapMB: 3586
+    })
+
+    recordProcessGoneCrash({ record } as never, event(), new ProcessGoneDedupe())
+
+    // The dying renderer's own bundle must still describe its heap.
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        breadcrumbs: expect.arrayContaining([
+          expect.objectContaining({ name: 'renderer_memory_highwater' })
+        ])
+      })
+    )
+
+    // A fresh renderer that dies before re-crossing must not inherit it.
+    recordProcessGoneCrash({ record } as never, event({ exitCode: 9 }), new ProcessGoneDedupe())
+
+    expect(getCrashBreadcrumbSnapshot()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'renderer_memory_highwater' })])
+    )
+  })
 })
