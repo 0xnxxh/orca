@@ -20,6 +20,8 @@ const LABEL_ROW_PATTERN = /^[^\s:/?&=#%+-][^\s:]*:(?:\s|\S|$)/
 // (#8832); so is one holding characters a URL tail would have percent-encoded.
 const PATH_ROW_START_PATTERN = /^(?:[/\\~]|\.{1,2}[/\\]|[A-Za-z]:[/\\])/
 const URL_TAIL_CHARSET_PATTERN = /^[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]+$/
+// A row that is only `#token`: a Markdown anchor or heading, not a URL fragment.
+const MARKDOWN_ANCHOR_ROW_PATTERN = /^#/
 const MAX_BLOCK_WRAPPED_ROWS = 30
 const BLOCK_WIDTH_SCAN_ROWS = 40
 // Why: a wrapper breaks a URL only once the row is nearly used up. A URL row
@@ -235,6 +237,7 @@ export function buildBlockWrappedHttpLogicalLineCandidates(
       continue
     }
 
+    const previousRowEndsAtPathSeparator = start.text[start.contentEnd - 1] === '/'
     let text = start.text.slice(schemeIndex, start.contentEnd)
     const rows = [toLogicalRow(start, startY, schemeIndex, start.contentEnd, 0)]
     let previousEndColumn = start.endColumn
@@ -270,6 +273,12 @@ export function buildBlockWrappedHttpLogicalLineCandidates(
       // punctuation — a bare last path segment is legal — because
       // leadingUrlFragment has already established the token is the whole row.
       if (!URL_TAIL_CHARSET_PATTERN.test(fragment.runText)) {
+        break
+      }
+      // Why: a fragment attaches to a resource, so a wrap never leaves `/` at
+      // the end of one row and `#` at the start of the next. A lone `#token`
+      // row is a Markdown anchor or heading of its own.
+      if (previousRowEndsAtPathSeparator && MARKDOWN_ANCHOR_ROW_PATTERN.test(fragment.runText)) {
         break
       }
       // Why: a token spanning the block's full width would not have fit on any

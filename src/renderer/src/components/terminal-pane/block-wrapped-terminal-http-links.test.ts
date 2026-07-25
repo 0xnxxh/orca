@@ -122,7 +122,15 @@ describe('block-wrapped terminal HTTP links', () => {
       ['git ref range', 'origin/main..HEAD is ahead'],
       ['date row', '2026/07/24 build finished'],
       ['markdown heading', '### Heading text goes here'],
-      ['fraction prose', '1/2 of the tests passed ok']
+      ['fraction prose', '1/2 of the tests passed ok'],
+      ['CI date log', '2026/07/24 deploy finished without errors'],
+      ['repo path sentence', 'src/main/index.ts was rebuilt after the change'],
+      ['and/or prose', 'and/or the retry can be triggered manually later'],
+      ['version note', 'v2.0/changelog notes were published separately'],
+      // A fragment attaches to a resource, so a wrap never leaves `/` ending one
+      // row and `#` opening the next — that row is a Markdown anchor.
+      ['bare markdown anchor', '#next-steps'],
+      ['bare hashtag', '#deploy']
     ])('does not glue a following %s', (_shape, nextRow) => {
       const rows = [fullUrl, nextRow, 'x'.repeat(WRAP_WIDTH)].map((row) => makeBufferLine(row))
       const buffer = { getLine: (y: number) => rows[y] }
@@ -134,6 +142,47 @@ describe('block-wrapped terminal HTTP links', () => {
         })
       ).toBe(true)
       expect(openUrlMock).toHaveBeenCalledWith(fullUrl)
+    })
+
+    // A tail need not carry URL punctuation: requiring it truncated legal URLs.
+    // Prose is excluded by the whole-row rule instead.
+    it.each([
+      [
+        'bare commit SHA',
+        'https://git.example.com/org/very-long-repository-name/branch/-/commit/',
+        'e83bc27b12f04ad9e5f1'
+      ],
+      ['bare final path segment', `https://example.com/${'a'.repeat(WRAP_WIDTH - 25)}/`, 'archive']
+    ])('reconstructs a wrapped URL ending in a %s', (_shape, prefix, tail) => {
+      const urlRow = `${prefix}${'p'.repeat(WRAP_WIDTH - 3 - prefix.length)}/`
+      const rows = [urlRow, tail, 'w'.repeat(WRAP_WIDTH)].map((row) => makeBufferLine(row))
+      const buffer = { getLine: (y: number) => rows[y] }
+
+      expect(
+        openHttpLinkAtBufferPosition(buffer, { x: 20, y: 1 }, COLS, {
+          worktreeId: 'wt-1',
+          forceSystemBrowser: true
+        })
+      ).toBe(true)
+      expect(openUrlMock).toHaveBeenCalledWith(`${urlRow}${tail}`)
+    })
+
+    it('infers the block width from the nearest wider row, not the widest', () => {
+      // A single full-terminal-width line must not inflate the block width and
+      // make a genuine wrap look like it had room to spare.
+      const urlRow = `https://example.com/${'a'.repeat(69)}/`
+      const rows = [urlRow, 'abcdefghijk/p', 'x'.repeat(WRAP_WIDTH), 'z'.repeat(COLS)].map((row) =>
+        makeBufferLine(row)
+      )
+      const buffer = { getLine: (y: number) => rows[y] }
+
+      expect(
+        openHttpLinkAtBufferPosition(buffer, { x: 10, y: 1 }, COLS, {
+          worktreeId: 'wt-1',
+          forceSystemBrowser: true
+        })
+      ).toBe(true)
+      expect(openUrlMock).toHaveBeenCalledWith(`${urlRow}abcdefghijk/p`)
     })
 
     it('does not join when the URL row ends far short of the block width', () => {
