@@ -596,6 +596,7 @@ export type TerminalSlice = {
       remoteCloseOwnedByHost?: boolean
       localPtyTeardownOwnedExternally?: boolean
       precomputedRetirementPlan?: TerminalTabRetirementPlan
+      registerProviderTeardown?: (teardown: Promise<void>) => void
     }
   ) => void
   reorderTabs: (worktreeId: string, tabIds: string[]) => void
@@ -1197,6 +1198,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         ? opts.precomputedRetirementPlan
         : buildTerminalTabRetirementPlan(get(), tabId)
     let closingWorktreeId: string | null = null
+    let providerTeardown = Promise.resolve()
 
     // Why: a parked tab has no mounted TerminalPane cleanup, so revoke its observer/candidate state before provider exit races.
     retireParkedTerminalTab(tabId)
@@ -1233,8 +1235,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           count: retirementPlan.unroutablePtyIds.length
         })
       }
-      // Why: keep close synchronous and idempotent — provider failures must not reject into the UI or block ownership revocation.
-      void Promise.allSettled(retirementTasks).then((results) => {
+      // Why: keep state retirement synchronous and idempotent while exposing provider completion to durable close acknowledgements.
+      providerTeardown = Promise.allSettled(retirementTasks).then((results) => {
         const localOrSshFailures = results
           .slice(0, localOrSshTaskCount)
           .filter((result) => result.status === 'rejected').length
@@ -1250,6 +1252,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         }
       })
     }
+    opts?.registerProviderTeardown?.(providerTeardown)
 
     set((s) => {
       const next = { ...s.tabsByWorktree }
