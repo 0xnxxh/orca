@@ -195,15 +195,27 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     }
   }
 
-  onBackgroundStreamEvent(callback: (payload: PtyBackgroundStreamEvent) => void): () => void {
-    const unsubscribes = this.allProviders().flatMap(
-      (provider) => provider.onBackgroundStreamEvent?.(callback) ?? []
-    )
+  private combineUnsubscribes(unsubscribes: (() => void)[]): () => void {
     return () => {
       for (const unsubscribe of unsubscribes) {
         unsubscribe()
       }
     }
+  }
+
+  onBackgroundStreamEvent(callback: (payload: PtyBackgroundStreamEvent) => void): () => void {
+    return this.combineUnsubscribes(
+      this.allProviders().flatMap((provider) => provider.onBackgroundStreamEvent?.(callback) ?? [])
+    )
+  }
+
+  // Why: main subscribes on the routed provider, so without this the dead-endpoint
+  // fan-out reaches no listener and only the written pane recovers (STA-2373). Daemon
+  // adapters only — the local fallback has no dead-socket problem.
+  onWriteUnavailable(callback: (payload: { id: string }) => void): () => void {
+    return this.combineUnsubscribes(
+      this.allDaemonAdapters().map((adapter) => adapter.onWriteUnavailable(callback))
+    )
   }
 
   onReplay(callback: (payload: { id: string; data: string }) => void): () => void {
@@ -218,9 +230,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
       if (idx !== -1) {
         this.unsubscribers.splice(idx, 1)
       }
-      for (const unsubscribe of unsubscribes) {
-        unsubscribe()
-      }
+      this.combineUnsubscribes(unsubscribes)()
     }
     this.unsubscribers.push(trackedUnsubscribe)
     return trackedUnsubscribe
@@ -272,9 +282,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   disposeProviderOnly(): void {
-    for (const unsubscribe of this.unsubscribers.splice(0)) {
-      unsubscribe()
-    }
+    this.combineUnsubscribes(this.unsubscribers.splice(0))()
   }
 
   async shutdownFallbackSessions(): Promise<number> {
