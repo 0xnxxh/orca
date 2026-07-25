@@ -122,6 +122,7 @@ type StoreState = {
   terminalLayoutsByTabId?: Record<string, TerminalLayoutSnapshot>
   unreadTerminalTabs?: Record<string, true>
   deleteStateByWorktreeId?: Record<string, { isDeleting?: boolean; phase?: string }>
+  getKnownWorktreeById?: (worktreeId: string) => { id: string } | null
   worktreesByRepo: Record<
     string,
     {
@@ -789,6 +790,12 @@ describe('connectPanePty', () => {
       },
       unreadTerminalTabs: {},
       deleteStateByWorktreeId: {},
+      // Why: read through the live mockStoreState so tests that drop a workspace
+      // mid-run (a completed delete) see it disappear, as the real store does.
+      getKnownWorktreeById: (worktreeId: string) =>
+        Object.values(mockStoreState.worktreesByRepo)
+          .flat()
+          .find((worktree) => worktree.id === worktreeId) ?? null,
       worktreesByRepo: {
         repo1: [{ id: 'wt-1', repoId: 'repo1', path: '/tmp/wt-1', displayName: 'feat/notis' }]
       },
@@ -1052,6 +1059,62 @@ describe('connectPanePty', () => {
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
   })
 
+  // Why: main kills the workspace's PTYs before the removal can fail, so a delete
+  // that fails partway leaves this pane's shells dead. The skip above is one-shot
+  // (the pane connects once), so without re-arming the spawn the user is left with
+  // a blank dead pane until they switch workspaces.
+  it('respawns the pane after a failed workspace delete clears the removal fence', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport()
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      deleteStateByWorktreeId: { 'wt-1': { isDeleting: true, phase: 'deleting' } }
+    }
+    const deps = createDeps({ tabId: 'tab-removal-failed-respawn' })
+
+    connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks()
+    expect(transport.connect).not.toHaveBeenCalled()
+
+    // removeWorktree's failure branch: isDeleting clears, the workspace survives.
+    mockStoreState = {
+      ...mockStoreState,
+      deleteStateByWorktreeId: { 'wt-1': { isDeleting: false, phase: 'deleting' } }
+    }
+    notifyStoreSubscribers()
+    await flushAsyncTicks()
+
+    expect(transport.connect).toHaveBeenCalled()
+    expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
+  })
+
+  it('does not respawn a suppressed pane when the workspace delete succeeds', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport()
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      deleteStateByWorktreeId: { 'wt-1': { isDeleting: true, phase: 'deleting' } }
+    }
+    const deps = createDeps({ tabId: 'tab-removal-succeeded-no-respawn' })
+
+    connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks()
+
+    // removeWorktree's success branch drops both the delete state and the workspace.
+    mockStoreState = {
+      ...mockStoreState,
+      deleteStateByWorktreeId: {},
+      worktreesByRepo: { repo1: [] }
+    }
+    notifyStoreSubscribers()
+    await flushAsyncTicks()
+
+    expect(transport.connect).not.toHaveBeenCalled()
+    expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
+  })
+
   it('fresh-spawns normally when the pane worktree is not being deleted', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
@@ -1094,6 +1157,45 @@ describe('connectPanePty', () => {
       `Error invoking remote method 'pty:spawn': Error: ${TERMINAL_REMOVAL_IN_PROGRESS_MESSAGE}`
     )
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
+  })
+
+  // Why: a parent workspace's removal fences this child pane's spawn, and
+  // startFreshSpawn's own-worktree skip cannot see it. Swallowing that fence is
+  // right while the removal runs, but if it FAILS the child pane keeps a mounted,
+  // shell-less surface — so the swallowed spawn has to be retried.
+  it('respawns after a swallowed removal fence once the removal settles', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const { TERMINAL_REMOVAL_IN_PROGRESS_MESSAGE } =
+      await import('../../../../shared/worktree-removal-fence-error')
+    const transport = createMockTransport()
+    const capturedOnError: { current: ((message: string) => void) | null } = { current: null }
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      capturedOnError.current = callbacks.onError ?? null
+      return 'pty-1'
+    })
+    transportFactoryQueue.push(transport)
+    // A parent/overlapping root is being removed; this pane's own workspace is not.
+    mockStoreState = {
+      ...mockStoreState,
+      deleteStateByWorktreeId: { 'wt-parent': { isDeleting: true, phase: 'deleting' } }
+    }
+    const deps = createDeps({ tabId: 'tab-fence-respawn' })
+
+    connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks()
+
+    expect(capturedOnError.current).toBeTypeOf('function')
+    expect(transport.connect).toHaveBeenCalledTimes(1)
+    capturedOnError.current!(
+      `Error invoking remote method 'pty:spawn': Error: ${TERMINAL_REMOVAL_IN_PROGRESS_MESSAGE}`
+    )
+    expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
+
+    mockStoreState = { ...mockStoreState, deleteStateByWorktreeId: {} }
+    notifyStoreSubscribers()
+    await flushAsyncTicks()
+
+    expect(transport.connect).toHaveBeenCalledTimes(2)
   })
 
   it('still surfaces non-fence spawn errors through the pane error sink', async () => {
