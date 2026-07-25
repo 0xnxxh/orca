@@ -59,6 +59,15 @@ describe('readFeedbackImageFiles', () => {
     expect(errors).toEqual([`You can attach up to ${MAX_FEEDBACK_IMAGE_COUNT} images.`])
   })
 
+  it('revokes previews already created when a later read in the batch fails', async () => {
+    const good = pngFile('good.png')
+    const broken = pngFile('broken.png')
+    broken.arrayBuffer = () => Promise.reject(new Error('file went away'))
+
+    await expect(readFeedbackImageFiles([good, broken], 0)).rejects.toThrow('file went away')
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:feedback-1')
+  })
+
   it('does not depend on crypto.randomUUID, which LAN web clients do not expose', async () => {
     const realCrypto = globalThis.crypto
     Object.defineProperty(globalThis, 'crypto', {

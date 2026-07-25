@@ -48,32 +48,39 @@ export async function readFeedbackImageFiles(
   const errors: string[] = []
   let remaining = MAX_FEEDBACK_IMAGE_COUNT - existingCount
 
-  for (const file of files) {
-    if (!isSupportedType(file.type)) {
-      errors.push(`${file.name || 'Image'} is not a supported image type.`)
-      continue
+  try {
+    for (const file of files) {
+      if (!isSupportedType(file.type)) {
+        errors.push(`${file.name || 'Image'} is not a supported image type.`)
+        continue
+      }
+      if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {
+        errors.push(
+          `${file.name || 'Image'} is larger than ${formatFeedbackImageSize(MAX_FEEDBACK_IMAGE_BYTES)}.`
+        )
+        continue
+      }
+      if (remaining <= 0) {
+        errors.push(`You can attach up to ${MAX_FEEDBACK_IMAGE_COUNT} images.`)
+        break
+      }
+      remaining -= 1
+      images.push({
+        // Why: crypto.randomUUID is undefined in non-secure browser contexts (LAN
+        // web client over plain HTTP); createBrowserUuid falls back safely.
+        id: `${file.name}-${file.size}-${createBrowserUuid()}`,
+        name: file.name || 'pasted-image',
+        contentType: file.type,
+        bytes: file.size,
+        data: new Uint8Array(await file.arrayBuffer()),
+        previewUrl: URL.createObjectURL(file)
+      })
     }
-    if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {
-      errors.push(
-        `${file.name || 'Image'} is larger than ${formatFeedbackImageSize(MAX_FEEDBACK_IMAGE_BYTES)}.`
-      )
-      continue
-    }
-    if (remaining <= 0) {
-      errors.push(`You can attach up to ${MAX_FEEDBACK_IMAGE_COUNT} images.`)
-      break
-    }
-    remaining -= 1
-    images.push({
-      // Why: crypto.randomUUID is undefined in non-secure browser contexts (LAN
-      // web client over plain HTTP); createBrowserUuid falls back safely.
-      id: `${file.name}-${file.size}-${createBrowserUuid()}`,
-      name: file.name || 'pasted-image',
-      contentType: file.type,
-      bytes: file.size,
-      data: new Uint8Array(await file.arrayBuffer()),
-      previewUrl: URL.createObjectURL(file)
-    })
+  } catch (error) {
+    // Why: a rejected read never returns these drafts, and an un-revoked object
+    // URL pins its blob for the life of the renderer.
+    images.forEach(releaseFeedbackImageDraft)
+    throw error
   }
 
   return { images, errors }
