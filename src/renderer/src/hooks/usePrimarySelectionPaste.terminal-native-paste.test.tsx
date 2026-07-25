@@ -47,7 +47,7 @@ function appendXtermHelperTextarea(): HTMLTextAreaElement {
   return textarea
 }
 
-function dispatchPaste(target: HTMLElement): Event {
+function dispatchPasteBeforeInput(target: HTMLElement): Event {
   const event = new InputEvent('beforeinput', {
     bubbles: true,
     cancelable: true,
@@ -94,8 +94,8 @@ describe('terminal-armed native paste suppression', () => {
     let keyboardPaste!: Event
 
     await act(async () => {
-      nativeFollowUp = dispatchPaste(terminalTextarea)
-      keyboardPaste = dispatchPaste(terminalTextarea)
+      nativeFollowUp = dispatchPasteBeforeInput(terminalTextarea)
+      keyboardPaste = dispatchPasteBeforeInput(terminalTextarea)
     })
 
     expect(nativeFollowUp.defaultPrevented).toBe(true)
@@ -124,7 +124,7 @@ describe('terminal-armed native paste suppression', () => {
 
     let paste!: Event
     await act(async () => {
-      paste = dispatchPaste(terminalTextarea)
+      paste = dispatchPasteBeforeInput(terminalTextarea)
     })
 
     expect(paste.defaultPrevented).toBe(false)
@@ -138,7 +138,7 @@ describe('terminal-armed native paste suppression', () => {
 
     let paste!: Event
     await act(async () => {
-      paste = dispatchPaste(terminalTextarea)
+      paste = dispatchPasteBeforeInput(terminalTextarea)
     })
 
     expect(paste.defaultPrevented).toBe(false)
