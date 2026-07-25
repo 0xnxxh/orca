@@ -23,12 +23,17 @@ const ROWS = 40
 // Why per-cell color: the serialized checkpoint must clear 16MiB to cover the pre-#10479 cap, and
 // SGR-per-cell is how real agent/build output inflates a snapshot well past its plain-text size.
 function writeLargeScrollback(emulator: HeadlessEmulator, fillerLines: number): void {
+  let written = true
   for (let index = 0; index < fillerLines; index += 1) {
-    emulator.writeSync(`\x1b[3${index % 8}m${'x'.repeat(COLS - 1)}\x1b[0m\r\n`)
+    written = emulator.writeSync(`\x1b[3${index % 8}m${'x'.repeat(COLS - 1)}\x1b[0m\r\n`) && written
   }
   for (let index = 0; index < MARKERS; index += 1) {
-    emulator.writeSync(`MARKER-${index}\r\n`)
+    written = emulator.writeSync(`MARKER-${index}\r\n`) && written
   }
+  // Why assert: writeSync returns false if xterm's private _core.writeSync ever goes away, which
+  // would leave an empty snapshot. The size assertions below catch that, but the endedAt gate is
+  // size-independent and would still pass — pinning the gate over no scrollback at all.
+  expect(written).toBe(true)
 }
 
 describe('checkpoint-only cold restore of a large checkpoint', () => {
