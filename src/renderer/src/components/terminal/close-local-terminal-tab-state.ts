@@ -12,6 +12,7 @@ export function closeLocalTerminalTabState(
     remoteCloseOwnedByHost?: boolean
     localPtyTeardownOwnedExternally?: boolean
     precomputedRetirementPlan?: TerminalTabRetirementPlan
+    providerTeardownTimeoutMs?: number
     registerProviderTeardown?: (teardown: Promise<void>) => void
   }
 ): void {
@@ -26,6 +27,7 @@ export function closeLocalTerminalTabState(
       options?.remoteCloseOwnedByHost ||
       options?.localPtyTeardownOwnedExternally ||
       options?.precomputedRetirementPlan ||
+      options?.providerTeardownTimeoutMs !== undefined ||
       options?.registerProviderTeardown
     ) {
       state.closeTab(terminalTabId, options)

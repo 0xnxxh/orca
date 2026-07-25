@@ -23613,6 +23613,42 @@ export class OrcaRuntimeService {
     return { handle, tabId: leaf.tabId, ptyKilled }
   }
 
+  async closeTerminalProvider(
+    handle: string,
+    options: { timeoutMs?: number } = {}
+  ): Promise<RuntimeTerminalClose> {
+    const pty = this.getLivePtyForHandle(handle)
+    let ptyId: string | null
+    let tabId: string
+    if (pty) {
+      ptyId = pty.pty.ptyId
+      tabId = pty.pty.tabId ?? pty.record.tabId
+    } else {
+      this.assertGraphReady()
+      const resolved = this.getLiveLeafForHandle(handle).leaf
+      ptyId = resolved.ptyId
+      tabId = resolved.tabId
+    }
+    if (!ptyId) {
+      return { handle, tabId, ptyKilled: false }
+    }
+    const stopAndWait = this.ptyController?.stopAndWait?.bind(this.ptyController)
+    if (!stopAndWait) {
+      throw new Error('terminal_provider_teardown_unavailable')
+    }
+    const deadlineMs =
+      typeof options.timeoutMs === 'number' &&
+      Number.isFinite(options.timeoutMs) &&
+      options.timeoutMs > 0
+        ? Date.now() + options.timeoutMs
+        : undefined
+    const stopped = await stopAndWait(ptyId, deadlineMs === undefined ? undefined : { deadlineMs })
+    if (!stopped) {
+      throw new Error('terminal_provider_teardown_failed')
+    }
+    return { handle, tabId, ptyKilled: true }
+  }
+
   async closeTerminalTab(handle: string): Promise<RuntimeTerminalClose> {
     const pty = this.getLivePtyForHandle(handle)
     if (pty) {

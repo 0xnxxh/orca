@@ -15,6 +15,7 @@ vi.mock('electron', () => ({ ipcMain: ipcMainMock }))
 
 describe('requestTerminalTabCloseFromRenderer', () => {
   beforeEach(() => {
+    vi.useRealTimers()
     ipcEmitter.removeAllListeners()
     ipcMainMock.on.mockClear()
     ipcMainMock.removeListener.mockClear()
@@ -67,5 +68,36 @@ describe('requestTerminalTabCloseFromRenderer', () => {
     )
 
     await expect(pending).rejects.toThrow('terminal_tab_pinned')
+  })
+
+  it('keeps the host request alive through the provider default timeout', async () => {
+    vi.useFakeTimers()
+    const { requestTerminalTabCloseFromRenderer } =
+      await import('./terminal-tab-close-request-relay')
+    const webContents = { isDestroyed: () => false, send: vi.fn() }
+    const pending = requestTerminalTabCloseFromRenderer(
+      { isDestroyed: () => false, webContents } as never,
+      'tab-slow-provider'
+    )
+    const request = webContents.send.mock.calls[0]?.[1] as { requestId: string }
+    let outcome = 'pending'
+    void pending.then(
+      () => {
+        outcome = 'resolved'
+      },
+      (error: Error) => {
+        outcome = error.message
+      }
+    )
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(outcome).toBe('pending')
+    ipcEmitter.emit(
+      'ui:terminalTabCloseResponse',
+      { sender: webContents },
+      { requestId: request.requestId }
+    )
+
+    await expect(pending).resolves.toBeUndefined()
   })
 })

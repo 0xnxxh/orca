@@ -45,6 +45,10 @@ import type { StartupCommandDelivery } from '../../../../shared/codex-startup-de
 import type { SessionOptionValue } from '../../../../shared/native-chat-session-options'
 import { resolveLocalWindowsTerminalShellOverrideForTab } from '../../../../shared/local-windows-terminal-runtime'
 import { WINDOWS_GIT_BASH_SHELL } from '../../../../shared/windows-terminal-shell'
+import {
+  TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
+  TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
+} from '../../../../shared/terminal-tab-close'
 import type { AgentStartedTelemetry } from '../../lib/worktree-activation'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
@@ -596,6 +600,7 @@ export type TerminalSlice = {
       remoteCloseOwnedByHost?: boolean
       localPtyTeardownOwnedExternally?: boolean
       precomputedRetirementPlan?: TerminalTabRetirementPlan
+      providerTeardownTimeoutMs?: number
       registerProviderTeardown?: (teardown: Promise<void>) => void
     }
   ) => void
@@ -1203,12 +1208,22 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     // Why: a parked tab has no mounted TerminalPane cleanup, so revoke its observer/candidate state before provider exit races.
     retireParkedTerminalTab(tabId)
     if (retiresSession) {
+      const providerTeardownTimeoutMs = opts?.registerProviderTeardown
+        ? (opts.providerTeardownTimeoutMs ?? TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS)
+        : undefined
+      // Why: a signal selects the abortable transport whose timeout includes connection and response latency.
+      const remoteTeardownSignal =
+        providerTeardownTimeoutMs === undefined ? undefined : new AbortController().signal
       const fallbackWorktreeRoute = retirementPlan.worktreeId
         ? resolveTerminalWorktreeRoute(get(), retirementPlan.worktreeId)
         : { runtimeEnvironmentId: null }
       const retirementTasks: Promise<unknown>[] = opts?.localPtyTeardownOwnedExternally
         ? []
-        : retirementPlan.localOrSshPtyIds.map(async (ptyId) => window.api.pty.kill(ptyId))
+        : retirementPlan.localOrSshPtyIds.map(async (ptyId) =>
+            providerTeardownTimeoutMs === undefined
+              ? window.api.pty.kill(ptyId)
+              : window.api.pty.kill(ptyId, { timeoutMs: providerTeardownTimeoutMs })
+          )
       const localOrSshTaskCount = retirementTasks.length
       if (!opts?.remoteCloseOwnedByHost) {
         for (const terminal of retirementPlan.runtimeTerminals) {
@@ -1218,11 +1233,22 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           const environmentId =
             terminal.environmentId ?? fallbackWorktreeRoute?.runtimeEnvironmentId
           retirementTasks.push(
-            callRuntimeRpc(
-              environmentId ? { kind: 'environment', environmentId } : { kind: 'local' },
-              'terminal.close',
-              { terminal: terminal.handle }
-            )
+            providerTeardownTimeoutMs === undefined
+              ? callRuntimeRpc(
+                  environmentId ? { kind: 'environment', environmentId } : { kind: 'local' },
+                  'terminal.close',
+                  { terminal: terminal.handle }
+                )
+              : callRuntimeRpc(
+                  environmentId ? { kind: 'environment', environmentId } : { kind: 'local' },
+                  'terminal.closeProvider',
+                  { terminal: terminal.handle, timeoutMs: providerTeardownTimeoutMs },
+                  {
+                    timeoutMs: TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
+                    signal: remoteTeardownSignal,
+                    skipCompatibilityCheck: true
+                  }
+                )
           )
         }
       }
@@ -1249,8 +1275,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
             localOrSshFailures,
             runtimeFailures
           })
+          throw new Error('terminal_tab_close_failed')
         }
       })
+    }
+    // Why: only acknowledged host closes consume teardown failure; UI and bulk closes remain fail-soft.
+    if (!opts?.registerProviderTeardown) {
+      void providerTeardown.catch(() => {})
     }
     opts?.registerProviderTeardown?.(providerTeardown)
 

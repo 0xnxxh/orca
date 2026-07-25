@@ -28,6 +28,26 @@ export type { PrecomputedTerminalCloseState } from './terminal-close-target'
 export { closeOtherTerminalTabs, closeTerminalTabsToRight } from './terminal-tab-bulk-actions'
 
 type TerminalTabActionState = ReturnType<typeof useAppStore.getState>
+const providerTeardownByClosingTabId = new Map<string, Promise<void>>()
+
+function trackClosingTabProviderTeardown(
+  tabIds: readonly string[],
+  providerTeardown: Promise<void>
+): void {
+  const keys = [...new Set(tabIds)]
+  for (const tabId of keys) {
+    providerTeardownByClosingTabId.set(tabId, providerTeardown)
+  }
+  const clear = (): void => {
+    for (const tabId of keys) {
+      if (providerTeardownByClosingTabId.get(tabId) === providerTeardown) {
+        providerTeardownByClosingTabId.delete(tabId)
+      }
+    }
+  }
+  // Why: a failed durable close must keep later not-found retries from falsely acknowledging success.
+  void providerTeardown.then(clear, () => {})
+}
 
 function isPinnedVisibleTab(
   state: TerminalTabActionState,
@@ -57,6 +77,7 @@ export function closeTerminalTab(
     localPtyTeardownOwnedExternally?: boolean
     precomputedRetirementPlan?: TerminalTabRetirementPlan
     precomputedCloseState?: PrecomputedTerminalCloseState
+    providerTeardownTimeoutMs?: number
     onClosed?: (providerTeardown?: Promise<void>) => void
     onCancel?: () => void
   }
@@ -69,7 +90,12 @@ export function closeTerminalTab(
   )
   const target = resolveTerminalCloseTarget(state, tabId, precomputedCloseState)
   if (!target) {
-    options?.onClosed?.()
+    const providerTeardown = providerTeardownByClosingTabId.get(tabId)
+    if (providerTeardown) {
+      options?.onClosed?.(providerTeardown)
+    } else {
+      options?.onClosed?.()
+    }
     return
   }
   const { worktreeId: owningWorktreeId, terminalTabId } = target
@@ -81,8 +107,12 @@ export function closeTerminalTab(
   let providerTeardown = Promise.resolve()
   const registerProviderTeardown = (teardown: Promise<void>): void => {
     providerTeardown = teardown
+    trackClosingTabProviderTeardown([tabId, terminalTabId], teardown)
   }
-  const providerTeardownRegistration = options?.onClosed ? { registerProviderTeardown } : {}
+  const providerTeardownRegistration =
+    options?.onClosed && options.providerTeardownTimeoutMs !== undefined
+      ? { registerProviderTeardown }
+      : {}
 
   // Why: a pinned tab routes through the confirmation guard instead of closing
   // outright. `force` is the post-confirmation re-entry, which skips the guard.
@@ -150,6 +180,9 @@ export function closeTerminalTab(
       ...(options?.precomputedRetirementPlan
         ? { precomputedRetirementPlan: options.precomputedRetirementPlan }
         : {}),
+      ...(options?.providerTeardownTimeoutMs !== undefined
+        ? { providerTeardownTimeoutMs: options.providerTeardownTimeoutMs }
+        : {}),
       ...providerTeardownRegistration
     })
     void closeWebRuntimeSessionTab({
@@ -186,6 +219,9 @@ export function closeTerminalTab(
         : {}),
       ...(options?.precomputedRetirementPlan
         ? { precomputedRetirementPlan: options.precomputedRetirementPlan }
+        : {}),
+      ...(options?.providerTeardownTimeoutMs !== undefined
+        ? { providerTeardownTimeoutMs: options.providerTeardownTimeoutMs }
         : {}),
       ...providerTeardownRegistration
     })
@@ -229,6 +265,9 @@ export function closeTerminalTab(
     ...(options?.localPtyTeardownOwnedExternally ? { localPtyTeardownOwnedExternally: true } : {}),
     ...(options?.precomputedRetirementPlan
       ? { precomputedRetirementPlan: options.precomputedRetirementPlan }
+      : {}),
+    ...(options?.providerTeardownTimeoutMs !== undefined
+      ? { providerTeardownTimeoutMs: options.providerTeardownTimeoutMs }
       : {}),
     ...providerTeardownRegistration
   })

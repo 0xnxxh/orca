@@ -6,8 +6,7 @@ import type {
   TerminalTabCloseRequest,
   TerminalTabCloseResponse
 } from '../../shared/terminal-tab-close'
-
-const TERMINAL_TAB_CLOSE_TIMEOUT_MS = 20_000
+import { TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS } from '../../shared/terminal-tab-close'
 
 export async function requestTerminalTabCloseFromRenderer(
   mainWindow: BrowserWindow,
@@ -21,7 +20,7 @@ export async function requestTerminalTabCloseFromRenderer(
     const timeout = setTimeout(() => {
       ipcMain.removeListener('ui:terminalTabCloseResponse', onResponse)
       reject(new Error('terminal_tab_close_timeout'))
-    }, TERMINAL_TAB_CLOSE_TIMEOUT_MS)
+    }, TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS)
     const onResponse = (event: Electron.IpcMainEvent, response: TerminalTabCloseResponse): void => {
       // Why: request IDs are visible to renderer code; only the selected main
       // window may commit or reject its lifecycle transaction.

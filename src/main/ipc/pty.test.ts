@@ -5640,6 +5640,32 @@ describe('registerPtyHandlers', () => {
     expect(fallbackShutdown).not.toHaveBeenCalled()
   })
 
+  it('bounds the renderer kill startup wait by its teardown timeout', async () => {
+    vi.useFakeTimers()
+    const awaitLocalPtyProviderStartup = vi.fn(() => new Promise<void>(() => {}))
+    const fallbackShutdown = vi.spyOn(getLocalPtyProvider(), 'shutdown')
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { awaitLocalPtyProviderStartup }
+    )
+
+    const pendingKill = handlers.get('pty:kill')!(null, {
+      id: 'daemon-session',
+      timeoutMs: 30_000
+    }) as Promise<void>
+    const rejection = expect(pendingKill).rejects.toThrow('terminal_provider_teardown_timeout')
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    await rejection
+    expect(fallbackShutdown).not.toHaveBeenCalled()
+  })
+
   it('waits for the desktop startup barrier before runtime local kills resolve the provider', async () => {
     const barrier = makeDeferred()
     const awaitLocalPtyProviderStartup = vi.fn(() => barrier.promise)

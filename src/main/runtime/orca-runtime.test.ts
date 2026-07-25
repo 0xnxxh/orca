@@ -22269,6 +22269,47 @@ describe('OrcaRuntimeService', () => {
     expect(closeTerminal).toHaveBeenCalledWith('laptop-tab')
   })
 
+  it('waits for physical provider teardown before returning its close receipt', async () => {
+    const physicalExit = makeDeferred()
+    const kill = vi.fn(() => true)
+    const stopAndWait = vi.fn(async () => {
+      await physicalExit.promise
+      return true
+    })
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      spawn: vi.fn().mockResolvedValue({ id: 'provider-owned-pty' }),
+      write: () => true,
+      kill,
+      stopAndWait,
+      getForegroundProcess: async () => null
+    })
+    const terminal = await runtime.createTerminal(`id:${TEST_WORKTREE_ID}`, {
+      tabId: 'provider-owned-tab',
+      leafId: HEADLESS_LEAF_ID
+    })
+
+    const pending = runtime.closeTerminalProvider(terminal.handle, { timeoutMs: 30_000 })
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+
+    expect(settled).toBe(false)
+    expect(kill).not.toHaveBeenCalled()
+    expect(stopAndWait).toHaveBeenCalledWith('provider-owned-pty', {
+      deadlineMs: expect.any(Number)
+    })
+
+    physicalExit.resolve()
+    await expect(pending).resolves.toEqual({
+      handle: terminal.handle,
+      tabId: 'provider-owned-tab',
+      ptyKilled: true
+    })
+  })
+
   it('waits for renderer acknowledgement before returning a whole-tab close receipt', async () => {
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
       makeWorkspaceSessionWithHeadlessTerminal()

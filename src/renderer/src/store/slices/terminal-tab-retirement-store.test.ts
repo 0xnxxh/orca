@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SleepingAgentSessionRecord } from '../../../../shared/agent-session-resume'
+import { TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS } from '../../../../shared/terminal-tab-close'
 
 const mockKill = vi.fn().mockResolvedValue(undefined)
 const mockRuntimeCall = vi.fn().mockResolvedValue({
@@ -158,6 +159,29 @@ describe('terminal tab retirement store boundary', () => {
     expect(teardownFinished).toBe(true)
   })
 
+  it('rejects registered teardown when a provider kill fails', async () => {
+    const store = createRetirementStore()
+    mockKill.mockRejectedValueOnce(new Error('provider unavailable'))
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'pty-1' })]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] }
+    })
+    let providerTeardown: Promise<void> | undefined
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    store.getState().closeTab('tab-1', {
+      registerProviderTeardown: (teardown) => {
+        providerTeardown = teardown
+      }
+    })
+
+    await expect(providerTeardown).rejects.toThrow('terminal_tab_close_failed')
+    expect(store.getState().tabsByWorktree['wt-1']).toEqual([])
+    warn.mockRestore()
+  })
+
   it('routes runtime handles to runtime close and preserves shared PTYs', async () => {
     const store = createRetirementStore()
     seedStore(store, {
@@ -181,6 +205,32 @@ describe('terminal tab retirement store boundary', () => {
       params: { terminal: 'terminal-1' }
     })
     expect(mockKill).not.toHaveBeenCalled()
+  })
+
+  it('uses provider-complete runtime close for registered teardown', async () => {
+    const store = createRetirementStore()
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'remote:terminal-1' })]
+      },
+      ptyIdsByTabId: { 'tab-1': ['remote:terminal-1'] }
+    })
+    let providerTeardown: Promise<void> | undefined
+
+    store.getState().closeTab('tab-1', {
+      registerProviderTeardown: (teardown) => {
+        providerTeardown = teardown
+      }
+    })
+    await providerTeardown
+
+    expect(mockRuntimeCall).toHaveBeenCalledWith({
+      method: 'terminal.closeProvider',
+      params: {
+        terminal: 'terminal-1',
+        timeoutMs: TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
+      }
+    })
   })
 
   it('preserves shared-owner snapshots while closing the source tab', async () => {

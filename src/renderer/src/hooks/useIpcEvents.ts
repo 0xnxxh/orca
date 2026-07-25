@@ -143,6 +143,7 @@ import { closeTerminalTab } from '@/components/terminal/terminal-tab-actions'
 import { initialAgentTabViewModeProps } from '@/lib/native-chat-initial-view-mode'
 import { getConnectionIdFromState } from '@/lib/connection-context'
 import { isNativeChatTranscriptLocalReadable } from '@/lib/native-chat-transcript-readability'
+import { TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS } from '../../../shared/terminal-tab-close'
 
 function getShortcutPlatform(): NodeJS.Platform {
   if (navigator.userAgent.includes('Mac')) {
@@ -2038,6 +2039,7 @@ export function useIpcEvents(): void {
           }
           closeTerminalTab(tabId, {
             rejectPinned: true,
+            providerTeardownTimeoutMs: TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
             onCancel: () => respond('terminal_tab_pinned'),
             onClosed: (providerTeardown = Promise.resolve()) => {
               void (async () => {

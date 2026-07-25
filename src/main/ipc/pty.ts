@@ -5689,18 +5689,39 @@ export function registerPtyHandlers(
     runtime?.clearHeadlessTerminalBuffer(args.id).catch(() => {})
   })
 
-  ipcMain.handle('pty:kill', async (_event, args: { id: string; keepHistory?: boolean }) => {
+  type RendererPtyKillArgs = { id: string; keepHistory?: boolean; timeoutMs?: number }
+  ipcMain.handle('pty:kill', async (_event, args: RendererPtyKillArgs): Promise<void> => {
     if (typeof args?.id !== 'string' || !args.id || args.id.startsWith('remote:')) {
       // Why: runtime terminal handles belong to terminal.close; unowned PTY routing could target the local provider.
       throw new Error('Invalid PTY provider id')
     }
+    const deadlineMs =
+      typeof args.timeoutMs === 'number' && Number.isFinite(args.timeoutMs) && args.timeoutMs > 0
+        ? Date.now() + args.timeoutMs
+        : undefined
     const ownedConnectionId = ptyOwnership.get(args.id)
     const parsedSshId = ownedConnectionId === undefined ? parseAppSshPtyId(args.id) : null
     const connectionId = ownedConnectionId ?? parsedSshId?.connectionId
     // Why: wait for daemon startup before selecting the local provider, else a fallback shutdown falsely succeeds and orphans a restored daemon PTY (#7742).
     const startupPromise = getLocalPtyProviderStartupPromise(connectionId)
     if (startupPromise) {
-      await startupPromise
+      if (deadlineMs === undefined) {
+        await startupPromise
+      } else {
+        const startupResult = await Promise.race([
+          startupPromise.then(
+            () => ({ started: true as const }),
+            (error: unknown) => ({ started: false as const, error })
+          ),
+          delay(Math.max(1, deadlineMs - Date.now())).then(() => ({
+            started: false as const,
+            error: new Error('terminal_provider_teardown_timeout')
+          }))
+        ])
+        if (!startupResult.started) {
+          throw startupResult.error
+        }
+      }
     }
     const provider = connectionId ? sshProviders.get(connectionId) : tryGetProviderForPty(args.id)
     if (!provider && connectionId) {
@@ -5718,7 +5739,8 @@ export function registerPtyHandlers(
     try {
       providerExitObserved = await shutdownProviderAndDetectExit(shutdownProvider, args.id, {
         immediate: true,
-        keepHistory: args.keepHistory ?? false
+        keepHistory: args.keepHistory ?? false,
+        ...(deadlineMs !== undefined ? { deadlineMs } : {})
       })
     } catch (err) {
       if (!isPtyAlreadyGoneError(err)) {
