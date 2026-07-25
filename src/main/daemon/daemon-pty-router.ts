@@ -253,6 +253,17 @@ export class DaemonPtyRouter implements IPtyProvider {
     }
   }
 
+  // Why: main subscribes on the routed provider, so without this the dead-endpoint
+  // fan-out never reaches the renderer and only the written pane recovers (STA-2373).
+  onWriteUnavailable(callback: (payload: { id: string }) => void): () => void {
+    const unsubscribes = this.allAdapters().map((adapter) => adapter.onWriteUnavailable(callback))
+    return () => {
+      for (const unsubscribe of unsubscribes) {
+        unsubscribe()
+      }
+    }
+  }
+
   onReplay(_callback: (payload: { id: string; data: string }) => void): () => void {
     return () => {}
   }

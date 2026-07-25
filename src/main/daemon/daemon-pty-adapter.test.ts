@@ -693,6 +693,28 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
+    it('keeps dropping writes silently on an adapter that cannot respawn', async () => {
+      // Why revert-sensitive: legacy adapters are built with no respawn, so a remount
+      // reattaches to nothing and rebuilds the pane EMPTY, losing scrollback the user
+      // could still read. Rejecting the write is only an improvement where the endpoint
+      // can actually come back, so an unrecoverable one must keep the old silent drop.
+      const legacyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath })
+      const recovered: string[] = []
+      legacyAdapter.onWriteUnavailable(({ id }) => recovered.push(id))
+      try {
+        const { id } = await legacyAdapter.spawn({ sessionId: 'legacy-pane', cols: 80, rows: 24 })
+        const client = (legacyAdapter as unknown as { client: DaemonClient }).client
+
+        await server.shutdown()
+        await waitFor(() => !client.isConnected())
+
+        expect(() => legacyAdapter.write(id, 'typed')).not.toThrow()
+        expect(recovered).toEqual([])
+      } finally {
+        legacyAdapter.dispose()
+      }
+    })
+
     it('re-arms recovery for a second daemon death when a background session never rebinds', async () => {
       const respawn = vi.fn(async () => {
         restartServerOnRespawn()

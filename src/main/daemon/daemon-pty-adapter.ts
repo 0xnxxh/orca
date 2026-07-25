@@ -619,14 +619,22 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   write(id: string, data: string): void {
     this.markSessionDirty(id)
-    const active = this.activeSessionIds.has(id)
-    if (active && (this.sessionsAwaitingDaemonRecovery.has(id) || !this.client.isConnected())) {
+    // Why recoverable and not just active: rejecting a write asks the pane to remount,
+    // which only helps if this endpoint can come back. A legacy adapter has no respawn,
+    // so its reattach fails and the pane rebuilds empty — losing scrollback the user
+    // could still read. Keep the pre-existing silent drop for those.
+    const recoverable =
+      this.activeSessionIds.has(id) && !this.respawnAdoptionClosed && Boolean(this.respawnFn)
+    if (
+      recoverable &&
+      (this.sessionsAwaitingDaemonRecovery.has(id) || !this.client.isConnected())
+    ) {
       this.sessionsAwaitingDaemonRecovery.add(id)
       this.reconnectAfterWriteFailure()
       throw new PtyWriteUnavailableError(`Daemon PTY "${id}" is awaiting recovery`)
     }
     const delivered = this.client.notify('write', { sessionId: id, data })
-    if (!delivered && active) {
+    if (!delivered && recoverable) {
       this.sessionsAwaitingDaemonRecovery.add(id)
       this.reconnectAfterWriteFailure()
       throw new PtyWriteUnavailableError(`Daemon PTY "${id}" is awaiting recovery`)

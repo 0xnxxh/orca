@@ -592,7 +592,14 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       )
     }
     ptyDataHandlers.set(id, dataHandler)
-    const writeUnavailable = (): void => storedCallbacks.onWriteUnavailable?.()
+    // Guard like the data/replay handlers: a transport that rebinds to a new id without
+    // detaching leaves this entry behind, and a fan-out for the stale id would otherwise
+    // remount a healthy pane.
+    const writeUnavailable = (): void => {
+      if (ptyId === id) {
+        storedCallbacks.onWriteUnavailable?.()
+      }
+    }
     ptyWriteUnavailableHandlers.set(id, writeUnavailable)
     ownedDataAndReplayHandlers.set(id, {
       data: dataHandler,
