@@ -534,18 +534,6 @@ jobs:
             exit 1
           fi
           git add package.json resources/skills/release-mapping.json
-          # Why: a lint that greps this file cannot see a path built from an env
-          # var, a composite action, or string concatenation. Assert the index
-          # itself so the release commit can only ever carry the version bump and
-          # the provenance row, no matter which step staged what.
-          # -F because the allowlist is literal: unanchored, `.` would match any
-          # character and quietly admit a path like `packageXjson`.
-          unexpected="$(git diff --cached --name-only |
-            grep -vxF -e 'package.json' -e 'resources/skills/release-mapping.json' || true)"
-          if [[ -n "$unexpected" ]]; then
-            echo "::error::Release commit would carry unexpected paths: $(echo "$unexpected" | tr '\n' ' ')Only package.json and the skill release-mapping row may be staged." >&2
-            exit 1
-          fi
           commit_message="release: v$VERSION"
           if [[ "$EVENT_NAME" == "schedule" ]]; then
             commit_message="$commit_message [rc-slot:$SLOT]"
@@ -557,6 +545,20 @@ jobs:
             git commit --allow-empty -m "$commit_message"
           else
             git commit -m "$commit_message"
+          fi
+          # Why: a lint that greps this file cannot see a path built from an env
+          # var, a composite action, or concatenation, and `git commit` has forms
+          # (-a, -i, --only, a pathspec) that commit the working tree rather than
+          # the index. Assert what the commit actually carries, so the tag can
+          # only ever ship the version bump and the provenance row, no matter
+          # which step staged what or how the commit was spelled.
+          # -F because the allowlist is literal: unanchored, `.` would match any
+          # character and quietly admit a path like `packageXjson`.
+          committed="$(git diff-tree --no-commit-id --name-only -r HEAD |
+            grep -vxF -e 'package.json' -e 'resources/skills/release-mapping.json' || true)"
+          if [[ -n "$committed" ]]; then
+            echo "::error::Release commit carries unexpected paths: $(echo "$committed" | tr '\n' ' ')Only package.json and the skill release-mapping row may ship in a version commit." >&2
+            exit 1
           fi
           git tag -a "v$VERSION" -m "v$VERSION"
           echo "tag=v$VERSION" >>"$GITHUB_OUTPUT"

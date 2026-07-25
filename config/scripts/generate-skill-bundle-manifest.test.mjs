@@ -479,16 +479,18 @@ describe('skill bundle manifest generator', () => {
       .map((step) => ({ name: step.name ?? '(unnamed)', run: step.run.replace(/^\s*#.*$/gm, '') }))
     const bumpStep = runSteps.find((step) => step.name === 'Bump package.json and tag')
 
-    // The load-bearing check: whatever staged it, only these two paths may ship.
+    // The load-bearing check: whatever staged it and however the commit was
+    // spelled, only these two paths may ship. Asserted on the commit rather than
+    // the index because `git commit -a/-i/--only/<pathspec>` bypasses the index.
     // -F is part of the contract; without it `.` admits a path like packageXjson.
     expect(bumpStep.run).toMatch(
-      /git diff --cached --name-only[\s\S]*grep -vxF -e 'package\.json' -e 'resources\/skills\/release-mapping\.json'/
+      /git diff-tree --no-commit-id --name-only -r HEAD[\s\S]*grep -vxF -e 'package\.json' -e 'resources\/skills\/release-mapping\.json'/
     )
-    expect(bumpStep.run.indexOf('grep -vxF')).toBeLessThan(bumpStep.run.indexOf('git commit'))
+    expect(bumpStep.run.indexOf('grep -vxF')).toBeLessThan(bumpStep.run.indexOf('git tag'))
     // ...and that it aborts. A guard degraded to a warning still reads as covered.
     // The exit must be inside the guard's own block, not borrowed from a later one.
     expect(bumpStep.run).toMatch(
-      /if \[\[ -n "\$unexpected" \]\]; then(?:(?!\bfi\b)[\s\S])*exit 1[\s\S]*?fi/
+      /if \[\[ -n "\$committed" \]\]; then(?:(?!\bfi\b)[\s\S])*exit 1[\s\S]*?fi/
     )
     // Tripwire only. A step that merely READS this directory may be added here;
     // one that writes or stages it must not, and the guard above will reject it.
