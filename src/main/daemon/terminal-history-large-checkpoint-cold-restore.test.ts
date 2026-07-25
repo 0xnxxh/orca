@@ -6,6 +6,7 @@ import { HistoryManager } from './history-manager'
 import { HistoryReader } from './history-reader'
 import { HeadlessEmulator } from './headless-emulator'
 import { LOG_HEADER_BYTES } from './terminal-history-log'
+import { getHistorySessionDirName } from './history-paths'
 
 // Guards checkpoint-only cold restore: the route taken when the daemon dies right after a
 // checkpoint, so output.log is header-only and checkpoint.json is the sole recovery source.
@@ -35,7 +36,7 @@ const FILLER_ROWS = Array.from(
 function writeLargeScrollback(emulator: HeadlessEmulator, fillerLines: number): void {
   let written = true
   for (let index = 0; index < fillerLines; index += 1) {
-    written = emulator.writeSync(FILLER_ROWS[index % 8]) && written
+    written = emulator.writeSync(FILLER_ROWS[index % FILLER_ROWS.length]) && written
   }
   for (let index = 0; index < MARKERS; index += 1) {
     written = emulator.writeSync(`MARKER-${index}\r\n`) && written
@@ -68,10 +69,12 @@ describe('checkpoint-only cold restore of a large checkpoint', () => {
       cols: COLS,
       rows: ROWS
     })
-    await manager.checkpoint(SESSION_ID, emulator.getSnapshot())
+    // Why dispose first: a throwing checkpoint() must not leak the buffer for the worker's life.
+    const snapshot = emulator.getSnapshot()
     emulator.dispose()
+    await manager.checkpoint(SESSION_ID, snapshot)
 
-    const sessionDir = join(dir, encodeURIComponent(SESSION_ID))
+    const sessionDir = join(dir, getHistorySessionDirName(SESSION_ID))
     // checkpoint() resets the log to its header, so this is genuinely checkpoint-only: any
     // recovered content had to come through the checkpoint read, not incremental log replay.
     expect(statSync(join(sessionDir, 'output.log')).size).toBe(LOG_HEADER_BYTES)
@@ -86,7 +89,7 @@ describe('checkpoint-only cold restore of a large checkpoint', () => {
       expect(seed).toContain(`MARKER-${index}`)
     }
     expect(seed.length).toBeGreaterThan(16 * 1024 * 1024)
-  }, 300_000)
+  }, 60_000)
 
   // Why pinned: this gate, not any size cap, is what makes a checkpoint-only restore come back
   // blank. Two separate investigations mistook a cleanly-ended session for a size regression.
@@ -100,17 +103,18 @@ describe('checkpoint-only cold restore of a large checkpoint', () => {
         cols: COLS,
         rows: ROWS
       })
-      await manager.checkpoint(SESSION_ID, emulator.getSnapshot())
+      const snapshot = emulator.getSnapshot()
       emulator.dispose()
+      await manager.checkpoint(SESSION_ID, snapshot)
       if (endCleanly) {
         await manager.closeSession(SESSION_ID, 0)
       }
       const info = await new HistoryReader(dir).detectColdRestore(SESSION_ID)
-      rmSync(join(dir, encodeURIComponent(SESSION_ID)), { recursive: true, force: true })
+      rmSync(join(dir, getHistorySessionDirName(SESSION_ID)), { recursive: true, force: true })
       return info !== null
     }
 
     expect(await restoreAfter(false)).toBe(true)
     expect(await restoreAfter(true)).toBe(false)
-  }, 300_000)
+  }, 60_000)
 })
