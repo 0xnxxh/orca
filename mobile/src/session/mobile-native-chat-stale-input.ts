@@ -31,10 +31,12 @@ export function resetMobileNativeChatStaleInputForTests(): void {
  *  false when a needed clear failed — the marker stays set for the next attempt
  *  and the caller must not submit, or the stale paste rides along with it.
  *
- *  Only for writes that can commit the composer. Pure dialog control (permission
- *  choices, Escape) is `enter: false` against an overlay that swallows the keys,
- *  so a clear there would not reach the input line yet would still consume the
- *  marker — leaving the next real message to be corrupted by the paste. */
+ *  Only for writes that can commit the composer. Dialog control (permission
+ *  choices, Escape) and selector answers carry no commit — the host coerces their
+ *  `enter` to false — and go to an active overlay that swallows the keys, so a
+ *  clear there would not reach the input line yet would still consume the marker,
+ *  leaving the next real message to be corrupted by the paste. The host acks a
+ *  write, never a cleared line, so consumption can't be made conditional on it. */
 export async function healMobileNativeChatStaleInput(args: {
   readonly client: Pick<RpcClient, 'sendRequest'>
   readonly terminal: string

@@ -158,6 +158,20 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
     expect(isMobileNativeChatInputStale('term-1')).toBe(true)
   })
 
+  it('keeps the marker when Escape cancels an ask, which never submits the composer', async () => {
+    markMobileNativeChatInputStale('term-1')
+    sendWithOutcome.mockResolvedValue('accepted')
+    let accepted = false
+    await act(async () => {
+      accepted = await controller!.handleNativeChatCancelAsk()
+    })
+    expect(accepted).toBe(true)
+    // The clear would be swallowed by the live overlay but still acked, burning
+    // the marker and leaving the paste to corrupt the next real message.
+    expect(clientStub.sendRequest).not.toHaveBeenCalled()
+    expect(isMobileNativeChatInputStale('term-1')).toBe(true)
+  })
+
   it('threads the optimistic-echo image URIs into acceptSend on an accepted send', async () => {
     sendWithOutcome.mockResolvedValue('accepted')
     let accepted = false

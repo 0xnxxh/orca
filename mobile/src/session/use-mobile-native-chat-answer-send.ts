@@ -103,22 +103,6 @@ export function useMobileNativeChatAnswerSend(args: {
       // A new answer supersedes any still-pending keystroke writes.
       cancelPending()
       const generation = generationRef.current
-      // Both answer shapes commit with Enter, so an orphaned image paste left on
-      // the composer would be submitted along with the answer if the overlay has
-      // already gone away (#10228). Clear it before the first keystroke.
-      if (
-        !(await healMobileNativeChatStaleInput({
-          client,
-          terminal: handle,
-          deviceToken: deviceTokenRef.current
-        }))
-      ) {
-        onSendError('Answer not sent')
-        return false
-      }
-      if (generationRef.current !== generation) {
-        return false
-      }
       let sawUnknownOutcome = false
       const sendTerminal = async (body: string, enter: boolean): Promise<boolean> => {
         const activeRoute = activeRouteRef.current
@@ -172,6 +156,29 @@ export function useMobileNativeChatAnswerSend(args: {
       // Grok commits pasted labels; Claude and Codex need their selector-specific
       // keystrokes paced so each step renders before the next lands.
       if (!shouldStepNativeChatAskAnswer(agentRef.current)) {
+        // This shape pastes the label into the composer and commits it, so an
+        // orphaned image paste would be submitted along with the answer (#10228).
+        // The selector shapes below deliberately skip the heal: their keys are
+        // `enter: false` for an active overlay, and a single-select answer is a
+        // bare option digit that cannot submit the line at all, so clearing there
+        // would consume the marker still protecting the next real message.
+        // Desktop splits it identically — use-native-chat-interactive-send.ts
+        // routes only the pasted-label shape through the clearing sender.
+        if (
+          !(await healMobileNativeChatStaleInput({
+            client,
+            terminal: handle,
+            deviceToken: deviceTokenRef.current
+          }))
+        ) {
+          if (generationRef.current === generation) {
+            onSendError('Answer not sent')
+          }
+          return false
+        }
+        if (generationRef.current !== generation) {
+          return false
+        }
         return (await sendTerminal(formatAskAnswer(prompt, selections), true)) || fail()
       }
       const groups =

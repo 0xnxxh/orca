@@ -250,6 +250,20 @@ describe('useMobileNativeChatAnswerSend', () => {
     expect(isMobileNativeChatInputStale('terminal')).toBe(false)
   })
 
+  it('keeps the marker for a selector answer, which cannot submit the composer', async () => {
+    const sendRequest = vi.fn().mockResolvedValue(acceptedResponse())
+    await mount({ sendRequest } as unknown as RpcClient, vi.fn(), 'claude')
+    markMobileNativeChatInputStale('terminal')
+
+    await expect(answerSend?.answerAsk(TABS_OR_SPACES, [{ indices: [1] }])).resolves.toBe(true)
+    // A single-select answer is a bare option digit against a live overlay: the
+    // clear would be swallowed but still acked, burning the marker and leaving the
+    // paste to corrupt the next real message. Only the digit may go.
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    expect(sendRequest.mock.calls[0]?.[1]).toMatchObject({ text: '2', enter: false })
+    expect(isMobileNativeChatInputStale('terminal')).toBe(true)
+  })
+
   it('does not answer when the healing clear is rejected, keeping the marker', async () => {
     const onSendError = vi.fn()
     const sendRequest = vi.fn().mockResolvedValue({
