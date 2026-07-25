@@ -1,4 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { execFileMock, powershellScanCount } = vi.hoisted(() => ({
+  execFileMock: vi.fn(),
+  powershellScanCount: { value: 0 }
+}))
+
+vi.mock('child_process', () => ({ execFile: execFileMock }))
+
+import { resetWindowsProcessRowsSnapshotForTests } from './providers/windows-foreground-process-rows'
 import {
   classifyWindowsTreeKillTarget,
   verifyWindowsTreeKillTarget,
@@ -136,5 +145,44 @@ describe('verifyWindowsTreeKillTarget', () => {
       verifyWindowsTreeKillTarget(4242, { readRows, ownerPid: ORCA_PID, platform: 'darwin' })
     ).resolves.toBe('unknown')
     expect(readRows).not.toHaveBeenCalled()
+  })
+})
+
+// Regression guard on the DEFAULT reader, which the cases above bypass by
+// injecting readRows: worktree delete tears down PTYs 32-wide, so a probe that
+// reads the table uncached forks 32 powershell cold-starts per delete — the
+// churn #6288/#6667 fixed for POSIX. Exercises the real wiring, not a fake.
+describe('verifyWindowsTreeKillTarget scan volume', () => {
+  const ROWS_JSON = JSON.stringify([
+    { ProcessId: ORCA_PID, ParentProcessId: 900, Name: 'orca.exe', CommandLine: 'orca.exe' },
+    { ProcessId: 4242, ParentProcessId: ORCA_PID, Name: 'pwsh.exe', CommandLine: 'pwsh.exe' }
+  ])
+
+  beforeEach(() => {
+    execFileMock.mockReset()
+    powershellScanCount.value = 0
+    resetWindowsProcessRowsSnapshotForTests()
+    execFileMock.mockImplementation((cmd: string, ..._rest: unknown[]) => {
+      const cb = _rest.at(-1) as (e: unknown, r: { stdout: string; stderr: string }) => void
+      if (cmd === 'powershell.exe') {
+        powershellScanCount.value += 1
+      }
+      cb(null, { stdout: ROWS_JSON, stderr: '' })
+    })
+  })
+
+  afterEach(() => {
+    resetWindowsProcessRowsSnapshotForTests()
+  })
+
+  it('collapses a 32-wide teardown burst into a single process-table scan', async () => {
+    const verdicts = await Promise.all(
+      Array.from({ length: 32 }, () =>
+        verifyWindowsTreeKillTarget(4242, { ownerPid: ORCA_PID, platform: 'win32' })
+      )
+    )
+
+    expect(powershellScanCount.value).toBe(1)
+    expect(new Set(verdicts)).toEqual(new Set(['own']))
   })
 })
