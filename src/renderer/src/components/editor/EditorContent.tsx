@@ -386,6 +386,7 @@ export function EditorContent({
             <RichMarkdownErrorBoundary key={viewStateScopeId} fileId={activeFile.id}>
               <RichMarkdownEditor
                 fileId={activeFile.id}
+                viewStateId={viewStateScopeId}
                 content={editorContent}
                 filePath={activeFile.filePath}
                 worktreeId={activeFile.worktreeId}

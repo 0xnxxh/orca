@@ -9,11 +9,16 @@ import type { Editor } from '@tiptap/react'
 export function autoFocusRichEditor(
   nextEditor: Editor,
   rootEl: HTMLElement | null,
-  force = false
+  force = false,
+  shouldFocus: () => boolean = () => true
 ): () => void {
+  // Why: Tiptap can recreate the instance before its deferred focus lands, losing explicit handoffs.
+  if (force && !nextEditor.isDestroyed && shouldFocus()) {
+    nextEditor.view?.dom?.focus?.({ preventScroll: true })
+  }
   let frameId: number | null = requestAnimationFrame(() => {
     frameId = null
-    if (nextEditor.isDestroyed) {
+    if (nextEditor.isDestroyed || !shouldFocus()) {
       return
     }
     const active = document.activeElement

@@ -121,7 +121,12 @@ describe('createEditorSlice right sidebar state', () => {
     )
 
     const request = store.getState().pendingEditorFocusRequest
-    expect(request).toMatchObject({ fileId: '/repo/README.md', worktreeId: 'wt-1' })
+    expect(request).toMatchObject({
+      fileId: '/repo/README.md',
+      worktreeId: 'wt-1',
+      viewStateId: expect.any(String),
+      expiresAt: expect.any(Number)
+    })
 
     store.getState().consumeEditorFocusRequest((request?.token ?? 0) + 1)
     expect(store.getState().pendingEditorFocusRequest).toBe(request)
