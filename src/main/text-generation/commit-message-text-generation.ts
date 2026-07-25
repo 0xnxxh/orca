@@ -44,10 +44,8 @@ import {
   type ResolvedSourceControlAiGenerationParams
 } from '../../shared/source-control-ai'
 import type { SourceControlAiOperation } from '../../shared/source-control-ai-types'
-import {
-  formatLinkedIssueTemplateValue,
-  renderSourceControlActionCommandTemplate
-} from '../../shared/source-control-ai-actions'
+import { formatLinkedIssueTemplateValue } from '../../shared/source-control-ai-action-variables'
+import { renderSourceControlActionCommandTemplate } from '../../shared/source-control-ai-actions'
 import { resolveCliCommand } from '../codex-cli/command'
 import {
   getSpawnArgsForWindows,

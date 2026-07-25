@@ -2,16 +2,9 @@ import { isCustomAgentId, type CustomAgentId } from './commit-message-agent-spec
 import { isTuiAgent } from './tui-agent-config'
 import type { TuiAgent } from './types'
 
-// Why: the variable registry lives in its own module for max-lines headroom;
-// re-exported here so every existing chip/render consumer keeps one import site.
-export {
-  SOURCE_CONTROL_ACTION_VARIABLES,
-  SOURCE_CONTROL_ACTION_VARIABLE_INFO,
-  formatLinkedIssueTemplateValue,
-  isLinkedIssueNumber,
-  withLinkedIssueDraftContext,
-  type SourceControlActionVariableInfo
-} from './source-control-ai-action-variables'
+// Why: the variable registry lives in `./source-control-ai-action-variables` for max-lines
+// headroom. It is deliberately not re-exported here — one import path per symbol keeps a
+// grep of that module's consumers complete (the chip row is the one that must not diverge).
 
 export type SourceControlTextActionId = 'commitMessage' | 'pullRequest' | 'branchName'
 

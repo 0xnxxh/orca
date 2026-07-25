@@ -64,26 +64,17 @@ describe('planSourceControlCommitMessageGeneration', () => {
     }
   })
 
-  it('prefers caller-supplied variable values over the synthetic sample', () => {
-    for (const [linkedIssue, expected] of [
-      ['7', 'echo Fixes #7'],
-      // Why: an unlinked workspace must preview the empty expansion it will really send,
-      // not the synthetic `123`.
-      ['', 'echo Fixes #']
-    ]) {
-      const result = planSourceControlTextGeneration(
-        'commitMessage',
-        {
-          agentId: 'custom',
-          model: '',
-          customAgentCommand: 'echo {prompt}',
-          commandInputTemplate: 'Fixes #{linkedIssue}'
-        },
-        { linkedIssue }
-      )
+  it('accepts a bare {linkedIssue} recipe, which is only empty per workspace', () => {
+    // Why: the recipe is saved repo- or globally scoped, so validation must not depend on
+    // whichever workspace happens to be active — an unlinked one must not fail the plan.
+    const result = planSourceControlTextGeneration('commitMessage', {
+      agentId: 'custom',
+      model: '',
+      customAgentCommand: 'echo {prompt}',
+      commandInputTemplate: '{linkedIssue}'
+    })
 
-      expect(result.ok && result.commandLabel).toBe(expected)
-    }
+    expect(result).toEqual(expect.objectContaining({ ok: true, commandLabel: 'echo 123' }))
   })
 
   it('leaves linkedIssue literal in branch-name plan previews', () => {

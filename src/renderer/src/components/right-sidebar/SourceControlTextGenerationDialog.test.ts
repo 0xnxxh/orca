@@ -43,6 +43,32 @@ function escapeHtml(value: string): string {
   return value.replace(/"/g, '&quot;')
 }
 
+function renderTextGenerationForm(input: {
+  commandInputTemplate: string
+  linkedIssue: number | null
+}): string {
+  return renderToStaticMarkup(
+    React.createElement(SourceControlTextGenerationDialogForm, {
+      actionId: 'commitMessage',
+      generateLabel: 'Generate commit message',
+      settings: null,
+      repo: null,
+      baseParams: {
+        agentId: 'codex',
+        model: 'gpt-5.4-mini',
+        commandInputTemplate: input.commandInputTemplate
+      },
+      linkedIssue: input.linkedIssue,
+      saveTargets: [
+        { target: { type: 'global' }, label: 'Save as global default', successMessage: '' }
+      ],
+      onGenerate: () => {},
+      onOpenChange: () => {},
+      onSaveDefaults: () => {}
+    })
+  )
+}
+
 describe('buildCommitMessageGenerationParams', () => {
   it('defaults saved text-generation recipes to the global target when repo and global are available', () => {
     expect(
@@ -113,7 +139,7 @@ describe('buildCommitMessageGenerationParams', () => {
     expect(markup).toContain(escapeHtml(JSON.stringify({ linkedIssue: expected })))
   })
 
-  it('leaves the issue preview to the synthetic sample when no workspace is in scope', () => {
+  it('omits the issue preview when no workspace is in scope', () => {
     const markup = renderToStaticMarkup(
       React.createElement(SourceControlTextGenerationDialogForm, {
         actionId: 'commitMessage',
@@ -133,6 +159,31 @@ describe('buildCommitMessageGenerationParams', () => {
     )
 
     expect(markup).not.toContain('linkedIssue')
+  })
+
+  // Why: previews are chip-only. The recipe is saved repo- or globally scoped, so gating
+  // Save/Generate on the active workspace's empty `{linkedIssue}` would block a global write.
+  it.each([
+    { label: 'a linked workspace', linkedIssue: 42 },
+    { label: 'an unlinked workspace', linkedIssue: null }
+  ])('keeps a bare {linkedIssue} recipe runnable from $label', ({ linkedIssue }) => {
+    const markup = renderTextGenerationForm({
+      commandInputTemplate: '{linkedIssue}',
+      linkedIssue
+    })
+
+    expect(markup).toContain('Save defaults')
+    expect(markup).toContain('Generate commit message')
+    expect(markup).not.toContain('disabled=""')
+    expect(markup).not.toContain('Command input is empty.')
+  })
+
+  it('still disables both actions for a template that renders empty for everyone', () => {
+    // Why: the negative control for the two cases above — without it they pass even if the
+    // buttons could never be disabled at all.
+    const markup = renderTextGenerationForm({ commandInputTemplate: '   ', linkedIssue: 42 })
+
+    expect(markup).toContain('disabled=""')
   })
 
   it('preserves the resolved model and thinking level for the selected agent', () => {

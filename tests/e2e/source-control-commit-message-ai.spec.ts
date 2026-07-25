@@ -61,64 +61,72 @@ function writeLinkedIssueEchoGenerator(scriptPath: string): void {
 }
 
 test.describe('Source Control AI commit messages', () => {
-  test('substitutes the workspace-linked issue into the commit-message recipe', async ({
-    orcaPage,
-    testRepoPath
-  }) => {
-    const { branchName, worktreePath } = createWorktreeWithStagedChange(testRepoPath)
-    const generatorPath = path.join(os.tmpdir(), `${branchName}-linked-issue-generator.cjs`)
-    writeLinkedIssueEchoGenerator(generatorPath)
+  // Why: the unlinked case is what separates a real resolver from one that always returns a
+  // number — `saw-issue:empty` proves the token expanded to nothing rather than staying literal.
+  for (const { label, linkedIssue, expected } of [
+    { label: 'substitutes the workspace-linked issue into', linkedIssue: 4242, expected: '4242' },
+    {
+      label: 'expands the issue token to nothing for an unlinked workspace in',
+      linkedIssue: null,
+      expected: 'empty'
+    }
+  ]) {
+    test(`${label} the commit-message recipe`, async ({ orcaPage, testRepoPath }) => {
+      const { branchName, worktreePath } = createWorktreeWithStagedChange(testRepoPath)
+      const generatorPath = path.join(os.tmpdir(), `${branchName}-linked-issue-generator.cjs`)
+      writeLinkedIssueEchoGenerator(generatorPath)
 
-    try {
-      await waitForSessionReady(orcaPage)
-      await openSourceControlForWorktree(orcaPage, testRepoPath, worktreePath)
+      try {
+        await waitForSessionReady(orcaPage)
+        await openSourceControlForWorktree(orcaPage, testRepoPath, worktreePath)
 
-      await orcaPage.evaluate(
-        async ({ generatorPath, linkedIssue }) => {
-          const store = window.__store
-          if (!store) {
-            throw new Error('window.__store is not available')
-          }
-          const worktreeId = store.getState().activeWorktreeId
-          if (!worktreeId) {
-            throw new Error('No worktree was active after opening Source Control')
-          }
-          await window.api.worktrees.updateMeta({ worktreeId, updates: { linkedIssue } })
-          const customAgentCommand = `node ${JSON.stringify(generatorPath)}`
-          await store.getState().updateSettings({
-            activeRuntimeEnvironmentId: null,
-            sourceControlAi: {
-              enabled: true,
-              agentId: 'custom' as const,
-              selectedModelByAgent: {},
-              selectedThinkingByModel: {},
-              customAgentCommand,
-              instructionsByOperation: {},
-              actions: {
-                commitMessage: {
-                  agentId: 'custom' as const,
-                  commandInputTemplate: 'ORCA_E2E_ISSUE={linkedIssue}\n\n{basePrompt}'
+        await orcaPage.evaluate(
+          async ({ generatorPath, linkedIssue }) => {
+            const store = window.__store
+            if (!store) {
+              throw new Error('window.__store is not available')
+            }
+            const worktreeId = store.getState().activeWorktreeId
+            if (!worktreeId) {
+              throw new Error('No worktree was active after opening Source Control')
+            }
+            await window.api.worktrees.updateMeta({ worktreeId, updates: { linkedIssue } })
+            const customAgentCommand = `node ${JSON.stringify(generatorPath)}`
+            await store.getState().updateSettings({
+              activeRuntimeEnvironmentId: null,
+              sourceControlAi: {
+                enabled: true,
+                agentId: 'custom' as const,
+                selectedModelByAgent: {},
+                selectedThinkingByModel: {},
+                customAgentCommand,
+                instructionsByOperation: {},
+                actions: {
+                  commitMessage: {
+                    agentId: 'custom' as const,
+                    commandInputTemplate: 'ORCA_E2E_ISSUE={linkedIssue}\n\n{basePrompt}'
+                  }
                 }
               }
-            }
-          })
-        },
-        { generatorPath, linkedIssue: 4242 }
-      )
+            })
+          },
+          { generatorPath, linkedIssue }
+        )
 
-      const textarea = orcaPage.getByRole('textbox', { name: 'Commit message' })
-      await expect(textarea).toBeVisible({ timeout: 10_000 })
+        const textarea = orcaPage.getByRole('textbox', { name: 'Commit message' })
+        await expect(textarea).toBeVisible({ timeout: 10_000 })
 
-      const generate = orcaPage.getByRole('button', { name: 'Generate commit message with AI' })
-      await expect(generate).toBeEnabled()
-      await generate.click()
+        const generate = orcaPage.getByRole('button', { name: 'Generate commit message with AI' })
+        await expect(generate).toBeEnabled()
+        await generate.click()
 
-      await expect(textarea).toHaveValue('saw-issue:4242', { timeout: 15_000 })
-    } finally {
-      rmSync(generatorPath, { force: true })
-      cleanupWorktree(testRepoPath, worktreePath, branchName)
-    }
-  })
+        await expect(textarea).toHaveValue(`saw-issue:${expected}`, { timeout: 15_000 })
+      } finally {
+        rmSync(generatorPath, { force: true })
+        cleanupWorktree(testRepoPath, worktreePath, branchName)
+      }
+    })
+  }
 
   test('generates a commit message from staged changes through the Source Control UI', async ({
     orcaPage,

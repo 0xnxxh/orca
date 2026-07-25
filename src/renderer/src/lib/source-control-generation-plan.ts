@@ -51,22 +51,21 @@ const SYNTHETIC_BASE_PROMPTS: Record<SourceControlTextActionId, string> = {
 }
 
 /**
- * `variableOverrides` lets a workspace-scoped caller (the in-app generation dialog)
- * preview real values where it has them, so an unlinked workspace does not preview
- * `Fixes #123` and then generate `Fixes #`. Settings dry-runs pass nothing and stay
- * fully synthetic, since no workspace is in scope there.
+ * Validates a recipe, so it always renders against the synthetic context above.
+ * Workspace values must not leak in here: the recipe is saved repo- or globally
+ * scoped, and gating it on the active workspace's `{linkedIssue}` would disable
+ * Save/Generate for a template that is not actually empty.
  */
 export function planSourceControlTextGeneration(
   actionId: SourceControlTextActionId,
-  params: ResolvedSourceControlAiGenerationParams,
-  variableOverrides?: Record<string, string>
+  params: ResolvedSourceControlAiGenerationParams
 ): SourceControlGenerationPlanResult {
   const prompt =
     params.commandInputTemplate !== undefined
-      ? renderSourceControlActionCommandTemplate(params.commandInputTemplate, {
-          ...SYNTHETIC_TEXT_GENERATION_CONTEXT[actionId],
-          ...variableOverrides
-        })
+      ? renderSourceControlActionCommandTemplate(
+          params.commandInputTemplate,
+          SYNTHETIC_TEXT_GENERATION_CONTEXT[actionId]
+        )
       : SYNTHETIC_BASE_PROMPTS[actionId]
   if (!prompt.trim()) {
     return {

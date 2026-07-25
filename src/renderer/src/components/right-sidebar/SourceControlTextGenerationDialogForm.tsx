@@ -118,8 +118,8 @@ export function SourceControlTextGenerationDialogForm({
     settings,
     customAgentCommand: baseParams?.customAgentCommand
   })
-  // Why: the workspace's own issue, not the synthetic `123`, so an unlinked workspace
-  // previews what it will actually generate.
+  // Why: chip previews only. The plan below stays synthetic so a workspace-empty
+  // `{linkedIssue}` cannot disable Save/Generate for a repo- or global-scoped recipe.
   const variablePreviews = useMemo(() => {
     const previews: Record<string, string> = {}
     if (basePromptPreview) {
@@ -130,9 +130,7 @@ export function SourceControlTextGenerationDialogForm({
     }
     return Object.keys(previews).length > 0 ? previews : undefined
   }, [basePromptPreview, linkedIssue])
-  const paramsPlanResult = params
-    ? planSourceControlTextGeneration(actionId, params, variablePreviews)
-    : null
+  const paramsPlanResult = params ? planSourceControlTextGeneration(actionId, params) : null
   const canRunGeneration = Boolean(params && paramsPlanResult?.ok)
   const saving = savingTargetKey !== null
   const defaultsAlreadySaved = Boolean(

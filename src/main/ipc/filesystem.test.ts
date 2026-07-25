@@ -2242,6 +2242,9 @@ describe('registerFilesystemHandlers', () => {
       })
 
       expect(getWorktreeMeta).not.toHaveBeenCalled()
+      // Why: without the length guard the property assertion passes vacuously on `undefined`,
+      // so an unrelated early return would read as "enrichment correctly suppressed".
+      expect(generatePullRequestFieldsFromContextMock.mock.calls).toHaveLength(1)
       expect(generatePullRequestFieldsFromContextMock.mock.calls[0]?.[0]).not.toHaveProperty(
         'linkedIssue'
       )
