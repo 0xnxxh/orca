@@ -3652,7 +3652,9 @@ describe('Store', () => {
     store.removeProjectForHost('shared', 'ssh:ssh-a')
 
     // The removed SSH host's session is pruned; the surviving local session stays.
-    expect(store.getWorkspaceSession('ssh:ssh-a').lastVisitedAtByWorktreeId?.['shared::/repo']).toBeUndefined()
+    expect(
+      store.getWorkspaceSession('ssh:ssh-a').lastVisitedAtByWorktreeId?.['shared::/repo']
+    ).toBeUndefined()
     expect(store.getWorkspaceSession().lastVisitedAtByWorktreeId?.['shared::/repo']).toBe(111)
   })
 
@@ -3684,7 +3686,9 @@ describe('Store', () => {
     store.removeProjectForHost('shared', 'local')
 
     expect(store.getWorkspaceSession().lastVisitedAtByWorktreeId?.['shared::/repo']).toBeUndefined()
-    expect(store.getWorkspaceSession('ssh:ssh-a').lastVisitedAtByWorktreeId?.['shared::/repo']).toBe(222)
+    expect(
+      store.getWorkspaceSession('ssh:ssh-a').lastVisitedAtByWorktreeId?.['shared::/repo']
+    ).toBe(222)
   })
 
   it('removeProjectForHost prunes only the removed host when a third host also shares the owner key', async () => {
@@ -3734,9 +3738,13 @@ describe('Store', () => {
     store.removeProjectForHost('shared', 'ssh:ssh-a')
 
     // Only the removed host's partition is pruned; local and the other SSH host survive.
-    expect(store.getWorkspaceSession('ssh:ssh-a').lastVisitedAtByWorktreeId?.['shared::/repo']).toBeUndefined()
+    expect(
+      store.getWorkspaceSession('ssh:ssh-a').lastVisitedAtByWorktreeId?.['shared::/repo']
+    ).toBeUndefined()
     expect(store.getWorkspaceSession().lastVisitedAtByWorktreeId?.['shared::/repo']).toBe(111)
-    expect(store.getWorkspaceSession('ssh:ssh-b').lastVisitedAtByWorktreeId?.['shared::/repo']).toBe(333)
+    expect(
+      store.getWorkspaceSession('ssh:ssh-b').lastVisitedAtByWorktreeId?.['shared::/repo']
+    ).toBe(333)
   })
 
   it('reorderReposForHost independently reorders local and SSH rows with shared ids', async () => {
