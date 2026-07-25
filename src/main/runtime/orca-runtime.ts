@@ -10,6 +10,7 @@ import {
   normalizeTerminalTitle
 } from '../../shared/agent-detection'
 import { extractOscTitleScanTail } from '../../shared/osc-title-scan-tail'
+import { BoundedMap } from '../../shared/memory-safety/bounded-map'
 import { extractLastOsc7Uri, extractOscScanTail } from '../daemon/osc7-uri-extraction'
 import { parseFileUriPathParts } from '../daemon/osc7-file-uri'
 import type { AgentStatus } from '../../shared/agent-detection'
@@ -2886,13 +2887,17 @@ export class OrcaRuntimeService {
   // same repo remote/ref locks. This queue serializes all fetch shapes for one
   // canonical repo+remote while still letting same-shape callers share promises.
   private remoteFetchQueueTail = new Map<string, Promise<RemoteFetchResult>>()
-  private fetchLastCompletedAt = new Map<string, number>()
+  private fetchLastCompletedAt = new BoundedMap<string, number>({
+    maxEntries: REMOTE_FETCH_CACHE_MAX
+  })
   // Why: `getCanonicalFetchKey` is awaited from every freshness probe and
   // every getOrStartRemoteFetch call. Without memoization the warm-cache hot
   // path spawns a `git rev-parse --git-common-dir` subprocess per touch
   // (twice in createLocalWorktree). Cache by `<repoPath>::<remote>` so the
   // canonical key is resolved at most once per repo+remote in the process.
-  private canonicalFetchKeyCache = new Map<string, string>()
+  private canonicalFetchKeyCache = new BoundedMap<string, string>({
+    maxEntries: REMOTE_FETCH_CACHE_MAX
+  })
   private optimisticReconcileTokens = new Map<string, string>()
   private removeManagedWorktreeInFlight = new Map<string, RuntimeWorktreeRemovalInFlight>()
   private preservedBranchCleanupByWorktreeId = new Map<string, PreservedBranchCleanupTarget>()
@@ -19530,7 +19535,7 @@ export class OrcaRuntimeService {
     const cacheKey = `${runtimeKey}::${repoPath}::${remote}`
     const cached = this.canonicalFetchKeyCache.get(cacheKey)
     if (cached !== undefined) {
-      setBoundedMapEntry(this.canonicalFetchKeyCache, cacheKey, cached, REMOTE_FETCH_CACHE_MAX)
+      this.canonicalFetchKeyCache.set(cacheKey, cached)
       return cached
     }
     let resolved = cacheKey
@@ -19547,7 +19552,7 @@ export class OrcaRuntimeService {
       // Fall through to the caller-provided path. The fetch still runs from
       // repoPath; this key only controls cache sharing.
     }
-    setBoundedMapEntry(this.canonicalFetchKeyCache, cacheKey, resolved, REMOTE_FETCH_CACHE_MAX)
+    this.canonicalFetchKeyCache.set(cacheKey, resolved)
     return resolved
   }
 
@@ -19572,7 +19577,7 @@ export class OrcaRuntimeService {
       return null
     }
     if (Date.now() - lastAt < FETCH_FRESHNESS_MS) {
-      setBoundedMapEntry(this.fetchLastCompletedAt, key, lastAt, REMOTE_FETCH_CACHE_MAX)
+      this.fetchLastCompletedAt.set(key, lastAt)
       return lastAt
     }
     this.fetchLastCompletedAt.delete(key)
@@ -19580,7 +19585,7 @@ export class OrcaRuntimeService {
   }
 
   private rememberFreshFetchCompletedAt(key: string, completedAt = Date.now()): void {
-    setBoundedMapEntry(this.fetchLastCompletedAt, key, completedAt, REMOTE_FETCH_CACHE_MAX)
+    this.fetchLastCompletedAt.set(key, completedAt)
   }
 
   async getOrStartRemoteFetch(
@@ -30446,20 +30451,6 @@ const FETCH_FRESHNESS_MS = 30_000
 const REMOTE_FETCH_TIMEOUT_MS = 60_000
 const REMOTE_FETCH_CACHE_MAX = 512
 const DRIFT_PROBE_SUBJECT_LIMIT = 5
-
-function setBoundedMapEntry<K, V>(map: Map<K, V>, key: K, value: V, maxEntries: number): void {
-  if (map.has(key)) {
-    map.delete(key)
-  }
-  map.set(key, value)
-  while (map.size > maxEntries) {
-    const oldest = map.keys().next()
-    if (oldest.done) {
-      return
-    }
-    map.delete(oldest.value)
-  }
-}
 
 function getExplicitWorktreeIdSelector(selector: string | undefined): string | null {
   if (!selector?.startsWith('id:')) {
