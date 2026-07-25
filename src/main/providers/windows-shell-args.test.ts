@@ -121,12 +121,49 @@ describe('resolveWindowsShellLaunchArgs', () => {
     expect(codexRestoreIndex).toBeGreaterThan(outputEncodingIndex)
     expect(codexRestoreIndex).toBeGreaterThan(ompWrapperIndex)
     expect(promptIndex).toBeGreaterThan(codexRestoreIndex)
-    expect(cwdRestoreIndex).toBeGreaterThan(promptIndex)
+    expect(cwdRestoreIndex).toBeGreaterThanOrEqual(0)
+    expect(cwdRestoreIndex).toBeLessThan(outputEncodingIndex)
     expect(command).toContain('Esc = [char]27')
     expect(command).toContain('Bel = [char]7')
     expect(command).toContain(')]133;D;$fakeExitCode$(')
     expect(command).toContain(')]133;C$(')
     expect(command).not.toContain('`e]133')
+  })
+
+  it('runs cwd restore and startup command outside the shell-integration guards', () => {
+    // Why: the OSC 133 bootstrap bails with a top-level `return` when the host
+    // runs in ConstrainedLanguage (WDAC/AppLocker). Both the cwd restore and
+    // the startup command must sit outside that guarded block, or a managed
+    // host silently opens the terminal in the wrong directory and never runs
+    // the startup command.
+    const startupCommand = "& 'codex' '--no-alt-screen'"
+    const result = resolveWindowsShellLaunchArgs(
+      'powershell.exe',
+      'C:\\Users\\alice\\repo',
+      'C:\\Users\\alice',
+      undefined,
+      startupCommand
+    )
+
+    const command = decodePowerShellCommand(result)
+    const cwdRestoreIndex = command.indexOf(
+      expectedPowerShellRestoreCwdCommand("'C:\\Users\\alice\\repo'")
+    )
+    const guardBlockIndex = command.indexOf('. {')
+    const languageModeGuardIndex = command.indexOf(
+      '$ExecutionContext.SessionState.LanguageMode -ne "FullLanguage"'
+    )
+
+    expect(cwdRestoreIndex).toBeGreaterThanOrEqual(0)
+    expect(guardBlockIndex).toBeGreaterThanOrEqual(0)
+    expect(languageModeGuardIndex).toBeGreaterThanOrEqual(0)
+    // cwd restore precedes the guarded block entirely.
+    expect(cwdRestoreIndex).toBeLessThan(guardBlockIndex)
+    // the guards live inside that block, not at script top level.
+    expect(guardBlockIndex).toBeLessThan(languageModeGuardIndex)
+    // the startup command trails the block's closing brace.
+    expect(command.lastIndexOf('}')).toBeLessThan(command.indexOf(startupCommand))
+    expect(command.trimEnd().endsWith(startupCommand)).toBe(true)
   })
 
   it('normalizes MSYS drive cwd before spawning native PowerShell', () => {

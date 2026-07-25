@@ -83,9 +83,9 @@ function getCmdShellArgStartupCommand(command?: string): string | null {
  */
 function getPowerShellRestoreCwdCommand(cwd: string): string {
   return [
-    '',
     '# Profiles can change location; restore the PTY cwd after profile loading.',
-    `try { Set-Location -LiteralPath ${quoteStartupArg(cwd, 'powershell')} -ErrorAction Stop } catch { Write-Warning "Failed to restore working directory: $_" }`
+    `try { Set-Location -LiteralPath ${quoteStartupArg(cwd, 'powershell')} -ErrorAction Stop } catch { Write-Warning "Failed to restore working directory: $_" }`,
+    ''
   ].join('\n')
 }
 
@@ -96,7 +96,10 @@ function getPowerShellEncodedCommand(
   encodedCommand: string
   startupCommandDeliveredInShellArgs?: boolean
 } {
-  const bootstrap = `${getPowerShellOsc133Bootstrap()}${getPowerShellRestoreCwdCommand(cwd)}`
+  // Why: cwd restore runs FIRST so shell-integration setup failing — or being
+  // skipped entirely under ConstrainedLanguage — can never strand the terminal
+  // in the wrong directory. Set-Location is permitted in ConstrainedLanguage.
+  const bootstrap = `${getPowerShellRestoreCwdCommand(cwd)}${getPowerShellOsc133Bootstrap()}`
   if (!startupCommand || startupCommand.length > STARTUP_COMMAND_TEXT_MAX_CHARS) {
     return { encodedCommand: encodePowerShellCommand(bootstrap) }
   }
