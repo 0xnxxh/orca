@@ -23,7 +23,7 @@ export function serveSignalExitError(
     'Orca serve aborted with SIGABRT on macOS. This most often happens at application startup, when the process cannot register with the macOS window server, which is common in restricted or sandboxed environments, SSH sessions without a GUI login, and CI.',
     {
       nextSteps: [
-        'Run `orca serve` from a normal terminal session on the Mac desktop.',
+        'Re-run `orca serve` outside a sandboxed or restricted environment, with a macOS desktop login active.',
         `Look for a crash report at ${MAC_CRASH_REPORT_GLOB}.`
       ]
     }

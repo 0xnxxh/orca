@@ -44,7 +44,7 @@ describe('serveSignalExitError', () => {
     expect(error.message).toContain('macOS window server')
     expect(error.data).toMatchObject({
       nextSteps: [
-        expect.stringContaining('normal terminal session'),
+        expect.stringContaining('macOS desktop login'),
         expect.stringContaining('~/Library/Logs/DiagnosticReports/Orca-*.ips')
       ]
     })
