@@ -111,24 +111,44 @@ describe('worktree copy budget tracker', () => {
   })
 
   it('charges the walk itself so repeated over-budget sources cannot re-walk forever', async () => {
-    for (const dir of ['a', 'b']) {
-      mkdirSync(join(root, dir))
-      writeFileSync(join(root, dir, 'one'), 'x'.repeat(200))
+    // 10 sources of 2 entries each, against a walk ceiling of maxEntries * 5.
+    for (let index = 0; index < 10; index += 1) {
+      mkdirSync(join(root, `dir-${index}`))
+      writeFileSync(join(root, `dir-${index}`, 'one'), 'x'.repeat(200))
     }
     writeFileSync(join(root, 'tiny'), '')
-    // Each refused source walks 2 entries before busting the byte limit, so the
-    // two of them exhaust a 4-entry ceiling.
     const tracker = createWorktreeCopyBudgetTracker({ maxBytes: 64, maxEntries: 4 })
 
-    await expect(tracker.admit(join(root, 'a'))).resolves.toMatchObject({ withinBudget: false })
-    await expect(tracker.admit(join(root, 'b'))).resolves.toMatchObject({ withinBudget: false })
+    for (let index = 0; index < 10; index += 1) {
+      await expect(tracker.admit(join(root, `dir-${index}`))).resolves.toMatchObject({
+        withinBudget: false
+      })
+    }
 
-    // Neither was admitted, so the copy budget itself is untouched and `tiny`
-    // would fit — it is refused purely because the walk ceiling is spent.
+    // Nothing was admitted, so the copy budget itself is untouched and `tiny`
+    // would fit — it is refused purely because the walk ceiling is spent, and
+    // says so rather than blaming limits it never approached.
     await expect(tracker.admit(join(root, 'tiny'))).resolves.toEqual({
+      withinBudget: false,
+      reason: 'sizing'
+    })
+  })
+
+  it('lets a small entry through after one huge entry is refused on file count', async () => {
+    // The regression this guards: sizing `node_modules` burns maxEntries + 1
+    // walk, which without headroom would starve every entry listed after it.
+    mkdirSync(join(root, 'node_modules'))
+    for (let index = 0; index < 12; index += 1) {
+      writeFileSync(join(root, 'node_modules', `pkg-${index}`), '')
+    }
+    writeFileSync(join(root, '.env'), 'A=1\n')
+    const tracker = createWorktreeCopyBudgetTracker({ maxBytes: 1024, maxEntries: 4 })
+
+    await expect(tracker.admit(join(root, 'node_modules'))).resolves.toEqual({
       withinBudget: false,
       reason: 'entries'
     })
+    await expect(tracker.admit(join(root, '.env'))).resolves.toMatchObject({ withinBudget: true })
   })
 
   posixIt('counts a nested symlink without following it', async () => {
@@ -157,6 +177,18 @@ describe('formatWorktreeIncludeCopyWarning', () => {
     expect(warning).toContain('"node_modules"')
     expect(warning).toContain('".cache"')
     expect(warning).toContain('.worktreeinclude')
+  })
+
+  it('does not quote the size limits at an entry that was never measured', () => {
+    const warning = formatWorktreeIncludeCopyWarning([
+      { path: 'node_modules', reason: 'entries' },
+      { path: '.env', reason: 'sizing' }
+    ])
+
+    expect(warning).toContain('"node_modules"')
+    expect(warning).toContain('earlier entries used up the budget for measuring')
+    // The limits belong to node_modules' sentence, not to `.env`'s.
+    expect(warning).not.toMatch(/"\.env"[^.]*file limit/u)
   })
 })
 

@@ -20,7 +20,16 @@ export const DEFAULT_WORKTREE_COPY_BUDGET: WorktreeCopyBudget = {
   maxEntries: 50_000
 }
 
-export type WorktreeCopyBudgetExceededReason = 'bytes' | 'entries'
+// Why: the sizing walk gets headroom over the copy budget so one refused
+// `node_modules` cannot starve the small entries listed after it — it burns
+// maxEntries+1 measuring, and without headroom nothing else would be sized.
+const WORKTREE_COPY_SIZING_HEADROOM = 5
+
+export type WorktreeCopyBudgetExceededReason =
+  | 'bytes'
+  | 'entries'
+  /** Not this entry's fault: earlier entries used up the total sizing walk. */
+  | 'sizing'
 
 export type WorktreeCopySizeVerdict =
   | { withinBudget: true; bytes: number; entries: number }
@@ -114,11 +123,11 @@ export function createWorktreeCopyBudgetTracker(
   // Why: refused entries consume no copy budget, so without a separate ceiling
   // on walking itself a `.worktreeinclude` listing 1000 over-budget directories
   // would pay a fresh full-limit walk for each one — the very stall this bounds.
-  let remainingWalk = budget.maxEntries
+  let remainingWalk = budget.maxEntries * WORKTREE_COPY_SIZING_HEADROOM
   return {
     admit: async (source, { bytesAreCopied = true } = {}) => {
       if (remainingWalk <= 0) {
-        return { withinBudget: false, reason: 'entries' }
+        return { withinBudget: false, reason: 'sizing' }
       }
       const { verdict, walked } = await measureCopySize(
         source,
@@ -154,13 +163,28 @@ export function formatWorktreeIncludeCopyWarning(
   if (skipped.length === 0) {
     return undefined
   }
-  const names = skipped.map((entry) => `"${entry.path}"`).join(', ')
-  const subject = skipped.length === 1 ? 'entry' : 'entries'
-  const verb = skipped.length === 1 ? 'was' : 'were'
-  return (
-    `.worktreeinclude ${subject} ${names} ${verb} not copied into the new workspace: ` +
-    `copying them would exceed the ${formatByteLimit(budget.maxBytes)} / ` +
-    `${budget.maxEntries.toLocaleString('en-US')} file limit that keeps workspace creation responsive. ` +
-    `Copy them in manually if this workspace needs them.`
-  )
+  const describe = (entries: readonly SkippedWorktreeCopyPath[]): string => {
+    const names = entries.map((entry) => `"${entry.path}"`).join(', ')
+    const subject = entries.length === 1 ? 'entry' : 'entries'
+    const verb = entries.length === 1 ? 'was' : 'were'
+    return `.worktreeinclude ${subject} ${names} ${verb} not copied into the new workspace`
+  }
+  // Why: an entry refused because earlier ones exhausted the sizing walk never
+  // approached the limits itself, so quoting them at the user would be a lie.
+  const overBudget = skipped.filter((entry) => entry.reason !== 'sizing')
+  const unsized = skipped.filter((entry) => entry.reason === 'sizing')
+  const sentences: string[] = []
+  if (overBudget.length > 0) {
+    sentences.push(
+      `${describe(overBudget)}: copying them would exceed the ${formatByteLimit(budget.maxBytes)} / ` +
+        `${budget.maxEntries.toLocaleString('en-US')} file limit that keeps workspace creation responsive.`
+    )
+  }
+  if (unsized.length > 0) {
+    sentences.push(
+      `${describe(unsized)}: earlier entries used up the budget for measuring what to copy.`
+    )
+  }
+  sentences.push('Copy them in manually if this workspace needs them.')
+  return sentences.join(' ')
 }
