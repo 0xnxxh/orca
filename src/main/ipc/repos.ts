@@ -59,6 +59,7 @@ import { createNestedRepoImportTargetResolver } from '../project-groups/nested-r
 import {
   isGitRepo,
   getGitRepoRoot,
+  getLinkedWorktreeMainRepoRoot,
   getRepoName,
   getBaseRefDefault,
   getRemoteCount,
@@ -192,6 +193,25 @@ async function addLocalRepoFromPath(
       )
     if (existingAfterRootResolve) {
       return { repo: existingAfterRootResolve, alreadyExisted: true }
+    }
+  }
+
+  // Why: a linked worktree reports itself as its own toplevel, so the path checks above can't see that
+  // it belongs to an already-tracked repo. Adding it anyway yields a second "ready" host setup on the
+  // same project and host — a duplicate run-target row that resolves to a transient worktree path.
+  if (repoKind === 'git') {
+    const mainRepoRoot = getLinkedWorktreeMainRepoRoot(resolvedPath)
+    if (mainRepoRoot) {
+      const mainRepoKey = normalizeRuntimePathForComparison(mainRepoRoot)
+      const trackedMainRepo = store
+        .getRepos()
+        .find(
+          (repo) =>
+            !repo.connectionId && normalizeRuntimePathForComparison(repo.path) === mainRepoKey
+        )
+      if (trackedMainRepo) {
+        return { repo: trackedMainRepo, alreadyExisted: true }
+      }
     }
   }
 
