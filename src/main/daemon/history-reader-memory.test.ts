@@ -22,6 +22,8 @@ import {
   TERMINAL_HISTORY_JSON_MAX_STRUCTURAL_TOKENS
 } from './terminal-history-file-reader'
 
+const RETIRED_CHECKPOINT_READ_CAP_BYTES = 16 * 1024 * 1024
+
 const directories: string[] = []
 
 function createSession(sessionId: string): { basePath: string; sessionPath: string } {
@@ -49,7 +51,7 @@ function createSparseFile(path: string, bytes: number): void {
   closeSync(descriptor)
 }
 
-function checkpoint(): string {
+function checkpoint(overrides?: Record<string, unknown>): string {
   return JSON.stringify({
     snapshotAnsi: 'safe checkpoint',
     scrollbackAnsi: '',
@@ -62,7 +64,8 @@ function checkpoint(): string {
       mouseTracking: false,
       applicationCursor: false,
       alternateScreen: false
-    }
+    },
+    ...overrides
   })
 }
 
@@ -82,6 +85,18 @@ describe('terminal history restore memory limits', () => {
     expect(restore?.snapshotAnsi).toBe('safe checkpoint')
   })
 
+  // Why: the read cap once sat at 16MiB while the writer stayed unbounded, so a big-scrollback
+  // session cold-restored to an empty terminal — checkpoint nulled, and every fallback collapsed.
+  it('restores a checkpoint larger than the retired 16MiB read cap', async () => {
+    const { basePath, sessionPath } = createSession('large-checkpoint')
+    const scrollbackAnsi = 'x'.repeat(RETIRED_CHECKPOINT_READ_CAP_BYTES + 1)
+    writeFileSync(join(sessionPath, 'checkpoint.json'), checkpoint({ scrollbackAnsi }))
+
+    const restore = await new HistoryReader(basePath).detectColdRestore('large-checkpoint')
+    expect(restore?.scrollbackAnsi).toBe(scrollbackAnsi)
+  })
+
+  // Why the cap survives at all: it bounds a corrupt/runaway file, well above legitimate output.
   it('ignores oversized checkpoint and metadata files before parsing', async () => {
     const checkpointSession = createSession('oversized-checkpoint')
     createSparseFile(
