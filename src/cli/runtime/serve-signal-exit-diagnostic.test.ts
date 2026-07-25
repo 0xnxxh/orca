@@ -40,7 +40,7 @@ describe('serveSignalExitError', () => {
 
     expect(error).toBeInstanceOf(RuntimeClientError)
     expect(error.code).toBe('runtime_serve_failed')
-    expect(error.message).toContain('SIGABRT during macOS application startup')
+    expect(error.message).toContain('aborted with SIGABRT on macOS')
     expect(error.message).toContain('macOS window server')
     expect(error.data).toMatchObject({
       nextSteps: [
@@ -78,7 +78,7 @@ describe('superviseForegroundServe signal exits', () => {
     setPlatform('darwin')
 
     await expect(superviseUntilExit(null, 'SIGABRT')).rejects.toThrow(
-      /SIGABRT during macOS application startup/
+      /aborted with SIGABRT on macOS/
     )
   })
 
