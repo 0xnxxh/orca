@@ -1,5 +1,15 @@
 import { execFileSync } from 'node:child_process'
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -23,6 +33,26 @@ async function createPackage() {
   const directory = await mkdtemp(path.join(tmpdir(), 'orca-skill-manifest-'))
   temporaryDirectories.push(directory)
   return directory
+}
+
+// Why: the generator resolves its repo root from its own location, so a copy of
+// the script inside a throwaway tree exercises the real CLI — including which
+// artifacts each mode is allowed to write — without touching resources/skills.
+async function createReleaseSandbox() {
+  // Node resolves the entry point through symlinks, so the script's own
+  // repo-root check only matches when the sandbox path is already resolved.
+  const root = await realpath(await createPackage())
+  const skillRoot = path.join(root, 'skills', 'demo')
+  const script = path.join(root, 'config', 'scripts', 'generate-skill-bundle-manifest.mjs')
+  await mkdir(path.dirname(script), { recursive: true })
+  await mkdir(skillRoot, { recursive: true })
+  await copyFile(path.join(import.meta.dirname, 'generate-skill-bundle-manifest.mjs'), script)
+  await writeFile(path.join(skillRoot, 'SKILL.md'), 'demo skill\n')
+  return {
+    generate: (...args) => execFileSync(process.execPath, [script, ...args], { stdio: 'pipe' }),
+    read: (name) => readFile(path.join(root, 'resources', 'skills', name), 'utf8'),
+    editSkill: (body) => writeFile(path.join(skillRoot, 'SKILL.md'), body)
+  }
 }
 
 afterEach(async () => {
@@ -313,6 +343,62 @@ describe('skill bundle manifest generator', () => {
     }
 
     expect(() => appendReleaseRow(artifacts, '1.4.151')).toThrow(/already has a row for 1\.4\.151/)
+  })
+
+  it('records a release without regenerating the content-addressed artifacts', async () => {
+    const sandbox = await createReleaseSandbox()
+
+    sandbox.generate('--write')
+    const [manifest, registry] = await Promise.all([
+      sandbox.read('current-manifest.json'),
+      sandbox.read('snapshot-registry.json')
+    ])
+    sandbox.generate('--release', 'v1.4.156')
+
+    // The cut records provenance for bytes that are already committed, so a
+    // version-only cut can never rewrite a shipped identity.
+    expect(JSON.parse(await sandbox.read('release-mapping.json')).releases).toEqual([
+      { appVersion: '1.4.156', skills: { demo: 1 } }
+    ])
+    expect(await sandbox.read('current-manifest.json')).toBe(manifest)
+    expect(await sandbox.read('snapshot-registry.json')).toBe(registry)
+
+    // Bytes that changed since the last regeneration would make the row name a
+    // revision this tag does not ship — refuse rather than record it.
+    await sandbox.editSkill('edited after the last regeneration\n')
+    expect(() => sandbox.generate('--release', '1.4.157')).toThrow(
+      /Generated skill artifacts are stale/
+    )
+    expect(JSON.parse(await sandbox.read('release-mapping.json')).releases).toHaveLength(1)
+  })
+
+  it('freezes a revision once a release records it, and only until then', async () => {
+    const sandbox = await createReleaseSandbox()
+    const demoSnapshots = async () =>
+      JSON.parse(await sandbox.read('snapshot-registry.json')).skills.demo
+
+    sandbox.generate('--write')
+    const unreleased = (await demoSnapshots())[0].packageDigest
+
+    // Nothing has shipped revision 1 yet, so re-deriving it over new bytes is
+    // correct: the tail floats until a release names it.
+    await sandbox.editSkill('about to ship\n')
+    sandbox.generate('--write')
+    const shipped = await demoSnapshots()
+    expect(shipped).toHaveLength(1)
+    expect(shipped[0].packageDigest).not.toBe(unreleased)
+
+    sandbox.generate('--release', '1.4.156')
+
+    // The cut named revision 1, so the next change appends revision 2 instead of
+    // rebuilding revision 1. Installs carrying the shipped digest keep matching a
+    // known snapshot — without the ledger row they would match nothing.
+    await sandbox.editSkill('changed again after the cut\n')
+    sandbox.generate('--write')
+    const frozen = await demoSnapshots()
+    expect(frozen).toHaveLength(2)
+    expect(frozen[0]).toEqual(shipped[0])
+    expect(frozen[1].releaseRevision).toBe(2)
   })
 
   it.runIf(process.platform !== 'win32')(

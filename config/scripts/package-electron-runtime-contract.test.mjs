@@ -433,7 +433,7 @@ describe('Electron runtime package contract', () => {
     expect(afterInstallScript).not.toContain('chmod 0755 "$sandbox"')
   })
 
-  it('keeps release-cut version commits skill-independent and taggable on retries', () => {
+  it('advances only the skill release ledger in a taggable release-cut commit', () => {
     const releaseWorkflow = readFileSync(
       join(projectDir, '.github/workflows/release-cut.yml'),
       'utf8'
@@ -447,13 +447,23 @@ describe('Electron runtime package contract', () => {
     const bumpIndex = bumpStep.run.indexOf(
       'npm version "$VERSION" --no-git-tag-version --allow-same-version'
     )
+    const generateIndex = bumpStep.run.indexOf(
+      'node config/scripts/generate-skill-bundle-manifest.mjs --release "$VERSION"'
+    )
     const stageIndex = bumpStep.run.indexOf('git add package.json')
+    const stagedPaths = [...bumpStep.run.matchAll(/^\s*git add (.+)$/gm)].flatMap((match) =>
+      match[1].trim().split(/\s+/)
+    )
     expect(checkoutStep.with['fetch-depth']).toBe(0)
     expect(bumpIndex).toBeGreaterThanOrEqual(0)
-    expect(stageIndex).toBeGreaterThan(bumpIndex)
-    // Why: version-only cuts must not mutate content-addressed skill artifacts.
-    expect(bumpStep.run).not.toContain('generate-skill-bundle-manifest')
-    expect(bumpStep.run).not.toContain('resources/skills')
+    // Why: the cut is the only point that advances the release ledger, so the
+    // revision this tag ships is never rebuilt over different bytes later. It
+    // may append that provenance row and nothing else — regenerating or staging
+    // the content-addressed artifacts is what made version bumps rewrite them.
+    expect(generateIndex).toBeGreaterThan(bumpIndex)
+    expect(stageIndex).toBeGreaterThan(generateIndex)
+    expect(bumpStep.run).not.toContain('--write')
+    expect(stagedPaths).toEqual(['package.json', 'resources/skills/release-mapping.json'])
     expect(bumpStep.run).toContain('git diff --cached --quiet')
     expect(bumpStep.run).toContain('git commit --allow-empty -m "$commit_message"')
   })
