@@ -45,10 +45,7 @@ import type { StartupCommandDelivery } from '../../../../shared/codex-startup-de
 import type { SessionOptionValue } from '../../../../shared/native-chat-session-options'
 import { resolveLocalWindowsTerminalShellOverrideForTab } from '../../../../shared/local-windows-terminal-runtime'
 import { WINDOWS_GIT_BASH_SHELL } from '../../../../shared/windows-terminal-shell'
-import {
-  TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
-  TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
-} from '../../../../shared/terminal-tab-close'
+import { TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS } from '../../../../shared/terminal-tab-close'
 import type { AgentStartedTelemetry } from '../../lib/worktree-activation'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
@@ -77,6 +74,7 @@ import {
   disposeParkedTerminalWatchersForPtyIds,
   retireParkedTerminalTab
 } from '@/components/terminal-pane/terminal-parked-watcher-registry'
+import { retireRuntimeTerminalProvider } from '@/runtime/terminal-provider-retirement'
 import {
   clearCommittedPtyShutdownSettlements,
   hasCommittedPtyShutdownSettlement,
@@ -601,7 +599,7 @@ export type TerminalSlice = {
       localPtyTeardownOwnedExternally?: boolean
       precomputedRetirementPlan?: TerminalTabRetirementPlan
       providerTeardownTimeoutMs?: number
-      registerProviderTeardown?: (teardown: Promise<void>) => void
+      registerProviderTeardown?: (teardown: Promise<void>, retry: () => Promise<void>) => void
     }
   ) => void
   reorderTabs: (worktreeId: string, tabIds: string[]) => void
@@ -1211,9 +1209,6 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const providerTeardownTimeoutMs = opts?.registerProviderTeardown
         ? (opts.providerTeardownTimeoutMs ?? TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS)
         : undefined
-      // Why: a signal selects the abortable transport whose timeout includes connection and response latency.
-      const remoteTeardownSignal =
-        providerTeardownTimeoutMs === undefined ? undefined : new AbortController().signal
       const fallbackWorktreeRoute = retirementPlan.worktreeId
         ? resolveTerminalWorktreeRoute(get(), retirementPlan.worktreeId)
         : { runtimeEnvironmentId: null }
@@ -1239,15 +1234,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
                   'terminal.close',
                   { terminal: terminal.handle }
                 )
-              : callRuntimeRpc(
+              : retireRuntimeTerminalProvider(
                   environmentId ? { kind: 'environment', environmentId } : { kind: 'local' },
-                  'terminal.closeProvider',
-                  { terminal: terminal.handle, timeoutMs: providerTeardownTimeoutMs },
-                  {
-                    timeoutMs: TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
-                    signal: remoteTeardownSignal,
-                    skipCompatibilityCheck: true
-                  }
+                  terminal.handle,
+                  { providerTimeoutMs: providerTeardownTimeoutMs }
                 )
           )
         }
@@ -1283,7 +1273,19 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     if (!opts?.registerProviderTeardown) {
       void providerTeardown.catch(() => {})
     }
-    opts?.registerProviderTeardown?.(providerTeardown)
+    const retryProviderTeardown = (): Promise<void> => {
+      let retryTeardown: Promise<void> | null = null
+      get().closeTab(tabId, {
+        ...opts,
+        captureRecentlyClosed: false,
+        precomputedRetirementPlan: retirementPlan,
+        registerProviderTeardown: (teardown) => {
+          retryTeardown = teardown
+        }
+      })
+      return retryTeardown ?? Promise.reject(new Error('terminal_tab_close_failed'))
+    }
+    opts?.registerProviderTeardown?.(providerTeardown, retryProviderTeardown)
 
     set((s) => {
       const next = { ...s.tabsByWorktree }

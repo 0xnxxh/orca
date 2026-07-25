@@ -3337,7 +3337,7 @@ describe('useIpcEvents browser tab close routing', () => {
       activeWorktreeId: 'wt-1',
       activeTabId: 'terminal-1'
     })
-    const ptyKill = vi.fn().mockRejectedValue(new Error('provider unavailable'))
+    const ptyKill = vi.fn().mockRejectedValueOnce(new Error('provider unavailable'))
     const persistWorkspaceSession = vi.fn().mockResolvedValue(undefined)
     const respondTerminalTabClose = vi.fn()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -3366,12 +3366,9 @@ describe('useIpcEvents browser tab close routing', () => {
 
     listenerRef.current?.({ requestId: 'close-retry', tabId: 'terminal-1' })
     await vi.waitFor(() => expect(respondTerminalTabClose).toHaveBeenCalledTimes(2))
-    expect(respondTerminalTabClose).toHaveBeenLastCalledWith({
-      requestId: 'close-retry',
-      error: 'terminal_tab_close_failed'
-    })
-    expect(ptyKill).toHaveBeenCalledTimes(1)
-    expect(persistWorkspaceSession).not.toHaveBeenCalled()
+    expect(respondTerminalTabClose).toHaveBeenLastCalledWith({ requestId: 'close-retry' })
+    expect(ptyKill).toHaveBeenCalledTimes(2)
+    expect(persistWorkspaceSession).toHaveBeenCalledTimes(1)
     warn.mockRestore()
   })
 

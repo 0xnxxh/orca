@@ -223,6 +223,7 @@ import {
 import type { SshConnectionState } from '../../shared/ssh-types'
 import { getPublicSshState } from './public-ssh-state'
 import { closeTerminalTabInWorkspaceSession } from '../../shared/workspace-session-terminal-tab-close'
+import { TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS } from '../../shared/terminal-tab-close'
 import type {
   LinearCurrentIssueContextHints,
   LinearAttachResult,
@@ -6137,6 +6138,7 @@ export class OrcaRuntimeService {
       expectedTerminalHandle?: string
     } = {}
   ): Promise<RuntimeMobileSessionTabCloseResult> {
+    const closeDeadlineMs = Date.now() + TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS
     const explicitWorktreeId = this.getValidatedExplicitWorktreeIdSelector(worktreeSelector)
     const worktreeId =
       explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
@@ -6273,7 +6275,23 @@ export class OrcaRuntimeService {
       if (closingWholeParent && this.notifier?.closeTerminalTab) {
         // Why: whole-tab close is a lifecycle transaction. The renderer reply
         // arrives only after canonical retirement and a forced session flush.
-        await this.notifier.closeTerminalTab(tab.parentTabId)
+        try {
+          await this.notifier.closeTerminalTab(tab.parentTabId)
+        } catch (error) {
+          const recovered =
+            error instanceof Error &&
+            error.message === 'terminal_tab_close_failed' &&
+            (await this.recoverFailedRendererTerminalClose(
+              worktreeId,
+              snapshot!,
+              tab,
+              closeDeadlineMs
+            ))
+          if (!recovered) {
+            throw error
+          }
+          return { closed: true }
+        }
         const remainingSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
         const remainingTab = remainingSnapshot?.tabs.find(
           (candidate): candidate is RuntimeMobileSessionTerminalTab =>
@@ -6460,30 +6478,12 @@ export class OrcaRuntimeService {
     options: { killPtys?: boolean } = {}
   ): void {
     const closedParentTabId = tab.parentTabId
-    const projectedPtyIds = this.removePersistedHeadlessTerminalTab(worktreeId, closedParentTabId)
-    // Why: local provider ids can be reused after restart, so a dormant
-    // persisted id is not kill authority. SSH relay ids remain durable exact
-    // identities even before pane metadata reconnects.
-    const ptyIdsToKill = new Set(projectedPtyIds.filter((ptyId) => parseAppSshPtyId(ptyId)))
-    for (const candidate of snapshot.tabs) {
-      if (candidate.type !== 'terminal' || candidate.parentTabId !== closedParentTabId) {
-        continue
-      }
-      const livePty = this.findPtyForMobileTerminalTab(worktreeId, candidate)
-      const ptyId = livePty?.ptyId ?? candidate.ptyId
-      const hasOtherOwner = snapshot.tabs.some(
-        (other) =>
-          other.type === 'terminal' &&
-          other.parentTabId !== closedParentTabId &&
-          other.ptyId === ptyId
-      )
-      if (ptyId && !hasOtherOwner && (livePty || parseAppSshPtyId(ptyId))) {
-        // Why: a live serve leaf can exist before its debounced binding reaches
-        // persistence. Include it from the authoritative snapshot so split
-        // close cannot leave a provider process behind.
-        ptyIdsToKill.add(ptyId)
-      }
-    }
+    const ptyIdsToKill = this.collectHeadlessMobileTerminalPtyIds(
+      worktreeId,
+      snapshot,
+      closedParentTabId
+    )
+    this.removePersistedHeadlessTerminalTab(worktreeId, closedParentTabId)
     if (options.killPtys !== false) {
       for (const ptyId of ptyIdsToKill) {
         this.ptyController?.kill(ptyId)
@@ -6512,6 +6512,70 @@ export class OrcaRuntimeService {
     }
     this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
     this.emitMobileSessionTabsSnapshot(nextSnapshot)
+  }
+
+  private collectHeadlessMobileTerminalPtyIds(
+    worktreeId: string,
+    snapshot: RuntimeMobileSessionTabsSnapshot,
+    closedParentTabId: string
+  ): Set<string> {
+    const session = this.getWorkspaceSessionForWorktree(worktreeId)
+    const projectedPtyIds = session
+      ? closeTerminalTabInWorkspaceSession(session, worktreeId, closedParentTabId).ptyIdsToKill
+      : []
+    // Why: dormant local ids can be reused after restart; only SSH ids remain exact kill authority without a live binding.
+    const ptyIdsToKill = new Set(projectedPtyIds.filter((ptyId) => parseAppSshPtyId(ptyId)))
+    for (const candidate of snapshot.tabs) {
+      if (candidate.type !== 'terminal' || candidate.parentTabId !== closedParentTabId) {
+        continue
+      }
+      const livePty = this.findPtyForMobileTerminalTab(worktreeId, candidate)
+      const ptyId = livePty?.ptyId ?? candidate.ptyId
+      const hasOtherOwner = snapshot.tabs.some(
+        (other) =>
+          other.type === 'terminal' &&
+          other.parentTabId !== closedParentTabId &&
+          other.ptyId === ptyId
+      )
+      if (ptyId && !hasOtherOwner && (livePty || parseAppSshPtyId(ptyId))) {
+        // Why: a live serve leaf can exist before its debounced binding reaches
+        // persistence. Include it from the authoritative snapshot so split
+        // close cannot leave a provider process behind.
+        ptyIdsToKill.add(ptyId)
+      }
+    }
+    return ptyIdsToKill
+  }
+
+  private async recoverFailedRendererTerminalClose(
+    worktreeId: string,
+    snapshot: RuntimeMobileSessionTabsSnapshot,
+    tab: RuntimeMobileSessionTerminalTab,
+    deadlineMs: number
+  ): Promise<boolean> {
+    const ptyIds = this.collectHeadlessMobileTerminalPtyIds(worktreeId, snapshot, tab.parentTabId)
+    const stopAndWait = this.ptyController?.stopAndWait?.bind(this.ptyController)
+    if (ptyIds.size > 0 && (!stopAndWait || deadlineMs <= Date.now())) {
+      return false
+    }
+    const stopped = await Promise.all(
+      [...ptyIds].map((ptyId) => stopAndWait!(ptyId, { deadlineMs }).catch(() => false))
+    )
+    if (stopped.some((result) => !result)) {
+      return false
+    }
+    const currentSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId) ?? snapshot
+    const currentTab =
+      currentSnapshot.tabs.find(
+        (candidate): candidate is RuntimeMobileSessionTerminalTab =>
+          candidate.type === 'terminal' && candidate.parentTabId === tab.parentTabId
+      ) ?? tab
+    this.closeHeadlessMobileTerminalTab(worktreeId, currentSnapshot, currentTab, {
+      killPtys: false
+    })
+    this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
+    this.store?.flushOrThrow?.()
+    return true
   }
 
   async moveMobileSessionTab(

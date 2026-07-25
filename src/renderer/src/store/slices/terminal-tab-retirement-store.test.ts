@@ -9,12 +9,17 @@ const mockRuntimeCall = vi.fn().mockResolvedValue({
   result: {},
   _meta: { runtimeId: 'local-runtime' }
 })
+const mockRuntimeEnvironmentCall = vi.fn()
+const mockRuntimeEnvironmentSubscribe = vi.fn()
 
 vi.stubGlobal('window', {
   api: {
     pty: { kill: mockKill },
     runtime: { call: mockRuntimeCall },
-    runtimeEnvironments: { call: vi.fn() }
+    runtimeEnvironments: {
+      call: mockRuntimeEnvironmentCall,
+      subscribe: mockRuntimeEnvironmentSubscribe
+    }
   }
 })
 
@@ -65,6 +70,8 @@ describe('terminal tab retirement store boundary', () => {
       result: {},
       _meta: { runtimeId: 'local-runtime' }
     })
+    mockRuntimeEnvironmentCall.mockReset()
+    mockRuntimeEnvironmentSubscribe.mockReset()
     parkedWatchersByTabId.clear()
     capturedPanesByTabId.clear()
   })
@@ -231,6 +238,86 @@ describe('terminal tab retirement store boundary', () => {
         timeoutMs: TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
       }
     })
+  })
+
+  it('proves legacy runtime teardown after closeProvider is unavailable', async () => {
+    const store = createRetirementStore()
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [
+          makeTab({
+            id: 'tab-1',
+            worktreeId: 'wt-1',
+            ptyId: 'remote:legacy-runtime@@terminal-1'
+          })
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['remote:legacy-runtime@@terminal-1'] }
+    })
+    const responses = [
+      {
+        id: 'rpc-close-provider',
+        ok: false,
+        error: { code: 'method_not_found', message: 'Unknown method: terminal.closeProvider' },
+        _meta: { runtimeId: 'legacy-runtime' }
+      },
+      {
+        id: 'rpc-close',
+        ok: true,
+        result: { close: { ptyKilled: true } },
+        _meta: { runtimeId: 'legacy-runtime' }
+      },
+      {
+        id: 'rpc-wait',
+        ok: true,
+        result: {
+          wait: {
+            handle: 'terminal-1',
+            condition: 'exit',
+            satisfied: true,
+            status: 'exited',
+            exitCode: 0
+          }
+        },
+        _meta: { runtimeId: 'legacy-runtime' }
+      }
+    ]
+    mockRuntimeEnvironmentSubscribe.mockImplementation(
+      (_request, callbacks: { onResponse: (response: (typeof responses)[number]) => void }) => {
+        const response = responses.shift()!
+        queueMicrotask(() => callbacks.onResponse(response))
+        return Promise.resolve({ unsubscribe: vi.fn() })
+      }
+    )
+    let providerTeardown: Promise<void> | undefined
+
+    store.getState().closeTab('tab-1', {
+      registerProviderTeardown: (teardown) => {
+        providerTeardown = teardown
+      }
+    })
+    await expect(providerTeardown).resolves.toBeUndefined()
+
+    expect(mockRuntimeEnvironmentSubscribe.mock.calls.map(([request]) => request.method)).toEqual([
+      'terminal.closeProvider',
+      'terminal.close',
+      'terminal.wait'
+    ])
+    expect(mockRuntimeEnvironmentSubscribe).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        selector: 'legacy-runtime',
+        method: 'terminal.wait',
+        params: {
+          terminal: 'terminal-1',
+          for: 'exit',
+          timeoutMs: expect.any(Number)
+        },
+        timeoutMs: expect.any(Number)
+      }),
+      expect.any(Object)
+    )
+    expect(mockRuntimeEnvironmentCall).not.toHaveBeenCalled()
+    expect(mockRuntimeCall).not.toHaveBeenCalled()
   })
 
   it('preserves shared-owner snapshots while closing the source tab', async () => {

@@ -57,6 +57,7 @@ import { runRemoteAgentSessionLaunch } from './remote-agent-session-launch'
 import { translate } from '../i18n/i18n'
 import { getRuntimeEnvironmentRevision } from './runtime-environment-revision'
 import { parsePaneKey } from '../../../shared/stable-pane-id'
+import { TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS } from '../../../shared/terminal-tab-close'
 
 export {
   HOST_TERMINAL_SURFACE_SEPARATOR,
@@ -896,7 +897,7 @@ async function callWebRuntimeSessionTabMethod(
             ? { reason: args.reason }
             : {})
       },
-      timeoutMs: 15_000
+      timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
     })
     const result = unwrapRuntimeRpcResult(
       response as RuntimeRpcResponse<RuntimeMobileSessionTabCloseResult | undefined>

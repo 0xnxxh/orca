@@ -24280,6 +24280,77 @@ describe('OrcaRuntimeService', () => {
     expect(getSession().terminalLayoutsByTabId['host-tab']).toBeDefined()
   })
 
+  it('retires host state after recovering a failed renderer provider close', async () => {
+    const ptyId = 'serve-adopted-retry'
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: 'host-tab',
+              ptyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Adopted Terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          'host-tab': makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: ptyId })
+        }
+      })
+    )
+    const flushOrThrow = vi.fn()
+    const stopAndWait = vi.fn(async () => true)
+    const closeTerminal = vi.fn()
+    const closeTerminalTab = vi.fn(async () => {
+      throw new Error('terminal_tab_close_failed')
+    })
+    const runtime = new OrcaRuntimeService({ ...runtimeStore, flushOrThrow } as never)
+    runtime.setPtyController({
+      write: () => true,
+      kill: vi.fn(() => true),
+      stopAndWait,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [{ id: ptyId, cwd: TEST_WORKTREE_PATH, title: 'Adopted' }]
+    })
+    runtime.setNotifier({ closeTerminal, closeTerminalTab } as never)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'host-tab',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Adopted Terminal',
+          activeLeafId: HEADLESS_LEAF_ID,
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId: 'host-tab',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: HEADLESS_LEAF_ID,
+          paneRuntimeId: 1,
+          ptyId
+        }
+      ]
+    })
+
+    await expect(
+      runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
+    ).resolves.toEqual({ closed: true })
+
+    expect(stopAndWait).toHaveBeenCalledWith(ptyId, { deadlineMs: expect.any(Number) })
+    expect(closeTerminal).toHaveBeenCalledWith('host-tab')
+    expect(flushOrThrow).toHaveBeenCalledTimes(1)
+    expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([])
+    expect(getSession().terminalLayoutsByTabId['host-tab']).toBeUndefined()
+    expect((await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)).tabs).toEqual([])
+  })
+
   it('materializes hydrated pending headless terminals with the persisted session identity', async () => {
     const { runtimeStore } = makeRuntimeStoreWithWorkspaceSession(
       makeWorkspaceSessionWithHeadlessTerminal()

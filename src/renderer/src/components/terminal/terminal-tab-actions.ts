@@ -19,6 +19,10 @@ import type {
 import { closeLocalTerminalTabState } from './close-local-terminal-tab-state'
 import { getTerminalIncarnationHandle } from './terminal-close-incarnation'
 import {
+  getTerminalTabProviderTeardown,
+  trackTerminalTabProviderTeardown
+} from './terminal-tab-provider-teardown'
+import {
   getWorktreeTerminalTabIds,
   resolveTerminalCloseTarget,
   validatePrecomputedTerminalCloseState,
@@ -28,26 +32,6 @@ export type { PrecomputedTerminalCloseState } from './terminal-close-target'
 export { closeOtherTerminalTabs, closeTerminalTabsToRight } from './terminal-tab-bulk-actions'
 
 type TerminalTabActionState = ReturnType<typeof useAppStore.getState>
-const providerTeardownByClosingTabId = new Map<string, Promise<void>>()
-
-function trackClosingTabProviderTeardown(
-  tabIds: readonly string[],
-  providerTeardown: Promise<void>
-): void {
-  const keys = [...new Set(tabIds)]
-  for (const tabId of keys) {
-    providerTeardownByClosingTabId.set(tabId, providerTeardown)
-  }
-  const clear = (): void => {
-    for (const tabId of keys) {
-      if (providerTeardownByClosingTabId.get(tabId) === providerTeardown) {
-        providerTeardownByClosingTabId.delete(tabId)
-      }
-    }
-  }
-  // Why: a failed durable close must keep later not-found retries from falsely acknowledging success.
-  void providerTeardown.then(clear, () => {})
-}
 
 function isPinnedVisibleTab(
   state: TerminalTabActionState,
@@ -90,7 +74,7 @@ export function closeTerminalTab(
   )
   const target = resolveTerminalCloseTarget(state, tabId, precomputedCloseState)
   if (!target) {
-    const providerTeardown = providerTeardownByClosingTabId.get(tabId)
+    const providerTeardown = getTerminalTabProviderTeardown(tabId)
     if (providerTeardown) {
       options?.onClosed?.(providerTeardown)
     } else {
@@ -105,9 +89,9 @@ export function closeTerminalTab(
     return
   }
   let providerTeardown = Promise.resolve()
-  const registerProviderTeardown = (teardown: Promise<void>): void => {
+  const registerProviderTeardown = (teardown: Promise<void>, retry: () => Promise<void>): void => {
     providerTeardown = teardown
-    trackClosingTabProviderTeardown([tabId, terminalTabId], teardown)
+    trackTerminalTabProviderTeardown([tabId, terminalTabId], teardown, retry)
   }
   const providerTeardownRegistration =
     options?.onClosed && options.providerTeardownTimeoutMs !== undefined
