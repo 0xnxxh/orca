@@ -464,20 +464,28 @@ describe('skill bundle manifest generator', () => {
     expect(gitTreeSha(files)).toBe(expected)
   })
 
-  // Why: the runtime contract test only inspects the bump step, but every step
-  // in the cut job shares one workspace and one index, so an earlier step could
-  // regenerate and stage the content-addressed artifacts into the version commit.
+  // Why: every step in the cut job shares one workspace and one index, so any of
+  // them can stage the content-addressed artifacts and the bump step's own commit
+  // then carries them into the tag. Grepping the workflow cannot see a path built
+  // from an env var, a composite action, or concatenation, so the cut asserts its
+  // own index before committing; this test pins that guard and adds a tripwire
+  // for the literal spellings.
   it('keeps the whole release-cut job off skill regeneration', async () => {
     const workflow = parse(
       await readFile(path.join(REPO_ROOT, '.github/workflows/release-cut.yml'), 'utf8')
     )
     const runSteps = workflow.jobs.cut.steps
       .filter((step) => typeof step.run === 'string')
-      .map((step) => ({ name: step.name, run: step.run.replace(/^\s*#.*$/gm, '') }))
+      .map((step) => ({ name: step.name ?? '(unnamed)', run: step.run.replace(/^\s*#.*$/gm, '') }))
+    const bumpStep = runSteps.find((step) => step.name === 'Bump package.json and tag')
 
-    expect(runSteps.length).toBeGreaterThan(0)
-    // Only the step that appends the provenance row may name the directory, and
-    // no step anywhere may regenerate — under either the flag or its alias.
+    // The load-bearing check: whatever staged it, only these two paths may ship.
+    expect(bumpStep.run).toMatch(
+      /git diff --cached --name-only[\s\S]*grep -vx -e 'package\.json' -e 'resources\/skills\/release-mapping\.json'/
+    )
+    expect(bumpStep.run.indexOf('grep -vx')).toBeLessThan(bumpStep.run.indexOf('git commit'))
+    // Tripwire only. A step that merely READS this directory may be added here;
+    // one that writes or stages it must not, and the guard above will reject it.
     expect(runSteps.filter((s) => /resources[/\\]skills/.test(s.run)).map((s) => s.name)).toEqual([
       'Bump package.json and tag'
     ])

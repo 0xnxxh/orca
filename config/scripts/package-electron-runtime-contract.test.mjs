@@ -450,23 +450,24 @@ describe('Electron runtime package contract', () => {
     const generateIndex = bumpStep.run.indexOf(
       'node config/scripts/generate-skill-bundle-manifest.mjs --release "$VERSION"'
     )
-    const stageIndex = bumpStep.run.indexOf('git add package.json')
     const commands = bumpStep.run.replace(/^\s*#.*$/gm, '')
     // Unanchored: a `git add` chained after `&&` stages just as effectively.
     const stagedPaths = [...commands.matchAll(/\bgit add (.+)$/gm)].flatMap((match) =>
       match[1].trim().split(/\s+/)
     )
+    // Quotes trimmed and deduped: the index guard names the row a second time.
+    const mentioned = new Set(commands.match(/resources[/\\]skills[^\s'"]*/g))
     expect(checkoutStep.with['fetch-depth']).toBe(0)
     expect(bumpIndex).toBeGreaterThanOrEqual(0)
     // Why: the cut is the only point that advances the release ledger, so this
     // tag's revision is never rebuilt later — it appends that row, nothing else.
     expect(generateIndex).toBeGreaterThan(bumpIndex)
-    expect(stageIndex).toBeGreaterThan(generateIndex)
+    expect(bumpStep.run.indexOf('git add package.json')).toBeGreaterThan(generateIndex)
     expect(stagedPaths).toEqual(['package.json', 'resources/skills/release-mapping.json'])
-    // Every mention must be staged, so a copy, a redirect, or a path held in a
-    // variable cannot reach the content-addressed artifacts. Matched without a
-    // trailing slash so `dir="resources/skills"` still counts as a mention.
-    expect(commands.match(/resources[/\\]skills\S*/g)).toEqual(stagedPaths.slice(1))
+    // Every distinct mention must be staged, so a copy, a redirect, or a path
+    // held in a variable cannot reach the content-addressed artifacts. Matched
+    // without a trailing slash so `dir="resources/skills"` still counts.
+    expect([...mentioned]).toEqual(stagedPaths.slice(1))
     // Regeneration is banned job-wide by the generator suite. Here: `-a`, `-am`,
     // and `--all` sweep unstaged artifacts in; `--allow-empty` below must not.
     expect(commands).not.toMatch(/\bcommit\b[^\n]*\s(?:-a(?:\b|[a-z])|--all\b)/)
