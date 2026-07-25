@@ -4884,7 +4884,7 @@
           "reconnectAndDelete": "Reconnect & Delete"
         },
         "SidebarFeedbackImageAttachments": {
-          "screenshotsHint": "Screenshots help a lot — paste, drop, or attach up to {count}.",
+          "screenshotsHint": "Attach up to {count} screenshots",
           "attachImages": "Attach",
           "removeImage": "Remove image"
         }

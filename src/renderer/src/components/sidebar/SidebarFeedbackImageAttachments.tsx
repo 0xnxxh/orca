@@ -39,7 +39,7 @@ export function SidebarFeedbackImageAttachments({
         <span className="text-xs text-muted-foreground">
           {translate(
             'auto.components.sidebar.SidebarFeedbackImageAttachments.screenshotsHint',
-            'Screenshots help a lot — paste, drop, or attach up to {count}.'
+            'Attach up to {count} screenshots'
           ).replace('{count}', String(MAX_FEEDBACK_IMAGE_COUNT))}
         </span>
         <Button
