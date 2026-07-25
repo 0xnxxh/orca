@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
+import { PLUGIN_COMMIT_PATTERN } from '../../shared/plugins/plugin-install-lockfile'
 import {
   pluginMarketplaceGitSourceSchema,
   pluginMarketplaceSchema,
@@ -27,7 +28,7 @@ const cachedSnapshotSchema = z.strictObject({
   schemaVersion: z.literal(1),
   sourceId: sourceIdSchema,
   source: pluginMarketplaceGitSourceSchema,
-  marketplaceCommit: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/),
+  marketplaceCommit: z.string().regex(PLUGIN_COMMIT_PATTERN),
   fetchedAt: z.number().finite().nonnegative(),
   marketplace: pluginMarketplaceSchema
 })

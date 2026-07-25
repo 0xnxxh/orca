@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
+import { PLUGIN_CONTENT_HASH_PATTERN } from '../../shared/plugins/plugin-install-lockfile'
 import {
   PLUGIN_MANIFEST_FILENAME,
   isQualifiedPluginKey,
@@ -163,7 +164,7 @@ async function readInstalledPlugin(
   }
   // The pointer names a sibling directory; refuse anything path-like so a
   // corrupted pointer cannot address content outside the plugin dir.
-  if (!/^(?:[0-9a-f]{32}|[0-9a-f]{64})$/.test(contentHash)) {
+  if (!PLUGIN_CONTENT_HASH_PATTERN.test(contentHash)) {
     return {
       pluginKey: dirName,
       rootDir: pluginDir,

@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { isAllowedPluginGitUrl } from '../../shared/plugins/plugin-install-lockfile'
+import {
+  isAllowedPluginGitUrl,
+  PLUGIN_COMMIT_PATTERN
+} from '../../shared/plugins/plugin-install-lockfile'
 
 const execFileAsync = promisify(execFile)
 const PLUGIN_GIT_TIMEOUT_MS = 120_000
-const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 
 /** Runs system Git with argv-only invocation so credential helpers and SSH
  * remotes work without exposing an executable remote-helper surface. */
@@ -34,7 +36,7 @@ export async function checkoutPluginGitSource(input: {
     throw new Error('plugin Git URL must use HTTPS or SSH')
   }
   const ref = input.ref.trim()
-  if (COMMIT_PATTERN.test(ref)) {
+  if (PLUGIN_COMMIT_PATTERN.test(ref)) {
     await runPluginGit(['init', '--quiet', input.destination], input.workingDirectory)
     await runPluginGit(['remote', 'add', 'origin', input.url], input.destination)
     await runPluginGit(['fetch', '--quiet', '--depth', '1', 'origin', ref], input.destination)
@@ -48,7 +50,7 @@ export async function checkoutPluginGitSource(input: {
     await runPluginGit(args, input.workingDirectory)
   }
   const resolvedCommit = await runPluginGit(['rev-parse', 'HEAD'], input.destination)
-  if (!COMMIT_PATTERN.test(resolvedCommit)) {
+  if (!PLUGIN_COMMIT_PATTERN.test(resolvedCommit)) {
     throw new Error('Git resolved an invalid commit identity')
   }
   return resolvedCommit

@@ -14,7 +14,7 @@ import {
   isOfficialOrganizationGitSource,
   isOfficialPluginIdentity
 } from '../../shared/plugins/plugin-marketplace'
-import { mapPluginContentWithConcurrency } from './plugin-content-load-pool'
+import { mapWithConcurrency } from '../../shared/map-with-concurrency'
 
 const PLUGIN_LIST_PROJECTION_CONCURRENCY = 4
 
@@ -90,10 +90,10 @@ export async function buildPluginList(
     pluginConsents: service.options.getPluginConsents(),
     disabledPlugins: service.options.getDisabledPlugins()
   }
-  return mapPluginContentWithConcurrency(
-    service.getDiscovered().map((plugin, index) => ({ plugin, index })),
+  return mapWithConcurrency(
+    service.getDiscovered(),
     PLUGIN_LIST_PROJECTION_CONCURRENCY,
-    async ({ plugin, index }): Promise<PluginListEntry> => {
+    async (plugin, index): Promise<PluginListEntry> => {
       if (isInvalidDiscoveredPlugin(plugin)) {
         // Why: invalid dev paths can contain private absolute desktop paths;
         // never project those as identity over desktop/serve transports.

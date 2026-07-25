@@ -4,7 +4,7 @@ import {
   PLUGIN_VM_RECIPE_MAX_BYTES,
   readContainedPluginArtifactText
 } from './plugin-artifact-validation'
-import { mapPluginContentWithConcurrency } from './plugin-content-load-pool'
+import { mapWithConcurrency } from '../../shared/map-with-concurrency'
 import {
   isInvalidDiscoveredPlugin,
   type DiscoveredPlugin,
@@ -52,7 +52,7 @@ export class PluginVmRecipeRegistry {
       (plugin): plugin is ValidDiscoveredPlugin =>
         !isInvalidDiscoveredPlugin(plugin) && plugin.manifest.contributes.vmRecipes.length > 0
     )
-    const results = await mapPluginContentWithConcurrency(
+    const results = await mapWithConcurrency(
       candidates,
       VM_RECIPE_LOAD_CONCURRENCY,
       async (plugin): Promise<VmRecipeLoadResult> => {

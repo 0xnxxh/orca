@@ -75,14 +75,6 @@ export async function resolveContainedPluginArtifact(
   return resolvePathFromRealRoot(rootDir, rootReal, relativePath, 'file', maxBytes)
 }
 
-export async function resolveContainedPluginDirectory(
-  rootDir: string,
-  relativePath: string
-): Promise<string> {
-  const rootReal = await realpath(resolve(rootDir))
-  return resolvePathFromRealRoot(rootDir, rootReal, relativePath, 'directory')
-}
-
 export async function readContainedPluginArtifactText(
   rootDir: string,
   relativePath: string,

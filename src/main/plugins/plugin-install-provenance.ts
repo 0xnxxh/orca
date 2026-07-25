@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs'
 import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  PLUGIN_CONTENT_HASH_PATTERN,
   pluginLockEntrySchema,
   type PluginLockEntry,
   type PluginLockfile
@@ -11,10 +12,9 @@ import { readPluginCurrentPointer } from './plugin-current-pointer'
 
 const PROVENANCE_DIRECTORY = '.install-provenance'
 const PROVENANCE_MAX_BYTES = 64 * 1024
-const CONTENT_HASH_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/
 
 function provenancePath(pluginDir: string, contentHash: string): string {
-  if (!CONTENT_HASH_PATTERN.test(contentHash)) {
+  if (!PLUGIN_CONTENT_HASH_PATTERN.test(contentHash)) {
     throw new Error('invalid plugin content hash')
   }
   return join(pluginDir, PROVENANCE_DIRECTORY, `${contentHash}.json`)
@@ -84,7 +84,7 @@ export async function recoverPluginLockfile(
     }
     const pluginDir = join(pluginsDir, directory.name)
     const contentHash = await readPluginCurrentPointer(pluginDir).catch(() => null)
-    if (!contentHash || !CONTENT_HASH_PATTERN.test(contentHash)) {
+    if (!contentHash || !PLUGIN_CONTENT_HASH_PATTERN.test(contentHash)) {
       continue
     }
     const provenance = await readPluginInstallProvenance(pluginDir, contentHash)
@@ -115,7 +115,7 @@ export async function prunePluginInstallProvenance(
         (entry) =>
           entry.isFile() &&
           entry.name.endsWith('.json') &&
-          CONTENT_HASH_PATTERN.test(entry.name.slice(0, -'.json'.length)) &&
+          PLUGIN_CONTENT_HASH_PATTERN.test(entry.name.slice(0, -'.json'.length)) &&
           !retained.has(entry.name.slice(0, -'.json'.length))
       )
       .map((entry) => rm(join(directory, entry.name), { force: true }))

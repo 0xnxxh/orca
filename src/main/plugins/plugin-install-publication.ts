@@ -1,6 +1,7 @@
 import { readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  PLUGIN_CONTENT_HASH_PATTERN,
   upsertPluginLock,
   type PluginLockEntry
 } from '../../shared/plugins/plugin-install-lockfile'
@@ -15,8 +16,6 @@ import {
   readPluginInstallProvenance,
   writePluginInstallProvenance
 } from './plugin-install-provenance'
-
-const CONTENT_HASH_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/
 
 /** Publishes executable identity and provenance as one recoverable mutation,
  * then retains only current plus one rollback version. */
@@ -71,7 +70,8 @@ export async function publishPluginInstall(input: {
       input.pluginDir,
       new Set(
         [input.entry.contentHash, previousContentHash].filter(
-          (hash): hash is string => typeof hash === 'string' && CONTENT_HASH_PATTERN.test(hash)
+          (hash): hash is string =>
+            typeof hash === 'string' && PLUGIN_CONTENT_HASH_PATTERN.test(hash)
         )
       )
     ).catch(() => undefined)
@@ -84,7 +84,9 @@ async function pruneHistoricalVersions(pluginDir: string, retained: ReadonlySet<
     entries
       .filter(
         (entry) =>
-          entry.isDirectory() && CONTENT_HASH_PATTERN.test(entry.name) && !retained.has(entry.name)
+          entry.isDirectory() &&
+          PLUGIN_CONTENT_HASH_PATTERN.test(entry.name) &&
+          !retained.has(entry.name)
       )
       .map((entry) => rm(join(pluginDir, entry.name), { recursive: true, force: true }))
   )

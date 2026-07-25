@@ -9,6 +9,11 @@ import { isQualifiedPluginKey } from './plugin-manifest'
  * #5801's SHA-256 + lockfile installer pieces.
  */
 
+/** Install content hash: legacy 128-bit SHA-256 prefix or the full digest. */
+export const PLUGIN_CONTENT_HASH_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/
+/** Git object id, SHA-1 or SHA-256. */
+export const PLUGIN_COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
+
 export const pluginInstallSourceSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('local-path'),
@@ -36,7 +41,7 @@ export const pluginInstallSourceSchema = z.discriminatedUnion('kind', [
         .max(32 * 1024)
         .refine(isAllowedPluginGitUrl, 'marketplace Git URL must use HTTPS or SSH'),
       ref: z.string().min(1).max(4096),
-      resolvedCommit: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
+      resolvedCommit: z.string().regex(PLUGIN_COMMIT_PATTERN)
     }),
     plugin: z.object({
       url: z
@@ -84,12 +89,9 @@ export const pluginLockEntrySchema = z
     version: z.string().min(1).max(128),
     source: pluginInstallSourceSchema,
     /** Commit the git source resolved to at install time; null for local. */
-    resolvedCommit: z
-      .string()
-      .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/)
-      .nullable(),
+    resolvedCommit: z.string().regex(PLUGIN_COMMIT_PATTERN).nullable(),
     /** Deterministic hash of the installed file tree (also the install dir name). */
-    contentHash: z.string().regex(/^(?:[0-9a-f]{32}|[0-9a-f]{64})$/),
+    contentHash: z.string().regex(PLUGIN_CONTENT_HASH_PATTERN),
     /** New descriptive name, accepted for forward compatibility. */
     consentFingerprint: z.string().min(1).max(256).optional(),
     /** v1 on-disk name retained so existing Orca builds can read new lockfiles. */

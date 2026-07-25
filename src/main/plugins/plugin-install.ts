@@ -8,6 +8,8 @@ import {
 } from '../../shared/plugins/plugin-manifest'
 import {
   isAllowedPluginGitUrl,
+  PLUGIN_COMMIT_PATTERN,
+  PLUGIN_CONTENT_HASH_PATTERN,
   pluginInstallSourceSchema,
   removePluginLock
 } from '../../shared/plugins/plugin-install-lockfile'
@@ -159,7 +161,7 @@ export async function installPluginFromMarketplace(input: {
   if (!isQualifiedPluginKey(input.expectedPluginKey)) {
     return { ok: false, error: 'invalid marketplace plugin identity' }
   }
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(input.expectedResolvedCommit)) {
+  if (!PLUGIN_COMMIT_PATTERN.test(input.expectedResolvedCommit)) {
     return { ok: false, error: 'invalid previewed plugin commit' }
   }
   return serializePluginMutation(input.pluginsDir, async () => {
@@ -217,7 +219,7 @@ export async function rollbackInstalledPlugin(input: {
       .filter(
         (entry) =>
           entry.isDirectory() &&
-          /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/.test(entry.name) &&
+          PLUGIN_CONTENT_HASH_PATTERN.test(entry.name) &&
           entry.name !== currentContentHash
       )
       .map((entry) => entry.name)

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { constants, createReadStream } from 'node:fs'
-import { lstat, open, readdir } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { lstat, readdir } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { pluginPathSegmentError } from '../../shared/plugins/plugin-path-safety'
 
@@ -17,18 +17,6 @@ const MAX_PLUGIN_TOTAL_BYTES = 50 * 1024 * 1024
 
 type PluginFile = { path: string; size: number }
 
-export type PluginTreeSnapshot = {
-  hash: string
-  fileCount: number
-  totalBytes: number
-  directories: string[]
-  files: { relativePath: string; content: Buffer }[]
-}
-
-export type PluginTreeSnapshotResult =
-  | { ok: true; snapshot: PluginTreeSnapshot }
-  | { ok: false; error: string }
-
 export type PluginTreeHashResult =
   | { ok: true; hash: string; fileCount: number; totalBytes: number }
   | { ok: false; error: string }
@@ -37,17 +25,13 @@ async function collectFiles(
   root: string,
   dir: string,
   files: PluginFile[],
-  directories: string[],
-  counters: { entries: number; bytes: number },
-  signal?: AbortSignal
+  counters: { entries: number; bytes: number }
 ): Promise<string | null> {
-  signal?.throwIfAborted()
   const entries = await readdir(dir, { withFileTypes: true })
   // Why: localeCompare ordering varies with host locale/ICU data; content
   // addresses must sort identically on macOS, Linux, and Windows.
   entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
   for (const entry of entries) {
-    signal?.throwIfAborted()
     if (dir === root && entry.name === '.git') {
       continue
     }
@@ -65,8 +49,7 @@ async function collectFiles(
       return `symlink not allowed in plugin content: ${relative(root, full)}`
     }
     if (stat.isDirectory()) {
-      directories.push(relative(root, full).replaceAll('\\', '/'))
-      const error = await collectFiles(root, full, files, directories, counters, signal)
+      const error = await collectFiles(root, full, files, counters)
       if (error) {
         return error
       }
@@ -106,7 +89,7 @@ export async function hashPluginTree(root: string): Promise<PluginTreeHashResult
   const files: PluginFile[] = []
   try {
     const counters = { entries: 0, bytes: 0 }
-    const error = await collectFiles(root, root, files, [], counters)
+    const error = await collectFiles(root, root, files, counters)
     if (error) {
       return { ok: false, error }
     }
@@ -133,75 +116,6 @@ export async function hashPluginTree(root: string): Promise<PluginTreeHashResult
       hash: hash.digest('hex'),
       fileCount: files.length,
       totalBytes
-    }
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
-  }
-}
-
-async function readSnapshotFile(file: PluginFile, signal?: AbortSignal): Promise<Buffer> {
-  signal?.throwIfAborted()
-  const handle = await open(file.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-  try {
-    const metadata = await handle.stat()
-    if (!metadata.isFile() || metadata.size !== file.size) {
-      throw new Error(`plugin file changed while snapshotting: ${file.path}`)
-    }
-    const content = Buffer.alloc(file.size)
-    let offset = 0
-    while (offset < content.byteLength) {
-      signal?.throwIfAborted()
-      const length = Math.min(64 * 1024, content.byteLength - offset)
-      const { bytesRead } = await handle.read(content, offset, length, offset)
-      if (bytesRead === 0) {
-        throw new Error(`plugin file changed while snapshotting: ${file.path}`)
-      }
-      offset += bytesRead
-    }
-    const extra = Buffer.allocUnsafe(1)
-    if ((await handle.read(extra, 0, 1, offset)).bytesRead !== 0) {
-      throw new Error(`plugin file changed while snapshotting: ${file.path}`)
-    }
-    return content
-  } finally {
-    await handle.close()
-  }
-}
-
-/** Reads one bounded tree snapshot so its consent hash and preview bytes share buffers. */
-export async function readPluginTreeSnapshot(
-  root: string,
-  signal?: AbortSignal
-): Promise<PluginTreeSnapshotResult> {
-  const files: PluginFile[] = []
-  const directories: string[] = []
-  try {
-    const counters = { entries: 0, bytes: 0 }
-    const error = await collectFiles(root, root, files, directories, counters, signal)
-    if (error) {
-      return { ok: false, error }
-    }
-    const hash = createHash('sha256').update('orca-plugin-tree-v1\0')
-    const snapshotFiles: PluginTreeSnapshot['files'] = []
-    for (const file of files) {
-      signal?.throwIfAborted()
-      const relativePath = relative(root, file.path).replaceAll('\\', '/')
-      const content = await readSnapshotFile(file, signal)
-      hashLength(hash, Buffer.byteLength(relativePath, 'utf8'))
-      hash.update(relativePath, 'utf8')
-      hashLength(hash, content.byteLength)
-      hash.update(content)
-      snapshotFiles.push({ relativePath, content })
-    }
-    return {
-      ok: true,
-      snapshot: {
-        hash: hash.digest('hex'),
-        fileCount: snapshotFiles.length,
-        totalBytes: counters.bytes,
-        directories,
-        files: snapshotFiles
-      }
     }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }

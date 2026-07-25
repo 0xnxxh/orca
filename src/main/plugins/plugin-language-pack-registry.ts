@@ -8,7 +8,7 @@ import {
   readContainedPluginArtifactText
 } from './plugin-artifact-validation'
 import type { PluginContentVerifier } from './plugin-content-integrity'
-import { mapPluginContentWithConcurrency } from './plugin-content-load-pool'
+import { mapWithConcurrency } from '../../shared/map-with-concurrency'
 import {
   isInvalidDiscoveredPlugin,
   type DiscoveredPlugin,
@@ -49,7 +49,7 @@ export class PluginLanguagePackRegistry {
         candidates.push(plugin)
       }
     }
-    const results = await mapPluginContentWithConcurrency(
+    const results = await mapWithConcurrency(
       candidates,
       LANGUAGE_PACK_LOAD_CONCURRENCY,
       async (plugin): Promise<LanguageLoadResult> => {
