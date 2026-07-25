@@ -289,6 +289,35 @@ async function injectPaneData(
   }
 }
 
+function buildAltScreenFrame(marker: string, frame: number): string {
+  const progress = `${'█'.repeat((frame % 8) + 1)}${'░'.repeat(8 - ((frame % 8) + 1))}`
+  return [
+    '\x1b[?2026h',
+    '\x1b[?1049h',
+    '\x1b[2J\x1b[H',
+    '\x1b[?25l',
+    `╭────────────────────────────────────────────────────────────────────╮`,
+    `│ ${marker} frame ${String(frame).padStart(3, '0')} ${progress}                     │`,
+    `│ Dimension              │ Rating                                      │`,
+    `╰────────────────────────────────────────────────────────────────────╯`,
+    '\x1b[?2026l'
+  ].join('\r\n')
+}
+
+async function writeToPaneTerminal(page: Page, tabId: string, data: string): Promise<void> {
+  await page.evaluate(
+    ({ tabId, data }) => {
+      const manager = window.__paneManagers?.get(tabId)
+      const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0]
+      if (!pane) {
+        throw new Error(`No terminal pane for tab ${tabId}`)
+      }
+      return new Promise<void>((resolve) => pane.terminal.write(data, resolve))
+    },
+    { tabId, data }
+  )
+}
+
 async function setHiddenSnapshotOverride(
   page: Page,
   ptyId: string,
@@ -611,63 +640,28 @@ test.describe('Terminal tab switch visual restore', () => {
 
     const { firstTabId, secondTabId } = await ensureTwoTerminalTabs(orcaPage)
     await forceWebglOnActiveTab(orcaPage)
+    await waitForPanePtyIdOnTab(orcaPage, firstTabId)
 
     const runId = `${Date.now()}`
     const finalMarker = `${TAB_SWITCH_MARKER_PREFIX}_${runId}_ALT_24`
 
-    await orcaPage.evaluate(
-      ({ tabId, finalMarker }) => {
-        const manager = window.__paneManagers?.get(tabId)
-        const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0]
-        if (!pane) {
-          throw new Error(`No terminal pane for tab ${tabId}`)
-        }
-        const frames = Array.from({ length: 25 }, (_, frame) => {
-          const progress = `${'█'.repeat((frame % 8) + 1)}${'░'.repeat(8 - ((frame % 8) + 1))}`
-          return [
-            '\x1b[?2026h',
-            '\x1b[?1049h',
-            '\x1b[2J\x1b[H',
-            '\x1b[?25l',
-            `╭────────────────────────────────────────────────────────────────────╮`,
-            `│ ${finalMarker} frame ${String(frame).padStart(3, '0')} ${progress}                     │`,
-            `│ Dimension              │ Rating                                      │`,
-            `╰────────────────────────────────────────────────────────────────────╯`,
-            '\x1b[?2026l'
-          ].join('\r\n')
-        }).join('')
-        return new Promise<void>((resolve) => pane.terminal.write(frames, resolve))
-      },
-      { tabId: firstTabId, finalMarker }
+    await writeToPaneTerminal(
+      orcaPage,
+      firstTabId,
+      Array.from({ length: 25 }, (_, frame) => buildAltScreenFrame(finalMarker, frame)).join('')
     )
 
     const corruptionReports: string[] = []
     for (let cycle = 0; cycle < 6; cycle += 1) {
+      const redraw = buildAltScreenFrame(finalMarker, cycle * 4)
+      // Why: this frame never transits the PTY, so a reveal restore would
+      // repaint main's model over it. Publish it as the snapshot too, so both
+      // the live-write and restore paths land the same frame. Identity is
+      // re-read per cycle because a reattach would re-key the override.
+      const { ptyId, cols, rows } = await readPaneIdentityOnTab(orcaPage, firstTabId)
+      await setHiddenSnapshotOverride(orcaPage, ptyId, { data: redraw, cols, rows })
       await activateTerminalTab(orcaPage, secondTabId)
-      await orcaPage.evaluate(
-        ({ tabId, finalMarker, cycle }) => {
-          const manager = window.__paneManagers?.get(tabId)
-          const pane = manager?.getActivePane?.() ?? manager?.getPanes?.()[0]
-          if (!pane) {
-            throw new Error(`No terminal pane for tab ${tabId}`)
-          }
-          const frame = cycle * 4
-          const progress = `${'█'.repeat((frame % 8) + 1)}${'░'.repeat(8 - ((frame % 8) + 1))}`
-          const redraw = [
-            '\x1b[?2026h',
-            '\x1b[?1049h',
-            '\x1b[2J\x1b[H',
-            '\x1b[?25l',
-            `╭────────────────────────────────────────────────────────────────────╮`,
-            `│ ${finalMarker} frame ${String(frame).padStart(3, '0')} ${progress}                     │`,
-            `│ Dimension              │ Rating                                      │`,
-            `╰────────────────────────────────────────────────────────────────────╯`,
-            '\x1b[?2026l'
-          ].join('\r\n')
-          return new Promise<void>((resolve) => pane.terminal.write(redraw, resolve))
-        },
-        { tabId: firstTabId, finalMarker, cycle }
-      )
+      await writeToPaneTerminal(orcaPage, firstTabId, redraw)
       await activateTerminalTab(orcaPage, firstTabId)
 
       const geometry = await readTabTerminalGeometry(orcaPage, firstTabId, `${runId}_ALT`)
