@@ -148,4 +148,23 @@ describe('terminal history restore memory limits', () => {
       ).values
     ).toHaveLength(2_000_001)
   })
+
+  // Why: the pre-scan also carried a 128-level nesting cap, and dropping it is only safe
+  // because V8 parses JSON iteratively — depth costs heap, not stack. A future engine that
+  // recursed would abort the daemon rather than throw into the callers' catch, so pin it.
+  it('parses deeply nested checkpoints without the retired nesting-depth cap', () => {
+    const { sessionPath } = createSession('deeply-nested-checkpoint')
+    const checkpointPath = join(sessionPath, 'checkpoint.json')
+    const depth = 50_000
+    writeFileSync(
+      checkpointPath,
+      `{"snapshotAnsi":"","nested":${'['.repeat(depth)}${']'.repeat(depth)}}`
+    )
+    expect(
+      readTerminalHistoryJson<{ nested: unknown[] }>(
+        checkpointPath,
+        TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES
+      ).nested
+    ).toHaveLength(1)
+  })
 })
