@@ -202,6 +202,22 @@ describe('AppearancePane', () => {
     delete (window as unknown as { api?: unknown }).api
   })
 
+  it('shows language as a primary interface control without opening Advanced', async () => {
+    // Language is a first-class presentation pref next to Theme — browsing
+    // Appearance → Interface must surface it without expanding Advanced.
+    mocks.state.settingsSearchQuery = ''
+    const container = await renderAppearancePane(getDefaultSettings('/tmp'))
+    const languageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="select-trigger"][aria-label="Language"]'
+    )
+
+    expect(languageTrigger).not.toBeNull()
+    // Advanced platform-chrome controls stay collapsed by default.
+    expect(
+      container.querySelector('button[role="switch"][aria-label="Titlebar App Name"]')
+    ).toBeNull()
+  })
+
   it('renders the language dropdown with system, english, chinese, korean, japanese, and spanish options', async () => {
     mocks.state.settingsSearchQuery = 'language'
     const updateSettings = vi.fn()
