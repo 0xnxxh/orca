@@ -34,7 +34,10 @@ import {
 import { createTerminalHandleLinkProvider } from './terminal-handle-links'
 import type { LinkHandlerDeps } from './terminal-link-handlers'
 import { handleOscLink } from './terminal-osc-link-routing'
-import { createOsc8CursorPositionedLinkProvider } from './osc8-cursor-positioned-link-provider'
+import {
+  createOsc8CursorPositionedLinkProvider,
+  registerFirstLinkProvider
+} from './osc8-cursor-positioned-link-provider'
 import { createOsc8LinkUrlCache } from './osc8-link-url-cache'
 import { handleTerminalWebLinkClick } from './terminal-web-link-click'
 import {
@@ -1117,7 +1120,11 @@ export function useTerminalPaneLifecycle({
         // Why: xterm's own OSC 8 provider only joins rows carrying its isWrapped
         // flag, so a link a TUI cursor-positioned across rows highlighted only the
         // hovered row. This provider spans the whole run by its shared OSC 8 id.
-        const osc8LinkDisposable = pane.terminal.registerLinkProvider(
+        // Why: the linkifier takes the first provider that matches, and xterm
+        // registers its own OSC 8 provider at construction — so this must go in
+        // front or its narrower single-row range always wins.
+        const osc8LinkDisposable = registerFirstLinkProvider(
+          pane.terminal,
           createOsc8CursorPositionedLinkProvider({
             getTerminal: () =>
               managerRef.current?.getPanes().find((candidate) => candidate.id === pane.id)

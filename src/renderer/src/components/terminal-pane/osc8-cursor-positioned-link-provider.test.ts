@@ -1,7 +1,10 @@
 import { Terminal } from '@xterm/headless'
 import type { ILink, Terminal as XtermTerminal } from '@xterm/xterm'
 import { describe, expect, it, vi } from 'vitest'
-import { createOsc8CursorPositionedLinkProvider } from './osc8-cursor-positioned-link-provider'
+import {
+  createOsc8CursorPositionedLinkProvider,
+  registerFirstLinkProvider
+} from './osc8-cursor-positioned-link-provider'
 import { createOsc8LinkUrlCache } from './osc8-link-url-cache'
 
 const COLS = 110
@@ -120,5 +123,42 @@ describe('OSC 8 cursor-positioned link provider', () => {
     // Row 1's run reaches the row end but row 2 belongs to a different link.
     expect(provideAt(1)).toBeUndefined()
     terminal.dispose()
+  })
+
+  // Why: xterm's linkifier takes the FIRST provider that matches, and it
+  // registers its own OSC 8 provider at construction — so a later registration
+  // could never win and the hover kept showing the single-row range.
+  it('registers ahead of xterm’s own OSC 8 provider', () => {
+    const builtIn = { provideLinks: vi.fn() }
+    const linkProviders: unknown[] = [builtIn]
+    // Orca wraps providers in an error guard before registering, so the array
+    // holds a wrapper rather than the provider object itself.
+    const stub = {
+      registerLinkProvider: (p: { provideLinks: unknown }) => {
+        const guarded = { provideLinks: p.provideLinks }
+        linkProviders.push(guarded)
+        return {
+          dispose: () => {
+            linkProviders.splice(linkProviders.indexOf(guarded), 1)
+          }
+        }
+      },
+      _core: { _linkProviderService: { linkProviders } }
+    }
+    const provider = createOsc8CursorPositionedLinkProvider({
+      getTerminal: () => null,
+      getLinkUrl: () => URL,
+      onActivate: vi.fn(),
+      onHover: vi.fn(),
+      onLeave: vi.fn()
+    })
+
+    const disposable = registerFirstLinkProvider(stub as unknown as XtermTerminal, provider)
+
+    expect(linkProviders[0]).not.toBe(builtIn)
+    expect(linkProviders.indexOf(builtIn)).toBe(1)
+
+    disposable.dispose()
+    expect(linkProviders).toEqual([builtIn])
   })
 })

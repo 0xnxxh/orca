@@ -1,4 +1,12 @@
-import type { IBufferCell, IBufferLine, IBufferRange, ILink, ILinkProvider } from '@xterm/xterm'
+import type {
+  IBufferCell,
+  IBufferLine,
+  IBufferRange,
+  IDisposable,
+  ILink,
+  ILinkProvider,
+  Terminal
+} from '@xterm/xterm'
 
 type OscLinkTerminal = {
   cols: number
@@ -148,14 +156,44 @@ function expandRangeAcrossRows(
 }
 
 /**
+ * Gives this provider precedence over xterm's own OSC 8 provider.
+ *
+ * The linkifier resolves a hover against providers in registration order and
+ * takes the first that matches. xterm registers its OSC 8 provider during
+ * construction, so anything registered later can never win for the same cells —
+ * the narrower single-row range would always be chosen. Moving this provider to
+ * the front is the only way to be preferred; it declines every link it does not
+ * widen, so the built-in provider still handles the rest.
+ */
+export function registerFirstLinkProvider(
+  terminal: Pick<Terminal, 'registerLinkProvider'>,
+  provider: ILinkProvider
+): IDisposable {
+  const providers = (
+    terminal as unknown as {
+      _core?: { _linkProviderService?: { linkProviders?: ILinkProvider[] } }
+    }
+  )._core?._linkProviderService?.linkProviders
+  const countBefore = Array.isArray(providers) ? providers.length : -1
+
+  const disposable = terminal.registerLinkProvider(provider)
+
+  // Why: Orca wraps every provider in an error guard before registering it, so
+  // the array holds the wrapper rather than `provider`. Take whatever landed at
+  // the end instead of searching by identity.
+  if (Array.isArray(providers) && providers.length === countBefore + 1) {
+    const registered = providers.pop()!
+    providers.unshift(registered)
+  }
+  return disposable
+}
+
+/**
  * Reports OSC 8 links that span rows a TUI cursor-positioned rather than
  * soft-wrapped, so hover highlights the whole link instead of one row.
  *
- * Registered ahead of nothing in particular: xterm's built-in OSC 8 provider is
- * registered at construction and wins ties, so this provider must be the one
- * that returns the wider range for the same cells. It only reports links whose
- * range is genuinely wider than a single row; everything else is left to the
- * built-in provider.
+ * Only links wider than a single row are reported; xterm's own provider keeps
+ * everything else.
  */
 export function createOsc8CursorPositionedLinkProvider(deps: Osc8LinkProviderDeps): ILinkProvider {
   return {
