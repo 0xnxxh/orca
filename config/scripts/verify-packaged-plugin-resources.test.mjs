@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -34,6 +34,36 @@ describe('verify packaged plugin resources', () => {
         join(launchRoot, 'stablyai.orca-navigation-shortcuts', 'extra.json'),
         '{"mutated":true}\n'
       )
+
+      expect(() => verifyPackagedPluginResources(resourcesDir)).toThrow(
+        'packaged bytes do not match stablyai.orca-navigation-shortcuts'
+      )
+    } finally {
+      await rm(resourcesDir, { recursive: true, force: true })
+    }
+  })
+
+  // The tree is hashed by raw bytes, so a CRLF checkout on Windows breaks the
+  // pinned hash. These two guard the `.gitattributes` eol=lf pin that prevents it.
+  it('pins the launch tree to LF so Windows checkouts hash identically', async () => {
+    const attributes = await readFile(join(process.cwd(), '.gitattributes'), 'utf8')
+    expect(attributes).toContain('/resources/plugins/** text eol=lf')
+  })
+
+  it('rejects a CRLF checkout of the launch tree', async () => {
+    const resourcesDir = await mkdtemp(join(tmpdir(), 'orca-packaged-plugins-'))
+    try {
+      const launchRoot = join(resourcesDir, 'plugins', 'launch')
+      await cp(join(process.cwd(), 'resources', 'plugins', 'launch'), launchRoot, {
+        recursive: true
+      })
+      for (const entry of await readdir(launchRoot, { recursive: true })) {
+        const path = join(launchRoot, entry)
+        if (!(await stat(path)).isFile()) {
+          continue
+        }
+        await writeFile(path, (await readFile(path, 'utf8')).replace(/\r?\n/g, '\r\n'))
+      }
 
       expect(() => verifyPackagedPluginResources(resourcesDir)).toThrow(
         'packaged bytes do not match stablyai.orca-navigation-shortcuts'
