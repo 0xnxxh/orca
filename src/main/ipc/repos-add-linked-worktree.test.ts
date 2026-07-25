@@ -167,6 +167,18 @@ describe('repos:add with git worktrees', () => {
     expect(mockStore.addRepo).not.toHaveBeenCalled()
   })
 
+  it('does not match a folder record sitting on the main-checkout path', async () => {
+    mockStore.getRepos.mockReturnValue([
+      { ...trackedMainRepo(), id: 'folder-repo-id', kind: 'folder' } as Repo
+    ])
+    getLinkedWorktreeMainRepoRootMock.mockReturnValue(MAIN_CHECKOUT)
+
+    const result = await callAdd({ path: LINKED_WORKTREE })
+
+    expect(mockStore.addRepo).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ repo: expect.objectContaining({ path: LINKED_WORKTREE }) })
+  })
+
   it('does not match a tracked SSH repo that shares the local main-checkout path', async () => {
     mockStore.getRepos.mockReturnValue([
       { ...trackedMainRepo(), id: 'ssh-repo-id', connectionId: 'builder' } as Repo

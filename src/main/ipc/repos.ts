@@ -203,11 +203,15 @@ async function addLocalRepoFromPath(
     const mainRepoRoot = getLinkedWorktreeMainRepoRoot(resolvedPath)
     if (mainRepoRoot) {
       const mainRepoKey = normalizeRuntimePathForComparison(mainRepoRoot)
+      // Why !isFolderRepo: only a git-kind main checkout projects onto the same project as its
+      // worktree, so matching a folder record would suppress the add without deduping anything.
       const trackedMainRepo = store
         .getRepos()
         .find(
           (repo) =>
-            !repo.connectionId && normalizeRuntimePathForComparison(repo.path) === mainRepoKey
+            !repo.connectionId &&
+            !isFolderRepo(repo) &&
+            normalizeRuntimePathForComparison(repo.path) === mainRepoKey
         )
       if (trackedMainRepo) {
         return { repo: trackedMainRepo, alreadyExisted: true }
