@@ -19,6 +19,8 @@ import {
 import { getRelayShellLaunchConfig } from './pty-shell-launch'
 import { DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../shared/ssh-types'
 import { shouldUseShellReadyStartupDelivery } from '../shared/codex-startup-delivery'
+import { recognizeAgentProcessFromCommandLine } from '../shared/agent-process-recognition'
+import { applyAgentTerminalBrandEnv } from '../shared/agent-terminal-brand-env'
 import { buildStartupCommandSubmission } from '../shared/startup-command-submission'
 import { resolveSetupAgentSequenceLaunchCommand } from '../shared/setup-agent-sequencing'
 import {
@@ -459,6 +461,10 @@ export class PtyHandler {
     if (!result.TERM) {
       result.TERM = 'xterm-256color'
     }
+    // Why: grok gates OSC 8 hyperlinks on a TERM_PROGRAM allowlist with no Orca
+    // entry, so it drops the link spans it already computed. Applied after the
+    // deletions above so an augmenter cannot resurrect Orca's own brand.
+    applyAgentTerminalBrandEnv(result, recognizeAgentProcessFromCommandLine(ctx.command)?.agent)
     return result
   }
 

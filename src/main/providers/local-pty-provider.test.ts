@@ -633,6 +633,30 @@ describe('LocalPtyProvider', () => {
       expect(spawnCall[2].env.ORCA_ATTRIBUTION_SHIM_DIR).toBeUndefined()
     })
 
+    // Why: grok discards the OSC 8 link spans it already computed unless
+    // TERM_PROGRAM names a brand it classifies; Orca is not in its table.
+    it.each([
+      ['an explicit launchAgent', { launchAgent: 'grok' as const }],
+      ['a recognized startup command', { command: 'grok' }]
+    ])('advertises an xterm.js brand to grok via %s', async (_signal, spawnArgs) => {
+      await provider.spawn({ cols: 80, rows: 24, ...spawnArgs })
+
+      const spawnEnv = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
+      expect(spawnEnv.TERM_PROGRAM).toBe('vscode')
+      expect(spawnEnv.ORCA_TERM_PROGRAM).toBe('Orca')
+    })
+
+    it.each([
+      ['a plain shell', {}],
+      ['another agent', { launchAgent: 'claude' as const }]
+    ])('keeps Orca’s own brand for %s', async (_case, spawnArgs) => {
+      await provider.spawn({ cols: 80, rows: 24, ...spawnArgs })
+
+      const spawnEnv = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
+      expect(spawnEnv.TERM_PROGRAM).toBe('Orca')
+      expect(spawnEnv.ORCA_TERM_PROGRAM).toBeUndefined()
+    })
+
     it('drops stale inherited Git config indices behind a smaller explicit count', async () => {
       const keys = [
         'GIT_CONFIG_COUNT',

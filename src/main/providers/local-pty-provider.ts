@@ -55,6 +55,7 @@ import { resolveAgentForegroundProcessWithAvailability } from './agent-foregroun
 import { resolveStableForegroundProcess } from './stable-foreground-process'
 import { getAgentForegroundContextPaths } from './agent-foreground-context-paths'
 import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
+import { applyAgentTerminalBrandEnv } from '../../shared/agent-terminal-brand-env'
 import { killWithDescendantSweep } from '../pty-descendant-termination'
 import { readWindowsConptyProcessIds } from './windows-conpty-process-membership'
 import { canConfirmAgentFromConsolePresence } from './windows-console-foreground'
@@ -686,6 +687,10 @@ export class LocalPtyProvider implements IPtyProvider {
           wslDistro: launchWslDistro
         })
       : spawnEnv
+    // Why: grok gates OSC 8 hyperlinks on a TERM_PROGRAM allowlist with no Orca
+    // entry, so it drops the link spans it already computed. Scoped per agent —
+    // TERM_PROGRAM is read by everything else spawned here too.
+    applyAgentTerminalBrandEnv(finalEnv, args.launchAgent ?? startupAgentRecognition?.agent)
     // Why: app-level env hooks can re-add scrubbed vars; delete last so shims like Claude Agent Teams keep their PATH.
     for (const key of args.envToDelete ?? []) {
       delete finalEnv[key]
