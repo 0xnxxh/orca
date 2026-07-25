@@ -480,10 +480,11 @@ describe('skill bundle manifest generator', () => {
     const bumpStep = runSteps.find((step) => step.name === 'Bump package.json and tag')
 
     // The load-bearing check: whatever staged it, only these two paths may ship.
+    // -F is part of the contract; without it `.` admits a path like packageXjson.
     expect(bumpStep.run).toMatch(
-      /git diff --cached --name-only[\s\S]*grep -vx -e 'package\.json' -e 'resources\/skills\/release-mapping\.json'/
+      /git diff --cached --name-only[\s\S]*grep -vxF -e 'package\.json' -e 'resources\/skills\/release-mapping\.json'/
     )
-    expect(bumpStep.run.indexOf('grep -vx')).toBeLessThan(bumpStep.run.indexOf('git commit'))
+    expect(bumpStep.run.indexOf('grep -vxF')).toBeLessThan(bumpStep.run.indexOf('git commit'))
     // Tripwire only. A step that merely READS this directory may be added here;
     // one that writes or stages it must not, and the guard above will reject it.
     expect(runSteps.filter((s) => /resources[/\\]skills/.test(s.run)).map((s) => s.name)).toEqual([

@@ -538,8 +538,10 @@ jobs:
           # var, a composite action, or string concatenation. Assert the index
           # itself so the release commit can only ever carry the version bump and
           # the provenance row, no matter which step staged what.
+          # -F because the allowlist is literal: unanchored, `.` would match any
+          # character and quietly admit a path like `packageXjson`.
           unexpected="$(git diff --cached --name-only |
-            grep -vx -e 'package.json' -e 'resources/skills/release-mapping.json' || true)"
+            grep -vxF -e 'package.json' -e 'resources/skills/release-mapping.json' || true)"
           if [[ -n "$unexpected" ]]; then
             echo "::error::Release commit would carry unexpected paths: $(echo "$unexpected" | tr '\n' ' ')Only package.json and the skill release-mapping row may be staged." >&2
             exit 1
