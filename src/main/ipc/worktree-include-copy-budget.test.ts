@@ -214,6 +214,19 @@ describe('formatWorktreeIncludeCopyWarning', () => {
     expect(warning).toContain('check it before reusing this workspace')
   })
 
+  it('caps the partial-copy list too, so it cannot grow unbounded either', () => {
+    const warning = formatWorktreeIncludeCopyWarning(
+      Array.from({ length: 10 }, (_, index) => ({
+        path: `dir-${index}`,
+        reason: 'bytes' as const,
+        mayBePartial: true
+      }))
+    )
+
+    expect(warning).toContain('"dir-4" and 5 more may hold a partial copy')
+    expect(warning).not.toContain('"dir-5"')
+  })
+
   it('caps how many entries it names so the warning cannot grow unbounded', () => {
     const warning = formatWorktreeIncludeCopyWarning(
       Array.from({ length: 30 }, (_, index) => ({
@@ -421,7 +434,9 @@ describe('createWorktreeCopiedPaths copy budget', () => {
     })
 
     expect(readFileSync(join(worktree, 'one'), 'utf8')).toBe('x'.repeat(50))
-    expect(skipped).toEqual([{ path: 'two', reason: 'bytes', mayBePartial: true }])
+    // No mayBePartial: a failed *file* clone publishes via link(2) from a temp
+    // path, so it never leaves anything at the target to go check.
+    expect(skipped).toEqual([{ path: 'two', reason: 'bytes' }])
     expect(existsSync(join(worktree, 'two'))).toBe(false)
   })
 

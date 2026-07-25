@@ -185,16 +185,18 @@ export function formatWorktreeIncludeCopyWarning(
   if (skipped.length === 0) {
     return undefined
   }
-  const describe = (entries: readonly SkippedWorktreeCopyPath[]): string => {
-    // Why: `.worktreeinclude` allows 1000 entries and every one can be skipped,
-    // so enumerating them all would put a multi-kilobyte sentence in a warning.
+  // Why: `.worktreeinclude` allows 1000 entries and every one can be skipped,
+  // so enumerating them all would put a multi-kilobyte sentence in a warning.
+  const nameList = (entries: readonly SkippedWorktreeCopyPath[]): string => {
     const shown = entries.slice(0, MAX_NAMED_SKIPPED_ENTRIES)
     const names = shown.map((entry) => `"${entry.path}"`).join(', ')
     const rest = entries.length - shown.length
+    return rest > 0 ? `${names} and ${rest.toLocaleString('en-US')} more` : names
+  }
+  const describe = (entries: readonly SkippedWorktreeCopyPath[]): string => {
     const subject = entries.length === 1 ? 'entry' : 'entries'
     const verb = entries.length === 1 ? 'was' : 'were'
-    const suffix = rest > 0 ? ` and ${rest.toLocaleString('en-US')} more` : ''
-    return `.worktreeinclude ${subject} ${names}${suffix} ${verb} not copied into the new workspace`
+    return `.worktreeinclude ${subject} ${nameList(entries)} ${verb} not copied into the new workspace`
   }
   const pronoun = (count: number): string => (count === 1 ? 'it' : 'them')
   // Why: an entry refused because earlier ones exhausted the sizing walk never
@@ -218,12 +220,8 @@ export function formatWorktreeIncludeCopyWarning(
   if (partial.length > 0) {
     // Why: the copy was abandoned after it started, so "copy it in manually"
     // would merge into whatever the interrupted run already left behind.
-    const names = partial
-      .slice(0, MAX_NAMED_SKIPPED_ENTRIES)
-      .map((entry) => `"${entry.path}"`)
-      .join(', ')
     sentences.push(
-      `${names} may hold a partial copy from the interrupted attempt — check ` +
+      `${nameList(partial)} may hold a partial copy from the interrupted attempt — check ` +
         `${pronoun(partial.length)} before reusing this workspace.`
     )
   }

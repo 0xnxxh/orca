@@ -266,9 +266,14 @@ async function materializeWorktreePaths(
       )
     } catch (error) {
       if (error instanceof WorktreeCopyBudgetFallbackError) {
-        // Why: the clone had already started, and it only removes an *empty*
-        // reservation on failure, so leftovers can survive at the target.
-        skipped.push({ path: safePath.rel, reason: 'bytes', mayBePartial: true })
+        // Why: a directory clone reserves the target and only removes it when
+        // it is still *empty*, so leftovers can survive. A file clone publishes
+        // from a temp path with link(2), so a failure leaves nothing behind.
+        skipped.push({
+          path: safePath.rel,
+          reason: 'bytes',
+          ...(sourceIsDirectory ? { mayBePartial: true } : {})
+        })
         console.warn(`[worktree-symlinks] Skipping "${safePath.rel}": ${error.message}`)
         continue
       }
