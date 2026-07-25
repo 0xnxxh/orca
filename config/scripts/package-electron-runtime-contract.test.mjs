@@ -463,10 +463,13 @@ describe('Electron runtime package contract', () => {
     expect(generateIndex).toBeGreaterThan(bumpIndex)
     expect(stageIndex).toBeGreaterThan(generateIndex)
     expect(stagedPaths).toEqual(['package.json', 'resources/skills/release-mapping.json'])
-    // Every mention must be staged, so a copy or redirect cannot reach the
-    // content-addressed artifacts; the alias and `commit -a` bypass them too.
-    expect(commands.match(/resources\/skills\/\S*/g)).toEqual(stagedPaths.slice(1))
-    expect(commands).not.toMatch(/--write|generate:skill-bundle-manifest|commit\s[^\n]*\s-a\b/)
+    // Every mention must be staged, so a copy, a redirect, or a path held in a
+    // variable cannot reach the content-addressed artifacts. Matched without a
+    // trailing slash so `dir="resources/skills"` still counts as a mention.
+    expect(commands.match(/resources[/\\]skills\S*/g)).toEqual(stagedPaths.slice(1))
+    // Regeneration is banned job-wide by the generator suite. Here: `-a`, `-am`,
+    // and `--all` sweep unstaged artifacts in; `--allow-empty` below must not.
+    expect(commands).not.toMatch(/\bcommit\b[^\n]*\s(?:-a(?:\b|[a-z])|--all\b)/)
     expect(bumpStep.run).toContain('git diff --cached --quiet')
     expect(bumpStep.run).toContain('git commit --allow-empty -m "$commit_message"')
   })

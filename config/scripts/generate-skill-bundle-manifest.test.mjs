@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { parse } from 'yaml'
 import {
   appendReleaseRow,
   assertReleasedHistoryPreserved,
@@ -28,6 +29,7 @@ import {
 } from './generate-skill-bundle-manifest.mjs'
 
 const temporaryDirectories = []
+const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..')
 
 async function createPackage() {
   const directory = await mkdtemp(path.join(tmpdir(), 'orca-skill-manifest-'))
@@ -460,5 +462,27 @@ describe('skill bundle manifest generator', () => {
     }).trim()
 
     expect(gitTreeSha(files)).toBe(expected)
+  })
+
+  // Why: the runtime contract test only inspects the bump step, but every step
+  // in the cut job shares one workspace and one index, so an earlier step could
+  // regenerate and stage the content-addressed artifacts into the version commit.
+  it('keeps the whole release-cut job off skill regeneration', async () => {
+    const workflow = parse(
+      await readFile(path.join(REPO_ROOT, '.github/workflows/release-cut.yml'), 'utf8')
+    )
+    const runSteps = workflow.jobs.cut.steps
+      .filter((step) => typeof step.run === 'string')
+      .map((step) => ({ name: step.name, run: step.run.replace(/^\s*#.*$/gm, '') }))
+
+    expect(runSteps.length).toBeGreaterThan(0)
+    // Only the step that appends the provenance row may name the directory, and
+    // no step anywhere may regenerate — under either the flag or its alias.
+    expect(runSteps.filter((s) => /resources[/\\]skills/.test(s.run)).map((s) => s.name)).toEqual([
+      'Bump package.json and tag'
+    ])
+    for (const step of runSteps) {
+      expect(step.run, step.name).not.toMatch(/--write|generate:skill-bundle-manifest/)
+    }
   })
 })
