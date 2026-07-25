@@ -157,6 +157,17 @@ describe('enrichMissingRepoGitRemoteIdentities', () => {
     expect(store.updateRepo).not.toHaveBeenCalled()
   })
 
+  it('resolves a settled no-remote repo once it gains a remote', async () => {
+    vi.mocked(probeGitRemoteIdentity).mockResolvedValue(resolvedProbe)
+    const repo = makeRepo({ gitRemoteIdentity: null })
+    const store = makeStore(repo)
+
+    enrichMissingRepoGitRemoteIdentities(store)
+    await flushRepoGitRemoteIdentityEnrichmentForTests()
+
+    expect(store.updateRepo).toHaveBeenCalledWith('repo-1', { gitRemoteIdentity: remoteIdentity })
+  })
+
   it('does not write stale identity data after the repo path changes', async () => {
     const probe = deferred<GitRemoteIdentityProbe>()
     vi.mocked(probeGitRemoteIdentity).mockReturnValue(probe.promise)

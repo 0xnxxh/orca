@@ -88,6 +88,10 @@ async function enrichMissingRepoGitRemoteIdentitiesInBackground(
   store: RepoIdentityStore,
   options: EnrichmentOptions
 ): Promise<void> {
+  // Why: the settled `null` marker stays a candidate on purpose — a repo that
+  // gains a remote later must still resolve. Do not tighten this to
+  // `=== undefined`; the retry TTL already bounds the cost and `writeIdentity`
+  // skips the redundant rewrite.
   const candidates = store
     .getRepos()
     .filter((repo) => repo.kind !== 'folder' && !repo.gitRemoteIdentity)
