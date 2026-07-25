@@ -1079,10 +1079,9 @@ export function useTerminalPaneLifecycle({
         }
         // Why: async tooltip formatting can resolve after the hover changes; a stale result must not overwrite a newer hover/leave.
         let oscTooltipHoverToken = 0
-        // Why: xterm keeps the OSC 8 id -> URL mapping private, but hands both to
-        // linkHandler; seeding from there lets Orca widen a link's range without
-        // reaching into internals.
-        const osc8UrlCache = createOsc8LinkUrlCache()
+        // Why: xterm keeps the OSC 8 id -> URL mapping private. Mirror it from the
+        // parsed sequences so links written before this pane mounted are known too.
+        const osc8UrlCache = createOsc8LinkUrlCache(pane.terminal)
         pane.terminal.options.linkHandler = {
           allowNonHttpProtocols: true,
           activate: (event, text) => {
@@ -1099,8 +1098,7 @@ export function useTerminalPaneLifecycle({
             }
           },
           // Show hover tooltip for OSC 8 hyperlinks — same behaviour WebLinksAddon gives plain-text URLs.
-          hover: (_event, text, range) => {
-            osc8UrlCache.remember(pane.terminal, text, range)
+          hover: (_event, text) => {
             oscTooltipHoverToken += 1
             const hoverToken = oscTooltipHoverToken
             pane.linkTooltip.textContent = `${text} (${urlOpenLinkHint})`
@@ -1153,7 +1151,12 @@ export function useTerminalPaneLifecycle({
             }
           })
         )
-        osc8LinkDisposables.set(pane.id, osc8LinkDisposable)
+        osc8LinkDisposables.set(pane.id, {
+          dispose: () => {
+            osc8LinkDisposable.dispose()
+            osc8UrlCache.dispose()
+          }
+        })
         applyAppearance(manager)
         const panePtyBinding = connectPanePty(pane, manager, {
           ...ptyDeps,

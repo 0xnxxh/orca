@@ -186,6 +186,10 @@ export function createOsc8CursorPositionedLinkProvider(deps: Osc8LinkProviderDep
           links.push({
             range,
             text: url,
+            // Why: xterm defaults these on, but state them so a wrapped link is
+            // decorated identically to the single-row links its own provider
+            // reports — the whole point is that the two look the same.
+            decorations: { pointerCursor: true, underline: true },
             activate: (event) => deps.onActivate(event, url, range),
             hover: (event) => deps.onHover(event, url, range),
             leave: () => deps.onLeave()

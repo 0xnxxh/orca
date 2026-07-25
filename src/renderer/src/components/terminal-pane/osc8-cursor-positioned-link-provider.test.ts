@@ -1,5 +1,5 @@
 import { Terminal } from '@xterm/headless'
-import type { IBufferRange, ILink, Terminal as XtermTerminal } from '@xterm/xterm'
+import type { ILink, Terminal as XtermTerminal } from '@xterm/xterm'
 import { describe, expect, it, vi } from 'vitest'
 import { createOsc8CursorPositionedLinkProvider } from './osc8-cursor-positioned-link-provider'
 import { createOsc8LinkUrlCache } from './osc8-link-url-cache'
@@ -20,14 +20,20 @@ async function writeRows(terminal: Terminal, rows: string[]): Promise<void> {
   await new Promise<void>((resolve) => terminal.write(rows.join('\r\n'), () => resolve()))
 }
 
-function providerFor(terminal: Terminal, url = URL) {
-  const cache = createOsc8LinkUrlCache()
+/** Cache must observe the stream, so create it before writing. */
+function newTerminal(): { terminal: Terminal; cache: ReturnType<typeof createOsc8LinkUrlCache> } {
+  const terminal = new Terminal({ cols: COLS, rows: 20, allowProposedApi: true })
+  const cache = createOsc8LinkUrlCache(terminal as unknown as XtermTerminal)
+  return { terminal, cache }
+}
+
+function providerFor(
+  terminal: Terminal,
+  cache = createOsc8LinkUrlCache(terminal as unknown as XtermTerminal)
+) {
   const xterm = terminal as unknown as XtermTerminal
   const onActivate = vi.fn()
   const onHover = vi.fn()
-
-  // Seed the id -> URL mapping the way xterm's linkHandler would on first hover.
-  const seed = (range: IBufferRange): void => cache.remember(xterm, url, range)
 
   const provider = createOsc8CursorPositionedLinkProvider({
     getTerminal: () => xterm,
@@ -45,7 +51,7 @@ function providerFor(terminal: Terminal, url = URL) {
     return links
   }
 
-  return { seed, provideAt, onActivate, onHover }
+  return { provideAt, onActivate, onHover, cache }
 }
 
 describe('OSC 8 cursor-positioned link provider', () => {
@@ -53,13 +59,12 @@ describe('OSC 8 cursor-positioned link provider', () => {
     ['the row bearing the scheme', 1],
     ['the continuation row', 2]
   ])('spans both rows when hovering %s', async (_label, bufferLineNumber) => {
-    const terminal = new Terminal({ cols: COLS, rows: 20, allowProposedApi: true })
+    const { terminal, cache } = newTerminal()
     await writeRows(terminal, WRAPPED_ROWS)
     // Neither row is soft-wrapped, which is why xterm's own provider stops short.
     expect(terminal.buffer.active.getLine(1)?.isWrapped).toBe(false)
 
-    const { seed, provideAt } = providerFor(terminal)
-    seed({ start: { x: 8, y: 1 }, end: { x: 40, y: 1 } })
+    const { provideAt } = providerFor(terminal, cache)
 
     const links = provideAt(bufferLineNumber)
 
@@ -71,10 +76,9 @@ describe('OSC 8 cursor-positioned link provider', () => {
   })
 
   it('starts the range at the scheme, not the row start', async () => {
-    const terminal = new Terminal({ cols: COLS, rows: 20, allowProposedApi: true })
+    const { terminal, cache } = newTerminal()
     await writeRows(terminal, WRAPPED_ROWS)
-    const { seed, provideAt } = providerFor(terminal)
-    seed({ start: { x: 8, y: 1 }, end: { x: 40, y: 1 } })
+    const { provideAt } = providerFor(terminal, cache)
 
     // `10349 (` precedes the link, so the run starts at column 8 (1-based).
     expect(provideAt(1)?.[0].range.start.x).toBe(8)
@@ -82,10 +86,9 @@ describe('OSC 8 cursor-positioned link provider', () => {
   })
 
   it('activates and hovers with the whole URL from the continuation row', async () => {
-    const terminal = new Terminal({ cols: COLS, rows: 20, allowProposedApi: true })
+    const { terminal, cache } = newTerminal()
     await writeRows(terminal, WRAPPED_ROWS)
-    const { seed, provideAt, onActivate, onHover } = providerFor(terminal)
-    seed({ start: { x: 8, y: 1 }, end: { x: 40, y: 1 } })
+    const { provideAt, onActivate, onHover } = providerFor(terminal, cache)
 
     const link = provideAt(2)![0]
     link.activate({} as MouseEvent, link.text)
@@ -97,33 +100,22 @@ describe('OSC 8 cursor-positioned link provider', () => {
   })
 
   it('leaves single-row links to xterm’s own provider', async () => {
-    const terminal = new Terminal({ cols: COLS, rows: 20, allowProposedApi: true })
+    const { terminal, cache } = newTerminal()
     await writeRows(terminal, [`see ${OPEN}${URL}${CLOSE} done`])
-    const { seed, provideAt } = providerFor(terminal)
-    seed({ start: { x: 5, y: 1 }, end: { x: 60, y: 1 } })
-
-    expect(provideAt(1)).toBeUndefined()
-    terminal.dispose()
-  })
-
-  it('reports nothing when the URL for an id is not known yet', async () => {
-    const terminal = new Terminal({ cols: COLS, rows: 20, allowProposedApi: true })
-    await writeRows(terminal, WRAPPED_ROWS)
-    const { provideAt } = providerFor(terminal)
+    const { provideAt } = providerFor(terminal, cache)
 
     expect(provideAt(1)).toBeUndefined()
     terminal.dispose()
   })
 
   it('does not join adjacent links that carry different ids', async () => {
-    const terminal = new Terminal({ cols: COLS, rows: 20, allowProposedApi: true })
+    const { terminal, cache } = newTerminal()
     const other = 'https://example.com/other'
     await writeRows(terminal, [
       `${OPEN}https://github.com/stablyai/orca/${CLOSE}`,
       `]8;id=99;${other}${other}${CLOSE}`
     ])
-    const { seed, provideAt } = providerFor(terminal)
-    seed({ start: { x: 1, y: 1 }, end: { x: 33, y: 1 } })
+    const { provideAt } = providerFor(terminal, cache)
 
     // Row 1's run reaches the row end but row 2 belongs to a different link.
     expect(provideAt(1)).toBeUndefined()
