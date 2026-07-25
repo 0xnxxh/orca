@@ -20,12 +20,22 @@ const SESSION_ID = 'repo-1::/Users/dev/large-scrollback'
 const COLS = 800
 const ROWS = 40
 
-// Why per-cell color: the serialized checkpoint must clear 16MiB to cover the pre-#10479 cap, and
+// Why per-cell color: the restore seed must clear 16MiB to cover the pre-#10479 cap, and
 // SGR-per-cell is how real agent/build output inflates a snapshot well past its plain-text size.
+// It is also what keeps the fixture affordable — the xterm buffer costs rows x cols, so carrying
+// the bytes in SGR runs instead of rows reaches 25MiB of seed from 5.5k rows rather than 26k,
+// cutting this file's peak RSS from ~1.2GiB to ~800MiB. Only 8 distinct rows exist under
+// (row + col) % 8, so build them once rather than per line.
+const FILLER_ROWS = Array.from(
+  { length: 8 },
+  (_unused, row) =>
+    `${Array.from({ length: COLS - 1 }, (_cell, col) => `\x1b[3${(row + col) % 8}mx`).join('')}\x1b[0m\r\n`
+)
+
 function writeLargeScrollback(emulator: HeadlessEmulator, fillerLines: number): void {
   let written = true
   for (let index = 0; index < fillerLines; index += 1) {
-    written = emulator.writeSync(`\x1b[3${index % 8}m${'x'.repeat(COLS - 1)}\x1b[0m\r\n`) && written
+    written = emulator.writeSync(FILLER_ROWS[index % 8]) && written
   }
   for (let index = 0; index < MARKERS; index += 1) {
     written = emulator.writeSync(`MARKER-${index}\r\n`) && written
@@ -51,7 +61,7 @@ describe('checkpoint-only cold restore of a large checkpoint', () => {
     const manager = new HistoryManager(dir)
     const reader = new HistoryReader(dir)
     const emulator = new HeadlessEmulator({ cols: COLS, rows: ROWS, scrollback: 100_000 })
-    writeLargeScrollback(emulator, 26_000)
+    writeLargeScrollback(emulator, 5_500)
 
     await manager.openSession(SESSION_ID, {
       cwd: '/Users/dev/large-scrollback',
