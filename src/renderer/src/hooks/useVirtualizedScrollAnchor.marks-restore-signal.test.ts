@@ -137,12 +137,76 @@ describe('useVirtualizedScrollAnchor with marks + restoreSignal', () => {
 
   it('keeps retrying a restore that is still converging when layout moves the viewport', async () => {
     const { harness, useVirtualizedScrollAnchor } = await loadHook()
-    // The first pass writes toward the anchor and remains armed.
+    let rowTop = -3_000
+    const rowElement: FakeRowElement = {
+      getBoundingClientRect: () => ({
+        bottom: rowTop + 4_000,
+        height: 4_000,
+        top: rowTop
+      }),
+      isConnected: true,
+      key: 'row-1'
+    }
     const { el } = createScrollElement({
+      rowElements: [rowElement],
+      scrollTop: 746
+    })
+    const anchorRef = { current: { key: 'row-1', offset: 3_358, scrollTop: 746 } }
+    const virtualizer = virtualizerWithRow1()
+    // Stable across rerenders, like the real caller: fresh objects would reset
+    // the marks and offset bookkeeping the first pass left behind.
+    const programmaticScrollMarks = createProgrammaticScrollMarks()
+    const scrollElementRef = { current: el }
+    const scrollOffsetRef = { current: 746 }
+
+    const render = (): void => {
+      harness.beginRender()
+      // oxlint-disable-next-line react-hooks/rules-of-hooks -- test harness mocks React's hook dispatcher directly.
+      useVirtualizedScrollAnchor({
+        anchorRef,
+        getItemElementKey: (element: FakeRowElement) => element.key,
+        getRowKey: (row: string) => row,
+        itemElementSelector: '[data-row]',
+        programmaticScrollMarks,
+        recordAnchorOnScroll: false,
+        restoreSignal: 'signal-a',
+        rows: ['row-0', 'row-1'],
+        scrollElementRef,
+        scrollOffsetRef,
+        totalSize: 30_000,
+        virtualizer
+      } as never)
+      harness.effects[1]?.effect()
+    }
+
+    render()
+    const attemptsAfterFirstPass = el.querySelectorAll.mock.calls.length
+    expect(attemptsAfterFirstPass).toBeGreaterThan(0)
+    expect(el.scrollTop).toBe(1_104)
+
+    // Monaco grows content above while browser anchoring keeps the row pinned.
+    rowTop = -3_358
+    el.scrollTop += 196
+
+    render()
+    expect(el.querySelectorAll.mock.calls.length).toBeGreaterThan(attemptsAfterFirstPass)
+    const attemptsAfterConfirm = el.querySelectorAll.mock.calls.length
+    expect(anchorRef.current.scrollTop).toBe(1_300)
+
+    render()
+    expect(el.querySelectorAll.mock.calls.length).toBe(attemptsAfterConfirm)
+  })
+
+  it('lets an unmarked user scroll disarm a restore that is still converging', async () => {
+    const { harness, useVirtualizedScrollAnchor } = await loadHook()
+    const { el, emitScroll } = createScrollElement({
       rowElements: [anchoredRowElement('row-1', -3_000)],
       scrollTop: 746
     })
     const anchorRef = { current: { key: 'row-1', offset: 3_358, scrollTop: 746 } }
+    const programmaticScrollMarks = createProgrammaticScrollMarks()
+    const scrollElementRef = { current: el }
+    const scrollOffsetRef = { current: 746 }
     const virtualizer = virtualizerWithRow1()
 
     const render = (): void => {
@@ -153,27 +217,29 @@ describe('useVirtualizedScrollAnchor with marks + restoreSignal', () => {
         getItemElementKey: (element: FakeRowElement) => element.key,
         getRowKey: (row: string) => row,
         itemElementSelector: '[data-row]',
-        programmaticScrollMarks: createProgrammaticScrollMarks(),
+        programmaticScrollMarks,
         recordAnchorOnScroll: false,
         restoreSignal: 'signal-a',
         rows: ['row-0', 'row-1'],
-        scrollElementRef: { current: el },
-        scrollOffsetRef: { current: 746 },
+        scrollElementRef,
+        scrollOffsetRef,
         totalSize: 30_000,
         virtualizer
       } as never)
-      harness.effects[1]?.effect()
     }
 
     render()
+    harness.effects[0]?.effect()
+    harness.effects[1]?.effect()
     const attemptsAfterFirstPass = el.querySelectorAll.mock.calls.length
-    expect(attemptsAfterFirstPass).toBeGreaterThan(0)
+    expect(el.scrollTop).toBe(1_104)
 
-    // Simulate Monaco measurement shifting the viewport without user input.
-    el.scrollTop += 196
-
+    emitScroll(1_400)
     render()
-    expect(el.querySelectorAll.mock.calls.length).toBeGreaterThan(attemptsAfterFirstPass)
+    harness.effects[1]?.effect()
+
+    expect(el.scrollTop).toBe(1_400)
+    expect(el.querySelectorAll.mock.calls.length).toBe(attemptsAfterFirstPass)
   })
 
   it('lets the user position win when the viewport moved after the anchor was recorded', async () => {
