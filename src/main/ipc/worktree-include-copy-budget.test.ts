@@ -94,6 +94,43 @@ describe('worktree copy budget tracker', () => {
     await expect(tracker.admit(join(root, 'small'))).resolves.toMatchObject({ withinBudget: true })
   })
 
+  it('ignores the byte limit when the backend copies on write, but still counts entries', async () => {
+    writeFileSync(join(root, 'huge'), 'x'.repeat(400))
+    const tracker = createWorktreeCopyBudgetTracker(TINY_BYTE_BUDGET)
+
+    await expect(
+      tracker.admit(join(root, 'huge'), { bytesAreCopied: false })
+    ).resolves.toMatchObject({ withinBudget: true })
+
+    // The same source is refused once its bytes actually have to be written.
+    const byteTracker = createWorktreeCopyBudgetTracker(TINY_BYTE_BUDGET)
+    await expect(byteTracker.admit(join(root, 'huge'))).resolves.toEqual({
+      withinBudget: false,
+      reason: 'bytes'
+    })
+  })
+
+  it('charges the walk itself so repeated over-budget sources cannot re-walk forever', async () => {
+    for (const dir of ['a', 'b']) {
+      mkdirSync(join(root, dir))
+      writeFileSync(join(root, dir, 'one'), 'x'.repeat(200))
+    }
+    writeFileSync(join(root, 'tiny'), '')
+    // Each refused source walks 2 entries before busting the byte limit, so the
+    // two of them exhaust a 4-entry ceiling.
+    const tracker = createWorktreeCopyBudgetTracker({ maxBytes: 64, maxEntries: 4 })
+
+    await expect(tracker.admit(join(root, 'a'))).resolves.toMatchObject({ withinBudget: false })
+    await expect(tracker.admit(join(root, 'b'))).resolves.toMatchObject({ withinBudget: false })
+
+    // Neither was admitted, so the copy budget itself is untouched and `tiny`
+    // would fit — it is refused purely because the walk ceiling is spent.
+    await expect(tracker.admit(join(root, 'tiny'))).resolves.toEqual({
+      withinBudget: false,
+      reason: 'entries'
+    })
+  })
+
   posixIt('counts a nested symlink without following it', async () => {
     mkdirSync(join(root, 'payload'))
     writeFileSync(join(root, 'payload', 'real'), 'x'.repeat(40))
@@ -202,7 +239,7 @@ describe('createWorktreeCopiedPaths copy budget', () => {
     expect(readFileSync(join(worktree, '.vscode', 'settings.json'), 'utf8')).toBe('{}')
   })
 
-  it('does not run the macOS APFS clone for an over-budget entry', async () => {
+  it('still clones on macOS when only the byte budget would be exceeded', async () => {
     mkdirSync(join(primary, 'node_modules'))
     writeFileSync(join(primary, 'node_modules', 'pkg.js'), 'x'.repeat(200))
     const cloneWorktreePath = vi.fn(async () => undefined)
@@ -213,7 +250,27 @@ describe('createWorktreeCopiedPaths copy budget', () => {
       copyBudget: TINY_BYTE_BUDGET
     })
 
-    expect(skipped).toEqual([{ path: 'node_modules', reason: 'bytes' }])
+    // An APFS clone is copy-on-write: bytes cost nothing, so refusing on bytes
+    // would deny a copy that is already free.
+    expect(skipped).toEqual([])
+    expect(cloneWorktreePath).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not run the macOS APFS clone for an entry over the file-count limit', async () => {
+    mkdirSync(join(primary, '.cache'))
+    for (const name of ['a', 'b', 'c', 'd', 'e']) {
+      writeFileSync(join(primary, '.cache', name), '')
+    }
+    const cloneWorktreePath = vi.fn(async () => undefined)
+
+    const skipped = await createWorktreeCopiedPaths(primary, worktree, ['.cache'], {
+      platform: 'darwin',
+      cloneWorktreePath,
+      copyBudget: TINY_ENTRY_BUDGET
+    })
+
+    // Inodes are real work even on the clone path, so the entry limit holds.
+    expect(skipped).toEqual([{ path: '.cache', reason: 'entries' }])
     expect(cloneWorktreePath).not.toHaveBeenCalled()
   })
 

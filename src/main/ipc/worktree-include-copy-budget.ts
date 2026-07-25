@@ -31,18 +31,36 @@ export type SkippedWorktreeCopyPath = {
   reason: WorktreeCopyBudgetExceededReason
 }
 
+export type WorktreeCopyAdmitOptions = {
+  /** False when the backend clones copy-on-write (APFS `clonefile`), where
+   *  bytes cost nothing and only inode count is real work. */
+  bytesAreCopied?: boolean
+}
+
 export type WorktreeCopyBudgetTracker = {
   /** Measure `source` against what is left of the budget. A `withinBudget`
    *  verdict consumes the measured size; an over-budget verdict consumes
-   *  nothing, so later, smaller entries still get their chance. */
-  admit: (source: string) => Promise<WorktreeCopySizeVerdict>
+   *  nothing, so later, smaller entries still get their chance.
+   *
+   *  Await each call before the next: the remaining pool is read before the
+   *  measurement walk and written after it, so concurrent callers would both
+   *  size against the same stale pool and could jointly bust the budget. */
+  admit: (source: string, options?: WorktreeCopyAdmitOptions) => Promise<WorktreeCopySizeVerdict>
+}
+
+type MeasuredCopySize = {
+  verdict: WorktreeCopySizeVerdict
+  /** Entries actually walked, whatever the verdict — this is the measurement's
+   *  own cost, which the tracker charges so a long list of over-budget entries
+   *  cannot re-freeze creation by re-walking for each one. */
+  walked: number
 }
 
 async function measureCopySize(
   source: string,
   remainingBytes: number,
   remainingEntries: number
-): Promise<WorktreeCopySizeVerdict> {
+): Promise<MeasuredCopySize> {
   let bytes = 0
   let entries = 0
   const pending: string[] = [source]
@@ -57,7 +75,7 @@ async function measureCopySize(
     }
     entries += 1
     if (entries > remainingEntries) {
-      return { withinBudget: false, reason: 'entries' }
+      return { verdict: { withinBudget: false, reason: 'entries' }, walked: entries }
     }
     // Why: both copy backends reproduce a nested symlink as a symlink rather
     // than following it, so walking through one would double-count a shared
@@ -77,10 +95,10 @@ async function measureCopySize(
     }
     bytes += stats.size
     if (bytes > remainingBytes) {
-      return { withinBudget: false, reason: 'bytes' }
+      return { verdict: { withinBudget: false, reason: 'bytes' }, walked: entries }
     }
   }
-  return { withinBudget: true, bytes, entries }
+  return { verdict: { withinBudget: true, bytes, entries }, walked: entries }
 }
 
 /** Why a pre-measurement pass rather than aborting mid-copy: `fs.cp` ignores
@@ -93,11 +111,25 @@ export function createWorktreeCopyBudgetTracker(
 ): WorktreeCopyBudgetTracker {
   let remainingBytes = budget.maxBytes
   let remainingEntries = budget.maxEntries
+  // Why: refused entries consume no copy budget, so without a separate ceiling
+  // on walking itself a `.worktreeinclude` listing 1000 over-budget directories
+  // would pay a fresh full-limit walk for each one — the very stall this bounds.
+  let remainingWalk = budget.maxEntries
   return {
-    admit: async (source) => {
-      const verdict = await measureCopySize(source, remainingBytes, remainingEntries)
+    admit: async (source, { bytesAreCopied = true } = {}) => {
+      if (remainingWalk <= 0) {
+        return { withinBudget: false, reason: 'entries' }
+      }
+      const { verdict, walked } = await measureCopySize(
+        source,
+        bytesAreCopied ? remainingBytes : Number.POSITIVE_INFINITY,
+        Math.min(remainingEntries, remainingWalk)
+      )
+      remainingWalk -= walked
       if (verdict.withinBudget) {
-        remainingBytes -= verdict.bytes
+        if (bytesAreCopied) {
+          remainingBytes -= verdict.bytes
+        }
         remainingEntries -= verdict.entries
       }
       return verdict

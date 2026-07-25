@@ -2,6 +2,7 @@ import { symlink, mkdir, stat, lstat, unlink, cp, realpath } from 'node:fs/promi
 import { dirname, isAbsolute, resolve } from 'node:path'
 import {
   ApfsCloneUnavailableError,
+  canCloneWithApfs,
   cloneWorktreePathWithApfs,
   defaultApfsCloneDeps,
   WorktreeLinkedPathTargetExistsError,
@@ -115,6 +116,30 @@ async function createWorktreeLinkedPath(
   await symlinkWorktreePath(source, target, sourceIsDirectory)
 }
 
+/** Whether this copy will land as an APFS clone rather than a byte-for-byte
+ *  copy. Only the volume probe can answer it, and that probe writes nothing. */
+async function copyIsCopyOnWrite(
+  source: string,
+  worktreePath: string,
+  options: WorktreeLinkedPathOptions,
+  apfsFilesystemCache: DarwinFilesystemCache
+): Promise<boolean> {
+  if (options.platform !== 'darwin') {
+    return false
+  }
+  // An injected clone stands in for the real one, so treat it as cloning —
+  // probing the real filesystem here would make these tests host-dependent.
+  if (options.cloneWorktreePath) {
+    return true
+  }
+  return await canCloneWithApfs(
+    source,
+    worktreePath,
+    options.apfsCloneDeps ?? defaultApfsCloneDeps,
+    apfsFilesystemCache
+  )
+}
+
 async function targetExists(target: string): Promise<boolean> {
   try {
     // Why: lstat so a pre-existing symlink (even a broken one) is detected and
@@ -181,7 +206,16 @@ async function materializeWorktreePaths(
         if (sourceIsSymbolicLink) {
           copySource = await realpath(source)
         }
-        const verdict = await copyBudget.admit(copySource)
+        // Why: an APFS clone is copy-on-write — a 2.7 GB tree clones in ~20ms
+        // and consumes no disk — so bytes are not the cost there, inodes are.
+        // Charging bytes on that path would refuse work that is already free.
+        const bytesAreCopied = !(await copyIsCopyOnWrite(
+          copySource,
+          worktreePath,
+          effectiveOptions,
+          apfsFilesystemCache
+        ))
+        const verdict = await copyBudget.admit(copySource, { bytesAreCopied })
         if (!verdict.withinBudget) {
           // Why: refuse before the first byte is written. Aborting mid-copy is
           // not available (`fs.cp` ignores its `signal`) and would strand a
