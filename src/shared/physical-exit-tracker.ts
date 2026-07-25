@@ -14,11 +14,6 @@ export class PhysicalExitTracker {
     this.resolveExit = resolve
   })
 
-  /** True once physical exit was observed, so callers can stop signalling the pid. */
-  get hasExited(): boolean {
-    return this.exited
-  }
-
   markExited(): void {
     if (this.exited) {
       return

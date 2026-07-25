@@ -1122,15 +1122,11 @@ export class LocalPtyProvider implements IPtyProvider {
       operation.rootSignalled = true
       this.requestTrackedPtyShutdown(id, proc, operation.immediate)
     }
-    // Why: map identity alone still points at a numeric pid after node-pty reported
-    // exit, and that pid can already be recycled — only sweep a root we believe live.
-    const ownsLiveRoot = (): boolean =>
-      ptyProcesses.get(id) === proc && physicalExit?.hasExited !== true
     if (ptyAgentSessionIds.has(id)) {
       // Why: POSIX needs a pre-kill descendant snapshot; Windows uses taskkill /T so
       // agent/MCP orphans cannot hold the worktree cwd after shell stop (#10004).
       await killWithDescendantSweep(proc.pid, signalRoot, {
-        ownsRoot: ownsLiveRoot
+        ownsRoot: () => ptyProcesses.get(id) === proc
       })
     } else if (process.platform === 'win32' && operation.immediate) {
       // Why: a plain shell's ConPTY teardown doesn't reap orphaned children (useConptyDll
@@ -1138,7 +1134,7 @@ export class LocalPtyProvider implements IPtyProvider {
       // holds the worktree cwd, failing destructive removal. taskkill /T /F clears the tree so
       // physical stop is verifiable. POSIX shells reach their child pgroup on forceKill (#10004).
       await killWithDescendantSweep(proc.pid, signalRoot, {
-        ownsRoot: ownsLiveRoot
+        ownsRoot: () => ptyProcesses.get(id) === proc
       })
     } else {
       signalRoot()

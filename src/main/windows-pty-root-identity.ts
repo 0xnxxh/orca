@@ -1,4 +1,4 @@
-import { queryWindowsProcessRowsUncached } from './providers/windows-foreground-process-rows'
+import { queryWindowsProcessRowsFresh } from './providers/windows-foreground-process-rows'
 
 /**
  * Whether a PID still names the PTY root this process spawned.
@@ -115,7 +115,7 @@ export async function verifyWindowsTreeKillTarget(
     return 'unknown'
   }
   const rows = await readLinksBeforeDeadline(
-    deps.readRows ?? queryWindowsProcessRowsUncached,
+    deps.readRows ?? queryWindowsProcessRowsFresh,
     deps.timeoutMs ?? WINDOWS_ROOT_IDENTITY_TIMEOUT_MS
   )
   if (!rows) {

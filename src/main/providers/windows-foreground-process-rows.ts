@@ -31,7 +31,8 @@ export type WindowsProcessCandidate = WindowsProcessRow & { depth: number }
 // a burst of panes collapses to ~2 scans/sec; every caller runs its own descendant
 // walk over the shared snapshot.
 async function runWindowsProcessRows(): Promise<WindowsProcessRow[]> {
-  const rows = await queryWindowsProcessRowsUncached()
+  const rows =
+    (await queryWindowsProcessesWithPowerShell()) ?? (await queryWindowsProcessesWithWmic())
   if (!rows) {
     // Reject so the reader does not cache the miss; callers fall through to
     // node-pty's process name (the prior null-return contract is preserved by
@@ -41,19 +42,20 @@ async function runWindowsProcessRows(): Promise<WindowsProcessRow[]> {
   return rows
 }
 
-/**
- * One uncached PowerShell/CIM (then wmic) scan. PID-identity checks in teardown
- * must not reuse the TTL snapshot: a cached row can predate the very PID recycle
- * it is meant to detect. Returns null when both probes are unavailable.
- */
-export async function queryWindowsProcessRowsUncached(): Promise<WindowsProcessRow[] | null> {
-  return (await queryWindowsProcessesWithPowerShell()) ?? (await queryWindowsProcessesWithWmic())
-}
-
 const windowsProcessRowsReader = createProcessTableSnapshotReader<WindowsProcessRow[]>({
   runPs: runWindowsProcessRows,
   now: () => Date.now()
 })
+
+/**
+ * Rows from a scan that starts after this call. PID-identity checks in teardown
+ * must not reuse a cached row — it can predate the very recycle it detects — but
+ * they must still dedupe: a worktree delete tears down PTYs 32-wide, so a bypass
+ * would fork that many powershell cold-starts. Rejects when both probes fail.
+ */
+export function queryWindowsProcessRowsFresh(): Promise<WindowsProcessRow[]> {
+  return windowsProcessRowsReader.getFreshSnapshot()
+}
 
 export async function queryWindowsProcessDescendants(
   rootPid: number,

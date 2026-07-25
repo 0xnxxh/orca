@@ -20,13 +20,6 @@ describe('PhysicalExitTracker', () => {
     await expect(tracker.exitedPromise).resolves.toBeUndefined()
   })
 
-  it('exposes exit so teardown can stop signalling a possibly recycled pid', () => {
-    const tracker = new PhysicalExitTracker()
-    expect(tracker.hasExited).toBe(false)
-    tracker.markExited()
-    expect(tracker.hasExited).toBe(true)
-  })
-
   it('settles every active waiter once and resolves later waits immediately', async () => {
     const tracker = new PhysicalExitTracker()
     const first = tracker.waitForExit(100, () => new Error('deadline'))
