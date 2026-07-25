@@ -2,6 +2,7 @@ import { useEffect, type RefObject } from 'react'
 import type { Editor } from '@tiptap/react'
 import { useAppStore } from '@/store'
 import { autoFocusRichEditor } from './rich-markdown-auto-focus'
+import { matchesPendingEditorFocusRequest } from './pending-editor-focus-request'
 
 type PendingFocusOptions = {
   editor: Editor | null
@@ -13,8 +14,10 @@ type PendingFocusOptions = {
 }
 
 /**
- * Focuses the editor when the Explorer opens this document for find (issue #8083), then consumes
- * the request so a later remount of the same file does not steal focus again.
+ * Focuses the editor when the Explorer opens this document for find (issue #8083). The request is
+ * scoped to one pane (`viewStateId`) so split siblings can't claim it, and stays armed until focus
+ * actually lands — Tiptap can replace the instance first — or until its TTL retires it, so a later
+ * unrelated remount of the same file never steals focus.
  */
 export function useRichMarkdownPendingFocus({
   editor,
@@ -26,9 +29,7 @@ export function useRichMarkdownPendingFocus({
 }: PendingFocusOptions): void {
   const pendingEditorFocusRequest = useAppStore((s) => {
     const request = s.pendingEditorFocusRequest
-    return request?.fileId === fileId &&
-      request.worktreeId === worktreeId &&
-      request.viewStateId === viewStateId
+    return matchesPendingEditorFocusRequest(request, { fileId, worktreeId, viewStateId })
       ? request
       : null
   })

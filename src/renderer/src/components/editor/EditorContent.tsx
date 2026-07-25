@@ -307,6 +307,7 @@ export function EditorContent({
       fileId={activeFile.id}
       filePath={activeFile.filePath}
       viewStateKey={editorViewStateKey}
+      viewStateId={viewStateScopeId}
       relativePath={activeFile.relativePath}
       content={editBuffers[activeFile.id] ?? fc.content}
       language={monacoLanguage}

@@ -135,6 +135,33 @@ describe('createEditorSlice right sidebar state', () => {
     expect(store.getState().pendingEditorFocusRequest).toBeNull()
   })
 
+  it('scopes the focus request to the unified tab that will render the file', () => {
+    const store = createEditorTabsStore()
+    const sourceTab = store.getState().createUnifiedTab('wt-1', 'terminal', { id: 'terminal-1' })
+    const targetGroupId = store.getState().createEmptySplitGroup('wt-1', sourceTab.groupId, 'right')
+    if (!targetGroupId) {
+      throw new Error('expected split group')
+    }
+
+    store.getState().openFile(
+      {
+        filePath: '/repo/README.md',
+        relativePath: 'README.md',
+        worktreeId: 'wt-1',
+        language: 'markdown',
+        mode: 'edit'
+      },
+      { focusEditor: true, targetGroupId }
+    )
+
+    const editorTab = store
+      .getState()
+      .unifiedTabsByWorktree['wt-1']?.find((tab) => tab.contentType === 'editor')
+    expect(editorTab?.groupId).toBe(targetGroupId)
+    // Why: the pane matches the handoff on its own tab id, so a drifting id silently drops it.
+    expect(store.getState().pendingEditorFocusRequest?.viewStateId).toBe(editorTab?.id)
+  })
+
   it('does not record markdown-file-created when opening an existing markdown file', () => {
     const store = createEditorStore()
 
