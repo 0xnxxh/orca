@@ -4058,7 +4058,8 @@
           "a2fd890d9e": "Introduce feedback antes de enviarlo.",
           "f2e42e1307": "Enviar",
           "69969ba364": "Envío…",
-          "imagesNotDelivered": "Feedback sent, but the images could not be attached."
+          "imagesNotDelivered": "Feedback sent, but the images could not be attached.",
+          "imageReadFailed": "Could not read the attached images. Try attaching them again."
         },
         "SidebarFilter": {
           "e3b3898218": "Agregar proyecto",
@@ -4861,7 +4862,7 @@
           "reconnectAndDelete": "Reconectar y eliminar"
         },
         "SidebarFeedbackImageAttachments": {
-          "screenshotsHint": "Screenshots help a lot — paste, drop, or attach up to {count}.",
+          "screenshotsHint": "Attach up to {count} screenshots",
           "attachImages": "Attach",
           "removeImage": "Remove image"
         }

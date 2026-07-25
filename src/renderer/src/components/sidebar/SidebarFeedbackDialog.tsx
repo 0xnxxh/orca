@@ -22,6 +22,7 @@ import {
   type FeedbackImageDraft
 } from '@/lib/feedback-image-attachments'
 import { SidebarFeedbackImageAttachments } from './SidebarFeedbackImageAttachments'
+import { useFeedbackImageDrop } from './use-feedback-image-drop'
 
 const GITHUB_ISSUES_URL = 'https://github.com/stablyai/orca/issues/'
 const DISCORD_URL = 'https://discord.gg/fzjDKHxv8Q'
@@ -65,10 +66,8 @@ export function SidebarFeedbackDialog({
   const [isViewerLoading, setIsViewerLoading] = useState(false)
   const [submitAnonymously, setSubmitAnonymously] = useState(false)
   const [images, setImages] = useState<FeedbackImageDraft[]>([])
-  const [isDragActive, setIsDragActive] = useState(false)
   const mountedRef = useMountedRef()
   const feedbackTextareaRef = useRef<HTMLTextAreaElement>(null)
-  const dragDepthRef = useRef(0)
 
   const clearImages = React.useCallback(() => {
     setImages((current) => {
@@ -81,18 +80,22 @@ export function SidebarFeedbackDialog({
   // the dialog unmounts as well as when an attachment is removed.
   React.useEffect(() => clearImages, [clearImages])
 
-  // Why: reading the count through a ref keeps the capacity check correct when
-  // several pastes land before React re-renders.
   const imageCountRef = useRef(0)
   imageCountRef.current = images.length
+  // Why: committed state lags the in-flight reads, so batches still being read
+  // count against capacity — otherwise two quick pastes both see room for four.
+  const pendingImageReadsRef = useRef(0)
 
   const handleAddFiles = React.useCallback(
     (files: readonly File[]) => {
       if (files.length === 0) {
         return
       }
-      void readFeedbackImageFiles(files, imageCountRef.current).then(
+      const existingCount = imageCountRef.current + pendingImageReadsRef.current
+      pendingImageReadsRef.current += files.length
+      void readFeedbackImageFiles(files, existingCount).then(
         ({ images: added, errors }) => {
+          pendingImageReadsRef.current -= files.length
           if (!mountedRef.current) {
             added.forEach(releaseFeedbackImageDraft)
             return
@@ -103,6 +106,18 @@ export function SidebarFeedbackDialog({
           // Why: never drop an attachment without telling the user — that
           // silence is what made screenshots vanish in the first place.
           errors.forEach((error) => toast.warning(error))
+        },
+        (error: unknown) => {
+          pendingImageReadsRef.current -= files.length
+          console.error('Failed to read feedback image attachments:', error)
+          if (mountedRef.current) {
+            toast.error(
+              translate(
+                'auto.components.sidebar.SidebarFeedbackDialog.imageReadFailed',
+                'Could not read the attached images. Try attaching them again.'
+              )
+            )
+          }
         }
       )
     },
@@ -118,6 +133,8 @@ export function SidebarFeedbackDialog({
       return current.filter((image) => image.id !== id)
     })
   }, [])
+
+  const { isDragActive, contentRef, dragHandlers } = useFeedbackImageDrop(open, handleAddFiles)
 
   React.useEffect(() => {
     if (!open) {
@@ -228,6 +245,7 @@ export function SidebarFeedbackDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        ref={contentRef}
         className="sm:max-w-lg"
         onOpenAutoFocus={(event) => {
           event.preventDefault()
@@ -242,35 +260,9 @@ export function SidebarFeedbackDialog({
             handleAddFiles(pasted)
           }
         }}
-        onDragEnter={(event) => {
-          if (extractImageFilesFromDataTransfer(event.dataTransfer).length === 0) {
-            return
-          }
-          dragDepthRef.current += 1
-          setIsDragActive(true)
-        }}
-        onDragOver={(event) => {
-          if (dragDepthRef.current > 0) {
-            event.preventDefault()
-          }
-        }}
-        onDragLeave={() => {
-          // Why: dragenter/leave fire per nested child; only clear the
-          // highlight once the pointer has left the dialog entirely.
-          dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
-          if (dragDepthRef.current === 0) {
-            setIsDragActive(false)
-          }
-        }}
-        onDrop={(event) => {
-          const dropped = extractImageFilesFromDataTransfer(event.dataTransfer)
-          dragDepthRef.current = 0
-          setIsDragActive(false)
-          if (dropped.length > 0) {
-            event.preventDefault()
-            handleAddFiles(dropped)
-          }
-        }}
+        // Why: dragenter/leave fire per nested child; the hook counts depth so
+        // the highlight only clears once the pointer leaves the dialog.
+        {...dragHandlers}
       >
         <DialogHeader>
           <DialogTitle className="text-sm">

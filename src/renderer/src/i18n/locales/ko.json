@@ -4039,7 +4039,8 @@
           "a2fd890d9e": "제출하기 전에 피드백을 입력해 주세요.",
           "f2e42e1307": "보내기",
           "69969ba364": "전송 중…",
-          "imagesNotDelivered": "Feedback sent, but the images could not be attached."
+          "imagesNotDelivered": "Feedback sent, but the images could not be attached.",
+          "imageReadFailed": "Could not read the attached images. Try attaching them again."
         },
         "SidebarFilter": {
           "e3b3898218": "프로젝트 추가",
@@ -4861,7 +4862,7 @@
           "reconnectAndDelete": "재연결 후 삭제"
         },
         "SidebarFeedbackImageAttachments": {
-          "screenshotsHint": "Screenshots help a lot — paste, drop, or attach up to {count}.",
+          "screenshotsHint": "Attach up to {count} screenshots",
           "attachImages": "Attach",
           "removeImage": "Remove image"
         }

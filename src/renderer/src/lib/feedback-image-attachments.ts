@@ -1,3 +1,5 @@
+import { createBrowserUuid } from './browser-uuid'
+
 export const MAX_FEEDBACK_IMAGE_COUNT = 4
 export const MAX_FEEDBACK_IMAGE_BYTES = 8 * 1024 * 1024
 export const SUPPORTED_FEEDBACK_IMAGE_TYPES = [
@@ -63,7 +65,9 @@ export async function readFeedbackImageFiles(
     }
     remaining -= 1
     images.push({
-      id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
+      // Why: crypto.randomUUID is undefined in non-secure browser contexts (LAN
+      // web client over plain HTTP); createBrowserUuid falls back safely.
+      id: `${file.name}-${file.size}-${createBrowserUuid()}`,
       name: file.name || 'pasted-image',
       contentType: file.type,
       bytes: file.size,

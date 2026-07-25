@@ -4096,7 +4096,8 @@
           "a2fd890d9e": "Please enter feedback before submitting.",
           "f2e42e1307": "Send",
           "69969ba364": "Sending…",
-          "imagesNotDelivered": "Feedback sent, but the images could not be attached."
+          "imagesNotDelivered": "Feedback sent, but the images could not be attached.",
+          "imageReadFailed": "Could not read the attached images. Try attaching them again."
         },
         "SidebarFilter": {
           "e3b3898218": "Add project",

@@ -4039,7 +4039,8 @@
           "a2fd890d9e": "送信する前にフィードバックを入力。",
           "f2e42e1307": "送信",
           "69969ba364": "送信中…",
-          "imagesNotDelivered": "Feedback sent, but the images could not be attached."
+          "imagesNotDelivered": "Feedback sent, but the images could not be attached.",
+          "imageReadFailed": "Could not read the attached images. Try attaching them again."
         },
         "SidebarFilter": {
           "e3b3898218": "プロジェクトの追加",
@@ -4861,7 +4862,7 @@
           "reconnectAndDelete": "再接続して削除"
         },
         "SidebarFeedbackImageAttachments": {
-          "screenshotsHint": "Screenshots help a lot — paste, drop, or attach up to {count}.",
+          "screenshotsHint": "Attach up to {count} screenshots",
           "attachImages": "Attach",
           "removeImage": "Remove image"
         }
