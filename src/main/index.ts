@@ -104,6 +104,10 @@ import {
   type GpuFallbackTier
 } from './startup/gpu-fallback-tiers'
 import { purgeGpuCaches } from './startup/gpu-cache-purge'
+import {
+  getResumeGpuFallbackTier,
+  recordGpuFallbackRequiredTier
+} from './startup/gpu-fallback-required-tier'
 import { captureGpuInfoSnapshot } from './crash-reporting/gpu-info-snapshot'
 import {
   DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
@@ -1434,8 +1438,14 @@ function handleGpuChildCrash(reason: string, exitCode: number | null): void {
   if (!result.shouldEngageFallback) {
     return
   }
+  const userDataPath = getGpuFallbackUserDataPath()
   const currentTier = gpuFallbackTierThisLaunch
-  const nextTier = getNextGpuFallbackTier(currentTier)
+  // Why: after an update the build-scoped marker is gone but the machine is not.
+  // Resuming at the tier it already needed is the difference between one relaunch
+  // per update and re-walking the whole ladder every time.
+  const resumeTier =
+    currentTier === NO_GPU_FALLBACK_TIER ? getResumeGpuFallbackTier(userDataPath) : null
+  const nextTier = resumeTier ?? getNextGpuFallbackTier(currentTier)
   if (currentTier !== NO_GPU_FALLBACK_TIER) {
     // Why: 20 of 21 crashed launches on the reported machine already carried
     // gpu_fallback_applied. Without this breadcrumb the failure looked like a fix.
@@ -1463,6 +1473,7 @@ function handleGpuChildCrash(reason: string, exitCode: number | null): void {
     exitCode,
     tier: nextTier,
     previousTier: currentTier,
+    resumedFromHistory: resumeTier !== null,
     crashesInWindow: result.crashesInWindow
   })
   const engagedAt = Date.now()
@@ -1470,7 +1481,6 @@ function handleGpuChildCrash(reason: string, exitCode: number | null): void {
   if (!environment) {
     return
   }
-  const userDataPath = getGpuFallbackUserDataPath()
   try {
     writeGpuFallbackMarker(
       userDataPath,
@@ -1485,6 +1495,12 @@ function handleGpuChildCrash(reason: string, exitCode: number | null): void {
     console.warn('[gpu-fallback] failed to persist marker:', error)
     return
   }
+  // Why: survives the update that invalidates the marker above.
+  const recordedTier = recordGpuFallbackRequiredTier(userDataPath, nextTier, environment, engagedAt)
+  recordCrashBreadcrumb('gpu_fallback_required_tier_recorded', {
+    tier: nextTier,
+    recordedTier: recordedTier ?? null
+  })
   // Why: a shader cache written by the driver that just crashed replays the same
   // crash on the next GPU init, defeating the tier we just escalated to.
   const purge = purgeGpuCaches(userDataPath)
