@@ -10,6 +10,7 @@ import {
   type AskPrompt
 } from './mobile-native-chat-ask'
 import { sendMobileNativeChatMessageWithOutcome } from './mobile-native-chat-send'
+import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
 import {
   resolveNativeChatTranscriptAgent,
   shouldStepNativeChatAskAnswer
@@ -102,6 +103,22 @@ export function useMobileNativeChatAnswerSend(args: {
       // A new answer supersedes any still-pending keystroke writes.
       cancelPending()
       const generation = generationRef.current
+      // Both answer shapes commit with Enter, so an orphaned image paste left on
+      // the composer would be submitted along with the answer if the overlay has
+      // already gone away (#10228). Clear it before the first keystroke.
+      if (
+        !(await healMobileNativeChatStaleInput({
+          client,
+          terminal: handle,
+          deviceToken: deviceTokenRef.current
+        }))
+      ) {
+        onSendError('Answer not sent')
+        return false
+      }
+      if (generationRef.current !== generation) {
+        return false
+      }
       let sawUnknownOutcome = false
       const sendTerminal = async (body: string, enter: boolean): Promise<boolean> => {
         const activeRoute = activeRouteRef.current
