@@ -394,8 +394,13 @@ jobs:
             # branch builds never outrank the main RC series and cannot
             # hijack the update channel; clients find them by matching the
             # identifier ("perf") in the prerelease components.
-            if [[ ! "$1" =~ ^[0-9A-Za-z]+$ ]]; then
-              echo "::error::version_suffix must be alphanumeric, got: $1" >&2
+            # Why the numeric alternation rather than plain [0-9A-Za-z]+:
+            # semver forbids a leading zero on an all-digit identifier, and
+            # `npm version` silently renormalizes rc.4.01 to rc.4.1 while the
+            # tag step keeps the literal input — so the shipped package.json
+            # version and its own release tag would name different releases.
+            if [[ ! "$1" =~ ^(0|[1-9][0-9]*|[0-9A-Za-z]*[A-Za-z][0-9A-Za-z]*)$ ]]; then
+              echo "::error::version suffix must be alphanumeric with no leading zero on an all-digit identifier, got: $1" >&2
               exit 1
             fi
           }
@@ -513,13 +518,24 @@ jobs:
             # Why the optional trailing identifier: the rc path can cut
             # suffixed side-branch RCs (X.Y.Z-rc.N.perf), and a shape this
             # regex rejects can never be re-cut through the override.
-            # Why rc.(0|[1-9][0-9]*): semver forbids a leading zero on a
-            # numeric identifier, and rc.08 would otherwise reach the `-le`
-            # below as an invalid octal literal, whose error makes the test
-            # false — falling *open* on exactly the RCs this gate must catch.
-            if [[ ! "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.(0|[1-9][0-9]*)(\.[0-9A-Za-z]+)?)?$ ]]; then
+            # Why rc.(0|[1-9][0-9]{0,8}): the `-le` below compares with bash's
+            # machine-width integers, so both ends of that range fall *open* on
+            # exactly the RCs this gate must catch. A leading zero (rc.08) is an
+            # invalid octal literal, and the failed test makes the `if` false.
+            # Past INTMAX (rc.99999999999999999999) bash saturates, so the test
+            # reads as "above the published rc" and the cut lands a tag that
+            # then pins highest_rc_for_base at 1e20 forever — every later cut
+            # wraps to a *lower* rc the fleet never updates to. Nine digits is
+            # far above any real series and exact in bash math either way.
+            if [[ ! "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.(0|[1-9][0-9]{0,8})(\.[0-9A-Za-z]+)?)?$ ]]; then
               echo "::error::version must be X.Y.Z, X.Y.Z-rc.N, or X.Y.Z-rc.N.suffix, got: $EXPLICIT_VERSION" >&2
               exit 1
+            fi
+            # Why route the embedded identifier through the same validator the
+            # kind path uses: the regex above only checks shape, and rc.4.01
+            # is a shape-valid identifier that is not valid semver.
+            if [[ "$explicit" == *-rc.*.* ]]; then
+              require_valid_version_suffix "${explicit##*.}"
             fi
             # Same updater-safety gate the kind path enforces: stable line must
             # strictly increase over the latest published stable (prerelease
