@@ -34,6 +34,7 @@ on:
       - 'src/preload/**'
       - 'src/renderer/src/components/terminal-pane/**'
       - 'src/renderer/src/lib/pane-manager/**'
+      - 'src/shared/process-table-snapshot.ts'
       - 'src/shared/pty-session-id-format.ts'
   workflow_dispatch:
     inputs:
