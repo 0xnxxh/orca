@@ -114,6 +114,7 @@ import {
   configureElectronNetworkCompatibility,
   configureDevUserDataPath,
   configureOrcaUserDataPathEnv,
+  disableIntensiveWakeUpThrottling,
   enableMainProcessGpuFeatures,
   installDevParentDisconnectQuit,
   installDevParentSignalQuit,
@@ -134,7 +135,14 @@ import {
   type GpuFallbackEnvironment,
   type WindowsGpuFallbackEnvironment
 } from './startup/gpu-fallback-marker'
-import { applyGpuFallbackCommandLineSwitches } from './startup/gpu-fallback-switches'
+import {
+  NO_GPU_FALLBACK_TIER,
+  getGpuFallbackTierSwitches,
+  getNextGpuFallbackTier,
+  type GpuFallbackTier
+} from './startup/gpu-fallback-tiers'
+import { purgeGpuCaches } from './startup/gpu-cache-purge'
+import { captureGpuInfoSnapshot } from './crash-reporting/gpu-info-snapshot'
 import {
   DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
   DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
@@ -365,7 +373,9 @@ const gpuCrashFallbackTracker = new GpuCrashFallbackTracker({
   windowMs: DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
   threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD
 })
-let gpuFallbackActiveThisLaunch = false
+// Why: 0 = hardware path. A non-zero tier is the rung of the fallback ladder this launch is running.
+let gpuFallbackTierThisLaunch: GpuFallbackTier | typeof NO_GPU_FALLBACK_TIER = NO_GPU_FALLBACK_TIER
+const GPU_INFO_CAPTURE_TIMEOUT_MS = 10_000
 let gpuFeatureStatus: Electron.GPUFeatureStatus | null = null
 let localPtyStartupReady: Promise<void> = Promise.resolve()
 let localPtyProviderStartupReady: Promise<void> = Promise.resolve()
@@ -378,7 +388,7 @@ function updateGpuAccelerationAboutPanel(): void {
       appName: app.name,
       appVersion: app.getVersion(),
       platform: process.platform,
-      gpuFallbackActive: gpuFallbackActiveThisLaunch,
+      gpuFallbackActive: gpuFallbackTierThisLaunch !== NO_GPU_FALLBACK_TIER,
       gpuFeatureStatus
     })
   )
@@ -757,9 +767,11 @@ if (hasSingleInstanceLock) {
   configureElectronNetworkCompatibility()
   enableRendererHeapHeadroom()
   maybeApplyGpuFallbackForThisLaunch()
-  if (!gpuFallbackActiveThisLaunch) {
+  if (gpuFallbackTierThisLaunch === NO_GPU_FALLBACK_TIER) {
     enableMainProcessGpuFeatures()
   }
+  // Why: timer throttling is unrelated to the GPU; the fallback path used to drop it too.
+  disableIntensiveWakeUpThrottling()
   // Why: headless serve's offscreen BrowserWindows need an X display (Xvfb) on Linux; the result gates whether the offscreen backend is installed.
   headlessBrowserDisplayAvailable = ensureVirtualDisplayForHeadlessServe({ isServeMode })
 }
@@ -1540,6 +1552,12 @@ function getGpuFallbackEnvironment(): GpuFallbackEnvironment {
   }
 }
 
+// Why: the marker is read pre-whenReady and written post-app.setName('Orca'), and a late
+// app.getPath('userData') resolves differently — the two must agree or the marker "vanishes".
+function getGpuFallbackUserDataPath(): string {
+  return getCanonicalUserDataPath()
+}
+
 function getWindowsGpuFallbackEnvironment(): WindowsGpuFallbackEnvironment | null {
   const environment = getGpuFallbackEnvironment()
   if (environment.platform !== 'win32') {
@@ -1553,34 +1571,76 @@ function maybeApplyGpuFallbackForThisLaunch(): void {
   if (isServeMode || process.platform !== 'win32') {
     return
   }
-  const marker = readActiveGpuFallbackMarker(app.getPath('userData'), getGpuFallbackEnvironment())
+  const { marker, cleared, unreadableErrorCode } = readActiveGpuFallbackMarker(
+    getGpuFallbackUserDataPath(),
+    getGpuFallbackEnvironment()
+  )
+  if (cleared) {
+    // Why: a vanished marker silently re-arms hardware acceleration; that must be visible in triage.
+    recordCrashBreadcrumb('gpu_fallback_marker_cleared', { reason: cleared })
+  }
+  if (unreadableErrorCode) {
+    recordCrashBreadcrumb('gpu_fallback_marker_unreadable', { errorCode: unreadableErrorCode })
+  }
   if (!marker) {
     return
   }
   app.disableHardwareAcceleration()
-  const appliedSwitches = applyGpuFallbackCommandLineSwitches(app.commandLine, process.platform)
-  gpuFallbackActiveThisLaunch = true
-  // Why: with no GPU child left, child-process-gone can't report a GPU fault, so
-  // name the applied switches in the trail any later crash report carries.
+  for (const { name, value } of getGpuFallbackTierSwitches(marker.tier)) {
+    if (value === undefined) {
+      app.commandLine.appendSwitch(name)
+    } else {
+      app.commandLine.appendSwitch(name, value)
+    }
+  }
+  gpuFallbackTierThisLaunch = marker.tier
   recordCrashBreadcrumb('gpu_fallback_applied', {
+    tier: marker.tier,
     crashesInWindow: marker.crashesInWindow,
-    switches: appliedSwitches.join(',')
+    switches: getGpuFallbackTierSwitches(marker.tier)
+      .map(({ name }) => name)
+      .join(',')
   })
 }
 
-// Why: a burst of GPU child crashes means HW acceleration is unusable — persist a build-scoped marker and offer software rendering.
+// Why: a burst of GPU child crashes right after launch means the current GPU path is unusable — persist a build-scoped tier and relaunch one rung higher.
 async function handleGpuChildCrash(reason: string, exitCode: number | null): Promise<void> {
-  // Software rendering already active or shutting down: nothing more to do.
-  if (gpuFallbackActiveThisLaunch || isQuitting || isServeMode) {
+  if (isQuitting || isServeMode) {
     return
   }
   const result = gpuCrashFallbackTracker.recordGpuCrash(performance.now())
   if (!result.shouldEngageFallback) {
     return
   }
+  const currentTier = gpuFallbackTierThisLaunch
+  const nextTier = getNextGpuFallbackTier(currentTier)
+  if (currentTier !== NO_GPU_FALLBACK_TIER) {
+    // Why: 20 of 21 crashed launches on the reported machine already carried
+    // gpu_fallback_applied. Without this breadcrumb the failure looked like a fix.
+    recordCrashBreadcrumb('gpu_fallback_ineffective', {
+      reason,
+      exitCode,
+      tier: currentTier,
+      nextTier: nextTier ?? null,
+      crashesInWindow: result.crashesInWindow
+    })
+  }
+  if (nextTier === null) {
+    // Why: the ladder is bounded per build — keep running degraded rather than
+    // relaunch into a tier that already failed.
+    recordCrashBreadcrumb('gpu_fallback_exhausted', {
+      reason,
+      exitCode,
+      tier: currentTier,
+      crashesInWindow: result.crashesInWindow
+    })
+    return
+  }
   recordCrashBreadcrumb('gpu_fallback_engaged', {
     reason,
     exitCode,
+    tier: nextTier,
+    previousTier: currentTier,
     crashesInWindow: result.crashesInWindow
   })
   const engagedAt = Date.now()
@@ -1595,6 +1655,8 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
   const fallbackData = {
     processReason: reason,
     exitCode,
+    tier: nextTier,
+    previousTier: currentTier,
     crashesInWindow: result.crashesInWindow
   }
   if (isQuitting) {
@@ -1608,12 +1670,14 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
   if (!environment) {
     return
   }
+  const userDataPath = getGpuFallbackUserDataPath()
   try {
     writeGpuFallbackMarker(
-      app.getPath('userData'),
+      userDataPath,
       {
         engagedAt,
-        crashesInWindow: result.crashesInWindow
+        crashesInWindow: result.crashesInWindow,
+        tier: nextTier
       },
       environment
     )
@@ -1621,6 +1685,13 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
     console.warn('[gpu-fallback] failed to persist marker:', error)
     return
   }
+  // Why: a shader cache written by the driver that just crashed replays the same
+  // crash on the next GPU init, defeating the tier we just escalated to.
+  const purge = purgeGpuCaches(userDataPath)
+  recordCrashBreadcrumb('gpu_cache_purged', {
+    removed: purge.removed.join(','),
+    failed: purge.failed.join(',')
+  })
   isQuitting = true
   relaunchApp('gpu-fallback', fallbackData)
   // Why: app.exit(0) skips before-quit, so destroy the Windows tray manually to avoid a stale icon.
@@ -1641,6 +1712,7 @@ function recordProcessGoneCrash(
     processType,
     reason,
     exitCode,
+    gpuFallbackActive: gpuFallbackTierThisLaunch !== NO_GPU_FALLBACK_TIER,
     expectedTeardown: getExpectedTeardownScope(webContentsId),
     details
   })
@@ -1989,6 +2061,13 @@ void app.whenReady().then(async () => {
       selfRecovered: hangDetection.selfRecovered
     })
   }
+  // Why: driver identity for crash details. Fire-and-forget and bounded — on the
+  // machines this exists for, the GPU process never initializes and this never resolves.
+  void captureGpuInfoSnapshot(() => app.getGPUInfo('complete'), GPU_INFO_CAPTURE_TIMEOUT_MS).then(
+    (snapshot) => {
+      recordCrashBreadcrumb('gpu_info_captured', snapshot)
+    }
+  )
   // Why: install certificate decisions before any webview or headless window issues its first TLS request.
   app.on(
     'certificate-error',
@@ -2621,7 +2700,8 @@ void app.whenReady().then(async () => {
     recordProcessGoneCrash('child', details.type, details.reason, details.exitCode ?? null, {
       name: details.name,
       serviceName: details.serviceName,
-      type: details.type
+      type: details.type,
+      gpuFallbackTier: gpuFallbackTierThisLaunch
     })
     if (
       isGpuFallbackCrashCandidate({
