@@ -39,7 +39,7 @@ function assertCeiling(name: string, value: number | undefined): void {
 // Why SameValueZero: Map key equality treats NaN as equal to NaN, but === does not; a === guard
 // would fail to protect a just-admitted NaN key and evict it after reporting success.
 function isSameKey<K>(a: K, b: K): boolean {
-  return a === b || (Number.isNaN(a as unknown as number) && Number.isNaN(b as unknown as number))
+  return a === b || Object.is(a, b)
 }
 
 export class BoundedMap<K, V> {

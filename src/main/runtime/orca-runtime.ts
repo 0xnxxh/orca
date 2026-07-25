@@ -19535,7 +19535,6 @@ export class OrcaRuntimeService {
     const cacheKey = `${runtimeKey}::${repoPath}::${remote}`
     const cached = this.canonicalFetchKeyCache.get(cacheKey)
     if (cached !== undefined) {
-      this.canonicalFetchKeyCache.set(cacheKey, cached)
       return cached
     }
     let resolved = cacheKey
@@ -19577,7 +19576,6 @@ export class OrcaRuntimeService {
       return null
     }
     if (Date.now() - lastAt < FETCH_FRESHNESS_MS) {
-      this.fetchLastCompletedAt.set(key, lastAt)
       return lastAt
     }
     this.fetchLastCompletedAt.delete(key)
