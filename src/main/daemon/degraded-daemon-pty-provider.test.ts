@@ -7,7 +7,8 @@ type ProviderMock = IPtyProvider & {
   emitData: (id: string, data: string, sequenceChars?: number) => void
   emitReplay: (id: string, data: string) => void
   emitExit: (id: string, code: number) => void
-  emitWriteUnavailable: (id: string) => void
+  triggerWriteUnavailable: (id: string) => void
+  onWriteUnavailable: (callback: (payload: { id: string }) => void) => () => void
 }
 
 function createProvider(
@@ -103,7 +104,7 @@ function createProvider(
         }
       }
     }),
-    emitWriteUnavailable: (id: string) => {
+    triggerWriteUnavailable: (id: string) => {
       for (const listener of writeUnavailableListeners) {
         listener({ id })
       }
@@ -140,12 +141,12 @@ it('forwards dead-endpoint write-unavailable signals from the daemon adapters', 
   const recovered: string[] = []
 
   const unsubscribe = provider.onWriteUnavailable(({ id }) => recovered.push(id))
-  current.emitWriteUnavailable('daemon-pane')
-  legacy.emitWriteUnavailable('legacy-pane')
+  current.triggerWriteUnavailable('daemon-pane')
+  legacy.triggerWriteUnavailable('legacy-pane')
   expect(recovered).toEqual(['daemon-pane', 'legacy-pane'])
 
   unsubscribe()
-  current.emitWriteUnavailable('after-unsubscribe')
+  current.triggerWriteUnavailable('after-unsubscribe')
   expect(recovered).toEqual(['daemon-pane', 'legacy-pane'])
 })
 

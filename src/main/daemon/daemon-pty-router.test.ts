@@ -12,7 +12,7 @@ type AdapterMock = DaemonPtyAdapter & {
   emitData: (id: string, data: string, sequenceChars?: number) => void
   emitBackground: (event: PtyBackgroundStreamEvent) => void
   emitExit: (id: string, code: number, incarnationId?: string) => void
-  emitWriteUnavailable: (id: string) => void
+  triggerWriteUnavailable: (id: string) => void
 }
 
 const LARGE_RECONCILE_SESSION_COUNT = 150_000
@@ -148,7 +148,7 @@ function createAdapter(
         listener({ id, code, ...(incarnationId ? { incarnationId } : {}) })
       }
     },
-    emitWriteUnavailable: (id: string) => {
+    triggerWriteUnavailable: (id: string) => {
       for (const listener of writeUnavailableListeners) {
         listener({ id })
       }
@@ -168,14 +168,14 @@ it('forwards dead-endpoint write-unavailable signals from every routed adapter',
   const recovered: string[] = []
 
   const unsubscribe = router.onWriteUnavailable(({ id }) => recovered.push(id))
-  current.emitWriteUnavailable('current-pane')
-  legacy.emitWriteUnavailable('legacy-pane')
+  current.triggerWriteUnavailable('current-pane')
+  legacy.triggerWriteUnavailable('legacy-pane')
 
   expect(recovered).toEqual(['current-pane', 'legacy-pane'])
 
   unsubscribe()
-  current.emitWriteUnavailable('after-unsubscribe')
-  legacy.emitWriteUnavailable('after-unsubscribe')
+  current.triggerWriteUnavailable('after-unsubscribe')
+  legacy.triggerWriteUnavailable('after-unsubscribe')
   expect(recovered).toEqual(['current-pane', 'legacy-pane'])
 })
 
