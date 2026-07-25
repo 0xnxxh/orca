@@ -470,7 +470,7 @@ describe('Electron runtime package contract', () => {
     expect([...mentioned]).toEqual(stagedPaths.slice(1))
     // Regeneration is banned job-wide by the generator suite. Here: `-a`, `-am`,
     // and `--all` sweep unstaged artifacts in; `--allow-empty` below must not.
-    expect(commands).not.toMatch(/\bcommit\b[^\n]*\s(?:-a(?:\b|[a-z])|--all\b)/)
+    expect(commands).not.toMatch(/\bcommit\b[^\n]*(?:\s-[a-z]*a[a-z]*\b|\s--all\b)/)
     expect(bumpStep.run).toContain('git diff --cached --quiet')
     expect(bumpStep.run).toContain('git commit --allow-empty -m "$commit_message"')
   })
