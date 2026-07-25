@@ -1,4 +1,5 @@
 import type { PRConflictSummary } from '../../shared/types'
+import { BoundedMap } from '../../shared/memory-safety/bounded-map'
 
 // Why 60s: the hottest coordinator cadences that re-derive a CONFLICTING PR
 // (10s mergeability-pending, 2.5s manual-pending) previously each ran a
@@ -31,8 +32,10 @@ type CachedSummary = {
   staleAt: number | null
 }
 
-const baseOidCache = new Map<string, CachedBaseTipResolution>()
-const summaryCache = new Map<string, CachedSummary>()
+const baseOidCache = new BoundedMap<string, CachedBaseTipResolution>({
+  maxEntries: BASE_OID_CACHE_MAX
+})
+const summaryCache = new BoundedMap<string, CachedSummary>({ maxEntries: SUMMARY_CACHE_MAX })
 const inFlightBaseOidResolves = new Map<string, Promise<FreshBaseTipResolution>>()
 const inFlightSummaryDerivations = new Map<string, Promise<PRConflictSummary | undefined>>()
 
@@ -62,16 +65,11 @@ export function readFreshBaseTipResolution(baseKey: string): FreshBaseTipResolut
 }
 
 export function storeResolvedBaseTip(baseKey: string, oid: string): void {
-  setBoundedMapEntry(baseOidCache, baseKey, { oid, resolvedAt: Date.now() }, BASE_OID_CACHE_MAX)
+  baseOidCache.set(baseKey, { oid, resolvedAt: Date.now() })
 }
 
 export function rememberUnresolvedBaseTip(baseKey: string): void {
-  setBoundedMapEntry(
-    baseOidCache,
-    baseKey,
-    { oid: null, resolvedAt: Date.now() },
-    BASE_OID_CACHE_MAX
-  )
+  baseOidCache.set(baseKey, { oid: null, resolvedAt: Date.now() })
 }
 
 export function readCachedSummary(summaryKey: string): CachedSummary | null {
@@ -87,15 +85,10 @@ export function readCachedSummary(summaryKey: string): CachedSummary | null {
 }
 
 export function storeCachedSummary(summaryKey: string, value: PRConflictSummary | undefined): void {
-  setBoundedMapEntry(
-    summaryCache,
-    summaryKey,
-    {
-      value,
-      staleAt: value === undefined ? Date.now() + CONFLICT_SUMMARY_BASE_FETCH_WINDOW_MS : null
-    },
-    SUMMARY_CACHE_MAX
-  )
+  summaryCache.set(summaryKey, {
+    value,
+    staleAt: value === undefined ? Date.now() + CONFLICT_SUMMARY_BASE_FETCH_WINDOW_MS : null
+  })
 }
 
 export function dedupeBaseOidResolve(
@@ -126,20 +119,6 @@ function dedupeInFlight<T>(
   })
   map.set(key, promise)
   return promise
-}
-
-function setBoundedMapEntry<K, V>(map: Map<K, V>, key: K, value: V, maxEntries: number): void {
-  if (map.has(key)) {
-    map.delete(key)
-  }
-  map.set(key, value)
-  while (map.size > maxEntries) {
-    const oldest = map.keys().next()
-    if (oldest.done) {
-      return
-    }
-    map.delete(oldest.value)
-  }
 }
 
 export function __resetPRConflictSummaryDerivationCachesForTests(): void {
