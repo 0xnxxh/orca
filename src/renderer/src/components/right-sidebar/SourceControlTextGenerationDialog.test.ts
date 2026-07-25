@@ -38,6 +38,11 @@ vi.mock('@/components/ui/select', () => ({
   SelectValue: () => React.createElement('span')
 }))
 
+/** The mocked chips serialize their previews into an attribute, so quotes arrive escaped. */
+function escapeHtml(value: string): string {
+  return value.replace(/"/g, '&quot;')
+}
+
 describe('buildCommitMessageGenerationParams', () => {
   it('defaults saved text-generation recipes to the global target when repo and global are available', () => {
     expect(
@@ -77,6 +82,57 @@ describe('buildCommitMessageGenerationParams', () => {
     )
 
     expect(markup).toContain('You are generating a single git commit message.')
+  })
+
+  // Why: the chips fall back to the synthetic `123` sample when no preview is supplied,
+  // which told an unlinked workspace it would render `Fixes #123` and then produced
+  // `Fixes #`. Workspace-scoped callers must preview their own value, empty included.
+  it.each([
+    { label: 'the linked issue', linkedIssue: 42, expected: '42' },
+    { label: 'an empty value when unlinked', linkedIssue: null, expected: '' }
+  ])('previews $label for a workspace-scoped dialog', ({ linkedIssue, expected }) => {
+    const markup = renderToStaticMarkup(
+      React.createElement(SourceControlTextGenerationDialogForm, {
+        actionId: 'commitMessage',
+        generateLabel: 'Generate',
+        settings: null,
+        repo: null,
+        baseParams: {
+          agentId: 'codex',
+          model: 'gpt-5.4-mini',
+          commandInputTemplate: '{basePrompt}'
+        },
+        linkedIssue,
+        saveTargets: [],
+        onGenerate: () => {},
+        onOpenChange: () => {},
+        onSaveDefaults: () => {}
+      })
+    )
+
+    expect(markup).toContain(escapeHtml(JSON.stringify({ linkedIssue: expected })))
+  })
+
+  it('leaves the issue preview to the synthetic sample when no workspace is in scope', () => {
+    const markup = renderToStaticMarkup(
+      React.createElement(SourceControlTextGenerationDialogForm, {
+        actionId: 'commitMessage',
+        generateLabel: 'Generate',
+        settings: null,
+        repo: null,
+        baseParams: {
+          agentId: 'codex',
+          model: 'gpt-5.4-mini',
+          commandInputTemplate: '{basePrompt}'
+        },
+        saveTargets: [],
+        onGenerate: () => {},
+        onOpenChange: () => {},
+        onSaveDefaults: () => {}
+      })
+    )
+
+    expect(markup).not.toContain('linkedIssue')
   })
 
   it('preserves the resolved model and thinking level for the selected agent', () => {

@@ -61,7 +61,11 @@ vi.mock('../source-control/pull-request-template', () => ({
 const tempDirs: string[] = []
 
 function makeWorktree(path: string, linkedIssue: number | null = null): ResolvedRuntimeGitWorktree {
-  return {
+  // Why: `satisfies Partial<…>` keeps every field name and type checked against the
+  // real worktree shape (the widening cast alone would let these tests keep passing
+  // against a `linkedIssue` key production no longer has) while still allowing the
+  // fixture to omit the fields these tests never read.
+  const worktree = {
     id: 'wt-1',
     repoId: 'repo-1',
     path,
@@ -69,11 +73,12 @@ function makeWorktree(path: string, linkedIssue: number | null = null): Resolved
     git: {
       path,
       branch: 'main',
-      bare: false,
-      detached: false,
+      isBare: false,
+      isMainWorktree: false,
       head: 'a'.repeat(40)
     }
-  } as unknown as ResolvedRuntimeGitWorktree
+  } satisfies Partial<ResolvedRuntimeGitWorktree>
+  return worktree as unknown as ResolvedRuntimeGitWorktree
 }
 
 function makeCommands(worktreePath: string): RuntimeGitCommands {
@@ -700,5 +705,34 @@ describe('RuntimeGitCommands', () => {
     for (const call of mocks.generatePullRequestFieldsFromContext.mock.calls) {
       expect(call[0]).toEqual({ ...context, linkedIssue: 55 })
     }
+  })
+
+  it('leaves the pull-request context untouched when no issue is linked', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'orca-runtime-git-'))
+    tempDirs.push(worktreePath)
+    const context = {
+      base: 'main',
+      branch: 'feature/login',
+      commitSummary: 'abc123 feat: test',
+      changeSummary: 'M README.md',
+      patch: '+hello',
+      currentTitle: '',
+      currentBody: '',
+      currentDraft: false
+    }
+    const params = { agentId: 'codex' as const, model: 'gpt-5.5' }
+    mocks.getPullRequestDraftContext.mockResolvedValue(context)
+    mocks.generatePullRequestFieldsFromContext.mockResolvedValue({ success: true, fields: {} })
+
+    await makeCommands(worktreePath).generateRuntimePullRequestFields(
+      'id:wt-1',
+      { base: 'main', title: '', body: '', draft: false },
+      { sourceControlAiResolvedParams: params }
+    )
+
+    expect(mocks.generatePullRequestFieldsFromContext.mock.calls).toHaveLength(1)
+    expect(mocks.generatePullRequestFieldsFromContext.mock.calls[0][0]).not.toHaveProperty(
+      'linkedIssue'
+    )
   })
 })

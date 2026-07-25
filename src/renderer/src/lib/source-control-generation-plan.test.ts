@@ -64,6 +64,28 @@ describe('planSourceControlCommitMessageGeneration', () => {
     }
   })
 
+  it('prefers caller-supplied variable values over the synthetic sample', () => {
+    for (const [linkedIssue, expected] of [
+      ['7', 'echo Fixes #7'],
+      // Why: an unlinked workspace must preview the empty expansion it will really send,
+      // not the synthetic `123`.
+      ['', 'echo Fixes #']
+    ]) {
+      const result = planSourceControlTextGeneration(
+        'commitMessage',
+        {
+          agentId: 'custom',
+          model: '',
+          customAgentCommand: 'echo {prompt}',
+          commandInputTemplate: 'Fixes #{linkedIssue}'
+        },
+        { linkedIssue }
+      )
+
+      expect(result.ok && result.commandLabel).toBe(expected)
+    }
+  })
+
   it('leaves linkedIssue literal in branch-name plan previews', () => {
     const result = planSourceControlTextGeneration('branchName', {
       agentId: 'custom',

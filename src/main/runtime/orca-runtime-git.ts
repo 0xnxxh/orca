@@ -23,8 +23,8 @@ import {
   mergeLegacyCommitMessageAiIntoSourceControlAi,
   type ResolvedSourceControlAiGenerationParams
 } from '../../shared/source-control-ai'
+import { withLinkedIssueDraftContext } from '../../shared/source-control-ai-action-variables'
 import type { SourceControlAiOperation } from '../../shared/source-control-ai-types'
-import { withLinkedIssueDraftContext } from '../../shared/source-control-ai-actions'
 import type { GitProviderStatusOptions } from '../providers/types'
 import { getRemoteCommitUrl, getRemoteFileUrl } from '../git/repo'
 import {

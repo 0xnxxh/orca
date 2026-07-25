@@ -87,6 +87,7 @@ import { assertGitPushTargetShape } from '../../shared/git-push-target-validatio
 import { getCommitMessageModelDiscoveryHostKey } from '../../shared/commit-message-host-key'
 import type { HostedReviewProvider } from '../../shared/hosted-review'
 import type { ResolvedSourceControlAiGenerationParams } from '../../shared/source-control-ai'
+import { withLinkedIssueDraftContext } from '../../shared/source-control-ai-action-variables'
 import { validateGitPushTarget } from '../git/push-target-validation'
 import { getRemoteCommitUrl, getRemoteFileUrl } from '../git/repo'
 import {
@@ -101,7 +102,6 @@ import { registerFilesystemMutationHandlers } from './filesystem-mutations'
 import { searchWithGitGrep } from './filesystem-search-git'
 import { getLocalGitOptionsForRegisteredWorktree } from './local-worktree-runtime-options'
 import { resolveSourceControlAiLinkedIssue } from './source-control-ai-linked-issue'
-import { withLinkedIssueDraftContext } from '../../shared/source-control-ai-actions'
 import { listMarkdownDocuments, markdownDocumentsFromRelativePaths } from './markdown-documents'
 import { checkRgAvailable } from './rg-availability'
 import {

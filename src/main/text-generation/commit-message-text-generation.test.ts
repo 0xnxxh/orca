@@ -1970,17 +1970,41 @@ describe('linkedIssue template substitution', () => {
     }
   })
 
+  // Why: a fixture-unique sentinel — a short number like 42 also appears in the
+  // character counts that truncateDiffForPrompt/limitSection emit, so growing any
+  // fixture past its limit would fail these guards for reasons unrelated to leakage.
+  const BUILT_IN_PROMPT_SENTINEL_ISSUE = 987654
+  const builtInPromptParams = {
+    agentId: 'custom' as const,
+    model: '',
+    customAgentCommand: 'agent'
+  }
+
   it('leaves the built-in commit prompt free of issue guidance', async () => {
     let prompt = ''
     await generateCommitMessageFromContext(
-      { ...COMMIT_CONTEXT, linkedIssue: 42 },
-      { agentId: 'custom', model: '', customAgentCommand: 'agent' },
+      { ...COMMIT_CONTEXT, linkedIssue: BUILT_IN_PROMPT_SENTINEL_ISSUE },
+      builtInPromptParams,
       capturingTarget((value) => {
         prompt = value
       })
     )
 
-    expect(prompt).not.toContain('42')
+    expect(prompt).not.toContain(String(BUILT_IN_PROMPT_SENTINEL_ISSUE))
+    expect(prompt).not.toContain('linkedIssue')
+  })
+
+  it('leaves the built-in pull-request prompt free of issue guidance', async () => {
+    let prompt = ''
+    await generatePullRequestFieldsFromContext(
+      { ...PULL_REQUEST_CONTEXT, linkedIssue: BUILT_IN_PROMPT_SENTINEL_ISSUE },
+      builtInPromptParams,
+      capturingTarget((value) => {
+        prompt = value
+      })
+    )
+
+    expect(prompt).not.toContain(String(BUILT_IN_PROMPT_SENTINEL_ISSUE))
     expect(prompt).not.toContain('linkedIssue')
   })
 

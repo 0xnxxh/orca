@@ -50,16 +50,23 @@ const SYNTHETIC_BASE_PROMPTS: Record<SourceControlTextActionId, string> = {
   branchName: 'Generate a git branch name for a synthetic task.'
 }
 
+/**
+ * `variableOverrides` lets a workspace-scoped caller (the in-app generation dialog)
+ * preview real values where it has them, so an unlinked workspace does not preview
+ * `Fixes #123` and then generate `Fixes #`. Settings dry-runs pass nothing and stay
+ * fully synthetic, since no workspace is in scope there.
+ */
 export function planSourceControlTextGeneration(
   actionId: SourceControlTextActionId,
-  params: ResolvedSourceControlAiGenerationParams
+  params: ResolvedSourceControlAiGenerationParams,
+  variableOverrides?: Record<string, string>
 ): SourceControlGenerationPlanResult {
   const prompt =
     params.commandInputTemplate !== undefined
-      ? renderSourceControlActionCommandTemplate(
-          params.commandInputTemplate,
-          SYNTHETIC_TEXT_GENERATION_CONTEXT[actionId]
-        )
+      ? renderSourceControlActionCommandTemplate(params.commandInputTemplate, {
+          ...SYNTHETIC_TEXT_GENERATION_CONTEXT[actionId],
+          ...variableOverrides
+        })
       : SYNTHETIC_BASE_PROMPTS[actionId]
   if (!prompt.trim()) {
     return {

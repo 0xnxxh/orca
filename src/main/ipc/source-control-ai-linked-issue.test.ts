@@ -41,7 +41,11 @@ describe('resolveSourceControlAiLinkedIssue', () => {
     expect(store.getWorktreeMeta).toHaveBeenCalledWith(instanceId)
   })
 
-  it('ignores an id whose path does not match the request', () => {
+  // Why: the desktop renderer derives `worktreePath` from `worktreeId`, so it can
+  // never send a mismatched pair — these cases model an independent caller (relay,
+  // CLI, future in-process caller) and assert the guard fails closed for them.
+  // They are not evidence that a stale renderer context is rejected; it is not.
+  it('rejects an independently supplied id whose path does not match the request', () => {
     const store = makeStore({ [LOCAL_ID]: { linkedIssue: 123 } })
 
     expect(
@@ -65,7 +69,7 @@ describe('resolveSourceControlAiLinkedIssue', () => {
     ).toBe(5)
   })
 
-  it('ignores an id whose repoId contradicts the request repoId', () => {
+  it('rejects an independently supplied id whose repoId contradicts the request repoId', () => {
     const store = makeStore({ [LOCAL_ID]: { linkedIssue: 123 } })
 
     expect(
@@ -73,6 +77,19 @@ describe('resolveSourceControlAiLinkedIssue', () => {
         worktreeId: LOCAL_ID,
         worktreePath: LOCAL_PATH,
         repoId: 'repo-2'
+      })
+    ).toBeNull()
+    expect(store.getWorktreeMeta).not.toHaveBeenCalled()
+  })
+
+  it('fails closed on an empty-string repoId instead of skipping the cross-check', () => {
+    const store = makeStore({ [LOCAL_ID]: { linkedIssue: 123 } })
+
+    expect(
+      resolveSourceControlAiLinkedIssue(store, {
+        worktreeId: LOCAL_ID,
+        worktreePath: LOCAL_PATH,
+        repoId: ''
       })
     ).toBeNull()
     expect(store.getWorktreeMeta).not.toHaveBeenCalled()
@@ -124,14 +141,14 @@ describe('resolveSourceControlAiLinkedIssue', () => {
     ).toBeNull()
   })
 
-  it('returns null for unparsable ids and unlinked or non-numeric meta', () => {
+  it('returns null for unparsable ids and unlinked or unusable meta', () => {
     expect(
       resolveSourceControlAiLinkedIssue(makeStore({}), {
         worktreeId: 'no-separator',
         worktreePath: LOCAL_PATH
       })
     ).toBeNull()
-    for (const linkedIssue of [null, undefined, Number.NaN]) {
+    for (const linkedIssue of [null, undefined, Number.NaN, 0, -7, 12.9]) {
       expect(
         resolveSourceControlAiLinkedIssue(makeStore({ [LOCAL_ID]: { linkedIssue } }), {
           worktreeId: LOCAL_ID,

@@ -42,6 +42,8 @@ const {
   discoverCommitMessageModelsRemoteMock,
   cancelGenerateCommitMessageLocalMock,
   cancelGeneratePullRequestFieldsLocalMock,
+  getPullRequestDraftContextMock,
+  resolveHostedReviewBodyForGenerationMock,
   getSshFilesystemProviderMock,
   getSshGitProviderMock,
   tryDeleteWslUncPathMock,
@@ -85,6 +87,8 @@ const {
   discoverCommitMessageModelsRemoteMock: vi.fn(),
   cancelGenerateCommitMessageLocalMock: vi.fn(),
   cancelGeneratePullRequestFieldsLocalMock: vi.fn(),
+  getPullRequestDraftContextMock: vi.fn(),
+  resolveHostedReviewBodyForGenerationMock: vi.fn(),
   getSshFilesystemProviderMock: vi.fn(),
   getSshGitProviderMock: vi.fn(),
   tryDeleteWslUncPathMock: vi.fn(),
@@ -189,6 +193,16 @@ vi.mock('../text-generation/commit-message-text-generation', () => ({
   cancelGeneratePullRequestFieldsLocal: cancelGeneratePullRequestFieldsLocalMock
 }))
 
+vi.mock('../text-generation/pull-request-context', () => ({
+  getPullRequestDraftContext: getPullRequestDraftContextMock
+}))
+
+vi.mock('../source-control/pull-request-template', () => ({
+  readHostedPullRequestTemplate: vi.fn(),
+  readHostedReviewTemplate: vi.fn(),
+  resolveHostedReviewBodyForGeneration: resolveHostedReviewBodyForGenerationMock
+}))
+
 import { registerFilesystemHandlers } from './filesystem'
 import { invalidateAuthorizedRootsCache, registerWorktreeRootsForRepo } from './filesystem-auth'
 
@@ -289,6 +303,8 @@ describe('registerFilesystemHandlers', () => {
       resolveCommitMessageSettingsMock,
       generateCommitMessageFromContextMock,
       generatePullRequestFieldsFromContextMock,
+      getPullRequestDraftContextMock,
+      resolveHostedReviewBodyForGenerationMock,
       discoverCommitMessageModelsLocalMock,
       discoverCommitMessageModelsRemoteMock,
       cancelGenerateCommitMessageLocalMock,
@@ -2086,7 +2102,9 @@ describe('registerFilesystemHandlers', () => {
     )
   })
 
-  it('ignores a worktree id that does not own the requested worktree path', async () => {
+  // Why: the renderer derives worktreePath from worktreeId, so a mismatched pair
+  // models an independent caller (relay/CLI/future), not a stale renderer context.
+  it('ignores an independently supplied id that does not own the requested worktree path', async () => {
     const context = {
       branch: 'feature/ai',
       stagedSummary: 'M\tREADME.md',
@@ -2139,6 +2157,95 @@ describe('registerFilesystemHandlers', () => {
       params,
       expect.objectContaining({ kind: 'remote' })
     )
+  })
+
+  describe('git:generatePullRequestFields linked issue', () => {
+    const PULL_REQUEST_CONTEXT = {
+      base: 'main',
+      branch: 'feature/ai',
+      branchChangedByPreparation: false,
+      commitSummary: 'a1b2c3d Add generation',
+      changeSummary: 'README.md | 2 +-',
+      patch: '+hello',
+      currentTitle: '',
+      currentBody: '',
+      currentDraft: false
+    }
+    const PULL_REQUEST_ARGS = { base: 'main', title: '', body: '', draft: false }
+    const params = { agentId: 'codex', model: 'gpt-5.4-mini' }
+
+    beforeEach(() => {
+      resolveCommitMessageSettingsMock.mockReturnValue({ ok: true, params })
+      resolveHostedReviewBodyForGenerationMock.mockResolvedValue('')
+      getPullRequestDraftContextMock.mockResolvedValue(PULL_REQUEST_CONTEXT)
+      generatePullRequestFieldsFromContextMock.mockResolvedValue({ success: true, fields: {} })
+    })
+
+    it('enriches the local pull-request context with a validated worktree linked issue', async () => {
+      const worktreeId = `repo-1::${WORKTREE_FEATURE_PATH}`
+      const linkedStore = {
+        ...store,
+        getWorktreeMeta: (id: string) => (id === worktreeId ? { linkedIssue: 123 } : undefined)
+      }
+
+      registerFilesystemHandlers(linkedStore as never)
+
+      await handlers.get('git:generatePullRequestFields')!(null, {
+        ...PULL_REQUEST_ARGS,
+        worktreePath: WORKTREE_FEATURE_PATH,
+        worktreeId
+      })
+
+      expect(generatePullRequestFieldsFromContextMock).toHaveBeenCalledWith(
+        { ...PULL_REQUEST_CONTEXT, linkedIssue: 123 },
+        params,
+        expect.objectContaining({ kind: 'local' })
+      )
+    })
+
+    it('enriches the SSH pull-request context from host meta using the remote path', async () => {
+      const worktreeId = 'repo-1::/remote/repo'
+      getSshGitProviderMock.mockReturnValue({
+        exec: vi.fn(),
+        executeCommitMessagePlan: vi.fn()
+      })
+      const linkedStore = {
+        ...store,
+        getWorktreeMeta: (id: string) => (id === worktreeId ? { linkedIssue: 77 } : undefined)
+      }
+
+      registerFilesystemHandlers(linkedStore as never)
+
+      await handlers.get('git:generatePullRequestFields')!(null, {
+        ...PULL_REQUEST_ARGS,
+        worktreePath: '/remote/repo',
+        worktreeId,
+        connectionId: 'conn-1'
+      })
+
+      expect(generatePullRequestFieldsFromContextMock).toHaveBeenCalledWith(
+        { ...PULL_REQUEST_CONTEXT, linkedIssue: 77 },
+        params,
+        expect.objectContaining({ kind: 'remote' })
+      )
+    })
+
+    it('ignores a pull-request worktree id that does not own the requested path', async () => {
+      const getWorktreeMeta = vi.fn(() => ({ linkedIssue: 123 }))
+
+      registerFilesystemHandlers({ ...store, getWorktreeMeta } as never)
+
+      await handlers.get('git:generatePullRequestFields')!(null, {
+        ...PULL_REQUEST_ARGS,
+        worktreePath: WORKTREE_FEATURE_PATH,
+        worktreeId: `repo-1::${path.resolve('/workspace/repo-other')}`
+      })
+
+      expect(getWorktreeMeta).not.toHaveBeenCalled()
+      expect(generatePullRequestFieldsFromContextMock.mock.calls[0]?.[0]).not.toHaveProperty(
+        'linkedIssue'
+      )
+    })
   })
 
   it('returns a sanitized error when local agent account preparation fails', async () => {

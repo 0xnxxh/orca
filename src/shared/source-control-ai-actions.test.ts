@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { CommitMessageDraftContext } from './commit-message-generation'
 import {
   formatLinkedIssueTemplateValue,
   normalizeSourceControlAiActionDefaults,
@@ -200,18 +201,26 @@ describe('source-control AI variable registry', () => {
 })
 
 describe('formatLinkedIssueTemplateValue', () => {
-  it('renders finite numbers as decimal strings', () => {
+  it('renders positive integers as decimal strings', () => {
     expect(formatLinkedIssueTemplateValue(123)).toBe('123')
-    expect(formatLinkedIssueTemplateValue(0)).toBe('0')
-    expect(formatLinkedIssueTemplateValue(-7)).toBe('-7')
-    expect(formatLinkedIssueTemplateValue(12.9)).toBe('12')
+    expect(formatLinkedIssueTemplateValue(1)).toBe('1')
   })
 
-  it('renders missing and non-finite values as an empty string', () => {
-    expect(formatLinkedIssueTemplateValue(null)).toBe('')
-    expect(formatLinkedIssueTemplateValue(undefined)).toBe('')
-    expect(formatLinkedIssueTemplateValue(Number.NaN)).toBe('')
-    expect(formatLinkedIssueTemplateValue(Number.POSITIVE_INFINITY)).toBe('')
+  it('renders anything that is not a positive integer as an empty string', () => {
+    // Why: `Fixes #-7` / `Fixes #1e+21` are worse output than `Fixes #`, so corrupt
+    // metadata degrades to the unlinked rendering instead of a nonsense reference.
+    for (const value of [
+      0,
+      -7,
+      12.9,
+      1e21,
+      null,
+      undefined,
+      Number.NaN,
+      Number.POSITIVE_INFINITY
+    ]) {
+      expect(formatLinkedIssueTemplateValue(value)).toBe('')
+    }
   })
 
   it('expands both brace forms and never leaves the token literal', () => {
@@ -230,12 +239,16 @@ describe('formatLinkedIssueTemplateValue', () => {
 })
 
 describe('withLinkedIssueDraftContext', () => {
-  it('attaches only finite numbers and leaves the context untouched otherwise', () => {
-    const context = { branch: 'main', stagedSummary: 'M a.ts', stagedPatch: 'diff' }
+  it('attaches only positive integers and leaves the context untouched otherwise', () => {
+    const context: CommitMessageDraftContext = {
+      branch: 'main',
+      stagedSummary: 'M a.ts',
+      stagedPatch: 'diff'
+    }
 
     expect(withLinkedIssueDraftContext(context, 42)).toEqual({ ...context, linkedIssue: 42 })
-    expect(withLinkedIssueDraftContext(context, null)).toBe(context)
-    expect(withLinkedIssueDraftContext(context, undefined)).toBe(context)
-    expect(withLinkedIssueDraftContext(context, Number.NaN)).toBe(context)
+    for (const value of [null, undefined, Number.NaN, 0, -7, 12.9]) {
+      expect(withLinkedIssueDraftContext(context, value)).toBe(context)
+    }
   })
 })
