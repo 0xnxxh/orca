@@ -9,6 +9,7 @@ import {
   isTerminalWritePipelineCertifiedDead,
   notifyUndeliverableWrite,
   registerUndeliverableWriteHandler,
+  requestTerminalWritePipelineProbe,
   settleTerminalWriteStallWatch,
   WRITE_PIPELINE_STALL_CHECK_MS
 } from './terminal-write-pipeline-health'
@@ -113,14 +114,15 @@ describe('terminal write pipeline health', () => {
     _resetWritePipelineHealthForTests(terminal)
   })
 
-  it('keeps a required probe armed through unrelated parse progress', () => {
+  it('keeps a requested probe armed through unrelated parse progress', () => {
     vi.useFakeTimers()
     const terminal = makeTerminal()
     terminal.dropCallbacks = true
     const handler = vi.fn()
     registerUndeliverableWriteHandler(terminal, handler)
 
-    armTerminalWriteStallWatch(terminal, { requireProbe: true })
+    armTerminalWriteStallWatch(terminal)
+    requestTerminalWritePipelineProbe(terminal)
     settleTerminalWriteStallWatch(terminal)
     vi.advanceTimersByTime(WRITE_PIPELINE_STALL_CHECK_MS * 2)
 

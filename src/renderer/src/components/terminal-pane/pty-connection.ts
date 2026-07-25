@@ -75,9 +75,9 @@ import {
   waitForTerminalReplayWritesParsed
 } from './replay-guard'
 import {
-  armTerminalWriteStallWatch,
   isTerminalWritePipelineCertifiedDead,
-  registerUndeliverableWriteHandler
+  registerUndeliverableWriteHandler,
+  requestTerminalWritePipelineProbe
 } from '@/lib/pane-manager/terminal-write-pipeline-health'
 import {
   captureTerminalPaneRecoveryGeneration,
@@ -3358,6 +3358,8 @@ export function connectPanePty(
   const MAX_DEFERRED_REATTACH_LIVE_CHUNKS = 1_024
   const markTerminalInputSent = (): void => {
     lastTerminalInputAt = performance.now()
+    // Why: input must probe a wedged xterm even when the PTY produces no renderer output.
+    requestTerminalWritePipelineProbe(pane.terminal)
   }
   const recordTerminalInputForHibernation = (): void => {
     useAppStore.getState().recordTerminalInput(cacheKey)
@@ -3605,10 +3607,6 @@ export function connectPanePty(
   // pre-existing session when a late reattach resolves, so a remount racing
   // a slow-but-alive connect costs a wasted view rebuild, not a shell.
   const TRANSPORT_CONNECT_SETTLE_GRACE_MS = 60_000
-  // Why: user input must probe a wedged xterm even when no PTY output reaches the renderer.
-  const armWritePipelineWatchForUserInput = (): void => {
-    armTerminalWriteStallWatch(pane.terminal, { requireProbe: true })
-  }
   const requestRecoveryForUndeliverableInput = (): void => {
     if (transport.isConnected?.() && transport.getPtyId() !== null) {
       return
@@ -3734,7 +3732,6 @@ export function connectPanePty(
       }
       clearPendingTerminalInputIntent()
       markTerminalInputSent()
-      armWritePipelineWatchForUserInput()
       const writePromise = transport
         .sendInputAccepted(data)
         .then((accepted) => {
@@ -3760,7 +3757,6 @@ export function connectPanePty(
       claimViewportForUserActivity()
       if (transport.sendInput(data)) {
         markAcceptedTerminalInputSent()
-        armWritePipelineWatchForUserInput()
         observeAcceptedShellCommandInput(data)
         observeAcceptedTerminalInput(data, intent)
       } else {
@@ -3772,7 +3768,6 @@ export function connectPanePty(
     claimViewportForUserActivity()
     if (transport.sendInput(data)) {
       markAcceptedTerminalInputSent()
-      armWritePipelineWatchForUserInput()
       observeAcceptedShellCommandInput(data)
       observeAcceptedTerminalInput(data)
       observeSentTerminalInputIntent(data)
