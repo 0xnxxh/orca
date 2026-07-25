@@ -400,7 +400,7 @@ jobs:
             # tag step keeps the literal input — so the shipped package.json
             # version and its own release tag would name different releases.
             if [[ ! "$1" =~ ^(0|[1-9][0-9]*|[0-9A-Za-z]*[A-Za-z][0-9A-Za-z]*)$ ]]; then
-              echo "::error::version suffix must be alphanumeric with no leading zero on an all-digit identifier, got: $1" >&2
+              echo "::error::version_suffix (or the trailing .identifier in version) must be alphanumeric with no leading zero on an all-digit identifier, got: $1" >&2
               exit 1
             fi
           }
@@ -522,10 +522,12 @@ jobs:
             # machine-width integers, so both ends of that range fall *open* on
             # exactly the RCs this gate must catch. A leading zero (rc.08) is an
             # invalid octal literal, and the failed test makes the `if` false.
-            # Past INTMAX (rc.99999999999999999999) bash saturates, so the test
-            # reads as "above the published rc" and the cut lands a tag that
-            # then pins highest_rc_for_base at 1e20 forever — every later cut
-            # wraps to a *lower* rc the fleet never updates to. Nine digits is
+            # Past INTMAX the literal wraps two's-complement, so whether it
+            # reads as above or below the published rc depends on the value:
+            # rc.99999999999999999999 wraps to 7766279631452241919 and sails
+            # through. The cut then lands a tag that pins highest_rc_for_base
+            # at 1e20 forever, and every later cut wraps to a *lower* rc that
+            # sorts below it, so the fleet never updates again. Nine digits is
             # far above any real series and exact in bash math either way.
             if [[ ! "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.(0|[1-9][0-9]{0,8})(\.[0-9A-Za-z]+)?)?$ ]]; then
               echo "::error::version must be X.Y.Z, X.Y.Z-rc.N, or X.Y.Z-rc.N.suffix, got: $EXPLICIT_VERSION" >&2
@@ -557,7 +559,12 @@ jobs:
               explicit_rc="${explicit_rc%%.*}"
               highest_explicit_rc="$(highest_rc_for_base "$explicit_base")"
               if [[ -n "$highest_explicit_rc" && "$explicit_rc" -le "$highest_explicit_rc" ]]; then
-                echo "::error::Refusing explicit version $explicit: rc.$explicit_rc is not above rc.$highest_explicit_rc, the highest already cut for $explicit_base. Request rc.$((highest_explicit_rc + 1)) or higher; to resume an unpublished tag in this series, dispatch kind=rc instead." >&2
+                # Why the remedy is spelled this narrowly: kind=rc derives its
+                # base from bump(latest_stable, patch), so it can only resume a
+                # series on that base. A minor/major series (1.5.0-rc.N) exists
+                # only because this override created it, and pointing an
+                # operator at kind=rc there would cut an unrelated release.
+                echo "::error::Refusing explicit version $explicit: rc.$explicit_rc is not above rc.$highest_explicit_rc, the highest already cut for $explicit_base. Request rc.$((highest_explicit_rc + 1)) or higher. If you are resuming an unpublished tag and $explicit_base is the next patch after latest stable $latest_stable, dispatch kind=rc instead, which recovers the existing tag; otherwise cut rc.$((highest_explicit_rc + 1)) and leave the unpublished tag alone." >&2
                 exit 1
               fi
             fi
