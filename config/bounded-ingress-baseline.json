@@ -1,5 +1,7 @@
 {
   "allowed": {
+    "mobile/app/h/[hostId]/session/[worktreeId].tsx:json-stringify": 1,
+    "mobile/app/index.tsx:json-parse": 1,
     "mobile/src/cache/home-snapshot-cache.ts:json-parse": 1,
     "mobile/src/cache/home-snapshot-cache.ts:json-stringify": 1,
     "mobile/src/components/CustomKeyModal.tsx:json-parse": 1,
