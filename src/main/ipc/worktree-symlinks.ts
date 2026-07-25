@@ -8,11 +8,19 @@ import {
   type ApfsCloneDeps,
   type DarwinFilesystemCache
 } from './worktree-apfs-clone'
+import {
+  createWorktreeCopyBudgetTracker,
+  type SkippedWorktreeCopyPath,
+  type WorktreeCopyBudget
+} from './worktree-include-copy-budget'
 
 type WorktreeLinkedPathOptions = {
   platform?: NodeJS.Platform
   cloneWorktreePath?: (source: string, target: string, sourceIsDirectory: boolean) => Promise<void>
   apfsCloneDeps?: ApfsCloneDeps
+  /** Copy-mode only. Overridable so tests can trip the bound without writing
+   *  gigabytes to disk. */
+  copyBudget?: WorktreeCopyBudget
 }
 
 // 'link': symlink when APFS clone is unavailable (user-configured shared paths).
@@ -66,6 +74,7 @@ async function copyWorktreePath(source: string, target: string): Promise<void> {
 
 async function createWorktreeLinkedPath(
   source: string,
+  copySource: string,
   target: string,
   sourceIsDirectory: boolean,
   sourceIsSymbolicLink: boolean,
@@ -73,11 +82,6 @@ async function createWorktreeLinkedPath(
   options: WorktreeLinkedPathOptions,
   apfsFilesystemCache: DarwinFilesystemCache
 ): Promise<void> {
-  // Why: copy mode promises each worktree an independent copy; copying the
-  // symlink itself would recreate a link to the shared target, so edits in the
-  // worktree would leak back into the primary checkout (or escape it entirely if
-  // the link points outside). Resolve the real source so we copy content.
-  const copySource = mode === 'copy' && sourceIsSymbolicLink ? await realpath(source) : source
   if (options.platform === 'darwin' && (!sourceIsSymbolicLink || mode === 'copy')) {
     try {
       const cloneWorktreePath =
@@ -128,11 +132,15 @@ async function materializeWorktreePaths(
   paths: readonly string[],
   mode: WorktreeMaterializeMode,
   options: WorktreeLinkedPathOptions = {}
-): Promise<void> {
+): Promise<SkippedWorktreeCopyPath[]> {
   const effectiveOptions = { platform: process.platform, ...options }
   // Why: one df+diskutil probe per distinct volume for the whole materialization,
   // not per copied path — see DarwinFilesystemCache.
   const apfsFilesystemCache: DarwinFilesystemCache = new Map()
+  // Why: one budget for the whole materialization, so a hundred medium entries
+  // are refused for the same reason one `node_modules` entry is.
+  const copyBudget = createWorktreeCopyBudgetTracker(options.copyBudget)
+  const skipped: SkippedWorktreeCopyPath[] = []
 
   for (const rawPath of paths) {
     const safePath = getSafeRelativePath(rawPath)
@@ -163,9 +171,37 @@ async function materializeWorktreePaths(
       continue
     }
 
+    // Why: copy mode promises each worktree an independent copy; copying the
+    // symlink itself would recreate a link to the shared target, so edits in the
+    // worktree would leak back into the primary checkout (or escape it entirely if
+    // the link points outside). Resolve the real source so we copy content.
+    let copySource = source
+    if (mode === 'copy') {
+      try {
+        if (sourceIsSymbolicLink) {
+          copySource = await realpath(source)
+        }
+        const verdict = await copyBudget.admit(copySource)
+        if (!verdict.withinBudget) {
+          // Why: refuse before the first byte is written. Aborting mid-copy is
+          // not available (`fs.cp` ignores its `signal`) and would strand a
+          // partial tree; the caller surfaces this as a create warning.
+          skipped.push({ path: safePath.rel, reason: verdict.reason })
+          console.warn(
+            `[worktree-symlinks] Skipping "${safePath.rel}": copy exceeds the worktree copy budget (${verdict.reason})`
+          )
+          continue
+        }
+      } catch (error) {
+        console.error(`[worktree-symlinks] Failed to size "${safePath.rel}" (${source}):`, error)
+        continue
+      }
+    }
+
     try {
       await createWorktreeLinkedPath(
         source,
+        copySource,
         target,
         sourceIsDirectory,
         sourceIsSymbolicLink,
@@ -180,6 +216,7 @@ async function materializeWorktreePaths(
       )
     }
   }
+  return skipped
 }
 
 export async function createWorktreeLinkedPaths(
@@ -194,14 +231,18 @@ export async function createWorktreeLinkedPaths(
 /** Copy `.worktreeinclude`-resolved paths from the primary checkout into a
  *  freshly-created worktree. Same per-path failure isolation as
  *  createWorktreeLinkedPaths, but the non-APFS fallback is a real copy, never a
- *  symlink: the convention promises each worktree its own private copy. */
+ *  symlink: the convention promises each worktree its own private copy.
+ *
+ *  Returns the entries refused by the copy budget so worktree creation can
+ *  surface them — a workspace quietly missing its included files is worse than
+ *  one that says which entries it left behind. */
 export async function createWorktreeCopiedPaths(
   primaryPath: string,
   worktreePath: string,
   paths: readonly string[],
   options: WorktreeLinkedPathOptions = {}
-): Promise<void> {
-  await materializeWorktreePaths(primaryPath, worktreePath, paths, 'copy', options)
+): Promise<SkippedWorktreeCopyPath[]> {
+  return await materializeWorktreePaths(primaryPath, worktreePath, paths, 'copy', options)
 }
 
 /** Create filesystem symlinks from the primary checkout into a freshly-created
