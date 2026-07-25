@@ -230,10 +230,10 @@ describe('usePrimarySelectionPaste', () => {
     expect(readPrimarySelectionTextMock).not.toHaveBeenCalled()
   })
 
-  it('lets a keyboard paste through once the armed follow-up has been consumed', async () => {
+  it('re-asks per paste event instead of caching the first suppression answer', async () => {
     setUserAgent('Mozilla/5.0 (X11; Linux x86_64)')
-    // Single-shot: the arm owes one follow-up, so a real Ctrl+V that lands
-    // inside the same window must reach the terminal.
+    // Single-shot lives in the module, which is mocked here; this only pins that
+    // the hook asks once per event, so the real one-shot answer is honored.
     consumeNativePasteMock.mockReturnValueOnce(true).mockReturnValue(false)
     await renderProbe()
     const terminalTextarea = appendXtermHelperTextarea()
@@ -269,6 +269,9 @@ describe('usePrimarySelectionPaste', () => {
 
     expect(nativeBeforeInput.defaultPrevented).toBe(false)
     expect(nativePaste.defaultPrevented).toBe(false)
+    // Consuming mutates, so the target check must short-circuit first: an
+    // unrelated paste that burned the arm would let the follow-up double-paste.
+    expect(consumeNativePasteMock).not.toHaveBeenCalled()
   })
 
   it('does not suppress native paste when the terminal has not armed the window', async () => {

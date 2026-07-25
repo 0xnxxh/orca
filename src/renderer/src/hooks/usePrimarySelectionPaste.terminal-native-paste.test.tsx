@@ -58,6 +58,14 @@ function dispatchPaste(target: HTMLElement): Event {
   return event
 }
 
+// Why: `paste` is the event that actually reaches the PTY — xterm forwards from
+// a `paste` listener and never listens to `beforeinput`.
+function dispatchClipboardPaste(target: HTMLElement): Event {
+  const event = new Event('paste', { bubbles: true, cancelable: true })
+  target.dispatchEvent(event)
+  return event
+}
+
 beforeEach(() => {
   resetPrimarySelectionForTests()
   setUserAgent('Mozilla/5.0 (X11; Linux x86_64)')
@@ -88,6 +96,22 @@ describe('terminal-armed native paste suppression', () => {
     await act(async () => {
       nativeFollowUp = dispatchPaste(terminalTextarea)
       keyboardPaste = dispatchPaste(terminalTextarea)
+    })
+
+    expect(nativeFollowUp.defaultPrevented).toBe(true)
+    expect(keyboardPaste.defaultPrevented).toBe(false)
+  })
+
+  it('swallows one clipboard paste per arm, the event xterm forwards to the PTY', async () => {
+    await renderProbe()
+    const terminalTextarea = appendXtermHelperTextarea()
+    armPrimarySelectionNativePasteSuppression()
+    let nativeFollowUp!: Event
+    let keyboardPaste!: Event
+
+    await act(async () => {
+      nativeFollowUp = dispatchClipboardPaste(terminalTextarea)
+      keyboardPaste = dispatchClipboardPaste(terminalTextarea)
     })
 
     expect(nativeFollowUp.defaultPrevented).toBe(true)
