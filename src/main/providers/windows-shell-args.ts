@@ -96,9 +96,8 @@ function getPowerShellEncodedCommand(
   encodedCommand: string
   startupCommandDeliveredInShellArgs?: boolean
 } {
-  // Why: cwd restore runs FIRST so shell-integration setup failing — or being
-  // skipped entirely under ConstrainedLanguage — can never strand the terminal
-  // in the wrong directory. Set-Location is permitted in ConstrainedLanguage.
+  // Why: cwd restore runs first so shell integration failing — or being skipped
+  // under ConstrainedLanguage — cannot strand the terminal in the wrong directory.
   const bootstrap = `${getPowerShellRestoreCwdCommand(cwd)}${getPowerShellOsc133Bootstrap()}`
   if (!startupCommand || startupCommand.length > STARTUP_COMMAND_TEXT_MAX_CHARS) {
     return { encodedCommand: encodePowerShellCommand(bootstrap) }

@@ -69,12 +69,10 @@ if ($Global:__OrcaOsc133State.HasPSReadLine -and
 `
 
 export function getPowerShellOsc133Bootstrap(): string {
-  // Why: the guards above exit with a top-level `return`, which aborts the
-  // ENTIRE -EncodedCommand payload — not just this bootstrap. Callers append
-  // the cwd restore and the user's startup command to the same payload, so on a
-  // ConstrainedLanguage host (WDAC/AppLocker) those were silently dropped.
-  // Dot-sourcing a scriptblock scopes `return` to the block while still running
-  // in the caller's scope, so unscoped state like $OutputEncoding stays global.
+  // Why: the guards above `return`, which at top level aborts the whole
+  // -EncodedCommand payload — including the cwd restore and startup command
+  // callers append. Dot-sourcing scopes `return` to the block while still
+  // running in the caller's scope, so $OutputEncoding stays global.
   return `. {\n${POWERSHELL_OSC133_BOOTSTRAP}}\n`
 }
 

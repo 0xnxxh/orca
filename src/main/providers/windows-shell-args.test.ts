@@ -131,11 +131,8 @@ describe('resolveWindowsShellLaunchArgs', () => {
   })
 
   it('runs cwd restore and startup command outside the shell-integration guards', () => {
-    // Why: the OSC 133 bootstrap bails with a top-level `return` when the host
-    // runs in ConstrainedLanguage (WDAC/AppLocker). Both the cwd restore and
-    // the startup command must sit outside that guarded block, or a managed
-    // host silently opens the terminal in the wrong directory and never runs
-    // the startup command.
+    // Why: on a ConstrainedLanguage host (WDAC/AppLocker) the bootstrap bails,
+    // so both must sit outside its guarded block to survive.
     const startupCommand = "& 'codex' '--no-alt-screen'"
     const result = resolveWindowsShellLaunchArgs(
       'powershell.exe',
@@ -157,11 +154,8 @@ describe('resolveWindowsShellLaunchArgs', () => {
     expect(cwdRestoreIndex).toBeGreaterThanOrEqual(0)
     expect(guardBlockIndex).toBeGreaterThanOrEqual(0)
     expect(languageModeGuardIndex).toBeGreaterThanOrEqual(0)
-    // cwd restore precedes the guarded block entirely.
     expect(cwdRestoreIndex).toBeLessThan(guardBlockIndex)
-    // the guards live inside that block, not at script top level.
     expect(guardBlockIndex).toBeLessThan(languageModeGuardIndex)
-    // the startup command trails the block's closing brace.
     expect(command.lastIndexOf('}')).toBeLessThan(command.indexOf(startupCommand))
     expect(command.trimEnd().endsWith(startupCommand)).toBe(true)
   })
