@@ -971,6 +971,21 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       legacy.dispose()
     })
 
+    it('reports a null foreground as idle, matching what the legacy daemon can report', async () => {
+      // Why: pins the one response shape whose semantics differ from v27, where inspectProcess goes
+      // through getAliveSession() and throws for a vanished session while getForegroundProcess stays
+      // null-not-throw. Reading it as idle is deliberate — this is also the only shape that reaches a
+      // user-visible completion — so the divergence must not change silently.
+      const legacy = createLegacyAdapter(vi.fn(async () => ({ foregroundProcess: null })))
+
+      expect(await legacy.inspectProcess('sess-a')).toEqual({
+        foregroundProcess: null,
+        hasChildProcesses: false
+      })
+
+      legacy.dispose()
+    })
+
     it('rejects rather than reading as idle when the daemon call fails', async () => {
       // Why: getForegroundProcess swallows errors into null; composing through it would turn a dead
       // socket into a false "agent exited" completion, the mirror of the bug this path fixes.
