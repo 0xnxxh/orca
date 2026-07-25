@@ -18,7 +18,14 @@ beforeEach(() => {
   vi.resetModules()
   testState.userData = mkdtempSync(join(tmpdir(), 'orca-codex-status-home-ud-'))
   testState.home = mkdtempSync(join(tmpdir(), 'orca-codex-status-home-'))
-  for (const key of ['ORCA_USER_DATA_PATH', 'ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME']) {
+  // Why: the real-home check consults CODEX_HOME and the shell rc, so a
+  // developer who exports one would otherwise fail this suite locally.
+  for (const key of [
+    'ORCA_USER_DATA_PATH',
+    'ORCA_CODEX_SYSTEM_DEFAULT_REAL_HOME',
+    'CODEX_HOME',
+    'ORCA_CODEX_HOME'
+  ]) {
     previousEnv[key] = process.env[key]
     delete process.env[key]
   }
