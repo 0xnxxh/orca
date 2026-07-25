@@ -50,6 +50,31 @@ describe('planSourceControlCommitMessageGeneration', () => {
     expect(result.ok && result.commandLabel).toContain('codex exec')
   })
 
+  it('expands linkedIssue in commit and pull-request plan previews', () => {
+    for (const actionId of ['commitMessage', 'pullRequest'] as const) {
+      // Why: `{prompt}` puts the rendered template in argv, so commandLabel shows it.
+      const result = planSourceControlTextGeneration(actionId, {
+        agentId: 'custom',
+        model: '',
+        customAgentCommand: 'echo {prompt}',
+        commandInputTemplate: 'Fixes #{linkedIssue}'
+      })
+
+      expect(result.ok && result.commandLabel).toBe('echo Fixes #123')
+    }
+  })
+
+  it('leaves linkedIssue literal in branch-name plan previews', () => {
+    const result = planSourceControlTextGeneration('branchName', {
+      agentId: 'custom',
+      model: '',
+      customAgentCommand: 'echo {prompt}',
+      commandInputTemplate: 'issue {linkedIssue}'
+    })
+
+    expect(result.ok && result.commandLabel).toBe('echo issue {linkedIssue}')
+  })
+
   it('shows per-action CLI arguments in dry-run command labels', () => {
     const result = planSourceControlTextGeneration('pullRequest', {
       agentId: 'codex',

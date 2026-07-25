@@ -2056,6 +2056,91 @@ describe('registerFilesystemHandlers', () => {
     })
   })
 
+  it('enriches the local commit context with a validated worktree linked issue', async () => {
+    const context = {
+      branch: 'feature/ai',
+      stagedSummary: 'M\tREADME.md',
+      stagedPatch: '+hello'
+    }
+    const params = { agentId: 'codex', model: 'gpt-5.4-mini' }
+    const worktreeId = `repo-1::${WORKTREE_FEATURE_PATH}`
+    resolveCommitMessageSettingsMock.mockReturnValue({ ok: true, params })
+    getStagedCommitContextMock.mockResolvedValue(context)
+    generateCommitMessageFromContextMock.mockResolvedValue({ success: true, message: 'Update' })
+    const linkedStore = {
+      ...store,
+      getWorktreeMeta: (id: string) => (id === worktreeId ? { linkedIssue: 123 } : undefined)
+    }
+
+    registerFilesystemHandlers(linkedStore as never)
+
+    await handlers.get('git:generateCommitMessage')!(null, {
+      worktreePath: WORKTREE_FEATURE_PATH,
+      worktreeId
+    })
+
+    expect(generateCommitMessageFromContextMock).toHaveBeenCalledWith(
+      { ...context, linkedIssue: 123 },
+      params,
+      expect.objectContaining({ kind: 'local' })
+    )
+  })
+
+  it('ignores a worktree id that does not own the requested worktree path', async () => {
+    const context = {
+      branch: 'feature/ai',
+      stagedSummary: 'M\tREADME.md',
+      stagedPatch: '+hello'
+    }
+    const params = { agentId: 'codex', model: 'gpt-5.4-mini' }
+    const getWorktreeMeta = vi.fn(() => ({ linkedIssue: 123 }))
+    resolveCommitMessageSettingsMock.mockReturnValue({ ok: true, params })
+    getStagedCommitContextMock.mockResolvedValue(context)
+    generateCommitMessageFromContextMock.mockResolvedValue({ success: true, message: 'Update' })
+
+    registerFilesystemHandlers({ ...store, getWorktreeMeta } as never)
+
+    await handlers.get('git:generateCommitMessage')!(null, {
+      worktreePath: WORKTREE_FEATURE_PATH,
+      worktreeId: `repo-1::${path.resolve('/workspace/repo-other')}`
+    })
+
+    expect(getWorktreeMeta).not.toHaveBeenCalled()
+    expect(generateCommitMessageFromContextMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      'linkedIssue'
+    )
+  })
+
+  it('enriches the SSH commit context from host meta using the remote path', async () => {
+    const context = { branch: 'main', stagedSummary: 'A\tremote.txt', stagedPatch: '+remote' }
+    const params = { agentId: 'custom', model: '', customAgentCommand: 'agent' }
+    const worktreeId = 'repo-1::/remote/repo'
+    resolveCommitMessageSettingsMock.mockReturnValue({ ok: true, params })
+    getSshGitProviderMock.mockReturnValue({
+      getStagedCommitContext: vi.fn().mockResolvedValue(context),
+      executeCommitMessagePlan: vi.fn()
+    })
+    generateCommitMessageFromContextMock.mockResolvedValue({ success: true, message: 'Add file' })
+    const linkedStore = {
+      ...store,
+      getWorktreeMeta: (id: string) => (id === worktreeId ? { linkedIssue: 77 } : undefined)
+    }
+
+    registerFilesystemHandlers(linkedStore as never)
+
+    await handlers.get('git:generateCommitMessage')!(null, {
+      worktreePath: '/remote/repo',
+      worktreeId,
+      connectionId: 'conn-1'
+    })
+
+    expect(generateCommitMessageFromContextMock).toHaveBeenCalledWith(
+      { ...context, linkedIssue: 77 },
+      params,
+      expect.objectContaining({ kind: 'remote' })
+    )
+  })
+
   it('returns a sanitized error when local agent account preparation fails', async () => {
     const context = {
       branch: 'feature/ai',

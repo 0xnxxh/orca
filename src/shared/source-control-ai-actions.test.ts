@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  formatLinkedIssueTemplateValue,
   normalizeSourceControlAiActionDefaults,
+  SOURCE_CONTROL_ACTION_VARIABLE_INFO,
   SOURCE_CONTROL_ACTION_VARIABLES,
   SOURCE_CONTROL_LAUNCH_ACTION_IDS,
   SOURCE_CONTROL_LAUNCH_ACTION_LABELS,
@@ -8,7 +10,8 @@ import {
   readSourceControlActionDefault,
   renderSourceControlActionCommandTemplate,
   resolveSourceControlActionCommandTemplate,
-  setSourceControlActionAgentDefault
+  setSourceControlActionAgentDefault,
+  withLinkedIssueDraftContext
 } from './source-control-ai-actions'
 
 describe('source-control AI launch action defaults', () => {
@@ -167,5 +170,72 @@ describe('source-control AI launch action defaults', () => {
         thing: 'CI'
       })
     ).toBe('use {constructor} and {toString}')
+  })
+})
+
+describe('source-control AI variable registry', () => {
+  it('documents every registered variable so chip hover cards cannot crash', () => {
+    const undocumented = [...new Set(Object.values(SOURCE_CONTROL_ACTION_VARIABLES).flat())].filter(
+      (variable) => SOURCE_CONTROL_ACTION_VARIABLE_INFO[variable] === undefined
+    )
+
+    expect(undocumented).toEqual([])
+  })
+
+  it('offers linkedIssue on commit message and pull request only', () => {
+    expect(SOURCE_CONTROL_ACTION_VARIABLES.commitMessage).toContain('linkedIssue')
+    expect(SOURCE_CONTROL_ACTION_VARIABLES.pullRequest).toContain('linkedIssue')
+    expect(SOURCE_CONTROL_ACTION_VARIABLES.branchName).not.toContain('linkedIssue')
+    for (const actionId of SOURCE_CONTROL_LAUNCH_ACTION_IDS) {
+      expect(SOURCE_CONTROL_ACTION_VARIABLES[actionId]).not.toContain('linkedIssue')
+    }
+  })
+
+  it('names GitHub and the empty case in the linkedIssue description', () => {
+    const info = SOURCE_CONTROL_ACTION_VARIABLE_INFO.linkedIssue
+    expect(info.description).toContain('GitHub')
+    expect(info.description).toContain('Empty')
+    expect(info.example).toBe('123')
+  })
+})
+
+describe('formatLinkedIssueTemplateValue', () => {
+  it('renders finite numbers as decimal strings', () => {
+    expect(formatLinkedIssueTemplateValue(123)).toBe('123')
+    expect(formatLinkedIssueTemplateValue(0)).toBe('0')
+    expect(formatLinkedIssueTemplateValue(-7)).toBe('-7')
+    expect(formatLinkedIssueTemplateValue(12.9)).toBe('12')
+  })
+
+  it('renders missing and non-finite values as an empty string', () => {
+    expect(formatLinkedIssueTemplateValue(null)).toBe('')
+    expect(formatLinkedIssueTemplateValue(undefined)).toBe('')
+    expect(formatLinkedIssueTemplateValue(Number.NaN)).toBe('')
+    expect(formatLinkedIssueTemplateValue(Number.POSITIVE_INFINITY)).toBe('')
+  })
+
+  it('expands both brace forms and never leaves the token literal', () => {
+    const template = 'Fixes #{linkedIssue} / {{ linkedIssue }}'
+    expect(
+      renderSourceControlActionCommandTemplate(template, {
+        linkedIssue: formatLinkedIssueTemplateValue(42)
+      })
+    ).toBe('Fixes #42 / 42')
+    expect(
+      renderSourceControlActionCommandTemplate(template, {
+        linkedIssue: formatLinkedIssueTemplateValue(null)
+      })
+    ).toBe('Fixes # / ')
+  })
+})
+
+describe('withLinkedIssueDraftContext', () => {
+  it('attaches only finite numbers and leaves the context untouched otherwise', () => {
+    const context = { branch: 'main', stagedSummary: 'M a.ts', stagedPatch: 'diff' }
+
+    expect(withLinkedIssueDraftContext(context, 42)).toEqual({ ...context, linkedIssue: 42 })
+    expect(withLinkedIssueDraftContext(context, null)).toBe(context)
+    expect(withLinkedIssueDraftContext(context, undefined)).toBe(context)
+    expect(withLinkedIssueDraftContext(context, Number.NaN)).toBe(context)
   })
 })

@@ -23,7 +23,8 @@ const SYNTHETIC_TEXT_GENERATION_CONTEXT: Record<
     basePrompt: SYNTHETIC_COMMIT_PROMPT,
     branch: 'feature/example',
     stagedFiles: 'M src/example.ts',
-    stagedPatch: 'diff --git a/src/example.ts b/src/example.ts'
+    stagedPatch: 'diff --git a/src/example.ts b/src/example.ts',
+    linkedIssue: '123'
   },
   pullRequest: {
     basePrompt: SYNTHETIC_PULL_REQUEST_PROMPT,
@@ -33,7 +34,8 @@ const SYNTHETIC_TEXT_GENERATION_CONTEXT: Record<
     currentBody: 'Draft description',
     commitSummary: 'a1b2c3d Add source-control AI recipes',
     changedFiles: 'src/example.ts | 12 ++++++++++--',
-    patch: 'diff --git a/src/example.ts b/src/example.ts'
+    patch: 'diff --git a/src/example.ts b/src/example.ts',
+    linkedIssue: '123'
   },
   branchName: {
     basePrompt: 'Generate a git branch name for a synthetic task.',

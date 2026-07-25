@@ -24,6 +24,7 @@ import {
   type ResolvedSourceControlAiGenerationParams
 } from '../../shared/source-control-ai'
 import type { SourceControlAiOperation } from '../../shared/source-control-ai-types'
+import { withLinkedIssueDraftContext } from '../../shared/source-control-ai-actions'
 import type { GitProviderStatusOptions } from '../providers/types'
 import { getRemoteCommitUrl, getRemoteFileUrl } from '../git/repo'
 import {
@@ -615,6 +616,7 @@ export class RuntimeGitCommands {
       if (!context) {
         return { success: false, error: 'No staged changes to summarize.' }
       }
+      context = withLinkedIssueDraftContext(context, target.worktree.linkedIssue)
       return generateCommitMessageFromContext(context, resolvedSettings.params, {
         kind: 'remote',
         cwd: target.worktree.path,
@@ -634,6 +636,7 @@ export class RuntimeGitCommands {
     if (!context) {
       return { success: false, error: 'No staged changes to summarize.' }
     }
+    context = withLinkedIssueDraftContext(context, target.worktree.linkedIssue)
     const localEnv = await prepareLocalCommitMessageAgentEnv(
       resolvedSettings.params.agentId,
       this.host.getCommitMessageAgentEnvironment?.(),
@@ -738,6 +741,8 @@ export class RuntimeGitCommands {
     if (!context) {
       return { success: false, error: 'No branch changes to summarize.' }
     }
+    // Why: both SSH and local branches share this context, so one attach covers each.
+    context = withLinkedIssueDraftContext(context, target.worktree.linkedIssue)
 
     if (target.connectionId) {
       return generatePullRequestFieldsFromContext(context, resolvedSettings.params, {

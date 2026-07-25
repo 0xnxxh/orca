@@ -76,7 +76,7 @@ export const DEFAULT_SOURCE_CONTROL_ACTION_COMMAND_TEMPLATES: Record<
 }
 
 export const SOURCE_CONTROL_ACTION_VARIABLES: Record<SourceControlActionId, string[]> = {
-  commitMessage: ['basePrompt', 'branch', 'stagedFiles', 'stagedPatch'],
+  commitMessage: ['basePrompt', 'branch', 'stagedFiles', 'stagedPatch', 'linkedIssue'],
   pullRequest: [
     'basePrompt',
     'branch',
@@ -85,7 +85,8 @@ export const SOURCE_CONTROL_ACTION_VARIABLES: Record<SourceControlActionId, stri
     'currentBody',
     'commitSummary',
     'changedFiles',
-    'patch'
+    'patch',
+    'linkedIssue'
   ],
   branchName: ['basePrompt', 'firstPrompt', 'assistantMessage'],
   fixCommitFailure: ['basePrompt'],
@@ -152,8 +153,36 @@ export const SOURCE_CONTROL_ACTION_VARIABLE_INFO: Record<string, SourceControlAc
     assistantMessage: {
       description: 'The initial agent response, when Orca has one available.',
       example: 'I will inspect the failing check, patch the issue, and run tests.'
+    },
+    linkedIssue: {
+      description:
+        'The GitHub issue number linked to this workspace. Empty when no GitHub issue is linked (including GitLab-linked workspaces). Prefer instructional templates: a bare "Fixes #{linkedIssue}" becomes "Fixes #" when unlinked.',
+      example: '123'
     }
   }
+
+/**
+ * Render the workspace-linked GitHub issue for template substitution. Non-numbers
+ * become `''` so the token expands to nothing instead of leaking into the prompt.
+ */
+export function formatLinkedIssueTemplateValue(linkedIssue: number | null | undefined): string {
+  return typeof linkedIssue === 'number' && Number.isFinite(linkedIssue)
+    ? String(Math.trunc(linkedIssue))
+    : ''
+}
+
+/**
+ * Attach a resolved issue number to a draft context. Returns the context untouched
+ * when nothing resolves, so unlinked workspaces keep their existing context shape.
+ */
+export function withLinkedIssueDraftContext<T extends object>(
+  context: T,
+  linkedIssue: number | null | undefined
+): T {
+  return typeof linkedIssue === 'number' && Number.isFinite(linkedIssue)
+    ? { ...context, linkedIssue }
+    : context
+}
 
 const ACTION_ID_SET = new Set<string>(SOURCE_CONTROL_ACTION_IDS)
 
