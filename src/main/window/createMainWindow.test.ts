@@ -531,6 +531,58 @@ describe('createMainWindow', () => {
     expect(browserWindowInstance.setSize).not.toHaveBeenCalled()
   })
 
+  it('still reflows a maximized macOS 26 window, which the size nudge had to skip', () => {
+    vi.useFakeTimers()
+    macosTahoeMock.value = true
+    const windowHandlers = new Map<string, ((...args: any[]) => void)[]>()
+    const webContents = {
+      on: vi.fn(),
+      setZoomLevel: vi.fn(),
+      setBackgroundThrottling: vi.fn(),
+      invalidate: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      setWindowOpenHandler: vi.fn(),
+      send: vi.fn(),
+      isDevToolsOpened: vi.fn(),
+      openDevTools: vi.fn(),
+      closeDevTools: vi.fn(),
+      enableDeviceEmulation: vi.fn(),
+      disableDeviceEmulation: vi.fn()
+    }
+    const browserWindowInstance = {
+      webContents,
+      on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+        const handlers = windowHandlers.get(event) ?? []
+        handlers.push(handler)
+        windowHandlers.set(event, handlers)
+      }),
+      isDestroyed: vi.fn(() => false),
+      // Why: the maximized/fullscreen bail-out only ever protected setSize from un-maximizing
+      // the window; emulation leaves the frame alone, so the reflow must still happen here.
+      isMaximized: vi.fn(() => true),
+      isFullScreen: vi.fn(() => true),
+      getSize: vi.fn(() => [1200, 800]),
+      getContentSize: vi.fn(() => [1200, 800]),
+      setSize: vi.fn(),
+      maximize: vi.fn(),
+      show: vi.fn(),
+      loadFile: vi.fn(),
+      loadURL: vi.fn()
+    }
+    browserWindowMock.mockImplementation(function () {
+      return browserWindowInstance
+    })
+
+    withPlatform('darwin', () => createMainWindow(null))
+
+    windowHandlers.get('show')?.[0]?.()
+    vi.advanceTimersByTime(300)
+
+    expect(webContents.enableDeviceEmulation).toHaveBeenCalled()
+    expect(webContents.disableDeviceEmulation).toHaveBeenCalled()
+    expect(browserWindowInstance.setSize).not.toHaveBeenCalled()
+  })
+
   it('reflows without the size nudge when macOS 26 wakes from sleep', () => {
     vi.useFakeTimers()
     macosTahoeMock.value = true

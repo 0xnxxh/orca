@@ -61,13 +61,15 @@ function forceRepaint(window: BrowserWindow): void {
     return
   }
   window.webContents.invalidate()
-  if (window.isMaximized() || window.isFullScreen() || activeRepaintJiggles.has(window)) {
-    return
-  }
   // Why: macOS 26 scene-backed windows deadlock the main thread on frame mutation, but invalidate
   // alone never reflows the dvh root (STA-2383); emulation reflows without touching the frame.
+  // Runs before the maximized/fullscreen bail-out below, which only exists to protect setSize —
+  // emulation leaves those states intact, and a maximized window goes stale just the same.
   if (isMacosTahoeOrNewer()) {
     reflowRendererViewport(window)
+    return
+  }
+  if (window.isMaximized() || window.isFullScreen() || activeRepaintJiggles.has(window)) {
     return
   }
   activeRepaintJiggles.add(window)
