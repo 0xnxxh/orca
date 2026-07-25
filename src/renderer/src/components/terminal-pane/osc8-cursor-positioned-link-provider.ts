@@ -227,6 +227,13 @@ export function createOsc8CursorPositionedLinkProvider(deps: Osc8LinkProviderDep
             // Why: xterm defaults these on, but state them so a wrapped link is
             // decorated identically to the single-row links its own provider
             // reports — the whole point is that the two look the same.
+            //
+            // Underline plus pointer, with no recoloring: xterm draws the
+            // underline in the cell's own foreground, so it adapts to any theme.
+            // Ghostty settled on the same restraint — a hardcoded single
+            // underline coloured `underlineColor(palette) orelse fg`, with no
+            // link-specific colour and no config to change it — which is why
+            // Orca exposes no link-appearance setting either.
             decorations: { pointerCursor: true, underline: true },
             activate: (event) => deps.onActivate(event, url, range),
             hover: (event) => deps.onHover(event, url, range),
