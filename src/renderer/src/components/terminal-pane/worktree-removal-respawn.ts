@@ -28,6 +28,28 @@ export const WORKTREE_REMOVAL_RESPAWN_FALLBACK_MS = 4_000
 export const WORKTREE_REMOVAL_SPAWN_BLOCKED_MESSAGE =
   'This terminal could not start: a workspace deletion is still blocking new shells. Reopen this tab once the deletion finishes or is cancelled.'
 
+// Why NOT getKnownWorktreeById: it falls back to `detectedWorktreesByRepo`, which
+// is the repo's full on-disk worktree scan (registered rows carry `visible: true`)
+// and which removeWorktree never prunes. A successfully deleted workspace stays
+// resolvable there until the next detection refresh, so reading it would respawn a
+// shell into the directory that was just deleted. Only consult the maps the
+// removal clears in the same set() as the deletion.
+export function isWorkspaceStillRegistered(
+  state: {
+    worktreesByRepo?: Record<string, readonly { id: string }[] | undefined>
+    folderWorkspaces?: readonly { id: string }[]
+  },
+  workspaceId: string,
+  folderWorkspaceId: string | null
+): boolean {
+  if (folderWorkspaceId !== null) {
+    return (state.folderWorkspaces ?? []).some((workspace) => workspace.id === folderWorkspaceId)
+  }
+  return Object.values(state.worktreesByRepo ?? {}).some((worktrees) =>
+    (worktrees ?? []).some((worktree) => worktree.id === workspaceId)
+  )
+}
+
 export function resolveWorktreeRemovalRespawnDecision(
   deleteStateByWorktreeId: Record<string, { isDeleting?: boolean } | undefined> | undefined,
   worktreeExists: boolean

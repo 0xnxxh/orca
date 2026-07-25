@@ -18,6 +18,7 @@ import {
   MAX_WORKTREE_REMOVAL_RESPAWN_ATTEMPTS,
   WORKTREE_REMOVAL_RESPAWN_FALLBACK_MS,
   WORKTREE_REMOVAL_SPAWN_BLOCKED_MESSAGE,
+  isWorkspaceStillRegistered,
   resolveWorktreeRemovalRespawnDecision
 } from './worktree-removal-respawn'
 import { parseTerminalOscColorQuery } from '../../../../shared/terminal-osc-color-reply'
@@ -3180,16 +3181,20 @@ export function connectPanePty(
   // and agentStatusByPaneKey. Treat it as opaque outside Orca.
   const state = useAppStore.getState()
   const parsedWorkspaceKey = parseWorkspaceKey(deps.worktreeId)
+  const paneFolderWorkspaceId =
+    parsedWorkspaceKey?.type === 'folder' ? parsedWorkspaceKey.folderWorkspaceId : null
   const folderWorkspace =
-    parsedWorkspaceKey?.type === 'folder'
-      ? state.folderWorkspaces.find(
-          (workspace) => workspace.id === parsedWorkspaceKey.folderWorkspaceId
-        )
+    paneFolderWorkspaceId !== null
+      ? state.folderWorkspaces.find((workspace) => workspace.id === paneFolderWorkspaceId)
       : null
   // Why: the floating terminal's synthetic workspace is registered nowhere, so a
   // later "not found" must not be read as "this workspace was just deleted" by the
   // removal-respawn retry below. Record whether it was ever known at all.
-  const paneWorkspaceWasRegistered = state.getKnownWorktreeById?.(deps.worktreeId) != null
+  const paneWorkspaceWasRegistered = isWorkspaceStillRegistered(
+    state,
+    deps.worktreeId,
+    paneFolderWorkspaceId
+  )
   const workspaceEnv: Record<string, string> = { ORCA_WORKSPACE_ID: deps.worktreeId }
   if (folderWorkspace) {
     workspaceEnv.ORCA_PROJECT_GROUP_ID = folderWorkspace.projectGroupId
@@ -4237,11 +4242,10 @@ export function connectPanePty(
         return
       }
       const state = useAppStore.getState()
-      // Why: getKnownWorktreeById, not the repo-backed worktree map — folder
-      // workspaces are synthesized on lookup and never live in worktreesByRepo.
       const decision = resolveWorktreeRemovalRespawnDecision(
         state.deleteStateByWorktreeId,
-        !paneWorkspaceWasRegistered || state.getKnownWorktreeById?.(deps.worktreeId) != null
+        !paneWorkspaceWasRegistered ||
+          isWorkspaceStillRegistered(state, deps.worktreeId, paneFolderWorkspaceId)
       )
       if (decision === 'wait') {
         return
@@ -4850,8 +4854,12 @@ export function connectPanePty(
         // removal is about to delete (main fences it anyway), and the pane is
         // about to unmount — so skip the doomed respawn instead of racing it.
         // If the removal fails, the pane stays mounted with dead shells and this
-        // skipped spawn is the only one it would ever get, so queue a retry.
-        armRemovalRespawn(() => void startFreshSpawn(startupOverride, options))
+        // skipped spawn is the only one it would ever get, so queue a retry. Once
+        // the retries are spent, say so rather than silently leaving it blank —
+        // that silence is the bug this path exists to fix.
+        if (!armRemovalRespawn(() => void startFreshSpawn(startupOverride, options)) && !disposed) {
+          deps.onPtyErrorRef?.current?.(pane.id, WORKTREE_REMOVAL_SPAWN_BLOCKED_MESSAGE)
+        }
         return Promise.resolve(null)
       }
       clearPaneMode2031State()

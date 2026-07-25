@@ -123,6 +123,7 @@ type StoreState = {
   unreadTerminalTabs?: Record<string, true>
   deleteStateByWorktreeId?: Record<string, { isDeleting?: boolean; phase?: string }>
   getKnownWorktreeById?: (worktreeId: string) => { id: string } | null
+  detectedWorktreesByRepo?: Record<string, { worktrees: { id: string }[] } | undefined>
   worktreesByRepo: Record<
     string,
     {
@@ -792,10 +793,18 @@ describe('connectPanePty', () => {
       deleteStateByWorktreeId: {},
       // Why: read through the live mockStoreState so tests that drop a workspace
       // mid-run (a completed delete) see it disappear, as the real store does.
+      // Mirrors findKnownWorktreeById's fallback to the on-disk detection scan,
+      // which removeWorktree does NOT prune — the removal-respawn retry must not
+      // read that stale row as "the workspace survived the delete".
       getKnownWorktreeById: (worktreeId: string) =>
         Object.values(mockStoreState.worktreesByRepo)
           .flat()
-          .find((worktree) => worktree.id === worktreeId) ?? null,
+          .find((worktree) => worktree.id === worktreeId) ??
+        Object.values(mockStoreState.detectedWorktreesByRepo ?? {})
+          .flatMap((result) => result?.worktrees ?? [])
+          .find((worktree) => worktree.id === worktreeId) ??
+        null,
+      detectedWorktreesByRepo: {},
       worktreesByRepo: {
         repo1: [{ id: 'wt-1', repoId: 'repo1', path: '/tmp/wt-1', displayName: 'feat/notis' }]
       },
@@ -1113,6 +1122,78 @@ describe('connectPanePty', () => {
 
     expect(transport.connect).not.toHaveBeenCalled()
     expect(deps.onPtyErrorRef.current).not.toHaveBeenCalled()
+  })
+
+  // Why: removeWorktree drops the row from worktreesByRepo but never prunes the
+  // on-disk detection scan, and findKnownWorktreeById falls back to it. Reading
+  // that stale row would respawn a shell into the directory just deleted.
+  it('does not respawn when a stale detected row outlives a successful delete', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport()
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      deleteStateByWorktreeId: { 'wt-1': { isDeleting: true, phase: 'deleting' } },
+      detectedWorktreesByRepo: { repo1: { worktrees: [{ id: 'wt-1' }] } }
+    }
+    const deps = createDeps({ tabId: 'tab-removal-stale-detected-no-respawn' })
+
+    connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks()
+    expect(transport.connect).not.toHaveBeenCalled()
+
+    // Success branch: the visible row goes, the detection scan is left stale.
+    mockStoreState = {
+      ...mockStoreState,
+      deleteStateByWorktreeId: {},
+      worktreesByRepo: { repo1: [] }
+    }
+    notifyStoreSubscribers()
+    await flushAsyncTicks()
+
+    expect(transport.connect).not.toHaveBeenCalled()
+  })
+
+  // Why: a fence that keeps re-firing (main still rejecting) must not retry
+  // forever, and must not fall back to silence either — the pane needs an
+  // explanation once the cap is spent, which is the defect this path fixes.
+  it('surfaces the blocked-spawn banner once removal respawn retries are spent', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const { TERMINAL_REMOVAL_IN_PROGRESS_MESSAGE } =
+      await import('../../../../shared/worktree-removal-fence-error')
+    const { MAX_WORKTREE_REMOVAL_RESPAWN_ATTEMPTS, WORKTREE_REMOVAL_SPAWN_BLOCKED_MESSAGE } =
+      await import('./worktree-removal-respawn')
+    const transport = createMockTransport()
+    const capturedOnError: { current: ((message: string) => void) | null } = { current: null }
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      capturedOnError.current = callbacks.onError ?? null
+      return 'pty-1'
+    })
+    transportFactoryQueue.push(transport)
+    const fencedRemoval = { 'wt-parent': { isDeleting: true, phase: 'deleting' } }
+    mockStoreState = { ...mockStoreState, deleteStateByWorktreeId: { ...fencedRemoval } }
+    const deps = createDeps({ tabId: 'tab-fence-retries-exhausted' })
+
+    connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks()
+
+    // Each round: main fences the spawn, the removal settles, the pane retries.
+    for (let attempt = 0; attempt <= MAX_WORKTREE_REMOVAL_RESPAWN_ATTEMPTS; attempt++) {
+      mockStoreState = { ...mockStoreState, deleteStateByWorktreeId: { ...fencedRemoval } }
+      capturedOnError.current!(
+        `Error invoking remote method 'pty:spawn': Error: ${TERMINAL_REMOVAL_IN_PROGRESS_MESSAGE}`
+      )
+      mockStoreState = { ...mockStoreState, deleteStateByWorktreeId: {} }
+      notifyStoreSubscribers()
+      await flushAsyncTicks()
+    }
+
+    // Bounded: the cap stops the retry loop rather than reconnecting forever.
+    expect(transport.connect).toHaveBeenCalledTimes(MAX_WORKTREE_REMOVAL_RESPAWN_ATTEMPTS + 1)
+    expect(deps.onPtyErrorRef.current).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKTREE_REMOVAL_SPAWN_BLOCKED_MESSAGE
+    )
   })
 
   it('fresh-spawns normally when the pane worktree is not being deleted', async () => {
