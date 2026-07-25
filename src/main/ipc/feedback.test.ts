@@ -464,6 +464,21 @@ describe('submitFeedback', () => {
       expect(fetchMock).not.toHaveBeenCalled()
     })
 
+    // Why: the renderer screens types first, so this lane only matters for a
+    // renderer invoking the channel directly — the case the handler guards.
+    it('rejects a prototype member posing as a content type over IPC', async () => {
+      registerFeedbackHandlers()
+      const result = (await handlers.get('feedback:submit')?.(null, {
+        feedback: 'images attached',
+        githubLogin: null,
+        githubEmail: null,
+        images: [{ contentType: 'constructor', data: new Uint8Array(4).fill(1) }]
+      })) as { ok: boolean; error?: string }
+
+      expect(result).toMatchObject({ ok: false, error: 'Unsupported image type constructor.' })
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
     it('rejects more images than the supported count', async () => {
       const result = await submitFeedback(
         imageSubmitArgs(Array.from({ length: 5 }, () => pngImage()))

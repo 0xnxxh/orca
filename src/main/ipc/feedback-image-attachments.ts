@@ -17,7 +17,9 @@ export type FeedbackImageAttachment = {
 }
 
 export function isSupportedFeedbackImageContentType(contentType: string): boolean {
-  return contentType in FEEDBACK_IMAGE_EXTENSIONS
+  // Why: `in` walks the prototype chain, so "constructor" and "__proto__" would
+  // clear the allow-list and name the upload after an inherited member.
+  return Object.hasOwn(FEEDBACK_IMAGE_EXTENSIONS, contentType)
 }
 
 export function getSupportedFeedbackImageContentTypes(): string[] {
