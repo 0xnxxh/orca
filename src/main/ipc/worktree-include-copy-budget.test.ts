@@ -134,6 +134,32 @@ describe('worktree copy budget tracker', () => {
     })
   })
 
+  it('blames the walk ceiling, not the file limit, for an entry that would have fit', async () => {
+    // 9 sources of 2 entries each leave 2 of the 20-entry walk ceiling — enough
+    // to start measuring `fits`, not enough to finish — while the 4-entry copy
+    // budget stays completely unspent.
+    for (let index = 0; index < 9; index += 1) {
+      mkdirSync(join(root, `dir-${index}`))
+      writeFileSync(join(root, `dir-${index}`, 'one'), 'x'.repeat(200))
+    }
+    mkdirSync(join(root, 'fits'))
+    for (const name of ['a', 'b', 'c']) {
+      writeFileSync(join(root, 'fits', name), '')
+    }
+    const tracker = createWorktreeCopyBudgetTracker({ maxBytes: 64, maxEntries: 4 })
+
+    for (let index = 0; index < 9; index += 1) {
+      await tracker.admit(join(root, `dir-${index}`))
+    }
+
+    // `fits` is 4 entries against an untouched 4-entry budget — the only thing
+    // refusing it is the spent walk, so it must not be told it busted a limit.
+    await expect(tracker.admit(join(root, 'fits'))).resolves.toEqual({
+      withinBudget: false,
+      reason: 'sizing'
+    })
+  })
+
   it('lets a small entry through after one huge entry is refused on file count', async () => {
     // The regression this guards: sizing `node_modules` burns maxEntries + 1
     // walk, which without headroom would starve every entry listed after it.
@@ -177,6 +203,14 @@ describe('formatWorktreeIncludeCopyWarning', () => {
     expect(warning).toContain('"node_modules"')
     expect(warning).toContain('".cache"')
     expect(warning).toContain('.worktreeinclude')
+  })
+
+  it('reads grammatically for a single skipped entry', () => {
+    const warning = formatWorktreeIncludeCopyWarning([{ path: 'node_modules', reason: 'bytes' }])
+
+    expect(warning).toContain('entry "node_modules" was not copied')
+    expect(warning).toContain('copying it would exceed')
+    expect(warning).toContain('Copy it in manually if this workspace needs it.')
   })
 
   it('does not quote the size limits at an entry that was never measured', () => {
@@ -304,6 +338,26 @@ describe('createWorktreeCopiedPaths copy budget', () => {
     // Inodes are real work even on the clone path, so the entry limit holds.
     expect(skipped).toEqual([{ path: '.cache', reason: 'entries' }])
     expect(cloneWorktreePath).not.toHaveBeenCalled()
+  })
+
+  it('does not fall back to a real copy when a failed clone would escape the byte budget', async () => {
+    mkdirSync(join(primary, 'models'))
+    writeFileSync(join(primary, 'models', 'checkpoint'), 'x'.repeat(500))
+    // The clone was predicted (so bytes went uncharged) but fails mid-copy.
+    const cloneWorktreePath = vi.fn(async () => {
+      throw Object.assign(new Error('EPERM'), { code: 'EPERM' })
+    })
+
+    const skipped = await createWorktreeCopiedPaths(primary, worktree, ['models'], {
+      platform: 'darwin',
+      cloneWorktreePath,
+      copyBudget: TINY_BYTE_BUDGET
+    })
+
+    expect(cloneWorktreePath).toHaveBeenCalledTimes(1)
+    expect(skipped).toEqual([{ path: 'models', reason: 'bytes' }])
+    // The whole point: no unbudgeted byte-for-byte copy ran behind the failure.
+    expect(existsSync(join(worktree, 'models'))).toBe(false)
   })
 
   posixIt('leaves link mode unbounded — symlinks cost no bytes', async () => {

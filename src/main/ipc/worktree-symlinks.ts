@@ -73,6 +73,15 @@ async function copyWorktreePath(source: string, target: string): Promise<void> {
   await cp(source, target, { recursive: true, force: false, errorOnExist: false })
 }
 
+/** An APFS clone was expected (so its bytes were never charged) but failed, and
+ *  the byte-for-byte fallback would escape the budget. */
+class WorktreeCopyBudgetFallbackError extends Error {
+  constructor(target: string) {
+    super(`APFS clone failed and a real copy of "${target}" would exceed the copy budget`)
+    this.name = 'WorktreeCopyBudgetFallbackError'
+  }
+}
+
 async function createWorktreeLinkedPath(
   source: string,
   copySource: string,
@@ -81,7 +90,8 @@ async function createWorktreeLinkedPath(
   sourceIsSymbolicLink: boolean,
   mode: WorktreeMaterializeMode,
   options: WorktreeLinkedPathOptions,
-  apfsFilesystemCache: DarwinFilesystemCache
+  apfsFilesystemCache: DarwinFilesystemCache,
+  realCopyFallbackAllowed: () => boolean
 ): Promise<void> {
   if (options.platform === 'darwin' && (!sourceIsSymbolicLink || mode === 'copy')) {
     try {
@@ -106,6 +116,13 @@ async function createWorktreeLinkedPath(
       // appeared after our preflight.
       if (!(error instanceof ApfsCloneUnavailableError)) {
         console.warn(`[worktree-symlinks] APFS clone-copy unavailable for "${target}":`, error)
+        // Why: the fallback is a real byte-for-byte copy. If this entry was
+        // admitted as a free clone its bytes were never charged, so bill them
+        // now — and refuse if they no longer fit, rather than silently
+        // reopening the unbounded copy this budget exists to close.
+        if (mode === 'copy' && !realCopyFallbackAllowed()) {
+          throw new WorktreeCopyBudgetFallbackError(target)
+        }
       }
     }
   }
@@ -201,6 +218,8 @@ async function materializeWorktreePaths(
     // worktree would leak back into the primary checkout (or escape it entirely if
     // the link points outside). Resolve the real source so we copy content.
     let copySource = source
+    let bytesAreCopied = true
+    let measuredBytes = 0
     if (mode === 'copy') {
       try {
         if (sourceIsSymbolicLink) {
@@ -209,7 +228,7 @@ async function materializeWorktreePaths(
         // Why: an APFS clone is copy-on-write — a 2.7 GB tree clones in ~20ms
         // and consumes no disk — so bytes are not the cost there, inodes are.
         // Charging bytes on that path would refuse work that is already free.
-        const bytesAreCopied = !(await copyIsCopyOnWrite(
+        bytesAreCopied = !(await copyIsCopyOnWrite(
           copySource,
           worktreePath,
           effectiveOptions,
@@ -226,6 +245,7 @@ async function materializeWorktreePaths(
           )
           continue
         }
+        measuredBytes = verdict.bytes
       } catch (error) {
         console.error(`[worktree-symlinks] Failed to size "${safePath.rel}" (${source}):`, error)
         continue
@@ -241,9 +261,15 @@ async function materializeWorktreePaths(
         sourceIsSymbolicLink,
         mode,
         effectiveOptions,
-        apfsFilesystemCache
+        apfsFilesystemCache,
+        () => bytesAreCopied || copyBudget.chargeBytes(measuredBytes)
       )
     } catch (error) {
+      if (error instanceof WorktreeCopyBudgetFallbackError) {
+        skipped.push({ path: safePath.rel, reason: 'bytes' })
+        console.warn(`[worktree-symlinks] Skipping "${safePath.rel}": ${error.message}`)
+        continue
+      }
       console.error(
         `[worktree-symlinks] Failed to link "${safePath.rel}" (${source} -> ${target}):`,
         error
