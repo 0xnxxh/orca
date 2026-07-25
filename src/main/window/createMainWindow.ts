@@ -49,6 +49,7 @@ import { rectHasVisibleAreaOnAnyDisplay } from './window-bounds-validation'
 import { closeDashboardPopout } from './dashboard-popout-window'
 import { installPrivilegedWindowNavigationPolicy } from './privileged-window-navigation'
 import { isMacosTahoeOrNewer } from './macos-tahoe-release'
+import { reflowRendererViewport } from './renderer-viewport-reflow'
 
 // Why: show/restore/resume can overlap before the size nudge resets; never capture the temporary width as the next baseline.
 const activeRepaintJiggles = new WeakSet<BrowserWindow>()
@@ -63,8 +64,10 @@ function forceRepaint(window: BrowserWindow): void {
   if (window.isMaximized() || window.isFullScreen() || activeRepaintJiggles.has(window)) {
     return
   }
-  // Why: macOS 26 scene-backed windows can deadlock the main thread on re-entrant frame updates; invalidate alone recovers the compositor there.
+  // Why: macOS 26 scene-backed windows deadlock the main thread on frame mutation, but invalidate
+  // alone never reflows the dvh root (STA-2383); emulation reflows without touching the frame.
   if (isMacosTahoeOrNewer()) {
+    reflowRendererViewport(window)
     return
   }
   activeRepaintJiggles.add(window)
@@ -75,16 +78,26 @@ function forceRepaint(window: BrowserWindow): void {
       return
     }
     const [width, height] = window.getSize()
-    window.setSize(width + 1, height)
-    setTimeout(() => {
-      if (!window.isDestroyed()) {
-        const [currentWidth, currentHeight] = window.getSize()
-        // Why: a real user resize during the jiggle owns the final bounds.
-        if (currentWidth === width + 1 && currentHeight === height) {
-          window.setSize(width, height)
-        }
-      }
+    // Why: if the nudge throws mid-flight the WeakSet entry must still clear, or this window
+    // never repaints again.
+    try {
+      window.setSize(width + 1, height)
+    } catch {
       activeRepaintJiggles.delete(window)
+      return
+    }
+    setTimeout(() => {
+      try {
+        if (!window.isDestroyed()) {
+          const [currentWidth, currentHeight] = window.getSize()
+          // Why: a real user resize during the jiggle owns the final bounds.
+          if (currentWidth === width + 1 && currentHeight === height) {
+            window.setSize(width, height)
+          }
+        }
+      } finally {
+        activeRepaintJiggles.delete(window)
+      }
     }, 32)
   }, 0)
 }
