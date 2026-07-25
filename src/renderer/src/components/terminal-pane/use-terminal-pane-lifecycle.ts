@@ -34,6 +34,8 @@ import {
 import { createTerminalHandleLinkProvider } from './terminal-handle-links'
 import type { LinkHandlerDeps } from './terminal-link-handlers'
 import { handleOscLink } from './terminal-osc-link-routing'
+import { createOsc8CursorPositionedLinkProvider } from './osc8-cursor-positioned-link-provider'
+import { createOsc8LinkUrlCache } from './osc8-link-url-cache'
 import { handleTerminalWebLinkClick } from './terminal-web-link-click'
 import {
   installHttpLinkClickFallback,
@@ -568,6 +570,7 @@ export function useTerminalPaneLifecycle({
   const terminalHandleLinkDisposablesRef = useRef(new Map<number, IDisposable>())
   const fileLinkClickFallbackDisposablesRef = useRef(new Map<number, IDisposable>())
   const httpLinkClickFallbackDisposablesRef = useRef(new Map<number, IDisposable>())
+  const osc8LinkDisposablesRef = useRef(new Map<number, IDisposable>())
   // Why: read settingsRef at fire time so toggling "copy on select" applies without recreating panes.
   const selectionDisposablesRef = useRef(new Map<number, IDisposable>())
   const selectionCaptureTimersRef = useRef(new Map<number, number>())
@@ -635,6 +638,7 @@ export function useTerminalPaneLifecycle({
     const terminalHandleLinkDisposables = terminalHandleLinkDisposablesRef.current
     const fileLinkClickFallbackDisposables = fileLinkClickFallbackDisposablesRef.current
     const httpLinkClickFallbackDisposables = httpLinkClickFallbackDisposablesRef.current
+    const osc8LinkDisposables = osc8LinkDisposablesRef.current
     const selectionDisposables = selectionDisposablesRef.current
     const selectionCaptureTimers = selectionCaptureTimersRef.current
     const mouseHideDisposables = mouseHideDisposablesRef.current
@@ -1075,6 +1079,10 @@ export function useTerminalPaneLifecycle({
         }
         // Why: async tooltip formatting can resolve after the hover changes; a stale result must not overwrite a newer hover/leave.
         let oscTooltipHoverToken = 0
+        // Why: xterm keeps the OSC 8 id -> URL mapping private, but hands both to
+        // linkHandler; seeding from there lets Orca widen a link's range without
+        // reaching into internals.
+        const osc8UrlCache = createOsc8LinkUrlCache()
         pane.terminal.options.linkHandler = {
           allowNonHttpProtocols: true,
           activate: (event, text) => {
@@ -1091,7 +1099,8 @@ export function useTerminalPaneLifecycle({
             }
           },
           // Show hover tooltip for OSC 8 hyperlinks — same behaviour WebLinksAddon gives plain-text URLs.
-          hover: (_event, text) => {
+          hover: (_event, text, range) => {
+            osc8UrlCache.remember(pane.terminal, text, range)
             oscTooltipHoverToken += 1
             const hoverToken = oscTooltipHoverToken
             pane.linkTooltip.textContent = `${text} (${urlOpenLinkHint})`
@@ -1107,6 +1116,44 @@ export function useTerminalPaneLifecycle({
             pane.linkTooltip.style.display = 'none'
           }
         }
+        // Why: xterm's own OSC 8 provider only joins rows carrying its isWrapped
+        // flag, so a link a TUI cursor-positioned across rows highlighted only the
+        // hovered row. This provider spans the whole run by its shared OSC 8 id.
+        const osc8LinkDisposable = pane.terminal.registerLinkProvider(
+          createOsc8CursorPositionedLinkProvider({
+            getTerminal: () =>
+              managerRef.current?.getPanes().find((candidate) => candidate.id === pane.id)
+                ?.terminal ?? null,
+            getLinkUrl: (urlId) => osc8UrlCache.get(urlId),
+            onActivate: (event, url) => {
+              const handled = handleOscLink(url, event, {
+                ...linkDeps,
+                startupCwd: getPaneLinkCwd(pane.id),
+                runtimeEnvironmentId: linkDeps.getRuntimeEnvironmentIdForPane?.(pane.id) ?? null,
+                requestOpenLinksInAppPreference
+              })
+              if (handled) {
+                pane.terminal.clearSelection()
+              }
+            },
+            onHover: (_event, url) => {
+              oscTooltipHoverToken += 1
+              const hoverToken = oscTooltipHoverToken
+              pane.linkTooltip.textContent = `${url} (${urlOpenLinkHint})`
+              pane.linkTooltip.style.display = ''
+              void formatTerminalUrlTooltip(url, urlOpenLinkHint).then((nextText) => {
+                if (hoverToken === oscTooltipHoverToken && nextText) {
+                  pane.linkTooltip.textContent = nextText
+                }
+              })
+            },
+            onLeave: () => {
+              oscTooltipHoverToken += 1
+              pane.linkTooltip.style.display = 'none'
+            }
+          })
+        )
+        osc8LinkDisposables.set(pane.id, osc8LinkDisposable)
         applyAppearance(manager)
         const panePtyBinding = connectPanePty(pane, manager, {
           ...ptyDeps,
@@ -1152,6 +1199,11 @@ export function useTerminalPaneLifecycle({
         if (fileLinkClickFallbackDisposable) {
           fileLinkClickFallbackDisposable.dispose()
           fileLinkClickFallbackDisposablesRef.current.delete(paneId)
+        }
+        const osc8LinkDisposable = osc8LinkDisposables.get(paneId)
+        if (osc8LinkDisposable) {
+          osc8LinkDisposable.dispose()
+          osc8LinkDisposables.delete(paneId)
         }
         const httpLinkClickFallbackDisposable = httpLinkClickFallbackDisposables.get(paneId)
         if (httpLinkClickFallbackDisposable) {
@@ -1608,6 +1660,10 @@ export function useTerminalPaneLifecycle({
         disposable.dispose()
       }
       fileLinkClickFallbackDisposables.clear()
+      for (const disposable of osc8LinkDisposables.values()) {
+        disposable.dispose()
+      }
+      osc8LinkDisposables.clear()
       for (const disposable of httpLinkClickFallbackDisposables.values()) {
         disposable.dispose()
       }
