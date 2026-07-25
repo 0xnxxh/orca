@@ -488,6 +488,23 @@ describe('submitFeedback', () => {
       expect(fetchMock).not.toHaveBeenCalled()
     })
 
+    it('does not fail a crash report over images it was never going to send', async () => {
+      // Why: the crash lane discards images, so validating them there would
+      // abort a crash report the user needs delivered.
+      await submitFeedback({
+        ...diagnosticSubmitArgs(),
+        images: Array.from({ length: 9 }, () => ({
+          contentType: 'application/pdf',
+          data: new Uint8Array(0)
+        }))
+      } as Parameters<typeof submitFeedback>[0])
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const body = requestInit().body as FormData
+      expect(body.getAll('feedbackImage')).toHaveLength(0)
+      expect(body.get('submissionType')).toBe('crash')
+    })
+
     it('drops images from crash submissions', async () => {
       await submitFeedback({
         ...diagnosticSubmitArgs(),

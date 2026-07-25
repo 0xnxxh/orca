@@ -290,7 +290,9 @@ async function readImagesDelivered(response: Response): Promise<boolean> {
 export async function submitFeedback(
   args: InternalFeedbackSubmitArgs
 ): Promise<FeedbackSubmitResult> {
-  if (args.images?.length) {
+  // Why: buildSubmitBody drops images on the crash lane, so validating them
+  // there would abort a crash report over attachments it never meant to send.
+  if (args.submissionType !== 'crash' && args.images?.length) {
     const imageError = validateFeedbackImages(args.images)
     if (imageError) {
       return { ok: false, status: null, error: imageError }
@@ -307,6 +309,9 @@ export async function submitFeedback(
       if (response.ok) {
         return { ok: true, imagesDelivered: await readImagesDelivered(response) }
       }
+      // Why: the text lane retries 5xx, this one does not. Replaying up to
+      // 32 MiB of attachments on a flaky link costs more than it saves, and the
+      // dialog keeps the draft and thumbnails so the user can resend.
       return { ok: false, ...responseFailure(response) }
     } catch (error) {
       return { ok: false, ...errorFailure(error) }
