@@ -139,7 +139,7 @@ import {
   NO_GPU_FALLBACK_TIER,
   getGpuFallbackTierSwitches,
   resolveGpuFallbackEscalation,
-  type GpuFallbackTier
+  type GpuFallbackTierOrNone
 } from './startup/gpu-fallback-tiers'
 import { purgeGpuCaches } from './startup/gpu-cache-purge'
 import {
@@ -378,7 +378,7 @@ const gpuCrashFallbackTracker = new GpuCrashFallbackTracker({
   threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD
 })
 // Why: 0 = hardware path. A non-zero tier is the rung of the fallback ladder this launch is running.
-let gpuFallbackTierThisLaunch: GpuFallbackTier | typeof NO_GPU_FALLBACK_TIER = NO_GPU_FALLBACK_TIER
+let gpuFallbackTierThisLaunch: GpuFallbackTierOrNone = NO_GPU_FALLBACK_TIER
 const GPU_INFO_CAPTURE_TIMEOUT_MS = 10_000
 let gpuFeatureStatus: Electron.GPUFeatureStatus | null = null
 let localPtyStartupReady: Promise<void> = Promise.resolve()
@@ -1693,6 +1693,15 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
     )
   } catch (error) {
     console.warn('[gpu-fallback] failed to persist marker:', error)
+    // Why: this abandons the tier record, the cache purge and the relaunch; console
+    // output reaches no support bundle, so the escalation would vanish without trace.
+    recordDurableCrashBreadcrumb('gpu_fallback_marker_write_failed', {
+      reason,
+      exitCode,
+      tier: nextTier,
+      previousTier: currentTier,
+      errorMessage: error instanceof Error ? error.message : String(error)
+    })
     return
   }
   // Why: survives the update that invalidates the marker above.
@@ -1709,7 +1718,15 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
     failed: purge.failed.join(',')
   })
   isQuitting = true
-  relaunchApp('gpu-fallback', fallbackData)
+  // Why: the breadcrumbs above are in-memory only and this process exits next, so
+  // app_relaunch_requested is the sole durable record of what the escalation did.
+  relaunchApp('gpu-fallback', {
+    ...fallbackData,
+    resumedFromHistory,
+    recordedTier: recordedTier ?? null,
+    cachesPurged: purge.removed.join(','),
+    cachePurgeFailed: purge.failed.join(',')
+  })
   // Why: app.exit(0) skips before-quit, so destroy the Windows tray manually to avoid a stale icon.
   destroySystemTray()
   app.exit(0)

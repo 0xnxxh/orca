@@ -49,6 +49,40 @@ describe('gpu-fallback-marker', () => {
     expect(existsSync(join(userDataPath, `${GPU_FALLBACK_MARKER_FILE}.tmp`))).toBe(false)
   })
 
+  // Why: the caller treats a throw as "escalation abandoned", so a failed write must
+  // surface rather than leave a half-written marker or a stray temp file behind.
+  it('throws and leaves no temp file behind when the atomic write fails', () => {
+    const missingUserDataPath = join(userDataPath, 'absent')
+
+    expect(() =>
+      writeGpuFallbackMarker(
+        missingUserDataPath,
+        { engagedAt: 1, crashesInWindow: 3, tier: 2 },
+        environment
+      )
+    ).toThrow()
+
+    expect(existsSync(join(missingUserDataPath, `${GPU_FALLBACK_MARKER_FILE}.tmp`))).toBe(false)
+    expect(existsSync(join(missingUserDataPath, GPU_FALLBACK_MARKER_FILE))).toBe(false)
+  })
+
+  // Why: the rename is the step that actually fails in the wild (a locked or
+  // directory-shaped target), and that is the only path where a temp file can survive.
+  it('cleans up the temp file when the rename fails', () => {
+    mkdirSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE), { recursive: true })
+    writeFileSync(join(userDataPath, GPU_FALLBACK_MARKER_FILE, 'occupied'), 'x')
+
+    expect(() =>
+      writeGpuFallbackMarker(
+        userDataPath,
+        { engagedAt: 1, crashesInWindow: 3, tier: 2 },
+        environment
+      )
+    ).toThrow()
+
+    expect(existsSync(join(userDataPath, `${GPU_FALLBACK_MARKER_FILE}.tmp`))).toBe(false)
+  })
+
   it('overwrites an existing marker when escalating tiers', () => {
     writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 3, tier: 1 }, environment)
     writeGpuFallbackMarker(userDataPath, { engagedAt: 2, crashesInWindow: 4, tier: 2 }, environment)
