@@ -38,6 +38,9 @@ export type WorktreeCopySizeVerdict =
 export type SkippedWorktreeCopyPath = {
   path: string
   reason: WorktreeCopyBudgetExceededReason
+  /** The copy was abandoned after it had started, so leftovers may remain —
+   *  "copy it in manually" would then merge into a half-populated directory. */
+  mayBePartial?: boolean
 }
 
 export type WorktreeCopyAdmitOptions = {
@@ -171,6 +174,8 @@ function formatByteLimit(maxBytes: number): string {
   return `${Math.max(1, Math.round(maxBytes / (1024 * 1024)))} MB`
 }
 
+const MAX_NAMED_SKIPPED_ENTRIES = 5
+
 /** User-facing warning for entries the budget refused. Returns undefined when
  *  nothing was skipped so callers can spread it conditionally. */
 export function formatWorktreeIncludeCopyWarning(
@@ -181,10 +186,15 @@ export function formatWorktreeIncludeCopyWarning(
     return undefined
   }
   const describe = (entries: readonly SkippedWorktreeCopyPath[]): string => {
-    const names = entries.map((entry) => `"${entry.path}"`).join(', ')
+    // Why: `.worktreeinclude` allows 1000 entries and every one can be skipped,
+    // so enumerating them all would put a multi-kilobyte sentence in a warning.
+    const shown = entries.slice(0, MAX_NAMED_SKIPPED_ENTRIES)
+    const names = shown.map((entry) => `"${entry.path}"`).join(', ')
+    const rest = entries.length - shown.length
     const subject = entries.length === 1 ? 'entry' : 'entries'
     const verb = entries.length === 1 ? 'was' : 'were'
-    return `.worktreeinclude ${subject} ${names} ${verb} not copied into the new workspace`
+    const suffix = rest > 0 ? ` and ${rest.toLocaleString('en-US')} more` : ''
+    return `.worktreeinclude ${subject} ${names}${suffix} ${verb} not copied into the new workspace`
   }
   const pronoun = (count: number): string => (count === 1 ? 'it' : 'them')
   // Why: an entry refused because earlier ones exhausted the sizing walk never
@@ -199,9 +209,22 @@ export function formatWorktreeIncludeCopyWarning(
         `file limit that keeps workspace creation responsive.`
     )
   }
+  const partial = skipped.filter((entry) => entry.mayBePartial)
   if (unsized.length > 0) {
     sentences.push(
       `${describe(unsized)}: earlier entries used up the budget for measuring what to copy.`
+    )
+  }
+  if (partial.length > 0) {
+    // Why: the copy was abandoned after it started, so "copy it in manually"
+    // would merge into whatever the interrupted run already left behind.
+    const names = partial
+      .slice(0, MAX_NAMED_SKIPPED_ENTRIES)
+      .map((entry) => `"${entry.path}"`)
+      .join(', ')
+    sentences.push(
+      `${names} may hold a partial copy from the interrupted attempt — check ` +
+        `${pronoun(partial.length)} before reusing this workspace.`
     )
   }
   sentences.push(

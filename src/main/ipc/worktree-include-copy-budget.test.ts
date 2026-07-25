@@ -205,6 +205,28 @@ describe('formatWorktreeIncludeCopyWarning', () => {
     expect(warning).toContain('.worktreeinclude')
   })
 
+  it('warns that an interrupted copy may have left leftovers behind', () => {
+    const warning = formatWorktreeIncludeCopyWarning([
+      { path: 'models', reason: 'bytes', mayBePartial: true }
+    ])
+
+    expect(warning).toContain('"models" may hold a partial copy')
+    expect(warning).toContain('check it before reusing this workspace')
+  })
+
+  it('caps how many entries it names so the warning cannot grow unbounded', () => {
+    const warning = formatWorktreeIncludeCopyWarning(
+      Array.from({ length: 30 }, (_, index) => ({
+        path: `dir-${index}`,
+        reason: 'bytes' as const
+      }))
+    )
+
+    expect(warning).toContain('"dir-0"')
+    expect(warning).toContain('and 25 more')
+    expect(warning).not.toContain('"dir-6"')
+  })
+
   it('reads grammatically for a single skipped entry', () => {
     const warning = formatWorktreeIncludeCopyWarning([{ path: 'node_modules', reason: 'bytes' }])
 
@@ -355,9 +377,52 @@ describe('createWorktreeCopiedPaths copy budget', () => {
     })
 
     expect(cloneWorktreePath).toHaveBeenCalledTimes(1)
-    expect(skipped).toEqual([{ path: 'models', reason: 'bytes' }])
+    expect(skipped).toEqual([{ path: 'models', reason: 'bytes', mayBePartial: true }])
     // The whole point: no unbudgeted byte-for-byte copy ran behind the failure.
     expect(existsSync(join(worktree, 'models'))).toBe(false)
+  })
+
+  it('still copies when the clone was never predicted, so its bytes were already charged', async () => {
+    // Sized so that billing it a second time would bust the 64-byte budget —
+    // that is what makes this test notice a missing short-circuit.
+    writeFileSync(join(primary, '.env'), 'x'.repeat(40))
+    // A wedged df/diskutil makes the volume probe answer "no clone", so bytes
+    // are charged up front and the real-copy fallback must simply proceed.
+    const apfsCloneDeps = {
+      execFileAsync: async () => {
+        throw new Error('diskutil unavailable')
+      },
+      randomUUID: () => 'test'
+    }
+
+    const skipped = await createWorktreeCopiedPaths(primary, worktree, ['.env'], {
+      platform: 'darwin',
+      apfsCloneDeps,
+      copyBudget: TINY_BYTE_BUDGET
+    })
+
+    expect(skipped).toEqual([])
+    expect(readFileSync(join(worktree, '.env'), 'utf8')).toBe('x'.repeat(40))
+  })
+
+  it('bills a recovered clone fallback so a later entry sees the spent budget', async () => {
+    writeFileSync(join(primary, 'one'), 'x'.repeat(50))
+    writeFileSync(join(primary, 'two'), 'x'.repeat(50))
+    // Clone is predicted for both, then fails, so each falls back to a real
+    // copy. The first bills 50 of the 64-byte budget; the second cannot.
+    const cloneWorktreePath = vi.fn(async () => {
+      throw new Error('clonefile failed')
+    })
+
+    const skipped = await createWorktreeCopiedPaths(primary, worktree, ['one', 'two'], {
+      platform: 'darwin',
+      cloneWorktreePath,
+      copyBudget: TINY_BYTE_BUDGET
+    })
+
+    expect(readFileSync(join(worktree, 'one'), 'utf8')).toBe('x'.repeat(50))
+    expect(skipped).toEqual([{ path: 'two', reason: 'bytes', mayBePartial: true }])
+    expect(existsSync(join(worktree, 'two'))).toBe(false)
   })
 
   posixIt('leaves link mode unbounded — symlinks cost no bytes', async () => {
