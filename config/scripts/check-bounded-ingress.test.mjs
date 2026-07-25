@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { findViolations, violationKey } from './check-bounded-ingress.mjs'
+import { findViolations, violationKey, PATTERNS } from './check-bounded-ingress.mjs'
 
 describe('check-bounded-ingress', () => {
   it('flags an unbounded file read and JSON parse', () => {
@@ -41,5 +43,56 @@ describe('check-bounded-ingress', () => {
 
   it('ignores lines with no ingress pattern', () => {
     expect(findViolations('src/main/thing.ts', 'const total = a + b')).toEqual([])
+  })
+
+  it('catches fan-out that the formatter wrapped onto the next line', () => {
+    const wrapped = findViolations(
+      'src/main/thing.ts',
+      ['await Promise.all(', '  items.map((i) => load(i))', ')'].join('\n')
+    )
+    expect(wrapped.map((v) => v.id)).toContain('unbounded-fanout')
+    for (const variant of ['Promise.allSettled', 'Promise.any']) {
+      expect(
+        findViolations(
+          'src/main/thing.ts',
+          `await ${variant}(\n  items.map((i) => load(i))\n)`
+        ).map((v) => v.id)
+      ).toContain('unbounded-fanout')
+    }
+  })
+
+  it('rejects an empty or non-comment bounded-by escape', () => {
+    // An escape that costs nothing gets pattern-matched into place without thought.
+    expect(
+      findViolations('src/main/thing.ts', 'const buf = await readFile(p) // bounded-by:')
+    ).toHaveLength(1)
+    expect(
+      findViolations('src/main/thing.ts', 'const label = "bounded-by: lol"; readFile(p)')
+    ).toHaveLength(1)
+    expect(
+      findViolations(
+        'src/main/thing.ts',
+        'const buf = await readFile(p) // bounded-by: stat-checked'
+      )
+    ).toEqual([])
+  })
+
+  it('every hint names a real export of the module it points at', () => {
+    // The hint is the text an agent copies when blocked; a stale name is an immediate import error.
+    const root = path.resolve(import.meta.dirname, '../..')
+    for (const pattern of PATTERNS) {
+      const match = /\b([a-zA-Z][\w]*)\s*\(memory-safety\/([\w-]+)\)/.exec(pattern.hint)
+      if (!match) {
+        continue
+      }
+      const [, fn, moduleName] = match
+      const source = readFileSync(
+        path.join(root, 'src/shared/memory-safety', `${moduleName}.ts`),
+        'utf8'
+      )
+      expect(source, `${pattern.id} hint names ${fn}`).toMatch(
+        new RegExp(`export (?:async )?function ${fn}\\b`)
+      )
+    }
   })
 })

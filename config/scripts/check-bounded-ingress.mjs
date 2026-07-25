@@ -19,8 +19,9 @@ const SKIP_PATH_PARTS = new Set([
 ])
 const BASELINE_PATH = 'config/bounded-ingress-baseline.json'
 
-// Each pattern names an unbounded way to pull data into memory.
-const PATTERNS = [
+// Each pattern names an unbounded way to pull data into memory. Hints must name real exports —
+// they are the text an agent copies when the ratchet blocks it (asserted in the test).
+export const PATTERNS = [
   {
     id: 'read-file',
     re: /\breadFile(?:Sync)?\s*\(/,
@@ -34,21 +35,26 @@ const PATTERNS = [
   {
     id: 'json-parse',
     re: /\bJSON\.parse\s*\(/,
-    hint: 'guard with assertJsonTextWithinStructureLimits (memory-safety/json-text-structure-limit)'
+    hint: 'guard with assertJsonTextStructureWithinLimits (memory-safety/json-text-structure-limit)'
   },
   {
     id: 'json-stringify',
     re: /\bJSON\.stringify\s*\(/,
-    hint: 'use stringifyJsonWithinLimit (memory-safety/node-bounded-json-stringify) when the value can be large'
+    hint: 'use stringifyJsonWithinByteLimit (memory-safety/node-bounded-json-stringify) when the value can be large'
   },
   {
     id: 'unbounded-fanout',
-    re: /Promise\.all\s*\(\s*[\w.]+\s*\.map\s*\(/,
+    // Why two lines joined: the formatter wraps `Promise.all(\n  items.map(` far more often than it
+    // keeps it on one, so a single-line regex misses the majority of real fan-outs.
+    re: /Promise\.(?:all|allSettled|any)\s*\(\s*[\w.[\]]+\s*\.map\s*\(/,
+    joinsNextLine: true,
     hint: 'use mapWithConcurrency so fan-out cannot grow with input size'
   }
 ]
 
-const ALLOW_RE = /bounded-by:/i
+// Why a non-empty rationale: an escape that costs nothing gets pattern-matched into place. Anchor to
+// a comment so a string literal containing the token cannot silence a real finding.
+const ALLOW_RE = /(?:\/\/|\/\*|\*)[^\n]*bounded-by:\s*\S/i
 
 export function findViolations(relativePath, source) {
   const lines = source.split('\n')
@@ -58,8 +64,19 @@ export function findViolations(relativePath, source) {
     if (ALLOW_RE.test(line) || (i > 0 && ALLOW_RE.test(lines[i - 1]))) {
       continue
     }
+    const joined = i + 1 < lines.length ? `${line} ${lines[i + 1].trim()}` : line
     for (const pattern of PATTERNS) {
-      if (pattern.re.test(line)) {
+      if (!pattern.joinsNextLine) {
+        if (pattern.re.test(line)) {
+          found.push({ file: relativePath, line: i + 1, id: pattern.id, hint: pattern.hint })
+        }
+        continue
+      }
+      // Report the wrapped form once, at the line that opens it.
+      if (
+        pattern.re.test(joined) &&
+        !(i > 0 && pattern.re.test(`${lines[i - 1]} ${line.trim()}`))
+      ) {
         found.push({ file: relativePath, line: i + 1, id: pattern.id, hint: pattern.hint })
       }
     }
@@ -73,6 +90,11 @@ export function violationKey(violation) {
 
 function isSkipped(relative) {
   if (relative.includes('.test.') || relative.includes('.spec.') || relative.includes('.bench.')) {
+    return true
+  }
+  // Why: generated output is gitignored, so scanning it makes the baseline depend on whether the
+  // person regenerating it happens to have build artifacts present.
+  if (relative.includes('.generated.')) {
     return true
   }
   return relative.split('/').some((part) => SKIP_PATH_PARTS.has(part))
@@ -114,21 +136,43 @@ export async function run(root, { updateBaseline = false } = {}) {
     violations.push(...findViolations(file.relative, source))
   }
 
-  const baselineFile = path.join(root, BASELINE_PATH)
-  if (updateBaseline) {
-    const keys = [...new Set(violations.map(violationKey))].sort()
-    await fs.writeFile(baselineFile, `${JSON.stringify({ allowed: keys }, null, 2)}\n`)
-    return { added: [], baselineSize: keys.length, updated: true }
+  // Why counts, not just keys: a file:rule key alone lets an already-baselined file add a SECOND
+  // unbounded read of the same kind silently — and follow-on work mostly touches baselined files.
+  const counts = {}
+  for (const v of violations) {
+    const key = violationKey(v)
+    counts[key] = (counts[key] ?? 0) + 1
   }
 
-  let allowed = new Set()
+  const baselineFile = path.join(root, BASELINE_PATH)
+  if (updateBaseline) {
+    const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : 1)))
+    await fs.writeFile(baselineFile, `${JSON.stringify({ allowed: sorted }, null, 2)}\n`)
+    return { added: [], baselineSize: Object.keys(sorted).length, updated: true }
+  }
+
+  let allowed = {}
   try {
-    allowed = new Set(JSON.parse(await fs.readFile(baselineFile, 'utf8')).allowed)
+    const parsed = JSON.parse(await fs.readFile(baselineFile, 'utf8')).allowed
+    // Tolerate the original array form so the baseline can be regenerated, not hand-migrated.
+    allowed = Array.isArray(parsed)
+      ? Object.fromEntries(parsed.map((k) => [k, Number.POSITIVE_INFINITY]))
+      : (parsed ?? {})
   } catch {
     // No baseline yet: every occurrence is reported so the first run can seed one.
   }
-  const added = violations.filter((v) => !allowed.has(violationKey(v)))
-  return { added, baselineSize: allowed.size, updated: false }
+
+  const overBudget = new Set(Object.keys(counts).filter((key) => counts[key] > (allowed[key] ?? 0)))
+  const seen = new Set()
+  const added = violations.filter((v) => {
+    const key = violationKey(v)
+    if (!overBudget.has(key) || seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+  return { added, baselineSize: Object.keys(allowed).length, updated: false }
 }
 
 const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
