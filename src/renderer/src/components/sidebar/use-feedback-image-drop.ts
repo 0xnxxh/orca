@@ -71,16 +71,19 @@ export function useFeedbackImageDrop(
     const handleDrop = (event: DragEvent): void => {
       const droppedInDialog = contentRef.current?.contains(event.target as Node) ?? false
       reset()
-      if (!droppedInDialog) {
+      if (!droppedInDialog || !hasNativeFileDragTypes(event.dataTransfer?.types)) {
         return
       }
+      // Why: dragover accepted this drag, and a drop left uncancelled after that
+      // is what makes the browser navigate to the file — including the non-image
+      // drops below, which would otherwise wipe the typed feedback on web.
+      event.preventDefault()
       const images = extractImageFilesFromDataTransfer(event.dataTransfer)
       if (images.length === 0) {
         return
       }
       // Why: stop preload's native-drop lane from also opening the screenshot
       // in an editor behind the dialog.
-      event.preventDefault()
       event.stopPropagation()
       onAddFiles(images)
     }

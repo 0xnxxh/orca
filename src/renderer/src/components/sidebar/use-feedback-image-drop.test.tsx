@@ -117,14 +117,16 @@ describe('useFeedbackImageDrop', () => {
     const onAddFiles = vi.fn()
     await renderHarness(true, onAddFiles)
 
+    const event = dragEvent('drop', [new File(['x'], 'notes.txt', { type: 'text/plain' })])
     act(() => {
-      dialogChild().dispatchEvent(
-        dragEvent('drop', [new File(['x'], 'notes.txt', { type: 'text/plain' })])
-      )
+      dialogChild().dispatchEvent(event)
     })
 
     expect(onAddFiles).not.toHaveBeenCalled()
     expect(preloadDropSpy).toHaveBeenCalledTimes(1)
+    // Why: dragover accepted the drag, so an uncancelled drop navigates the web
+    // client to the file; preload still gets it because propagation continues.
+    expect(event.defaultPrevented).toBe(true)
   })
 
   it('stops listening once the dialog is closed', async () => {
