@@ -67,4 +67,40 @@ describe('usePluginPanelThemeRevision', () => {
 
     expect(revisions.at(-1)).toBe(before)
   })
+
+  // The revision keys the panel iframe, so a bump here destroys in-panel state.
+  it('ignores root custom properties the panel shell does not bake in', async () => {
+    const { revisions } = renderProbe()
+    const before = revisions.at(-1)
+
+    // Written every rAF while dragging the sidebar divider.
+    for (const width of [240, 241, 242, 243]) {
+      document.documentElement.style.setProperty('--workspace-sidebar-live-width', `${width}px`)
+      await flushObserver()
+    }
+
+    expect(revisions.at(-1)).toBe(before)
+  })
+
+  it('ignores a class change that leaves the color scheme alone', async () => {
+    const { revisions } = renderProbe()
+    const before = revisions.at(-1)
+
+    document.documentElement.classList.add('theme-transition-disabled')
+    await flushObserver()
+
+    expect(revisions.at(-1)).toBe(before)
+  })
+
+  it('bumps once when a token settles on a new value', async () => {
+    const { revisions } = renderProbe()
+    const before = revisions.at(-1)
+
+    document.documentElement.style.setProperty('--background', '#111')
+    await flushObserver()
+    document.documentElement.style.setProperty('--background', '#111')
+    await flushObserver()
+
+    expect(revisions.at(-1)).toBe(before! + 1)
+  })
 })
