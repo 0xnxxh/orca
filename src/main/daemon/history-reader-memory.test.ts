@@ -99,10 +99,13 @@ describe('terminal history restore memory limits', () => {
   // Why the cap survives at all: it bounds a corrupt/runaway file, well above legitimate output.
   it('ignores oversized checkpoint and metadata files before parsing', async () => {
     const checkpointSession = createSession('oversized-checkpoint')
-    createSparseFile(
-      join(checkpointSession.sessionPath, 'checkpoint.json'),
-      TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES + 1
-    )
+    const oversizedCheckpoint = join(checkpointSession.sessionPath, 'checkpoint.json')
+    createSparseFile(oversizedCheckpoint, TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES + 1)
+    // Why assert the reader directly too: detectColdRestore returns null for any unparseable
+    // checkpoint, so it would stay green with the byte cap removed entirely.
+    expect(() =>
+      readTerminalHistoryJson(oversizedCheckpoint, TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES)
+    ).toThrow(/File too large/)
     expect(
       await new HistoryReader(checkpointSession.basePath).detectColdRestore('oversized-checkpoint')
     ).toBeNull()
