@@ -50,7 +50,7 @@ describe('planSourceControlCommitMessageGeneration', () => {
     expect(result.ok && result.commandLabel).toContain('codex exec')
   })
 
-  it('expands linkedIssue in commit and pull-request plan previews', () => {
+  it('expands linkedIssue when validating commit and pull-request recipes', () => {
     for (const actionId of ['commitMessage', 'pullRequest'] as const) {
       // Why: `{prompt}` puts the rendered template in argv, so commandLabel shows it.
       const result = planSourceControlTextGeneration(actionId, {
@@ -77,7 +77,7 @@ describe('planSourceControlCommitMessageGeneration', () => {
     expect(result).toEqual(expect.objectContaining({ ok: true, commandLabel: 'echo 123' }))
   })
 
-  it('leaves linkedIssue literal in branch-name plan previews', () => {
+  it('leaves linkedIssue literal when validating branch-name recipes', () => {
     const result = planSourceControlTextGeneration('branchName', {
       agentId: 'custom',
       model: '',

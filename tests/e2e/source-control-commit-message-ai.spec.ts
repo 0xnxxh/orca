@@ -53,7 +53,9 @@ function writeLinkedIssueEchoGenerator(scriptPath: string): void {
       "process.stdin.on('data', (chunk) => chunks.push(chunk))",
       "process.stdin.on('end', () => {",
       "  const prompt = Buffer.concat(chunks).toString('utf8')",
-      '  const match = prompt.match(/ORCA_E2E_ISSUE=(\\d*)/)',
+      // Why: capture the whole line, not `\d*` — a `\d*` capture matches zero digits before
+      // an unexpanded `{linkedIssue}` and reports it as `empty`, hiding a literal token.
+      '  const match = prompt.match(/ORCA_E2E_ISSUE=([^\\r\\n]*)/)',
       "  process.stdout.write(`saw-issue:${match ? match[1] || 'empty' : 'missing'}`)",
       '})'
     ].join('\n')
@@ -61,8 +63,9 @@ function writeLinkedIssueEchoGenerator(scriptPath: string): void {
 }
 
 test.describe('Source Control AI commit messages', () => {
-  // Why: the unlinked case is what separates a real resolver from one that always returns a
-  // number — `saw-issue:empty` proves the token expanded to nothing rather than staying literal.
+  // Why: the unlinked case separates a real resolver from one that always returns a number,
+  // and — because the generator echoes the whole line — a literal `{linkedIssue}` reaches the
+  // assertion as `saw-issue:{linkedIssue}` instead of masquerading as the empty expansion.
   for (const { label, linkedIssue, expected } of [
     { label: 'substitutes the workspace-linked issue into', linkedIssue: 4242, expected: '4242' },
     {

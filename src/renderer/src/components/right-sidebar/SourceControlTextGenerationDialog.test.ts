@@ -172,10 +172,11 @@ describe('buildCommitMessageGenerationParams', () => {
       linkedIssue
     })
 
+    // Why: `disabled=""` is the only observable gate here — the "Command input is empty."
+    // copy is click-driven `generationError` state, so static markup can never show it.
     expect(markup).toContain('Save defaults')
     expect(markup).toContain('Generate commit message')
     expect(markup).not.toContain('disabled=""')
-    expect(markup).not.toContain('Command input is empty.')
   })
 
   it('still disables both actions for a template that renders empty for everyone', () => {
