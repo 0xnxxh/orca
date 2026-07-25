@@ -31,8 +31,7 @@ export type WindowsProcessCandidate = WindowsProcessRow & { depth: number }
 // a burst of panes collapses to ~2 scans/sec; every caller runs its own descendant
 // walk over the shared snapshot.
 async function runWindowsProcessRows(): Promise<WindowsProcessRow[]> {
-  const rows =
-    (await queryWindowsProcessesWithPowerShell()) ?? (await queryWindowsProcessesWithWmic())
+  const rows = await queryWindowsProcessRowsUncached()
   if (!rows) {
     // Reject so the reader does not cache the miss; callers fall through to
     // node-pty's process name (the prior null-return contract is preserved by
@@ -40,6 +39,15 @@ async function runWindowsProcessRows(): Promise<WindowsProcessRow[]> {
     throw new Error('windows process enumeration unavailable')
   }
   return rows
+}
+
+/**
+ * One uncached PowerShell/CIM (then wmic) scan. PID-identity checks in teardown
+ * must not reuse the TTL snapshot: a cached row can predate the very PID recycle
+ * it is meant to detect. Returns null when both probes are unavailable.
+ */
+export async function queryWindowsProcessRowsUncached(): Promise<WindowsProcessRow[] | null> {
+  return (await queryWindowsProcessesWithPowerShell()) ?? (await queryWindowsProcessesWithWmic())
 }
 
 const windowsProcessRowsReader = createProcessTableSnapshotReader<WindowsProcessRow[]>({
