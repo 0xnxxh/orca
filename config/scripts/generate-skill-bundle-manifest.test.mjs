@@ -485,6 +485,8 @@ describe('skill bundle manifest generator', () => {
       /git diff --cached --name-only[\s\S]*grep -vxF -e 'package\.json' -e 'resources\/skills\/release-mapping\.json'/
     )
     expect(bumpStep.run.indexOf('grep -vxF')).toBeLessThan(bumpStep.run.indexOf('git commit'))
+    // ...and that it aborts. A guard degraded to a warning still reads as covered.
+    expect(bumpStep.run).toMatch(/if \[\[ -n "\$unexpected" \]\]; then[\s\S]*?exit 1[\s\S]*?fi/)
     // Tripwire only. A step that merely READS this directory may be added here;
     // one that writes or stages it must not, and the guard above will reject it.
     expect(runSteps.filter((s) => /resources[/\\]skills/.test(s.run)).map((s) => s.name)).toEqual([
