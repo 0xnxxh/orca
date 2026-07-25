@@ -45,6 +45,7 @@ export function hasTerminalParseProgressSince(terminal: object, generation: numb
 type StallWatch = {
   timer: ReturnType<typeof setTimeout>
   onCertifiedDead?: () => void
+  requireProbe: boolean
 }
 
 const stallWatchByTerminal = new WeakMap<object, StallWatch>()
@@ -112,14 +113,25 @@ export function isTerminalWritePipelineCertifiedDead(terminal: object): boolean 
  */
 export function armTerminalWriteStallWatch(
   terminal: WriteTarget,
-  options: { onCertifiedDead?: () => void; stallCheckMs?: number } = {}
+  options: {
+    onCertifiedDead?: () => void
+    /** Ignore unrelated write completions so user-input health checks reach their FIFO probe. */
+    requireProbe?: boolean
+    stallCheckMs?: number
+  } = {}
 ): void {
-  if (stallWatchByTerminal.has(terminal) || certifiedDeadTerminals.has(terminal)) {
+  if (certifiedDeadTerminals.has(terminal)) {
+    return
+  }
+  const existingWatch = stallWatchByTerminal.get(terminal)
+  if (existingWatch) {
+    existingWatch.requireProbe ||= options.requireProbe === true
     return
   }
   const stallCheckMs = options.stallCheckMs ?? WRITE_PIPELINE_STALL_CHECK_MS
   const watch: StallWatch = {
     onCertifiedDead: options.onCertifiedDead,
+    requireProbe: options.requireProbe === true,
     timer: setTimeout(probeForStall, stallCheckMs)
   }
   const certifyDead = (): void => certifyTerminalWritePipelineDead(terminal, watch)
@@ -165,9 +177,12 @@ export function cancelTerminalWriteStallWatch(terminal: object): void {
   stallWatchByTerminal.delete(terminal)
 }
 
-/** Write completed normally — the pipeline is healthy; drop any pending watch. */
+/** Write completed normally — record progress and drop ordinary write watches. */
 export function settleTerminalWriteStallWatch(terminal: object): void {
   recordTerminalParseProgress(terminal)
+  if (stallWatchByTerminal.get(terminal)?.requireProbe) {
+    return
+  }
   cancelTerminalWriteStallWatch(terminal)
 }
 

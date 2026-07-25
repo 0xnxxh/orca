@@ -4777,6 +4777,32 @@ describe('connectPanePty', () => {
     expect(window.api.agentStatus.inferInterrupt).not.toHaveBeenCalled()
   })
 
+  it('recovers a wedged write pipeline after accepted input without renderer output', async () => {
+    vi.useFakeTimers()
+    const { connectPanePty } = await import('./pty-connection')
+    const { settleTerminalWriteStallWatch, WRITE_PIPELINE_STALL_CHECK_MS } =
+      await import('@/lib/pane-manager/terminal-write-pipeline-health')
+    const remountTerminalTabForRecovery = vi.fn<(tabId: string) => boolean>(() => true)
+    mockStoreState = { ...mockStoreState, remountTerminalTabForRecovery } as StoreState
+    const transport = createMockTransport('pty-wedged')
+    transportFactoryQueue.push(transport)
+    const pane = createPane(1)
+    const binding = connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
+    await flushAsyncTicks()
+    pane.terminal.write.mockClear()
+    pane.terminal.write.mockImplementation(() => {})
+
+    sendTerminalInputThroughPane(pane, 'x')
+    settleTerminalWriteStallWatch(pane.terminal)
+    vi.advanceTimersByTime(WRITE_PIPELINE_STALL_CHECK_MS * 2)
+    await flushAsyncTicks()
+
+    expect(transport.sendInput).toHaveBeenCalledWith('x')
+    expect(pane.terminal.write).toHaveBeenCalledWith('', expect.any(Function))
+    expect(remountTerminalTabForRecovery).toHaveBeenCalledWith('tab-1')
+    binding.dispose()
+  })
+
   it('blocks input when tab-level ptyId is stale even if panePtyId is null', async () => {
     const { connectPanePty } = await import('./pty-connection')
 
