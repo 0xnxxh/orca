@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { cp, mkdir, rename, rm } from 'node:fs/promises'
+import { cp, mkdir, rm } from 'node:fs/promises'
 import { join, relative, resolve, sep } from 'node:path'
 import {
   PLUGIN_MANIFEST_FILENAME,
@@ -18,6 +18,7 @@ import {
   validatePluginInstallContent,
   type PluginArtifactValidationResult
 } from './plugin-artifact-validation'
+import { renamePluginFileWithWindowsRetry } from './plugin-atomic-file-write'
 import { hashPluginTree } from './plugin-content-hash'
 import { publishPluginInstall } from './plugin-install-publication'
 import { readPluginManifestText } from './plugin-manifest-file'
@@ -192,7 +193,7 @@ export async function installStagedPluginTree(input: {
       if (!copiedArtifacts.ok) {
         return { ok: false, error: `copied artifact validation failed: ${copiedArtifacts.error}` }
       }
-      await rename(stagedVersionDir, versionDir)
+      await renamePluginFileWithWindowsRetry(stagedVersionDir, versionDir)
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     } finally {

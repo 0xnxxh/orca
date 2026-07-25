@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pluginKillListSchema, type PluginKillList } from '../../shared/plugins/plugin-kill-list'
+import { writePluginFileAtomically } from './plugin-atomic-file-write'
 
 const PLUGIN_KILL_LIST_MAX_BYTES = 4 * 1024 * 1024
 
@@ -41,12 +41,6 @@ export class PluginKillListStore {
   async write(killList: PluginKillList): Promise<void> {
     const parsed = pluginKillListSchema.parse(killList)
     await mkdir(dirname(this.filePath), { recursive: true })
-    const temporary = `${this.filePath}.${randomUUID()}.tmp`
-    try {
-      await writeFile(temporary, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8')
-      await rename(temporary, this.filePath)
-    } finally {
-      await rm(temporary, { force: true }).catch(() => undefined)
-    }
+    await writePluginFileAtomically(this.filePath, `${JSON.stringify(parsed, null, 2)}\n`)
   }
 }

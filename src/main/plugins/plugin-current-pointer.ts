@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs'
-import { rename, rm, writeFile } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { writePluginFileAtomically } from './plugin-atomic-file-write'
 
 export const PLUGIN_CURRENT_POINTER_FILENAME = 'current'
 export const PLUGIN_CURRENT_POINTER_MAX_BYTES = 128
@@ -33,10 +34,7 @@ export async function writePluginCurrentPointer(
   pluginDir: string,
   contentHash: string
 ): Promise<void> {
-  const target = join(pluginDir, PLUGIN_CURRENT_POINTER_FILENAME)
-  const temporary = `${target}.tmp`
-  await writeFile(temporary, contentHash, 'utf8')
-  await rename(temporary, target)
+  await writePluginFileAtomically(join(pluginDir, PLUGIN_CURRENT_POINTER_FILENAME), contentHash)
 }
 
 export async function restorePluginCurrentPointer(

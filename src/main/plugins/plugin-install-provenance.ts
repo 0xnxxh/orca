@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs'
-import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   PLUGIN_CONTENT_HASH_PATTERN,
@@ -8,6 +8,7 @@ import {
   type PluginLockfile
 } from '../../shared/plugins/plugin-install-lockfile'
 import { isQualifiedPluginKey } from '../../shared/plugins/plugin-manifest'
+import { writePluginFileAtomically } from './plugin-atomic-file-write'
 import { readPluginCurrentPointer } from './plugin-current-pointer'
 
 const PROVENANCE_DIRECTORY = '.install-provenance'
@@ -28,17 +29,11 @@ export async function writePluginInstallProvenance(
   const parsedEntry = pluginLockEntrySchema.parse(entry)
   const directory = join(pluginDir, PROVENANCE_DIRECTORY)
   await mkdir(directory, { recursive: true, mode: 0o700 })
-  const target = provenancePath(pluginDir, parsedEntry.contentHash)
-  const temporary = `${target}.tmp`
-  try {
-    await writeFile(temporary, JSON.stringify({ version: 1, entry: parsedEntry }, null, 2), {
-      encoding: 'utf8',
-      mode: 0o600
-    })
-    await rename(temporary, target)
-  } finally {
-    await rm(temporary, { force: true })
-  }
+  await writePluginFileAtomically(
+    provenancePath(pluginDir, parsedEntry.contentHash),
+    JSON.stringify({ version: 1, entry: parsedEntry }, null, 2),
+    { mode: 0o600 }
+  )
 }
 
 export async function readPluginInstallProvenance(

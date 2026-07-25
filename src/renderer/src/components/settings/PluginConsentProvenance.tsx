@@ -4,12 +4,7 @@ import { Badge } from '../ui/badge'
 import { Button } from '../ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
 
-/**
- * Compact provenance for plugin consent surfaces: a short "who published this"
- * badge (Official vs Bundled/Local/Community) with the full source URL and
- * pinned commits tucked behind an on-demand "Source" popover, so the review
- * dialogs lead with trust, not a metadata table.
- */
+/** Review dialogs lead with trust, not a metadata table: badge up front, details on demand. */
 
 export type PluginConsentSource = {
   kind: 'local-path' | 'git' | 'marketplace' | 'bundled'

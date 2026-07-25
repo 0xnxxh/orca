@@ -1,6 +1,5 @@
 import { createReadStream } from 'node:fs'
-import { randomUUID } from 'node:crypto'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   emptyPluginLockfile,
@@ -8,6 +7,7 @@ import {
   serializePluginLockfile,
   type PluginLockfile
 } from '../../shared/plugins/plugin-install-lockfile'
+import { writePluginFileAtomically } from './plugin-atomic-file-write'
 import { recoverPluginLockfile } from './plugin-install-provenance'
 
 export const PLUGIN_LOCKFILE_MAX_BYTES = 5 * 1024 * 1024
@@ -76,12 +76,8 @@ async function writePluginLockfileUnserialized(
   lock: PluginLockfile
 ): Promise<void> {
   await mkdir(pluginsDir, { recursive: true })
-  const target = pluginLockfilePath(pluginsDir)
-  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`
-  try {
-    await writeFile(temporary, JSON.stringify(serializePluginLockfile(lock), null, 2), 'utf8')
-    await rename(temporary, target)
-  } finally {
-    await rm(temporary, { force: true })
-  }
+  await writePluginFileAtomically(
+    pluginLockfilePath(pluginsDir),
+    JSON.stringify(serializePluginLockfile(lock), null, 2)
+  )
 }

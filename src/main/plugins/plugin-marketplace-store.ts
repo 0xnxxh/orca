@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 import { PLUGIN_COMMIT_PATTERN } from '../../shared/plugins/plugin-install-lockfile'
@@ -10,6 +10,7 @@ import {
   type PluginMarketplace,
   type PluginMarketplaceGitSource
 } from '../../shared/plugins/plugin-marketplace'
+import { writePluginFileAtomically } from './plugin-atomic-file-write'
 
 export const PLUGIN_MARKETPLACE_SOURCE_LIMIT = 64
 export const PLUGIN_MARKETPLACE_SOURCE_ID_PATTERN = /^[0-9a-f]{32}$/
@@ -207,11 +208,5 @@ async function readBoundedText(path: string, limit: number): Promise<string> {
 
 async function writeAtomicJson(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
-  const temporary = `${path}.${randomUUID()}.tmp`
-  try {
-    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-    await rename(temporary, path)
-  } finally {
-    await rm(temporary, { force: true }).catch(() => undefined)
-  }
+  await writePluginFileAtomically(path, `${JSON.stringify(value, null, 2)}\n`)
 }
