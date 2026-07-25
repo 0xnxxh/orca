@@ -1333,6 +1333,92 @@ describe('OrcaRuntimeRpcServer', () => {
     }
   })
 
+  it('applies the ask sub-cap on the WebSocket path and releases both counters on close', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+    const runtime = new OrcaRuntimeService()
+    const db = new OrchestrationDb(':memory:')
+    runtime.setOrchestrationDb(db)
+    // Why: cap 4 → ask sub-cap 2, so the third ask must be shed while waits keep the other half.
+    const server = new OrcaRuntimeRpcServer({
+      runtime,
+      userDataPath,
+      enableWebSocket: false,
+      longPollCap: 4
+    })
+    server['deviceRegistry'] = new DeviceRegistry(userDataPath)
+    // Why: 'runtime' scope, not 'mobile' — orchestration.ask is absent from the mobile allowlist.
+    const entry = server['deviceRegistry']!.addDevice('runtime-test', 'runtime')
+    const ws = new FakeWebSocket()
+    server['mobileSocketWiring'] = {
+      getConnectionId: () => 'conn-test'
+    } as unknown as NonNullable<(typeof server)['mobileSocketWiring']>
+    const replies: Record<string, unknown>[] = []
+    const push = (response: string): void => {
+      replies.push(JSON.parse(response) as Record<string, unknown>)
+    }
+    const dispatch = (id: string, method: string, params: unknown): Promise<void> =>
+      server['handleWebSocketMessage'](
+        JSON.stringify({ id, method, deviceToken: entry.token, params }),
+        push,
+        () => {},
+        undefined,
+        ws as unknown as WebSocket
+      )
+
+    try {
+      const asks = [0, 1].map((i) =>
+        dispatch(`req_ask_${i}`, 'orchestration.ask', {
+          from: `term_w${i}`,
+          to: 'term_coord',
+          question: 'proceed?',
+          timeoutMs: 10_000
+        })
+      )
+      // Why: gate on the pre-existing total so a missing sub-cap fails on the shed below, not here.
+      await waitFor(() => server['activeLongPolls'] === 2)
+
+      await dispatch('req_ask_overflow', 'orchestration.ask', {
+        from: 'term_w2',
+        to: 'term_coord',
+        question: 'proceed?',
+        timeoutMs: 10_000
+      })
+      expect(replies).toContainEqual(
+        expect.objectContaining({
+          id: 'req_ask_overflow',
+          ok: false,
+          error: expect.objectContaining({
+            code: 'runtime_busy',
+            message: 'orchestration.ask capacity reached; retry with backoff'
+          })
+        })
+      )
+      // Shedding the ask must not burn a slot from the reserved half.
+      expect(server['activeLongPolls']).toBe(2)
+      expect(server['activeAskLongPolls']).toBe(2)
+
+      const wait = dispatch('req_check_wait', 'orchestration.check', {
+        terminal: 'term_other',
+        wait: true,
+        timeoutMs: 10_000
+      })
+      await waitFor(() => server['activeLongPolls'] === 3)
+      expect(server['activeAskLongPolls']).toBe(2)
+
+      ws.readyState = 3
+      ws.emit('close')
+      await Promise.all([...asks, wait])
+
+      expect(server['activeLongPolls']).toBe(0)
+      expect(server['activeAskLongPolls']).toBe(0)
+      expect(replies).toContainEqual(expect.objectContaining({ id: 'req_ask_0', ok: true }))
+      expect(replies).toContainEqual(expect.objectContaining({ id: 'req_check_wait', ok: true }))
+    } finally {
+      db.close()
+      await server.stop()
+    }
+  })
+
   it('shares one socket close listener across concurrent WebSocket dispatches', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     const runtime = { getRuntimeId: () => 'test-runtime' } as unknown as OrcaRuntimeService
