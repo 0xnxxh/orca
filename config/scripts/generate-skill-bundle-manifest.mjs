@@ -652,7 +652,10 @@ async function main() {
 
   // Why: released snapshots are append-only. The committed registry/mapping are
   // read fresh here so the artifacts (which may have appended a release row) can
-  // never alias what we validate against.
+  // never alias what we validate against. This mapping must stay the PRE-append
+  // one to match artifacts.releasedSnapshotCounts, which seeding fixed before the
+  // row existed; the post-append mapping names one more revision than the counts
+  // do, which reads as incomplete history and would throw on every cut.
   assertReleasedHistoryPreserved(committedRegistry, artifacts, committedMapping)
 
   const shouldWrite = releaseVersion !== null || argv.includes('--write')
