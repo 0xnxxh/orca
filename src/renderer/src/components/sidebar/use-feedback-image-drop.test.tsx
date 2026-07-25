@@ -9,6 +9,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ORCA_INTERNAL_FILE_DRAG_TYPE } from '../../../../shared/native-file-drop'
 import { useFeedbackImageDrop } from './use-feedback-image-drop'
 
 let container: HTMLDivElement
@@ -64,9 +65,9 @@ async function renderHarness(
   })
 }
 
-function dragEvent(type: string, files: File[]): Event {
+function dragEvent(type: string, files: File[], types: string[] = ['Files']): Event {
   const event = new Event(type, { bubbles: true, cancelable: true })
-  Object.defineProperty(event, 'dataTransfer', { value: { files, types: ['Files'] } })
+  Object.defineProperty(event, 'dataTransfer', { value: { files, types } })
   return event
 }
 
@@ -137,6 +138,31 @@ describe('useFeedbackImageDrop', () => {
 
     expect(onAddFiles).not.toHaveBeenCalled()
     expect(preloadDropSpy).toHaveBeenCalledTimes(1)
+  })
+
+  // Why: only preload preventDefaults dragover, and the web client has no
+  // preload — without this the browser rejects the drop and opens the file.
+  it('accepts the drag on dragover so the drop can fire without preload', async () => {
+    await renderHarness(true, vi.fn())
+
+    const event = dragEvent('dragover', [])
+    act(() => {
+      dialogChild().dispatchEvent(event)
+    })
+
+    expect(event.defaultPrevented).toBe(true)
+    expect((event as DragEvent).dataTransfer?.dropEffect).toBe('copy')
+  })
+
+  it('leaves in-app drags alone on dragover', async () => {
+    await renderHarness(true, vi.fn())
+
+    const event = dragEvent('dragover', [], ['Files', ORCA_INTERNAL_FILE_DRAG_TYPE])
+    act(() => {
+      dialogChild().dispatchEvent(event)
+    })
+
+    expect(event.defaultPrevented).toBe(false)
   })
 
   it('highlights from the advertised drag types, which is all a dragenter exposes', async () => {

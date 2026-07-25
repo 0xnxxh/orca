@@ -4,6 +4,7 @@ import { extractImageFilesFromDataTransfer } from '@/lib/feedback-image-attachme
 
 type FeedbackImageDragHandlers = {
   onDragEnter: (event: React.DragEvent<HTMLElement>) => void
+  onDragOver: (event: React.DragEvent<HTMLElement>) => void
   onDragLeave: (event: React.DragEvent<HTMLElement>) => void
 }
 
@@ -39,6 +40,16 @@ export function useFeedbackImageDrop(
     }
     dragDepthRef.current += 1
     setIsDragActive(true)
+  }, [])
+
+  // Why: the web client has no preload to preventDefault dragover for it, and
+  // without that the browser refuses the drop and navigates to the dropped file.
+  const onDragOver = useCallback((event: React.DragEvent<HTMLElement>) => {
+    if (!hasNativeFileDragTypes(event.dataTransfer.types)) {
+      return
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
   }, [])
 
   const onDragLeave = useCallback((event: React.DragEvent<HTMLElement>) => {
@@ -83,5 +94,5 @@ export function useFeedbackImageDrop(
     }
   }, [onAddFiles, open, reset])
 
-  return { isDragActive, contentRef, dragHandlers: { onDragEnter, onDragLeave } }
+  return { isDragActive, contentRef, dragHandlers: { onDragEnter, onDragOver, onDragLeave } }
 }
