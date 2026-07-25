@@ -3,20 +3,24 @@
  *
  * `--disable-gpu` alone does not stop Chromium from spawning a GPU child for the
  * Viz display compositor, so a driver that CHECK-crashes at GPU init keeps
- * killing every launch even with the fallback applied. Each tier removes
- * strictly more of the GPU process from the path; tier 3 removes the child
- * process entirely, which is the only shape a GPU-init crash cannot survive.
+ * killing every launch even with the fallback applied (20 of 21 crashed launches
+ * in the reported bundle already carried tier 1). Tier 2 takes the compositor off
+ * the GPU child and forces ANGLE onto SwiftShader so the vendor DLL is never loaded.
+ *
+ * The ladder deliberately stops there. `--in-process-gpu` would remove the child
+ * entirely, but it also turns a recoverable child fault into a main-process kill,
+ * and nothing in the evidence says tier 2 is insufficient.
  *
  * Tiers are additive on purpose: escalating never drops a switch that a lower
  * tier already needed.
  */
 
-export const GPU_FALLBACK_TIERS = [1, 2, 3] as const
+export const GPU_FALLBACK_TIERS = [1, 2] as const
 
 export type GpuFallbackTier = (typeof GPU_FALLBACK_TIERS)[number]
 
 export const MIN_GPU_FALLBACK_TIER: GpuFallbackTier = 1
-export const MAX_GPU_FALLBACK_TIER: GpuFallbackTier = 3
+export const MAX_GPU_FALLBACK_TIER: GpuFallbackTier = 2
 
 /** Tier 0 means "no fallback applied to this launch". */
 export const NO_GPU_FALLBACK_TIER = 0
@@ -31,13 +35,6 @@ const TIER_SWITCHES: Record<GpuFallbackTier, readonly GpuFallbackSwitch[]> = {
     { name: 'disable-gpu-compositing' },
     // Why: keeps a broken vendor D3D11 driver DLL out of the process even when Chromium still initializes ANGLE.
     { name: 'use-angle', value: 'swiftshader' }
-  ],
-  3: [
-    { name: 'disable-gpu' },
-    { name: 'disable-gpu-compositing' },
-    { name: 'use-angle', value: 'swiftshader' },
-    // Why: last resort — no GPU child exists, so a GPU-init CHECK crash can no longer loop the app.
-    { name: 'in-process-gpu' }
   ]
 }
 
@@ -63,7 +60,7 @@ export function getGpuFallbackTierSwitches(tier: GpuFallbackTier): readonly GpuF
 
 /**
  * Next rung above `currentTier` (0 = nothing applied yet), or null once the
- * ladder is exhausted. Null is what bounds relaunches to 3 per build.
+ * ladder is exhausted. Null is what bounds relaunches per build.
  */
 export function getNextGpuFallbackTier(currentTier: number): GpuFallbackTier | null {
   if (Number.isNaN(currentTier) || currentTier < MIN_GPU_FALLBACK_TIER) {

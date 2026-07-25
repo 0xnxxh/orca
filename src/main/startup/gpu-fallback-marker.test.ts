@@ -51,8 +51,8 @@ describe('gpu-fallback-marker', () => {
 
   it('overwrites an existing marker when escalating tiers', () => {
     writeGpuFallbackMarker(userDataPath, { engagedAt: 1, crashesInWindow: 3, tier: 1 }, environment)
-    writeGpuFallbackMarker(userDataPath, { engagedAt: 2, crashesInWindow: 4, tier: 3 }, environment)
-    expect(readGpuFallbackMarker(userDataPath)?.tier).toBe(3)
+    writeGpuFallbackMarker(userDataPath, { engagedAt: 2, crashesInWindow: 4, tier: 2 }, environment)
+    expect(readGpuFallbackMarker(userDataPath)?.tier).toBe(2)
   })
 
   it('returns null when no marker exists', () => {
@@ -90,7 +90,7 @@ describe('gpu-fallback-marker', () => {
         platform: 'win32'
       })
     )
-    expect(readGpuFallbackMarker(userDataPath)?.tier).toBe(3)
+    expect(readGpuFallbackMarker(userDataPath)?.tier).toBe(2)
   })
 
   it('defaults a marker with no tier to the first rung', () => {
