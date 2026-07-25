@@ -193,8 +193,10 @@ describe('parseCoreSparseCheckoutFlag', () => {
   })
 
   it('does not treat trailing junk as a second assignment', () => {
-    // Git rejects this line outright (a value runs to end of line, so only one assignment can share
-    // a line); reading the whole tail as the value keeps us on the conservative "not sparse" side.
+    // Git parses this line fine and takes the whole tail as one value (`git config --list` reports
+    // `core.sparsecheckout=true bogus = false`) — a value runs to end of line, so only one
+    // assignment can share a line. Git then fails the boolean coercion outright, so reading the
+    // whole tail as the value keeps us on the conservative "not sparse" side.
     expect(parseCoreSparseCheckoutFlag('[core] sparseCheckout = true bogus = false\n')).toBe(false)
   })
 })
