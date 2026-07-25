@@ -1315,7 +1315,12 @@ function sanitizeRepoUpstream(value: unknown): Repo['upstream'] | undefined {
   return owner && repo ? { owner, repo } : undefined
 }
 
-function sanitizeGitRemoteIdentity(value: unknown): GitRemoteIdentity | undefined {
+function sanitizeGitRemoteIdentity(value: unknown): GitRemoteIdentity | null | undefined {
+  // Why: `null` is a resolved "no usable remote" marker; dropping it would make
+  // a settled repo indistinguishable from one whose identity probe is pending.
+  if (value === null) {
+    return null
+  }
   if (!value || typeof value !== 'object') {
     return undefined
   }
@@ -1374,7 +1379,7 @@ function sanitizeRepoUpdatesForPersistence<
       sanitized.repoIcon = repoIcon
     }
   }
-  // Why: `null` is a valid "not a fork" marker; only drop malformed shapes.
+  // Why: `null` is a valid "not a fork" / "no usable remote" marker; only drop malformed shapes.
   if ('upstream' in sanitized) {
     const upstream = sanitizeRepoUpstream(sanitized.upstream)
     if (upstream === undefined) {
