@@ -25,6 +25,9 @@ export const MAX_GPU_FALLBACK_TIER: GpuFallbackTier = 2
 /** Tier 0 means "no fallback applied to this launch". */
 export const NO_GPU_FALLBACK_TIER = 0
 
+/** A rung, or the hardware path. The only values a launch's current tier may hold. */
+export type GpuFallbackTierOrNone = GpuFallbackTier | typeof NO_GPU_FALLBACK_TIER
+
 export type GpuFallbackSwitch = { name: string; value?: string }
 
 const TIER_SWITCHES: Record<GpuFallbackTier, readonly GpuFallbackSwitch[]> = {
