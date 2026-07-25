@@ -4,7 +4,8 @@ import {
   clampGpuFallbackTier,
   getGpuFallbackTierSwitches,
   getNextGpuFallbackTier,
-  isGpuFallbackTier
+  isGpuFallbackTier,
+  resolveGpuFallbackEscalation
 } from './gpu-fallback-tiers'
 
 describe('gpu-fallback-tiers', () => {
@@ -61,5 +62,44 @@ describe('gpu-fallback-tiers', () => {
         'in-process-gpu'
       )
     }
+  })
+})
+
+describe('resolveGpuFallbackEscalation', () => {
+  it('starts a machine with no history at the bottom of the ladder', () => {
+    expect(resolveGpuFallbackEscalation(0, () => null)).toEqual({
+      nextTier: 1,
+      resumedFromHistory: false
+    })
+  })
+
+  // Why: this is what turns "unusable after every update" into one relaunch per update.
+  it('resumes a hardware launch at the tier the machine already needed', () => {
+    expect(resolveGpuFallbackEscalation(0, () => 2)).toEqual({
+      nextTier: 2,
+      resumedFromHistory: true
+    })
+    expect(resolveGpuFallbackEscalation(0, () => 1)).toEqual({
+      nextTier: 1,
+      resumedFromHistory: true
+    })
+  })
+
+  it('ignores history once a tier is applied and escalates one rung', () => {
+    let historyReads = 0
+    expect(
+      resolveGpuFallbackEscalation(1, () => {
+        historyReads += 1
+        return 2
+      })
+    ).toEqual({ nextTier: 2, resumedFromHistory: false })
+    expect(historyReads).toBe(0)
+  })
+
+  it('reports an exhausted ladder at the top rung', () => {
+    expect(resolveGpuFallbackEscalation(2, () => 2)).toEqual({
+      nextTier: null,
+      resumedFromHistory: false
+    })
   })
 })

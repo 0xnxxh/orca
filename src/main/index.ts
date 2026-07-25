@@ -138,7 +138,7 @@ import {
 import {
   NO_GPU_FALLBACK_TIER,
   getGpuFallbackTierSwitches,
-  getNextGpuFallbackTier,
+  resolveGpuFallbackEscalation,
   type GpuFallbackTier
 } from './startup/gpu-fallback-tiers'
 import { purgeGpuCaches } from './startup/gpu-cache-purge'
@@ -1621,9 +1621,9 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
   // Why: after an update the build-scoped marker is gone but the machine is not.
   // Resuming at the tier it already needed is the difference between one relaunch
   // per update and re-walking the whole ladder every time.
-  const resumeTier =
-    currentTier === NO_GPU_FALLBACK_TIER ? getResumeGpuFallbackTier(userDataPath) : null
-  const nextTier = resumeTier ?? getNextGpuFallbackTier(currentTier)
+  const { nextTier, resumedFromHistory } = resolveGpuFallbackEscalation(currentTier, () =>
+    getResumeGpuFallbackTier(userDataPath)
+  )
   if (currentTier !== NO_GPU_FALLBACK_TIER) {
     // Why: 20 of 21 crashed launches on the reported machine already carried
     // gpu_fallback_applied. Without this breadcrumb the failure looked like a fix.
@@ -1651,7 +1651,7 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
     exitCode,
     tier: nextTier,
     previousTier: currentTier,
-    resumedFromHistory: resumeTier !== null,
+    resumedFromHistory,
     crashesInWindow: result.crashesInWindow
   })
   const engagedAt = Date.now()
@@ -2079,11 +2079,15 @@ void app.whenReady().then(async () => {
   }
   // Why: driver identity for crash details. Fire-and-forget and bounded — on the
   // machines this exists for, the GPU process never initializes and this never resolves.
-  void captureGpuInfoSnapshot(() => app.getGPUInfo('complete'), GPU_INFO_CAPTURE_TIMEOUT_MS).then(
-    (snapshot) => {
-      recordCrashBreadcrumb('gpu_info_captured', snapshot)
-    }
-  )
+  // Skipped in headless serve: no crash dialog to feed, and 'complete' can provoke a
+  // GPU child that Xvfb environments have no reason to spawn.
+  if (!isServeMode) {
+    void captureGpuInfoSnapshot(() => app.getGPUInfo('complete'), GPU_INFO_CAPTURE_TIMEOUT_MS).then(
+      (snapshot) => {
+        recordCrashBreadcrumb('gpu_info_captured', snapshot)
+      }
+    )
+  }
   // Why: install certificate decisions before any webview or headless window issues its first TLS request.
   app.on(
     'certificate-error',

@@ -72,3 +72,25 @@ export function getNextGpuFallbackTier(currentTier: number): GpuFallbackTier | n
   const next = Math.trunc(currentTier) + 1
   return isGpuFallbackTier(next) ? next : null
 }
+
+export type GpuFallbackEscalation = {
+  nextTier: GpuFallbackTier | null
+  resumedFromHistory: boolean
+}
+
+/**
+ * Tier for the relaunch after a crash burst. History (the strongest tier this
+ * machine ever needed) is consulted only when no tier is applied this launch —
+ * i.e. the post-update hardware probe just failed. Once on the ladder,
+ * escalation is strictly one rung at a time.
+ */
+export function resolveGpuFallbackEscalation(
+  currentTier: number,
+  readRequiredTierHistory: () => GpuFallbackTier | null
+): GpuFallbackEscalation {
+  const resumeTier = currentTier === NO_GPU_FALLBACK_TIER ? readRequiredTierHistory() : null
+  return {
+    nextTier: resumeTier ?? getNextGpuFallbackTier(currentTier),
+    resumedFromHistory: resumeTier !== null
+  }
+}
