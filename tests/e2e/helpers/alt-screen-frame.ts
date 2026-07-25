@@ -31,7 +31,8 @@ export async function readRenderedAltScreenFrame(
       if (!pane) {
         throw new Error(`No terminal pane for tab ${tabId}`)
       }
-      const pattern = new RegExp(`${marker} frame (\\d{3})`)
+      // marker is a literal, so escape it rather than letting `[`/`.`/`+` act as regex syntax.
+      const pattern = new RegExp(`${marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} frame (\\d{3})`)
       const buffer = pane.terminal.buffer.active
       for (let row = 0; row < pane.terminal.rows; row += 1) {
         const line = buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? ''
