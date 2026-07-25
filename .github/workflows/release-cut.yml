@@ -42,7 +42,7 @@ on:
         default: false
         type: boolean
       version_suffix:
-        description: Extra prerelease identifier appended to an rc version (e.g. "perf" -> 1.2.3-rc.4.perf). rc kind only.
+        description: Extra prerelease identifier appended to an rc version (e.g. "perf" -> 1.2.3-rc.4.perf). Applies to kind=rc, or to an explicit version that is a bare X.Y.Z-rc.N.
         required: false
         type: string
         default: ''
@@ -515,9 +515,13 @@ jobs:
           new=""
           if [[ -n "${EXPLICIT_VERSION:-}" ]]; then
             explicit="${EXPLICIT_VERSION#v}"
-            # Why the optional trailing identifier: the rc path can cut
-            # suffixed side-branch RCs (X.Y.Z-rc.N.perf), and a shape this
-            # regex rejects can never be re-cut through the override.
+            # Why the optional trailing identifier: it lets an operator name a
+            # suffixed side-branch RC (X.Y.Z-rc.N.perf) directly, the same shape
+            # the rc path cuts. Note this only ever admits one *above* the
+            # series head — the gate below refuses a suffixed rc at or below it
+            # just like a bare one, so this is a second spelling of
+            # `version=X.Y.Z-rc.N` + `version_suffix`, not a way back into a
+            # series that already shipped.
             # Why rc.(0|[1-9][0-9]{0,8}): the `-le` below compares with bash's
             # machine-width integers, so both ends of that range fall *open* on
             # exactly the RCs this gate must catch. A leading zero (rc.08) is an
@@ -564,7 +568,7 @@ jobs:
                 # series on that base. A minor/major series (1.5.0-rc.N) exists
                 # only because this override created it, and pointing an
                 # operator at kind=rc there would cut an unrelated release.
-                echo "::error::Refusing explicit version $explicit: rc.$explicit_rc is not above rc.$highest_explicit_rc, the highest already cut for $explicit_base. Request rc.$((highest_explicit_rc + 1)) or higher. If you are resuming an unpublished tag and $explicit_base is the next patch after latest stable $latest_stable, dispatch kind=rc instead, which recovers the existing tag; otherwise cut rc.$((highest_explicit_rc + 1)) and leave the unpublished tag alone." >&2
+                echo "::error::Refusing explicit version $explicit: rc.$explicit_rc is not above rc.$highest_explicit_rc, the highest already cut for $explicit_base. Request rc.$((highest_explicit_rc + 1)) or higher. If you are resuming an unpublished tag and $explicit_base is the next patch after latest stable $latest_stable, dispatch kind=rc instead, which recovers that tag when it was cut from the ref you dispatch; otherwise cut rc.$((highest_explicit_rc + 1)) and leave the unpublished tag alone." >&2
                 exit 1
               fi
             fi
@@ -575,7 +579,9 @@ jobs:
             # stable X.Y.Z.perf is not valid semver, and re-suffixing an
             # already-suffixed rc would produce rc.N.perf.perf.
             if [[ -n "${VERSION_SUFFIX:-}" ]]; then
-              if [[ ! "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+              # Same bounded rc pattern as the shape check above, so the two
+              # cannot drift apart under a later edit.
+              if [[ ! "$explicit" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.(0|[1-9][0-9]{0,8})$ ]]; then
                 echo "::error::version_suffix applies only to a bare X.Y.Z-rc.N version, got: $explicit" >&2
                 exit 1
               fi
