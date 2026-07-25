@@ -1,6 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import type { BrowserWindow } from 'electron'
-import { reflowRendererViewport, VIEWPORT_REFLOW_SETTLE_MS } from './renderer-viewport-reflow'
+import {
+  reflowRendererViewport,
+  VIEWPORT_REFLOW_RESTORE_ATTEMPTS,
+  VIEWPORT_REFLOW_SETTLE_MS
+} from './renderer-viewport-reflow'
 
 function createWindow(overrides: Record<string, unknown> = {}): BrowserWindow {
   const webContents = {
@@ -123,16 +127,70 @@ describe('reflowRendererViewport', () => {
     expect(window.webContents.enableDeviceEmulation).toHaveBeenCalledTimes(2)
   })
 
-  it('recovers the latch when disabling emulation throws', () => {
+  it('retries the restore rather than stranding a live renderer at the overshot viewport', () => {
     const window = createWindow()
     vi.mocked(window.webContents.disableDeviceEmulation).mockImplementationOnce(() => {
-      throw new Error('Object has been destroyed')
+      throw new Error('transient failure')
     })
     reflowRendererViewport(window)
     expect(() => vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS + 1)).not.toThrow()
 
+    // Why: the webContents is still alive, so the emulated viewport is still applied — giving up
+    // here would leave the renderer stuck at the overshot height forever.
+    expect(window.webContents.disableDeviceEmulation).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS + 1)
+    expect(window.webContents.disableDeviceEmulation).toHaveBeenCalledTimes(2)
+
+    // Why: the retry succeeded, so the latch is free and later reveals still reflow.
     reflowRendererViewport(window)
     vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS + 1)
     expect(window.webContents.enableDeviceEmulation).toHaveBeenCalledTimes(2)
+  })
+
+  it('holds the latch while a restore is still being retried', () => {
+    const window = createWindow()
+    vi.mocked(window.webContents.disableDeviceEmulation).mockImplementation(() => {
+      throw new Error('still failing')
+    })
+    reflowRendererViewport(window)
+    vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS + 1)
+
+    // Why: stacking a second emulation over an unrestored viewport would compound the overshoot.
+    reflowRendererViewport(window)
+    vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS + 1)
+    expect(window.webContents.enableDeviceEmulation).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops retrying the restore and re-arms after the attempt budget', () => {
+    const window = createWindow()
+    vi.mocked(window.webContents.disableDeviceEmulation).mockImplementation(() => {
+      throw new Error('always fails')
+    })
+    reflowRendererViewport(window)
+    vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS * (VIEWPORT_REFLOW_RESTORE_ATTEMPTS + 4))
+    expect(window.webContents.disableDeviceEmulation).toHaveBeenCalledTimes(
+      VIEWPORT_REFLOW_RESTORE_ATTEMPTS + 1
+    )
+
+    // Why: an unbounded retry would pin the latch and silently kill every later reflow.
+    vi.mocked(window.webContents.disableDeviceEmulation).mockImplementation(() => undefined)
+    reflowRendererViewport(window)
+    vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS + 1)
+    expect(window.webContents.enableDeviceEmulation).toHaveBeenCalledTimes(2)
+  })
+
+  it('abandons the restore once the webContents is gone', () => {
+    const window = createWindow()
+    vi.mocked(window.webContents.disableDeviceEmulation).mockImplementation(() => {
+      throw new Error('always fails')
+    })
+    reflowRendererViewport(window)
+    vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS + 1)
+    expect(window.webContents.disableDeviceEmulation).toHaveBeenCalledTimes(1)
+
+    // Why: a destroyed renderer takes its emulated viewport with it; retrying is pointless.
+    vi.mocked(window.webContents.isDestroyed).mockReturnValue(true)
+    vi.advanceTimersByTime(VIEWPORT_REFLOW_SETTLE_MS * 5)
+    expect(window.webContents.disableDeviceEmulation).toHaveBeenCalledTimes(1)
   })
 })

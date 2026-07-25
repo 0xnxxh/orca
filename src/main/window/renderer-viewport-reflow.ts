@@ -4,6 +4,10 @@ import type { BrowserWindow } from 'electron'
 // that a user never sees the 1px overshoot.
 export const VIEWPORT_REFLOW_SETTLE_MS = 32
 
+// Why: a restore that keeps failing on a live webContents would loop forever; give up and
+// release the latch so a later reveal can try a fresh cycle.
+export const VIEWPORT_REFLOW_RESTORE_ATTEMPTS = 3
+
 // Why: overlapping reveals must not stack emulation calls; the outer one owns the restore.
 const activeViewportReflows = new WeakSet<BrowserWindow>()
 
@@ -56,16 +60,28 @@ export function reflowRendererViewport(window: BrowserWindow): void {
     }
     // Why: emulation must always be undone — leaving it on strands the renderer at the
     // overshot viewport for the rest of the window's life.
-    setTimeout(() => {
-      try {
-        if (!isWindowGone(window)) {
-          window.webContents.disableDeviceEmulation()
-        }
-      } catch {
-        // Why: same teardown race; the emulated viewport dies with the webContents.
-      } finally {
-        activeViewportReflows.delete(window)
-      }
-    }, VIEWPORT_REFLOW_SETTLE_MS)
+    restoreRealViewport(window, 0)
   }, 0)
+}
+
+function restoreRealViewport(window: BrowserWindow, attempt: number): void {
+  setTimeout(() => {
+    if (isWindowGone(window)) {
+      // Why: the emulated viewport dies with the webContents, so there is nothing to restore.
+      activeViewportReflows.delete(window)
+      return
+    }
+    try {
+      window.webContents.disableDeviceEmulation()
+      activeViewportReflows.delete(window)
+    } catch {
+      // Why: the webContents is still alive, so the renderer is stuck at the overshot viewport;
+      // keep retrying and hold the latch so no second cycle stacks on the unrestored state.
+      if (attempt >= VIEWPORT_REFLOW_RESTORE_ATTEMPTS) {
+        activeViewportReflows.delete(window)
+        return
+      }
+      restoreRealViewport(window, attempt + 1)
+    }
+  }, VIEWPORT_REFLOW_SETTLE_MS)
 }
