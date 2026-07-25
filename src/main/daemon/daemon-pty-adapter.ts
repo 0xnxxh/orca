@@ -195,6 +195,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.supportsStartupIngress = supportsPtyStartupIngress(this.protocolVersion)
     this.client.onDisconnected(() => {
       if (!this.respawnAdoptionClosed) {
+        // Why re-arm here: the latch is otherwise only cleared when every awaiting
+        // session rebinds, and background sessions (no mounted pane, so nothing ever
+        // calls createOrAttach for them) never do — which would leave the fan-out
+        // permanently latched off after the first death. Fires once per connection.
+        this.writeRecoveryAttempted = false
         for (const id of this.activeSessionIds) {
           this.sessionsAwaitingDaemonRecovery.add(id)
         }

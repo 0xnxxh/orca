@@ -692,6 +692,50 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         healingAdapter.dispose()
       }
     })
+
+    it('re-arms recovery for a second daemon death when a background session never rebinds', async () => {
+      const respawn = vi.fn(async () => {
+        restartServerOnRespawn()
+        await server.start()
+      })
+      const healingAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, respawn })
+      const recovered: string[] = []
+      healingAdapter.onWriteUnavailable(({ id }) => recovered.push(id))
+      try {
+        await healingAdapter.spawn({ sessionId: 'pane-a', cols: 80, rows: 24 })
+        // A backgrounded session: no pane is mounted for it, so nothing in the
+        // renderer ever calls createOrAttach to rebind it after a daemon death.
+        await healingAdapter.spawn({ sessionId: 'background-b', cols: 80, rows: 24 })
+        const client = (healingAdapter as unknown as { client: DaemonClient }).client
+
+        await server.shutdown()
+        await waitFor(() => !client.isConnected())
+        expect(() => healingAdapter.write('pane-a', 'first-death')).toThrow(
+          PtyWriteUnavailableError
+        )
+        await waitFor(() => respawn.mock.calls.length === 1)
+        await waitFor(() => client.isConnected())
+
+        // Only the mounted pane rebinds; background-b keeps the awaiting set non-empty.
+        await healingAdapter.spawn({ sessionId: 'pane-a', cols: 80, rows: 24 })
+        recovered.length = 0
+
+        await server.shutdown()
+        await waitFor(() => !client.isConnected())
+
+        // Why revert-sensitive: the storm latch is otherwise only released when the
+        // awaiting set empties, which a never-rebinding background session prevents
+        // forever. That silently downgrades the fix to one-shot — every daemon death
+        // after the first would respawn nothing and leave siblings frozen again.
+        expect(() => healingAdapter.write('pane-a', 'second-death')).toThrow(
+          PtyWriteUnavailableError
+        )
+        expect(recovered).toContain('pane-a')
+        await waitFor(() => respawn.mock.calls.length === 2)
+      } finally {
+        healingAdapter.dispose()
+      }
+    })
   })
 
   describe('background stream thinning compatibility', () => {
