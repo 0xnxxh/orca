@@ -25,6 +25,7 @@ import {
   processGoneDedupe,
   type ProcessGoneDedupe
 } from './process-gone-dedupe'
+import { getGpuInfoSnapshot } from './gpu-info-snapshot'
 import { getMainProcessLifecycleIdentity } from './main-process-lifecycle-identity'
 import { flushActiveSink, startSpan } from '../observability/tracer'
 
@@ -35,6 +36,8 @@ export type ProcessGoneCrashEvent = {
   exitCode: number | null
   expectedTeardown: ExpectedTeardownScope
   details: Record<string, unknown>
+  /** True when this launch already runs a GPU fallback tier, so GPU deaths stop counting as churn. */
+  gpuFallbackActive?: boolean
 }
 
 type CrashReportRecorderStore = Pick<CrashReportStore, 'record'>
@@ -91,7 +94,8 @@ export function recordProcessGoneCrash(
         typeof event.details.serviceName === 'string' ? event.details.serviceName : undefined,
       reason: event.reason,
       exitCode: event.exitCode,
-      expectedTeardown: event.expectedTeardown
+      expectedTeardown: event.expectedTeardown,
+      gpuFallbackActive: event.gpuFallbackActive
     })
   ) {
     // Why: Chromium can crash-loop a recoverable child (network service seen at
@@ -121,8 +125,15 @@ export function recordProcessGoneCrash(
     return
   }
   const mainProcessLifecycle = getMainProcessLifecycleIdentity()
+  // Why: GPU and renderer deaths are the ones triage needs driver identity for;
+  // every other child type would just pad the report.
+  const gpuIdentity =
+    event.source === 'renderer' || event.processType.toLowerCase() === 'gpu'
+      ? (getGpuInfoSnapshot() ?? {})
+      : {}
   const crashDetails = buildProcessGoneCrashDetails({
     ...event.details,
+    ...gpuIdentity,
     ...mainProcessLifecycle
   })
   const breadcrumbs = getCrashBreadcrumbSnapshot()
