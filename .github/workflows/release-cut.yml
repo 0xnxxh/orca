@@ -554,7 +554,9 @@ jobs:
           # which step staged what or how the commit was spelled.
           # -F because the allowlist is literal: unanchored, `.` would match any
           # character and quietly admit a path like `packageXjson`.
-          committed="$(git diff-tree --no-commit-id --name-only -r HEAD |
+          # -m --first-parent: plain diff-tree prints NOTHING for a merge commit,
+          # which would make this guard pass silently rather than fail closed.
+          committed="$(git diff-tree --no-commit-id --name-only -r -m --first-parent HEAD |
             grep -vxF -e 'package.json' -e 'resources/skills/release-mapping.json' || true)"
           if [[ -n "$committed" ]]; then
             echo "::error::Release commit carries unexpected paths: $(echo "$committed" | tr '\n' ' ')Only package.json and the skill release-mapping row may ship in a version commit." >&2
