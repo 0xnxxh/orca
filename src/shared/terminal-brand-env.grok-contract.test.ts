@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
-import { getAgentTerminalBrandOverride } from './agent-terminal-brand-env'
+import { ORCA_ADVERTISED_TERM_PROGRAM, ORCA_TRUE_TERM_PROGRAM } from './terminal-brand-env'
 
 /**
  * Contract test against a real `grok` binary, when one is installed.
@@ -45,7 +45,7 @@ function grokDoctorTerminalLine(termProgram: string): string | null {
   }
 }
 
-const grokTerminalLine = grokDoctorTerminalLine('Orca')
+const grokTerminalLine = grokDoctorTerminalLine(ORCA_TRUE_TERM_PROGRAM)
 const describeWithGrok = grokTerminalLine === null ? describe.skip : describe
 
 describeWithGrok('grok terminal-brand contract', () => {
@@ -54,9 +54,6 @@ describeWithGrok('grok terminal-brand contract', () => {
   })
 
   it('classifies the advertised brand as a terminal it emits hyperlinks for', () => {
-    const advertised = getAgentTerminalBrandOverride('grok')
-    expect(advertised).not.toBeNull()
-
-    expect(grokDoctorTerminalLine(advertised!)).toMatch(/VS Code/i)
+    expect(grokDoctorTerminalLine(ORCA_ADVERTISED_TERM_PROGRAM)).toMatch(/VS Code/i)
   })
 })

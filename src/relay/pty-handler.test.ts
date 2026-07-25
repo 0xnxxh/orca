@@ -2138,7 +2138,7 @@ describe('PtyHandler', () => {
     }
     expect(spawnEnv.name).toBe('xterm-256color')
     expect(spawnEnv.env.TERM).toBe('xterm-256color')
-    expect(spawnEnv.env.TERM_PROGRAM).toBe('Orca')
+    expect(spawnEnv.env.TERM_PROGRAM).toBe('vscode')
   })
 
   it('uses the safe terminal default when TERM is deleted without a custom value', async () => {
@@ -2299,7 +2299,7 @@ describe('PtyHandler', () => {
     expect(callArgs.env.ORCA_AGENT_HOOK_PORT).toBe('12345')
     expect(callArgs.env.ORCA_AGENT_HOOK_TOKEN).toBe('abc-uuid')
     expect(callArgs.env.TERM).toBe('xterm-256color')
-    expect(callArgs.env.TERM_PROGRAM).toBe('Orca')
+    expect(callArgs.env.TERM_PROGRAM).toBe('vscode')
   })
 
   it('fences both revived worktree identity and cwd with rollback', async () => {

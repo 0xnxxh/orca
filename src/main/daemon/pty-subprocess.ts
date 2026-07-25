@@ -54,7 +54,10 @@ import {
   recognizeAgentProcess,
   recognizeAgentProcessFromCommandLine
 } from '../../shared/agent-process-recognition'
-import { applyAgentTerminalBrandEnv } from '../../shared/agent-terminal-brand-env'
+import {
+  ORCA_ADVERTISED_TERM_PROGRAM,
+  ORCA_TRUE_TERM_PROGRAM
+} from '../../shared/terminal-brand-env'
 import { shouldInspectOuterWrapperForegroundProcess } from '../../shared/foreground-wrapper-agent'
 import {
   shouldUseShellReadyStartupDelivery,
@@ -564,7 +567,8 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
     ...mergeGitConfigEnvProtocol(stripInheritedBuildModeEnv(process.env), opts.env),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'Orca',
+    TERM_PROGRAM: ORCA_ADVERTISED_TERM_PROGRAM,
+    ORCA_TERM_PROGRAM: ORCA_TRUE_TERM_PROGRAM,
     // Why: TUIs feature-gate on TERM_PROGRAM_VERSION; ORCA_APP_VERSION is inherited from the forking main process.
     TERM_PROGRAM_VERSION: process.env.ORCA_APP_VERSION ?? '0.0.0-dev',
     // Why: `supports-hyperlinks` gates OSC 8 on a TERM_PROGRAM allowlist excluding Orca; force it since xterm.js parses OSC 8 for clickable links.
@@ -593,9 +597,6 @@ export function createPtySubprocess(opts: PtySubprocessOptions): SubprocessHandl
   let windowsFallbackAttempts: WindowsShellSpawnAttempt[] = []
   const startupAgentRecognition = recognizeAgentProcessFromCommandLine(opts.command)
   const isCodexStartupCommand = startupAgentRecognition?.agent === 'codex'
-  // Why: grok drops the OSC 8 link spans it already computed unless TERM_PROGRAM
-  // names a brand it classifies. Scoped per agent — see agent-terminal-brand-env.
-  applyAgentTerminalBrandEnv(env, opts.launchAgent ?? startupAgentRecognition?.agent)
   // Why: gate on the effective cwd, not raw opts.cwd — an omitted cwd becomes a safe
   // default (mirrors LocalPtyProvider). Guarding first treated undefined as root-like (#9578).
   const requestedCwd = opts.cwd || getDefaultCwd()

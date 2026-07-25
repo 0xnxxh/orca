@@ -55,7 +55,10 @@ import { resolveAgentForegroundProcessWithAvailability } from './agent-foregroun
 import { resolveStableForegroundProcess } from './stable-foreground-process'
 import { getAgentForegroundContextPaths } from './agent-foreground-context-paths'
 import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
-import { applyAgentTerminalBrandEnv } from '../../shared/agent-terminal-brand-env'
+import {
+  ORCA_ADVERTISED_TERM_PROGRAM,
+  ORCA_TRUE_TERM_PROGRAM
+} from '../../shared/terminal-brand-env'
 import { killWithDescendantSweep } from '../pty-descendant-termination'
 import { readWindowsConptyProcessIds } from './windows-conpty-process-membership'
 import { canConfirmAgentFromConsolePresence } from './windows-console-foreground'
@@ -645,7 +648,8 @@ export class LocalPtyProvider implements IPtyProvider {
       ...mergeGitConfigEnvProtocol(stripInheritedBuildModeEnv(process.env), args.env),
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      TERM_PROGRAM: 'Orca',
+      TERM_PROGRAM: ORCA_ADVERTISED_TERM_PROGRAM,
+      ORCA_TERM_PROGRAM: ORCA_TRUE_TERM_PROGRAM,
       // Why: TUIs feature-gate on TERM_PROGRAM_VERSION; the fallback keeps tests and non-Electron runs working.
       TERM_PROGRAM_VERSION: process.env.ORCA_APP_VERSION ?? '0.0.0-dev',
       // Why: supports-hyperlinks rejects TERM_PROGRAM=Orca, so tools drop OSC 8 links; force it since xterm.js parses them.
@@ -687,10 +691,6 @@ export class LocalPtyProvider implements IPtyProvider {
           wslDistro: launchWslDistro
         })
       : spawnEnv
-    // Why: grok gates OSC 8 hyperlinks on a TERM_PROGRAM allowlist with no Orca
-    // entry, so it drops the link spans it already computed. Scoped per agent —
-    // TERM_PROGRAM is read by everything else spawned here too.
-    applyAgentTerminalBrandEnv(finalEnv, args.launchAgent ?? startupAgentRecognition?.agent)
     // Why: app-level env hooks can re-add scrubbed vars; delete last so shims like Claude Agent Teams keep their PATH.
     for (const key of args.envToDelete ?? []) {
       delete finalEnv[key]
