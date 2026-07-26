@@ -16,11 +16,8 @@ import { useAppStore } from '@/store'
 import { useTerminalScrollVisibilityMemory } from './use-terminal-scroll-visibility-memory'
 import { useTerminalContainerFitSync } from './use-terminal-container-fit-sync'
 import { handleTerminalProgrammaticTextPaste } from './terminal-programmatic-text-paste'
-import {
-  hideTerminalVisibility,
-  resumeTerminalVisibility,
-  type TerminalHiddenReason
-} from './terminal-visibility-resume'
+import { applyTerminalVisibilityTransition } from './apply-terminal-visibility-transition'
+import type { TerminalHiddenReason } from './terminal-visibility-resume'
 import { useTerminalWindowWakeRecovery } from './use-terminal-window-wake-recovery'
 import {
   releaseRendererPtyVisibilityClaim,
@@ -81,22 +78,14 @@ export function useTerminalPaneGlobalEffects({
   worktreeIdRef.current = worktreeId
   const cwdRef = useRef(cwd)
   cwdRef.current = cwd
-  // Starts true so the first render with isVisible=false triggers a
-  // suspendRendering(). Background worktrees that mount hidden would
-  // otherwise leak WebGL contexts — openTerminal() unconditionally creates
-  // one — and exhaust Chromium's ~8-context budget across worktrees.
+  // Starts true so the first isVisible=false pass suspends WebGL (context budget).
   const wasVisibleRef = useRef(true)
   const wasWorktreeActiveRef = useRef(isWorktreeActive)
   const hasCompletedVisibleResumeRef = useRef(false)
   const renderingSuspendedByVisibilityRef = useRef(false)
   const hiddenReasonRef = useRef<TerminalHiddenReason | null>(null)
   const rendererVisible = isVisible && isWorktreeActive
-  // Why: the active pane can rebind to a new PTY (deferred reattach / eager
-  // adopt) or switch active leaf without isActive/isVisible/isWorktreeActive
-  // flipping. Derive the active leaf's live PTY reactively from the same
-  // leaf→PTY binding the reattach path writes, so the active-renderer-pty report
-  // below re-fires on rebind — otherwise main keeps the stale id and the live
-  // PTY loses its interactive reserve.
+  // Why: rebind/active-leaf changes without visibility flips must re-report PTY.
   const activeLeafPtyId = useAppStore((state) => {
     const layout = state.terminalLayoutsByTabId[tabId]
     const activeLeafId = layout?.activeLeafId
@@ -137,54 +126,24 @@ export function useTerminalPaneGlobalEffects({
     }
   }, [rendererVisible, paneTransportsRef])
 
-  // Why useLayoutEffect: worktree hide disposes WebGL (DOM fallback). If resume
-  // runs in useEffect after paint, the first visible frame is the heavier DOM
-  // glyphs, then WebGL settles — a brief bold flash on switch. Pre-paint resume
-  // keeps the first painted frame on the GPU renderer.
+  // Why layout: pre-paint WebGL resume avoids one-frame DOM bold flash on reveal.
   useLayoutEffect(() => {
-    const manager = managerRef.current
-    if (!manager) {
-      return
-    }
-    const wasVisible = wasVisibleRef.current
-    const wasWorktreeActive = wasWorktreeActiveRef.current
     isActiveRef.current = isActive
     isVisibleRef.current = rendererVisible
-    if (rendererVisible) {
-      const shouldUseLightTabResume =
-        isWorktreeActive &&
-        hasCompletedVisibleResumeRef.current &&
-        !renderingSuspendedByVisibilityRef.current &&
-        (wasVisible || hiddenReasonRef.current === 'tab')
-      resumeTerminalVisibility({
-        manager,
-        isActive,
-        wasVisible,
-        shouldUseLightTabResume,
-        captureViewportPositions,
-        withSuppressedScrollTracking
-      })
-      renderingSuspendedByVisibilityRef.current = false
-      wasVisibleRef.current = true
-      wasWorktreeActiveRef.current = isWorktreeActive
-      hasCompletedVisibleResumeRef.current = true
-      hiddenReasonRef.current = null
-      applyPendingFollowOutputRequests()
-      return
-    } else {
-      const hiddenState = hideTerminalVisibility({
-        manager,
-        wasVisible,
-        wasWorktreeActive,
-        isWorktreeActive,
-        hasCompletedVisibleResume: hasCompletedVisibleResumeRef.current,
-        captureViewportPositions
-      })
-      renderingSuspendedByVisibilityRef.current = hiddenState.renderingSuspended
-      hiddenReasonRef.current = hiddenState.hiddenReason
-    }
-    wasVisibleRef.current = false
-    wasWorktreeActiveRef.current = isWorktreeActive
+    applyTerminalVisibilityTransition({
+      manager: managerRef.current,
+      rendererVisible,
+      isActive,
+      isWorktreeActive,
+      wasVisibleRef,
+      wasWorktreeActiveRef,
+      hasCompletedVisibleResumeRef,
+      renderingSuspendedByVisibilityRef,
+      hiddenReasonRef,
+      captureViewportPositions,
+      withSuppressedScrollTracking,
+      applyPendingFollowOutputRequests
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, isWorktreeActive, rendererVisible])
 
