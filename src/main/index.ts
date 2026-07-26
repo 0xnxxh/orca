@@ -173,8 +173,8 @@ import { createCodexSessionMigrationScheduler } from './codex/codex-session-migr
 import { prepareLegacySharedCodexSessionResume } from './codex/codex-legacy-session-resume'
 import { resolveHostCodexSessionSourceHome } from './codex/codex-session-source-home'
 import {
-  claimsCodexRolloutLayout,
-  findTrustedCodexSessionResume
+  resolveCodexSessionResumeProvenance,
+  type CodexSessionResumePreparation
 } from './codex/codex-session-resume-home'
 import { getSystemCodexHomePath } from './codex/codex-home-paths'
 import { normalizeRuntimePathForComparison } from '../shared/cross-platform-path'
@@ -839,7 +839,7 @@ async function prepareCodexSessionResumeForLaunch(args: {
   target: CodexAccountSelectionTarget
   launchEnv?: NodeJS.ProcessEnv
   workspacePath?: string
-}): Promise<{ codexHomePath: string | null } | null> {
+}): Promise<CodexSessionResumePreparation | null> {
   if (args.target.runtime === 'wsl' || !codexRuntimeHome || !store) {
     return null
   }
@@ -849,20 +849,15 @@ async function prepareCodexSessionResumeForLaunch(args: {
     systemHomePath,
     ...codexRuntimeHome.getHostCodexHomePathsForSessionDiscovery()
   ]
-  const sessionSource = await findTrustedCodexSessionResume({
+  const sessionSource = await resolveCodexSessionResumeProvenance({
     sessionId: args.providerSession.id,
     transcriptPath: args.providerSession.transcriptPath,
     trustedCodexHomes: trustedHomes
   })
-  if (!sessionSource) {
-    // Why: an unverifiable Codex rollout still blocks; only paths that never claimed Codex
-    // provenance (e.g. ~/.claude/… on a pane mislabeled "codex") fall through to a normal launch.
-    if (claimsCodexRolloutLayout(args.providerSession.transcriptPath)) {
-      throw new Error(
-        'Orca could not verify the originating Codex session file, so automatic resume was stopped to avoid using a different account.'
-      )
-    }
-    return null
+  if (sessionSource.outcome === 'fresh') {
+    // Why: unverifiable provenance drops the resume argv instead of failing the spawn —
+    // with nothing to resume, cross-account resume is impossible by construction (#10793).
+    return sessionSource
   }
 
   let migrated = { useRealCodexHome: false }
@@ -911,7 +906,7 @@ async function prepareCodexSessionResumeForLaunch(args: {
     // Why: hook repair is best-effort; session provenance must still win over the currently selected home.
     console.warn('[codex-hook-service] failed to prepare automatic resume home:', error)
   }
-  return { codexHomePath: resumeHome }
+  return { outcome: 'resume', codexHomePath: resumeHome }
 }
 
 // Why: restore the window the close handler may have hidden to tray, or reopen it (dock-reactivation style) if fully torn down.

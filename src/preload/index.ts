@@ -837,6 +837,7 @@ const api = {
       sessionExpired?: boolean
       coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }
       startupCwdFallback?: { kind: 'worktree'; cwd: string }
+      agentResumeUnavailable?: true
     }> => ipcRenderer.invoke('pty:spawn', opts),
 
     write: (id: string, data: string): void => {

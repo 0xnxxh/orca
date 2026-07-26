@@ -1335,6 +1335,7 @@ export type PreloadApi = {
       sessionExpired?: boolean
       coldRestore?: { scrollback: string; cwd: string; cols?: number; rows?: number }
       startupCwdFallback?: { kind: 'worktree'; cwd: string }
+      agentResumeUnavailable?: true
     }>
     write: (id: string, data: string) => void
     writeAccepted: (id: string, data: string) => Promise<boolean>

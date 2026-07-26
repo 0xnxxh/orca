@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { userInfo } from 'node:os'
 import { delimiter, join, posix } from 'node:path'
+import { resolveCodexSessionResumeProvenance } from '../codex/codex-session-resume-home'
 import {
   TERMINAL_INPUT_CHUNK_MAX_BYTES,
   TERMINAL_INPUT_MAX_BYTES
@@ -1734,7 +1735,10 @@ describe('registerPtyHandlers', () => {
 
     it('resumes an automatic Codex session from its prepared originating home', async () => {
       const selectedHome = vi.fn(() => '/managed/current/home')
-      const prepareResume = vi.fn(async () => ({ codexHomePath: '/managed/origin/home' }))
+      const prepareResume = vi.fn(async () => ({
+        outcome: 'resume' as const,
+        codexHomePath: '/managed/origin/home'
+      }))
       registerPtyHandlers(
         mainWindow as never,
         undefined,
@@ -1779,7 +1783,12 @@ describe('registerPtyHandlers', () => {
         undefined,
         undefined,
         undefined,
-        { prepareCodexSessionResume: async () => ({ codexHomePath: systemHome }) }
+        {
+          prepareCodexSessionResume: async () => ({
+            outcome: 'resume' as const,
+            codexHomePath: systemHome
+          })
+        }
       )
 
       await handlers.get('pty:spawn')!(null, {
@@ -1835,6 +1844,136 @@ describe('registerPtyHandlers', () => {
 
       expect(selectedHome).not.toHaveBeenCalled()
       expect(spawnMock).not.toHaveBeenCalled()
+    })
+
+    describe('unverifiable Codex resume provenance', () => {
+      const RESUME_SESSION_ID = '019f81b9-19a9-7651-a8d1-352d9420bd11'
+      const ORIGIN_HOME = '/managed/origin/home'
+      const OTHER_HOME = '/managed/other/home'
+      const ORIGIN_ROLLOUT = `${ORIGIN_HOME}/sessions/2026/07/20/rollout-2026-07-20T12-00-00-${RESUME_SESSION_ID}.jsonl`
+
+      // Why: main's real provenance rule, so these cases exercise the same decision
+      // prepareCodexSessionResumeForLaunch makes instead of a hand-written stub. This
+      // suite mocks fs, so the rollout is declared present — the only variable left is
+      // whether its home is trusted, which is exactly the case the guard exists for.
+      function registerWithTrustedHomes(trustedHomes: readonly string[], selectedHome: string) {
+        const selectedHomeMock = vi.fn(() => selectedHome)
+        registerPtyHandlers(
+          mainWindow as never,
+          undefined,
+          selectedHomeMock,
+          undefined,
+          undefined,
+          undefined,
+          {
+            prepareCodexSessionResume: async ({ providerSession }) => {
+              const provenance = await resolveCodexSessionResumeProvenance({
+                sessionId: providerSession.id,
+                transcriptPath: providerSession.transcriptPath,
+                trustedCodexHomes: trustedHomes,
+                fileIsRegular: () => true
+              })
+              return provenance.outcome === 'resume'
+                ? { outcome: 'resume' as const, codexHomePath: provenance.homePath }
+                : provenance
+            }
+          }
+        )
+        return selectedHomeMock
+      }
+
+      async function spawnCodexResume(
+        transcriptPath: string | undefined
+      ): Promise<{ agentResumeUnavailable?: true }> {
+        return (await handlers.get('pty:spawn')!(null, {
+          cols: 80,
+          rows: 24,
+          cwd: '/tmp',
+          command: `codex 'resume' '${RESUME_SESSION_ID}'`,
+          launchAgent: 'codex',
+          resumeProviderSession: {
+            key: 'session_id',
+            id: RESUME_SESSION_ID,
+            ...(transcriptPath ? { transcriptPath } : {})
+          }
+        })) as { agentResumeUnavailable?: true }
+      }
+
+      posixOnlyIt(
+        'launches plain codex when a REAL rollout sits under a home Orca no longer trusts',
+        async () => {
+          // Why: the discriminating case — the rollout exists, so only the trust check can
+          // reject it. Falling through would resume it under the selected account.
+          const mockProc = createMockProc()
+          spawnMock.mockReturnValue(mockProc.proc)
+          vi.useFakeTimers()
+
+          try {
+            const selectedHome = registerWithTrustedHomes([OTHER_HOME], OTHER_HOME)
+            const spawned = await spawnCodexResume(ORIGIN_ROLLOUT)
+
+            await Promise.resolve()
+            vi.runAllTimers()
+            await Promise.resolve()
+            vi.runAllTimers()
+
+            expect(mockProc.proc.write).toHaveBeenCalledWith('codex\n')
+            expect(mockProc.proc.write).not.toHaveBeenCalledWith(
+              expect.stringContaining(RESUME_SESSION_ID)
+            )
+            expect(spawned.agentResumeUnavailable).toBe(true)
+            // The pane still runs under the selected account — but with nothing to resume.
+            const env = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
+            expect(env.CODEX_HOME).toBe(OTHER_HOME)
+            expect(selectedHome).toHaveBeenCalled()
+          } finally {
+            vi.useRealTimers()
+          }
+        }
+      )
+
+      it('reports the dropped resume so the pane can say it started fresh', async () => {
+        registerWithTrustedHomes([OTHER_HOME], OTHER_HOME)
+        const spawned = await spawnCodexResume(ORIGIN_ROLLOUT)
+
+        expect(spawned.agentResumeUnavailable).toBe(true)
+      })
+
+      it('stays silent for cross-agent provenance on a pane relabeled codex', async () => {
+        registerWithTrustedHomes([OTHER_HOME], OTHER_HOME)
+
+        const spawned = await spawnCodexResume(
+          '/Users/example/.claude/projects/repo/019f81b9.jsonl'
+        )
+
+        expect(spawned.agentResumeUnavailable).toBeUndefined()
+      })
+
+      posixOnlyIt('still pins CODEX_HOME and resumes when provenance is verified', async () => {
+        const mockProc = createMockProc()
+        spawnMock.mockReturnValue(mockProc.proc)
+        vi.useFakeTimers()
+
+        try {
+          const selectedHome = registerWithTrustedHomes([ORIGIN_HOME], OTHER_HOME)
+          const spawned = await spawnCodexResume(ORIGIN_ROLLOUT)
+
+          await Promise.resolve()
+          vi.runAllTimers()
+          await Promise.resolve()
+          vi.runAllTimers()
+
+          expect(mockProc.proc.write).toHaveBeenCalledWith(
+            `codex 'resume' '${RESUME_SESSION_ID}'\n`
+          )
+          expect(spawned.agentResumeUnavailable).toBeUndefined()
+          const env = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
+          expect(env.CODEX_HOME).toBe(ORIGIN_HOME)
+          expect(selectedHome).not.toHaveBeenCalled()
+        } finally {
+          vi.useRealTimers()
+        }
+      })
     })
 
     it('prepares Codex launch state for the workspace before spawning an interactive tab', async () => {
@@ -2653,7 +2792,12 @@ describe('registerPtyHandlers', () => {
           undefined,
           undefined,
           undefined,
-          { prepareCodexSessionResume: async () => ({ codexHomePath: systemHome }) }
+          {
+            prepareCodexSessionResume: async () => ({
+              outcome: 'resume' as const,
+              codexHomePath: systemHome
+            })
+          }
         )
 
         await handlers.get('pty:spawn')!(null, {
@@ -2711,7 +2855,12 @@ describe('registerPtyHandlers', () => {
           undefined,
           undefined,
           undefined,
-          { prepareCodexSessionResume: async () => ({ codexHomePath: systemHome }) }
+          {
+            prepareCodexSessionResume: async () => ({
+              outcome: 'resume' as const,
+              codexHomePath: systemHome
+            })
+          }
         )
         const controller = runtime.setPtyController.mock.calls[0]?.[0] as RuntimeSpawnController
 

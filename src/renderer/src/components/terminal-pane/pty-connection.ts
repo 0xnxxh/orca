@@ -50,6 +50,7 @@ import {
   type HasPty
 } from './terminal-dead-session-reconcile'
 import type { PtyConnectionDeps } from './pty-connection-types'
+import type { SessionRestoredBannerReason } from './session-restored-banner-pane-state'
 import {
   consumeCommittedPtyShutdownExit,
   deferPtyShutdownExit,
@@ -4502,12 +4503,12 @@ export function connectPanePty(
       armStartupDraftReadinessObservation()
     }
     let sessionRestoredBannerShown = false
-    const showSessionRestoredBanner = (): void => {
+    const showSessionRestoredBanner = (reason: SessionRestoredBannerReason = 'restored'): void => {
       if (sessionRestoredBannerShown) {
         return
       }
       sessionRestoredBannerShown = true
-      deps.onShowSessionRestoredBanner(pane.id)
+      deps.onShowSessionRestoredBanner(pane.id, reason)
     }
     const getColdRestoreAgentResumePlatform = (): NodeJS.Platform => {
       if (projectRuntime?.status === 'repair-required') {
@@ -4849,7 +4850,15 @@ export function connectPanePty(
                 foreground: shouldWritePtyOutputForeground(deps.isVisibleRef.current)
               })
             }
-            if (coldRestoreOverride?.hasSleepingRecord) {
+            if (
+              spawnedPtyId &&
+              typeof spawnedPtyId === 'object' &&
+              spawnedPtyId.agentResumeUnavailable
+            ) {
+              // Why: main dropped the resume argv, so this pane is a NEW session —
+              // the plain restored banner would claim the old one came back.
+              showSessionRestoredBanner('resume-unavailable')
+            } else if (coldRestoreOverride?.hasSleepingRecord) {
               showSessionRestoredBanner()
             }
             clearSleepingRecordAfterColdRestoreSpawn(coldRestoreOverride)
@@ -7443,7 +7452,11 @@ export function connectPanePty(
           const preparedStartup = coldRestoreStartup ?? buildColdRestoreAgentResumeStartup()
           const didPrepareResume = applyColdRestoreAgentResumeStartup(preparedStartup)
           if (didPrepareResume) {
-            if (preparedStartup?.hasSleepingRecord) {
+            if (connectResult.agentResumeUnavailable) {
+              // Why: main dropped the resume argv, so this pane is a NEW session —
+              // the plain restored banner would claim the old one came back.
+              showSessionRestoredBanner('resume-unavailable')
+            } else if (preparedStartup?.hasSleepingRecord) {
               showSessionRestoredBanner()
             }
             clearSleepingRecordAfterColdRestoreSpawn(preparedStartup)

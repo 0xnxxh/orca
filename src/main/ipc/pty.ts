@@ -163,6 +163,8 @@ import { validateTerminalViewAttributes } from '../../shared/terminal-view-attri
 import type { PtyModelRestoreReason } from '../../shared/pty-model-restore-marker'
 import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
 import { isCodexSystemDefaultRealHomeEnabled } from '../codex/codex-real-home-flag'
+import type { CodexSessionResumePreparation } from '../codex/codex-session-resume-home'
+import { dropUnverifiedCodexResumeArgv } from '../codex/codex-unverified-resume-launch'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
 import { buildConfiguredProxyEnv, type NetworkProxySettings } from '../../shared/network-proxy'
 import { resolveSetupAgentSequenceLaunchCommand } from '../../shared/setup-agent-sequencing'
@@ -787,7 +789,7 @@ export type PrepareCodexSessionResume = (args: {
   target: CodexAccountSelectionTarget
   launchEnv?: NodeJS.ProcessEnv
   workspacePath?: string
-}) => Promise<{ codexHomePath: string | null } | null>
+}) => Promise<CodexSessionResumePreparation | null>
 type PrepareClaudeAuth = (
   target?: ClaudeAccountSelectionTarget
 ) => Promise<ClaudeRuntimeAuthPreparation>
@@ -3126,7 +3128,10 @@ export function registerPtyHandlers(
     target: CodexAccountSelectionTarget
     launchEnv?: NodeJS.ProcessEnv
     workspacePath?: string
-  }): Promise<{ codexHomePath: string | null } | null> | null => {
+  }): {
+    providerSession: AgentProviderSessionMetadata
+    preparation: Promise<CodexSessionResumePreparation | null>
+  } | null => {
     if (args.connectionId || args.launchAgent !== 'codex' || !options?.prepareCodexSessionResume) {
       return null
     }
@@ -3134,13 +3139,51 @@ export function registerPtyHandlers(
     if (!providerSession) {
       return null
     }
-    return options.prepareCodexSessionResume({
+    return {
       providerSession,
-      target: args.target,
-      launchEnv: args.launchEnv,
-      workspacePath: args.workspacePath
-    })
+      preparation: options.prepareCodexSessionResume({
+        providerSession,
+        target: args.target,
+        launchEnv: args.launchEnv,
+        workspacePath: args.workspacePath
+      })
+    }
   }
+
+  type CodexResumeLaunch = {
+    codexResumeHome: { codexHomePath: string } | null
+    command: string | undefined
+    notifyResumeUnavailable: boolean
+  }
+
+  /** Kept separate from resolveCodexResumeLaunch so non-Codex spawns never await:
+   *  an extra tick reorders the pane-spawn reservation races this handler arbitrates. */
+  const noCodexResumeLaunch = (command: string | undefined): CodexResumeLaunch => ({
+    codexResumeHome: null,
+    command,
+    notifyResumeUnavailable: false
+  })
+
+  /** The command a Codex launch actually runs: unchanged when provenance is verified,
+   *  stripped of `resume <id>` when it is not. */
+  const resolveCodexResumeLaunch = (
+    command: string | undefined,
+    preparation: NonNullable<ReturnType<typeof prepareCodexResumeHome>>
+  ): Promise<CodexResumeLaunch> =>
+    preparation.preparation.then((prepared) => {
+      if (prepared?.outcome !== 'fresh') {
+        return { codexResumeHome: prepared ?? null, command, notifyResumeUnavailable: false }
+      }
+      const dropped = dropUnverifiedCodexResumeArgv({
+        command,
+        providerSession: preparation.providerSession
+      })
+      return {
+        codexResumeHome: null,
+        command: dropped.command,
+        notifyResumeUnavailable: dropped.droppedResumeArgv && prepared.claimedCodexProvenance
+      }
+    })
 
   // Why: route through getProviderForPty() so CLI commands work for remote PTYs too; localProvider would silently fail for them.
   runtime?.setPtyController({
@@ -3180,7 +3223,11 @@ export function registerPtyHandlers(
         launchEnv: args.env,
         workspacePath: cwd
       })
-      const codexResumeHome = codexResumePreparation ? await codexResumePreparation : null
+      const codexResumeLaunch = codexResumePreparation
+        ? await resolveCodexResumeLaunch(args.command, codexResumePreparation)
+        : noCodexResumeLaunch(args.command)
+      const codexResumeHome = codexResumeLaunch.codexResumeHome
+      const launchCommand = codexResumeLaunch.command
       const claudeAuth =
         isClaudeLaunch && prepareClaudeAuth ? await prepareClaudeAuth(codexSelectionTarget) : null
       if (isClaudeLaunch && isClaudeAuthSwitchInProgress()) {
@@ -3286,7 +3333,7 @@ export function registerPtyHandlers(
           skipCodexHomeEnv,
           stripInheritedOrcaCodexHome,
           githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false,
-          launchCommand: args.command,
+          launchCommand,
           launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined,
           shellPath: daemonShellOverride ?? process.env.COMSPEC,
           isWsl: shouldSkipCodexHomeEnvForWindowsShell(daemonShellOverride, cwd),
@@ -3347,8 +3394,8 @@ export function registerPtyHandlers(
       }
       deleteRequestedEnvKeys(env, spawnOptions.envToDelete)
       promoteAgentTeamsShimPath(env, requestedAgentTeamsPath)
-      if (args.command !== undefined) {
-        spawnOptions.command = args.command
+      if (launchCommand !== undefined) {
+        spawnOptions.command = launchCommand
       }
       if (args.commandDelivery !== undefined) {
         spawnOptions.commandDelivery = args.commandDelivery
@@ -3742,7 +3789,7 @@ export function registerPtyHandlers(
           runtime?.cancelPendingPtyRegistration?.(result.id, result.incarnationId)
         }
         // Why: arms main's per-PTY Command Code output detector from the launch command (renderer startupCommand parity).
-        runtime?.noteTerminalSpawnCommand?.(result.id, args.command ?? null)
+        runtime?.noteTerminalSpawnCommand?.(result.id, launchCommand ?? null)
         if (isClaudeLaunch) {
           markClaudePtySpawned(result.id)
         }
@@ -4400,7 +4447,11 @@ export function registerPtyHandlers(
         launchEnv: baseEnv,
         workspacePath: cwd
       })
-      const codexResumeHome = codexResumePreparation ? await codexResumePreparation : null
+      const codexResumeLaunch = codexResumePreparation
+        ? await resolveCodexResumeLaunch(args.command, codexResumePreparation)
+        : noCodexResumeLaunch(args.command)
+      const codexResumeHome = codexResumeLaunch.codexResumeHome
+      const launchCommand = codexResumeLaunch.command
       const selectedCodexHomePath = isDaemonHostSpawn
         ? getCompatibleSelectedCodexHomePath(
             codexSelectionTarget,
@@ -4444,7 +4495,7 @@ export function registerPtyHandlers(
             skipCodexHomeEnv,
             stripInheritedOrcaCodexHome,
             githubAttributionEnabled: getSettings?.()?.enableGitHubAttribution ?? false,
-            launchCommand: args.command,
+            launchCommand,
             launchAgent: isTuiAgent(args.launchAgent) ? args.launchAgent : undefined,
             shellPath: effectiveShellOverride ?? process.env.COMSPEC,
             isWsl: shouldSkipCodexHomeEnvForWindowsShell(effectiveShellOverride, cwd),
@@ -4504,8 +4555,8 @@ export function registerPtyHandlers(
       if (combinedEnvToDelete) {
         spawnOptions.envToDelete = combinedEnvToDelete
       }
-      if (args.command !== undefined) {
-        spawnOptions.command = args.command
+      if (launchCommand !== undefined) {
+        spawnOptions.command = launchCommand
       }
       if (args.commandDelivery !== undefined) {
         spawnOptions.commandDelivery = args.commandDelivery
@@ -4877,7 +4928,7 @@ export function registerPtyHandlers(
         // Why: arm main's per-PTY Command Code output detector from the launch command (startupCommand parity); banner detection covers PTYs without one.
         runtime?.noteTerminalSpawnCommand?.(
           result.id,
-          typeof args.command === 'string' ? args.command : null
+          typeof launchCommand === 'string' ? launchCommand : null
         )
         if (isClaudeLaunch) {
           markClaudePtySpawned(result.id)
@@ -4947,7 +4998,12 @@ export function registerPtyHandlers(
             ? { launchConfig: effectiveLaunchConfig }
             : {}),
           // Why: a daemon-retry race can surface isReattach even for a minted session id, and a reattach must never claim its cwd was remapped.
-          ...(startupCwdFallback && !result.isReattach ? { startupCwdFallback } : {})
+          ...(startupCwdFallback && !result.isReattach ? { startupCwdFallback } : {}),
+          // Why: the pane asked to resume and got a fresh session instead; only the
+          // renderer can say so, and a reattach never ran this launch command.
+          ...(codexResumeLaunch.notifyResumeUnavailable && !result.isReattach
+            ? { agentResumeUnavailable: true as const }
+            : {})
         }
         // Why: renderer tab state cannot reliably infer background and reattached PTYs in the daemon inventory.
         sendPtySpawnedToRenderer(result.id)

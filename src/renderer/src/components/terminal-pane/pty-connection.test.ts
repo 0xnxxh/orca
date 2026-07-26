@@ -8102,7 +8102,7 @@ describe('connectPanePty', () => {
     const writeCalls = pane.terminal.write.mock.calls.map(([data]) => data)
     expect(writeCalls.findIndex((data) => data.includes('--- session restored ---'))).toBe(-1)
     expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledTimes(1)
-    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(1)
+    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(1, 'restored')
     expect(transport.sendInput).not.toHaveBeenCalled()
     expect(transport.connect).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -8119,6 +8119,63 @@ describe('connectPanePty', () => {
     )
     // Why: consuming the record prevents a later worktree activation from launching a duplicate resume tab.
     expect(mockStoreState.clearSleepingAgentSession).toHaveBeenCalledWith(paneKey)
+  })
+
+  it('marks the pane as freshly started when main declined an unverifiable resume', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('fresh-pty')
+    transport.connect.mockImplementation(async ({ sessionId }: { sessionId?: string }) => {
+      if (sessionId) {
+        // Why: main dropped `resume <id>` because it could not verify which Codex
+        // account owns the rollout, so this PTY is a new session, not a restore.
+        return {
+          id: 'fresh-pty',
+          coldRestore: { scrollback: 'cold-payload', cwd: '/tmp/wt-1' },
+          agentResumeUnavailable: true as const
+        }
+      }
+      return 'fresh-pty'
+    })
+    transportFactoryQueue.push(transport)
+    const paneKey = makePaneKey('tab-1', LEAF_1)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: {
+        'wt-1': [{ id: 'tab-1', ptyId: 'lost-pty' }]
+      },
+      settings: {
+        ...mockStoreState.settings,
+        agentCmdOverrides: {}
+      },
+      agentStatusByPaneKey: {},
+      sleepingAgentSessionsByPaneKey: {
+        [paneKey]: {
+          paneKey,
+          tabId: 'tab-1',
+          worktreeId: 'wt-1',
+          agent: 'codex',
+          providerSession: { key: 'session_id', id: 'codex-session-1' },
+          prompt: 'finish the task',
+          state: 'working',
+          capturedAt: 1,
+          updatedAt: 1
+        }
+      }
+    } as StoreState
+
+    const pane = createPane(1)
+    const manager = createManager(1)
+    const deps = createDeps({
+      restoredLeafId: LEAF_1,
+      restoredPtyIdByLeafId: { [LEAF_1]: 'lost-pty' }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks(20)
+    await new Promise((resolve) => setTimeout(resolve, 70))
+
+    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledTimes(1)
+    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(1, 'resume-unavailable')
   })
 
   it('resumes from an unambiguous legacy sleeping record when cold-restoring a preserved pane', async () => {
@@ -8184,7 +8241,7 @@ describe('connectPanePty', () => {
     await new Promise((resolve) => setTimeout(resolve, 70))
 
     expect(pane.terminal.write).toHaveBeenCalledWith('cold-payload', expect.any(Function))
-    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(1)
+    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(1, 'restored')
     expect(transport.sendInput).not.toHaveBeenCalled()
     expect(transport.connect).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -8694,7 +8751,7 @@ describe('connectPanePty', () => {
       expect.any(Function)
     )
     expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledTimes(1)
-    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(2)
+    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(2, 'restored')
     expect(mockStoreState.clearSleepingAgentSession).toHaveBeenCalledWith(paneKey)
   })
 
@@ -8797,7 +8854,7 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(10)
 
     expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledTimes(1)
-    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(2)
+    expect(deps.onShowSessionRestoredBanner).toHaveBeenCalledWith(2, 'restored')
     expect(mockStoreState.clearSleepingAgentSession).toHaveBeenCalledWith(paneKey)
   })
 
