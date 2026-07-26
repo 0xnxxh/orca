@@ -574,6 +574,10 @@ export default function TerminalPane({
   const setTabCanExpandPane = useAppStore((store) => store.setTabCanExpandPane)
   const suppressPtyExit = useAppStore((store) => store.suppressPtyExit)
   const pendingCodexPaneRestartIds = useAppStore((store) => store.pendingCodexPaneRestartIds)
+  // Why: a parked or deferred tab mounts with no transport yet, so the queued
+  // restart below has no ptyId to match on the mount pass. This re-runs it once
+  // the reconnected PTY is bound, which is the only moment the pane can act.
+  const attachedPtyIds = useAppStore((store) => store.ptyIdsByTabId[tabId])
   const consumePendingCodexPaneRestart = useAppStore(
     (store) => store.consumePendingCodexPaneRestart
   )
@@ -1687,7 +1691,12 @@ export default function TerminalPane({
         handleRestartCodexPane(pane.id)
       }
     }
-  }, [consumePendingCodexPaneRestart, handleRestartCodexPane, pendingCodexPaneRestartIds])
+  }, [
+    attachedPtyIds,
+    consumePendingCodexPaneRestart,
+    handleRestartCodexPane,
+    pendingCodexPaneRestartIds
+  ])
 
   useTerminalFontZoom({ isActive, containerRef, managerRef, paneFontSizesRef, settingsRef })
 

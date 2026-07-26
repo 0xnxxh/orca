@@ -1,6 +1,7 @@
 import type { AppState } from '@/store'
 import { useAppStore } from '@/store'
 import { inspectRuntimeTerminalProcess } from '@/runtime/runtime-terminal-inspection'
+import { translate } from '@/i18n/i18n'
 
 // Why: prompt integrations such as Starship can outlast the daemon's 300ms
 // Codex fast-path timeout; account restarts must wait until the shell accepts input.
@@ -74,4 +75,50 @@ export async function markLiveCodexSessionsForRestart(args: {
       nextAccountLabel: args.nextAccountLabel
     }))
   )
+}
+
+/**
+ * Re-raises restart prompts for panes that outlived the app.
+ *
+ * Why: restart notices are renderer state, but the shells they describe live in
+ * the PTY daemon and survive a full app restart with the old account still
+ * baked into their environment. Without this, quitting Orca before restarting a
+ * stale pane silently strands it on the previous account forever.
+ */
+export async function markRestoredStaleCodexSessionsForRestart(): Promise<void> {
+  const state = useAppStore.getState()
+  const liveCodexSessionPtyIds = await getLiveCodexSessionPtyIds(state)
+  if (liveCodexSessionPtyIds.length === 0) {
+    return
+  }
+  const stalePanes = await window.api.codexAccounts.listStalePanes({
+    ptyIds: liveCodexSessionPtyIds
+  })
+  if (stalePanes.length === 0) {
+    return
+  }
+
+  const resolveAccountLabel = await createCodexAccountLabelResolver()
+  useAppStore.getState().markCodexRestartNotices(
+    stalePanes.map((pane) => ({
+      ptyId: pane.ptyId,
+      previousAccountLabel: resolveAccountLabel(pane.launchAccountId),
+      nextAccountLabel: resolveAccountLabel(pane.activeAccountId)
+    }))
+  )
+}
+
+async function createCodexAccountLabelResolver(): Promise<(accountId: string | null) => string> {
+  // Why: a failed roster read still yields usable prompts — the account ids are
+  // already known, only their friendly emails are missing.
+  const accounts = await window.api.codexAccounts.list().catch(() => null)
+  return (accountId) => {
+    if (accountId == null) {
+      return translate('auto.lib.codex.session.restart.4bd4a3a9c7', 'System default')
+    }
+    return (
+      accounts?.accounts.find((account) => account.id === accountId)?.email ??
+      translate('auto.lib.codex.session.restart.9f0b1c2d3e', 'Codex account')
+    )
+  }
 }

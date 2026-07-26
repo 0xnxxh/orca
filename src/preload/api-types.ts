@@ -2192,6 +2192,12 @@ export type PreloadApi = {
       runtime?: 'host' | 'wsl'
       wslDistro?: string | null
     }) => Promise<CodexRateLimitAccountsState>
+    /** Live PTYs whose baked CODEX_HOME still points at a deselected account. */
+    listStalePanes: (args: {
+      ptyIds: string[]
+    }) => Promise<
+      { ptyId: string; launchAccountId: string | null; activeAccountId: string | null }[]
+    >
   }
   claudeAccounts: {
     list: () => Promise<ClaudeRateLimitAccountsState>

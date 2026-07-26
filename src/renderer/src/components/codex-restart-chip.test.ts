@@ -82,6 +82,21 @@ describe('CodexRestartChip helpers', () => {
     ).toEqual(['pty-1'])
   })
 
+  it('drops PTYs whose restart is already requested', () => {
+    expect(
+      collectStalePtyIdsForTabs({
+        tabs: [{ id: 'tab-1' }],
+        ptyIdsByTabId: {
+          'tab-1': ['pty-1', 'pty-2']
+        },
+        codexRestartNoticeByPtyId: {
+          'pty-1': { previousAccountLabel: 'a', nextAccountLabel: 'b', restartRequested: true },
+          'pty-2': { previousAccountLabel: 'a', nextAccountLabel: 'b' }
+        }
+      })
+    ).toEqual(['pty-2'])
+  })
+
   it('dismisses every stale PTY notice in the worktree prompt', () => {
     const clearCodexRestartNotice = vi.fn()
 
@@ -127,5 +142,46 @@ describe('CodexRestartChip helpers', () => {
     expect(
       Array.from(container.querySelectorAll('button'), (button) => button.textContent?.trim())
     ).toEqual(['Keep old account', 'Restart'])
+  })
+
+  it('closes the prompt after Restart even when no mounted pane can run it yet', async () => {
+    useAppStore.setState({
+      tabsByWorktree: {
+        'worktree-1': [
+          {
+            id: 'tab-1',
+            worktreeId: 'worktree-1',
+            title: 'Terminal',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1,
+            ptyId: null
+          }
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] },
+      codexRestartNoticeByPtyId: {
+        'pty-1': {
+          previousAccountLabel: 'old@example.com',
+          nextAccountLabel: 'new@example.com'
+        }
+      }
+    })
+    await act(async () => {
+      root.render(React.createElement(CodexRestartChip, { worktreeId: 'worktree-1' }))
+    })
+
+    const restartButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Restart'
+    )
+    await act(async () => {
+      restartButton?.click()
+    })
+
+    expect(container.textContent).toBe('')
+    // Why: the pane still has to restart; only the prompt is answered.
+    expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({ 'pty-1': true })
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']?.restartRequested).toBe(true)
   })
 })

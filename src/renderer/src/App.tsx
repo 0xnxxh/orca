@@ -122,6 +122,7 @@ import {
   shouldPersistWorkspaceSession
 } from './lib/workspace-session'
 import { createSessionWriteSubscriber } from './lib/session-write-subscriber'
+import { markRestoredStaleCodexSessionsForRestart } from './lib/codex-session-restart'
 import { buildActiveViewUnloadPatch } from './lib/active-view-persist'
 import {
   buildWorkspaceSessionHostSnapshots,
@@ -1089,6 +1090,12 @@ function App(): React.JSX.Element {
               }
             }
           })()
+          // Why: restored Codex panes keep the account that was selected when
+          // their shell first opened, so re-raise the restart prompt the app
+          // restart discarded. Deferred — it is a hint, never startup-critical.
+          void markRestoredStaleCodexSessionsForRestart().catch((err: unknown) => {
+            console.warn('Codex stale-pane restart sweep failed:', err)
+          })
         }
       } catch (error) {
         // Why (issue #1158): leave in-memory state untouched and keep hydrationSucceeded false (default-hydrating here once erased saved tabs); still flip the ready flags so the UI mounts.

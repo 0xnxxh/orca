@@ -160,7 +160,15 @@ import {
 import { setTerminalViewAttributes } from '../runtime/terminal-view-attribute-store'
 import { validateTerminalViewAttributes } from '../../shared/terminal-view-attributes'
 import type { PtyModelRestoreReason } from '../../shared/pty-model-restore-marker'
-import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
+import {
+  getCodexSelectionLaneKey,
+  getSelectedCodexAccountIdForTarget,
+  type CodexAccountSelectionTarget
+} from '../codex-accounts/runtime-selection'
+import {
+  forgetCodexPaneAccount,
+  recordCodexPaneAccount
+} from '../codex/codex-pane-account-registry'
 import { isCodexSystemDefaultRealHomeEnabled } from '../codex/codex-real-home-flag'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
 import { buildConfiguredProxyEnv, type NetworkProxySettings } from '../../shared/network-proxy'
@@ -819,6 +827,31 @@ function getCompatibleSelectedCodexHomePath(
     : selectedCodexHomePath
 }
 
+// Why: CODEX_HOME is fixed in a shell's environment at spawn and the daemon
+// keeps that shell alive across app restarts, so the launch account is the only
+// way to tell later that a pane still runs Codex as the previously selected
+// account. A resume-pinned pane is deliberately on its session's own account,
+// so it is forgotten rather than recorded as stale.
+function recordCodexPaneAccountForSpawn(args: {
+  ptyId: string | undefined
+  isDaemonHostSpawn: boolean
+  pinnedByResume: boolean
+  target: CodexAccountSelectionTarget
+  settings: GlobalSettings | undefined
+}): void {
+  if (!args.ptyId || !args.isDaemonHostSpawn) {
+    return
+  }
+  if (args.pinnedByResume || !args.settings) {
+    forgetCodexPaneAccount(args.ptyId)
+    return
+  }
+  recordCodexPaneAccount(args.ptyId, {
+    selectionKey: getCodexSelectionLaneKey(args.target),
+    accountId: getSelectedCodexAccountIdForTarget(args.settings, args.target)
+  })
+}
+
 function readEnvWithProcessFallback(
   baseEnv: Record<string, string>,
   key: string
@@ -1286,6 +1319,10 @@ export function clearProviderPtyState(
 ): void {
   if (!opts.preserveAgentSessionOwners) {
     agentSessionOwners.release(id)
+    // Why: the launch-account record outlives the app, so only a real teardown
+    // may drop it — a disconnect that can reconnect is not a death, and a reused
+    // id must never inherit a dead pane's Codex account.
+    forgetCodexPaneAccount(id)
   }
   // Why: OpenCode and Pi both allocate PTY-scoped runtime state outside the
   // node-pty process table. Centralizing provider cleanup avoids drift where a
@@ -3238,6 +3275,13 @@ export function registerPtyHandlers(
                 }) ?? null)
           )
         : null
+      recordCodexPaneAccountForSpawn({
+        ptyId: effectiveSessionAppId ?? sessionId,
+        isDaemonHostSpawn,
+        pinnedByResume: Boolean(codexResumeHome),
+        target: codexSelectionTarget,
+        settings: getSettings?.()
+      })
       const skipCodexHomeEnv =
         isDaemonHostSpawn &&
         shouldSkipCodexHomeEnvForWindowsShell(daemonShellOverride, cwd) &&
@@ -4387,6 +4431,13 @@ export function registerPtyHandlers(
                 }) ?? null)
           )
         : null
+      recordCodexPaneAccountForSpawn({
+        ptyId: effectiveSessionAppId ?? effectiveSessionId,
+        isDaemonHostSpawn,
+        pinnedByResume: Boolean(codexResumeHome),
+        target: codexSelectionTarget,
+        settings: getSettings?.()
+      })
       const skipCodexHomeEnv =
         isDaemonHostSpawn &&
         shouldSkipCodexHomeEnvForWindowsShell(effectiveShellOverride, cwd) &&

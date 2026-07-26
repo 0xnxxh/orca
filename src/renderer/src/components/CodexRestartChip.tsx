@@ -7,6 +7,7 @@ import { selectCodexRestartInputs } from './codex-restart-chip-inputs'
 import { translate } from '@/i18n/i18n'
 import { shouldFocusMobileDriverAction } from './terminal-pane/mobile-driver-overlay-focus'
 import { buildCodexRestartNoticeKey } from './codex-restart-notice-key'
+import type { CodexRestartNotice } from '../store/slices/terminals'
 
 const EMPTY_TABS: { id: string }[] = []
 
@@ -17,10 +18,16 @@ export function collectStalePtyIdsForTabs({
 }: {
   tabs: { id: string }[]
   ptyIdsByTabId: Record<string, string[]>
-  codexRestartNoticeByPtyId: Record<string, unknown>
+  codexRestartNoticeByPtyId: Record<string, CodexRestartNotice | undefined>
 }): string[] {
+  // Why: an already-requested restart runs when its pane next mounts. Keeping it
+  // out of the prompt is what stops the panel from sticking on a worktree whose
+  // stale pane is parked or deferred and cannot answer the request yet.
   return tabs.flatMap((tab) =>
-    (ptyIdsByTabId[tab.id] ?? []).filter((ptyId) => Boolean(codexRestartNoticeByPtyId[ptyId]))
+    (ptyIdsByTabId[tab.id] ?? []).filter((ptyId) => {
+      const notice = codexRestartNoticeByPtyId[ptyId]
+      return Boolean(notice) && !notice?.restartRequested
+    })
   )
 }
 
@@ -32,7 +39,7 @@ export function collectStaleWorktreePtyIds({
 }: {
   tabsByWorktree: Record<string, { id: string }[]>
   ptyIdsByTabId: Record<string, string[]>
-  codexRestartNoticeByPtyId: Record<string, unknown>
+  codexRestartNoticeByPtyId: Record<string, CodexRestartNotice | undefined>
   worktreeId: string
 }): string[] {
   return collectStalePtyIdsForTabs({

@@ -59,4 +59,34 @@ describe('summarizeCodexRestartStatus', () => {
       staleWorktreeCount: 2
     })
   })
+
+  it('stops offering sessions whose restart was already requested', () => {
+    expect(
+      summarizeCodexRestartStatus({
+        tabsByWorktree: { wt1: [{ id: 'tab-1' }] },
+        ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-2'] },
+        codexRestartNoticeByPtyId: {
+          'pty-1': { previousAccountLabel: 'a', nextAccountLabel: 'b', restartRequested: true },
+          'pty-2': { previousAccountLabel: 'a', nextAccountLabel: 'b' }
+        }
+      })
+    ).toEqual({
+      stalePtyIds: ['pty-2'],
+      staleSessionCount: 1,
+      staleTabCount: 1,
+      staleWorktreeCount: 1
+    })
+  })
+
+  it('hides the prompt once every stale session has a requested restart', () => {
+    expect(
+      summarizeCodexRestartStatus({
+        tabsByWorktree: { wt1: [{ id: 'tab-1' }] },
+        ptyIdsByTabId: { 'tab-1': ['pty-1'] },
+        codexRestartNoticeByPtyId: {
+          'pty-1': { previousAccountLabel: 'a', nextAccountLabel: 'b', restartRequested: true }
+        }
+      }).staleTabCount
+    ).toBe(0)
+  })
 })

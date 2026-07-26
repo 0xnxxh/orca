@@ -459,6 +459,15 @@ export type AutomaticAgentResumeClaim = {
   providerSession: AgentProviderSessionMetadata
 }
 
+export type CodexRestartNotice = {
+  previousAccountLabel: string
+  nextAccountLabel: string
+  /** Set once the user asks for the restart. The record outlives the prompt
+   *  because `previousAccountLabel` is the only memory of the account this pane
+   *  actually launched under, which drives the A -> B -> A collapse. */
+  restartRequested?: true
+}
+
 export type TerminalSlice = {
   tabsByWorktree: Record<string, TerminalTab[]>
   activeTabId: string | null
@@ -478,10 +487,7 @@ export type TerminalSlice = {
   /** Reference-counted so overlapping shutdowns retain renderer PTY bindings until every owner settles. */
   pendingPtyShutdownIds: Record<string, number>
   pendingCodexPaneRestartIds: Record<string, true>
-  codexRestartNoticeByPtyId: Record<
-    string,
-    { previousAccountLabel: string; nextAccountLabel: string }
-  >
+  codexRestartNoticeByPtyId: Record<string, CodexRestartNotice>
   expandedPaneByTabId: Record<string, boolean>
   canExpandPaneByTabId: Record<string, boolean>
   terminalLayoutsByTabId: Record<string, TerminalLayoutSnapshot>
@@ -2783,12 +2789,25 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     if (ptyIds.length === 0) {
       return
     }
-    set((s) => ({
-      pendingCodexPaneRestartIds: {
-        ...s.pendingCodexPaneRestartIds,
-        ...Object.fromEntries(ptyIds.map((ptyId) => [ptyId, true] as const))
+    set((s) => {
+      // Why: the prompt is answered the moment the user asks for a restart. A
+      // pane whose tab isn't mounted can only restart when it next mounts, and
+      // leaving the prompt up re-showed a button that now does nothing.
+      const nextCodexRestartNoticeByPtyId = { ...s.codexRestartNoticeByPtyId }
+      for (const ptyId of ptyIds) {
+        const notice = nextCodexRestartNoticeByPtyId[ptyId]
+        if (notice) {
+          nextCodexRestartNoticeByPtyId[ptyId] = { ...notice, restartRequested: true }
+        }
       }
-    }))
+      return {
+        pendingCodexPaneRestartIds: {
+          ...s.pendingCodexPaneRestartIds,
+          ...Object.fromEntries(ptyIds.map((ptyId) => [ptyId, true] as const))
+        },
+        codexRestartNoticeByPtyId: nextCodexRestartNoticeByPtyId
+      }
+    })
   },
 
   consumePendingCodexPaneRestart: (ptyId) => {
@@ -2825,7 +2844,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
 
         next[notice.ptyId] = {
           previousAccountLabel,
-          nextAccountLabel: notice.nextAccountLabel
+          nextAccountLabel: notice.nextAccountLabel,
+          // Why: a queued restart relaunches under whatever account is selected
+          // when it runs, so a later switch does not reopen an answered prompt.
+          ...(existing?.restartRequested ? { restartRequested: true as const } : {})
         }
       }
       return {

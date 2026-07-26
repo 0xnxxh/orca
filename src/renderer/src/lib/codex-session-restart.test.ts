@@ -3,7 +3,8 @@ import { useAppStore } from '@/store'
 import { shouldUseShellReadyStartupDelivery } from '../../../shared/codex-startup-delivery'
 import {
   CODEX_ACCOUNT_RESTART_STARTUP,
-  markLiveCodexSessionsForRestart
+  markLiveCodexSessionsForRestart,
+  markRestoredStaleCodexSessionsForRestart
 } from './codex-session-restart'
 import {
   createCompatibleRuntimeStatusResponseIfNeeded,
@@ -69,6 +70,14 @@ describe('markLiveCodexSessionsForRestart', () => {
           getForegroundProcess: vi.fn(),
           hasChildProcesses: vi.fn().mockResolvedValue(false),
           inspectProcess: vi.fn()
+        },
+        codexAccounts: {
+          ...originalWindow?.api?.codexAccounts,
+          list: vi.fn().mockResolvedValue({
+            accounts: [{ id: 'account-a', email: ACCOUNT_A }],
+            activeAccountId: null
+          }),
+          listStalePanes: vi.fn().mockResolvedValue([])
         },
         runtimeEnvironments: {
           ...originalWindow?.api?.runtimeEnvironments,
@@ -249,6 +258,32 @@ describe('markLiveCodexSessionsForRestart', () => {
     expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({})
   })
 
+  it('keeps a requested restart answered when the account switches again first', async () => {
+    vi.mocked(window.api.pty.inspectProcess).mockResolvedValue({
+      foregroundProcess: 'codex',
+      hasChildProcesses: false
+    })
+
+    await markLiveCodexSessionsForRestart({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+    useAppStore.getState().queueCodexPaneRestarts(['pty-1'])
+    await markLiveCodexSessionsForRestart({
+      previousAccountLabel: ACCOUNT_B,
+      nextAccountLabel: 'account-c@example.com'
+    })
+
+    // Why: the queued restart relaunches under whatever account is selected when
+    // it runs, so a third switch must not reopen a prompt the user answered.
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: 'account-c@example.com',
+      restartRequested: true
+    })
+    expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({ 'pty-1': true })
+  })
+
   it('preserves the pane original account across repeated switches until restart', async () => {
     vi.mocked(window.api.pty.inspectProcess).mockResolvedValue({
       foregroundProcess: 'codex',
@@ -317,5 +352,109 @@ describe('markLiveCodexSessionsForRestart', () => {
       previousAccountLabel: ACCOUNT_A,
       nextAccountLabel: ACCOUNT_B
     })
+  })
+})
+
+describe('markRestoredStaleCodexSessionsForRestart', () => {
+  const originalWindow = (globalThis as { window?: typeof window }).window
+
+  beforeEach(() => {
+    clearRuntimeCompatibilityCacheForTests()
+    useAppStore.setState({
+      tabsByWorktree: {
+        wt1: [
+          {
+            id: 'tab-1',
+            ptyId: 'pty-1',
+            worktreeId: 'wt1',
+            title: 'orca-1',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1
+          }
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] },
+      pendingCodexPaneRestartIds: {},
+      codexRestartNoticeByPtyId: {}
+    })
+    ;(globalThis as { window: typeof window }).window = {
+      ...originalWindow,
+      api: {
+        ...originalWindow?.api,
+        pty: {
+          ...originalWindow?.api?.pty,
+          getForegroundProcess: vi.fn(),
+          hasChildProcesses: vi.fn().mockResolvedValue(false),
+          inspectProcess: vi
+            .fn()
+            .mockResolvedValue({ foregroundProcess: 'codex', hasChildProcesses: false })
+        },
+        codexAccounts: {
+          ...originalWindow?.api?.codexAccounts,
+          list: vi.fn().mockResolvedValue({
+            accounts: [
+              { id: 'account-a', email: ACCOUNT_A },
+              { id: 'account-b', email: ACCOUNT_B }
+            ],
+            activeAccountId: 'account-b'
+          }),
+          listStalePanes: vi.fn().mockResolvedValue([])
+        }
+      }
+    } as unknown as typeof window
+  })
+
+  afterEach(() => {
+    if (originalWindow) {
+      ;(globalThis as { window: typeof window }).window = originalWindow
+    } else {
+      delete (globalThis as { window?: typeof window }).window
+    }
+  })
+
+  it('re-raises the prompt for a pane the app restart forgot', async () => {
+    vi.mocked(window.api.codexAccounts.listStalePanes).mockResolvedValue([
+      { ptyId: 'pty-1', launchAccountId: 'account-a', activeAccountId: 'account-b' }
+    ])
+
+    await markRestoredStaleCodexSessionsForRestart()
+
+    expect(window.api.codexAccounts.listStalePanes).toHaveBeenCalledWith({ ptyIds: ['pty-1'] })
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+  })
+
+  it('labels the system default when a pane launched without a managed account', async () => {
+    vi.mocked(window.api.codexAccounts.listStalePanes).mockResolvedValue([
+      { ptyId: 'pty-1', launchAccountId: null, activeAccountId: 'account-b' }
+    ])
+
+    await markRestoredStaleCodexSessionsForRestart()
+
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']?.previousAccountLabel).toBe(
+      'System default'
+    )
+  })
+
+  it('prompts nothing when every restored pane is on the selected account', async () => {
+    await markRestoredStaleCodexSessionsForRestart()
+
+    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
+  })
+
+  it('skips the account lookup entirely when no pane is running Codex', async () => {
+    vi.mocked(window.api.pty.inspectProcess).mockResolvedValue({
+      foregroundProcess: 'zsh',
+      hasChildProcesses: false
+    })
+
+    await markRestoredStaleCodexSessionsForRestart()
+
+    expect(window.api.codexAccounts.listStalePanes).not.toHaveBeenCalled()
+    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
   })
 })

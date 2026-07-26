@@ -635,6 +635,14 @@
             "triageFollowupsPrompt": "Use {{value0}} to triage the linked Linear issue — set priority and estimate — and create a parented follow-up ticket for the deferred cleanup."
           }
         }
+      },
+      "codex": {
+        "session": {
+          "restart": {
+            "4bd4a3a9c7": "System default",
+            "9f0b1c2d3e": "Codex account"
+          }
+        }
       }
     },
     "hooks": {
