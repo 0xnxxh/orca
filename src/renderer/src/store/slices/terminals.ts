@@ -2802,7 +2802,11 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       for (const ptyId of ptyIds) {
         const notice = nextCodexRestartNoticeByPtyId[ptyId]
         if (notice) {
-          nextCodexRestartNoticeByPtyId[ptyId] = { ...notice, restartRequested: true }
+          // Why: mirror of the strip in dismissCodexRestartNotices. A queued
+          // restart leaves the pane on the old account until it relaunches, so
+          // it must re-block input that an earlier dismissal had freed.
+          const { dismissed: _dismissed, ...kept } = notice
+          nextCodexRestartNoticeByPtyId[ptyId] = { ...kept, restartRequested: true }
         }
       }
       return {

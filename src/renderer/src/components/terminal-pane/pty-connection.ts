@@ -827,8 +827,12 @@ function isCodexPaneStale(args: {
   if (!hasCodexRestartNotices(codexRestartNoticeByPtyId)) {
     return false
   }
-  if (args.panePtyId && blocksCodexPaneInput(codexRestartNoticeByPtyId[args.panePtyId])) {
-    return true
+  // Why: the pane's own record is the last word. `tab.ptyId` names whichever
+  // pane bound last, so in a split tab consulting it would keep this pane's
+  // keyboard dead over a sibling's prompt the user cannot answer for this pane.
+  const paneNotice = args.panePtyId ? codexRestartNoticeByPtyId[args.panePtyId] : undefined
+  if (paneNotice) {
+    return blocksCodexPaneInput(paneNotice)
   }
 
   const tab = (state.tabsByWorktree[args.worktreeId] ?? []).find((entry) => entry.id === args.tabId)

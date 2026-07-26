@@ -71,6 +71,21 @@ describe('codex restart notice lifecycle', () => {
     expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({})
   })
 
+  it('re-blocks a dismissed pane once a restart is queued for it', () => {
+    switchAccount('pty-1', A, B)
+    useAppStore.getState().dismissCodexRestartNotices(['pty-1'])
+
+    useAppStore.getState().queueCodexPaneRestarts(['pty-1'])
+
+    // Why: the pane still runs under A until it relaunches, so the dismissal
+    // that freed its keyboard must not outlive the restart request.
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: A,
+      nextAccountLabel: B,
+      restartRequested: true
+    })
+  })
+
   it('leaves the notice map identity alone when nothing is dismissable', () => {
     switchAccount('pty-1', A, B)
     const before = useAppStore.getState().codexRestartNoticeByPtyId
