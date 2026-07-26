@@ -201,28 +201,39 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     expect(manager.resumeRendering.mock.invocationCallOrder[0]).toBeLessThan(
       manager.fitAllRevealedPanes.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
     )
+    // Post-flush geometry refresh, then enforce.
+    expect(syncTerminalScrollIntentFromViewport).toHaveBeenLastCalledWith(terminal, {
+      preservePinnedAtBottom: true
+    })
     expect(enforceTerminalCurrentScrollIntent.mock.invocationCallOrder[0]).toBeGreaterThan(
       manager.fitAllRevealedPanes.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY
     )
   })
 
-  it('does not re-sync viewport intent after heavy resume reattaches WebGL', async () => {
-    // Outer resumeTerminalVisibility already latched intent pre-resume; a
-    // post-reattach sync would treat a disturbed at-bottom viewport as followOutput.
+  it('latches intent before resume and re-syncs after flush without re-latching pins', async () => {
+    // Pre-resume latch protects against reattach viewport wobble; post-flush
+    // re-sync (preservePinnedAtBottom) tracks trim without promoting pins.
     const terminal = { name: 'pinned-heavy' }
     const manager = createManager()
     manager.getPanes.mockReturnValue([{ terminal }])
+    const { flushTerminalOutput, requestTerminalBacklogRecovery } = vi.mocked(
+      await import('@/lib/pane-manager/pane-terminal-output-scheduler')
+    )
     const { syncTerminalScrollIntentFromViewport } = vi.mocked(
       await import('@/lib/pane-manager/terminal-scroll-intent')
     )
+    flushTerminalOutput.mockImplementation(() => undefined)
+    requestTerminalBacklogRecovery.mockImplementation(() => undefined)
 
     resumeTerminalVisibility(resumeArgs(manager, false))
 
-    // One pre-resume latch from the outer resume path; none after reattach/fit/flush.
-    expect(syncTerminalScrollIntentFromViewport).toHaveBeenCalledTimes(1)
+    expect(syncTerminalScrollIntentFromViewport).toHaveBeenCalledTimes(2)
     expect(syncTerminalScrollIntentFromViewport.mock.invocationCallOrder[0]).toBeLessThan(
       manager.resumeRendering.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
     )
+    expect(syncTerminalScrollIntentFromViewport).toHaveBeenLastCalledWith(terminal, {
+      preservePinnedAtBottom: true
+    })
   })
 
   it('resets each pane linkifier hover cache on window wake recovery so links recover without a scroll', () => {
