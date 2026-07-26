@@ -374,11 +374,13 @@ describe('PtyHandler', () => {
     expect(mockPtySpawn).toHaveBeenCalledOnce()
   })
 
-  it('only offers the build-tools remedy on Linux, where node-pty has no prebuild', () => {
+  it('hedges both causes on Linux and offers the build-tools remedy nowhere else', () => {
     const linux = formatNodePtyUnavailableMessage('linux')
     expect(linux).toContain('Remote terminals are unavailable')
-    expect(linux).toContain('C/C++ build tools')
+    // Conditional, not asserted: a host with build-essential can still hit an ABI/Node-version flip.
+    expect(linux).toMatch(/If it is missing the C\/C\+\+ build tools/)
     expect(linux).toContain('python3')
+    expect(linux).toContain('version and architecture match the installed binding')
 
     // Windows/macOS ship node-pty prebuilds, so "install make/g++/python3" sends the user chasing nothing.
     for (const platform of ['win32', 'darwin'] as const) {

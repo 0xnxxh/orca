@@ -80,6 +80,7 @@ import {
   decodePowerShellCommand,
   makeExecResponses,
   makeMockConnection,
+  makeRepairToolchainSkipExecResponses,
   type ExecResponse,
   type SftpWriteCapture
 } from './ssh-relay-native-deps-install-fixture'
@@ -260,8 +261,7 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
         npmInstall: { reject: 'gyp ERR! stack Error: not found: make' },
         // No HAVE lines + apk present: the tailored hint must come from the remote probe, not a hardcoded apt fallback.
         toolchainProbe: 'PKG apk',
-        nodePtySkipRetry: { reject: 'npm ERR! registry unreachable' },
-        probe: 'ok'
+        nodePtySkipRetry: { reject: 'npm ERR! registry unreachable' }
       })
     )
 
@@ -681,6 +681,23 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     expect(installCommand).toContain('node_modules/@parcel/watcher')
     expect(installCommand).toContain("-name 'watcher-*'")
     expect(installCommand).not.toContain("rm -rf 'node_modules/node-pty'")
+  })
+
+  it('keeps the caller resets when a repair reconnect has to drop node-pty', async () => {
+    vi.mocked(isRelayAlreadyInstalled).mockResolvedValue(true)
+    const conn = makeMockConnection(sftpCapture)
+    feed(makeRepairToolchainSkipExecResponses())
+
+    await expect(deployAndLaunchRelay(conn)).resolves.toBeDefined()
+    expect(vi.mocked(finalizeInstall)).toHaveBeenCalledTimes(1)
+
+    const execCalls = vi.mocked(execCommand).mock.calls.map(([, c]) => c)
+    const reinstall = execCalls.findLast((c) => c.includes('npm install')) ?? ''
+    expect(reinstall).not.toContain('node-pty@')
+    expect(reinstall).toContain("rm -rf 'node_modules/node-pty'")
+    // Dropping the repair's own resets here leaves npm calling the broken watcher up to date.
+    expect(reinstall).toContain("rm -rf 'node_modules/@parcel/watcher'")
+    expect(reinstall).toContain("-name 'watcher-*'")
   })
 
   it('launches an already-installed relay in degraded mode when repair throws', async () => {

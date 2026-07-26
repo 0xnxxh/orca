@@ -54,6 +54,27 @@ export function makeMockConnection(capture: SftpWriteCapture): SshConnection {
 
 export type ExecResponse = string | { reject: string }
 
+// Repair reconnect (isRelayAlreadyInstalled → true) where BOTH native deps are broken and the host
+// cannot compile node-pty, so the caller's resets must survive into the node-pty-less reinstall.
+export function makeRepairToolchainSkipExecResponses(): ExecResponse[] {
+  const bothMissing = 'ORCA-NATIVE-DEPS-MISSING:node-pty,@parcel/watcher\nMISSING'
+  return [
+    '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
+    '/home/u',
+    bothMissing, // health probe before lock
+    bothMissing, // re-probe under the repair lock
+    '', // SFTP-namespace install-owner marker (repair)
+    { reject: 'gyp ERR! stack Error: not found: make' },
+    'PKG apk', // toolchain probe: no HAVE lines
+    '', // reset both deps + reinstall without node-pty
+    'ORCA-NATIVE-DEPS-MISSING:node-pty\nMISSING\n', // watcher probe: only node-pty still absent
+    '', // cat probe stderr
+    '', // rm -f probe stderr
+    'DEAD',
+    'READY'
+  ]
+}
+
 export function decodePowerShellCommand(command: string): string | null {
   const match = command.match(/-EncodedCommand\s+([A-Za-z0-9+/=]+)/)
   return match ? Buffer.from(match[1], 'base64').toString('utf16le') : null

@@ -967,6 +967,8 @@ async function installNativeDepsWithoutNodePty(
   const resetCommand = resetNativeDepsCommand(hostPlatform, [
     ...new Set<RelayNativeDepName>([...resetDeps, 'node-pty'])
   ])
+  // Why: POSIX-only command shape (`;` chaining, `2>&1`) — safe because the only caller is gated on a
+  // linux platform. Widen that gate and this needs the Windows branch installNativeDeps already has.
   await execHostCommand(
     conn,
     hostPlatform,

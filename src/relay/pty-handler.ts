@@ -60,12 +60,13 @@ import {
   type AgentSessionOwnerBinding
 } from '../shared/agent-session-host-authority'
 
-// Why: only Linux compiles node-pty (no prebuilt) and can have it skipped for a missing compiler, so
-// the build-tools remedy is a closable setup gap there and wrong advice anywhere node-pty ships one.
+// Why: only Linux compiles node-pty (no prebuilt), so the build-tools remedy is a closable setup gap
+// there and wrong advice anywhere node-pty ships one. The relay only sees an unloadable binding, never
+// why — a skipped compile and a later Node/ABI flip look identical here — so Linux hedges both causes.
 export function formatNodePtyUnavailableMessage(platform: NodeJS.Platform): string {
   const remedy =
     platform === 'linux'
-      ? 'this host is missing the C/C++ build tools needed to compile node-pty. Install make, a C++ compiler, and python3 on the remote host, then reconnect.'
+      ? "node-pty's native binding is not loadable on this host. If it is missing the C/C++ build tools needed to compile node-pty, install make, a C++ compiler, and python3 on the remote host, then reconnect. Otherwise reconnect to reinstall the relay's native modules, and check that the remote Node.js version and architecture match the installed binding."
       : "node-pty's native binding failed to load on this host. Reconnect to reinstall the relay's native modules; if it persists, check that the remote Node.js version and architecture match the installed binding."
   return `Remote terminals are unavailable: ${remedy}`
 }
