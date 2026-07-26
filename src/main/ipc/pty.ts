@@ -4150,13 +4150,8 @@ export function registerPtyHandlers(
         provider = connectionId ? getProvider(connectionId) : getProviderForPty(ptyId)
       } catch {
         if (connectionId) {
-          // Why: an absent SSH provider means there is no live target left to
-          // await, but the relay lease must still be tombstoned.
-          const incarnationId = finishPtyShutdown(ptyId, connectionId, store)
-          runtime?.onPtyExit(ptyId, -1, incarnationId)
-          rememberSyntheticKillExit(ptyId)
-          sendPtyExitToRenderer({ id: ptyId, code: -1 })
-          return true
+          // Why: relay detach unregisters providers while the remote PTY remains alive for reattach.
+          return false
         }
         return false
       }

@@ -1,50 +1,51 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import {
+import * as terminalTabClose from './terminal-tab-close'
+
+const {
   TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS,
   TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS,
+  TERMINAL_TAB_COLD_DAEMON_PROVIDER_TEARDOWN_TIMEOUT_MS,
+  TERMINAL_TAB_POSIX_PROVIDER_TEARDOWN_TIMEOUT_MS,
   TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
-  TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
-} from './terminal-tab-close'
+  TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
+  TERMINAL_TAB_SSH_PROVIDER_TEARDOWN_TIMEOUT_MS,
+  TERMINAL_TAB_WINDOWS_PROVIDER_TEARDOWN_TIMEOUT_MS,
+  resolveTerminalTabCloseCallerTimeoutMs
+} = terminalTabClose
 
 describe('terminal tab close deadline composition', () => {
-  it('fits every inner deadline below the real web, mobile, and short-RPC callers', () => {
-    const directMobileRpc = readFileSync(
-      join(process.cwd(), 'mobile', 'src', 'transport', 'rpc-client.ts'),
-      'utf8'
+  it('derives each provider budget from its sequential teardown costs', () => {
+    expect(TERMINAL_TAB_POSIX_PROVIDER_TEARDOWN_TIMEOUT_MS).toBe(8_000 + 2_000)
+    expect(TERMINAL_TAB_WINDOWS_PROVIDER_TEARDOWN_TIMEOUT_MS).toBe(3_000 + 5_000 + 8_000 + 2_000)
+    expect(TERMINAL_TAB_COLD_DAEMON_PROVIDER_TEARDOWN_TIMEOUT_MS).toBe(5_000 + 8_000 + 2_000)
+    expect(TERMINAL_TAB_SSH_PROVIDER_TEARDOWN_TIMEOUT_MS).toBe(30_000 + 5_000)
+    expect(TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS).toBe(
+      TERMINAL_TAB_SSH_PROVIDER_TEARDOWN_TIMEOUT_MS
     )
-    const relayMobileRpc = readFileSync(
-      join(process.cwd(), 'mobile', 'src', 'transport', 'mobile-relay-rpc-session.ts'),
-      'utf8'
-    )
-    const pairedWebRuntime = readFileSync(
-      join(process.cwd(), 'src', 'renderer', 'src', 'runtime', 'web-runtime-session.ts'),
-      'utf8'
-    )
-    const shortRpcSocket = readFileSync(
-      join(process.cwd(), 'src', 'main', 'runtime', 'rpc', 'unix-socket-transport.ts'),
-      'utf8'
-    )
-    const pairedWebCallerTimeoutMs = pairedWebRuntime.includes(
-      'timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS'
-    )
-      ? TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
-      : pairedWebRuntime.includes('timeoutMs: 15_000')
-        ? 15_000
-        : Number.NaN
+  })
 
+  it('keeps provider proof below RPC, host response, and caller deadlines', () => {
     expect(TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS).toBeLessThan(
       TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS
     )
     expect(TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS).toBeLessThan(
       TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS
     )
-    expect(TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS).toBeLessThan(pairedWebCallerTimeoutMs)
-    expect(pairedWebCallerTimeoutMs).toBe(15_000)
-    expect(directMobileRpc).toContain('const REQUEST_TIMEOUT_MS = 30_000')
-    expect(relayMobileRpc).toContain('args.requestTimeoutMs ?? 30_000')
-    expect(shortRpcSocket).toContain('const RUNTIME_RPC_SOCKET_IDLE_TIMEOUT_MS = 30_000')
-    expect(TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS).toBeLessThan(30_000)
+    expect(TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS).toBeLessThan(
+      TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
+    )
+  })
+
+  it.each(['session.tabs.close', 'session.tabs.closeLifecycle', 'terminal.closeTab'])(
+    'floors every %s transport caller at the end-to-end budget',
+    (method) => {
+      expect(resolveTerminalTabCloseCallerTimeoutMs(method, 1)).toBe(
+        TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
+      )
+    }
+  )
+
+  it('preserves unrelated RPC timeouts', () => {
+    expect(resolveTerminalTabCloseCallerTimeoutMs('status.get', 5_000)).toBe(5_000)
   })
 })

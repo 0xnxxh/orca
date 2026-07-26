@@ -16,6 +16,7 @@ import type {
   TerminalTabCloseReason,
   TerminalTabRetirementPlan
 } from '@/store/slices/terminal-tab-retirement'
+import { TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS } from '../../../../shared/terminal-tab-close'
 import { closeLocalTerminalTabState } from './close-local-terminal-tab-state'
 import { getTerminalIncarnationHandle } from './terminal-close-incarnation'
 import {
@@ -97,6 +98,8 @@ export function closeTerminalTab(
     options?.onClosed && options.providerTeardownTimeoutMs !== undefined
       ? { registerProviderTeardown }
       : {}
+  const requiresProviderProof =
+    options?.onClosed !== undefined && options.providerTeardownTimeoutMs !== undefined
 
   // Why: a pinned tab routes through the confirmation guard instead of closing
   // outright. `force` is the post-confirmation re-entry, which skips the guard.
@@ -150,6 +153,42 @@ export function closeTerminalTab(
       wireReason === 'user'
         ? null
         : getLatestWebSessionTabsPublicationEpoch(runtimeEnvironmentId, owningWorktreeId)
+    const remoteCloseArgs = {
+      worktreeId: owningWorktreeId,
+      tabId: hostBackedTabId,
+      environmentId: runtimeEnvironmentId,
+      reason: wireReason,
+      ...(requiresProviderProof ? { timeoutMs: TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS } : {}),
+      ...(wireReason !== 'user'
+        ? {
+            publicationEpoch,
+            terminalHandle: lifecycleTerminalHandle
+          }
+        : {})
+    }
+    let remoteCloseProven = false
+    const proveRemoteClose = async (): Promise<void> => {
+      if (remoteCloseProven) {
+        return
+      }
+      if (!(await closeWebRuntimeSessionTab(remoteCloseArgs))) {
+        throw new Error('terminal_tab_close_failed')
+      }
+      remoteCloseProven = true
+    }
+    const remoteProviderTeardown = proveRemoteClose()
+    const remoteProviderTeardownRegistration = requiresProviderProof
+      ? {
+          registerProviderTeardown: (teardown: Promise<void>, retry: () => Promise<void>) =>
+            registerProviderTeardown(
+              Promise.all([teardown, remoteProviderTeardown]).then(() => undefined),
+              () => Promise.all([retry(), proveRemoteClose()]).then(() => undefined)
+            )
+        }
+      : {}
+    if (!requiresProviderProof) {
+      void remoteProviderTeardown.catch(() => {})
+    }
     // Why: prune local mirrors immediately so close feels responsive while the
     // host session snapshot catches up.
     closeLocalTerminalTabState(terminalTabId, {
@@ -167,21 +206,7 @@ export function closeTerminalTab(
       ...(options?.providerTeardownTimeoutMs !== undefined
         ? { providerTeardownTimeoutMs: options.providerTeardownTimeoutMs }
         : {}),
-      ...providerTeardownRegistration
-    })
-    void closeWebRuntimeSessionTab({
-      worktreeId: owningWorktreeId,
-      tabId: hostBackedTabId,
-      environmentId: runtimeEnvironmentId,
-      // Why: lifecycle evidence binds this stale-prone echo to the exact host
-      // publication and terminal incarnation that the renderer observed.
-      reason: wireReason,
-      ...(wireReason !== 'user'
-        ? {
-            publicationEpoch,
-            terminalHandle: lifecycleTerminalHandle
-          }
-        : {})
+      ...remoteProviderTeardownRegistration
     })
     options?.onClosed?.(providerTeardown)
     return

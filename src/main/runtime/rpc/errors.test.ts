@@ -10,6 +10,7 @@ class LineageError extends Error {
 
 describe('mapRuntimeError', () => {
   it.each([
+    'terminal_provider_teardown_requires_runtime_upgrade',
     'terminal_tab_close_failed',
     'terminal_tab_close_timeout',
     'terminal_tab_not_found',

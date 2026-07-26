@@ -11,6 +11,10 @@ import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-re
 import { isRpcResponse } from './rpc-response-shape'
 import type { RpcClient } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
+import {
+  isTerminalTabCloseRpcMethod,
+  resolveTerminalTabCloseCallerTimeoutMs
+} from '../../../src/shared/terminal-tab-close'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -76,7 +80,14 @@ export function connectMobileRelayRpcSession(args: {
 
   const client: MobileRelayRpcSession = {
     async sendRequest(method, params, options) {
-      const budget = openRpcRequestBudget(options)
+      const timeoutMs = resolveTerminalTabCloseCallerTimeoutMs(
+        method,
+        options?.timeoutMs ?? requestTimeoutMs
+      )
+      const budget = openRpcRequestBudget({
+        ...options,
+        ...(isTerminalTabCloseRpcMethod(method) ? { timeoutMs } : {})
+      })
       await waitForConnected(budget.timeoutMs)
       return sendRpc(method, params, resolvePostConnectRequestTimeout(budget, requestTimeoutMs))
     },

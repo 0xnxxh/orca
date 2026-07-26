@@ -1,4 +1,3 @@
-import type { RuntimeTerminalWait } from '../../../shared/runtime-types'
 import {
   TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
   TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
@@ -47,26 +46,11 @@ export async function retireRuntimeTerminalProvider(
       },
       rpcOptions()
     )
-    return
   } catch (error) {
     if (!(error instanceof RuntimeRpcCallError) || error.code !== 'method_not_found') {
       throw error
     }
-  }
-
-  // Why: terminal.wait turns the legacy fire-and-forget close into physical-exit proof.
-  await callRuntimeRpc(target, 'terminal.close', { terminal }, rpcOptions())
-  const { wait } = await callRuntimeRpc<{ wait: RuntimeTerminalWait }>(
-    target,
-    'terminal.wait',
-    {
-      terminal,
-      for: 'exit',
-      timeoutMs: remainingTimeoutMs(providerDeadlineMs, 'terminal_provider_teardown_timeout')
-    },
-    rpcOptions()
-  )
-  if (!wait.satisfied || wait.status !== 'exited') {
-    throw new Error('terminal_provider_teardown_failed')
+    // Why: legacy terminal.wait treats provider disconnect as exit and cannot prove physical teardown.
+    throw new Error('terminal_provider_teardown_requires_runtime_upgrade')
   }
 }

@@ -1253,6 +1253,15 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       }
       // Why: keep state retirement synchronous and idempotent while exposing provider completion to durable close acknowledgements.
       providerTeardown = Promise.allSettled(retirementTasks).then((results) => {
+        const upgradeFailure = results.find(
+          (result) =>
+            result.status === 'rejected' &&
+            result.reason instanceof Error &&
+            result.reason.message === 'terminal_provider_teardown_requires_runtime_upgrade'
+        )
+        if (upgradeFailure?.status === 'rejected') {
+          throw upgradeFailure.reason
+        }
         const localOrSshFailures = results
           .slice(0, localOrSshTaskCount)
           .filter((result) => result.status === 'rejected').length

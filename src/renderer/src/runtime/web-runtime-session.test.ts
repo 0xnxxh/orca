@@ -1,6 +1,7 @@
 /* eslint-disable max-lines */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
+import { TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS } from '../../../shared/terminal-tab-close'
 import {
   activateWebRuntimeSessionWorktree,
   activateWebRuntimeSessionTab,
@@ -1515,6 +1516,7 @@ describe('web runtime session tab actions', () => {
 
     expect(runtimeCall).toHaveBeenNthCalledWith(1, {
       selector: ENVIRONMENT_ID,
+      expectedEnvironmentPairingRevision: undefined,
       method: 'session.tabs.activate',
       params: {
         worktree: `id:${WORKTREE_ID}`,
@@ -1526,16 +1528,18 @@ describe('web runtime session tab actions', () => {
     })
     expect(runtimeCall).toHaveBeenNthCalledWith(2, {
       selector: ENVIRONMENT_ID,
+      expectedEnvironmentPairingRevision: undefined,
       method: 'session.tabs.close',
       params: {
         worktree: `id:${WORKTREE_ID}`,
         tabId: 'host-browser-unified',
         reason: 'user'
       },
-      timeoutMs: 15_000
+      timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
     })
     expect(runtimeCall).toHaveBeenNthCalledWith(3, {
       selector: ENVIRONMENT_ID,
+      expectedEnvironmentPairingRevision: undefined,
       method: 'session.tabs.list',
       params: {
         worktree: `id:${WORKTREE_ID}`
@@ -1579,6 +1583,7 @@ describe('web runtime session tab actions', () => {
 
     expect(runtimeCall).toHaveBeenNthCalledWith(1, {
       selector: ENVIRONMENT_ID,
+      expectedEnvironmentPairingRevision: undefined,
       method: 'session.tabs.closeLifecycle',
       params: {
         worktree: `id:${WORKTREE_ID}`,
@@ -1587,17 +1592,18 @@ describe('web runtime session tab actions', () => {
         publicationEpoch: 'epoch-1',
         terminal: 'term-1'
       },
-      timeoutMs: 15_000
+      timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
     })
     expect(runtimeCall).toHaveBeenNthCalledWith(3, {
       selector: ENVIRONMENT_ID,
+      expectedEnvironmentPairingRevision: undefined,
       method: 'session.tabs.close',
       params: {
         worktree: `id:${WORKTREE_ID}`,
         tabId: 'host-browser-unified',
         reason: 'user'
       },
-      timeoutMs: 15_000
+      timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
     })
   })
 

@@ -20,6 +20,7 @@ import {
   ORCHESTRATION_CONTRACT_VERSION,
   RUNTIME_PROTOCOL_VERSION
 } from '../../shared/protocol-version'
+import { resolveTerminalTabCloseCallerTimeoutMs } from '../../shared/terminal-tab-close'
 
 // Why: for long-poll methods the caller's method-level
 // `params.timeoutMs` is the inner waiter budget; we extend the client-side
@@ -68,7 +69,10 @@ export class RuntimeClient {
     params?: unknown,
     options?: { timeoutMs?: number } & RuntimeOrchestrationEnvelope
   ): Promise<RuntimeRpcSuccess<TResult>> {
-    const effectiveTimeoutMs = options?.timeoutMs ?? this.resolveMethodTimeoutMs(method, params)
+    const effectiveTimeoutMs = resolveTerminalTabCloseCallerTimeoutMs(
+      method,
+      options?.timeoutMs ?? this.resolveMethodTimeoutMs(method, params)
+    )
     const orchestrationMutation = isOrchestrationMutation(method, params)
     if (orchestrationMutation) {
       await this.ensureOrchestrationContractCompatible(effectiveTimeoutMs)

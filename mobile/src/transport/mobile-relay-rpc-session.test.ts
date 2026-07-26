@@ -5,6 +5,7 @@ import {
 } from '../../../src/shared/browser-screencast-protocol'
 import { encodeTerminalStreamFrame, TerminalStreamOpcode } from './terminal-stream-protocol'
 import { isRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
+import { TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS } from '../../../src/shared/terminal-tab-close'
 
 const fakes = vi.hoisted(() => ({
   linkOptions: null as null | {
@@ -234,6 +235,25 @@ describe('mobile relay RPC session', () => {
         message: 'relay RPC timed out: terminal.send',
         unknown: true
       })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('floors terminal close timeouts above the relay transport default', async () => {
+    const { session } = await authenticateSession()
+    vi.useFakeTimers()
+    try {
+      const pending = session.sendRequest('session.tabs.close', {})
+      const outcome = pending.catch((error: unknown) => (error as Error).message)
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS - 1)
+      await expect(
+        Promise.race([outcome.then(() => 'settled'), Promise.resolve('pending')])
+      ).resolves.toBe('pending')
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(outcome).resolves.toBe('relay RPC timed out: session.tabs.close')
     } finally {
       vi.useRealTimers()
     }

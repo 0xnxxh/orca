@@ -6554,8 +6554,11 @@ export class OrcaRuntimeService {
     deadlineMs: number
   ): Promise<boolean> {
     const ptyIds = this.collectHeadlessMobileTerminalPtyIds(worktreeId, snapshot, tab.parentTabId)
+    if (ptyIds.size === 0) {
+      return false
+    }
     const stopAndWait = this.ptyController?.stopAndWait?.bind(this.ptyController)
-    if (ptyIds.size > 0 && (!stopAndWait || deadlineMs <= Date.now())) {
+    if (!stopAndWait || deadlineMs <= Date.now()) {
       return false
     }
     const stopped = await Promise.all(

@@ -7,6 +7,13 @@ type ClosingProviderTeardown = {
 const MAX_RETRYABLE_PROVIDER_TEARDOWNS = 128
 const providerTeardownByClosingTabId = new Map<string, ClosingProviderTeardown>()
 const retryableProviderTeardowns = new Set<ClosingProviderTeardown>()
+let retryAuthorityWasEvicted = false
+
+function failedProviderTeardownProof(): Promise<void> {
+  const failure = Promise.reject(new Error('terminal_tab_close_failed'))
+  void failure.catch(() => {})
+  return failure
+}
 
 function clearClosingTabProviderTeardown(entry: ClosingProviderTeardown): void {
   retryableProviderTeardowns.delete(entry)
@@ -40,6 +47,8 @@ function beginClosingTabProviderTeardown(
           break
         }
         clearClosingTabProviderTeardown(oldest)
+        // Why: after retry authority is discarded, an unknown tab can no longer prove provider absence.
+        retryAuthorityWasEvicted = true
       }
     }
   )
@@ -61,7 +70,7 @@ export function trackTerminalTabProviderTeardown(
 export function getTerminalTabProviderTeardown(tabId: string): Promise<void> | undefined {
   const entry = providerTeardownByClosingTabId.get(tabId)
   if (!entry) {
-    return undefined
+    return retryAuthorityWasEvicted ? failedProviderTeardownProof() : undefined
   }
   if (entry.inFlight) {
     return entry.inFlight

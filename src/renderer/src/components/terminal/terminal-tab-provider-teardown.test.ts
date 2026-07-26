@@ -4,7 +4,7 @@ import {
   trackTerminalTabProviderTeardown
 } from './terminal-tab-provider-teardown'
 
-it('bounds failed retry authority and re-runs the newest teardown', async () => {
+it('fails closed after retry authority eviction and re-runs the newest teardown', async () => {
   const retries = Array.from({ length: 129 }, () => vi.fn().mockResolvedValue(undefined))
   for (const [index, retry] of retries.entries()) {
     trackTerminalTabProviderTeardown(
@@ -15,7 +15,9 @@ it('bounds failed retry authority and re-runs the newest teardown', async () => 
   }
   await Promise.resolve()
 
-  expect(getTerminalTabProviderTeardown('failed-tab-0')).toBeUndefined()
+  await expect(getTerminalTabProviderTeardown('failed-tab-0')).rejects.toThrow(
+    'terminal_tab_close_failed'
+  )
   await expect(getTerminalTabProviderTeardown('failed-tab-128')).resolves.toBeUndefined()
   expect(retries[128]).toHaveBeenCalledOnce()
 })

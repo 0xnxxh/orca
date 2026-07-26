@@ -32,6 +32,10 @@ import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
 import { websocketPayloadToUint8 } from './websocket-payload-bytes'
+import {
+  isTerminalTabCloseRpcMethod,
+  resolveTerminalTabCloseCallerTimeoutMs
+} from '../../../src/shared/terminal-tab-close'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -997,10 +1001,17 @@ export function connect(
       params?: unknown,
       options?: SendRequestOptions
     ): Promise<RpcResponse> {
-      const budget = openRpcRequestBudget(options)
+      const methodTimeoutMs = resolveTerminalTabCloseCallerTimeoutMs(
+        method,
+        options?.timeoutMs ?? REQUEST_TIMEOUT_MS
+      )
+      const budget = openRpcRequestBudget({
+        ...options,
+        ...(isTerminalTabCloseRpcMethod(method) ? { timeoutMs: methodTimeoutMs } : {})
+      })
       const waitStart = budget.startedAt
       const wasConnected = state === 'connected'
-      await waitForConnected(options?.timeoutMs)
+      await waitForConnected(budget.timeoutMs)
       if (!wasConnected) {
         console.log('[net] sendRequest waited for connect', {
           method,

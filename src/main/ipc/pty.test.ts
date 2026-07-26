@@ -5155,6 +5155,39 @@ describe('registerPtyHandlers', () => {
         expect(runtime.onPtyExit).toHaveBeenCalledWith('remote-pty', -1, undefined)
       })
 
+      it('does not treat a detached SSH provider as physical stop proof', async () => {
+        const store = {
+          markSshRemotePtyLease: vi.fn()
+        }
+        const runtime = {
+          setPtyController: vi.fn(),
+          onPtyExit: vi.fn()
+        }
+        setPtyOwnership('remote-pty', 'ssh-1')
+        unregisterSshPtyProvider('ssh-1')
+        handlers.clear()
+        registerPtyHandlers(
+          mainWindow as never,
+          runtime as never,
+          undefined,
+          undefined,
+          undefined,
+          store as never
+        )
+        const controller = runtime.setPtyController.mock.calls[0]?.[0] as {
+          stopAndWait: (ptyId: string) => Promise<boolean>
+        }
+
+        try {
+          await expect(controller.stopAndWait('remote-pty')).resolves.toBe(false)
+        } finally {
+          deletePtyOwnership('remote-pty')
+        }
+
+        expect(store.markSshRemotePtyLease).not.toHaveBeenCalled()
+        expect(runtime.onPtyExit).not.toHaveBeenCalled()
+      })
+
       it('preserves an SSH lease when runtime controller kill shutdown fails transiently', async () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
         const store = {

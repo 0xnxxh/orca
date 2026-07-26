@@ -705,6 +705,7 @@ export async function closeWebRuntimeSessionTab(args: {
   reason: RuntimeSessionTabCloseReason
   publicationEpoch?: string | null
   terminalHandle?: string | null
+  timeoutMs?: number
 }): Promise<boolean> {
   return callWebRuntimeSessionTabMethod('session.tabs.close', args)
 }
@@ -825,6 +826,7 @@ async function callWebRuntimeSessionTabMethod(
     reason?: RuntimeSessionTabCloseReason
     publicationEpoch?: string | null
     terminalHandle?: string | null
+    timeoutMs?: number
   }
 ): Promise<boolean> {
   const environmentId =
@@ -897,7 +899,7 @@ async function callWebRuntimeSessionTabMethod(
             ? { reason: args.reason }
             : {})
       },
-      timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
+      timeoutMs: args.timeoutMs ?? (isClose ? TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS : 15_000)
     })
     const result = unwrapRuntimeRpcResult(
       response as RuntimeRpcResponse<RuntimeMobileSessionTabCloseResult | undefined>

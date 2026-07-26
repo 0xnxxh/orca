@@ -2,6 +2,10 @@ import type { RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
 import type { RuntimeStatus } from '../../../shared/runtime-types'
 import type { RuntimeCapability } from '../../../shared/protocol-version'
 import { withBrowserPaneUiRuntimeRpcSource } from '../../../shared/runtime-rpc-feature-interaction-source'
+import {
+  isTerminalTabCloseRpcMethod,
+  resolveTerminalTabCloseCallerTimeoutMs
+} from '../../../shared/terminal-tab-close'
 import { assertRuntimeStatusCompatible } from './runtime-protocol-compat'
 import { createRuntimeRpcAbortError } from './abortable-runtime-environment-call'
 import { callRuntimeEnvironmentWithRevision } from './runtime-rpc-environment-call'
@@ -59,6 +63,9 @@ export async function callRuntimeRpc<TResult>(
           options.expectedEnvironmentPairingRevision
         )
       : undefined
+  const timeoutMs = isTerminalTabCloseRpcMethod(method)
+    ? resolveTerminalTabCloseCallerTimeoutMs(method, options.timeoutMs ?? 0)
+    : options.timeoutMs
   if (
     target.kind === 'environment' &&
     method !== 'status.get' &&
@@ -66,6 +73,7 @@ export async function callRuntimeRpc<TResult>(
   ) {
     await ensureRuntimeEnvironmentCompatible(target.environmentId, {
       ...options,
+      timeoutMs,
       expectedEnvironmentPairingRevision
     })
   }
@@ -82,7 +90,7 @@ export async function callRuntimeRpc<TResult>(
           environmentId: target.environmentId,
           method,
           params: nextParams,
-          timeoutMs: options.timeoutMs,
+          timeoutMs,
           signal: options.signal,
           expectedEnvironmentPairingRevision
         })

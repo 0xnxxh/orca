@@ -179,6 +179,7 @@ describe('createNewTerminalTab', () => {
 describe('closeTerminalTab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    closeWebRuntimeSessionTabMock.mockResolvedValue(true)
     isWebRuntimeSessionActiveMock.mockReturnValue(false)
     resolveHostSessionTabIdForWebSessionTabMock.mockReturnValue(null)
     isWebTerminalSurfaceTabIdMock.mockReturnValue(false)

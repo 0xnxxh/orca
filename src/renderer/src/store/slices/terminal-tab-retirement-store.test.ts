@@ -240,7 +240,7 @@ describe('terminal tab retirement store boundary', () => {
     })
   })
 
-  it('proves legacy runtime teardown after closeProvider is unavailable', async () => {
+  it('fails closed when a legacy runtime cannot prove provider teardown', async () => {
     const store = createRetirementStore()
     seedStore(store, {
       tabsByWorktree: {
@@ -264,7 +264,7 @@ describe('terminal tab retirement store boundary', () => {
       {
         id: 'rpc-close',
         ok: true,
-        result: { close: { ptyKilled: true } },
+        result: { close: { ptyKilled: false } },
         _meta: { runtimeId: 'legacy-runtime' }
       },
       {
@@ -276,7 +276,7 @@ describe('terminal tab retirement store boundary', () => {
             condition: 'exit',
             satisfied: true,
             status: 'exited',
-            exitCode: 0
+            exitCode: null
           }
         },
         _meta: { runtimeId: 'legacy-runtime' }
@@ -296,26 +296,13 @@ describe('terminal tab retirement store boundary', () => {
         providerTeardown = teardown
       }
     })
-    await expect(providerTeardown).resolves.toBeUndefined()
+    await expect(providerTeardown).rejects.toThrow(
+      'terminal_provider_teardown_requires_runtime_upgrade'
+    )
 
     expect(mockRuntimeEnvironmentSubscribe.mock.calls.map(([request]) => request.method)).toEqual([
-      'terminal.closeProvider',
-      'terminal.close',
-      'terminal.wait'
+      'terminal.closeProvider'
     ])
-    expect(mockRuntimeEnvironmentSubscribe).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        selector: 'legacy-runtime',
-        method: 'terminal.wait',
-        params: {
-          terminal: 'terminal-1',
-          for: 'exit',
-          timeoutMs: expect.any(Number)
-        },
-        timeoutMs: expect.any(Number)
-      }),
-      expect.any(Object)
-    )
     expect(mockRuntimeEnvironmentCall).not.toHaveBeenCalled()
     expect(mockRuntimeCall).not.toHaveBeenCalled()
   })
