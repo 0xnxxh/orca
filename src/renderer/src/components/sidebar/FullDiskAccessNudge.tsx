@@ -27,6 +27,7 @@ const DISMISS_KEY = 'orca.fullDiskAccessNudgeDismissed.v1'
 let cachedFullDiskAccessStatus: DeveloperPermissionStatus | undefined
 let fullDiskAccessProbed = false
 let fullDiskAccessProbe: Promise<DeveloperPermissionStatus | undefined> | null = null
+let fullDiskAccessRefreshSequence = 0
 
 function getFullDiskAccessStatus(
   states: readonly DeveloperPermissionState[]
@@ -62,9 +63,16 @@ function probeFullDiskAccessStatusOnce(): Promise<DeveloperPermissionStatus | un
 // Why: a fresh, cache-bypassing probe used only on CTA return-focus so the card
 // can hide the moment a Full Disk Access grant takes effect for this process.
 function refreshFullDiskAccessStatus(): Promise<DeveloperPermissionStatus | undefined> {
+  // Why: rapid focus/blur puts several getStatus() round-trips in flight, and an
+  // earlier pre-grant result resolving last would un-hide the card and poison the
+  // session cache — same refresh-sequence guard as FullDiskAccessSetupPrompt.
+  const refreshId = ++fullDiskAccessRefreshSequence
   return window.api.developerPermissions
     .getStatus()
     .then((states) => {
+      if (refreshId !== fullDiskAccessRefreshSequence) {
+        return cachedFullDiskAccessStatus
+      }
       const next = getFullDiskAccessStatus(states)
       rememberFullDiskAccessStatus(next)
       return next

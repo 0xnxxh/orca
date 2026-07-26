@@ -17,6 +17,10 @@ import {
   shouldShowFullDiskAccessNudge
 } from './FullDiskAccessNudge'
 
+// Why: without this React skips its "update not wrapped in act" warnings, so a
+// state update escaping act() in these async probe paths would pass unnoticed.
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
 vi.mock('sonner', () => ({
   toast: {
     error: vi.fn(),
@@ -56,10 +60,13 @@ function fdaStatus(status: DeveloperPermissionStatus): DeveloperPermissionState[
   return [{ id: 'full-disk-access', status }]
 }
 
+const mountedRoots: Root[] = []
+
 async function renderNudge(): Promise<{ container: HTMLDivElement; root: Root }> {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
+  mountedRoots.push(root)
   await act(async () => {
     root.render(
       React.createElement(TooltipProvider, null, React.createElement(FullDiskAccessNudge))
@@ -73,7 +80,15 @@ async function renderNudge(): Promise<{ container: HTMLDivElement; root: Root }>
   return { container, root }
 }
 
-afterEach(() => {
+afterEach(async () => {
+  // Why: clearing document.body leaves the roots mounted, so their window focus
+  // listener survives and re-probes during later tests. Unmount them instead.
+  const roots = mountedRoots.splice(0)
+  await act(async () => {
+    for (const root of roots) {
+      root.unmount()
+    }
+  })
   vi.restoreAllMocks()
   document.body.innerHTML = ''
   resetFullDiskAccessProbeForTests()
@@ -266,6 +281,56 @@ describe('FullDiskAccessNudge', () => {
       await Promise.resolve()
     })
     expect(container.textContent).toBe('')
+  })
+
+  it('ignores a slow focus refresh that resolves after a newer one saw the grant', async () => {
+    setUserAgent(MAC_UA)
+    const pendingResolvers: ((states: DeveloperPermissionState[]) => void)[] = []
+    let deferGetStatus = false
+    installDeveloperPermissionsApi({
+      getStatus: () =>
+        deferGetStatus
+          ? new Promise<DeveloperPermissionState[]>((resolve) => {
+              pendingResolvers.push(resolve)
+            })
+          : Promise.resolve(fdaStatus('unknown')),
+      request: async () => ({
+        id: 'full-disk-access',
+        status: 'unknown',
+        openedSystemSettings: true
+      })
+    })
+    const { container } = await renderNudge()
+    const openButton = Array.from(container.querySelectorAll('button')).find((button) =>
+      button.textContent?.includes('Open System Settings')
+    )
+    await act(async () => {
+      openButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    // Rapid blur/focus while the first round-trip is still in flight.
+    deferGetStatus = true
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect(pendingResolvers.length).toBe(2)
+    // The newer refresh observes the grant and hides the card.
+    await act(async () => {
+      pendingResolvers[1]?.(fdaStatus('granted'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(container.textContent).toBe('')
+    // The older, slower refresh still reports the pre-grant status; it must not win.
+    await act(async () => {
+      pendingResolvers[0]?.(fdaStatus('unknown'))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(container.textContent).toBe('')
+    // The stale result must not poison the session cache a later mount reads either.
+    const remount = await renderNudge()
+    expect(remount.container.textContent).toBe('')
   })
 
   it('stops watching for the grant once the card is dismissed', async () => {
