@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import type { CodexAccountAddTarget, CodexAccountService } from '../codex-accounts/service'
 import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
-import { listStaleCodexPanes } from '../codex/codex-stale-pane-accounts'
+import { forgetStaleCodexPanes, listStaleCodexPanes } from '../codex/codex-stale-pane-accounts'
 import type { GlobalSettings } from '../../shared/types'
 
 export function registerCodexAccountHandlers(
@@ -17,6 +17,12 @@ export function registerCodexAccountHandlers(
       ptyIds: args.ptyIds.filter((ptyId): ptyId is string => typeof ptyId === 'string'),
       settings
     })
+  })
+  ipcMain.handle('codexAccounts:forgetStalePanes', (_event, args: { ptyIds?: unknown }) => {
+    if (!Array.isArray(args?.ptyIds)) {
+      return
+    }
+    forgetStaleCodexPanes(args.ptyIds.filter((ptyId): ptyId is string => typeof ptyId === 'string'))
   })
   ipcMain.handle('codexAccounts:list', () => codexAccounts.listAccounts())
   ipcMain.handle('codexAccounts:add', (_event, args?: CodexAccountAddTarget) =>

@@ -9,7 +9,7 @@ import {
   getCodexPaneAccount,
   recordCodexPaneAccount
 } from './codex-pane-account-registry'
-import { listStaleCodexPanes } from './codex-stale-pane-accounts'
+import { forgetStaleCodexPanes, listStaleCodexPanes } from './codex-stale-pane-accounts'
 
 let userDataPath: string
 let previousUserDataPath: string | undefined
@@ -148,6 +148,22 @@ describe('listStaleCodexPanes', () => {
     expect(
       listStaleCodexPanes({ ptyIds: ['pty-unknown'], settings: settingsWithSelection('account-b') })
     ).toEqual([])
+  })
+
+  it('stops reporting a pane the user chose to keep on the old account', () => {
+    recordCodexPaneAccount('pty-1', { selectionKey: 'host', accountId: 'account-a' })
+    recordCodexPaneAccount('pty-2', { selectionKey: 'host', accountId: 'account-a' })
+
+    forgetStaleCodexPanes(['pty-1'])
+    _internals.resetCache()
+
+    // Why: the dismissal must outlive the app, or the startup sweep re-raises it.
+    expect(
+      listStaleCodexPanes({
+        ptyIds: ['pty-1', 'pty-2'],
+        settings: settingsWithSelection('account-b')
+      })
+    ).toEqual([{ ptyId: 'pty-2', launchAccountId: 'account-a', activeAccountId: 'account-b' }])
   })
 
   it('compares a WSL pane against its own distro selection', () => {

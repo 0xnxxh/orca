@@ -51,7 +51,8 @@ export function collectStaleWorktreePtyIds({
 
 export function dismissStaleWorktreePtyIds(
   staleWorktreePtyIds: string[],
-  clearCodexRestartNotice: (ptyId: string) => void
+  clearCodexRestartNotice: (ptyId: string) => void,
+  forgetLaunchAccounts: (ptyIds: string[]) => void
 ): void {
   // Why: restart notices are stored per PTY, but the workspace host presents
   // one shared prompt. Clearing all matching PTY notices keeps every pane in
@@ -59,6 +60,10 @@ export function dismissStaleWorktreePtyIds(
   for (const ptyId of staleWorktreePtyIds) {
     clearCodexRestartNotice(ptyId)
   }
+  // Why: notices are renderer-only, so without dropping the on-disk launch
+  // record the startup sweep re-raises this exact prompt — and re-blocks the
+  // pane's input — after every app restart the user already answered.
+  forgetLaunchAccounts(staleWorktreePtyIds)
 }
 
 function isInsideHiddenTree(element: HTMLElement): boolean {
@@ -112,7 +117,11 @@ export default function CodexRestartChip({
   }
 
   const handleDismiss = (): void => {
-    dismissStaleWorktreePtyIds(staleWorktreePtyIds, clearCodexRestartNotice)
+    dismissStaleWorktreePtyIds(staleWorktreePtyIds, clearCodexRestartNotice, (ptyIds) => {
+      void window.api.codexAccounts.forgetStalePanes({ ptyIds }).catch((err: unknown) => {
+        console.warn('Failed to forget dismissed Codex pane accounts:', err)
+      })
+    })
   }
 
   return (

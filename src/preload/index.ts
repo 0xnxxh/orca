@@ -1924,7 +1924,9 @@ const api = {
       ptyIds: string[]
     }): Promise<
       { ptyId: string; launchAccountId: string | null; activeAccountId: string | null }[]
-    > => ipcRenderer.invoke('codexAccounts:listStalePanes', args)
+    > => ipcRenderer.invoke('codexAccounts:listStalePanes', args),
+    forgetStalePanes: (args: { ptyIds: string[] }): Promise<void> =>
+      ipcRenderer.invoke('codexAccounts:forgetStalePanes', args)
   },
 
   claudeAccounts: {

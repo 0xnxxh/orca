@@ -1,6 +1,6 @@
 import type { GlobalSettings } from '../../shared/types'
 import { getSelectedCodexAccountIdForTarget } from '../codex-accounts/runtime-selection'
-import { getCodexPaneAccount } from './codex-pane-account-registry'
+import { forgetCodexPaneAccount, getCodexPaneAccount } from './codex-pane-account-registry'
 
 export type StaleCodexPane = {
   ptyId: string
@@ -31,6 +31,19 @@ export function listStaleCodexPanes(args: {
     }
   }
   return stalePanes
+}
+
+/**
+ * Drops the launch record for panes the user chose to keep on the old account.
+ *
+ * Why: keeping the old account is an answer to the prompt, but the record is
+ * what the startup sweep re-raises from — without this the same dismissed pane
+ * is prompted again (and has its input blocked again) after every app restart.
+ */
+export function forgetStaleCodexPanes(ptyIds: readonly string[]): void {
+  for (const ptyId of ptyIds) {
+    forgetCodexPaneAccount(ptyId)
+  }
 }
 
 function parseSelectionLaneKey(selectionKey: string): {

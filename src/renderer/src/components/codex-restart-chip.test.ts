@@ -99,12 +99,14 @@ describe('CodexRestartChip helpers', () => {
 
   it('dismisses every stale PTY notice in the worktree prompt', () => {
     const clearCodexRestartNotice = vi.fn()
+    const forgetLaunchAccounts = vi.fn()
 
-    dismissStaleWorktreePtyIds(['pty-1', 'pty-3'], clearCodexRestartNotice)
+    dismissStaleWorktreePtyIds(['pty-1', 'pty-3'], clearCodexRestartNotice, forgetLaunchAccounts)
 
     expect(clearCodexRestartNotice).toHaveBeenNthCalledWith(1, 'pty-1')
     expect(clearCodexRestartNotice).toHaveBeenNthCalledWith(2, 'pty-3')
     expect(clearCodexRestartNotice).toHaveBeenCalledTimes(2)
+    expect(forgetLaunchAccounts).toHaveBeenCalledWith(['pty-1', 'pty-3'])
   })
 
   it('renders only account-resolution actions without an external-store update loop', async () => {
@@ -142,6 +144,51 @@ describe('CodexRestartChip helpers', () => {
     expect(
       Array.from(container.querySelectorAll('button'), (button) => button.textContent?.trim())
     ).toEqual(['Keep old account', 'Restart'])
+  })
+
+  it('forgets the launch record when the user keeps the old account', async () => {
+    const forgetStalePanes = vi.fn(() => Promise.resolve())
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { codexAccounts: { forgetStalePanes } }
+    })
+    useAppStore.setState({
+      tabsByWorktree: {
+        'worktree-1': [
+          {
+            id: 'tab-1',
+            worktreeId: 'worktree-1',
+            title: 'Terminal',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1,
+            ptyId: null
+          }
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] },
+      codexRestartNoticeByPtyId: {
+        'pty-1': {
+          previousAccountLabel: 'old@example.com',
+          nextAccountLabel: 'new@example.com'
+        }
+      }
+    })
+    await act(async () => {
+      root.render(React.createElement(CodexRestartChip, { worktreeId: 'worktree-1' }))
+    })
+
+    const dismissButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Keep old account'
+    )
+    await act(async () => {
+      dismissButton?.click()
+    })
+
+    // Why: without this the startup sweep re-raises the prompt the user just answered.
+    expect(forgetStalePanes).toHaveBeenCalledWith({ ptyIds: ['pty-1'] })
+    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
   })
 
   it('closes the prompt after Restart even when no mounted pane can run it yet', async () => {
