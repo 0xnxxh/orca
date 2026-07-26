@@ -1050,13 +1050,58 @@ export class DaemonPtyAdapter implements IPtyProvider {
         alive.push(session.sessionId)
         // Why: track background sessions in the checkpoint set so disconnectOnly's final checkpoint doesn't leave stale recovery data.
         this.activeSessionIds.add(session.sessionId)
-        if (this.historyReader?.probeRestorableHistory(session.sessionId).status === 'none') {
-          this.historyManager?.registerWriter(session.sessionId)
-        }
+        await this.reconcileLiveSessionHistory(session).catch((err) =>
+          console.warn('[history] live-session reconciliation failed:', session.sessionId, err)
+        )
       }
     }
 
     return { alive, killed }
+  }
+
+  private async reconcileLiveSessionHistory(session: SessionInfo): Promise<void> {
+    const historyManager = this.historyManager
+    const historyReader = this.historyReader
+    if (!historyManager || !historyReader) {
+      return
+    }
+    await this.withHistorySpawnLock(session.sessionId, async () => {
+      if (historyManager.hasWriter(session.sessionId)) {
+        return
+      }
+      const probe = historyReader.probeRestorableHistory(session.sessionId)
+      if (probe.status === 'unreadable') {
+        return
+      }
+      if (probe.status === 'none') {
+        await historyManager.openSession(session.sessionId, {
+          cwd: session.cwd ?? '',
+          cols: session.cols,
+          rows: session.rows
+        })
+      } else {
+        const recoveryFreeze = await historyManager.freezeForRecovery(session.sessionId)
+        try {
+          const detection = await historyReader.detectColdRestoreState(session.sessionId, {
+            wslDistro: session.wslDistro ?? undefined
+          })
+          if (
+            detection.status === 'unreadable' ||
+            (detection.status === 'restored' && detection.hasUnreadableRecovery)
+          ) {
+            historyManager.suspendSession(session.sessionId, recoveryFreeze)
+            return
+          }
+          historyManager.reopenSession(session.sessionId, recoveryFreeze)
+        } finally {
+          historyManager.abandonRecoveryFreeze(recoveryFreeze)
+        }
+      }
+      if (historyManager.hasWriter(session.sessionId)) {
+        this.sessionsNeedingFullCheckpoint.add(session.sessionId)
+        this.lastFullCheckpointAt.delete(session.sessionId)
+      }
+    })
   }
 
   async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
@@ -1256,7 +1301,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.releasePendingRespawnAdoptionLease()
     // Why: a final checkpoint covers sessions opened since the last tick (else cold restore finds nothing if the daemon
     // later dies). Await it — fire-and-forget would race client.disconnect() and reject the pending getSnapshot RPCs.
-    await this.runExclusiveCheckpoint(() => this.checkpointAllSessions())
+    await this.runExclusiveCheckpoint(() => this.checkpointAllSessions(), {
+      rescheduleDirty: false
+    })
     this.dirtySessionVersions.clear()
     this.lastFullCheckpointAt.clear()
     this.coldRestoreCache.clear()
@@ -1393,7 +1440,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.stopCheckpointTimerIfIdle()
   }
 
-  private async runExclusiveCheckpoint(operation: () => Promise<void>): Promise<void> {
+  private async runExclusiveCheckpoint(
+    operation: () => Promise<void>,
+    options: { rescheduleDirty?: boolean } = {}
+  ): Promise<void> {
     this.stopCheckpointTimer()
     if (this.checkpointInFlight) {
       await this.checkpointInFlight
@@ -1407,6 +1457,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.checkpointInFlight = null
       }
       this.stopCheckpointTimer()
+      if (options.rescheduleDirty !== false) {
+        this.scheduleCheckpointTimer()
+      }
     }
   }
 

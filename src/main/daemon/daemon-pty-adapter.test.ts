@@ -1749,6 +1749,40 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
+    it('reschedules another dirty session after a keepHistory checkpoint', async () => {
+      const adapterClass = DaemonPtyAdapter as unknown as { CHECKPOINT_INTERVAL_MS: number }
+      const previousInterval = adapterClass.CHECKPOINT_INTERVAL_MS
+      adapterClass.CHECKPOINT_INTERVAL_MS = 25
+      try {
+        historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+        const sleeping = await historyAdapter.spawn({
+          cols: 80,
+          rows: 24,
+          sessionId: 'sleep-with-dirty-peer'
+        })
+        const peer = await historyAdapter.spawn({
+          cols: 80,
+          rows: 24,
+          sessionId: 'dirty-peer'
+        })
+        const appendSpy = vi.spyOn(historyAdapter.getHistoryManager()!, 'appendIncrements')
+        lastSubprocess._simulateData('peer output before sleep\r\n')
+
+        await historyAdapter.shutdown(sleeping.id, { immediate: true, keepHistory: true })
+        await waitFor(() => appendSpy.mock.calls.some(([sessionId]) => sessionId === peer.id))
+
+        expect(appendSpy).toHaveBeenCalledWith(
+          peer.id,
+          expect.any(Number),
+          expect.arrayContaining([
+            expect.objectContaining({ kind: 'output', data: 'peer output before sleep\r\n' })
+          ])
+        )
+      } finally {
+        adapterClass.CHECKPOINT_INTERVAL_MS = previousInterval
+      }
+    })
+
     itOnPosix('persists final take records that are not represented in the snapshot', async () => {
       historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
 
@@ -2077,6 +2111,41 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       expect(reconciled.alive).toEqual([sessionId])
       expect(historyAdapter.getHistoryManager()!.hasWriter(sessionId)).toBe(false)
+    })
+
+    it('re-anchors ordinary restorable history during startup reconciliation', async () => {
+      const worktreeId = 'repo-a::/wt/reconciled-history'
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const { id: sessionId } = await historyAdapter.spawn({
+        cols: 80,
+        rows: 24,
+        worktreeId
+      })
+      lastSubprocess._simulateData('before adapter restart\r\n')
+      await historyAdapter.disconnectOnly()
+
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const reconciled = await historyAdapter.reconcileOnStartup(new Set([worktreeId]))
+      const internals = historyAdapter as unknown as {
+        sessionsNeedingFullCheckpoint: Set<string>
+        checkpointSessions(sessionIds: Iterable<string>): Promise<Set<string>>
+      }
+
+      expect(reconciled.alive).toEqual([sessionId])
+      expect(historyAdapter.getHistoryManager()!.hasWriter(sessionId)).toBe(true)
+      expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(true)
+
+      lastSubprocess._simulateData('after adapter restart\r\n')
+      await internals.checkpointSessions([sessionId])
+
+      const checkpoint = JSON.parse(
+        readFileSync(
+          join(historyDir, getHistorySessionDirName(sessionId), 'checkpoint.json'),
+          'utf8'
+        )
+      )
+      expect(checkpoint.snapshotAnsi).toContain('after adapter restart')
+      expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(false)
     })
 
     it('serializes explicit shutdown behind an in-progress history-aware spawn', async () => {
