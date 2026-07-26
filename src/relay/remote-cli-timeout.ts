@@ -1,5 +1,9 @@
 import { clampOrchestrationAskTimeoutMs } from '../shared/orchestration-ask-timeout'
-import { parsePositiveSafeIntegerText } from '../shared/timer-delay'
+import {
+  isSafeTimerDelayMs,
+  parsePositiveSafeIntegerNumericText,
+  parsePositiveSafeIntegerText
+} from '../shared/timer-delay'
 
 // Why: the host bridges the full Orca CLI over the relay (#7716), so mutation
 // commands (worktree create, orchestration dispatch, Linear writes, ...) can
@@ -44,9 +48,13 @@ export function remoteCliRequestTimeoutMs(params: Record<string, unknown>): numb
   const base = isWaitStyleCliRequest(argv, commandPath)
     ? REMOTE_CLI_WAIT_TIMEOUT_MS
     : REMOTE_CLI_DEFAULT_TIMEOUT_MS
-  const explicit = timeoutFlag?.raw === undefined ? null : Number(timeoutFlag.raw)
-  if (explicit !== null && explicit > 0) {
-    return Math.max(base, explicit + REMOTE_CLI_TIMEOUT_GRACE_MS)
+  const explicit =
+    timeoutFlag?.raw === undefined ? null : parsePositiveSafeIntegerNumericText(timeoutFlag.raw)
+  // Why: the relay forwards this straight into a timer, so a budget that would
+  // overflow the timer range after grace has to degrade to the base budget.
+  const extended = explicit === null ? null : explicit + REMOTE_CLI_TIMEOUT_GRACE_MS
+  if (extended !== null && isSafeTimerDelayMs(extended)) {
+    return Math.max(base, extended)
   }
   return base
 }

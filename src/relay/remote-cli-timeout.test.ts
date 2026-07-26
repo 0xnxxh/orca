@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { remoteCliRequestTimeoutMs } from './remote-cli-timeout'
+import { MAX_TIMER_DELAY_MS } from '../shared/timer-delay'
 
 describe('remoteCliRequestTimeoutMs', () => {
   it('gives Linear issue context reads the general CLI budget', () => {
@@ -77,6 +78,39 @@ describe('remoteCliRequestTimeoutMs', () => {
         argv: ['terminal', 'wait', '--timeout-ms', '1800001']
       })
     ).toBe(1_860_001)
+  })
+
+  it.each(['+1000000', '1000000.0', '1e6'])(
+    'extends non-ask waits using CLI-compatible integer syntax %s',
+    (raw) => {
+      expect(
+        remoteCliRequestTimeoutMs({
+          argv: ['terminal', 'wait', '--timeout-ms', raw]
+        })
+      ).toBe(1_060_000)
+    }
+  )
+
+  it.each([
+    ['Infinity'],
+    ['1.5'],
+    ['-1'],
+    ['bad'],
+    [String(Number.MAX_SAFE_INTEGER)],
+    [String(MAX_TIMER_DELAY_MS - 60_000 + 1)]
+  ])('falls back to the base budget when a non-ask --timeout-ms %s is unusable', (raw) => {
+    expect(remoteCliRequestTimeoutMs({ argv: ['terminal', 'wait', '--timeout-ms', raw] })).toBe(
+      600_000
+    )
+    expect(remoteCliRequestTimeoutMs({ argv: ['status', '--timeout-ms', raw] })).toBe(300_000)
+  })
+
+  it('keeps the largest non-ask budget that stays inside the timer range', () => {
+    expect(
+      remoteCliRequestTimeoutMs({
+        argv: ['terminal', 'wait', '--timeout-ms', String(MAX_TIMER_DELAY_MS - 60_000)]
+      })
+    ).toBe(MAX_TIMER_DELAY_MS)
   })
 
   it('does not treat a flag value named wait as a command path element', () => {

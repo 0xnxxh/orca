@@ -21,6 +21,7 @@ import {
 } from './ssh-remote-cli-host-passthrough'
 import { resolveOrchestrationAskClientTimeoutMs } from '../../shared/orchestration-ask-timeout'
 import { remoteCliRequestTimeoutMs } from '../../relay/remote-cli-timeout'
+import { MAX_TIMER_DELAY_MS } from '../../shared/timer-delay'
 
 type FakeChild = EventEmitter & {
   stdout: EventEmitter
@@ -121,6 +122,35 @@ describe('resolveHostCliKillTimeoutMs', () => {
     expect(resolveHostCliKillTimeoutMs(['terminal', 'wait', '--timeout-ms', '1800001'])).toBe(
       1_920_001
     )
+  })
+
+  it.each(['+1000000', '1000000.0', '1e6'])(
+    'extends non-ask child timers using CLI-compatible integer syntax %s',
+    (raw) => {
+      expect(resolveHostCliKillTimeoutMs(['terminal', 'wait', '--timeout-ms', raw])).toBe(1_120_000)
+    }
+  )
+
+  it.each([
+    'Infinity',
+    '1.5',
+    '-1',
+    'bad',
+    String(Number.MAX_SAFE_INTEGER),
+    String(MAX_TIMER_DELAY_MS - 120_000 + 1)
+  ])('falls back to the default kill timer when a non-ask --timeout-ms %s is unusable', (raw) => {
+    expect(resolveHostCliKillTimeoutMs(['terminal', 'wait', '--timeout-ms', raw])).toBe(600_000)
+  })
+
+  it('keeps the largest non-ask kill timer that stays inside the timer range', () => {
+    expect(
+      resolveHostCliKillTimeoutMs([
+        'terminal',
+        'wait',
+        '--timeout-ms',
+        String(MAX_TIMER_DELAY_MS - 120_000)
+      ])
+    ).toBe(MAX_TIMER_DELAY_MS)
   })
 
   it.each<[string[], number | undefined]>([

@@ -14,6 +14,7 @@ import { clampOrchestrationAskTimeoutMs } from '../../shared/orchestration-ask-t
 import {
   MAX_TIMER_DELAY_MS,
   isSafeTimerDelayMs,
+  parsePositiveSafeIntegerNumericText,
   parsePositiveSafeIntegerText
 } from '../../shared/timer-delay'
 
@@ -89,9 +90,13 @@ export function resolveHostCliKillTimeoutMs(argv: string[]): number {
       clampOrchestrationAskTimeoutMs(explicit ?? undefined) + KILL_TIMEOUT_GRACE_MS
     )
   }
-  const explicit = typeof rawTimeout === 'string' ? Number(rawTimeout) : null
-  if (explicit !== null && Number.isFinite(explicit) && explicit > 0) {
-    return Math.max(DEFAULT_KILL_TIMEOUT_MS, explicit + KILL_TIMEOUT_GRACE_MS)
+  const explicit =
+    typeof rawTimeout === 'string' ? parsePositiveSafeIntegerNumericText(rawTimeout) : null
+  // Why: this feeds the kill timer directly, so a post-grace budget outside the
+  // timer range degrades to the default instead of throwing at spawn time.
+  const extended = explicit === null ? null : explicit + KILL_TIMEOUT_GRACE_MS
+  if (extended !== null && isSafeTimerDelayMs(extended)) {
+    return Math.max(DEFAULT_KILL_TIMEOUT_MS, extended)
   }
   return DEFAULT_KILL_TIMEOUT_MS
 }

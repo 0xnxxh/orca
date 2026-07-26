@@ -208,6 +208,31 @@ describe('orchestration timeout flag validation', () => {
     }
   )
 
+  it.each(['+1000', '1000.0', '1e3', '0x3e8'])(
+    'preserves CLI-compatible exact integer timeout syntax %s',
+    async (rawTimeout) => {
+      process.env.ORCA_TERMINAL_HANDLE = 'term_worker'
+      callMock.mockResolvedValue({
+        result: { answer: 'yes', messageId: 'msg_1', threadId: 'thread_1', timedOut: false }
+      })
+      vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await invokeAsk(
+        new Map<string, string | boolean>([
+          ['to', 'term_coord'],
+          ['question', 'Proceed?'],
+          ['timeout-ms', rawTimeout]
+        ])
+      )
+
+      expect(callMock).toHaveBeenCalledWith(
+        'orchestration.ask',
+        expect.objectContaining({ timeoutMs: 1_000 }),
+        { timeoutMs: 6_000 }
+      )
+    }
+  )
+
   it('keeps an omitted ask timeout out of the payload while using default headroom', async () => {
     process.env.ORCA_TERMINAL_HANDLE = 'term_worker'
     callMock.mockResolvedValue({
