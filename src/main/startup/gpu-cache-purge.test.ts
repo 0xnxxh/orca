@@ -51,7 +51,30 @@ describe('purgeGpuCaches', () => {
   })
 
   it('reports nothing removed when no caches exist', () => {
-    expect(purgeGpuCaches(userDataPath)).toEqual({ removed: [], failed: [] })
+    expect(purgeGpuCaches(userDataPath)).toEqual({ removed: [], failed: [], skipped: [] })
+  })
+
+  // Why: purge runs synchronously on the path to a relaunch — a huge cache tree must
+  // not stall the recovery, so once the budget is spent the rest is left in place.
+  it('skips remaining caches once the wall-clock budget is spent', () => {
+    for (const name of GPU_CACHE_DIRECTORY_NAMES) {
+      mkdirSync(join(userDataPath, name), { recursive: true })
+    }
+    let elapsed = 0
+    // Each clock read advances 300ms: the first removal fits the 500ms budget, then
+    // every later directory sees the deadline already passed.
+    const now = (): number => {
+      elapsed += 300
+      return elapsed
+    }
+
+    const result = purgeGpuCaches(userDataPath, { budgetMs: 500, now })
+
+    expect(result.removed).toEqual([GPU_CACHE_DIRECTORY_NAMES[0]])
+    expect(result.skipped).toEqual(GPU_CACHE_DIRECTORY_NAMES.slice(1))
+    expect(result.failed).toEqual([])
+    expect(existsSync(join(userDataPath, GPU_CACHE_DIRECTORY_NAMES[0]))).toBe(false)
+    expect(existsSync(join(userDataPath, GPU_CACHE_DIRECTORY_NAMES[1]))).toBe(true)
   })
 
   it('leaves unrelated userData entries alone', () => {

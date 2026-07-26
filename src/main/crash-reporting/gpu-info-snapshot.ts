@@ -9,6 +9,10 @@ import {
  * Nothing in the main process called app.getGPUInfo() before, so every GPU
  * crash bundle arrived without a vendor, device or driver version — triage
  * could not tell a broken driver from a broken machine.
+ *
+ * Capture is lazy: most users never produce a GPU crash report, so a healthy
+ * launch must not spend startup on GPU IPC. index.ts registers a source, and
+ * the first crash that needs identity triggers a one-attempt-per-launch capture.
  */
 
 /** Bounded so a pathological glExtensions-style string can't dominate the report. */
@@ -159,22 +163,70 @@ export async function captureGpuInfoSnapshot(
 /** Short: 'basic' is answered by the browser process and should not need the wait. */
 export const GPU_BASIC_INFO_TIMEOUT_MS = 2_000
 
+/** 'complete' needs a live GPU child; on broken drivers it answers late or never. */
+export const GPU_COMPLETE_INFO_TIMEOUT_MS = 10_000
+
+export type GpuIdentitySource = {
+  getGpuInfo: (infoType: 'basic' | 'complete') => Promise<unknown>
+  /** A fallback-tier launch has hardware acceleration off, where 'complete' never settles. */
+  hardwareAccelerationDisabled: boolean
+}
+
+let gpuIdentitySource: GpuIdentitySource | null = null
+let gpuIdentityCapture: Promise<CrashReportBreadcrumbData | null> | null = null
+
+/** Arms lazy capture; never registered in headless serve, where a 'complete' probe could provoke a GPU child. */
+export function registerGpuIdentitySource(source: GpuIdentitySource): void {
+  gpuIdentitySource = source
+}
+
+export function resetGpuIdentityCaptureForTesting(): void {
+  gpuIdentitySource = null
+  gpuIdentityCapture = null
+}
+
+function hasDeviceIdentity(snapshot: CrashReportBreadcrumbData | null): boolean {
+  return (
+    snapshot?.gpuInfoAvailable === true &&
+    (snapshot.gpuVendorId !== undefined || snapshot.gpuDeviceId !== undefined)
+  )
+}
+
 /**
- * Two-stage capture.
+ * Lazy, single-flight identity capture — one attempt per launch, so a driver that
+ * ignores getGPUInfo cannot accrete an orphaned IPC call per crash.
  *
- * Every launch that records a GPU crash has already called disableHardwareAcceleration(),
- * which is exactly when `getGPUInfo('complete')` never settles — so the complete-only
- * capture left the reports it exists for with no vendor or driver at all. 'basic' reports
- * gpuDevice (vendorId/deviceId/machineModel) from the browser process without a healthy
- * GPU child, so it lands first and 'complete' upgrades it with auxAttributes if it can.
+ * 'basic' reports gpuDevice (vendorId/deviceId/machineModel) from the browser process
+ * without a healthy GPU child, so it goes first; 'complete' only runs when the device
+ * identity is still missing and hardware acceleration is on — every launch that records
+ * a GPU crash under a fallback tier has it disabled, which is exactly when 'complete'
+ * never settles.
+ *
+ * Resolves null when no source is registered and nothing was ever cached.
  */
-export async function captureGpuIdentity(
-  getGpuInfo: (infoType: 'basic' | 'complete') => Promise<unknown>,
-  completeTimeoutMs: number
-): Promise<CrashReportBreadcrumbData> {
-  await captureGpuInfoSnapshot(() => getGpuInfo('basic'), GPU_BASIC_INFO_TIMEOUT_MS)
-  const complete = await captureGpuInfoSnapshot(() => getGpuInfo('complete'), completeTimeoutMs)
-  // Why: report what triage will actually read — a timed-out 'complete' leaves the
-  // richer 'basic' result cached, and the breadcrumb should say so.
-  return getGpuInfoSnapshot() ?? complete
+export function ensureGpuIdentityCaptured(): Promise<CrashReportBreadcrumbData | null> {
+  if (hasDeviceIdentity(gpuInfoSnapshot)) {
+    return Promise.resolve(gpuInfoSnapshot)
+  }
+  const source = gpuIdentitySource
+  if (!source) {
+    return Promise.resolve(gpuInfoSnapshot)
+  }
+  gpuIdentityCapture ??= (async () => {
+    const basic = await captureGpuInfoSnapshot(
+      () => source.getGpuInfo('basic'),
+      GPU_BASIC_INFO_TIMEOUT_MS
+    )
+    if (source.hardwareAccelerationDisabled || hasDeviceIdentity(getGpuInfoSnapshot())) {
+      return getGpuInfoSnapshot() ?? basic
+    }
+    const complete = await captureGpuInfoSnapshot(
+      () => source.getGpuInfo('complete'),
+      GPU_COMPLETE_INFO_TIMEOUT_MS
+    )
+    // Why: report what triage will actually read — a timed-out 'complete' leaves the
+    // richer 'basic' result cached.
+    return getGpuInfoSnapshot() ?? complete
+  })()
+  return gpuIdentityCapture
 }

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  captureGpuIdentity,
   captureGpuInfoSnapshot,
+  ensureGpuIdentityCaptured,
   getGpuInfoSnapshot,
+  registerGpuIdentitySource,
+  resetGpuIdentityCaptureForTesting,
   setGpuInfoSnapshotForTesting,
   summarizeGpuInfo
 } from './gpu-info-snapshot'
@@ -141,50 +143,81 @@ describe('captureGpuInfoSnapshot', () => {
   })
 })
 
-describe('captureGpuIdentity', () => {
+describe('ensureGpuIdentityCaptured', () => {
   afterEach(() => {
+    resetGpuIdentityCaptureForTesting()
     setGpuInfoSnapshotForTesting(null)
     vi.useRealTimers()
   })
 
-  // Why: this is the whole point — a fallback launch has hardware acceleration disabled,
-  // so 'complete' hangs and only 'basic' can supply vendor/device for the crash report.
-  it('keeps basic device identity when the complete capture hangs', async () => {
-    vi.useFakeTimers()
-    const pending = captureGpuIdentity(
-      (infoType) =>
-        infoType === 'basic'
-          ? Promise.resolve({ gpuDevice: COMPLETE_INFO.gpuDevice })
-          : new Promise(() => {}),
-      10_000
-    )
-    await vi.advanceTimersByTimeAsync(10_000)
+  // Why: with no consumer armed (headless serve, unit tests) capture must stay inert.
+  it('resolves the cached snapshot without capturing when no source is registered', async () => {
+    await expect(ensureGpuIdentityCaptured()).resolves.toBeNull()
 
-    await expect(pending).resolves.toMatchObject({
+    setGpuInfoSnapshotForTesting({ gpuInfoAvailable: false })
+    await expect(ensureGpuIdentityCaptured()).resolves.toEqual({ gpuInfoAvailable: false })
+  })
+
+  // Why: the whole point of gating — a fallback launch has hardware acceleration
+  // disabled, where 'complete' never settles; 'basic' alone must carry vendor/device.
+  it('captures basic only when hardware acceleration is disabled', async () => {
+    const getGpuInfo = vi.fn().mockResolvedValue({ gpuDevice: COMPLETE_INFO.gpuDevice })
+    registerGpuIdentitySource({ getGpuInfo, hardwareAccelerationDisabled: true })
+
+    await expect(ensureGpuIdentityCaptured()).resolves.toMatchObject({
       gpuInfoAvailable: true,
       gpuVendorId: '0x8086'
     })
-    expect(getGpuInfoSnapshot()).toMatchObject({ gpuVendorId: '0x8086' })
+    expect(getGpuInfo).toHaveBeenCalledTimes(1)
+    expect(getGpuInfo).toHaveBeenCalledWith('basic')
   })
 
-  it('upgrades to the complete payload when it resolves', async () => {
-    const snapshot = await captureGpuIdentity(
-      (infoType) =>
-        Promise.resolve(
-          infoType === 'basic' ? { gpuDevice: COMPLETE_INFO.gpuDevice } : COMPLETE_INFO
-        ),
-      10_000
+  it('skips complete when basic already yields vendor and device', async () => {
+    const getGpuInfo = vi.fn().mockResolvedValue({ gpuDevice: COMPLETE_INFO.gpuDevice })
+    registerGpuIdentitySource({ getGpuInfo, hardwareAccelerationDisabled: false })
+
+    await expect(ensureGpuIdentityCaptured()).resolves.toMatchObject({ gpuVendorId: '0x8086' })
+    expect(getGpuInfo).toHaveBeenCalledTimes(1)
+    expect(getGpuInfo).toHaveBeenCalledWith('basic')
+  })
+
+  it('escalates to complete when basic lacks device identity', async () => {
+    const getGpuInfo = vi.fn((infoType: 'basic' | 'complete') =>
+      Promise.resolve(infoType === 'basic' ? { gpuDevice: [] } : COMPLETE_INFO)
     )
+    registerGpuIdentitySource({ getGpuInfo, hardwareAccelerationDisabled: false })
 
-    expect(snapshot.gpuGlRenderer).toBeDefined()
-    expect(snapshot.gpuVendorId).toBe('0x8086')
+    await expect(ensureGpuIdentityCaptured()).resolves.toMatchObject({
+      gpuVendorId: '0x8086',
+      gpuGlRenderer: expect.stringContaining('ANGLE')
+    })
+    expect(getGpuInfo).toHaveBeenCalledWith('complete')
   })
 
-  it('reports unavailable when neither capture yields device info', async () => {
+  // Why: one attempt per launch — a driver that ignores getGPUInfo must not accrete
+  // an orphaned IPC call for every crash in a burst.
+  it('captures once per launch even when the first attempt yields nothing', async () => {
     vi.useFakeTimers()
-    const pending = captureGpuIdentity(() => new Promise(() => {}), 10_000)
+    const getGpuInfo = vi.fn(() => new Promise(() => {}))
+    registerGpuIdentitySource({ getGpuInfo, hardwareAccelerationDisabled: false })
+
+    const first = ensureGpuIdentityCaptured()
+    const second = ensureGpuIdentityCaptured()
     await vi.advanceTimersByTimeAsync(12_000)
 
-    await expect(pending).resolves.toMatchObject({ gpuInfoAvailable: false })
+    await expect(first).resolves.toMatchObject({ gpuInfoAvailable: false })
+    await expect(second).resolves.toMatchObject({ gpuInfoAvailable: false })
+    await expect(ensureGpuIdentityCaptured()).resolves.toMatchObject({ gpuInfoAvailable: false })
+    // basic + complete from the single flight; repeat calls started nothing new.
+    expect(getGpuInfo).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns an already-captured identity without touching the source again', async () => {
+    setGpuInfoSnapshotForTesting({ gpuInfoAvailable: true, gpuVendorId: '0x10de' })
+    const getGpuInfo = vi.fn()
+    registerGpuIdentitySource({ getGpuInfo, hardwareAccelerationDisabled: false })
+
+    await expect(ensureGpuIdentityCaptured()).resolves.toMatchObject({ gpuVendorId: '0x10de' })
+    expect(getGpuInfo).not.toHaveBeenCalled()
   })
 })

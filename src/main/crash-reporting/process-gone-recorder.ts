@@ -26,7 +26,7 @@ import {
   processGoneDedupe,
   type ProcessGoneDedupe
 } from './process-gone-dedupe'
-import { getGpuInfoSnapshot } from './gpu-info-snapshot'
+import { ensureGpuIdentityCaptured, getGpuInfoSnapshot } from './gpu-info-snapshot'
 import { getMainProcessLifecycleIdentity } from './main-process-lifecycle-identity'
 import { flushActiveSink, startSpan } from '../observability/tracer'
 
@@ -84,6 +84,29 @@ function suppressedProcessGoneCoalesceKey(data: CrashReportBreadcrumbData): stri
   ])
 }
 
+// Why: 'basic' answers from the browser process in milliseconds; this bound only
+// bites when getGPUInfo hangs, and the report must not wait out that hang.
+const GPU_IDENTITY_CRASH_CAPTURE_WAIT_MS = 2_000
+
+/** Bounded wait for the lazy capture; falls back to whatever snapshot exists. */
+async function resolveGpuIdentityForCrash(): Promise<CrashReportBreadcrumbData | null> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    const captured = await Promise.race([
+      ensureGpuIdentityCaptured().catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), GPU_IDENTITY_CRASH_CAPTURE_WAIT_MS)
+        timer.unref?.()
+      })
+    ])
+    return captured ?? getGpuInfoSnapshot()
+  } finally {
+    if (timer) {
+      clearTimeout(timer)
+    }
+  }
+}
+
 function persistFailureData(event: ProcessGoneCrashEvent, error: unknown) {
   const errorCode =
     typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
@@ -97,13 +120,14 @@ function persistFailureData(event: ProcessGoneCrashEvent, error: unknown) {
   }
 }
 
+/** Resolves once the persist attempt settles (or immediately when nothing was recorded). */
 export function recordProcessGoneCrash(
   store: CrashReportRecorderStore | null,
   event: ProcessGoneCrashEvent,
   dedupe: ProcessGoneDedupe = processGoneDedupe
-): void {
+): Promise<void> {
   if (!isCrashReportReason(event.reason)) {
-    return
+    return Promise.resolve()
   }
   if (
     !shouldRecordProcessGoneCrash({
@@ -127,7 +151,7 @@ export function recordProcessGoneCrash(
       coalesceKey: suppressedProcessGoneCoalesceKey(suppressedData),
       minIntervalMs: SUPPRESSED_PROCESS_GONE_COALESCE_MS
     })
-    return
+    return Promise.resolve()
   }
   if (!store) {
     recordDurableCrashBreadcrumb(
@@ -135,7 +159,7 @@ export function recordProcessGoneCrash(
       processGoneBreadcrumbData(event),
       'Crash report store unavailable'
     )
-    return
+    return Promise.resolve()
   }
 
   const gpuFallbackBudgeted = countsAgainstGpuFallbackReportBudget(event)
@@ -147,72 +171,73 @@ export function recordProcessGoneCrash(
       ...processGoneBreadcrumbData(event),
       suppressedBy: 'gpu_fallback_report_budget'
     })
-    return
+    return Promise.resolve()
   }
 
   const key = getProcessGoneDedupeKey(event.source, event.processType, event.reason, event.exitCode)
   const claim = dedupe.tryClaim(key)
   if (!claim) {
-    return
+    return Promise.resolve()
   }
   if (gpuFallbackBudgeted) {
     gpuFallbackCrashReportsThisLaunch += 1
   }
-  const mainProcessLifecycle = getMainProcessLifecycleIdentity()
   // Why: GPU and renderer deaths are the ones triage needs driver identity for;
   // every other child type would just pad the report.
-  const gpuIdentity =
-    event.source === 'renderer' || isGpuProcessType(event.processType)
-      ? (getGpuInfoSnapshot() ?? {})
-      : {}
-  const crashDetails = buildProcessGoneCrashDetails({
-    ...event.details,
-    ...gpuIdentity,
-    ...mainProcessLifecycle
-  })
-  const breadcrumbs = getCrashBreadcrumbSnapshot()
-  const span = startSpan('electron.process_gone', {
-    attributes: {
-      'crash.source': event.source,
-      'crash.process_type': event.processType,
-      'crash.reason': event.reason,
-      ...(event.exitCode !== null ? { 'crash.exit_code': event.exitCode } : {}),
-      'app.version': app.getVersion(),
-      platform: process.platform,
-      osRelease: os.release(),
-      arch: process.arch,
-      electronVersion: process.versions.electron,
-      chromeVersion: process.versions.chrome,
-      'app.main_process.pid': mainProcessLifecycle.mainProcessPid,
-      'app.main_process.launch_id': mainProcessLifecycle.mainProcessLaunchId,
-      'app.main_process.started_at': mainProcessLifecycle.mainProcessStartedAt,
-      details: crashDetails,
-      breadcrumbs
-    }
-  })
-  // Why: a renderer crash can be followed by another process exit before the
-  // trace batch window closes, so make the primary signal durable immediately.
-  span.fail(
-    `${event.source} process gone: ${event.processType} ${event.reason} (${event.exitCode ?? 'unknown'})`
-  )
-  flushActiveSink()
-
-  void store
-    .record({
-      source: event.source,
-      processType: event.processType,
-      reason: event.reason,
-      exitCode: event.exitCode,
-      appVersion: app.getVersion(),
-      platform: process.platform,
-      osRelease: os.release(),
-      arch: process.arch,
-      electronVersion: process.versions.electron ?? 'unknown',
-      chromeVersion: process.versions.chrome ?? 'unknown',
-      details: crashDetails,
-      breadcrumbs
+  const needsGpuIdentity = event.source === 'renderer' || isGpuProcessType(event.processType)
+  return (async () => {
+    // Why: capture is lazy so healthy launches never touch getGPUInfo — the first
+    // crash that needs identity pays one bounded wait here instead.
+    const gpuIdentity = needsGpuIdentity ? ((await resolveGpuIdentityForCrash()) ?? {}) : {}
+    const mainProcessLifecycle = getMainProcessLifecycleIdentity()
+    const crashDetails = buildProcessGoneCrashDetails({
+      ...event.details,
+      ...gpuIdentity,
+      ...mainProcessLifecycle
     })
-    .catch((error) => {
+    const breadcrumbs = getCrashBreadcrumbSnapshot()
+    const span = startSpan('electron.process_gone', {
+      attributes: {
+        'crash.source': event.source,
+        'crash.process_type': event.processType,
+        'crash.reason': event.reason,
+        ...(event.exitCode !== null ? { 'crash.exit_code': event.exitCode } : {}),
+        'app.version': app.getVersion(),
+        platform: process.platform,
+        osRelease: os.release(),
+        arch: process.arch,
+        electronVersion: process.versions.electron,
+        chromeVersion: process.versions.chrome,
+        'app.main_process.pid': mainProcessLifecycle.mainProcessPid,
+        'app.main_process.launch_id': mainProcessLifecycle.mainProcessLaunchId,
+        'app.main_process.started_at': mainProcessLifecycle.mainProcessStartedAt,
+        details: crashDetails,
+        breadcrumbs
+      }
+    })
+    // Why: a renderer crash can be followed by another process exit before the
+    // trace batch window closes, so make the primary signal durable immediately.
+    span.fail(
+      `${event.source} process gone: ${event.processType} ${event.reason} (${event.exitCode ?? 'unknown'})`
+    )
+    flushActiveSink()
+
+    try {
+      await store.record({
+        source: event.source,
+        processType: event.processType,
+        reason: event.reason,
+        exitCode: event.exitCode,
+        appVersion: app.getVersion(),
+        platform: process.platform,
+        osRelease: os.release(),
+        arch: process.arch,
+        electronVersion: process.versions.electron ?? 'unknown',
+        chromeVersion: process.versions.chrome ?? 'unknown',
+        details: crashDetails,
+        breadcrumbs
+      })
+    } catch (error) {
       dedupe.release(claim)
       if (gpuFallbackBudgeted) {
         gpuFallbackCrashReportsThisLaunch -= 1
@@ -224,5 +249,6 @@ export function recordProcessGoneCrash(
         data,
         `${String(data.errorName)}: ${String(data.errorMessage)}`
       )
-    })
+    }
+  })()
 }

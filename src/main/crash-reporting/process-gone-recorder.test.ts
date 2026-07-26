@@ -19,7 +19,11 @@ import {
   type ProcessGoneCrashEvent
 } from './process-gone-recorder'
 import { _resetTracerForTests, setActiveSink, type TracerSink } from '../observability/tracer'
-import { setGpuInfoSnapshotForTesting } from './gpu-info-snapshot'
+import {
+  registerGpuIdentitySource,
+  resetGpuIdentityCaptureForTesting,
+  setGpuInfoSnapshotForTesting
+} from './gpu-info-snapshot'
 
 type CapturingSink = TracerSink & { records: unknown[]; flushMock: ReturnType<typeof vi.fn> }
 
@@ -57,10 +61,12 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   _resetTracerForTests()
   clearCrashBreadcrumbsForTest()
   setGpuInfoSnapshotForTesting(null)
+  resetGpuIdentityCaptureForTesting()
 })
 
 describe('recordProcessGoneCrash', () => {
@@ -508,6 +514,66 @@ describe('recordProcessGoneCrash', () => {
     expect(record.mock.calls[0][0].details).toEqual(
       expect.objectContaining({ gpuInfoAvailable: true, gpuVendorId: '0x10de' })
     )
+  })
+
+  // Why: healthy launches never call getGPUInfo — the first crash that needs driver
+  // identity is what triggers the capture, and the report still carries the fields.
+  it('lazily captures GPU identity on the first crash that needs it', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report' })
+    const getGpuInfo = vi
+      .fn()
+      .mockResolvedValue({ gpuDevice: [{ active: true, vendorId: 32902, deviceId: 15130 }] })
+    registerGpuIdentitySource({ getGpuInfo, hardwareAccelerationDisabled: false })
+
+    await recordProcessGoneCrash({ record } as never, event(), new ProcessGoneDedupe())
+
+    expect(getGpuInfo).toHaveBeenCalledWith('basic')
+    expect(record).toHaveBeenCalledOnce()
+    expect(record.mock.calls[0][0].details).toEqual(
+      expect.objectContaining({ gpuInfoAvailable: true, gpuVendorId: '0x8086' })
+    )
+  })
+
+  it('does not trigger identity capture for non-GPU child crashes', async () => {
+    const record = vi.fn().mockResolvedValue({ id: 'report' })
+    const getGpuInfo = vi.fn()
+    registerGpuIdentitySource({ getGpuInfo, hardwareAccelerationDisabled: false })
+
+    await recordProcessGoneCrash(
+      { record } as never,
+      event({ source: 'child', processType: 'Utility', details: { type: 'Utility' } }),
+      new ProcessGoneDedupe()
+    )
+
+    expect(getGpuInfo).not.toHaveBeenCalled()
+    expect(record).toHaveBeenCalledOnce()
+  })
+
+  // Why: the report must not wait out a hung getGPUInfo — the bounded wait expires
+  // and the crash persists without identity rather than never.
+  it('persists after a bounded wait when the identity capture hangs', async () => {
+    vi.useFakeTimers()
+    const record = vi.fn().mockResolvedValue({ id: 'report' })
+    registerGpuIdentitySource({
+      getGpuInfo: () => new Promise(() => {}),
+      hardwareAccelerationDisabled: true
+    })
+
+    const recorded = recordProcessGoneCrash(
+      { record } as never,
+      event({
+        source: 'child',
+        processType: 'GPU',
+        gpuFallbackActive: true,
+        details: { type: 'GPU' }
+      }),
+      new ProcessGoneDedupe()
+    )
+    await vi.advanceTimersByTimeAsync(2_000)
+    await recorded
+
+    expect(record).toHaveBeenCalledOnce()
+    expect(record.mock.calls[0][0].details).not.toHaveProperty('gpuVendorId')
   })
 
   // Why: every other child type would just pad the report.

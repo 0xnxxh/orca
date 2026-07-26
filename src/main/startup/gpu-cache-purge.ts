@@ -20,7 +20,14 @@ export const GPU_CACHE_DIRECTORY_NAMES = [
 export type GpuCachePurgeResult = {
   removed: string[]
   failed: string[]
+  /** Left in place because the wall-clock budget ran out before they were reached. */
+  skipped: string[]
 }
+
+// Why: purge runs synchronously on the path to a relaunch; a huge or slow cache tree
+// must delay the recovery by at most this much — a stale leftover cache is the lesser
+// risk, and the next escalation sweeps it again.
+export const GPU_CACHE_PURGE_BUDGET_MS = 500
 
 /** Chromium repeats the same cache directories under every persisted session partition. */
 const PARTITIONS_DIRECTORY_NAME = 'Partitions'
@@ -40,10 +47,16 @@ function partitionCacheRoots(userDataPath: string): { label: string; path: strin
   }
 }
 
-/** Best effort: a locked cache directory must never block the relaunch that follows. */
-export function purgeGpuCaches(userDataPath: string): GpuCachePurgeResult {
+/** Best effort: a locked or huge cache directory must never block the relaunch that follows. */
+export function purgeGpuCaches(
+  userDataPath: string,
+  options: { budgetMs?: number; now?: () => number } = {}
+): GpuCachePurgeResult {
+  const { budgetMs = GPU_CACHE_PURGE_BUDGET_MS, now = Date.now } = options
+  const deadline = now() + budgetMs
   const removed: string[] = []
   const failed: string[] = []
+  const skipped: string[] = []
   // Why: Orca's embedded browser uses persist: partitions, each with its own GPUCache;
   // leaving those behind replays a shader written by the driver that just crashed.
   const roots = [{ label: '', path: userDataPath }, ...partitionCacheRoots(userDataPath)]
@@ -55,6 +68,10 @@ export function purgeGpuCaches(userDataPath: string): GpuCachePurgeResult {
         if (!existsSync(target)) {
           continue
         }
+        if (now() > deadline) {
+          skipped.push(label)
+          continue
+        }
         // Why: Windows can hold a brief lock on a cache file the dying GPU child owned.
         rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 })
         removed.push(label)
@@ -63,5 +80,5 @@ export function purgeGpuCaches(userDataPath: string): GpuCachePurgeResult {
       }
     }
   }
-  return { removed, failed }
+  return { removed, failed, skipped }
 }
