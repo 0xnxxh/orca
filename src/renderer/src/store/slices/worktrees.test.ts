@@ -382,7 +382,14 @@ describe('fetchWorktrees', () => {
     mockApi.worktrees.listDetected.mockResolvedValueOnce(detected)
     store.setState({
       worktreesByRepo: { repo1: [existing] },
-      detectedWorktreesByRepo: { repo1: detected },
+      // Why: a committed refresh always carries the per-host authority record, so an
+      // unchanged payload only stays unchanged when the seed carries it too.
+      detectedWorktreesByRepo: {
+        repo1: {
+          ...detected,
+          authorityByHostId: { local: { authoritative: true, source: 'git' } }
+        }
+      },
       sortEpoch: 7
     } as Partial<AppState>)
 
@@ -981,7 +988,7 @@ describe('fetchWorktrees', () => {
       [makeWorktree({ id: 'repo-authority::/repo', repoId: 'repo-authority', path: '/repo' })],
       { authoritative: true, source: 'git' }
     )
-    mockApi.worktrees.listDetected.mockResolvedValue(detected)
+    mockApi.worktrees.listDetected.mockResolvedValueOnce(detected).mockResolvedValueOnce(detected)
     await store.getState().fetchDetectedWorktrees('repo-authority')
 
     const committed = store.getState().detectedWorktreesByRepo['repo-authority']!
