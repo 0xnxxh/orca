@@ -260,7 +260,7 @@ export async function killWithDescendantSweep(
         const verify = deps.verifyTreeKillTarget ?? verifyWindowsTreeKillTarget
         const target = await verify(rootPid).catch((): WindowsTreeKillTarget => 'unknown')
         // Re-check ownership: the identity query awaits, so exit can land meanwhile.
-        if (target !== 'absent' && target !== 'foreign' && (deps.ownsRoot?.() ?? true)) {
+        if (target === 'own' && (deps.ownsRoot?.() ?? true)) {
           const killTree = deps.killWindowsTree ?? terminateWindowsProcessTree
           // Why: taskkill may race an already-exited tree; never block killRoot on that.
           await killTree(rootPid).catch(() => {})
