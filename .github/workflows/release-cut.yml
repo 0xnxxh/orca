@@ -799,6 +799,20 @@ jobs:
 
           node config/scripts/create-draft-release.mjs "$TAG"
 
+      - name: Record macOS build authorization
+        env:
+          TAG: ${{ needs.cut.outputs.tag }}
+        run: printf '%s\n' "$TAG" > release-mac-build-control.txt
+
+      - name: Upload macOS build authorization
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-mac-build-control-${{ github.run_id }}-${{ needs.cut.outputs.tag }}
+          path: release-mac-build-control.txt
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
   # Why: tag-scoped E2E gives release visibility, but the suite is flaky enough
   # that publish-release must not depend on it.
   e2e:

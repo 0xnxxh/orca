@@ -18,6 +18,9 @@ describe('release-cut Windows signing contract', () => {
     const controlPlaneStep = cutJob.steps[0]
     const versionStep = cutJob.steps.find((step) => step.name === 'Compute next version')
     const createReleaseJob = workflow.jobs['create-release']
+    const macAuthorizationStep = createReleaseJob.steps.find(
+      (step) => step.name === 'Upload macOS build authorization'
+    )
     const buildJob = workflow.jobs.build
     const publishReleaseJob = workflow.jobs['publish-release']
     const createCheckout = createReleaseJob.steps.find((step) => step.name === 'Checkout')
@@ -44,6 +47,10 @@ describe('release-cut Windows signing contract', () => {
     ).toBe(false)
 
     expect(createReleaseJob.if).toBe("needs.cut.outputs.should_release == 'true'")
+    expect(macAuthorizationStep.with.name).toBe(
+      'release-mac-build-control-${{ github.run_id }}-${{ needs.cut.outputs.tag }}'
+    )
+    expect(macAuthorizationStep.with['if-no-files-found']).toBe('error')
     expect(buildJob.if).toBe("needs.cut.outputs.should_release == 'true'")
     expect(createCheckout.with.ref).toBe('refs/tags/${{ needs.cut.outputs.tag }}')
     expect(buildCheckout.with.ref).toBe('refs/tags/${{ needs.cut.outputs.tag }}')
@@ -122,19 +129,27 @@ describe('release-cut Windows signing contract', () => {
 
   it('keeps macOS publishing draft-only and coupled to an active release cut', () => {
     const workflow = parse(readFileSync(macWorkflowPath, 'utf8'))
+    const preflightJob = workflow.jobs['validate-release-control-plane']
     const buildJob = workflow.jobs['build-mac']
-    const controlPlaneStep = buildJob.steps[0]
+    const controlPlaneStep = preflightJob.steps[0]
     const publishStep = buildJob.steps.find(
       (step) => step.name === 'Publish release artifacts (macOS)'
     )
 
     expect(workflow.permissions.actions).toBe('read')
-    expect(workflow.permissions.contents).toBe('write')
+    expect(workflow.permissions.contents).toBe('read')
+    expect(preflightJob['runs-on']).toBe('ubuntu-latest')
+    expect(buildJob.needs).toBe('validate-release-control-plane')
+    expect(buildJob.permissions.contents).toBe('write')
     expect(buildJob.if).toBeUndefined()
     expect(controlPlaneStep.name).toBe('Validate release control plane and draft')
     expect(controlPlaneStep.run).toContain("WORKFLOW_REF\" != 'refs/heads/main'")
     expect(controlPlaneStep.run).toContain("run_path\" != '.github/workflows/release-cut.yml'")
     expect(controlPlaneStep.run).toContain("run_status\" != 'in_progress'")
+    expect(controlPlaneStep.run).toContain(
+      'authorization_name="release-mac-build-control-${RELEASE_RUN_ID}-${TAG}"'
+    )
+    expect(controlPlaneStep.run).toContain('.artifacts[]?')
     expect(controlPlaneStep.run).toContain("draft\" != 'true'")
     expect(publishStep.with.command).toContain('--publish always')
     expect(electronBuilderConfig.publish.releaseType).toBe('draft')

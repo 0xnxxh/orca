@@ -16,21 +16,16 @@ on:
 
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: release-mac-build-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  build-mac:
-    # Why: this workflow is outside the SignPath signing run, so Blacksmith
-    # cannot enter Windows artifact provenance while mac notarization gets the
-    # faster runner.
-    runs-on: blacksmith-6vcpu-macos-15
-    timeout-minutes: 60
-    env:
-      NODE_OPTIONS: --max-old-space-size=4096
+  validate-release-control-plane:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Validate release control plane and draft
         shell: bash
@@ -56,6 +51,15 @@ jobs:
             exit 1
           fi
 
+          authorization_name="release-mac-build-control-${RELEASE_RUN_ID}-${TAG}"
+          artifacts_json="$(gh api "repos/$REPOSITORY/actions/runs/$RELEASE_RUN_ID/artifacts?per_page=100")"
+          if ! jq -e --arg name "$authorization_name" '
+            [.artifacts[]? | select(.name == $name and .expired != true)] | length == 1
+          ' <<<"$artifacts_json" >/dev/null; then
+            echo "::error::Release run $RELEASE_RUN_ID did not authorize macOS build $TAG."
+            exit 1
+          fi
+
           releases_json="$(gh api "repos/$REPOSITORY/releases?per_page=100")"
           draft="$(jq -er --arg tag "$TAG" '
             map(select(.tag_name == $tag))
@@ -69,6 +73,19 @@ jobs:
             exit 1
           fi
 
+  build-mac:
+    needs: validate-release-control-plane
+    # Why: this workflow is outside the SignPath signing run, so Blacksmith
+    # cannot enter Windows artifact provenance while mac notarization gets the
+    # faster runner.
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: write
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
