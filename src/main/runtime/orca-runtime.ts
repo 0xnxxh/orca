@@ -105,6 +105,7 @@ import type {
 } from '../../shared/automations-types'
 import type {
   AutomationWorkspaceProvenance,
+  CliWorkspaceProvenance,
   BaseRefSearchResult,
   CreateWorktreeResult,
   DetectedWorktree,
@@ -792,6 +793,7 @@ import {
   findExistingWorktreeSymlinkPaths,
   removeWorktreeLinkedPaths
 } from '../ipc/worktree-symlinks'
+import { formatWorktreeIncludeCopyWarning } from '../ipc/worktree-include-copy-budget'
 import { resolveWorktreeIncludePaths } from '../git/worktree-include-file'
 import { deleteWorktreeHistoryDir } from '../terminal-history'
 import {
@@ -1463,7 +1465,7 @@ type RuntimePtyController = {
   getForegroundProcess(ptyId: string): Promise<string | null>
   inspectProcess?(
     ptyId: string
-  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }>
+  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean; unavailable?: true }>
   confirmForegroundProcess?(ptyId: string): Promise<string | null>
   hasChildProcesses?(ptyId: string): Promise<boolean>
   clearBuffer?(ptyId: string): Promise<void>
@@ -1854,6 +1856,7 @@ function mergeRuntimeFolderWorkspace(repo: Repo, worktreeId: string, meta: Workt
     ...(meta.automationProvenance !== undefined
       ? { automationProvenance: meta.automationProvenance }
       : {}),
+    ...(meta.cliProvenance !== undefined ? { cliProvenance: meta.cliProvenance } : {}),
     ...(meta.priorWorktreeIds !== undefined ? { priorWorktreeIds: meta.priorWorktreeIds } : {}),
     workspaceStatus: meta.workspaceStatus ?? DEFAULT_WORKSPACE_STATUS_ID,
     diffComments: meta.diffComments,
@@ -7061,7 +7064,18 @@ export class OrcaRuntimeService {
   private readonly gitCommands = new RuntimeGitCommands({
     resolveRuntimeGitTarget: (selector) => this.resolveRuntimeGitTarget(selector),
     getRuntimeSettings: () => this.requireStore().getSettings() as GlobalSettings,
-    getCommitMessageAgentEnvironment: () => this.commitMessageAgentEnv ?? undefined
+    getCommitMessageAgentEnvironment: () => this.commitMessageAgentEnv ?? undefined,
+    // Why: resolved worktrees are cached for a second, so link/unlink would lag
+    // generation; meta is keyed by the same id the resolver returns.
+    getWorktreeLinkedIssue: (worktreeId) => {
+      const store = this.store
+      // Why: an unreadable store is "unknown", not "unlinked" — undefined keeps
+      // the resolver's cached linkedIssue instead of suppressing {linkedIssue}.
+      if (!store?.getWorktreeMeta) {
+        return undefined
+      }
+      return store.getWorktreeMeta(worktreeId)?.linkedIssue ?? null
+    }
   })
 
   getRuntimeGitStatus: RuntimeGitCommands['getRuntimeGitStatus'] =
@@ -15820,7 +15834,7 @@ export class OrcaRuntimeService {
 
   async inspectTerminalProcess(
     terminalSelector: string
-  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }> {
+  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean; unavailable?: true }> {
     const leaf = this.resolveLiveLeafForHandle(terminalSelector)
     if (!leaf?.ptyId || !this.ptyController) {
       throw new Error('terminal_gone')
@@ -16127,12 +16141,15 @@ export class OrcaRuntimeService {
     type?: 'issue' | 'pr'
   ): Promise<Awaited<ReturnType<typeof getWorkItem>>> {
     const repo = await this.resolveRepoSelector(repoSelector)
+    // Why: open-by-number must pin the same source the list and start-point use,
+    // else a fork and its upstream sharing a PR number resolve to different PRs.
     return getWorkItem(
       repo.path,
       number,
       type,
       repo.connectionId ?? null,
-      ...this.getLocalGitExecutionOptionArgs(repo)
+      this.getLocalGitExecutionOptionArgs(repo)[0] ?? {},
+      repo.issueSourcePreference
     )
   }
 
@@ -16164,7 +16181,8 @@ export class OrcaRuntimeService {
       number,
       type,
       repo.connectionId ?? null,
-      ...this.getLocalGitExecutionOptionArgs(repo)
+      this.getLocalGitExecutionOptionArgs(repo)[0] ?? {},
+      repo.issueSourcePreference
     )
   }
 
@@ -18240,6 +18258,7 @@ export class OrcaRuntimeService {
     startupPrompt?: string
     pendingFirstAgentMessageRename?: boolean
     automationProvenance?: AutomationWorkspaceProvenance
+    cliProvenance?: CliWorkspaceProvenance
     startup?: WorktreeStartupLaunch
     startupDraft?: string
     startupDraftPaste?: WorktreeStartupDraftPaste
@@ -18300,6 +18319,7 @@ export class OrcaRuntimeService {
           nestWorkspaces: settings.nestWorkspaces
         },
         ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {}),
+        ...(args.cliProvenance ? { cliProvenance: args.cliProvenance } : {}),
         ...(args.linkedIssue !== undefined ? { linkedIssue: args.linkedIssue } : {}),
         ...(args.linkedPR !== undefined ? { linkedPR: args.linkedPR } : {}),
         ...(args.linkedLinearIssue !== undefined
@@ -18905,6 +18925,7 @@ export class OrcaRuntimeService {
         ? { pendingFirstAgentMessageRename: true }
         : {}),
       ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {}),
+      ...(args.cliProvenance ? { cliProvenance: args.cliProvenance } : {}),
       ...(args.comment !== undefined ? { comment: args.comment } : {}),
       ...(args.manualOrder !== undefined ? { manualOrder: args.manualOrder } : {}),
       ...(args.workspaceStatus !== undefined ? { workspaceStatus: args.workspaceStatus } : {})
@@ -18930,12 +18951,21 @@ export class OrcaRuntimeService {
       repo.path,
       localWorktreeGitOptions
     )
+    let includeCopyWarning: string | undefined
     if (worktreeIncludePaths.length > 0) {
-      await createWorktreeCopiedPaths(repo.path, created.path, worktreeIncludePaths)
+      const skippedIncludePaths = await createWorktreeCopiedPaths(
+        repo.path,
+        created.path,
+        worktreeIncludePaths
+      )
+      includeCopyWarning = formatWorktreeIncludeCopyWarning(skippedIncludePaths)
+      if (includeCopyWarning) {
+        console.warn(`[worktree-include] ${includeCopyWarning}`)
+      }
     }
 
     let setup: CreateWorktreeResult['setup']
-    let warning: string | undefined
+    let warning: string | undefined = includeCopyWarning
     // Why: CLI-created worktrees do not have a renderer preview to mismatch
     // against. Trust is granted by the direct CLI invocation (`--run-hooks`),
     // so loading the setup hook from the created worktree is intentional here.
@@ -18989,8 +19019,9 @@ export class OrcaRuntimeService {
       }
     } else if (hooks?.scripts.setup && effectiveDecision !== 'skip') {
       // Runtime RPC calls have no renderer trust prompt, so hooks require explicit CLI opt-in.
-      warning = `orca.yaml setup hook skipped for ${worktreePath}; pass --setup run to run it.`
-      console.warn(`[hooks] ${warning}`)
+      const setupSkipped = `orca.yaml setup hook skipped for ${worktreePath}; pass --setup run to run it.`
+      warning = warning ? `${warning} Also ${setupSkipped}` : setupSkipped
+      console.warn(`[hooks] ${setupSkipped}`)
     }
 
     this.invalidateResolvedWorktreeCache()
@@ -19244,6 +19275,7 @@ export class OrcaRuntimeService {
       createdWithAgent?: TuiAgent
       pendingFirstAgentMessageRename?: boolean
       automationProvenance?: AutomationWorkspaceProvenance
+      cliProvenance?: CliWorkspaceProvenance
       startup?: WorktreeStartupLaunch
       startupFollowup?: WorktreeStartupFollowup
       startupDraftPaste?: WorktreeStartupDraftPaste
@@ -19295,7 +19327,8 @@ export class OrcaRuntimeService {
         ...(args.pendingFirstAgentMessageRename === true
           ? { pendingFirstAgentMessageRename: true }
           : {}),
-        ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {})
+        ...(args.automationProvenance ? { automationProvenance: args.automationProvenance } : {}),
+        ...(args.cliProvenance ? { cliProvenance: args.cliProvenance } : {})
       },
       repo,
       this.store as unknown as Store,
@@ -20120,11 +20153,12 @@ export class OrcaRuntimeService {
     const gitExec = sshGitProvider
       ? (gitArgs: string[]) => sshGitProvider.exec(gitArgs, repo.path)
       : (gitArgs: string[]) => gitExecFileAsync(gitArgs, localGitExecOptions ?? { cwd: repo.path })
-    // Why: one shared resolver for local and SSH so origin-vs-upstream cannot
-    // diverge by surface; it prefers the remote hosting the PR's project.
+    // Why: one resolver keeps source preference and hosting identity aligned
+    // across local, WSL, and SSH worktree creation.
     const resolveRemote = (): Promise<string> =>
       resolveGitHubReviewHeadRemote({
         repoPath: repo.path,
+        issueSourcePreference: repo.issueSourcePreference,
         connectionId: repo.connectionId ?? null,
         localGitOptions: localWorktreeGitOptions,
         gitExec
@@ -20154,6 +20188,7 @@ export class OrcaRuntimeService {
       headRefName: args.headRefName,
       baseRefName: args.baseRefName,
       isCrossRepository: args.isCrossRepository,
+      issueSourcePreference: repo.issueSourcePreference,
       connectionId: repo.connectionId ?? null,
       localGitOptions: localWorktreeGitOptions,
       gitExec,

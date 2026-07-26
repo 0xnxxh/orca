@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { TERMINAL_WEBGL_MAX_ACTIVE_CONTEXTS } from '../../shared/terminal-webgl-context-budget'
 import { getVersionManagerBinPaths } from '../codex-cli/command'
 import { getMainE2EConfig } from '../e2e-config'
 
@@ -254,6 +255,13 @@ export function installDevParentSignalQuit(isDev: boolean): void {
   process.once('SIGTERM', onSignal)
 }
 
+export function configureMainProcessWebglContextBudget(): void {
+  app.commandLine.appendSwitch(
+    'max-active-webgl-contexts',
+    String(TERMINAL_WEBGL_MAX_ACTIVE_CONTEXTS)
+  )
+}
+
 export function enableMainProcessGpuFeatures(): void {
   if (process.platform === 'linux' && getMainE2EConfig().userDataDir) {
     // Why: Ubuntu/Xvfb runners fail Electron startup with "GPU process isn't usable"; E2E needs no GPU, so use the software path.
@@ -262,9 +270,16 @@ export function enableMainProcessGpuFeatures(): void {
     return
   }
 
+  if (process.platform === 'darwin') {
+    // Why: Graphite can strand corrupt Metal tiles after idle; Ganesh preserves GPU compositing without the stale surface.
+    // Reached on every macOS launch only because GPU fallback skips this function and is win32-only; if fallback ever
+    // reaches macOS this must move out of this path or Macs silently lose the fix.
+    app.commandLine.appendSwitch('disable-skia-graphite')
+  }
+
   // Why: Blink evicts the oldest WebGL context past 16/renderer and each terminal pane holds one, silently downgrading panes to DOM.
   // 128 raises the ceiling for real layouts while staying bounded so context leaks still surface.
-  app.commandLine.appendSwitch('max-active-webgl-contexts', '128')
+  configureMainProcessWebglContextBudget()
 
   const ozonePlatform = (app.commandLine.getSwitchValue('ozone-platform') ?? '').toLowerCase()
   const ozonePlatformHint = (process.env.ELECTRON_OZONE_PLATFORM_HINT ?? '').toLowerCase()

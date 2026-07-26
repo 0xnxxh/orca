@@ -445,6 +445,19 @@ function createOutOfProcessLauncher(
           )
           return preserveDaemon()
         }
+        // Why: the sibling replace branches announce themselves, but this one used
+        // to kill a daemon silently — leaving no way to tell a replacement apart
+        // from an adoption after the fact. A cold start also lands here with
+        // nothing to replace, so only speak up once something actually answered:
+        // a probe that returned a count, a socket that survived a grace retry, or
+        // a refused hello.
+        if (liveSessionCount !== null || graceRetry > 0 || health === 'rejected') {
+          console.warn(
+            `[daemon] Replacing daemon that failed the health check (health=${health}, liveSessions=${liveSessionCount ?? 'unverifiable'}, graceRetries=${graceRetry})`
+          )
+        }
+        // Why: unlike the log above, telemetry gates on confirmedReplacement below — the
+        // post-kill truth — so a cold start that killed nothing never reports a replacement.
         pendingReplacement = { reason: 'failed_health_check', liveSessionCount }
       }
 

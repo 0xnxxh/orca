@@ -313,6 +313,7 @@ import type { BrowserSetAnnotationViewportBridgeArgs } from '../shared/browser-a
 import type { CliInstallStatus } from '../shared/cli-install-types'
 import type { E2EConfig } from '../shared/e2e-config'
 import type { AgentHookInstallStatus } from '../shared/agent-hook-types'
+import type { CodexConfigSyncStatus } from '../shared/codex-config-sync-types'
 import type {
   AgentStatusClearIpcPayload,
   AgentStatusIpcPayload,
@@ -353,6 +354,7 @@ import type {
   ReactErrorBoundaryReportArgs,
   ReactErrorBoundaryReportResult
 } from '../shared/crash-reporting'
+import type { RendererHeapStatistics } from '../shared/renderer-heap-statistics'
 
 export type {
   ShellOpenExternalEditorRequest,
@@ -1373,9 +1375,11 @@ export type PreloadApi = {
     publishTerminalViewAttributes: (attributes: TerminalViewAttributes) => void
     hasChildProcesses: (id: string) => Promise<boolean>
     getForegroundProcess: (id: string) => Promise<string | null>
-    inspectProcess: (
-      id: string
-    ) => Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }>
+    inspectProcess: (id: string) => Promise<{
+      foregroundProcess: string | null
+      hasChildProcesses: boolean
+      unavailable?: true
+    }>
     confirmForegroundProcess: (id: string) => Promise<string | null>
     getCwd: (id: string) => Promise<string>
     getSize: (id: string) => Promise<{ cols: number; rows: number } | null>
@@ -1502,6 +1506,8 @@ export type PreloadApi = {
     copyLatestDiagnostics: (
       args?: CrashReportCopyDiagnosticsArgs
     ) => Promise<{ ok: true } | { ok: false; error: string }>
+    /** Exact V8/Blink heap sizes; null when the runtime withholds them. */
+    readHeapStatistics: () => RendererHeapStatistics | null
   }
   export: ExportApi
   gh: {
@@ -2210,6 +2216,9 @@ export type PreloadApi = {
     installWsl: (args?: { distro?: string | null }) => Promise<CliInstallStatus>
     removeWsl: (args?: { distro?: string | null }) => Promise<CliInstallStatus>
   }
+  codexConfigSync: {
+    status: () => Promise<CodexConfigSyncStatus>
+  }
   agentHooks: {
     claudeStatus: () => Promise<AgentHookInstallStatus>
     openClaudeStatus: () => Promise<AgentHookInstallStatus>
@@ -2740,6 +2749,8 @@ export type PreloadApi = {
     }) => Promise<{ success: boolean; error?: string }>
     generateCommitMessage: (args: {
       worktreePath: string
+      /** Raw (unstripped) worktree meta key; validated against worktreePath in main. */
+      worktreeId?: string
       repoId?: string
       connectionId?: string
       sourceControlAiResolvedParams?: ResolvedSourceControlAiGenerationParams
@@ -2768,6 +2779,8 @@ export type PreloadApi = {
     }) => Promise<void>
     generatePullRequestFields: (args: {
       worktreePath: string
+      /** Raw (unstripped) worktree meta key; validated against worktreePath in main. */
+      worktreeId?: string
       repoId?: string
       base: string
       title: string

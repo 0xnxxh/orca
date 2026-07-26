@@ -127,6 +127,7 @@ export function createPaneDOM(
     gpuRenderingEnabled: ENABLE_WEBGL_RENDERER,
     webglAttachmentDeferred: false,
     webglDisabledAfterContextLoss: false,
+    webglRebuildDeferred: false,
     hasComplexScriptOutput: false,
     fitAddon,
     fitResizeObserver: null,
