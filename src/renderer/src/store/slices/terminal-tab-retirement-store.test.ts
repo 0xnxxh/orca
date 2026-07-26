@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SleepingAgentSessionRecord } from '../../../../shared/agent-session-resume'
-import { TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS } from '../../../../shared/terminal-tab-close'
+import {
+  TERMINAL_TAB_CLOSE_ACK_MARGIN_MS,
+  TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
+} from '../../../../shared/terminal-tab-close'
 
 const mockKill = vi.fn().mockResolvedValue(undefined)
 const mockRuntimeCall = vi.fn().mockResolvedValue({
@@ -36,8 +39,6 @@ import {
   seedStore
 } from './store-test-helpers'
 import { replanTerminalTabRetirement } from './terminal-tab-retirement'
-
-const EXPECTED_PERSISTENCE_MARGIN_MS = 10_000
 
 function createRetirementStore() {
   const store = createTestStore()
@@ -425,7 +426,7 @@ describe('terminal tab retirement store boundary', () => {
     await expect(retryProviderTeardown?.()).resolves.toBeUndefined()
     expect(mockKill.mock.calls.map(([, options]) => options?.timeoutMs)).toEqual([
       TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
-      deadlineMs - 30_000 - EXPECTED_PERSISTENCE_MARGIN_MS
+      deadlineMs - 30_000 - TERMINAL_TAB_CLOSE_ACK_MARGIN_MS
     ])
     now.mockRestore()
     warn.mockRestore()

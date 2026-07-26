@@ -107,6 +107,7 @@ import { track } from '@/lib/telemetry'
 import { singlePaneLayoutSnapshot } from '@/store/slices/terminal-helpers'
 import { buildWorkspaceSessionPayload } from '@/lib/workspace-session'
 import { persistWorkspaceSessionByHost } from '@/lib/workspace-session-host-persistence'
+import { enqueueTerminalTabCloseSessionPersistence } from '@/lib/terminal-tab-close-session-persistence'
 import { getLinearIssueWorkspaceName } from '../../../shared/workspace-name'
 import type { RuntimeClientEvent } from '../../../shared/runtime-client-events'
 import { applyHostWorktreeTerminalSleepState } from '@/components/terminal-pane/pty-shutdown-exit-deferral'
@@ -2046,14 +2047,19 @@ export function useIpcEvents(): void {
               void (async () => {
                 await providerTeardown
                 const state = useAppStore.getState()
-                await persistWorkspaceSessionByHost(
-                  window.api.session,
-                  buildWorkspaceSessionPayload(state),
-                  state
+                const payload = buildWorkspaceSessionPayload(state)
+                // Why: host retirement fences recover a crash; this ordered retry queue moves the full snapshot flush off the acknowledgement wall.
+                const persistence = enqueueTerminalTabCloseSessionPersistence(() =>
+                  persistWorkspaceSessionByHost(window.api.session, payload, state)
                 )
                 respond()
+                await persistence
               })().catch((error: unknown) => {
-                respond(error instanceof Error ? error.message : 'terminal_tab_close_failed')
+                if (!responded) {
+                  respond(error instanceof Error ? error.message : 'terminal_tab_close_failed')
+                  return
+                }
+                console.error('[terminal-close] post-ack session persistence failed:', error)
               })
             }
           })

@@ -6280,8 +6280,8 @@ export class OrcaRuntimeService {
         return { closed: true }
       }
       if (closingWholeParent && this.notifier?.closeTerminalTab) {
-        // Why: whole-tab close is a lifecycle transaction. The renderer reply
-        // arrives only after canonical retirement and a forced session flush.
+        // Why: the renderer reply proves canonical retirement and provider exit;
+        // its full-session checkpoint is ordered and retried after the reply.
         try {
           await this.notifier.closeTerminalTab(tab.parentTabId)
         } catch (error) {

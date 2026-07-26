@@ -23,16 +23,13 @@ export const TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS = Math.max(
 )
 export const TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS =
   TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS + 2_000
-// Why: a durable close still has to write every host partition and force-flush after provider proof.
-export const TERMINAL_TAB_CLOSE_PERSISTENCE_MARGIN_MS = 10_000
-export const TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS =
-  TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS + 2 * TERMINAL_TAB_CLOSE_PERSISTENCE_MARGIN_MS
+export const TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS = TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS + 2_000
 export const TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS = TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS + 1_000
 export const TERMINAL_TAB_CLOSE_ACK_MARGIN_MS =
   TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS - TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS
 
 export function resolveNestedTerminalTabCloseTimeoutMs(deadlineMs: number): number {
-  return Math.max(1, deadlineMs - Date.now() - TERMINAL_TAB_CLOSE_PERSISTENCE_MARGIN_MS)
+  return Math.max(1, deadlineMs - Date.now() - TERMINAL_TAB_CLOSE_ACK_MARGIN_MS)
 }
 
 export function resolveTerminalTabProviderTimeoutMs(
@@ -41,7 +38,7 @@ export function resolveTerminalTabProviderTimeoutMs(
 ): number {
   return Math.max(
     1,
-    Math.min(maximumMs, deadlineMs - Date.now() - TERMINAL_TAB_CLOSE_PERSISTENCE_MARGIN_MS)
+    Math.min(maximumMs, deadlineMs - Date.now() - TERMINAL_TAB_CLOSE_ACK_MARGIN_MS)
   )
 }
 

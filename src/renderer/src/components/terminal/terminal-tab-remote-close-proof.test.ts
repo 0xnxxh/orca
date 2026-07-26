@@ -1,10 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import {
+  TERMINAL_TAB_CLOSE_ACK_MARGIN_MS,
   TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS,
   TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
 } from '../../../../shared/terminal-tab-close'
-
-const EXPECTED_PERSISTENCE_MARGIN_MS = 10_000
 
 const { closeRemoteMock, getStateMock } = vi.hoisted(() => ({
   closeRemoteMock: vi.fn(),
@@ -119,8 +118,8 @@ it('recomputes the paired-runtime timeout when a failed close is retried', async
   await expect(retryClosed.mock.calls[0]?.[0] as Promise<void>).resolves.toBeUndefined()
 
   expect(closeRemoteMock.mock.calls.map(([args]) => args.timeoutMs)).toEqual([
-    deadlineMs - EXPECTED_PERSISTENCE_MARGIN_MS,
-    deadlineMs - 20_000 - EXPECTED_PERSISTENCE_MARGIN_MS
+    deadlineMs - TERMINAL_TAB_CLOSE_ACK_MARGIN_MS,
+    deadlineMs - 20_000 - TERMINAL_TAB_CLOSE_ACK_MARGIN_MS
   ])
   vi.useRealTimers()
 })

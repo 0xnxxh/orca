@@ -79,8 +79,7 @@ it('bounds a nested paired close inside the real renderer acknowledgement wall',
   expect(outcomeBeforeRelayWall).toBe('terminal_tab_close_failed')
 })
 
-it('reserves time for durable persistence after a nested paired close', async () => {
-  const persistenceMs = 8_000
+it('accepts successful provider proof at the nested close deadline', async () => {
   const webContents = {
     isDestroyed: () => false,
     send: vi.fn((_channel: string, request: { requestId: string; deadlineMs: number }): void => {
@@ -93,14 +92,14 @@ it('reserves time for durable persistence after a nested paired close', async ()
           { sender: webContents },
           { requestId: request.requestId }
         )
-      }, nestedCloseMs + persistenceMs)
+      }, nestedCloseMs)
     })
   }
 
   let outcome = 'pending'
   void requestTerminalTabCloseFromRenderer(
     { isDestroyed: () => false, webContents } as never,
-    'tab-with-persistence'
+    'tab-with-provider-proof'
   ).then(
     () => {
       outcome = 'resolved'

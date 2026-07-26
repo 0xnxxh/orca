@@ -1299,7 +1299,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           count: retirementPlan.unroutablePtyIds.length
         })
       }
-      // Why: keep state retirement synchronous and idempotent while exposing provider completion to durable close acknowledgements.
+      // Why: keep state retirement synchronous and idempotent while exposing provider completion to close acknowledgements.
       providerTeardown = Promise.allSettled(retirementTasks).then((results) => {
         const upgradeFailure = results.find(
           (result) =>

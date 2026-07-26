@@ -61,7 +61,7 @@ it('floors remote terminal tab closes at the end-to-end caller budget', async ()
   })
 })
 
-it('shares one close deadline across compatibility preflight and request', async () => {
+it('preserves the close budget after a new compatibility preflight', async () => {
   let resolveStatus!: (value: unknown) => void
   runtimeEnvironmentCall.mockImplementation(({ method }: { method: string }) => {
     if (method === 'status.get') {
@@ -95,10 +95,7 @@ it('shares one close deadline across compatibility preflight and request', async
   })
   await close
 
-  expect(runtimeEnvironmentCall).toHaveBeenNthCalledWith(2, {
-    selector: 'env-deadline',
-    method: 'terminal.closeTab',
-    params: { terminal: 'terminal-1' },
-    timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS - 20_000
-  })
+  expect(runtimeEnvironmentCall.mock.calls[1]?.[0].timeoutMs).toBe(
+    TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
+  )
 })

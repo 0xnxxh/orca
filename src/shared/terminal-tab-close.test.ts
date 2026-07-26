@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import * as terminalTabClose from './terminal-tab-close'
 
 const {
+  TERMINAL_TAB_CLOSE_ACK_MARGIN_MS,
   TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS,
-  TERMINAL_TAB_CLOSE_PERSISTENCE_MARGIN_MS,
   TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS,
   TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
   TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
@@ -17,6 +17,11 @@ describe('terminal tab close deadline composition', () => {
   })
 
   it('keeps provider proof below RPC, host response, and caller deadlines', () => {
+    expect(TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS).toBe(35_000)
+    expect(TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS).toBe(37_000)
+    expect(TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS).toBe(39_000)
+    expect(TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS).toBe(40_000)
+    expect(TERMINAL_TAB_CLOSE_ACK_MARGIN_MS).toBe(1_000)
     expect(TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS).toBeLessThan(
       TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS
     )
@@ -25,9 +30,6 @@ describe('terminal tab close deadline composition', () => {
     )
     expect(TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS).toBeLessThan(
       TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
-    )
-    expect(TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS).toBe(
-      TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS + 2 * TERMINAL_TAB_CLOSE_PERSISTENCE_MARGIN_MS
     )
   })
 

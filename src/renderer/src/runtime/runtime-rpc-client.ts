@@ -12,6 +12,7 @@ import { callRuntimeEnvironmentWithRevision } from './runtime-rpc-environment-ca
 import { RuntimeRpcCallError, unwrapRuntimeRpcResult } from './runtime-rpc-result'
 import { captureRuntimeEnvironmentRequestRevision } from './runtime-environment-revision'
 import type { RuntimeClientTarget } from './runtime-client-target'
+import type { RuntimeRpcCallOptions } from './runtime-rpc-call-options'
 
 export {
   getActiveRuntimeTarget,
@@ -47,14 +48,7 @@ export async function callRuntimeRpc<TResult>(
   target: RuntimeClientTarget,
   method: string,
   params?: unknown,
-  options: {
-    timeoutMs?: number
-    suppressFeatureInteraction?: boolean
-    reuseRecentCompatibilityFailure?: boolean
-    skipCompatibilityCheck?: boolean
-    signal?: AbortSignal
-    expectedEnvironmentPairingRevision?: number
-  } = {}
+  options: RuntimeRpcCallOptions = {}
 ): Promise<TResult> {
   const expectedEnvironmentPairingRevision =
     target.kind === 'environment'
@@ -74,7 +68,8 @@ export async function callRuntimeRpc<TResult>(
   ) {
     await ensureRuntimeEnvironmentCompatible(target.environmentId, {
       ...options,
-      timeoutMs: remainingRuntimeCallTimeoutMs(deadlineMs),
+      timeoutMs,
+      cachedCheckTimeoutMs: remainingRuntimeCallTimeoutMs(deadlineMs),
       expectedEnvironmentPairingRevision
     })
   }
@@ -91,7 +86,7 @@ export async function callRuntimeRpc<TResult>(
           environmentId: target.environmentId,
           method,
           params: nextParams,
-          timeoutMs: remainingRuntimeCallTimeoutMs(deadlineMs),
+          timeoutMs,
           signal: options.signal,
           expectedEnvironmentPairingRevision
         })
@@ -105,13 +100,17 @@ async function ensureRuntimeEnvironmentCompatible(
   environmentId: string,
   options: {
     timeoutMs?: number
+    cachedCheckTimeoutMs?: number
     reuseRecentCompatibilityFailure?: boolean
     expectedEnvironmentPairingRevision?: number
   } = {}
 ): Promise<void> {
   const cached = getCachedRuntimeCompatibilityCheck(environmentId, options)
   if (cached) {
-    await runtimeProtocolCompat.awaitCompatibilityCheckDeadline(cached.check, options.timeoutMs)
+    await runtimeProtocolCompat.awaitCompatibilityCheckDeadline(
+      cached.check,
+      options.cachedCheckTimeoutMs
+    )
     return
   }
   const entry: RuntimeCompatibilityCacheEntry = {
