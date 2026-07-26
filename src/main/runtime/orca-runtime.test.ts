@@ -34598,6 +34598,9 @@ describe('OrcaRuntimeService', () => {
         return { stdout: 'origin\n', stderr: '' }
       }
       if (args[0] === 'remote' && args[1] === 'get-url') {
+        if (args[2] !== 'origin' && args[2] !== 'upstream') {
+          throw new Error(`unexpected remote: ${String(args[2])}`)
+        }
         const url =
           args[2] === 'origin'
             ? 'git@github.com:org/repo.git'
@@ -34645,7 +34648,12 @@ describe('OrcaRuntimeService', () => {
         cwd: TEST_REPO_PATH,
         wslDistro: 'Ubuntu'
       })
-      expect(gitSpy).not.toHaveBeenCalledWith(['remote', 'get-url', 'upstream'], expect.anything())
+      // Why: the explicit origin preference must short-circuit before any
+      // identity probe, so no remote — not just upstream — gets a get-url.
+      expect(gitSpy).not.toHaveBeenCalledWith(
+        ['remote', 'get-url', expect.anything()],
+        expect.anything()
+      )
     } finally {
       gitSpy.mockRestore()
     }
