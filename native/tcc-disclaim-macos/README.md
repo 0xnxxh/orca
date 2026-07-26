@@ -2,21 +2,31 @@
 
 Tiny macOS exec shim that runs `<command> [args...]` in place with the
 "responsible process" responsibility disclaimed
-(`responsibility_spawnattrs_setdisclaim` + `POSIX_SPAWN_SETEXEC`). tccd then
-attributes the command's protected-resource access (and its children's) to the
-shim's own signed code identity instead of collapsing everything into the Orca
-app bundle, so per-tool TCC grants persist across launches (#9756, #6996).
+(`responsibility_spawnattrs_setdisclaim` + `POSIX_SPAWN_SETEXEC`).
+
+Measured effect: a process spawned normally by an app inherits that app as its
+responsible process, so every terminal program's protected-resource access
+collapses into Orca's bundle identity. Exec'd through this shim, the target —
+and each of its descendants — is instead its **own** responsible process, so
+tccd keys grants to each terminal program's own code identity and they persist
+across launches (#9756, #6996). Note the shim's own identity is not what grants
+land on: `POSIX_SPAWN_SETEXEC` replaces the shim's image with the target, so the
+shim is gone from the process by the time tccd sees anything.
 
 The build embeds a dedicated, stable `CFBundleIdentifier`
 (`com.stablyai.orca.tcc-disclaim-exec`) as a `__TEXT,__info_plist` section so
-every `codesign --force` pass derives the same code identifier — that
-identifier is what TCC keys grants to, so it must stay deterministic across
-releases and distinct from the app bundle id.
+every `codesign --force` pass derives the same code identifier for the shim
+binary instead of silently reusing the app's.
 
 Build: `pnpm run build:tcc-disclaim-macos` (add `--single-arch` for a
 host-arch-only dev build). Output:
 `.build/release/orca-tcc-disclaim-exec`; packaged builds ship it at
 `Orca.app/Contents/MacOS/orca-tcc-disclaim-exec`.
+
+To confirm the disclaim took effect without root, have a process call
+`responsibility_get_pid_responsible_for_pid(getpid())` (dlsym'd, self-query
+only): it returns the launching app's pid on the plain path and the caller's
+own pid through the shim.
 
 Runtime wiring is flag-gated behind `ORCA_MACOS_TCC_DISCLAIM` (default off —
 the login(1) wrap in `src/main/providers/macos-tcc-login-shell.ts` remains the

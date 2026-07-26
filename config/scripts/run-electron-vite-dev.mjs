@@ -235,9 +235,9 @@ function prepareMacDevElectronApp() {
     )
   }
 
-  // Why: the tcc-disclaim exec shim keeps its own DEDICATED bundle id (not the
-  // dev app id) — TCC keys grants to that stable identity, so dev and packaged
-  // builds must present the same one. Non-fatal: the wrap is flag-gated
+  // Why no --bundle-id: unlike the notification helper (which must carry the
+  // dev app id), the shim keeps its own dedicated identifier in both dev and
+  // packaged builds. Non-fatal: the wrap is flag-gated
   // (ORCA_MACOS_TCC_DISCLAIM) and falls back to login(1) when the shim is absent.
   try {
     execFileSync(

@@ -6,8 +6,9 @@ const SHIM_EXECUTABLE = 'orca-tcc-disclaim-exec'
 /**
  * Rollout flag for the disclaim exec shim (default off). Set to `1`/`true` to
  * replace the login(1) TCC-attribution wrap with the shim, which disclaims the
- * responsible-process link so tccd keys terminal children's grants to the
- * shim's stable code identity (#9756) without dragging PAM into every spawn.
+ * responsible-process link so each terminal program becomes its own responsible
+ * process — tccd then keys grants to that program's own code identity instead
+ * of Orca's (#9756), without dragging PAM into every spawn.
  */
 const ENABLE_ENV_VAR = 'ORCA_MACOS_TCC_DISCLAIM'
 

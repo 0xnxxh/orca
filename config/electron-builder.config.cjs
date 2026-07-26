@@ -298,8 +298,9 @@ module.exports = {
         from: 'native/notification-status-macos/.build/release/orca-notification-status',
         to: 'MacOS/orca-notification-status'
       },
-      // Why: TCC keys grants to this shim's own code identity, so it too needs
-      // its own executable under Contents/MacOS rather than a Resources copy.
+      // Why Contents/MacOS: the shim is a real executable the PTY layer spawns,
+      // so it belongs beside the app binary (where the runtime resolves it from
+      // process.execPath), not in the Resources asset tree.
       {
         from: 'native/tcc-disclaim-macos/.build/release/orca-tcc-disclaim-exec',
         to: 'MacOS/orca-tcc-disclaim-exec'
@@ -494,10 +495,11 @@ async function signMacStandaloneHelperBinary(helperPath, packager) {
   if (!identity) {
     throw new Error(`Missing signing identity for ${helperName} helper`)
   }
-  // Why: macOS keys notification records / TCC grants to the code-signing
-  // identifier; each helper embeds its CFBundleIdentifier in __TEXT,__info_plist
-  // so this (and any later) `codesign --force` derives the correct identifier.
-  // Sign before the outer Orca.app is sealed, like the computer-use helper.
+  // Why: macOS keys notification records to the code-signing identifier; each
+  // helper embeds its CFBundleIdentifier in __TEXT,__info_plist so this (and any
+  // later) `codesign --force` derives that helper's own identifier rather than
+  // the app's. Sign before the outer Orca.app is sealed, like the computer-use
+  // helper.
   const args = ['--force', '--sign', identity]
   if (isMacRelease) {
     args.push('--options', 'runtime', '--timestamp')

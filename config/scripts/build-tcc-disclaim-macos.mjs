@@ -6,9 +6,7 @@
 // Its dedicated CFBundleIdentifier is embedded as a __TEXT,__info_plist
 // section so every later `codesign --force` pass (electron-builder's signing,
 // the dev runner's ad-hoc deep sign) derives the same stable code identifier
-// automatically — tccd keys the children's protected-resource grants to that
-// identifier, so it must stay deterministic and distinct from the app bundle
-// id across releases.
+// for this binary instead of silently reusing the app's.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
