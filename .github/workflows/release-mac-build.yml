@@ -187,6 +187,25 @@ jobs:
           # Kill only its child and require both PTY and watch recovery before packaging.
           node config/scripts/relay-watcher-fault-harness.mjs
 
+      - name: Verify release is draft before macOS artifact upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          draft="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -er --arg tag "$TAG" '
+            map(select(.tag_name == $tag))
+            | if length == 1 and (.[0].draft | type) == "boolean" then (.[0].draft | tostring) else empty end
+          ')" || {
+            echo "::error::Release $TAG was not found uniquely before macOS upload."
+            exit 1
+          }
+          if [[ "$draft" != 'true' ]]; then
+            echo "::error::Release $TAG is not draft; refusing macOS artifact upload."
+            exit 1
+          fi
+
       - name: Publish release artifacts (macOS)
         uses: nick-fields/retry@v4
         with:
@@ -195,6 +214,7 @@ jobs:
           retry_wait_seconds: 30
           command: node config/scripts/ensure-native-runtime.mjs --runtime=electron && ORCA_MAC_RELEASE=1 pnpm exec electron-builder --config config/electron-builder.config.cjs --mac --publish always
         env:
+          EP_DRAFT: 'true'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.MAC_CERTS }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTS_PASSWORD }}

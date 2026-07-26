@@ -379,7 +379,7 @@ describe('Electron runtime package contract', () => {
     expect(outerVerifyIndex).toBeGreaterThan(-1)
     expect(innerVerifyIndex).toBe(outerVerifyIndex + 1)
     expect(evidenceIndex).toBe(innerVerifyIndex + 1)
-    expect(publishIndex).toBe(evidenceIndex + 1)
+    expect(publishIndex).toBe(evidenceIndex + 2)
     expect(steps[innerVerifyIndex].env.ORCA_WINDOWS_INNER_SIGNATURE_REQUIRED).toBe('true')
     expect(steps[evidenceIndex].if).toBe("always() && matrix.platform == 'win'")
     expect(steps[publishIndex].if).toBe("success() && matrix.platform == 'win'")

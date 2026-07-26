@@ -785,19 +785,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: refs/tags/${{ needs.cut.outputs.tag }}
+          ref: ${{ github.sha }}
 
       - name: Create draft release with bounded generated notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.cut.outputs.tag }}
         run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG already exists."
-            exit 0
+          set -euo pipefail
+          releases_json="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          release_count="$(jq -r --arg tag "$TAG" '[.[] | select(.tag_name == $tag)] | length' <<<"$releases_json")"
+          if [[ "$release_count" == '0' ]]; then
+            node config/scripts/create-draft-release.mjs "$TAG"
+          elif [[ "$release_count" != '1' ]]; then
+            echo "::error::Expected at most one release for $TAG, found $release_count."
+            exit 1
           fi
 
-          node config/scripts/create-draft-release.mjs "$TAG"
+          releases_json="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100")"
+          draft="$(jq -er --arg tag "$TAG" '
+            map(select(.tag_name == $tag))
+            | if length == 1 and (.[0].draft | type) == "boolean" then (.[0].draft | tostring) else empty end
+          ' <<<"$releases_json")" || {
+            echo "::error::Release $TAG was not found uniquely after draft creation."
+            exit 1
+          }
+          if [[ "$draft" != 'true' ]]; then
+            echo "::error::Release $TAG is already public; refusing to authorize uploads."
+            exit 1
+          fi
+          echo "Release $TAG is draft."
 
       - name: Record macOS build authorization
         env:
@@ -1148,6 +1165,26 @@ jobs:
           # Kill only its child and require both PTY and watch recovery before packaging.
           node config/scripts/relay-watcher-fault-harness.mjs
 
+      - name: Verify release is draft before Linux artifact upload
+        if: matrix.platform == 'linux-x64' || matrix.platform == 'linux-arm64'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.cut.outputs.tag }}
+        run: |
+          set -euo pipefail
+          draft="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -er --arg tag "$TAG" '
+            map(select(.tag_name == $tag))
+            | if length == 1 and (.[0].draft | type) == "boolean" then (.[0].draft | tostring) else empty end
+          ')" || {
+            echo "::error::Release $TAG was not found uniquely before Linux upload."
+            exit 1
+          }
+          if [[ "$draft" != 'true' ]]; then
+            echo "::error::Release $TAG is not draft; refusing Linux artifact upload."
+            exit 1
+          fi
+
       - name: Publish release artifacts (Linux)
         if: matrix.platform == 'linux-x64' || matrix.platform == 'linux-arm64'
         uses: nick-fields/retry@v4
@@ -1157,6 +1194,7 @@ jobs:
           retry_wait_seconds: 30
           command: ${{ matrix.release_command }}
         env:
+          EP_DRAFT: 'true'
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Why: SignPath signs GitHub workflow artifacts, so Windows builds must
@@ -1741,6 +1779,26 @@ jobs:
             inner-signing-list.txt
           if-no-files-found: error
           retention-days: 30
+
+      - name: Verify release is draft before Windows artifact upload
+        if: success() && matrix.platform == 'win'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.cut.outputs.tag }}
+        run: |
+          set -euo pipefail
+          draft="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -er --arg tag "$TAG" '
+            map(select(.tag_name == $tag))
+            | if length == 1 and (.[0].draft | type) == "boolean" then (.[0].draft | tostring) else empty end
+          ')" || {
+            echo "::error::Release $TAG was not found uniquely before Windows upload."
+            exit 1
+          }
+          if [[ "$draft" != 'true' ]]; then
+            echo "::error::Release $TAG is not draft; refusing Windows artifact upload."
+            exit 1
+          fi
 
       - name: Publish signed Windows release artifacts
         if: success() && matrix.platform == 'win'

@@ -18,6 +18,9 @@ describe('release-cut Windows signing contract', () => {
     const controlPlaneStep = cutJob.steps[0]
     const versionStep = cutJob.steps.find((step) => step.name === 'Compute next version')
     const createReleaseJob = workflow.jobs['create-release']
+    const createDraftStep = createReleaseJob.steps.find(
+      (step) => step.name === 'Create draft release with bounded generated notes'
+    )
     const macAuthorizationStep = createReleaseJob.steps.find(
       (step) => step.name === 'Upload macOS build authorization'
     )
@@ -52,7 +55,8 @@ describe('release-cut Windows signing contract', () => {
     )
     expect(macAuthorizationStep.with['if-no-files-found']).toBe('error')
     expect(buildJob.if).toBe("needs.cut.outputs.should_release == 'true'")
-    expect(createCheckout.with.ref).toBe('refs/tags/${{ needs.cut.outputs.tag }}')
+    expect(createCheckout.with.ref).toBe('${{ github.sha }}')
+    expect(createDraftStep.run).toContain('Release $TAG is already public; refusing')
     expect(buildCheckout.with.ref).toBe('refs/tags/${{ needs.cut.outputs.tag }}')
     expect(publishReleaseJob.needs).toContain('build')
     expect(publishCheckout.with.ref).toBe('${{ github.sha }}')
@@ -66,6 +70,9 @@ describe('release-cut Windows signing contract', () => {
     const outerVerifyIndex = stepNames.indexOf('Verify signed Windows installer')
     const innerVerifyIndex = stepNames.indexOf('Verify Windows inner binary signatures')
     const evidenceIndex = stepNames.indexOf('Upload Windows inner signing evidence')
+    const draftCheckIndex = stepNames.indexOf(
+      'Verify release is draft before Windows artifact upload'
+    )
     const publishIndex = stepNames.indexOf('Publish signed Windows release artifacts')
     const innerVerifyStep = steps[innerVerifyIndex]
     const evidenceStep = steps[evidenceIndex]
@@ -74,7 +81,8 @@ describe('release-cut Windows signing contract', () => {
     expect(outerVerifyIndex).toBeGreaterThan(-1)
     expect(innerVerifyIndex).toBe(outerVerifyIndex + 1)
     expect(evidenceIndex).toBe(innerVerifyIndex + 1)
-    expect(publishIndex).toBe(evidenceIndex + 1)
+    expect(draftCheckIndex).toBe(evidenceIndex + 1)
+    expect(publishIndex).toBe(draftCheckIndex + 1)
     expect(innerVerifyStep.env.ORCA_WINDOWS_INNER_SIGNATURE_REQUIRED).toBe('true')
     expect(innerVerifyStep['continue-on-error']).toBeUndefined()
     expect(innerVerifyStep.if).toBe("always() && matrix.platform == 'win'")
@@ -135,6 +143,9 @@ describe('release-cut Windows signing contract', () => {
     const publishStep = buildJob.steps.find(
       (step) => step.name === 'Publish release artifacts (macOS)'
     )
+    const preuploadStep = buildJob.steps.find(
+      (step) => step.name === 'Verify release is draft before macOS artifact upload'
+    )
 
     expect(workflow.permissions.actions).toBe('read')
     expect(workflow.permissions.contents).toBe('read')
@@ -151,7 +162,26 @@ describe('release-cut Windows signing contract', () => {
     )
     expect(controlPlaneStep.run).toContain('.artifacts[]?')
     expect(controlPlaneStep.run).toContain("draft\" != 'true'")
+    expect(buildJob.steps.indexOf(preuploadStep)).toBe(buildJob.steps.indexOf(publishStep) - 1)
     expect(publishStep.with.command).toContain('--publish always')
+    expect(publishStep.env.EP_DRAFT).toBe('true')
     expect(electronBuilderConfig.publish.releaseType).toBe('draft')
+  })
+
+  it('pins draft policy in protected workflow steps for historical source tags', () => {
+    const workflow = parse(readFileSync(workflowPath, 'utf8'))
+    const steps = workflow.jobs.build.steps
+    const stepNames = steps.map((step) => step.name)
+    const linuxPreuploadIndex = stepNames.indexOf(
+      'Verify release is draft before Linux artifact upload'
+    )
+    const linuxPublishIndex = stepNames.indexOf('Publish release artifacts (Linux)')
+    const linuxPublishStep = steps[linuxPublishIndex]
+
+    expect(linuxPreuploadIndex).toBe(linuxPublishIndex - 1)
+    expect(linuxPublishStep.env.EP_DRAFT).toBe('true')
+    expect(workflow.jobs.build.steps.find((step) => step.name === 'Checkout').with.ref).toBe(
+      'refs/tags/${{ needs.cut.outputs.tag }}'
+    )
   })
 })
