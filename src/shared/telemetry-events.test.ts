@@ -359,19 +359,23 @@ describe('daemon_lifecycle schema', () => {
 
   // Core privacy invariant: enum-only + bucketed counts. If this flips, the lane is leaking
   // paths/versions/exact counts — revert the offending schema change (STA-2376).
+  // Both union members, so neither can lose .strict() unnoticed.
   it('rejects raw paths, versions, and unbucketed counts via .strict()', () => {
-    for (const leak of [
-      { daemon_path: '/Users/alice/Orca.app' },
-      { daemon_app_version: '1.4.129' },
-      { live_session_count: 3 }
-    ]) {
-      const parsed = eventSchemas.daemon_lifecycle.safeParse({
-        transition: 'replaced',
-        reason: 'failed_health_check',
-        live_session_count_bucket: '2-5',
-        ...leak
-      })
-      expect(parsed.success).toBe(false)
+    const bases = [
+      { transition: 'replaced', reason: 'failed_health_check', live_session_count_bucket: '2-5' },
+      { transition: 'retired', reason: 'died_respawn', live_session_count_bucket: 'unknown' }
+    ]
+    for (const base of bases) {
+      for (const leak of [
+        { daemon_path: '/Users/alice/Orca.app' },
+        { daemon_app_version: '1.4.129' },
+        { live_session_count: 3 }
+      ]) {
+        const parsed = eventSchemas.daemon_lifecycle.safeParse({ ...base, ...leak })
+        expect(parsed.success).toBe(false)
+      }
+      // Sanity: the base itself must be valid, so the rejections above are the leak, not the base.
+      expect(eventSchemas.daemon_lifecycle.safeParse(base).success).toBe(true)
     }
   })
 

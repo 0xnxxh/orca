@@ -874,6 +874,22 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     await outgoingRespawn?.('daemon_died')
     expect(trackDaemonRetiredMock).toHaveBeenCalledTimes(1)
     expect(trackDaemonRetiredMock).toHaveBeenCalledWith('died_respawn')
+
+    // The restart installs its own adapter, whose closure is a second copy of the guard — and the one
+    // that actually runs in the field from the second restart onward, since the first adapter is gone.
+    const restartedRespawn = adapterInstances[1].options.respawn
+    trackDaemonRetiredMock.mockClear()
+    let respawnedMidSecondRestart = false
+    ensureRunningOverrides.push(async () => {
+      await restartedRespawn?.('daemon_died')
+      respawnedMidSecondRestart = true
+      return { socketPath: '/fake/restarted-socket-2', tokenPath: '/fake/restarted-token-2' }
+    })
+
+    await mod.restartDaemon()
+
+    expect(respawnedMidSecondRestart).toBe(true)
+    expect(trackDaemonRetiredMock).not.toHaveBeenCalled()
   })
 
   it('preserves legacy adapter instances by identity, drains outgoing router via disposeRouterOnly, and re-discovers legacy sessions on the new router', async () => {
