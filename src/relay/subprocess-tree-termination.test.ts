@@ -70,13 +70,9 @@ describe('terminateRelaySubprocessTreeAndWait', () => {
     vi.useFakeTimers()
     Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
     const child = Object.assign(new EventEmitter(), { pid: 12345 })
-    let probes = 0
     const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
       if (signal === 0) {
-        probes += 1
-        if (probes > 1) {
-          throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
-        }
+        throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
       }
       return true
     })
@@ -87,11 +83,14 @@ describe('terminateRelaySubprocessTreeAndWait', () => {
       ).then(() => {
         settled = true
       })
-      child.emit('close', 0)
 
       await vi.advanceTimersByTimeAsync(999)
       expect(settled).toBe(false)
       await vi.advanceTimersByTimeAsync(1)
+      expect(settled).toBe(false)
+      expect(killSpy).not.toHaveBeenCalledWith(-12345, 'SIGKILL')
+
+      child.emit('close', 0)
       await pending
 
       expect(killSpy).toHaveBeenCalledWith(-12345, 'SIGTERM')

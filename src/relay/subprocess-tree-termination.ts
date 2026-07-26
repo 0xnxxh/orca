@@ -64,6 +64,7 @@ export function terminateRelaySubprocessTreeAndWait(
   }
   return new Promise((resolve) => {
     let leaderClosed = leaderAlreadyClosed || hasRelaySubprocessExited(child)
+    let groupConfirmedGone = false
     let settled = false
     let forceTimer: NodeJS.Timeout | null = null
     const groupGone = (): boolean => {
@@ -74,8 +75,12 @@ export function terminateRelaySubprocessTreeAndWait(
         return (error as NodeJS.ErrnoException).code === 'ESRCH'
       }
     }
+    const confirmGroupGone = (): boolean => {
+      groupConfirmedGone ||= groupGone()
+      return groupConfirmedGone
+    }
     const finish = (): boolean => {
-      if (leaderClosed && groupGone()) {
+      if (leaderClosed && groupConfirmedGone) {
         settled = true
         if (forceTimer) {
           clearTimeout(forceTimer)
@@ -86,13 +91,18 @@ export function terminateRelaySubprocessTreeAndWait(
       return false
     }
     const poll = (): void => {
-      if (settled || finish()) {
+      if (settled) {
+        return
+      }
+      if (confirmGroupGone()) {
+        finish()
         return
       }
       setTimeout(poll, 25).unref()
     }
     child.once('close', () => {
       leaderClosed = true
+      confirmGroupGone()
       finish()
     })
     try {
@@ -101,7 +111,8 @@ export function terminateRelaySubprocessTreeAndWait(
       // The final group probe decides whether the resource has settled.
     }
     forceTimer = setTimeout(() => {
-      if (finish()) {
+      if (confirmGroupGone()) {
+        finish()
         return
       }
       try {

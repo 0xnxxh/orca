@@ -403,6 +403,7 @@ function terminateSpawnedCommandTreeAndWait(
   }
   return new Promise((resolve) => {
     let leaderClosed = leaderAlreadyClosed || hasSpawnedCommandExited(child)
+    let groupConfirmedGone = false
     let settled = false
     let forceTimer: NodeJS.Timeout | null = null
     const groupGone = (): boolean => {
@@ -413,8 +414,12 @@ function terminateSpawnedCommandTreeAndWait(
         return (error as NodeJS.ErrnoException).code === 'ESRCH'
       }
     }
+    const confirmGroupGone = (): boolean => {
+      groupConfirmedGone ||= groupGone()
+      return groupConfirmedGone
+    }
     const finish = (): boolean => {
-      if (leaderClosed && groupGone()) {
+      if (leaderClosed && groupConfirmedGone) {
         settled = true
         if (forceTimer) {
           clearTimeout(forceTimer)
@@ -425,13 +430,18 @@ function terminateSpawnedCommandTreeAndWait(
       return false
     }
     const poll = (): void => {
-      if (settled || finish()) {
+      if (settled) {
+        return
+      }
+      if (confirmGroupGone()) {
+        finish()
         return
       }
       setTimeout(poll, 25).unref()
     }
     child.once('close', () => {
       leaderClosed = true
+      confirmGroupGone()
       finish()
     })
     try {
@@ -440,7 +450,8 @@ function terminateSpawnedCommandTreeAndWait(
       // The group may already be gone; the close/group checks decide settlement.
     }
     forceTimer = setTimeout(() => {
-      if (finish()) {
+      if (confirmGroupGone()) {
+        finish()
         return
       }
       try {

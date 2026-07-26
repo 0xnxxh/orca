@@ -222,13 +222,9 @@ describe('runner execFile timeout handling', () => {
     await withPlatform('linux', async () => {
       const child = createMockChildProcess(1234)
       execFileMock.mockReturnValue(child)
-      let probes = 0
       const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
         if (signal === 0) {
-          probes += 1
-          if (probes > 1) {
-            throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
-          }
+          throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
         }
         return true
       })
@@ -239,13 +235,20 @@ describe('runner execFile timeout handling', () => {
           settleProcessTree: true
         })
         const rejection = expect(promise).rejects.toThrow('git timed out.')
+        let rejected = false
+        void promise.catch(() => {
+          rejected = true
+        })
 
         await vi.advanceTimersByTimeAsync(1000)
         expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGTERM')
-        child.emit('close', null, 'SIGTERM')
         await vi.advanceTimersByTimeAsync(999)
         expect(killSpy).not.toHaveBeenCalledWith(-1234, 'SIGKILL')
         await vi.advanceTimersByTimeAsync(1)
+        expect(rejected).toBe(false)
+        expect(killSpy).not.toHaveBeenCalledWith(-1234, 'SIGKILL')
+
+        child.emit('close', null, 'SIGTERM')
         await rejection
 
         expect(execFileMock).toHaveBeenCalledWith(
