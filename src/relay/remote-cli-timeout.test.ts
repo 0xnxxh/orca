@@ -28,7 +28,7 @@ describe('remoteCliRequestTimeoutMs', () => {
       remoteCliRequestTimeoutMs({
         argv: ['orchestration', 'ask', '--to', 'term_x', '--question', 'ok?']
       })
-    ).toBe(600_000)
+    ).toBe(780_000)
   })
 
   it('extends past an explicit --timeout-ms waiter budget', () => {
@@ -50,6 +50,33 @@ describe('remoteCliRequestTimeoutMs', () => {
         argv: ['terminal', 'wait', '--for', 'exit', '--timeout-ms', '5000']
       })
     ).toBe(600_000)
+  })
+
+  it.each([
+    [['--timeout-ms', String(Number.MAX_SAFE_INTEGER)], 1_980_000],
+    [['--timeout-ms', String(Number.MAX_SAFE_INTEGER + 1)], 780_000],
+    [['--timeout-ms', '9007199254740991.1'], 780_000],
+    [['--timeout-ms', '1', '--timeout-ms=1800000'], 1_980_000],
+    [['--timeout-ms=1800000', '--timeout-ms', '1'], 660_000],
+    [['--timeout-ms', '1800000', '--timeout-ms'], 780_000],
+    [['--timeout-ms=1800000', '--timeout-ms='], 780_000],
+    [['--timeout-ms=1800000', '--timeout-ms', 'bad'], 780_000],
+    [['--timeout-ms', 'bad', '--timeout-ms=1800000'], 1_980_000],
+    [['--timeout-ms=bad', '--timeout-ms', '1800000'], 1_980_000]
+  ])('bounds ask outer timers with last-wins flags %#', (timeoutArgs, expected) => {
+    expect(
+      remoteCliRequestTimeoutMs({
+        argv: ['orchestration', 'ask', '--to', 'term_x', ...timeoutArgs]
+      })
+    ).toBe(expected)
+  })
+
+  it('does not apply the ask maximum to other wait commands', () => {
+    expect(
+      remoteCliRequestTimeoutMs({
+        argv: ['terminal', 'wait', '--timeout-ms', '1800001']
+      })
+    ).toBe(1_860_001)
   })
 
   it('does not treat a flag value named wait as a command path element', () => {
