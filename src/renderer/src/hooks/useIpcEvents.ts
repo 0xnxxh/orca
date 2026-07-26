@@ -3157,10 +3157,11 @@ export function useIpcEvents(): void {
           terminalHandle: data.terminalHandle,
           ...(ownershipConnectionId !== undefined ? { connectionId: ownershipConnectionId } : {})
         },
-        data.providerSession || data.launchToken
+        data.providerSession || data.launchToken || data.reportedCwd !== undefined
           ? {
               ...(data.providerSession ? { providerSession: data.providerSession } : {}),
-              ...(data.launchToken ? { launchToken: data.launchToken } : {})
+              ...(data.launchToken ? { launchToken: data.launchToken } : {}),
+              ...(data.reportedCwd === undefined ? {} : { reportedCwd: data.reportedCwd })
             }
           : undefined
       )
