@@ -261,7 +261,10 @@ export async function requestTerminalPaneRecovery(request: RecoveryRequest): Pro
   // A remount replaces every pane xterm in the tab; a previously scheduled
   // retry would only re-remount the fresh, healthy panes.
   cancelPendingRecoveryRetry(request.tabId)
-  console.error(
+  // warn, not error: this is the recovery succeeding, and the breadcrumb below is
+  // what diagnostics actually read. STA-2373 made this path routine (every daemon
+  // death remounts each live pane), so error level just floods logs and telemetry.
+  console.warn(
     `[terminal] recovering pane tab ${request.tabId} — ${request.reason} with a live PTY (${request.ptyId ?? 'unbound'}); remounting to rebuild the renderer`
   )
   recordRendererCrashBreadcrumb('terminal_pane_recovery_remount', {
