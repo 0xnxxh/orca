@@ -723,11 +723,8 @@ export class PtyHandler {
 
   private flushPendingOutput(): void {
     this.outputFlushTimer = null
-    // Why: the send loop has no skip path and stops at PTY_OUTPUT_FLUSH_MAX_WRITES, so it can never
-    // reach a third entry — `Array.from(entries())` allocated one tuple per session every tick to
-    // consume at most two. Capture only that prefix, and capture it *before* the first send so a
-    // re-entrant sink still reads the values a whole-map snapshot would have frozen.
-    // Why the explicit iterator: `for...of` would advance one tuple past the limit and discard it.
+    // Why batch before the first send: a re-entrant sink must read the values a whole-map snapshot
+    // would have frozen. Why the raw iterator: `for...of` would consume one entry past the limit.
     const pendingEntries = this.pendingOutputByPty[Symbol.iterator]()
     const batch: [string, PendingPtyOutput][] = []
     while (batch.length < PTY_OUTPUT_FLUSH_MAX_WRITES) {
