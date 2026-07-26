@@ -31,8 +31,7 @@ type ResumeTerminalVisibilityArgs = {
 }
 
 export type TerminalVisibilityPostPaintRecovery = {
-  manager: PaneManager
-  run: () => void
+  run: (manager: PaneManager) => void
 }
 
 type HideTerminalVisibilityArgs = {
@@ -101,14 +100,14 @@ export function resumeTerminalVisibility({
     return null
   }
   return {
-    manager,
-    run: () => {
+    run: (currentManager) => {
       withSuppressedScrollTracking(() => {
-        drainVisibleTerminalBacklog(manager)
+        drainVisibleTerminalBacklog(currentManager)
+        enforceTerminalViewportIntents(currentManager)
         // Why: the shared atlas reset repaints every live manager, so keep it
         // out of the reveal's pre-paint critical path.
         resetAndRefreshAllTerminalWebglAtlases()
-        manager.scheduleRevealRepaint()
+        currentManager.scheduleRevealRepaint()
       })
     }
   }

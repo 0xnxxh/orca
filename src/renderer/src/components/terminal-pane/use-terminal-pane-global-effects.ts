@@ -154,10 +154,12 @@ export function useTerminalPaneGlobalEffects({
   useEffect(() => {
     const recovery = postPaintVisibilityRecoveryRef.current
     postPaintVisibilityRecoveryRef.current = null
-    if (!recovery || !isVisibleRef.current || managerRef.current !== recovery.manager) {
+    const manager = managerRef.current
+    if (!recovery || !isVisibleRef.current || !manager) {
       return
     }
-    recovery.run()
+    // Why: lifecycle effects may replace the manager after layout but before this effect.
+    recovery.run(manager)
   }, [isActive, isWorktreeActive, rendererVisible, isVisibleRef, managerRef])
 
   useEffect(() => {

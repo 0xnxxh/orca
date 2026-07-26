@@ -121,7 +121,7 @@ describe('resumeTerminalVisibility reveal repaint', () => {
 
     expect(order).toEqual(['resume-rendering', 'fit-reveal'])
 
-    recovery?.run()
+    recovery?.run(manager as never as PaneManager)
     expect(order).toEqual(['resume-rendering', 'fit-reveal', 'reveal-repaint'])
   })
 
@@ -148,7 +148,7 @@ describe('resumeTerminalVisibility reveal repaint', () => {
 
     expect(order).toEqual(['resume-rendering', 'fit-reveal'])
     expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
-    recovery?.run()
+    recovery?.run(manager as never as PaneManager)
     expect(order.slice(0, 4)).toEqual(['resume-rendering', 'fit-reveal', 'backlog', 'flush'])
     expect(resetAndRefreshAllTerminalWebglAtlases).toHaveBeenCalledTimes(1)
     // Why: no flush may land between resume and the corrective reveal fit.
@@ -157,6 +157,25 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     const flushIdx = order.indexOf('flush')
     expect(resumeIdx).toBeLessThan(fitIdx)
     expect(fitIdx).toBeLessThan(flushIdx)
+  })
+
+  it('retargets post-paint recovery to a replacement manager', async () => {
+    const oldManager = createManager()
+    const newTerminal = { name: 'replacement' }
+    const newManager = createManager()
+    newManager.getPanes.mockReturnValue([{ terminal: newTerminal }])
+    const { flushTerminalOutput } = vi.mocked(
+      await import('@/lib/pane-manager/pane-terminal-output-scheduler')
+    )
+    const recovery = resumeTerminalVisibility(resumeArgs(oldManager, false))
+
+    recovery?.run(newManager as never as PaneManager)
+
+    expect(flushTerminalOutput).toHaveBeenCalledWith(newTerminal, {
+      maxChars: 256 * 1024
+    })
+    expect(newManager.scheduleRevealRepaint).toHaveBeenCalledTimes(1)
+    expect(oldManager.scheduleRevealRepaint).not.toHaveBeenCalled()
   })
 
   it('routes a heavy reveal through fitAllRevealedPanes, not the sync fit', () => {

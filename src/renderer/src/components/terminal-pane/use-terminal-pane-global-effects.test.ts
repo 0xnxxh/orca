@@ -314,6 +314,8 @@ describe('useTerminalPaneGlobalEffects', () => {
       'flush:terminal-a',
       'recover:terminal-b',
       'flush:terminal-b',
+      'intent:terminal-a',
+      'intent:terminal-b',
       'reset-atlas',
       'refresh',
       'reveal-repaint'
