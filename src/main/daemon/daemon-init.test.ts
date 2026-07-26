@@ -413,7 +413,10 @@ async function importFresh() {
   getDaemonLaunchIdentityMock.mockClear()
   isDaemonStaleForCurrentBundleMock.mockReset()
   isDaemonStaleForCurrentBundleMock.mockReturnValue(false)
-  killStaleDaemonMock.mockClear()
+  // mockClear alone would leave a previous test's mockResolvedValue in place, silently disarming
+  // the confirmedReplacement gate for every test that runs after it.
+  killStaleDaemonMock.mockReset()
+  killStaleDaemonMock.mockResolvedValue(true)
   getAppPathMock.mockReset()
   getAppPathMock.mockReturnValue('/fake/app')
   forkMock.mockReset()
@@ -812,9 +815,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(trackDaemonRetiredMock).toHaveBeenCalledWith('died_respawn')
     trackDaemonRetiredMock.mockClear()
     trackDaemonReplacedMock.mockClear()
-    // STA-2376: the resolver respawn must stay silent here. doRespawn never kills the daemon, so the
-    // ensureRunning() it triggers re-enters the launcher, which emits the replace itself. Emitting
-    // here too would double-count every runtime resolver replacement.
+    // STA-2376: the resolver respawn attributes rather than emits — the launch it triggers reports it.
+    // Emitting here too would double-count, and would fire before the outcome is known.
     await replacementAdapter.options.respawn?.('unhealthy_resolver')
     expect(trackDaemonRetiredMock).not.toHaveBeenCalled()
     expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
@@ -1531,6 +1533,47 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       'stop after replacement decision'
     )
 
+    expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
+  })
+
+  // STA-2376 regression: dropping the adapter's last authenticated client is enough to make an idle
+  // daemon self-retire, so by the time the launcher runs there is nothing to kill and its own
+  // confirmed-kill gate reports nothing. The attributed reason is what keeps the runtime resolver
+  // replacement on the wire — and keeps it off the failed_health_check bucket it would otherwise land in.
+  it('reports the runtime resolver replacement even after the daemon self-retired', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+    const adapterOptions = adapterInstances[0].options
+    trackDaemonReplacedMock.mockClear()
+
+    // The daemon is gone before the launcher looks: nothing answers, nothing left to kill.
+    checkDaemonHealthMock.mockResolvedValue('unreachable')
+    killStaleDaemonMock.mockResolvedValueOnce(false).mockResolvedValueOnce(false)
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('stop after replacement decision')
+    })
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+
+    await adapterOptions.respawn?.('unhealthy_resolver')
+    expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
+
+    await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+      'stop after replacement decision'
+    )
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('unhealthy_resolver', 0)
+
+    // One-shot: a later unrelated launch must not inherit the attribution.
+    trackDaemonReplacedMock.mockClear()
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('stop after replacement decision')
+    })
+    await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+      'stop after replacement decision'
+    )
     expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
   })
 

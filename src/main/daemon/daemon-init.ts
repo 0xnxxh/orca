@@ -40,6 +40,7 @@ import {
 } from './daemon-host-relocation'
 import { DegradedDaemonPtyProvider } from './degraded-daemon-pty-provider'
 import { trackDaemonReplaced, trackDaemonRetired } from './daemon-lifecycle-event'
+import type { DaemonReplaceReason } from '../../shared/daemon-lifecycle-telemetry'
 import {
   getLocalPtyProvider,
   setLocalPtyProvider,
@@ -322,6 +323,12 @@ async function shouldPreserveDaemonWithLiveSessions(
   return true
 }
 
+// Why: the adapter decides a runtime resolver replacement, but the launcher completes it — and by
+// then the daemon has usually self-retired (dropping its last authenticated client is enough), so
+// there is nothing left to kill and the launcher's own confirmed-kill gate would report nothing.
+// The adapter hands the reason across so the launch it triggers reports what actually drove it.
+let attributedReplaceReason: DaemonReplaceReason | null = null
+
 function createOutOfProcessLauncher(
   runtimeDir: string,
   macosLoginSessionWatch = false
@@ -330,6 +337,9 @@ function createOutOfProcessLauncher(
     const entryPath = getDaemonEntryPath()
     const pidPath = suppliedPidPath ?? getDaemonPidPath(runtimeDir)
     const launchNonce = suppliedLaunchNonce ?? randomUUID()
+    // One-shot: whichever launch consumes it owns the attribution, so a later unrelated launch can't reuse it.
+    const attributedReason = attributedReplaceReason
+    attributedReplaceReason = null
     let pendingReplacement:
       | {
           reason: Parameters<typeof trackDaemonReplaced>[0]
@@ -465,7 +475,13 @@ function createOutOfProcessLauncher(
       adoptionClient = null
       confirmedReplacement =
         (await killStaleDaemon(runtimeDir, socketPath, tokenPath)) || confirmedReplacement
-      if (pendingReplacement && confirmedReplacement) {
+      // Why: an attributed reason outranks whatever this launch inferred. The adapter already proved
+      // the replacement (resolver unhealthy, zero live sessions) before handing off, and the daemon it
+      // decided against is gone either way — self-retired, or killed just above. Preferring it also
+      // keeps the surviving-daemon case to a single event instead of one from each side.
+      if (attributedReason) {
+        trackDaemonReplaced(attributedReason, 0)
+      } else if (pendingReplacement && confirmedReplacement) {
         trackDaemonReplaced(pendingReplacement.reason, pendingReplacement.liveSessionCount)
       }
 
@@ -703,15 +719,19 @@ export async function initDaemonPtyProvider(
     historyPath: getHistoryDir(),
     // Why: on daemon death, ensureConnected() detects the dead socket and calls this to fork a replacement before retrying.
     respawn: async (reason: DaemonRespawnReason) => {
-      // Why: 'unhealthy_resolver' deliberately emits nothing here — doRespawn never kills the daemon,
-      // so the ensureRunning() below re-enters the launcher, which re-detects the same condition and
-      // emits the replace itself, gated on a confirmed kill. Emitting here too would double-count,
-      // and would also fire when the launcher goes on to preserve (resolver recovered mid-flight).
+      // Why: attribute rather than emit — the launcher below is the one that completes the
+      // replacement, and emitting here would fire before the outcome is known.
       // Caveat: a wedged-but-alive daemon (#8689) can still report died_respawn here and
       // failed_health_check from the launcher — the app cannot tell wedged from dead at this point.
       if (reason === 'daemon_died') {
         console.warn('[daemon] Daemon process died — respawning')
-        trackDaemonRetired('died_respawn')
+        // Why: a manual restart tears the daemon down under a still-live adapter, so a pane
+        // respawning on its synthetic exit would bill a user action to the crash bucket.
+        if (!restartInFlight) {
+          trackDaemonRetired('died_respawn')
+        }
+      } else if (reason === 'unhealthy_resolver') {
+        attributedReplaceReason = 'unhealthy_resolver'
       }
       newSpawner.resetHandle()
       await newSpawner.ensureRunning()
@@ -894,15 +914,19 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
     tokenPath: info.tokenPath,
     historyPath: getHistoryDir(),
     respawn: async (reason: DaemonRespawnReason) => {
-      // Why: 'unhealthy_resolver' deliberately emits nothing here — doRespawn never kills the daemon,
-      // so the ensureRunning() below re-enters the launcher, which re-detects the same condition and
-      // emits the replace itself, gated on a confirmed kill. Emitting here too would double-count,
-      // and would also fire when the launcher goes on to preserve (resolver recovered mid-flight).
+      // Why: attribute rather than emit — the launcher below is the one that completes the
+      // replacement, and emitting here would fire before the outcome is known.
       // Caveat: a wedged-but-alive daemon (#8689) can still report died_respawn here and
       // failed_health_check from the launcher — the app cannot tell wedged from dead at this point.
       if (reason === 'daemon_died') {
         console.warn('[daemon] Daemon process died — respawning')
-        trackDaemonRetired('died_respawn')
+        // Why: a manual restart tears the daemon down under a still-live adapter, so a pane
+        // respawning on its synthetic exit would bill a user action to the crash bucket.
+        if (!restartInFlight) {
+          trackDaemonRetired('died_respawn')
+        }
+      } else if (reason === 'unhealthy_resolver') {
+        attributedReplaceReason = 'unhealthy_resolver'
       }
       currentSpawner.resetHandle()
       await currentSpawner.ensureRunning()
