@@ -117,12 +117,15 @@ describe('resumeTerminalVisibility reveal repaint', () => {
   it('schedules the repaint after rendering resumes on a heavy reveal', () => {
     const order: string[] = []
     const manager = createManager(order)
-    resumeTerminalVisibility(resumeArgs(manager, false))
+    const recovery = resumeTerminalVisibility(resumeArgs(manager, false))
 
+    expect(order).toEqual(['resume-rendering', 'fit-reveal'])
+
+    recovery?.run()
     expect(order).toEqual(['resume-rendering', 'fit-reveal', 'reveal-repaint'])
   })
 
-  it('reattaches WebGL and fits before flushing backlog on a heavy reveal', async () => {
+  it('defers backlog and shared atlas recovery until after resume and fit', async () => {
     // Why: resume before flush avoids DOM bold flash; fit before flush avoids
     // writing TUI backlog onto the transient DOM↔WebGL one-column-off grid.
     const order: string[] = []
@@ -131,6 +134,9 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     const { flushTerminalOutput, requestTerminalBacklogRecovery } = vi.mocked(
       await import('@/lib/pane-manager/pane-terminal-output-scheduler')
     )
+    const { resetAndRefreshAllTerminalWebglAtlases } = vi.mocked(
+      await import('@/lib/pane-manager/pane-manager-registry')
+    )
     flushTerminalOutput.mockImplementation(() => {
       order.push('flush')
     })
@@ -138,9 +144,13 @@ describe('resumeTerminalVisibility reveal repaint', () => {
       order.push('backlog')
     })
 
-    resumeTerminalVisibility(resumeArgs(manager, false))
+    const recovery = resumeTerminalVisibility(resumeArgs(manager, false))
 
+    expect(order).toEqual(['resume-rendering', 'fit-reveal'])
+    expect(resetAndRefreshAllTerminalWebglAtlases).not.toHaveBeenCalled()
+    recovery?.run()
     expect(order.slice(0, 4)).toEqual(['resume-rendering', 'fit-reveal', 'backlog', 'flush'])
+    expect(resetAndRefreshAllTerminalWebglAtlases).toHaveBeenCalledTimes(1)
     // Why: no flush may land between resume and the corrective reveal fit.
     const resumeIdx = order.indexOf('resume-rendering')
     const fitIdx = order.indexOf('fit-reveal')

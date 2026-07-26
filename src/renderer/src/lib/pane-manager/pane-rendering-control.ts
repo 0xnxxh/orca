@@ -75,7 +75,8 @@ export function resumePaneRendering(panes: Iterable<ManagedPaneInternal>): void 
     pane.webglAttachmentDeferred = false
     pane.webglDisabledAfterContextLoss = false
     pane.webglRebuildDeferred = false
-    if (wasDeferred && pane.webglAddon && !isPaneWebglContextLost(pane)) {
+    const contextLost = Boolean(pane.webglAddon && isPaneWebglContextLost(pane))
+    if (wasDeferred && pane.webglAddon && !contextLost) {
       if (rebuildDeferred) {
         rebuildAttachedWebgl(pane)
         continue
@@ -90,7 +91,7 @@ export function resumePaneRendering(panes: Iterable<ManagedPaneInternal>): void 
       }
       continue
     }
-    if (pane.webglAddon) {
+    if (contextLost) {
       disposeWebgl(pane)
     }
     reattachWebglIfNeeded(pane)

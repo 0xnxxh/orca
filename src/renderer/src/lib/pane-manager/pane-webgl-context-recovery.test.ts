@@ -140,6 +140,37 @@ describe('terminal WebGL context recovery', () => {
     expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
   })
 
+  it('keeps a healthy visible context on window wake', () => {
+    const pane = createPane()
+    attachWebgl(pane)
+    const addon = pane.webglAddon
+
+    resumePaneRendering([pane])
+
+    expect(pane.webglAddon).toBe(addon)
+    expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(1)
+  })
+
+  it('replaces a synchronously lost visible context on window wake', () => {
+    const pane = createPane()
+    const dispose = vi.fn()
+    pane.webglAddon = {
+      dispose,
+      _renderer: {
+        _gl: {
+          getExtension: vi.fn(() => null),
+          isContextLost: vi.fn(() => true)
+        }
+      }
+    } as never
+
+    resumePaneRendering([pane])
+
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(pane.webglAddon).not.toBeNull()
+    expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(1)
+  })
+
   it('replaces a retained context lost before xterm fires its delayed event', () => {
     stubWindowsDesktop()
     const pane = createPane()
@@ -232,6 +263,20 @@ describe('terminal WebGL context recovery', () => {
     expect(pane.webglDisabledAfterContextLoss).toBe(false)
     expect(pane.webglAddon).not.toBeNull()
     expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not schedule a DOM refit when a hidden retained context is lost', () => {
+    stubWindowsDesktop()
+    const requestAnimationFrame = vi.fn(() => 1)
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame)
+    const pane = createPane()
+    attachWebgl(pane)
+    suspendPaneRendering([pane])
+
+    fireContextLoss(pane)
+
+    expect(requestAnimationFrame).not.toHaveBeenCalled()
+    expect(pane.pendingWebglRefreshRafId).toBeNull()
   })
 
   it('re-latches when the retried context is lost again', () => {

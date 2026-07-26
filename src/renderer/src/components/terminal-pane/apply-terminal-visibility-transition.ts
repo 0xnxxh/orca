@@ -3,7 +3,8 @@ import type { ScrollState } from '@/lib/pane-manager/pane-manager-types'
 import {
   hideTerminalVisibility,
   resumeTerminalVisibility,
-  type TerminalHiddenReason
+  type TerminalHiddenReason,
+  type TerminalVisibilityPostPaintRecovery
 } from './terminal-visibility-resume'
 
 export type TerminalVisibilityBookkeepingRefs = {
@@ -27,7 +28,7 @@ type ApplyTerminalVisibilityTransitionArgs = TerminalVisibilityBookkeepingRefs &
 // Record visible mounts before PaneManager exists so first tab hide stays light.
 export function applyTerminalVisibilityTransition(
   args: ApplyTerminalVisibilityTransitionArgs
-): void {
+): TerminalVisibilityPostPaintRecovery | null {
   const {
     manager,
     rendererVisible,
@@ -54,7 +55,7 @@ export function applyTerminalVisibilityTransition(
       wasVisibleRef.current = false
       wasWorktreeActiveRef.current = isWorktreeActive
     }
-    return
+    return null
   }
 
   const wasVisible = wasVisibleRef.current
@@ -65,7 +66,7 @@ export function applyTerminalVisibilityTransition(
       hasCompletedVisibleResumeRef.current &&
       !renderingSuspendedByVisibilityRef.current &&
       (wasVisible || hiddenReasonRef.current === 'tab')
-    resumeTerminalVisibility({
+    const postPaintRecovery = resumeTerminalVisibility({
       manager,
       isActive,
       wasVisible,
@@ -79,7 +80,7 @@ export function applyTerminalVisibilityTransition(
     hasCompletedVisibleResumeRef.current = true
     hiddenReasonRef.current = null
     applyPendingFollowOutputRequests()
-    return
+    return postPaintRecovery
   }
 
   const hiddenState = hideTerminalVisibility({
@@ -94,4 +95,5 @@ export function applyTerminalVisibilityTransition(
   hiddenReasonRef.current = hiddenState.hiddenReason
   wasVisibleRef.current = false
   wasWorktreeActiveRef.current = isWorktreeActive
+  return null
 }

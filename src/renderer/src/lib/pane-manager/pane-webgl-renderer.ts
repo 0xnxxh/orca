@@ -17,6 +17,7 @@ let suggestedRendererType: 'dom' | undefined
 // attach constantly in "on" mode. Latch the first failure and skip attempts
 // until the next recovery boundary (rendering resume or GPU-setting change).
 let webglAttachFailedSinceRecovery = false
+let contextInspectionUnavailableRecorded = false
 
 type ReleasableWebglContext = {
   getExtension(name: 'WEBGL_lose_context'): WEBGL_lose_context | null
@@ -75,7 +76,15 @@ export function cancelPendingWebglRefresh(pane: ManagedPaneInternal): void {
 export function isPaneWebglContextLost(pane: ManagedPaneInternal): boolean {
   try {
     const renderer = (pane.webglAddon as unknown as XtermWebglAddonInternals | null)?._renderer
-    return renderer?._gl?.isContextLost?.() === true
+    const isContextLost = renderer?._gl?.isContextLost
+    if (!isContextLost) {
+      if (pane.webglAddon && !contextInspectionUnavailableRecorded) {
+        contextInspectionUnavailableRecorded = true
+        recordTerminalWebglDiagnostic('webgl-context-inspection-unavailable', { paneId: pane.id })
+      }
+      return false
+    }
+    return isContextLost.call(renderer._gl) === true
   } catch {
     return true
   }
@@ -197,7 +206,7 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
       // visually blank, so keep the pane on the DOM renderer until the next
       // rendering resume (worktree foreground / window wake) retries it.
       pane.webglDisabledAfterContextLoss = true
-      disposeWebgl(pane, { refreshDimensions: true })
+      disposeWebgl(pane, { refreshDimensions: !pane.webglAttachmentDeferred })
     })
     pane.terminal.loadAddon(addon)
     pane.webglAddon = addon

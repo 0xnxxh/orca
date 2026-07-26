@@ -30,6 +30,11 @@ type ResumeTerminalVisibilityArgs = {
   withSuppressedScrollTracking: (callback: () => void) => void
 }
 
+export type TerminalVisibilityPostPaintRecovery = {
+  manager: PaneManager
+  run: () => void
+}
+
 type HideTerminalVisibilityArgs = {
   manager: PaneManager
   wasVisible: boolean
@@ -57,7 +62,7 @@ export function resumeTerminalVisibility({
   shouldUseLightTabResume,
   captureViewportPositions,
   withSuppressedScrollTracking
-}: ResumeTerminalVisibilityArgs): void {
+}: ResumeTerminalVisibilityArgs): TerminalVisibilityPostPaintRecovery | null {
   // Why: hiding the surface fired mouseleave, which cleared xterm's current
   // link but left its hover cell cache; without this reset a link stays dead
   // until a scroll when the pointer returns to the same cell on reveal.
@@ -85,19 +90,28 @@ export function resumeTerminalVisibility({
         focusActivePane(manager)
       }
     } else {
-      resumeTerminalVisibilityHeavy(manager, isActive)
+      resumeTerminalVisibilityBeforePaint(manager, isActive)
     }
     enforceTerminalViewportIntents(manager)
-    if (!shouldUseLightTabResume) {
-      // Why: this clear wipes the glyph atlas shared with other same-config
-      // terminals; refresh after reset so rebuilt atlases repaint from xterm.
-      resetAndRefreshAllTerminalWebglAtlases()
+    if (shouldUseLightTabResume) {
+      manager.scheduleRevealRepaint()
     }
-    // Why: the synchronous recovery above can fire before the revealed pane is
-    // attached and laid out, where the WebGL renderer drops redraw requests
-    // without retry. Follow up with a settled-frame, pane-scoped repaint.
-    manager.scheduleRevealRepaint()
   })
+  if (shouldUseLightTabResume) {
+    return null
+  }
+  return {
+    manager,
+    run: () => {
+      withSuppressedScrollTracking(() => {
+        drainVisibleTerminalBacklog(manager)
+        // Why: the shared atlas reset repaints every live manager, so keep it
+        // out of the reveal's pre-paint critical path.
+        resetAndRefreshAllTerminalWebglAtlases()
+        manager.scheduleRevealRepaint()
+      })
+    }
+  }
 }
 
 export function hideTerminalVisibility({
@@ -189,17 +203,19 @@ function requestLightTabBacklogRecovery(manager: PaneManager): void {
   }
 }
 
-function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean): void {
+function resumeTerminalVisibilityBeforePaint(manager: PaneManager, isActive: boolean): void {
   // Retained Windows surfaces reuse WebGL; disposed or pressure-lost surfaces reattach.
   manager.resumeRendering()
-  // Fit before flush so backlog cannot target transient DOM↔WebGL metrics.
   manager.fitAllRevealedPanes()
+  if (isActive) {
+    focusActivePane(manager)
+  }
+}
+
+function drainVisibleTerminalBacklog(manager: PaneManager): void {
   for (const pane of manager.getPanes()) {
     requestTerminalBacklogRecovery(pane.terminal)
     flushTerminalOutput(pane.terminal, { maxChars: VISIBLE_RESUME_FLUSH_CHARS })
-  }
-  if (isActive) {
-    focusActivePane(manager)
   }
 }
 

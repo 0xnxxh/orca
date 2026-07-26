@@ -17,7 +17,10 @@ import { useTerminalScrollVisibilityMemory } from './use-terminal-scroll-visibil
 import { useTerminalContainerFitSync } from './use-terminal-container-fit-sync'
 import { handleTerminalProgrammaticTextPaste } from './terminal-programmatic-text-paste'
 import { applyTerminalVisibilityTransition } from './apply-terminal-visibility-transition'
-import type { TerminalHiddenReason } from './terminal-visibility-resume'
+import type {
+  TerminalHiddenReason,
+  TerminalVisibilityPostPaintRecovery
+} from './terminal-visibility-resume'
 import { useTerminalWindowWakeRecovery } from './use-terminal-window-wake-recovery'
 import {
   releaseRendererPtyVisibilityClaim,
@@ -84,6 +87,7 @@ export function useTerminalPaneGlobalEffects({
   const hasCompletedVisibleResumeRef = useRef(false)
   const renderingSuspendedByVisibilityRef = useRef(false)
   const hiddenReasonRef = useRef<TerminalHiddenReason | null>(null)
+  const postPaintVisibilityRecoveryRef = useRef<TerminalVisibilityPostPaintRecovery | null>(null)
   const rendererVisible = isVisible && isWorktreeActive
   // Why: rebind/active-leaf changes without visibility flips must re-report PTY.
   const activeLeafPtyId = useAppStore((state) => {
@@ -130,7 +134,7 @@ export function useTerminalPaneGlobalEffects({
   useLayoutEffect(() => {
     isActiveRef.current = isActive
     isVisibleRef.current = rendererVisible
-    applyTerminalVisibilityTransition({
+    postPaintVisibilityRecoveryRef.current = applyTerminalVisibilityTransition({
       manager: managerRef.current,
       rendererVisible,
       isActive,
@@ -146,6 +150,15 @@ export function useTerminalPaneGlobalEffects({
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, isWorktreeActive, rendererVisible])
+
+  useEffect(() => {
+    const recovery = postPaintVisibilityRecoveryRef.current
+    postPaintVisibilityRecoveryRef.current = null
+    if (!recovery || !isVisibleRef.current || managerRef.current !== recovery.manager) {
+      return
+    }
+    recovery.run()
+  }, [isActive, isWorktreeActive, rendererVisible, isVisibleRef, managerRef])
 
   useEffect(() => {
     const ptyId = isActive && isVisible && isWorktreeActive ? activeLeafPtyId : null
