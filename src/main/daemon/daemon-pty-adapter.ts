@@ -1402,9 +1402,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.scheduleCheckpointTimer()
         return
       }
-      this.checkpointInFlight = this.checkpointDirtySessions().finally(() => {
-        this.checkpointInFlight = null
-        this.scheduleCheckpointTimer()
+      const checkpoint = this.checkpointDirtySessions()
+      this.checkpointInFlight = checkpoint
+      void checkpoint.finally(() => {
+        if (this.checkpointInFlight === checkpoint) {
+          this.checkpointInFlight = null
+          this.scheduleCheckpointTimer()
+        }
       })
     }, DaemonPtyAdapter.CHECKPOINT_INTERVAL_MS)
   }
@@ -1445,10 +1449,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
     options: { rescheduleDirty?: boolean } = {}
   ): Promise<void> {
     this.stopCheckpointTimer()
-    if (this.checkpointInFlight) {
-      await this.checkpointInFlight
-    }
-    const checkpoint = operation()
+    // Why: a promise tail keeps every waiter ordered; awaiting one active operation lets sibling waiters resume together.
+    const previous = this.checkpointInFlight ?? Promise.resolve()
+    const checkpoint = previous.catch(() => {}).then(operation)
     this.checkpointInFlight = checkpoint
     try {
       await checkpoint

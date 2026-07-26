@@ -1749,6 +1749,73 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
     })
 
+    it('serializes concurrent keepHistory and disconnectOnly checkpoints', async () => {
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const sessionIds = await Promise.all(
+        ['queued-checkpoint-a', 'queued-checkpoint-b', 'queued-checkpoint-c'].map(
+          async (sessionId) =>
+            (
+              await historyAdapter.spawn({
+                cols: 80,
+                rows: 24,
+                sessionId
+              })
+            ).id
+        )
+      )
+      const internals = historyAdapter as unknown as {
+        checkpointSessions(
+          sessionIds: Iterable<string>,
+          opts?: { final?: boolean; teardown?: boolean }
+        ): Promise<Set<string>>
+        client: { disconnect(): void }
+      }
+      const originalCheckpointSessions = internals.checkpointSessions.bind(historyAdapter)
+      let activeCheckpoints = 0
+      let maxActiveCheckpoints = 0
+      let checkpointCalls = 0
+      let releaseFirstCheckpoint!: () => void
+      let firstCheckpointStarted!: () => void
+      const firstStarted = new Promise<void>((resolve) => {
+        firstCheckpointStarted = resolve
+      })
+      const firstRelease = new Promise<void>((resolve) => {
+        releaseFirstCheckpoint = resolve
+      })
+      vi.spyOn(internals, 'checkpointSessions').mockImplementation(async (...args) => {
+        checkpointCalls++
+        activeCheckpoints++
+        maxActiveCheckpoints = Math.max(maxActiveCheckpoints, activeCheckpoints)
+        try {
+          if (checkpointCalls === 1) {
+            firstCheckpointStarted()
+            await firstRelease
+          }
+          return await originalCheckpointSessions(...args)
+        } finally {
+          activeCheckpoints--
+        }
+      })
+      vi.spyOn(internals.client, 'disconnect').mockImplementation(() => {})
+
+      const firstShutdown = historyAdapter.shutdown(sessionIds[0], {
+        immediate: true,
+        keepHistory: true
+      })
+      await firstStarted
+      const queuedOperations = [
+        historyAdapter.shutdown(sessionIds[1], { immediate: true, keepHistory: true }),
+        historyAdapter.shutdown(sessionIds[2], { immediate: true, keepHistory: true }),
+        historyAdapter.disconnectOnly()
+      ]
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      releaseFirstCheckpoint()
+      await Promise.all([firstShutdown, ...queuedOperations])
+
+      expect(checkpointCalls).toBe(4)
+      expect(maxActiveCheckpoints).toBe(1)
+    })
+
     it('reschedules another dirty session after a keepHistory checkpoint', async () => {
       const adapterClass = DaemonPtyAdapter as unknown as { CHECKPOINT_INTERVAL_MS: number }
       const previousInterval = adapterClass.CHECKPOINT_INTERVAL_MS
