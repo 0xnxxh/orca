@@ -114,10 +114,10 @@ export class HistoryManager {
     }
   }
 
-  abandonRecoveryFreeze(freeze: HistoryRecoveryFreeze): void {
-    const activeFreeze = this.recoveryFreezes.get(freeze.sessionId)
-    if (activeFreeze?.handle === freeze) {
-      this.recoveryFreezes.delete(freeze.sessionId)
+  abandonRecoveryFreeze(freeze?: HistoryRecoveryFreeze): void {
+    const activeFreeze = freeze ? this.recoveryFreezes.get(freeze.sessionId) : undefined
+    if (activeFreeze && activeFreeze.handle === freeze) {
+      this.recoveryFreezes.delete(activeFreeze.handle.sessionId)
     }
   }
 
@@ -126,9 +126,9 @@ export class HistoryManager {
     if (this.writers.has(sessionId)) {
       return
     }
-    if (!recoveryFreeze && hasTerminalHistoryRecoveryProtection(this.basePath, sessionId)) {
-      this.disabledSessions.add(sessionId)
-      return
+    if (hasTerminalHistoryRecoveryProtection(this.basePath, sessionId)) {
+      this.abandonRecoveryFreeze(recoveryFreeze)
+      return void this.disabledSessions.add(sessionId)
     }
     if (recoveryFreeze) {
       try {

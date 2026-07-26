@@ -184,7 +184,7 @@ describe('HistoryManager', () => {
       expect(relaunched.hasWriter(sessionId)).toBe(false)
     })
 
-    it('clears stale protection after a verified writer creates a good checkpoint', async () => {
+    it('rejects a freeze-verified writer for a protected recovery generation', async () => {
       const sessionId = 'recovered-protection'
       await mgr.openSession(sessionId, { cwd: '/old', cols: 80, rows: 24 })
       const recoveryFreeze = await mgr.freezeForRecovery(sessionId)
@@ -202,8 +202,9 @@ describe('HistoryManager', () => {
 
       await relaunched.checkpoint(sessionId, makeSnapshot({ snapshotAnsi: 'verified recovery' }))
 
-      expect(hasTerminalHistoryRecoveryProtection(dir, sessionId)).toBe(false)
-      expect(relaunched.hasWriter(sessionId)).toBe(true)
+      expect(hasTerminalHistoryRecoveryProtection(dir, sessionId)).toBe(true)
+      expect(relaunched.hasWriter(sessionId)).toBe(false)
+      expect(relaunched.isSessionDisabled(sessionId)).toBe(true)
     })
 
     it('rejects a consumed recovery freeze token', async () => {

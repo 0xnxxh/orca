@@ -301,6 +301,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
         return null
       }
       const restoreInfo = detection.status === 'restored' ? detection.restoreInfo : null
+      if (detection.status === 'restored' && detection.hasUnreadableRecovery) {
+        historyRecovery.unreadableSessionId = detection.sessionId
+      }
       if (!restoreInfo) {
         return null
       }
@@ -392,16 +395,21 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
 
     let scrollback = restoreInfo ? getRecoveredHistorySeed(restoreInfo) : null
-    let result = await createOrAttach(scrollback)
-    if (opts.agentSessionEnsure && !isAgentSessionClaimedSpawnResult(result.agentSessionEnsure)) {
-      // Why: a claim-incapable owner may already have spawned before returning
-      // a malformed response; retire only this requested session before failing closed.
-      await this.client.request('kill', { sessionId }).catch(() => {})
-      throw new Error('agent_session_claim_unavailable')
-    }
-    const requestedSessionId = sessionId
-    sessionId = result.agentSessionEnsure?.owner.ptyId ?? requestedSessionId
-    if (requestedSessionId !== sessionId) {
+    const adoptSpawnResultSession = async (spawnResult: CreateOrAttachResult): Promise<void> => {
+      const requestedSessionId = sessionId
+      if (
+        opts.agentSessionEnsure &&
+        !isAgentSessionClaimedSpawnResult(spawnResult.agentSessionEnsure)
+      ) {
+        // Why: a claim-incapable owner may already have spawned before returning
+        // a malformed response; retire only this requested session before failing closed.
+        await this.client.request('kill', { sessionId: requestedSessionId }).catch(() => {})
+        throw new Error('agent_session_claim_unavailable')
+      }
+      sessionId = spawnResult.agentSessionEnsure?.owner.ptyId ?? requestedSessionId
+      if (requestedSessionId === sessionId) {
+        return
+      }
       if (historyRecovery.freeze) {
         this.historyManager?.abandonRecoveryFreeze(historyRecovery.freeze)
         historyRecovery.freeze = null
@@ -411,6 +419,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
       restoreInfo = null
       scrollback = null
     }
+    let result = await createOrAttach(scrollback)
+    await adoptSpawnResultSession(result)
     const exitedResult = this.resultForExitBeforeSpawnReply(sessionId, result, operation)
     if (exitedResult) {
       return exitedResult
@@ -484,6 +494,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
         effectiveCols = restoreInfo.cols
         effectiveRows = restoreInfo.rows
         result = await createOrAttach(scrollback)
+        await adoptSpawnResultSession(result)
         const exitedRetryResult = this.resultForExitBeforeSpawnReply(sessionId, result, operation)
         if (exitedRetryResult) {
           return exitedRetryResult
@@ -522,7 +533,20 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (this.historyManager && !historyRecovery.identityChanged) {
         const recoveryFreeze =
           historyRecovery.freeze?.sessionId === sessionId ? historyRecovery.freeze : undefined
-        if (canReanchorHistory) {
+        if (historyRecovery.unreadableSessionId === sessionId) {
+          await this.historyManager.openSession(sessionId, {
+            cwd: effectiveCwd ?? '',
+            cols: effectiveCols,
+            rows: effectiveRows,
+            ...(recoveryFreeze ? { recoveryFreeze } : {}),
+            quarantineUnreadableRecovery: true
+          })
+          historyRecovery.freeze = null
+          if (this.historyManager.hasWriter(sessionId)) {
+            this.sessionsNeedingFullCheckpoint.add(sessionId)
+            this.lastFullCheckpointAt.delete(sessionId)
+          }
+        } else if (canReanchorHistory) {
           this.historyManager.registerWriter(sessionId, recoveryFreeze)
           historyRecovery.freeze = null
           this.sessionsNeedingFullCheckpoint.add(sessionId)

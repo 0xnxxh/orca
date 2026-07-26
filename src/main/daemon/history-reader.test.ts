@@ -211,10 +211,14 @@ describe('HistoryReader', () => {
       writeFileSync(join(sessionDir, 'checkpoint.json'), 'not json')
       writeFileSync(join(sessionDir, 'scrollback.bin'), 'fallback data\r\n')
 
-      const info = await reader.detectColdRestore('bad-cp')
-      expect(info).not.toBeNull()
-      expect(info!.snapshotAnsi).toBe('fallback data\r\n')
-      expect(info!.rehydrateSequences).toBe('')
+      const detection = await reader.detectColdRestoreState('bad-cp')
+      expect(detection.status).toBe('restored')
+      if (detection.status !== 'restored') {
+        throw new Error('expected fallback restore')
+      }
+      expect(detection.restoreInfo.snapshotAnsi).toBe('fallback data\r\n')
+      expect(detection.restoreInfo.rehydrateSequences).toBe('')
+      expect(detection.hasUnreadableRecovery).toBe(true)
     })
   })
 

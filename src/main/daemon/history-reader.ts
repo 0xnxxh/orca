@@ -39,7 +39,12 @@ export type RestorableHistoryProbe =
 
 export type ColdRestoreDetection =
   | { status: 'none' }
-  | { status: 'restored'; sessionId: string; restoreInfo: ColdRestoreInfo }
+  | {
+      status: 'restored'
+      sessionId: string
+      restoreInfo: ColdRestoreInfo
+      hasUnreadableRecovery: boolean
+    }
   | { status: 'unreadable'; sessionId: string }
 
 type IncrementalLogRestore = {
@@ -91,6 +96,9 @@ export class HistoryReader {
     sessionId: string,
     opts?: { ignoreCleanEnd?: boolean; wslDistro?: string }
   ): Promise<ColdRestoreDetection> {
+    if (hasTerminalHistoryRecoveryProtection(this.basePath, sessionId)) {
+      return { status: 'unreadable', sessionId }
+    }
     const metaRead = this.readMetaState(sessionId)
     if (metaRead.status === 'missing') {
       return { status: 'none' }
@@ -124,7 +132,12 @@ export class HistoryReader {
       opts?.wslDistro
     )
     if (logRestore.restoreInfo) {
-      return { status: 'restored', sessionId, restoreInfo: logRestore.restoreInfo }
+      return {
+        status: 'restored',
+        sessionId,
+        restoreInfo: logRestore.restoreInfo,
+        hasUnreadableRecovery: checkpointReadFailed
+      }
     }
 
     if (!checkpoint) {
@@ -138,7 +151,12 @@ export class HistoryReader {
         meta
       )
       if (legacyRestore) {
-        return { status: 'restored', sessionId, restoreInfo: legacyRestore }
+        return {
+          status: 'restored',
+          sessionId,
+          restoreInfo: legacyRestore,
+          hasUnreadableRecovery: checkpointReadFailed || logRestore.readFailed
+        }
       }
       return checkpointReadFailed || logRestore.readFailed || legacyExists
         ? { status: 'unreadable', sessionId }
@@ -148,7 +166,8 @@ export class HistoryReader {
     return {
       status: 'restored',
       sessionId,
-      restoreInfo: coldRestoreInfoFromSnapshot(checkpoint, checkpoint.cwd, meta)
+      restoreInfo: coldRestoreInfoFromSnapshot(checkpoint, checkpoint.cwd, meta),
+      hasUnreadableRecovery: logRestore.readFailed
     }
   }
 

@@ -32,7 +32,10 @@ import {
   TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES,
   TERMINAL_HISTORY_LEGACY_SCROLLBACK_MAX_BYTES
 } from './terminal-history-file-limits'
-import { getTerminalHistoryQuarantineOwnerDir } from './terminal-history-recovery-quarantine'
+import {
+  getTerminalHistoryQuarantineOwnerDir,
+  hasTerminalHistoryRecoveryProtection
+} from './terminal-history-recovery-quarantine'
 import type { HistoryReader } from './history-reader'
 import type { SubprocessHandle } from './session'
 import type { DaemonFileLog } from './daemon-file-log'
@@ -1833,6 +1836,38 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(existsSync(join(sessionDir, 'meta.json'))).toBe(true)
     })
 
+    it('quarantines an unreadable checkpoint even when legacy scrollback restores', async () => {
+      const sessionId = 'oversized-checkpoint-with-fallback'
+      const sessionDir = join(historyDir, getHistorySessionDirName(sessionId))
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(
+        join(sessionDir, 'meta.json'),
+        JSON.stringify({
+          cwd: '/projects/oversized',
+          cols: 80,
+          rows: 24,
+          startedAt: '2026-07-25T10:00:00Z',
+          endedAt: null,
+          exitCode: null
+        })
+      )
+      const checkpointPath = join(sessionDir, 'checkpoint.json')
+      const checkpointBytes = TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES + 1
+      createSparseFile(checkpointPath, checkpointBytes)
+      writeFileSync(join(sessionDir, 'scrollback.bin'), 'legacy fallback\r\n')
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+
+      const result = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
+
+      expect(result.coldRestore?.scrollback).toContain('legacy fallback')
+      expect(existsSync(checkpointPath)).toBe(false)
+      const ownerDir = getTerminalHistoryQuarantineOwnerDir(historyDir, sessionId)
+      const bundles = readdirSync(ownerDir)
+      expect(bundles).toHaveLength(1)
+      expect(statSync(join(ownerDir, bundles[0], 'checkpoint.json')).size).toBe(checkpointBytes)
+      expect(historyAdapter.getHistoryManager()!.hasWriter(sessionId)).toBe(true)
+    })
+
     it('keeps unreadable history suspended when a fresh adapter finds the daemon live', async () => {
       const sessionId = 'live-with-unreadable-history'
       await adapter.spawn({ cols: 80, rows: 24, sessionId })
@@ -1862,6 +1897,54 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(suspend).toHaveBeenCalledWith(sessionId, expect.objectContaining({ sessionId }))
       expect(statSync(checkpointPath).size).toBe(checkpointBytes)
       expect(existsSync(getTerminalHistoryQuarantineOwnerDir(historyDir, sessionId))).toBe(false)
+    })
+
+    it('keeps protected history suspended when its files become readable before reattach', async () => {
+      const sessionId = 'live-with-recovered-protection'
+      await adapter.spawn({ cols: 80, rows: 24, sessionId })
+      const sessionDir = join(historyDir, getHistorySessionDirName(sessionId))
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(
+        join(sessionDir, 'meta.json'),
+        JSON.stringify({
+          cwd: '/projects/preserved',
+          cols: 80,
+          rows: 24,
+          startedAt: '2026-07-25T10:00:00Z',
+          endedAt: null,
+          exitCode: null
+        })
+      )
+      const checkpointPath = join(sessionDir, 'checkpoint.json')
+      createSparseFile(checkpointPath, TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES + 1)
+      await leaveFailedQuarantineProtection(historyDir, sessionId)
+      writeFileSync(
+        checkpointPath,
+        JSON.stringify({
+          snapshotAnsi: 'must stay protected',
+          scrollbackAnsi: '',
+          rehydrateSequences: '',
+          cwd: '/projects/preserved',
+          cols: 80,
+          rows: 24,
+          modes: {
+            bracketedPaste: false,
+            mouseTracking: false,
+            applicationCursor: false,
+            alternateScreen: false
+          },
+          scrollbackLines: 0,
+          checkpointedAt: '2026-07-25T10:01:00Z'
+        })
+      )
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+
+      const result = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
+
+      expect(result.isReattach).toBe(true)
+      expect(historyAdapter.getHistoryManager()!.hasWriter(sessionId)).toBe(false)
+      expect(hasTerminalHistoryRecoveryProtection(historyDir, sessionId)).toBe(true)
+      expect(readFileSync(checkpointPath, 'utf8')).toContain('must stay protected')
     })
 
     itOnPosix(
@@ -2408,6 +2491,83 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       }
       expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(true)
       expect(internals.lastFullCheckpointAt.has(sessionId)).toBe(false)
+    })
+
+    it('revalidates a claimed canonical id after replacing a raced spawn', async () => {
+      const sessionId = 'probe-race-claimed-request'
+      const canonicalId = 'probe-race-claimed-canonical'
+      const sessionDir = join(historyDir, getHistorySessionDirName(sessionId))
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(
+        join(sessionDir, 'meta.json'),
+        JSON.stringify({
+          cwd: '/projects/raced',
+          cols: 100,
+          rows: 30,
+          startedAt: '2026-04-15T10:00:00Z',
+          endedAt: null,
+          exitCode: null
+        })
+      )
+      writeFileSync(join(sessionDir, 'scrollback.bin'), 'raced claimed output\r\n')
+      const claim = {
+        digestVersion: 1 as const,
+        keyId: 'key',
+        identityDigest: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        worktreeScopeDigest: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        agent: 'codex' as const
+      }
+      const surface = {
+        worktreeId: 'worktree',
+        tabId: 'tab',
+        leafId: '11111111-1111-4111-8111-111111111111',
+        terminalHandle: 'term_claim_race'
+      }
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const client = (
+        historyAdapter as unknown as {
+          client: { request: (type: string, payload?: unknown) => Promise<unknown> }
+        }
+      ).client
+      const originalRequest = client.request.bind(client)
+      let createCalls = 0
+      vi.spyOn(client, 'request').mockImplementation(async (type: string, payload?: unknown) => {
+        if (type === 'getSize') {
+          return { size: { cols: 100, rows: 30 } }
+        }
+        if (type === 'createOrAttach') {
+          createCalls++
+          if (createCalls === 2) {
+            await adapter.spawn({
+              cols: 80,
+              rows: 24,
+              sessionId: canonicalId,
+              agentSessionEnsure: {
+                claim,
+                surface: { ...surface, terminalHandle: 'term_claim_race_canonical' }
+              }
+            })
+          }
+        }
+        return await originalRequest(type, payload)
+      })
+
+      const result = await historyAdapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId,
+        agentSessionEnsure: { claim, surface }
+      })
+
+      expect(createCalls).toBe(2)
+      expect(result.id).toBe(canonicalId)
+      expect(result.agentSessionEnsure?.disposition).toBe('adopted')
+      expect(result.coldRestore).toBeUndefined()
+      expect(historyAdapter.getHistoryManager()!.hasWriter(sessionId)).toBe(false)
+      expect(historyAdapter.getHistoryManager()!.hasWriter(canonicalId)).toBe(false)
+      expect(readFileSync(join(sessionDir, 'scrollback.bin'), 'utf8')).toContain(
+        'raced claimed output'
+      )
     })
 
     it('falls back to the full cold-restore detect when the aliveness probe fails', async () => {
