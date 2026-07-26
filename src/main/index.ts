@@ -852,7 +852,11 @@ async function prepareCodexSessionResumeForLaunch(args: {
   const sessionSource = await findTrustedCodexSessionResume({
     sessionId: args.providerSession.id,
     transcriptPath: args.providerSession.transcriptPath,
-    trustedCodexHomes: trustedHomes
+    trustedCodexHomes: trustedHomes,
+    // Why: the legacy id rescan's winning home becomes this pane's CODEX_HOME, i.e. its account;
+    // rank it by the current selection so settings insertion order can never decide the account.
+    selectedAccountCodexHome: codexRuntimeHome.getSelectedHostAccountCodexHomePath(),
+    systemCodexHomePath: systemHomePath
   })
   if (!sessionSource) {
     // Why: an unverifiable Codex rollout still blocks; only paths that never claimed Codex

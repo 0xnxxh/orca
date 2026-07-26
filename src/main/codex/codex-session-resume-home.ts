@@ -93,10 +93,54 @@ export function claimsCodexRolloutLayout(transcriptPath: string | undefined): bo
   return CODEX_ROLLOUT_LAYOUT_PATH.test(persistedPath.replace(/\\/g, '/'))
 }
 
+/**
+ * Orders trusted homes for the legacy id rescan, lowest wins.
+ *
+ * The winning home becomes the resumed pane's CODEX_HOME, so it picks the
+ * account. Rank the currently selected account's own home first — once a
+ * rollout is hardlinked into every managed home the id alone no longer names
+ * an account, and resuming under the account the user has selected is what
+ * they asked for. The real system home ranks next because codex refreshes it
+ * directly. Everything else is ordered by normalized path so no winner ever
+ * depends on the order accounts happen to sit in settings.
+ */
+function rankTrustedCodexHomesForRescan(args: {
+  trustedCodexHomes: readonly string[]
+  selectedAccountCodexHome?: string | null
+  systemCodexHomePath?: string | null
+}): string[] {
+  const selected = args.selectedAccountCodexHome?.trim()
+  const system = args.systemCodexHomePath?.trim()
+  const selectedComparison = selected ? normalizeRuntimePathForComparison(selected) : null
+  const systemComparison = system ? normalizeRuntimePathForComparison(system) : null
+  const rankOf = (comparisonHome: string): number => {
+    if (selectedComparison && comparisonHome === selectedComparison) {
+      return 0
+    }
+    return systemComparison && comparisonHome === systemComparison ? 1 : 2
+  }
+  return args.trustedCodexHomes
+    .map((homePath) => ({ homePath, comparisonHome: normalizeRuntimePathForComparison(homePath) }))
+    .sort((left, right) => {
+      const rankDelta = rankOf(left.comparisonHome) - rankOf(right.comparisonHome)
+      if (rankDelta !== 0) {
+        return rankDelta
+      }
+      return left.comparisonHome < right.comparisonHome
+        ? -1
+        : left.comparisonHome > right.comparisonHome
+          ? 1
+          : 0
+    })
+    .map((entry) => entry.homePath)
+}
+
 export async function findTrustedCodexSessionResume(args: {
   sessionId: string
   transcriptPath: string | undefined
   trustedCodexHomes: readonly string[]
+  selectedAccountCodexHome?: string | null
+  systemCodexHomePath?: string | null
   fileIsRegular?: (filePath: string) => boolean
   listSessionFiles?: (sessionsRoot: string) => AsyncIterable<string>
 }): Promise<{ homePath: string; transcriptPath: string } | null> {
@@ -118,7 +162,7 @@ export async function findTrustedCodexSessionResume(args: {
       listCodexSessionRolloutFilesIncrementally(sessionsRoot, { batchSize: 64, yieldMs: 0 }))
   const expectedSuffix = `-${args.sessionId}.jsonl`.toLowerCase()
   const seenHomes = new Set<string>()
-  for (const homePath of args.trustedCodexHomes) {
+  for (const homePath of rankTrustedCodexHomesForRescan(args)) {
     const comparisonHome = normalizeRuntimePathForComparison(homePath)
     if (seenHomes.has(comparisonHome)) {
       continue

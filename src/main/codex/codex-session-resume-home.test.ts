@@ -226,6 +226,111 @@ describe('resolveTrustedCodexSessionResumeHome', () => {
   })
 })
 
+describe('findTrustedCodexSessionResume legacy-rescan home ranking', () => {
+  const sessionId = '019f81b9-19a9-7651-a8d1-352d9420bd11'
+  const systemHome = join('/Users', 'example', '.codex')
+  const sharedMirror = join('/userData', 'codex-runtime-home', 'home')
+  const accountAHome = join('/userData', 'codex-accounts', 'account-a', 'home')
+  const accountBHome = join('/userData', 'codex-accounts', 'account-b', 'home')
+
+  const rolloutIn = (homePath: string): string =>
+    join(homePath, 'sessions', '2026', '07', '20', `rollout-2026-07-20T15-50-19-${sessionId}.jsonl`)
+
+  // Why: PR #10770 hardlinks one rollout into every managed home, so the id alone stops naming an account.
+  const listRolloutInEveryHome = async function* (sessionsRoot: string): AsyncIterable<string> {
+    yield join(sessionsRoot, '2026', '07', '20', `rollout-2026-07-20T15-50-19-${sessionId}.jsonl`)
+  }
+
+  const listRolloutOnlyIn = (homePath: string) =>
+    async function* (sessionsRoot: string): AsyncIterable<string> {
+      if (sessionsRoot === join(homePath, 'sessions')) {
+        yield* listRolloutInEveryHome(sessionsRoot)
+      }
+    }
+
+  it('resumes into the selected account home whatever order the homes arrive in', async () => {
+    for (const trustedCodexHomes of [
+      [systemHome, sharedMirror, accountAHome, accountBHome],
+      [systemHome, sharedMirror, accountBHome, accountAHome],
+      [accountBHome, accountAHome, sharedMirror, systemHome]
+    ]) {
+      await expect(
+        findTrustedCodexSessionResume({
+          sessionId,
+          transcriptPath: undefined,
+          trustedCodexHomes,
+          selectedAccountCodexHome: accountBHome,
+          systemCodexHomePath: systemHome,
+          listSessionFiles: listRolloutInEveryHome
+        })
+      ).resolves.toEqual({ homePath: accountBHome, transcriptPath: rolloutIn(accountBHome) })
+    }
+  })
+
+  it('falls back to the real system home when no account home is selected', async () => {
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId,
+        transcriptPath: undefined,
+        trustedCodexHomes: [sharedMirror, accountAHome, systemHome],
+        selectedAccountCodexHome: null,
+        systemCodexHomePath: systemHome,
+        listSessionFiles: listRolloutInEveryHome
+      })
+    ).resolves.toEqual({ homePath: systemHome, transcriptPath: rolloutIn(systemHome) })
+  })
+
+  it('orders the remaining homes by path so insertion order never decides', async () => {
+    for (const trustedCodexHomes of [
+      [accountBHome, sharedMirror, accountAHome],
+      [accountAHome, accountBHome, sharedMirror]
+    ]) {
+      await expect(
+        findTrustedCodexSessionResume({
+          sessionId,
+          transcriptPath: undefined,
+          trustedCodexHomes,
+          selectedAccountCodexHome: null,
+          systemCodexHomePath: systemHome,
+          listSessionFiles: listRolloutInEveryHome
+        })
+      ).resolves.toEqual({ homePath: accountAHome, transcriptPath: rolloutIn(accountAHome) })
+    }
+  })
+
+  it('still resumes the only home holding the id, selected or not', async () => {
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId,
+        transcriptPath: undefined,
+        trustedCodexHomes: [systemHome, sharedMirror, accountAHome, accountBHome],
+        selectedAccountCodexHome: accountAHome,
+        systemCodexHomePath: systemHome,
+        listSessionFiles: listRolloutOnlyIn(accountBHome)
+      })
+    ).resolves.toEqual({ homePath: accountBHome, transcriptPath: rolloutIn(accountBHome) })
+  })
+
+  it('does not rescan into the selected account home when transcript provenance was rejected', async () => {
+    const listSessionFiles = vi.fn((): AsyncIterable<string> => {
+      throw new Error('must not scan')
+    })
+
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId,
+        transcriptPath: rolloutIn(accountBHome),
+        trustedCodexHomes: [systemHome, accountAHome, accountBHome],
+        selectedAccountCodexHome: accountAHome,
+        systemCodexHomePath: systemHome,
+        fileIsRegular: () => false,
+        listSessionFiles
+      })
+    ).resolves.toBeNull()
+    expect(listSessionFiles).not.toHaveBeenCalled()
+  })
+})
+
 describe('claimsCodexRolloutLayout', () => {
   it('is true for a rollout path even if the file is missing', () => {
     expect(
