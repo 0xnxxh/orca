@@ -855,7 +855,8 @@ async function prepareCodexSessionResumeForLaunch(args: {
     trustedCodexHomes: trustedHomes,
     // Why: the legacy id rescan's winning home becomes this pane's CODEX_HOME, i.e. its account;
     // rank it by the current selection so settings insertion order can never decide the account.
-    selectedAccountCodexHome: codexRuntimeHome.getSelectedHostAccountCodexHomePath(),
+    // Lazy: only the legacy branch ranks, so a provenance-present resume never stats the marker.
+    getSelectedAccountCodexHome: () => codexRuntimeHome!.getSelectedHostAccountCodexHomePath(),
     systemCodexHomePath: systemHomePath
   })
   if (!sessionSource) {

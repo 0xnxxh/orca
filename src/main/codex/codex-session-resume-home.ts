@@ -103,13 +103,19 @@ export function claimsCodexRolloutLayout(transcriptPath: string | undefined): bo
  * they asked for. The real system home ranks next because codex refreshes it
  * directly. Everything else is ordered by normalized path so no winner ever
  * depends on the order accounts happen to sit in settings.
+ *
+ * Both inputs are required, not optional: a caller that forgot one would
+ * silently degrade to pure path order, which is the accident this exists to
+ * remove. The selection arrives as a thunk because resolving it stats the
+ * account's ownership marker, and the far more common provenance-present
+ * resume never reaches the ranking at all.
  */
 function rankTrustedCodexHomesForRescan(args: {
   trustedCodexHomes: readonly string[]
-  selectedAccountCodexHome?: string | null
-  systemCodexHomePath?: string | null
+  getSelectedAccountCodexHome: () => string | null
+  systemCodexHomePath: string | null
 }): string[] {
-  const selected = args.selectedAccountCodexHome?.trim()
+  const selected = args.getSelectedAccountCodexHome()?.trim()
   const system = args.systemCodexHomePath?.trim()
   const selectedComparison = selected ? normalizeRuntimePathForComparison(selected) : null
   const systemComparison = system ? normalizeRuntimePathForComparison(system) : null
@@ -139,8 +145,8 @@ export async function findTrustedCodexSessionResume(args: {
   sessionId: string
   transcriptPath: string | undefined
   trustedCodexHomes: readonly string[]
-  selectedAccountCodexHome?: string | null
-  systemCodexHomePath?: string | null
+  getSelectedAccountCodexHome: () => string | null
+  systemCodexHomePath: string | null
   fileIsRegular?: (filePath: string) => boolean
   listSessionFiles?: (sessionsRoot: string) => AsyncIterable<string>
 }): Promise<{ homePath: string; transcriptPath: string } | null> {
