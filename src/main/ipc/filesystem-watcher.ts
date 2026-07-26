@@ -1273,9 +1273,17 @@ function handleRemoteWatcherTerminalError(
   }
   remoteWatchers.delete(key)
   console.warn(`[filesystem-watcher] SSH watcher terminated for ${key}:`, error)
-  for (const listener of state.listeners.values()) {
-    scheduleRemoteWatcherRetry(listener, connectionId, worktreePath)
+  if (remoteWatchersClosed || suspendedRemoteWatcherListeners.has(key)) {
+    return
   }
+  const startedAt = Date.now()
+  for (const listener of state.listeners.values()) {
+    scheduleRemoteWatcherRetry(listener, connectionId, worktreePath, startedAt, true)
+  }
+}
+
+function isCurrentDesiredRemoteWatcher(key: string, listener: WebContents): boolean {
+  return desiredRemoteWatchers.get(key)?.listeners.get(listener.id) === listener
 }
 
 function scheduleRemoteWatcherRetry(
@@ -1310,7 +1318,7 @@ function scheduleRemoteWatcherRetry(
     loggedUnavailableRemoteWatchers.delete(key)
     // Why: handler already resolved so the renderer thinks the watch is live; emit overflow to force a manual refresh instead of waiting forever.
     for (const listener of retry.listeners.values()) {
-      if (listener.isDestroyed()) {
+      if (listener.isDestroyed() || !isCurrentDesiredRemoteWatcher(key, listener)) {
         continue
       }
       console.warn(
@@ -1330,7 +1338,7 @@ function scheduleRemoteWatcherRetry(
     pendingRemoteWatcherRetries.delete(key)
     pendingRemoteWatcherRetryListeners.delete(key)
     const listeners = Array.from(retry.listeners.values()).filter(
-      (listener) => !listener.isDestroyed()
+      (listener) => !listener.isDestroyed() && isCurrentDesiredRemoteWatcher(key, listener)
     )
     void Promise.all(
       listeners.map((listener) => installRemoteWatcher(listener, connectionId, worktreePath))
@@ -1338,7 +1346,11 @@ function scheduleRemoteWatcherRetry(
       .then((results) => {
         if (retry.resyncOnInstall) {
           for (const [index, listener] of listeners.entries()) {
-            if (results[index] === 'installed' && !listener.isDestroyed()) {
+            if (
+              results[index] === 'installed' &&
+              !listener.isDestroyed() &&
+              isCurrentDesiredRemoteWatcher(key, listener)
+            ) {
               listener.send('fs:changed', {
                 worktreePath,
                 events: [{ kind: 'overflow', absolutePath: worktreePath }]
@@ -1564,7 +1576,11 @@ async function rearmDormantRemoteWatcher(
     return
   }
   for (const [index, listener] of listeners.entries()) {
-    if (results[index] !== 'installed' || listener.isDestroyed()) {
+    if (
+      results[index] !== 'installed' ||
+      listener.isDestroyed() ||
+      !isCurrentDesiredRemoteWatcher(key, listener)
+    ) {
       continue
     }
     listener.send('fs:changed', {
@@ -1637,7 +1653,11 @@ function reinstallRemoteWatchersForConnection(connectionId: string): void {
     )
       .then((results) => {
         for (const [index, listener] of listeners.entries()) {
-          if (results[index] !== 'installed' || listener.isDestroyed()) {
+          if (
+            results[index] !== 'installed' ||
+            listener.isDestroyed() ||
+            !isCurrentDesiredRemoteWatcher(key, listener)
+          ) {
             continue
           }
           // Why: events between the transport dropping and this reinstall are gone for good;
