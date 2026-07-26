@@ -283,6 +283,9 @@ export type PullRequestPushTarget = {
   maintainerCanModify?: boolean
 }
 
+// Why: only an explicit `origin` preference is origin-only; `upstream`/`auto`/
+// undefined keep the multi-candidate probe ordered upstream-first, matching
+// resolvePrWorkItemSource list semantics.
 async function resolvePullRequestLookupCandidates(
   repoPath: string,
   preference: IssueSourcePreference | undefined,
