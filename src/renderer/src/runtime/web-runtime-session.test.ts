@@ -1546,7 +1546,6 @@ describe('web runtime session tab actions', () => {
       },
       timeoutMs: 15_000
     })
-    expect(mocks.applyFreshWebSessionTabsSnapshot).toHaveBeenCalled()
   })
 
   it('sends lifecycle and explicit user close reasons on the wire', async () => {
@@ -1573,10 +1572,11 @@ describe('web runtime session tab actions', () => {
         terminalHandle: 'term-1'
       })
     ).resolves.toBe(true)
+    await vi.waitFor(() => expect(runtimeCall).toHaveBeenCalledTimes(2))
     await expect(
       closeWebRuntimeSessionTab({
         worktreeId: WORKTREE_ID,
-        tabId: 'local-browser-unified',
+        tabId: 'host-browser-unified',
         reason: 'user'
       })
     ).resolves.toBe(true)
@@ -1725,7 +1725,7 @@ describe('web runtime session tab actions', () => {
       WORKTREE_ID
     )
     expect(mocks.acceptReplayedWebSessionTabsSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.applyFreshWebSessionTabsSnapshot.mock.invocationCallOrder[0]!
+      runtimeCall.mock.invocationCallOrder[1]!
     )
   })
 

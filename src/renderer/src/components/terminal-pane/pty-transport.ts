@@ -765,7 +765,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         // Why: on destroy mid-connect, kill only a fresh spawn — killing a reattached session (owned by the tab lifecycle) loses a live shell.
         if (destroyed) {
           if (!options.sessionId) {
-            window.api.pty.kill(spawnResult.id)
+            void Promise.resolve(window.api.pty.kill(spawnResult.id)).catch(() => {})
           }
           return
         }
@@ -925,7 +925,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       inputWriteQueue.clear()
       if (ptyId) {
         const id = ptyId
-        window.api.pty.kill(id)
+        void Promise.resolve(window.api.pty.kill(id)).catch(() => {})
         connected = false
         ptyId = null
         unregisterPtyHandlers(id)

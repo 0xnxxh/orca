@@ -5,7 +5,6 @@ type ClosingProviderTeardown = {
 }
 
 const MAX_RETRYABLE_PROVIDER_TEARDOWNS = 128
-const MAX_EVICTED_PROVIDER_TEARDOWN_IDS = 512
 const providerTeardownByClosingTabId = new Map<string, ClosingProviderTeardown>()
 const retryableProviderTeardowns = new Set<ClosingProviderTeardown>()
 const evictedProviderTeardownTabIds = new Set<string>()
@@ -29,13 +28,6 @@ function rememberEvictedProviderTeardown(entry: ClosingProviderTeardown): void {
   for (const tabId of entry.keys) {
     evictedProviderTeardownTabIds.delete(tabId)
     evictedProviderTeardownTabIds.add(tabId)
-  }
-  while (evictedProviderTeardownTabIds.size > MAX_EVICTED_PROVIDER_TEARDOWN_IDS) {
-    const oldest = evictedProviderTeardownTabIds.values().next().value
-    if (!oldest) {
-      break
-    }
-    evictedProviderTeardownTabIds.delete(oldest)
   }
 }
 

@@ -2028,7 +2028,7 @@ export function useIpcEvents(): void {
     // Why: during an in-place renderer reload an older preload can linger; keep this listener additive at that seam.
     if (window.api.ui.onTerminalTabCloseRequest) {
       unsubs.push(
-        window.api.ui.onTerminalTabCloseRequest(({ requestId, tabId }) => {
+        window.api.ui.onTerminalTabCloseRequest(({ requestId, tabId, deadlineMs }) => {
           let responded = false
           const respond = (error?: string): void => {
             if (responded) {
@@ -2040,6 +2040,7 @@ export function useIpcEvents(): void {
           closeTerminalTab(tabId, {
             rejectPinned: true,
             providerTeardownTimeoutMs: TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
+            providerTeardownDeadlineMs: deadlineMs,
             onCancel: () => respond('terminal_tab_pinned'),
             onClosed: (providerTeardown = Promise.resolve()) => {
               void (async () => {

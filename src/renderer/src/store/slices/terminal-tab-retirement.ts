@@ -143,7 +143,8 @@ export function buildTerminalTabRetirementPlan(
 
 export function buildTerminalTabRetirementPlans(
   state: TerminalTabRetirementState,
-  tabIds: readonly string[]
+  tabIds: readonly string[],
+  priorPlans: ReadonlyMap<string, TerminalTabRetirementPlan> = new Map()
 ): Map<string, TerminalTabRetirementPlan> {
   const targetIds = [...new Set(tabIds)]
   const targetIdSet = new Set(targetIds)
@@ -168,9 +169,12 @@ export function buildTerminalTabRetirementPlans(
   const scheduledPtyOwners = new Set<string>()
   for (const tabId of targetIds) {
     const owner = liveTabs.get(tabId)
-    const worktreeId = owner?.worktreeId ?? null
+    const priorPlan = priorPlans.get(tabId)
+    const worktreeId = owner?.worktreeId ?? priorPlan?.worktreeId ?? null
     const ptyIds =
-      ptyIdsByLiveTab.get(tabId) ?? collectPtyIdsForTab(state, tabId, owner?.rowPtyId ?? null)
+      ptyIdsByLiveTab.get(tabId) ??
+      priorPlan?.ptyIds ??
+      collectPtyIdsForTab(state, tabId, owner?.rowPtyId ?? null)
     const sharedPtyIds: string[] = []
     const localOrSshPtyIds: string[] = []
     const runtimeTerminals: TerminalTabRetirementPlan['runtimeTerminals'] = []
@@ -225,6 +229,17 @@ export function buildTerminalTabRetirementPlans(
     })
   }
   return plans
+}
+
+export function replanTerminalTabRetirement(
+  state: TerminalTabRetirementState,
+  priorPlan: TerminalTabRetirementPlan
+): TerminalTabRetirementPlan {
+  return buildTerminalTabRetirementPlans(
+    state,
+    [priorPlan.tabId],
+    new Map([[priorPlan.tabId, priorPlan]])
+  ).get(priorPlan.tabId)!
 }
 
 export function removeSleepingAgentSessionsForTab(

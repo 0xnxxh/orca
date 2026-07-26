@@ -913,7 +913,7 @@ async function callWebRuntimeSessionTabMethod(
         const { acceptReplayedWebSessionTabsSnapshot } = await import('./web-session-tabs-sync')
         acceptReplayedWebSessionTabsSnapshot(environmentId, args.worktreeId)
       }
-      await refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId, {
+      void refreshWebRuntimeSessionTabsSnapshot(environmentId, args.worktreeId, {
         expectedEnvironmentPairingRevision: intentOwner.pairingRevision
       })
     }

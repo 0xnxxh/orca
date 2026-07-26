@@ -6,7 +6,7 @@ import {
   isTerminalTabCloseRpcMethod,
   resolveTerminalTabCloseCallerTimeoutMs
 } from '../../../shared/terminal-tab-close'
-import { assertRuntimeStatusCompatible } from './runtime-protocol-compat'
+import * as runtimeProtocolCompat from './runtime-protocol-compat'
 import { createRuntimeRpcAbortError } from './abortable-runtime-environment-call'
 import { callRuntimeEnvironmentWithRevision } from './runtime-rpc-environment-call'
 import { RuntimeRpcCallError, unwrapRuntimeRpcResult } from './runtime-rpc-result'
@@ -111,7 +111,7 @@ async function ensureRuntimeEnvironmentCompatible(
 ): Promise<void> {
   const cached = getCachedRuntimeCompatibilityCheck(environmentId, options)
   if (cached) {
-    await cached.check
+    await runtimeProtocolCompat.awaitCompatibilityCheckDeadline(cached.check, options.timeoutMs)
     return
   }
   const entry: RuntimeCompatibilityCacheEntry = {
@@ -131,7 +131,7 @@ async function ensureRuntimeEnvironmentCompatible(
     const status = unwrapRuntimeRpcResult<RuntimeStatus>(
       response as RuntimeRpcResponse<RuntimeStatus>
     )
-    assertRuntimeStatusCompatible(status)
+    runtimeProtocolCompat.assertRuntimeStatusCompatible(status)
     entry.status = status
     entry.statusCheckedAt = Date.now()
   })()
@@ -263,7 +263,7 @@ export async function getRuntimeEnvironmentStatus(
     const status = unwrapRuntimeRpcResult<RuntimeStatus>(
       response as RuntimeRpcResponse<RuntimeStatus>
     )
-    assertRuntimeStatusCompatible(status)
+    runtimeProtocolCompat.assertRuntimeStatusCompatible(status)
     entry.status = status
     entry.statusCheckedAt = Date.now()
     entry.provenCompatible = true

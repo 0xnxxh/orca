@@ -358,6 +358,42 @@ describe('terminal tab retirement store boundary', () => {
     warn.mockRestore()
   })
 
+  it('replans a failed unroutable teardown after its worktree route is repaired', async () => {
+    const store = createRetirementStore()
+    const worktreeId = 'missing-repo::/repo/repaired'
+    seedStore(store, {
+      worktreesByRepo: { repo1: [] },
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'tab-route-retry', worktreeId, ptyId: 'pty-route-retry' })]
+      },
+      ptyIdsByTabId: { 'tab-route-retry': ['pty-route-retry'] }
+    })
+    let providerTeardown: Promise<void> | undefined
+    let retryProviderTeardown: (() => Promise<void>) | undefined
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    store.getState().closeTab('tab-route-retry', {
+      registerProviderTeardown: (teardown, retry) => {
+        providerTeardown = teardown
+        retryProviderTeardown = retry
+      }
+    })
+    await expect(providerTeardown).rejects.toThrow('terminal_tab_close_failed')
+    expect(mockKill).not.toHaveBeenCalled()
+
+    store.setState({
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', path: '/repo/repaired' })]
+      }
+    })
+    await expect(retryProviderTeardown?.()).resolves.toBeUndefined()
+
+    expect(mockKill).toHaveBeenCalledWith('pty-route-retry', {
+      timeoutMs: TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
+    })
+    warn.mockRestore()
+  })
+
   it('reconciles natural exit without issuing teardown or revoking resume authority', async () => {
     const store = createRetirementStore()
     const record = sleepingRecord('tab-1:leaf-1', 'tab-1')

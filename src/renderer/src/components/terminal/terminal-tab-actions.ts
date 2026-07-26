@@ -16,7 +16,10 @@ import type {
   TerminalTabCloseReason,
   TerminalTabRetirementPlan
 } from '@/store/slices/terminal-tab-retirement'
-import { TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS } from '../../../../shared/terminal-tab-close'
+import {
+  TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS,
+  resolveNestedTerminalTabCloseTimeoutMs
+} from '../../../../shared/terminal-tab-close'
 import { closeLocalTerminalTabState } from './close-local-terminal-tab-state'
 import { getTerminalIncarnationHandle } from './terminal-close-incarnation'
 import {
@@ -63,6 +66,7 @@ export function closeTerminalTab(
     precomputedRetirementPlan?: TerminalTabRetirementPlan
     precomputedCloseState?: PrecomputedTerminalCloseState
     providerTeardownTimeoutMs?: number
+    providerTeardownDeadlineMs?: number
     onClosed?: (providerTeardown?: Promise<void>) => void
     onCancel?: () => void
   }
@@ -153,12 +157,16 @@ export function closeTerminalTab(
       wireReason === 'user'
         ? null
         : getLatestWebSessionTabsPublicationEpoch(runtimeEnvironmentId, owningWorktreeId)
+    const remoteCloseTimeoutMs =
+      options?.providerTeardownDeadlineMs === undefined
+        ? TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
+        : resolveNestedTerminalTabCloseTimeoutMs(options.providerTeardownDeadlineMs)
     const remoteCloseArgs = {
       worktreeId: owningWorktreeId,
       tabId: hostBackedTabId,
       environmentId: runtimeEnvironmentId,
       reason: wireReason,
-      ...(requiresProviderProof ? { timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS } : {}),
+      ...(requiresProviderProof ? { timeoutMs: remoteCloseTimeoutMs } : {}),
       ...(wireReason !== 'user'
         ? {
             publicationEpoch,

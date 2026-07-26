@@ -133,6 +133,21 @@ describe('createIpcPtyTransport', () => {
     expect(transport.isConnected()).toBe(false)
   })
 
+  it('observes best-effort PTY kill rejection during disconnect', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const kill = window.api.pty.kill as unknown as ReturnType<typeof vi.fn>
+    const killPromise = Promise.reject(new Error('provider unavailable'))
+    void killPromise.then(undefined, () => {})
+    const catchSpy = vi.spyOn(killPromise, 'catch')
+    kill.mockReturnValueOnce(killPromise)
+    const transport = createIpcPtyTransport({})
+    await transport.connect({ url: '', callbacks: {} })
+
+    transport.disconnect()
+
+    expect(catchSpy).toHaveBeenCalledOnce()
+  })
+
   it('forwards requested environment deletions to the PTY spawn', async () => {
     const { createIpcPtyTransport } = await import('./pty-transport')
     const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>

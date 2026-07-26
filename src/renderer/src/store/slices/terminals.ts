@@ -118,6 +118,7 @@ import {
 import {
   buildTerminalTabRetirementPlan,
   classifyTerminalRetirementWorktree,
+  replanTerminalTabRetirement,
   isTerminalTabPresent,
   removeSleepingAgentSessionsForTab,
   type TerminalTabCloseReason,
@@ -1287,10 +1288,11 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     }
     const retryProviderTeardown = (): Promise<void> => {
       let retryTeardown: Promise<void> | null = null
+      const retryRetirementPlan = replanTerminalTabRetirement(get(), retirementPlan)
       get().closeTab(tabId, {
         ...opts,
         captureRecentlyClosed: false,
-        precomputedRetirementPlan: retirementPlan,
+        precomputedRetirementPlan: retryRetirementPlan,
         registerProviderTeardown: (teardown) => {
           retryTeardown = teardown
         }

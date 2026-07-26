@@ -25,6 +25,12 @@ export const TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS =
   TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS + 2_000
 export const TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS = TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS + 2_000
 export const TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS = TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS + 1_000
+export const TERMINAL_TAB_CLOSE_ACK_MARGIN_MS =
+  TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS - TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS
+
+export function resolveNestedTerminalTabCloseTimeoutMs(deadlineMs: number): number {
+  return Math.max(1, deadlineMs - Date.now() - TERMINAL_TAB_CLOSE_ACK_MARGIN_MS)
+}
 
 const TERMINAL_TAB_CLOSE_RPC_METHODS = new Set([
   'session.tabs.close',
@@ -48,6 +54,7 @@ export function resolveTerminalTabCloseCallerTimeoutMs(
 export type TerminalTabCloseRequest = {
   requestId: string
   tabId: string
+  deadlineMs: number
 }
 
 export type TerminalTabCloseResponse = {
