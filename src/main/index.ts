@@ -103,6 +103,10 @@ import {
   isGpuFallbackCrashCandidate
 } from './crash-reporting/gpu-crash-fallback-decision'
 import {
+  promptForGpuFallbackRestart,
+  type GpuFallbackRestartDecision
+} from './crash-reporting/gpu-fallback-restart-prompt'
+import {
   shouldSuppressDevEducation,
   suppressDevEducationForStore
 } from './startup/dev-education-suppression'
@@ -290,8 +294,6 @@ let managedWslCliReconciliationReady: Promise<void> = Promise.resolve()
 let managedWslCliStartupBarrierReady: Promise<void> = Promise.resolve()
 // Why: the serve barrier fails open, so this state tells headless clients a WSL PTY launch may still race an un-migrated registration ('settled' = off-Windows no-op).
 let managedWslCliReconciliationStatus: 'pending' | 'settled' | 'failed' = 'settled'
-// Why: a tight cluster of GPU child crashes indicates a broken driver, whenever in the session it starts; track them to switch this build to software rendering.
-const gpuLaunchTimeMs = Date.now()
 const gpuCrashFallbackTracker = new GpuCrashFallbackTracker({
   windowMs: DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
   threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD
@@ -1389,13 +1391,13 @@ function maybeApplyGpuFallbackForThisLaunch(): void {
   })
 }
 
-// Why: a burst of GPU child crashes means HW acceleration is unusable — persist a build-scoped marker and relaunch into software rendering.
-function handleGpuChildCrash(reason: string, exitCode: number | null): void {
+// Why: a burst of GPU child crashes means HW acceleration is unusable — persist a build-scoped marker and offer software rendering.
+async function handleGpuChildCrash(reason: string, exitCode: number | null): Promise<void> {
   // Software rendering already active or shutting down: nothing more to do.
   if (gpuFallbackActiveThisLaunch || isQuitting || isServeMode) {
     return
   }
-  const result = gpuCrashFallbackTracker.recordGpuCrash(Date.now() - gpuLaunchTimeMs)
+  const result = gpuCrashFallbackTracker.recordGpuCrash(performance.now())
   if (!result.shouldEngageFallback) {
     return
   }
@@ -1422,12 +1424,28 @@ function handleGpuChildCrash(reason: string, exitCode: number | null): void {
     console.warn('[gpu-fallback] failed to persist marker:', error)
     return
   }
-  isQuitting = true
-  relaunchApp('gpu-fallback', {
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+  let restartDecision: GpuFallbackRestartDecision
+  try {
+    restartDecision = await promptForGpuFallbackRestart(window)
+  } catch (error) {
+    console.warn('[gpu-fallback] failed to show restart prompt:', error)
+    return
+  }
+  const fallbackData = {
     processReason: reason,
     exitCode,
     crashesInWindow: result.crashesInWindow
-  })
+  }
+  if (isQuitting) {
+    return
+  }
+  if (restartDecision !== 'restart') {
+    recordDurableCrashBreadcrumb('gpu_fallback_restart_deferred', fallbackData)
+    return
+  }
+  isQuitting = true
+  relaunchApp('gpu-fallback', fallbackData)
   // Why: app.exit(0) skips before-quit, so destroy the Windows tray manually to avoid a stale icon.
   destroySystemTray()
   app.exit(0)
@@ -2208,7 +2226,7 @@ app.whenReady().then(async () => {
         reason: details.reason
       })
     ) {
-      handleGpuChildCrash(details.reason, details.exitCode ?? null)
+      void handleGpuChildCrash(details.reason, details.exitCode ?? null)
     }
   })
 
