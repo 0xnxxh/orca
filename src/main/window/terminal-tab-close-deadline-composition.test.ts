@@ -78,3 +78,40 @@ it('bounds a nested paired close inside the real renderer acknowledgement wall',
 
   expect(outcomeBeforeRelayWall).toBe('terminal_tab_close_failed')
 })
+
+it('reserves time for durable persistence after a nested paired close', async () => {
+  const persistenceMs = 8_000
+  const webContents = {
+    isDestroyed: () => false,
+    send: vi.fn((_channel: string, request: { requestId: string; deadlineMs: number }): void => {
+      const nestedCloseMs = terminalTabCloseTiming.resolveNestedTerminalTabCloseTimeoutMs(
+        request.deadlineMs
+      )
+      setTimeout(() => {
+        emitIpc(
+          'ui:terminalTabCloseResponse',
+          { sender: webContents },
+          { requestId: request.requestId }
+        )
+      }, nestedCloseMs + persistenceMs)
+    })
+  }
+
+  let outcome = 'pending'
+  void requestTerminalTabCloseFromRenderer(
+    { isDestroyed: () => false, webContents } as never,
+    'tab-with-persistence'
+  ).then(
+    () => {
+      outcome = 'resolved'
+    },
+    (error: Error) => {
+      outcome = error.message
+    }
+  )
+  await vi.advanceTimersByTimeAsync(
+    terminalTabCloseTiming.TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS - 1
+  )
+
+  expect(outcome).toBe('resolved')
+})

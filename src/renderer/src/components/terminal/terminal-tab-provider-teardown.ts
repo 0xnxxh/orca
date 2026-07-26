@@ -1,13 +1,15 @@
 type ClosingProviderTeardown = {
   keys: string[]
   inFlight: Promise<void> | null
-  retry: () => Promise<void>
+  retry: (deadlineMs?: number) => Promise<void>
 }
 
 const MAX_RETRYABLE_PROVIDER_TEARDOWNS = 128
+const MAX_EVICTED_PROVIDER_TEARDOWN_TAB_IDS = 512
 const providerTeardownByClosingTabId = new Map<string, ClosingProviderTeardown>()
 const retryableProviderTeardowns = new Set<ClosingProviderTeardown>()
 const evictedProviderTeardownTabIds = new Set<string>()
+let evictedProviderTeardownOverflowed = false
 
 function failedProviderTeardownProof(): Promise<void> {
   const failure = Promise.reject(new Error('terminal_tab_close_failed'))
@@ -28,6 +30,14 @@ function rememberEvictedProviderTeardown(entry: ClosingProviderTeardown): void {
   for (const tabId of entry.keys) {
     evictedProviderTeardownTabIds.delete(tabId)
     evictedProviderTeardownTabIds.add(tabId)
+    while (evictedProviderTeardownTabIds.size > MAX_EVICTED_PROVIDER_TEARDOWN_TAB_IDS) {
+      const oldestTabId = evictedProviderTeardownTabIds.values().next().value
+      if (!oldestTabId) {
+        break
+      }
+      evictedProviderTeardownTabIds.delete(oldestTabId)
+      evictedProviderTeardownOverflowed = true
+    }
   }
 }
 
@@ -63,7 +73,7 @@ function beginClosingTabProviderTeardown(
 export function trackTerminalTabProviderTeardown(
   tabIds: readonly string[],
   providerTeardown: Promise<void>,
-  retry: () => Promise<void>
+  retry: (deadlineMs?: number) => Promise<void>
 ): void {
   const keys = [...new Set(tabIds)]
   for (const tabId of keys) {
@@ -77,17 +87,22 @@ export function trackTerminalTabProviderTeardown(
   beginClosingTabProviderTeardown(entry, providerTeardown)
 }
 
-export function getTerminalTabProviderTeardown(tabId: string): Promise<void> | undefined {
+export function getTerminalTabProviderTeardown(
+  tabId: string,
+  deadlineMs?: number
+): Promise<void> | undefined {
   const entry = providerTeardownByClosingTabId.get(tabId)
   if (!entry) {
-    return evictedProviderTeardownTabIds.has(tabId) ? failedProviderTeardownProof() : undefined
+    return evictedProviderTeardownTabIds.has(tabId) || evictedProviderTeardownOverflowed
+      ? failedProviderTeardownProof()
+      : undefined
   }
   if (entry.inFlight) {
     return entry.inFlight
   }
   let providerTeardown: Promise<void>
   try {
-    providerTeardown = entry.retry()
+    providerTeardown = entry.retry(deadlineMs)
   } catch (error) {
     providerTeardown = Promise.reject(error)
   }

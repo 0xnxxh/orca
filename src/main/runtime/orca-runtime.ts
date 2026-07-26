@@ -223,7 +223,10 @@ import {
 import type { SshConnectionState } from '../../shared/ssh-types'
 import { getPublicSshState } from './public-ssh-state'
 import { closeTerminalTabInWorkspaceSession } from '../../shared/workspace-session-terminal-tab-close'
-import { TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS } from '../../shared/terminal-tab-close'
+import {
+  TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS,
+  TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
+} from '../../shared/terminal-tab-close'
 import type {
   LinearCurrentIssueContextHints,
   LinearAttachResult,
@@ -2500,7 +2503,9 @@ export class OrcaRuntimeService {
   private readonly terminalCreateIdempotency = new RemoteRuntimeTerminalCreateIdempotency()
   // Why: concurrent clients sleeping one host workspace must share one physical teardown.
   private terminalSleepByWorktreeId = new Map<string, Promise<RuntimeWorktreeTerminalSleepResult>>()
+  private terminalMutationTailByRepoId = new Map<string, Promise<void>>()
   private terminalMutationTailByWorktreeId = new Map<string, Promise<void>>()
+  private removedTerminalRepoIds = new Set<string>()
   private terminalSleepStateByWorktreeId = new Map<
     string,
     {
@@ -6282,7 +6287,8 @@ export class OrcaRuntimeService {
         } catch (error) {
           const recovered =
             error instanceof Error &&
-            error.message === 'terminal_tab_close_failed' &&
+            (error.message === 'terminal_tab_close_failed' ||
+              error.message === 'terminal_tab_close_timeout') &&
             (await this.recoverFailedRendererTerminalClose(
               worktreeId,
               snapshot!,
@@ -6602,14 +6608,19 @@ export class OrcaRuntimeService {
       return false
     }
     const stopAndWait = this.ptyController?.stopAndWait?.bind(this.ptyController)
-    if (!stopAndWait || deadlineMs <= Date.now()) {
-      return false
-    }
-    const stopped = await Promise.all(
-      [...ptyIds].map((ptyId) => stopAndWait!(ptyId, { deadlineMs }).catch(() => false))
+    const alreadyExited = [...ptyIds].every(
+      (ptyId) => this.ptyController?.hasPty?.(ptyId) === false
     )
-    if (stopped.some((result) => !result)) {
-      return false
+    if (!alreadyExited) {
+      if (!stopAndWait || deadlineMs <= Date.now()) {
+        return false
+      }
+      const stopped = await Promise.all(
+        [...ptyIds].map((ptyId) => stopAndWait(ptyId, { deadlineMs }).catch(() => false))
+      )
+      if (stopped.some((result) => !result)) {
+        return false
+      }
     }
     const currentSnapshot = this.mobileSessionTabsByWorktree.get(worktreeId) ?? snapshot
     const currentTab =
@@ -15846,6 +15857,7 @@ export class OrcaRuntimeService {
             : {})
         }
         this.store.addRepo(repo)
+        this.removedTerminalRepoIds.delete(repo.id)
         importedProjectIdsByRepoPath.set(normalizedImportRepoPath, repo.id)
         results.push({ path: repoPath, projectId: repo.id, status: 'imported' })
       } catch (error) {
@@ -15978,6 +15990,7 @@ export class OrcaRuntimeService {
         : {})
     }
     this.store.addRepo(repo)
+    this.removedTerminalRepoIds.delete(repo.id)
     await prepareLocalWorktreeRootForRepo(this.store, repo)
     this.invalidateResolvedWorktreeCache()
     this.invalidateWorktreeScanCacheForRepo(repo.id)
@@ -16099,6 +16112,7 @@ export class OrcaRuntimeService {
         : {})
     }
     this.store.addRepo(repo)
+    this.removedTerminalRepoIds.delete(repo.id)
     await prepareLocalWorktreeRootForRepo(this.store, repo)
     invalidateAuthorizedRootsCache()
     this.invalidateResolvedWorktreeCache()
@@ -16268,6 +16282,7 @@ export class OrcaRuntimeService {
       externalWorktreeVisibilityLegacy: false
     }
     this.store.addRepo(repo)
+    this.removedTerminalRepoIds.delete(repo.id)
     await prepareLocalWorktreeRootForRepo(this.store, repo)
     invalidateAuthorizedRootsCache()
     this.invalidateResolvedWorktreeCache()
@@ -16362,13 +16377,89 @@ export class OrcaRuntimeService {
       throw new Error('runtime_unavailable')
     }
     const repo = await this.resolveRepoSelector(repoSelector)
-    this.store.removeProject(repo.id)
-    this.terminalTopologyRevisionByRepoId.delete(repo.id)
-    this.invalidateResolvedWorktreeCache()
-    this.invalidateWorktreeScanCacheForRepo(repo.id)
-    invalidateAuthorizedRootsCache()
-    this.notifyReposChanged()
-    return { removed: true }
+    const deadlineMs = Date.now() + TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
+    const releaseMutation = await this.acquireRepoTerminalMutation(repo.id, deadlineMs)
+    try {
+      if (!this.store.getRepo(repo.id)) {
+        throw new Error('repo_not_found')
+      }
+      await this.stopProjectTerminalsBeforeRemoval(repo.id, deadlineMs)
+      this.store.removeProject(repo.id)
+      this.removedTerminalRepoIds.add(repo.id)
+      this.terminalTopologyRevisionByRepoId.delete(repo.id)
+      this.invalidateResolvedWorktreeCache()
+      this.invalidateWorktreeScanCacheForRepo(repo.id)
+      invalidateAuthorizedRootsCache()
+      this.notifyReposChanged()
+      return { removed: true }
+    } finally {
+      releaseMutation()
+      this.clearRemovedTerminalRepoWhenMutationsDrain(repo.id)
+    }
+  }
+
+  private async stopProjectTerminalsBeforeRemoval(
+    repoId: string,
+    deadlineMs: number
+  ): Promise<void> {
+    const resolvedWorktrees = await this.listResolvedWorktrees()
+    const freshPtyIds = await this.refreshPtyWorktreeRecordsFromController(
+      resolvedWorktrees,
+      null,
+      deadlineMs
+    )
+    const knownPtyIds = this.getLivePtyIdsForRepo(repoId, freshPtyIds ?? undefined)
+    if (freshPtyIds === null) {
+      if (knownPtyIds.size > 0) {
+        throw new Error('project_terminal_teardown_unavailable')
+      }
+      return
+    }
+    if (knownPtyIds.size === 0) {
+      return
+    }
+    const stopAndWait = this.ptyController?.stopAndWait?.bind(this.ptyController)
+    if (!stopAndWait || Date.now() >= deadlineMs) {
+      throw new Error('project_terminal_teardown_unavailable')
+    }
+    const stopped = await Promise.all(
+      [...knownPtyIds].map((ptyId) => stopAndWait(ptyId, { deadlineMs }).catch(() => false))
+    )
+    if (stopped.some((didStop) => !didStop)) {
+      throw new Error('project_terminal_teardown_failed')
+    }
+    const postStopPtyIds = await this.refreshPtyWorktreeRecordsFromController(
+      resolvedWorktrees,
+      null,
+      deadlineMs
+    )
+    if (postStopPtyIds === null || this.getLivePtyIdsForRepo(repoId, postStopPtyIds).size > 0) {
+      throw new Error('project_terminal_teardown_failed')
+    }
+  }
+
+  private getLivePtyIdsForRepo(repoId: string, freshPtyIds?: ReadonlySet<string>): Set<string> {
+    const ptyIds = new Set<string>()
+    for (const leaf of this.leaves.values()) {
+      if (
+        getRepoIdFromWorktreeId(leaf.worktreeId) === repoId &&
+        leaf.connected &&
+        leaf.ptyId &&
+        (!freshPtyIds || freshPtyIds.has(leaf.ptyId))
+      ) {
+        ptyIds.add(leaf.ptyId)
+      }
+    }
+    for (const pty of this.ptysById.values()) {
+      if (
+        getRepoIdFromWorktreeId(pty.worktreeId) === repoId &&
+        pty.connected &&
+        (!freshPtyIds || freshPtyIds.has(pty.ptyId))
+      ) {
+        ptyIds.add(pty.ptyId)
+      }
+    }
+    return ptyIds
   }
 
   async inspectTerminalProcess(
@@ -22401,82 +22492,95 @@ export class OrcaRuntimeService {
       if (launchOpts.signal?.aborted) {
         throw new Error('client_disconnected')
       }
-      const result = await this.ptyController.spawn({
-        cols: 120,
-        rows: 40,
-        cwd,
-        command: sequencedStartupCommand
-          ? launchOpts.command
-          : (agentTeamsPlan?.command ?? launchOpts.command),
-        launchAgent: launchOpts.launchAgent,
-        commandDelivery: 'provider',
-        startupCommandDelivery: launchOpts.startupCommandDelivery,
-        env,
-        envToDelete: mergeTerminalEnvDeletionKeys(
-          launchOpts.envToDelete,
-          agentTeamsPlan?.envToDelete
-        ),
-        resumeProviderSession: launchOpts.resumeProviderSession,
-        telemetry: launchOpts.telemetry,
-        connectionId: workspace.connectionId,
-        worktreeId: workspace.id,
-        preAllocatedHandle,
-        tabId,
-        leafId,
-        ...(terminalColorQueryReplies ? { terminalColorQueryReplies } : {}),
-        ...(launchOpts.agentSessionClaim
-          ? {
-              agentSessionEnsure: {
-                claim: launchOpts.agentSessionClaim,
-                surface: {
-                  worktreeId: workspace.id,
-                  tabId,
-                  leafId,
-                  terminalHandle: preAllocatedHandle
+      const releaseWorktreeSpawn = await this.acquireWorktreeTerminalSpawn(workspace.id)
+      const result = await this.ptyController
+        .spawn({
+          cols: 120,
+          rows: 40,
+          cwd,
+          command: sequencedStartupCommand
+            ? launchOpts.command
+            : (agentTeamsPlan?.command ?? launchOpts.command),
+          launchAgent: launchOpts.launchAgent,
+          commandDelivery: 'provider',
+          startupCommandDelivery: launchOpts.startupCommandDelivery,
+          env,
+          envToDelete: mergeTerminalEnvDeletionKeys(
+            launchOpts.envToDelete,
+            agentTeamsPlan?.envToDelete
+          ),
+          resumeProviderSession: launchOpts.resumeProviderSession,
+          telemetry: launchOpts.telemetry,
+          connectionId: workspace.connectionId,
+          worktreeId: workspace.id,
+          preAllocatedHandle,
+          tabId,
+          leafId,
+          ...(terminalColorQueryReplies ? { terminalColorQueryReplies } : {}),
+          ...(launchOpts.agentSessionClaim
+            ? {
+                agentSessionEnsure: {
+                  claim: launchOpts.agentSessionClaim,
+                  surface: {
+                    worktreeId: workspace.id,
+                    tabId,
+                    leafId,
+                    terminalHandle: preAllocatedHandle
+                  }
                 }
               }
-            }
-          : {}),
-        ...(launchOpts.agentSessionCreateOperationId
-          ? { agentSessionCreateOperationId: launchOpts.agentSessionCreateOperationId }
-          : {}),
-        ...(launchOpts.signal ? { signal: launchOpts.signal } : {}),
-        ...(launchOpts.onPtySpawnCommitted ? { onPtySpawnCommitted: reportPtySpawnCommitted } : {}),
-        ...(launchOpts.sessionId ? { sessionId: launchOpts.sessionId } : {}),
-        // Why: a headless-created pane has no renderer session writer. Persist
-        // its tab/leaf binding at spawn so a later promoted window reattaches
-        // the live daemon or SSH PTY instead of replacing it with a fresh one.
-        // Re-check freshly: the entry-time snapshot can go stale across the
-        // awaits above if the authoritative window is destroyed mid-spawn.
-        ...(launchOpts.persistHostSessionBinding || this.getAvailableAuthoritativeWindow() === null
-          ? { persistHostSessionBinding: true }
-          : {})
-      })
-      reportPtySpawnCommitted()
-      if (result.agentSessionEnsure) {
-        const canonicalSurface = result.agentSessionEnsure.owner.surface
-        preAllocatedHandle = canonicalSurface.terminalHandle
-        tabId = canonicalSurface.tabId
-        leafId = canonicalSurface.leafId
-        paneKey = makePaneKey(tabId, leafId)
-      }
+            : {}),
+          ...(launchOpts.agentSessionCreateOperationId
+            ? { agentSessionCreateOperationId: launchOpts.agentSessionCreateOperationId }
+            : {}),
+          ...(launchOpts.signal ? { signal: launchOpts.signal } : {}),
+          ...(launchOpts.onPtySpawnCommitted
+            ? { onPtySpawnCommitted: reportPtySpawnCommitted }
+            : {}),
+          ...(launchOpts.sessionId ? { sessionId: launchOpts.sessionId } : {}),
+          // Why: a headless-created pane has no renderer session writer. Persist
+          // its tab/leaf binding at spawn so a later promoted window reattaches
+          // the live daemon or SSH PTY instead of replacing it with a fresh one.
+          // Re-check freshly: the entry-time snapshot can go stale across the
+          // awaits above if the authoritative window is destroyed mid-spawn.
+          ...(launchOpts.persistHostSessionBinding ||
+          this.getAvailableAuthoritativeWindow() === null
+            ? { persistHostSessionBinding: true }
+            : {})
+        })
+        .catch((error: unknown) => {
+          releaseWorktreeSpawn()
+          throw error
+        })
       try {
-        this.assertPtyDidNotExitBeforeRegistration(result.id, result.incarnationId)
-      } catch (error) {
-        if (error instanceof Error && error.message === 'agent_session_exited_during_start') {
-          this.releaseRejectedPtyRegistrationFence(result.id, result.incarnationId)
+        reportPtySpawnCommitted()
+        if (result.agentSessionEnsure) {
+          const canonicalSurface = result.agentSessionEnsure.owner.surface
+          preAllocatedHandle = canonicalSurface.terminalHandle
+          tabId = canonicalSurface.tabId
+          leafId = canonicalSurface.leafId
+          paneKey = makePaneKey(tabId, leafId)
         }
-        throw error
+        try {
+          this.assertPtyDidNotExitBeforeRegistration(result.id, result.incarnationId)
+        } catch (error) {
+          if (error instanceof Error && error.message === 'agent_session_exited_during_start') {
+            this.releaseRejectedPtyRegistrationFence(result.id, result.incarnationId)
+          }
+          throw error
+        }
+        this.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
+        if (result.wslDistro) {
+          this.preparePtyExecutionContext(result.id, result.wslDistro)
+        }
+        this.registerPty(result.id, workspace.id, workspace.connectionId, {
+          tabId,
+          leafId,
+          ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
+        })
+      } finally {
+        releaseWorktreeSpawn()
       }
-      this.registerPreAllocatedHandleForPty(result.id, preAllocatedHandle)
-      if (result.wslDistro) {
-        this.preparePtyExecutionContext(result.id, result.wslDistro)
-      }
-      this.registerPty(result.id, workspace.id, workspace.connectionId, {
-        tabId,
-        leafId,
-        ...(result.incarnationId ? { incarnationId: result.incarnationId } : {})
-      })
       const pty = this.getOrCreatePtyWorktreeRecord(result.id)
       if (pty) {
         if (launchOpts.title) {
@@ -24085,7 +24189,25 @@ export class OrcaRuntimeService {
     if (!worktreeId) {
       return () => {}
     }
-    const release = await this.acquireWorktreeTerminalMutation(worktreeId)
+    const workspaceKey = parseWorkspaceKey(worktreeId)
+    const repoId =
+      worktreeId === FLOATING_TERMINAL_WORKTREE_ID || workspaceKey?.type === 'folder'
+        ? null
+        : getRepoIdFromWorktreeId(worktreeId)
+    const releaseRepo = repoId ? await this.acquireRepoTerminalMutation(repoId) : (): void => {}
+    let releaseWorktree: () => void
+    try {
+      releaseWorktree = await this.acquireWorktreeTerminalMutation(worktreeId)
+    } catch (error) {
+      releaseRepo()
+      throw error
+    }
+    if (repoId && this.removedTerminalRepoIds.has(repoId)) {
+      releaseWorktree()
+      releaseRepo()
+      this.clearRemovedTerminalRepoWhenMutationsDrain(repoId)
+      throw new Error('repo_not_found')
+    }
     const key = runtimeWorktreeIdentityKey(worktreeId)
     const sleepState = this.terminalSleepStateByWorktreeId.get(key)
     if (sleepState?.phase === 'sleeping' || sleepState?.phase === 'partial') {
@@ -24099,49 +24221,36 @@ export class OrcaRuntimeService {
         terminalHandles: sleepState.terminalHandles
       })
     }
-    return release
+    return () => {
+      releaseWorktree()
+      releaseRepo()
+    }
   }
 
   private async acquireWorktreeTerminalMutation(
     worktreeId: string,
     deadline?: number
   ): Promise<() => void> {
-    const key = runtimeWorktreeIdentityKey(worktreeId)
-    const previous = this.terminalMutationTailByWorktreeId.get(key) ?? Promise.resolve()
-    let releaseCurrent = (): void => {}
-    const current = new Promise<void>((resolve) => {
-      releaseCurrent = resolve
-    })
-    const tail = previous.catch(() => {}).then(() => current)
-    this.terminalMutationTailByWorktreeId.set(key, tail)
-    try {
-      await waitForWorktreeTerminalMutation(
-        previous.catch(() => {}),
-        deadline
-      )
-    } catch (error) {
-      // Why: resolve this abandoned queue node now so it can never acquire later and stop a terminal after the caller timed out.
-      releaseCurrent()
-      void tail.finally(() => {
-        if (this.terminalMutationTailByWorktreeId.get(key) === tail) {
-          this.terminalMutationTailByWorktreeId.delete(key)
-        }
-      })
-      throw error
-    }
-    let released = false
-    return () => {
-      if (released) {
-        return
+    return acquireTerminalMutation(
+      this.terminalMutationTailByWorktreeId,
+      runtimeWorktreeIdentityKey(worktreeId),
+      deadline
+    )
+  }
+
+  private async acquireRepoTerminalMutation(
+    repoId: string,
+    deadline?: number
+  ): Promise<() => void> {
+    return acquireTerminalMutation(this.terminalMutationTailByRepoId, repoId, deadline)
+  }
+
+  private clearRemovedTerminalRepoWhenMutationsDrain(repoId: string): void {
+    void Promise.resolve().then(() => {
+      if (!this.terminalMutationTailByRepoId.has(repoId)) {
+        this.removedTerminalRepoIds.delete(repoId)
       }
-      released = true
-      releaseCurrent()
-      void tail.finally(() => {
-        if (this.terminalMutationTailByWorktreeId.get(key) === tail) {
-          this.terminalMutationTailByWorktreeId.delete(key)
-        }
-      })
-    }
+    })
   }
 
   private async sleepResolvedWorktreeTerminals(
@@ -31219,6 +31328,44 @@ export function resolveWorktreeScanCacheTtlMs(repo: Pick<Repo, 'path' | 'connect
 const PTY_CONTROLLER_LIST_TIMEOUT_MS = 3000
 // Why: the renderer waits 15s; leave room for the verified failure response and release the spawn fence before its caller times out.
 const WORKTREE_TERMINAL_SLEEP_TIMEOUT_MS = 12_000
+
+async function acquireTerminalMutation(
+  tails: Map<string, Promise<void>>,
+  key: string,
+  deadline?: number
+): Promise<() => void> {
+  const previous = tails.get(key) ?? Promise.resolve()
+  let releaseCurrent = (): void => {}
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve
+  })
+  const tail = previous.catch(() => {}).then(() => current)
+  tails.set(key, tail)
+  const clearTail = (): void => {
+    if (tails.get(key) === tail) {
+      tails.delete(key)
+    }
+  }
+  try {
+    await waitForWorktreeTerminalMutation(
+      previous.catch(() => {}),
+      deadline
+    )
+  } catch (error) {
+    releaseCurrent()
+    void tail.finally(clearTail)
+    throw error
+  }
+  let released = false
+  return () => {
+    if (released) {
+      return
+    }
+    released = true
+    releaseCurrent()
+    void tail.finally(clearTail)
+  }
+}
 
 async function waitForWorktreeTerminalMutation(
   previous: Promise<void>,

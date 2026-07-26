@@ -12,15 +12,12 @@ import {
 } from '@/runtime/web-session-tabs-sync'
 import { resolveTerminalWorktreeRoute } from '@/lib/terminal-worktree-route'
 import { guardPinnedTabClose, resolvePinnedTabLabel } from '@/store/pinned-tab-close-guard'
-import type {
-  TerminalTabCloseReason,
-  TerminalTabRetirementPlan
-} from '@/store/slices/terminal-tab-retirement'
 import {
   TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS,
   resolveNestedTerminalTabCloseTimeoutMs
 } from '../../../../shared/terminal-tab-close'
 import { closeLocalTerminalTabState } from './close-local-terminal-tab-state'
+import type { TerminalTabCloseOptions } from './terminal-tab-close-options'
 import { getTerminalIncarnationHandle } from './terminal-close-incarnation'
 import {
   getTerminalTabProviderTeardown,
@@ -29,8 +26,7 @@ import {
 import {
   getWorktreeTerminalTabIds,
   resolveTerminalCloseTarget,
-  validatePrecomputedTerminalCloseState,
-  type PrecomputedTerminalCloseState
+  validatePrecomputedTerminalCloseState
 } from './terminal-close-target'
 export type { PrecomputedTerminalCloseState } from './terminal-close-target'
 export { closeOtherTerminalTabs, closeTerminalTabsToRight } from './terminal-tab-bulk-actions'
@@ -49,28 +45,7 @@ function isPinnedVisibleTab(
   )
 }
 
-export function closeTerminalTab(
-  tabId: string,
-  options?: {
-    force?: boolean
-    rejectPinned?: boolean
-    reason?: TerminalTabCloseReason
-    /** Close reason sent to the host only. Unlike `reason`, it does not skip
-     *  local guards (pinned confirmation keys off `reason === 'pty-exit'`),
-     *  so lifecycle echoes that still need those guards can tag the wire. */
-    hostCloseReason?: TerminalTabCloseReason
-    /** PTY whose lifecycle event initiated the host close. */
-    lifecyclePtyId?: string
-    captureRecentlyClosed?: boolean
-    localPtyTeardownOwnedExternally?: boolean
-    precomputedRetirementPlan?: TerminalTabRetirementPlan
-    precomputedCloseState?: PrecomputedTerminalCloseState
-    providerTeardownTimeoutMs?: number
-    providerTeardownDeadlineMs?: number
-    onClosed?: (providerTeardown?: Promise<void>) => void
-    onCancel?: () => void
-  }
-): void {
+export function closeTerminalTab(tabId: string, options?: TerminalTabCloseOptions): void {
   const state = useAppStore.getState()
   const precomputedCloseState = validatePrecomputedTerminalCloseState(
     tabId,
@@ -79,7 +54,10 @@ export function closeTerminalTab(
   )
   const target = resolveTerminalCloseTarget(state, tabId, precomputedCloseState)
   if (!target) {
-    const providerTeardown = getTerminalTabProviderTeardown(tabId)
+    const providerTeardown = getTerminalTabProviderTeardown(
+      tabId,
+      options?.providerTeardownDeadlineMs
+    )
     if (providerTeardown) {
       options?.onClosed?.(providerTeardown)
     } else {
@@ -94,7 +72,10 @@ export function closeTerminalTab(
     return
   }
   let providerTeardown = Promise.resolve()
-  const registerProviderTeardown = (teardown: Promise<void>, retry: () => Promise<void>): void => {
+  const registerProviderTeardown = (
+    teardown: Promise<void>,
+    retry: (deadlineMs?: number) => Promise<void>
+  ): void => {
     providerTeardown = teardown
     trackTerminalTabProviderTeardown([tabId, terminalTabId], teardown, retry)
   }
@@ -102,6 +83,10 @@ export function closeTerminalTab(
     options?.onClosed && options.providerTeardownTimeoutMs !== undefined
       ? { registerProviderTeardown }
       : {}
+  const providerTeardownDeadlineRegistration =
+    options?.providerTeardownDeadlineMs === undefined
+      ? {}
+      : { providerTeardownDeadlineMs: options.providerTeardownDeadlineMs }
   const requiresProviderProof =
     options?.onClosed !== undefined && options.providerTeardownTimeoutMs !== undefined
 
@@ -157,29 +142,32 @@ export function closeTerminalTab(
       wireReason === 'user'
         ? null
         : getLatestWebSessionTabsPublicationEpoch(runtimeEnvironmentId, owningWorktreeId)
-    const remoteCloseTimeoutMs =
-      options?.providerTeardownDeadlineMs === undefined
-        ? TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
-        : resolveNestedTerminalTabCloseTimeoutMs(options.providerTeardownDeadlineMs)
-    const remoteCloseArgs = {
-      worktreeId: owningWorktreeId,
-      tabId: hostBackedTabId,
-      environmentId: runtimeEnvironmentId,
-      reason: wireReason,
-      ...(requiresProviderProof ? { timeoutMs: remoteCloseTimeoutMs } : {}),
-      ...(wireReason !== 'user'
-        ? {
-            publicationEpoch,
-            terminalHandle: lifecycleTerminalHandle
-          }
-        : {})
-    }
     let remoteCloseProven = false
-    const proveRemoteClose = async (): Promise<void> => {
+    const proveRemoteClose = async (
+      deadlineMs = options?.providerTeardownDeadlineMs
+    ): Promise<void> => {
       if (remoteCloseProven) {
         return
       }
-      if (!(await closeWebRuntimeSessionTab(remoteCloseArgs))) {
+      const remoteCloseTimeoutMs =
+        deadlineMs === undefined
+          ? TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
+          : resolveNestedTerminalTabCloseTimeoutMs(deadlineMs)
+      if (
+        !(await closeWebRuntimeSessionTab({
+          worktreeId: owningWorktreeId,
+          tabId: hostBackedTabId,
+          environmentId: runtimeEnvironmentId,
+          reason: wireReason,
+          ...(requiresProviderProof ? { timeoutMs: remoteCloseTimeoutMs } : {}),
+          ...(wireReason !== 'user'
+            ? {
+                publicationEpoch,
+                terminalHandle: lifecycleTerminalHandle
+              }
+            : {})
+        }))
+      ) {
         throw new Error('terminal_tab_close_failed')
       }
       remoteCloseProven = true
@@ -187,10 +175,14 @@ export function closeTerminalTab(
     const remoteProviderTeardown = proveRemoteClose()
     const remoteProviderTeardownRegistration = requiresProviderProof
       ? {
-          registerProviderTeardown: (teardown: Promise<void>, retry: () => Promise<void>) =>
+          registerProviderTeardown: (
+            teardown: Promise<void>,
+            retry: (deadlineMs?: number) => Promise<void>
+          ) =>
             registerProviderTeardown(
               Promise.all([teardown, remoteProviderTeardown]).then(() => undefined),
-              () => Promise.all([retry(), proveRemoteClose()]).then(() => undefined)
+              (deadlineMs) =>
+                Promise.all([retry(deadlineMs), proveRemoteClose(deadlineMs)]).then(() => undefined)
             )
         }
       : {}
@@ -214,6 +206,7 @@ export function closeTerminalTab(
       ...(options?.providerTeardownTimeoutMs !== undefined
         ? { providerTeardownTimeoutMs: options.providerTeardownTimeoutMs }
         : {}),
+      ...providerTeardownDeadlineRegistration,
       ...remoteProviderTeardownRegistration
     })
     options?.onClosed?.(providerTeardown)
@@ -240,6 +233,7 @@ export function closeTerminalTab(
       ...(options?.providerTeardownTimeoutMs !== undefined
         ? { providerTeardownTimeoutMs: options.providerTeardownTimeoutMs }
         : {}),
+      ...providerTeardownDeadlineRegistration,
       ...providerTeardownRegistration
     })
     if (state.activeWorktreeId === owningWorktreeId) {
@@ -286,6 +280,7 @@ export function closeTerminalTab(
     ...(options?.providerTeardownTimeoutMs !== undefined
       ? { providerTeardownTimeoutMs: options.providerTeardownTimeoutMs }
       : {}),
+    ...providerTeardownDeadlineRegistration,
     ...providerTeardownRegistration
   })
   options?.onClosed?.(providerTeardown)

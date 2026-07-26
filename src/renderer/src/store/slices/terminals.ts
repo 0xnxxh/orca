@@ -45,7 +45,11 @@ import type { StartupCommandDelivery } from '../../../../shared/codex-startup-de
 import type { SessionOptionValue } from '../../../../shared/native-chat-session-options'
 import { resolveLocalWindowsTerminalShellOverrideForTab } from '../../../../shared/local-windows-terminal-runtime'
 import { WINDOWS_GIT_BASH_SHELL } from '../../../../shared/windows-terminal-shell'
-import { TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS } from '../../../../shared/terminal-tab-close'
+import {
+  TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
+  TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
+  resolveTerminalTabProviderTimeoutMs
+} from '../../../../shared/terminal-tab-close'
 import type { AgentStartedTelemetry } from '../../lib/worktree-activation'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
@@ -124,6 +128,10 @@ import {
   type TerminalTabCloseReason,
   type TerminalTabRetirementPlan
 } from './terminal-tab-retirement'
+import {
+  claimPendingTerminalTabSpawns,
+  waitForPendingTerminalTabRetirement
+} from './terminal-tab-pending-spawn'
 
 function getNextTerminalOrdinal(tabs: TerminalTab[]): number {
   const usedOrdinals = new Set<number>()
@@ -600,7 +608,11 @@ export type TerminalSlice = {
       localPtyTeardownOwnedExternally?: boolean
       precomputedRetirementPlan?: TerminalTabRetirementPlan
       providerTeardownTimeoutMs?: number
-      registerProviderTeardown?: (teardown: Promise<void>, retry: () => Promise<void>) => void
+      providerTeardownDeadlineMs?: number
+      registerProviderTeardown?: (
+        teardown: Promise<void>,
+        retry: (deadlineMs?: number) => Promise<void>
+      ) => void
     }
   ) => void
   reorderTabs: (worktreeId: string, tabIds: string[]) => void
@@ -1208,8 +1220,20 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     retireParkedTerminalTab(tabId)
     if (retiresSession) {
       const providerTeardownTimeoutMs = opts?.registerProviderTeardown
-        ? (opts.providerTeardownTimeoutMs ?? TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS)
+        ? opts.providerTeardownDeadlineMs === undefined
+          ? (opts.providerTeardownTimeoutMs ?? TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS)
+          : resolveTerminalTabProviderTimeoutMs(
+              opts.providerTeardownDeadlineMs,
+              opts.providerTeardownTimeoutMs ?? TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
+            )
         : undefined
+      const providerRpcTimeoutMs =
+        opts?.registerProviderTeardown && opts.providerTeardownDeadlineMs !== undefined
+          ? resolveTerminalTabProviderTimeoutMs(
+              opts.providerTeardownDeadlineMs,
+              TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS
+            )
+          : undefined
       const fallbackWorktreeRoute = retirementPlan.worktreeId
         ? resolveTerminalWorktreeRoute(get(), retirementPlan.worktreeId)
         : { runtimeEnvironmentId: null }
@@ -1220,6 +1244,24 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
               ? window.api.pty.kill(ptyId)
               : window.api.pty.kill(ptyId, { timeoutMs: providerTeardownTimeoutMs })
           )
+      for (const pendingSpawn of claimPendingTerminalTabSpawns(tabId)) {
+        const pendingRetirement = pendingSpawn.retire(async (ptyId) => {
+          if (!retirementPlan.ptyIds.includes(ptyId)) {
+            retirementPlan.ptyIds.push(ptyId)
+          }
+          if (!retirementPlan.localOrSshPtyIds.includes(ptyId)) {
+            retirementPlan.localOrSshPtyIds.push(ptyId)
+          }
+          return providerTeardownTimeoutMs === undefined
+            ? window.api.pty.kill(ptyId)
+            : window.api.pty.kill(ptyId, { timeoutMs: providerTeardownTimeoutMs })
+        })
+        retirementTasks.push(
+          providerTeardownTimeoutMs === undefined
+            ? pendingRetirement
+            : waitForPendingTerminalTabRetirement(pendingRetirement, providerTeardownTimeoutMs)
+        )
+      }
       const localOrSshTaskCount = retirementTasks.length
       if (!opts?.remoteCloseOwnedByHost) {
         for (const terminal of retirementPlan.runtimeTerminals) {
@@ -1238,7 +1280,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
               : retireRuntimeTerminalProvider(
                   environmentId ? { kind: 'environment', environmentId } : { kind: 'local' },
                   terminal.handle,
-                  { providerTimeoutMs: providerTeardownTimeoutMs }
+                  {
+                    providerTimeoutMs: providerTeardownTimeoutMs,
+                    ...(providerRpcTimeoutMs !== undefined
+                      ? { rpcTimeoutMs: providerRpcTimeoutMs }
+                      : {})
+                  }
                 )
           )
         }
@@ -1286,13 +1333,16 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     if (!opts?.registerProviderTeardown) {
       void providerTeardown.catch(() => {})
     }
-    const retryProviderTeardown = (): Promise<void> => {
+    const retryProviderTeardown = (
+      deadlineMs = opts?.providerTeardownDeadlineMs
+    ): Promise<void> => {
       let retryTeardown: Promise<void> | null = null
       const retryRetirementPlan = replanTerminalTabRetirement(get(), retirementPlan)
       get().closeTab(tabId, {
         ...opts,
         captureRecentlyClosed: false,
         precomputedRetirementPlan: retryRetirementPlan,
+        ...(deadlineMs !== undefined ? { providerTeardownDeadlineMs: deadlineMs } : {}),
         registerProviderTeardown: (teardown) => {
           retryTeardown = teardown
         }

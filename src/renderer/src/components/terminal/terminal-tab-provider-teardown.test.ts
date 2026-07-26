@@ -36,4 +36,7 @@ it('keeps fail-closed markers beyond the former 512-id residual cap', async () =
   await expect(getTerminalTabProviderTeardown('overflow-tab-0')).rejects.toThrow(
     'terminal_tab_close_failed'
   )
+  await expect(getTerminalTabProviderTeardown('unknown-after-overflow')).rejects.toThrow(
+    'terminal_tab_close_failed'
+  )
 })

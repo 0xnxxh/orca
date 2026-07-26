@@ -1,8 +1,10 @@
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import {
   TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS,
   TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
 } from '../../../../shared/terminal-tab-close'
+
+const EXPECTED_PERSISTENCE_MARGIN_MS = 10_000
 
 const { closeRemoteMock, getStateMock } = vi.hoisted(() => ({
   closeRemoteMock: vi.fn(),
@@ -24,6 +26,11 @@ vi.mock('@/runtime/web-session-tabs-sync', () => ({
 }))
 
 import { closeTerminalTab } from './terminal-tab-actions'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.useRealTimers()
+})
 
 it('awaits paired-runtime close proof before acknowledging provider teardown', async () => {
   let resolveRemoteClose!: (closed: boolean) => void
@@ -66,4 +73,54 @@ it('awaits paired-runtime close proof before acknowledging provider teardown', a
     reason: 'user',
     timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
   })
+})
+
+it('recomputes the paired-runtime timeout when a failed close is retried', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(0)
+  closeRemoteMock.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+  const closeTab = vi.fn(
+    (
+      _tabId: string,
+      options: {
+        registerProviderTeardown?: (teardown: Promise<void>, retry: () => Promise<void>) => void
+      }
+    ) => options.registerProviderTeardown?.(Promise.resolve(), () => Promise.resolve())
+  )
+  const presentState = {
+    settings: { activeRuntimeEnvironmentId: 'web-runtime' },
+    tabsByWorktree: { 'wt-1': [{ id: 'deadline-tab' }] },
+    activeWorktreeId: 'wt-1',
+    activeTabId: 'deadline-tab',
+    closeTab,
+    setActiveTab: vi.fn()
+  }
+  getStateMock.mockReturnValue(presentState)
+  const firstClosed = vi.fn()
+  const deadlineMs = 50_000
+
+  closeTerminalTab('deadline-tab', {
+    onClosed: firstClosed,
+    providerTeardownTimeoutMs: TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
+    providerTeardownDeadlineMs: deadlineMs
+  })
+  await expect(firstClosed.mock.calls[0]?.[0] as Promise<void>).rejects.toThrow(
+    'terminal_tab_close_failed'
+  )
+
+  vi.setSystemTime(20_000)
+  getStateMock.mockReturnValue({ ...presentState, tabsByWorktree: { 'wt-1': [] } })
+  const retryClosed = vi.fn()
+  closeTerminalTab('deadline-tab', {
+    onClosed: retryClosed,
+    providerTeardownTimeoutMs: TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
+    providerTeardownDeadlineMs: deadlineMs
+  })
+  await expect(retryClosed.mock.calls[0]?.[0] as Promise<void>).resolves.toBeUndefined()
+
+  expect(closeRemoteMock.mock.calls.map(([args]) => args.timeoutMs)).toEqual([
+    deadlineMs - EXPECTED_PERSISTENCE_MARGIN_MS,
+    deadlineMs - 20_000 - EXPECTED_PERSISTENCE_MARGIN_MS
+  ])
+  vi.useRealTimers()
 })

@@ -85,7 +85,7 @@ describe('removeProject purges per-worktree state (leak regression)', () => {
     expect(s.everActivatedWorktreeIds.has(W2)).toBe(true)
   })
 
-  it('keeps terminal retry authority when a repo PTY kill rejects', async () => {
+  it('does not delete the project before its PTY exit is proven', async () => {
     const store = createTestStore()
     seedTwoProjects(store)
     store.setState({
@@ -100,6 +100,7 @@ describe('removeProject purges per-worktree state (leak regression)', () => {
 
     await store.getState().removeProject(repo1.id)
 
+    expect(reposRemove).not.toHaveBeenCalled()
     expect(store.getState().repos).toContainEqual(repo1)
     expect(store.getState().tabsByWorktree[W1]).toEqual([{ id: 'tab-retry', worktreeId: W1 }])
     expect(store.getState().ptyIdsByTabId['tab-retry']).toEqual(['ssh:ssh-1@@detached'])

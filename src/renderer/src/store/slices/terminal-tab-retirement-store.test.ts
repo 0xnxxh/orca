@@ -35,6 +35,9 @@ import {
   makeUnifiedTab,
   seedStore
 } from './store-test-helpers'
+import { replanTerminalTabRetirement } from './terminal-tab-retirement'
+
+const EXPECTED_PERSISTENCE_MARGIN_MS = 10_000
 
 function createRetirementStore() {
   const store = createTestStore()
@@ -392,6 +395,68 @@ describe('terminal tab retirement store boundary', () => {
       timeoutMs: TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
     })
     warn.mockRestore()
+  })
+
+  it('recomputes the local provider timeout when a failed teardown is retried', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0)
+    const store = createRetirementStore()
+    mockKill.mockRejectedValueOnce(new Error('provider unavailable')).mockResolvedValue(undefined)
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [makeTab({ id: 'tab-deadline', worktreeId: 'wt-1', ptyId: 'pty-deadline' })]
+      },
+      ptyIdsByTabId: { 'tab-deadline': ['pty-deadline'] }
+    })
+    let providerTeardown: Promise<void> | undefined
+    let retryProviderTeardown: (() => Promise<void>) | undefined
+    const deadlineMs = 50_000
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    store.getState().closeTab('tab-deadline', {
+      providerTeardownDeadlineMs: deadlineMs,
+      registerProviderTeardown: (teardown, retry) => {
+        providerTeardown = teardown
+        retryProviderTeardown = retry
+      }
+    })
+    await expect(providerTeardown).rejects.toThrow('terminal_tab_close_failed')
+
+    now.mockReturnValue(30_000)
+    await expect(retryProviderTeardown?.()).resolves.toBeUndefined()
+    expect(mockKill.mock.calls.map(([, options]) => options?.timeoutMs)).toEqual([
+      TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS,
+      deadlineMs - 30_000 - EXPECTED_PERSISTENCE_MARGIN_MS
+    ])
+    now.mockRestore()
+    warn.mockRestore()
+  })
+
+  it('retains a prior kill set when a re-materialized tab has no current PTY ids', () => {
+    const store = createRetirementStore()
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [
+          makeTab({ id: 'tab-replanned', worktreeId: 'wt-1', ptyId: null }),
+          makeTab({ id: 'tab-bystander', worktreeId: 'wt-1', ptyId: 'pty-prior' })
+        ]
+      },
+      ptyIdsByTabId: { 'tab-replanned': [], 'tab-bystander': ['pty-prior'] }
+    })
+
+    const replanned = replanTerminalTabRetirement(store.getState(), {
+      tabId: 'tab-replanned',
+      worktreeId: 'wt-1',
+      ptyIds: ['pty-prior'],
+      localOrSshPtyIds: ['pty-prior'],
+      runtimeTerminals: [],
+      cleanupOnlyPtyIds: [],
+      sharedPtyIds: [],
+      unroutablePtyIds: []
+    })
+
+    expect(replanned.ptyIds).toEqual(['pty-prior'])
+    expect(replanned.sharedPtyIds).toEqual(['pty-prior'])
+    expect(replanned.localOrSshPtyIds).toEqual([])
   })
 
   it('reconciles natural exit without issuing teardown or revoking resume authority', async () => {

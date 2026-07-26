@@ -13,7 +13,11 @@ export function closeLocalTerminalTabState(
     localPtyTeardownOwnedExternally?: boolean
     precomputedRetirementPlan?: TerminalTabRetirementPlan
     providerTeardownTimeoutMs?: number
-    registerProviderTeardown?: (teardown: Promise<void>, retry: () => Promise<void>) => void
+    providerTeardownDeadlineMs?: number
+    registerProviderTeardown?: (
+      teardown: Promise<void>,
+      retry: (deadlineMs?: number) => Promise<void>
+    ) => void
   }
 ): void {
   const state = useAppStore.getState()
@@ -28,6 +32,7 @@ export function closeLocalTerminalTabState(
       options?.localPtyTeardownOwnedExternally ||
       options?.precomputedRetirementPlan ||
       options?.providerTeardownTimeoutMs !== undefined ||
+      options?.providerTeardownDeadlineMs !== undefined ||
       options?.registerProviderTeardown
     ) {
       state.closeTab(terminalTabId, options)

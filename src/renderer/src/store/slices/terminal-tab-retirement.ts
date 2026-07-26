@@ -171,10 +171,11 @@ export function buildTerminalTabRetirementPlans(
     const owner = liveTabs.get(tabId)
     const priorPlan = priorPlans.get(tabId)
     const worktreeId = owner?.worktreeId ?? priorPlan?.worktreeId ?? null
+    const livePtyIds = ptyIdsByLiveTab.get(tabId)
     const ptyIds =
-      ptyIdsByLiveTab.get(tabId) ??
-      priorPlan?.ptyIds ??
-      collectPtyIdsForTab(state, tabId, owner?.rowPtyId ?? null)
+      livePtyIds && livePtyIds.length > 0
+        ? livePtyIds
+        : (priorPlan?.ptyIds ?? livePtyIds ?? collectPtyIdsForTab(state, tabId, null))
     const sharedPtyIds: string[] = []
     const localOrSshPtyIds: string[] = []
     const runtimeTerminals: TerminalTabRetirementPlan['runtimeTerminals'] = []
