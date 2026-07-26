@@ -1,1 +1,1 @@
-"NSAppDataUsageDescription" = "Orca は、ターミナルツールの使用、ブラウザ Cookie のインポート、または選択したファイルを開くために、ほかのアプリのデータにアクセスします。";
+"NSAppDataUsageDescription" = "Orca のターミナルで実行するエージェントやツールが、ほかのアプリのフォルダに保存されているデータを読み取る場合があります。";

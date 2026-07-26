@@ -1,1 +1,1 @@
-"NSAppDataUsageDescription" = "Orca accede a los datos de otras apps para las herramientas de terminal, la importación de cookies del navegador y los archivos que elijas abrir.";
+"NSAppDataUsageDescription" = "Los agentes y las herramientas que ejecutas en el terminal de Orca pueden leer datos guardados en las carpetas de otras apps.";

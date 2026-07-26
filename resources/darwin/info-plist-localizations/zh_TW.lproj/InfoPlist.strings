@@ -1,1 +1,1 @@
-"NSAppDataUsageDescription" = "Orca 會存取其他 App 的資料，用於終端機工具、瀏覽器 Cookie 匯入，以及您選擇開啟的檔案。";
+"NSAppDataUsageDescription" = "您在 Orca 終端機中執行的 AI 代理和工具，可能會讀取儲存在其他 App 檔案夾中的資料。";

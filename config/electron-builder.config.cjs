@@ -241,7 +241,7 @@ module.exports = {
     entitlementsInherit: 'resources/build/entitlements.mac.plist',
     extendInfo: {
       NSAppDataUsageDescription:
-        "Orca uses access to other apps' data for terminal tools, browser cookie imports, and files you choose to open.",
+        "Agents and tools you run in Orca's terminal may read data stored in other apps' folders.",
       NSAppleEventsUsageDescription:
         'Orca allows terminal-launched developer tools to automate local apps when you request it.',
       NSBluetoothAlwaysUsageDescription:
