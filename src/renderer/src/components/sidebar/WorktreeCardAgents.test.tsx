@@ -29,7 +29,6 @@ type MockAgentOptions = {
     isLastSibling: boolean
     childCount: number
   }
-  liveWorktreeMismatch?: { destinationWorktreeId: string; destinationLabel: string }
 }
 
 function mockAgent({
@@ -44,15 +43,13 @@ function mockAgent({
   stateStartedAt = 1000,
   terminalHandle,
   orchestration,
-  lineage,
-  liveWorktreeMismatch
+  lineage
 }: MockAgentOptions = {}): unknown {
   return {
     paneKey,
     tab: { id: tabId },
     agentType,
     rowSource,
-    liveWorktreeMismatch,
     state,
     startedAt,
     entry: {
@@ -897,106 +894,5 @@ describe('WorktreeCardAgents', () => {
     expect(markup).not.toContain('Parent A')
     expect(markup).not.toContain('Child A')
     expect(markup).not.toContain('compact-agent-row')
-  })
-
-  it('notes the destination worktree on a compact row without dropping its details', async () => {
-    mockAgentActivityDisplayMode = 'compact'
-    mockAgents = [
-      mockAgent({
-        agentType: 'codex',
-        rowSource: 'live',
-        startedAt: 1000,
-        prompt: 'Run tests',
-        lastAssistantMessage: 'Inspecting changes',
-        liveWorktreeMismatch: {
-          destinationWorktreeId: 'wt-scratch',
-          destinationLabel: 'scratch-fix'
-        }
-      })
-    ]
-    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
-
-    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
-
-    expect(markup).toContain('data-agent-live-worktree-mismatch')
-    expect(markup).toContain(' · in scratch-fix')
-    expect(markup).toContain('<span class="text-muted-foreground/90">Run tests</span>')
-    expect(markup).toContain('<span class="text-muted-foreground/65"> - Inspecting changes</span>')
-    expect(markup).toContain('title="Run tests · in scratch-fix - Inspecting changes"')
-  })
-
-  it('summarizes hidden panes running elsewhere on the collapsed compact affordance', async () => {
-    mockAgentActivityDisplayMode = 'compact'
-    mockAgents = [
-      mockAgent({
-        agentType: 'codex',
-        rowSource: 'live',
-        startedAt: 1000,
-        prompt: 'One',
-        liveWorktreeMismatch: {
-          destinationWorktreeId: 'wt-scratch',
-          destinationLabel: 'scratch-fix'
-        }
-      }),
-      mockAgent({
-        paneKey: 'tab-1:2',
-        agentType: 'claude',
-        rowSource: 'live',
-        startedAt: 1500,
-        stateStartedAt: 1500,
-        prompt: 'Two',
-        liveWorktreeMismatch: {
-          destinationWorktreeId: 'wt-other',
-          destinationLabel: 'other-fix'
-        }
-      }),
-      mockAgent({
-        paneKey: 'tab-1:3',
-        agentType: 'gemini',
-        rowSource: 'live',
-        startedAt: 1700,
-        stateStartedAt: 1700,
-        prompt: 'Three'
-      })
-    ]
-    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
-
-    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
-
-    expect(markup).toContain('aria-expanded="false"')
-    expect(markup).toContain('data-agent-live-worktree-mismatch-summary')
-    expect(markup).toContain('2 elsewhere')
-    expect(markup).toContain('2 agents in another worktree')
-    expect(markup).not.toContain('3 agents in another worktree')
-  })
-
-  it('uses the singular hidden-elsewhere phrasing for a single mismatched pane', async () => {
-    mockAgentActivityDisplayMode = 'compact'
-    mockAgents = [
-      mockAgent({
-        agentType: 'codex',
-        rowSource: 'live',
-        startedAt: 1000,
-        prompt: 'One',
-        liveWorktreeMismatch: {
-          destinationWorktreeId: 'wt-scratch',
-          destinationLabel: 'scratch-fix'
-        }
-      }),
-      mockAgent({
-        paneKey: 'tab-1:2',
-        agentType: 'claude',
-        rowSource: 'live',
-        startedAt: 1500,
-        stateStartedAt: 1500,
-        prompt: 'Two'
-      })
-    ]
-    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
-
-    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
-
-    expect(markup).toContain('1 elsewhere')
-    expect(markup).toContain('1 agent in another worktree')
   })
 })

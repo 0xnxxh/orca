@@ -22,7 +22,7 @@ function seedTabs(store: ReturnType<typeof createTestStore>): void {
 
 function setStatusWithMetadata(
   store: ReturnType<typeof createTestStore>,
-  payload: { state: 'working' | 'done'; prompt?: string; agentType?: 'claude' | 'codex' | 'pi' },
+  payload: { state: 'working' | 'done'; prompt: string; agentType?: 'claude' | 'codex' | 'pi' },
   metadata?: { reportedCwd?: string | null }
 ): void {
   store
@@ -46,31 +46,76 @@ describe('agent status reported cwd', () => {
     const store = createTestStore()
     seedTabs(store)
 
-    setStatusWithMetadata(store, { state: 'working', prompt: 'go', agentType: 'claude' }, {
-      reportedCwd: SCRATCH_CWD
-    })
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'go', agentType: 'claude' },
+      {
+        reportedCwd: SCRATCH_CWD
+      }
+    )
     expect(reportedCwd(store)).toBe(SCRATCH_CWD)
 
     // Why: a same-root transition with no cwd must not blank the known location.
     setStatusWithMetadata(store, { state: 'done', prompt: 'go', agentType: 'claude' })
     expect(reportedCwd(store)).toBe(SCRATCH_CWD)
 
-    setStatusWithMetadata(store, { state: 'working', prompt: 'again', agentType: 'claude' }, {
-      reportedCwd: OWNER_CWD
-    })
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'again', agentType: 'claude' },
+      {
+        reportedCwd: OWNER_CWD
+      }
+    )
     expect(reportedCwd(store)).toBe(OWNER_CWD)
+  })
+
+  it('publishes a fresh entry for an update that only moves the location', () => {
+    const store = createTestStore()
+    seedTabs(store)
+
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'go', agentType: 'claude' },
+      {
+        reportedCwd: OWNER_CWD
+      }
+    )
+    const before = store.getState().agentStatusByPaneKey[PANE_KEY]
+
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'go', agentType: 'claude' },
+      {
+        reportedCwd: SCRATCH_CWD
+      }
+    )
+    const after = store.getState().agentStatusByPaneKey[PANE_KEY]
+
+    // Why: sidebar cards diff entry identity, so a cwd-only move must publish a new object.
+    expect(after).not.toBe(before)
+    expect(after.reportedCwd).toBe(SCRATCH_CWD)
+    expect(after.state).toBe(before.state)
+    expect(after.prompt).toBe(before.prompt)
   })
 
   it('clears the location when main sends an explicit null', () => {
     const store = createTestStore()
     seedTabs(store)
 
-    setStatusWithMetadata(store, { state: 'working', prompt: 'go', agentType: 'claude' }, {
-      reportedCwd: SCRATCH_CWD
-    })
-    setStatusWithMetadata(store, { state: 'working', prompt: 'go', agentType: 'claude' }, {
-      reportedCwd: null
-    })
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'go', agentType: 'claude' },
+      {
+        reportedCwd: SCRATCH_CWD
+      }
+    )
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'go', agentType: 'claude' },
+      {
+        reportedCwd: null
+      }
+    )
 
     expect(reportedCwd(store)).toBeUndefined()
     expect('reportedCwd' in store.getState().agentStatusByPaneKey[PANE_KEY]).toBe(false)
@@ -81,13 +126,21 @@ describe('agent status reported cwd', () => {
     const store = createTestStore()
     seedTabs(store)
 
-    setStatusWithMetadata(store, { state: 'working', prompt: 'root', agentType: 'claude' }, {
-      reportedCwd: OWNER_CWD
-    })
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'root', agentType: 'claude' },
+      {
+        reportedCwd: OWNER_CWD
+      }
+    )
     // Why: a foreign agentType while the root turn is live is nested child traffic.
-    setStatusWithMetadata(store, { state: 'working', prompt: 'child', agentType: 'codex' }, {
-      reportedCwd: SCRATCH_CWD
-    })
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'child', agentType: 'codex' },
+      {
+        reportedCwd: SCRATCH_CWD
+      }
+    )
 
     expect(store.getState().agentStatusByPaneKey[PANE_KEY].agentType).toBe('claude')
     expect(reportedCwd(store)).toBe(OWNER_CWD)
@@ -98,9 +151,13 @@ describe('agent status reported cwd', () => {
     const store = createTestStore()
     seedTabs(store)
 
-    setStatusWithMetadata(store, { state: 'working', prompt: 'root', agentType: 'claude' }, {
-      reportedCwd: SCRATCH_CWD
-    })
+    setStatusWithMetadata(
+      store,
+      { state: 'working', prompt: 'root', agentType: 'claude' },
+      {
+        reportedCwd: SCRATCH_CWD
+      }
+    )
     setStatusWithMetadata(store, { state: 'done', prompt: 'root', agentType: 'claude' })
     setStatusWithMetadata(store, { state: 'working', prompt: 'next', agentType: 'codex' })
 
@@ -112,9 +169,13 @@ describe('agent status reported cwd', () => {
     const store = createTestStore()
     seedTabs(store)
 
-    setStatusWithMetadata(store, { state: 'done', prompt: 'finished', agentType: 'claude' }, {
-      reportedCwd: SCRATCH_CWD
-    })
+    setStatusWithMetadata(
+      store,
+      { state: 'done', prompt: 'finished', agentType: 'claude' },
+      {
+        reportedCwd: SCRATCH_CWD
+      }
+    )
 
     const retained = collectHibernatedCompletionEvidenceForWorktree(store.getState(), 'wt-1', [
       PANE_KEY
@@ -130,19 +191,17 @@ describe('agent status reported cwd', () => {
     const store = createTestStore()
     seedTabs(store)
 
-    store
-      .getState()
-      .setAgentStatus(
-        PANE_KEY,
-        { state: 'working', prompt: 'sleep me', agentType: 'codex' },
-        undefined,
-        undefined,
-        { tabId: 'tab-1', worktreeId: 'wt-1' },
-        {
-          reportedCwd: SCRATCH_CWD,
-          providerSession: { key: 'session_id', id: 'codex-session-1' }
-        }
-      )
+    store.getState().setAgentStatus(
+      PANE_KEY,
+      { state: 'working', prompt: 'sleep me', agentType: 'codex' },
+      undefined,
+      undefined,
+      { tabId: 'tab-1', worktreeId: 'wt-1' },
+      {
+        reportedCwd: SCRATCH_CWD,
+        providerSession: { key: 'session_id', id: 'codex-session-1' }
+      }
+    )
 
     const records = collectSleepingAgentSessionRecordsForWorktree(store.getState(), 'wt-1')
     expect(records[PANE_KEY]).toBeDefined()

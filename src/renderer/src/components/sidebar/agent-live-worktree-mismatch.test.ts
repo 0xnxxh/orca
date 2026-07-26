@@ -104,11 +104,12 @@ function resolve(
 
 describe('resolveAgentLiveWorktreeMismatch', () => {
   it('resolves a nested scratch destination over the owner checkout', () => {
-    expect(resolve('/repo/.claude/worktrees/scratch/src', [candidate(OWNER), candidate(SCRATCH)]))
-      .toEqual({
-        destinationWorktreeId: SCRATCH.id,
-        destinationLabel: '10572-live-repro'
-      })
+    expect(
+      resolve('/repo/.claude/worktrees/scratch/src', [candidate(OWNER), candidate(SCRATCH)])
+    ).toEqual({
+      destinationWorktreeId: SCRATCH.id,
+      destinationLabel: '10572-live-repro'
+    })
   })
 
   it('returns no mismatch for the owner checkout, unknown paths, and folder workspaces', () => {
@@ -148,8 +149,9 @@ describe('resolveAgentLiveWorktreeMismatch', () => {
       path: '/repo/.claude/worktrees/scratch',
       hostId: 'ssh:target-b'
     })
-    expect(resolve('/repo/.claude/worktrees/scratch', [candidate(sameIdOtherHost)], sshOwner))
-      .toBeNull()
+    expect(
+      resolve('/repo/.claude/worktrees/scratch', [candidate(sameIdOtherHost)], sshOwner)
+    ).toBeNull()
     // Why: matching is by current path only; a renamed folder's old id must not match.
     const renamed = makeWorktree({
       id: 'repo-1::/repo/.claude/worktrees/renamed',
@@ -158,7 +160,9 @@ describe('resolveAgentLiveWorktreeMismatch', () => {
       priorWorktreeIds: ['repo-1::/repo/.claude/worktrees/old'],
       branch: 'refs/heads/renamed'
     })
-    expect(resolve('/repo/.claude/worktrees/old', [candidate(OWNER), candidate(renamed)])).toBeNull()
+    expect(
+      resolve('/repo/.claude/worktrees/old', [candidate(OWNER), candidate(renamed)])
+    ).toBeNull()
   })
 
   it('rejects a candidate from another repo bucket', () => {
@@ -244,7 +248,10 @@ describe('resolveAgentLiveWorktreeMismatch', () => {
 
   it('collapses dot segments, duplicate and trailing separators', () => {
     expect(
-      resolve('/repo/./.claude//worktrees/other/../scratch/', [candidate(OWNER), candidate(SCRATCH)])
+      resolve('/repo/./.claude//worktrees/other/../scratch/', [
+        candidate(OWNER),
+        candidate(SCRATCH)
+      ])
     ).toEqual({ destinationWorktreeId: SCRATCH.id, destinationLabel: '10572-live-repro' })
   })
 
@@ -304,7 +311,11 @@ describe('resolveAgentLiveWorktreeMismatch', () => {
     // Why: the distro alias folds case, the Linux tail does not.
     expect(resolve('/home/dev/repo/Scratch', [candidate(wslScratch)], wslOwner)).toBeNull()
     expect(
-      resolve('\\\\wsl.localhost\\Debian\\home\\dev\\repo\\scratch', [candidate(wslScratch)], wslOwner)
+      resolve(
+        '\\\\wsl.localhost\\Debian\\home\\dev\\repo\\scratch',
+        [candidate(wslScratch)],
+        wslOwner
+      )
     ).toBeNull()
     // Why: a bare Linux cwd only bridges into the owner's proven distro.
     expect(resolve('/home/dev/repo/scratch', [candidate(otherDistro)], wslOwner)).toBeNull()
@@ -321,11 +332,11 @@ describe('resolveAgentLiveWorktreeMismatch', () => {
   })
 
   it('falls back from branch to display name to path basename for the label', () => {
-    const noBranch = { ...SCRATCH, branch: undefined } as Worktree
-    expect(resolve('/repo/.claude/worktrees/scratch', [candidate(noBranch)])?.destinationLabel).toBe(
-      'scratch'
-    )
-    const noNames = { ...SCRATCH, branch: undefined, displayName: '' } as Worktree
+    const noBranch: Worktree = { ...SCRATCH, branch: '' }
+    expect(
+      resolve('/repo/.claude/worktrees/scratch', [candidate(noBranch)])?.destinationLabel
+    ).toBe('scratch')
+    const noNames: Worktree = { ...SCRATCH, branch: '', displayName: '' }
     expect(resolve('/repo/.claude/worktrees/scratch', [candidate(noNames)])?.destinationLabel).toBe(
       'scratch'
     )
@@ -402,7 +413,10 @@ describe('buildAgentLiveWorktreeMismatchCandidates', () => {
 
 describe('attachAgentLiveWorktreeMismatch', () => {
   function makeRow(
-    overrides: Partial<DashboardAgentRow> & { paneKey: string }
+    overrides: Omit<Partial<DashboardAgentRow>, 'entry'> & {
+      paneKey: string
+      entry?: Partial<AgentStatusEntry>
+    }
   ): DashboardAgentRow {
     const entry = {
       paneKey: overrides.paneKey,
@@ -411,10 +425,9 @@ describe('attachAgentLiveWorktreeMismatch', () => {
       stateStartedAt: 1,
       stateHistory: [],
       agentType: 'claude',
-      ...(overrides.entry ?? {})
+      ...overrides.entry
     } as AgentStatusEntry
     return {
-      paneKey: overrides.paneKey,
       tab: { id: 'tab-1', worktreeId: OWNER.id } as TerminalTab,
       agentType: 'claude',
       rowSource: 'live',
@@ -465,5 +478,43 @@ describe('attachAgentLiveWorktreeMismatch', () => {
       })
     ]
     expect(attachAgentLiveWorktreeMismatch(rows, args)).toBe(rows)
+  })
+
+  it('starts annotating the same row once the destination is discovered', () => {
+    const rows = [
+      makeRow({
+        paneKey: 'tab-1:pane-a',
+        entry: { reportedCwd: '/repo/.claude/worktrees/scratch' } as Partial<AgentStatusEntry>
+      })
+    ]
+    // Why: the scratch checkout usually appears in a later catalog refresh than
+    // the hook event that first reports its path.
+    const beforeDiscovery = buildAgentLiveWorktreeMismatchCandidates({
+      ownerWorktree: OWNER,
+      ownerRepo: OWNER_REPO,
+      visibleWorktrees: [OWNER],
+      detected: undefined
+    })
+    expect(
+      attachAgentLiveWorktreeMismatch(rows, {
+        ownerWorktree: OWNER,
+        ownerRepo: OWNER_REPO,
+        candidates: beforeDiscovery
+      })[0].liveWorktreeMismatch
+    ).toBeUndefined()
+
+    const afterDiscovery = buildAgentLiveWorktreeMismatchCandidates({
+      ownerWorktree: OWNER,
+      ownerRepo: OWNER_REPO,
+      visibleWorktrees: [OWNER],
+      detected: makeDetected([SCRATCH], { local: { authoritative: true, source: 'git' } })
+    })
+    expect(
+      attachAgentLiveWorktreeMismatch(rows, {
+        ownerWorktree: OWNER,
+        ownerRepo: OWNER_REPO,
+        candidates: afterDiscovery
+      })[0].liveWorktreeMismatch?.destinationLabel
+    ).toBe('10572-live-repro')
   })
 })

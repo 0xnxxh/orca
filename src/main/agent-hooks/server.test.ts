@@ -6182,10 +6182,7 @@ describe('AgentHookServer reported cwd merge', () => {
     envelope: Record<string, unknown>,
     connectionId = 'conn-1'
   ): void => {
-    server.ingestRemote(
-      envelope as Parameters<AgentHookServer['ingestRemote']>[0],
-      connectionId
-    )
+    server.ingestRemote(envelope as Parameters<AgentHookServer['ingestRemote']>[0], connectionId)
   }
   const workingPayload = (overrides: Record<string, unknown> = {}) => ({
     state: 'working',

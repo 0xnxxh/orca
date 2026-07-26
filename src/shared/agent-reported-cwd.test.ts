@@ -56,9 +56,9 @@ describe('extractAgentReportedCwdUpdate', () => {
   it('accepts the workspaceRoot aliases and honours alias precedence', () => {
     expect(extractAgentReportedCwdUpdate({ workspaceRoot: '/repo/a' })).toBe('/repo/a')
     expect(extractAgentReportedCwdUpdate({ workspace_root: '/repo/b' })).toBe('/repo/b')
-    expect(
-      extractAgentReportedCwdUpdate({ cwd: '/repo/a', workspaceRoot: '/repo/b' })
-    ).toBe('/repo/a')
+    expect(extractAgentReportedCwdUpdate({ cwd: '/repo/a', workspaceRoot: '/repo/b' })).toBe(
+      '/repo/a'
+    )
     expect(
       extractAgentReportedCwdUpdate({ workspaceRoot: '/repo/b', workspace_root: '/repo/c' })
     ).toBe('/repo/b')
