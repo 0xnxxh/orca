@@ -24,11 +24,7 @@ type ApplyTerminalVisibilityTransitionArgs = TerminalVisibilityBookkeepingRefs &
   applyPendingFollowOutputRequests: () => void
 }
 
-// Why: PaneManager is created in a passive lifecycle effect after the layout
-// visibility pass. When manager is still null on a visible mount, still record
-// completion so the first intra-worktree hide does not take the
-// !hasCompletedVisibleResume suspend branch (that wrongly disposes WebGL).
-// openTerminal already attaches WebGL for visible mounts.
+// Record visible mounts before PaneManager exists so first tab hide stays light.
 export function applyTerminalVisibilityTransition(
   args: ApplyTerminalVisibilityTransitionArgs
 ): void {

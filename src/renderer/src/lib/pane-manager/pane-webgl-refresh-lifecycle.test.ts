@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PaneManager } from './pane-manager'
 import type { ManagedPaneInternal } from './pane-manager-types'
 import { disposePane } from './pane-lifecycle'
-import { suspendPaneRendering } from './pane-rendering-control'
+import { resumePaneRendering, suspendPaneRendering } from './pane-rendering-control'
 import { disposeWebgl } from './pane-webgl-renderer'
 import {
   beginTerminalScrollIntentBufferRebuild,
@@ -57,6 +58,14 @@ function createPane(
     debugLabel: null,
     ...overrides
   }
+}
+
+function stubRendererWindow(platform: NodeJS.Platform, webClient = false): void {
+  vi.stubGlobal('window', {
+    __ORCA_WEB_CLIENT__: webClient,
+    api: { platform: { get: () => ({ platform }) } },
+    location: { pathname: webClient ? '/web-index.html' : '/index.html' }
+  })
 }
 
 describe('pane WebGL refresh lifecycle', () => {
@@ -122,6 +131,7 @@ describe('pane WebGL refresh lifecycle', () => {
   })
 
   it('disposes WebGL when rendering is suspended', () => {
+    stubRendererWindow('darwin')
     const dispose = vi.fn()
     const pane = createPane({ webglAddon: { dispose } as never })
 
@@ -130,6 +140,70 @@ describe('pane WebGL refresh lifecycle', () => {
     expect(pane.webglAttachmentDeferred).toBe(true)
     expect(dispose).toHaveBeenCalledTimes(1)
     expect(pane.webglAddon).toBeNull()
+  })
+
+  it('retains and reuses a live WebGL addon on Windows desktop', () => {
+    stubRendererWindow('win32')
+    const dispose = vi.fn()
+    const addon = { dispose } as never
+    const pane = createPane({ webglAddon: addon })
+    vi.mocked(pane.terminal.refresh).mockClear()
+
+    suspendPaneRendering([pane])
+
+    expect(pane.webglAttachmentDeferred).toBe(true)
+    expect(pane.webglAddon).toBe(addon)
+    expect(dispose).not.toHaveBeenCalled()
+
+    resumePaneRendering([pane])
+
+    expect(pane.webglAttachmentDeferred).toBe(false)
+    expect(pane.webglAddon).toBe(addon)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
+  })
+
+  it('disposes suspended WebGL in a Windows web client', () => {
+    stubRendererWindow('win32', true)
+    const dispose = vi.fn()
+    const pane = createPane({ webglAddon: { dispose } as never })
+
+    suspendPaneRendering([pane])
+
+    expect(pane.webglAttachmentDeferred).toBe(true)
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(pane.webglAddon).toBeNull()
+  })
+
+  it('skips deferred panes during global refresh', () => {
+    const deferred = createPane()
+    const visible = createPane()
+    deferred.webglAttachmentDeferred = true
+    vi.mocked(deferred.terminal.refresh).mockClear()
+    vi.mocked(visible.terminal.refresh).mockClear()
+
+    PaneManager.prototype.refreshAllPanes.call({
+      panes: new Map([
+        [1, deferred],
+        [2, visible]
+      ])
+    } as never)
+
+    expect(deferred.terminal.refresh).not.toHaveBeenCalled()
+    expect(visible.terminal.refresh).toHaveBeenCalledWith(0, 23)
+  })
+
+  it('disposes a retained Windows context when its pane unmounts', () => {
+    stubRendererWindow('win32')
+    const dispose = vi.fn()
+    const pane = createPane({ webglAddon: { dispose } as never })
+    const panes = new Map([[pane.id, pane]])
+    suspendPaneRendering([pane])
+
+    disposePane(pane, panes)
+
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(pane.webglAddon).toBeNull()
+    expect(panes.has(pane.id)).toBe(false)
   })
 
   it('cancels a pending WebGL refresh when the pane is disposed', () => {

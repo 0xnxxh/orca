@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedPaneInternal } from './pane-manager-types'
-import { resumePaneRendering } from './pane-rendering-control'
+import { resumePaneRendering, suspendPaneRendering } from './pane-rendering-control'
 import { attachWebgl, resetTerminalWebglSuggestion } from './pane-webgl-renderer'
 
 function createPane(options: { loadAddon?: () => void } = {}): ManagedPaneInternal {
@@ -52,6 +52,13 @@ function fireContextLoss(pane: ManagedPaneInternal): void {
   // cycle runs through the production onContextLoss handler.
   const addon = pane.webglAddon as unknown as { _onContextLoss: { fire: () => void } }
   addon._onContextLoss.fire()
+}
+
+function stubWindowsDesktop(): void {
+  vi.stubGlobal('window', {
+    api: { platform: { get: () => ({ platform: 'win32' }) } },
+    location: { pathname: '/index.html' }
+  })
 }
 
 describe('terminal WebGL context recovery', () => {
@@ -109,6 +116,50 @@ describe('terminal WebGL context recovery', () => {
     resumePaneRendering([pane])
     expect(pane.webglDisabledAfterContextLoss).toBe(false)
     expect(pane.webglAddon).not.toBeNull()
+  })
+
+  it('reuses a retained Windows context without loading another addon', () => {
+    stubWindowsDesktop()
+    const pane = createPane()
+    attachWebgl(pane)
+    const addon = pane.webglAddon
+    vi.mocked(pane.terminal.refresh).mockClear()
+
+    suspendPaneRendering([pane])
+    resumePaneRendering([pane])
+
+    expect(pane.webglAddon).toBe(addon)
+    expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(1)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
+  })
+
+  it('blocks new WebGL contexts while a Windows pane is hidden', () => {
+    stubWindowsDesktop()
+    const pane = createPane()
+
+    suspendPaneRendering([pane])
+    attachWebgl(pane)
+
+    expect(pane.webglAddon).toBeNull()
+    expect(pane.terminal.loadAddon).not.toHaveBeenCalled()
+  })
+
+  it('recovers a retained Windows context lost while hidden', () => {
+    stubWindowsDesktop()
+    const pane = createPane()
+    attachWebgl(pane)
+    suspendPaneRendering([pane])
+
+    fireContextLoss(pane)
+
+    expect(pane.webglAddon).toBeNull()
+    expect(pane.webglDisabledAfterContextLoss).toBe(true)
+
+    resumePaneRendering([pane])
+
+    expect(pane.webglDisabledAfterContextLoss).toBe(false)
+    expect(pane.webglAddon).not.toBeNull()
+    expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(2)
   })
 
   it('re-latches when the retried context is lost again', () => {

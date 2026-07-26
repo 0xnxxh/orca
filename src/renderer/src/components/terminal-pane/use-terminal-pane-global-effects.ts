@@ -78,7 +78,7 @@ export function useTerminalPaneGlobalEffects({
   worktreeIdRef.current = worktreeId
   const cwdRef = useRef(cwd)
   cwdRef.current = cwd
-  // Starts true so the first isVisible=false pass suspends WebGL (context budget).
+  // Starts true so initially hidden tabs never allocate WebGL.
   const wasVisibleRef = useRef(true)
   const wasWorktreeActiveRef = useRef(isWorktreeActive)
   const hasCompletedVisibleResumeRef = useRef(false)

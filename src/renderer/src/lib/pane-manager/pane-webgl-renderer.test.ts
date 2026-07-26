@@ -123,4 +123,13 @@ describe('terminal WebGL addon lifecycle', () => {
 
     expect(pane.terminal.refresh).not.toHaveBeenCalled()
   })
+
+  it('skips atlas recovery while a retained pane is hidden', () => {
+    const pane = createPane()
+    pane.webglAttachmentDeferred = true
+
+    resetWebglTextureAtlas(pane)
+
+    expect(pane.terminal.refresh).not.toHaveBeenCalled()
+  })
 })

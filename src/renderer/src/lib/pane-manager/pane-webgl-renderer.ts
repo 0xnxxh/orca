@@ -124,7 +124,8 @@ export function markComplexScriptOutput(pane: ManagedPaneInternal): void {
 }
 
 export function resetWebglTextureAtlas(pane: ManagedPaneInternal): void {
-  if (pane.webglDisabledAfterContextLoss) {
+  // Deferred panes repaint on resume; atlas recovery stays scoped to visible contexts.
+  if (pane.webglDisabledAfterContextLoss || pane.webglAttachmentDeferred) {
     return
   }
   try {

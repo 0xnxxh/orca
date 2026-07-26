@@ -115,8 +115,7 @@ export function hideTerminalVisibility({
     captureViewportPositions(false)
   }
   if (!isWorktreeActive && (wasVisible || surfaceBecameHidden)) {
-    // Suspend WebGL when going hidden. xterm.write() continues to land in the
-    // DOM-renderer fallback terminal; the suspend is purely a GPU resource decision.
+    // Windows defers new contexts but retains live ones; other clients dispose.
     manager.suspendRendering()
     return { hiddenReason: 'surface', renderingSuspended: true }
   }
@@ -191,22 +190,9 @@ function requestLightTabBacklogRecovery(manager: PaneManager): void {
 }
 
 function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean): void {
-  // Order is resume → fit → flush (not flush→resume, not resume→flush→fit):
-  // 1. resumeRendering: while hidden we dispose WebGL (DOM fallback). Flushing
-  //    on DOM paints heavier CSS-AA glyphs for a frame (bold flash on switch).
-  //    Reattach first so drain + first paint stay on GPU. macOS ~5 ms; Windows
-  //    ANGLE can be 100-500 ms, but deferred resume paints a DOM flash instead.
-  // 2. fitAllRevealedPanes: WebGL cell metrics differ from DOM's briefly; must
-  //    settle the grid before any write, or full-screen TUI backlog (grok) lands
-  //    on a one-column-off grid and garbles (the fitAllRevealedPanes regression).
-  // 3. flush: bounded drain of hidden PTY bursts onto the now-stable GPU grid;
-  //    scheduler continues the rest async so return-to-app does not beachball.
-  // Intent is latched by the outer pre-resume sync/capture. Do not re-sync after
-  // resume/fit/flush in this tick: reattach can move viewportY into a false
-  // at-bottom reading, and flush only queues terminal.write (async parse), so a
-  // same-tick re-sync would overwrite the pre-resume pin with pre-parse geometry.
-  // Outer enforce restores the latched intent after this returns.
+  // Retained Windows surfaces reuse WebGL; disposed or pressure-lost surfaces reattach.
   manager.resumeRendering()
+  // Fit before flush so backlog cannot target transient DOM↔WebGL metrics.
   manager.fitAllRevealedPanes()
   for (const pane of manager.getPanes()) {
     requestTerminalBacklogRecovery(pane.terminal)
