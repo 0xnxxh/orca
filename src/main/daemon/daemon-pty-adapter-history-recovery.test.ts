@@ -1,7 +1,7 @@
 /* History recovery / quarantine / reconcile regressions for DaemonPtyAdapter. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   chmodSync,
   closeSync,
@@ -39,7 +39,8 @@ const { getMacDaemonSystemResolverHealthMock } = vi.hoisted(() => ({
   getMacDaemonSystemResolverHealthMock: vi.fn(async () => 'unknown')
 }))
 
-const itOnPosix = process.platform === 'win32' ? it.skip : it
+// Why not just posix: mode 0o500 does not block writes for uid 0, so root CI containers would never hit the failure.
+const itOnUnprivilegedPosix = it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)
 
 vi.mock('./daemon-health', async (importOriginal) => {
   const actual = await importOriginal<typeof DaemonHealthModule>()
@@ -65,7 +66,11 @@ async function leaveFailedQuarantineProtection(
 ): Promise<void> {
   const manager = new HistoryManager(historyPath)
   const recoveryFreeze = await manager.freezeForRecovery(sessionId)
-  writeFileSync(join(historyPath, '.recovery-quarantine'), 'block quarantine')
+  // Occupy the quarantine root with a file so the owner-directory mkdir fails.
+  writeFileSync(
+    dirname(getTerminalHistoryQuarantineOwnerDir(historyPath, sessionId)),
+    'block quarantine'
+  )
   await manager.openSession(sessionId, {
     cwd: '/replacement',
     cols: 80,
@@ -283,8 +288,11 @@ describe('DaemonPtyAdapter history recovery', () => {
         sessionIds: Iterable<string>,
         opts?: { final?: boolean; teardown?: boolean }
       ): Promise<Set<string>>
+      runExclusiveCheckpoint(operation: () => Promise<void>, options?: object): Promise<void>
     }
     const originalCheckpointSessions = internals.checkpointSessions.bind(historyAdapter)
+    // Call-through spy: entering the exclusive gate is the observable "queued behind the in-flight checkpoint" moment.
+    const exclusiveEntries = vi.spyOn(internals, 'runExclusiveCheckpoint')
     let activeCheckpoints = 0
     let maxActiveCheckpoints = 0
     let checkpointCalls = 0
@@ -321,7 +329,9 @@ describe('DaemonPtyAdapter history recovery', () => {
       historyAdapter.shutdown(sessionIds[2], { immediate: true, keepHistory: true }),
       historyAdapter.disconnectOnly()
     ]
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    // Why not a fixed sleep: releasing before both queued shutdowns enter the gate makes maxActiveCheckpoints===1 vacuous.
+    // (disconnectOnly's own entry lands after it drains the keepHistory shutdowns, so it can't be waited on here.)
+    await waitFor(() => exclusiveEntries.mock.calls.length >= 3)
     releaseFirstCheckpoint()
     await Promise.all([firstShutdown, ...queuedOperations])
 
@@ -561,7 +571,7 @@ describe('DaemonPtyAdapter history recovery', () => {
     expect(readFileSync(checkpointPath, 'utf8')).toContain('must stay protected')
   })
 
-  itOnPosix(
+  itOnUnprivilegedPosix(
     'full-checks live recovery after a transient protection-marker write failure',
     async () => {
       const sessionId = 'live-after-marker-write-failure'
@@ -585,14 +595,18 @@ describe('DaemonPtyAdapter history recovery', () => {
       const failedManager = new HistoryManager(historyDir)
       const recoveryFreeze = await failedManager.freezeForRecovery(sessionId)
       chmodSync(sessionDir, 0o500)
-      await failedManager.openSession(sessionId, {
-        cwd: '/replacement',
-        cols: 80,
-        rows: 24,
-        recoveryFreeze,
-        quarantineUnreadableRecovery: true
-      })
-      chmodSync(sessionDir, 0o700)
+      try {
+        await failedManager.openSession(sessionId, {
+          cwd: '/replacement',
+          cols: 80,
+          rows: 24,
+          recoveryFreeze,
+          quarantineUnreadableRecovery: true
+        })
+      } finally {
+        // Why finally: a leaked 0o500 dir turns teardown into a confusing EACCES instead of the real assertion failure.
+        chmodSync(sessionDir, 0o700)
+      }
       expect(failedManager.isSessionDisabled(sessionId)).toBe(true)
       expect(existsSync(join(sessionDir, '.unreadable-recovery'))).toBe(false)
       historyAdapter = new DaemonPtyAdapter({
@@ -750,12 +764,16 @@ describe('DaemonPtyAdapter history recovery', () => {
     historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
     const reader = (historyAdapter as unknown as { historyReader: HistoryReader }).historyReader
     let releaseDetection!: () => void
-    vi.spyOn(reader, 'detectColdRestoreState').mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          releaseDetection = () => resolve({ status: 'none' })
-        })
-    )
+    let detectCalls = 0
+    // Why only the first call blocks: a second never-resolving promise would hang the test instead of failing it.
+    vi.spyOn(reader, 'detectColdRestoreState').mockImplementation(() => {
+      if (detectCalls++ > 0) {
+        return Promise.resolve({ status: 'none' })
+      }
+      return new Promise((resolve) => {
+        releaseDetection = () => resolve({ status: 'none' })
+      })
+    })
 
     const spawning = historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
     await waitFor(() => releaseDetection !== undefined)

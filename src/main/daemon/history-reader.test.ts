@@ -106,6 +106,19 @@ describe('HistoryReader', () => {
       expect(info).toMatchObject({ cols: 800, rows: 24 })
     })
 
+    it('restores checkpoint history at the exact accepted dimension ceiling', async () => {
+      writeSessionWithCheckpoint(
+        dir,
+        'ceiling-checkpoint',
+        makeMeta({ cols: 1_000, rows: 500 }),
+        makeCheckpoint({ cols: 1_000, rows: 500 })
+      )
+
+      const info = await reader.detectColdRestore('ceiling-checkpoint')
+
+      expect(info).toMatchObject({ cols: 1_000, rows: 500 })
+    })
+
     it('restores terminal modes from checkpoint', async () => {
       const modes = {
         bracketedPaste: true,
@@ -398,6 +411,7 @@ describe('HistoryReader', () => {
       expect(detection.status).toBe('restored')
       if (detection.status === 'restored') {
         expect(detection.restoreInfo.snapshotAnsi).toContain('complete prefix')
+        expect(detection.restoreInfo.snapshotAnsi).not.toContain('unique torn tail')
         expect(detection.hasUnreadableRecovery).toBe(true)
       }
     })

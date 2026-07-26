@@ -27,7 +27,11 @@ export function readTerminalHistoryMeta(basePath: string, sessionId: string): Se
   try {
     const meta = readTerminalHistoryJson<unknown>(metaPath, TERMINAL_HISTORY_META_MAX_BYTES)
     return isSessionMeta(meta) ? { status: 'readable', meta } : { status: 'unreadable' }
-  } catch {
+  } catch (err) {
+    // Why: a concurrent cleanup/quarantine between existsSync and the read means no history, not corrupt history.
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return { status: 'missing' }
+    }
     return { status: 'unreadable' }
   }
 }

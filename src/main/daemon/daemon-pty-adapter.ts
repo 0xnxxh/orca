@@ -62,6 +62,17 @@ type HistoryRecoveryContext = {
   identityChanged: boolean
 }
 
+// Why take-and-clear together: every consuming branch must reset the field, so pairing them stops one from forgetting.
+function takeRecoveryFreeze(
+  historyRecovery: HistoryRecoveryContext,
+  sessionId: string
+): HistoryRecoveryFreeze | undefined {
+  const freeze =
+    historyRecovery.freeze?.sessionId === sessionId ? historyRecovery.freeze : undefined
+  historyRecovery.freeze = null
+  return freeze
+}
+
 function getRecoveredHistorySeed(restoreInfo: ColdRestoreInfo): string | null {
   // Why: alt-screen snapshots are the TUI buffer; prefer its normal scrollback so a dead TUI isn't revived as the fresh shell's active screen.
   return restoreInfo.modes.alternateScreen
@@ -458,14 +469,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
       // Why: wake-after-sleep lands here too; sleep dropped active tracking + the history writer, so re-register both or the next sleep/wake restores a blank terminal.
       this.activeSessionIds.add(sessionId)
       if (this.historyManager && !historyRecovery.identityChanged) {
-        const recoveryFreeze =
-          historyRecovery.freeze?.sessionId === sessionId ? historyRecovery.freeze : undefined
+        const recoveryFreeze = takeRecoveryFreeze(historyRecovery, sessionId)
         if (historyRecovery.unreadableSessionId === sessionId) {
           this.historyManager.suspendSession(sessionId, recoveryFreeze)
         } else {
           this.historyManager.reopenSession(sessionId, recoveryFreeze)
         }
-        historyRecovery.freeze = null
       }
       return {
         id: sessionId,
@@ -533,8 +542,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       const canReanchorHistory = !scrollback || result.historySeeded === true
       // Why: registerWriter (not openSession) avoids deleting checkpoint.json — the only recovery data if the revived daemon crashes before the next tick.
       if (this.historyManager && !historyRecovery.identityChanged) {
-        const recoveryFreeze =
-          historyRecovery.freeze?.sessionId === sessionId ? historyRecovery.freeze : undefined
+        const recoveryFreeze = takeRecoveryFreeze(historyRecovery, sessionId)
         if (historyRecovery.unreadableSessionId === sessionId) {
           await this.historyManager.openSession(sessionId, {
             cwd: effectiveCwd ?? '',
@@ -543,21 +551,18 @@ export class DaemonPtyAdapter implements IPtyProvider {
             ...(recoveryFreeze ? { recoveryFreeze } : {}),
             quarantineUnreadableRecovery: true
           })
-          historyRecovery.freeze = null
           if (this.historyManager.hasWriter(sessionId)) {
             this.sessionsNeedingFullCheckpoint.add(sessionId)
             this.lastFullCheckpointAt.delete(sessionId)
           }
         } else if (canReanchorHistory) {
           this.historyManager.registerWriter(sessionId, recoveryFreeze)
-          historyRecovery.freeze = null
           this.sessionsNeedingFullCheckpoint.add(sessionId)
           // Why: the revived generation has no valid checkpoint yet; a cooldown inherited from the pre-crash generation must not defer this re-anchor.
           this.lastFullCheckpointAt.delete(sessionId)
         } else {
           // Preserve old recovery files when the new daemon can't include them; a fresh-only checkpoint would make the data loss permanent.
           this.historyManager.suspendSession(sessionId, recoveryFreeze)
-          historyRecovery.freeze = null
         }
       }
       if (coldRestore) {
@@ -586,8 +591,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
 
     if (this.historyManager && !historyRecovery.identityChanged && result.isNew) {
-      const recoveryFreeze =
-        historyRecovery.freeze?.sessionId === sessionId ? historyRecovery.freeze : undefined
+      const recoveryFreeze = takeRecoveryFreeze(historyRecovery, sessionId)
       await this.historyManager.openSession(sessionId, {
         cwd: effectiveCwd ?? '',
         cols: effectiveCols,
@@ -597,23 +601,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
           ? { quarantineUnreadableRecovery: true }
           : {})
       })
-      historyRecovery.freeze = null
     } else if (
       this.historyManager &&
       !historyRecovery.identityChanged &&
       (result.historySeeded === false || historyRecovery.unreadableSessionId === sessionId)
     ) {
       // Why: the daemon keeps this failure bit with the live session, so a new adapter can't promote its fresh-only snapshot after restart.
-      const recoveryFreeze =
-        historyRecovery.freeze?.sessionId === sessionId ? historyRecovery.freeze : undefined
-      this.historyManager.suspendSession(sessionId, recoveryFreeze)
-      historyRecovery.freeze = null
+      this.historyManager.suspendSession(sessionId, takeRecoveryFreeze(historyRecovery, sessionId))
     } else if (this.historyManager && !historyRecovery.identityChanged) {
       // Why: on warm reattach after relaunch the HistoryManager is fresh; registerWriter adds a writer without deleting the still-only-valid checkpoint.
-      const recoveryFreeze =
-        historyRecovery.freeze?.sessionId === sessionId ? historyRecovery.freeze : undefined
-      this.historyManager.registerWriter(sessionId, recoveryFreeze)
-      historyRecovery.freeze = null
+      this.historyManager.registerWriter(sessionId, takeRecoveryFreeze(historyRecovery, sessionId))
       if (!wasAlreadyManaged) {
         // Why: a previous adapter may have drained records it never persisted, so appending would leave a seq gap the reader rejects; force a full snapshot to re-anchor.
         this.sessionsNeedingFullCheckpoint.add(sessionId)
@@ -1433,12 +1430,15 @@ export class DaemonPtyAdapter implements IPtyProvider {
       }
       const checkpoint = this.checkpointDirtySessions()
       this.checkpointInFlight = checkpoint
-      void checkpoint.finally(() => {
-        if (this.checkpointInFlight === checkpoint) {
-          this.checkpointInFlight = null
-          this.scheduleCheckpointTimer()
-        }
-      })
+      void checkpoint
+        .finally(() => {
+          if (this.checkpointInFlight === checkpoint) {
+            this.checkpointInFlight = null
+            this.scheduleCheckpointTimer()
+          }
+        })
+        // Why: .finally() re-throws, so a rejected checkpoint would surface as an unhandled rejection here.
+        .catch(() => {})
     }, DaemonPtyAdapter.CHECKPOINT_INTERVAL_MS)
   }
 
