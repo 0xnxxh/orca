@@ -7159,6 +7159,45 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
+  it('refuses SSH hosts instead of setting the project up on the local machine', async () => {
+    const spawnSpy = vi.spyOn(gitRunner, 'gitSpawn')
+    const repos: Record<string, unknown>[] = []
+    const runtimeStore = {
+      ...store,
+      getRepos: () => [...repos] as never,
+      addRepo: (repo: Record<string, unknown>) => {
+        repos.push(repo)
+      }
+    }
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+
+    try {
+      await expect(
+        runtime.setupProjectClone({
+          projectId: 'github:stablyai/orca',
+          hostId: 'ssh:openclaw',
+          url: 'https://example.com/orca.git',
+          destination: '/home/brennan'
+        })
+      ).rejects.toThrow(/SSH hosts are not supported/)
+
+      await expect(
+        runtime.setupProjectExistingFolder({
+          projectId: 'github:stablyai/orca',
+          hostId: 'ssh:openclaw',
+          path: '/home/brennan/orca',
+          kind: 'git'
+        })
+      ).rejects.toThrow(/SSH hosts are not supported/)
+
+      // Why: the defect was a silent local clone/probe recorded as remote, not a bad message.
+      expect(spawnSpy).not.toHaveBeenCalled()
+      expect(repos).toHaveLength(0)
+    } finally {
+      spawnSpy.mockRestore()
+    }
+  })
+
   it('adopts public clone repos into host-qualified project setup', async () => {
     const destination = await mkdtemp(join(tmpdir(), 'orca-runtime-project-clone-'))
     const clonePath = join(destination, 'orca')
