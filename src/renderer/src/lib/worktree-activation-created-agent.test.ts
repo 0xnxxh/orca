@@ -60,43 +60,7 @@ describe('activateAndRevealWorktree', () => {
 
   it('does not relaunch the creation-time agent when reopening an empty worktree', () => {
     const worktree = makeWorktree()
-    const revealWorktreeInSidebar = vi.fn()
-
-    useAppStore.setState({
-      repos: [
-        {
-          id: 'repo-1',
-          path: '/workspace/repo',
-          displayName: 'repo',
-          badgeColor: '#000000',
-          addedAt: 0
-        }
-      ],
-      worktreesByRepo: { 'repo-1': [worktree] },
-      activeRepoId: 'repo-1',
-      activeView: 'terminal',
-      tabsByWorktree: {},
-      unifiedTabsByWorktree: {},
-      groupsByWorktree: {},
-      layoutByWorktree: {},
-      activeGroupIdByWorktree: {},
-      openFiles: [],
-      browserTabsByWorktree: {},
-      activeFileIdByWorktree: {},
-      activeBrowserTabIdByWorktree: {},
-      activeTabTypeByWorktree: {},
-      activeTabIdByWorktree: {},
-      tabBarOrderByWorktree: {},
-      pendingStartupByTabId: {},
-      settings: {
-        agentCmdOverrides: {},
-        setupScriptLaunchMode: 'new-tab'
-      } as unknown as ReturnType<typeof useAppStore.getState>['settings'],
-      markWorktreeVisited: vi.fn(),
-      recordWorktreeVisit: vi.fn(),
-      refreshGitHubForWorktreeIfStale: vi.fn(),
-      revealWorktreeInSidebar
-    })
+    const { revealWorktreeInSidebar } = seedEmptyActivatableWorktree(worktree)
 
     const result = activateAndRevealWorktree(worktree.id)
     const state = useAppStore.getState()
@@ -121,19 +85,21 @@ describe('activateAndRevealWorktree', () => {
       expect(tabId).toBeDefined()
       expect(state.pendingStartupByTabId[tabId!]).toBeUndefined()
 
-      // Close it the way a user does — the close that purges the sleeping record and
-      // returns the workspace to zero tabs, which used to re-arm the relaunch.
+      // Return to zero tabs, the state that used to re-arm the relaunch. Sets state
+      // directly rather than via closeTab — the sleeping-record purge is covered in
+      // worktree-reactivation-tab-forkbomb.test.ts.
       useAppStore.setState({ tabsByWorktree: {}, activeTabIdByWorktree: {} })
     }
   })
 
-  it('does not relaunch when post-delete focus handoff lands on an untouched worktree', () => {
-    const deleted = makeWorktree()
-    const handoffTarget = { ...makeWorktree(), id: 'wt-handoff', displayName: 'handoff' }
-    seedEmptyActivatableWorktree(handoffTarget, { extraWorktrees: [deleted] })
+  it('does not relaunch when activating a sibling worktree the user never opened', () => {
+    const sibling = makeWorktree()
+    const target = { ...makeWorktree(), id: 'wt-handoff', displayName: 'handoff' }
+    seedEmptyActivatableWorktree(target, { extraWorktrees: [sibling] })
 
-    // Focus handoff activates a worktree the user never interacted with.
-    const result = activateAndRevealWorktree(handoffTarget.id)
+    // The shape post-delete focus handoff produces. That caller passes no opts at all —
+    // asserted directly in active-worktree-focus-after-delete.test.ts.
+    const result = activateAndRevealWorktree(target.id)
     const state = useAppStore.getState()
     const tabId = result === false ? undefined : (result.primaryTabId ?? undefined)
 
@@ -141,12 +107,13 @@ describe('activateAndRevealWorktree', () => {
     expect(state.pendingStartupByTabId[tabId!]).toBeUndefined()
   })
 
-  it('does not relaunch for host-originated activation that carries no startup payload', () => {
+  it('does not relaunch when activation opts carry no startup payload', () => {
     const worktree = makeWorktree()
     seedEmptyActivatableWorktree(worktree)
 
-    // The host omits `startup` both when it already spawned the agent itself and when
-    // none was requested at all (CLI/relay navigation, notification click).
+    // The opts shape CLI/relay navigation and notification clicks arrive with; those
+    // callers are asserted in useIpcEvents.test.ts. The host's `didSpawnStartup` leg is
+    // a main-process concern and is not reachable from here.
     const result = activateAndRevealWorktree(worktree.id, { notifyHostRuntime: false })
     const state = useAppStore.getState()
     const tabId = result === false ? undefined : (result.primaryTabId ?? undefined)

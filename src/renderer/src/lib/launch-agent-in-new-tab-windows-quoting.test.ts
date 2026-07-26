@@ -298,7 +298,9 @@ describe('launchAgentInNewTab Windows shell quoting', () => {
     )
   })
 
-  it('uses WSL launch quoting for default agent args containing a single quote', async () => {
+  // Platform resolution lands on posix here because vitest's node environment does not
+  // report Windows. This pins single-quote escaping of user-configured default agent args.
+  it('escapes a single quote inside default agent args', async () => {
     store.settings.terminalWindowsShell = 'cmd.exe'
     store.settings.agentDefaultArgs = { codex: '--profile "don\'t"' }
     store.projects = [
