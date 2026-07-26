@@ -723,11 +723,21 @@ export class PtyHandler {
 
   private flushPendingOutput(): void {
     this.outputFlushTimer = null
-    let writes = 0
-    for (const [id, pending] of Array.from(this.pendingOutputByPty.entries())) {
-      if (writes >= PTY_OUTPUT_FLUSH_MAX_WRITES) {
+    // Why: the send loop has no skip path and stops at PTY_OUTPUT_FLUSH_MAX_WRITES, so it can never
+    // reach a third entry — `Array.from(entries())` allocated one tuple per session every tick to
+    // consume at most two. Capture only that prefix, and capture it *before* the first send so a
+    // re-entrant sink still reads the values a whole-map snapshot would have frozen.
+    // Why the explicit iterator: `for...of` would advance one tuple past the limit and discard it.
+    const pendingEntries = this.pendingOutputByPty[Symbol.iterator]()
+    const batch: [string, PendingPtyOutput][] = []
+    while (batch.length < PTY_OUTPUT_FLUSH_MAX_WRITES) {
+      const next = pendingEntries.next()
+      if (next.done === true) {
         break
       }
+      batch.push(next.value)
+    }
+    for (const [id, pending] of batch) {
       this.pendingOutputByPty.delete(id)
       const chunk = pending.transformed
         ? pending.data
@@ -754,9 +764,8 @@ export class PtyHandler {
         ...(chunkRawLength === undefined ? {} : { rawLength: chunkRawLength }),
         ...(pending.transformed ? { transformed: true } : {})
       })
-      writes++
     }
-    if (this.pendingOutputByPty.size > 0 && writes > 0) {
+    if (this.pendingOutputByPty.size > 0 && batch.length > 0) {
       // Why: yield between slices of a large chunk so client input and control frames can interleave.
       this.scheduleOutputFlush(PTY_OUTPUT_DRAIN_CONTINUE_MS)
     }
