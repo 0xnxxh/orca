@@ -984,8 +984,11 @@ const api = {
       ipcRenderer.invoke('pty:getForegroundProcess', { id }),
     inspectProcess: (
       id: string
-    ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }> =>
-      ipcRenderer.invoke('pty:inspectProcess', { id }),
+    ): Promise<{
+      foregroundProcess: string | null
+      hasChildProcesses: boolean
+      unavailable?: true
+    }> => ipcRenderer.invoke('pty:inspectProcess', { id }),
     confirmForegroundProcess: (id: string): Promise<string | null> =>
       ipcRenderer.invoke('pty:confirmForegroundProcess', { id }),
 
