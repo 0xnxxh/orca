@@ -811,7 +811,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
         }
         // Why: physical exit must not mark intentional sleep as a clean end; the final checkpoint stays the wake-time recovery authority.
         this.historyManager?.suspendSession(id)
-      } else if (detection?.status === 'unreadable') {
+      } else if (
+        detection?.status === 'unreadable' ||
+        (detection?.status === 'restored' && detection.hasUnreadableRecovery)
+      ) {
         this.historyManager?.suspendSession(id)
       }
     }

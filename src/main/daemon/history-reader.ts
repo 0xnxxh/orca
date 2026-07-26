@@ -136,7 +136,7 @@ export class HistoryReader {
         status: 'restored',
         sessionId,
         restoreInfo: logRestore.restoreInfo,
-        hasUnreadableRecovery: checkpointReadFailed
+        hasUnreadableRecovery: checkpointReadFailed || logRestore.readFailed
       }
     }
 
@@ -313,7 +313,7 @@ export class HistoryReader {
             snapshot.cwd ?? checkpoint?.cwd ?? meta.cwd,
             meta
           ),
-          readFailed: false
+          readFailed: log.truncatedTail
         }
       } catch {
         // Why: a replay failure must degrade to checkpoint-only restore, never

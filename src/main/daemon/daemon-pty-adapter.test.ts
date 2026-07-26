@@ -1708,6 +1708,39 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(JSON.parse(readFileSync(metaPath, 'utf-8')).endedAt).toBeNull()
     })
 
+    it('suspends an empty final checkpoint with unreadable post-checkpoint recovery', async () => {
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const { id } = await historyAdapter.spawn({
+        cols: 80,
+        rows: 24,
+        sessionId: 'sleep-empty-mixed-recovery'
+      })
+      const manager = historyAdapter.getHistoryManager()!
+      const suspend = vi.spyOn(manager, 'suspendSession')
+      const originalCheckpoint = manager.checkpoint.bind(manager)
+      let malformedLog!: Buffer
+      vi.spyOn(manager, 'checkpoint').mockImplementation(async (...args) => {
+        await originalCheckpoint(...args)
+        const sessionDir = join(historyDir, getHistorySessionDirName(id))
+        const checkpoint = JSON.parse(readFileSync(join(sessionDir, 'checkpoint.json'), 'utf-8'))
+        malformedLog = Buffer.concat([
+          encodeLogHeader(checkpoint.generation),
+          encodeLogBatch(1, [
+            { kind: 'output', data: 'only post-checkpoint copy\r\n' },
+            { kind: 'resize', cols: 1_001, rows: 24 }
+          ])
+        ])
+        writeFileSync(join(sessionDir, 'output.log'), malformedLog)
+      })
+
+      await historyAdapter.shutdown(id, { immediate: true, keepHistory: true })
+
+      expect(suspend).toHaveBeenCalledWith(id)
+      const sessionDir = join(historyDir, getHistorySessionDirName(id))
+      expect(readFileSync(join(sessionDir, 'output.log'))).toEqual(malformedLog)
+      expect(JSON.parse(readFileSync(join(sessionDir, 'meta.json'), 'utf-8')).endedAt).toBeNull()
+    })
+
     it('keeps the checkpoint timer out of a final keepHistory checkpoint', async () => {
       const adapterClass = DaemonPtyAdapter as unknown as { CHECKPOINT_INTERVAL_MS: number }
       const previousInterval = adapterClass.CHECKPOINT_INTERVAL_MS

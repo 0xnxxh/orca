@@ -375,6 +375,33 @@ describe('HistoryReader', () => {
       }
     })
 
+    it('flags a torn current-generation log while restoring its complete prefix', async () => {
+      const sessionId = 'torn-log-with-checkpoint'
+      writeSessionWithCheckpoint(
+        dir,
+        sessionId,
+        makeMeta(),
+        makeCheckpoint({ generation: 1, snapshotAnsi: 'checkpoint base\r\n' })
+      )
+      const fullLog = Buffer.concat([
+        encodeLogHeader(1),
+        encodeLogBatch(1, [{ kind: 'output', data: 'complete prefix\r\n' }]),
+        encodeLogBatch(2, [{ kind: 'output', data: 'unique torn tail\r\n' }])
+      ])
+      writeFileSync(
+        join(dir, getHistorySessionDirName(sessionId), 'output.log'),
+        fullLog.subarray(0, -3)
+      )
+
+      const detection = await reader.detectColdRestoreState(sessionId)
+
+      expect(detection.status).toBe('restored')
+      if (detection.status === 'restored') {
+        expect(detection.restoreInfo.snapshotAnsi).toContain('complete prefix')
+        expect(detection.hasUnreadableRecovery).toBe(true)
+      }
+    })
+
     it('truncates alt-screen from scrollback.bin fallback', async () => {
       const scrollback = ['normal output\r\n', '\x1b[?1049h', 'vim content here'].join('')
 
