@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px;
+    background: #0e0f13;
+    font: 13px/1.5 ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+    color: #e6e8ee;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: #8b90a0; font-size: 12px; margin-bottom: 20px; }
+  .row { display: flex; gap: 16px; align-items: flex-start; }
+  .panel {
+    flex: 1; background: #16181f; border: 1px solid #262a35;
+    border-radius: 10px; padding: 14px; min-width: 0;
+  }
+  .panel.bad { border-color: #5c2b2b; }
+  .panel.good { border-color: #24543a; }
+  .ptitle { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .pnote { font-size: 11px; color: #8b90a0; margin-bottom: 12px; height: 28px; }
+  .bad .ptitle { color: #f2777a; }
+  .good .ptitle { color: #6dd39b; }
+  .card {
+    display: flex; align-items: center; gap: 10px;
+    background: #1c1f28; border: 1px solid #2b303c;
+    border-radius: 7px; padding: 8px 10px; margin-bottom: 6px;
+  }
+  .num {
+    flex: none; width: 34px; text-align: center;
+    font: 600 11px ui-monospace, "SF Mono", Menlo, monospace;
+    color: #9aa0b4; background: #232733; border: 1px solid #333949;
+    border-radius: 5px; padding: 2px 0;
+  }
+  .name { font: 12px ui-monospace, "SF Mono", Menlo, monospace; }
+  .main-badge {
+    margin-left: auto; font-size: 10px; color: #7d8496;
+    background: #232733; border-radius: 4px; padding: 1px 6px;
+  }
+  .hit { outline: 2px solid #f2777a; outline-offset: 1px; }
+  .hit .num { background: #4a2222; border-color: #7a3535; color: #ffb4b4; }
+  .hit-ok { outline: 2px solid #3d9e6d; outline-offset: 1px; }
+  .hit-ok .num { background: #1e4433; border-color: #2f6b4c; color: #8fe3b6; }
+  .foot {
+    margin-top: 18px; font-size: 11px; color: #7d8496;
+    border-top: 1px solid #262a35; padding-top: 12px;
+  }
+  code { color: #c8cddb; background: #1c1f28; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>#9497 — Cmd+1 targets a different workspace once the sidebar is closed</h1>
+  <div class="sub">Same repo, same three workspaces, same keypress. Orders below are produced by the real code paths, not mocked.</div>
+
+  <div class="row">
+    <div class="panel">
+      <div class="ptitle">Sidebar OPEN</div>
+      <div class="pnote">WorktreeList publishes the order it rendered.</div>
+      <div class="card hit-ok"><span class="num">⌘1</span><span class="name">main</span><span class="main-badge">main</span></div>
+      <div class="card"><span class="num">⌘2</span><span class="name">feature/login</span></div>
+      <div class="card"><span class="num">⌘3</span><span class="name">fix/crash</span></div>
+    </div>
+
+    <div class="panel bad">
+      <div class="ptitle">Sidebar CLOSED — before</div>
+      <div class="pnote">Flat membership order: no main-worktree hoisting, no grouping.</div>
+      <div class="card hit"><span class="num">⌘1</span><span class="name">feature/login</span></div>
+      <div class="card"><span class="num">⌘2</span><span class="name">fix/crash</span></div>
+      <div class="card"><span class="num">⌘3</span><span class="name">main</span><span class="main-badge">main</span></div>
+    </div>
+
+    <div class="panel good">
+      <div class="ptitle">Sidebar CLOSED — after</div>
+      <div class="pnote">Recomputed from the sidebar's own row pipeline.</div>
+      <div class="card hit-ok"><span class="num">⌘1</span><span class="name">main</span><span class="main-badge">main</span></div>
+      <div class="card"><span class="num">⌘2</span><span class="name">feature/login</span></div>
+      <div class="card"><span class="num">⌘3</span><span class="name">fix/crash</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    Before the fix <code>⌘1</code> selects <code>feature/login</code> while the sidebar's first card is <code>main</code> — the reporter's "Cmd+1 selects the second workspace". After the fix the closed order matches the open order exactly.
+  </div>
+</body>
+</html>
