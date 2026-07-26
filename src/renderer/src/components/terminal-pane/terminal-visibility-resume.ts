@@ -143,8 +143,11 @@ export function recoverVisibleTerminalWindowWake({
 }: RecoverVisibleTerminalWindowWakeArgs): void {
   // Why: macOS screensaver/display wake can leave xterm visible but with a
   // stale renderer/input surface; Orca's own hidden-state resume never runs.
-  // Order: resume WebGL → fit metrics → then drain. Fit must precede flush so
-  // backlog does not land on the transient DOM↔WebGL one-column-off grid.
+  // Order: latch intent → resume WebGL → fit metrics → drain → enforce.
+  // Intent must be captured before resume/fit (they can move viewportY and
+  // would re-latch a pin as followOutput). Fit must precede flush so backlog
+  // does not land on the transient DOM↔WebGL one-column-off grid.
+  syncTerminalViewportIntents(manager)
   manager.resumeRendering()
   manager.fitAllRevealedPanes()
   for (const pane of manager.getPanes()) {
@@ -158,7 +161,6 @@ export function recoverVisibleTerminalWindowWake({
       resetTerminalLinkifierHoverState(pane.terminal)
     }
   }
-  syncTerminalViewportIntents(manager)
   if (isActive) {
     focusActivePane(manager)
   }
@@ -195,15 +197,14 @@ function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean):
   //    on a one-column-off grid and garbles (the fitAllRevealedPanes regression).
   // 3. flush: bounded drain of hidden PTY bursts onto the now-stable GPU grid;
   //    scheduler continues the rest async so return-to-app does not beachball.
+  // Intent is latched by the outer pre-resume sync/capture — do not re-sync after
+  // resume/fit (reattach can move viewportY and would re-latch a pin as followOutput).
   manager.resumeRendering()
   manager.fitAllRevealedPanes()
   for (const pane of manager.getPanes()) {
     requestTerminalBacklogRecovery(pane.terminal)
     flushTerminalOutput(pane.terminal, { maxChars: VISIBLE_RESUME_FLUSH_CHARS })
   }
-  // Why after flush: drain can move native viewport; re-sync intents before the
-  // outer enforce so we pin the post-flush position, not the pre-flush one.
-  syncTerminalViewportIntents(manager)
   if (isActive) {
     focusActivePane(manager)
   }

@@ -178,6 +178,53 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     expect(manager.fitAllPanes).not.toHaveBeenCalled()
   })
 
+  it('latches viewport intent before WebGL resume on window wake', async () => {
+    // Why: resume/fit can move viewportY; syncing after reattach would re-latch
+    // a pinned viewport as followOutput and jump the user to the bottom.
+    const terminal = { name: 'pinned-wake' }
+    const manager = createManager()
+    manager.getPanes.mockReturnValue([{ terminal }])
+    const { enforceTerminalCurrentScrollIntent, syncTerminalScrollIntentFromViewport } = vi.mocked(
+      await import('@/lib/pane-manager/terminal-scroll-intent')
+    )
+
+    recoverVisibleTerminalWindowWake({
+      manager: manager as never as PaneManager,
+      isActive: true,
+      clearGlyphAtlases: false
+    })
+
+    expect(syncTerminalScrollIntentFromViewport).toHaveBeenCalledWith(terminal)
+    expect(syncTerminalScrollIntentFromViewport.mock.invocationCallOrder[0]).toBeLessThan(
+      manager.resumeRendering.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    )
+    expect(manager.resumeRendering.mock.invocationCallOrder[0]).toBeLessThan(
+      manager.fitAllRevealedPanes.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    )
+    expect(enforceTerminalCurrentScrollIntent.mock.invocationCallOrder[0]).toBeGreaterThan(
+      manager.fitAllRevealedPanes.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY
+    )
+  })
+
+  it('does not re-sync viewport intent after heavy resume reattaches WebGL', async () => {
+    // Outer resumeTerminalVisibility already latched intent pre-resume; a
+    // post-reattach sync would treat a disturbed at-bottom viewport as followOutput.
+    const terminal = { name: 'pinned-heavy' }
+    const manager = createManager()
+    manager.getPanes.mockReturnValue([{ terminal }])
+    const { syncTerminalScrollIntentFromViewport } = vi.mocked(
+      await import('@/lib/pane-manager/terminal-scroll-intent')
+    )
+
+    resumeTerminalVisibility(resumeArgs(manager, false))
+
+    // One pre-resume latch from the outer resume path; none after reattach/fit/flush.
+    expect(syncTerminalScrollIntentFromViewport).toHaveBeenCalledTimes(1)
+    expect(syncTerminalScrollIntentFromViewport.mock.invocationCallOrder[0]).toBeLessThan(
+      manager.resumeRendering.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    )
+  })
+
   it('resets each pane linkifier hover cache on window wake recovery so links recover without a scroll', () => {
     const first = { name: 'pane-a' }
     const second = { name: 'pane-b' }
