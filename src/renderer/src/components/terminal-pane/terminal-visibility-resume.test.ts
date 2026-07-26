@@ -122,9 +122,9 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     expect(order).toEqual(['resume-rendering', 'fit-reveal', 'reveal-repaint'])
   })
 
-  it('reattaches WebGL before flushing backlog on a heavy reveal', async () => {
-    // Why: flushing against the DOM fallback while the surface is already
-    // visible paints heavier glyphs for a frame (bold flash on worktree switch).
+  it('reattaches WebGL and fits before flushing backlog on a heavy reveal', async () => {
+    // Why: resume before flush avoids DOM bold flash; fit before flush avoids
+    // writing TUI backlog onto the transient DOM↔WebGL one-column-off grid.
     const order: string[] = []
     const manager = createManager(order)
     manager.getPanes.mockReturnValue([{ terminal: { name: 'pane' } }])
@@ -140,7 +140,13 @@ describe('resumeTerminalVisibility reveal repaint', () => {
 
     resumeTerminalVisibility(resumeArgs(manager, false))
 
-    expect(order.slice(0, 3)).toEqual(['resume-rendering', 'backlog', 'flush'])
+    expect(order.slice(0, 4)).toEqual(['resume-rendering', 'fit-reveal', 'backlog', 'flush'])
+    // Why: no flush may land between resume and the corrective reveal fit.
+    const resumeIdx = order.indexOf('resume-rendering')
+    const fitIdx = order.indexOf('fit-reveal')
+    const flushIdx = order.indexOf('flush')
+    expect(resumeIdx).toBeLessThan(fitIdx)
+    expect(fitIdx).toBeLessThan(flushIdx)
   })
 
   it('routes a heavy reveal through fitAllRevealedPanes, not the sync fit', () => {

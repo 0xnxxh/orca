@@ -241,9 +241,9 @@ describe('useTerminalPaneGlobalEffects', () => {
     delete (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver
   })
 
-  it('resumes WebGL before flushing backlog so the first paint is not DOM-fallback', () => {
-    // Why: flushing against the DOM fallback while the worktree is already
-    // visible paints heavier glyphs for a frame (bold flash on switch).
+  it('resumes WebGL and fits before flushing backlog so paint is GPU and grid is stable', () => {
+    // Why: resume before flush avoids DOM bold flash; fit before flush avoids
+    // writing backlog onto the transient DOM↔WebGL one-column-off grid.
     const order: string[] = []
     const terminalA = { name: 'terminal-a' }
     const terminalB = { name: 'terminal-b' }
@@ -307,17 +307,20 @@ describe('useTerminalPaneGlobalEffects', () => {
       'capture:terminal-a',
       'capture:terminal-b',
       'resume',
+      'fit-reveal',
       'recover:terminal-a',
       'flush:terminal-a',
       'recover:terminal-b',
       'flush:terminal-b',
-      'fit-reveal',
       'intent:terminal-a',
       'intent:terminal-b',
       'reset-atlas',
       'refresh',
       'reveal-repaint'
     ])
+    // Why: flush must not land between resume and the corrective reveal fit.
+    expect(order.indexOf('resume')).toBeLessThan(order.indexOf('fit-reveal'))
+    expect(order.indexOf('fit-reveal')).toBeLessThan(order.indexOf('flush:terminal-a'))
     expect(mocks.restoreScrollStateAfterLayout).not.toHaveBeenCalled()
     expect(mocks.flushTerminalOutput).toHaveBeenNthCalledWith(1, terminalA, {
       maxChars: 256 * 1024

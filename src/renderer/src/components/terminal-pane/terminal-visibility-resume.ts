@@ -143,8 +143,10 @@ export function recoverVisibleTerminalWindowWake({
 }: RecoverVisibleTerminalWindowWakeArgs): void {
   // Why: macOS screensaver/display wake can leave xterm visible but with a
   // stale renderer/input surface; Orca's own hidden-state resume never runs.
-  // Resume WebGL first so wake backlog drain doesn't paint a DOM-fallback frame.
+  // Order: resume WebGL → fit metrics → then drain. Fit must precede flush so
+  // backlog does not land on the transient DOM↔WebGL one-column-off grid.
   manager.resumeRendering()
+  manager.fitAllRevealedPanes()
   for (const pane of manager.getPanes()) {
     requestTerminalBacklogRecovery(pane.terminal)
     flushTerminalOutput(pane.terminal, { maxChars: WINDOW_WAKE_FLUSH_CHARS })
@@ -157,8 +159,6 @@ export function recoverVisibleTerminalWindowWake({
     }
   }
   syncTerminalViewportIntents(manager)
-  // Why: wake re-attaches WebGL — same transient cell-metric wobble guard as the heavy resume.
-  manager.fitAllRevealedPanes()
   if (isActive) {
     focusActivePane(manager)
   }
@@ -185,28 +185,25 @@ function requestLightTabBacklogRecovery(manager: PaneManager): void {
 }
 
 function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean): void {
-  // Why resume before flush: while a worktree is hidden we dispose WebGL and
-  // fall back to xterm's DOM renderer. Flushing backlog against that DOM
-  // fallback paints heavier-looking glyphs (macOS CSS AA / synthetic weights)
-  // for a frame when the surface becomes visible, then WebGL reattach settles
-  // to the thinner steady-state the user expects — a brief "bold flash".
-  // Reattach first so drain + first paint stay on the GPU path. macOS context
-  // creation is ~5 ms; on Windows (ANGLE -> D3D11) it can be 100-500 ms, but a
-  // deferred resume would paint a stretched DOM-fallback flash, which is worse UX.
+  // Order is resume → fit → flush (not flush→resume, not resume→flush→fit):
+  // 1. resumeRendering: while hidden we dispose WebGL (DOM fallback). Flushing
+  //    on DOM paints heavier CSS-AA glyphs for a frame (bold flash on switch).
+  //    Reattach first so drain + first paint stay on GPU. macOS ~5 ms; Windows
+  //    ANGLE can be 100-500 ms, but deferred resume paints a DOM flash instead.
+  // 2. fitAllRevealedPanes: WebGL cell metrics differ from DOM's briefly; must
+  //    settle the grid before any write, or full-screen TUI backlog (grok) lands
+  //    on a one-column-off grid and garbles (the fitAllRevealedPanes regression).
+  // 3. flush: bounded drain of hidden PTY bursts onto the now-stable GPU grid;
+  //    scheduler continues the rest async so return-to-app does not beachball.
   manager.resumeRendering()
-  // Why: hidden panes can accumulate large PTY bursts while Chromium is
-  // occluded. Drain a bounded slice after WebGL is live; the scheduler keeps
-  // ordering and continues the rest asynchronously so return-to-app does
-  // not beachball behind an entire backlog.
+  manager.fitAllRevealedPanes()
   for (const pane of manager.getPanes()) {
     requestTerminalBacklogRecovery(pane.terminal)
     flushTerminalOutput(pane.terminal, { maxChars: VISIBLE_RESUME_FLUSH_CHARS })
   }
+  // Why after flush: drain can move native viewport; re-sync intents before the
+  // outer enforce so we pin the post-flush position, not the pre-flush one.
   syncTerminalViewportIntents(manager)
-  // Why: resumeRendering just re-attached WebGL, whose cell metrics briefly differ
-  // from the DOM renderer's; a raw fit here reflows on a transient one-column-off
-  // grid and garbles diff-painting inline TUIs (grok minimize→restore).
-  manager.fitAllRevealedPanes()
   if (isActive) {
     focusActivePane(manager)
   }
