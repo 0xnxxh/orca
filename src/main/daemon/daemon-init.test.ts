@@ -1606,6 +1606,35 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(trackDaemonReplacedMock).toHaveBeenCalledWith('different_app_path', 0)
   })
 
+  // STA-2376: failed_health_check is the residual bucket, not an identification, so it must not
+  // absorb the attribution. The same dead login session that fails the resolver also fails the PTY
+  // spawn probe, and with zero live sessions that lands here instead of the degraded preserve —
+  // so this is the likely shape of the incident, not a corner case.
+  it('keeps the attributed reason when the launcher only reaches failed_health_check', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+    const adapterOptions = adapterInstances[0].options
+    trackDaemonReplacedMock.mockClear()
+
+    // Daemon survived the disconnect (non-alive sessions keep it non-idle) but fails the spawn probe.
+    checkDaemonHealthMock.mockResolvedValue('pty-spawn-unhealthy')
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('stop after replacement decision')
+    })
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+
+    await adapterOptions.respawn?.('unhealthy_resolver')
+    await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+      'stop after replacement decision'
+    )
+
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('unhealthy_resolver', 0)
+  })
+
   it('removes detached daemon startup listeners after readiness', async () => {
     const mod = await importFresh()
     checkDaemonHealthMock.mockResolvedValue('unreachable')

@@ -477,14 +477,24 @@ function createOutOfProcessLauncher(
       adoptionClient = null
       confirmedReplacement =
         (await killStaleDaemon(runtimeDir, socketPath, tokenPath)) || confirmedReplacement
-      // Why: a confirmed kill outranks the attribution — this launch proved its reason against the
-      // daemon it actually removed, so a stale bundle it caught here must not be billed to the
-      // resolver. The attribution exists only to cover the case the gate cannot see: a daemon that
-      // self-retired on the adapter's disconnect, leaving nothing to kill and no reason to infer.
-      if (pendingReplacement && confirmedReplacement) {
-        trackDaemonReplaced(pendingReplacement.reason, pendingReplacement.liveSessionCount)
+      // Why: rank by how well each reason is evidenced. A confirmed kill whose reason positively
+      // identified the daemon outranks the attribution, so a stale bundle caught here is not billed
+      // to the resolver. failed_health_check is the residual "couldn't tell" bucket though — it also
+      // absorbs wedges and crashes — so the adapter's attribution beats it. That case is not exotic:
+      // the same dead login session that fails the resolver also fails the PTY spawn probe, and with
+      // zero live sessions that lands here rather than in the degraded preserve above.
+      const identifiedReplacement =
+        pendingReplacement &&
+        confirmedReplacement &&
+        pendingReplacement.reason !== 'failed_health_check'
+          ? pendingReplacement
+          : null
+      if (identifiedReplacement) {
+        trackDaemonReplaced(identifiedReplacement.reason, identifiedReplacement.liveSessionCount)
       } else if (attributedReason) {
         trackDaemonReplaced(attributedReason, 0)
+      } else if (pendingReplacement && confirmedReplacement) {
+        trackDaemonReplaced(pendingReplacement.reason, pendingReplacement.liveSessionCount)
       }
 
       const userDataPath = app.getPath('userData')
