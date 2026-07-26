@@ -89,7 +89,10 @@ import {
 import { GitResponseStreamRegistry } from './git-response-stream'
 import { GIT_RESPONSE_STREAM_THRESHOLD } from './protocol'
 import { endSubprocessStdin } from '../shared/subprocess-stdin-write'
-import { terminateRelaySubprocessTreeAndWait } from './subprocess-tree-termination'
+import {
+  settleRelaySubprocessTreeAfterExit,
+  terminateRelaySubprocessTreeAndWait
+} from './subprocess-tree-termination'
 import { clearGitStatusLineStatsCache } from '../shared/git-status-line-stats-cache'
 import { streamRelayGitStdout } from './git-stdout-stream'
 
@@ -420,20 +423,23 @@ export class GitHandler {
         if (terminating) {
           return
         }
-        cleanup()
-        const { stdout, stderr } = output()
-        if (code === 0) {
-          resolve({ stdout, stderr })
-          return
-        }
-        reject(
-          Object.assign(new Error(stderr || `git exited with ${code ?? closeSignal}`), {
-            code,
-            signal: closeSignal,
-            stdout,
-            stderr
-          })
-        )
+        terminating = true
+        void settleRelaySubprocessTreeAfterExit(child).then(() => {
+          cleanup()
+          const { stdout, stderr } = output()
+          if (code === 0) {
+            resolve({ stdout, stderr })
+            return
+          }
+          reject(
+            Object.assign(new Error(stderr || `git exited with ${code ?? closeSignal}`), {
+              code,
+              signal: closeSignal,
+              stdout,
+              stderr
+            })
+          )
+        })
       })
     })
   }

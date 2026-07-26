@@ -8,6 +8,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 })
 
 import {
+  settleRelaySubprocessTreeAfterExit,
   terminateRelaySubprocessTree,
   terminateRelaySubprocessTreeAndWait
 } from './subprocess-tree-termination'
@@ -65,13 +66,17 @@ describe('terminateRelaySubprocessTreeAndWait', () => {
     )
   })
 
-  it('waits for POSIX group termination after the leader closes', async () => {
+  it('does not SIGKILL when a POSIX group disappears during grace', async () => {
     vi.useFakeTimers()
     Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
     const child = Object.assign(new EventEmitter(), { pid: 12345 })
+    let probes = 0
     const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
       if (signal === 0) {
-        throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
+        probes += 1
+        if (probes > 1) {
+          throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
+        }
       }
       return true
     })
@@ -87,6 +92,34 @@ describe('terminateRelaySubprocessTreeAndWait', () => {
       await vi.advanceTimersByTimeAsync(999)
       expect(settled).toBe(false)
       await vi.advanceTimersByTimeAsync(1)
+      await pending
+
+      expect(killSpy).toHaveBeenCalledWith(-12345, 'SIGTERM')
+      expect(killSpy).not.toHaveBeenCalledWith(-12345, 'SIGKILL')
+      expect(killSpy).toHaveBeenCalledWith(-12345, 0)
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  it('settles remaining descendants after a natural POSIX leader close', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
+    const child = Object.assign(new EventEmitter(), { pid: 12345 })
+    let killed = false
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+      if (signal === 'SIGKILL') {
+        killed = true
+      } else if (signal === 0 && killed) {
+        throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
+      }
+      return true
+    })
+    try {
+      const pending = settleRelaySubprocessTreeAfterExit(
+        child as unknown as ChildProcessModule.ChildProcess
+      )
+      await vi.advanceTimersByTimeAsync(1_000)
       await pending
 
       expect(killSpy).toHaveBeenCalledWith(-12345, 'SIGTERM')

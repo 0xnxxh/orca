@@ -501,6 +501,16 @@ describe('SshChannelMultiplexer', () => {
       expect(getMuxInternals(mux).trackedSettlementWaiters.size).toBe(1)
     })
 
+    it('returns settled ownership when a tracked request was never sent', async () => {
+      mux.dispose()
+
+      const tracked = mux.requestTracked('git.listWorktrees')
+
+      await expect(tracked.result).rejects.toThrow('Multiplexer disposed')
+      await expect(tracked.settled).resolves.toBeUndefined()
+      expect(getMuxInternals(mux).trackedSettlementWaiters.size).toBe(0)
+    })
+
     it('throws on request after dispose', async () => {
       mux.dispose()
 

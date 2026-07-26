@@ -2320,7 +2320,16 @@ type RuntimeWorktreeScanInFlight = {
   generation: number
   runtimeKey: string
   promise: Promise<RuntimeWorktreeScanResult>
+  settled: Promise<unknown>
   consumedBySweep: boolean
+  failureRecorded: boolean
+  completedResult?: RuntimeWorktreeScanResult
+}
+
+type RuntimeWorktreeScanIdentity = {
+  generation: number
+  runtimeKey: string
+  projectRuntime?: ProjectExecutionRuntimeResolution
 }
 
 type WorktreeLineageCandidate = {
@@ -2567,6 +2576,7 @@ export class OrcaRuntimeService {
   private worktreeScanCache = new Map<string, RuntimeWorktreeScanCache>()
   private worktreeScanInFlight = new Map<string, RuntimeWorktreeScanInFlight>()
   private worktreeScanBackoff = new Map<string, RuntimeWorktreeScanBackoff>()
+  private worktreeScanSweepCursor = 0
   private readonly worktreeScanGate = new WorktreeScanGate(WORKTREE_SCAN_CONCURRENCY)
   private cloneInFlightByPath = new Map<string, Promise<void>>()
   private agentDetector: AgentDetector | null = null
@@ -15843,7 +15853,7 @@ export class OrcaRuntimeService {
       invalidateAuthorizedRootsCache()
     }
     this.invalidateResolvedWorktreeCache()
-    if ('worktreeBasePath' in updates) {
+    if ('worktreeBasePath' in updates || 'kind' in updates) {
       this.invalidateWorktreeScanCacheForRepo(repo.id)
     }
     this.notifyReposChanged()
@@ -17560,14 +17570,14 @@ export class OrcaRuntimeService {
     let scan: RuntimeWorktreeScanResult
     try {
       const acquisition = new AbortController()
-      scan = await withTimeout(
+      scan = await withTimeoutFactory(
         this.listRepoWorktreesForResolution(repo, undefined, undefined, acquisition.signal),
         RESOLVED_WORKTREE_REPO_TIMEOUT_MS,
-        { ok: false, worktrees: [] },
+        () => this.buildCurrentWorktreeScanFallback(repo),
         () => acquisition.abort()
       )
     } catch {
-      scan = { ok: false, worktrees: [] }
+      scan = this.buildCurrentWorktreeScanFallback(repo)
     }
     const authoritative = this.pruneLineageForAuthoritativeWorktreeScan(repo, scan)
     const agentScratchWorktreePathMatcher = createAgentScratchWorktreePathMatcher([
@@ -24804,32 +24814,48 @@ export class OrcaRuntimeService {
       ])
     )
     const fleet = this.resolveWorktreeScanFleet(repos)
+    const scannableRepos = repos.filter((repo) => !isFolderRepo(repo))
+    const sweepStart =
+      scannableRepos.length > 0 ? this.worktreeScanSweepCursor % scannableRepos.length : 0
+    this.worktreeScanSweepCursor =
+      scannableRepos.length > 0
+        ? (sweepStart + WORKTREE_SCAN_CONCURRENCY) % scannableRepos.length
+        : 0
+    const sweepOrder = [
+      ...scannableRepos.slice(sweepStart),
+      ...scannableRepos.slice(0, sweepStart),
+      ...repos.filter(isFolderRepo)
+    ]
     // Why: every repo's scan TTL expires in the same pass, so an uncapped map spawned one git per
     // repo simultaneously. Cap it like the worktrees:list sibling path (crash-cluster C2).
-    const perRepoWorktrees = await mapWithConcurrency(
-      repos,
+    const scannedRepos = await mapWithConcurrency(
+      sweepOrder,
       WORKTREE_SCAN_CONCURRENCY,
       async (repo) => {
         if (isFolderRepo(repo)) {
-          return listRuntimeFolderWorkspaces(this.requireStore(), repo).map((worktree) => ({
-            ...worktree,
-            hostId: worktree.hostId ?? getRepoExecutionHostId(repo),
-            parentWorktreeId: null,
-            childWorktreeIds: [],
-            lineage: null,
-            git: {
-              path: worktree.path,
-              head: worktree.head,
-              branch: worktree.branch,
-              isBare: worktree.isBare,
-              isMainWorktree: worktree.isMainWorktree
-            },
-            displayName: worktree.displayName,
-            comment: worktree.comment
-          }))
+          return {
+            repo,
+            scan: undefined,
+            worktrees: listRuntimeFolderWorkspaces(this.requireStore(), repo).map((worktree) => ({
+              ...worktree,
+              hostId: worktree.hostId ?? getRepoExecutionHostId(repo),
+              parentWorktreeId: null,
+              childWorktreeIds: [],
+              lineage: null,
+              git: {
+                path: worktree.path,
+                head: worktree.head,
+                branch: worktree.branch,
+                isBare: worktree.isBare,
+                isMainWorktree: worktree.isMainWorktree
+              },
+              displayName: worktree.displayName,
+              comment: worktree.comment
+            }))
+          }
         }
         // Why: mobile startup shares this path, so a slow repo scan degrades one repo's metadata instead of blocking all session loading.
-        const scan = await withTimeout(
+        const scan = await withTimeoutFactory(
           this.listRepoWorktreesForResolution(
             repo,
             projectRuntimeByRepoId,
@@ -24837,43 +24863,62 @@ export class OrcaRuntimeService {
             acquisition.signal
           ),
           Math.max(0, sweepDeadline - Date.now()),
-          { ok: false, worktrees: [] }
+          () => this.buildCurrentWorktreeScanFallback(repo)
         )
         const gitWorktrees = scan.worktrees
-        this.pruneLineageForAuthoritativeWorktreeScan(repo, scan)
-        return gitWorktrees.map((gitWorktree) => {
-          const worktreeId = `${repo.id}::${gitWorktree.path}`
-          // Why: lineage validation needs a durable instance ID even when the runtime sees a workspace before renderer discovery-stamp.
-          const existingMeta = metaById[worktreeId]
-          const meta =
-            existingMeta && existingMeta.instanceId
-              ? existingMeta
-              : this.store?.setWorktreeMeta(worktreeId, {})
-          const merged = {
-            ...mergeWorktree(repo.id, gitWorktree, meta, repo.displayName),
-            hostId: existingMeta?.hostId ?? meta?.hostId ?? getRepoExecutionHostId(repo)
-          }
-          return {
-            ...merged,
-            parentWorktreeId: null,
-            childWorktreeIds: [],
-            lineage: null,
-            git: {
-              path: gitWorktree.path,
-              head: gitWorktree.head,
-              branch: gitWorktree.branch,
-              isBare: gitWorktree.isBare,
-              isMainWorktree: gitWorktree.isMainWorktree
-            },
-            displayName: merged.displayName,
-            comment: merged.comment
-          }
-        })
+        return {
+          repo,
+          scan,
+          worktrees: gitWorktrees.map((gitWorktree) => {
+            const worktreeId = `${repo.id}::${gitWorktree.path}`
+            // Why: lineage validation needs a durable instance ID even when the runtime sees a workspace before renderer discovery-stamp.
+            const existingMeta = metaById[worktreeId]
+            const meta =
+              existingMeta && existingMeta.instanceId
+                ? existingMeta
+                : this.store?.setWorktreeMeta(worktreeId, {})
+            const merged = {
+              ...mergeWorktree(repo.id, gitWorktree, meta, repo.displayName),
+              hostId: existingMeta?.hostId ?? meta?.hostId ?? getRepoExecutionHostId(repo)
+            }
+            return {
+              ...merged,
+              parentWorktreeId: null,
+              childWorktreeIds: [],
+              lineage: null,
+              git: {
+                path: gitWorktree.path,
+                head: gitWorktree.head,
+                branch: gitWorktree.branch,
+                isBare: gitWorktree.isBare,
+                isMainWorktree: gitWorktree.isMainWorktree
+              },
+              displayName: merged.displayName,
+              comment: merged.comment
+            }
+          })
+        }
       }
     )
     clearTimeout(abortTimer)
+    const currentProjectRuntimeByRepoId = resolveLocalProjectRuntimesForRepos(
+      this.requireStore(),
+      repos
+    )
+    for (const scanned of scannedRepos) {
+      if (scanned.scan) {
+        this.pruneLineageForAuthoritativeWorktreeScan(
+          scanned.repo,
+          scanned.scan,
+          currentProjectRuntimeByRepoId
+        )
+      }
+    }
+    const worktreesByRepoId = new Map(
+      scannedRepos.map(({ repo, worktrees: repoWorktrees }) => [repo.id, repoWorktrees])
+    )
     const worktrees = projectResolvedWorktreeLineage(
-      perRepoWorktrees.flat(),
+      repos.flatMap((repo) => worktreesByRepoId.get(repo.id) ?? []),
       this.store?.getAllWorktreeLineage?.() ?? {}
     )
     // Why: short TTL avoids shelling out on every frequent poll while still catching worktree changes made outside Orca.
@@ -24889,16 +24934,19 @@ export class OrcaRuntimeService {
 
   private pruneLineageForAuthoritativeWorktreeScan(
     repo: Repo,
-    scan: RuntimeWorktreeScanResult
+    scan: RuntimeWorktreeScanResult,
+    projectRuntimeByRepoId?: ReadonlyMap<string, ProjectExecutionRuntimeResolution>
   ): boolean {
-    if (!scan.ok || !scan.authority) {
+    if (!scan.ok || !scan.authority || !this.store || isFolderRepo(repo)) {
       return false
     }
+    const identity = this.resolveWorktreeScanIdentity(repo, projectRuntimeByRepoId)
     const current = this.worktreeScanCache.get(repo.id)
     if (
       !current ||
       current.authority !== scan.authority ||
-      current.generation !== (this.worktreeScanGenerations.get(repo.id) ?? 0) ||
+      current.generation !== identity.generation ||
+      current.runtimeKey !== identity.runtimeKey ||
       Date.now() - current.scannedAt > WORKTREE_SCAN_CACHE_TTL_MS
     ) {
       return false
@@ -24970,6 +25018,46 @@ export class OrcaRuntimeService {
     }
   }
 
+  private resolveWorktreeScanIdentity(
+    repo: Repo,
+    projectRuntimeByRepoId?: ReadonlyMap<string, ProjectExecutionRuntimeResolution>
+  ): RuntimeWorktreeScanIdentity {
+    const projectRuntime = repo.connectionId
+      ? undefined
+      : projectRuntimeByRepoId
+        ? projectRuntimeByRepoId.get(repo.id)
+        : resolveLocalProjectRuntimeForRepo(this.requireStore(), repo)
+    const runtimeKey = projectRuntime
+      ? projectRuntime.status === 'resolved'
+        ? projectRuntime.runtime.cacheKey
+        : projectRuntime.repair.cacheKey
+      : repo.connectionId
+        ? `ssh:${repo.connectionId}:${getSshGitProviderGeneration(repo.connectionId)}`
+        : 'local:default'
+    return {
+      generation: this.worktreeScanGenerations.get(repo.id) ?? 0,
+      runtimeKey,
+      projectRuntime
+    }
+  }
+
+  private evictMismatchedWorktreeScanState(
+    repoId: string,
+    identity: RuntimeWorktreeScanIdentity
+  ): void {
+    const matches = (state: { generation: number; runtimeKey: string } | undefined): boolean =>
+      state?.generation === identity.generation && state.runtimeKey === identity.runtimeKey
+    if (!matches(this.worktreeScanCache.get(repoId))) {
+      this.worktreeScanCache.delete(repoId)
+    }
+    if (!matches(this.worktreeScanInFlight.get(repoId))) {
+      this.worktreeScanInFlight.delete(repoId)
+    }
+    if (!matches(this.worktreeScanBackoff.get(repoId))) {
+      this.worktreeScanBackoff.delete(repoId)
+    }
+  }
+
   /** Reproduces what a live failing scan would return, without paying the spawn again. */
   private buildBackedOffWorktreeScanResult(
     repo: Repo,
@@ -24986,6 +25074,15 @@ export class OrcaRuntimeService {
             ? this.listStoredSshWorktreesForResolution(repo)
             : []
     }
+  }
+
+  private buildCurrentWorktreeScanFallback(repo: Repo): RuntimeWorktreeScanResult {
+    if (!this.store || isFolderRepo(repo)) {
+      return { ok: false, worktrees: [] }
+    }
+    const identity = this.resolveWorktreeScanIdentity(repo)
+    this.evictMismatchedWorktreeScanState(repo.id, identity)
+    return this.buildBackedOffWorktreeScanResult(repo, identity.generation, identity.runtimeKey)
   }
 
   private withStaleWorktreeScanFallback(
@@ -25036,6 +25133,65 @@ export class OrcaRuntimeService {
     }
   }
 
+  private recordInFlightWorktreeScanFailure(repo: Repo, record: RuntimeWorktreeScanInFlight): void {
+    const result = record.completedResult
+    if (
+      record.failureRecorded ||
+      !record.consumedBySweep ||
+      !result ||
+      result.ok ||
+      !result.failureKind ||
+      this.worktreeScanInFlight.get(repo.id) !== record
+    ) {
+      return
+    }
+    if (
+      !this.store ||
+      isFolderRepo(repo) ||
+      (this.worktreeScanGenerations.get(repo.id) ?? 0) !== record.generation
+    ) {
+      return
+    }
+    record.failureRecorded = true
+    this.recordWorktreeScanFailure(repo, result.failureKind, record.generation, record.runtimeKey)
+  }
+
+  private finalizeRepoWorktreeScan(
+    repo: Repo,
+    record: RuntimeWorktreeScanInFlight,
+    result: RuntimeWorktreeScanResult
+  ): RuntimeWorktreeScanResult {
+    record.completedResult = result
+    if (!this.store || isFolderRepo(repo)) {
+      return { ok: false, worktrees: [] }
+    }
+    if (
+      this.worktreeScanInFlight.get(repo.id) !== record ||
+      (this.worktreeScanGenerations.get(repo.id) ?? 0) !== record.generation
+    ) {
+      return result.ok
+        ? { ok: false, worktrees: result.worktrees }
+        : this.buildCurrentWorktreeScanFallback(repo)
+    }
+    if (result.ok) {
+      this.clearWorktreeScanFailure(repo)
+      const authority: WorktreeScanAuthority = {
+        generation: record.generation,
+        runtimeKey: record.runtimeKey
+      }
+      this.worktreeScanCache.set(repo.id, {
+        generation: record.generation,
+        runtimeKey: record.runtimeKey,
+        authority,
+        worktrees: result.worktrees,
+        scannedAt: Date.now()
+      })
+      return { ...result, authority }
+    }
+    this.recordInFlightWorktreeScanFailure(repo, record)
+    return this.withStaleWorktreeScanFallback(repo, result, record.generation, record.runtimeKey)
+  }
+
   /**
    * `sweepFleet` is set only by the periodic all-repo sweep — the path that produced the spawn
    * storm. Explicit user-triggered scans pass nothing so they never read or write the backoff and
@@ -25048,19 +25204,9 @@ export class OrcaRuntimeService {
     acquisitionSignal?: AbortSignal
   ): Promise<RuntimeWorktreeScanResult> {
     const now = Date.now()
-    const generation = this.worktreeScanGenerations.get(repo.id) ?? 0
-    const projectRuntime = projectRuntimeByRepoId
-      ? projectRuntimeByRepoId.get(repo.id)
-      : !repo.connectionId
-        ? resolveLocalProjectRuntimeForRepo(this.requireStore(), repo)
-        : undefined
-    const runtimeKey = projectRuntime
-      ? projectRuntime.status === 'resolved'
-        ? projectRuntime.runtime.cacheKey
-        : projectRuntime.repair.cacheKey
-      : repo.connectionId
-        ? `ssh:${repo.connectionId}:${getSshGitProviderGeneration(repo.connectionId)}`
-        : 'local:default'
+    const identity = this.resolveWorktreeScanIdentity(repo, projectRuntimeByRepoId)
+    const { generation, runtimeKey, projectRuntime } = identity
+    this.evictMismatchedWorktreeScanState(repo.id, identity)
     const cached = this.worktreeScanCache.get(repo.id)
     if (
       cached?.generation === generation &&
@@ -25073,8 +25219,13 @@ export class OrcaRuntimeService {
     if (inFlight?.generation === generation && inFlight.runtimeKey === runtimeKey) {
       if (sweepFleet) {
         inFlight.consumedBySweep = true
+        this.recordInFlightWorktreeScanFailure(repo, inFlight)
       }
       return inFlight.promise
+    }
+    const provider = repo.connectionId ? getSshGitProvider(repo.connectionId) : undefined
+    if (repo.connectionId && !provider) {
+      return this.buildBackedOffWorktreeScanResult(repo, generation, runtimeKey)
     }
     const backoff = sweepFleet ? this.worktreeScanBackoff.get(repo.id) : undefined
     if (
@@ -25084,58 +25235,37 @@ export class OrcaRuntimeService {
     ) {
       return this.buildBackedOffWorktreeScanResult(repo, generation, runtimeKey)
     }
-    const promise = this.worktreeScanGate.run(
-      () => this.startRepoWorktreesForResolution(repo, projectRuntime),
+    const tracked = this.worktreeScanGate.runTracked(
+      () => this.startRepoWorktreesForResolution(repo, projectRuntime, provider),
       acquisitionSignal
+    )
+    let activeRecord!: RuntimeWorktreeScanInFlight
+    const promise = tracked.result.then(
+      (result) => this.finalizeRepoWorktreeScan(repo, activeRecord, result),
+      () => this.buildCurrentWorktreeScanFallback(repo)
     )
     const record: RuntimeWorktreeScanInFlight = {
       generation,
       runtimeKey,
       promise,
-      consumedBySweep: Boolean(sweepFleet)
+      settled: tracked.settled,
+      consumedBySweep: Boolean(sweepFleet),
+      failureRecorded: false
     }
+    activeRecord = record
     this.worktreeScanInFlight.set(repo.id, record)
-    try {
-      const result = await promise
-      if (
-        generation === (this.worktreeScanGenerations.get(repo.id) ?? 0) &&
-        this.worktreeScanInFlight.get(repo.id) === record
-      ) {
-        if (result.ok) {
-          this.clearWorktreeScanFailure(repo)
-          const authority: WorktreeScanAuthority = {
-            generation,
-            runtimeKey
-          }
-          this.worktreeScanCache.set(repo.id, {
-            generation,
-            runtimeKey,
-            authority,
-            worktrees: result.worktrees,
-            scannedAt: Date.now()
-          })
-          return { ...result, authority }
-        } else if (record.consumedBySweep && result.failureKind) {
-          // Why: without this a missing repo directory re-spawns git every TTL forever with no
-          // backoff and nothing surfaced (crash-cluster C2: 12 repos, 770 ENOENTs, 0 successes).
-          this.recordWorktreeScanFailure(repo, result.failureKind, generation, runtimeKey)
-        }
-      }
-      return result.ok
-        ? { ok: false, worktrees: result.worktrees }
-        : this.withStaleWorktreeScanFallback(repo, result, generation, runtimeKey)
-    } catch {
-      return this.buildBackedOffWorktreeScanResult(repo, generation, runtimeKey)
-    } finally {
+    void Promise.allSettled([record.promise, record.settled]).then(() => {
       if (this.worktreeScanInFlight.get(repo.id) === record) {
         this.worktreeScanInFlight.delete(repo.id)
       }
-    }
+    })
+    return promise
   }
 
   private startRepoWorktreesForResolution(
     repo: Repo,
-    projectRuntime: ProjectExecutionRuntimeResolution | undefined
+    projectRuntime: ProjectExecutionRuntimeResolution | undefined,
+    provider: ReturnType<typeof getSshGitProvider>
   ): {
     result: Promise<RuntimeWorktreeScanResult>
     settled?: Promise<unknown>
@@ -25143,7 +25273,6 @@ export class OrcaRuntimeService {
     if (!repo.connectionId) {
       return { result: this.listLocalRepoWorktreesForResolution(repo, projectRuntime) }
     }
-    const provider = getSshGitProvider(repo.connectionId)
     if (!provider) {
       return {
         result: Promise.resolve({
@@ -30806,16 +30935,29 @@ function withTimeout<T>(
   fallback: T,
   onTimeout?: () => void
 ): Promise<T> {
+  return withTimeoutFactory(promise, timeoutMs, () => fallback, onTimeout)
+}
+
+function withTimeoutFactory<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: () => T,
+  onTimeout?: () => void
+): Promise<T> {
   let timeout: ReturnType<typeof setTimeout> | null = null
-  return new Promise<T>((resolve) => {
+  return new Promise<T>((resolve, reject) => {
+    const resolveFallback = (): void => {
+      try {
+        resolve(fallback())
+      } catch (error) {
+        reject(error)
+      }
+    }
     timeout = setTimeout(() => {
       onTimeout?.()
-      resolve(fallback)
+      resolveFallback()
     }, timeoutMs)
-    promise.then(
-      (value) => resolve(value),
-      () => resolve(fallback)
-    )
+    promise.then((value) => resolve(value), resolveFallback)
   }).finally(() => {
     if (timeout) {
       clearTimeout(timeout)

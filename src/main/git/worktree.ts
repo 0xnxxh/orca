@@ -612,16 +612,17 @@ async function readWorktreeList(
   )
 }
 
-async function annotatePrunableByExistence(
+export async function annotatePrunableByExistence(
   worktrees: GitWorktreeInfo[],
   repoPath: string,
   options: GitWorktreeExecOptions = {}
 ): Promise<GitWorktreeInfo[]> {
   const annotated = [...worktrees]
   let nextIndex = 0
+  let probeError: unknown
 
   async function probeNext(): Promise<void> {
-    while (nextIndex < worktrees.length) {
+    while (probeError === undefined && nextIndex < worktrees.length) {
       if (options.signal?.aborted) {
         return
       }
@@ -642,16 +643,22 @@ async function annotatePrunableByExistence(
       try {
         await stat(translateWorktreePath(worktree.path, repoPath, options))
       } catch (err) {
-        if (getErrorCode(err) === 'ENOENT') {
+        const code = getErrorCode(err)
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
           annotated[index] = { ...worktree, prunable: true }
+        } else {
+          probeError ??= err
         }
       }
     }
   }
 
   const workerCount = Math.min(PRUNABLE_EXISTENCE_PROBE_CONCURRENCY, worktrees.length)
-  await Promise.allSettled(Array.from({ length: workerCount }, () => probeNext()))
+  await Promise.all(Array.from({ length: workerCount }, () => probeNext()))
   throwIfWorktreeScanAborted(options.signal)
+  if (probeError !== undefined) {
+    throw probeError
+  }
   return annotated
 }
 

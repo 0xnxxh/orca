@@ -218,13 +218,17 @@ describe('runner execFile timeout handling', () => {
     expect(child.kill).toHaveBeenCalled()
   })
 
-  it('keeps POSIX scan timeouts pending until the process group is gone', async () => {
+  it('does not SIGKILL when a timed-out POSIX group disappears during grace', async () => {
     await withPlatform('linux', async () => {
       const child = createMockChildProcess(1234)
       execFileMock.mockReturnValue(child)
+      let probes = 0
       const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
         if (signal === 0) {
-          throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
+          probes += 1
+          if (probes > 1) {
+            throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
+          }
         }
         return true
       })
@@ -250,7 +254,7 @@ describe('runner execFile timeout handling', () => {
           expect.objectContaining({ detached: true }),
           expect.any(Function)
         )
-        expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGKILL')
+        expect(killSpy).not.toHaveBeenCalledWith(-1234, 'SIGKILL')
         expect(killSpy).toHaveBeenCalledWith(-1234, 0)
         expect(child.kill).not.toHaveBeenCalled()
       } finally {
@@ -301,8 +305,11 @@ describe('runner execFile timeout handling', () => {
         callback = next
         return child
       })
+      let killed = false
       const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
-        if (signal === 0) {
+        if (signal === 'SIGKILL') {
+          killed = true
+        } else if (signal === 0 && killed) {
           throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
         }
         return true
@@ -327,6 +334,46 @@ describe('runner execFile timeout handling', () => {
         expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGTERM')
         expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGKILL')
         expect(killSpy).toHaveBeenCalledWith(-1234, 0)
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+  })
+
+  it('settles remaining POSIX descendants after natural scan completion', async () => {
+    await withPlatform('linux', async () => {
+      const child = createMockChildProcess(1234)
+      let callback!: (error: Error | null, stdout: string, stderr: string) => void
+      execFileMock.mockImplementation((_command, _args, _options, next) => {
+        callback = next
+        return child
+      })
+      let killed = false
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        if (signal === 'SIGKILL') {
+          killed = true
+        } else if (signal === 0 && killed) {
+          throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
+        }
+        return true
+      })
+      try {
+        const promise = gitExecFileAsync(['worktree', 'list'], {
+          cwd: '/repo',
+          settleProcessTree: true
+        })
+        callback(null, 'worktree /repo\n', '')
+        let settled = false
+        void promise.then(() => {
+          settled = true
+        })
+
+        await vi.advanceTimersByTimeAsync(999)
+        expect(settled).toBe(false)
+        await vi.advanceTimersByTimeAsync(1)
+        await expect(promise).resolves.toEqual({ stdout: 'worktree /repo\n', stderr: '' })
+        expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGTERM')
+        expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGKILL')
       } finally {
         killSpy.mockRestore()
       }

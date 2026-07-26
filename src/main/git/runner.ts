@@ -367,14 +367,17 @@ function killSpawnedCommandTree(child: ChildProcess): Promise<void> {
   })
 }
 
-function terminateSpawnedCommandTreeAndWait(child: ChildProcess): Promise<void> {
+function terminateSpawnedCommandTreeAndWait(
+  child: ChildProcess,
+  leaderAlreadyClosed = false
+): Promise<void> {
   const pid = child.pid
   if (!pid) {
     return new Promise(() => {})
   }
   if (process.platform === 'win32') {
     return new Promise((resolve) => {
-      let childClosed = hasSpawnedCommandExited(child)
+      let childClosed = leaderAlreadyClosed || hasSpawnedCommandExited(child)
       let treeKilled = false
       const finish = (): void => {
         if (childClosed && treeKilled) {
@@ -399,8 +402,9 @@ function terminateSpawnedCommandTreeAndWait(child: ChildProcess): Promise<void> 
     })
   }
   return new Promise((resolve) => {
-    let leaderClosed = hasSpawnedCommandExited(child)
-    let forced = false
+    let leaderClosed = leaderAlreadyClosed || hasSpawnedCommandExited(child)
+    let settled = false
+    let forceTimer: NodeJS.Timeout | null = null
     const groupGone = (): boolean => {
       try {
         process.kill(-pid, 0)
@@ -409,32 +413,60 @@ function terminateSpawnedCommandTreeAndWait(child: ChildProcess): Promise<void> 
         return (error as NodeJS.ErrnoException).code === 'ESRCH'
       }
     }
-    const finish = (): void => {
-      if (leaderClosed && forced && groupGone()) {
+    const finish = (): boolean => {
+      if (leaderClosed && groupGone()) {
+        settled = true
+        if (forceTimer) {
+          clearTimeout(forceTimer)
+        }
         resolve()
+        return true
+      }
+      return false
+    }
+    const poll = (): void => {
+      if (settled || finish()) {
         return
       }
-      setTimeout(finish, 25).unref()
+      setTimeout(poll, 25).unref()
     }
     child.once('close', () => {
       leaderClosed = true
+      finish()
     })
     try {
       process.kill(-pid, 'SIGTERM')
     } catch {
       // The group may already be gone; the close/group checks decide settlement.
     }
-    const forceTimer = setTimeout(() => {
-      forced = true
+    forceTimer = setTimeout(() => {
+      if (finish()) {
+        return
+      }
       try {
         process.kill(-pid, 'SIGKILL')
       } catch {
         // The group may already be gone.
       }
-      finish()
+      poll()
     }, POSIX_TREE_KILL_GRACE_MS)
     forceTimer.unref()
   })
+}
+
+function settleSpawnedCommandTreeAfterExit(child: ChildProcess): Promise<void> {
+  const pid = child.pid
+  if (!pid || process.platform === 'win32') {
+    return Promise.resolve()
+  }
+  try {
+    process.kill(-pid, 0)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+      return Promise.resolve()
+    }
+  }
+  return terminateSpawnedCommandTreeAndWait(child, true)
 }
 
 type ExecFileCaptureOptions = Omit<ExecFileOptions, 'timeout'> & {
@@ -534,9 +566,12 @@ function execFileCapture(
         if (terminating) {
           return
         }
-        if (!error && stderr === undefined && isExecFileResultObject(stdout)) {
-          finish(null, stdout.stdout, stdout.stderr)
-          return
+        const complete = (): void => {
+          if (!error && stderr === undefined && isExecFileResultObject(stdout)) {
+            finish(null, stdout.stdout, stdout.stderr)
+            return
+          }
+          finish(error, stdout, stderr)
         }
         if (
           error &&
@@ -551,7 +586,15 @@ function execFileCapture(
           })
           return
         }
-        finish(error, stdout, stderr)
+        if (options.settleProcessTree && child) {
+          terminating = true
+          void settleSpawnedCommandTreeAfterExit(child).then(() => {
+            terminating = false
+            complete()
+          })
+          return
+        }
+        complete()
       })
       recordSubprocessSpawn(command, args, performance.now() - spawnStartedAt)
     } catch (error) {

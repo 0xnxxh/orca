@@ -231,6 +231,12 @@ export class SshChannelMultiplexer {
     params?: Record<string, unknown>,
     options?: { signal?: AbortSignal; timeoutMs?: number }
   ): TrackedRequest<T> {
+    if (this.disposed || options?.signal?.aborted) {
+      return {
+        result: this.request(method, params, options) as Promise<T>,
+        settled: Promise.resolve()
+      }
+    }
     const token = `${Date.now().toString(36)}-${this.nextRequestId.toString(36)}-${Math.random()
       .toString(36)
       .slice(2)}`

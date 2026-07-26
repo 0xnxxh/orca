@@ -10,6 +10,11 @@ export type WorktreeScanOperation<T> = {
   settled?: Promise<unknown>
 }
 
+export type TrackedWorktreeScanOperation<T> = {
+  result: Promise<T>
+  settled: Promise<unknown>
+}
+
 function abortError(): Error {
   const error = new Error('Worktree scan was cancelled before it started.')
   error.name = 'AbortError'
@@ -27,20 +32,40 @@ export class WorktreeScanGate {
   }
 
   run<T>(start: () => WorktreeScanOperation<T>, acquisitionSignal?: AbortSignal): Promise<T> {
+    return this.runTracked(start, acquisitionSignal).result
+  }
+
+  runTracked<T>(
+    start: () => WorktreeScanOperation<T>,
+    acquisitionSignal?: AbortSignal
+  ): TrackedWorktreeScanOperation<T> {
     if (acquisitionSignal?.aborted) {
-      return Promise.reject(abortError())
+      const rejected = Promise.reject(abortError())
+      return { result: rejected, settled: Promise.resolve() }
     }
     if (this.active < this.limit) {
       this.active += 1
       return this.startOperation(start, this.createRelease())
     }
-    return this.acquire(acquisitionSignal).then((release) => this.startOperation(start, release))
+    const acquisition = this.acquire(acquisitionSignal)
+    const operation = acquisition.then((release) => this.startOperation(start, release))
+    return {
+      result: operation.then((tracked) => tracked.result),
+      settled: operation.then(
+        (tracked) =>
+          tracked.settled.then(
+            () => undefined,
+            () => undefined
+          ),
+        () => undefined
+      )
+    }
   }
 
   private startOperation<T>(
     start: () => WorktreeScanOperation<T>,
     release: () => void
-  ): Promise<T> {
+  ): TrackedWorktreeScanOperation<T> {
     let operation: WorktreeScanOperation<T>
     try {
       operation = start()
@@ -48,8 +73,9 @@ export class WorktreeScanGate {
       release()
       throw error
     }
-    void (operation.settled ?? operation.result).then(release, release)
-    return operation.result
+    const settled = operation.settled ?? operation.result
+    void settled.then(release, release)
+    return { result: operation.result, settled }
   }
 
   private acquire(signal?: AbortSignal): Promise<() => void> {

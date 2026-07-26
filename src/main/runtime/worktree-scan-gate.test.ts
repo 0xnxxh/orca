@@ -63,4 +63,24 @@ describe('WorktreeScanGate', () => {
     settled.resolve()
     await expect(second).resolves.toBe(2)
   })
+
+  it('exposes result and resource lifetimes to the scan owner', async () => {
+    const gate = new WorktreeScanGate(1)
+    const settlement = deferred<void>()
+    const tracked = gate.runTracked(() => ({
+      result: Promise.resolve(1),
+      settled: settlement.promise
+    }))
+
+    await expect(tracked.result).resolves.toBe(1)
+    let settled = false
+    void tracked.settled.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    settlement.resolve()
+    await expect(tracked.settled).resolves.toBeUndefined()
+  })
 })

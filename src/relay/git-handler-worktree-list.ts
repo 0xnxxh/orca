@@ -45,9 +45,10 @@ export async function annotatePrunableWorktreesByExistence(
 ): Promise<Record<string, unknown>[]> {
   const annotated = [...worktrees]
   let nextIndex = 0
+  let probeError: unknown
 
   async function probeNext(): Promise<void> {
-    while (nextIndex < worktrees.length) {
+    while (probeError === undefined && nextIndex < worktrees.length) {
       if (signal?.aborted) {
         return
       }
@@ -72,19 +73,25 @@ export async function annotatePrunableWorktreesByExistence(
       try {
         await stat(worktreePath)
       } catch (err) {
-        if ((err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+        const code = (err as NodeJS.ErrnoException | undefined)?.code
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
           annotated[index] = { ...worktree, prunable: true }
+        } else {
+          probeError ??= err
         }
       }
     }
   }
 
   const workerCount = Math.min(PRUNABLE_EXISTENCE_PROBE_CONCURRENCY, worktrees.length)
-  await Promise.allSettled(Array.from({ length: workerCount }, () => probeNext()))
+  await Promise.all(Array.from({ length: workerCount }, () => probeNext()))
   if (signal?.aborted) {
     const error = new Error('Relay worktree scan was cancelled.')
     error.name = 'AbortError'
     throw error
+  }
+  if (probeError !== undefined) {
+    throw probeError
   }
   return annotated
 }
