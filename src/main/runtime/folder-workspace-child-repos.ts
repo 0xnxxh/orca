@@ -1,0 +1,111 @@
+import type { GitStatusEntry, GitStatusResult, Repo } from '../../shared/types'
+import { isFolderRepo } from '../../shared/repo-kind'
+import {
+  isPathInsideOrEqual,
+  relativePathInsideRoot,
+  resolveRuntimePath
+} from '../../shared/cross-platform-path'
+
+/**
+ * A folder workspace is a container directory that is not itself a git repo; the
+ * real repos live inside it. Git operations addressed to the workspace selector
+ * must be routed to whichever child repo owns the requested path.
+ */
+export function listFolderWorkspaceChildRepos(repos: readonly Repo[], folderPath: string): Repo[] {
+  return repos
+    .filter(
+      (candidate) => !isFolderRepo(candidate) && isPathInsideOrEqual(folderPath, candidate.path)
+    )
+    .filter((candidate) => relativePathInsideRoot(folderPath, candidate.path) !== '')
+    .sort((left, right) => right.path.length - left.path.length)
+}
+
+export type FolderWorkspaceChildRepoMatch = {
+  repo: Repo
+  /** `relativePath` rebased to be relative to `repo.path`. */
+  rebasedRelativePath: string
+}
+
+/**
+ * Resolve which child repo owns `relativePath` (given relative to the workspace
+ * folder). Deepest match wins so a nested repo beats its ancestor.
+ */
+export function matchFolderWorkspaceChildRepo(
+  repos: readonly Repo[],
+  folderPath: string,
+  relativePath: string | undefined
+): FolderWorkspaceChildRepoMatch | null {
+  if (!relativePath) {
+    return null
+  }
+  const absolutePath = resolveRuntimePath(folderPath, relativePath)
+  // Why: a `..` segment can escape the workspace, which must not silently
+  // resolve to an unrelated repo the user never opened.
+  if (relativePathInsideRoot(folderPath, absolutePath) === null) {
+    return null
+  }
+  for (const repo of listFolderWorkspaceChildRepos(repos, folderPath)) {
+    if (!isPathInsideOrEqual(repo.path, absolutePath)) {
+      continue
+    }
+    const rebasedRelativePath = relativePathInsideRoot(repo.path, absolutePath)
+    if (rebasedRelativePath === null || rebasedRelativePath === '') {
+      continue
+    }
+    return { repo, rebasedRelativePath }
+  }
+  return null
+}
+
+/** Prefix a child repo's status entry path so it stays addressable from the workspace root. */
+export function prefixFolderWorkspaceEntryPath(
+  folderPath: string,
+  repoPath: string,
+  entryPath: string
+): string {
+  const repoPrefix = relativePathInsideRoot(folderPath, repoPath)
+  return repoPrefix ? `${repoPrefix}/${entryPath}` : entryPath
+}
+
+/**
+ * Merge per-child-repo status into one workspace-level result. Entry paths are
+ * rewritten workspace-relative so the renderer can address them with the same
+ * selector it listed them under.
+ */
+export function mergeFolderWorkspaceGitStatus(
+  folderPath: string,
+  perRepo: readonly { repo: Repo; status: GitStatusResult }[]
+): GitStatusResult {
+  const entries: GitStatusEntry[] = []
+  const ignoredPaths: string[] = []
+  let didHitLimit = false
+  let statusLength = 0
+  for (const { repo, status } of perRepo) {
+    const rebase = (path: string): string =>
+      prefixFolderWorkspaceEntryPath(folderPath, repo.path, path)
+    for (const entry of status.entries) {
+      entries.push({
+        ...entry,
+        path: rebase(entry.path),
+        ...(entry.oldPath ? { oldPath: rebase(entry.oldPath) } : {}),
+        ...(entry.submoduleRoot ? { submoduleRoot: rebase(entry.submoduleRoot) } : {})
+      })
+    }
+    for (const ignored of status.ignoredPaths ?? []) {
+      ignoredPaths.push(rebase(ignored))
+    }
+    didHitLimit ||= status.didHitLimit === true
+    statusLength += status.statusLength ?? status.entries.length
+  }
+  return {
+    entries,
+    // Why: no single HEAD/branch/upstream describes N repos, so those stay unset
+    // rather than reporting one child's state as the whole workspace's.
+    conflictOperation:
+      perRepo.find(({ status }) => status.conflictOperation !== 'unknown')?.status
+        .conflictOperation ?? 'unknown',
+    ...(ignoredPaths.length > 0 ? { ignoredPaths } : {}),
+    ...(didHitLimit ? { didHitLimit: true } : {}),
+    statusLength
+  }
+}

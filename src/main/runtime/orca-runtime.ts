@@ -298,6 +298,13 @@ import {
   isPathInsideOrEqual,
   normalizeRuntimePathForComparison
 } from '../../shared/cross-platform-path'
+import type { GitProviderStatusOptions } from '../providers/git-provider-status-options'
+import type { GitStatusResult } from '../../shared/types'
+import {
+  listFolderWorkspaceChildRepos,
+  matchFolderWorkspaceChildRepo,
+  mergeFolderWorkspaceGitStatus
+} from './folder-workspace-child-repos'
 import { resolveTerminalStartupCwd } from '../../shared/terminal-startup-cwd'
 import { isWslUncPath, parseWslUncPath } from '../../shared/wsl-paths'
 import {
@@ -446,7 +453,11 @@ import {
 import { RuntimeEmulatorCommands, setEmulatorBridge } from './orca-runtime-emulator'
 import type { EmulatorBridge } from '../emulator/emulator-bridge'
 import { RuntimeFileCommands } from './orca-runtime-files'
-import { RuntimeGitCommands } from './orca-runtime-git'
+import {
+  getRuntimeGitStatusForTarget,
+  RuntimeGitCommands,
+  type RuntimeGitTargetPathGroup
+} from './orca-runtime-git'
 import {
   activateClientSessionTabSelection,
   ClientSessionTabSelectionStore,
@@ -7060,7 +7071,10 @@ export class OrcaRuntimeService {
   )
 
   private readonly gitCommands = new RuntimeGitCommands({
-    resolveRuntimeGitTarget: (selector) => this.resolveRuntimeGitTarget(selector),
+    resolveRuntimeGitTarget: (selector, relativePath) =>
+      this.resolveRuntimeGitTarget(selector, relativePath),
+    resolveRuntimeGitTargetPathGroups: (selector, relativePaths) =>
+      this.resolveRuntimeGitTargetPathGroups(selector, relativePaths),
     getRuntimeSettings: () => this.requireStore().getSettings() as GlobalSettings,
     getCommitMessageAgentEnvironment: () => this.commitMessageAgentEnv ?? undefined,
     // Why: resolved worktrees are cached for a second, so link/unlink would lag
@@ -7076,8 +7090,11 @@ export class OrcaRuntimeService {
     }
   })
 
-  getRuntimeGitStatus: RuntimeGitCommands['getRuntimeGitStatus'] =
-    this.gitCommands.getRuntimeGitStatus.bind(this.gitCommands)
+  getRuntimeGitStatus: RuntimeGitCommands['getRuntimeGitStatus'] = async (selector, options) =>
+    // Why: a folder workspace has no repo of its own, so its status is the merge
+    // of its child repos rather than a single `git status` invocation.
+    (await this.resolveFolderWorkspaceGitStatus(selector, options)) ??
+    (await this.gitCommands.getRuntimeGitStatus(selector, options))
   getRuntimeGitSubmoduleStatus: RuntimeGitCommands['getRuntimeGitSubmoduleStatus'] =
     this.gitCommands.getRuntimeGitSubmoduleStatus.bind(this.gitCommands)
   checkRuntimeGitIgnoredPaths: RuntimeGitCommands['checkRuntimeGitIgnoredPaths'] =
@@ -7151,19 +7168,71 @@ export class OrcaRuntimeService {
   getRuntimeGitRemoteCommitUrl: RuntimeGitCommands['getRuntimeGitRemoteCommitUrl'] =
     this.gitCommands.getRuntimeGitRemoteCommitUrl.bind(this.gitCommands)
 
-  private async resolveRuntimeGitTarget(worktreeSelector: string): Promise<{
+  private async resolveRuntimeGitTarget(
+    worktreeSelector: string,
+    relativePath?: string
+  ): Promise<{
     worktree: ResolvedWorktree
     repo?: Repo
     connectionId?: string
     localGitOptions?: { wslDistro?: string }
+    /** Relative path rebased onto the resolved child repo, when the selector was a folder workspace. */
+    rebasedRelativePath?: string
   }> {
     const store = this.requireStore()
+    const folderGitTarget = await this.resolveFolderWorkspaceGitTarget(
+      worktreeSelector,
+      relativePath
+    )
+    if (folderGitTarget) {
+      return folderGitTarget
+    }
     const worktree = await this.resolveWorktreeSelector(worktreeSelector)
     const repo = store.getRepo(worktree.repoId)
     const connectionId = repo?.connectionId ?? undefined
     const localGitOptions =
       repo && !connectionId ? getLocalProjectWorktreeGitOptions(store, repo) : {}
     return { worktree, repo, connectionId, localGitOptions }
+  }
+
+  private async resolveRuntimeGitTargetPathGroups(
+    worktreeSelector: string,
+    relativePaths: string[]
+  ): Promise<RuntimeGitTargetPathGroup[]> {
+    const scope = await this.resolveFolderWorkspaceLaunchScope(worktreeSelector)
+    const folderPath = scope?.folderWorkspace?.folderPath
+    if (!folderPath) {
+      const target = await this.resolveRuntimeGitTarget(worktreeSelector)
+      return [{ target, relativePaths }]
+    }
+    const repos = this.requireStore().getRepos()
+    // Why: one bulk request can span several child repos, so paths are grouped by
+    // owning repo and each group runs as its own git invocation.
+    const byRepoId = new Map<string, { repo: Repo; relativePaths: string[] }>()
+    for (const relativePath of relativePaths) {
+      const match = matchFolderWorkspaceChildRepo(repos, folderPath, relativePath)
+      if (!match) {
+        throw new Error('selector_not_found')
+      }
+      const group = byRepoId.get(match.repo.id)
+      if (group) {
+        group.relativePaths.push(match.rebasedRelativePath)
+      } else {
+        byRepoId.set(match.repo.id, {
+          repo: match.repo,
+          relativePaths: [match.rebasedRelativePath]
+        })
+      }
+    }
+    const groups: RuntimeGitTargetPathGroup[] = []
+    for (const { repo, relativePaths: owned } of byRepoId.values()) {
+      const target = await this.resolveChildRepoGitTarget(repo)
+      if (!target) {
+        throw new Error('selector_not_found')
+      }
+      groups.push({ target, relativePaths: owned })
+    }
+    return groups
   }
 
   private async resolveRuntimeFileTarget(worktreeSelector: string): Promise<{
@@ -24035,6 +24104,98 @@ export class OrcaRuntimeService {
       repo: null,
       folderWorkspace: workspace
     }
+  }
+
+  // Why: a folder workspace spans N child repos, so git ops must be routed to the
+  // child repo that owns the requested path instead of failing selector resolution.
+  private async resolveFolderWorkspaceGitTarget(
+    selector: string,
+    relativePath: string | undefined
+  ): Promise<{
+    worktree: ResolvedWorktree
+    repo?: Repo
+    connectionId?: string
+    localGitOptions?: { wslDistro?: string }
+    rebasedRelativePath?: string
+  } | null> {
+    const scope = await this.resolveFolderWorkspaceLaunchScope(selector)
+    const folderWorkspace = scope?.folderWorkspace
+    if (!folderWorkspace) {
+      return null
+    }
+    const store = this.requireStore()
+    const match = matchFolderWorkspaceChildRepo(
+      store.getRepos(),
+      folderWorkspace.folderPath,
+      relativePath
+    )
+    if (!match) {
+      return null
+    }
+    const target = await this.resolveChildRepoGitTarget(match.repo)
+    return target ? { ...target, rebasedRelativePath: match.rebasedRelativePath } : null
+  }
+
+  // Why: a child repo's own main worktree is the git target; it has no Orca-managed
+  // worktree row of its own when only the parent folder was imported.
+  private async resolveChildRepoGitTarget(repo: Repo): Promise<{
+    worktree: ResolvedWorktree
+    repo: Repo
+    connectionId?: string
+    localGitOptions?: { wslDistro?: string }
+  } | null> {
+    const worktrees = await this.listResolvedWorktrees()
+    const worktree = worktrees.find(
+      (candidate) => candidate.repoId === repo.id && runtimePathsEqual(candidate.path, repo.path)
+    )
+    if (!worktree) {
+      return null
+    }
+    const connectionId = repo.connectionId ?? undefined
+    return {
+      worktree,
+      repo,
+      connectionId,
+      localGitOptions: connectionId
+        ? {}
+        : getLocalProjectWorktreeGitOptions(this.requireStore(), repo)
+    }
+  }
+
+  /**
+   * Status for a folder-workspace selector: no single repo owns the workspace, so
+   * fan out across the child repos and merge their entries under workspace-relative
+   * paths. Returns null when the selector is not a folder workspace.
+   */
+  async resolveFolderWorkspaceGitStatus(
+    selector: string,
+    options?: GitProviderStatusOptions
+  ): Promise<GitStatusResult | null> {
+    const scope = await this.resolveFolderWorkspaceLaunchScope(selector)
+    const folderWorkspace = scope?.folderWorkspace
+    if (!folderWorkspace) {
+      return null
+    }
+    const folderPath = folderWorkspace.folderPath
+    const childRepos = listFolderWorkspaceChildRepos(this.requireStore().getRepos(), folderPath)
+    const perRepo = await Promise.all(
+      childRepos.map(async (repo) => {
+        const target = await this.resolveChildRepoGitTarget(repo)
+        if (!target) {
+          return null
+        }
+        // Why: one unreadable child repo must not blank the whole workspace list.
+        const status = await getRuntimeGitStatusForTarget(target, options).catch(() => null)
+        if (!status) {
+          return null
+        }
+        return { repo, status }
+      })
+    )
+    return mergeFolderWorkspaceGitStatus(
+      folderPath,
+      perRepo.filter((entry) => entry !== null)
+    )
   }
 
   private folderWorkspaceToResolvedWorktree(folderWorkspace: FolderWorkspace): ResolvedWorktree {
