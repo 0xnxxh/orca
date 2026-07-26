@@ -337,7 +337,9 @@ function createOutOfProcessLauncher(
     const entryPath = getDaemonEntryPath()
     const pidPath = suppliedPidPath ?? getDaemonPidPath(runtimeDir)
     const launchNonce = suppliedLaunchNonce ?? randomUUID()
-    // One-shot: whichever launch consumes it owns the attribution, so a later unrelated launch can't reuse it.
+    // One-shot: whichever launch consumes it owns the attribution, so a later unrelated launch can't
+    // reuse it. The write in the respawn closure reaches here without an intervening await, which is
+    // what makes a bare module-scoped slot safe — keep it that way or a concurrent launch can steal it.
     const attributedReason = attributedReplaceReason
     attributedReplaceReason = null
     let pendingReplacement:
@@ -475,14 +477,14 @@ function createOutOfProcessLauncher(
       adoptionClient = null
       confirmedReplacement =
         (await killStaleDaemon(runtimeDir, socketPath, tokenPath)) || confirmedReplacement
-      // Why: an attributed reason outranks whatever this launch inferred. The adapter already proved
-      // the replacement (resolver unhealthy, zero live sessions) before handing off, and the daemon it
-      // decided against is gone either way — self-retired, or killed just above. Preferring it also
-      // keeps the surviving-daemon case to a single event instead of one from each side.
-      if (attributedReason) {
-        trackDaemonReplaced(attributedReason, 0)
-      } else if (pendingReplacement && confirmedReplacement) {
+      // Why: a confirmed kill outranks the attribution — this launch proved its reason against the
+      // daemon it actually removed, so a stale bundle it caught here must not be billed to the
+      // resolver. The attribution exists only to cover the case the gate cannot see: a daemon that
+      // self-retired on the adapter's disconnect, leaving nothing to kill and no reason to infer.
+      if (pendingReplacement && confirmedReplacement) {
         trackDaemonReplaced(pendingReplacement.reason, pendingReplacement.liveSessionCount)
+      } else if (attributedReason) {
+        trackDaemonReplaced(attributedReason, 0)
       }
 
       const userDataPath = app.getPath('userData')
@@ -731,6 +733,7 @@ export async function initDaemonPtyProvider(
           trackDaemonRetired('died_respawn')
         }
       } else if (reason === 'unhealthy_resolver') {
+        // Must reach the launcher below without an await in between; see the consume site.
         attributedReplaceReason = 'unhealthy_resolver'
       }
       newSpawner.resetHandle()
@@ -926,6 +929,7 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
           trackDaemonRetired('died_respawn')
         }
       } else if (reason === 'unhealthy_resolver') {
+        // Must reach the launcher below without an await in between; see the consume site.
         attributedReplaceReason = 'unhealthy_resolver'
       }
       currentSpawner.resetHandle()

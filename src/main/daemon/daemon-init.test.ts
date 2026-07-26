@@ -413,8 +413,8 @@ async function importFresh() {
   getDaemonLaunchIdentityMock.mockClear()
   isDaemonStaleForCurrentBundleMock.mockReset()
   isDaemonStaleForCurrentBundleMock.mockReturnValue(false)
-  // mockClear alone would leave a previous test's mockResolvedValue in place, silently disarming
-  // the confirmedReplacement gate for every test that runs after it.
+  // mockReset (not mockClear) also drops an unconsumed *Once queue, so a test that bails early
+  // can't leak a queued false into the next test's confirmedReplacement gate.
   killStaleDaemonMock.mockReset()
   killStaleDaemonMock.mockResolvedValue(true)
   getAppPathMock.mockReset()
@@ -1575,6 +1575,35 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       'stop after replacement decision'
     )
     expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
+  })
+
+  // STA-2376: the attribution covers the case the confirmed-kill gate cannot see; it must not
+  // overwrite a reason this launch proved against the daemon it actually removed. Otherwise a
+  // resolver that recovers mid-flight bills a real stale-bundle replacement to the resolver bucket.
+  it('prefers a proven replacement reason over the attributed one', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+    const adapterOptions = adapterInstances[0].options
+    trackDaemonReplacedMock.mockClear()
+
+    // Resolver recovered by the time the launcher looks, but the daemon is genuinely from another path.
+    getMacDaemonSystemResolverHealthMock.mockReturnValue('healthy')
+    getDaemonLaunchIdentityMock.mockReturnValueOnce('mismatch')
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('stop after replacement decision')
+    })
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+
+    await adapterOptions.respawn?.('unhealthy_resolver')
+    await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+      'stop after replacement decision'
+    )
+
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('different_app_path', 0)
   })
 
   it('removes detached daemon startup listeners after readiness', async () => {
