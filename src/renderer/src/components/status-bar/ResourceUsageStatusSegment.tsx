@@ -752,7 +752,7 @@ export function ResourceUsageStatusSegment({
     clearSessionsError,
     removeSession,
     removeSessions
-  } = useResourceSessionInventory(workspaceSessionReady)
+  } = useResourceSessionInventory(workspaceSessionReady, open)
   const sessions = sessionInventory.sessions
   const [killConfirm, setKillConfirm] = useState<UnifiedSessionRow | null>(null)
   const [killing, setKilling] = useState(false)
