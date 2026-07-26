@@ -56,7 +56,7 @@ describe('#9040 worktree dot attributes spinner titles to the launched agent', (
   })
 
   // Why: pins the #9647 gate — spinner attribution needs a launch identity, so a
-  // frozen spinner frame left by an exited agent still cannot spin the dot forever.
+  // spinner in a tab no agent was launched in cannot spin the dot.
   it('stays active for a spinner title with no launch identity', () => {
     const status = getWorktreeStatus(
       [{ id: 'tab-1', title: '⠐ Review branch for regressions' }],
@@ -75,6 +75,30 @@ describe('#9040 worktree dot attributes spinner titles to the launched agent', (
     )
 
     expect(status).toBe('active')
+  })
+})
+
+// Why: launchAgent usually clears on exit (clearTabLaunchAgent via
+// resolveLaunchedAgentExitEvidence), but not on every path — a hookless remote agent has
+// no completion hook and no shell-foreground producer, so its launch identity can outlive
+// it and a later ora-style spinner then reads as working. Documented trade-off, not an
+// oversight — the row builder has behaved this way since #9647. Pinned so it stays a
+// deliberate choice rather than drifting silently.
+describe('#9040 spinner attribution trade-off is bounded', () => {
+  it('over-reports a non-agent spinner in a tab an agent was launched in', () => {
+    const tab = {
+      id: 'tab-1',
+      title: '⠋ Progress: resolved 42',
+      launchAgent: 'claude'
+    } satisfies Partial<TerminalTab>
+
+    expect(getWorktreeStatus([tab], [], livePtyMap('tab-1'))).toBe('working')
+    // Bound 1: the same title cannot spin a tab with no launch identity.
+    expect(getWorktreeStatus([{ id: 'tab-1', title: tab.title }], [], livePtyMap('tab-1'))).toBe(
+      'active'
+    )
+    // Bound 2: a dead PTY drops out regardless of launch identity.
+    expect(getWorktreeStatus([tab], [], {})).toBe('inactive')
   })
 })
 
