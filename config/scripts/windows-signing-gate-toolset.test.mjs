@@ -223,6 +223,27 @@ describe('Windows signing gates resolve 7za through the toolset resolver (#6487)
     expect(block.code).toContain('Add-GateSummary')
   })
 
+  // Why cross-checked: the upload is `if-no-files-found: ignore`, so renaming the
+  // evidence file on one side and not the other ships a green run with an artifact
+  // that silently omits the verdict — the same class as the bug this PR fixes.
+  it('uploads the exact evidence filename the gate writes', () => {
+    const source = workflowSource('release-cut.yml')
+    const uploadStart = source.indexOf('- name: Upload Windows inner signing evidence')
+    expect(uploadStart).toBeGreaterThan(-1)
+    const uploadEnd = source.indexOf('\n      - name:', uploadStart + 1)
+    expect(uploadEnd).toBeGreaterThan(uploadStart)
+    const upload = source.slice(uploadStart, uploadEnd)
+
+    const step = innerBinaryStep()
+    const written = new Set(
+      [...withoutComments(step).matchAll(/-Path\s+'([\w.-]+\.txt)'/g)].map((m) => m[1])
+    )
+    expect(written.size).toBeGreaterThan(0)
+    for (const file of written) {
+      expect(upload, `${file} is written by the gate but never uploaded`).toContain(file)
+    }
+  })
+
   it('never lets verdict persistence itself fail a warn-only release', () => {
     // Every persistence helper is best-effort: a disk-full or read-only runner
     // must not turn evidence-writing into the thing that fails the release.
