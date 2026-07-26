@@ -151,6 +151,59 @@ describe('HistoryReader', () => {
       expect(await reader.detectColdRestore('corrupt')).toBeNull()
     })
 
+    it.each([
+      'null',
+      '[]',
+      '{}',
+      JSON.stringify({ cwd: '/tmp', cols: 80, rows: 24 }),
+      JSON.stringify(makeMeta({ cols: 1.5 })),
+      JSON.stringify(makeMeta({ rows: 501 }))
+    ])('classifies structurally invalid metadata as unreadable: %s', async (metadata) => {
+      const sessionDir = join(dir, getHistorySessionDirName('invalid-meta'))
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(join(sessionDir, 'meta.json'), metadata)
+      writeFileSync(join(sessionDir, 'checkpoint.json'), JSON.stringify(makeCheckpoint()))
+
+      expect(reader.probeRestorableHistory('invalid-meta')).toEqual({
+        status: 'unreadable',
+        sessionId: 'invalid-meta'
+      })
+      expect(await reader.detectColdRestoreState('invalid-meta')).toEqual({
+        status: 'unreadable',
+        sessionId: 'invalid-meta'
+      })
+    })
+
+    it.each(['null', '[]', '{}', JSON.stringify({ snapshotAnsi: 'only recovery copy' })])(
+      'classifies structurally invalid checkpoint JSON as unreadable: %s',
+      async (checkpoint) => {
+        const sessionDir = join(dir, getHistorySessionDirName('invalid-checkpoint'))
+        mkdirSync(sessionDir, { recursive: true })
+        writeFileSync(join(sessionDir, 'meta.json'), JSON.stringify(makeMeta()))
+        writeFileSync(join(sessionDir, 'checkpoint.json'), checkpoint)
+
+        expect(await reader.detectColdRestoreState('invalid-checkpoint')).toEqual({
+          status: 'unreadable',
+          sessionId: 'invalid-checkpoint'
+        })
+      }
+    )
+
+    it.each([
+      makeCheckpoint({ cols: 1.5 }),
+      makeCheckpoint({ rows: 501 }),
+      makeCheckpoint({ scrollbackLines: -1 }),
+      makeCheckpoint({ modes: { bracketedPaste: false } })
+    ])('classifies unsafe checkpoint fields as unreadable', async (checkpoint) => {
+      const sessionId = 'unsafe-checkpoint'
+      writeSessionWithCheckpoint(dir, sessionId, makeMeta(), checkpoint)
+
+      expect(await reader.detectColdRestoreState(sessionId)).toEqual({
+        status: 'unreadable',
+        sessionId
+      })
+    })
+
     it('falls back to scrollback.bin when checkpoint.json is corrupt', async () => {
       const sessionDir = join(dir, getHistorySessionDirName('bad-cp'))
       mkdirSync(sessionDir, { recursive: true })
@@ -201,6 +254,38 @@ describe('HistoryReader', () => {
       writeFileSync(join(sessionDir, 'meta.json'), JSON.stringify(makeMeta()))
 
       expect(await reader.detectColdRestore('no-data')).toBeNull()
+    })
+
+    it('classifies a sole corrupt incremental log as unreadable', async () => {
+      const sessionId = 'corrupt-log-only'
+      const sessionDir = join(dir, getHistorySessionDirName(sessionId))
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(join(sessionDir, 'meta.json'), JSON.stringify(makeMeta()))
+      writeFileSync(join(sessionDir, 'output.log'), 'not a terminal history log')
+
+      expect(await reader.detectColdRestoreState(sessionId)).toEqual({
+        status: 'unreadable',
+        sessionId
+      })
+    })
+
+    it('classifies an unsafe sole-log resize as unreadable', async () => {
+      const sessionId = 'unsafe-log-resize'
+      const sessionDir = join(dir, getHistorySessionDirName(sessionId))
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(join(sessionDir, 'meta.json'), JSON.stringify(makeMeta()))
+      writeFileSync(
+        join(sessionDir, 'output.log'),
+        Buffer.concat([
+          encodeLogHeader(0),
+          encodeLogBatch(1, [{ kind: 'resize', cols: 501, rows: 24 }])
+        ])
+      )
+
+      expect(await reader.detectColdRestoreState(sessionId)).toEqual({
+        status: 'unreadable',
+        sessionId
+      })
     })
 
     it('truncates alt-screen from scrollback.bin fallback', async () => {
@@ -297,6 +382,15 @@ describe('HistoryReader', () => {
       writeSessionWithScrollback(dir, sessionId, makeMeta(), 'data')
 
       expect(reader.listRestorable()).toEqual([sessionId])
+    })
+
+    it('does not enumerate quarantined bundle metadata as live sessions', () => {
+      writeSessionWithScrollback(dir, 'alive', makeMeta(), 'data')
+      const quarantined = join(dir, '.recovery-quarantine', 'owner', 'bundle')
+      mkdirSync(quarantined, { recursive: true })
+      writeFileSync(join(quarantined, 'meta.json'), JSON.stringify(makeMeta()))
+
+      expect(reader.listRestorable()).toEqual(['alive'])
     })
 
     it('skips malformed encoded session directories', () => {

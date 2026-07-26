@@ -18,13 +18,13 @@ import { getHistorySessionDirName } from './history-paths'
 
 const MARKERS = 300
 const SESSION_ID = 'repo-1::/Users/dev/large-scrollback'
-const COLS = 800
+const COLS = 500
 const ROWS = 40
 
 // Why per-cell color: the restore seed must clear 16MiB to cover the pre-#10479 cap, and
 // SGR-per-cell is how real agent/build output inflates a snapshot well past its plain-text size.
 // It is also what keeps the fixture affordable — the xterm buffer costs rows x cols, so carrying
-// the bytes in SGR runs instead of rows reaches 25MiB of seed from 5.5k rows rather than 26k,
+// the bytes in SGR runs instead of rows reaches 25MiB of seed from 8.8k rows rather than 26k,
 // cutting this file's peak RSS from ~1.2GiB to ~800MiB. Only 8 distinct rows exist under
 // (row + col) % 8, so build them once rather than per line.
 const FILLER_ROWS = Array.from(
@@ -62,7 +62,7 @@ describe('checkpoint-only cold restore of a large checkpoint', () => {
     const manager = new HistoryManager(dir)
     const reader = new HistoryReader(dir)
     const emulator = new HeadlessEmulator({ cols: COLS, rows: ROWS, scrollback: 100_000 })
-    writeLargeScrollback(emulator, 5_500)
+    writeLargeScrollback(emulator, 8_800)
 
     await manager.openSession(SESSION_ID, {
       cwd: '/Users/dev/large-scrollback',
