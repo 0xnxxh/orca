@@ -161,10 +161,22 @@ export type RuntimeGitCommandHost = {
   resolveRuntimeGitTarget(selector: string): Promise<RuntimeGitTarget>
   getRuntimeSettings(): GlobalSettings
   getCommitMessageAgentEnvironment?(): CommitMessageAgentEnvironmentResolvers | undefined
+  /**
+   * Live linked-issue read by worktree id. Resolved worktrees come from a
+   * short-TTL cache, so link/unlink would otherwise lag generation; hosts that
+   * implement this are authoritative, including the `null` unlinked answer.
+   */
+  getWorktreeLinkedIssue?(worktreeId: string): number | null
 }
 
 export class RuntimeGitCommands {
   constructor(private readonly host: RuntimeGitCommandHost) {}
+
+  private linkedIssueForTarget(target: RuntimeGitTarget): number | null | undefined {
+    return this.host.getWorktreeLinkedIssue
+      ? this.host.getWorktreeLinkedIssue(target.worktree.id)
+      : target.worktree.linkedIssue
+  }
 
   async getRuntimeGitStatus(
     worktreeSelector: string,
@@ -616,7 +628,7 @@ export class RuntimeGitCommands {
       if (!context) {
         return { success: false, error: 'No staged changes to summarize.' }
       }
-      context = withLinkedIssueDraftContext(context, target.worktree.linkedIssue)
+      context = withLinkedIssueDraftContext(context, this.linkedIssueForTarget(target))
       return generateCommitMessageFromContext(context, resolvedSettings.params, {
         kind: 'remote',
         cwd: target.worktree.path,
@@ -636,7 +648,7 @@ export class RuntimeGitCommands {
     if (!context) {
       return { success: false, error: 'No staged changes to summarize.' }
     }
-    context = withLinkedIssueDraftContext(context, target.worktree.linkedIssue)
+    context = withLinkedIssueDraftContext(context, this.linkedIssueForTarget(target))
     const localEnv = await prepareLocalCommitMessageAgentEnv(
       resolvedSettings.params.agentId,
       this.host.getCommitMessageAgentEnvironment?.(),
@@ -742,7 +754,7 @@ export class RuntimeGitCommands {
       return { success: false, error: 'No branch changes to summarize.' }
     }
     // Why: both SSH and local branches share this context, so one attach covers each.
-    context = withLinkedIssueDraftContext(context, target.worktree.linkedIssue)
+    context = withLinkedIssueDraftContext(context, this.linkedIssueForTarget(target))
 
     if (target.connectionId) {
       return generatePullRequestFieldsFromContext(context, resolvedSettings.params, {

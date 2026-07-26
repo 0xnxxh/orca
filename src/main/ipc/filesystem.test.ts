@@ -2102,6 +2102,39 @@ describe('registerFilesystemHandlers', () => {
     )
   })
 
+  // Why: folder-repo instances keep `::workspace:<uuid>` on the meta key while the
+  // request path is the stripped cwd. A strip-before-lookup "cleanup" would still
+  // pass plain-id tests and silently lose enrichment on second workspaces.
+  it('enriches local commit context when the worktree id carries a folder-repo workspace suffix', async () => {
+    const context = {
+      branch: 'feature/ai',
+      stagedSummary: 'M\tREADME.md',
+      stagedPatch: '+hello'
+    }
+    const params = { agentId: 'codex', model: 'gpt-5.4-mini' }
+    const instanceId = `repo-1::${WORKTREE_FEATURE_PATH}::workspace:${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`
+    resolveCommitMessageSettingsMock.mockReturnValue({ ok: true, params })
+    getStagedCommitContextMock.mockResolvedValue(context)
+    generateCommitMessageFromContextMock.mockResolvedValue({ success: true, message: 'Update' })
+    const getWorktreeMeta = vi.fn((id: string) =>
+      id === instanceId ? { linkedIssue: 9 } : undefined
+    )
+
+    registerFilesystemHandlers({ ...store, getWorktreeMeta } as never)
+
+    await handlers.get('git:generateCommitMessage')!(null, {
+      worktreePath: WORKTREE_FEATURE_PATH,
+      worktreeId: instanceId
+    })
+
+    expect(getWorktreeMeta).toHaveBeenCalledWith(instanceId)
+    expect(generateCommitMessageFromContextMock).toHaveBeenCalledWith(
+      { ...context, linkedIssue: 9 },
+      params,
+      expect.objectContaining({ kind: 'local' })
+    )
+  })
+
   // Why: the renderer derives worktreePath from worktreeId, so a mismatched pair
   // models an independent caller (relay/CLI/future), not a stale renderer context.
   it('ignores an independently supplied id that does not own the requested worktree path', async () => {

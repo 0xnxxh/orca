@@ -644,6 +644,87 @@ describe('RuntimeGitCommands', () => {
     )
   })
 
+  it('prefers live meta over the linked issue projected onto the resolved worktree', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'orca-runtime-git-'))
+    tempDirs.push(worktreePath)
+    const context = { branch: 'main', stagedSummary: 'M\tREADME.md', stagedPatch: '+hello' }
+    const params = { agentId: 'codex', model: 'gpt-5.4-mini' }
+    mocks.resolveCommitMessageSettings.mockReturnValue({ ok: true, params })
+    mocks.getStagedCommitContext.mockResolvedValue(context)
+    mocks.generateCommitMessageFromContext.mockResolvedValue({ success: true, message: 'docs' })
+    const getWorktreeLinkedIssue = vi.fn(() => 321)
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({ worktree: makeWorktree(worktreePath, 123) }),
+      getRuntimeSettings: () => ({}) as GlobalSettings,
+      getWorktreeLinkedIssue
+    })
+
+    await commands.generateRuntimeCommitMessage('id:wt-1')
+
+    expect(getWorktreeLinkedIssue).toHaveBeenCalledWith('wt-1')
+    expect(mocks.generateCommitMessageFromContext).toHaveBeenCalledWith(
+      { ...context, linkedIssue: 321 },
+      params,
+      expect.objectContaining({ kind: 'local' })
+    )
+  })
+
+  it('drops a stale worktree issue number when live meta reports the workspace unlinked', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'orca-runtime-git-'))
+    tempDirs.push(worktreePath)
+    const context = { branch: 'main', stagedSummary: 'M\tREADME.md', stagedPatch: '+hello' }
+    mocks.resolveCommitMessageSettings.mockReturnValue({
+      ok: true,
+      params: { agentId: 'codex', model: 'gpt-5.4-mini' }
+    })
+    mocks.getStagedCommitContext.mockResolvedValue(context)
+    mocks.generateCommitMessageFromContext.mockResolvedValue({ success: true, message: 'docs' })
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({ worktree: makeWorktree(worktreePath, 123) }),
+      getRuntimeSettings: () => ({}) as GlobalSettings,
+      getWorktreeLinkedIssue: () => null
+    })
+
+    await commands.generateRuntimeCommitMessage('id:wt-1')
+
+    expect(mocks.generateCommitMessageFromContext.mock.calls[0][0]).not.toHaveProperty(
+      'linkedIssue'
+    )
+  })
+
+  it('reads pull-request linked issues from live meta too', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'orca-runtime-git-'))
+    tempDirs.push(worktreePath)
+    const context = {
+      base: 'main',
+      branch: 'feature/login',
+      commitSummary: 'abc123 feat: test',
+      changeSummary: 'M README.md',
+      patch: '+hello',
+      currentTitle: '',
+      currentBody: '',
+      currentDraft: false
+    }
+    mocks.getPullRequestDraftContext.mockResolvedValue(context)
+    mocks.generatePullRequestFieldsFromContext.mockResolvedValue({ success: true, fields: {} })
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({ worktree: makeWorktree(worktreePath, 123) }),
+      getRuntimeSettings: () => ({}) as GlobalSettings,
+      getWorktreeLinkedIssue: () => 321
+    })
+
+    await commands.generateRuntimePullRequestFields(
+      'id:wt-1',
+      { base: 'main', title: '', body: '', draft: false },
+      { sourceControlAiResolvedParams: { agentId: 'codex' as const, model: 'gpt-5.5' } }
+    )
+
+    expect(mocks.generatePullRequestFieldsFromContext.mock.calls[0][0]).toEqual({
+      ...context,
+      linkedIssue: 321
+    })
+  })
+
   it('leaves the commit context untouched when no issue is linked', async () => {
     const worktreePath = mkdtempSync(join(tmpdir(), 'orca-runtime-git-'))
     tempDirs.push(worktreePath)

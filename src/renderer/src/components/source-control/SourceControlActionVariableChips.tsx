@@ -2,7 +2,8 @@ import type React from 'react'
 import { Braces } from 'lucide-react'
 import {
   SOURCE_CONTROL_ACTION_VARIABLE_INFO,
-  SOURCE_CONTROL_ACTION_VARIABLES
+  SOURCE_CONTROL_ACTION_VARIABLES,
+  type SourceControlActionVariable
 } from '../../../../shared/source-control-ai-action-variables'
 import type { SourceControlActionId } from '../../../../shared/source-control-ai-actions'
 import { Button } from '../ui/button'
@@ -55,7 +56,7 @@ function SourceControlVariableDetails({
   variable,
   preview
 }: {
-  variable: string
+  variable: SourceControlActionVariable
   preview?: string
 }): React.JSX.Element {
   // Why: for `basePrompt` the preview *is* the content — the static card only restates it.

@@ -13,8 +13,11 @@ import {
 
 describe('source-control AI variable registry', () => {
   it('documents every registered variable so chip hover cards cannot crash', () => {
+    // Why: the registry type already makes an undocumented chip a compile error;
+    // this keeps the guarantee falsifiable at runtime if that type ever loosens.
+    const documented = new Set<string>(Object.keys(SOURCE_CONTROL_ACTION_VARIABLE_INFO))
     const undocumented = [...new Set(Object.values(SOURCE_CONTROL_ACTION_VARIABLES).flat())].filter(
-      (variable) => SOURCE_CONTROL_ACTION_VARIABLE_INFO[variable] === undefined
+      (variable) => !documented.has(variable)
     )
 
     expect(undocumented).toEqual([])

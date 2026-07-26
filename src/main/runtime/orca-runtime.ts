@@ -7062,7 +7062,11 @@ export class OrcaRuntimeService {
   private readonly gitCommands = new RuntimeGitCommands({
     resolveRuntimeGitTarget: (selector) => this.resolveRuntimeGitTarget(selector),
     getRuntimeSettings: () => this.requireStore().getSettings() as GlobalSettings,
-    getCommitMessageAgentEnvironment: () => this.commitMessageAgentEnv ?? undefined
+    getCommitMessageAgentEnvironment: () => this.commitMessageAgentEnv ?? undefined,
+    // Why: resolved worktrees are cached for a second, so link/unlink would lag
+    // generation; meta is keyed by the same id the resolver returns.
+    getWorktreeLinkedIssue: (worktreeId) =>
+      this.store?.getWorktreeMeta?.(worktreeId)?.linkedIssue ?? null
   })
 
   getRuntimeGitStatus: RuntimeGitCommands['getRuntimeGitStatus'] =
