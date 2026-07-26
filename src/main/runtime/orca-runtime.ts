@@ -1464,7 +1464,7 @@ type RuntimePtyController = {
   getForegroundProcess(ptyId: string): Promise<string | null>
   inspectProcess?(
     ptyId: string
-  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }>
+  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean; unavailable?: true }>
   confirmForegroundProcess?(ptyId: string): Promise<string | null>
   hasChildProcesses?(ptyId: string): Promise<boolean>
   clearBuffer?(ptyId: string): Promise<void>
@@ -15832,7 +15832,7 @@ export class OrcaRuntimeService {
 
   async inspectTerminalProcess(
     terminalSelector: string
-  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }> {
+  ): Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean; unavailable?: true }> {
     const leaf = this.resolveLiveLeafForHandle(terminalSelector)
     if (!leaf?.ptyId || !this.ptyController) {
       throw new Error('terminal_gone')

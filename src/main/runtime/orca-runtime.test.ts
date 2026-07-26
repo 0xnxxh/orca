@@ -1297,7 +1297,7 @@ async function createExplicitAgentStatusHarness(options: {
   getForegroundProcess: (ptyId: string) => Promise<string | null>
   inspectProcess?: (
     ptyId: string
-  ) => Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean }>
+  ) => Promise<{ foregroundProcess: string | null; hasChildProcesses: boolean; unavailable?: true }>
   confirmForegroundProcess?: (ptyId: string) => Promise<string | null>
   title?: string
 }): Promise<{
@@ -10542,6 +10542,24 @@ describe('OrcaRuntimeService', () => {
     await expect(runtime.inspectTerminalProcess(handle)).rejects.toBe(failure)
     expect(inspectProcess).toHaveBeenCalledExactlyOnceWith('pty-1')
     expect(providerInspectProcess).toHaveBeenCalledExactlyOnceWith('pty-1')
+    expect(getForegroundProcess).not.toHaveBeenCalled()
+  })
+
+  it('preserves provider unavailable results during process inspection', async () => {
+    const inspection = {
+      foregroundProcess: null,
+      hasChildProcesses: true,
+      unavailable: true as const
+    }
+    const inspectProcess = vi.fn(async () => inspection)
+    const getForegroundProcess = vi.fn(async () => null)
+    const { runtime, handle } = await createExplicitAgentStatusHarness({
+      getForegroundProcess,
+      inspectProcess
+    })
+
+    await expect(runtime.inspectTerminalProcess(handle)).resolves.toEqual(inspection)
+    expect(inspectProcess).toHaveBeenCalledExactlyOnceWith('pty-1')
     expect(getForegroundProcess).not.toHaveBeenCalled()
   })
 
