@@ -9,25 +9,32 @@ import {
 } from '../../shared/daemon-lifecycle-telemetry'
 import { track } from '../telemetry/client'
 
-// Replaced a still-connectable daemon (startup launcher or runtime resolver-health path).
-// `versionSkew` = pid-file appVersion differs from current app (omit when not version-driven).
+// Why: both call sites sit on the daemon launch/respawn path, where a throw costs the user every
+// terminal. Diagnostics must never be able to do that, so failures die here.
+function trackQuietly(props: Parameters<typeof track<'daemon_lifecycle'>>[1]): void {
+  try {
+    track('daemon_lifecycle', props)
+  } catch {
+    // Telemetry is best-effort; a dropped event must not fail a daemon launch.
+  }
+}
+
+// Replaced a still-connectable daemon (startup launcher decided to kill and re-fork it).
 export function trackDaemonReplaced(
   reason: DaemonReplaceReason,
-  liveSessionCount: number | null,
-  versionSkew?: boolean
+  liveSessionCount: number | null
 ): void {
-  track('daemon_lifecycle', {
+  trackQuietly({
     transition: 'replaced',
     reason,
-    live_session_count_bucket: bucketDaemonLiveSessionCount(liveSessionCount),
-    ...(versionSkew === undefined ? {} : { version_skew: versionSkew })
+    live_session_count_bucket: bucketDaemonLiveSessionCount(liveSessionCount)
   })
 }
 
 // Adapter observed the daemon die and forked a replacement; the app can't see the daemon-internal
 // exit cause, so the live-session count is unknowable here and buckets to `unknown`.
 export function trackDaemonRetired(reason: DaemonRetireReason): void {
-  track('daemon_lifecycle', {
+  trackQuietly({
     transition: 'retired',
     reason,
     live_session_count_bucket: bucketDaemonLiveSessionCount(null)

@@ -807,13 +807,17 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     await replacementAdapter.options.respawn?.('daemon_died')
     expect(originalSpawner.resetHandle).toHaveBeenCalledTimes(1)
     expect(originalSpawner.ensureRunning).toHaveBeenCalledTimes(1)
-    // STA-2376: death → respawn retires; runtime unhealthy_resolver is a replace (not a false death).
+    // STA-2376: death → respawn retires, exactly once.
+    expect(trackDaemonRetiredMock).toHaveBeenCalledTimes(1)
     expect(trackDaemonRetiredMock).toHaveBeenCalledWith('died_respawn')
     trackDaemonRetiredMock.mockClear()
     trackDaemonReplacedMock.mockClear()
+    // STA-2376: the resolver respawn must stay silent here. doRespawn never kills the daemon, so the
+    // ensureRunning() it triggers re-enters the launcher, which emits the replace itself. Emitting
+    // here too would double-count every runtime resolver replacement.
     await replacementAdapter.options.respawn?.('unhealthy_resolver')
     expect(trackDaemonRetiredMock).not.toHaveBeenCalled()
-    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('unhealthy_resolver', 0)
+    expect(trackDaemonReplacedMock).not.toHaveBeenCalled()
     // Still only one spawner in the whole test — nobody new was constructed.
     expect(spawnerInstances).toHaveLength(1)
   })
@@ -1163,7 +1167,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       ]),
       expect.objectContaining({ cwd: '/fake/userData', detached: true })
     )
-    // STA-2376: different-app-path replacement, no version_skew (path differs, not version).
+    // STA-2376: different-app-path replacement, emitted exactly once.
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
     expect(trackDaemonReplacedMock).toHaveBeenCalledWith('different_app_path', 0)
   })
 
@@ -1373,7 +1378,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       ]),
       expect.objectContaining({ cwd: '/fake/userData', detached: true })
     )
-    // STA-2376: replacing the resolver-unhealthy daemon fires the lifecycle event.
+    // STA-2376: the launcher is the sole emitter for a resolver replace, and fires exactly once.
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
     expect(trackDaemonReplacedMock).toHaveBeenCalledWith('unhealthy_resolver', 0)
   })
 
@@ -1503,7 +1509,8 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       ]),
       expect.objectContaining({ detached: true })
     )
-    // STA-2376: an unreachable daemon with no live sessions is replaced via the failed-health path.
+    // STA-2376: an unreachable daemon with no live sessions is replaced via the failed-health path, once.
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
     expect(trackDaemonReplacedMock).toHaveBeenCalledWith('failed_health_check', 0)
   })
 
@@ -2741,8 +2748,9 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
       ]),
       expect.objectContaining({ detached: true })
     )
-    // STA-2376: stale-bundle replacement carries version_skew=true.
-    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('stale_bundle', 0, true)
+    // STA-2376: stale-bundle replacement, emitted exactly once.
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('stale_bundle', 0)
   })
 
   it('preserves a packaged daemon that predates the current app bundle when it owns live sessions', async () => {

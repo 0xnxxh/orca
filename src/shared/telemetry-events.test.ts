@@ -339,17 +339,16 @@ describe('agent_error schema', () => {
 })
 
 describe('daemon_lifecycle schema', () => {
-  it('round-trips a startup replace payload with version skew', () => {
+  it('round-trips a startup replace payload', () => {
     const parsed = eventSchemas.daemon_lifecycle.safeParse({
       transition: 'replaced',
       reason: 'stale_bundle',
-      live_session_count_bucket: '0',
-      version_skew: true
+      live_session_count_bucket: '0'
     })
     expect(parsed.success).toBe(true)
   })
 
-  it('round-trips a retirement payload without version skew', () => {
+  it('round-trips a retirement payload', () => {
     const parsed = eventSchemas.daemon_lifecycle.safeParse({
       transition: 'retired',
       reason: 'died_respawn',
@@ -404,9 +403,8 @@ describe('daemon_lifecycle schema', () => {
     expect(
       eventSchemas.daemon_lifecycle.safeParse({
         transition: 'retired',
-        reason: 'died_respawn',
-        live_session_count_bucket: 'unknown',
-        version_skew: true
+        reason: 'failed_health_check',
+        live_session_count_bucket: 'unknown'
       }).success
     ).toBe(false)
   })

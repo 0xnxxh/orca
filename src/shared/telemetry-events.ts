@@ -371,15 +371,14 @@ const agentErrorSchema = z
 const daemonStartFailedSchema = z.object({ error_class: errorClassSchema }).strict()
 
 // Why: daemon replace/retire lifecycle signal — issue #7936 was undiagnosable without asking a user for daemon.log.
-// Enum-only + bucketed session count so no paths, raw versions, or exact counts reach the wire. `version_skew`
-// is optional (only replace-at-startup knows the pid-file appVersion vs current; a death→respawn does not).
+// Enum-only + bucketed session count so no paths, raw versions, or exact counts reach the wire.
+// The union keeps each reason pinned to its transition, so a death can't be reported as a replace.
 const daemonLifecycleSchema = z.discriminatedUnion('transition', [
   z
     .object({
       transition: z.literal(DAEMON_LIFECYCLE_TRANSITIONS[0]),
       reason: z.enum(DAEMON_REPLACE_REASONS),
-      live_session_count_bucket: z.enum(DAEMON_LIFECYCLE_SESSION_BUCKETS),
-      version_skew: z.boolean().optional()
+      live_session_count_bucket: z.enum(DAEMON_LIFECYCLE_SESSION_BUCKETS)
     })
     .strict(),
   z

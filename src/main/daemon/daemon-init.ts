@@ -334,7 +334,6 @@ function createOutOfProcessLauncher(
       | {
           reason: Parameters<typeof trackDaemonReplaced>[0]
           liveSessionCount: number | null
-          versionSkew?: boolean
         }
       | undefined
     let confirmedReplacement = false
@@ -407,10 +406,10 @@ function createOutOfProcessLauncher(
                 ? '[daemon] Replacing daemon launched before the current app bundle was installed'
                 : '[daemon] Replacing daemon launched from a different app path'
             )
+            // liveSessionCount is 0: shouldPreserveDaemonWithLiveSessions() only falls through at exactly 0.
             pendingReplacement = {
               reason: stalePackagedBundle ? 'stale_bundle' : 'different_app_path',
-              liveSessionCount: 0,
-              ...(stalePackagedBundle ? { versionSkew: true } : {})
+              liveSessionCount: 0
             }
             confirmedReplacement = (await cleanupDaemonForProtocol(runtimeDir, PROTOCOL_VERSION))
               .cleaned
@@ -467,15 +466,7 @@ function createOutOfProcessLauncher(
       confirmedReplacement =
         (await killStaleDaemon(runtimeDir, socketPath, tokenPath)) || confirmedReplacement
       if (pendingReplacement && confirmedReplacement) {
-        if (pendingReplacement.versionSkew === undefined) {
-          trackDaemonReplaced(pendingReplacement.reason, pendingReplacement.liveSessionCount)
-        } else {
-          trackDaemonReplaced(
-            pendingReplacement.reason,
-            pendingReplacement.liveSessionCount,
-            pendingReplacement.versionSkew
-          )
-        }
+        trackDaemonReplaced(pendingReplacement.reason, pendingReplacement.liveSessionCount)
       }
 
       const userDataPath = app.getPath('userData')
@@ -712,12 +703,15 @@ export async function initDaemonPtyProvider(
     historyPath: getHistoryDir(),
     // Why: on daemon death, ensureConnected() detects the dead socket and calls this to fork a replacement before retrying.
     respawn: async (reason: DaemonRespawnReason) => {
+      // Why: 'unhealthy_resolver' deliberately emits nothing here — doRespawn never kills the daemon,
+      // so the ensureRunning() below re-enters the launcher, which re-detects the same condition and
+      // emits the replace itself, gated on a confirmed kill. Emitting here too would double-count,
+      // and would also fire when the launcher goes on to preserve (resolver recovered mid-flight).
+      // Caveat: a wedged-but-alive daemon (#8689) can still report died_respawn here and
+      // failed_health_check from the launcher — the app cannot tell wedged from dead at this point.
       if (reason === 'daemon_died') {
         console.warn('[daemon] Daemon process died — respawning')
         trackDaemonRetired('died_respawn')
-      } else if (reason === 'unhealthy_resolver') {
-        // Runtime resolver replace (adapter only fires when live sessions are verified empty). Not a death.
-        trackDaemonReplaced('unhealthy_resolver', 0)
       }
       newSpawner.resetHandle()
       await newSpawner.ensureRunning()
@@ -900,12 +894,15 @@ async function runRestartDaemon(): Promise<RestartDaemonResult> {
     tokenPath: info.tokenPath,
     historyPath: getHistoryDir(),
     respawn: async (reason: DaemonRespawnReason) => {
+      // Why: 'unhealthy_resolver' deliberately emits nothing here — doRespawn never kills the daemon,
+      // so the ensureRunning() below re-enters the launcher, which re-detects the same condition and
+      // emits the replace itself, gated on a confirmed kill. Emitting here too would double-count,
+      // and would also fire when the launcher goes on to preserve (resolver recovered mid-flight).
+      // Caveat: a wedged-but-alive daemon (#8689) can still report died_respawn here and
+      // failed_health_check from the launcher — the app cannot tell wedged from dead at this point.
       if (reason === 'daemon_died') {
         console.warn('[daemon] Daemon process died — respawning')
         trackDaemonRetired('died_respawn')
-      } else if (reason === 'unhealthy_resolver') {
-        // Runtime resolver replace (adapter only fires when live sessions are verified empty). Not a death.
-        trackDaemonReplaced('unhealthy_resolver', 0)
       }
       currentSpawner.resetHandle()
       await currentSpawner.ensureRunning()

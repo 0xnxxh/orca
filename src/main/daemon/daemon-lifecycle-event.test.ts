@@ -26,30 +26,40 @@ describe('bucketDaemonLiveSessionCount', () => {
 // Revert-sensitive: asserts each emitter fires `daemon_lifecycle` with a payload the real
 // runtime validator accepts. If the event, emitter, or schema is reverted, these fail.
 describe('daemon lifecycle emitters', () => {
-  it('emits a validator-accepted replace payload with version skew', () => {
-    trackDaemonReplaced('stale_bundle', 0, true)
+  it('emits a validator-accepted replace payload', () => {
+    trackDaemonReplaced('stale_bundle', 0)
     expect(trackMock).toHaveBeenCalledTimes(1)
     const [name, props] = trackMock.mock.calls[0]
     expect(name).toBe('daemon_lifecycle')
     expect(props).toEqual({
       transition: 'replaced',
       reason: 'stale_bundle',
-      live_session_count_bucket: '0',
-      version_skew: true
+      live_session_count_bucket: '0'
     })
     expect(validate('daemon_lifecycle', props).ok).toBe(true)
   })
 
-  it('omits version_skew when not provided (different app path)', () => {
+  it('maps an unverifiable session count to the unknown bucket', () => {
     trackDaemonReplaced('different_app_path', null)
     const [, props] = trackMock.mock.calls[0]
-    expect(props).not.toHaveProperty('version_skew')
-    expect(props).toMatchObject({
+    expect(props).toEqual({
       transition: 'replaced',
       reason: 'different_app_path',
       live_session_count_bucket: 'unknown'
     })
     expect(validate('daemon_lifecycle', props).ok).toBe(true)
+  })
+
+  // Why: both emitters run on the daemon launch/respawn path, where a throw would cost every terminal.
+  it('swallows a throwing telemetry client instead of failing the caller', () => {
+    trackMock.mockImplementationOnce(() => {
+      throw new Error('posthog exploded')
+    })
+    expect(() => trackDaemonReplaced('failed_health_check', null)).not.toThrow()
+    trackMock.mockImplementationOnce(() => {
+      throw new Error('posthog exploded')
+    })
+    expect(() => trackDaemonRetired('died_respawn')).not.toThrow()
   })
 
   it('emits a validator-accepted retirement payload', () => {
