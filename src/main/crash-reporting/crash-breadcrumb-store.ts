@@ -2,7 +2,8 @@ import {
   sanitizeCrashReportBreadcrumbs,
   sanitizeCrashReportDetails,
   type CrashReportBreadcrumbData,
-  type CrashReportBreadcrumb
+  type CrashReportBreadcrumb,
+  type RendererSurface
 } from '../../shared/crash-reporting'
 
 const MAX_BREADCRUMBS = 30
@@ -35,6 +36,16 @@ function retainedBreadcrumbKey(breadcrumb: CrashReportBreadcrumb): string | null
   return `${breadcrumb.name}:${String(surface)}:${String(threshold)}`
 }
 
+function evictOldestRetainedBreadcrumbs(): void {
+  while (retainedBreadcrumbs.size > MAX_RETAINED_BREADCRUMBS) {
+    const oldestKey = retainedBreadcrumbs.keys().next()
+    if (oldestKey.done) {
+      break
+    }
+    retainedBreadcrumbs.delete(oldestKey.value)
+  }
+}
+
 /** Returns the stored breadcrumb so coalescing can refresh the entry it owns. */
 export function recordCrashBreadcrumb(
   name: string,
@@ -55,13 +66,7 @@ export function recordCrashBreadcrumb(
   if (retainedKey) {
     retainedBreadcrumbs.delete(retainedKey)
     retainedBreadcrumbs.set(retainedKey, breadcrumb)
-    while (retainedBreadcrumbs.size > MAX_RETAINED_BREADCRUMBS) {
-      const oldestKey = retainedBreadcrumbs.keys().next()
-      if (oldestKey.done) {
-        break
-      }
-      retainedBreadcrumbs.delete(oldestKey.value)
-    }
+    evictOldestRetainedBreadcrumbs()
     return breadcrumb
   }
   breadcrumbs.push(breadcrumb)
@@ -164,9 +169,50 @@ function resolveAllPendingCoalescedBreadcrumbs(): void {
  * a renderer reload resets the renderer-side one-shot guard while this store
  * survives. Without dropping them at process-gone, the next renderer's crash
  * inherits the dead one's heap profiles — reading as "OOM at a tiny heap".
+ *
+ * Scope the clear to the dead surface: a popout that outlives the main window
+ * never re-emits its own profiles (its one-shot guard is still armed).
  */
-export function clearRetainedHighwaterBreadcrumbs(): void {
-  retainedBreadcrumbs.clear()
+export function clearRetainedHighwaterBreadcrumbs(options?: { surface?: RendererSurface }): void {
+  const surface = options?.surface
+  if (surface === undefined) {
+    retainedBreadcrumbs.clear()
+    return
+  }
+  for (const [key, breadcrumb] of retainedBreadcrumbs) {
+    const breadcrumbSurface = breadcrumb.data?.rendererSurface
+    // Why: an unattributed profile has no owner that could re-emit it, so the
+    // dying renderer takes it rather than leaving it to poison the next report.
+    if (typeof breadcrumbSurface !== 'string' || breadcrumbSurface === surface) {
+      retainedBreadcrumbs.delete(key)
+    }
+  }
+}
+
+/**
+ * Why: process-gone clears retained profiles eagerly so the replacement renderer
+ * starts clean, but a failed persist releases the dedupe claim for a retry — and
+ * the retry re-snapshots. Without re-seeding, that retry writes a durable report
+ * with every heap profile missing.
+ */
+export function restoreRetainedHighwaterBreadcrumbs(snapshot: CrashReportBreadcrumb[]): void {
+  const restored = new Map<string, CrashReportBreadcrumb>()
+  for (const breadcrumb of snapshot) {
+    const key = retainedBreadcrumbKey(breadcrumb)
+    // Why: anything the live renderer already recorded for this key is newer.
+    if (key !== null && !retainedBreadcrumbs.has(key)) {
+      restored.set(key, breadcrumb)
+    }
+  }
+  if (restored.size === 0) {
+    return
+  }
+  // Restored profiles predate the live entries; insertion order is eviction order.
+  for (const [key, breadcrumb] of retainedBreadcrumbs) {
+    restored.set(key, breadcrumb)
+  }
+  retainedBreadcrumbs = restored
+  evictOldestRetainedBreadcrumbs()
 }
 
 export function getCrashBreadcrumbSnapshot(): CrashReportBreadcrumb[] {

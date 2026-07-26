@@ -3,12 +3,14 @@ import { app } from 'electron'
 import {
   isCrashReportReason,
   sanitizeCrashReportString,
-  type CrashReportBreadcrumbData
+  type CrashReportBreadcrumbData,
+  type RendererSurface
 } from '../../shared/crash-reporting'
 import type { CrashReportStore } from './crash-report-store'
 import {
   clearRetainedHighwaterBreadcrumbs,
-  getCrashBreadcrumbSnapshot
+  getCrashBreadcrumbSnapshot,
+  restoreRetainedHighwaterBreadcrumbs
 } from './crash-breadcrumb-store'
 import {
   recordCoalescedDurableCrashBreadcrumb,
@@ -38,6 +40,8 @@ export type ProcessGoneCrashEvent = {
   exitCode: number | null
   expectedTeardown: ExpectedTeardownScope
   details: Record<string, unknown>
+  /** Which renderer surface died; scopes the retained heap-profile clear. */
+  rendererSurface?: RendererSurface
 }
 
 type CrashReportRecorderStore = Pick<CrashReportStore, 'record'>
@@ -78,12 +82,27 @@ function persistFailureData(event: ProcessGoneCrashEvent, error: unknown) {
   }
 }
 
+/**
+ * Why: a renderer generation ends whether or not a report is written — a
+ * suppressed reload or SIGTERM kill replaces the process just the same, and the
+ * successor re-arms its own ladder from zero. Only a real process death counts:
+ * React error-boundary reports share source 'renderer' with no process gone.
+ */
+function clearRetainedHighwatersForDeadRenderer(event: ProcessGoneCrashEvent): void {
+  if (event.source !== 'renderer' || event.processType.toLowerCase() !== 'renderer') {
+    return
+  }
+  // Why: only the main window wires process-gone today, so an unstamped event is its.
+  clearRetainedHighwaterBreadcrumbs({ surface: event.rendererSurface ?? 'main' })
+}
+
 export function recordProcessGoneCrash(
   store: CrashReportRecorderStore | null,
   event: ProcessGoneCrashEvent,
   dedupe: ProcessGoneDedupe = processGoneDedupe
 ): void {
   if (!isCrashReportReason(event.reason)) {
+    clearRetainedHighwatersForDeadRenderer(event)
     return
   }
   if (
@@ -107,6 +126,7 @@ export function recordProcessGoneCrash(
       coalesceKey: suppressedProcessGoneCoalesceKey(suppressedData),
       minIntervalMs: SUPPRESSED_PROCESS_GONE_COALESCE_MS
     })
+    clearRetainedHighwatersForDeadRenderer(event)
     return
   }
   if (!store) {
@@ -115,6 +135,7 @@ export function recordProcessGoneCrash(
       processGoneBreadcrumbData(event),
       'Crash report store unavailable'
     )
+    clearRetainedHighwatersForDeadRenderer(event)
     return
   }
 
@@ -128,12 +149,9 @@ export function recordProcessGoneCrash(
     ...event.details,
     ...mainProcessLifecycle
   })
+  // Snapshot before the clear so the dying renderer's own report keeps its profiles.
   const breadcrumbs = getCrashBreadcrumbSnapshot()
-  if (event.processType.toLowerCase() === 'renderer') {
-    // Why: the replacement renderer re-arms its own ladder from zero, so these
-    // profiles describe the process that just died and nothing after it.
-    clearRetainedHighwaterBreadcrumbs()
-  }
+  clearRetainedHighwatersForDeadRenderer(event)
   const span = startSpan('electron.process_gone', {
     attributes: {
       'crash.source': event.source,
@@ -176,6 +194,9 @@ export function recordProcessGoneCrash(
       breadcrumbs
     })
     .catch((error) => {
+      // Why: the retry re-snapshots, so without putting the cleared profiles back
+      // the durable report it finally writes describes an OOM with no heap ladder.
+      restoreRetainedHighwaterBreadcrumbs(breadcrumbs)
       dedupe.release(claim)
       console.error('[crash-reporting] Failed to persist crash report:', error)
       const data = persistFailureData(event, error)

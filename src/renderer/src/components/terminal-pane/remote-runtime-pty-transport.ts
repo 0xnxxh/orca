@@ -2302,6 +2302,9 @@ export function createRemoteRuntimePtyTransport(
       inputBatcher.clear()
       viewportBatcher.flush()
       outputProcessor.clearAccumulatedState()
+      // Why: detach abandons this transport (the pty is adopted by a successor's
+      // transport), so its side-effect gauge must stop counting toward the census.
+      outputProcessor.disposePendingSideEffectGauge()
       unregisterShutdownHandlers(remotePtyId)
       connected = false
       connecting = false
@@ -2517,6 +2520,7 @@ export function createRemoteRuntimePtyTransport(
       destroyed = true
       setAttachmentUnavailable()
       this.disconnect()
+      outputProcessor.disposePendingSideEffectGauge()
       recovery.dispose()
       inputBatcher.clear()
       viewportBatcher.clear()

@@ -312,6 +312,8 @@ export function startParkedTerminalByteWatcher(
     processor?.clearAccumulatedState()
     commandFinishedScanner?.reset()
     commandStatusPolicy.dispose()
+    // Why: the watcher's processor outlives nothing past dispose — leave its gauge in the census and every park/reveal cycle leaks one.
+    processor?.disposePendingSideEffectGauge()
     clearBellNotificationTimer()
     clearAgentTaskCompleteTimer()
     pendingBellNotification = false
