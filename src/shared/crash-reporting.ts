@@ -163,6 +163,11 @@ export function isReactErrorBoundaryReport(report: CrashReportRecord): boolean {
   )
 }
 
+/** Single definition of "this is the GPU child"; crash classification, budget accounting and the dialog must not drift apart. */
+export function isGpuProcessType(processType: string | undefined): boolean {
+  return processType?.toLowerCase() === 'gpu'
+}
+
 /**
  * A GPU child crash that happened while a GPU fallback tier was already applied.
  *
@@ -172,7 +177,7 @@ export function isReactErrorBoundaryReport(report: CrashReportRecord): boolean {
 export function isGpuFallbackCrashReport(report: CrashReportRecord): boolean {
   return (
     report.source === 'child' &&
-    report.processType.toLowerCase() === 'gpu' &&
+    isGpuProcessType(report.processType) &&
     typeof report.details.gpuFallbackTier === 'number' &&
     report.details.gpuFallbackTier > 0
   )

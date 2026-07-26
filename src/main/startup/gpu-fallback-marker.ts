@@ -1,4 +1,12 @@
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import { clampGpuFallbackTier, type GpuFallbackTier } from './gpu-fallback-tiers'
 
@@ -137,7 +145,15 @@ export function writeGpuFallbackMarker(
   // reads as invalid and silently re-arms hardware acceleration next launch.
   const tempPath = join(userDataPath, GPU_FALLBACK_MARKER_TEMP_FILE)
   try {
-    writeFileSync(tempPath, JSON.stringify(marker))
+    // Why: a durable rename over non-durable data leaves an empty marker after power
+    // loss, which reads as invalid and re-arms hardware acceleration.
+    const handle = openSync(tempPath, 'w')
+    try {
+      writeFileSync(handle, JSON.stringify(marker))
+      fsyncSync(handle)
+    } finally {
+      closeSync(handle)
+    }
     renameSync(tempPath, markerPath(userDataPath))
   } catch (error) {
     try {

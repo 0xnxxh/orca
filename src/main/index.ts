@@ -1651,6 +1651,12 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
     })
     return
   }
+  // Why: resolve first — a breadcrumb claiming the fallback engaged, written ahead of
+  // the guard that abandons it, reads in triage as a remediation that never ran.
+  const environment = getWindowsGpuFallbackEnvironment()
+  if (!environment) {
+    return
+  }
   recordCrashBreadcrumb('gpu_fallback_engaged', {
     reason,
     exitCode,
@@ -1680,10 +1686,6 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
   }
   if (restartDecision !== 'restart') {
     recordDurableCrashBreadcrumb('gpu_fallback_restart_deferred', fallbackData)
-    return
-  }
-  const environment = getWindowsGpuFallbackEnvironment()
-  if (!environment) {
     return
   }
   try {
@@ -2147,12 +2149,13 @@ void app.whenReady().then(async () => {
   // Skipped in headless serve: no crash dialog to feed, and 'complete' can provoke a
   // GPU child that Xvfb environments have no reason to spawn.
   if (!isServeMode) {
-    void captureGpuIdentity(
-      (infoType) => app.getGPUInfo(infoType),
-      GPU_INFO_CAPTURE_TIMEOUT_MS
-    ).then((snapshot) => {
-      recordCrashBreadcrumb('gpu_info_captured', snapshot)
-    })
+    void captureGpuIdentity((infoType) => app.getGPUInfo(infoType), GPU_INFO_CAPTURE_TIMEOUT_MS)
+      .then((snapshot) => {
+        recordCrashBreadcrumb('gpu_info_captured', snapshot)
+      })
+      .catch(() => {
+        // best effort; GPU identity is a diagnostic, never a startup dependency
+      })
   }
   scheduleGpuFallbackHistoryReset()
   // Why: install certificate decisions before any webview or headless window issues its first TLS request.

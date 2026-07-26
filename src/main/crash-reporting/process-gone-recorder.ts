@@ -2,6 +2,7 @@ import os from 'node:os'
 import { app } from 'electron'
 import {
   isCrashReportReason,
+  isGpuProcessType,
   sanitizeCrashReportString,
   type CrashReportBreadcrumbData
 } from '../../shared/crash-reporting'
@@ -60,7 +61,7 @@ function countsAgainstGpuFallbackReportBudget(event: ProcessGoneCrashEvent): boo
   return (
     event.gpuFallbackActive === true &&
     event.source === 'child' &&
-    event.processType.toLowerCase() === 'gpu'
+    isGpuProcessType(event.processType)
   )
 }
 
@@ -161,7 +162,7 @@ export function recordProcessGoneCrash(
   // Why: GPU and renderer deaths are the ones triage needs driver identity for;
   // every other child type would just pad the report.
   const gpuIdentity =
-    event.source === 'renderer' || event.processType.toLowerCase() === 'gpu'
+    event.source === 'renderer' || isGpuProcessType(event.processType)
       ? (getGpuInfoSnapshot() ?? {})
       : {}
   const crashDetails = buildProcessGoneCrashDetails({

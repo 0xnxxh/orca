@@ -19,8 +19,11 @@ export const GPU_FALLBACK_TIERS = [1, 2] as const
 
 export type GpuFallbackTier = (typeof GPU_FALLBACK_TIERS)[number]
 
-export const MIN_GPU_FALLBACK_TIER: GpuFallbackTier = 1
-export const MAX_GPU_FALLBACK_TIER: GpuFallbackTier = 2
+// Why: derived, so adding a rung to the ladder cannot leave clamping and escalation pinned to the old ceiling.
+export const MIN_GPU_FALLBACK_TIER: GpuFallbackTier = GPU_FALLBACK_TIERS[0]
+export const MAX_GPU_FALLBACK_TIER: GpuFallbackTier = GPU_FALLBACK_TIERS.reduce((highest, tier) =>
+  tier > highest ? tier : highest
+)
 
 /** Tier 0 means "no fallback applied to this launch". */
 export const NO_GPU_FALLBACK_TIER = 0

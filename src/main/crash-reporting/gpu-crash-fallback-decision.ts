@@ -1,3 +1,5 @@
+import { isGpuProcessType } from '../../shared/crash-reporting'
+
 export type GpuCrashFallbackOptions = {
   /** Rolling span over which clustered GPU crashes indicate a broken driver. */
   windowMs: number
@@ -86,7 +88,7 @@ export class GpuCrashFallbackTracker {
 
 /** True for the Chromium child process types whose crashes should count here. */
 export function isGpuChildProcessType(processType: string | undefined): boolean {
-  return (processType ?? '').toLowerCase() === 'gpu'
+  return isGpuProcessType(processType)
 }
 
 export function isGpuFallbackCrashCandidate({

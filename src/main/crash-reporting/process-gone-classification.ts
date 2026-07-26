@@ -1,3 +1,5 @@
+import { isGpuProcessType } from '../../shared/crash-reporting'
+
 export type ProcessGoneSource = 'renderer' | 'child'
 export type ExpectedTeardownScope = 'none' | 'renderer-reload' | 'app-shutdown'
 
@@ -48,7 +50,7 @@ function isRecoverableChromiumChildProcess({
     // still tears the GPU child down noisily, so app-shutdown stays suppressed.
     return !(
       gpuFallbackActive === true &&
-      normalizedProcessType === 'gpu' &&
+      isGpuProcessType(processType) &&
       expectedTeardown !== 'app-shutdown'
     )
   }
