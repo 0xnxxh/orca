@@ -76,7 +76,6 @@ import { shouldHideNonOpenReviewOnDefaultBranch } from '../source-control/repo-d
 import { readLocalGitConfigSignature } from './local-git-config-signature'
 import {
   getGitHubApiRepositoryForRemote,
-  getIssueGitHubApiRepository,
   getOriginGitHubApiRepository,
   githubHostExecOptions,
   githubRepositorySlugArg,
@@ -1982,14 +1981,21 @@ export async function getWorkItem(
 ): Promise<MainWorkItem | null> {
   await acquire()
   try {
+    // Why: listWorkItems uses resolveIssueGitHubApiRepositorySource; open-by-number
+    // must share that preference so origin/upstream toggles cannot disagree.
     if (type === 'issue') {
-      return await fetchIssueWorkItem(
+      const { source } = await resolveIssueGitHubApiRepositorySource(
         repoPath,
-        await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions),
-        number,
+        preference,
         connectionId,
         localGitOptions
       )
+      // Why: explicit origin with no origin identity must not bare-lookup ambient gh
+      // (same fail-closed rule as origin-pinned PR candidate resolution).
+      if (!source && preference === 'origin') {
+        return null
+      }
+      return await fetchIssueWorkItem(repoPath, source, number, connectionId, localGitOptions)
     }
     if (type === 'pr') {
       return await fetchPullRequestWorkItemFromCandidates(
@@ -2002,15 +2008,23 @@ export async function getWorkItem(
     }
 
     try {
-      const issue = await fetchIssueWorkItem(
+      const { source } = await resolveIssueGitHubApiRepositorySource(
         repoPath,
-        await getIssueGitHubApiRepository(repoPath, connectionId, localGitOptions),
-        number,
+        preference,
         connectionId,
         localGitOptions
       )
-      if (issue) {
-        return issue
+      if (source || preference !== 'origin') {
+        const issue = await fetchIssueWorkItem(
+          repoPath,
+          source,
+          number,
+          connectionId,
+          localGitOptions
+        )
+        if (issue) {
+          return issue
+        }
       }
     } catch (err) {
       // Why: only fall through to PR #N on a genuine 404; re-throw transient errors so a flake can't surface an unrelated PR.
