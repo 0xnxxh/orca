@@ -4819,6 +4819,13 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).not.toHaveBeenCalled()
     expect(sendInputAccepted).not.toHaveBeenCalled()
 
+    // The user is told why their typing vanished, once, in the pane itself.
+    const noticeWrites = pane.terminal.write.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .filter((t: string) => t.includes('Terminal reconnected'))
+    expect(noticeWrites).toHaveLength(1)
+    expect(noticeWrites[0]).toContain('\u001b[7m')
+
     // ...and the next line the user types is delivered normally.
     sendTerminalInputThroughPane(pane, 'ls')
     await flushAsyncTicks(2)

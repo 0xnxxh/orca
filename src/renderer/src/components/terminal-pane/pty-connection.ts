@@ -86,6 +86,8 @@ import {
 } from './terminal-pane-recovery'
 import {
   armTerminalInputQuarantine,
+  consumeTerminalInputQuarantineNotice,
+  formatTerminalPaneNotice,
   shouldQuarantineTerminalInput
 } from './terminal-input-quarantine'
 import {
@@ -3724,7 +3726,16 @@ export function connectPanePty(
     // Why here: after the query-reply bypass, so xterm's own auto-replies still
     // flow, but before any send path — a quarantined pane must not deliver the
     // tail of a line whose head died with the old daemon (STA-2373 follow-up).
-    if (shouldQuarantineTerminalInput(deps.tabId, data)) {
+    if (currentPtyId && shouldQuarantineTerminalInput(currentPtyId, data)) {
+      if (consumeTerminalInputQuarantineNotice(currentPtyId)) {
+        // Why print on the first drop: this is the keystroke where the pane stops
+        // echoing, so the notice lands exactly where the silence would confuse.
+        pane.terminal.write(
+          formatTerminalPaneNotice(
+            'Terminal reconnected after the shell restarted; partly-typed input was discarded. Press Enter for a new prompt.'
+          )
+        )
+      }
       clearPendingTerminalInputIntent()
       return
     }
@@ -5342,8 +5353,13 @@ export function connectPanePty(
             if (isCurrent()) {
               // Arm before requesting recovery: the remount that recovery triggers
               // builds a fresh connection, so only module-scoped quarantine state
-              // survives to gate the new pane's input.
-              armTerminalInputQuarantine(deps.tabId)
+              // survives to gate the new pane's input. Keyed by the session id,
+              // which the remount rebinds, so split siblings stay independent.
+              const quarantinedPtyId =
+                transport.getPtyId() ?? useAppStore.getState().ptyIdsByTabId?.[deps.tabId]?.[0]
+              if (quarantinedPtyId) {
+                armTerminalInputQuarantine(quarantinedPtyId)
+              }
               requestRecoveryForUndeliverableInput(true)
             }
           },

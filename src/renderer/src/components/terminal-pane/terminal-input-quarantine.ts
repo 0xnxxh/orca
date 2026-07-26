@@ -7,21 +7,37 @@
 // commands. Partially executing a command the user never completed is worse than
 // dropping it, so quarantine input until the line boundary and start clean.
 //
-// State lives at module scope keyed by tabId, not in the pane closure: recovery
-// remounts the pane, which builds a brand-new connection: closure state would be
-// discarded exactly when the quarantine needs to apply.
+// State lives at module scope, not in the pane closure: recovery remounts the pane,
+// which builds a brand-new connection, so closure state would be discarded exactly
+// when the quarantine needs to apply.
+//
+// Keyed by ptyId, not tabId: split panes share a tab, and a tab-wide key would let
+// Enter in one pane release its sibling — handing that sibling the mangled tail this
+// exists to prevent, in precisely the multi-pane case STA-2373 was about. Session
+// ids survive recovery (createOrAttach rebinds the same id), so a ptyId key still
+// matches the pane after its remount.
 
 // Why a cap: the release condition is the user's next Enter, which normally arrives
 // within seconds. If they instead switch away mid-line and never submit, input must
 // not stay dead — release on a timer so the worst case is bounded.
 const QUARANTINE_MAX_MS = 15_000
 
-type Quarantine = { armedAt: number }
+type Quarantine = { armedAt: number; noticeShown: boolean }
 
-const quarantineByTabId = new Map<string, Quarantine>()
+const quarantineByPtyId = new Map<string, Quarantine>()
 
 function isLineBoundary(data: string): boolean {
   return data.includes('\r') || data.includes('\n')
+}
+
+/**
+ * Render a pane notice: an inverse-video gutter marker followed by the message.
+ *
+ * Inverse video rather than a colour so it stays legible against every theme and any
+ * shell palette, and reads as the app speaking rather than as shell output.
+ */
+export function formatTerminalPaneNotice(message: string): string {
+  return `\r\n[0m[7m * [0m ${message}[0m\r\n`
 }
 
 /**
@@ -29,11 +45,11 @@ function isLineBoundary(data: string): boolean {
  * a line whose head was dropped. Idempotent: re-arming keeps the original deadline
  * so repeated signals for the same incident cannot extend the window indefinitely.
  */
-export function armTerminalInputQuarantine(tabId: string, now = Date.now()): void {
-  if (quarantineByTabId.has(tabId)) {
+export function armTerminalInputQuarantine(ptyId: string, now = Date.now()): void {
+  if (quarantineByPtyId.has(ptyId)) {
     return
   }
-  quarantineByTabId.set(tabId, { armedAt: now })
+  quarantineByPtyId.set(ptyId, { armedAt: now, noticeShown: false })
 }
 
 /**
@@ -44,34 +60,51 @@ export function armTerminalInputQuarantine(tabId: string, now = Date.now()): voi
  * and on deadline expiry.
  */
 export function shouldQuarantineTerminalInput(
-  tabId: string,
+  ptyId: string,
   data: string,
   now = Date.now()
 ): boolean {
-  const quarantine = quarantineByTabId.get(tabId)
+  const quarantine = quarantineByPtyId.get(ptyId)
   if (!quarantine) {
     return false
   }
   if (now - quarantine.armedAt >= QUARANTINE_MAX_MS) {
-    quarantineByTabId.delete(tabId)
+    quarantineByPtyId.delete(ptyId)
     return false
   }
   if (isLineBoundary(data)) {
     // Drop this one too: it is the submit for a line the shell never fully saw.
-    quarantineByTabId.delete(tabId)
+    quarantineByPtyId.delete(ptyId)
     return true
   }
   return true
 }
 
-export function isTerminalInputQuarantined(tabId: string): boolean {
-  return quarantineByTabId.has(tabId)
+/**
+ * True once per quarantine, for the caller that should print the notice.
+ *
+ * Deferred to the first dropped keystroke rather than shown at reconnect: that is
+ * the moment the pane stops echoing, so it explains the silence exactly when the
+ * user meets it, and it needs no hook into the replay pipeline that would otherwise
+ * have to paint after a restore without being overwritten by it.
+ */
+export function consumeTerminalInputQuarantineNotice(ptyId: string): boolean {
+  const quarantine = quarantineByPtyId.get(ptyId)
+  if (!quarantine || quarantine.noticeShown) {
+    return false
+  }
+  quarantine.noticeShown = true
+  return true
 }
 
-export function releaseTerminalInputQuarantine(tabId: string): void {
-  quarantineByTabId.delete(tabId)
+export function isTerminalInputQuarantined(ptyId: string): boolean {
+  return quarantineByPtyId.has(ptyId)
+}
+
+export function releaseTerminalInputQuarantine(ptyId: string): void {
+  quarantineByPtyId.delete(ptyId)
 }
 
 export function _resetTerminalInputQuarantineForTests(): void {
-  quarantineByTabId.clear()
+  quarantineByPtyId.clear()
 }
