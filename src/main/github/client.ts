@@ -283,16 +283,32 @@ export type PullRequestPushTarget = {
   maintainerCanModify?: boolean
 }
 
+async function resolvePullRequestLookupCandidates(
+  repoPath: string,
+  preference: IssueSourcePreference | undefined,
+  connectionId?: string | null,
+  localGitOptions: LocalGitExecOptions = {}
+): Promise<GitHubApiRepository[]> {
+  if (preference === 'origin') {
+    const origin = await getOriginGitHubApiRepository(repoPath, connectionId, localGitOptions)
+    return origin ? [origin] : []
+  }
+  return (await resolveGitHubApiRepositoryCandidates(repoPath, connectionId, localGitOptions))
+    .candidates
+}
+
 export async function getPullRequestPushTarget(
   repoPath: string,
   prNumber: number,
   connectionId?: string | null,
-  localGitOptions: LocalGitExecOptions = {}
+  localGitOptions: LocalGitExecOptions = {},
+  preference?: IssueSourcePreference
 ): Promise<PullRequestPushTarget | null> {
   const context = githubRepoContext(repoPath, connectionId, localGitOptions)
   const ghOptions = ghRepoExecOptions(context)
-  const { candidates } = await resolveGitHubApiRepositoryCandidates(
+  const candidates = await resolvePullRequestLookupCandidates(
     repoPath,
+    preference,
     connectionId,
     localGitOptions
   )
@@ -954,14 +970,19 @@ async function fetchPullRequestWorkItemFromCandidates(
   repoPath: string,
   number: number,
   connectionId?: string | null,
-  localGitOptions: LocalGitExecOptions = {}
+  localGitOptions: LocalGitExecOptions = {},
+  preference?: IssueSourcePreference
 ): Promise<MainWorkItem | null> {
-  const { candidates } = await resolveGitHubApiRepositoryCandidates(
+  const candidates = await resolvePullRequestLookupCandidates(
     repoPath,
+    preference,
     connectionId,
     localGitOptions
   )
   if (candidates.length === 0) {
+    if (preference === 'origin') {
+      return null
+    }
     return fetchPullRequestWorkItem(repoPath, null, number, connectionId, localGitOptions)
   }
   for (const candidate of candidates) {
@@ -1953,7 +1974,8 @@ export async function getWorkItem(
   number: number,
   type?: 'issue' | 'pr',
   connectionId?: string | null,
-  localGitOptions: LocalGitExecOptions = {}
+  localGitOptions: LocalGitExecOptions = {},
+  preference?: IssueSourcePreference
 ): Promise<MainWorkItem | null> {
   await acquire()
   try {
@@ -1971,7 +1993,8 @@ export async function getWorkItem(
         repoPath,
         number,
         connectionId,
-        localGitOptions
+        localGitOptions,
+        preference
       )
     }
 
@@ -1997,7 +2020,8 @@ export async function getWorkItem(
       repoPath,
       number,
       connectionId,
-      localGitOptions
+      localGitOptions,
+      preference
     )
   } catch {
     return null

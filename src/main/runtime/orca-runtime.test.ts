@@ -34515,10 +34515,20 @@ describe('OrcaRuntimeService', () => {
     expect(updateSettings).not.toHaveBeenCalled()
   })
 
-  it('routes runtime GitHub PR base git calls through the selected WSL project runtime', async () => {
+  it('threads explicit origin preference through runtime WSL PR base resolution', async () => {
     setPlatform('win32')
+    const localRepo = {
+      id: TEST_REPO_ID,
+      path: TEST_REPO_PATH,
+      displayName: 'repo',
+      badgeColor: 'blue',
+      addedAt: 1,
+      issueSourcePreference: 'origin' as const
+    }
     const runtimeStore = {
       ...store,
+      getRepos: () => [localRepo],
+      getRepo: (id: string) => (id === localRepo.id ? localRepo : undefined),
       getProjects: () => [
         {
           id: 'project-1',
@@ -34546,8 +34556,15 @@ describe('OrcaRuntimeService', () => {
       if (args[0] === 'config') {
         return { stdout: 'origin\n', stderr: '' }
       }
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        const url =
+          args[2] === 'origin'
+            ? 'git@github.com:org/repo.git'
+            : 'git@github.com:org/upstream-repo.git'
+        return { stdout: `${url}\n`, stderr: '' }
+      }
       if (args[0] === 'remote') {
-        return { stdout: 'origin\n', stderr: '' }
+        return { stdout: 'origin\nupstream\n', stderr: '' }
       }
       if (args[0] === 'fetch') {
         return { stdout: '', stderr: '' }
@@ -34575,11 +34592,6 @@ describe('OrcaRuntimeService', () => {
         headSha: 'pr-head-sha',
         branchNameOverride: 'feature/add-feature'
       })
-      expect(gitSpy).toHaveBeenCalledWith(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], {
-        cwd: TEST_REPO_PATH,
-        timeout: 15_000,
-        wslDistro: 'Ubuntu'
-      })
       expect(gitSpy).toHaveBeenCalledWith(
         [
           'fetch',
@@ -34592,6 +34604,7 @@ describe('OrcaRuntimeService', () => {
         cwd: TEST_REPO_PATH,
         wslDistro: 'Ubuntu'
       })
+      expect(gitSpy).not.toHaveBeenCalledWith(['remote', 'get-url', 'upstream'], expect.anything())
     } finally {
       gitSpy.mockRestore()
     }
@@ -34604,7 +34617,8 @@ describe('OrcaRuntimeService', () => {
       displayName: 'repo',
       badgeColor: 'blue',
       addedAt: 1,
-      connectionId: 'ssh-1'
+      connectionId: 'ssh-1',
+      issueSourcePreference: 'origin' as const
     }
     const runtimeStore = {
       ...store,
@@ -34617,7 +34631,7 @@ describe('OrcaRuntimeService', () => {
           return { stdout: `${ORIGIN_REMOTE_URL}\n`, stderr: '' }
         }
         if (args[0] === 'remote') {
-          return { stdout: 'origin\n', stderr: '' }
+          return { stdout: 'origin\nupstream\n', stderr: '' }
         }
         if (
           args[0] === 'rev-parse' &&
@@ -34648,6 +34662,13 @@ describe('OrcaRuntimeService', () => {
       branchNameOverride: 'contributor/fix'
     })
     expect(provider.fetchGitHubPullRequestHead).toHaveBeenCalledWith('/remote/repo', 'origin', 42)
+    expect(getPullRequestPushTargetMock).toHaveBeenCalledWith(
+      '/remote/repo',
+      42,
+      'ssh-1',
+      {},
+      'origin'
+    )
     expect(provider.exec).not.toHaveBeenCalledWith(
       expect.arrayContaining(['fetch']),
       '/remote/repo'
