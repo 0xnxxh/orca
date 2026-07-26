@@ -6,6 +6,7 @@ import {
   RETAINED_WEBGL_PANE_LIMIT,
   retainedWebglPaneCount
 } from './pane-webgl-context-retention'
+import { rebuildAttachedWebgl } from './pane-webgl-reattach'
 import { attachWebgl, resetTerminalWebglSuggestion } from './pane-webgl-renderer'
 
 function createPane(options: { id?: number; loadAddon?: () => void } = {}): ManagedPaneInternal {
@@ -137,6 +138,48 @@ describe('terminal WebGL context recovery', () => {
     expect(pane.webglAddon).toBe(addon)
     expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(1)
     expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
+  })
+
+  it('replaces a retained context lost before xterm fires its delayed event', () => {
+    stubWindowsDesktop()
+    const pane = createPane()
+    const dispose = vi.fn()
+    pane.webglAddon = {
+      dispose,
+      _renderer: {
+        _gl: {
+          getExtension: vi.fn(() => null),
+          isContextLost: vi.fn(() => true)
+        }
+      }
+    } as never
+
+    suspendPaneRendering([pane])
+    resumePaneRendering([pane])
+
+    expect(dispose).toHaveBeenCalledTimes(1)
+    expect(pane.webglAddon).not.toBeNull()
+    expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(1)
+  })
+
+  it('defers requested WebGL rebuilds until a hidden pane resumes', () => {
+    stubWindowsDesktop()
+    const pane = createPane()
+    attachWebgl(pane)
+    const retainedAddon = pane.webglAddon
+    suspendPaneRendering([pane])
+
+    rebuildAttachedWebgl(pane)
+
+    expect(pane.webglAddon).toBe(retainedAddon)
+    expect(pane.webglRebuildDeferred).toBe(true)
+    expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(1)
+
+    resumePaneRendering([pane])
+
+    expect(pane.webglAddon).not.toBe(retainedAddon)
+    expect(pane.webglRebuildDeferred).toBe(false)
+    expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(2)
   })
 
   it('reattaches an LRU-evicted context when its pane resumes', () => {

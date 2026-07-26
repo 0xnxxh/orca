@@ -92,6 +92,21 @@ describe('pane WebGL context retention', () => {
     expect(retainedWebglPaneCount()).toBe(RETAINED_WEBGL_PANE_LIMIT)
   })
 
+  it('evicts across pane managers using global worktree hide recency', () => {
+    stubRendererWindow('win32')
+    const firstManagerPanes = Array.from({ length: RETAINED_WEBGL_PANE_LIMIT }, (_, index) =>
+      createAttachedPane(index)
+    )
+    const secondManagerPane = createAttachedPane(RETAINED_WEBGL_PANE_LIMIT)
+
+    suspendPaneRendering(firstManagerPanes)
+    suspendPaneRendering([secondManagerPane])
+
+    expect(firstManagerPanes[0].webglAddon).toBeNull()
+    expect(secondManagerPane.webglAddon).not.toBeNull()
+    expect(retainedWebglPaneCount()).toBe(RETAINED_WEBGL_PANE_LIMIT)
+  })
+
   it('releases panes from the retained set', () => {
     const pane = createAttachedPane(1)
     retainSuspendedWebglPane(pane)

@@ -14,7 +14,9 @@ import {
 } from './terminal-scroll-intent-rebuild'
 
 function createPane(
-  overrides: Partial<Pick<ManagedPaneInternal, 'pendingWebglRefreshRafId' | 'webglAddon'>> = {}
+  overrides: Partial<
+    Pick<ManagedPaneInternal, 'id' | 'pendingWebglRefreshRafId' | 'webglAddon'>
+  > = {}
 ): ManagedPaneInternal {
   const leafId = '11111111-1111-4111-8111-111111111111' as never
   return {
@@ -179,21 +181,26 @@ describe('pane WebGL refresh lifecycle', () => {
     expect(pane.webglAddon).toBeNull()
   })
 
-  it('skips deferred panes during global refresh', () => {
-    const deferred = createPane()
+  it('skips retained panes but refreshes hidden DOM panes during global recovery', () => {
+    const retained = createPane({ id: 1 })
+    const hiddenDom = createPane({ id: 2, webglAddon: null })
     const visible = createPane()
-    deferred.webglAttachmentDeferred = true
-    vi.mocked(deferred.terminal.refresh).mockClear()
+    retained.webglAttachmentDeferred = true
+    hiddenDom.webglAttachmentDeferred = true
+    vi.mocked(retained.terminal.refresh).mockClear()
+    vi.mocked(hiddenDom.terminal.refresh).mockClear()
     vi.mocked(visible.terminal.refresh).mockClear()
 
     PaneManager.prototype.refreshAllPanes.call({
       panes: new Map([
-        [1, deferred],
-        [2, visible]
+        [1, retained],
+        [2, hiddenDom],
+        [3, visible]
       ])
     } as never)
 
-    expect(deferred.terminal.refresh).not.toHaveBeenCalled()
+    expect(retained.terminal.refresh).not.toHaveBeenCalled()
+    expect(hiddenDom.terminal.refresh).toHaveBeenCalledWith(0, 23)
     expect(visible.terminal.refresh).toHaveBeenCalledWith(0, 23)
   })
 
@@ -211,6 +218,41 @@ describe('pane WebGL refresh lifecycle', () => {
     expect(pane.webglAddon).toBeNull()
     expect(panes.has(pane.id)).toBe(false)
     expect(retainedWebglPaneCount()).toBe(0)
+  })
+
+  it('drains all retained contexts when a pane manager is destroyed', () => {
+    stubRendererWindow('win32')
+    const first = createPane({ id: 1 })
+    const second = createPane({ id: 2 })
+    const panes = new Map([
+      [first.id, first],
+      [second.id, second]
+    ])
+    suspendPaneRendering(panes.values())
+    const root = {
+      innerHTML: 'mounted',
+      querySelectorAll: vi.fn(() => [])
+    }
+
+    PaneManager.prototype.destroy.call({
+      destroyed: false,
+      panes,
+      identities: { clear: vi.fn() },
+      root,
+      activePaneId: first.id,
+      dragState: {
+        dragSourcePaneId: null,
+        dropOverlay: null,
+        currentDropTarget: null,
+        currentExternalDropTarget: null,
+        cleanupActiveDrag: null
+      },
+      cancelPendingPaneReparentFrames: vi.fn()
+    } as never)
+
+    expect(retainedWebglPaneCount()).toBe(0)
+    expect(panes.size).toBe(0)
+    expect(root.innerHTML).toBe('')
   })
 
   it('cancels a pending WebGL refresh when the pane is disposed', () => {

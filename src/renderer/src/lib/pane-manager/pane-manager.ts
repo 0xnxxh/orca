@@ -208,8 +208,8 @@ export class PaneManager {
 
   refreshAllPanes(): void {
     for (const pane of this.panes.values()) {
-      // Deferred panes repaint on resume without scaling recovery across hidden workspaces.
-      if (pane.webglAttachmentDeferred) {
+      // Retained contexts repaint on resume without scaling recovery across hidden workspaces.
+      if (pane.webglAttachmentDeferred && pane.webglAddon) {
         continue
       }
       try {

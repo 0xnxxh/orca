@@ -4,6 +4,7 @@ import {
   attachWebgl,
   clearTerminalWebglAttachBackoff,
   disposeWebgl,
+  isPaneWebglContextLost,
   markComplexScriptOutput,
   resetWebglTextureAtlas
 } from './pane-webgl-renderer'
@@ -12,7 +13,7 @@ import {
   retainSuspendedWebglPane,
   shouldRetainSuspendedWebglContexts
 } from './pane-webgl-context-retention'
-import { reattachWebglIfNeeded } from './pane-webgl-reattach'
+import { rebuildAttachedWebgl, reattachWebglIfNeeded } from './pane-webgl-reattach'
 
 export function setPaneGpuRenderingState(
   panes: Map<number, ManagedPaneInternal>,
@@ -70,9 +71,15 @@ export function resumePaneRendering(panes: Iterable<ManagedPaneInternal>): void 
   for (const pane of panes) {
     releaseRetainedWebglPane(pane)
     const wasDeferred = pane.webglAttachmentDeferred
+    const rebuildDeferred = pane.webglRebuildDeferred === true
     pane.webglAttachmentDeferred = false
     pane.webglDisabledAfterContextLoss = false
-    if (wasDeferred && pane.webglAddon) {
+    pane.webglRebuildDeferred = false
+    if (wasDeferred && pane.webglAddon && !isPaneWebglContextLost(pane)) {
+      if (rebuildDeferred) {
+        rebuildAttachedWebgl(pane)
+        continue
+      }
       // Shared-atlas recovery skips deferred panes, so repaint the retained model now.
       try {
         if (pane.terminal.rows > 0) {
@@ -82,6 +89,9 @@ export function resumePaneRendering(panes: Iterable<ManagedPaneInternal>): void 
         /* ignore — pane may be tearing down during resume */
       }
       continue
+    }
+    if (pane.webglAddon) {
+      disposeWebgl(pane)
     }
     reattachWebglIfNeeded(pane)
   }

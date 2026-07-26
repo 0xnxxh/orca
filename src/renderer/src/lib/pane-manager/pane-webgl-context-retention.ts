@@ -1,9 +1,9 @@
 import { getRendererAppPlatform } from '@/lib/renderer-app-platform'
 import { isWebClientLocation } from '@/lib/web-client-location'
+import { TERMINAL_WEBGL_RETAINED_WORKTREE_CONTEXTS } from '../../../../shared/terminal-webgl-context-budget'
 import type { ManagedPaneInternal } from './pane-manager-types'
 
-// Leaves 96 of Electron's 128 contexts for visible panes and new attachments.
-export const RETAINED_WEBGL_PANE_LIMIT = 32
+export const RETAINED_WEBGL_PANE_LIMIT = TERMINAL_WEBGL_RETAINED_WORKTREE_CONTEXTS
 
 export function shouldRetainSuspendedWebglContexts(): boolean {
   return (
@@ -11,7 +11,7 @@ export function shouldRetainSuspendedWebglContexts(): boolean {
   )
 }
 
-// Set insertion order is the hidden-pane recency order.
+// Set insertion order tracks worktree-surface hide recency.
 const retainedPanes = new Set<ManagedPaneInternal>()
 
 export function retainSuspendedWebglPane(pane: ManagedPaneInternal): ManagedPaneInternal | null {

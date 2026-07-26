@@ -20,6 +20,7 @@ let webglAttachFailedSinceRecovery = false
 
 type ReleasableWebglContext = {
   getExtension(name: 'WEBGL_lose_context'): WEBGL_lose_context | null
+  isContextLost?: () => boolean
 }
 
 type XtermWebglAddonInternals = {
@@ -69,6 +70,15 @@ export function cancelPendingWebglRefresh(pane: ManagedPaneInternal): void {
     globalThis.cancelAnimationFrame(pane.pendingWebglRefreshRafId)
   }
   pane.pendingWebglRefreshRafId = null
+}
+
+export function isPaneWebglContextLost(pane: ManagedPaneInternal): boolean {
+  try {
+    const renderer = (pane.webglAddon as unknown as XtermWebglAddonInternals | null)?._renderer
+    return renderer?._gl?.isContextLost?.() === true
+  } catch {
+    return true
+  }
 }
 
 export function disposeWebgl(
@@ -126,8 +136,8 @@ export function markComplexScriptOutput(pane: ManagedPaneInternal): void {
 }
 
 export function resetWebglTextureAtlas(pane: ManagedPaneInternal): void {
-  // Deferred panes repaint on resume; atlas recovery stays scoped to visible contexts.
-  if (pane.webglDisabledAfterContextLoss || pane.webglAttachmentDeferred) {
+  // Retained contexts repaint on resume; hidden DOM panes keep the existing recovery path.
+  if (pane.webglDisabledAfterContextLoss || (pane.webglAttachmentDeferred && pane.webglAddon)) {
     return
   }
   try {
@@ -191,6 +201,7 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
     })
     pane.terminal.loadAddon(addon)
     pane.webglAddon = addon
+    pane.webglRebuildDeferred = false
     refreshTerminalAfterWebglAttach(pane)
   } catch (err) {
     if (pane.terminalGpuAcceleration === 'auto') {
