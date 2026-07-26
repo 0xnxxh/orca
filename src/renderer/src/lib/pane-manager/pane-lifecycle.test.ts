@@ -6,7 +6,7 @@ import {
   markComplexScriptOutput,
   resetTerminalWebglSuggestion
 } from './pane-webgl-renderer'
-import { attachLigatures, disposePane, openTerminal } from './pane-lifecycle'
+import { attachLigatures, disposePane, openTerminal, setLigaturesEnabled } from './pane-lifecycle'
 import { ensureArabicShapingJoinerForText } from './terminal-arabic-shaping-joiner'
 import {
   buildDefaultTerminalOptions,
@@ -429,6 +429,32 @@ describe('attachLigatures', () => {
     expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(1)
     expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
     expect(pane.ligaturesAddon).not.toBeNull()
+  })
+
+  it('defers a retained WebGL rebuild while enabling ligatures offscreen', () => {
+    const pane = createPane()
+    const retainedAddon = { dispose: vi.fn() } as never
+    pane.webglAddon = retainedAddon
+    pane.webglAttachmentDeferred = true
+
+    attachLigatures(pane)
+
+    expect(pane.webglAddon).toBe(retainedAddon)
+    expect(pane.webglRebuildDeferred).toBe(true)
+    expect(pane.terminal.refresh).not.toHaveBeenCalled()
+  })
+
+  it('defers a retained WebGL rebuild while disabling ligatures offscreen', () => {
+    const pane = createPane()
+    const retainedAddon = { dispose: vi.fn() } as never
+    pane.webglAddon = retainedAddon
+    pane.ligaturesAddon = { dispose: vi.fn() } as never
+    pane.webglAttachmentDeferred = true
+
+    setLigaturesEnabled(pane, false)
+
+    expect(pane.webglAddon).toBe(retainedAddon)
+    expect(pane.webglRebuildDeferred).toBe(true)
   })
 })
 
