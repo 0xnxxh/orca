@@ -41,6 +41,7 @@ export type GitWorktreeExecOptions = {
   wslDistro?: string
   signal?: AbortSignal
   timeout?: number
+  settleProcessTree?: boolean
 }
 
 type WorktreeRemovalPreflightOptions = GitWorktreeExecOptions & {
@@ -93,12 +94,19 @@ export const WORKTREE_LIST_TIMEOUT_MS = 30_000
 function gitExecOptions(
   cwd: string,
   options: GitWorktreeExecOptions = {}
-): { cwd: string; wslDistro?: string; signal?: AbortSignal; timeout?: number } {
+): {
+  cwd: string
+  wslDistro?: string
+  signal?: AbortSignal
+  timeout?: number
+  settleProcessTree?: boolean
+} {
   return {
     cwd,
     ...(options.wslDistro ? { wslDistro: options.wslDistro } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
-    ...(options.timeout ? { timeout: options.timeout } : {})
+    ...(options.timeout ? { timeout: options.timeout } : {}),
+    ...(options.settleProcessTree ? { settleProcessTree: true } : {})
   }
 }
 
@@ -406,32 +414,28 @@ async function readRepoLocation(
     cwd: repoPath,
     wslDistro: options.wslDistro
   })
-  try {
-    return await capabilities.runWithFallback(
-      'rev-parse-path-format',
-      async () => {
-        const { stdout } = await gitExecFileAsync(
-          ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
-          gitExecOptions(repoPath, options)
-        )
-        if (hasUnsupportedRevParsePathFormatEcho(stdout)) {
-          // Why: some old Git echoes the unknown option and exits zero; remember that compat signal even though parsing recovers.
-          capabilities.rememberUnsupported('rev-parse-path-format')
-        }
-        return parseRepoLocation(resolveBasePath, stdout)
-      },
-      async () => {
-        const { stdout } = await gitExecFileAsync(
-          ['rev-parse', '--show-toplevel', '--git-common-dir'],
-          gitExecOptions(repoPath, options)
-        )
-        return parseRepoLocation(resolveBasePath, stdout)
-      },
-      isUnsupportedRevParsePathFormatError
-    )
-  } catch {
-    return undefined
-  }
+  return capabilities.runWithFallback(
+    'rev-parse-path-format',
+    async () => {
+      const { stdout } = await gitExecFileAsync(
+        ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
+        gitExecOptions(repoPath, options)
+      )
+      if (hasUnsupportedRevParsePathFormatEcho(stdout)) {
+        // Why: some old Git echoes the unknown option and exits zero; remember that compat signal even though parsing recovers.
+        capabilities.rememberUnsupported('rev-parse-path-format')
+      }
+      return parseRepoLocation(resolveBasePath, stdout)
+    },
+    async () => {
+      const { stdout } = await gitExecFileAsync(
+        ['rev-parse', '--show-toplevel', '--git-common-dir'],
+        gitExecOptions(repoPath, options)
+      )
+      return parseRepoLocation(resolveBasePath, stdout)
+    },
+    isUnsupportedRevParsePathFormatError
+  )
 }
 
 async function normalizeMainWorktreePath(
@@ -451,7 +455,7 @@ async function normalizeMainWorktreePath(
 
   const location = await readRepoLocation(repoPath, comparablePath, options)
   if (!location) {
-    return worktrees
+    throw new Error(`Could not normalize the main worktree path for ${repoPath}.`)
   }
 
   // Why: only a separate-git-dir/submodule main worktree reports git-common-dir as its path; gate on
@@ -618,6 +622,9 @@ async function annotatePrunableByExistence(
 
   async function probeNext(): Promise<void> {
     while (nextIndex < worktrees.length) {
+      if (options.signal?.aborted) {
+        return
+      }
       const index = nextIndex
       nextIndex += 1
       const worktree = worktrees[index]
@@ -643,7 +650,8 @@ async function annotatePrunableByExistence(
   }
 
   const workerCount = Math.min(PRUNABLE_EXISTENCE_PROBE_CONCURRENCY, worktrees.length)
-  await Promise.all(Array.from({ length: workerCount }, () => probeNext()))
+  await Promise.allSettled(Array.from({ length: workerCount }, () => probeNext()))
+  throwIfWorktreeScanAborted(options.signal)
   return annotated
 }
 
@@ -764,7 +772,7 @@ async function listWorktreesUnshared(
 ): Promise<GitWorktreeInfo[]> {
   try {
     const worktrees = await readTranslatedWorktreeGraph(repoPath, options)
-    return annotateSparseCheckoutStatus(worktrees)
+    return annotateSparseCheckoutStatus(worktrees, options)
   } catch (err) {
     if (getErrorCode(err) === 'ENOENT') {
       try {
@@ -793,17 +801,21 @@ export async function listWorktreesStrict(
     const translatedPath = translateWorktreePath(worktree.path, repoPath, options)
     return translatedPath === worktree.path ? worktree : { ...worktree, path: translatedPath }
   })
-  return annotateSparseCheckoutStatus(worktrees)
+  return annotateSparseCheckoutStatus(worktrees, options)
 }
 
 async function annotateSparseCheckoutStatus(
-  worktrees: GitWorktreeInfo[]
+  worktrees: GitWorktreeInfo[],
+  options: GitWorktreeExecOptions = {}
 ): Promise<GitWorktreeInfo[]> {
   const annotated = [...worktrees]
   let nextIndex = 0
 
   async function detectNext(): Promise<void> {
     while (nextIndex < worktrees.length) {
+      if (options.signal?.aborted) {
+        return
+      }
       const index = nextIndex
       nextIndex += 1
       const worktree = worktrees[index]
@@ -819,8 +831,18 @@ async function annotateSparseCheckoutStatus(
 
   // Why: cap concurrency so status-poll refreshes don't fan out many sparse-checkout filesystem probes at once.
   const workerCount = Math.min(SPARSE_CHECKOUT_DETECTION_CONCURRENCY, worktrees.length)
-  await Promise.all(Array.from({ length: workerCount }, () => detectNext()))
+  await Promise.allSettled(Array.from({ length: workerCount }, () => detectNext()))
+  throwIfWorktreeScanAborted(options.signal)
   return annotated
+}
+
+function throwIfWorktreeScanAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) {
+    return
+  }
+  const error = new Error('Worktree scan was cancelled.')
+  error.name = 'AbortError'
+  throw error
 }
 
 async function refreshLocalBaseRefForWorktreeCreate(

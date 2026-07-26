@@ -29,6 +29,11 @@ type PendingRequest = {
   cleanup: () => void
 }
 
+type TrackedRequest<T> = {
+  result: Promise<T>
+  settled: Promise<void>
+}
+
 export type NotificationHandler = (method: string, params: Record<string, unknown>) => void
 export type MethodNotificationHandler = (params: Record<string, unknown>) => void
 export type RequestHandler = (params: Record<string, unknown>) => Promise<unknown> | unknown
@@ -47,6 +52,7 @@ export class SshChannelMultiplexer {
   private highestAckedBySelf = 0
   private lastReceivedAt = Date.now()
   private pendingRequests = new Map<number, PendingRequest>()
+  private trackedSettlementWaiters = new Map<string, () => void>()
   private notificationHandlers: NotificationHandler[] = []
   private requestHandlers = new Map<string, RequestHandler>()
   // Why: per-method dispatch map keeps streaming consumers (fs.streamChunk,
@@ -218,6 +224,25 @@ export class SshChannelMultiplexer {
       this.pendingRequests.set(id, { resolve, reject, timer, cleanup })
       this.sendMessage(msg)
     })
+  }
+
+  requestTracked<T>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { signal?: AbortSignal; timeoutMs?: number }
+  ): TrackedRequest<T> {
+    const token = `${Date.now().toString(36)}-${this.nextRequestId.toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2)}`
+    const settled = new Promise<void>((resolve) => {
+      this.trackedSettlementWaiters.set(token, resolve)
+    })
+    const result = this.request(
+      method,
+      { ...params, __orcaSettlementToken: token },
+      options
+    ) as Promise<T>
+    return { result, settled }
   }
 
   /**
@@ -446,6 +471,14 @@ export class SshChannelMultiplexer {
 
   private handleNotification(msg: JsonRpcNotification): void {
     const params = msg.params ?? {}
+    if (msg.method === 'rpc.settled' && typeof params.token === 'string') {
+      const settle = this.trackedSettlementWaiters.get(params.token)
+      if (settle) {
+        this.trackedSettlementWaiters.delete(params.token)
+        settle()
+      }
+      return
+    }
     // Why: handlers may unsubscribe during iteration (via the returned disposer
     // from onNotification / onNotificationByMethod), which mutates the live
     // collection and skips the next handler. Iterating a snapshot prevents that.

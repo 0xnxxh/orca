@@ -218,6 +218,121 @@ describe('runner execFile timeout handling', () => {
     expect(child.kill).toHaveBeenCalled()
   })
 
+  it('keeps POSIX scan timeouts pending until the process group is gone', async () => {
+    await withPlatform('linux', async () => {
+      const child = createMockChildProcess(1234)
+      execFileMock.mockReturnValue(child)
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        if (signal === 0) {
+          throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
+        }
+        return true
+      })
+      try {
+        const promise = gitExecFileAsync(['worktree', 'list'], {
+          cwd: '/repo',
+          timeout: 1000,
+          settleProcessTree: true
+        })
+        const rejection = expect(promise).rejects.toThrow('git timed out.')
+
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGTERM')
+        child.emit('close', null, 'SIGTERM')
+        await vi.advanceTimersByTimeAsync(999)
+        expect(killSpy).not.toHaveBeenCalledWith(-1234, 'SIGKILL')
+        await vi.advanceTimersByTimeAsync(1)
+        await rejection
+
+        expect(execFileMock).toHaveBeenCalledWith(
+          'git',
+          ['worktree', 'list'],
+          expect.objectContaining({ detached: true }),
+          expect.any(Function)
+        )
+        expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGKILL')
+        expect(killSpy).toHaveBeenCalledWith(-1234, 0)
+        expect(child.kill).not.toHaveBeenCalled()
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+  })
+
+  it('keeps Windows scan timeouts pending until taskkill and child close', async () => {
+    await withPlatform('win32', async () => {
+      const child = createMockChildProcess(1234)
+      const taskkill = createMockTaskkillProcess()
+      execFileMock.mockReturnValue(child)
+      spawnMock.mockReturnValue(taskkill)
+
+      const promise = gitExecFileAsync(['worktree', 'list'], {
+        cwd: 'C:\\repo',
+        timeout: 1000,
+        settleProcessTree: true
+      })
+      const rejection = expect(promise).rejects.toThrow(/git(?:\.exe)? timed out\./i)
+      let rejected = false
+      void promise.catch(() => {
+        rejected = true
+      })
+
+      await vi.advanceTimersByTimeAsync(1000)
+      taskkill.emit('close', 0)
+      await Promise.resolve()
+      expect(rejected).toBe(false)
+
+      child.emit('close', null, 'SIGTERM')
+      await rejection
+      expect(spawnMock).toHaveBeenCalledWith(
+        'taskkill',
+        ['/pid', '1234', '/t', '/f'],
+        expect.objectContaining({ stdio: 'ignore', windowsHide: true })
+      )
+      expect(child.kill).not.toHaveBeenCalled()
+    })
+  })
+
+  it('settles over-buffer scan process groups before rejecting', async () => {
+    await withPlatform('linux', async () => {
+      const child = createMockChildProcess(1234)
+      let callback!: (error: Error, stdout: string, stderr: string) => void
+      execFileMock.mockImplementation((_command, _args, _options, next) => {
+        callback = next
+        return child
+      })
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
+        if (signal === 0) {
+          throw Object.assign(new Error('group gone'), { code: 'ESRCH' })
+        }
+        return true
+      })
+      try {
+        const promise = gitExecFileAsync(['worktree', 'list'], {
+          cwd: '/repo',
+          settleProcessTree: true
+        })
+        const rejection = expect(promise).rejects.toThrow('stdout maxBuffer length exceeded')
+        callback(
+          Object.assign(new Error('stdout maxBuffer length exceeded'), {
+            code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+          }),
+          'overflow',
+          ''
+        )
+        child.emit('close', null, 'SIGTERM')
+
+        await vi.advanceTimersByTimeAsync(1000)
+        await rejection
+        expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGTERM')
+        expect(killSpy).toHaveBeenCalledWith(-1234, 'SIGKILL')
+        expect(killSpy).toHaveBeenCalledWith(-1234, 0)
+      } finally {
+        killSpy.mockRestore()
+      }
+    })
+  })
+
   it('rejects gh executions that never call back using the default timeout', async () => {
     const child = createMockChildProcess(1234)
     execFileMock.mockReturnValue(child)

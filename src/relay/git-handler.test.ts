@@ -1997,16 +1997,79 @@ describe('GitHandler', () => {
         .spyOn(handler as unknown as GitSpyTarget, 'git')
         .mockRejectedValue(new Error('aborted'))
 
-      const result = await dispatcher.callRequest(
-        'git.listWorktrees',
-        { repoPath: tmpDir },
-        { isStale: () => false, signal: controller.signal }
-      )
-
-      expect(result).toEqual([])
+      await expect(
+        dispatcher.callRequest(
+          'git.listWorktrees',
+          { repoPath: tmpDir },
+          { isStale: () => false, signal: controller.signal }
+        )
+      ).rejects.toThrow('aborted')
       expect(gitSpy).toHaveBeenCalledWith(['worktree', 'list', '--porcelain', '-z'], tmpDir, {
         signal: controller.signal
       })
+    })
+
+    it('uses the tracked process-tree scan path when settlement is requested', async () => {
+      const controller = new AbortController()
+      const trackedScan = vi
+        .spyOn(
+          handler as unknown as {
+            gitWorktreeScan(
+              args: string[],
+              cwd: string,
+              signal?: AbortSignal
+            ): Promise<{ stdout: string; stderr: string }>
+          },
+          'gitWorktreeScan'
+        )
+        .mockRejectedValue(new Error('tracked scan failed'))
+
+      await expect(
+        dispatcher.callRequest(
+          'git.listWorktrees',
+          { repoPath: tmpDir, __orcaSettlementToken: 'token' },
+          { isStale: () => false, signal: controller.signal }
+        )
+      ).rejects.toThrow('tracked scan failed')
+      expect(trackedScan).toHaveBeenCalledWith(
+        ['worktree', 'list', '--porcelain', '-z'],
+        tmpDir,
+        controller.signal
+      )
+    })
+
+    it('classifies a missing scan root even when the git failure is not an object', async () => {
+      const missingPath = path.join(tmpDir, 'missing-repo')
+      vi.spyOn(handler as unknown as GitSpyTarget, 'git').mockRejectedValue(null)
+
+      await expect(
+        dispatcher.callRequest('git.listWorktrees', { repoPath: missingPath })
+      ).rejects.toMatchObject({
+        data: { worktreeScanRootMissing: true }
+      })
+    })
+
+    it('propagates required main-worktree normalization failures', async () => {
+      const gitSpy = vi
+        .spyOn(handler as unknown as GitSpyTarget, 'git')
+        .mockImplementation(async (args) => {
+          if (args[0] === 'worktree') {
+            return {
+              stdout: 'worktree /git-store/project.git\0HEAD abc\0branch refs/heads/main\0\0',
+              stderr: ''
+            }
+          }
+          throw new Error('rev-parse failed')
+        })
+
+      await expect(
+        dispatcher.callRequest('git.listWorktrees', { repoPath: tmpDir })
+      ).rejects.toThrow('rev-parse failed')
+      expect(gitSpy).toHaveBeenCalledWith(
+        ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
+        tmpDir,
+        { signal: undefined }
+      )
     })
 
     it.skipIf(process.platform === 'win32')(

@@ -432,6 +432,10 @@ export class RelayDispatcher {
         client.generation !== gen || !this.clients.has(client.id) || abortController.signal.aborted,
       signal: abortController.signal
     }
+    const settlementToken =
+      typeof req.params?.__orcaSettlementToken === 'string'
+        ? req.params.__orcaSettlementToken
+        : null
     try {
       const result = await handler(req.params ?? {}, context)
       if (context.isStale()) {
@@ -444,9 +448,17 @@ export class RelayDispatcher {
       }
       const message = err instanceof Error ? err.message : String(err)
       const code = (err as { code?: number }).code ?? -32000
-      this.sendResponse(client, req.id, undefined, { code, message })
+      const data = (err as { data?: unknown }).data
+      this.sendResponse(client, req.id, undefined, { code, message, data })
     } finally {
       this.requestAborts.delete(abortKey)
+      if (settlementToken) {
+        this.sendFrame(client, {
+          jsonrpc: '2.0',
+          method: 'rpc.settled',
+          params: { token: settlementToken }
+        })
+      }
     }
   }
 

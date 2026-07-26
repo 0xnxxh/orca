@@ -269,6 +269,7 @@ type GitExecOptions = {
   signal?: AbortSignal
   wslDistro?: string
   useConfiguredSshCommandForNetwork?: boolean
+  settleProcessTree?: boolean
 }
 
 type CommandExecOptions = {
@@ -308,6 +309,13 @@ function createAbortError(): Error {
 }
 
 const WINDOWS_TREE_KILL_WAIT_MS = 2_000
+const POSIX_TREE_KILL_GRACE_MS = 1_000
+
+function hasSpawnedCommandExited(child: ChildProcess): boolean {
+  return child.exitCode !== undefined
+    ? child.exitCode !== null
+    : child.signalCode !== undefined && child.signalCode !== null
+}
 
 function killSpawnedCommandTree(child: ChildProcess): Promise<void> {
   const pid = child.pid
@@ -359,9 +367,80 @@ function killSpawnedCommandTree(child: ChildProcess): Promise<void> {
   })
 }
 
+function terminateSpawnedCommandTreeAndWait(child: ChildProcess): Promise<void> {
+  const pid = child.pid
+  if (!pid) {
+    return new Promise(() => {})
+  }
+  if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      let childClosed = hasSpawnedCommandExited(child)
+      let treeKilled = false
+      const finish = (): void => {
+        if (childClosed && treeKilled) {
+          resolve()
+        }
+      }
+      child.once('close', () => {
+        childClosed = true
+        finish()
+      })
+      const killer = spawn('taskkill', ['/pid', String(pid), '/t', '/f'], {
+        stdio: 'ignore',
+        windowsHide: true
+      })
+      killer.once('close', (code) => {
+        treeKilled = code === 0
+        finish()
+      })
+      killer.once('error', () => {
+        // An unconfirmed tree remains gate-owned until runtime restart.
+      })
+    })
+  }
+  return new Promise((resolve) => {
+    let leaderClosed = hasSpawnedCommandExited(child)
+    let forced = false
+    const groupGone = (): boolean => {
+      try {
+        process.kill(-pid, 0)
+        return false
+      } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'ESRCH'
+      }
+    }
+    const finish = (): void => {
+      if (leaderClosed && forced && groupGone()) {
+        resolve()
+        return
+      }
+      setTimeout(finish, 25).unref()
+    }
+    child.once('close', () => {
+      leaderClosed = true
+    })
+    try {
+      process.kill(-pid, 'SIGTERM')
+    } catch {
+      // The group may already be gone; the close/group checks decide settlement.
+    }
+    const forceTimer = setTimeout(() => {
+      forced = true
+      try {
+        process.kill(-pid, 'SIGKILL')
+      } catch {
+        // The group may already be gone.
+      }
+      finish()
+    }, POSIX_TREE_KILL_GRACE_MS)
+    forceTimer.unref()
+  })
+}
+
 type ExecFileCaptureOptions = Omit<ExecFileOptions, 'timeout'> & {
   timeout?: number
   stdin?: string
+  settleProcessTree?: boolean
 }
 
 function emptyExecFileOutput(options: ExecFileCaptureOptions): string | Buffer {
@@ -432,7 +511,10 @@ function execFileCapture(
         finish(abortError)
         return
       }
-      void killSpawnedCommandTree(child).then(() => {
+      const terminate = options.settleProcessTree
+        ? terminateSpawnedCommandTreeAndWait(child)
+        : killSpawnedCommandTree(child)
+      void terminate.then(() => {
         terminating = false
         finish(abortError)
       })
@@ -441,26 +523,36 @@ function execFileCapture(
     try {
       const spawnStartedAt = performance.now()
       // Why: our abort listener owns tree cleanup; Node's signal handler could kill wsl.exe before taskkill sees its children.
-      child = execFile(
-        command,
-        args,
-        {
-          cwd: options.cwd,
-          encoding: options.encoding,
-          maxBuffer: options.maxBuffer ?? DEFAULT_GIT_MAX_BUFFER,
-          env: options.env
-        },
-        (error, stdout, stderr) => {
-          if (terminating) {
-            return
-          }
-          if (!error && stderr === undefined && isExecFileResultObject(stdout)) {
-            finish(null, stdout.stdout, stdout.stderr)
-            return
-          }
-          finish(error, stdout, stderr)
+      const execOptions = {
+        cwd: options.cwd,
+        encoding: options.encoding,
+        maxBuffer: options.maxBuffer ?? DEFAULT_GIT_MAX_BUFFER,
+        env: options.env,
+        detached: options.settleProcessTree && process.platform !== 'win32'
+      } as ExecFileOptions
+      child = execFile(command, args, execOptions, (error, stdout, stderr) => {
+        if (terminating) {
+          return
         }
-      )
+        if (!error && stderr === undefined && isExecFileResultObject(stdout)) {
+          finish(null, stdout.stdout, stdout.stderr)
+          return
+        }
+        if (
+          error &&
+          options.settleProcessTree &&
+          (error as NodeJS.ErrnoException).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' &&
+          child
+        ) {
+          terminating = true
+          void terminateSpawnedCommandTreeAndWait(child).then(() => {
+            terminating = false
+            finish(error, stdout, stderr)
+          })
+          return
+        }
+        finish(error, stdout, stderr)
+      })
       recordSubprocessSpawn(command, args, performance.now() - spawnStartedAt)
     } catch (error) {
       finish(error instanceof Error ? error : new Error(String(error)))
@@ -490,7 +582,10 @@ function execFileCapture(
           finish(timeoutError)
           return
         }
-        void killSpawnedCommandTree(child).then(() => {
+        const terminate = options.settleProcessTree
+          ? terminateSpawnedCommandTreeAndWait(child)
+          : killSpawnedCommandTree(child)
+        void terminate.then(() => {
           terminating = false
           finish(timeoutError)
         })
@@ -857,7 +952,8 @@ export async function gitExecFileAsync(
           stdin: options.stdin,
           // Why: never let a git read-path call block on an interactive prompt (issue #5308) — fail fast.
           env: policy.env,
-          signal: options.signal
+          signal: options.signal,
+          settleProcessTree: options.settleProcessTree
         })
       } catch (error) {
         if (options.useConfiguredSshCommandForNetwork && error && typeof error === 'object') {

@@ -27,6 +27,7 @@ import {
   _resetWorktreeScanCacheForTests,
   listWorktreeGraph,
   listWorktrees,
+  listWorktreesStrict,
   moveWorktree,
   parseWorktreeList,
   removeWorktree,
@@ -36,6 +37,22 @@ import {
 
 beforeEach(() => {
   clearGitCapabilityStateForTests()
+})
+
+describe('listWorktreesStrict', () => {
+  afterEach(() => {
+    gitExecFileAsyncMock.mockReset()
+  })
+
+  it('propagates required main-worktree normalization failures', async () => {
+    gitExecFileAsyncMock
+      .mockResolvedValueOnce({
+        stdout: 'worktree /git-store/project.git\0HEAD abc\0branch refs/heads/main\0\0'
+      })
+      .mockRejectedValueOnce(new Error('rev-parse failed'))
+
+    await expect(listWorktreesStrict('/repo')).rejects.toThrow('rev-parse failed')
+  })
 })
 
 describe('listWorktrees in-flight sharing', () => {
@@ -154,7 +171,7 @@ describe('listWorktrees in-flight sharing', () => {
           scanResolvers.push((stdout) => resolve({ stdout }))
         })
       }
-      return Promise.resolve({ stdout: '' })
+      return Promise.resolve({ stdout: '/repo\n/repo\n' })
     })
 
     const staleScan = listWorktrees('/repo')

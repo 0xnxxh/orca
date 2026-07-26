@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- Why: centralizes the git RPC protocol surface so local and SSH git behavior stay in one dispatch table. */
 import { execFile, spawn, type ExecFileOptions } from 'node:child_process'
+import { lstat } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import * as path from 'node:path'
 import type { RelayDispatcher, RequestContext } from './dispatcher'
@@ -88,6 +89,7 @@ import {
 import { GitResponseStreamRegistry } from './git-response-stream'
 import { GIT_RESPONSE_STREAM_THRESHOLD } from './protocol'
 import { endSubprocessStdin } from '../shared/subprocess-stdin-write'
+import { terminateRelaySubprocessTreeAndWait } from './subprocess-tree-termination'
 import { clearGitStatusLineStatsCache } from '../shared/git-status-line-stats-cache'
 import { streamRelayGitStdout } from './git-stdout-stream'
 
@@ -341,6 +343,99 @@ export class GitHandler {
     }
     const { stdout, stderr } = await execFileAsync('git', args, execOptions)
     return { stdout: String(stdout), stderr: String(stderr) }
+  }
+
+  private gitWorktreeScan(
+    args: string[],
+    cwd: string,
+    signal?: AbortSignal
+  ): Promise<{ stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        const error = new Error('Relay worktree scan was cancelled.')
+        error.name = 'AbortError'
+        reject(error)
+        return
+      }
+      const child = spawn('git', args, {
+        cwd: expandTilde(cwd),
+        env: buildRelayGitEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
+        windowsHide: true
+      })
+      const stdoutChunks: Buffer[] = []
+      const stderrChunks: Buffer[] = []
+      let stdoutBytes = 0
+      let stderrBytes = 0
+      let terminating = false
+      const output = (): { stdout: string; stderr: string } => ({
+        stdout: Buffer.concat(stdoutChunks, stdoutBytes).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks, stderrBytes).toString('utf8')
+      })
+      const cleanup = (): void => signal?.removeEventListener('abort', onAbort)
+      const terminate = (error: Error): void => {
+        if (terminating) {
+          return
+        }
+        terminating = true
+        void terminateRelaySubprocessTreeAndWait(child).then(() => {
+          cleanup()
+          reject(Object.assign(error, output()))
+        })
+      }
+      const onAbort = (): void => {
+        const error = new Error('Relay worktree scan was cancelled.')
+        error.name = 'AbortError'
+        terminate(error)
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      child.stdout?.on('data', (chunk: Buffer) => {
+        if (terminating) {
+          return
+        }
+        stdoutChunks.push(chunk)
+        stdoutBytes += chunk.length
+        if (stdoutBytes > MAX_GIT_BUFFER) {
+          terminate(new Error('Relay worktree scan stdout exceeded maxBuffer.'))
+        }
+      })
+      child.stderr?.on('data', (chunk: Buffer) => {
+        if (terminating) {
+          return
+        }
+        stderrChunks.push(chunk)
+        stderrBytes += chunk.length
+        if (stderrBytes > MAX_GIT_BUFFER) {
+          terminate(new Error('Relay worktree scan stderr exceeded maxBuffer.'))
+        }
+      })
+      child.once('error', (error) => {
+        if (!terminating) {
+          cleanup()
+          reject(Object.assign(error, output()))
+        }
+      })
+      child.once('close', (code, closeSignal) => {
+        if (terminating) {
+          return
+        }
+        cleanup()
+        const { stdout, stderr } = output()
+        if (code === 0) {
+          resolve({ stdout, stderr })
+          return
+        }
+        reject(
+          Object.assign(new Error(stderr || `git exited with ${code ?? closeSignal}`), {
+            code,
+            signal: closeSignal,
+            stdout,
+            stderr
+          })
+        )
+      })
+    })
   }
 
   private async gitBuffer(args: string[], cwd: string): Promise<Buffer> {
@@ -1336,38 +1431,35 @@ export class GitHandler {
     }
   }
 
-  private async readRepoLocation(repoPath: string): Promise<RelayRepoLocation | undefined> {
-    try {
-      return await this.gitCapabilities.runWithFallback(
-        'rev-parse-path-format',
-        async () => {
-          const { stdout } = await this.git(
-            ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
-            repoPath
-          )
-          if (hasUnsupportedRevParsePathFormatEcho(stdout)) {
-            // Why: old Git echoes the unknown option and exits zero; remember the signal though the paths still parse.
-            this.gitCapabilities.rememberUnsupported('rev-parse-path-format')
-          }
-          return parseRelayRepoLocation(repoPath, stdout)
-        },
-        async () => {
-          const { stdout } = await this.git(
-            ['rev-parse', '--show-toplevel', '--git-common-dir'],
-            repoPath
-          )
-          return parseRelayRepoLocation(repoPath, stdout)
-        },
-        isUnsupportedRevParsePathFormatError
-      )
-    } catch {
-      return undefined
-    }
+  private async readRepoLocation(
+    repoPath: string,
+    git: GitExec
+  ): Promise<RelayRepoLocation | undefined> {
+    return this.gitCapabilities.runWithFallback(
+      'rev-parse-path-format',
+      async () => {
+        const { stdout } = await git(
+          ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
+          repoPath
+        )
+        if (hasUnsupportedRevParsePathFormatEcho(stdout)) {
+          // Why: old Git echoes the unknown option and exits zero; remember the signal though the paths still parse.
+          this.gitCapabilities.rememberUnsupported('rev-parse-path-format')
+        }
+        return parseRelayRepoLocation(repoPath, stdout)
+      },
+      async () => {
+        const { stdout } = await git(['rev-parse', '--show-toplevel', '--git-common-dir'], repoPath)
+        return parseRelayRepoLocation(repoPath, stdout)
+      },
+      isUnsupportedRevParsePathFormatError
+    )
   }
 
   private async normalizeMainWorktreePath(
     repoPath: string,
-    worktrees: Record<string, unknown>[]
+    worktrees: Record<string, unknown>[],
+    git: GitExec
   ): Promise<Record<string, unknown>[]> {
     const mainIndex = worktrees.findIndex((worktree) => worktree.isMainWorktree === true)
     const mainWorktree = worktrees[mainIndex]
@@ -1378,9 +1470,9 @@ export class GitHandler {
       return worktrees
     }
 
-    const location = await this.readRepoLocation(resolvedRepoPath)
+    const location = await this.readRepoLocation(resolvedRepoPath, git)
     if (!location) {
-      return worktrees
+      throw new Error(`Could not normalize the main worktree path for ${repoPath}.`)
     }
 
     // Why: only separate-git-dir/submodule repos have main entry == git-common-dir; gate on it so we don't clobber a linked worktree's real root.
@@ -1395,37 +1487,51 @@ export class GitHandler {
 
   private async listWorktrees(params: Record<string, unknown>, context?: RequestContext) {
     const repoPath = params.repoPath as string
-    return this.gitCapabilities
-      .runWithFallback(
+    const tracked = typeof params.__orcaSettlementToken === 'string'
+    const git: GitExec = tracked
+      ? (args, cwd) => this.gitWorktreeScan(args, cwd, context?.signal)
+      : (args, cwd) => this.git(args, cwd, { signal: context?.signal })
+    try {
+      return await this.gitCapabilities.runWithFallback(
         'worktree-list-z',
         async () => {
-          const { stdout } = await this.git(['worktree', 'list', '--porcelain', '-z'], repoPath, {
-            signal: context?.signal
-          })
+          const { stdout } = await git(['worktree', 'list', '--porcelain', '-z'], repoPath)
           return this.normalizeMainWorktreePath(
             repoPath,
-            parseWorktreeList(stdout, { nulDelimited: true })
+            parseWorktreeList(stdout, { nulDelimited: true }),
+            git
           )
         },
         async () => {
           // Why: Git <2.36 lacks worktree-list `-z`, so fall back to the newline-block parser (loses newline-in-path safety).
-          try {
-            const { stdout } = await this.git(['worktree', 'list', '--porcelain'], repoPath, {
-              signal: context?.signal
-            })
-            const normalized = await this.normalizeMainWorktreePath(
-              repoPath,
-              parseWorktreeList(stdout)
-            )
-            // Why: Git <2.31 emits no `prunable` annotation, so probe each linked worktree's existence instead of trusting stale registrations (issue #8389).
-            return annotatePrunableWorktreesByExistence(normalized)
-          } catch {
-            return []
-          }
+          const { stdout } = await git(['worktree', 'list', '--porcelain'], repoPath)
+          const normalized = await this.normalizeMainWorktreePath(
+            repoPath,
+            parseWorktreeList(stdout),
+            git
+          )
+          // Why: Git <2.31 emits no `prunable` annotation, so probe each linked worktree's existence instead of trusting stale registrations (issue #8389).
+          return annotatePrunableWorktreesByExistence(normalized, context?.signal)
         },
         isUnsupportedWorktreeListZError
       )
-      .catch(() => [])
+    } catch (error) {
+      let classifiedError = error
+      try {
+        await lstat(expandTilde(repoPath))
+      } catch (probeError) {
+        const code = (probeError as NodeJS.ErrnoException | null)?.code
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
+          const target: object =
+            typeof error === 'object' && error !== null
+              ? error
+              : new Error(String(error ?? 'Relay worktree scan failed.'))
+          Object.assign(target, { data: { worktreeScanRootMissing: true } })
+          classifiedError = target
+        }
+      }
+      throw classifiedError
+    }
   }
 
   private async addWorktree(params: Record<string, unknown>) {

@@ -707,6 +707,13 @@ export class SshGitProvider implements IGitProvider {
     )) as GitWorktreeInfo[]
   }
 
+  listWorktreesTracked(repoPath: string): {
+    result: Promise<GitWorktreeInfo[]>
+    settled: Promise<void>
+  } {
+    return this.mux.requestTracked<GitWorktreeInfo[]>('git.listWorktrees', { repoPath })
+  }
+
   async addWorktree(
     repoPath: string,
     branchName: string,
