@@ -48,7 +48,9 @@ export async function launchAgentBackgroundSession(
 ): Promise<LaunchAgentBackgroundSessionResult | null> {
   const { agent, worktreeId, prompt, launchSource, title, onData, onExit, onAgentStatus } = args
   const store = useAppStore.getState()
-  const worktree = store.allWorktrees().find((entry) => entry.id === worktreeId)
+  // Why: allWorktrees() reads only worktreesByRepo, so every folder workspace looks
+  // absent and its automation dies here. getKnownWorktreeById covers both (#2989).
+  const worktree = store.getKnownWorktreeById(worktreeId)
   const repo = worktree ? store.repos.find((entry) => entry.id === worktree.repoId) : null
   if (!worktree) {
     throw new Error('The target workspace is no longer available.')
@@ -227,7 +229,6 @@ export async function launchAgentBackgroundSession(
       store,
       worktreeId,
       reservedTabId,
-      leafId,
       ptyId,
       paneKey,
       launchConfig: returnedLaunchConfig ?? startupPlan.launchConfig,

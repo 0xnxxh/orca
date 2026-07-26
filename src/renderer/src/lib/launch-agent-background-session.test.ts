@@ -226,22 +226,16 @@ describe('launchAgentBackgroundSession', () => {
     expect(mockDispatchEvent).not.toHaveBeenCalled()
   })
 
-  it('keeps a folder-workspace launch alive across the spawn await', async () => {
-    // Why: folder workspaces live outside worktreesByRepo, so a liveness check built on
-    // allWorktrees() reports them as gone and kills the agent PTY the moment it resolves.
+  it('launches into a folder workspace that is absent from worktreesByRepo throughout', async () => {
+    // Why: a real folder workspace is NEVER in worktreesByRepo — it lives in
+    // folderWorkspaces and only getKnownWorktreeById resolves it. Seeding the repo
+    // list here (even briefly) would fake the one condition under test, so both the
+    // initial resolution and the post-spawn retire check are exercised for real (#2989).
+    state.worktreesByRepo['repo-1'] = []
     state.getKnownWorktreeById = (worktreeId: string) =>
       worktreeId === 'folder:fw-1'
         ? { id: 'folder:fw-1', path: '/tmp/folder-workspace' }
         : undefined
-    state.worktreesByRepo['repo-1'] = [
-      {
-        id: 'folder:fw-1',
-        repoId: 'repo-1',
-        projectId: 'repo-1',
-        path: '/tmp/folder-workspace',
-        displayName: 'folder-workspace'
-      }
-    ]
     const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
 
     const launch = launchAgentBackgroundSession({
@@ -249,8 +243,6 @@ describe('launchAgentBackgroundSession', () => {
       worktreeId: 'folder:fw-1',
       prompt: 'run in a folder workspace'
     })
-    // The worktree list stays empty for the whole launch; only the folder lookup resolves.
-    state.worktreesByRepo['repo-1'] = []
 
     await expect(launch).resolves.toMatchObject({ ptyId: 'pty-1' })
     expect(mockKill).not.toHaveBeenCalled()
@@ -539,6 +531,32 @@ describe('launchAgentBackgroundSession', () => {
       reason: 'cleanup'
     })
     expect(mockKill).toHaveBeenCalledWith('pty-1')
+  })
+
+  it('retires the launch instead of adopting a colliding tab id', async () => {
+    // Why: ORCA_TAB_ID / ORCA_PANE_KEY are already baked into the spawned process, so a
+    // re-keyed tab would route bytes to one identity and hooks to another. Fail closed.
+    mockSpawn.mockImplementationOnce((args: { tabId: string }) => {
+      // Land the collision between the reservation and the adoption, exactly as a
+      // concurrently-created tab would.
+      state.tabsByWorktree['wt-1'].push({ id: args.tabId, title: 'Squatter' })
+      return Promise.resolve({ id: 'pty-1' })
+    })
+    const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
+
+    await expect(
+      launchAgentBackgroundSession({
+        agent: 'claude',
+        worktreeId: 'wt-1',
+        prompt: 'run the automation'
+      })
+    ).resolves.toBeNull()
+
+    expect(mockCreateTab).not.toHaveBeenCalled()
+    expect(mockKill).toHaveBeenCalledWith('pty-1')
+    expect(state.clearAgentLaunchConfig).toHaveBeenCalledWith(
+      expectStableAgentBackgroundPaneSpawn(mockSpawn)
+    )
   })
 
   it('submits prompts for stdin-after-start agents in background mode', async () => {

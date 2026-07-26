@@ -3,7 +3,8 @@ import { makePaneKey, type PaneKey } from '../../../shared/stable-pane-id'
 import type { AgentType } from '../../../shared/agent-status-types'
 import { bindAutomationTerminal } from '@/lib/automation-terminal-ownership'
 import { createBrowserUuid } from '@/lib/browser-uuid'
-import { retireUnownedTerminal } from '@/lib/retire-unowned-background-terminal'
+import { retireProvider, retireUnownedTerminal } from '@/lib/retire-unowned-background-terminal'
+import { isTerminalTabPresent } from '@/store/slices/terminal-tab-retirement'
 import type { RuntimeClientTarget } from '@/runtime/runtime-rpc-client'
 
 type Store = ReturnType<typeof useAppStore.getState>
@@ -74,7 +75,6 @@ export async function adoptAgentBackgroundSessionTab(args: {
   store: Store
   worktreeId: string
   reservedTabId: string
-  leafId: string
   ptyId: string
   paneKey: PaneKey
   launchConfig: RegisterArgs[1]
@@ -88,7 +88,7 @@ export async function adoptAgentBackgroundSessionTab(args: {
   paneKey: PaneKey
   terminalOwnership: ReturnType<typeof bindAutomationTerminal>
 } | null> {
-  const { store, reservedTabId, leafId, ptyId, launchRegistration } = args
+  const { store, reservedTabId, ptyId, launchRegistration } = args
   // Why: the run tab cannot be closed mid-spawn now that it is created after the
   // await, but the worktree can still disappear across it — adopting into a gone
   // worktree would strand a live PTY behind an unreachable tab.
@@ -103,20 +103,29 @@ export async function adoptAgentBackgroundSessionTab(args: {
   ) {
     return null
   }
+  // Why fail instead of re-key: ORCA_TAB_ID / ORCA_PANE_KEY are already baked into
+  // the running process's env and cannot be rewritten. On collision createTab mints
+  // a different id, so renderer routing and the agent's own hook identity would
+  // permanently disagree — status and completion attribution silently go to the
+  // colliding tab. A dead launch the user can retry beats a mis-attributed live one.
+  // (A v4 UUID collision is vanishingly unlikely; this is a fail-closed guard.)
+  if (isTerminalTabPresent(store, reservedTabId)) {
+    store.clearAgentLaunchConfig(args.paneKey)
+    args.onRetire()
+    await retireProvider({
+      ptyId,
+      runtimeTarget: args.runtimeTarget,
+      runtimeTerminalHandle: args.runtimeTerminalHandle
+    })
+    return null
+  }
   const tab = store.createTab(args.worktreeId, undefined, undefined, {
     id: reservedTabId,
     initialPtyId: ptyId,
     activate: false,
     recordInteraction: false
   })
-  let paneKey = args.paneKey
-  if (tab.id !== reservedTabId) {
-    // Why: createTab mints a fresh id on collision, so the env-baked paneKey no
-    // longer routes; drop the stale registration before re-keying.
-    store.clearAgentLaunchConfig(paneKey)
-    paneKey = makePaneKey(tab.id, leafId)
-    launchRegistration.tabId = tab.id
-  }
+  const paneKey = args.paneKey
   store.registerAgentLaunchConfig(paneKey, args.launchConfig, launchRegistration)
   const terminalOwnership = bindAutomationTerminal(
     tab,
