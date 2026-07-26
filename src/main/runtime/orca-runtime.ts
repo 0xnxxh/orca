@@ -16139,12 +16139,15 @@ export class OrcaRuntimeService {
     type?: 'issue' | 'pr'
   ): Promise<Awaited<ReturnType<typeof getWorkItem>>> {
     const repo = await this.resolveRepoSelector(repoSelector)
+    // Why: open-by-number must pin the same source the list and start-point use,
+    // else a fork and its upstream sharing a PR number resolve to different PRs.
     return getWorkItem(
       repo.path,
       number,
       type,
       repo.connectionId ?? null,
-      ...this.getLocalGitExecutionOptionArgs(repo)
+      this.getLocalGitExecutionOptionArgs(repo)[0] ?? {},
+      repo.issueSourcePreference
     )
   }
 
@@ -16176,7 +16179,8 @@ export class OrcaRuntimeService {
       number,
       type,
       repo.connectionId ?? null,
-      ...this.getLocalGitExecutionOptionArgs(repo)
+      this.getLocalGitExecutionOptionArgs(repo)[0] ?? {},
+      repo.issueSourcePreference
     )
   }
 
@@ -20142,11 +20146,12 @@ export class OrcaRuntimeService {
     const gitExec = sshGitProvider
       ? (gitArgs: string[]) => sshGitProvider.exec(gitArgs, repo.path)
       : (gitArgs: string[]) => gitExecFileAsync(gitArgs, localGitExecOptions ?? { cwd: repo.path })
-    // Why: one shared resolver for local and SSH so origin-vs-upstream cannot
-    // diverge by surface; it prefers the remote hosting the PR's project.
+    // Why: one resolver keeps source preference and hosting identity aligned
+    // across local, WSL, and SSH worktree creation.
     const resolveRemote = (): Promise<string> =>
       resolveGitHubReviewHeadRemote({
         repoPath: repo.path,
+        issueSourcePreference: repo.issueSourcePreference,
         connectionId: repo.connectionId ?? null,
         localGitOptions: localWorktreeGitOptions,
         gitExec
@@ -20176,6 +20181,7 @@ export class OrcaRuntimeService {
       headRefName: args.headRefName,
       baseRefName: args.baseRefName,
       isCrossRepository: args.isCrossRepository,
+      issueSourcePreference: repo.issueSourcePreference,
       connectionId: repo.connectionId ?? null,
       localGitOptions: localWorktreeGitOptions,
       gitExec,
