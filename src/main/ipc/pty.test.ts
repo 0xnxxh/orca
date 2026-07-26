@@ -13545,6 +13545,99 @@ describe('registerPtyHandlers', () => {
     ])
   })
 
+  it('records the origin account a resumed Codex pane is pinned to', async () => {
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({ id: 'pty-resumed' })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const getSettings = vi.fn().mockReturnValue({
+      activeCodexManagedAccountId: 'account-b',
+      codexManagedAccounts: [
+        { id: 'account-a', managedHomePath: '/managed/origin/home' },
+        { id: 'account-b', managedHomePath: '/managed/current/home' }
+      ]
+    })
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      vi.fn(() => '/managed/current/home'),
+      getSettings as never,
+      undefined,
+      undefined,
+      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/origin/home' }) }
+    )
+
+    await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      command: 'codex resume session-a',
+      launchAgent: 'codex',
+      resumeProviderSession: {
+        key: 'session_id',
+        id: 'session-a',
+        transcriptPath: '/managed/origin/home/sessions/2026/07/20/rollout-a.jsonl'
+      }
+    })
+
+    // Why: the resume deliberately overrides the selection, so the pane really
+    // is on account-a. Recording that is what makes the restart prompt appear.
+    expect(recordCodexPaneAccountMock.mock.calls).toEqual([
+      ['pty-resumed', { selectionKey: 'host', accountId: 'account-a' }]
+    ])
+    expect(forgetCodexPaneAccountMock).not.toHaveBeenCalled()
+  })
+
+  it('leaves a resumed Codex pane unattributed when no account owns its home', async () => {
+    setLocalPtyProvider({
+      spawn: vi.fn(async () => ({ id: 'pty-resumed' })),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      shutdown: vi.fn(),
+      onData: vi.fn(() => vi.fn()),
+      onExit: vi.fn(() => vi.fn()),
+      listProcesses: vi.fn(async () => []),
+      getForegroundProcess: vi.fn(async () => null)
+    } as never)
+    const getSettings = vi.fn().mockReturnValue({
+      activeCodexManagedAccountId: 'account-b',
+      codexManagedAccounts: [{ id: 'account-b', managedHomePath: '/managed/current/home' }]
+    })
+    registerPtyHandlers(
+      mainWindow as never,
+      undefined,
+      vi.fn(() => '/managed/current/home'),
+      getSettings as never,
+      undefined,
+      undefined,
+      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/shared-mirror/home' }) }
+    )
+
+    await handlers.get('pty:spawn')!(null, {
+      cols: 80,
+      rows: 24,
+      command: 'codex resume session-a',
+      launchAgent: 'codex',
+      resumeProviderSession: {
+        key: 'session_id',
+        id: 'session-a',
+        transcriptPath: '/managed/shared-mirror/home/sessions/2026/07/20/rollout-a.jsonl'
+      }
+    })
+
+    // Why: the shared mirror hot-swaps to the selected account, so guessing here
+    // would raise a restart notice that blocks a correctly-signed-in pane's input.
+    expect(recordCodexPaneAccountMock).not.toHaveBeenCalled()
+    expect(forgetCodexPaneAccountMock).toHaveBeenCalledWith('pty-resumed')
+  })
+
   it('seeds cold restore at recovered dimensions with a legacy dimensionless fallback', async () => {
     const oscLinks = [{ row: 0, startCol: 0, endCol: 8, uri: 'https://example.com/restored' }]
     const coldRestore = {
