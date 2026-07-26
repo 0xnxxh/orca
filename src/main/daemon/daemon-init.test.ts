@@ -848,6 +848,34 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(rebindOrder).toBeGreaterThan(swapOrder)
   })
 
+  // STA-2376: a manual restart kills the daemon while the outgoing adapter is still live, so a pane
+  // respawning on its synthetic exit reaches the death path for a user action. That must not land in
+  // the crash bucket. Driven from inside the restart's ensureRunning so restartInFlight is genuinely
+  // set, rather than asserting the guard against a flag the test poked itself.
+  it('does not report a retirement for a death observed during a manual restart', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+    const outgoingRespawn = adapterInstances[0].options.respawn
+    trackDaemonRetiredMock.mockClear()
+
+    let respawnedMidRestart = false
+    ensureRunningOverrides.push(async () => {
+      await outgoingRespawn?.('daemon_died')
+      respawnedMidRestart = true
+      return { socketPath: '/fake/restarted-socket', tokenPath: '/fake/restarted-token' }
+    })
+
+    await mod.restartDaemon()
+
+    expect(respawnedMidRestart).toBe(true)
+    expect(trackDaemonRetiredMock).not.toHaveBeenCalled()
+
+    // The same closure still retires once the restart has settled, so the guard is scoped, not permanent.
+    await outgoingRespawn?.('daemon_died')
+    expect(trackDaemonRetiredMock).toHaveBeenCalledTimes(1)
+    expect(trackDaemonRetiredMock).toHaveBeenCalledWith('died_respawn')
+  })
+
   it('preserves legacy adapter instances by identity, drains outgoing router via disposeRouterOnly, and re-discovers legacy sessions on the new router', async () => {
     const mod = await importFresh()
 
