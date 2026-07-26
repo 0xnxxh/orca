@@ -236,6 +236,9 @@ describe('FullDiskAccessNudge', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
+    // Why: this test builds its own root instead of renderNudge(), so it has to
+    // register for the afterEach unmount or it leaks a live component into later tests.
+    mountedRoots.push(root)
     await act(async () => {
       root.render(
         React.createElement(
