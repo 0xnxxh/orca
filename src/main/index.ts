@@ -1777,8 +1777,9 @@ function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
 }
 
 app.whenReady().then(async () => {
-  // Why: app.quit() above is async, so a lock-losing launch still reaches ready; returning keeps it from
-  // republishing orca-runtime.json / agent-hooks endpoint files over the live instance's (STA-1513).
+  // Why: Linux defers the app.quit() above until after ready, so a lock-losing launch still runs this
+  // handler and republishes orca-runtime.json / agent-hooks endpoints over the live instance's, leaving
+  // the CLI pointed at a dead pid. macOS quits before ready, so this is a no-op there. (STA-1513)
   if (!hasSingleInstanceLock) {
     return
   }

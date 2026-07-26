@@ -29,6 +29,7 @@ import type {
   RuntimeTerminalRead
 } from '../../src/shared/runtime-types'
 import { PROTOCOL_VERSION } from '../../src/main/daemon/types'
+import { getRuntimeMetadataPath, type RuntimeMetadata } from '../../src/shared/runtime-bootstrap'
 
 const electronPackageDir = path.join(process.cwd(), 'node_modules', 'electron')
 const electronPath = path.join(
@@ -65,6 +66,18 @@ function readDaemonPid(userDataDir: string): number {
     throw new Error(`Daemon pid file did not contain a numeric pid: ${raw}`)
   }
   return parsed.pid
+}
+
+// Why: status.get answers from the owner's live server, so only the file on disk can show whether a
+// lock-losing launch republished its own pid over the owner's. Guards Linux CI, where the quit is
+// deferred past ready and the clobber is reachable; macOS quits earlier, so it is a no-op. (STA-1513)
+function readRuntimeMetadataFromDisk(userDataDir: string): RuntimeMetadata {
+  const metadataPath = getRuntimeMetadataPath(userDataDir)
+  const parsed = JSON.parse(readFileSync(metadataPath, 'utf8')) as Partial<RuntimeMetadata>
+  if (typeof parsed.pid !== 'number' || typeof parsed.runtimeId !== 'string') {
+    throw new Error(`Runtime metadata lacked a pid/runtimeId: ${metadataPath}`)
+  }
+  return parsed as RuntimeMetadata
 }
 
 async function waitForProcessExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
@@ -127,6 +140,7 @@ test('promotes the headless owner without replacing its daemon terminal', async 
 
     const beforeStatus = await client.call<RuntimeStatus>('status.get')
     const daemonPidBefore = readDaemonPid(userDataDir)
+    const runtimeMetadataBefore = readRuntimeMetadataFromDisk(userDataDir)
     await client.call('repo.add', { path: repoPath, kind: 'git' })
     const created = await client.call<{ terminal: RuntimeTerminalCreate }>('terminal.create', {
       worktree: `path:${repoPath}`,
@@ -194,6 +208,11 @@ test('promotes the headless owner without replacing its daemon terminal', async 
     expect(promotedPtyId).toBe(terminal.ptyId)
     expect(readDaemonPid(userDataDir)).toBe(daemonPidBefore)
     expect(await waitForProcessExit(activatingProcess, 10_000)).toBe(true)
+    // Why: the loser publishes during its own startup, so only a post-exit read proves the
+    // owner's discovery record survived the whole second launch.
+    const runtimeMetadataAfter = readRuntimeMetadataFromDisk(userDataDir)
+    expect(runtimeMetadataAfter.pid).toBe(runtimeMetadataBefore.pid)
+    expect(runtimeMetadataAfter.runtimeId).toBe(runtimeMetadataBefore.runtimeId)
     await waitForTerminalOutput(page, beforeMarker, 30_000)
 
     const afterMarker = `SERVE_PROMOTION_AFTER_${Date.now()}`

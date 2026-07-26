@@ -87,11 +87,15 @@ describe('startup ordering', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const readyStart = source.indexOf('app.whenReady().then(async () => {')
     const guard = source.indexOf('if (!hasSingleInstanceLock) {', readyStart)
+    const guardEnd = source.indexOf('}', guard)
     const rpcStart = source.indexOf('runtimeRpc.start()', readyStart)
     const startupServices = source.indexOf('startTerminalRuntimeStartupServices()', readyStart)
 
     expect(readyStart).toBeGreaterThanOrEqual(0)
     expect(guard).toBeGreaterThan(readyStart)
+    // Why: ordering alone would still pass if the body were emptied to a no-op.
+    expect(guardEnd).toBeGreaterThan(guard)
+    expect(source.slice(guard, guardEnd)).toContain('return')
     expect(rpcStart).toBeGreaterThan(guard)
     expect(startupServices).toBeGreaterThan(guard)
     // Why: the bail must precede every side effect in the handler, not merely the RPC publish.
