@@ -73,6 +73,7 @@ export class RuntimeClient {
       method,
       options?.timeoutMs ?? this.resolveMethodTimeoutMs(method, params)
     )
+    const deadlineMs = Date.now() + effectiveTimeoutMs
     const orchestrationMutation = isOrchestrationMutation(method, params)
     if (orchestrationMutation) {
       await this.ensureOrchestrationContractCompatible(effectiveTimeoutMs)
@@ -89,7 +90,7 @@ export class RuntimeClient {
     }
     if (this.remotePairing) {
       if (method !== 'status.get') {
-        await this.ensureRemoteRuntimeCompatible(effectiveTimeoutMs)
+        await this.ensureRemoteRuntimeCompatible(remainingRemoteCallTimeoutMs(deadlineMs))
       }
       const sendWebSocketRequest = await loadSendWebSocketRequest()
       let response
@@ -98,7 +99,7 @@ export class RuntimeClient {
           this.remotePairing,
           method,
           params,
-          effectiveTimeoutMs,
+          remainingRemoteCallTimeoutMs(deadlineMs),
           envelope
         )
       } catch (error) {
@@ -292,6 +293,10 @@ function attachMutationRecovery(error: unknown, requestId: string | undefined): 
       orchestrationRequestId: requestId
     }
   )
+}
+
+function remainingRemoteCallTimeoutMs(deadlineMs: number): number {
+  return Math.max(1, deadlineMs - Date.now())
 }
 
 function throwDesktopActivationBlocked(): never {

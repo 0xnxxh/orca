@@ -5,9 +5,10 @@ type ClosingProviderTeardown = {
 }
 
 const MAX_RETRYABLE_PROVIDER_TEARDOWNS = 128
+const MAX_EVICTED_PROVIDER_TEARDOWN_IDS = 512
 const providerTeardownByClosingTabId = new Map<string, ClosingProviderTeardown>()
 const retryableProviderTeardowns = new Set<ClosingProviderTeardown>()
-let retryAuthorityWasEvicted = false
+const evictedProviderTeardownTabIds = new Set<string>()
 
 function failedProviderTeardownProof(): Promise<void> {
   const failure = Promise.reject(new Error('terminal_tab_close_failed'))
@@ -21,6 +22,20 @@ function clearClosingTabProviderTeardown(entry: ClosingProviderTeardown): void {
     if (providerTeardownByClosingTabId.get(tabId) === entry) {
       providerTeardownByClosingTabId.delete(tabId)
     }
+  }
+}
+
+function rememberEvictedProviderTeardown(entry: ClosingProviderTeardown): void {
+  for (const tabId of entry.keys) {
+    evictedProviderTeardownTabIds.delete(tabId)
+    evictedProviderTeardownTabIds.add(tabId)
+  }
+  while (evictedProviderTeardownTabIds.size > MAX_EVICTED_PROVIDER_TEARDOWN_IDS) {
+    const oldest = evictedProviderTeardownTabIds.values().next().value
+    if (!oldest) {
+      break
+    }
+    evictedProviderTeardownTabIds.delete(oldest)
   }
 }
 
@@ -47,8 +62,7 @@ function beginClosingTabProviderTeardown(
           break
         }
         clearClosingTabProviderTeardown(oldest)
-        // Why: after retry authority is discarded, an unknown tab can no longer prove provider absence.
-        retryAuthorityWasEvicted = true
+        rememberEvictedProviderTeardown(oldest)
       }
     }
   )
@@ -59,8 +73,12 @@ export function trackTerminalTabProviderTeardown(
   providerTeardown: Promise<void>,
   retry: () => Promise<void>
 ): void {
+  const keys = [...new Set(tabIds)]
+  for (const tabId of keys) {
+    evictedProviderTeardownTabIds.delete(tabId)
+  }
   const entry: ClosingProviderTeardown = {
-    keys: [...new Set(tabIds)],
+    keys,
     inFlight: null,
     retry
   }
@@ -70,7 +88,7 @@ export function trackTerminalTabProviderTeardown(
 export function getTerminalTabProviderTeardown(tabId: string): Promise<void> | undefined {
   const entry = providerTeardownByClosingTabId.get(tabId)
   if (!entry) {
-    return retryAuthorityWasEvicted ? failedProviderTeardownProof() : undefined
+    return evictedProviderTeardownTabIds.has(tabId) ? failedProviderTeardownProof() : undefined
   }
   if (entry.inFlight) {
     return entry.inFlight

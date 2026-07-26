@@ -1262,6 +1262,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         if (upgradeFailure?.status === 'rejected') {
           throw upgradeFailure.reason
         }
+        if (retirementPlan.unroutablePtyIds.length > 0) {
+          throw new Error('terminal_tab_close_failed')
+        }
         const localOrSshFailures = results
           .slice(0, localOrSshTaskCount)
           .filter((result) => result.status === 'rejected').length
@@ -1422,8 +1425,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const closingPtyIds = new Set([
         ...retirementPlan.localOrSshPtyIds,
         ...retirementPlan.runtimeTerminals.map((terminal) => terminal.ptyId),
-        ...retirementPlan.cleanupOnlyPtyIds,
-        ...retirementPlan.unroutablePtyIds
+        ...retirementPlan.cleanupOnlyPtyIds
       ])
       for (const closingId of closingPtyIds) {
         if (closingId in nextSnapshots) {

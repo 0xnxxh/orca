@@ -20460,6 +20460,7 @@ describe('OrcaRuntimeService', () => {
       spawn: vi.fn(),
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null
     })
     runtime.setNotifier({
@@ -21738,6 +21739,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => []
     })
@@ -22242,6 +22244,7 @@ describe('OrcaRuntimeService', () => {
       spawn,
       write: () => true,
       kill,
+      stopAndWait: async () => true,
       getForegroundProcess: async () => null
     })
 
@@ -22425,6 +22428,7 @@ describe('OrcaRuntimeService', () => {
       spawn,
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null
     })
     runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
@@ -24054,6 +24058,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => [{ id: persistedPtyId, cwd: TEST_WORKTREE_PATH, title: 'Remote' }]
     })
@@ -24064,6 +24069,53 @@ describe('OrcaRuntimeService', () => {
     expect(kill).toHaveBeenCalledWith(persistedPtyId)
     expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toEqual([])
     expect(getSession().terminalLayoutsByTabId['host-tab']).toBeUndefined()
+  })
+
+  it('keeps headless state when physical PTY exit cannot be proven', async () => {
+    const persistedPtyId = 'ssh:ssh-1@@unproven-pty'
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal({
+        tabsByWorktree: {
+          [TEST_WORKTREE_ID]: [
+            {
+              id: 'host-tab',
+              ptyId: persistedPtyId,
+              worktreeId: TEST_WORKTREE_ID,
+              title: 'Remote Terminal',
+              customTitle: null,
+              color: null,
+              sortOrder: 0,
+              createdAt: 1
+            }
+          ]
+        },
+        terminalLayoutsByTabId: {
+          'host-tab': makeHeadlessTerminalLayout({ [HEADLESS_LEAF_ID]: persistedPtyId })
+        }
+      })
+    )
+    const kill = vi.fn(() => true)
+    const stopAndWait = vi.fn(async () => false)
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setPtyController({
+      write: () => true,
+      kill,
+      stopAndWait,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [{ id: persistedPtyId, cwd: TEST_WORKTREE_PATH, title: 'Remote' }]
+    })
+    runtime.syncWindowGraph(0, { tabs: [], leaves: [] })
+
+    await expect(
+      runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, 'host-tab')
+    ).rejects.toThrow('terminal_tab_close_failed')
+
+    expect(stopAndWait).toHaveBeenCalledWith(persistedPtyId, {
+      deadlineMs: expect.any(Number)
+    })
+    expect(kill).not.toHaveBeenCalled()
+    expect(getSession().tabsByWorktree[TEST_WORKTREE_ID]).toHaveLength(1)
+    expect(getSession().terminalLayoutsByTabId['host-tab']).toBeDefined()
   })
 
   it('durably tears down a runtime-owned SSH headless tab when renderer cleanup fails', async () => {
@@ -24102,6 +24154,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => [{ id: persistedPtyId, cwd: TEST_WORKTREE_PATH, title: 'Remote' }]
     })
@@ -24157,6 +24210,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (closedPtyId) => kill(closedPtyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => []
     })
@@ -24904,6 +24958,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => []
     })
@@ -24993,6 +25048,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => []
     })
@@ -25060,6 +25116,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => []
     })
@@ -25126,6 +25183,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => []
     })
@@ -25252,6 +25310,7 @@ describe('OrcaRuntimeService', () => {
     runtime.setPtyController({
       write: () => true,
       kill,
+      stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
       getForegroundProcess: async () => null,
       listProcesses: async () => []
     })
@@ -25341,6 +25400,7 @@ describe('OrcaRuntimeService', () => {
       runtime.setPtyController({
         write: () => true,
         kill,
+        stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
         getForegroundProcess: async () => null,
         listProcesses
       })
@@ -25624,6 +25684,7 @@ describe('OrcaRuntimeService', () => {
       runtime.setPtyController({
         write: () => true,
         kill,
+        stopAndWait: async (ptyId) => (kill as unknown as (id: string) => boolean)(ptyId),
         getForegroundProcess: async () => null,
         listProcesses: async () => []
       })

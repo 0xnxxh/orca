@@ -6265,8 +6265,9 @@ export class OrcaRuntimeService {
       // the relay when no renderer owns the parent: an adopted tab needs the
       // renderer's live pin guard and durable close transaction.
       if (closingWholeParent && !this.tabs.has(tab.parentTabId)) {
-        this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab, {
-          killPtys: options.reason === undefined || options.reason === 'user'
+        await this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab, {
+          killPtys: options.reason === undefined || options.reason === 'user',
+          deadlineMs: closeDeadlineMs
         })
         this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
         this.store?.flushOrThrow?.()
@@ -6303,7 +6304,9 @@ export class OrcaRuntimeService {
           this.isRuntimeOwnedHeadlessMobileTab(worktreeId, remainingTab)
         ) {
           // Why: after relay recovery the renderer can acknowledge a tab it no longer mirrors; the HUB must still retire its SSH-owned surface.
-          this.closeHeadlessMobileTerminalTab(worktreeId, remainingSnapshot, remainingTab)
+          await this.closeHeadlessMobileTerminalTab(worktreeId, remainingSnapshot, remainingTab, {
+            deadlineMs: closeDeadlineMs
+          })
           this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
           this.store?.flushOrThrow?.()
         }
@@ -6312,20 +6315,24 @@ export class OrcaRuntimeService {
       // Why: notifier implementations without the acknowledged relay may expose
       // only raw pane close. Runtime-owned parents still need de-persist + kill.
       if (closingWholeParent && this.isRuntimeOwnedHeadlessMobileTab(worktreeId, tab)) {
-        this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab)
+        await this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab, {
+          deadlineMs: closeDeadlineMs
+        })
         this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)
         this.store?.flushOrThrow?.()
         return { closed: true }
       }
       if (!this.notifier?.closeTerminal) {
-        this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab)
+        await this.closeHeadlessMobileTerminalTab(worktreeId, snapshot!, tab, {
+          deadlineMs: closeDeadlineMs
+        })
         this.store?.flushOrThrow?.()
         return { closed: true }
       }
       if (tab.id === tabId) {
         const pty = this.findPtyForMobileTerminalTab(worktreeId, tab)
         if (pty) {
-          this.ptyController?.kill(pty.ptyId)
+          await this.stopHeadlessMobilePtys([pty.ptyId], closeDeadlineMs)
         } else {
           this.notifier?.closeTerminal(tab.parentTabId)
         }
@@ -6471,24 +6478,25 @@ export class OrcaRuntimeService {
     this.emitMobileSessionTabsSnapshot(nextSnapshot)
   }
 
-  private closeHeadlessMobileTerminalTab(
+  private async closeHeadlessMobileTerminalTab(
     worktreeId: string,
     snapshot: RuntimeMobileSessionTabsSnapshot,
     tab: RuntimeMobileSessionTerminalTab,
-    options: { killPtys?: boolean } = {}
-  ): void {
+    options: { killPtys?: boolean; deadlineMs?: number } = {}
+  ): Promise<void> {
     const closedParentTabId = tab.parentTabId
     const ptyIdsToKill = this.collectHeadlessMobileTerminalPtyIds(
       worktreeId,
       snapshot,
       closedParentTabId
     )
-    this.removePersistedHeadlessTerminalTab(worktreeId, closedParentTabId)
     if (options.killPtys !== false) {
-      for (const ptyId of ptyIdsToKill) {
-        this.ptyController?.kill(ptyId)
-      }
+      await this.stopHeadlessMobilePtys(
+        ptyIdsToKill,
+        options.deadlineMs ?? Date.now() + TERMINAL_TAB_CLOSE_RESPONSE_TIMEOUT_MS
+      )
     }
+    this.removePersistedHeadlessTerminalTab(worktreeId, closedParentTabId)
     const nextTabs = snapshot.tabs.filter((candidate) => {
       if (candidate.type !== 'terminal' || candidate.parentTabId !== closedParentTabId) {
         return true
@@ -6512,6 +6520,26 @@ export class OrcaRuntimeService {
     }
     this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
     this.emitMobileSessionTabsSnapshot(nextSnapshot)
+  }
+
+  private async stopHeadlessMobilePtys(
+    ptyIds: Iterable<string>,
+    deadlineMs: number
+  ): Promise<void> {
+    const ids = [...ptyIds]
+    if (ids.length === 0) {
+      return
+    }
+    const stopAndWait = this.ptyController?.stopAndWait?.bind(this.ptyController)
+    if (!stopAndWait || deadlineMs <= Date.now()) {
+      throw new Error('terminal_tab_close_failed')
+    }
+    const stopped = await Promise.all(
+      ids.map((ptyId) => stopAndWait(ptyId, { deadlineMs }).catch(() => false))
+    )
+    if (stopped.some((result) => !result)) {
+      throw new Error('terminal_tab_close_failed')
+    }
   }
 
   private collectHeadlessMobileTerminalPtyIds(
@@ -6573,7 +6601,7 @@ export class OrcaRuntimeService {
         (candidate): candidate is RuntimeMobileSessionTerminalTab =>
           candidate.type === 'terminal' && candidate.parentTabId === tab.parentTabId
       ) ?? tab
-    this.closeHeadlessMobileTerminalTab(worktreeId, currentSnapshot, currentTab, {
+    await this.closeHeadlessMobileTerminalTab(worktreeId, currentSnapshot, currentTab, {
       killPtys: false
     })
     this.notifyRendererOfHeadlessTerminalClose(tab.parentTabId)

@@ -331,6 +331,33 @@ describe('terminal tab retirement store boundary', () => {
     expect(store.getState().pendingColdRestoreByPtyId['pty-shared']).toBe(coldRestore)
   })
 
+  it('fails closed and preserves recovery snapshots for an unroutable live PTY', async () => {
+    const store = createRetirementStore()
+    const snapshot = { snapshot: 'unroutable snapshot' }
+    const coldRestore = { scrollback: 'unroutable scrollback', cwd: '/repo/wt-1' }
+    seedStore(store, {
+      tabsByWorktree: {
+        'wt-1': [makeTab({ id: 'tab-1', worktreeId: 'wt-1', ptyId: 'remote:' })]
+      },
+      ptyIdsByTabId: { 'tab-1': ['remote:'] },
+      pendingSnapshotByPtyId: { 'remote:': snapshot },
+      pendingColdRestoreByPtyId: { 'remote:': coldRestore }
+    })
+    let providerTeardown: Promise<void> | undefined
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    store.getState().closeTab('tab-1', {
+      registerProviderTeardown: (teardown) => {
+        providerTeardown = teardown
+      }
+    })
+
+    await expect(providerTeardown).rejects.toThrow('terminal_tab_close_failed')
+    expect(store.getState().pendingSnapshotByPtyId['remote:']).toBe(snapshot)
+    expect(store.getState().pendingColdRestoreByPtyId['remote:']).toBe(coldRestore)
+    warn.mockRestore()
+  })
+
   it('reconciles natural exit without issuing teardown or revoking resume authority', async () => {
     const store = createRetirementStore()
     const record = sleepingRecord('tab-1:leaf-1', 'tab-1')

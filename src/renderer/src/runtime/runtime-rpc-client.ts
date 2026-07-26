@@ -66,6 +66,7 @@ export async function callRuntimeRpc<TResult>(
   const timeoutMs = isTerminalTabCloseRpcMethod(method)
     ? resolveTerminalTabCloseCallerTimeoutMs(method, options.timeoutMs ?? 0)
     : options.timeoutMs
+  const deadlineMs = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
   if (
     target.kind === 'environment' &&
     method !== 'status.get' &&
@@ -73,7 +74,7 @@ export async function callRuntimeRpc<TResult>(
   ) {
     await ensureRuntimeEnvironmentCompatible(target.environmentId, {
       ...options,
-      timeoutMs,
+      timeoutMs: remainingRuntimeCallTimeoutMs(deadlineMs),
       expectedEnvironmentPairingRevision
     })
   }
@@ -90,12 +91,15 @@ export async function callRuntimeRpc<TResult>(
           environmentId: target.environmentId,
           method,
           params: nextParams,
-          timeoutMs,
+          timeoutMs: remainingRuntimeCallTimeoutMs(deadlineMs),
           signal: options.signal,
           expectedEnvironmentPairingRevision
         })
   return unwrapRuntimeRpcResult<TResult>(response as RuntimeRpcResponse<TResult>)
 }
+
+const remainingRuntimeCallTimeoutMs = (deadlineMs?: number) =>
+  deadlineMs === undefined ? undefined : Math.max(1, deadlineMs - Date.now())
 
 async function ensureRuntimeEnvironmentCompatible(
   environmentId: string,
@@ -335,6 +339,4 @@ export async function assertRuntimeEnvironmentCapability(
   }
 }
 
-export function clearRuntimeCompatibilityCacheForTests(): void {
-  clearRuntimeCompatibilityCache()
-}
+export const clearRuntimeCompatibilityCacheForTests = clearRuntimeCompatibilityCache

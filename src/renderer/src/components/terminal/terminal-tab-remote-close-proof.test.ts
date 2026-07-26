@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import {
-  TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS,
+  TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS,
   TERMINAL_TAB_PROVIDER_TEARDOWN_TIMEOUT_MS
 } from '../../../../shared/terminal-tab-close'
 
@@ -64,6 +64,6 @@ it('awaits paired-runtime close proof before acknowledging provider teardown', a
     tabId: 'host-tab-1',
     environmentId: 'web-runtime',
     reason: 'user',
-    timeoutMs: TERMINAL_TAB_PROVIDER_RPC_TIMEOUT_MS
+    timeoutMs: TERMINAL_TAB_CLOSE_CALLER_TIMEOUT_MS
   })
 })

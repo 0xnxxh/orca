@@ -1007,7 +1007,9 @@ export function connect(
       )
       const budget = openRpcRequestBudget({
         ...options,
-        ...(isTerminalTabCloseRpcMethod(method) ? { timeoutMs: methodTimeoutMs } : {})
+        ...(isTerminalTabCloseRpcMethod(method)
+          ? { timeoutMs: methodTimeoutMs, budgetSpansConnect: true }
+          : {})
       })
       const waitStart = budget.startedAt
       const wasConnected = state === 'connected'
@@ -1021,17 +1023,18 @@ export function connect(
 
       return new Promise((resolve, reject) => {
         const id = nextId()
-        const timeoutMs = resolvePostConnectRequestTimeout(budget, REQUEST_TIMEOUT_MS)
+        const requestTimeoutMs =
+          resolvePostConnectRequestTimeout(budget, REQUEST_TIMEOUT_MS)
         const timeout = setTimeout(() => {
           pending.delete(id)
           console.log('[net] sendRequest TIMEOUT', {
             method,
-            timeoutMs,
+            timeoutMs: requestTimeoutMs,
             state
           })
           // Why: the frame was written 30s ago — the host may have processed it.
           reject(markRpcDeliveryUnknown(new Error(`Request timed out: ${method}`)))
-        }, timeoutMs)
+        }, requestTimeoutMs)
 
         pending.set(id, {
           resolve: (response) => {

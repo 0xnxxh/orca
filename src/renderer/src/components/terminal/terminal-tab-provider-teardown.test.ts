@@ -18,6 +18,7 @@ it('fails closed after retry authority eviction and re-runs the newest teardown'
   await expect(getTerminalTabProviderTeardown('failed-tab-0')).rejects.toThrow(
     'terminal_tab_close_failed'
   )
+  expect(getTerminalTabProviderTeardown('never-tracked-tab')).toBeUndefined()
   await expect(getTerminalTabProviderTeardown('failed-tab-128')).resolves.toBeUndefined()
   expect(retries[128]).toHaveBeenCalledOnce()
 })

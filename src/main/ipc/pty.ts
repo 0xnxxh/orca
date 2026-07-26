@@ -4043,14 +4043,8 @@ export function registerPtyHandlers(
           provider = connectionId ? getProvider(connectionId) : getProviderForPty(ptyId)
         } catch {
           if (connectionId) {
-            // Why: runtime/CLI close can target a detached SSH PTY after its
-            // provider was unregistered. Tombstone the lease so reconnect does
-            // not revive a terminal the user explicitly closed.
-            const incarnationId = finishPtyShutdown(ptyId, connectionId, store)
-            runtime?.onPtyExit(ptyId, -1, incarnationId)
-            rememberSyntheticKillExit(ptyId)
-            sendPtyExitToRenderer({ id: ptyId, code: -1 })
-            return true
+            // Why: relay detach removes the provider while deliberately keeping the remote PTY alive for reattach.
+            return false
           }
           return false
         }
@@ -5720,14 +5714,8 @@ export function registerPtyHandlers(
     }
     const provider = connectionId ? sshProviders.get(connectionId) : tryGetProviderForPty(args.id)
     if (!provider && connectionId) {
-      // Why: detached SSH PTYs intentionally keep ownership after their
-      // provider is unregistered; hydrated app-scoped ids can also arrive
-      // before ownership is rebuilt. Tombstone instead of falling back local.
-      const incarnationId = finishPtyShutdown(args.id, connectionId, store)
-      runtime?.onPtyExit(args.id, -1, incarnationId)
-      rememberSyntheticKillExit(args.id)
-      sendPtyExitToRenderer({ id: args.id, code: -1 })
-      return
+      // Why: detached SSH ownership is positive evidence that the missing provider is not physical-exit proof.
+      throw new Error('terminal_provider_teardown_unavailable')
     }
     const shutdownProvider = provider ?? getProviderForPty(args.id)
     let providerExitObserved = false
