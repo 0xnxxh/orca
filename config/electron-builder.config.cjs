@@ -495,11 +495,12 @@ async function signMacStandaloneHelperBinary(helperPath, packager) {
   if (!identity) {
     throw new Error(`Missing signing identity for ${helperName} helper`)
   }
-  // Why: macOS keys notification records to the code-signing identifier; each
-  // helper embeds its CFBundleIdentifier in __TEXT,__info_plist so this (and any
-  // later) `codesign --force` derives that helper's own identifier rather than
-  // the app's. Sign before the outer Orca.app is sealed, like the computer-use
-  // helper.
+  // Why: each helper embeds a CFBundleIdentifier in __TEXT,__info_plist so this
+  // (and any later) `codesign --force` derives a stable identifier instead of
+  // codesign's filename-plus-content-hash default. Which identifier differs per
+  // helper: orca-notification-status deliberately carries the *app's* id (macOS
+  // keys notification records to it), the disclaim shim its own. Sign before the
+  // outer Orca.app is sealed, like the computer-use helper.
   const args = ['--force', '--sign', identity]
   if (isMacRelease) {
     args.push('--options', 'runtime', '--timestamp')

@@ -6,7 +6,7 @@
 // Its dedicated CFBundleIdentifier is embedded as a __TEXT,__info_plist
 // section so every later `codesign --force` pass (electron-builder's signing,
 // the dev runner's ad-hoc deep sign) derives the same stable code identifier
-// for this binary instead of silently reusing the app's.
+// for this binary, not the filename-plus-content-hash codesign defaults to.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

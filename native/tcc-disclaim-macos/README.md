@@ -16,7 +16,8 @@ shim is gone from the process by the time tccd sees anything.
 The build embeds a dedicated, stable `CFBundleIdentifier`
 (`com.stablyai.orca.tcc-disclaim-exec`) as a `__TEXT,__info_plist` section so
 every `codesign --force` pass derives the same code identifier for the shim
-binary instead of silently reusing the app's.
+binary. Without it codesign falls back to the filename plus a content hash
+(`orca-tcc-disclaim-exec-<hash>`), which changes on every rebuild.
 
 Build: `pnpm run build:tcc-disclaim-macos` (add `--single-arch` for a
 host-arch-only dev build). Output:
@@ -25,8 +26,10 @@ host-arch-only dev build). Output:
 
 To confirm the disclaim took effect without root, have a process call
 `responsibility_get_pid_responsible_for_pid(getpid())` (dlsym'd, self-query
-only): it returns the launching app's pid on the plain path and the caller's
-own pid through the shim.
+only) **from a terminal Orca spawned**: the plain path reports Orca's pid, the
+shim path the caller's own pid. The check only discriminates under an app-bundle
+ancestor — run from an ordinary login/SSH shell (already its own responsible
+process) both paths report the caller's own pid, i.e. a false positive.
 
 Runtime wiring is flag-gated behind `ORCA_MACOS_TCC_DISCLAIM` (default off —
 the login(1) wrap in `src/main/providers/macos-tcc-login-shell.ts` remains the
