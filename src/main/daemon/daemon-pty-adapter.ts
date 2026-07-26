@@ -152,6 +152,8 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private sessionsNeedingFullCheckpoint = new Set<string>()
   private checkpointTimer: ReturnType<typeof setTimeout> | null = null
   private checkpointInFlight: Promise<void> | null = null
+  private keepHistoryShutdowns = new Set<Promise<void>>()
+  private disconnectOnlyPromise: Promise<void> | null = null
   // Why: checkpoint persistence needs the getSnapshot RPC (v4+); legacy daemons reject it, spamming logs every 5s.
   private supportsCheckpoints: boolean
   // Why: incremental checkpoints need the takePendingOutput RPC (v13+); older daemons fall back to full-snapshot checkpoints.
@@ -756,7 +758,20 @@ export class DaemonPtyAdapter implements IPtyProvider {
     id: string,
     opts: { immediate?: boolean; keepHistory?: boolean; deadlineMs?: number }
   ): Promise<void> {
-    await this.withHistorySpawnLock(id, () => this.shutdownWithHistoryLock(id, opts))
+    if (opts.keepHistory && this.disconnectOnlyPromise) {
+      throw new Error('Cannot keep history after daemon disconnect has started')
+    }
+    const shutdown = this.withHistorySpawnLock(id, () => this.shutdownWithHistoryLock(id, opts))
+    if (!opts.keepHistory) {
+      await shutdown
+      return
+    }
+    this.keepHistoryShutdowns.add(shutdown)
+    try {
+      await shutdown
+    } finally {
+      this.keepHistoryShutdowns.delete(shutdown)
+    }
   }
 
   private async shutdownWithHistoryLock(
@@ -1297,8 +1312,18 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // Why: unlike dispose(), leave history files unclean (no endedAt) so the next launch treats them as crash-recoverable,
   // but still write a final checkpoint so a daemon crash while Orca is closed has recovery data.
   async disconnectOnly(): Promise<void> {
+    if (!this.disconnectOnlyPromise) {
+      this.respawnAdoptionClosed = true
+      this.releasePendingRespawnAdoptionLease()
+      this.disconnectOnlyPromise = this.finishDisconnectOnly([...this.keepHistoryShutdowns])
+    }
+    await this.disconnectOnlyPromise
+  }
+
+  private async finishDisconnectOnly(keepHistoryShutdowns: Promise<void>[]): Promise<void> {
+    // Why: sleep shutdowns still detect recovery and kill after checkpointing; disconnecting first rejects those admitted operations.
+    await Promise.allSettled(keepHistoryShutdowns)
     this.respawnAdoptionClosed = true
-    this.releasePendingRespawnAdoptionLease()
     // Why: a final checkpoint covers sessions opened since the last tick (else cold restore finds nothing if the daemon
     // later dies). Await it — fire-and-forget would race client.disconnect() and reject the pending getSnapshot RPCs.
     await this.runExclusiveCheckpoint(() => this.checkpointAllSessions(), {

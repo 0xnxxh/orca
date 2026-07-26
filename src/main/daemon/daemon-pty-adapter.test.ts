@@ -1768,7 +1768,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
           sessionIds: Iterable<string>,
           opts?: { final?: boolean; teardown?: boolean }
         ): Promise<Set<string>>
-        client: { disconnect(): void }
       }
       const originalCheckpointSessions = internals.checkpointSessions.bind(historyAdapter)
       let activeCheckpoints = 0
@@ -1796,7 +1795,6 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
           activeCheckpoints--
         }
       })
-      vi.spyOn(internals.client, 'disconnect').mockImplementation(() => {})
 
       const firstShutdown = historyAdapter.shutdown(sessionIds[0], {
         immediate: true,
