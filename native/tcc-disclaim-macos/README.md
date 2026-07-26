@@ -34,3 +34,13 @@ process) both paths report the caller's own pid, i.e. a false positive.
 Runtime wiring is flag-gated behind `ORCA_MACOS_TCC_DISCLAIM` (default off —
 the login(1) wrap in `src/main/providers/macos-tcc-login-shell.ts` remains the
 live path). See `src/main/providers/macos-tcc-disclaim-exec.ts`.
+
+Setting the flag needs a **fresh daemon**, or it silently does nothing: PTYs are
+spawned by the detached daemon, which inherits the env of the GUI that forked it.
+Quitting Orca only asks the daemon to retire when it hosts zero sessions
+(`shutdownIfIdle`), so a relaunch with any warm terminal adopts the old,
+flag-less daemon. Close every terminal before quitting, or kill the daemon. Also
+launch the app from a shell — a Finder/Dock launch carries no shell environment.
+Note the engaged log line reaches a console only on in-process (degraded/local)
+spawns, since the daemon forks stdout to `'ignore'`; it is not a usable
+flag-on confirmation for the normal daemon path.
