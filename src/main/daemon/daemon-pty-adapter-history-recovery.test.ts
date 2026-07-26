@@ -731,8 +731,12 @@ describe('DaemonPtyAdapter history recovery', () => {
       expect(manager.hasWriter(sessionId)).toBe(true)
       expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(true)
 
-      await waitFor(() => checkpointSpy.mock.calls.some(([id]) => id === sessionId))
-      expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(false)
+      // Why both: the spy fires inside takeSnapshotAndCheckpoint; the set clears only after that await returns.
+      await waitFor(
+        () =>
+          checkpointSpy.mock.calls.some(([id]) => id === sessionId) &&
+          !internals.sessionsNeedingFullCheckpoint.has(sessionId)
+      )
 
       const checkpoint = JSON.parse(
         readFileSync(
