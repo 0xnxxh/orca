@@ -396,14 +396,27 @@ describe('relay install writes on a split SFTP namespace', () => {
   })
 
   it('leaves system-SSH connections unmapped and unprobed', async () => {
-    const conn = makeConnection(capture, { systemSsh: true })
+    // transferMethods models the shipping SshConnection path (uploadDirectory/writeFile → system SSH helpers).
+    const conn = makeConnection(capture, { systemSsh: true, transferMethods: true })
     feed(POSIX_FIRST_INSTALL)
 
     await deployAndLaunchRelay(conn)
 
     expect(execCommands().some((command) => MARKER_PATTERN.test(command))).toBe(false)
     expect(capture.realpathCalls).toEqual([])
+    expect(capture.lstatCalls).toEqual([])
+    expect(conn.sftp).not.toHaveBeenCalled()
+    // System SSH never retargets: shell absolute paths, no mapping, no SFTP session.
     expect(capture.uploadTargets).toEqual([SHELL_RELAY_DIR])
+    expect(capture.writePaths).toEqual([
+      `${SHELL_RELAY_DIR}/.version`,
+      `${SHELL_RELAY_DIR}/package.json`
+    ])
+    const transferOptions = [...capture.uploadOptions, ...capture.writeOptions]
+    expect(transferOptions).toHaveLength(3)
+    for (const options of transferOptions) {
+      expect(options?.sftpNamespace).toBeUndefined()
+    }
   })
 
   it('leaves Windows hosts unmapped and unprobed', async () => {
@@ -521,7 +534,7 @@ describe('relay repair writes on a split SFTP namespace', () => {
   })
 
   it('does not stamp a marker when repairing over system SSH', async () => {
-    const conn = makeConnection(capture, { systemSsh: true })
+    const conn = makeConnection(capture, { systemSsh: true, transferMethods: true })
     feed([
       '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
       SHELL_HOME,
@@ -538,7 +551,9 @@ describe('relay repair writes on a split SFTP namespace', () => {
     await deployAndLaunchRelay(conn)
 
     expect(execCommands().some((command) => MARKER_PATTERN.test(command))).toBe(false)
+    expect(conn.sftp).not.toHaveBeenCalled()
     expect(capture.writePaths).toEqual([`${SHELL_RELAY_DIR}/package.json`])
+    expect(capture.writeOptions).toEqual([expect.objectContaining({ sftpNamespace: undefined })])
   })
 
   it('degrades to shell paths when marker creation fails outright', async () => {

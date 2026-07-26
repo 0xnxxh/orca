@@ -243,14 +243,18 @@ function connectionWithClient(client: Client): SshConnection {
   return connection
 }
 
-async function boundedUpload(operation: Promise<void>, operations: string[]): Promise<void> {
+async function boundedTransfer(
+  operation: Promise<void>,
+  operations: string[],
+  label: string
+): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([
       operation,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(
-          () => reject(new Error(`SFTP wire upload timed out: ${operations.join(', ')}`)),
+          () => reject(new Error(`SFTP wire ${label} timed out: ${operations.join(', ')}`)),
           5_000
         )
       })
@@ -260,12 +264,23 @@ async function boundedUpload(operation: Promise<void>, operations: string[]): Pr
   }
 }
 
-it('uploads through a verified split namespace over a real ssh2 SFTP session', async () => {
-  const localDir = await realpath(await mkdtemp(join(tmpdir(), 'orca-sftp-wire-local-')))
+function splitNamespaceMapping(homeRelativePath: string): SftpNamespacePathMapping {
+  return {
+    homeRelativePath,
+    shellProbePath: `${SHELL_RELAY_DIR}/${MARKER_PATH}`,
+    homeRelativeProbePath: `${RELAY_DIR}/${MARKER_PATH}`
+  }
+}
+
+async function withSplitNamespaceFixture(
+  run: (args: {
+    connection: SshConnection
+    fixture: SftpWireServer
+    backingRelayDir: string
+  }) => Promise<void>
+): Promise<void> {
   const backingRoot = await mkdtemp(join(tmpdir(), 'orca-sftp-wire-remote-'))
   const backingRelayDir = join(backingRoot, ...RELAY_DIR.split('/'))
-  await mkdir(join(localDir, 'nested'))
-  await writeFile(join(localDir, 'nested', 'payload.bin'), Buffer.from([0, 1, 2, 255]))
   await mkdir(join(backingRelayDir, '.install-lock'), { recursive: true })
   await writeFile(join(backingRelayDir, '.install-lock', MARKER_FILE), '')
 
@@ -274,34 +289,73 @@ it('uploads through a verified split namespace over a real ssh2 SFTP session', a
   try {
     fixture = await startSftpWireServer(backingRoot)
     client = await connectSshClient(fixture.port)
-    const connection = connectionWithClient(client)
-    const mapping: SftpNamespacePathMapping = {
-      homeRelativePath: RELAY_DIR,
-      shellProbePath: `${SHELL_RELAY_DIR}/${MARKER_PATH}`,
-      homeRelativeProbePath: `${RELAY_DIR}/${MARKER_PATH}`
-    }
-
-    await boundedUpload(
-      connection.uploadDirectory(localDir, SHELL_RELAY_DIR, {
-        hostPlatform: getRemoteHostPlatform('linux-x64'),
-        sftpNamespace: mapping
-      }),
-      fixture.operations
-    )
-
-    expect(await readFile(join(backingRelayDir, 'nested', 'payload.bin'))).toEqual(
-      Buffer.from([0, 1, 2, 255])
-    )
-    expect(fixture.operations).toContain(`REALPATH:.`)
-    expect(fixture.operations).toContain(`LSTAT:${mapping.shellProbePath}`)
-    expect(fixture.operations).toContain(`LSTAT:${SFTP_RELAY_DIR}/${MARKER_PATH}`)
-    expect(fixture.operations).toContain(`MKDIR:${SFTP_RELAY_DIR}/nested`)
-    expect(fixture.operations).toContain(`OPEN:${SFTP_RELAY_DIR}/nested/payload.bin`)
-    expect(fixture.operations).toEqual(expect.arrayContaining(['WRITE', 'CLOSE']))
+    await run({
+      connection: connectionWithClient(client),
+      fixture,
+      backingRelayDir
+    })
   } finally {
     client?.end()
     await fixture?.close()
-    await rm(localDir, { recursive: true, force: true })
     await rm(backingRoot, { recursive: true, force: true })
   }
+}
+
+it('uploads through a verified split namespace over a real ssh2 SFTP session', async () => {
+  const localDir = await realpath(await mkdtemp(join(tmpdir(), 'orca-sftp-wire-local-')))
+  await mkdir(join(localDir, 'nested'))
+  await writeFile(join(localDir, 'nested', 'payload.bin'), Buffer.from([0, 1, 2, 255]))
+
+  try {
+    await withSplitNamespaceFixture(async ({ connection, fixture, backingRelayDir }) => {
+      const mapping = splitNamespaceMapping(RELAY_DIR)
+
+      await boundedTransfer(
+        connection.uploadDirectory(localDir, SHELL_RELAY_DIR, {
+          hostPlatform: getRemoteHostPlatform('linux-x64'),
+          sftpNamespace: mapping
+        }),
+        fixture.operations,
+        'upload'
+      )
+
+      expect(await readFile(join(backingRelayDir, 'nested', 'payload.bin'))).toEqual(
+        Buffer.from([0, 1, 2, 255])
+      )
+      expect(fixture.operations).toContain(`REALPATH:.`)
+      expect(fixture.operations).toContain(`LSTAT:${mapping.shellProbePath}`)
+      expect(fixture.operations).toContain(`LSTAT:${SFTP_RELAY_DIR}/${MARKER_PATH}`)
+      expect(fixture.operations).toContain(`MKDIR:${SFTP_RELAY_DIR}/nested`)
+      expect(fixture.operations).toContain(`OPEN:${SFTP_RELAY_DIR}/nested/payload.bin`)
+      expect(fixture.operations).toEqual(expect.arrayContaining(['WRITE', 'CLOSE']))
+    })
+  } finally {
+    await rm(localDir, { recursive: true, force: true })
+  }
+}, 15_000)
+
+it('writes a mapped file through a verified split namespace over a real ssh2 SFTP session', async () => {
+  await withSplitNamespaceFixture(async ({ connection, fixture, backingRelayDir }) => {
+    const mapping = splitNamespaceMapping(`${RELAY_DIR}/package.json`)
+    const shellFilePath = `${SHELL_RELAY_DIR}/package.json`
+    const contents = '{"name":"orca-relay"}\n'
+
+    await boundedTransfer(
+      connection.writeFile(shellFilePath, contents, {
+        hostPlatform: getRemoteHostPlatform('linux-x64'),
+        sftpNamespace: mapping
+      }),
+      fixture.operations,
+      'writeFile'
+    )
+
+    expect(await readFile(join(backingRelayDir, 'package.json'), 'utf8')).toBe(contents)
+    expect(fixture.operations).toContain(`REALPATH:.`)
+    expect(fixture.operations).toContain(`LSTAT:${mapping.shellProbePath}`)
+    expect(fixture.operations).toContain(`LSTAT:${SFTP_RELAY_DIR}/${MARKER_PATH}`)
+    expect(fixture.operations).toContain(`OPEN:${SFTP_RELAY_DIR}/package.json`)
+    expect(fixture.operations).toEqual(expect.arrayContaining(['WRITE', 'CLOSE']))
+    // Shell-namespace path must never be opened for a confirmed split write.
+    expect(fixture.operations).not.toContain(`OPEN:${shellFilePath}`)
+  })
 }, 15_000)

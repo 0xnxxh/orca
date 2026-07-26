@@ -34,6 +34,13 @@ function assertAbsolutePosixPath(label: string, value: string): void {
       `SFTP namespace ${label} must be an absolute POSIX path: ${JSON.stringify(redactRelayInstallMarkerTokens(value))}`
     )
   }
+  // Same segment hygiene as REALPATH start paths — empty/`.`/`..` are programming errors.
+  if (value === '/') {
+    return
+  }
+  for (const segment of value.slice(1).split('/')) {
+    assertSafeRemotePathSegment(segment, 'posix')
+  }
 }
 
 function assertHomeRelativePosixPath(label: string, value: string): void {

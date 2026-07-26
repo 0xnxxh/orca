@@ -214,6 +214,24 @@ describe('resolveSftpTransferPath', () => {
     ['a relative shell path', { shell: `${SHELL_HOME}/${RELAY_DIR}`.slice(1) }, 'SFTP namespace'],
     ['an absolute home-relative path', { homeRelativePath: `/${RELAY_DIR}` }, 'SFTP namespace'],
     ['a traversal segment', { homeRelativePath: `${RELAY_DIR}/../escape` }, 'Unsafe remote path'],
+    [
+      'a traversal segment in the absolute shell path',
+      { shell: `${SHELL_HOME}/archive/../${RELAY_DIR}` },
+      'Unsafe remote path'
+    ],
+    [
+      'an empty component in the absolute shell path',
+      { shell: `${SHELL_HOME}//${RELAY_DIR}` },
+      'Unsafe remote path'
+    ],
+    [
+      'a dot component in the absolute marker path',
+      {
+        shellProbePath: `${SHELL_HOME}/./${RELAY_DIR}/${MARKER}`,
+        homeRelativeProbePath: `${RELAY_DIR}/${MARKER}`
+      },
+      'Unsafe remote path'
+    ],
     ['a line break in the marker path', { shellProbePath: `${SHELL_HOME}/a\nb` }, 'SFTP namespace'],
     [
       'a mismatched transfer suffix',
