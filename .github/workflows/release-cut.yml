@@ -61,15 +61,22 @@ concurrency:
 
 jobs:
   cut:
-    # Why: release policy must execute from the canonical main workflow even
-    # when inputs.ref selects historical or off-main source to build.
-    if: github.repository == 'stablyai/orca' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
       tag: ${{ steps.tag.outputs.tag || steps.version.outputs.recovered_tag }}
       should_release: ${{ steps.tag.outputs.tag != '' || steps.version.outputs.recovered_tag != '' }}
     steps:
+      - name: Validate release control plane
+        env:
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          if [[ "$REPOSITORY" != 'stablyai/orca' || "$WORKFLOW_REF" != 'refs/heads/main' ]]; then
+            echo "::error::Cut Release must run from stablyai/orca main; use inputs.ref to select source."
+            exit 1
+          fi
+
       # Why inlined (not m-s-abeer/update-gha-summary-with-workflow-inputs):
       # this job runs with contents:write and secret scope, so avoid executing
       # any external (mutable @v1) action here. Surfaces every
@@ -1616,7 +1623,7 @@ jobs:
       # PR #7170's Orca.exe-only gate — this covers every staged .exe/.dll/.node
       # plus resources\elevate.exe by extracting the shipped installer).
       - name: Verify Windows inner binary signatures
-        if: matrix.platform == 'win'
+        if: always() && matrix.platform == 'win'
         shell: pwsh
         env:
           ORCA_WINDOWS_INNER_SIGNATURE_REQUIRED: 'true'
@@ -1718,7 +1725,7 @@ jobs:
           path: |
             inner-signing-evidence.txt
             inner-signing-list.txt
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 30
 
       - name: Publish signed Windows release artifacts

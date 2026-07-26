@@ -1,16 +1,21 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
 const projectDir = resolve(import.meta.dirname, '../..')
 const workflowPath = join(projectDir, '.github/workflows/release-cut.yml')
+const macWorkflowPath = join(projectDir, '.github/workflows/release-mac-build.yml')
+const require = createRequire(import.meta.url)
+const electronBuilderConfig = require('../electron-builder.config.cjs')
 
 describe('release-cut Windows signing contract', () => {
   it('keeps release policy on canonical main and publishes only after rebuild', () => {
     const workflowText = readFileSync(workflowPath, 'utf8')
     const workflow = parse(workflowText)
     const cutJob = workflow.jobs.cut
+    const controlPlaneStep = cutJob.steps[0]
     const versionStep = cutJob.steps.find((step) => step.name === 'Compute next version')
     const createReleaseJob = workflow.jobs['create-release']
     const buildJob = workflow.jobs.build
@@ -19,9 +24,11 @@ describe('release-cut Windows signing contract', () => {
     const buildCheckout = buildJob.steps.find((step) => step.name === 'Checkout')
     const publishCheckout = publishReleaseJob.steps.find((step) => step.name === 'Checkout')
 
-    expect(cutJob.if).toBe(
-      "github.repository == 'stablyai/orca' && github.ref == 'refs/heads/main'"
-    )
+    expect(cutJob.if).toBeUndefined()
+    expect(controlPlaneStep.name).toBe('Validate release control plane')
+    expect(controlPlaneStep.env.REPOSITORY).toBe('${{ github.repository }}')
+    expect(controlPlaneStep.env.WORKFLOW_REF).toBe('${{ github.ref }}')
+    expect(controlPlaneStep.run).toContain("WORKFLOW_REF\" != 'refs/heads/main'")
     expect(cutJob.outputs.tag).toContain('steps.version.outputs.recovered_tag')
     expect(cutJob.outputs.should_release).toContain('steps.version.outputs.recovered_tag')
     expect(cutJob.outputs.latest_published_rc_tag).toBeUndefined()
@@ -63,7 +70,9 @@ describe('release-cut Windows signing contract', () => {
     expect(publishIndex).toBe(evidenceIndex + 1)
     expect(innerVerifyStep.env.ORCA_WINDOWS_INNER_SIGNATURE_REQUIRED).toBe('true')
     expect(innerVerifyStep['continue-on-error']).toBeUndefined()
+    expect(innerVerifyStep.if).toBe("always() && matrix.platform == 'win'")
     expect(evidenceStep.if).toBe("always() && matrix.platform == 'win'")
+    expect(evidenceStep.with['if-no-files-found']).toBe('error')
     expect(publishStep.if).toBe("success() && matrix.platform == 'win'")
 
     const expectedOutcomes = {
@@ -109,5 +118,25 @@ describe('release-cut Windows signing contract', () => {
     expect(firstEvidenceWrite).toBeLessThan(incompleteChainCheck)
     expect(verificationFailure).toBeLessThan(verificationThrow)
     expect(caughtError).toBeLessThan(caughtErrorThrow)
+  })
+
+  it('keeps macOS publishing draft-only and coupled to an active release cut', () => {
+    const workflow = parse(readFileSync(macWorkflowPath, 'utf8'))
+    const buildJob = workflow.jobs['build-mac']
+    const controlPlaneStep = buildJob.steps[0]
+    const publishStep = buildJob.steps.find(
+      (step) => step.name === 'Publish release artifacts (macOS)'
+    )
+
+    expect(workflow.permissions.actions).toBe('read')
+    expect(workflow.permissions.contents).toBe('write')
+    expect(buildJob.if).toBeUndefined()
+    expect(controlPlaneStep.name).toBe('Validate release control plane and draft')
+    expect(controlPlaneStep.run).toContain("WORKFLOW_REF\" != 'refs/heads/main'")
+    expect(controlPlaneStep.run).toContain("run_path\" != '.github/workflows/release-cut.yml'")
+    expect(controlPlaneStep.run).toContain("run_status\" != 'in_progress'")
+    expect(controlPlaneStep.run).toContain("draft\" != 'true'")
+    expect(publishStep.with.command).toContain('--publish always')
+    expect(electronBuilderConfig.publish.releaseType).toBe('draft')
   })
 })
