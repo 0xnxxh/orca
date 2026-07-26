@@ -1,6 +1,4 @@
 import type { ManagedPaneInternal } from './pane-manager-types'
-import { getRendererAppPlatform } from '@/lib/renderer-app-platform'
-import { isWebClientLocation } from '@/lib/web-client-location'
 import { safeFit } from './pane-tree-ops'
 import {
   attachWebgl,
@@ -9,6 +7,11 @@ import {
   markComplexScriptOutput,
   resetWebglTextureAtlas
 } from './pane-webgl-renderer'
+import {
+  releaseRetainedWebglPane,
+  retainSuspendedWebglPane,
+  shouldRetainSuspendedWebglContexts
+} from './pane-webgl-context-retention'
 import { reattachWebglIfNeeded } from './pane-webgl-reattach'
 
 export function setPaneGpuRenderingState(
@@ -44,19 +47,17 @@ export function markPaneComplexScriptOutput(
   }
 }
 
-// Windows ANGLE reattach is costly; only Electron owns the raised 128-context budget.
-export function shouldRetainSuspendedWebglContexts(): boolean {
-  return (
-    typeof window !== 'undefined' && getRendererAppPlatform() === 'win32' && !isWebClientLocation()
-  )
-}
-
 export function suspendPaneRendering(panes: Iterable<ManagedPaneInternal>): void {
   const retainLiveContexts = shouldRetainSuspendedWebglContexts()
   for (const pane of panes) {
     pane.webglAttachmentDeferred = true
     if (!retainLiveContexts) {
       disposeWebgl(pane)
+      continue
+    }
+    const evicted = retainSuspendedWebglPane(pane)
+    if (evicted) {
+      disposeWebgl(evicted)
     }
   }
 }
@@ -67,6 +68,7 @@ export function resumePaneRendering(panes: Iterable<ManagedPaneInternal>): void 
   // loss, and bounding retries to resume events cannot loop on live loss.
   clearTerminalWebglAttachBackoff()
   for (const pane of panes) {
+    releaseRetainedWebglPane(pane)
     const wasDeferred = pane.webglAttachmentDeferred
     pane.webglAttachmentDeferred = false
     pane.webglDisabledAfterContextLoss = false

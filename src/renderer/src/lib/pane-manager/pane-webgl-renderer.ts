@@ -2,6 +2,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { ManagedPaneInternal } from './pane-manager-types'
 import { recordTerminalWebglDiagnostic } from '../../../../shared/terminal-webgl-diagnostics'
 import { forceRepaintThroughRenderPause } from './terminal-render-pause-release'
+import { releaseRetainedWebglPane } from './pane-webgl-context-retention'
 import {
   getTerminalWebglAutoDecision,
   resetTerminalWebglAutoDecision
@@ -74,6 +75,7 @@ export function disposeWebgl(
   pane: ManagedPaneInternal,
   options?: { refreshDimensions?: boolean }
 ): void {
+  releaseRetainedWebglPane(pane)
   cancelPendingWebglRefresh(pane)
   if (!pane.webglAddon) {
     return

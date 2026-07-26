@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedPaneInternal } from './pane-manager-types'
 import { resumePaneRendering, suspendPaneRendering } from './pane-rendering-control'
+import {
+  clearRetainedWebglPanesForTests,
+  RETAINED_WEBGL_PANE_LIMIT,
+  retainedWebglPaneCount
+} from './pane-webgl-context-retention'
 import { attachWebgl, resetTerminalWebglSuggestion } from './pane-webgl-renderer'
 
-function createPane(options: { loadAddon?: () => void } = {}): ManagedPaneInternal {
+function createPane(options: { id?: number; loadAddon?: () => void } = {}): ManagedPaneInternal {
   const leafId = '11111111-1111-4111-8111-111111111111' as never
   return {
-    id: 1,
+    id: options.id ?? 1,
     leafId,
     stablePaneId: leafId,
     terminal: {
@@ -73,6 +78,7 @@ describe('terminal WebGL context recovery', () => {
   })
 
   afterEach(() => {
+    clearRetainedWebglPanesForTests()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
@@ -133,6 +139,27 @@ describe('terminal WebGL context recovery', () => {
     expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
   })
 
+  it('reattaches an LRU-evicted context when its pane resumes', () => {
+    stubWindowsDesktop()
+    const panes = Array.from({ length: RETAINED_WEBGL_PANE_LIMIT + 1 }, (_, id) =>
+      createPane({ id })
+    )
+    for (const pane of panes) {
+      attachWebgl(pane)
+    }
+
+    suspendPaneRendering(panes)
+    expect(panes[0].webglAddon).toBeNull()
+    expect(panes[0].terminal.loadAddon).toHaveBeenCalledTimes(1)
+
+    resumePaneRendering(panes)
+
+    expect(retainedWebglPaneCount()).toBe(0)
+    expect(panes[0].webglAddon).not.toBeNull()
+    expect(panes[0].terminal.loadAddon).toHaveBeenCalledTimes(2)
+    expect(panes[1].terminal.loadAddon).toHaveBeenCalledTimes(1)
+  })
+
   it('blocks new WebGL contexts while a Windows pane is hidden', () => {
     stubWindowsDesktop()
     const pane = createPane()
@@ -149,11 +176,13 @@ describe('terminal WebGL context recovery', () => {
     const pane = createPane()
     attachWebgl(pane)
     suspendPaneRendering([pane])
+    expect(retainedWebglPaneCount()).toBe(1)
 
     fireContextLoss(pane)
 
     expect(pane.webglAddon).toBeNull()
     expect(pane.webglDisabledAfterContextLoss).toBe(true)
+    expect(retainedWebglPaneCount()).toBe(0)
 
     resumePaneRendering([pane])
 

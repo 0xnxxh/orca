@@ -3,6 +3,10 @@ import { PaneManager } from './pane-manager'
 import type { ManagedPaneInternal } from './pane-manager-types'
 import { disposePane } from './pane-lifecycle'
 import { resumePaneRendering, suspendPaneRendering } from './pane-rendering-control'
+import {
+  clearRetainedWebglPanesForTests,
+  retainedWebglPaneCount
+} from './pane-webgl-context-retention'
 import { disposeWebgl } from './pane-webgl-renderer'
 import {
   beginTerminalScrollIntentBufferRebuild,
@@ -70,6 +74,7 @@ function stubRendererWindow(platform: NodeJS.Platform, webClient = false): void 
 
 describe('pane WebGL refresh lifecycle', () => {
   afterEach(() => {
+    clearRetainedWebglPanesForTests()
     vi.unstubAllGlobals()
   })
 
@@ -198,12 +203,14 @@ describe('pane WebGL refresh lifecycle', () => {
     const pane = createPane({ webglAddon: { dispose } as never })
     const panes = new Map([[pane.id, pane]])
     suspendPaneRendering([pane])
+    expect(retainedWebglPaneCount()).toBe(1)
 
     disposePane(pane, panes)
 
     expect(dispose).toHaveBeenCalledTimes(1)
     expect(pane.webglAddon).toBeNull()
     expect(panes.has(pane.id)).toBe(false)
+    expect(retainedWebglPaneCount()).toBe(0)
   })
 
   it('cancels a pending WebGL refresh when the pane is disposed', () => {
