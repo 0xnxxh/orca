@@ -574,10 +574,6 @@ export default function TerminalPane({
   const setTabCanExpandPane = useAppStore((store) => store.setTabCanExpandPane)
   const suppressPtyExit = useAppStore((store) => store.suppressPtyExit)
   const pendingCodexPaneRestartIds = useAppStore((store) => store.pendingCodexPaneRestartIds)
-  // Why: a parked or deferred tab mounts with no transport yet, so the queued
-  // restart below has no ptyId to match on the mount pass. This re-runs it once
-  // the reconnected PTY is bound, which is the only moment the pane can act.
-  const attachedPtyIds = useAppStore((store) => store.ptyIdsByTabId[tabId])
   const consumePendingCodexPaneRestart = useAppStore(
     (store) => store.consumePendingCodexPaneRestart
   )
@@ -1675,6 +1671,11 @@ export default function TerminalPane({
     ]
   )
 
+  // Why leaf bindings are a dep: a parked or deferred tab mounts with no
+  // transport, so a queued restart has no ptyId to match on the mount pass. The
+  // reconnected PTY rewrites this map when it binds — `ptyIdsByTabId` does not,
+  // because a restored id is already listed there before the pane ever mounts.
+  const panePtyLayoutBindings = savedLayout.ptyIdsByLeafId
   useEffect(() => {
     const manager = managerRef.current
     if (!manager) {
@@ -1692,9 +1693,9 @@ export default function TerminalPane({
       }
     }
   }, [
-    attachedPtyIds,
     consumePendingCodexPaneRestart,
     handleRestartCodexPane,
+    panePtyLayoutBindings,
     pendingCodexPaneRestartIds
   ])
 

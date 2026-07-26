@@ -830,16 +830,19 @@ function getCompatibleSelectedCodexHomePath(
 // Why: CODEX_HOME is fixed in a shell's environment at spawn and the daemon
 // keeps that shell alive across app restarts, so the launch account is the only
 // way to tell later that a pane still runs Codex as the previously selected
-// account. A resume-pinned pane is deliberately on its session's own account,
-// so it is forgotten rather than recorded as stale.
+// account. A reattach inherits that baked environment rather than choosing one,
+// so re-recording it under the current selection would erase the very evidence
+// that the pane is stale. A resume-pinned pane is deliberately on its session's
+// own account, so it is forgotten rather than recorded as stale.
 function recordCodexPaneAccountForSpawn(args: {
   ptyId: string | undefined
   isDaemonHostSpawn: boolean
+  isReattach: boolean
   pinnedByResume: boolean
   target: CodexAccountSelectionTarget
   settings: GlobalSettings | undefined
 }): void {
-  if (!args.ptyId || !args.isDaemonHostSpawn) {
+  if (!args.ptyId || !args.isDaemonHostSpawn || args.isReattach) {
     return
   }
   if (args.pinnedByResume || !args.settings) {
@@ -3275,13 +3278,6 @@ export function registerPtyHandlers(
                 }) ?? null)
           )
         : null
-      recordCodexPaneAccountForSpawn({
-        ptyId: effectiveSessionAppId ?? sessionId,
-        isDaemonHostSpawn,
-        pinnedByResume: Boolean(codexResumeHome),
-        target: codexSelectionTarget,
-        settings: getSettings?.()
-      })
       const skipCodexHomeEnv =
         isDaemonHostSpawn &&
         shouldSkipCodexHomeEnvForWindowsShell(daemonShellOverride, cwd) &&
@@ -3698,6 +3694,14 @@ export function registerPtyHandlers(
         if (effectiveSessionAppId !== undefined && effectiveSessionAppId !== result.id) {
           ptySizes.delete(effectiveSessionAppId)
         }
+        recordCodexPaneAccountForSpawn({
+          ptyId: result.id,
+          isDaemonHostSpawn,
+          isReattach: result.isReattach === true,
+          pinnedByResume: Boolean(codexResumeHome),
+          target: codexSelectionTarget,
+          settings: getSettings?.()
+        })
         if (hostSessionBinding) {
           try {
             const binding = {
@@ -4431,13 +4435,6 @@ export function registerPtyHandlers(
                 }) ?? null)
           )
         : null
-      recordCodexPaneAccountForSpawn({
-        ptyId: effectiveSessionAppId ?? effectiveSessionId,
-        isDaemonHostSpawn,
-        pinnedByResume: Boolean(codexResumeHome),
-        target: codexSelectionTarget,
-        settings: getSettings?.()
-      })
       const skipCodexHomeEnv =
         isDaemonHostSpawn &&
         shouldSkipCodexHomeEnvForWindowsShell(effectiveShellOverride, cwd) &&
@@ -4738,6 +4735,14 @@ export function registerPtyHandlers(
         spawnTiming.log(result.id, {
           daemon: isDaemonHostSpawn,
           reattach: result.isReattach ?? false
+        })
+        recordCodexPaneAccountForSpawn({
+          ptyId: result.id,
+          isDaemonHostSpawn,
+          isReattach: result.isReattach === true,
+          pinnedByResume: Boolean(codexResumeHome),
+          target: codexSelectionTarget,
+          settings: getSettings?.()
         })
         ptyOwnership.set(result.id, args.connectionId ?? null)
         if (result.incarnationId) {
