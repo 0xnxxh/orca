@@ -66,7 +66,6 @@ export function AppearanceInterfaceSection({
   const titlebarEntry = getTitlebarEntries()[0]
   const typographyEntry = getTypographyEntries()[0]
   const zoomEntry = getZoomEntries()[0]
-  // Language is primary (with Theme/Zoom/Font); Advanced is platform chrome only.
   const advancedEntries = [
     ...getTitlebarEntries(),
     ...getSystemTrayEntries({ showSystemTray: isDesktopWindows }),

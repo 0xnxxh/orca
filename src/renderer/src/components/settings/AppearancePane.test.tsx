@@ -203,16 +203,32 @@ describe('AppearancePane', () => {
   })
 
   it('shows language as a primary interface control without opening Advanced', async () => {
-    // Language is a first-class presentation pref next to Theme — browsing
-    // Appearance → Interface must surface it without expanding Advanced.
     mocks.state.settingsSearchQuery = ''
+    const container = await renderAppearancePane(getDefaultSettings('/tmp'))
+    const languageTrigger = container.querySelector<HTMLButtonElement>(
+      '[data-slot="select-trigger"][aria-label="Language"]'
+    )
+    const advancedTrigger = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('button[aria-expanded]')
+    ).find((button) => button.textContent?.includes('Advanced'))
+
+    expect(languageTrigger).not.toBeNull()
+    expect(advancedTrigger).toBeDefined()
+    expect(advancedTrigger?.getAttribute('aria-expanded')).toBe('false')
+    expect(
+      container.querySelector('button[role="switch"][aria-label="Titlebar App Name"]')
+    ).toBeNull()
+  })
+
+  it('keeps Advanced closed when searching for language', async () => {
+    mocks.state.settingsSearchQuery = 'language'
     const container = await renderAppearancePane(getDefaultSettings('/tmp'))
     const languageTrigger = container.querySelector<HTMLButtonElement>(
       '[data-slot="select-trigger"][aria-label="Language"]'
     )
 
     expect(languageTrigger).not.toBeNull()
-    // Advanced platform-chrome controls stay collapsed by default.
+    expect(container.textContent).not.toContain('Advanced')
     expect(
       container.querySelector('button[role="switch"][aria-label="Titlebar App Name"]')
     ).toBeNull()
@@ -236,6 +252,7 @@ describe('AppearancePane', () => {
 
     expect(languageTrigger).not.toBeNull()
     expect(chineseOption).not.toBeNull()
+    expect(container.textContent).not.toContain('Advanced')
     expect(container.textContent).toContain('System')
     expect(container.textContent).toContain('English')
     expect(container.textContent).toContain('中文（简体）')
@@ -248,6 +265,30 @@ describe('AppearancePane', () => {
     })
 
     expect(updateSettings).toHaveBeenCalledWith({ uiLanguage: 'zh' })
+  })
+
+  it('includes the selected language in the collapsed Interface summary', async () => {
+    mocks.state.settingsSearchQuery = ''
+    const settings = {
+      ...getDefaultSettings('/tmp'),
+      uiLanguage: 'zh' as const,
+      theme: 'dark' as const,
+      appFontFamily: 'Inter'
+    }
+    const container = await renderAppearancePane(settings)
+    const interfaceToggle = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(
+        'button[aria-controls="appearance-section-interface"]'
+      )
+    )[0]
+    expect(interfaceToggle).toBeDefined()
+    await act(async () => {
+      interfaceToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(interfaceToggle?.getAttribute('aria-expanded')).toBe('false')
+    // Summary is only rendered on the collapsed toggle (children stay mounted but hidden).
+    expect(interfaceToggle?.textContent).toContain('Dark · 中文（简体） · Inter')
   })
 
   it('updates the left sidebar appearance from sidebar settings', async () => {

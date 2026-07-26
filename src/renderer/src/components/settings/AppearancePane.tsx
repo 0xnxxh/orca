@@ -39,6 +39,7 @@ import {
   getLeftSidebarAppearanceEntry,
   getWorkspaceCardLayoutEntry
 } from './appearance-sidebar-search'
+import { resolveInterfaceSectionSummary } from './appearance-interface-summary'
 export { getAppearancePaneSearchEntries }
 
 type AppearancePaneProps = {
@@ -54,16 +55,6 @@ type AppearancePaneProps = {
 }
 
 type AppearanceSectionKey = 'interface' | 'terminal' | 'window'
-
-function resolveThemeSummary(theme: GlobalSettings['theme']): string {
-  if (theme === 'system') {
-    return translate('auto.components.settings.AppearancePane.fb0e0b4453', 'System')
-  }
-  if (theme === 'light') {
-    return translate('auto.components.settings.AppearancePane.fd89b5487c', 'Light')
-  }
-  return translate('auto.components.settings.AppearancePane.7d26ccabe8', 'Dark')
-}
 
 export function AppearancePane({
   settings,
@@ -184,10 +175,7 @@ export function AppearancePane({
     setManuallyOpenSection((current) => (current === key ? null : key))
   }
 
-  const interfaceSummary = `${resolveThemeSummary(settings.theme)} · ${
-    settings.appFontFamily ||
-    translate('auto.components.settings.AppearancePane.interfaceDefaultFont', 'Default font')
-  }`
+  const interfaceSummary = resolveInterfaceSectionSummary(settings)
   const terminalSummary = `${
     settings.terminalFontFamily ||
     translate('auto.components.settings.AppearancePane.terminalDefaultFont', 'Default font')
