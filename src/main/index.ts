@@ -143,14 +143,16 @@ import {
 } from './startup/gpu-fallback-tiers'
 import { purgeGpuCaches } from './startup/gpu-cache-purge'
 import {
+  clearGpuFallbackRequiredTier,
   getResumeGpuFallbackTier,
   recordGpuFallbackRequiredTier
 } from './startup/gpu-fallback-required-tier'
-import { captureGpuInfoSnapshot } from './crash-reporting/gpu-info-snapshot'
+import { captureGpuIdentity } from './crash-reporting/gpu-info-snapshot'
 import {
   DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
   DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
   GpuCrashFallbackTracker,
+  isGpuChildProcessType,
   isGpuFallbackCrashCandidate
 } from './crash-reporting/gpu-crash-fallback-decision'
 import {
@@ -381,6 +383,9 @@ const gpuCrashFallbackTracker = new GpuCrashFallbackTracker({
 let gpuFallbackTierThisLaunch: GpuFallbackTierOrNone = NO_GPU_FALLBACK_TIER
 const GPU_INFO_CAPTURE_TIMEOUT_MS = 10_000
 let gpuFeatureStatus: Electron.GPUFeatureStatus | null = null
+// Why: long enough for a local JSON rewrite, short enough that a wedged disk cannot
+// hold a crashing app hostage instead of relaunching it.
+const GPU_FALLBACK_EXIT_WRITE_GRACE_MS = 750
 let localPtyStartupReady: Promise<void> = Promise.resolve()
 let localPtyProviderStartupReady: Promise<void> = Promise.resolve()
 const AGENT_STATE_CRASH_BREADCRUMB_MIN_INTERVAL_MS = 30_000
@@ -1729,7 +1734,49 @@ async function handleGpuChildCrash(reason: string, exitCode: number | null): Pro
   })
   // Why: app.exit(0) skips before-quit, so destroy the Windows tray manually to avoid a stale icon.
   destroySystemTray()
-  app.exit(0)
+  // Why: this crash's own report is still being written. app.exit does not drain it,
+  // so exiting now loses the most informative report of the burst and strands its
+  // temp file. Bounded, because the relaunch must not hinge on the disk answering.
+  void Promise.race([
+    crashReports?.waitForPendingWrites() ?? Promise.resolve(),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, GPU_FALLBACK_EXIT_WRITE_GRACE_MS).unref?.()
+    })
+  ]).finally(() => app.exit(0))
+}
+
+/**
+ * Forgets the recorded tier after a hardware launch survives the crash-burst window.
+ *
+ * Without this the hint is a one-way ratchet: a machine that needed tier 2 once is
+ * escalated straight to software rendering by any later burst, however unrelated,
+ * with no way back down. Surviving the window on hardware is the same evidence the
+ * ladder uses to escalate, read in reverse.
+ */
+function scheduleGpuFallbackHistoryReset(): void {
+  if (isServeMode || process.platform !== 'win32') {
+    return
+  }
+  if (gpuFallbackTierThisLaunch !== NO_GPU_FALLBACK_TIER) {
+    return
+  }
+  const timer = setTimeout(() => {
+    // Why: zero crashes, not merely "below the threshold" — a launch that lost GPU
+    // children and limped is not evidence the machine is healthy again.
+    if (gpuCrashFallbackTracker.observedCrashes() > 0 || isQuitting) {
+      return
+    }
+    const userDataPath = getGpuFallbackUserDataPath()
+    if (getResumeGpuFallbackTier(userDataPath) === null) {
+      return
+    }
+    const cleared = clearGpuFallbackRequiredTier(userDataPath)
+    recordDurableCrashBreadcrumb('gpu_fallback_required_tier_cleared', {
+      reason: 'hardware-launch-healthy',
+      cleared
+    })
+  }, DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS)
+  timer.unref?.()
 }
 
 function recordProcessGoneCrash(
@@ -2094,17 +2141,20 @@ void app.whenReady().then(async () => {
       selfRecovered: hangDetection.selfRecovered
     })
   }
-  // Why: driver identity for crash details. Fire-and-forget and bounded — on the
-  // machines this exists for, the GPU process never initializes and this never resolves.
+  // Why: driver identity for crash details. Fire-and-forget and bounded — 'basic' lands
+  // first because every launch that records a GPU crash has hardware acceleration
+  // disabled, which is exactly when 'complete' never resolves.
   // Skipped in headless serve: no crash dialog to feed, and 'complete' can provoke a
   // GPU child that Xvfb environments have no reason to spawn.
   if (!isServeMode) {
-    void captureGpuInfoSnapshot(() => app.getGPUInfo('complete'), GPU_INFO_CAPTURE_TIMEOUT_MS).then(
-      (snapshot) => {
-        recordCrashBreadcrumb('gpu_info_captured', snapshot)
-      }
-    )
+    void captureGpuIdentity(
+      (infoType) => app.getGPUInfo(infoType),
+      GPU_INFO_CAPTURE_TIMEOUT_MS
+    ).then((snapshot) => {
+      recordCrashBreadcrumb('gpu_info_captured', snapshot)
+    })
   }
+  scheduleGpuFallbackHistoryReset()
   // Why: install certificate decisions before any webview or headless window issues its first TLS request.
   app.on(
     'certificate-error',
@@ -2738,7 +2788,9 @@ void app.whenReady().then(async () => {
       name: details.name,
       serviceName: details.serviceName,
       type: details.type,
-      gpuFallbackTier: gpuFallbackTierThisLaunch
+      // Why: only GPU reports are read for a tier; on any other child it is noise that
+      // also makes isGpuFallbackCrashReport's processType gate load-bearing twice over.
+      ...(isGpuChildProcessType(details.type) ? { gpuFallbackTier: gpuFallbackTierThisLaunch } : {})
     })
     if (
       isGpuFallbackCrashCandidate({

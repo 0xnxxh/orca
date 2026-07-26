@@ -224,13 +224,17 @@ describe('gpu-fallback-marker', () => {
     }
   )
 
+  // Why: this is the platform-independent twin of the chmod test above, which cannot run
+  // on Windows or as root — the preservation guarantee must stay covered everywhere.
+  // The exact errno is incidental (libuv differs by platform); "not absent" is the contract.
   it('reports a directory-shaped marker as unreadable rather than deleting it', () => {
     const markerFile = join(userDataPath, GPU_FALLBACK_MARKER_FILE)
     mkdirSync(markerFile)
     const result = readActiveGpuFallbackMarker(userDataPath, environment)
     expect(result.marker).toBeNull()
     expect(result.cleared).toBeNull()
-    expect(result.unreadableErrorCode).toBe('EISDIR')
+    expect(result.unreadableErrorCode).toBeTruthy()
+    expect(['ENOENT', 'ENOTDIR']).not.toContain(result.unreadableErrorCode)
     expect(existsSync(markerFile)).toBe(true)
   })
 

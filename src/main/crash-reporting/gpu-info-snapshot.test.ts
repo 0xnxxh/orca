@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  captureGpuIdentity,
   captureGpuInfoSnapshot,
   getGpuInfoSnapshot,
   setGpuInfoSnapshotForTesting,
@@ -111,5 +112,79 @@ describe('captureGpuInfoSnapshot', () => {
     const pending = captureGpuInfoSnapshot(() => new Promise(() => {}), 10_000)
     await vi.advanceTimersByTimeAsync(10_000)
     await expect(pending).resolves.toEqual({ gpuInfoAvailable: false, gpuInfoError: 'timeout' })
+  })
+
+  // Why: a slow driver that answers after the bound still carries the identity triage needs.
+  it('keeps a late-arriving capture that lost the timeout race', async () => {
+    vi.useFakeTimers()
+    const pending = captureGpuInfoSnapshot(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve(COMPLETE_INFO), 11_000)
+        }),
+      10_000
+    )
+    await vi.advanceTimersByTimeAsync(10_000)
+    await expect(pending).resolves.toMatchObject({ gpuInfoError: 'timeout' })
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(getGpuInfoSnapshot()).toMatchObject({ gpuInfoAvailable: true, gpuVendorId: '0x8086' })
+  })
+
+  it('does not let a later failure overwrite a successful capture', async () => {
+    await captureGpuInfoSnapshot(async () => COMPLETE_INFO, 1_000)
+    await captureGpuInfoSnapshot(async () => {
+      throw new Error('GPU process crashed')
+    }, 1_000)
+
+    expect(getGpuInfoSnapshot()).toMatchObject({ gpuInfoAvailable: true, gpuVendorId: '0x8086' })
+  })
+})
+
+describe('captureGpuIdentity', () => {
+  afterEach(() => {
+    setGpuInfoSnapshotForTesting(null)
+    vi.useRealTimers()
+  })
+
+  // Why: this is the whole point — a fallback launch has hardware acceleration disabled,
+  // so 'complete' hangs and only 'basic' can supply vendor/device for the crash report.
+  it('keeps basic device identity when the complete capture hangs', async () => {
+    vi.useFakeTimers()
+    const pending = captureGpuIdentity(
+      (infoType) =>
+        infoType === 'basic'
+          ? Promise.resolve({ gpuDevice: COMPLETE_INFO.gpuDevice })
+          : new Promise(() => {}),
+      10_000
+    )
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    await expect(pending).resolves.toMatchObject({
+      gpuInfoAvailable: true,
+      gpuVendorId: '0x8086'
+    })
+    expect(getGpuInfoSnapshot()).toMatchObject({ gpuVendorId: '0x8086' })
+  })
+
+  it('upgrades to the complete payload when it resolves', async () => {
+    const snapshot = await captureGpuIdentity(
+      (infoType) =>
+        Promise.resolve(
+          infoType === 'basic' ? { gpuDevice: COMPLETE_INFO.gpuDevice } : COMPLETE_INFO
+        ),
+      10_000
+    )
+
+    expect(snapshot.gpuGlRenderer).toBeDefined()
+    expect(snapshot.gpuVendorId).toBe('0x8086')
+  })
+
+  it('reports unavailable when neither capture yields device info', async () => {
+    vi.useFakeTimers()
+    const pending = captureGpuIdentity(() => new Promise(() => {}), 10_000)
+    await vi.advanceTimersByTimeAsync(12_000)
+
+    await expect(pending).resolves.toMatchObject({ gpuInfoAvailable: false })
   })
 })

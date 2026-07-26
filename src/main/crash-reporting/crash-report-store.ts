@@ -88,6 +88,15 @@ export class CrashReportStore {
     return new CrashReportStore(path.join(userDataPath, 'crash-reports.json'))
   }
 
+  /**
+   * Settles once no write is in flight. The GPU fallback relaunch calls app.exit(0)
+   * in the same turn it records the escalating crash; without this the report — and
+   * the temp file it was renaming — are both abandoned.
+   */
+  async waitForPendingWrites(): Promise<void> {
+    await this.writeChain
+  }
+
   async record(input: CrashReportCreateInput): Promise<CrashReportRecord> {
     return this.withWrite(async (reports) => {
       const report: CrashReportRecord = {

@@ -106,6 +106,16 @@ export function setGpuInfoSnapshotForTesting(snapshot: CrashReportBreadcrumbData
 }
 
 /**
+ * Only ever trade up. A timeout placeholder must not overwrite real device data,
+ * and a late-but-successful capture must be allowed to replace one that already did.
+ */
+function cacheGpuInfoSnapshot(snapshot: CrashReportBreadcrumbData): void {
+  if (gpuInfoSnapshot === null || snapshot.gpuInfoAvailable === true) {
+    gpuInfoSnapshot = snapshot
+  }
+}
+
+/**
  * Captures the snapshot once, off the startup critical path. On a machine whose
  * GPU child CHECK-crashes at init this call can hang forever, so it is bounded
  * and records the failure shape rather than nothing.
@@ -115,9 +125,13 @@ export async function captureGpuInfoSnapshot(
   timeoutMs: number
 ): Promise<CrashReportBreadcrumbData> {
   let timer: NodeJS.Timeout | undefined
+  const capture = (async () => summarizeGpuInfo(await getGpuInfo()))()
+  // Why: the timeout bounds how long callers wait, not whether the result is kept —
+  // a driver that answers at 11s still has the identity triage needs.
+  void capture.then(cacheGpuInfoSnapshot).catch(() => {})
   try {
     const snapshot = await Promise.race([
-      getGpuInfo().then(summarizeGpuInfo),
+      capture,
       new Promise<CrashReportBreadcrumbData>((resolve) => {
         timer = setTimeout(
           () => resolve({ gpuInfoAvailable: false, gpuInfoError: 'timeout' }),
@@ -126,18 +140,41 @@ export async function captureGpuInfoSnapshot(
         timer.unref?.()
       })
     ])
-    gpuInfoSnapshot = snapshot
+    cacheGpuInfoSnapshot(snapshot)
     return snapshot
   } catch (error) {
     const snapshot = sanitizeCrashReportDetails({
       gpuInfoAvailable: false,
       gpuInfoError: error instanceof Error ? error.message : String(error)
     })
-    gpuInfoSnapshot = snapshot
+    cacheGpuInfoSnapshot(snapshot)
     return snapshot
   } finally {
     if (timer) {
       clearTimeout(timer)
     }
   }
+}
+
+/** Short: 'basic' is answered by the browser process and should not need the wait. */
+export const GPU_BASIC_INFO_TIMEOUT_MS = 2_000
+
+/**
+ * Two-stage capture.
+ *
+ * Every launch that records a GPU crash has already called disableHardwareAcceleration(),
+ * which is exactly when `getGPUInfo('complete')` never settles — so the complete-only
+ * capture left the reports it exists for with no vendor or driver at all. 'basic' reports
+ * gpuDevice (vendorId/deviceId/machineModel) from the browser process without a healthy
+ * GPU child, so it lands first and 'complete' upgrades it with auxAttributes if it can.
+ */
+export async function captureGpuIdentity(
+  getGpuInfo: (infoType: 'basic' | 'complete') => Promise<unknown>,
+  completeTimeoutMs: number
+): Promise<CrashReportBreadcrumbData> {
+  await captureGpuInfoSnapshot(() => getGpuInfo('basic'), GPU_BASIC_INFO_TIMEOUT_MS)
+  const complete = await captureGpuInfoSnapshot(() => getGpuInfo('complete'), completeTimeoutMs)
+  // Why: report what triage will actually read — a timed-out 'complete' leaves the
+  // richer 'basic' result cached, and the breadcrumb should say so.
+  return getGpuInfoSnapshot() ?? complete
 }

@@ -215,4 +215,31 @@ describe('CrashReportStore', () => {
     const entries = await fs.readdir(path.dirname(filePath))
     expect(entries.filter((entry) => entry.endsWith('.tmp'))).toEqual([])
   })
+
+  // Why: the GPU fallback relaunch calls app.exit(0) in the same turn it records the
+  // escalating crash, so it needs a handle on the write it would otherwise abandon.
+  it('waitForPendingWrites settles only after an in-flight record lands', async () => {
+    const { store, filePath } = await createStore()
+
+    const pending = store.record(input())
+    await store.waitForPendingWrites()
+
+    const parsed = JSON.parse(await fs.readFile(filePath, 'utf8')) as { reports: unknown[] }
+    expect(parsed.reports).toHaveLength(1)
+    await pending
+  })
+
+  it('waitForPendingWrites resolves when nothing is in flight', async () => {
+    const { store } = await createStore()
+    await expect(store.waitForPendingWrites()).resolves.toBeUndefined()
+  })
+
+  it('waitForPendingWrites does not reject when the in-flight write fails', async () => {
+    const { store } = await createStore()
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('disk full'))
+
+    const failing = store.record(input())
+    await expect(store.waitForPendingWrites()).resolves.toBeUndefined()
+    await expect(failing).rejects.toThrow('disk full')
+  })
 })

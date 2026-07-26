@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   GPU_FALLBACK_REQUIRED_TIER_FILE,
+  clearGpuFallbackRequiredTier,
   getResumeGpuFallbackTier,
   readGpuFallbackRequiredTier,
   recordGpuFallbackRequiredTier
@@ -84,5 +85,30 @@ describe('gpu-fallback-required-tier', () => {
     expect(
       recordGpuFallbackRequiredTier(join(userDataPath, 'missing'), 2, environment, 1_000)
     ).toBeNull()
+  })
+
+  // Why: monotonic-forever would escalate a long-since-fixed machine straight to
+  // software rendering on any unrelated later burst.
+  it('clears the record so a healed machine starts from the bottom again', () => {
+    recordGpuFallbackRequiredTier(userDataPath, 2, environment, 1_000)
+    expect(getResumeGpuFallbackTier(userDataPath)).toBe(2)
+
+    expect(clearGpuFallbackRequiredTier(userDataPath)).toBe(true)
+
+    expect(getResumeGpuFallbackTier(userDataPath)).toBeNull()
+    expect(existsSync(join(userDataPath, GPU_FALLBACK_REQUIRED_TIER_FILE))).toBe(false)
+  })
+
+  it('records a fresh tier after a clear', () => {
+    recordGpuFallbackRequiredTier(userDataPath, 2, environment, 1_000)
+    clearGpuFallbackRequiredTier(userDataPath)
+
+    expect(recordGpuFallbackRequiredTier(userDataPath, 1, environment, 2_000)).toBe(1)
+    expect(getResumeGpuFallbackTier(userDataPath)).toBe(1)
+  })
+
+  it('is a no-op when there is no record to clear', () => {
+    expect(clearGpuFallbackRequiredTier(userDataPath)).toBe(true)
+    expect(getResumeGpuFallbackTier(userDataPath)).toBeNull()
   })
 })

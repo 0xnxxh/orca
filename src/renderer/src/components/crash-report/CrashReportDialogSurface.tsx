@@ -50,8 +50,10 @@ function getDialogTitle(report: CrashReportRecord | null): string {
   if (isReactErrorBoundaryReport(report)) {
     return 'Orca hit a recoverable UI error'
   }
+  // Why: the pending report can predate this launch, so present tense would assert a
+  // degraded state the user may not currently be in.
   return isGpuFallbackCrashReport(report)
-    ? 'Orca is running with reduced graphics acceleration'
+    ? 'Orca restarted with reduced graphics acceleration'
     : 'Orca closed unexpectedly'
 }
 
@@ -63,7 +65,7 @@ function getDialogDescription(report: CrashReportRecord | null): string {
     return 'Send a privacy-safe diagnostic report to help us understand the failed UI surface.'
   }
   return isGpuFallbackCrashReport(report)
-    ? "Your graphics driver keeps crashing Orca's GPU process, so Orca disabled hardware acceleration and restarted. Sending this privacy-safe report tells us which driver is affected."
+    ? "Your graphics driver kept crashing Orca's GPU process, so Orca disabled hardware acceleration and restarted itself. Sending this privacy-safe report tells us which driver is affected."
     : 'Send a privacy-safe diagnostic report to help us understand what happened.'
 }
 

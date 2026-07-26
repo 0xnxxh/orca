@@ -77,6 +77,11 @@ export class GpuCrashFallbackTracker {
   windowSnapshot(): readonly number[] {
     return [...this.recentCrashes]
   }
+
+  /** Crashes counted inside the post-launch window so far. Zero means a clean launch. */
+  observedCrashes(): number {
+    return this.recentCrashes.length
+  }
 }
 
 /** True for the Chromium child process types whose crashes should count here. */

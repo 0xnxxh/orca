@@ -108,6 +108,20 @@ describe('GpuCrashFallbackTracker', () => {
     expect([...window]).toEqual([...window].sort((left, right) => left - right))
   })
 
+  // Why: the required-tier reset keys off this — a launch that lost any GPU child
+  // must not be counted as evidence the machine healed.
+  it('reports observed crashes so a clean launch is distinguishable', () => {
+    const tracker = new GpuCrashFallbackTracker({ windowMs: 30_000, threshold: 3 })
+    expect(tracker.observedCrashes()).toBe(0)
+
+    tracker.recordGpuCrash(1_000)
+    expect(tracker.observedCrashes()).toBe(1)
+
+    // Outside the window: not a broken-driver signal, so not counted.
+    tracker.recordGpuCrash(45_000)
+    expect(tracker.observedCrashes()).toBe(1)
+  })
+
   it('ignores impossible timestamps', () => {
     const tracker = new GpuCrashFallbackTracker({ windowMs: 30_000, threshold: 1 })
     expect(tracker.recordGpuCrash(-1).shouldEngageFallback).toBe(false)

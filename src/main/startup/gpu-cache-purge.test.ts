@@ -68,6 +68,34 @@ describe('purgeGpuCaches', () => {
     expect(() => purgeGpuCaches(join(userDataPath, 'absent'))).not.toThrow()
   })
 
+  // Why: Orca's embedded browser uses persist: partitions, each with its own GPUCache;
+  // a shader written by the crashing driver survives there if only the root is swept.
+  it('purges GPU caches inside session partitions', () => {
+    mkdirSync(join(userDataPath, 'GPUCache'), { recursive: true })
+    mkdirSync(join(userDataPath, 'Partitions', 'orca-browser', 'GPUCache'), { recursive: true })
+    mkdirSync(join(userDataPath, 'Partitions', 'orca-browser', 'ShaderCache'), { recursive: true })
+    mkdirSync(join(userDataPath, 'Partitions', 'orca-browser', 'Cookies-journal'), {
+      recursive: true
+    })
+
+    const result = purgeGpuCaches(userDataPath)
+
+    expect(existsSync(join(userDataPath, 'Partitions', 'orca-browser', 'GPUCache'))).toBe(false)
+    expect(existsSync(join(userDataPath, 'Partitions', 'orca-browser', 'ShaderCache'))).toBe(false)
+    expect(result.removed).toContain('Partitions/orca-browser/GPUCache')
+    // Non-cache partition state must survive.
+    expect(existsSync(join(userDataPath, 'Partitions', 'orca-browser', 'Cookies-journal'))).toBe(
+      true
+    )
+  })
+
+  it('ignores a userData directory with no partitions', () => {
+    mkdirSync(join(userDataPath, 'GPUCache'), { recursive: true })
+
+    expect(() => purgeGpuCaches(userDataPath)).not.toThrow()
+    expect(purgeGpuCaches(userDataPath).failed).toEqual([])
+  })
+
   it('reports a locked cache directory as failed and still purges the rest', () => {
     for (const name of GPU_CACHE_DIRECTORY_NAMES) {
       mkdirSync(join(userDataPath, name), { recursive: true })

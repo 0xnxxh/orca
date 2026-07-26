@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -22,21 +22,45 @@ export type GpuCachePurgeResult = {
   failed: string[]
 }
 
+/** Chromium repeats the same cache directories under every persisted session partition. */
+const PARTITIONS_DIRECTORY_NAME = 'Partitions'
+
+function partitionCacheRoots(userDataPath: string): { label: string; path: string }[] {
+  const partitionsRoot = join(userDataPath, PARTITIONS_DIRECTORY_NAME)
+  try {
+    return readdirSync(partitionsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        label: `${PARTITIONS_DIRECTORY_NAME}/${entry.name}`,
+        path: join(partitionsRoot, entry.name)
+      }))
+  } catch {
+    // No partitions directory (or unreadable): nothing extra to purge.
+    return []
+  }
+}
+
 /** Best effort: a locked cache directory must never block the relaunch that follows. */
 export function purgeGpuCaches(userDataPath: string): GpuCachePurgeResult {
   const removed: string[] = []
   const failed: string[] = []
-  for (const name of GPU_CACHE_DIRECTORY_NAMES) {
-    const target = join(userDataPath, name)
-    try {
-      if (!existsSync(target)) {
-        continue
+  // Why: Orca's embedded browser uses persist: partitions, each with its own GPUCache;
+  // leaving those behind replays a shader written by the driver that just crashed.
+  const roots = [{ label: '', path: userDataPath }, ...partitionCacheRoots(userDataPath)]
+  for (const root of roots) {
+    for (const name of GPU_CACHE_DIRECTORY_NAMES) {
+      const target = join(root.path, name)
+      const label = root.label ? `${root.label}/${name}` : name
+      try {
+        if (!existsSync(target)) {
+          continue
+        }
+        // Why: Windows can hold a brief lock on a cache file the dying GPU child owned.
+        rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 })
+        removed.push(label)
+      } catch {
+        failed.push(label)
       }
-      // Why: Windows can hold a brief lock on a cache file the dying GPU child owned.
-      rmSync(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 })
-      removed.push(name)
-    } catch {
-      failed.push(name)
     }
   }
   return { removed, failed }

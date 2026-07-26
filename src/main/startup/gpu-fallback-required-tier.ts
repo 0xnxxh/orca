@@ -110,3 +110,22 @@ export function recordGpuFallbackRequiredTier(
 export function getResumeGpuFallbackTier(userDataPath: string): GpuFallbackTier | null {
   return readGpuFallbackRequiredTier(userDataPath)?.requiredTier ?? null
 }
+
+/**
+ * Forgets the recorded tier.
+ *
+ * Monotonic-forever would mean a machine that needed tier 2 once is escalated
+ * straight to software rendering by any later burst, even years after a driver
+ * fix — the record is monotonic *while the machine is failing*, not for life.
+ * The only thing that earns a clear is a hardware launch that survived the
+ * crash-burst window, which is the same evidence the ladder uses in reverse.
+ */
+export function clearGpuFallbackRequiredTier(userDataPath: string): boolean {
+  try {
+    rmSync(recordPath(userDataPath), { force: true })
+    return true
+  } catch {
+    // Best effort: a surviving record only costs an over-aggressive future tier.
+    return false
+  }
+}
