@@ -1635,6 +1635,58 @@ describe('daemon-init: runRestartDaemon (7-step sequence)', () => {
     expect(trackDaemonReplacedMock).toHaveBeenCalledWith('unhealthy_resolver', 0)
   })
 
+  // STA-2376: in the field the identified reasons confirm via cleanupDaemonForProtocol().cleaned, not
+  // via killStaleDaemon — the daemon is healthy, so cleanup shuts it down over RPC and unlinks its pid,
+  // leaving nothing for the kill to find. The other tests reach confirmedReplacement through the kill,
+  // so without this one the `.cleaned` half could be dropped and every identified reason would go
+  // silent in production with the suite still green.
+  it('reports a replacement confirmed by cleanup alone, with no stale daemon left to kill', async () => {
+    const mod = await importFresh()
+    await mod.initDaemonPtyProvider()
+    trackDaemonReplacedMock.mockClear()
+
+    getDaemonLaunchIdentityMock.mockReturnValueOnce('mismatch')
+    killStaleDaemonMock.mockResolvedValueOnce(false)
+    // The daemon answers cleanup's liveness probe, then the endpoint goes away so the self-shutdown
+    // wait succeeds and cleanup reports cleaned:true.
+    probeSocketExistsMock.mockReturnValue(true)
+    netConnectMock.mockImplementationOnce(() => {
+      const handlers: Record<string, (() => void)[]> = { connect: [], error: [] }
+      return {
+        on(event: string, cb: () => void) {
+          handlers[event]?.push(cb)
+          if (event === 'connect') {
+            queueMicrotask(() => cb())
+          }
+          return this
+        },
+        removeListener(event: string, cb: () => void) {
+          handlers[event] = handlers[event]?.filter((handler) => handler !== cb) ?? []
+          return this
+        },
+        destroy() {}
+      }
+    })
+    forkMock.mockImplementationOnce(() => {
+      throw new Error('stop after replacement decision')
+    })
+    const launcher = spawnerInstances[0].launcher as (
+      socketPath: string,
+      tokenPath: string
+    ) => Promise<{ shutdown(): Promise<void> }>
+
+    await expect(launcher('/fake/socket', '/fake/token')).rejects.toThrow(
+      'stop after replacement decision'
+    )
+
+    expect(killStaleDaemonMock).toHaveBeenCalled()
+    expect(trackDaemonReplacedMock).toHaveBeenCalledTimes(1)
+    expect(trackDaemonReplacedMock).toHaveBeenCalledWith('different_app_path', 0)
+
+    // beforeEach only mockClear()s this one, so hand it back rather than leaving later tests probing a live endpoint.
+    probeSocketExistsMock.mockReturnValue(false)
+  })
+
   it('removes detached daemon startup listeners after readiness', async () => {
     const mod = await importFresh()
     checkDaemonHealthMock.mockResolvedValue('unreachable')
