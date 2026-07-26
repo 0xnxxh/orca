@@ -3,6 +3,7 @@ import { rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test, expect } from './helpers/orca-app'
+import { writeLinkedIssueEchoGenerator } from './helpers/source-control-ai-generators'
 import { waitForSessionReady } from './helpers/store'
 import { openSourceControlForWorktree } from './helpers/worktree-registration'
 
@@ -40,28 +41,6 @@ function cleanupWorktree(repoPath: string, worktreePath: string, branchName: str
   }
 }
 
-/**
- * Echoes back whichever issue number reached the prompt, so the assertion covers the
- * whole chain (renderer → IPC → worktree meta → template render → agent stdin) rather
- * than any single hop.
- */
-function writeLinkedIssueEchoGenerator(scriptPath: string): void {
-  writeFileSync(
-    scriptPath,
-    [
-      'const chunks = []',
-      "process.stdin.on('data', (chunk) => chunks.push(chunk))",
-      "process.stdin.on('end', () => {",
-      "  const prompt = Buffer.concat(chunks).toString('utf8')",
-      // Why: capture the whole line, not `\d*` — a `\d*` capture matches zero digits before
-      // an unexpanded `{linkedIssue}` and reports it as `empty`, hiding a literal token.
-      '  const match = prompt.match(/ORCA_E2E_ISSUE=([^\\r\\n]*)/)',
-      "  process.stdout.write(`saw-issue:${match ? match[1] || 'empty' : 'missing'}`)",
-      '})'
-    ].join('\n')
-  )
-}
-
 test.describe('Source Control AI commit messages', () => {
   // Why: the unlinked case separates a real resolver from one that always returns a number,
   // and — because the generator echoes the whole line — a literal `{linkedIssue}` reaches the
@@ -77,7 +56,7 @@ test.describe('Source Control AI commit messages', () => {
     test(`${label} the commit-message recipe`, async ({ orcaPage, testRepoPath }) => {
       const { branchName, worktreePath } = createWorktreeWithStagedChange(testRepoPath)
       const generatorPath = path.join(os.tmpdir(), `${branchName}-linked-issue-generator.cjs`)
-      writeLinkedIssueEchoGenerator(generatorPath)
+      writeLinkedIssueEchoGenerator(generatorPath, ['  process.stdout.write(`saw-issue:${issue}`)'])
 
       try {
         await waitForSessionReady(orcaPage)

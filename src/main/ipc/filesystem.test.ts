@@ -2157,6 +2157,8 @@ describe('registerFilesystemHandlers', () => {
     })
 
     expect(getWorktreeMeta).not.toHaveBeenCalled()
+    // Why: without this the assertion below passes vacuously on an early return.
+    expect(generateCommitMessageFromContextMock.mock.calls).toHaveLength(1)
     expect(generateCommitMessageFromContextMock.mock.calls[0]?.[0]).not.toHaveProperty(
       'linkedIssue'
     )

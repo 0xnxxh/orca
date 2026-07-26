@@ -110,9 +110,8 @@ describe('buildCommitMessageGenerationParams', () => {
     expect(markup).toContain('You are generating a single git commit message.')
   })
 
-  // Why: the chips fall back to the synthetic `123` sample when no preview is supplied,
-  // which told an unlinked workspace it would render `Fixes #123` and then produced
-  // `Fixes #`. Workspace-scoped callers must preview their own value, empty included.
+  // Why: with no preview the chips fall back to the synthetic `123`, promising an unlinked
+  // workspace `Fixes #123` where it renders `Fixes #`.
   it.each([
     { label: 'the linked issue', linkedIssue: 42, expected: '42' },
     { label: 'an empty value when unlinked', linkedIssue: null, expected: '' }
@@ -161,8 +160,8 @@ describe('buildCommitMessageGenerationParams', () => {
     expect(markup).not.toContain('linkedIssue')
   })
 
-  // Why: previews are chip-only. The recipe is saved repo- or globally scoped, so gating
-  // Save/Generate on the active workspace's empty `{linkedIssue}` would block a global write.
+  // Why: the recipe saves repo- or globally scoped, so gating on the active workspace's
+  // empty `{linkedIssue}` would block a global write.
   it.each([
     { label: 'a linked workspace', linkedIssue: 42 },
     { label: 'an unlinked workspace', linkedIssue: null }
@@ -172,16 +171,16 @@ describe('buildCommitMessageGenerationParams', () => {
       linkedIssue
     })
 
-    // Why: `disabled=""` is the only observable gate here — the "Command input is empty."
-    // copy is click-driven `generationError` state, so static markup can never show it.
+    // Why: the "Command input is empty." copy is click-driven state, so `disabled=""` is the
+    // only gate static markup can observe.
     expect(markup).toContain('Save defaults')
     expect(markup).toContain('Generate commit message')
     expect(markup).not.toContain('disabled=""')
   })
 
   it('still disables both actions for a template that renders empty for everyone', () => {
-    // Why: the negative control for the two cases above — without it they pass even if the
-    // buttons could never be disabled at all.
+    // Why: negative control — without it the two cases above pass even if the buttons could
+    // never disable at all.
     const markup = renderTextGenerationForm({ commandInputTemplate: '   ', linkedIssue: 42 })
 
     expect(markup).toContain('disabled=""')

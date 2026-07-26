@@ -165,17 +165,20 @@ export type RuntimeGitCommandHost = {
    * Live linked-issue read by worktree id. Resolved worktrees come from a
    * short-TTL cache, so link/unlink would otherwise lag generation; hosts that
    * implement this are authoritative, including the `null` unlinked answer.
+   * Return `undefined` when metadata is unavailable (store not ready) so the
+   * caller keeps the resolved worktree's cached value instead of reading it as
+   * unlinked.
    */
-  getWorktreeLinkedIssue?(worktreeId: string): number | null
+  getWorktreeLinkedIssue?(worktreeId: string): number | null | undefined
 }
 
 export class RuntimeGitCommands {
   constructor(private readonly host: RuntimeGitCommandHost) {}
 
   private linkedIssueForTarget(target: RuntimeGitTarget): number | null | undefined {
-    return this.host.getWorktreeLinkedIssue
-      ? this.host.getWorktreeLinkedIssue(target.worktree.id)
-      : target.worktree.linkedIssue
+    const live = this.host.getWorktreeLinkedIssue?.(target.worktree.id)
+    // Why: `undefined` means the host could not answer, not "unlinked".
+    return live === undefined ? target.worktree.linkedIssue : live
   }
 
   async getRuntimeGitStatus(

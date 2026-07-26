@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test, expect } from './helpers/orca-app'
@@ -7,34 +7,19 @@ import {
   openSourceControl,
   seedCreatePrComposer
 } from './helpers/source-control-ai-generation'
+import { writeLinkedIssueEchoGenerator } from './helpers/source-control-ai-generators'
 import { waitForSessionReady } from './helpers/store'
 
-/**
- * Echoes back whichever issue number reached the PR prompt as the generated
- * title, so the assertion covers renderer → IPC → meta → template → agent stdin
- * for the pull-request path (the commit twin lives in source-control-commit-message-ai).
- */
+// Why: the PR path reads the echoed issue from the generated title.
 function writeLinkedIssuePrEchoGenerator(scriptPath: string, base: string): void {
-  writeFileSync(
-    scriptPath,
-    [
-      'const chunks = []',
-      "process.stdin.on('data', (chunk) => chunks.push(chunk))",
-      "process.stdin.on('end', () => {",
-      "  const prompt = Buffer.concat(chunks).toString('utf8')",
-      // Why: capture the whole line, not `\d*` — a `\d*` capture matches zero digits before
-      // an unexpanded `{linkedIssue}` and reports it as `empty`, hiding a literal token.
-      '  const match = prompt.match(/ORCA_E2E_ISSUE=([^\\r\\n]*)/)',
-      "  const issue = match ? match[1] || 'empty' : 'missing'",
-      '  process.stdout.write(JSON.stringify({',
-      `    base: ${JSON.stringify(base)},`,
-      '    title: `saw-issue:${issue}`,',
-      "    body: 'linked-issue e2e body',",
-      '    draft: false',
-      '  }))',
-      '})'
-    ].join('\n')
-  )
+  writeLinkedIssueEchoGenerator(scriptPath, [
+    '  process.stdout.write(JSON.stringify({',
+    `    base: ${JSON.stringify(base)},`,
+    '    title: `saw-issue:${issue}`,',
+    "    body: 'linked-issue e2e body',",
+    '    draft: false',
+    '  }))'
+  ])
 }
 
 test.describe('Source Control AI pull request linkedIssue', () => {

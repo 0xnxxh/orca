@@ -7065,8 +7065,15 @@ export class OrcaRuntimeService {
     getCommitMessageAgentEnvironment: () => this.commitMessageAgentEnv ?? undefined,
     // Why: resolved worktrees are cached for a second, so link/unlink would lag
     // generation; meta is keyed by the same id the resolver returns.
-    getWorktreeLinkedIssue: (worktreeId) =>
-      this.store?.getWorktreeMeta?.(worktreeId)?.linkedIssue ?? null
+    getWorktreeLinkedIssue: (worktreeId) => {
+      const store = this.store
+      // Why: an unreadable store is "unknown", not "unlinked" — undefined keeps
+      // the resolver's cached linkedIssue instead of suppressing {linkedIssue}.
+      if (!store?.getWorktreeMeta) {
+        return undefined
+      }
+      return store.getWorktreeMeta(worktreeId)?.linkedIssue ?? null
+    }
   })
 
   getRuntimeGitStatus: RuntimeGitCommands['getRuntimeGitStatus'] =

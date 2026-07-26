@@ -692,6 +692,30 @@ describe('RuntimeGitCommands', () => {
     )
   })
 
+  it('keeps the cached issue number when live meta is unavailable rather than unlinked', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'orca-runtime-git-'))
+    tempDirs.push(worktreePath)
+    const context = { branch: 'main', stagedSummary: 'M\tREADME.md', stagedPatch: '+hello' }
+    const params = { agentId: 'codex', model: 'gpt-5.4-mini' }
+    mocks.resolveCommitMessageSettings.mockReturnValue({ ok: true, params })
+    mocks.getStagedCommitContext.mockResolvedValue(context)
+    mocks.generateCommitMessageFromContext.mockResolvedValue({ success: true, message: 'docs' })
+    const commands = new RuntimeGitCommands({
+      resolveRuntimeGitTarget: async () => ({ worktree: makeWorktree(worktreePath, 123) }),
+      getRuntimeSettings: () => ({}) as GlobalSettings,
+      // Why: what the host reports when its store is not initialized yet.
+      getWorktreeLinkedIssue: () => undefined
+    })
+
+    await commands.generateRuntimeCommitMessage('id:wt-1')
+
+    expect(mocks.generateCommitMessageFromContext).toHaveBeenCalledWith(
+      { ...context, linkedIssue: 123 },
+      params,
+      expect.objectContaining({ kind: 'local' })
+    )
+  })
+
   it('reads pull-request linked issues from live meta too', async () => {
     const worktreePath = mkdtempSync(join(tmpdir(), 'orca-runtime-git-'))
     tempDirs.push(worktreePath)
