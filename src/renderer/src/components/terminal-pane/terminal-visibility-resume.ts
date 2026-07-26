@@ -9,16 +9,6 @@ import {
   enforceTerminalCurrentScrollIntent,
   syncTerminalScrollIntentFromViewport
 } from '@/lib/pane-manager/terminal-scroll-intent'
-
-// Why: after a bounded backlog flush, native trim can walk viewportY while baseY
-// stays fixed at scrollback capacity. Re-sync geometry with preservePinnedAtBottom
-// so pins stay pins (not re-latched as followOutput) while absolute line targets
-// track content-stable positions for enforce.
-function resyncViewportIntentsAfterFlush(manager: PaneManager): void {
-  for (const pane of manager.getPanes()) {
-    syncTerminalScrollIntentFromViewport(pane.terminal, { preservePinnedAtBottom: true })
-  }
-}
 import {
   isTerminalLinkifierHoverActive,
   resetTerminalLinkifierHoverState
@@ -171,9 +161,10 @@ export function recoverVisibleTerminalWindowWake({
       resetTerminalLinkifierHoverState(pane.terminal)
     }
   }
-  // Why after flush: drain can trim scrollback; refresh pin geometry without
-  // re-latching a bottom pin as followOutput (preservePinnedAtBottom).
-  resyncViewportIntentsAfterFlush(manager)
+  // Why no post-flush re-sync: flushTerminalOutput only submits terminal.write and
+  // returns before parse callbacks, so a same-tick re-sync would read pre-parse
+  // geometry (possibly disturbed by resume/fit) and overwrite the pre-resume pin.
+  // Enforce the pre-resume latched intent instead.
   if (isActive) {
     focusActivePane(manager)
   }
@@ -210,17 +201,17 @@ function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean):
   //    on a one-column-off grid and garbles (the fitAllRevealedPanes regression).
   // 3. flush: bounded drain of hidden PTY bursts onto the now-stable GPU grid;
   //    scheduler continues the rest async so return-to-app does not beachball.
-  // Intent is latched by the outer pre-resume sync/capture. After flush we
-  // re-sync geometry with preservePinnedAtBottom so trim updates pin lines
-  // without re-latching a bottom pin as followOutput (resume/fit alone must
-  // not re-sync — reattach can move viewportY into a false at-bottom reading).
+  // Intent is latched by the outer pre-resume sync/capture. Do not re-sync after
+  // resume/fit/flush in this tick: reattach can move viewportY into a false
+  // at-bottom reading, and flush only queues terminal.write (async parse), so a
+  // same-tick re-sync would overwrite the pre-resume pin with pre-parse geometry.
+  // Outer enforce restores the latched intent after this returns.
   manager.resumeRendering()
   manager.fitAllRevealedPanes()
   for (const pane of manager.getPanes()) {
     requestTerminalBacklogRecovery(pane.terminal)
     flushTerminalOutput(pane.terminal, { maxChars: VISIBLE_RESUME_FLUSH_CHARS })
   }
-  resyncViewportIntentsAfterFlush(manager)
   if (isActive) {
     focusActivePane(manager)
   }
