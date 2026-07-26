@@ -40,6 +40,7 @@ import { createSshOperationAbortError, shellEscape } from './ssh-connection-util
 import {
   probeBuildToolchain,
   formatMissingToolchainError,
+  formatSkippedNodePtyWarning,
   shouldProbeBuildToolchainAfterNativeDepsFailure
 } from './ssh-relay-build-toolchain'
 import {
@@ -751,29 +752,32 @@ async function installNativeDeps(
   resetDeps: RelayNativeDepName[] = [],
   namespace?: RelayInstallNamespace
 ): Promise<void> {
+  const writeRelayPackageJson = async (deps: Record<string, string>): Promise<void> => {
+    await writeRelayFile(
+      conn,
+      hostPlatform,
+      joinRemotePath(hostPlatform, remoteDir, 'package.json'),
+      `${JSON.stringify({
+        name: 'orca-relay',
+        version: '1.0.0',
+        private: true,
+        type: 'commonjs',
+        dependencies: deps,
+        allowScripts: RELAY_NATIVE_DEP_SCRIPT_ALLOWLIST
+      })}\n`,
+      {
+        signal,
+        sftpNamespace: namespace
+          ? relaySftpNamespaceMapping(namespace, hostPlatform, remoteDir, 'package.json')
+          : undefined
+      }
+    )
+  }
+
   // Why: node-pty's prebuild spawns `node` as a child, so node must be in PATH (commandWithNodePath) or it fails exit 127.
   // Why: npm init -y rejects '+' in content-hashed dir names, so write a fixed minimal package.json instead.
   // Why: type:commonjs pins module resolution against Node default flips or a remote ~/.npmrc type=module.
-  const pkgJson = `${JSON.stringify({
-    name: 'orca-relay',
-    version: '1.0.0',
-    private: true,
-    type: 'commonjs',
-    dependencies: RELAY_NATIVE_DEPS,
-    allowScripts: RELAY_NATIVE_DEP_SCRIPT_ALLOWLIST
-  })}\n`
-  await writeRelayFile(
-    conn,
-    hostPlatform,
-    joinRemotePath(hostPlatform, remoteDir, 'package.json'),
-    pkgJson,
-    {
-      signal,
-      sftpNamespace: namespace
-        ? relaySftpNamespaceMapping(namespace, hostPlatform, remoteDir, 'package.json')
-        : undefined
-    }
-  )
+  await writeRelayPackageJson(RELAY_NATIVE_DEPS)
 
   try {
     const installArgs = Object.entries(RELAY_NATIVE_DEPS)
@@ -819,7 +823,30 @@ async function installNativeDeps(
     if (platform.startsWith('linux') && shouldProbeBuildToolchainAfterNativeDepsFailure(msg)) {
       const toolchain = await probeBuildToolchain(conn, hostPlatform, signal)
       if (toolchain?.toolchainMissing) {
-        throw new Error(formatMissingToolchainError(toolchain, msg))
+        // Why: node-pty is the only dep that needs a compiler, and it only backs terminals. Retry
+        // without it so files/git/editor still connect instead of failing the host outright; a
+        // missing native dep is already non-fatal below. Rethrow the actionable error if even that
+        // fails, so a host broken for some other reason still reports the toolchain gap.
+        console.warn(
+          `[ssh-relay][NPTY-SKIP-NO-TOOLCHAIN] ${remoteDir} (${platform}): ${formatSkippedNodePtyWarning(toolchain)}`
+        )
+        try {
+          await installNativeDepsWithoutNodePty(
+            conn,
+            remoteDir,
+            hostPlatform,
+            nodePath,
+            writeRelayPackageJson,
+            signal
+          )
+        } catch (retryErr) {
+          if (isUnconfirmedSshCommandTermination(retryErr)) {
+            throw retryErr
+          }
+          signal?.throwIfAborted()
+          throw new Error(formatMissingToolchainError(toolchain, msg))
+        }
+        return
       }
     }
     throw err
@@ -895,6 +922,43 @@ function resetNativeDepsCommand(
     )
   }
   return commands.join('; ')
+}
+
+/**
+ * Reinstall the relay's native deps with node-pty dropped, for hosts that cannot compile it.
+ *
+ * Why: npm reconciles every dependency in package.json, not just the ones named on the command
+ * line, so node-pty has to leave the manifest too — naming only @parcel/watcher still rebuilds it.
+ */
+async function installNativeDepsWithoutNodePty(
+  conn: SshConnection,
+  remoteDir: string,
+  hostPlatform: RemoteHostPlatform,
+  nodePath: string,
+  writeRelayPackageJson: (deps: Record<string, string>) => Promise<void>,
+  signal?: AbortSignal
+): Promise<void> {
+  const deps = Object.fromEntries(
+    Object.entries(RELAY_NATIVE_DEPS).filter(([dep]) => dep !== 'node-pty')
+  )
+  await writeRelayPackageJson(deps)
+  const installArgs = Object.entries(deps)
+    .map(([dep, version]) => shellEscape(`${dep}@${version}`))
+    .join(' ')
+  // Why: the failed attempt leaves an unbuildable node-pty behind; clear it so npm prunes rather
+  // than rebuilds it.
+  const resetCommand = resetNativeDepsCommand(hostPlatform, ['node-pty'])
+  await execHostCommand(
+    conn,
+    hostPlatform,
+    commandWithNodePath(
+      hostPlatform,
+      nodePath,
+      remoteDir,
+      `${resetCommand}; npm install --ignore-scripts=false --omit=dev --no-audit --no-fund ${installArgs} 2>&1`
+    ),
+    { timeoutMs: NATIVE_DEPS_COMMAND_TIMEOUT_MS, signal }
+  )
 }
 
 async function rebuildNativeDeps(

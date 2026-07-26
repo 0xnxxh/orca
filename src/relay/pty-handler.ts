@@ -60,6 +60,11 @@ import {
   type AgentSessionOwnerBinding
 } from '../shared/agent-session-host-authority'
 
+// Why: on Linux node-pty has no prebuilt and gets skipped when the host has no compiler, so this
+// is a closable setup gap — say so instead of a bare "not available".
+const NODE_PTY_UNAVAILABLE_MESSAGE =
+  'Remote terminals are unavailable: this host is missing the C/C++ build tools needed to compile node-pty. Install make, a C++ compiler, and python3 on the remote host, then reconnect.'
+
 function isMissingNodePtyNativeBinding(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -997,7 +1002,7 @@ export class PtyHandler {
   ): Promise<{ id: string; incarnationId: string }> {
     const pty = await this.loadPty()
     if (!pty) {
-      throw new Error('node-pty is not available on this remote host')
+      throw new Error(NODE_PTY_UNAVAILABLE_MESSAGE)
     }
 
     const cols = (params.cols as number) || 80
@@ -1078,7 +1083,7 @@ export class PtyHandler {
       // Why: Windows loads conpty.node only on first spawn, so handle that late binding failure here.
       if (isMissingNodePtyNativeBinding(error)) {
         this.invalidatePtyModuleAfterBindingFailure()
-        throw new Error('node-pty is not available on this remote host')
+        throw new Error(NODE_PTY_UNAVAILABLE_MESSAGE)
       }
       throw error
     }

@@ -381,7 +381,7 @@ describe('PtyHandler', () => {
     })
 
     await expect(dispatcher.callRequest('pty.spawn', {})).rejects.toThrow(
-      'node-pty is not available on this remote host'
+      'Remote terminals are unavailable'
     )
     expect(handler.activePtyCount).toBe(0)
   })
