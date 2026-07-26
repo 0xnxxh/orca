@@ -122,6 +122,27 @@ describe('resumeTerminalVisibility reveal repaint', () => {
     expect(order).toEqual(['resume-rendering', 'fit-reveal', 'reveal-repaint'])
   })
 
+  it('reattaches WebGL before flushing backlog on a heavy reveal', async () => {
+    // Why: flushing against the DOM fallback while the surface is already
+    // visible paints heavier glyphs for a frame (bold flash on worktree switch).
+    const order: string[] = []
+    const manager = createManager(order)
+    manager.getPanes.mockReturnValue([{ terminal: { name: 'pane' } }])
+    const { flushTerminalOutput, requestTerminalBacklogRecovery } = vi.mocked(
+      await import('@/lib/pane-manager/pane-terminal-output-scheduler')
+    )
+    flushTerminalOutput.mockImplementation(() => {
+      order.push('flush')
+    })
+    requestTerminalBacklogRecovery.mockImplementation(() => {
+      order.push('backlog')
+    })
+
+    resumeTerminalVisibility(resumeArgs(manager, false))
+
+    expect(order.slice(0, 3)).toEqual(['resume-rendering', 'backlog', 'flush'])
+  })
+
   it('routes a heavy reveal through fitAllRevealedPanes, not the sync fit', () => {
     // Regression: the sync reveal fit applied a transient one-column DOM↔WebGL grid, garbling grok on restore.
     const manager = createManager()

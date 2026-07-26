@@ -143,6 +143,8 @@ export function recoverVisibleTerminalWindowWake({
 }: RecoverVisibleTerminalWindowWakeArgs): void {
   // Why: macOS screensaver/display wake can leave xterm visible but with a
   // stale renderer/input surface; Orca's own hidden-state resume never runs.
+  // Resume WebGL first so wake backlog drain doesn't paint a DOM-fallback frame.
+  manager.resumeRendering()
   for (const pane of manager.getPanes()) {
     requestTerminalBacklogRecovery(pane.terminal)
     flushTerminalOutput(pane.terminal, { maxChars: WINDOW_WAKE_FLUSH_CHARS })
@@ -155,7 +157,6 @@ export function recoverVisibleTerminalWindowWake({
     }
   }
   syncTerminalViewportIntents(manager)
-  manager.resumeRendering()
   // Why: wake re-attaches WebGL — same transient cell-metric wobble guard as the heavy resume.
   manager.fitAllRevealedPanes()
   if (isActive) {
@@ -184,8 +185,17 @@ function requestLightTabBacklogRecovery(manager: PaneManager): void {
 }
 
 function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean): void {
+  // Why resume before flush: while a worktree is hidden we dispose WebGL and
+  // fall back to xterm's DOM renderer. Flushing backlog against that DOM
+  // fallback paints heavier-looking glyphs (macOS CSS AA / synthetic weights)
+  // for a frame when the surface becomes visible, then WebGL reattach settles
+  // to the thinner steady-state the user expects — a brief "bold flash".
+  // Reattach first so drain + first paint stay on the GPU path. macOS context
+  // creation is ~5 ms; on Windows (ANGLE -> D3D11) it can be 100-500 ms, but a
+  // deferred resume would paint a stretched DOM-fallback flash, which is worse UX.
+  manager.resumeRendering()
   // Why: hidden panes can accumulate large PTY bursts while Chromium is
-  // occluded. Drain a bounded slice before fitting; the scheduler keeps
+  // occluded. Drain a bounded slice after WebGL is live; the scheduler keeps
   // ordering and continues the rest asynchronously so return-to-app does
   // not beachball behind an entire backlog.
   for (const pane of manager.getPanes()) {
@@ -193,11 +203,6 @@ function resumeTerminalVisibilityHeavy(manager: PaneManager, isActive: boolean):
     flushTerminalOutput(pane.terminal, { maxChars: VISIBLE_RESUME_FLUSH_CHARS })
   }
   syncTerminalViewportIntents(manager)
-  // Resume WebGL immediately so the terminal shows its last-known state
-  // on the first painted frame. macOS context creation is ~5 ms; on
-  // Windows (ANGLE -> D3D11) it can be 100-500 ms but a deferred resume
-  // would paint a stretched DOM-fallback flash, which is worse UX.
-  manager.resumeRendering()
   // Why: resumeRendering just re-attached WebGL, whose cell metrics briefly differ
   // from the DOM renderer's; a raw fit here reflows on a transient one-column-off
   // grid and garbles diff-painting inline TUIs (grok minimize→restore).

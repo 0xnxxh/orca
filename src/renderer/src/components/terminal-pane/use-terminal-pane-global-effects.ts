@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import {
   FOCUS_TERMINAL_PANE_EVENT,
   PASTE_TERMINAL_TEXT_EVENT,
@@ -137,7 +137,11 @@ export function useTerminalPaneGlobalEffects({
     }
   }, [rendererVisible, paneTransportsRef])
 
-  useEffect(() => {
+  // Why useLayoutEffect: worktree hide disposes WebGL (DOM fallback). If resume
+  // runs in useEffect after paint, the first visible frame is the heavier DOM
+  // glyphs, then WebGL settles — a brief bold flash on switch. Pre-paint resume
+  // keeps the first painted frame on the GPU renderer.
+  useLayoutEffect(() => {
     const manager = managerRef.current
     if (!manager) {
       return

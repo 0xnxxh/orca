@@ -50,6 +50,11 @@ vi.mock('react', async (importOriginal) => {
     useEffect: (effect: () => void | (() => void)) => {
       effect()
     },
+    // Why: visibility suspend/resume runs in useLayoutEffect so WebGL is live
+    // before the first paint of a revealed worktree (avoids DOM bold flash).
+    useLayoutEffect: (effect: () => void | (() => void)) => {
+      effect()
+    },
     useRef: <T>(value: T) => {
       const index = reactRefState.index
       reactRefState.index += 1
@@ -236,7 +241,9 @@ describe('useTerminalPaneGlobalEffects', () => {
     delete (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver
   })
 
-  it('flushes visible terminal panes before resuming rendering and fitting', () => {
+  it('resumes WebGL before flushing backlog so the first paint is not DOM-fallback', () => {
+    // Why: flushing against the DOM fallback while the worktree is already
+    // visible paints heavier glyphs for a frame (bold flash on switch).
     const order: string[] = []
     const terminalA = { name: 'terminal-a' }
     const terminalB = { name: 'terminal-b' }
@@ -299,11 +306,11 @@ describe('useTerminalPaneGlobalEffects', () => {
     expect(order).toEqual([
       'capture:terminal-a',
       'capture:terminal-b',
+      'resume',
       'recover:terminal-a',
       'flush:terminal-a',
       'recover:terminal-b',
       'flush:terminal-b',
-      'resume',
       'fit-reveal',
       'intent:terminal-a',
       'intent:terminal-b',
