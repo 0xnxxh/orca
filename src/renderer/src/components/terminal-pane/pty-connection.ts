@@ -129,6 +129,9 @@ import {
   registerPtyTitleSource
 } from './pty-buffer-serializer'
 import { inspectRuntimeTerminalProcess } from '@/runtime/runtime-terminal-inspection'
+// Why: a restored pane's stale-account prompt can only be raised once a PTY is
+// actually attached — nothing is inspectable while the session hydrates.
+import { notifyCodexPaneBoundForStaleSweep } from '@/lib/codex-stale-pane-sweep'
 import { getRemoteRuntimePtyEnvironmentId } from '@/runtime/runtime-terminal-stream'
 import {
   discardTerminalOutput,
@@ -2815,6 +2818,7 @@ export function connectPanePty(
     registerSideEffectFactConsumerForPty(ptyId)
     syncHiddenRendererPtyDelivery()
     deps.syncPanePtyLayoutBinding(pane.id, ptyId)
+    notifyCodexPaneBoundForStaleSweep(ptyId)
     const tabPtyIds = useAppStore.getState().ptyIdsByTabId?.[deps.tabId] ?? []
     if (options.updateTabPtyId !== 'if-missing' || !tabPtyIds.includes(ptyId)) {
       if (options.replacePtyId) {
@@ -7326,6 +7330,7 @@ export function connectPanePty(
       registerSideEffectFactConsumerForPty(ptyId)
       syncHiddenRendererPtyDelivery()
       deps.syncPanePtyLayoutBinding(pane.id, ptyId)
+      notifyCodexPaneBoundForStaleSweep(ptyId)
       deps.updateTabPtyId(deps.tabId, ptyId)
       agentCompletionCoordinator.startProcessTracking()
       sampleVisiblePaneForegroundAgent()

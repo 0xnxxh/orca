@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAppStore } from '@/store'
 import { shouldUseShellReadyStartupDelivery } from '../../../shared/codex-startup-delivery'
+import type { TuiAgent } from '../../../shared/types'
 import {
   CODEX_ACCOUNT_RESTART_STARTUP,
   markLiveCodexSessionsForRestart,
@@ -15,6 +16,14 @@ import { clearRuntimeCompatibilityCacheForTests } from '@/runtime/runtime-rpc-cl
 const ACCOUNT_A = 'account-a@example.com'
 const ACCOUNT_B = 'account-b@example.com'
 const ACCOUNT_C = 'account-c@example.com'
+
+function setLaunchAgentOnFirstTab(launchAgent: TuiAgent): void {
+  const [tab, ...rest] = useAppStore.getState().tabsByWorktree.wt1 ?? []
+  if (!tab) {
+    throw new Error('expected a seeded tab')
+  }
+  useAppStore.setState({ tabsByWorktree: { wt1: [{ ...tab, launchAgent }, ...rest] } })
+}
 
 describe('CODEX_ACCOUNT_RESTART_STARTUP', () => {
   it('waits for shell readiness before relaunching Codex after an account switch', () => {
@@ -178,6 +187,41 @@ describe('markLiveCodexSessionsForRestart', () => {
       nextAccountLabel: ACCOUNT_B
     })
 
+    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
+  })
+
+  it('marks a launcher-started Codex pane whose deepest process is a subagent', async () => {
+    // Windows reports pwsh -> node -> codex.exe -> claude.exe as "claude".
+    setLaunchAgentOnFirstTab('codex')
+    vi.mocked(window.api.pty.inspectProcess).mockResolvedValue({
+      foregroundProcess: 'claude.exe',
+      hasChildProcesses: true
+    })
+
+    await markLiveCodexSessionsForRestart({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+  })
+
+  it('leaves a Codex-launched pane alone once the user exits back to the shell', async () => {
+    setLaunchAgentOnFirstTab('codex')
+    vi.mocked(window.api.pty.inspectProcess).mockResolvedValue({
+      foregroundProcess: 'pwsh.exe',
+      hasChildProcesses: false
+    })
+
+    await markLiveCodexSessionsForRestart({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+
+    // Why: a restart notice drops every keystroke in that pane.
     expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
   })
 
