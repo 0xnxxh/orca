@@ -155,6 +155,7 @@ describe('current daemon lifecycle retirement', () => {
     options: {
       launchNonce?: string
       protocolVersion?: number
+      idleSelfShutdownTimeoutMs?: number
     } = {}
   ): Promise<void> {
     server = new DaemonServer({
@@ -165,6 +166,7 @@ describe('current daemon lifecycle retirement', () => {
         ? { protocolVersion: options.protocolVersion }
         : {}),
       initialAdoptionTestConfig: { timeoutMs: 100, clock },
+      idleSelfShutdownTimeoutMs: options.idleSelfShutdownTimeoutMs ?? 10_000,
       onIdleShutdown,
       spawnSubprocess: () => subprocess
     })
@@ -683,6 +685,93 @@ describe('current daemon lifecycle retirement', () => {
     await waitFor(() => onIdleShutdown.mock.calls.length === 1)
 
     expect(readFileSync(tokenPath, 'utf8')).toBe('replacement-token')
+  })
+
+  // ── Post-use idle self-shutdown (#9138) ────────────────────────────────────
+  // An app update spawns a new daemon generation and leaves the old one running. Nothing retired
+  // it, so its agent sessions accumulated across updates — four generations and 25 GB of swap in
+  // the field report. These cover the timer plus the races that make it safe.
+
+  it('arms the idle timer once a used daemon has no clients and no sessions', async () => {
+    // The gap the timer closes. A clean disconnect already sets retirementRequested, so a daemon
+    // that drains later still exits. An app killed by an update, a crash, or force-quit leaves a
+    // fully authenticated client record behind: retirement is never requested, and the daemon
+    // outlives every generation that follows it.
+    await startServer()
+    const daemon = server as unknown as {
+      initialAdoptionDeadlineMs: number | null
+      idleSelfShutdownTimer: unknown
+      reevaluateIdleShutdown(): void
+    }
+    // Past first adoption, so the short never-adopted deadline no longer owns this window.
+    daemon.initialAdoptionDeadlineMs = null
+    daemon.reevaluateIdleShutdown()
+
+    expect(daemon.idleSelfShutdownTimer).not.toBeNull()
+    clock.advanceBy(10_000)
+    await waitFor(() => onIdleShutdown.mock.calls.length === 1)
+  })
+
+  it('never arms the timer while a session is still live', async () => {
+    // A background agent is live work. The daemon must outlive its client for warm reattach.
+    await startServer()
+    const client = new DaemonClient({ socketPath, tokenPath })
+    await client.ensureConnected()
+    await client.request('createOrAttach', { sessionId: 'live-agent', cols: 80, rows: 24 })
+    client.disconnect()
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const daemon = server as unknown as { idleSelfShutdownTimer: unknown }
+    expect(daemon.idleSelfShutdownTimer).toBeNull()
+    clock.advanceBy(10_000)
+    expect(onIdleShutdown).not.toHaveBeenCalled()
+  })
+
+  it('cancels the timer when a client reconnects before it expires', async () => {
+    await startServer()
+    const daemon = server as unknown as {
+      initialAdoptionDeadlineMs: number | null
+      idleSelfShutdownTimer: unknown
+      reevaluateIdleShutdown(): void
+    }
+    daemon.initialAdoptionDeadlineMs = null
+    daemon.reevaluateIdleShutdown()
+    expect(daemon.idleSelfShutdownTimer).not.toBeNull()
+
+    // A full client pair re-owns the endpoint; isIdle() goes false and the timer is dropped.
+    const client = new DaemonClient({ socketPath, tokenPath })
+    await client.ensureConnected()
+    await client.request('createOrAttach', { sessionId: 'reclaimed', cols: 80, rows: 24 })
+    expect(daemon.idleSelfShutdownTimer).toBeNull()
+
+    clock.advanceBy(10_000)
+    expect(onIdleShutdown).not.toHaveBeenCalled()
+    client.disconnect()
+  })
+
+  it('does not fire when a session is created after the timer was armed', async () => {
+    // The race the design calls out. Cancelling on create is the fast path, not the guarantee:
+    // this proves the expiry re-check independently prevents killing a live session, so a lost or
+    // late cancel is non-destructive rather than fatal.
+    await startServer()
+    const client = new DaemonClient({ socketPath, tokenPath })
+    await client.ensureConnected()
+    const daemon = server as unknown as {
+      initialAdoptionDeadlineMs: number | null
+      idleSelfShutdownTimer: unknown
+      onIdleSelfShutdownExpiry(): void
+    }
+    daemon.initialAdoptionDeadlineMs = null
+    await client.request('createOrAttach', { sessionId: 'late-arrival', cols: 80, rows: 24 })
+
+    // Re-arm as if the create had raced past the cancel, then reach expiry with a live session.
+    daemon.idleSelfShutdownTimer = clock.setTimeout(() => {
+      daemon.onIdleSelfShutdownExpiry()
+    }, 10_000)
+    clock.advanceBy(10_000)
+
+    expect(onIdleShutdown).not.toHaveBeenCalled()
+    client.disconnect()
   })
 })
 

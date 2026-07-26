@@ -46,6 +46,8 @@ export type DaemonServerOptions = {
   /** Direct-construction seam for protocol fixture tests; production never overrides it. */
   protocolVersion?: number
   onIdleShutdown?: () => void
+  /** Test seam for the post-use idle timer; production uses IDLE_SELF_SHUTDOWN_TIMEOUT_MS. */
+  idleSelfShutdownTimeoutMs?: number
   /** Direct-construction-only controls; production uses the compiled initial-adoption timeout. */
   initialAdoptionTestConfig?: {
     timeoutMs: number
@@ -93,6 +95,10 @@ type PendingShutdownReply = {
 export class DaemonServer {
   // Why: survive long enough to adopt a first client pair, but don't orphan forever if the parent crashes first.
   private static readonly INITIAL_ADOPTION_TIMEOUT_MS = 2 * 60 * 1000
+  // Why 30 minutes (#9138): long enough that a brief app restart or update reconnects to the same
+  // daemon and keeps warm reattach, short enough that a generation left behind by an update exits
+  // the same day instead of holding its PTYs forever.
+  private static readonly IDLE_SELF_SHUTDOWN_TIMEOUT_MS = 30 * 60 * 1000
   private static readonly SHUTDOWN_REPLY_FLUSH_TIMEOUT_MS = 1_000
   private server: Server | null = null
   private token: string
@@ -113,6 +119,11 @@ export class DaemonServer {
   private idleShutdownState: 'running' | 'idle-shutdown-pending' | 'shutting-down' = 'running'
   private initialAdoptionTimer: unknown | null = null
   private initialAdoptionDeadlineMs: number | null = null
+  // Why separate from the adoption timer: that one only covers the window before the first client
+  // ever connects. This one covers a daemon that was used and then abandoned, which is the shape an
+  // app update leaves behind (#9138).
+  private idleSelfShutdownTimer: unknown | null = null
+  private idleSelfShutdownTimeoutMs: number
   private retirementRequested = false
   private shutdownPromise: Promise<void> | null = null
   private ordinaryShutdownServerClose: Promise<void> | null = null
@@ -174,6 +185,8 @@ export class DaemonServer {
     this.onIdleShutdown = opts.onIdleShutdown ?? (() => {})
     this.initialAdoptionTimeoutMs =
       opts.initialAdoptionTestConfig?.timeoutMs ?? DaemonServer.INITIAL_ADOPTION_TIMEOUT_MS
+    this.idleSelfShutdownTimeoutMs =
+      opts.idleSelfShutdownTimeoutMs ?? DaemonServer.IDLE_SELF_SHUTDOWN_TIMEOUT_MS
     this.lifecycleClock = opts.initialAdoptionTestConfig?.clock ?? {
       setTimeout: (callback, delayMs) => {
         const timer = setTimeout(callback, delayMs)
@@ -241,6 +254,7 @@ export class DaemonServer {
   private beginOrdinaryShutdownFence(): Promise<void> {
     this.idleShutdownState = 'shutting-down'
     this.cancelInitialAdoptionTimer()
+    this.cancelIdleSelfShutdownTimer()
     this.ordinaryShutdownServerClose ??= this.beginServerClose()
     return this.ordinaryShutdownServerClose
   }
@@ -310,6 +324,7 @@ export class DaemonServer {
   }
 
   private reevaluateIdleShutdown(): void {
+    this.reevaluateIdleSelfShutdown()
     if (this.idleShutdownState !== 'running') {
       return
     }
@@ -347,6 +362,58 @@ export class DaemonServer {
     this.reevaluateIdleShutdown()
   }
 
+  /**
+   * Arm/cancel the post-use idle timer (#9138). An app update spawns a new daemon generation and
+   * leaves the old one running; nothing retires it, so its agent sessions accumulate across updates.
+   * A daemon that still holds a session never arms this — a background agent is live work.
+   */
+  private reevaluateIdleSelfShutdown(): void {
+    if (this.idleShutdownState !== 'running') {
+      this.cancelIdleSelfShutdownTimer()
+      return
+    }
+    if (!this.isIdle()) {
+      this.cancelIdleSelfShutdownTimer()
+      return
+    }
+    // Why defer to the adoption timer: before the first client pair it already owns the
+    // never-adopted case on a much shorter deadline. Two live timers for one condition would race
+    // and double-count in lifecycle assertions.
+    if (this.initialAdoptionDeadlineMs !== null) {
+      this.cancelIdleSelfShutdownTimer()
+      return
+    }
+    if (this.idleSelfShutdownTimer !== null) {
+      return
+    }
+    this.idleSelfShutdownTimer = this.lifecycleClock.setTimeout(() => {
+      this.onIdleSelfShutdownExpiry()
+    }, this.idleSelfShutdownTimeoutMs)
+  }
+
+  /**
+   * Why re-check rather than trust the timer: a client can connect or a session can be created
+   * between arming and expiry. Cancelling on create is the fast path, not the guarantee — this
+   * re-test plus beginIdleShutdown's own is what makes a lost or late cancel non-destructive.
+   */
+  private onIdleSelfShutdownExpiry(): void {
+    this.idleSelfShutdownTimer = null
+    if (this.idleShutdownState !== 'running' || !this.isIdle()) {
+      return
+    }
+    this.log.log('shutdown', { reason: 'idle-self' })
+    this.retirementRequested = true
+    this.beginIdleShutdown()
+  }
+
+  private cancelIdleSelfShutdownTimer(): void {
+    if (this.idleSelfShutdownTimer === null) {
+      return
+    }
+    this.lifecycleClock.clearTimeout(this.idleSelfShutdownTimer)
+    this.idleSelfShutdownTimer = null
+  }
+
   private cancelInitialAdoptionTimer(): void {
     if (this.initialAdoptionTimer === null) {
       return
@@ -357,6 +424,7 @@ export class DaemonServer {
 
   private beginIdleShutdown(): void {
     this.initialAdoptionTimer = null
+    this.cancelIdleSelfShutdownTimer()
     if (this.idleShutdownState !== 'running') {
       return
     }
@@ -691,6 +759,9 @@ export class DaemonServer {
           // Why: a control-only replacement can't own terminal admission or erase the prior client's retirement request.
           throw new Error('Daemon client connection is incomplete; reconnect')
         }
+        // Why cancel before the counter: once a create is admitted the daemon is no longer idle, and
+        // the idle timer must not fire while this operation is in flight (#9138).
+        this.cancelIdleSelfShutdownTimer()
         this.createOrAttachInFlight++
         const p = request.payload
         let routedSessionId = p.sessionId
