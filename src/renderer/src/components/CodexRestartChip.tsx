@@ -7,6 +7,7 @@ import { selectCodexRestartInputs } from './codex-restart-chip-inputs'
 import { translate } from '@/i18n/i18n'
 import { shouldFocusMobileDriverAction } from './terminal-pane/mobile-driver-overlay-focus'
 import { buildCodexRestartNoticeKey } from './codex-restart-notice-key'
+import { awaitsCodexRestartAnswer } from './codex-restart-notice-state'
 import type { CodexRestartNotice } from '../store/slices/terminals'
 
 const EMPTY_TABS: { id: string }[] = []
@@ -22,12 +23,13 @@ export function collectStalePtyIdsForTabs({
 }): string[] {
   // Why: an already-requested restart runs when its pane next mounts. Keeping it
   // out of the prompt is what stops the panel from sticking on a worktree whose
-  // stale pane is parked or deferred and cannot answer the request yet.
+  // stale pane is parked or deferred and cannot answer the request yet. A
+  // dismissed notice is likewise answered — it only survives as launch-account
+  // memory.
   return tabs.flatMap((tab) =>
-    (ptyIdsByTabId[tab.id] ?? []).filter((ptyId) => {
-      const notice = codexRestartNoticeByPtyId[ptyId]
-      return Boolean(notice) && !notice?.restartRequested
-    })
+    (ptyIdsByTabId[tab.id] ?? []).filter((ptyId) =>
+      awaitsCodexRestartAnswer(codexRestartNoticeByPtyId[ptyId])
+    )
   )
 }
 
@@ -51,15 +53,13 @@ export function collectStaleWorktreePtyIds({
 
 export function dismissStaleWorktreePtyIds(
   staleWorktreePtyIds: string[],
-  clearCodexRestartNotice: (ptyId: string) => void,
+  dismissCodexRestartNotices: (ptyIds: string[]) => void,
   forgetLaunchAccounts: (ptyIds: string[]) => void
 ): void {
   // Why: restart notices are stored per PTY, but the workspace host presents
-  // one shared prompt. Clearing all matching PTY notices keeps every pane in
+  // one shared prompt. Dismissing all matching PTY notices keeps every pane in
   // that worktree consistent with the dismissal.
-  for (const ptyId of staleWorktreePtyIds) {
-    clearCodexRestartNotice(ptyId)
-  }
+  dismissCodexRestartNotices(staleWorktreePtyIds)
   // Why: notices are renderer-only, so without dropping the on-disk launch
   // record the startup sweep re-raises this exact prompt — and re-blocks the
   // pane's input — after every app restart the user already answered.
@@ -104,7 +104,7 @@ export default function CodexRestartChip({
     ? codexRestartNoticeByPtyId[staleWorktreePtyIds[0]]
     : undefined
   const queueCodexPaneRestarts = useAppStore((s) => s.queueCodexPaneRestarts)
-  const clearCodexRestartNotice = useAppStore((s) => s.clearCodexRestartNotice)
+  const dismissCodexRestartNotices = useAppStore((s) => s.dismissCodexRestartNotices)
 
   const noticeKey = restartNotice ? buildCodexRestartNoticeKey(restartNotice) : null
 
@@ -117,7 +117,7 @@ export default function CodexRestartChip({
   }
 
   const handleDismiss = (): void => {
-    dismissStaleWorktreePtyIds(staleWorktreePtyIds, clearCodexRestartNotice, (ptyIds) => {
+    dismissStaleWorktreePtyIds(staleWorktreePtyIds, dismissCodexRestartNotices, (ptyIds) => {
       void window.api.codexAccounts.forgetStalePanes({ ptyIds }).catch((err: unknown) => {
         console.warn('Failed to forget dismissed Codex pane accounts:', err)
       })

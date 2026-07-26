@@ -176,7 +176,12 @@ type StoreState = {
   } | null
   codexRestartNoticeByPtyId: Record<
     string,
-    { previousAccountLabel: string; nextAccountLabel: string }
+    {
+      previousAccountLabel: string
+      nextAccountLabel: string
+      restartRequested?: true
+      dismissed?: true
+    }
   >
   deferredSshReconnectTargets: string[]
   deferredSshSessionIdsByTabId: Record<string, string>
@@ -4473,6 +4478,112 @@ describe('connectPanePty', () => {
       ),
       codexRestartNoticeByPtyId: {
         'pty-live': { previousAccountLabel: 'A', nextAccountLabel: 'B' }
+      }
+    }
+
+    const pane = createPane(1)
+    let onDataHandler: ((data: string) => void) | null = null
+    pane.terminal.onData = vi.fn(((handler: (data: string) => void) => {
+      onDataHandler = handler
+      return { dispose: vi.fn() }
+    }) as typeof pane.terminal.onData)
+    const manager = createManager(1)
+    const deps = createDeps()
+
+    connectPanePty(pane as never, manager as never, deps as never)
+
+    expect(onDataHandler).toBeDefined()
+    if (!onDataHandler) {
+      throw new Error('expected onData handler to be registered')
+    }
+    ;(onDataHandler as (data: string) => void)('a')
+
+    expect(transport.sendInput).not.toHaveBeenCalled()
+  })
+
+  it('restores input to a Codex pane whose restart notice the user dismissed', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+
+    const transport = createMockTransport('pty-live')
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'pty-live' }] },
+      ptyIdsByTabId: { 'tab-1': ['pty-live'] },
+      // Why: the record survives a dismissal as launch-account memory, so the
+      // input gate has to read the marker rather than the record's existence.
+      codexRestartNoticeByPtyId: {
+        'pty-live': { previousAccountLabel: 'A', nextAccountLabel: 'B', dismissed: true }
+      }
+    }
+
+    const pane = createPane(1)
+    let onDataHandler: ((data: string) => void) | null = null
+    pane.terminal.onData = vi.fn(((handler: (data: string) => void) => {
+      onDataHandler = handler
+      return { dispose: vi.fn() }
+    }) as typeof pane.terminal.onData)
+    const manager = createManager(1)
+    const deps = createDeps()
+
+    connectPanePty(pane as never, manager as never, deps as never)
+
+    expect(onDataHandler).toBeDefined()
+    if (!onDataHandler) {
+      throw new Error('expected onData handler to be registered')
+    }
+    ;(onDataHandler as (data: string) => void)('a')
+
+    expect(transport.sendInput).toHaveBeenCalledWith('a')
+  })
+
+  it('restores input through the tab fallback when the dismissed pane has no live PTY binding', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+
+    const transport = createMockTransport(null)
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'pty-live' }] },
+      ptyIdsByTabId: { 'tab-1': ['pty-live'] },
+      codexRestartNoticeByPtyId: {
+        'pty-live': { previousAccountLabel: 'A', nextAccountLabel: 'B', dismissed: true }
+      }
+    }
+
+    const pane = createPane(1)
+    let onDataHandler: ((data: string) => void) | null = null
+    pane.terminal.onData = vi.fn(((handler: (data: string) => void) => {
+      onDataHandler = handler
+      return { dispose: vi.fn() }
+    }) as typeof pane.terminal.onData)
+    const manager = createManager(1)
+    const deps = createDeps()
+
+    connectPanePty(pane as never, manager as never, deps as never)
+
+    expect(onDataHandler).toBeDefined()
+    if (!onDataHandler) {
+      throw new Error('expected onData handler to be registered')
+    }
+    ;(onDataHandler as (data: string) => void)('a')
+
+    expect(transport.sendInput).toHaveBeenCalledWith('a')
+  })
+
+  it('keeps blocking input on a pane whose restart is requested but not yet run', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+
+    const transport = createMockTransport('pty-live')
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'pty-live' }] },
+      ptyIdsByTabId: { 'tab-1': ['pty-live'] },
+      // Why: unlike a dismissal, a queued restart leaves the pane running under
+      // the old account until it actually relaunches.
+      codexRestartNoticeByPtyId: {
+        'pty-live': { previousAccountLabel: 'A', nextAccountLabel: 'B', restartRequested: true }
       }
     }
 

@@ -5,6 +5,7 @@ import type { IBuffer, IDisposable } from '@xterm/xterm'
 import { resolveCursorAgentImeAnchor } from '@/lib/pane-manager/terminal-ime-anchor'
 import { detectAgentStatusFromTitle, agentTypeToIconAgent, isClaudeAgent } from '@/lib/agent-status'
 import { resolvePaneTitleDecision } from './terminal-title-evidence'
+import { blocksCodexPaneInput } from '../codex-restart-notice-state'
 import { resolveLiveAgentStatusConnectionRouting } from '@/lib/agent-status-connection-ownership'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { useAppStore } from '@/store'
@@ -826,12 +827,12 @@ function isCodexPaneStale(args: {
   if (!hasCodexRestartNotices(codexRestartNoticeByPtyId)) {
     return false
   }
-  if (args.panePtyId && codexRestartNoticeByPtyId[args.panePtyId]) {
+  if (args.panePtyId && blocksCodexPaneInput(codexRestartNoticeByPtyId[args.panePtyId])) {
     return true
   }
 
   const tab = (state.tabsByWorktree[args.worktreeId] ?? []).find((entry) => entry.id === args.tabId)
-  if (tab?.ptyId && codexRestartNoticeByPtyId[tab.ptyId]) {
+  if (tab?.ptyId && blocksCodexPaneInput(codexRestartNoticeByPtyId[tab.ptyId])) {
     return true
   }
 

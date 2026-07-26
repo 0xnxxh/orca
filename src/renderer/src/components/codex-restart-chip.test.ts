@@ -98,15 +98,28 @@ describe('CodexRestartChip helpers', () => {
   })
 
   it('dismisses every stale PTY notice in the worktree prompt', () => {
-    const clearCodexRestartNotice = vi.fn()
+    const dismissCodexRestartNotices = vi.fn()
     const forgetLaunchAccounts = vi.fn()
 
-    dismissStaleWorktreePtyIds(['pty-1', 'pty-3'], clearCodexRestartNotice, forgetLaunchAccounts)
+    dismissStaleWorktreePtyIds(['pty-1', 'pty-3'], dismissCodexRestartNotices, forgetLaunchAccounts)
 
-    expect(clearCodexRestartNotice).toHaveBeenNthCalledWith(1, 'pty-1')
-    expect(clearCodexRestartNotice).toHaveBeenNthCalledWith(2, 'pty-3')
-    expect(clearCodexRestartNotice).toHaveBeenCalledTimes(2)
+    expect(dismissCodexRestartNotices).toHaveBeenCalledWith(['pty-1', 'pty-3'])
     expect(forgetLaunchAccounts).toHaveBeenCalledWith(['pty-1', 'pty-3'])
+  })
+
+  it('drops dismissed PTYs from the prompt while keeping their launch account', () => {
+    expect(
+      collectStalePtyIdsForTabs({
+        tabs: [{ id: 'tab-1' }],
+        ptyIdsByTabId: {
+          'tab-1': ['pty-1', 'pty-2']
+        },
+        codexRestartNoticeByPtyId: {
+          'pty-1': { previousAccountLabel: 'a', nextAccountLabel: 'b', dismissed: true },
+          'pty-2': { previousAccountLabel: 'a', nextAccountLabel: 'b' }
+        }
+      })
+    ).toEqual(['pty-2'])
   })
 
   it('renders only account-resolution actions without an external-store update loop', async () => {
@@ -188,7 +201,131 @@ describe('CodexRestartChip helpers', () => {
 
     // Why: without this the startup sweep re-raises the prompt the user just answered.
     expect(forgetStalePanes).toHaveBeenCalledWith({ ptyIds: ['pty-1'] })
-    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
+    expect(container.textContent).toBe('')
+    // Why: the record survives as the pane's launch-account memory, but marked
+    // answered so it neither prompts again nor blocks the pane's keyboard.
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: 'old@example.com',
+      nextAccountLabel: 'new@example.com',
+      dismissed: true
+    })
+  })
+
+  it('stays closed when the user re-selects the account the pane launched under', async () => {
+    const forgetStalePanes = vi.fn(() => Promise.resolve())
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { codexAccounts: { forgetStalePanes } }
+    })
+    useAppStore.setState({
+      tabsByWorktree: {
+        'worktree-1': [
+          {
+            id: 'tab-1',
+            worktreeId: 'worktree-1',
+            title: 'Terminal',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1,
+            ptyId: null
+          }
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] }
+    })
+    useAppStore
+      .getState()
+      .markCodexRestartNotices([
+        {
+          ptyId: 'pty-1',
+          previousAccountLabel: 'old@example.com',
+          nextAccountLabel: 'new@example.com'
+        }
+      ])
+    await act(async () => {
+      root.render(React.createElement(CodexRestartChip, { worktreeId: 'worktree-1' }))
+    })
+    const dismissButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Keep old account'
+    )
+    await act(async () => {
+      dismissButton?.click()
+    })
+
+    // Re-select the pane's original account: it never left it, so there is
+    // nothing to restart and nothing to prompt about.
+    await act(async () => {
+      useAppStore.getState().markCodexRestartNotices([
+        {
+          ptyId: 'pty-1',
+          previousAccountLabel: 'new@example.com',
+          nextAccountLabel: 'old@example.com'
+        }
+      ])
+    })
+
+    expect(container.textContent).toBe('')
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toBeUndefined()
+  })
+
+  it('reopens the prompt when a dismissed pane is out of date against a third account', async () => {
+    const forgetStalePanes = vi.fn(() => Promise.resolve())
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { codexAccounts: { forgetStalePanes } }
+    })
+    useAppStore.setState({
+      tabsByWorktree: {
+        'worktree-1': [
+          {
+            id: 'tab-1',
+            worktreeId: 'worktree-1',
+            title: 'Terminal',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1,
+            ptyId: null
+          }
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] }
+    })
+    useAppStore
+      .getState()
+      .markCodexRestartNotices([
+        {
+          ptyId: 'pty-1',
+          previousAccountLabel: 'old@example.com',
+          nextAccountLabel: 'new@example.com'
+        }
+      ])
+    await act(async () => {
+      root.render(React.createElement(CodexRestartChip, { worktreeId: 'worktree-1' }))
+    })
+    const dismissButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Keep old account'
+    )
+    await act(async () => {
+      dismissButton?.click()
+    })
+    expect(container.textContent).toBe('')
+
+    await act(async () => {
+      useAppStore.getState().markCodexRestartNotices([
+        {
+          ptyId: 'pty-1',
+          previousAccountLabel: 'new@example.com',
+          nextAccountLabel: 'third@example.com'
+        }
+      ])
+    })
+
+    // Why: the dismissal answered "keep old instead of new", not "never prompt
+    // again"; the pane really is out of date against third@example.com.
+    expect(container.textContent).toContain('Codex is still signed in as old@example.com')
+    expect(container.textContent).toContain('Restart this session to use third@example.com')
   })
 
   it('closes the prompt after Restart even when no mounted pane can run it yet', async () => {

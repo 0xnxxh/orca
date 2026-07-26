@@ -466,6 +466,10 @@ export type CodexRestartNotice = {
    *  because `previousAccountLabel` is the only memory of the account this pane
    *  actually launched under, which drives the A -> B -> A collapse. */
   restartRequested?: true
+  /** Set when the user answers "Keep old account". Same reason the record has to
+   *  survive: deleting it erased the launch account, so re-selecting it looked
+   *  like a fresh switch and raised an inverted prompt that killed pane input. */
+  dismissed?: true
 }
 
 export type TerminalSlice = {
@@ -647,6 +651,7 @@ export type TerminalSlice = {
     notices: { ptyId: string; previousAccountLabel: string; nextAccountLabel: string }[]
   ) => void
   clearCodexRestartNotice: (ptyId: string) => void
+  dismissCodexRestartNotices: (ptyIds: string[]) => void
   setTabPaneExpanded: (tabId: string, expanded: boolean) => void
   setTabCanExpandPane: (tabId: string, canExpand: boolean) => void
   setTabLayout: (tabId: string, layout: TerminalLayoutSnapshot | null) => void
@@ -2847,6 +2852,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           nextAccountLabel: notice.nextAccountLabel,
           // Why: a queued restart relaunches under whatever account is selected
           // when it runs, so a later switch does not reopen an answered prompt.
+          // A dismissal is deliberately not carried over — it answered "keep the
+          // old account instead of B", which says nothing about a later C.
           ...(existing?.restartRequested ? { restartRequested: true as const } : {})
         }
       }
@@ -2866,6 +2873,34 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const nextPendingCodexPaneRestartIds = { ...s.pendingCodexPaneRestartIds }
       delete next[ptyId]
       delete nextPendingCodexPaneRestartIds[ptyId]
+      return {
+        codexRestartNoticeByPtyId: next,
+        pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds
+      }
+    })
+  },
+
+  dismissCodexRestartNotices: (ptyIds) => {
+    set((s) => {
+      // Why: keeping the old account is an answer, not a restart — the record
+      // stays so `previousAccountLabel` still names the pane's launch account,
+      // but every consumer treats it as answered (prompt hidden, input freed).
+      const next = { ...s.codexRestartNoticeByPtyId }
+      const nextPendingCodexPaneRestartIds = { ...s.pendingCodexPaneRestartIds }
+      let changed = false
+      for (const ptyId of ptyIds) {
+        const notice = next[ptyId]
+        if (!notice || notice.dismissed) {
+          continue
+        }
+        const { restartRequested: _restartRequested, ...kept } = notice
+        next[ptyId] = { ...kept, dismissed: true }
+        delete nextPendingCodexPaneRestartIds[ptyId]
+        changed = true
+      }
+      if (!changed) {
+        return {}
+      }
       return {
         codexRestartNoticeByPtyId: next,
         pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds
