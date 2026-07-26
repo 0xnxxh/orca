@@ -1115,6 +1115,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
       if (historyManager.hasWriter(session.sessionId)) {
         this.sessionsNeedingFullCheckpoint.add(session.sessionId)
         this.lastFullCheckpointAt.delete(session.sessionId)
+        this.markSessionDirty(session.sessionId)
       }
     })
   }

@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs'
 import { isTerminalOscLinkRanges } from '../../shared/terminal-osc-link-ranges'
-import { isValidTerminalSize } from '../../shared/terminal-size-limits'
 import { readTerminalHistoryJsonAsync } from './terminal-history-file-reader'
 import { TERMINAL_HISTORY_CHECKPOINT_MAX_BYTES } from './terminal-history-file-limits'
+import { isValidTerminalHistorySize } from './terminal-history-dimensions'
 import type { TerminalCheckpointFile, TerminalModes } from './types'
 
 export type TerminalHistoryCheckpointRead =
@@ -39,7 +39,7 @@ function isTerminalCheckpointFile(value: unknown): value is TerminalCheckpointFi
     typeof checkpoint.scrollbackAnsi === 'string' &&
     typeof checkpoint.rehydrateSequences === 'string' &&
     (checkpoint.cwd === null || typeof checkpoint.cwd === 'string') &&
-    isValidTerminalSize(checkpoint.cols, checkpoint.rows) &&
+    isValidTerminalHistorySize(checkpoint.cols, checkpoint.rows) &&
     isTerminalModes(checkpoint.modes) &&
     isNonNegativeSafeInteger(checkpoint.scrollbackLines) &&
     (checkpoint.generation === undefined || isNonNegativeSafeInteger(checkpoint.generation)) &&

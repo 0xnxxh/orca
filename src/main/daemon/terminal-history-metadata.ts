@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { isValidTerminalSize } from '../../shared/terminal-size-limits'
 import { getHistorySessionDirName } from './history-paths'
+import { isValidTerminalHistorySize } from './terminal-history-dimensions'
 import { readTerminalHistoryJson } from './terminal-history-file-reader'
 import { TERMINAL_HISTORY_META_MAX_BYTES } from './terminal-history-file-limits'
 
@@ -57,7 +57,7 @@ function isSessionMeta(value: unknown): value is SessionMeta {
   return (
     typeof meta.cwd === 'string' &&
     typeof meta.startedAt === 'string' &&
-    isValidTerminalSize(meta.cols, meta.rows) &&
+    isValidTerminalHistorySize(meta.cols, meta.rows) &&
     (meta.endedAt === null || typeof meta.endedAt === 'string') &&
     (meta.exitCode === null || typeof meta.exitCode === 'number')
   )

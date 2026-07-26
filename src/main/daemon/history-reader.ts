@@ -28,7 +28,7 @@ import {
   type ColdRestoreInfo
 } from './terminal-history-cold-restore-info'
 import { readTerminalHistoryCheckpoint } from './terminal-history-checkpoint-reader'
-import { isValidTerminalSize } from '../../shared/terminal-size-limits'
+import { isValidTerminalHistorySize } from './terminal-history-dimensions'
 
 export type { ColdRestoreInfo } from './terminal-history-cold-restore-info'
 
@@ -297,7 +297,7 @@ export class HistoryReader {
                 return { restoreInfo: null, readFailed: checkpoint === null }
               }
             } else if (record.kind === 'resize') {
-              if (!isValidTerminalSize(record.cols, record.rows)) {
+              if (!isValidTerminalHistorySize(record.cols, record.rows)) {
                 return { restoreInfo: null, readFailed: checkpoint === null }
               }
               await replay.resize(record.cols, record.rows)

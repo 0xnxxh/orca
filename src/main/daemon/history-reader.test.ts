@@ -93,6 +93,19 @@ describe('HistoryReader', () => {
       expect(info!.rehydrateSequences).toBe('')
     })
 
+    it('restores pre-limit 800-column checkpoint history', async () => {
+      writeSessionWithCheckpoint(
+        dir,
+        'wide-checkpoint',
+        makeMeta({ cols: 800 }),
+        makeCheckpoint({ cols: 800 })
+      )
+
+      const info = await reader.detectColdRestore('wide-checkpoint')
+
+      expect(info).toMatchObject({ cols: 800, rows: 24 })
+    })
+
     it('restores terminal modes from checkpoint', async () => {
       const modes = {
         bracketedPaste: true,
@@ -157,6 +170,7 @@ describe('HistoryReader', () => {
       '{}',
       JSON.stringify({ cwd: '/tmp', cols: 80, rows: 24 }),
       JSON.stringify(makeMeta({ cols: 1.5 })),
+      JSON.stringify(makeMeta({ cols: 1_001 })),
       JSON.stringify(makeMeta({ rows: 501 }))
     ])('classifies structurally invalid metadata as unreadable: %s', async (metadata) => {
       const sessionDir = join(dir, getHistorySessionDirName('invalid-meta'))
@@ -191,6 +205,7 @@ describe('HistoryReader', () => {
 
     it.each([
       makeCheckpoint({ cols: 1.5 }),
+      makeCheckpoint({ cols: 1_001 }),
       makeCheckpoint({ rows: 501 }),
       makeCheckpoint({ scrollbackLines: -1 }),
       makeCheckpoint({ modes: { bracketedPaste: false } })
@@ -252,6 +267,20 @@ describe('HistoryReader', () => {
       expect(info!.modes.alternateScreen).toBe(false)
     })
 
+    it('restores pre-limit 800-column legacy scrollback', async () => {
+      writeSessionWithScrollback(
+        dir,
+        'wide-legacy',
+        makeMeta({ cols: 800 }),
+        'wide old format data\r\n'
+      )
+
+      const info = await reader.detectColdRestore('wide-legacy')
+
+      expect(info).toMatchObject({ cols: 800, rows: 24 })
+      expect(info!.snapshotAnsi).toContain('wide old format data')
+    })
+
     it('returns null when neither checkpoint.json nor scrollback.bin exist', async () => {
       const sessionDir = join(dir, getHistorySessionDirName('no-data'))
       mkdirSync(sessionDir, { recursive: true })
@@ -282,7 +311,7 @@ describe('HistoryReader', () => {
         join(sessionDir, 'output.log'),
         Buffer.concat([
           encodeLogHeader(0),
-          encodeLogBatch(1, [{ kind: 'resize', cols: 501, rows: 24 }])
+          encodeLogBatch(1, [{ kind: 'resize', cols: 1_001, rows: 24 }])
         ])
       )
 
@@ -290,6 +319,31 @@ describe('HistoryReader', () => {
         status: 'unreadable',
         sessionId
       })
+    })
+
+    it('replays a pre-limit 800-column incremental resize', async () => {
+      const sessionId = 'wide-log-resize'
+      const sessionDir = join(dir, getHistorySessionDirName(sessionId))
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(join(sessionDir, 'meta.json'), JSON.stringify(makeMeta({ cols: 800 })))
+      writeFileSync(
+        join(sessionDir, 'output.log'),
+        Buffer.concat([
+          encodeLogHeader(0),
+          encodeLogBatch(1, [
+            { kind: 'resize', cols: 800, rows: 24 },
+            { kind: 'output', data: 'wide incremental data\r\n' }
+          ])
+        ])
+      )
+
+      const detection = await reader.detectColdRestoreState(sessionId)
+
+      expect(detection.status).toBe('restored')
+      if (detection.status === 'restored') {
+        expect(detection.restoreInfo).toMatchObject({ cols: 800, rows: 24 })
+        expect(detection.restoreInfo.snapshotAnsi).toContain('wide incremental data')
+      }
     })
 
     it('truncates alt-screen from scrollback.bin fallback', async () => {

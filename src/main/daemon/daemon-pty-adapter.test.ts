@@ -2179,38 +2179,45 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     })
 
     it('re-anchors ordinary restorable history during startup reconciliation', async () => {
-      const worktreeId = 'repo-a::/wt/reconciled-history'
-      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
-      const { id: sessionId } = await historyAdapter.spawn({
-        cols: 80,
-        rows: 24,
-        worktreeId
-      })
-      lastSubprocess._simulateData('before adapter restart\r\n')
-      await historyAdapter.disconnectOnly()
+      const adapterClass = DaemonPtyAdapter as unknown as { CHECKPOINT_INTERVAL_MS: number }
+      const previousInterval = adapterClass.CHECKPOINT_INTERVAL_MS
+      adapterClass.CHECKPOINT_INTERVAL_MS = 100
+      try {
+        const worktreeId = 'repo-a::/wt/reconciled-history'
+        historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+        const { id: sessionId } = await historyAdapter.spawn({
+          cols: 80,
+          rows: 24,
+          worktreeId
+        })
+        lastSubprocess._simulateData('before adapter restart\r\n')
+        await historyAdapter.disconnectOnly()
 
-      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
-      const reconciled = await historyAdapter.reconcileOnStartup(new Set([worktreeId]))
-      const internals = historyAdapter as unknown as {
-        sessionsNeedingFullCheckpoint: Set<string>
-        checkpointSessions(sessionIds: Iterable<string>): Promise<Set<string>>
-      }
+        historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+        const manager = historyAdapter.getHistoryManager()!
+        const checkpointSpy = vi.spyOn(manager, 'checkpoint')
+        const reconciled = await historyAdapter.reconcileOnStartup(new Set([worktreeId]))
+        const internals = historyAdapter as unknown as {
+          sessionsNeedingFullCheckpoint: Set<string>
+        }
 
-      expect(reconciled.alive).toEqual([sessionId])
-      expect(historyAdapter.getHistoryManager()!.hasWriter(sessionId)).toBe(true)
-      expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(true)
+        expect(reconciled.alive).toEqual([sessionId])
+        expect(manager.hasWriter(sessionId)).toBe(true)
+        expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(true)
 
-      lastSubprocess._simulateData('after adapter restart\r\n')
-      await internals.checkpointSessions([sessionId])
+        await waitFor(() => checkpointSpy.mock.calls.some(([id]) => id === sessionId))
+        expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(false)
 
-      const checkpoint = JSON.parse(
-        readFileSync(
-          join(historyDir, getHistorySessionDirName(sessionId), 'checkpoint.json'),
-          'utf8'
+        const checkpoint = JSON.parse(
+          readFileSync(
+            join(historyDir, getHistorySessionDirName(sessionId), 'checkpoint.json'),
+            'utf8'
+          )
         )
-      )
-      expect(checkpoint.snapshotAnsi).toContain('after adapter restart')
-      expect(internals.sessionsNeedingFullCheckpoint.has(sessionId)).toBe(false)
+        expect(checkpoint.snapshotAnsi).toContain('before adapter restart')
+      } finally {
+        adapterClass.CHECKPOINT_INTERVAL_MS = previousInterval
+      }
     })
 
     it('serializes explicit shutdown behind an in-progress history-aware spawn', async () => {
