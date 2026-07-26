@@ -316,6 +316,26 @@ describe('renderer crash diagnostics', () => {
       })
     })
 
+    it('omits the Blink field instead of emitting a junk value for it', () => {
+      // Why: `undefined * 1024` is NaN. The breadcrumb must carry no
+      // blinkAllocatedMB at all rather than a meaningless number.
+      readHeapStatistics.mockReturnValue({
+        usedHeapKB: 77 * KB,
+        totalHeapKB: 154 * KB,
+        heapLimitKB: 512 * KB,
+        mallocedKB: 3 * KB,
+        blinkAllocatedKB: undefined
+      })
+
+      diagnostics.installRendererCrashDiagnostics()
+
+      const call = recordBreadcrumbMock.mock.calls.find(
+        ([entry]) => (entry as { name: string }).name === 'renderer_memory'
+      )?.[0] as { data: Record<string, unknown> }
+      expect(call.data).toMatchObject({ usedHeapMB: 77, heapSource: 'v8', mallocedMB: 3 })
+      expect(call.data).not.toHaveProperty('blinkAllocatedMB')
+    })
+
     it('falls back to performance.memory when the bridge returns null', () => {
       readHeapStatistics.mockReturnValue(null)
 

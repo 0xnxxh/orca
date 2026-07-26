@@ -217,7 +217,11 @@ function readHeapMetrics(): HeapMetrics | undefined {
       totalJSHeapSize: exact.totalHeapKB * BYTES_PER_KILOBYTE,
       jsHeapSizeLimit: exact.heapLimitKB * BYTES_PER_KILOBYTE,
       mallocedBytes: exact.mallocedKB * BYTES_PER_KILOBYTE,
-      blinkAllocatedBytes: exact.blinkAllocatedKB * BYTES_PER_KILOBYTE,
+      // Why guarded: undefined * 1024 is NaN, which would emit a junk field.
+      blinkAllocatedBytes:
+        exact.blinkAllocatedKB === undefined
+          ? undefined
+          : exact.blinkAllocatedKB * BYTES_PER_KILOBYTE,
       exact: true
     }
   }

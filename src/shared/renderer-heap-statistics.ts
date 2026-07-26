@@ -16,6 +16,9 @@ export type RendererHeapStatistics = {
   heapLimitKB: number
   /** Off-heap V8 allocations, which `usedJSHeapSize` never included. */
   mallocedKB: number
-  /** Blink's own allocator (DOM, layout), invisible to the V8 heap counters. */
-  blinkAllocatedKB: number
+  /**
+   * Blink's own allocator (DOM, layout), invisible to the V8 heap counters.
+   * Optional: supplementary, so its absence must never discard the V8 numbers.
+   */
+  blinkAllocatedKB?: number
 }

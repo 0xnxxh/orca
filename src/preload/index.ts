@@ -240,6 +240,7 @@ import type {
   ReactErrorBoundaryReportResult
 } from '../shared/crash-reporting'
 import type { RendererHeapStatistics } from '../shared/renderer-heap-statistics'
+import { readRendererHeapStatistics } from './renderer-heap-statistics-reader'
 import type { PreloadApi } from './api-types'
 import {
   createUpdaterQuitAbortRelay,
@@ -424,24 +425,6 @@ document.addEventListener(
 )
 
 const startupDiagnosticsEnabled = process.env.ORCA_STARTUP_DIAGNOSTICS === '1'
-
-// Why: `performance.memory` is bucket-quantized and cached ~20min by Blink, so it
-// cannot observe heap growth. These are exact and available in a sandboxed preload.
-function readRendererHeapStatistics(): RendererHeapStatistics | null {
-  try {
-    const heap = process.getHeapStatistics()
-    return {
-      usedHeapKB: heap.usedHeapSize,
-      totalHeapKB: heap.totalHeapSize,
-      heapLimitKB: heap.heapSizeLimit,
-      mallocedKB: heap.mallocedMemory,
-      blinkAllocatedKB: process.getBlinkMemoryInfo().allocated
-    }
-  } catch {
-    // Why: diagnostics must never break the renderer if Electron drops an API.
-    return null
-  }
-}
 
 // Custom APIs for renderer
 const api = {
