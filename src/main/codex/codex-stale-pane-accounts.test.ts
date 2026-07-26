@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { GlobalSettings } from '../../shared/types'
@@ -69,12 +69,50 @@ describe('codex pane account registry', () => {
     expect(getCodexPaneAccount('pty-19')).not.toBeNull()
   })
 
-  it('reads back nothing when the registry file is corrupt', () => {
+  it('reads back nothing when the registry file is missing', () => {
     recordCodexPaneAccount('pty-1', { selectionKey: 'host', accountId: 'account-a' })
     rmSync(join(userDataPath, 'codex-pane-accounts.json'))
     _internals.resetCache()
 
     expect(getCodexPaneAccount('pty-1')).toBeNull()
+  })
+
+  it.each([
+    ['unparseable JSON', '{ not json'],
+    ['a non-object document', '"panes"'],
+    ['an array document', '[]'],
+    ['a missing panes map', '{"version":1}'],
+    ['a non-object panes map', '{"version":1,"panes":[]}']
+  ])('reads back nothing and still records when the file holds %s', (_label, contents) => {
+    writeFileSync(join(userDataPath, 'codex-pane-accounts.json'), contents)
+    _internals.resetCache()
+
+    expect(getCodexPaneAccount('pty-1')).toBeNull()
+    // Why: a corrupt file must not wedge the registry — the next spawn has to
+    // still be attributable, or fix-3 prompts silently die on one bad write.
+    recordCodexPaneAccount('pty-1', { selectionKey: 'host', accountId: 'account-a' })
+    _internals.resetCache()
+    expect(getCodexPaneAccount('pty-1')).toEqual({ selectionKey: 'host', accountId: 'account-a' })
+  })
+
+  it('drops a malformed record without discarding its valid siblings', () => {
+    writeFileSync(
+      join(userDataPath, 'codex-pane-accounts.json'),
+      JSON.stringify({
+        version: 1,
+        panes: {
+          'pty-bad': { selectionKey: 7, accountId: 'account-a' },
+          'pty-good': { selectionKey: 'host', accountId: 'account-a' }
+        }
+      })
+    )
+    _internals.resetCache()
+
+    expect(getCodexPaneAccount('pty-bad')).toBeNull()
+    expect(getCodexPaneAccount('pty-good')).toEqual({
+      selectionKey: 'host',
+      accountId: 'account-a'
+    })
   })
 })
 
