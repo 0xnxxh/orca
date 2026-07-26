@@ -290,7 +290,7 @@ let managedWslCliReconciliationReady: Promise<void> = Promise.resolve()
 let managedWslCliStartupBarrierReady: Promise<void> = Promise.resolve()
 // Why: the serve barrier fails open, so this state tells headless clients a WSL PTY launch may still race an un-migrated registration ('settled' = off-Windows no-op).
 let managedWslCliReconciliationStatus: 'pending' | 'settled' | 'failed' = 'settled'
-// Why: GPU child crashes clustered right after launch indicate a broken driver; track them to switch this build to software rendering.
+// Why: a tight cluster of GPU child crashes indicates a broken driver, whenever in the session it starts; track them to switch this build to software rendering.
 const gpuLaunchTimeMs = Date.now()
 const gpuCrashFallbackTracker = new GpuCrashFallbackTracker({
   windowMs: DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
@@ -1389,7 +1389,7 @@ function maybeApplyGpuFallbackForThisLaunch(): void {
   })
 }
 
-// Why: a burst of GPU child crashes right after launch means HW acceleration is unusable — persist a build-scoped marker and relaunch into software rendering.
+// Why: a burst of GPU child crashes means HW acceleration is unusable — persist a build-scoped marker and relaunch into software rendering.
 function handleGpuChildCrash(reason: string, exitCode: number | null): void {
   // Software rendering already active or shutting down: nothing more to do.
   if (gpuFallbackActiveThisLaunch || isQuitting || isServeMode) {
@@ -1428,6 +1428,8 @@ function handleGpuChildCrash(reason: string, exitCode: number | null): void {
     exitCode,
     crashesInWindow: result.crashesInWindow
   })
+  // Why: app.exit(0) skips before-quit, so destroy the Windows tray manually to avoid a stale icon.
+  destroySystemTray()
   app.exit(0)
 }
 
