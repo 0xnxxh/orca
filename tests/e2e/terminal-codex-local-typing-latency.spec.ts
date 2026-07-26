@@ -36,20 +36,22 @@ const TOTAL_KEYSTROKES = 60
 const WARMUP_KEYSTROKES = 10
 const KEYSTROKE_INTERVAL_MS = 60
 const TERMINAL_DUMP_CHARS = 4_000
-// Why these budgets: 10 local runs measured p50 21.6-22.6ms, p95 23.2-41.5ms,
-// max 23.4-58.7ms; each sits ~1.5-2x above the observed spread, so a real
-// regression trips the gate well before 100ms (perceptible lag) without
-// flagging scheduler jitter. A plain-shell control on the same probe reads
-// p50 2ms, so this budget is Codex composer cost, not harness overhead.
+// Why these budgets: ~20 local runs put p50 in a tight 21.5-22.6ms band with a
+// unimodal per-key distribution and rare isolated spikes to ~90ms. p50 gates the
+// steady state at ~1.6x observed; the tail budgets absorb those spikes so only a
+// sustained shift fails. A plain-shell control on this same probe reads p50 2ms,
+// so the ~22ms is Codex composer redraw cost, not harness overhead.
 const MAX_P50_ECHO_LATENCY_MS = 35
-const MAX_P95_ECHO_LATENCY_MS = 60
-const MAX_WORST_ECHO_LATENCY_MS = 120
+const MAX_P95_ECHO_LATENCY_MS = 80
+const MAX_WORST_ECHO_LATENCY_MS = 150
 
 type CodexCursorBlinkSample = {
   elapsedMs: number
   paintedCursorCellCount: number
 }
 
+// Why the focus assert: a run that types into an unfocused pane records zero
+// echoes and would otherwise fail as an opaque "sample count" mismatch.
 async function focusActiveTerminalInput(page: Page): Promise<void> {
   await page.evaluate(() => {
     const state = window.__store?.getState()
@@ -68,6 +70,11 @@ async function focusActiveTerminalInput(page: Page): Promise<void> {
     }
     pane.terminal.focus()
     textarea.focus()
+    if (document.activeElement !== textarea) {
+      throw new Error(
+        'Terminal helper textarea did not take focus; keystrokes would not reach Codex'
+      )
+    }
   })
 }
 
