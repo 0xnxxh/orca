@@ -36,6 +36,7 @@ import {
   getTerminalHistoryQuarantineOwnerDir,
   hasTerminalHistoryRecoveryProtection
 } from './terminal-history-recovery-quarantine'
+import { encodeLogBatch, encodeLogHeader } from './terminal-history-log'
 import type { HistoryReader } from './history-reader'
 import type { SubprocessHandle } from './session'
 import type { DaemonFileLog } from './daemon-file-log'
@@ -1964,6 +1965,61 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       const bundles = readdirSync(ownerDir)
       expect(bundles).toHaveLength(1)
       expect(statSync(join(ownerDir, bundles[0], 'checkpoint.json')).size).toBe(checkpointBytes)
+      expect(historyAdapter.getHistoryManager()!.hasWriter(sessionId)).toBe(true)
+    })
+
+    it('quarantines a malformed log when its checkpoint fallback restores', async () => {
+      const sessionId = 'malformed-log-with-checkpoint'
+      const sessionDir = join(historyDir, getHistorySessionDirName(sessionId))
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(
+        join(sessionDir, 'meta.json'),
+        JSON.stringify({
+          cwd: '/projects/mixed-log',
+          cols: 80,
+          rows: 24,
+          startedAt: '2026-07-25T10:00:00Z',
+          endedAt: null,
+          exitCode: null
+        })
+      )
+      writeFileSync(
+        join(sessionDir, 'checkpoint.json'),
+        JSON.stringify({
+          snapshotAnsi: 'checkpoint fallback\r\n',
+          scrollbackAnsi: 'checkpoint fallback\r\n',
+          rehydrateSequences: '',
+          cwd: '/projects/mixed-log',
+          cols: 80,
+          rows: 24,
+          modes: {
+            bracketedPaste: false,
+            mouseTracking: false,
+            applicationCursor: false,
+            alternateScreen: false
+          },
+          scrollbackLines: 1,
+          generation: 1,
+          checkpointedAt: '2026-07-25T10:01:00Z'
+        })
+      )
+      const log = Buffer.concat([
+        encodeLogHeader(1),
+        encodeLogBatch(1, [
+          { kind: 'output', data: 'only post-checkpoint copy\r\n' },
+          { kind: 'resize', cols: 1_001, rows: 24 }
+        ])
+      ])
+      writeFileSync(join(sessionDir, 'output.log'), log)
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+
+      const result = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
+
+      expect(result.coldRestore?.scrollback).toContain('checkpoint fallback')
+      const ownerDir = getTerminalHistoryQuarantineOwnerDir(historyDir, sessionId)
+      const bundles = readdirSync(ownerDir)
+      expect(bundles).toHaveLength(1)
+      expect(readFileSync(join(ownerDir, bundles[0], 'output.log'))).toEqual(log)
       expect(historyAdapter.getHistoryManager()!.hasWriter(sessionId)).toBe(true)
     })
 

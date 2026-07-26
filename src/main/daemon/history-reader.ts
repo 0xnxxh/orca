@@ -286,7 +286,7 @@ export class HistoryReader {
             !(await replay.write(checkpoint.rehydrateSequences)) ||
             !(await replay.write(checkpoint.snapshotAnsi))
           ) {
-            return { restoreInfo: null, readFailed: false }
+            return { restoreInfo: null, readFailed: true }
           }
           emulator.setRestoredOscLinks(checkpoint.oscLinks)
         }
@@ -294,11 +294,11 @@ export class HistoryReader {
           for (const record of batch.records) {
             if (record.kind === 'output') {
               if (!(await replay.write(record.data))) {
-                return { restoreInfo: null, readFailed: checkpoint === null }
+                return { restoreInfo: null, readFailed: true }
               }
             } else if (record.kind === 'resize') {
               if (!isValidTerminalHistorySize(record.cols, record.rows)) {
-                return { restoreInfo: null, readFailed: checkpoint === null }
+                return { restoreInfo: null, readFailed: true }
               }
               await replay.resize(record.cols, record.rows)
             } else {
@@ -318,7 +318,7 @@ export class HistoryReader {
       } catch {
         // Why: a replay failure must degrade to checkpoint-only restore, never
         // surface as a failed spawn.
-        return { restoreInfo: null, readFailed: checkpoint === null }
+        return { restoreInfo: null, readFailed: true }
       } finally {
         emulator.dispose()
       }

@@ -346,6 +346,35 @@ describe('HistoryReader', () => {
       }
     })
 
+    it('flags a malformed current-generation log when checkpoint fallback restores', async () => {
+      const sessionId = 'malformed-log-with-checkpoint'
+      writeSessionWithCheckpoint(
+        dir,
+        sessionId,
+        makeMeta(),
+        makeCheckpoint({ generation: 1, snapshotAnsi: 'checkpoint fallback\r\n' })
+      )
+      const sessionDir = join(dir, getHistorySessionDirName(sessionId))
+      writeFileSync(
+        join(sessionDir, 'output.log'),
+        Buffer.concat([
+          encodeLogHeader(1),
+          encodeLogBatch(1, [
+            { kind: 'output', data: 'only post-checkpoint copy\r\n' },
+            { kind: 'resize', cols: 1_001, rows: 24 }
+          ])
+        ])
+      )
+
+      const detection = await reader.detectColdRestoreState(sessionId)
+
+      expect(detection.status).toBe('restored')
+      if (detection.status === 'restored') {
+        expect(detection.restoreInfo.snapshotAnsi).toContain('checkpoint fallback')
+        expect(detection.hasUnreadableRecovery).toBe(true)
+      }
+    })
+
     it('truncates alt-screen from scrollback.bin fallback', async () => {
       const scrollback = ['normal output\r\n', '\x1b[?1049h', 'vim content here'].join('')
 
