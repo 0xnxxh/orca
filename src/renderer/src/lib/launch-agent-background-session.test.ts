@@ -4,6 +4,7 @@ import { toAppSshPtyId } from '../../../shared/ssh-pty-id'
 import {
   AGENT_BACKGROUND_SESSION_UUID_RE as UUID_RE,
   createAgentBackgroundSessionTestState,
+  expectReservedAgentBackgroundTabId,
   expectStableAgentBackgroundPaneSpawn,
   resetAgentBackgroundSessionTestHarness,
   useRemoteAgentBackgroundRuntime
@@ -88,7 +89,7 @@ describe('launchAgentBackgroundSession', () => {
     })
   })
 
-  it('spawns a PTY immediately and adopts it in an inactive tab', async () => {
+  it('spawns a PTY first and creates the inactive tab already bound to it', async () => {
     const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
 
     const result = await launchAgentBackgroundSession({
@@ -98,14 +99,22 @@ describe('launchAgentBackgroundSession', () => {
       title: 'Nightly audit'
     })
 
+    const tabId = expectReservedAgentBackgroundTabId(mockSpawn)
+    // Why: the run tab must never be store-visible without a PTY — Terminal.tsx
+    // would mount a pane for it and fresh-spawn a shell into it (#2989).
+    expect(mockSpawn.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCreateTab.mock.invocationCallOrder[0] ?? 0
+    )
     expect(mockCreateTab).toHaveBeenCalledWith('wt-1', undefined, undefined, {
+      id: tabId,
+      initialPtyId: 'pty-1',
       activate: false,
       recordInteraction: false
     })
     expect(mockDispatchEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: BACKGROUND_MOUNT_TERMINAL_WORKTREE_EVENT,
-        detail: { worktreeId: 'wt-1', tabIds: ['tab-1'] }
+        detail: { worktreeId: 'wt-1', tabIds: [tabId] }
       })
     )
     expect(mockUpdateTabPtyId.mock.invocationCallOrder[0]).toBeLessThan(
@@ -116,18 +125,18 @@ describe('launchAgentBackgroundSession', () => {
         cwd: '/repo/worktree',
         command: "claude '--dangerously-skip-permissions' 'run the automation'",
         env: expect.objectContaining({
-          ORCA_TAB_ID: 'tab-1',
+          ORCA_TAB_ID: tabId,
           ORCA_WORKTREE_ID: 'wt-1'
         }),
         connectionId: null,
         worktreeId: 'wt-1',
-        tabId: 'tab-1'
+        tabId
       })
     )
     const paneKey = expectStableAgentBackgroundPaneSpawn(mockSpawn)
-    const leafId = paneKey.slice('tab-1:'.length)
+    const leafId = paneKey.slice(`${tabId}:`.length)
     expect(mockSetTabLayout).toHaveBeenCalledWith(
-      'tab-1',
+      tabId,
       expect.objectContaining({
         root: { type: 'leaf', leafId },
         activeLeafId: leafId,
@@ -147,17 +156,17 @@ describe('launchAgentBackgroundSession', () => {
     expect(mockSpawn.mock.calls[0]?.[0].launchToken).toBe(
       mockSpawn.mock.calls[0]?.[0].env.ORCA_AGENT_LAUNCH_TOKEN
     )
-    expect(mockSetTabCustomTitle).toHaveBeenCalledWith('tab-1', 'Nightly audit', {
+    expect(mockSetTabCustomTitle).toHaveBeenCalledWith(tabId, 'Nightly audit', {
       recordInteraction: false
     })
-    expect(mockUpdateTabPtyId).toHaveBeenCalledWith('tab-1', 'pty-1')
+    expect(mockUpdateTabPtyId).toHaveBeenCalledWith(tabId, 'pty-1')
     expect(mockRegisterEagerPtyBuffer).toHaveBeenCalledWith('pty-1', expect.any(Function))
     expect(mockSubscribeToPtyData).toHaveBeenCalledWith('pty-1', expect.any(Function))
     expect(mockSubscribeToPtyExit).toHaveBeenCalledWith('pty-1', expect.any(Function))
-    expect(result).toMatchObject({ tabId: 'tab-1', paneKey, ptyId: 'pty-1' })
+    expect(result).toMatchObject({ tabId, paneKey, ptyId: 'pty-1' })
   })
 
-  it('does not mount the tab while the explicit PTY spawn is unresolved', async () => {
+  it('does not create or mount the tab while the explicit PTY spawn is unresolved', async () => {
     let resolveSpawn!: (result: { id: string }) => void
     mockSpawn.mockReturnValueOnce(
       new Promise<{ id: string }>((resolve) => {
@@ -173,18 +182,25 @@ describe('launchAgentBackgroundSession', () => {
     })
     await Promise.resolve()
 
-    expect(mockCreateTab).toHaveBeenCalled()
+    // Why: a PTY-less tab published here is exactly #2989 — Terminal.tsx mounts a
+    // pane for it and connectPanePty fresh-spawns a shell into the run tab.
+    expect(mockCreateTab).not.toHaveBeenCalled()
     expect(mockDispatchEvent).not.toHaveBeenCalled()
 
     resolveSpawn({ id: 'pty-slow' })
     await expect(launch).resolves.toMatchObject({ ptyId: 'pty-slow' })
-    expect(mockUpdateTabPtyId).toHaveBeenCalledWith('tab-1', 'pty-slow')
+    const tabId = expectReservedAgentBackgroundTabId(mockSpawn)
+    expect(mockCreateTab.mock.calls[0]?.[3]).toMatchObject({
+      id: tabId,
+      initialPtyId: 'pty-slow'
+    })
+    expect(mockUpdateTabPtyId).toHaveBeenCalledWith(tabId, 'pty-slow')
     expect(mockDispatchEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ detail: { worktreeId: 'wt-1', tabIds: ['tab-1'] } })
+      expect.objectContaining({ detail: { worktreeId: 'wt-1', tabIds: [tabId] } })
     )
   })
 
-  it('kills a local PTY when its tab closes before spawn resolves', async () => {
+  it('kills a local PTY when its worktree disappears before spawn resolves', async () => {
     let resolveSpawn!: (result: { id: string }) => void
     mockSpawn.mockReturnValueOnce(
       new Promise<{ id: string }>((resolve) => {
@@ -198,18 +214,50 @@ describe('launchAgentBackgroundSession', () => {
       worktreeId: 'wt-1',
       prompt: 'run slowly'
     })
-    await vi.waitFor(() => expect(mockCreateTab).toHaveBeenCalledOnce())
-    state.tabsByWorktree['wt-1'] = []
+    await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledOnce())
+    state.worktreesByRepo['repo-1'] = []
     resolveSpawn({ id: 'pty-after-close' })
 
     await expect(launch).resolves.toBeNull()
     expect(mockKill).toHaveBeenCalledWith('pty-after-close')
+    expect(mockCreateTab).not.toHaveBeenCalled()
     expect(mockUpdateTabPtyId).not.toHaveBeenCalled()
     expect(mockSubscribeToPtyData).not.toHaveBeenCalled()
     expect(mockDispatchEvent).not.toHaveBeenCalled()
   })
 
-  it('closes a runtime terminal when its tab closes before creation resolves', async () => {
+  it('keeps a folder-workspace launch alive across the spawn await', async () => {
+    // Why: folder workspaces live outside worktreesByRepo, so a liveness check built on
+    // allWorktrees() reports them as gone and kills the agent PTY the moment it resolves.
+    state.getKnownWorktreeById = (worktreeId: string) =>
+      worktreeId === 'folder:fw-1'
+        ? { id: 'folder:fw-1', path: '/tmp/folder-workspace' }
+        : undefined
+    state.worktreesByRepo['repo-1'] = [
+      {
+        id: 'folder:fw-1',
+        repoId: 'repo-1',
+        projectId: 'repo-1',
+        path: '/tmp/folder-workspace',
+        displayName: 'folder-workspace'
+      }
+    ]
+    const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
+
+    const launch = launchAgentBackgroundSession({
+      agent: 'claude',
+      worktreeId: 'folder:fw-1',
+      prompt: 'run in a folder workspace'
+    })
+    // The worktree list stays empty for the whole launch; only the folder lookup resolves.
+    state.worktreesByRepo['repo-1'] = []
+
+    await expect(launch).resolves.toMatchObject({ ptyId: 'pty-1' })
+    expect(mockKill).not.toHaveBeenCalled()
+    expect(mockCreateTab).toHaveBeenCalledOnce()
+  })
+
+  it('closes a runtime terminal when its worktree disappears before creation resolves', async () => {
     useRemoteAgentBackgroundRuntime(state)
     let resolveCreate!: (result: {
       ok: true
@@ -234,13 +282,12 @@ describe('launchAgentBackgroundSession', () => {
       worktreeId: 'wt-1',
       prompt: 'run remotely'
     })
-    await vi.waitFor(() => expect(mockCreateTab).toHaveBeenCalledOnce())
     await vi.waitFor(() =>
       expect(mockRuntimeEnvironmentCall).toHaveBeenCalledWith(
         expect.objectContaining({ method: 'terminal.createAgentSession' })
       )
     )
-    state.tabsByWorktree['wt-1'] = []
+    state.worktreesByRepo['repo-1'] = []
     resolveCreate({
       ok: true,
       result: { terminal: { handle: 'terminal-after-close', worktreeId: 'wt-1', title: null } }
@@ -253,6 +300,7 @@ describe('launchAgentBackgroundSession', () => {
         params: { terminal: 'terminal-after-close' }
       })
     )
+    expect(mockCreateTab).not.toHaveBeenCalled()
     expect(mockUpdateTabPtyId).not.toHaveBeenCalled()
     expect(mockRuntimeEnvironmentSubscribe).not.toHaveBeenCalled()
     expect(mockDispatchEvent).not.toHaveBeenCalled()
@@ -274,11 +322,12 @@ describe('launchAgentBackgroundSession', () => {
     })
 
     const paneKey = expectStableAgentBackgroundPaneSpawn(mockSpawn)
-    const leafId = paneKey.slice('tab-1:'.length)
+    const tabId = expectReservedAgentBackgroundTabId(mockSpawn)
+    const leafId = paneKey.slice(`${tabId}:`.length)
     expect(mockRegisterAgentLaunchConfig).toHaveBeenLastCalledWith(paneKey, effectiveLaunchConfig, {
       agentType: 'claude',
       launchToken: mockSpawn.mock.calls[0]?.[0].env.ORCA_AGENT_LAUNCH_TOKEN,
-      tabId: 'tab-1',
+      tabId,
       leafId
     })
   })
@@ -317,7 +366,7 @@ describe('launchAgentBackgroundSession', () => {
         command: "claude '--dangerously-skip-permissions' 'don'\\''t use powershell quoting'",
         connectionId: null,
         worktreeId: 'wt-1',
-        tabId: 'tab-1'
+        tabId: expect.stringMatching(UUID_RE)
       })
     )
   })
@@ -440,13 +489,16 @@ describe('launchAgentBackgroundSession', () => {
     const sidecar = mockSubscribeToPtyExit.mock.calls[0]?.[1] as (code: number) => void
     sidecar(0)
 
-    expect(state.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'pty-1')
-    expect(state.clearAgentLaunchConfig).toHaveBeenCalledWith(expect.stringMatching(/^tab-1:/))
+    const tabId = expectReservedAgentBackgroundTabId(mockSpawn)
+    expect(state.clearTabPtyId).toHaveBeenCalledWith(tabId, 'pty-1')
+    expect(state.clearAgentLaunchConfig).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`^${tabId}:`))
+    )
     expect(onExit).toHaveBeenCalledWith('pty-1', 0)
     expect(unsubscribe).toHaveBeenCalled()
   })
 
-  it('removes the inactive tab if PTY spawn fails', async () => {
+  it('leaves no tab behind if PTY spawn fails', async () => {
     mockSpawn.mockRejectedValueOnce(new Error('spawn failed'))
     const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
 
@@ -458,11 +510,35 @@ describe('launchAgentBackgroundSession', () => {
       })
     ).rejects.toThrow('spawn failed')
 
-    expect(mockCloseTab).toHaveBeenCalledWith('tab-1', {
+    // Why: the tab is only created once a PTY is live, so a failed spawn has nothing to close.
+    expect(mockCreateTab).not.toHaveBeenCalled()
+    expect(mockCloseTab).not.toHaveBeenCalled()
+    expect(state.clearAgentLaunchConfig).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`^${expectReservedAgentBackgroundTabId(mockSpawn)}:`))
+    )
+    expect(mockUpdateTabPtyId).not.toHaveBeenCalled()
+  })
+
+  it('closes the adopted tab if binding fails after the PTY is live', async () => {
+    mockSubscribeToPtyData.mockImplementationOnce(() => {
+      throw new Error('subscribe failed')
+    })
+    const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
+
+    await expect(
+      launchAgentBackgroundSession({
+        agent: 'claude',
+        worktreeId: 'wt-1',
+        prompt: 'run the automation'
+      })
+    ).rejects.toThrow('subscribe failed')
+
+    const tabId = expectReservedAgentBackgroundTabId(mockSpawn)
+    expect(mockCloseTab).toHaveBeenCalledWith(tabId, {
       recordInteraction: false,
       reason: 'cleanup'
     })
-    expect(mockUpdateTabPtyId).not.toHaveBeenCalled()
+    expect(mockKill).toHaveBeenCalledWith('pty-1')
   })
 
   it('submits prompts for stdin-after-start agents in background mode', async () => {
@@ -479,7 +555,7 @@ describe('launchAgentBackgroundSession', () => {
     )
     expect(mockPasteDraftWhenAgentReady).toHaveBeenCalledWith(
       expect.objectContaining({
-        tabId: 'tab-1',
+        tabId: expectReservedAgentBackgroundTabId(mockSpawn),
         content: 'run the automation',
         agent: 'aider',
         submit: true
@@ -689,11 +765,13 @@ describe('launchAgentBackgroundSession', () => {
     expect(mockSpawn).not.toHaveBeenCalled()
     const params = mockRuntimeEnvironmentCall.mock.calls[0]?.[0]?.params
     const leafId = params?.placement?.leafId
+    const tabId = params?.placement?.tabId
     expect(leafId).toMatch(UUID_RE)
+    expect(tabId).toMatch(UUID_RE)
     // Why: background launches have no explicit recipe override, so remote host settings win.
     expect(params).not.toHaveProperty('agentArgs')
     expect(mockRegisterAgentLaunchConfig).toHaveBeenCalledWith(
-      `tab-1:${leafId}`,
+      `${tabId}:${leafId}`,
       {
         agentCommand: "claude '--dangerously-skip-permissions'",
         agentArgs: '--dangerously-skip-permissions',
@@ -702,12 +780,12 @@ describe('launchAgentBackgroundSession', () => {
       {
         agentType: 'claude',
         launchToken: expect.stringMatching(UUID_RE),
-        tabId: 'tab-1',
+        tabId,
         leafId
       }
     )
     expect(mockSetTabLayout).toHaveBeenCalledWith(
-      'tab-1',
+      tabId,
       expect.objectContaining({
         root: { type: 'leaf', leafId },
         activeLeafId: leafId,
@@ -723,12 +801,12 @@ describe('launchAgentBackgroundSession', () => {
         agent: 'claude',
         prompt: 'run the automation',
         promptDelivery: 'auto-submit',
-        placement: { tabId: 'tab-1', leafId },
+        placement: { tabId, leafId },
         presentation: 'background'
       }),
       timeoutMs: 15_000
     })
-    expect(mockUpdateTabPtyId).toHaveBeenCalledWith('tab-1', 'remote:env-1@@terminal-1')
+    expect(mockUpdateTabPtyId).toHaveBeenCalledWith(tabId, 'remote:env-1@@terminal-1')
     expect(mockRegisterEagerPtyBuffer).not.toHaveBeenCalled()
     expect(mockRuntimeEnvironmentSubscribe).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -739,8 +817,8 @@ describe('launchAgentBackgroundSession', () => {
       expect.any(Object)
     )
     expect(result).toMatchObject({
-      tabId: 'tab-1',
-      paneKey: `tab-1:${leafId}`,
+      tabId,
+      paneKey: `${tabId}:${leafId}`,
       ptyId: 'remote:env-1@@terminal-1',
       terminalOwnership: null
     })
@@ -810,9 +888,13 @@ describe('launchAgentBackgroundSession', () => {
       params: { terminal: 'terminal-1' },
       timeoutMs: undefined
     })
-    expect(state.clearTabPtyId).toHaveBeenCalledWith('tab-1', 'remote:env-1@@terminal-1')
-    expect(state.clearAgentLaunchConfig).toHaveBeenCalledWith(expect.stringMatching(/^tab-1:/))
-    expect(mockCloseTab).toHaveBeenCalledWith('tab-1', {
+    const tabId = mockRuntimeEnvironmentCall.mock.calls[0]?.[0]?.params?.placement?.tabId
+    expect(tabId).toMatch(UUID_RE)
+    expect(state.clearTabPtyId).toHaveBeenCalledWith(tabId, 'remote:env-1@@terminal-1')
+    expect(state.clearAgentLaunchConfig).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`^${tabId}:`))
+    )
+    expect(mockCloseTab).toHaveBeenCalledWith(tabId, {
       recordInteraction: false,
       reason: 'cleanup'
     })

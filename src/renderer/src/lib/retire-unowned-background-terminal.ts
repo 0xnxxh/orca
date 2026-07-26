@@ -3,13 +3,23 @@ import { callRuntimeRpc, type RuntimeClientTarget } from '@/runtime/runtime-rpc-
 import { isTerminalTabPresent } from '@/store/slices/terminal-tab-retirement'
 
 export async function retireUnownedTerminal(args: {
-  tabId: string
+  /** Present tab id, or `{ worktreeId }` for a launch whose tab is created after the spawn. */
+  owner: { tabId: string } | { worktreeId: string }
   ptyId: string
   runtimeTarget: RuntimeClientTarget
   runtimeTerminalHandle?: string | null
   onRetire?: () => void
 }): Promise<boolean> {
-  if (isTerminalTabPresent(useAppStore.getState(), args.tabId)) {
+  const state = useAppStore.getState()
+  const owner = args.owner
+  const isOwned =
+    'tabId' in owner
+      ? isTerminalTabPresent(state, owner.tabId)
+      : // Why: getKnownWorktreeById, not allWorktrees() — the latter reads only
+        // worktreesByRepo and would report every folder workspace as gone,
+        // killing its agent PTY the instant the spawn resolves.
+        state.getKnownWorktreeById(owner.worktreeId) !== undefined
+  if (isOwned) {
     return false
   }
   // Why: close can win while provider creation is in flight, before the

@@ -6271,6 +6271,60 @@ describe('connectPanePty', () => {
     expect(deps.updateTabPtyId).not.toHaveBeenCalledWith('tab-1', otherTabPtyId)
   })
 
+  it('fresh-spawns a shell into any PTY-less tab, so agent launches must never publish one', async () => {
+    // Why: #2989. A pane with no PTY on the tab, in ptyIdsByTabId, in the layout, or in an
+    // eager buffer legitimately fresh-spawns a shell — that is the ordinary "user opened a
+    // terminal" path and stays correct here. The bug was upstream: launchAgentBackgroundSession
+    // published the hidden run tab before awaiting the agent spawn, so on an already-mounted
+    // worktree Terminal.tsx mounted a pane into exactly this state and bound a shell to the run
+    // tab, orphaning the agent PTY. This pins the downstream behavior the launch-site ordering
+    // fix depends on: publishing a PTY-less tab is unrecoverable, so it must not happen.
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport()
+    transport.connect.mockImplementation(async (opts: { sessionId?: string }) => {
+      if (opts.sessionId) {
+        return { id: opts.sessionId }
+      }
+      const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+        | ((ptyId: string) => void)
+        | undefined
+      onPtySpawn?.('stray-shell-pty')
+      return 'stray-shell-pty'
+    })
+    transportFactoryQueue.push(transport)
+    // The store shape launch-agent-background-session.ts used to expose between createTab and
+    // bindAutomationTerminal: tab exists, layout leaf exists, no PTY reachable anywhere.
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
+      ptyIdsByTabId: { 'tab-1': [] },
+      terminalLayoutsByTabId: {
+        'tab-1': {
+          root: { type: 'leaf', leafId: LEAF_1 },
+          activeLeafId: LEAF_1,
+          expandedLeafId: null
+        }
+      },
+      agentLaunchConfigByPaneKey: {
+        [`tab-1:${LEAF_1}`]: {
+          launchConfig: { agentCommand: 'claude', agentArgs: '', agentEnv: {} },
+          identity: { agentType: 'claude' }
+        }
+      }
+    } as StoreState
+    const deps = createDeps()
+
+    const pane = createPane(1)
+    connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks()
+
+    // A pending agent launch registration is NOT enough to hold the pane back.
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ url: '', cols: expect.any(Number) })
+    )
+    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'stray-shell-pty')
+  })
+
   it('spawns a fresh PTY when a restored daemon split session cannot reattach', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
