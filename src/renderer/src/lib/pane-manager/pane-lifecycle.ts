@@ -167,6 +167,18 @@ export function disposeLigatures(pane: ManagedPaneInternal): void {
   }
 }
 
+function rebuildWebglAfterLigatureChange(pane: ManagedPaneInternal): void {
+  if (!pane.webglAddon) {
+    return
+  }
+  if (pane.webglAttachmentDeferred) {
+    pane.webglRebuildDeferred = true
+    return
+  }
+  disposeWebgl(pane)
+  attachWebgl(pane)
+}
+
 export function attachLigatures(pane: ManagedPaneInternal): void {
   if (pane.ligaturesAddon) {
     return
@@ -177,16 +189,15 @@ export function attachLigatures(pane: ManagedPaneInternal): void {
     pane.ligaturesAddon = ligaturesAddon
     // Why: ligatures can be enabled after rows already rendered, especially
     // from Settings. Force existing glyph runs to be recomputed immediately.
-    pane.terminal.refresh(0, pane.terminal.rows - 1)
+    if (!pane.webglAttachmentDeferred) {
+      pane.terminal.refresh(0, pane.terminal.rows - 1)
+    }
     // Why: the WebGL renderer builds its glyph texture atlas at activation
     // time, so `font-feature-settings` applied after WebGL loaded won't
     // reach the GPU-rendered cells until the atlas is rebuilt. The upstream
     // docs call this out explicitly — reactivating WebGL after ligatures
     // forces a fresh atlas that includes the ligated glyphs.
-    if (pane.webglAddon) {
-      disposeWebgl(pane)
-      attachWebgl(pane)
-    }
+    rebuildWebglAfterLigatureChange(pane)
   } catch (err) {
     console.warn('[terminal] ligatures addon failed to attach for pane', pane.id, err)
     pane.ligaturesAddon = null
@@ -203,10 +214,7 @@ export function setLigaturesEnabled(pane: ManagedPaneInternal, enabled: boolean)
     // Why: ligatures lived inside the WebGL atlas, so after disposing the
     // addon the atlas still holds the ligated glyphs. Rebuild it so text
     // renders as the non-ligated fallback immediately.
-    if (pane.webglAddon) {
-      disposeWebgl(pane)
-      attachWebgl(pane)
-    }
+    rebuildWebglAfterLigatureChange(pane)
   }
 }
 

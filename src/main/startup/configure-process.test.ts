@@ -398,6 +398,44 @@ describe('enableMainProcessGpuFeatures', () => {
     expect(app.commandLine.appendSwitch).toHaveBeenCalledWith('max-active-webgl-contexts', '128')
   })
 
+  it('configures the shared WebGL budget independently for GPU fallback', async () => {
+    const { app } = await import('electron')
+    const { TERMINAL_WEBGL_MAX_ACTIVE_CONTEXTS } =
+      await import('../../shared/terminal-webgl-context-budget')
+    const { configureMainProcessWebglContextBudget } = await import('./configure-process')
+
+    vi.mocked(app.commandLine.appendSwitch).mockClear()
+    configureMainProcessWebglContextBudget()
+
+    expect(app.commandLine.appendSwitch).toHaveBeenCalledWith(
+      'max-active-webgl-contexts',
+      String(TERMINAL_WEBGL_MAX_ACTIVE_CONTEXTS)
+    )
+  })
+
+  it('disables Skia Graphite only on macOS without disabling hardware acceleration', async () => {
+    const { app } = await import('electron')
+    const { enableMainProcessGpuFeatures } = await import('./configure-process')
+
+    delete process.env.ORCA_E2E_USER_DATA_DIR
+    vi.mocked(app.disableHardwareAcceleration).mockClear()
+
+    for (const platform of ['darwin', 'linux', 'win32'] as const) {
+      setPlatform(platform)
+      vi.mocked(app.commandLine.appendSwitch).mockClear()
+
+      enableMainProcessGpuFeatures()
+
+      if (platform === 'darwin') {
+        expect(app.commandLine.appendSwitch).toHaveBeenCalledWith('disable-skia-graphite')
+      } else {
+        expect(app.commandLine.appendSwitch).not.toHaveBeenCalledWith('disable-skia-graphite')
+      }
+    }
+
+    expect(app.disableHardwareAcceleration).not.toHaveBeenCalled()
+  })
+
   it('disables the GPU sandbox on Linux Wayland without disabling acceleration', async () => {
     const { app } = await import('electron')
     const { enableMainProcessGpuFeatures } = await import('./configure-process')

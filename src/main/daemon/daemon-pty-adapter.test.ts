@@ -2,10 +2,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { DaemonClient } from './client'
 import { DaemonProtocolError } from './daemon-errors'
 import { DaemonPtyAdapter } from './daemon-pty-adapter'
+import {
+  COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION,
+  GET_FOREGROUND_PROCESS_PROTOCOL_VERSION,
+  PROTOCOL_VERSION
+} from './daemon-protocol-version'
 import { DaemonServer } from './daemon-server'
 import { HeadlessEmulator } from './headless-emulator'
 import { getHistorySessionDirName } from './history-paths'
@@ -1183,6 +1188,118 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       vi.mocked(lastSubprocess.getForegroundProcess).mockReturnValue('codex')
       expect(await adapter.getForegroundProcess(id)).toBe('codex')
     })
+  })
+
+  describe('inspectProcess on pre-inspection daemon protocols', () => {
+    type ClientInternals = {
+      client: { request: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }
+    }
+
+    function createInspectionAdapter(
+      protocolVersion: number,
+      request: ReturnType<typeof vi.fn>
+    ): DaemonPtyAdapter {
+      const inspectionAdapter = new DaemonPtyAdapter({
+        socketPath,
+        tokenPath,
+        protocolVersion
+      })
+      ;(inspectionAdapter as unknown as ClientInternals).client = {
+        request,
+        disconnect: vi.fn()
+      }
+      return inspectionAdapter
+    }
+
+    it('reports protocol 10 inspection as unavailable without unsupported RPCs', async () => {
+      const request = vi.fn()
+      const legacy = createInspectionAdapter(GET_FOREGROUND_PROCESS_PROTOCOL_VERSION - 1, request)
+
+      await expect(legacy.inspectProcess('sess-a')).resolves.toEqual({
+        foregroundProcess: null,
+        hasChildProcesses: true,
+        unavailable: true
+      })
+      await expect(legacy.getForegroundProcess('sess-a')).resolves.toBeNull()
+      await expect(legacy.hasChildProcesses('sess-a')).resolves.toBe(true)
+      expect(request).not.toHaveBeenCalled()
+
+      legacy.dispose()
+    })
+
+    it.each([
+      GET_FOREGROUND_PROCESS_PROTOCOL_VERSION,
+      COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION - 1
+    ])('composes protocol %s inspection from getForegroundProcess', async (protocolVersion) => {
+      const request = vi.fn(async () => ({ foregroundProcess: 'codex' }))
+      const legacy = createInspectionAdapter(protocolVersion, request)
+
+      expect(await legacy.inspectProcess('sess-a')).toEqual({
+        foregroundProcess: 'codex',
+        hasChildProcesses: true
+      })
+      expect(request).toHaveBeenCalledWith('getForegroundProcess', { sessionId: 'sess-a' })
+      expect(request).not.toHaveBeenCalledWith('inspectProcess', expect.anything())
+
+      legacy.dispose()
+    })
+
+    it('reports an idle shell as having no child processes', async () => {
+      const legacy = createInspectionAdapter(
+        COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION - 1,
+        vi.fn(async () => ({ foregroundProcess: 'bash' }))
+      )
+
+      expect(await legacy.inspectProcess('sess-a')).toEqual({
+        foregroundProcess: 'bash',
+        hasChildProcesses: false
+      })
+
+      legacy.dispose()
+    })
+
+    it('reports a null foreground as idle, matching what the legacy daemon can report', async () => {
+      const legacy = createInspectionAdapter(
+        COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION - 1,
+        vi.fn(async () => ({ foregroundProcess: null }))
+      )
+
+      expect(await legacy.inspectProcess('sess-a')).toEqual({
+        foregroundProcess: null,
+        hasChildProcesses: false
+      })
+
+      legacy.dispose()
+    })
+
+    it('rejects rather than reading as idle when the daemon call fails', async () => {
+      // Why: getForegroundProcess swallows errors into null; composing through it would turn a dead
+      // socket into a false "agent exited" completion, the mirror of the bug this path fixes.
+      const legacy = createInspectionAdapter(
+        COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION - 1,
+        vi.fn(async () => {
+          throw new Error('socket_closed')
+        })
+      )
+
+      await expect(legacy.inspectProcess('sess-a')).rejects.toThrow('socket_closed')
+
+      legacy.dispose()
+    })
+
+    it.each([COMPLETION_PROCESS_INSPECTION_PROTOCOL_VERSION, PROTOCOL_VERSION])(
+      'delegates protocol %s inspection to inspectProcess',
+      async (protocolVersion) => {
+        const request = vi.fn(async () => ({ foregroundProcess: 'codex', hasChildProcesses: true }))
+        const current = createInspectionAdapter(protocolVersion, request)
+
+        await current.inspectProcess('sess-a')
+
+        expect(request).toHaveBeenCalledWith('inspectProcess', { sessionId: 'sess-a' })
+
+        current.dispose()
+      }
+    )
   })
 
   describe('serialize / revive', () => {
