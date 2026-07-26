@@ -3283,6 +3283,12 @@ function normalizeCodexEvent(
     return buildCodexChildDrivenStatusPayload(state, eventName, paneKey, hookPayload)
   }
 
+  // Why: a lead Stop isn't "done" while children still run, so the roster must gate it before
+  // being retired. SessionStart is exempt — its roster belongs to the process that just exited.
+  const effectiveState =
+    eventName === 'SessionStart'
+      ? stateName
+      : codexRosterEffectiveState(state.codexSubagentRosterByPaneKey.get(paneKey), stateName)
   if (eventName === 'SessionStart') {
     // Why: a pane can host a new Codex process after the old one exited without child Stop hooks.
     state.codexSubagentRosterByPaneKey.delete(paneKey)
@@ -3297,10 +3303,6 @@ function normalizeCodexEvent(
       normalizeOptionalField(hookPayload['model'], AGENT_MODEL_MAX_LENGTH) ??
       (eventName === 'SessionStart' ? undefined : previousLead?.model)
   })
-  const effectiveState = codexRosterEffectiveState(
-    state.codexSubagentRosterByPaneKey.get(paneKey),
-    stateName
-  )
   return buildCodexStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
     stateName: effectiveState,
     updateLead: true
