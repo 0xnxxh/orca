@@ -85,6 +85,10 @@ import {
   requestTerminalPaneRecovery
 } from './terminal-pane-recovery'
 import {
+  armTerminalInputQuarantine,
+  shouldQuarantineTerminalInput
+} from './terminal-input-quarantine'
+import {
   isDocumentVisibilityProvenStale,
   registerStaleDocumentVisibilityRecovery
 } from './stale-document-visibility'
@@ -3717,6 +3721,13 @@ export function connectPanePty(
       sendDesktopQueryReplyImmediate(data)
       return
     }
+    // Why here: after the query-reply bypass, so xterm's own auto-replies still
+    // flow, but before any send path — a quarantined pane must not deliver the
+    // tail of a line whose head died with the old daemon (STA-2373 follow-up).
+    if (shouldQuarantineTerminalInput(deps.tabId, data)) {
+      clearPendingTerminalInputIntent()
+      return
+    }
     const intent = pendingTerminalInputIntent
     // Why: real xterm can deliver the terminal byte even when our DOM keydown
     // listener missed the press. Exact Ctrl+C/Escape bytes are still safe to
@@ -5329,6 +5340,10 @@ export function connectPanePty(
           },
           onWriteUnavailable: (): void => {
             if (isCurrent()) {
+              // Arm before requesting recovery: the remount that recovery triggers
+              // builds a fresh connection, so only module-scoped quarantine state
+              // survives to gate the new pane's input.
+              armTerminalInputQuarantine(deps.tabId)
               requestRecoveryForUndeliverableInput(true)
             }
           },

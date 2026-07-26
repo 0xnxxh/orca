@@ -4779,6 +4779,58 @@ describe('connectPanePty', () => {
     expect(window.api.agentStatus.inferInterrupt).not.toHaveBeenCalled()
   })
 
+  it('quarantines input after a dead-endpoint signal so the fresh shell never runs a line fragment', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const { _resetTerminalPaneRecoveryForTests } = await import('./terminal-pane-recovery')
+    const { _resetTerminalInputQuarantineForTests } = await import('./terminal-input-quarantine')
+    _resetTerminalPaneRecoveryForTests()
+    _resetTerminalInputQuarantineForTests()
+    const remountTerminalTabForRecovery = vi.fn<(tabId: string) => boolean>(() => true)
+    mockStoreState = { ...mockStoreState, remountTerminalTabForRecovery } as StoreState
+    const transport = createMockTransport('daemon-pty')
+    let writeUnavailable: (() => void) | undefined
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      writeUnavailable = callbacks.onWriteUnavailable
+      return { id: 'daemon-pty' }
+    })
+    transportFactoryQueue.push(transport)
+
+    const pane = createPane(1)
+    connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
+    await flushAsyncTicks(6)
+    writeUnavailable?.()
+    await flushAsyncTicks(6)
+    const sendInputAccepted = transport.sendInputAccepted
+    expect(sendInputAccepted).toBeTypeOf('function')
+    transport.sendInput.mockClear()
+    sendInputAccepted?.mockClear()
+
+    // Why revert-sensitive: the daemon died mid-line, so `echo hi; ` is already
+    // gone. Without the quarantine this tail reaches the replacement shell, zsh
+    // fails `cho hi` and then still executes `rm -rf x` after the `;`.
+    sendTerminalInputThroughPane(pane, 'cho hi; rm -rf x')
+    await flushAsyncTicks(2)
+    expect(transport.sendInput).not.toHaveBeenCalled()
+    expect(sendInputAccepted).not.toHaveBeenCalled()
+
+    // The submit for that mangled line is swallowed too, leaving a clean prompt.
+    sendTerminalInputThroughPane(pane, '\r')
+    await flushAsyncTicks(2)
+    expect(transport.sendInput).not.toHaveBeenCalled()
+    expect(sendInputAccepted).not.toHaveBeenCalled()
+
+    // ...and the next line the user types is delivered normally.
+    sendTerminalInputThroughPane(pane, 'ls')
+    await flushAsyncTicks(2)
+    const delivered = [
+      ...transport.sendInput.mock.calls.flat(),
+      ...(sendInputAccepted?.mock.calls.flat() ?? [])
+    ]
+    expect(delivered).toContain('ls')
+    _resetTerminalInputQuarantineForTests()
+    _resetTerminalPaneRecoveryForTests()
+  })
+
   it('remounts a connected pane when main reports its daemon write unavailable', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const { _resetTerminalPaneRecoveryForTests } = await import('./terminal-pane-recovery')
