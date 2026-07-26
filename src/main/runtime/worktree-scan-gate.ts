@@ -48,7 +48,13 @@ export class WorktreeScanGate {
       return this.startOperation(start, this.createRelease())
     }
     const acquisition = this.acquire(acquisitionSignal)
-    const operation = acquisition.then((release) => this.startOperation(start, release))
+    const operation = acquisition.then((release) => {
+      if (acquisitionSignal?.aborted) {
+        release()
+        throw abortError()
+      }
+      return this.startOperation(start, release)
+    })
     return {
       result: operation.then((tracked) => tracked.result),
       settled: operation.then(

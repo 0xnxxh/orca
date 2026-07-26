@@ -45,6 +45,22 @@ describe('WorktreeScanGate', () => {
     await expect(first).resolves.toBe(1)
   })
 
+  it('does not start after abort wins the acquired-permit microtask handoff', async () => {
+    const gate = new WorktreeScanGate(1)
+    const settlement = deferred<void>()
+    const controller = new AbortController()
+    const first = gate.run(() => ({ result: Promise.resolve(1), settled: settlement.promise }))
+    const startSecond = vi.fn(() => ({ result: Promise.resolve(2) }))
+    const second = gate.run(startSecond, controller.signal)
+
+    settlement.resolve()
+    queueMicrotask(() => controller.abort())
+
+    await expect(second).rejects.toMatchObject({ name: 'AbortError' })
+    expect(startSecond).not.toHaveBeenCalled()
+    await expect(first).resolves.toBe(1)
+  })
+
   it('retains a permit until resource settlement after the result rejects', async () => {
     const gate = new WorktreeScanGate(1)
     const settled = deferred<void>()
