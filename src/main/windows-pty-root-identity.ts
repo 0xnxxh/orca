@@ -28,11 +28,12 @@ export type WindowsProcessLinkReader = () => Promise<readonly ProcessLink[] | nu
  * so it resolves `foreign` and must never reach `taskkill /T /F`. Ambiguous
  * tables resolve `unknown` because ambiguity is not evidence of ownership.
  *
- * Known limit: a recycle that lands on one of our OWN descendants — another
- * pane's shell, an agent CLI, a `git.exe` we spawned — still reads `own`. That
- * is not remote during teardown, when Orca is itself the process allocating
- * pids. Closing it needs real identity (a `Win32_Process.CreationDate` baseline,
- * the analogue of the POSIX `lstart` check, or an inherited handle/Job Object).
+ * Known limit (#10680): a recycle that lands on one of our OWN descendants —
+ * another pane's shell, an agent CLI, a `git.exe` we spawned — still reads
+ * `own`. That is not remote during teardown, when Orca is itself the process
+ * allocating pids. Closing it needs real identity (a `Win32_Process.CreationDate`
+ * baseline, the analogue of the POSIX `lstart` check, or an inherited handle /
+ * Job Object).
  */
 export function classifyWindowsTreeKillTarget(
   rootPid: number,

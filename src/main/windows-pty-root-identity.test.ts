@@ -36,8 +36,11 @@ describe('classifyWindowsTreeKillTarget', () => {
     expect(classifyWindowsTreeKillTarget(4242, rows, ORCA_PID)).toBe('own')
   })
 
-  it('documents that another Orca descendant remains indistinguishable from the PTY root', () => {
-    const rows = [link(ORCA_PID, 900), link(6100, ORCA_PID), link(4242, 6100)]
+  it('documents that a recycled PID under another Orca pane still classifies as own', () => {
+    // Dead PTY root 4242 recycled as a tool under a different pane's agent tree.
+    // Ancestry still reaches us, so taskkill is allowed — wrong process, own tree.
+    // Closing this needs spawn-time CreationDate / Job Object (#10680).
+    const rows = [link(ORCA_PID, 900), link(7000, ORCA_PID), link(7100, 7000), link(4242, 7100)]
     expect(classifyWindowsTreeKillTarget(4242, rows, ORCA_PID)).toBe('own')
   })
 
