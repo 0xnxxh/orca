@@ -136,7 +136,6 @@ export type ManagedPaneInternal = {
   gpuRenderingEnabled: boolean
   webglAttachmentDeferred: boolean
   webglDisabledAfterContextLoss: boolean
-  webglRebuildDeferred?: boolean
   // Why: expose complex-output diagnostics without changing renderer choice;
   // auto renderer fallback is reserved for platform or WebGL failures.
   hasComplexScriptOutput: boolean
