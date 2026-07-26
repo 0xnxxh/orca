@@ -131,8 +131,10 @@ describe('FullDiskAccessNudge', () => {
     expect(container.textContent).toContain('Full Disk Access')
     expect(container.textContent).toContain('Open System Settings')
     // The grant covers this app, not the detached PTY daemon that owns terminals.
-    expect(container.textContent).toContain('Terminal sessions may still prompt separately')
+    expect(container.textContent).toContain('may still prompt separately')
     expect(container.textContent).not.toContain('stops asking')
+    // Agent sweeps trigger these prompts; macOS only names Orca as the responsible process.
+    expect(container.textContent).toContain('agents it runs')
   })
 
   it('stays hidden while the probe is unresolved (no first-paint flash)', async () => {

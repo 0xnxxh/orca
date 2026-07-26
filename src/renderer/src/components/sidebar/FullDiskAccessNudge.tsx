@@ -258,7 +258,7 @@ export function FullDiskAccessNudge(): React.JSX.Element | null {
         <p className="mt-1 text-xs leading-snug text-muted-foreground">
           {translate(
             'auto.components.sidebar.FullDiskAccessNudge.body',
-            'Grant Full Disk Access to reduce repeated macOS prompts when this copy of Orca reads protected app data. Terminal sessions may still prompt separately.'
+            "These prompts come from Orca and the agents it runs reading other apps' data. Full Disk Access reduces them; terminal sessions may still prompt separately."
           )}
         </p>
         <Button

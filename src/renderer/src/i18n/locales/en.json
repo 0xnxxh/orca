@@ -4835,7 +4835,7 @@
           "title": "Reduce macOS permission prompts",
           "dismissAriaLabel": "Dismiss Full Disk Access suggestion",
           "dismiss": "Dismiss",
-          "body": "Grant Full Disk Access to reduce repeated macOS prompts when this copy of Orca reads protected app data. Terminal sessions may still prompt separately.",
+          "body": "These prompts come from Orca and the agents it runs reading other apps' data. Full Disk Access reduces them; terminal sessions may still prompt separately.",
           "opening": "Opening…",
           "openSystemSettings": "Open System Settings"
         }
