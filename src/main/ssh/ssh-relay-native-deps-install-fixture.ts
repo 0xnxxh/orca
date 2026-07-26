@@ -61,13 +61,15 @@ export function decodePowerShellCommand(command: string): string | null {
 
 // Happy-path exec order: uname, $HOME, mkdir, chmod node, npm install, chmod prebuilds, probe, [cat stderr + rm if MISSING], [rebuild → chmod → re-probe if MISSING], DEAD, READY.
 // When the probe rejects (SSH channel close or vanished install dir), the catch skips both stderr-capture and the rm.
+// A failed npm install takes one of the two early branches below instead, which never reach `probe`.
 export function makeExecResponses(opts: {
   npmInstall: 'ok' | { reject: string }
+  // Only consumed when npmInstall is 'ok'; defaults to a healthy install.
   // 'ok'      : probe resolves with the sentinel; rm runs once
   // 'missing' : probe resolves with 'MISSING'; cat stderr + rm both run
   // 'dir-gone': probe rejects (cd-failure), exec rejects directly
   // { reject }: probe rejects with custom error (e.g. SSH channel)
-  probe: 'ok' | 'missing' | 'dir-gone' | { reject: string }
+  probe?: 'ok' | 'missing' | 'dir-gone' | { reject: string }
   // Override probe stdout entirely for shell-noise/pollution-prefix pressure tests.
   probeStdoutOverride?: string
   // Result after the automatic rebuild; defaults to missing so legacy tests still exercise the degraded-mode warning.
@@ -77,6 +79,8 @@ export function makeExecResponses(opts: {
   // Result of the node-pty-less reinstall the catch attempts when the toolchain is missing.
   // Omit for hosts that never reach it (full toolchain, or a non-build npm failure).
   nodePtySkipRetry?: 'ok' | { reject: string }
+  // Whether @parcel/watcher loads on the skip path; node-pty is always absent there by construction.
+  nodePtySkipWatcher?: 'ok' | 'missing'
 }): ExecResponse[] {
   // A failed npm install aborts after the catch probes the toolchain, unless the node-pty-less
   // reinstall succeeds; only then are the chmod/probe/launch slots reached.
@@ -91,26 +95,44 @@ export function makeExecResponses(opts: {
       ...(opts.nodePtySkipRetry ? [opts.nodePtySkipRetry] : []) // reinstall also rejects
     ]
   }
+  if (opts.npmInstall !== 'ok') {
+    // Skip path, exactly as production runs it: no chmod-prebuilds (node-pty is gone) and no rebuild
+    // (it provably can't compile here). The probe still runs to catch a dead @parcel/watcher.
+    return [
+      '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
+      '/home/u',
+      '', // mkdir remoteDir (uploadRelay)
+      '', // chmod +x node
+      opts.npmInstall, // npm install rejects on the missing compiler
+      opts.toolchainProbe ?? 'HAVE python3\nPKG dnf',
+      '', // rm -rf node-pty + reinstall without it
+      // node-pty is always reported missing here; the probe never resolves OK, so cat + rm both run.
+      opts.nodePtySkipWatcher === 'missing'
+        ? 'ORCA-NATIVE-DEPS-MISSING:node-pty,@parcel/watcher\nMISSING\n'
+        : 'ORCA-NATIVE-DEPS-MISSING:node-pty\nMISSING\n',
+      '', // cat probe stderr
+      '', // rm -f probe stderr
+      'DEAD',
+      'READY'
+    ]
+  }
+  const probe = opts.probe ?? 'ok'
   const probeSlot: ExecResponse =
     opts.probeStdoutOverride !== undefined
       ? opts.probeStdoutOverride
-      : opts.probe === 'ok'
+      : probe === 'ok'
         ? 'ORCA-NPTY-PROBE-OK\n'
-        : opts.probe === 'missing'
+        : probe === 'missing'
           ? 'MISSING\n' // shell-level `|| echo MISSING` after require throw
-          : opts.probe === 'dir-gone'
+          : probe === 'dir-gone'
             ? { reject: 'cd: no such file or directory' }
-            : opts.probe
+            : probe
   const slots: ExecResponse[] = [
     '__ORCA_REMOTE_PLATFORM__ Linux x86_64',
     '/home/u',
     '', // mkdir remoteDir (uploadRelay)
     '', // chmod +x node
-    opts.npmInstall === 'ok' ? '' : opts.npmInstall,
-    // Toolchain probe + node-pty-less reinstall, only when the first install failed to build.
-    ...(opts.npmInstall === 'ok'
-      ? []
-      : [opts.toolchainProbe ?? 'HAVE python3\nPKG dnf', '' as ExecResponse]),
+    '', // npm install native deps
     '', // chmod prebuilds
     probeSlot
   ]

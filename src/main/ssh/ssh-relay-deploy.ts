@@ -837,6 +837,7 @@ async function installNativeDeps(
             hostPlatform,
             nodePath,
             writeRelayPackageJson,
+            resetDeps,
             signal
           )
         } catch (retryErr) {
@@ -844,8 +845,23 @@ async function installNativeDeps(
             throw retryErr
           }
           signal?.throwIfAborted()
-          throw new Error(formatMissingToolchainError(toolchain, msg))
+          // The thrown toolchain message is built from the original error, so log the retry's own
+          // cause (registry, ENOSPC, EACCES) rather than losing it.
+          console.warn(
+            `[ssh-relay][NPTY-SKIP-RETRY-FAIL] node-pty-less reinstall failed at ${remoteDir} (${platform}): ${(retryErr as Error).message}`
+          )
+          throw new Error(formatMissingToolchainError(toolchain, msg), { cause: retryErr })
         }
+        // Why: this early return skips the probe below, so verify the dep that does have a prebuilt —
+        // a @parcel/watcher that installs but can't load would leave file watching silently dead.
+        await warnIfWatcherUnloadableWithoutNodePty(
+          conn,
+          remoteDir,
+          platform,
+          hostPlatform,
+          nodePath,
+          signal
+        )
         return
       }
     }
@@ -936,6 +952,7 @@ async function installNativeDepsWithoutNodePty(
   hostPlatform: RemoteHostPlatform,
   nodePath: string,
   writeRelayPackageJson: (deps: Record<string, string>) => Promise<void>,
+  resetDeps: RelayNativeDepName[],
   signal?: AbortSignal
 ): Promise<void> {
   const deps = Object.fromEntries(
@@ -946,8 +963,10 @@ async function installNativeDepsWithoutNodePty(
     .map(([dep, version]) => shellEscape(`${dep}@${version}`))
     .join(' ')
   // Why: the failed attempt leaves an unbuildable node-pty behind; clear it so npm prunes rather
-  // than rebuilds it.
-  const resetCommand = resetNativeDepsCommand(hostPlatform, ['node-pty'])
+  // than rebuilds it. Keep the caller's resets too — a repair reconnect still needs them.
+  const resetCommand = resetNativeDepsCommand(hostPlatform, [
+    ...new Set<RelayNativeDepName>([...resetDeps, 'node-pty'])
+  ])
   await execHostCommand(
     conn,
     hostPlatform,
@@ -959,6 +978,40 @@ async function installNativeDepsWithoutNodePty(
     ),
     { timeoutMs: NATIVE_DEPS_COMMAND_TIMEOUT_MS, signal }
   )
+}
+
+/**
+ * Report an unloadable @parcel/watcher after node-pty was skipped, without failing the connection.
+ *
+ * Why: node-pty is expected missing here, but a @parcel/watcher prebuilt that installs and still
+ * can't require() (glibc below the floor — docs/reference/linux-glibc-compatibility.md) means dead
+ * file watching. No rebuild: node-pty provably can't compile on this host, so it would only fail.
+ */
+async function warnIfWatcherUnloadableWithoutNodePty(
+  conn: SshConnection,
+  remoteDir: string,
+  platform: RelayPlatform,
+  hostPlatform: RemoteHostPlatform,
+  nodePath: string,
+  signal?: AbortSignal
+): Promise<void> {
+  try {
+    const probe = await probeInstalledNativeDeps(conn, remoteDir, hostPlatform, nodePath, signal)
+    if (probe.missing.includes('@parcel/watcher')) {
+      console.warn(
+        `[ssh-relay][WATCHER-MISSING-NPTY-SKIPPED] @parcel/watcher installed but require() failed at ${remoteDir} (${platform}); remote file watching is unavailable. stdout=${probe.output.trim().slice(-200)} stderr=${probe.stderr.trim().slice(-500)}`
+      )
+    }
+  } catch (err) {
+    if (isUnconfirmedSshCommandTermination(err)) {
+      throw err
+    }
+    signal?.throwIfAborted()
+    // Degraded-mode diagnostics must never cost the connection the retry just salvaged.
+    console.warn(
+      `[ssh-relay][WATCHER-PROBE-FAIL] native deps probe failed after skipping node-pty at ${remoteDir} (${platform}): ${(err as Error).message}`
+    )
+  }
 }
 
 async function rebuildNativeDeps(

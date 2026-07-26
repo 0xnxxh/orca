@@ -60,10 +60,15 @@ import {
   type AgentSessionOwnerBinding
 } from '../shared/agent-session-host-authority'
 
-// Why: on Linux node-pty has no prebuilt and gets skipped when the host has no compiler, so this
-// is a closable setup gap — say so instead of a bare "not available".
-const NODE_PTY_UNAVAILABLE_MESSAGE =
-  'Remote terminals are unavailable: this host is missing the C/C++ build tools needed to compile node-pty. Install make, a C++ compiler, and python3 on the remote host, then reconnect.'
+// Why: only Linux compiles node-pty (no prebuilt) and can have it skipped for a missing compiler, so
+// the build-tools remedy is a closable setup gap there and wrong advice anywhere node-pty ships one.
+export function formatNodePtyUnavailableMessage(platform: NodeJS.Platform): string {
+  const remedy =
+    platform === 'linux'
+      ? 'this host is missing the C/C++ build tools needed to compile node-pty. Install make, a C++ compiler, and python3 on the remote host, then reconnect.'
+      : "node-pty's native binding failed to load on this host. Reconnect to reinstall the relay's native modules; if it persists, check that the remote Node.js version and architecture match the installed binding."
+  return `Remote terminals are unavailable: ${remedy}`
+}
 
 function isMissingNodePtyNativeBinding(error: unknown): boolean {
   return (
@@ -1002,7 +1007,7 @@ export class PtyHandler {
   ): Promise<{ id: string; incarnationId: string }> {
     const pty = await this.loadPty()
     if (!pty) {
-      throw new Error(NODE_PTY_UNAVAILABLE_MESSAGE)
+      throw new Error(formatNodePtyUnavailableMessage(process.platform))
     }
 
     const cols = (params.cols as number) || 80
@@ -1083,7 +1088,7 @@ export class PtyHandler {
       // Why: Windows loads conpty.node only on first spawn, so handle that late binding failure here.
       if (isMissingNodePtyNativeBinding(error)) {
         this.invalidatePtyModuleAfterBindingFailure()
-        throw new Error(NODE_PTY_UNAVAILABLE_MESSAGE)
+        throw new Error(formatNodePtyUnavailableMessage(process.platform))
       }
       throw error
     }

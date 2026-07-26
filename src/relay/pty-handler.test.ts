@@ -36,7 +36,8 @@ import {
   IMMEDIATE_PTY_EXIT_TIMEOUT_MS,
   MAX_RELAY_PTY_SESSIONS,
   PtyHandler,
-  attachIdentityMismatches
+  attachIdentityMismatches,
+  formatNodePtyUnavailableMessage
 } from './pty-handler'
 import type { RelayDispatcher } from './dispatcher'
 
@@ -371,6 +372,22 @@ describe('PtyHandler', () => {
       owner: (first.agentSessionEnsure as { owner: unknown }).owner
     })
     expect(mockPtySpawn).toHaveBeenCalledOnce()
+  })
+
+  it('only offers the build-tools remedy on Linux, where node-pty has no prebuild', () => {
+    const linux = formatNodePtyUnavailableMessage('linux')
+    expect(linux).toContain('Remote terminals are unavailable')
+    expect(linux).toContain('C/C++ build tools')
+    expect(linux).toContain('python3')
+
+    // Windows/macOS ship node-pty prebuilds, so "install make/g++/python3" sends the user chasing nothing.
+    for (const platform of ['win32', 'darwin'] as const) {
+      const message = formatNodePtyUnavailableMessage(platform)
+      expect(message).toContain('Remote terminals are unavailable')
+      expect(message).not.toContain('build tools')
+      expect(message).not.toContain('python3')
+      expect(message).toMatch(/reconnect/i)
+    }
   })
 
   it('normalizes a missing native binding as degraded node-pty availability', async () => {

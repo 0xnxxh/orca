@@ -130,7 +130,13 @@ export function toolchainInstallHintLines(status: BuildToolchainStatus): string[
 
 /** One-line summary for the deploy log when node-pty is skipped rather than compiled. */
 export function formatSkippedNodePtyWarning(status: BuildToolchainStatus): string {
-  const hint = toolchainInstallHintLines(status)[0]?.trim() ?? 'install a C/C++ toolchain'
+  // Why: with no package manager detected the hint list is the cross-distro menu, whose first line
+  // is Debian's — quoting it alone would name the wrong distro, so stay neutral instead.
+  const hintLines = toolchainInstallHintLines(status)
+  const hint =
+    hintLines.length === 1
+      ? hintLines[0].trim()
+      : 'install a C/C++ toolchain (make, a C++ compiler, python3)'
   return (
     `missing build tools (${missingToolNames(status).join(', ')}); skipping node-pty so the ` +
     `connection still serves files and git. Remote terminals need: ${hint}`

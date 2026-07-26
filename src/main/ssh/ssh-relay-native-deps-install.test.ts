@@ -183,7 +183,6 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
       makeExecResponses({
         npmInstall: { reject: 'gyp ERR! stack Error: not found: make' },
         nodePtySkipRetry: 'ok',
-        probe: 'missing',
         toolchainProbe: 'PKG apk'
       })
     )
@@ -196,6 +195,13 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     const reinstall = execCalls.findLast((c) => c.includes('npm install')) ?? ''
     expect(reinstall).toContain('@parcel/watcher@')
     expect(reinstall).not.toContain('node-pty@')
+    // The skip path must stop here: rebuilding is pointless on a host with no compiler.
+    expect(execCalls.some((c) => c.includes('npm rebuild'))).toBe(false)
+    // node-pty is legitimately absent, so its probe result must not raise the degraded-mode alarm.
+    const warnMessages = warnSpy.mock.calls.map((args) => String(args[0] ?? ''))
+    expect(warnMessages.some((m) => m.includes('[ssh-relay][WATCHER-MISSING-NPTY-SKIPPED]'))).toBe(
+      false
+    )
     // The rewritten manifest must drop node-pty too, or npm reconciles it back and rebuilds.
     const pkgPath = sftpCapture.paths.findLast((p) => p.endsWith('/package.json')) as string
     // The capture concatenates every write to a path; the rewrite is the last manifest line.
@@ -203,6 +209,48 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     const deps = (JSON.parse(latest) as { dependencies: object }).dependencies
     expect(deps).toHaveProperty('@parcel/watcher')
     expect(deps).not.toHaveProperty('node-pty')
+  })
+
+  it('warns when @parcel/watcher is also unloadable after node-pty was skipped', async () => {
+    const conn = makeMockConnection(sftpCapture)
+    feed(
+      makeExecResponses({
+        npmInstall: { reject: 'gyp ERR! stack Error: not found: make' },
+        nodePtySkipRetry: 'ok',
+        nodePtySkipWatcher: 'missing'
+      })
+    )
+
+    // Watcher failure (e.g. glibc below the floor) is non-fatal, but silent dead file watching is not acceptable.
+    await expect(deployAndLaunchRelay(conn)).resolves.toBeDefined()
+    const warnMessages = warnSpy.mock.calls.map((args) => String(args[0] ?? ''))
+    expect(warnMessages.some((m) => m.includes('[ssh-relay][WATCHER-MISSING-NPTY-SKIPPED]'))).toBe(
+      true
+    )
+    expect(vi.mocked(finalizeInstall)).toHaveBeenCalledTimes(1)
+    const execCalls = vi.mocked(execCommand).mock.calls.map(([, c]) => c)
+    expect(execCalls.some((c) => c.includes('npm rebuild'))).toBe(false)
+  })
+
+  it('hard-fails on a gyp error when the remote toolchain is actually complete', async () => {
+    const conn = makeMockConnection(sftpCapture)
+    feed(
+      makeExecResponses({
+        npmInstall: { reject: 'gyp ERR! stack Error: not found: make' },
+        // Probe contradicts the gyp output: the tools are all there, so the real cause is unknown.
+        toolchainProbe: 'HAVE make\nHAVE g++\nHAVE python3\nPKG apt-get'
+      })
+    )
+
+    const error = await deployAndLaunchRelay(conn).catch((e: Error) => e)
+    // Degrading here would silently drop terminals on a host that can build them.
+    expect((error as Error).message).toContain('gyp ERR!')
+    expect((error as Error).message).not.toContain('build tools')
+
+    const execCalls = vi.mocked(execCommand).mock.calls.map(([, c]) => c)
+    expect(execCalls.filter((c) => c.includes('npm install'))).toHaveLength(1)
+    expect(execCalls.some((c) => c.includes("rm -rf 'node_modules/node-pty'"))).toBe(false)
+    expect(vi.mocked(finalizeInstall)).not.toHaveBeenCalled()
   })
 
   it('still reports the actionable build-tools error when the node-pty-less retry also fails', async () => {
@@ -226,6 +274,15 @@ describe('installNativeDeps (via deployAndLaunchRelay)', () => {
     expect(message).toContain('sudo apk add build-base python3')
     // The raw npm/node-gyp output is preserved for triage, not discarded.
     expect(message).toContain('not found: make')
+    // The retry's own cause is unrelated to the toolchain, so it must survive as cause + a log line.
+    expect((error as Error).cause).toBeInstanceOf(Error)
+    expect(((error as Error).cause as Error).message).toContain('registry unreachable')
+    const warnMessages = warnSpy.mock.calls.map((args) => String(args[0] ?? ''))
+    expect(
+      warnMessages.some(
+        (m) => m.includes('[ssh-relay][NPTY-SKIP-RETRY-FAIL]') && m.includes('registry unreachable')
+      )
+    ).toBe(true)
     expect(vi.mocked(finalizeInstall)).not.toHaveBeenCalled()
   })
 
