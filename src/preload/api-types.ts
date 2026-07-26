@@ -354,6 +354,7 @@ import type {
   ReactErrorBoundaryReportArgs,
   ReactErrorBoundaryReportResult
 } from '../shared/crash-reporting'
+import type { RendererHeapStatistics } from '../shared/renderer-heap-statistics'
 
 export type {
   ShellOpenExternalEditorRequest,
@@ -1503,6 +1504,8 @@ export type PreloadApi = {
     copyLatestDiagnostics: (
       args?: CrashReportCopyDiagnosticsArgs
     ) => Promise<{ ok: true } | { ok: false; error: string }>
+    /** Exact V8/Blink heap sizes; null when the runtime withholds them. */
+    readHeapStatistics: () => RendererHeapStatistics | null
   }
   export: ExportApi
   gh: {
