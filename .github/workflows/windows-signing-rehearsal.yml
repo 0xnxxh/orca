@@ -325,7 +325,11 @@ jobs:
 
           # Extract the signed installer and verify the files a user actually
           # gets on disk — including the exact file from issue #7785.
-          $7za = 'node_modules/7zip-bin/win/x64/7za.exe'
+          # electron-builder 26.9+ removed the bundled 7zip-bin package (#6487).
+          $7za = (node config/scripts/resolve-7za-path.mjs).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $7za)) {
+            throw "Could not resolve a 7za executable for the signing rehearsal: $7za"
+          }
           New-Item -ItemType Directory -Path extracted-app -Force | Out-Null
           & $7za x 'dist/orca-windows-setup.exe' '-oextracted-app' -y | Out-Null
 
