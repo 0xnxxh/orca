@@ -4,6 +4,7 @@ import {
   sendMobileNativeChatMessageWithOutcome,
   type MobileNativeChatSendOutcome
 } from './mobile-native-chat-send'
+import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
 import type { MobileNativeChatSendOrigin } from './use-mobile-native-chat-drafts'
 
 export type MobileNativeChatMessageSend = {
@@ -57,6 +58,15 @@ export function useMobileNativeChatMessageSend(args: {
       const origin = captureSendOrigin(text)
       if (!client || !handle || !origin || !enabled) {
         onSendError('Message not sent (disconnected)')
+        return 'rejected'
+      }
+      // The agent's input may still hold an orphaned image paste from an earlier
+      // send (#10228); submitting on top of it would glue the image onto this
+      // message. Healed before the draft clear so a failed heal — which sends
+      // nothing — leaves the composer exactly as the user left it.
+      const healArgs = { client, terminal: handle, deviceToken: deviceTokenRef.current }
+      if (!(await healMobileNativeChatStaleInput(healArgs))) {
+        onSendError('Message not sent')
         return 'rejected'
       }
       // Why: empty the composer at send time, not on the ack — over relay the

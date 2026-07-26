@@ -73,6 +73,7 @@ import {
   notifyServeSupervisorReady
 } from './serve-update-handoff'
 import {
+  configureMainProcessWebglContextBudget,
   configureElectronNetworkCompatibility,
   configureDevUserDataPath,
   configureOrcaUserDataPathEnv,
@@ -663,7 +664,10 @@ if (hasSingleInstanceLock) {
   configureElectronNetworkCompatibility()
   enableRendererHeapHeadroom()
   maybeApplyGpuFallbackForThisLaunch()
-  if (!gpuFallbackActiveThisLaunch) {
+  if (gpuFallbackActiveThisLaunch) {
+    // Software fallback still shares the renderer's bounded Windows retention policy.
+    configureMainProcessWebglContextBudget()
+  } else {
     enableMainProcessGpuFeatures()
   }
   // Why: headless serve's offscreen BrowserWindows need an X display (Xvfb) on Linux; the result gates whether the offscreen backend is installed.

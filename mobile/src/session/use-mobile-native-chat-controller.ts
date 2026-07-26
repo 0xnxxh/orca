@@ -188,6 +188,8 @@ export function useMobileNativeChatController(args: {
       return false
     }
     cancelNativeChatAnswer()
+    // Escape never submits the composer, so no stale-input heal: it would consume
+    // the marker still protecting the next real message.
     const outcome = await sendMobileNativeChatMessageWithOutcome({
       client,
       terminal: handle,

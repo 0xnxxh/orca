@@ -2646,8 +2646,17 @@
               "blocked": {
                 "toast": {
                   "97c98f1afe": "Abrir ajustes",
-                  "7cf51f74fd": "Habilita las escrituras al portapapeles TUI en los ajustes de Terminal para copiar desde SSH, tmux, Neovim, fzf o Grok.",
+                  "7cf51f74fd": "Habilita las escrituras al portapapeles TUI en los ajustes de Terminal para copiar desde SSH, Zellij, tmux, Neovim, fzf o Grok.",
                   "89eaa3e80b": "Escritura al portapapeles del terminal bloqueada"
+                }
+              },
+              "default": {
+                "on": {
+                  "notice": {
+                    "title": "La escritura del portapapeles desde TUI ahora está activada de forma predeterminada",
+                    "description": "Zellij, tmux, Neovim y otros programas de terminal ya pueden copiar a tu portapapeles. Desactívalo en la configuración de Terminal.",
+                    "action": "Abrir ajuste"
+                  }
                 }
               }
             }
@@ -3657,7 +3666,8 @@
           "SourceControlActionVariableChips": {
             "1b77798d5f": "Variables",
             "6b921a0ac2": "Ejemplo",
-            "4bf6d88039": "(vacío)"
+            "4bf6d88039": "(vacío)",
+            "7377483644": "Este espacio de trabajo"
           }
         }
       },
@@ -3725,7 +3735,8 @@
           "skippedReasonInRepo": "This is a project skill, not a global one — Orca only updates your global skills, so it left this out of the update.",
           "skippedReasonPluginCache": "A plugin manages this skill, so Orca left it out of the update — update the plugin instead.",
           "skippedReasonExternalLink": "This copy is a shortcut pointing outside Orca’s skill folders, so Orca left it out of the update.",
-          "skippedReasonBrokenLink": "This copy is a shortcut to something that no longer exists, so Orca left it out — you can safely delete it."
+          "skippedReasonBrokenLink": "This copy is a shortcut to something that no longer exists, so Orca left it out — you can safely delete it.",
+          "skippedReasonDuplicate": "This is a separate copy, so the update won’t reach it — the command only refreshes the main copy. Remove this copy, then reinstall the skill so this location follows the main one."
         },
         "SkillFreshnessUpdateDialog": {
           "title": "Actualizar skills",
@@ -3746,7 +3757,9 @@
         "SkillFreshnessStatusPill": {
           "updateAvailable": "Actualización disponible",
           "upToDate": "Actualizado",
-          "installed": "Instalado"
+          "installed": "Instalado",
+          "details": "Details",
+          "needsAttention": "Needs attention"
         }
       },
       "sidebar": {
@@ -4073,7 +4086,8 @@
           "75405270ed": "Editar filtros ({{value0}} activo)",
           "489d1c8c9f": "Buscar proyectos...",
           "ee240a39eb": "Editar filtros",
-          "automationCreated": "Ocultar creados por automatizaciones"
+          "automationCreated": "Ocultar creados por automatizaciones",
+          "cliCreated": "Hide CLI-created"
         },
         "SidebarHeader": {
           "92154beb7e": "Nuevo espacio de trabajo",
@@ -4136,7 +4150,8 @@
           "c3fa13dc2e": "Ocultar rama predeterminada",
           "ed1611b65b": "Ocultar en reposo",
           "82594419ba": "Filtros",
-          "automationCreated": "Ocultar creados por automatizaciones"
+          "automationCreated": "Ocultar creados por automatizaciones",
+          "cliCreated": "Hide CLI-created"
         },
         "SidebarWorkspaceOptionsMenu": {
           "95c9754653": "Diseño de actividad del Agent",
@@ -4191,7 +4206,8 @@
           "2d74665a56": "Puertos",
           "65a9820bd1": "Estados de Agents",
           "219ebf1961": "Nombre de rama",
-          "folderPathIdentity": "Rama / ruta de carpeta"
+          "folderPathIdentity": "Rama / ruta de carpeta",
+          "cli": "Orca CLI"
         },
         "SshDisconnectedDialog": {
           "ca4a7892af": "Conectando...",
@@ -4312,7 +4328,12 @@
           "copyLinkSuccess": "{{value0}} copiado",
           "copyLinkFailure": "No se pudo copiar el enlace",
           "issueLinkLabel": "Enlace del issue",
-          "reviewLinkLabel": "Enlace de {{value0}}"
+          "reviewLinkLabel": "Enlace de {{value0}}",
+          "cliHeader": "Orca CLI",
+          "cliCreatedFromAgent": "Created by an agent via `orca worktree create`",
+          "cliCreatedFromShell": "Created via `orca worktree create`",
+          "cliStartupAgent": "Started with {{value0}}",
+          "cliCreated": "Created by Orca CLI"
         },
         "WorktreeCardMetadataStatusBadges": {
           "fe188062a1": "Estado: Abierto",
@@ -5040,11 +5061,17 @@
           "remoteServerFallback": "el servidor remoto",
           "loadAccountsFailed": "No se pudieron cargar las cuentas de proveedor.",
           "remoteScopeAccounts": "Mostrando las cuentas administradas por {{value0}}. Agrega o vuelve a autenticar cuentas en ese servidor.",
+          "accountScopePrefix": "Alcance de la cuenta",
+          "accountScopeRemoteServerUnnamed": "Servidor remoto",
+          "remoteScopeLocalAccountsKept": "Las cuentas administradas en este escritorio no cambian. Vuelve a cambiar el runtime predeterminado a Escritorio local para verlas.",
           "remoteScopeAuthContext": "Cada cuenta mantiene su propio contexto de inicio de sesión en {{value0}}.",
           "remoteEmptyClaudeAccounts": "No hay cuentas de Claude administradas en {{value0}}. Usa su inicio de sesión de Claude predeterminado del sistema; agrega cuentas en ese servidor.",
           "remoteEmptyCodexAccounts": "No hay cuentas de Codex administradas en {{value0}}. Usa su inicio de sesión de Codex predeterminado del sistema; agrega cuentas en ese servidor.",
           "codexSystemDefaultCustomProvider": "Proveedor personalizado — no se registra el uso.",
-          "codexSystemDefaultNeedsSignIn": "No se encontró ningún inicio de sesión de Codex para {{value0}}."
+          "codexSystemDefaultNeedsSignIn": "No se encontró ningún inicio de sesión de Codex para {{value0}}.",
+          "codexConfigSyncMissingSource": "Codex is still using the settings it last synced because {{value0}} is missing. Restore that file to resume syncing.",
+          "codexConfigSyncBlankSource": "Codex is still using the settings it last synced because {{value0}} is empty. That is expected while a synced folder finishes downloading.",
+          "codexConfigSyncUnreadableSource": "Codex is still using the settings it last synced because {{value0}} could not be read. Check that file's permissions."
         },
         "AdvancedPane": {
           "40b29e0bf3": "Reiniciar",
@@ -5540,9 +5567,14 @@
           },
           "agentDashboard": {
             "title": "Agent Dashboard",
-            "description": "Pop-out Kanban board for monitoring agents across worktrees.",
-            "copy": "Adds an Agent Dashboard entry to the left sidebar. Open it to monitor attention, working, and idle agents in a separate window and jump into their live terminals.",
-            "toggleLabel": "Toggle Agent Dashboard"
+            "description": "Kanban board for monitoring agents across worktrees, in-window or as a pop-out.",
+            "copy": "Adds an Agent Dashboard entry to the left sidebar. Open it to monitor attention, working, and idle agents and jump into their live terminals.",
+            "toggleLabel": "Toggle Agent Dashboard",
+            "modeLabel": "Open as",
+            "modeCopy": "Show the dashboard as an in-window board beside the sidebar or a separate pop-out window.",
+            "modeAriaLabel": "Agent Dashboard open mode",
+            "modeInWindow": "In-window",
+            "modePopout": "Pop-out"
           }
         },
         "FloatingWorkspacePane": {
@@ -6931,9 +6963,9 @@
           "d23b43c5be": "Ubicación del script de configuración",
           "34a0dfa06e": "Dónde se ejecuta el script de configuración del repositorio cuando se crea un nuevo espacio de trabajo.",
           "21f8da2078": "Script de configuración del espacio de trabajo",
-          "6e6480a7df": "Permite que los programas del terminal (Grok, tmux, Neovim, fzf, SSH) copien al portapapeles del sistema.",
+          "6e6480a7df": "Permite que los programas del terminal (Zellij, tmux, Neovim, fzf, Grok, SSH) copien al portapapeles del sistema.",
           "3338dcf8c1": "Permitir escrituras en el portapapeles TUI (OSC 52)",
-          "69c64a479c": "Permite que Grok, tmux, Neovim y fzf copien al portapapeles del sistema a través de PTY (incluso por SSH).",
+          "69c64a479c": "Permite que Zellij, tmux, Neovim, fzf y Grok copien al portapapeles del sistema a través de PTY (incluso por SSH).",
           "4729c645fc": "Copia automáticamente las selecciones del terminal al portapapeles.",
           "902f5dee1f": "Copiar al seleccionar",
           "9129b7e805": "Al pasar el cursor sobre un panel de terminal, se activa sin necesidad de hacer clic.",
@@ -7632,6 +7664,7 @@
               "e3fbc48083": "bluetooth",
               "c4a4a02ea4": "USB",
               "fa3239cd42": "red local",
+              "87620e6416": "LAN",
               "acad3d4743": "Permitir herramientas de dispositivo y acceso LAN desde sesiones de terminal.",
               "3e0131e45d": "iCloud",
               "ce07159ff5": "escritorio",
@@ -7736,7 +7769,7 @@
             },
             "agentDashboard": {
               "title": "Agent Dashboard",
-              "description": "Pop-out Kanban board for monitoring agents across worktrees."
+              "description": "Kanban board for monitoring agents across worktrees, in-window or as a pop-out."
             }
           }
         },
@@ -8570,7 +8603,6 @@
             "10f9fb6fea": "ajustes",
             "2ade3ea490": "configuración",
             "fd752b3cac": "importar",
-            "82b63d07fe": "ghostty",
             "73e9422f19": "Importación única de ajustes de terminal compatibles de Ghostty.",
             "a979df0083": "Importar desde Ghostty",
             "4cec42dbf7": "internacional",
@@ -9874,7 +9906,6 @@
             "b715ef615b": "{{value0}} commits por delante de {{value1}}",
             "c1a8f3e204": "1 commit por detrás de {{value0}}",
             "d2b9g4f315": "{{value0}} commits por detrás de {{value1}}",
-            "e9c2a5d416": "A la par con {{value0}}",
             "4b4a7de138": "Abrir página de revisión en el navegador",
             "createPrIntentCommitBlockedSummary": "Commit bloqueado: {{value0}} Corrige el issue y reintenta crear PR.",
             "pushRecovery": {
@@ -9893,7 +9924,10 @@
               "783a808870": "Cerrar"
             },
             "97e7124eac": "No se pudo actualizar Source Control. Vuelve a intentarlo.",
-            "a4e93c21d7": "Rama actual: {{value0}}"
+            "b8c2e1a904": "{{value0}} → {{value1}}",
+            "a4e93c21d7": "Rama actual: {{value0}}",
+            "c7d4e2f801": "Cambiar ref base: {{value0}}",
+            "f3a1b8c204": "upstream"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "No se pudo iniciar el agente seleccionado.",
@@ -13713,7 +13747,16 @@
       "bar": {
         "SortableTabContextMenu": {
           "switchToTerminalView": "Cambiar a la vista de terminal",
-          "switchToChatView": "Cambiar a vista de chat"
+          "switchToChatView": "Cambiar a vista de chat",
+          "closeTabsToLeft": "Cerrar pestañas a la izquierda"
+        },
+        "BrowserTab": {
+          "closeOthers": "Cerrar otras",
+          "closeTabsToLeft": "Cerrar pestañas a la izquierda"
+        },
+        "EditorFileTabContextMenu": {
+          "closeOthers": "Cerrar otras",
+          "closeTabsToLeft": "Cerrar pestañas a la izquierda"
         }
       }
     },
@@ -13785,7 +13828,10 @@
       "closed": "No live terminal — this agent's pane has closed.",
       "focusWorktree": "Focus worktree",
       "close": "Close"
-    }
+    },
+    "close": "Close dashboard",
+    "settings": "Agent Dashboard settings",
+    "settingsTooltip": "Board settings"
   },
   "dashboard": {
     "sidebar": {
