@@ -250,7 +250,9 @@ describe('findTrustedCodexSessionResume legacy-rescan home ranking', () => {
   const rolloutIn = (homePath: string): string =>
     join(homePath, 'sessions', '2026', '07', '20', `rollout-2026-07-20T15-50-19-${sessionId}.jsonl`)
 
-  // Why: PR #10770 hardlinks one rollout into every managed home, so the id alone stops naming an account.
+  // Why: one id already lives in several homes on main — the one-shot migrateLegacySessions copies
+  // each per-account rollout into the shared mirror and leaves the original. #10770 widens this to
+  // every managed home. Either way the id alone stops naming an account.
   const listRolloutInEveryHome = async function* (sessionsRoot: string): AsyncIterable<string> {
     yield join(sessionsRoot, '2026', '07', '20', `rollout-2026-07-20T15-50-19-${sessionId}.jsonl`)
   }

@@ -97,19 +97,22 @@ export function claimsCodexRolloutLayout(transcriptPath: string | undefined): bo
  * Orders trusted homes for the legacy id rescan, lowest wins.
  *
  * The winning home becomes the resumed pane's CODEX_HOME, so it picks the
- * account. Rank the currently selected account's own home first — once a
- * rollout is hardlinked into every managed home the id alone no longer names
- * an account, and resuming under the account the user has selected is what
+ * account. Rank the currently selected account's own home first — once the same
+ * rollout sits in several homes the id alone no longer names an account, and
+ * resuming under the account the user has selected is what
  * they asked for. The real system home ranks next because codex refreshes it
  * directly. Everything else is ordered by normalized path so no winner ever
  * depends on the order accounts happen to sit in settings.
  *
  * The shared runtime mirror ranks above the remaining homes because winning is
- * not inert for it: it is the only home that triggers the legacy migration into
- * the real system home (prepareLegacySharedCodexSessionResume), which is how a
- * system-default selection resumes on ~/.codex instead of some account's home.
- * Letting a per-account home outrank it by mere path order would silently route
- * that selection to an account the user did not pick.
+ * not inert for it: with no account selected it is the only home that triggers
+ * the legacy migration into the real system home
+ * (prepareLegacySharedCodexSessionResume, which also requires the system-default
+ * selection), and that migration is how such a resume lands on ~/.codex instead
+ * of some account's home. Letting a per-account home outrank it by mere path
+ * order would silently route that selection to an account the user did not pick.
+ * With an account selected the migration cannot fire either way, so this tier
+ * just preserves the pre-ranking order rather than inventing a new winner.
  *
  * All inputs are required, not optional: a caller that forgot one would
  * silently degrade to pure path order, which is the accident this exists to
