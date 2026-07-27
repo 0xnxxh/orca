@@ -111,7 +111,10 @@ export function buildTargetedSkillUpdateCommand(names: readonly string[]): strin
 // the inventory after exit, never from parsing stdout.
 export type SkillUpdateRun =
   | { state: 'idle' }
-  | { state: 'running'; names: string[]; startedAt: number; output: string }
+  // `stopping` covers the window between Stop and the process tree actually
+  // dying — the run is still `running` (that is what blocks a second writer),
+  // but the Stop affordance has already been spent.
+  | { state: 'running'; names: string[]; startedAt: number; output: string; stopping?: boolean }
   | { state: 'success'; names: string[]; finishedAt: number; output: string }
   | {
       state: 'error'
@@ -125,4 +128,4 @@ export type SkillUpdateRun =
 
 export type SkillUpdateStartResult =
   | { started: true }
-  | { started: false; reason: 'already-running' | 'invalid-names' }
+  | { started: false; reason: 'already-running' | 'invalid-names' | 'unsafe-command-path' }

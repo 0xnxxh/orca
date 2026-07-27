@@ -3356,7 +3356,10 @@
             "successAria": "Skills updated. Click to open details.",
             "errorLabel": "Update failed",
             "errorTooltip": "Skill update failed — click to see details",
-            "errorAria": "Skill update failed. Click to open details."
+            "errorAria": "Skill update failed. Click to open details.",
+            "stoppingLabel": "Stopping update",
+            "stoppingTooltip": "Stopping the skill update…",
+            "stoppingAria": "Stopping the skill update. Click to open details."
           }
         }
       },
@@ -3767,7 +3770,6 @@
           "updateMany": "Se pueden actualizar {{value0}} skills de forma segura",
           "success": "Todas las skills de Orca instaladas están actualizadas.",
           "attention": "Algunas skills de Orca instaladas no se pueden actualizar automáticamente.",
-          "attentionDescription": "Abre Detalles de la actualización para ver por qué no se puede actualizar cada una.",
           "checkNow": "Comprobar ahora",
           "close": "Cerrar",
           "blockedOne": "1 skill can't be updated automatically.",
@@ -3787,7 +3789,10 @@
           "updating": "Updating…",
           "updateActionOne": "Update 1 skill",
           "updateActionMany": "Update {{value0}} skills",
-          "done": "Done"
+          "done": "Done",
+          "stop": "Stop",
+          "stopping": "Stopping…",
+          "stoppingHeadline": "Stopping the update…"
         },
         "SkillFreshnessStatusPill": {
           "updateAvailable": "Actualización disponible",

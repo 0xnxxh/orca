@@ -113,13 +113,17 @@ export function SkillUpdateRow({
         </p>
       ) : null}
 
+      {/* Why: outside the disclosure, alongside the failure line. The reason is
+          the whole point of a skipped row, so it must not depend on a click —
+          nor on a mount-time `defaultOpen` that a re-scan can't re-fire. */}
+      {state === 'blocked' ? (
+        <p className="px-1.5 pb-1.5 text-xs leading-5 text-muted-foreground">
+          {skippedReason(group.locations)}
+        </p>
+      ) : null}
+
       <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
         <div className="flex flex-col gap-2 px-1.5 pb-2 pt-0.5">
-          {state === 'blocked' ? (
-            <p className="text-xs leading-5 text-muted-foreground">
-              {skippedReason(group.locations)}
-            </p>
-          ) : null}
           {group.locations.map((location) => (
             <div key={location.id} className="flex min-w-0 items-center gap-2">
               {/* Why: plugin-cache paths nest arbitrarily deep. Without an explicit

@@ -3177,7 +3177,10 @@
             "successAria": "Skills updated. Click to open details.",
             "errorLabel": "Update failed",
             "errorTooltip": "Skill update failed — click to see details",
-            "errorAria": "Skill update failed. Click to open details."
+            "errorAria": "Skill update failed. Click to open details.",
+            "stoppingLabel": "Stopping update",
+            "stoppingTooltip": "Stopping the skill update…",
+            "stoppingAria": "Stopping the skill update. Click to open details."
           },
           "UpdateStatusSegment": {
             "5cd13105a3": "Update failed. Click to expand.",
@@ -3792,7 +3795,6 @@
           "blockedMany": "{{value0}} skills can't be updated automatically.",
           "success": "All installed Orca skills are up to date.",
           "attention": "Some installed Orca skills were left out of the update.",
-          "attentionDescription": "Open Update details to see why each one was skipped.",
           "runningOne": "Updating 1 skill…",
           "runningMany": "Updating {{value0}} skills…",
           "runningDescription": "You can close this window — it keeps running in the background.",
@@ -3810,7 +3812,10 @@
           "updateActionMany": "Update {{value0}} skills",
           "checkNow": "Re-check",
           "done": "Done",
-          "close": "Close"
+          "close": "Close",
+          "stop": "Stop",
+          "stopping": "Stopping…",
+          "stoppingHeadline": "Stopping the update…"
         },
         "SkillUpdateResultRows": {
           "stillOutdated": "Still out of date after the update ran."

@@ -1,6 +1,9 @@
-import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { AlertTriangle, CheckCircle2, ChevronDown, Copy, Loader2, RefreshCw } from 'lucide-react'
-import { buildTargetedSkillUpdateCommand } from '../../../../shared/skill-freshness'
+import {
+  buildTargetedSkillUpdateCommand,
+  type SkillFreshnessInventory
+} from '../../../../shared/skill-freshness'
 import { useSkillFreshness } from '@/hooks/useSkillFreshness'
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
 import { translate } from '@/i18n/i18n'
@@ -19,6 +22,7 @@ import { SkillUpdateRow } from './SkillUpdateRow'
 import { SummaryHeadline, summarizeInventory } from './skill-freshness-summary-headline'
 import {
   acknowledgeSkillUpdateRun,
+  cancelSkillUpdateRun,
   startSkillUpdateRun,
   useSkillUpdateRun
 } from './skill-update-run-store'
@@ -64,11 +68,31 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
     getSkillFreshnessUpdateDialogRequest
   )
   const [copied, setCopied] = useState(false)
-  const inventory = state.inventory
-  const eligibleNames = useMemo(() => inventory?.eligibleUpdateNames ?? [], [inventory])
+
+  // Why: settling a run notifies every skills surface, and that refresh nulls the
+  // inventory *synchronously* while it re-hashes each package on disk. Rendering
+  // rows off the last good scan keeps them on screen through that window instead
+  // of blanking the dialog at the exact moment the result appears. Eligibility
+  // below still reads the live snapshot, so nothing is authorized off stale bytes.
+  const lastInventoryRef = useRef<SkillFreshnessInventory | null>(null)
+  if (state.inventory) {
+    lastInventoryRef.current = state.inventory
+  }
+  const inventory = state.inventory ?? (state.loading ? lastInventoryRef.current : null)
+  const eligibleNames = useMemo(() => state.inventory?.eligibleUpdateNames ?? [], [state.inventory])
+  // Display only. The action still fires `eligibleNames`, so a re-scan in flight
+  // can never authorize work — but the button keeps its place and its label
+  // instead of vanishing and reflowing the footer every time one runs.
+  const displayEligibleCount = inventory?.eligibleUpdateNames.length ?? 0
   const isRunning = run.state === 'running'
+  // The kill sweep can take seconds; without this the Stop button sits enabled
+  // and inert, which reads as broken.
+  const isStopping = run.state === 'running' && run.stopping === true
   const showResult = run.state === 'success' || run.state === 'error'
-  const runNames = useMemo(() => (run.state === 'idle' ? [] : run.names), [run])
+  // Keyed on the names themselves: every captured output chunk republishes the
+  // run, and regrouping the whole inventory per chunk would re-render each row.
+  const runNamesKey = run.state === 'idle' ? '' : run.names.join('\n')
+  const runNames = useMemo(() => (runNamesKey ? runNamesKey.split('\n') : []), [runNamesKey])
   const groups = useMemo(
     () =>
       inventory
@@ -78,13 +102,18 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
   )
   const hasBlockedGroup = groups.some((group) => group.status === 'cannot-update')
   const blockedCount = groups.filter((group) => group.status === 'cannot-update').length
-  const summaryKind = summarizeInventory(inventory, hasBlockedGroup)
+  // Why: the headline reads the LIVE snapshot, not the retained one — the two
+  // disagree for the whole loading window, and pairing a retained "eligible" with
+  // a live count of 0 renders "0 updates available" over rows badged "Update
+  // available". Live means it says "Checking…" over the rows it kept on screen.
+  const summaryKind = summarizeInventory(state.inventory, hasBlockedGroup)
 
   // Why: one row list for every state. The rows are identical objects across the
   // transition, so pressing Update changes each row's leading icon in place
   // instead of swapping the dialog's body for a different component.
+  const failedNamesKey = run.state === 'error' ? run.failedNames.join('\n') : ''
   const rows = useMemo(() => {
-    const failed = new Set(run.state === 'error' ? run.failedNames : [])
+    const failed = new Set(failedNamesKey ? failedNamesKey.split('\n') : [])
     const inRun = new Set(runNames)
     return groups.map((group) => {
       if (inRun.has(group.name)) {
@@ -98,7 +127,7 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
         state: group.status === 'cannot-update' ? ('blocked' as const) : ('available' as const)
       }
     })
-  }, [groups, isRunning, run, runNames])
+  }, [groups, isRunning, failedNamesKey, runNames])
 
   const handleOpenChange = (next: boolean): void => {
     if (next) {
@@ -108,14 +137,20 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
     // status-bar segment carries it from here.
     consumeSkillFreshnessUpdateDialogRequest()
     setCopied(false)
+    // Don't carry a finished session's rows into the next open — but a live run
+    // keeps its own, or reopening from the status segment mid-run would land on
+    // an empty list while the close's own re-scan is still reading disk.
+    if (run.state === 'idle') {
+      lastInventoryRef.current = null
+    }
     if (showResult) {
       void acknowledgeSkillUpdateRun()
     }
     notifyInstalledAgentSkillsChanged()
   }
 
-  const handleUpdate = (): void => {
-    void startSkillUpdateRun(eligibleNames)
+  const handleUpdate = (names: readonly string[]): void => {
+    void startSkillUpdateRun(names)
   }
 
   const handleCopyCommand = (): void => {
@@ -125,13 +160,33 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
     if (!command) {
       return
     }
-    void navigator.clipboard.writeText(command).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
+    // Clipboard writes reject on a denied permission or an unfocused document;
+    // without this the button just never flips to "Copied".
+    void navigator.clipboard
+      .writeText(command)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to copy skill update command', error)
+      })
   }
 
   const headline = ((): React.JSX.Element => {
+    if (isStopping) {
+      // Why: no "keeps running in the background" line here — after Stop that is
+      // the opposite of what is happening.
+      return (
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          {translate(
+            'auto.components.skills.SkillFreshnessUpdateDialog.stoppingHeadline',
+            'Stopping the update…'
+          )}
+        </div>
+      )
+    }
     if (isRunning) {
       return (
         <div className="space-y-1">
@@ -218,10 +273,17 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
           // Indeterminate on purpose: the CLI reports no parseable progress.
           <div
             role="progressbar"
-            aria-label={translate(
-              'auto.components.skills.SkillFreshnessUpdateDialog.progressAria',
-              'Updating skills'
-            )}
+            aria-label={
+              isStopping
+                ? translate(
+                    'auto.components.skills.SkillFreshnessUpdateDialog.stoppingHeadline',
+                    'Stopping the update…'
+                  )
+                : translate(
+                    'auto.components.skills.SkillFreshnessUpdateDialog.progressAria',
+                    'Updating skills'
+                  )
+            }
             className="h-1 overflow-hidden rounded-full bg-secondary"
           >
             <div className="h-full w-2/5 animate-[skill-update-slide_1.35s_ease-in-out_infinite] rounded-full bg-primary motion-reduce:w-full motion-reduce:animate-none motion-reduce:opacity-40" />
@@ -250,7 +312,15 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
               {run.message}
             </p>
             <div className="flex flex-wrap gap-1.5">
-              <Button type="button" variant="outline" size="xs" onClick={handleUpdate}>
+              {/* Retry what actually failed, not the live eligibility list —
+                  the settling re-scan empties that for the whole window this
+                  button is on screen, so retrying it would be a silent no-op. */}
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                onClick={() => handleUpdate(run.failedNames)}
+              >
                 {translate('auto.components.skills.SkillFreshnessUpdateDialog.retry', 'Retry')}
               </Button>
               <Button
@@ -275,7 +345,24 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
         {isRunning || showResult ? <RunLog output={run.output} /> : null}
 
         <DialogFooter className="sm:justify-between">
-          {isRunning || showResult ? (
+          {isRunning ? (
+            // The terminal used to be the escape hatch for a stalled update;
+            // without it a wedged npx would leave restarting Orca as the only way out.
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={isStopping}
+              onClick={() => void cancelSkillUpdateRun()}
+            >
+              {isStopping
+                ? translate(
+                    'auto.components.skills.SkillFreshnessUpdateDialog.stopping',
+                    'Stopping…'
+                  )
+                : translate('auto.components.skills.SkillFreshnessUpdateDialog.stop', 'Stop')}
+            </Button>
+          ) : showResult ? (
             <span />
           ) : (
             <Button
@@ -295,14 +382,21 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
                 ? translate('auto.components.skills.SkillFreshnessUpdateDialog.done', 'Done')
                 : translate('auto.components.skills.SkillFreshnessUpdateDialog.close', 'Close')}
             </Button>
-            {!showResult && eligibleNames.length > 0 ? (
-              <Button type="button" size="sm" disabled={isRunning} onClick={handleUpdate}>
-                {isRunning
+            {!showResult && displayEligibleCount > 0 ? (
+              <Button
+                type="button"
+                size="sm"
+                disabled={isRunning || eligibleNames.length === 0}
+                onClick={() => handleUpdate(eligibleNames)}
+              >
+                {/* Not during a stop: the Stop button already carries the status,
+                    and "Updating…" beside "Stopping…" says both at once. */}
+                {isRunning && !isStopping
                   ? translate(
                       'auto.components.skills.SkillFreshnessUpdateDialog.updating',
                       'Updating…'
                     )
-                  : eligibleNames.length === 1
+                  : displayEligibleCount === 1
                     ? translate(
                         'auto.components.skills.SkillFreshnessUpdateDialog.updateActionOne',
                         'Update 1 skill'
@@ -310,7 +404,7 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
                     : translate(
                         'auto.components.skills.SkillFreshnessUpdateDialog.updateActionMany',
                         'Update {{value0}} skills',
-                        { value0: eligibleNames.length }
+                        { value0: displayEligibleCount }
                       )}
               </Button>
             ) : null}

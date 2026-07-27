@@ -12,6 +12,7 @@ import type {
 } from '../../shared/skill-freshness'
 import { inventorySkillFreshness } from '../skills/skill-freshness-inventory'
 import { SkillUpdateRunner } from '../skills/skill-update-run'
+import { skillUpdateFailedNames } from '../skills/skill-update-outcome'
 import {
   discoverSkillsOnTarget,
   resolveSkillDiscoveryTarget
@@ -28,11 +29,10 @@ export function registerSkillsHandlers(store: Store): void {
 
   const runner = new SkillUpdateRunner({
     // Why: per-skill outcomes come from re-hashing what is actually on disk, not
-    // from scraping stdout. Anything still eligible after the run did not land.
+    // from scraping stdout.
     rescanOutdatedNames: async (names) => {
       const inventory = await scanInventory()
-      const stillEligible = new Set(inventory.eligibleUpdateNames)
-      return names.filter((name) => stillEligible.has(name))
+      return skillUpdateFailedNames(names, inventory.installations)
     },
     onState: (run: SkillUpdateRun) => {
       for (const window of BrowserWindow.getAllWindows()) {

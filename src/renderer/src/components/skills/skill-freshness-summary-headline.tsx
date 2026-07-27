@@ -66,21 +66,15 @@ export function SummaryHeadline({
     )
   }
   if (kind === 'attention') {
+    // No follow-up sentence: skipped rows open themselves, so the reason is
+    // already on screen directly under this headline.
     return (
-      <div className="space-y-1">
-        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-          <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400" />
-          {translate(
-            'auto.components.skills.SkillFreshnessUpdateDialog.attention',
-            'Some installed Orca skills were left out of the update.'
-          )}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {translate(
-            'auto.components.skills.SkillFreshnessUpdateDialog.attentionDescription',
-            'Open Update details to see why each one was skipped.'
-          )}
-        </p>
+      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400" />
+        {translate(
+          'auto.components.skills.SkillFreshnessUpdateDialog.attention',
+          'Some installed Orca skills were left out of the update.'
+        )}
       </div>
     )
   }

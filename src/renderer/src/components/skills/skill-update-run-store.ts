@@ -1,6 +1,10 @@
 import { useSyncExternalStore } from 'react'
 import type { SkillUpdateRun } from '../../../../shared/skill-freshness'
 import { notifyInstalledAgentSkillsChanged } from '@/hooks/useInstalledAgentSkills'
+import {
+  getSkillFreshnessUpdateDialogRequest,
+  subscribeSkillFreshnessUpdateDialog
+} from './skill-freshness-update-dialog'
 
 // Why: the run outlives the dialog — closing the window must not cancel it, and
 // the status-bar segment needs the same snapshot. Keeping it outside React means
@@ -19,22 +23,42 @@ function emit(): void {
   }
 }
 
-function setRun(next: SkillUpdateRun): void {
-  run = next
+function clearSuccessTimer(): void {
   if (successTimer) {
     clearTimeout(successTimer)
     successTimer = null
   }
-  if (next.state === 'success') {
-    // Why: a success needs to be *seen*, then get out of the way. Errors stay
-    // until the user acts on them.
-    successTimer = setTimeout(() => {
-      successTimer = null
-      void window.api.skills.acknowledgeUpdateRun()
-    }, SKILL_UPDATE_SUCCESS_LINGER_MS)
+}
+
+/**
+ * Why: a success needs to be *seen*, then get out of the way. Errors stay until
+ * the user acts on them. The dialog renders this same run, so retiring it while
+ * the dialog is open would yank the result rows out from under someone reading
+ * them — there, closing the dialog is what acknowledges the run.
+ */
+function scheduleSuccessLinger(): void {
+  clearSuccessTimer()
+  if (run.state !== 'success' || getSkillFreshnessUpdateDialogRequest()) {
+    return
   }
-  if (next.state === 'success' || next.state === 'error') {
-    // A finished run changes what's on disk; let every skills surface re-read.
+  successTimer = setTimeout(() => {
+    successTimer = null
+    void acknowledgeSkillUpdateRun()
+  }, SKILL_UPDATE_SUCCESS_LINGER_MS)
+}
+
+// Opening the dialog on a lingering success hands ownership back to it.
+subscribeSkillFreshnessUpdateDialog(scheduleSuccessLinger)
+
+function setRun(next: SkillUpdateRun): void {
+  const wasRunning = run.state === 'running'
+  run = next
+  scheduleSuccessLinger()
+  // A run that stopped changes what's on disk — including a cancelled one, which
+  // may have written several skills before the kill landed. Without this a Stop
+  // leaves the rows and the count describing the pre-run scan, so the Update
+  // button re-offers skills that already updated.
+  if (next.state === 'success' || next.state === 'error' || (wasRunning && next.state === 'idle')) {
     notifyInstalledAgentSkillsChanged()
   }
   emit()
@@ -68,26 +92,38 @@ export function useSkillUpdateRun(): SkillUpdateRun {
   return useSyncExternalStore(subscribeSkillUpdateRun, getSkillUpdateRun, getSkillUpdateRun)
 }
 
+// Why: every caller fires these from an event handler with `void`. Swallowing
+// here rather than at each call site keeps a dropped IPC from surfacing as an
+// unhandled rejection; the run state itself is pushed from main either way.
 export async function startSkillUpdateRun(names: readonly string[]): Promise<void> {
   ensureSubscribed()
-  await window.api.skills.startUpdateRun([...names])
+  try {
+    await window.api.skills.startUpdateRun([...names])
+  } catch (error) {
+    console.error('Failed to start skill update run', error)
+  }
 }
 
 export async function cancelSkillUpdateRun(): Promise<void> {
-  await window.api.skills.cancelUpdateRun()
+  try {
+    await window.api.skills.cancelUpdateRun()
+  } catch (error) {
+    console.error('Failed to cancel skill update run', error)
+  }
 }
 
 export async function acknowledgeSkillUpdateRun(): Promise<void> {
-  await window.api.skills.acknowledgeUpdateRun()
+  try {
+    await window.api.skills.acknowledgeUpdateRun()
+  } catch (error) {
+    console.error('Failed to acknowledge skill update run', error)
+  }
 }
 
 /** @internal - tests need a clean module between cases. */
 export function _resetSkillUpdateRunStore(): void {
   run = { state: 'idle' }
   subscribed = false
-  if (successTimer) {
-    clearTimeout(successTimer)
-    successTimer = null
-  }
+  clearSuccessTimer()
   listeners.clear()
 }
