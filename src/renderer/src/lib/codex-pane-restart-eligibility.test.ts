@@ -32,13 +32,29 @@ describe('isCodexRestartEligiblePane', () => {
     ).toBe(true)
   })
 
-  it('accepts a launcher-started Codex pane running an ordinary child such as git', () => {
+  it('accepts a launcher-started Codex pane whose wrapper has not resolved to an agent yet', () => {
+    // Windows reports pwsh while the descendant scan warms up, then `node`
+    // (the `node .../bin/codex` wrapper) before it resolves to "codex".
     expect(
       isCodexRestartEligiblePane({
-        inspection: { foregroundProcess: 'git', hasChildProcesses: true },
+        inspection: { foregroundProcess: 'node', hasChildProcesses: true },
         launchAgent: 'codex'
       })
     ).toBe(true)
+  })
+
+  it('rejects a Codex-launched pane the user exited and is now typing into', () => {
+    // Why: the process scans only ever surface a recognized agent or the shell,
+    // so `less`/`vim`/`ssh` means Codex is gone — and a notice would eat the
+    // keystrokes the user needs to leave that program.
+    for (const foregroundProcess of ['less', 'vim', 'ssh', 'tmux', 'git']) {
+      expect(
+        isCodexRestartEligiblePane({
+          inspection: { foregroundProcess, hasChildProcesses: true },
+          launchAgent: 'codex'
+        })
+      ).toBe(false)
+    }
   })
 
   it('rejects a Codex-launched pane the user exited back to a shell prompt', () => {

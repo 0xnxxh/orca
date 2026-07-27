@@ -1,3 +1,7 @@
+import {
+  isAgentForegroundWrapperProcess,
+  recognizeAgentProcess
+} from '../../../shared/agent-process-recognition'
 import { isShellProcess } from '../../../shared/shell-process-detection'
 import type { TuiAgent } from '../../../shared/types'
 import type { RuntimeTerminalProcessInspection } from '@/runtime/runtime-terminal-inspection'
@@ -29,9 +33,12 @@ export function isCodexForegroundProcess(processName: string | null): boolean {
  * `pwsh -> node -> codex.exe -> claude.exe` => "claude" and was filtered out
  * before the stale-account registry was ever consulted. `launchAgent` is
  * recorded metadata (Orca started Codex in this tab), not a repaintable label,
- * so it survives that. It is deliberately paired with a non-shell foreground:
- * a restart notice makes the pane drop every keystroke, so a pane the user has
- * exited back to its shell prompt must never be marked.
+ * so it survives that. A restart notice makes the pane drop every keystroke, so
+ * the fallback is deliberately paired with a foreground that can only be a
+ * deeper *agent* (or the node/python wrapper that has not resolved to one yet):
+ * both the Windows descendant scan and the POSIX `ps` walk only ever surface a
+ * recognized agent or the shell/tty foreground, so `less`, `vim` or `ssh` in
+ * that pane means the user exited Codex and is typing at their own program.
  */
 export function isCodexRestartEligiblePane(args: {
   inspection: RuntimeTerminalProcessInspection
@@ -44,8 +51,14 @@ export function isCodexRestartEligiblePane(args: {
   if (isCodexForegroundProcess(foregroundProcess)) {
     return true
   }
-  if (args.launchAgent !== 'codex' || foregroundProcess === null) {
+  if (args.launchAgent !== 'codex' || foregroundProcess === null || !hasChildProcesses) {
     return false
   }
-  return hasChildProcesses && !isShellProcess(foregroundProcess)
+  if (isShellProcess(foregroundProcess)) {
+    return false
+  }
+  return (
+    recognizeAgentProcess(foregroundProcess) !== null ||
+    isAgentForegroundWrapperProcess(foregroundProcess)
+  )
 }

@@ -225,6 +225,23 @@ describe('markLiveCodexSessionsForRestart', () => {
     expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
   })
 
+  it('leaves a Codex-launched pane alone while the user is inside their own program', async () => {
+    // Why: the switch path never consults the stale-pane registry, so an exited
+    // Codex tab now running a pager would lose the keystrokes needed to quit it.
+    setLaunchAgentOnFirstTab('codex')
+    vi.mocked(window.api.pty.inspectProcess).mockResolvedValue({
+      foregroundProcess: 'less',
+      hasChildProcesses: true
+    })
+
+    await markLiveCodexSessionsForRestart({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+
+    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
+  })
+
   it('still marks a confirmed Codex pane when another pane is unreachable', async () => {
     useAppStore.setState({ ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-stale'] } })
     vi.mocked(window.api.pty.inspectProcess).mockImplementation(async (ptyId) => {
