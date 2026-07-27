@@ -208,9 +208,14 @@ describe('notifyCodexPaneBoundForStaleSweep', () => {
     // and never touched by that sweep — was left with nothing to fire it, ever.
     useAppStore.setState({ ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-2'] } })
     vi.mocked(window.api.pty.inspectProcess).mockRejectedValueOnce(new Error('terminal_gone'))
-    vi.mocked(window.api.codexAccounts.listStalePanes)
-      .mockRejectedValueOnce(new Error('registry unreadable'))
-      .mockResolvedValue([STALE_PANE])
+    // Why: keyed on the swept PTY rather than call order, so the rejection stays
+    // bound to pty-2's sweep even if the flush sequence changes.
+    vi.mocked(window.api.codexAccounts.listStalePanes).mockImplementation(async ({ ptyIds }) => {
+      if (ptyIds.includes('pty-2')) {
+        throw new Error('registry unreadable')
+      }
+      return [STALE_PANE]
+    })
 
     notifyCodexPaneBoundForStaleSweep('pty-1')
     // t = 300: pty-1 reads inconclusive and parks on its 1500ms rung (due 1800).
