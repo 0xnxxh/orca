@@ -6,6 +6,7 @@ import { getFolderWorkspaceConnectionId } from '@/lib/folder-workspace-connectio
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import { isWindowsAbsolutePathLike } from '../../../shared/cross-platform-path'
 import { repoIsRemote } from '../../../shared/agent-launch-remote'
+import { isWslUncPath } from '../../../shared/wsl-paths'
 
 type LaunchStore = ReturnType<typeof useAppStore.getState>
 type LaunchRepo = LaunchStore['repos'][number]
@@ -16,39 +17,22 @@ export type AgentBackgroundLaunchHost = {
   /** Platform whose shell quoting and CLI naming the startup plan must target. */
   platform: NodeJS.Platform
   isRemote: boolean
-  /**
-   * Connection the agent-status consumer should accept writes from. `undefined`
-   * means "unknown ownership, accept anything" — the pre-existing behavior for
-   * workspaces with no resolvable owner.
-   */
+  /** Accepted status connection; undefined preserves unknown-owner behavior. */
   expectedConnectionId: string | null | undefined
 }
 
-/**
- * SSH connection owning a folder-workspace selector, or null otherwise. Returns
- * null when ownership is ambiguous (mixed local/remote children) so an unclear
- * scope fails to a local launch rather than to the wrong host.
- */
 function resolveFolderWorkspaceConnectionIdForLaunch(
   store: LaunchStore,
   worktreeId: string
-): string | null {
+): string | null | undefined {
   const parsed = parseWorkspaceKey(worktreeId)
   if (parsed?.type !== 'folder') {
-    return null
+    return undefined
   }
-  return getFolderWorkspaceConnectionId(store, parsed.folderWorkspaceId) ?? null
+  return getFolderWorkspaceConnectionId(store, parsed.folderWorkspaceId)
 }
 
-/**
- * Resolve which host an automation's agent session runs on.
- *
- * Why this is not just `repo.connectionId`: a folder workspace has no repo row —
- * its synthetic repoId is `folder-workspace:<groupId>` — so repo-derived routing
- * finds nothing and falls back to a LOCAL spawn using a path that exists only on
- * the SSH host. Ownership has to come from the workspace scope, matching how
- * ordinary terminal creation resolves it (#2989).
- */
+/** Resolves folder launch ownership from workspace scope when no repo row exists. */
 export function resolveAgentBackgroundLaunchHost(args: {
   store: LaunchStore
   worktreeId: string
@@ -68,17 +52,20 @@ export function resolveAgentBackgroundLaunchHost(args: {
     }
   }
   const folderWorkspaceConnectionId = resolveFolderWorkspaceConnectionIdForLaunch(store, worktreeId)
+  const isFolderWorkspace = parseWorkspaceKey(worktreeId)?.type === 'folder'
+  if (isFolderWorkspace && folderWorkspaceConnectionId === undefined) {
+    throw new Error('The target folder workspace host is unavailable or ambiguous.')
+  }
   return {
-    connectionId: folderWorkspaceConnectionId,
-    // A remote folder workspace runs under the host's own shell; only a
-    // Windows-style path marks a win32 host (same rule as the repo path above).
+    connectionId: folderWorkspaceConnectionId ?? null,
     platform: folderWorkspaceConnectionId
       ? isWindowsAbsolutePathLike(worktreePath ?? '')
         ? 'win32'
         : 'linux'
-      : CLIENT_PLATFORM,
+      : isWslUncPath(worktreePath ?? '')
+        ? 'linux'
+        : CLIENT_PLATFORM,
     isRemote: Boolean(folderWorkspaceConnectionId),
-    // A resolved folder-workspace connection is as authoritative as a repo's.
-    expectedConnectionId: folderWorkspaceConnectionId ?? undefined
+    expectedConnectionId: isFolderWorkspace ? (folderWorkspaceConnectionId ?? null) : undefined
   }
 }

@@ -219,6 +219,28 @@ describe('launchAgentBackgroundSession remote runtime and SSH startup delivery',
     }
   })
 
+  it('falls back when an SSH shell produces no observable startup data', async () => {
+    vi.useFakeTimers()
+    try {
+      state.repos = [{ id: 'repo-1', connectionId: 'ssh-1', path: '/repo' }]
+      const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
+
+      await launchAgentBackgroundSession({
+        agent: 'codex',
+        worktreeId: 'wt-1',
+        prompt: 'run the automation'
+      })
+      vi.advanceTimersByTime(1_550)
+
+      expect(mockWrite).toHaveBeenCalledWith(
+        'pty-1',
+        "codex '--dangerously-bypass-approvals-and-sandbox' 'run the automation'\r"
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('waits for shell-ready for SSH background Codex native prefill commands without a hint', async () => {
     vi.useFakeTimers()
     try {
@@ -436,10 +458,7 @@ describe('launchAgentBackgroundSession remote runtime and SSH startup delivery',
   })
 
   it('spawns an SSH folder-workspace automation on the owning host, not locally', async () => {
-    // A folder workspace has no repo row — its synthetic repoId is
-    // `folder-workspace:<groupId>` — so repo-derived routing resolves no
-    // connection and spawns LOCALLY with a path that only exists on the remote
-    // host. Ownership must come from the workspace scope instead (#2989).
+    // Folder workspaces have no repo row, so launch ownership comes from their scope.
     state.repos = [
       { id: 'repo-1', connectionId: 'ssh-1', path: '/srv/proj/api', projectGroupId: 'grp-1' }
     ]
@@ -452,11 +471,16 @@ describe('launchAgentBackgroundSession remote runtime and SSH startup delivery',
     const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
 
     await launchAgentBackgroundSession({
-      agent: 'claude',
+      agent: 'codex',
       worktreeId: 'folder:fw-1',
       prompt: 'run the automation'
     })
 
+    expect(mockMarkTrusted).toHaveBeenCalledWith({
+      preset: 'codex',
+      workspacePath: '/srv/proj',
+      connectionId: 'ssh-1'
+    })
     expect(mockSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ connectionId: 'ssh-1', cwd: '/srv/proj' })
     )

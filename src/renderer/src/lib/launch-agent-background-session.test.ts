@@ -36,10 +36,11 @@ const state = createAgentBackgroundSessionTestState({
   setTabLayout: mockSetTabLayout,
   registerAgentLaunchConfig: mockRegisterAgentLaunchConfig
 })
+let currentStoreState = state
 
 vi.mock('@/store', () => ({
   useAppStore: {
-    getState: () => state,
+    getState: () => currentStoreState,
     subscribe: vi.fn(() => () => {})
   }
 }))
@@ -68,6 +69,7 @@ vi.mock('@/components/terminal-pane/pty-data-sidecar-subscriptions', () => ({
 
 describe('launchAgentBackgroundSession', () => {
   beforeEach(() => {
+    currentStoreState = state
     resetAgentBackgroundSessionTestHarness({
       state,
       createTab: mockCreateTab,
@@ -99,8 +101,7 @@ describe('launchAgentBackgroundSession', () => {
     })
 
     const tabId = expectReservedAgentBackgroundTabId(mockSpawn)
-    // Why: the run tab must never be store-visible without a PTY — Terminal.tsx
-    // would mount a pane for it and fresh-spawn a shell into it (#2989).
+    // A store-visible PTY-less run tab fresh-spawns a shell (#2989).
     expect(mockSpawn.mock.invocationCallOrder[0]).toBeLessThan(
       mockCreateTab.mock.invocationCallOrder[0] ?? 0
     )
@@ -181,8 +182,7 @@ describe('launchAgentBackgroundSession', () => {
     })
     await Promise.resolve()
 
-    // Why: a PTY-less tab published here is exactly #2989 — Terminal.tsx mounts a
-    // pane for it and connectPanePty fresh-spawns a shell into the run tab.
+    // Publishing a PTY-less tab here reproduces #2989.
     expect(mockCreateTab).not.toHaveBeenCalled()
     expect(mockDispatchEvent).not.toHaveBeenCalled()
 
@@ -226,11 +226,12 @@ describe('launchAgentBackgroundSession', () => {
   })
 
   it('launches into a folder workspace that is absent from worktreesByRepo throughout', async () => {
-    // Why: a real folder workspace is NEVER in worktreesByRepo — it lives in
-    // folderWorkspaces and only getKnownWorktreeById resolves it. Seeding the repo
-    // list here (even briefly) would fake the one condition under test, so both the
-    // initial resolution and the post-spawn retire check are exercised for real (#2989).
+    // Folder workspaces never appear in worktreesByRepo.
     state.worktreesByRepo['repo-1'] = []
+    state.folderWorkspaces = [
+      { id: 'fw-1', projectGroupId: 'grp-1', folderPath: '/tmp/folder-workspace' }
+    ]
+    state.projectGroups = [{ id: 'grp-1', connectionId: null }]
     state.getKnownWorktreeById = (worktreeId: string) =>
       worktreeId === 'folder:fw-1'
         ? { id: 'folder:fw-1', path: '/tmp/folder-workspace' }
@@ -246,6 +247,32 @@ describe('launchAgentBackgroundSession', () => {
     await expect(launch).resolves.toMatchObject({ ptyId: 'pty-1' })
     expect(mockKill).not.toHaveBeenCalled()
     expect(mockCreateTab).toHaveBeenCalledOnce()
+  })
+
+  it('launches a local WSL folder through wsl.exe', async () => {
+    const folderPath = '\\\\wsl.localhost\\Ubuntu\\home\\me\\project'
+    state.worktreesByRepo['repo-1'] = []
+    state.folderWorkspaces = [
+      { id: 'fw-wsl', projectGroupId: 'grp-wsl', folderPath, connectionId: null }
+    ]
+    state.projectGroups = [{ id: 'grp-wsl', connectionId: null }]
+    state.getKnownWorktreeById = (worktreeId: string) =>
+      worktreeId === 'folder:fw-wsl' ? { id: worktreeId, path: folderPath } : undefined
+    const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
+
+    await launchAgentBackgroundSession({
+      agent: 'claude',
+      worktreeId: 'folder:fw-wsl',
+      prompt: 'run the automation'
+    })
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: folderPath,
+        shellOverride: 'wsl.exe',
+        command: "claude '--dangerously-skip-permissions' 'run the automation'"
+      })
+    )
   })
 
   it('records effective launch config returned by local PTY spawn', async () => {
@@ -484,12 +511,14 @@ describe('launchAgentBackgroundSession', () => {
   })
 
   it('retires the launch instead of adopting a colliding tab id', async () => {
-    // Why: ORCA_TAB_ID / ORCA_PANE_KEY are already baked into the spawned process, so a
-    // re-keyed tab would route bytes to one identity and hooks to another. Fail closed.
     mockSpawn.mockImplementationOnce((args: { tabId: string }) => {
-      // Land the collision between the reservation and the adoption, exactly as a
-      // concurrently-created tab would.
-      state.tabsByWorktree['wt-1'].push({ id: args.tabId, title: 'Squatter' })
+      currentStoreState = {
+        ...state,
+        tabsByWorktree: {
+          ...state.tabsByWorktree,
+          'wt-1': [{ id: args.tabId, title: 'Squatter' }]
+        }
+      }
       return Promise.resolve({ id: 'pty-1' })
     })
     const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')

@@ -15,15 +15,12 @@ export async function retireUnownedTerminal(args: {
   const isOwned =
     'tabId' in owner
       ? isTerminalTabPresent(state, owner.tabId)
-      : // Why: getKnownWorktreeById, not allWorktrees() — the latter reads only
-        // worktreesByRepo and would report every folder workspace as gone,
-        // killing its agent PTY the instant the spawn resolves.
+      : // Folder workspaces exist only in getKnownWorktreeById.
         state.getKnownWorktreeById(owner.worktreeId) !== undefined
   if (isOwned) {
     return false
   }
-  // Why: close can win while provider creation is in flight, before the
-  // returned handle is bindable to store state or visible to tab retirement.
+  // Close can win before the provider is bindable to store state.
   args.onRetire?.()
   await retireProvider(args)
   return true

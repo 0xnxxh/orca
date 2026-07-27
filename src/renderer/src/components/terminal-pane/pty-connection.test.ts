@@ -6272,13 +6272,7 @@ describe('connectPanePty', () => {
   })
 
   it('fresh-spawns a shell into any PTY-less tab, so agent launches must never publish one', async () => {
-    // Why: #2989. A pane with no PTY on the tab, in ptyIdsByTabId, in the layout, or in an
-    // eager buffer legitimately fresh-spawns a shell — that is the ordinary "user opened a
-    // terminal" path and stays correct here. The bug was upstream: launchAgentBackgroundSession
-    // published the hidden run tab before awaiting the agent spawn, so on an already-mounted
-    // worktree Terminal.tsx mounted a pane into exactly this state and bound a shell to the run
-    // tab, orphaning the agent PTY. This pins the downstream behavior the launch-site ordering
-    // fix depends on: publishing a PTY-less tab is unrecoverable, so it must not happen.
+    // Why: #2989 depends on PTY-less tabs taking this legitimate fresh-shell path.
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
     transport.connect.mockImplementation(async (opts: { sessionId?: string }) => {
@@ -6292,8 +6286,7 @@ describe('connectPanePty', () => {
       return 'stray-shell-pty'
     })
     transportFactoryQueue.push(transport)
-    // The store shape launch-agent-background-session.ts used to expose between createTab and
-    // bindAutomationTerminal: tab exists, layout leaf exists, no PTY reachable anywhere.
+    // Reproduce the pre-fix gap between createTab and PTY binding.
     mockStoreState = {
       ...mockStoreState,
       tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
@@ -6318,7 +6311,7 @@ describe('connectPanePty', () => {
     connectPanePty(pane as never, createManager(1) as never, deps as never)
     await flushAsyncTicks()
 
-    // A pending agent launch registration is NOT enough to hold the pane back.
+    // Launch registration alone cannot identify a PTY to attach.
     expect(transport.connect).toHaveBeenCalledWith(
       expect.objectContaining({ url: '', cols: expect.any(Number) })
     )

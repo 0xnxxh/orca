@@ -39,42 +39,41 @@ import {
   reserveAgentBackgroundSessionIdentity
 } from '@/lib/adopt-agent-background-session-tab'
 import { createBackgroundAgentStatusConsumer } from '@/lib/background-agent-status-consumer'
+import { isWslUncPath } from '../../../shared/wsl-paths'
 
 export async function launchAgentBackgroundSession(
   args: LaunchAgentBackgroundSessionArgs
 ): Promise<LaunchAgentBackgroundSessionResult | null> {
   const { agent, worktreeId, prompt, launchSource, title, onData, onExit, onAgentStatus } = args
   const store = useAppStore.getState()
-  // Why: allWorktrees() reads only worktreesByRepo, so every folder workspace looks
-  // absent and its automation dies here. getKnownWorktreeById covers both (#2989).
+  // Folder workspaces exist only in getKnownWorktreeById (#2989).
   const worktree = store.getKnownWorktreeById(worktreeId)
   const repo = worktree ? store.repos.find((entry) => entry.id === worktree.repoId) : null
   if (!worktree) {
     throw new Error('The target workspace is no longer available.')
   }
-  const preflight = TUI_AGENT_CONFIG[agent].preflightTrust
-  if (preflight && worktree.path && window.api.agentTrust?.markTrusted) {
-    try {
-      await window.api.agentTrust.markTrusted({
-        preset: preflight,
-        workspacePath: worktree.path
-      })
-    } catch {
-      // Best-effort: continue with launch. The user can still accept the trust menu.
-    }
-  }
   const cmdOverrides = store.settings?.agentCmdOverrides ?? {}
   const agentArgs = resolveTuiAgentLaunchArgs(agent, store.settings?.agentDefaultArgs)
   const agentEnv = resolveTuiAgentLaunchEnv(agent, store.settings?.agentDefaultEnv)
-  // Why: SSH remotes deploy the CLI shim as plain `orca`, so the Linux-only
-  // `orca-ide` rename must not be applied for remote launches. Folder workspaces
-  // have no repo row, so host resolution cannot go through `repo` alone (#2989).
+  // Folder launch ownership cannot be derived from a repo row (#2989).
   const launchHost = resolveAgentBackgroundLaunchHost({
     store,
     worktreeId,
     worktreePath: worktree.path,
     repo
   })
+  const preflight = TUI_AGENT_CONFIG[agent].preflightTrust
+  if (preflight && worktree.path && window.api.agentTrust?.markTrusted) {
+    try {
+      await window.api.agentTrust.markTrusted({
+        preset: preflight,
+        workspacePath: worktree.path,
+        ...(launchHost.connectionId ? { connectionId: launchHost.connectionId } : {})
+      })
+    } catch {
+      // Best-effort: the user can still accept the trust prompt.
+    }
+  }
   const { platform: launchPlatform, isRemote } = launchHost
   const startupShell = resolveLocalWindowsAgentStartupShell({
     platform: launchPlatform,
@@ -101,9 +100,7 @@ export async function launchAgentBackgroundSession(
     return null
   }
 
-  // Why: automation runs should start without revealing the workspace, and the
-  // hidden run tab must never be store-visible without a PTY (#2989). Reserve the
-  // tab id, spawn first, then create the tab already bound to the live session.
+  // A hidden run tab must never be store-visible without its PTY (#2989).
   const { reservedTabId, leafId, launchToken, launchRegistration, paneEnv } =
     reserveAgentBackgroundSessionIdentity({
       store,
@@ -203,6 +200,7 @@ export async function launchAgentBackgroundSession(
         rows: 40,
         cwd: worktree.path,
         command: startupPlan.launchCommand,
+        ...(!sshConnectionId && isWslUncPath(worktree.path) ? { shellOverride: 'wsl.exe' } : {}),
         ...(!startupPlan.startupCommandDelivery
           ? {}
           : { startupCommandDelivery: startupPlan.startupCommandDelivery }),
@@ -288,6 +286,7 @@ export async function launchAgentBackgroundSession(
       // alive regardless of whether the tab is hidden or mounted.
       unsubscribeExit = subscribeToPtyExit(ptyId, (code) => handleExit(ptyId, code))
     }
+    sshStartupDelivery.armFallback(ptyId)
 
     // Why: bind the explicit PTY and ownership before mount; an earlier mount
     // can double-spawn, while later tracking can miss user takeover.
@@ -315,8 +314,7 @@ export async function launchAgentBackgroundSession(
       await retireProvider({ ptyId, runtimeTarget, runtimeTerminalHandle })
     }
     if (createdTab) {
-      // Why: a launch-failure cleanup close is not a user close — keep it out of
-      // the Cmd+Shift+T reopen stack.
+      // Cleanup closes must not enter the reopen stack.
       runBestEffortAgentBackgroundCleanups(() =>
         store.closeTab(createdTab.id, { recordInteraction: false, reason: 'cleanup' })
       )
