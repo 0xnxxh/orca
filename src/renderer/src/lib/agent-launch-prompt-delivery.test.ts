@@ -101,6 +101,21 @@ describe('deliverLaunchPromptToAgentTab', () => {
     expect(mocks.seedNativeChatLaunchPrompt).not.toHaveBeenCalled()
   })
 
+  it('does not seed a launch draft for multi-line content', async () => {
+    // The chat send pre-clears the TUI with Ctrl+U (kill-to-start-of-LINE), so a
+    // multi-line prefill (e.g. scraped session-fork context) would leave earlier
+    // lines behind to glue onto the next message.
+    await deliverLaunchPromptToAgentTab({
+      tabId: 'fork-tab',
+      agent: 'codex',
+      content: 'Forked from session\n\nhttps://example.test/context',
+      submit: false,
+      forcePaste: false
+    })
+
+    expect(mocks.seedNativeChatLaunchDraft).not.toHaveBeenCalled()
+  })
+
   it('does not seed a launch draft for submitted, unsupported, or empty content', async () => {
     await deliverLaunchPromptToAgentTab({
       tabId: 'submit-tab',

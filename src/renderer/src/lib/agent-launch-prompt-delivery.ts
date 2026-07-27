@@ -43,9 +43,12 @@ export function deliverLaunchPromptToAgentTab(args: {
       text: content,
       createdAt: Date.now()
     })
-  } else if (submit !== true) {
+  } else if (submit !== true && !content.includes('\n')) {
     // Why: an unsubmitted draft lives only in the TUI input buffer; seed the
     // chat-composer copy so the context isn't invisible in the GUI view.
+    // Single-line only: the chat send pre-clears the TUI with Ctrl+U
+    // (kill-to-start-of-LINE), so a multi-line prefill (e.g. scraped fork
+    // context) would leave earlier lines to glue onto the next message.
     seedNativeChatLaunchDraftForAgentTab({ tabId, agent, text: content })
   }
 
