@@ -13568,7 +13568,6 @@ export class OrcaRuntimeService {
     }
   }
 
-
   resolveTerminalPane(paneKey: string, expectedWorktreeId?: string): RuntimeTerminalResolvePane {
     // Why: the renderer context menu only knows the stable pane key; main owns
     // the runtime terminal handle that agents and CLI commands can address.

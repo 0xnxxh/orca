@@ -537,7 +537,6 @@ export class AgentHookServer {
     }
   }
 
-
   setPaneStatusClearListener(listener: PaneStatusClearListener | null): void {
     this.onPaneStatusCleared = listener
   }
