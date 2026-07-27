@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MacosTccPromptWatch,
   type LogStreamChild,
@@ -100,7 +100,34 @@ function createFakeLogStream(): {
   return { child, stdout, killed }
 }
 
+// Why: the watcher is darwin-gated, so CI (Linux) would silently no-op every
+// assertion below unless the platform is pinned. The gate itself is covered by
+// the non-darwin case at the end of this block.
+const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+
+function setPlatform(value: NodeJS.Platform): void {
+  Object.defineProperty(process, 'platform', { configurable: true, value })
+}
+
 describe('MacosTccPromptWatch', () => {
+  beforeEach(() => {
+    setPlatform('darwin')
+  })
+
+  afterEach(() => {
+    if (originalPlatform) {
+      Object.defineProperty(process, 'platform', originalPlatform)
+    }
+  })
+
+  it('never spawns a log reader off macOS', () => {
+    setPlatform('linux')
+    const spawnLogStream = vi.fn()
+    const watch = new MacosTccPromptWatch({ onPrompt: vi.fn(), spawnLogStream })
+    watch.start()
+    expect(spawnLogStream).not.toHaveBeenCalled()
+  })
+
   it('reports only Orca-attributed dialogs from a live stream', async () => {
     const { child, stdout } = createFakeLogStream()
     const onPrompt = vi.fn()
