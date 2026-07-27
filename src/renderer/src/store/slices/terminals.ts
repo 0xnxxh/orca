@@ -2856,9 +2856,15 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           nextAccountLabel: notice.nextAccountLabel,
           // Why: a queued restart relaunches under whatever account is selected
           // when it runs, so a later switch does not reopen an answered prompt.
-          // A dismissal is deliberately not carried over — it answered "keep the
-          // old account instead of B", which says nothing about a later C.
-          ...(existing?.restartRequested ? { restartRequested: true as const } : {})
+          ...(existing?.restartRequested ? { restartRequested: true as const } : {}),
+          // Why: a dismissal answered one question — "keep the launch account
+          // instead of this one". Only a genuinely different target re-asks it,
+          // so a later C reopens the prompt while adding an account or
+          // reauthenticating the active one (both re-mark live panes with the
+          // selection unchanged) must not resurrect it and re-mute the pane.
+          ...(existing?.dismissed && existing.nextAccountLabel === notice.nextAccountLabel
+            ? { dismissed: true as const }
+            : {})
         }
       }
       return {

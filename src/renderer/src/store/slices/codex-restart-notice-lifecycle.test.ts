@@ -57,6 +57,22 @@ describe('codex restart notice lifecycle', () => {
     })
   })
 
+  it('leaves a dismissal answered when the active account is re-marked unchanged', () => {
+    switchAccount('pty-1', A, B)
+    useAppStore.getState().dismissCodexRestartNotices(['pty-1'])
+
+    // Why: adding an account and reauthenticating the active one both re-mark
+    // live panes with the selection unchanged. Nothing about the pane moved, so
+    // resurrecting the prompt would also re-block a keyboard the user freed.
+    switchAccount('pty-1', B, B)
+
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: A,
+      nextAccountLabel: B,
+      dismissed: true
+    })
+  })
+
   it('drops a queued restart when the user dismisses the same pane', () => {
     switchAccount('pty-1', A, B)
     useAppStore.getState().queueCodexPaneRestarts(['pty-1'])
