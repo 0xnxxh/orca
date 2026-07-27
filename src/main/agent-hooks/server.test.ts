@@ -6623,6 +6623,47 @@ describe('Last-status persistence', () => {
     }
   })
 
+  it('strips leadStopWithLiveSubagents on hydrate even if the file already carries it', async () => {
+    // Why: the write-side strip only covers bytes this build wrote. A file from an older
+    // build, a restored backup, or a hand edit would otherwise rehydrate the flag on a
+    // `done` entry — the one state it survives normalization — and re-suppress a real
+    // completion after restart. Enforce the invariant against arbitrary bytes (#4375).
+    mkdirSync(join(userDataPath, 'agent-hooks'), { recursive: true })
+    writeFileSync(
+      lastStatusPath(),
+      JSON.stringify({
+        version: 2,
+        entries: {
+          [PANE]: {
+            paneKey: PANE,
+            tabId: 'tab-1',
+            worktreeId: 'wt-1',
+            receivedAt: recentTs(),
+            stateStartedAt: recentTs(-1000),
+            payload: {
+              state: 'done',
+              prompt: 'injected',
+              agentType: 'codex',
+              leadStopWithLiveSubagents: true
+            }
+          }
+        }
+      }),
+      'utf8'
+    )
+
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      const hydrated = server.getStatusSnapshot()[0]
+      // The entry must hydrate (otherwise this asserts nothing about the flag).
+      expect(hydrated?.state).toBe('done')
+      expect(hydrated).not.toHaveProperty('leadStopWithLiveSubagents')
+    } finally {
+      server.stop()
+    }
+  })
+
   it('treats a corrupt file as empty hydration without throwing', async () => {
     mkdirSync(join(userDataPath, 'agent-hooks'), { recursive: true })
     writeFileSync(lastStatusPath(), 'not-json{{', 'utf8')

@@ -234,6 +234,12 @@ function sanitizeHydratedEntry(
   if (!payload) {
     return null
   }
+  // Why: the write side already strips this, but the state gate in normalizeAgentStatusPayload
+  // preserves it on `done` — the only state it is ever set on. Enforce here too so the invariant
+  // holds against any bytes on disk, not just the ones this process wrote (#4375).
+  if (payload.leadStopWithLiveSubagents) {
+    delete payload.leadStopWithLiveSubagents
+  }
   const providerSession = normalizeAgentProviderSession(record.providerSession) ?? undefined
   const providerSessionOnly = record.providerSessionOnly === true
   if (providerSessionOnly && !isValidPiProviderSessionOnly(providerSession, payload.agentType)) {
