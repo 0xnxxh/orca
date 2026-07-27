@@ -144,7 +144,8 @@ export function useMobileNativeChatController(args: {
     tabId: activeSessionTabId,
     sessionId: activeChatSessionId,
     messages: nativeChatSession.messages,
-    launchDraft: activeChatResolution ? (activeSessionTab?.launchDraft ?? null) : null
+    launchDraft: activeChatResolution ? (activeSessionTab?.launchDraft ?? null) : null,
+    transcriptLoading: nativeChatSession.status === 'loading'
   })
 
   const nativeChatStatus = activeChatResolution ? activeSessionTab?.agentStatus : null

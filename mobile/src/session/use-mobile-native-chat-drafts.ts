@@ -43,6 +43,9 @@ export function useMobileNativeChatDrafts(args: {
   messages: readonly NativeChatMessage[]
   /** Host-provided launch context still parked as an unsent TUI-input draft. */
   launchDraft?: string | null
+  /** The transcript read is still in flight, so `messages` is not yet the
+   *  session's real history and cannot be trusted to decline the seed. */
+  transcriptLoading?: boolean
 }): {
   composerText: string
   setComposerText: Dispatch<SetStateAction<string>>
@@ -59,7 +62,7 @@ export function useMobileNativeChatDrafts(args: {
     onUnconfirmed: () => void
   ) => void
 } {
-  const { hostId, worktreeId, tabId, sessionId, messages, launchDraft } = args
+  const { hostId, worktreeId, tabId, sessionId, messages, launchDraft, transcriptLoading } = args
   const draftKey = mobileNativeChatScopeKey(hostId, worktreeId, tabId)
   const pendingKey = draftKey && sessionId ? `${draftKey}\0${sessionId}` : null
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -85,6 +88,12 @@ export function useMobileNativeChatDrafts(args: {
     if (!draftKey || !launchDraft?.trim() || seededLaunchDraftByKeyRef.current.has(draftKey)) {
       return
     }
+    // Why: `session.tabs` carries launchDraft before the transcript read settles,
+    // and an empty in-flight list would let the decline below miss an
+    // already-submitted prefill — long enough for a send to duplicate it.
+    if (transcriptLoading) {
+      return
+    }
     // A user turn already in the transcript means the one-line TUI prefill was
     // submitted or deliberately cleared; decline instead of resurrecting it.
     if (messages.some((message) => normalizedUserText(message) !== null)) {
@@ -95,7 +104,7 @@ export function useMobileNativeChatDrafts(args: {
     setDrafts((previous) =>
       (previous[draftKey] ?? '') === '' ? { ...previous, [draftKey]: launchDraft } : previous
     )
-  }, [draftKey, launchDraft, messages])
+  }, [draftKey, launchDraft, messages, transcriptLoading])
 
   // Drop an untouched adopted copy once the prefill is resolved elsewhere — a
   // user turn landed (sent or cleared TUI-side) or the host stopped publishing

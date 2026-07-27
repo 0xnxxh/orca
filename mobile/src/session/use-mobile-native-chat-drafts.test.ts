@@ -44,12 +44,14 @@ describe('useMobileNativeChatDrafts', () => {
     tabId,
     sessionId = `session-${tabId}`,
     messages = [],
-    launchDraft = null
+    launchDraft = null,
+    transcriptLoading = false
   }: {
     tabId: string
     sessionId?: string | null
     messages?: NativeChatMessage[]
     launchDraft?: string | null
+    transcriptLoading?: boolean
   }): null {
     state = useMobileNativeChatDrafts({
       hostId: 'host',
@@ -57,7 +59,8 @@ describe('useMobileNativeChatDrafts', () => {
       tabId,
       sessionId,
       messages,
-      launchDraft
+      launchDraft,
+      transcriptLoading
     })
     return null
   }
@@ -791,6 +794,46 @@ describe('useMobileNativeChatDrafts', () => {
       )
     )
     expect(state?.composerText).toBe('issue link plus my notes')
+  })
+
+  it('holds the launch draft until the transcript read settles', async () => {
+    // `session.tabs` carries launchDraft before the transcript loads. Seeding on
+    // the empty in-flight list would prefill an already-submitted issue link, and
+    // a send tapped before it retracts duplicates it to the agent.
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', launchDraft: 'issue link', transcriptLoading: true })
+      )
+    )
+    expect(state?.composerText).toBe('')
+
+    // The settled transcript already holds the submitted turn — decline for good.
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          launchDraft: 'issue link',
+          messages: [userTextMessage('m1', 'already sent from the TUI')]
+        })
+      )
+    )
+    expect(state?.composerText).toBe('')
+  })
+
+  it('seeds once the transcript settles empty', async () => {
+    await mount('a')
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, { tabId: 'a', launchDraft: 'issue link', transcriptLoading: true })
+      )
+    )
+    expect(state?.composerText).toBe('')
+
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'a', launchDraft: 'issue link' }))
+    )
+    expect(state?.composerText).toBe('issue link')
   })
 
   it('clears an untouched prefill when the host stops publishing the launch draft', async () => {
