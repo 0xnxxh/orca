@@ -49,6 +49,12 @@ describe('Orca cloud transport failure reporting', () => {
     fetchMock.mockReset()
   })
 
+  // Why afterEach and not inline: a failed assertion would otherwise leave the
+  // global fetch stub installed for the live-socket suite below.
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   const cases: { label: string; error: unknown; failure: OrcaCloudTransportFailure }[] = [
     {
       label: 'undici DNS lookup failure',
@@ -66,9 +72,16 @@ describe('Orca cloud transport failure reporting', () => {
       failure: 'redirect'
     },
     {
+      // Verbatim from Electron's net.fetch with redirect: 'error'.
       label: 'Chromium redirect refusal',
-      error: new TypeError("Attempted to redirect, but redirect policy was 'error'"),
+      error: new Error("Attempted to redirect, but redirect policy was 'error'"),
       failure: 'redirect'
+    },
+    {
+      // What Electron actually reports when the peer kills the socket.
+      label: 'Chromium empty response after socket death',
+      error: new Error('net::ERR_EMPTY_RESPONSE'),
+      failure: 'connection-lost'
     },
     {
       label: 'Chromium name resolution failure',
@@ -86,6 +99,18 @@ describe('Orca cloud transport failure reporting', () => {
         'self-signed certificate in certificate chain',
         'SELF_SIGNED_CERT_IN_CHAIN'
       ),
+      failure: 'tls'
+    },
+    {
+      // Node reports these without an err_ prefix; a skewed clock makes the
+      // expiry case common, and it used to fall through to 'unknown'.
+      label: 'expired certificate from a skewed clock',
+      error: undiciError('certificate has expired', 'CERT_HAS_EXPIRED'),
+      failure: 'tls'
+    },
+    {
+      label: 'revoked certificate',
+      error: undiciError('certificate revoked', 'CERT_REVOKED'),
       failure: 'tls'
     },
     {
@@ -109,6 +134,17 @@ describe('Orca cloud transport failure reporting', () => {
       failure: 'timeout'
     },
     {
+      // The only abort these requests carry is the 30s timeout signal.
+      label: 'Chromium abort from the timeout signal',
+      error: new Error('net::ERR_ABORTED'),
+      failure: 'timeout'
+    },
+    {
+      label: 'unreachable address',
+      error: new Error('net::ERR_ADDRESS_UNREACHABLE'),
+      failure: 'offline'
+    },
+    {
       label: 'unrecognized transport failure',
       error: new Error('net::ERR_FAILED'),
       failure: 'unknown'
@@ -119,11 +155,9 @@ describe('Orca cloud transport failure reporting', () => {
     it(`classifies ${label} as ${failure}`, async () => {
       fetchMock.mockRejectedValue(error)
 
-      const thrown = await orcaCloudFetch(
-        'session-exchange',
-        'https://login.onorca.dev/v1/desktop/auth/session',
-        { method: 'POST' }
-      ).catch((caught: unknown) => caught)
+      const thrown = await orcaCloudFetch('https://login.onorca.dev/v1/desktop/auth/session', {
+        method: 'POST'
+      }).catch((caught: unknown) => caught)
 
       expect(thrown).toBeInstanceOf(OrcaCloudTransportError)
       expect((thrown as OrcaCloudTransportError).failure).toBe(failure)
@@ -137,13 +171,40 @@ describe('Orca cloud transport failure reporting', () => {
     vi.stubGlobal('fetch', globalFetch)
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
 
-    await orcaCloudFetch('capabilities-refresh', 'https://login.onorca.dev/v1/desktop/auth/x', {
-      method: 'POST'
-    })
+    await orcaCloudFetch('https://login.onorca.dev/v1/desktop/auth/x', { method: 'POST' })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(globalFetch).not.toHaveBeenCalled()
-    vi.unstubAllGlobals()
+  })
+
+  // Verified against real Electron: net.fetch attaches default-session cookies
+  // unless credentials is 'omit'. Dropping this would silently start sending
+  // app cookies to token endpoints, which the previous undici path never did.
+  it('keeps ambient session cookies and cached responses off token endpoints', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+
+    await orcaCloudFetch('https://login.onorca.dev/v1/desktop/auth/session', { method: 'POST' })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://login.onorca.dev/v1/desktop/auth/session',
+      expect.objectContaining({ credentials: 'omit', cache: 'no-store' })
+    )
+  })
+
+  it('lets callers keep redirect refusal and the request timeout', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+    const signal = AbortSignal.timeout(30_000)
+
+    await orcaCloudFetch('https://login.onorca.dev/v1/desktop/auth/session', {
+      method: 'POST',
+      redirect: 'error',
+      signal
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ redirect: 'error', signal })
+    )
   })
 })
 

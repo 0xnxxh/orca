@@ -160,13 +160,8 @@ function normalizeSessionResponse(value: unknown): OrcaCloudSessionExchangeRespo
 
 const CLOUD_REQUEST_TIMEOUT_MS = 30_000
 
-async function postJson<T>(
-  operation: string,
-  url: string,
-  body: unknown,
-  accessToken?: string
-): Promise<T> {
-  const response = await orcaCloudFetch(operation, url, {
+async function postJson<T>(url: string, body: unknown, accessToken?: string): Promise<T> {
+  const response = await orcaCloudFetch(url, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
@@ -191,7 +186,7 @@ export async function exchangeOrcaCloudAuthCode(
   args: ExchangeCodeArgs
 ): Promise<OrcaCloudSessionExchangeResponse> {
   return normalizeSessionResponse(
-    await postJson('session-exchange', config.sessionEndpoint, {
+    await postJson(config.sessionEndpoint, {
       code: args.code,
       codeVerifier: args.codeVerifier,
       nonce: args.nonce,
@@ -210,7 +205,7 @@ export async function refreshOrcaCloudCapabilities(
     cloud?: unknown
     organizations?: unknown
     capabilities: unknown
-  }>('capabilities-refresh', config.capabilitiesEndpoint, {}, session.accessToken)
+  }>(config.capabilitiesEndpoint, {}, session.accessToken)
   return {
     cloud: response.cloud === undefined ? undefined : normalizeCloudSummary(response.cloud),
     organizations: normalizeOrganizations(response.organizations),
@@ -223,7 +218,7 @@ export async function refreshOrcaCloudSession(
   session: OrcaCloudSession
 ): Promise<OrcaCloudSessionExchangeResponse> {
   return normalizeSessionResponse(
-    await postJson('session-refresh', config.refreshEndpoint, {
+    await postJson(config.refreshEndpoint, {
       refreshToken: session.refreshToken
     })
   )
@@ -236,7 +231,6 @@ export async function createOrcaCloudProfile(
 ): Promise<OrcaCloudSessionExchangeResponse> {
   return normalizeSessionResponse(
     await postJson(
-      'profile-create',
       config.profileEndpoint,
       {
         orgId: args.orgId,
@@ -256,7 +250,7 @@ export async function selectOrcaCloudOrg(
     cloud: unknown
     organizations?: unknown
     capabilities: unknown
-  }>('org-select', config.orgEndpoint, { orgId }, session.accessToken)
+  }>(config.orgEndpoint, { orgId }, session.accessToken)
   return {
     cloud: normalizeCloudSummary(response.cloud),
     organizations: normalizeOrganizations(response.organizations),
@@ -268,10 +262,5 @@ export async function revokeOrcaCloudSession(
   config: OrcaCloudAuthConfig,
   session: OrcaCloudSession
 ): Promise<void> {
-  await postJson(
-    'session-revoke',
-    config.logoutEndpoint,
-    { refreshToken: session.refreshToken },
-    session.accessToken
-  )
+  await postJson(config.logoutEndpoint, { refreshToken: session.refreshToken }, session.accessToken)
 }

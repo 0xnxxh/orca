@@ -138,12 +138,11 @@ function requestInit(method: 'GET' | 'POST', accessToken: string, body?: unknown
 }
 
 async function requestOrgMembers<T>(
-  operation: string,
   url: string,
   init: RequestInit,
   parse: (value: unknown) => T
 ): Promise<T> {
-  const response = await orcaCloudFetch(operation, url, init)
+  const response = await orcaCloudFetch(url, init)
   if (!response.ok) {
     throw new OrcaCloudRequestError(response.status, await extractErrorCode(response))
   }
@@ -156,7 +155,6 @@ export async function listOrcaCloudOrgMembers(
   orgId: string
 ): Promise<OrcaOrgMembersRoster> {
   return requestOrgMembers(
-    'org-members-list',
     orgMembersUrl(config, orgId, '/members'),
     requestInit('GET', session.accessToken),
     normalizeRoster
@@ -169,7 +167,6 @@ export async function inviteOrcaCloudOrgMember(
   args: { orgId: string; email: string; role: OrcaOrgRole }
 ): Promise<void> {
   await requestOrgMembers(
-    'org-member-invite',
     orgMembersUrl(config, args.orgId, '/invites'),
     requestInit('POST', session.accessToken, { email: args.email, role: args.role }),
     () => undefined
@@ -182,7 +179,6 @@ export async function revokeOrcaCloudOrgInvite(
   args: { orgId: string; email: string }
 ): Promise<void> {
   await requestOrgMembers(
-    'org-invite-revoke',
     orgMembersUrl(config, args.orgId, '/invites/revoke'),
     requestInit('POST', session.accessToken, { email: args.email }),
     () => undefined
@@ -195,7 +191,6 @@ export async function changeOrcaCloudOrgMemberRole(
   args: { orgId: string; userId: string; role: OrcaOrgRole }
 ): Promise<void> {
   await requestOrgMembers(
-    'org-member-role',
     orgMembersUrl(config, args.orgId, '/members/role'),
     requestInit('POST', session.accessToken, { userId: args.userId, role: args.role }),
     () => undefined
@@ -208,7 +203,6 @@ export async function removeOrcaCloudOrgMember(
   args: { orgId: string; userId: string }
 ): Promise<void> {
   await requestOrgMembers(
-    'org-member-remove',
     orgMembersUrl(config, args.orgId, '/members/remove'),
     requestInit('POST', session.accessToken, { userId: args.userId }),
     () => undefined

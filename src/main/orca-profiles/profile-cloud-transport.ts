@@ -32,7 +32,6 @@ const FAILURE_REASON: Record<OrcaCloudTransportFailure, string> = {
 export class OrcaCloudTransportError extends Error {
   constructor(
     public readonly failure: OrcaCloudTransportFailure,
-    public readonly operation: string,
     public readonly detail: string,
     options?: { cause?: unknown }
   ) {
@@ -41,7 +40,9 @@ export class OrcaCloudTransportError extends Error {
   }
 }
 
-type ErrorFacts = { names: string[]; codes: string[]; messages: string[] }
+// `details` holds one `code: message` string per chain level, so the reported
+// detail never pairs an outer error's code with an inner error's message.
+type ErrorFacts = { names: string[]; details: string[]; haystack: string }
 
 type ErrorLike = { name?: unknown; message?: unknown; code?: unknown; cause?: unknown }
 
@@ -55,51 +56,66 @@ function isErrorLike(value: unknown): value is ErrorLike {
 // `net::ERR_*` in the message. Both chains are walked so classification does
 // not depend on which transport produced the failure.
 function collectErrorFacts(error: unknown): ErrorFacts {
-  const facts: ErrorFacts = { names: [], codes: [], messages: [] }
+  const names: string[] = []
+  const details: string[] = []
   let current: unknown = error
   for (let depth = 0; depth < 5 && isErrorLike(current); depth += 1) {
-    if (typeof current.name === 'string') {
-      facts.names.push(current.name)
+    const name = typeof current.name === 'string' ? current.name : ''
+    const message = typeof current.message === 'string' ? current.message : ''
+    const code = typeof current.code === 'string' ? current.code : ''
+    if (name) {
+      names.push(name)
     }
-    if (typeof current.message === 'string') {
-      facts.messages.push(current.message)
-    }
-    if (typeof current.code === 'string') {
-      facts.codes.push(current.code)
+    const detail = [code, message].filter(Boolean).join(': ')
+    if (detail) {
+      details.push(detail)
     }
     current = current.cause
   }
-  return facts
+  return { names, details, haystack: details.join(' | ').toLowerCase() }
 }
 
 function classifyTransportFailure(facts: ErrorFacts): OrcaCloudTransportFailure {
-  const haystack = [...facts.codes, ...facts.messages].join(' | ').toLowerCase()
-  const matches = (pattern: RegExp): boolean => pattern.test(haystack)
+  const matches = (pattern: RegExp): boolean => pattern.test(facts.haystack)
 
+  // Why err_aborted counts as a timeout: the only abort signal these requests
+  // carry is the 30s AbortSignal.timeout, which Chromium surfaces that way.
   if (facts.names.includes('TimeoutError') || facts.names.includes('AbortError')) {
     return 'timeout'
   }
-  if (matches(/etimedout|und_err_(connect_|headers_|body_)?timeout|err_(connection_)?timed_out/)) {
+  if (
+    matches(
+      /etimedout|und_err_(connect_|headers_|body_)?timeout|err_(connection_)?timed_out|err_aborted/
+    )
+  ) {
     return 'timeout'
   }
   if (matches(/unexpected redirect|redirect (mode|policy|count)|err_(unsafe_|too_many_)redirect/)) {
     return 'redirect'
   }
+  // DNS is checked before TLS so a hostname containing "cert" cannot be
+  // mistaken for a certificate failure.
   if (matches(/enotfound|eai_again|err_name_not_resolved|err_name_resolution_failed/)) {
     return 'dns'
   }
-  if (matches(/err_cert|err_ssl|err_tls|_cert_|certificate|self.signed|unable_to_verify|eproto/)) {
+  // Bare `cert`: Node reports CERT_HAS_EXPIRED/CERT_REVOKED/CERT_UNTRUSTED
+  // without any err_ prefix, and a skewed clock makes the expiry case common.
+  if (matches(/cert|err_ssl|err_tls|self.signed|unable_to_verify|eproto/)) {
     return 'tls'
   }
   if (matches(/err_proxy|err_tunnel_connection_failed|proxy_auth/)) {
     return 'proxy'
   }
-  if (matches(/err_internet_disconnected|err_network_changed|enetunreach|enetdown|ehostunreach/)) {
+  if (
+    matches(
+      /err_internet_disconnected|err_network_changed|err_address_unreachable|enetunreach|enetdown|ehostunreach/
+    )
+  ) {
     return 'offline'
   }
   if (
     matches(
-      /econnreset|econnrefused|econnaborted|epipe|und_err_socket|err_connection_|err_empty_response/
+      /econnreset|econnrefused|econnaborted|epipe|und_err_socket|err_connection_|err_empty_response|err_socket_not_connected/
     )
   ) {
     return 'connection-lost'
@@ -107,26 +123,18 @@ function classifyTransportFailure(facts: ErrorFacts): OrcaCloudTransportFailure 
   return 'unknown'
 }
 
-// Transport-level text only (errno, net:: code, host) — never request bodies,
-// so authorization codes, verifiers, nonces, and tokens cannot leak here.
-function describeErrorChain(facts: ErrorFacts): string {
-  const deepest = facts.messages.at(-1) ?? 'unknown error'
-  const code = facts.codes.at(-1)
-  return code ? `${code}: ${deepest}` : deepest
-}
-
-function recordTransportFailure(
-  span: ActiveSpan,
-  operation: string,
-  error: unknown
-): OrcaCloudTransportError {
+function recordTransportFailure(span: ActiveSpan, error: unknown): OrcaCloudTransportError {
   const facts = collectErrorFacts(error)
   const failure = classifyTransportFailure(facts)
-  const detail = describeErrorChain(facts)
+  // Transport-level text only (errno, net:: code, host) — never request bodies,
+  // so authorization codes, verifiers, nonces, and tokens cannot leak here.
+  // Capped because this reaches a toast and the trace file, and nothing
+  // upstream promises a short message.
+  const detail = (facts.details.at(-1) || String(error)).slice(0, 200)
   span.setAttribute('orcaCloud.transportFailure', failure)
   span.setAttribute('orcaCloud.transportErrorName', facts.names.join(' <- ') || typeof error)
   span.setAttribute('orcaCloud.transportErrorDetail', detail)
-  return new OrcaCloudTransportError(failure, operation, detail, { cause: error })
+  return new OrcaCloudTransportError(failure, detail, { cause: error })
 }
 
 /**
@@ -135,16 +143,15 @@ function recordTransportFailure(
  * call survives Windows TLS interception and undici's stale keep-alive sockets
  * that global fetch could only report as `fetch failed` (orca#10758).
  */
-export async function orcaCloudFetch(
-  operation: string,
-  url: string,
-  init: RequestInit
-): Promise<Response> {
+export async function orcaCloudFetch(url: string, init: RequestInit): Promise<Response> {
   return withSpan(
     'orcaCloud.request',
     async (span) => {
-      span.setAttribute('orcaCloud.operation', operation)
-      span.setAttribute('orcaCloud.origin', new URL(url).origin)
+      const endpoint = new URL(url)
+      // Origin + path identify which call failed. The query string is dropped
+      // because it is the one part of a URL that could ever carry a secret;
+      // these endpoints put codes and tokens in the body or Bearer header.
+      span.setAttribute('orcaCloud.endpoint', `${endpoint.origin}${endpoint.pathname}`)
       await ensureElectronProxyFromEnvironment({
         proxySession: session.defaultSession,
         probeUrl: url
@@ -154,10 +161,12 @@ export async function orcaCloudFetch(
         })
       })
       try {
-        // Why the explicit defaults: Chromium would otherwise attach default-
-        // session cookies and consult the HTTP cache, neither of which the
-        // previous undici path did. Token endpoints authenticate from the body
-        // or the Bearer header, so ambient session state stays out of it.
+        // credentials:'omit' is load-bearing, not cosmetic — verified against
+        // Electron: net.fetch attaches default-session cookies unless told not
+        // to, which undici never did cross-origin. Token endpoints authenticate
+        // from the body or the Bearer header, so no ambient session state
+        // belongs on them. cache:'no-store' likewise keeps Chromium from
+        // serving a stale roster on the one GET route.
         const response = await net.fetch(url, {
           credentials: 'omit',
           cache: 'no-store',
@@ -166,7 +175,7 @@ export async function orcaCloudFetch(
         span.setAttribute('orcaCloud.status', response.status)
         return response
       } catch (error) {
-        throw recordTransportFailure(span, operation, error)
+        throw recordTransportFailure(span, error)
       }
     },
     { kind: 'client' }
