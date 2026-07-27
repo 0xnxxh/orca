@@ -6,21 +6,36 @@ import {
   normalizeCodexAccountSelectionTarget,
   type CodexAccountSelectionTarget
 } from '../../../shared/codex-selection-lane'
-import { getRepoExecutionHostId, LOCAL_EXECUTION_HOST_ID } from '../../../shared/execution-host'
-import { isWslShellName } from '../../../shared/local-windows-terminal-runtime'
+import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
+import {
+  isWslShellName,
+  resolveLocalWindowsTerminalRuntimeOptions,
+  type LocalWindowsTerminalRuntimeOptions
+} from '../../../shared/local-windows-terminal-runtime'
 import { parseAppSshPtyId } from '../../../shared/ssh-pty-id'
 import { resolveTerminalStartupCwd } from '../../../shared/terminal-startup-cwd'
 import type { GlobalSettings, TerminalTab } from '../../../shared/types'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import { parseWslUncPath } from '../../../shared/wsl-paths'
+import { getLocalProjectExecutionRuntimeContext } from './local-preflight-context'
 import { getRendererAppPlatform } from './renderer-app-platform'
+import {
+  getCachedWindowsTerminalCapabilities,
+  hasCachedWindowsTerminalCapabilities
+} from './windows-terminal-capabilities'
 
 type RuntimeEnvironmentSettings = Pick<GlobalSettings, 'activeRuntimeEnvironmentId'>
 
 /** Everything the pane lane needs: the workspace path plus the project runtime inputs. */
 type CodexPaneLaneState = Pick<
   AppState,
-  'folderWorkspaces' | 'projects' | 'repos' | 'settings' | 'worktreesByRepo'
+  | 'activeRepoId'
+  | 'activeWorktreeId'
+  | 'folderWorkspaces'
+  | 'projects'
+  | 'repos'
+  | 'settings'
+  | 'worktreesByRepo'
 >
 
 /**
@@ -122,59 +137,81 @@ function resolveLocalPaneSelectionTarget(args: {
   state: CodexPaneLaneState
   tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>
 }): CodexAccountSelectionTarget {
-  const workspacePath = getWorkspacePath(args.state, args.tab.worktreeId)
-  // Why this exact call: it is the same one main spawns through, so a relative
-  // or inherited startup folder resolves to the identical absolute path.
-  const paneCwd = workspacePath
-    ? (resolveTerminalStartupCwd(workspacePath, args.tab.startupCwd) ?? workspacePath)
-    : null
+  const paneCwd = resolvePaneCwd(args)
   const wslPath = paneCwd ? parseWslUncPath(paneCwd) : null
   if (wslPath) {
     return { runtime: 'wsl', wslDistro: wslPath.distro }
   }
-  // Why the platform gate: pty.ts only consults the Windows terminal runtime on
-  // win32, so elsewhere the tab's own override is the whole answer.
-  if (getRendererAppPlatform() !== 'win32') {
-    return isWslShellName(args.tab.shellOverride)
-      ? { runtime: 'wsl', wslDistro: null }
-      : { runtime: 'host' }
+  const terminalRuntime = resolveLocalPaneTerminalRuntime(args)
+  if (isWslShellName(terminalRuntime.shellOverride)) {
+    return { runtime: 'wsl', wslDistro: terminalRuntime.terminalWindowsWslDistro }
   }
-  const projectWslDistro = resolveProjectWslDistro(args.state, args.tab.worktreeId)
-  // Why the settings shell too: main resolves `requestedShellOverride ?? settingsShell`,
-  // so an unset override still means WSL when that is the Windows default. Reading
-  // only the tab would key such a pane `host` and mute it on a host switch.
-  const shell = args.tab.shellOverride ?? args.state.settings?.terminalWindowsShell
-  if (projectWslDistro === null && !isWslShellName(shell)) {
-    return { runtime: 'host' }
+  return { runtime: 'host' }
+}
+
+/** The absolute directory the pane's shell was spawned in, as main resolved it. */
+function resolvePaneCwd(args: {
+  state: CodexPaneLaneState
+  tab: Pick<TerminalTab, 'startupCwd' | 'worktreeId'>
+}): string | null {
+  // Why floating terminals short-circuit: they have no workspace root, and
+  // resolveTerminalStartupCwdForWorkspace returns their requested cwd verbatim.
+  if (args.tab.worktreeId === FLOATING_TERMINAL_WORKTREE_ID) {
+    return args.tab.startupCwd ?? null
   }
-  return {
-    runtime: 'wsl',
-    wslDistro: projectWslDistro ?? args.state.settings?.terminalWindowsWslDistro ?? null
+  const workspacePath = getWorkspacePath(args.state, args.tab.worktreeId)
+  if (!workspacePath) {
+    return null
   }
+  // Why this exact call: it is the same one main spawns through, so a relative
+  // or inherited startup folder resolves to the identical absolute path.
+  return resolveTerminalStartupCwd(workspacePath, args.tab.startupCwd) ?? workspacePath
 }
 
 /**
- * The WSL distro a project runtime pins this pane to, or null for none.
+ * The shell and distro the launch resolved, not merely the ones the tab asked for.
  *
- * Why this walks repo -> project by hand instead of calling
- * getLocalProjectExecutionRuntimeContext: that helper falls back to the ACTIVE
- * repo when the worktree is not a git worktree, so a folder-workspace pane would
- * take whichever repo happens to be selected — a lane that changes under the
- * pane. It also synthesizes a runtime where main has none. Main resolves
- * strictly repo -> project (resolveLocalProjectRuntimeForRepo), so mirror that.
+ * Why getLocalProjectExecutionRuntimeContext specifically: for a local pane the
+ * RENDERER computes the project runtime and ships it with the spawn
+ * (pty-connection.ts), so this is not an approximation of main — it is the same
+ * call on the same state. Re-deriving it by hand drops the global WSL default,
+ * which turns `inherit-global` into WSL and would key a live WSL pane `host`.
  */
-function resolveProjectWslDistro(state: CodexPaneLaneState, worktreeId: string): string | null {
-  const worktree = Object.values(state.worktreesByRepo ?? {})
-    .flat()
-    .find((entry) => entry.id === worktreeId)
-  const repo = worktree ? (state.repos ?? []).find((entry) => entry.id === worktree.repoId) : null
-  if (!repo || getRepoExecutionHostId(repo) !== LOCAL_EXECUTION_HOST_ID) {
-    return null
+function resolveLocalPaneTerminalRuntime(args: {
+  state: CodexPaneLaneState
+  tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>
+}): LocalWindowsTerminalRuntimeOptions {
+  // Why the platform gate: pty.ts only consults the Windows terminal runtime on
+  // win32, so elsewhere the tab's own override is the whole answer.
+  if (getRendererAppPlatform() !== 'win32') {
+    return { shellOverride: args.tab.shellOverride, terminalWindowsWslDistro: null }
   }
-  const preference = (state.projects ?? []).find((entry) =>
-    entry.sourceRepoIds?.includes(repo.id)
-  )?.localWindowsRuntimePreference
-  return preference?.kind === 'wsl' ? (preference.distro ?? null) : null
+  const capabilities = hasCachedWindowsTerminalCapabilities()
+    ? getCachedWindowsTerminalCapabilities()
+    : null
+  const projectRuntime = getLocalProjectExecutionRuntimeContext(
+    args.state,
+    args.tab.worktreeId,
+    undefined,
+    {
+      wslAvailable: capabilities?.wslAvailable,
+      availableWslDistros: capabilities?.wslDistros ?? null
+    }
+  )
+  if (projectRuntime?.status === 'repair-required') {
+    // Why not delegate: resolveLocalWindowsTerminalRuntimeOptions throws here,
+    // and this call sits outside the scan's per-pane failure guard, so a throw
+    // would lose the notice for every pane in the batch, not just this one.
+    return {
+      shellOverride: 'wsl.exe',
+      terminalWindowsWslDistro: projectRuntime.repair.preferredRuntime.distro
+    }
+  }
+  return resolveLocalWindowsTerminalRuntimeOptions({
+    requestedShellOverride: args.tab.shellOverride,
+    settings: args.state.settings ?? undefined,
+    projectRuntime
+  })
 }
 
 function getWorkspacePath(

@@ -750,12 +750,16 @@ export function AccountsPane({
         // may still say "WSL default". Found by diffing the roster rather than
         // by the row's active id, which resolves to null once two distro slots
         // are filled and would send the notice to the wrong lane.
-        const addedAccount =
+        const newAccounts =
           action === 'adding'
-            ? next.accounts.find(
+            ? next.accounts.filter(
                 (account) => !codexAccounts.accounts.some((prior) => prior.id === account.id)
               )
-            : undefined
+            : []
+        // Why exactly one: an unloaded prior roster makes every account look new,
+        // and picking one of those would aim the notice at an unrelated lane.
+        // Falling back to the row is the pre-existing behaviour, not a new risk.
+        const addedAccount = newAccounts.length === 1 ? newAccounts[0] : undefined
         void markLiveCodexSessionsForRestart({
           previousAccountLabel: getCodexAccountLabel(codexAccounts, previousActiveAccountId),
           nextAccountLabel: getCodexAccountLabel(next, nextActiveAccountId),

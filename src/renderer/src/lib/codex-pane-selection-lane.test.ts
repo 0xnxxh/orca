@@ -10,7 +10,13 @@ import {
 
 type LaneState = Pick<
   AppState,
-  'folderWorkspaces' | 'projects' | 'repos' | 'settings' | 'worktreesByRepo'
+  | 'activeRepoId'
+  | 'activeWorktreeId'
+  | 'folderWorkspaces'
+  | 'projects'
+  | 'repos'
+  | 'settings'
+  | 'worktreesByRepo'
 >
 
 function laneState(args?: {
@@ -97,7 +103,11 @@ describe('resolveCodexPaneSelectionLaneKey', () => {
     withWindowsRenderer(() => {
       expect(
         resolveCodexPaneSelectionLaneKey({
-          state: laneState({ terminalWindowsWslDistro: 'Ubuntu', worktreePath: 'C:\\code\\app' }),
+          state: laneState({
+            terminalWindowsShell: 'wsl.exe',
+            terminalWindowsWslDistro: 'Ubuntu',
+            worktreePath: 'C:\\code\\app'
+          }),
           tab: { worktreeId: 'wt1', shellOverride: 'wsl.exe' },
           ptyId: 'pty-1'
         })
@@ -164,19 +174,21 @@ describe('resolveCodexPaneSelectionLaneKey', () => {
     })
   })
 
-  // Why: a folder workspace has no repo, and the project-runtime helper falls
-  // back to the ACTIVE repo — which would give this pane a lane belonging to
-  // whatever repo is selected, and mute it whenever that repo's distro changed.
-  it('never lends another repo\u2019s project runtime to a folder workspace pane', () => {
-    withWindowsRenderer(() => {
-      expect(
-        resolveCodexPaneSelectionLaneKey({
-          state: laneState({ projectWslDistro: 'Debian', folderPath: 'C:\\srv\\app' }),
-          tab: { worktreeId: 'folder:fw1', shellOverride: undefined },
-          ptyId: 'pty-1'
-        })
-      ).toBe('host')
-    })
+  // Why: a floating terminal has no workspace root, so its startup cwd is used
+  // verbatim (resolveTerminalStartupCwdForWorkspace). Resolving it against a
+  // root that does not exist would key a live WSL pane `host` and mute it.
+  it('keys a floating terminal by its own startup cwd', () => {
+    expect(
+      resolveCodexPaneSelectionLaneKey({
+        state: laneState(),
+        tab: {
+          worktreeId: 'global-floating-terminal',
+          shellOverride: undefined,
+          startupCwd: '\\\\wsl.localhost\\Ubuntu\\home\\dev'
+        },
+        ptyId: 'pty-1'
+      })
+    ).toBe('wsl:Ubuntu')
   })
 
   it('reads the distro from a folder workspace path too', () => {
