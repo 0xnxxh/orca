@@ -2934,6 +2934,10 @@ export class OrcaRuntimeService {
     | null
   private readonly agentSessionClaimSigner: AgentSessionClaimSigner
   private readonly agentSessionCreateOperations = new Map<string, AgentSessionCreateOperation>()
+  // Normalized folder-workspace path -> the child selectors its in-flight commit-message
+  // generations are running under. Cancellation is keyed by cwd, so without this a
+  // workspace-level Cancel would also kill a draft running in an unrelated child repo.
+  private readonly folderWorkspaceCommitMessageLanes = new Map<string, Set<string>>()
   private sshRelayRecoveryGenerationByTargetId = new Map<string, number>()
   private accountServices: RuntimeAccountServices | null = null
   private commitMessageAgentEnv: CommitMessageAgentEnvironmentResolvers | null = null
@@ -24265,23 +24269,28 @@ export class OrcaRuntimeService {
   }
 
   /**
-   * The one child repo a staged-index operation belongs to. Null when the selector
-   * is not a folder workspace, so callers can fall through to the single-repo path.
+   * The one child repo a staged-index operation belongs to, plus the workspace it
+   * was resolved under. Null when the selector is not a folder workspace, so
+   * callers can fall through to the single-repo path.
    */
-  private async selectFolderWorkspaceStagedTarget(
-    selector: string
-  ): Promise<{ ok: true; target: RuntimeGitTarget } | { ok: false; error: string } | null> {
+  private async selectFolderWorkspaceStagedTarget(selector: string): Promise<{
+    folderPath: string
+    selection: { ok: true; target: RuntimeGitTarget } | { ok: false; error: string }
+  } | null> {
     const scope = await this.resolveFolderWorkspaceLaunchScope(selector)
     const folderWorkspace = scope?.folderWorkspace
     if (!folderWorkspace) {
       return null
     }
-    return selectFolderWorkspaceCommitTarget(
-      await this.inspectFolderWorkspaceChildRepos(
-        folderWorkspace.folderPath,
-        probeChildRepoHasStagedChanges
+    return {
+      folderPath: folderWorkspace.folderPath,
+      selection: selectFolderWorkspaceCommitTarget(
+        await this.inspectFolderWorkspaceChildRepos(
+          folderWorkspace.folderPath,
+          probeChildRepoHasStagedChanges
+        )
       )
-    )
+    }
   }
 
   /**
@@ -24305,11 +24314,11 @@ export class OrcaRuntimeService {
     if (message.trim().length === 0) {
       throw new Error('Commit message is required')
     }
-    if (!selected.ok) {
-      return { success: false, error: selected.error }
+    if (!selected.selection.ok) {
+      return { success: false, error: selected.selection.error }
     }
     try {
-      return await commitRuntimeGitForTarget(selected.target, message)
+      return await commitRuntimeGitForTarget(selected.selection.target, message)
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Commit failed' }
     }
@@ -24330,19 +24339,32 @@ export class OrcaRuntimeService {
     if (!selected) {
       return null
     }
-    if (!selected.ok) {
+    if (!selected.selection.ok) {
       return {
         success: false,
         error:
-          selected.error === 'nothing to commit'
+          selected.selection.error === 'nothing to commit'
             ? 'No staged changes to summarize.'
-            : selected.error
+            : selected.selection.error
       }
     }
-    return this.gitCommands.generateRuntimeCommitMessage(
-      `id:${selected.target.worktree.id}`,
-      settingsOverride
-    )
+    // Why record: the cancel lane is keyed to the child path, and re-selecting at
+    // cancel time can name a different repo (staging moves between the two calls).
+    // Remembering the lane this call actually started is the only way Cancel can
+    // hit that one and nothing else.
+    const childSelector = `id:${selected.selection.target.worktree.id}`
+    const key = normalizeRuntimePathForComparison(selected.folderPath)
+    const lanes = this.folderWorkspaceCommitMessageLanes.get(key) ?? new Set<string>()
+    lanes.add(childSelector)
+    this.folderWorkspaceCommitMessageLanes.set(key, lanes)
+    try {
+      return await this.gitCommands.generateRuntimeCommitMessage(childSelector, settingsOverride)
+    } finally {
+      lanes.delete(childSelector)
+      if (lanes.size === 0) {
+        this.folderWorkspaceCommitMessageLanes.delete(key)
+      }
+    }
   }
 
   /**
@@ -24351,11 +24373,10 @@ export class OrcaRuntimeService {
    * keyed to that child's path — the folder selector resolves to no worktree and
    * would just throw `selector_not_found`, leaving Cancel silently dead.
    *
-   * Why cancel every child rather than re-select the staged one: selection is a
-   * fresh read, and staging can change between generate and cancel, so it can
-   * name a different repo than the one actually generating. Both cancel paths are
-   * cwd-keyed best-effort no-ops when nothing is in flight, so the broadest
-   * correct move is to signal every lane this selector could have started.
+   * Why only the recorded lanes: cancellation is keyed by cwd alone, so signalling
+   * every child would abort a draft another view started in a *different* child
+   * repo. `folderWorkspaceCommitMessageLanes` holds exactly the children this
+   * workspace's own generations are running in, so nothing else is touched.
    * Returns null when the selector is not a folder workspace.
    */
   private async cancelFolderWorkspaceGenerateCommitMessage(
@@ -24366,27 +24387,22 @@ export class OrcaRuntimeService {
     if (!folderWorkspace) {
       return null
     }
-    const childRepos = listFolderWorkspaceChildRepos(
-      this.requireStore().getRepos(),
-      folderWorkspace.folderPath
+    const lanes = this.folderWorkspaceCommitMessageLanes.get(
+      normalizeRuntimePathForComparison(folderWorkspace.folderPath)
     )
     await Promise.all(
-      childRepos.map(async (repo) => {
-        const target = await this.resolveChildRepoGitTarget(repo)
-        if (!target) {
-          return
-        }
+      [...(lanes ?? [])].map(async (childSelector) =>
         // Why swallow: a child that cannot be reached has nothing in flight to
         // cancel, and one unreachable repo must not strand the others.
-        await this.gitCommands
-          .cancelRuntimeGenerateCommitMessage(`id:${target.worktree.id}`)
+        this.gitCommands
+          .cancelRuntimeGenerateCommitMessage(childSelector)
           .catch((error: unknown) => {
             console.warn('[runtime] folder-workspace commit-message cancel failed', {
-              repo: repo.path,
+              childSelector,
               error
             })
           })
-      })
+      )
     )
     return { ok: true }
   }

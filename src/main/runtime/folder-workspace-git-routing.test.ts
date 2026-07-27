@@ -545,6 +545,52 @@ describe('#6357 monorepo folder workspace', () => {
     expect(await runtime.getRuntimeGitConflictOperation(`path:${CHILD_API}`)).toBe('merge')
   })
 
+  /**
+   * Hold a folder-workspace generation open so cancellation has a real in-flight
+   * lane to act on, and record every child selector cancellation is routed to.
+   */
+  async function withInFlightGeneration(
+    runtime: OrcaRuntimeService,
+    selector: string
+  ): Promise<{
+    generateSelectors: () => string[]
+    cancelSelectors: () => string[]
+    settle: () => Promise<void>
+  }> {
+    let release = (): void => {}
+    const generate = vi
+      .spyOn(
+        runtime['gitCommands'] as { generateRuntimeCommitMessage: (...args: never[]) => unknown },
+        'generateRuntimeCommitMessage'
+      )
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ success: true, message: 'drafted' })
+          }) as never
+      )
+    const cancel = vi
+      .spyOn(
+        runtime['gitCommands'] as {
+          cancelRuntimeGenerateCommitMessage: (...args: never[]) => unknown
+        },
+        'cancelRuntimeGenerateCommitMessage'
+      )
+      .mockResolvedValue({ ok: true } as never)
+    const inFlight = runtime.generateRuntimeCommitMessage(selector)
+    await vi.waitFor(() => expect(generate).toHaveBeenCalled())
+    return {
+      generateSelectors: () => generate.mock.calls.map((call) => String(call[0])),
+      cancelSelectors: () => cancel.mock.calls.map((call) => String(call[0])),
+      settle: async () => {
+        release()
+        await inFlight
+        generate.mockRestore()
+        cancel.mockRestore()
+      }
+    }
+  }
+
   it('M3: cancelling generation reaches the child repo instead of dying on the folder selector', async () => {
     buildFixture()
     const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
@@ -554,7 +600,53 @@ describe('#6357 monorepo folder workspace', () => {
     // to the child path. Passing the folder selector straight through threw
     // `selector_not_found`, and every caller is fire-and-forget — so Cancel silently
     // did nothing and the draft kept running.
-    const inner = vi
+    const run = await withInFlightGeneration(runtime, selector)
+    await expect(runtime.cancelRuntimeGenerateCommitMessage(selector)).resolves.toEqual({
+      ok: true
+    })
+    const routed = run.cancelSelectors()
+    expect(routed).not.toContain(selector)
+    // Why: exactly the lane the generation started under — see M4 for why not more.
+    expect(routed).toEqual(run.generateSelectors())
+    const staged = await runtime.getRuntimeGitStatus(routed[0] as string)
+    expect(staged.entries.length).toBeGreaterThan(0)
+    await run.settle()
+  })
+
+  it('M4: cancelling one child repo leaves a sibling repo untouched', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    // Why: cancellation is keyed by cwd alone, with no notion of who asked. Signalling
+    // every child — which is what routing Cancel by a fresh staged-repo *re-selection*
+    // amounts to — kills a draft the user started from the sibling repo's own view.
+    // The renderer keeps generation per-worktree precisely so navigating away does not
+    // cancel it (SourceControl.tsx), so that concurrent draft is reachable, not theoretical.
+    // Markers unique to each child, so a routed selector can be named by repo.
+    writeFileSync(join(CHILD_API, 'src', 'only-in-api.ts'), 'marker\n')
+    writeFileSync(join(CONTAINER, 'fint-portal', 'src', 'only-in-portal.ts'), 'marker\n')
+    const run = await withInFlightGeneration(runtime, selector)
+    await runtime.cancelRuntimeGenerateCommitMessage(selector)
+    const routed = run.cancelSelectors()
+    const signalled = await Promise.all(
+      routed.map(async (target) =>
+        (await runtime.getRuntimeGitStatus(target)).entries.map((entry) => entry.path)
+      )
+    )
+    // Before this, Cancel fanned out to every child, so the sibling was signalled too.
+    expect(signalled.flat()).toContain('src/only-in-api.ts')
+    expect(signalled.flat()).not.toContain('src/only-in-portal.ts')
+    expect(routed).toHaveLength(1)
+    await run.settle()
+  })
+
+  it('M5: Cancel with nothing in flight signals no child at all', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    const cancel = vi
       .spyOn(
         runtime['gitCommands'] as {
           cancelRuntimeGenerateCommitMessage: (...args: never[]) => unknown
@@ -562,16 +654,13 @@ describe('#6357 monorepo folder workspace', () => {
         'cancelRuntimeGenerateCommitMessage'
       )
       .mockResolvedValue({ ok: true } as never)
+    // Why: a stale Cancel click (the draft already finished) must not become a
+    // remote kill switch for whatever is running in these repos now.
     await expect(runtime.cancelRuntimeGenerateCommitMessage(selector)).resolves.toEqual({
       ok: true
     })
-    const routed = inner.mock.calls.map((call) => String(call[0]))
-    expect(routed).not.toContain(selector)
-    expect(routed.length).toBeGreaterThan(0)
-    // Why: the lane the generation actually started under must be among them.
-    const staged = await runtime.getRuntimeGitStatus(routed[0] as string)
-    expect(staged.entries.length).toBeGreaterThan(0)
-    inner.mockRestore()
+    expect(cancel).not.toHaveBeenCalled()
+    cancel.mockRestore()
   })
 
   it('E: the real child git worktree resolves fine when its repo is registered', async () => {
