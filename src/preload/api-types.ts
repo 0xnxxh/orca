@@ -3254,6 +3254,8 @@ export type PreloadApi = {
       selector: string
       timeoutMs?: number
     }) => Promise<RuntimeRpcResponse<RuntimeStatus>>
+    // Why: system resume / browser online advance pending shared-control reconnect timers only.
+    retryConnectionsNow?: () => Promise<void>
     call: (args: {
       selector: string
       method: string
