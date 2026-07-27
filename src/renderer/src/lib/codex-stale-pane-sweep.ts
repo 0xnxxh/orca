@@ -5,10 +5,14 @@ import {
 
 // Why: the first delay coalesces the startup burst of binds and lets
 // updateTabPtyId (written just after the layout binding) land, since the scan
-// walks tabs. The later two cover a reattached daemon shell that answers
-// `inspectProcess` with terminal_gone for a beat. Bounded on purpose — this is
-// a hint, and a pane that never resolves must not become a polling loop.
-const SWEEP_ATTEMPT_DELAYS_MS = [300, 1500, 4000] as const
+// walks tabs. The rest cover a reattached daemon shell that answers
+// `inspectProcess` with terminal_gone for a beat. The tail is sized off live
+// Windows 11 runs, where the 5.8s rung is what raised the notice in all three
+// (macOS resolved on the first): the ladder used to end exactly where the
+// slowest measured box landed, so a colder reattach fell off it and the pane
+// stayed silently stale. Bounded on purpose — this is a hint, and a pane that
+// never resolves must not become a polling loop.
+const SWEEP_ATTEMPT_DELAYS_MS = [300, 1500, 4000, 10_000, 20_000] as const
 
 // Why: each PTY owns its rung, so the queue has to carry a per-PTY due time. One
 // shared timer coalesces the startup burst, but it must always target the
