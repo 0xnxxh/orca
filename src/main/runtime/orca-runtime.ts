@@ -24191,8 +24191,18 @@ export class OrcaRuntimeService {
         if (!target) {
           return null
         }
-        // Why: one unreadable child repo must not blank the whole workspace list.
-        const status = await getRuntimeGitStatusForTarget(target, options).catch(() => null)
+        // Why: one unreadable child repo must not blank the whole workspace list,
+        // but it also must not vanish without a trace — its files silently go missing
+        // from the merged status, which looks identical to a clean repo.
+        const status = await getRuntimeGitStatusForTarget(target, options).catch(
+          (error: unknown) => {
+            console.warn('[runtime] folder-workspace status failed for child repo', {
+              repo: repo.path,
+              error
+            })
+            return null
+          }
+        )
         if (!status) {
           return null
         }
@@ -24236,7 +24246,15 @@ export class OrcaRuntimeService {
         if (!target) {
           return null
         }
-        const status = await getRuntimeGitStatusForTarget(target).catch(() => null)
+        // Why: a status failure here silently drops the repo from the commit, so the
+        // user sees a success that skipped their staged files. Log which one.
+        const status = await getRuntimeGitStatusForTarget(target).catch((error: unknown) => {
+          console.warn('[runtime] folder-workspace commit skipped a child repo', {
+            repo: repo.path,
+            error
+          })
+          return null
+        })
         const hasStaged = status?.entries.some((entry) => entry.area === 'staged') === true
         return hasStaged ? { repo, target } : null
       })
@@ -24288,7 +24306,13 @@ export class OrcaRuntimeService {
         }
         const detected = await this.gitCommands
           .getRuntimeGitConflictOperation(`id:${target.worktree.id}`)
-          .catch(() => 'unknown' as const)
+          .catch((error: unknown) => {
+            console.warn('[runtime] folder-workspace abort could not read conflict state', {
+              repo: repo.path,
+              error
+            })
+            return 'unknown' as const
+          })
         // Why: belt-and-braces. Git already refuses `merge --abort` on a mid-rebase
         // repo (and vice versa), so this narrows what we run rather than what we
         // prevent — it keeps N-1 pointless failing git invocations off the wire.
@@ -24299,7 +24323,16 @@ export class OrcaRuntimeService {
     // Why: aborting nothing is not an error — the conflict may have been resolved
     // in a terminal already, and the renderer only needs the state to settle.
     await Promise.all(
-      targets.map((target) => abortRuntimeGitForTarget(target, operation).catch(() => undefined))
+      targets.map((target) =>
+        abortRuntimeGitForTarget(target, operation).catch((error: unknown) => {
+          // Why: one repo refusing the abort must not block the others, but a
+          // still-conflicted repo the user believes is clean needs a trail.
+          console.warn(`[runtime] folder-workspace ${operation} abort failed`, {
+            repo: target.worktree.path,
+            error
+          })
+        })
+      )
     )
     return { ok: true }
   }

@@ -1,6 +1,14 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, writeFileSync, appendFileSync, rmSync, realpathSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+  appendFileSync,
+  rmSync,
+  realpathSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OrcaRuntimeService } from './orca-runtime'
 import { folderWorkspaceKey } from '../../shared/workspace-scope'
@@ -15,7 +23,9 @@ vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/tmp') }
 }))
 
-const FIXTURE = `${realpathSync('/tmp')}/hotbugs/fixture-6357`
+// Why: a fixed path collides when two runs of this file overlap (watch mode, CI
+// shards), and each `buildFixture` rm -rf's the other's repos mid-test.
+const FIXTURE = mkdtempSync(join(realpathSync(tmpdir()), 'orca-6357-'))
 const CONTAINER = join(FIXTURE, 'fint')
 const CHILD_API = join(CONTAINER, 'fint_api')
 const CHILD_WT = join(FIXTURE, 'wt-fint_api-refund')
@@ -139,6 +149,10 @@ function makeStore(overrides: { repos?: Repo[] } = {}): unknown {
 }
 
 describe('#6357 monorepo folder workspace', () => {
+  afterAll(() => {
+    rmSync(FIXTURE, { recursive: true, force: true })
+  })
+
   it('A: file explorer resolves for a folder workspace (merged #6569 path)', async () => {
     buildFixture()
     const runtime = new OrcaRuntimeService(makeStore() as never)
