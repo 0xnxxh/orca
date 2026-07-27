@@ -16,8 +16,10 @@ import type { ManagedPaneInternal } from './pane-manager-types'
 
 type GateState = { synchronizedOutput: boolean; rendered: number }
 
-// Mirrors RenderService.refreshRows (RenderService.ts:155-181): paused first,
-// then the synchronized-output buffer gate, then the actual render.
+// Mirrors RenderService.refreshRows: paused first, then the synchronized-output
+// buffer gate, then the actual render. This double can drift from xterm on an
+// upgrade, so the gate order it encodes is independently pinned against the real
+// renderer in tests/e2e/terminal-reveal-draw-command-probe.spec.ts.
 function createGatedPane(options: { synchronizedOutput: boolean }): {
   pane: ManagedPaneInternal
   gate: GateState
