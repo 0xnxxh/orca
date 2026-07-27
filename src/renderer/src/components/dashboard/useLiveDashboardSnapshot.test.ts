@@ -93,6 +93,7 @@ function seed(settings: Partial<GlobalSettings> | null): void {
       [TAB_ID]: {
         root: { type: 'leaf', leafId: LEAF_ID },
         activeLeafId: LEAF_ID,
+        expandedLeafId: null,
         ptyIdsByLeafId: { [LEAF_ID]: 'pty-1' }
       }
     },
