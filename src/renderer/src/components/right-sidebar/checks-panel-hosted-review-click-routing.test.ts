@@ -16,27 +16,27 @@ beforeEach(() => {
 })
 
 describe('checks panel hosted review click routing', () => {
-  it('maps Shift+Cmd to forceSystemBrowser on macOS', () => {
+  it('maps Shift+Cmd to the routing modifier on macOS', () => {
     const event = { metaKey: true, ctrlKey: false, shiftKey: true }
 
     expect(isChecksPanelHostedReviewSystemBrowserModifier(event, true)).toBe(true)
     expect(resolveChecksPanelHostedReviewHttpOpenOptions(event, true, 'wt-1')).toEqual({
       worktreeId: 'wt-1',
-      forceSystemBrowser: true
+      modifierHeld: true
     })
   })
 
-  it('maps Shift+Ctrl to forceSystemBrowser off macOS', () => {
+  it('maps Shift+Ctrl to the routing modifier off macOS', () => {
     const event = { metaKey: false, ctrlKey: true, shiftKey: true }
 
     expect(isChecksPanelHostedReviewSystemBrowserModifier(event, false)).toBe(true)
     expect(resolveChecksPanelHostedReviewHttpOpenOptions(event, false, 'wt-1')).toEqual({
       worktreeId: 'wt-1',
-      forceSystemBrowser: true
+      modifierHeld: true
     })
   })
 
-  it('preserves the worktree id without forceSystemBrowser on plain clicks', () => {
+  it('preserves the worktree id without the modifier on plain clicks', () => {
     expect(
       resolveChecksPanelHostedReviewHttpOpenOptions(
         { metaKey: false, ctrlKey: false, shiftKey: false },
@@ -46,7 +46,7 @@ describe('checks panel hosted review click routing', () => {
     ).toEqual({ worktreeId: 'wt-1' })
   })
 
-  it('opens hosted review URLs without forceSystemBrowser on plain clicks', () => {
+  it('opens hosted review URLs without the modifier on plain clicks', () => {
     openChecksPanelHostedReviewUrl({
       url: 'https://github.com/acme/widgets/pull/123',
       event: { metaKey: false, ctrlKey: false, shiftKey: false },
@@ -59,7 +59,7 @@ describe('checks panel hosted review click routing', () => {
     })
   })
 
-  it('opens hosted review URLs with forceSystemBrowser on Shift+Cmd clicks', () => {
+  it('opens hosted review URLs with the modifier on Shift+Cmd clicks', () => {
     openChecksPanelHostedReviewUrl({
       url: 'https://github.com/acme/widgets/pull/123',
       event: { metaKey: true, ctrlKey: false, shiftKey: true },
@@ -69,7 +69,7 @@ describe('checks panel hosted review click routing', () => {
 
     expect(openHttpLinkMock).toHaveBeenCalledWith('https://github.com/acme/widgets/pull/123', {
       worktreeId: 'wt-1',
-      forceSystemBrowser: true
+      modifierHeld: true
     })
   })
 })

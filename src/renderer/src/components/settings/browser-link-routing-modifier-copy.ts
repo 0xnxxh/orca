@@ -26,6 +26,14 @@ export function getLinkRoutingModifierDescription({
 }): string {
   const chord = isMac ? '⇧⌘' : 'Shift+Ctrl'
   return openLinksInApp
-    ? `Links open in Orca, so ${chord}+click sends one to your system browser instead.`
-    : `Links open in your system browser, so ${chord}+click opens one in Orca's built-in browser instead.`
+    ? translate(
+        'auto.components.settings.BrowserLinkRoutingModifierSetting.descriptionSystem',
+        'Links open in Orca, so {{chord}}+click sends one to your system browser instead.',
+        { chord }
+      )
+    : translate(
+        'auto.components.settings.BrowserLinkRoutingModifierSetting.descriptionOrca',
+        "Links open in your system browser, so {{chord}}+click opens one in Orca's built-in browser instead.",
+        { chord }
+      )
 }

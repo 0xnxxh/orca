@@ -9749,7 +9749,9 @@
         "BrowserLinkRoutingModifierSetting": {
           "toggleLabel": "Toggle inverted link routing modifier",
           "titleSystem": "Hold Shift to open in your web browser",
-          "titleOrca": "Hold Shift to open in Orca"
+          "titleOrca": "Hold Shift to open in Orca",
+          "descriptionSystem": "Links open in Orca, so {{chord}}+click sends one to your system browser instead.",
+          "descriptionOrca": "Links open in your system browser, so {{chord}}+click opens one in Orca's built-in browser instead."
         }
       },
       "right": {
