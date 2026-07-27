@@ -10,7 +10,6 @@ import {
   isCommandMarkerId,
   isLaunchPromptMessageId,
   isPendingMessageId,
-  launchDraftResolvedByTranscript,
   launchPromptAsMessage,
   nextNativeChatPendingSendId,
   pendingSendsAsMessages,
@@ -431,27 +430,6 @@ describe('isLaunchPromptMessageId', () => {
   it('recognizes the launch prompt id prefix', () => {
     expect(isLaunchPromptMessageId('launch-pending:tab-1')).toBe(true)
     expect(isLaunchPromptMessageId('pending:p1')).toBe(false)
-  })
-})
-
-describe('launchDraftResolvedByTranscript', () => {
-  it('resolves on any user turn at or after the seed time, even with different text', () => {
-    // The TUI input holds one line: a later user turn means the prefill was
-    // submitted with that turn (possibly edited/concatenated) or cleared first.
-    const submitted = { ...userMessage('u1', 'unrelated text'), timestamp: 5000 }
-    expect(launchDraftResolvedByTranscript({ createdAt: 1000 }, [submitted])).toBe(true)
-  })
-
-  it('ignores assistant turns and user turns from before the seed', () => {
-    const early = { ...userMessage('u1', 'old turn'), timestamp: 500 }
-    const reply = { ...assistantMessage('a1', 'hello'), timestamp: 5000 }
-    expect(launchDraftResolvedByTranscript({ createdAt: 1000 }, [early, reply])).toBe(false)
-  })
-
-  it('ignores user turns without timestamps and empty transcripts', () => {
-    const undated = { ...userMessage('u1', 'scraped'), timestamp: null }
-    expect(launchDraftResolvedByTranscript({ createdAt: 1000 }, [undated])).toBe(false)
-    expect(launchDraftResolvedByTranscript({ createdAt: 1000 }, [])).toBe(false)
   })
 })
 

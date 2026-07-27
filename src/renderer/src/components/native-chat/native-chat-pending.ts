@@ -5,7 +5,7 @@
 
 import type { NativeChatMessage } from '../../../../shared/native-chat-types'
 import { setBoundedScopeCacheEntry } from './native-chat-composer-scope-cache'
-import type { NativeChatLaunchDraft, NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
+import type { NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
 import {
   advancedNativeChatUserContentCounts,
   advancedNativeChatUserTexts,
@@ -275,20 +275,6 @@ export function nextNativeChatPendingSendId(now = Date.now()): string {
 
 export function isLaunchPromptMessageId(id: string): boolean {
   return id.startsWith('launch-pending:')
-}
-
-// Why: the TUI input holds one line — any user turn after the draft was seeded
-// means that prefill was either submitted with the turn or deliberately cleared
-// first, so the composer copy must not linger as stale context. Text matching
-// would miss TUI-edited submissions and concatenated remote sends.
-export function launchDraftResolvedByTranscript(
-  entry: Pick<NativeChatLaunchDraft, 'createdAt'>,
-  messages: NativeChatMessage[]
-): boolean {
-  return messages.some(
-    (message) =>
-      message.role === 'user' && message.timestamp !== null && message.timestamp >= entry.createdAt
-  )
 }
 
 /** A locally-recorded slash command (e.g. `/clear`). Slash commands dispatch to

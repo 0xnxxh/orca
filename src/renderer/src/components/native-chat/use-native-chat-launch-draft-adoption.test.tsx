@@ -3,21 +3,31 @@
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatLaunchDraft } from '@/lib/native-chat-launch-prompt'
-import { useNativeChatLaunchDraftAdoption } from './use-native-chat-launch-draft-adoption'
+import type { NativeChatMessage } from '../../../../shared/native-chat-types'
+import {
+  useNativeChatLaunchDraftAdoption,
+  useNativeChatLaunchDraftSignal
+} from './use-native-chat-launch-draft-adoption'
 
 const mocks = vi.hoisted(() => ({
   markNativeChatLaunchDraftAdopted: vi.fn(),
-  clearNativeChatLaunchDraft: vi.fn()
+  clearNativeChatLaunchDraft: vi.fn(),
+  storeState: { nativeChatLaunchDraftByTabId: {} as Record<string, NativeChatLaunchDraft> }
 }))
 
-vi.mock('../../store', () => ({
-  useAppStore: {
-    getState: () => ({
-      markNativeChatLaunchDraftAdopted: mocks.markNativeChatLaunchDraftAdopted,
-      clearNativeChatLaunchDraft: mocks.clearNativeChatLaunchDraft
-    })
+vi.mock('../../store', () => {
+  const useAppStore = ((selector: (state: unknown) => unknown) =>
+    selector(mocks.storeState)) as unknown as {
+    (selector: (state: unknown) => unknown): unknown
+    getState: () => unknown
   }
-}))
+  useAppStore.getState = () => ({
+    ...mocks.storeState,
+    markNativeChatLaunchDraftAdopted: mocks.markNativeChatLaunchDraftAdopted,
+    clearNativeChatLaunchDraft: mocks.clearNativeChatLaunchDraft
+  })
+  return { useAppStore }
+})
 
 function launchDraft(overrides: Partial<NativeChatLaunchDraft> = {}): NativeChatLaunchDraft {
   return {
@@ -50,6 +60,69 @@ function setup(args: {
   )
   return { setDraft, setCaret }
 }
+
+const SEEDED_AT = 1_000_000
+
+function userTurn(id: string, timestamp: number | null): NativeChatMessage {
+  return { id, role: 'user', blocks: [{ type: 'text', text: id }], timestamp, source: 'transcript' }
+}
+
+function renderSignal(messages: NativeChatMessage[]) {
+  return renderHook(
+    (props: { messages: NativeChatMessage[] }) =>
+      useNativeChatLaunchDraftSignal({
+        terminalTabId: 'tab-1',
+        agent: 'claude',
+        messages: props.messages
+      }),
+    { initialProps: { messages } }
+  )
+}
+
+describe('useNativeChatLaunchDraftSignal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.storeState.nativeChatLaunchDraftByTabId = {
+      'tab-1': launchDraft({ createdAt: SEEDED_AT })
+    }
+  })
+
+  it('resolves on an undated user turn (Grok omits row timestamps)', () => {
+    const { result } = renderSignal([userTurn('u1', null)])
+
+    expect(result.current.launchDraftResolved).toBe(true)
+  })
+
+  it('resolves a new turn even when the executing host clock runs far behind', () => {
+    // SSH/remote workspaces stamp the JSONL on the other host's clock, so no
+    // timestamp on either side proves the turn is new — the baseline does.
+    const stale = userTurn('u1', SEEDED_AT - 600_000)
+    const { result, rerender } = renderSignal([stale])
+    expect(result.current.launchDraftResolved).toBe(false)
+
+    rerender({ messages: [stale, userTurn('u2', SEEDED_AT - 599_000)] })
+    expect(result.current.launchDraftResolved).toBe(true)
+  })
+
+  it('does not resolve when "load earlier" only prepends older history', () => {
+    const tail = userTurn('u9', SEEDED_AT - 600_000)
+    const { result, rerender } = renderSignal([tail])
+    expect(result.current.launchDraftResolved).toBe(false)
+
+    rerender({ messages: [userTurn('u7', SEEDED_AT - 900_000), tail] })
+    expect(result.current.launchDraftResolved).toBe(false)
+  })
+
+  it('ignores a draft seeded for another agent', () => {
+    mocks.storeState.nativeChatLaunchDraftByTabId = {
+      'tab-1': launchDraft({ agent: 'codex', createdAt: SEEDED_AT })
+    }
+    const { result } = renderSignal([userTurn('u1', null)])
+
+    expect(result.current.launchDraft).toBeNull()
+    expect(result.current.launchDraftResolved).toBe(false)
+  })
+})
 
 describe('useNativeChatLaunchDraftAdoption', () => {
   beforeEach(() => {
