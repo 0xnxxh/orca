@@ -4803,6 +4803,42 @@ describe('connectPanePty', () => {
     _resetTerminalPaneRecoveryForTests()
   })
 
+  it('quarantines the interrupted line after a write-unavailable remount, but never device replies', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const { _resetTerminalPaneRecoveryForTests } = await import('./terminal-pane-recovery')
+    _resetTerminalPaneRecoveryForTests()
+    const remountTerminalTabForRecovery = vi.fn<(tabId: string) => boolean>(() => true)
+    mockStoreState = { ...mockStoreState, remountTerminalTabForRecovery } as StoreState
+    const transport = createMockTransport('daemon-pty')
+    let writeUnavailable: (() => void) | undefined
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      writeUnavailable = callbacks.onWriteUnavailable
+      return { id: 'daemon-pty' }
+    })
+    transportFactoryQueue.push(transport)
+    const pane = createPane(1)
+
+    connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
+    await flushAsyncTicks(6)
+    writeUnavailable?.()
+    await flushAsyncTicks(6)
+    expect(remountTerminalTabForRecovery).toHaveBeenCalledWith('tab-1')
+
+    // The surviving tail of `echo hi; rm -rf x`: reaching the fresh shell would
+    // let the user's own Enter run `rm -rf x` (#10065 follow-up).
+    sendTerminalInputThroughPane(pane, 'cho hi; rm -rf x')
+    expect(transport.sendInput).not.toHaveBeenCalledWith('cho hi; rm -rf x')
+    // A program that queries during reattach hangs if its reply is dropped.
+    sendTerminalInputThroughPane(pane, '\x1b[3;1R')
+    expect(transport.sendInputImmediate).toHaveBeenCalledWith('\x1b[3;1R')
+    sendTerminalInputThroughPane(pane, '\r')
+    expect(transport.sendInput).not.toHaveBeenCalledWith('\r')
+    // The terminator disarmed it, so the next real command reaches the shell.
+    sendTerminalInputThroughPane(pane, 'ls\r')
+    expect(transport.sendInput).toHaveBeenCalledWith('ls\r')
+    _resetTerminalPaneRecoveryForTests()
+  })
+
   it('recovers a wedged write pipeline after accepted input without renderer output', async () => {
     vi.useFakeTimers()
     const { connectPanePty } = await import('./pty-connection')
