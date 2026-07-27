@@ -3638,8 +3638,9 @@ export function connectPanePty(
       // cooldown window while typing. Local panes keep the lenient gate.
       requireAuthoritativeLiveness:
         Boolean(transport.getConnectionId?.()) || isRemoteRuntimePtyId(undeliverablePtyId),
-      // Why only the rejected path: a stalled-pipeline remount reattaches to the
-      // same shell, so its half-typed line is still on screen and intact.
+      // Why only the rejected path: it is the only one whose remount can land on
+      // a fresh shell. A stalled-pipeline remount always reattaches to the same
+      // shell, so its half-typed line is still on screen and intact.
       endpointReplaced: providerRejected
     })
   }

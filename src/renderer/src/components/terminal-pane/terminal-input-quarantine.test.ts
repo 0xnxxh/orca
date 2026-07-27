@@ -56,7 +56,7 @@ describe('terminal input quarantine', () => {
     expect(isTerminalInputQuarantined(TAB)).toBe(false)
   })
 
-  it('releases on an idle gap so a fresh command is never eaten', () => {
+  it('releases on an idle gap once a quarantined byte has been seen', () => {
     armTerminalInputQuarantine(TAB, 0)
     // Burst tail, no Enter — the user was still mid-line when the endpoint died.
     expect(shouldDropQuarantinedTerminalInput(TAB, 'c', REATTACH_MS)).toBe(true)
@@ -64,6 +64,22 @@ describe('terminal input quarantine', () => {
     // Then they notice, pause, and type a real command.
     expect(shouldDropQuarantinedTerminalInput(TAB, 'l', REATTACH_MS + 40 + 700)).toBe(false)
     expect(isTerminalInputQuarantined(TAB)).toBe(false)
+  })
+
+  // The accepted cost of the cap, pinned so it is not "fixed" by shortening it:
+  // over-quarantine is visible (nothing echoes) and recoverable by retyping,
+  // while under-quarantine executes half a command. A tail takes seconds to
+  // type, so a cap short enough to spare this command would cut that tail
+  // mid-line and deliver its remainder to the fresh shell.
+  it('eats a fresh command typed inside the cap, terminator included', () => {
+    armTerminalInputQuarantine(TAB, 0)
+    // No byte yet, so the idle gate cannot release the first keystroke however
+    // long the user waited; from there normal typing never opens a 700ms gap.
+    let at = 1_500
+    for (const char of 'ls -la\r') {
+      expect(shouldDropQuarantinedTerminalInput(TAB, char, at)).toBe(true)
+      at += 150
+    }
   })
 
   it('does not let the idle gate fire on the re-attach delay itself', () => {

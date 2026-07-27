@@ -38,10 +38,11 @@ type RecoveryRequest = {
    *  registry doesn't own, and treating null as "proceed" would let a
    *  disconnected remote pane churn reconnects on every cooldown window. */
   requireAuthoritativeLiveness?: boolean
-  /** The provider rejected the write because its endpoint died, so re-attach
-   *  lands on a *fresh* shell. Only then is the in-flight line mangled, and
-   *  only then may input be quarantined — a recovery that keeps the same live
-   *  shell would have a legitimate command eaten. */
+  /** The provider rejected the write because its endpoint stopped accepting
+   *  writes, so re-attach MAY land on a *fresh* shell (a respawn; a transient
+   *  socket drop reconnects to the same sessions). Only this path can mangle the
+   *  in-flight line, and only it may quarantine input — a recovery that always
+   *  keeps the same live shell would have a legitimate command eaten. */
   endpointReplaced?: boolean
 }
 
