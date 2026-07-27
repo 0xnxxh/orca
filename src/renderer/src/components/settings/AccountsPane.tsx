@@ -745,12 +745,21 @@ export function AccountsPane({
           action === `reauth:${nextActiveAccountId}`) ||
         (action.startsWith('remove:') && previousActiveAccountId !== nextActiveAccountId)
       if (shouldPromptRestart) {
+        // Why: `add` creates the managed home against the machine's own distro,
+        // so the slot it wrote is the created account's — not this row's, which
+        // may still say "WSL default".
+        const addedAccount =
+          action === 'adding'
+            ? next.accounts.find((account) => account.id === nextActiveAccountId)
+            : undefined
         void markLiveCodexSessionsForRestart({
           previousAccountLabel: getCodexAccountLabel(codexAccounts, previousActiveAccountId),
           nextAccountLabel: getCodexAccountLabel(next, nextActiveAccountId),
           // Why: the mutation wrote this row's slot only, so panes on any other
           // lane still launch under the account they already had.
-          target: actionRuntime
+          target: addedAccount ? getProviderAccountRuntime(addedAccount) : actionRuntime,
+          // Why: clearing a distro-less WSL row nulls every distro slot at once.
+          clearsEveryWslDistro: action === 'select:system'
         })
       }
     } catch (error) {

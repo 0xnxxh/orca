@@ -102,13 +102,16 @@ export async function markLiveCodexSessionsForRestart(args: {
   previousAccountLabel: string
   nextAccountLabel: string
   target?: CodexAccountSelectionTarget | null
+  /** Set when the change cleared the selection rather than pointing it somewhere. */
+  clearsEveryWslDistro?: boolean
 }): Promise<void> {
   const state = useAppStore.getState()
   const scans = await scanCodexPanes(state, {
     ptyIdFilter: null,
     isLaneInScope: getCodexAccountSwitchLaneMatcher({
       settings: state.settings,
-      target: args.target
+      target: args.target,
+      clearsEveryWslDistro: args.clearsEveryWslDistro
     })
   })
   const liveCodexSessionPtyIds = scans.filter((scan) => scan.eligible).map((scan) => scan.ptyId)

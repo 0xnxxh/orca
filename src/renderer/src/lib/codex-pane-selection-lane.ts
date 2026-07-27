@@ -8,13 +8,16 @@ import {
 } from '../../../shared/codex-selection-lane'
 import {
   isWslShellName,
-  resolveLocalWindowsTerminalRuntimeOptions
+  resolveLocalWindowsTerminalRuntimeOptions,
+  type LocalWindowsTerminalRuntimeOptions
 } from '../../../shared/local-windows-terminal-runtime'
 import { parseAppSshPtyId } from '../../../shared/ssh-pty-id'
+import { resolveTerminalStartupCwd } from '../../../shared/terminal-startup-cwd'
 import type { GlobalSettings, TerminalTab } from '../../../shared/types'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import { parseWslUncPath } from '../../../shared/wsl-paths'
 import { getLocalProjectExecutionRuntimeContext } from './local-preflight-context'
+import { getRendererAppPlatform } from './renderer-app-platform'
 
 type RuntimeEnvironmentSettings = Pick<GlobalSettings, 'activeRuntimeEnvironmentId'>
 
@@ -65,6 +68,13 @@ export function isForeignMachineCodexPtyId(ptyId: string): boolean {
 export function getCodexAccountSwitchLaneMatcher(args: {
   settings: RuntimeEnvironmentSettings | null | undefined
   target?: CodexAccountSelectionTarget | null
+  /**
+   * True only when the mutation cleared every WSL distro slot at once, which
+   * setSelectedCodexAccountIdForTarget does for a null account on a distro-less
+   * WSL target. Any other write lands in a single slot, so defaulting this to
+   * false keeps the matcher from muting a sibling distro's healthy panes.
+   */
+  clearsEveryWslDistro?: boolean
 }): (laneKey: string) => boolean {
   const runtimeTarget = getActiveRuntimeTarget(args.settings)
   // Why: with an environment active the mutation is RPC'd to that machine's
@@ -75,14 +85,10 @@ export function getCodexAccountSwitchLaneMatcher(args: {
     return (laneKey) => laneKey === environmentLaneKey
   }
   const normalized = normalizeCodexAccountSelectionTarget(args.target)
-  // Why a family rather than the `wsl:__default__` key: a WSL target that names
-  // no distro is resolved against the machine's own at write time. `add` stores
-  // the concrete distro it found, and selecting the system default clears every
-  // distro slot at once (setSelectedCodexAccountIdForTarget). Keying those to
-  // `__default__` would miss the very panes the mutation re-pointed. The cost is
-  // over-marking a sibling distro after an add — bounded to this machine's WSL
-  // panes, and far cheaper than a stranded pane with no notice.
-  if (normalized.runtime === 'wsl' && normalized.wslDistro === null) {
+  // Why a family rather than the `wsl:__default__` key: clearing a distro-less
+  // WSL selection nulls every distro slot, so every WSL pane really is stranded.
+  // Keying that to `__default__` alone would leave them all without a notice.
+  if (args.clearsEveryWslDistro && normalized.runtime === 'wsl' && normalized.wslDistro === null) {
     return (laneKey) => laneKey.startsWith(WSL_LANE_PREFIX)
   }
   const switchLaneKey = getCodexSelectionLaneKey(normalized)
@@ -92,7 +98,7 @@ export function getCodexAccountSwitchLaneMatcher(args: {
 /** The lane a live pane resolves its Codex account from. */
 export function resolveCodexPaneSelectionLaneKey(args: {
   state: CodexPaneLaneState
-  tab: Pick<TerminalTab, 'shellOverride' | 'worktreeId'>
+  tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>
   ptyId: string
 }): string {
   const remoteParts = parseRemoteRuntimePtyId(args.ptyId)
@@ -116,47 +122,67 @@ export function resolveCodexPaneSelectionLaneKey(args: {
 /**
  * Mirrors the main-process getCodexSelectionTargetForPty, from renderer state.
  *
- * Why the workspace path stands in for the PTY cwd: an explorer-created terminal
- * can start below the workspace root, but never outside it, so the WSL distro is
- * the same either way. Misreading a host pane as WSL would silently drop its
- * restart notice, so only the two signals a launch itself uses count as WSL.
+ * Why the pane cwd and not the workspace root: a terminal's startup cwd is
+ * deliberately NOT constrained to the worktree (see resolveTerminalStartupCwd,
+ * #7685), so a pane split after `cd \\wsl.localhost\...` runs on a different
+ * filesystem than its workspace. Main keys the lane off that cwd, so reading the
+ * root instead would call a live WSL pane `host` and mute it on a host switch.
  */
 function resolveLocalPaneSelectionTarget(args: {
   state: CodexPaneLaneState
-  tab: Pick<TerminalTab, 'shellOverride' | 'worktreeId'>
+  tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>
 }): CodexAccountSelectionTarget {
   const workspacePath = getWorkspacePath(args.state, args.tab.worktreeId)
-  const wslPath = workspacePath ? parseWslUncPath(workspacePath) : null
-  if (wslPath || isWslShellName(args.tab.shellOverride)) {
-    return { runtime: 'wsl', wslDistro: wslPath?.distro ?? resolveLocalPaneWslDistro(args) }
+  // Why this exact call: it is the same one main spawns through, so a relative
+  // or inherited startup folder resolves to the identical absolute path.
+  const paneCwd = workspacePath
+    ? (resolveTerminalStartupCwd(workspacePath, args.tab.startupCwd) ?? workspacePath)
+    : null
+  const wslPath = paneCwd ? parseWslUncPath(paneCwd) : null
+  const terminalRuntime = resolveLocalPaneTerminalRuntime(args)
+  if (wslPath || isWslShellName(terminalRuntime.shellOverride)) {
+    return {
+      runtime: 'wsl',
+      wslDistro: wslPath?.distro ?? terminalRuntime.terminalWindowsWslDistro
+    }
   }
   return { runtime: 'host' }
 }
 
 /**
- * The distro a WSL launch on a Windows-path worktree resolved its account from.
+ * The shell and distro the launch resolved, not merely the ones the tab asked for.
  *
- * Why this is not optional: pty.ts hands the resolved runtime's distro to
- * getCodexSelectionTargetForPty as its third argument, so such a pane launches
- * under `wsl:<distro>`. Stopping at the UNC path would key it `wsl:__default__`,
- * and its own distro's switch would then never reach it — the pane keeps the old
- * account with no notice, which is the bug this guard exists to avoid causing.
+ * Why the tab's own fields are not enough: pty.ts runs the request through
+ * resolveLocalWindowsTerminalRuntimeOptions and hands the result to
+ * getCodexSelectionTargetForPty — so an unset shellOverride still lands on WSL
+ * when that is the Windows default, and the distro comes from the resolved
+ * runtime. Reading only the tab would key such a pane `host` (a host switch then
+ * mutes a working WSL pane) or `wsl:__default__` (its own distro's switch never
+ * reaches it, which is #10757 returning).
  */
-function resolveLocalPaneWslDistro(args: {
+function resolveLocalPaneTerminalRuntime(args: {
   state: CodexPaneLaneState
-  tab: Pick<TerminalTab, 'shellOverride' | 'worktreeId'>
-}): string | null {
+  tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>
+}): LocalWindowsTerminalRuntimeOptions {
+  // Why the platform gate: pty.ts only consults the Windows terminal runtime on
+  // win32, so elsewhere the tab's own override is the whole answer.
+  if (getRendererAppPlatform() !== 'win32') {
+    return { shellOverride: args.tab.shellOverride, terminalWindowsWslDistro: null }
+  }
   const projectRuntime = getLocalProjectExecutionRuntimeContext(args.state, args.tab.worktreeId)
-  // Why handled here rather than below: resolveLocalWindowsTerminalRuntimeOptions
-  // throws on repair-required, which is a spawn-time refusal, not a lane answer.
   if (projectRuntime?.status === 'repair-required') {
-    return projectRuntime.repair.preferredRuntime.distro
+    // Why not delegate: resolveLocalWindowsTerminalRuntimeOptions throws here.
+    // A spawn-time refusal is not a lane answer, and the pane still means WSL.
+    return {
+      shellOverride: 'wsl.exe',
+      terminalWindowsWslDistro: projectRuntime.repair.preferredRuntime.distro
+    }
   }
   return resolveLocalWindowsTerminalRuntimeOptions({
     requestedShellOverride: args.tab.shellOverride,
     settings: args.state.settings ?? undefined,
     projectRuntime
-  }).terminalWindowsWslDistro
+  })
 }
 
 function getWorkspacePath(

@@ -23,18 +23,37 @@ function laneState(args?: {
   activeRuntimeEnvironmentId?: string | null
   worktreePath?: string
   folderPath?: string
+  terminalWindowsShell?: string
   terminalWindowsWslDistro?: string | null
 }): LaneState {
   return {
     folderWorkspaces: args?.folderPath ? [{ id: 'fw1', folderPath: args.folderPath }] : [],
     settings: {
       activeRuntimeEnvironmentId: args?.activeRuntimeEnvironmentId ?? null,
+      ...(args?.terminalWindowsShell ? { terminalWindowsShell: args.terminalWindowsShell } : {}),
       terminalWindowsWslDistro: args?.terminalWindowsWslDistro ?? null
     },
     worktreesByRepo: {
       repo1: [{ id: 'wt1', path: args?.worktreePath ?? '/Users/dev/code/orca' }]
     }
   } as unknown as LaneState
+}
+
+/** The Windows-only shell resolution is gated on the renderer platform. */
+function withWindowsRenderer(run: () => void): void {
+  const originalNavigator = globalThis.navigator
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+    configurable: true
+  })
+  try {
+    run()
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', {
+      value: originalNavigator,
+      configurable: true
+    })
+  }
 }
 
 const HOST_TAB = { worktreeId: 'wt1', shellOverride: undefined }
@@ -70,23 +89,62 @@ describe('resolveCodexPaneSelectionLaneKey', () => {
   // runtime, so keying it `wsl:__default__` would make its own distro's switch
   // miss it — the pane keeps the old account with no notice.
   it('keys a wsl.exe pane on a Windows-path worktree to the configured distro', () => {
-    expect(
-      resolveCodexPaneSelectionLaneKey({
-        state: laneState({ terminalWindowsWslDistro: 'Ubuntu' }),
-        tab: { worktreeId: 'wt1', shellOverride: 'wsl.exe' },
-        ptyId: 'pty-1'
-      })
-    ).toBe('wsl:Ubuntu')
+    withWindowsRenderer(() => {
+      expect(
+        resolveCodexPaneSelectionLaneKey({
+          state: laneState({ terminalWindowsWslDistro: 'Ubuntu', worktreePath: 'C:\\code\\app' }),
+          tab: { worktreeId: 'wt1', shellOverride: 'wsl.exe' },
+          ptyId: 'pty-1'
+        })
+      ).toBe('wsl:Ubuntu')
+    })
   })
 
   it('still keys an ordinary host pane to host when a WSL distro is configured', () => {
+    withWindowsRenderer(() => {
+      expect(
+        resolveCodexPaneSelectionLaneKey({
+          state: laneState({ terminalWindowsWslDistro: 'Ubuntu', worktreePath: 'C:\\code\\app' }),
+          tab: HOST_TAB,
+          ptyId: 'pty-1'
+        })
+      ).toBe('host')
+    })
+  })
+
+  // Why: main resolves the shell through resolveLocalWindowsTerminalRuntimeOptions,
+  // so an unset override still lands on WSL when that is the Windows default.
+  // Reading only the tab would key this pane `host` and mute it on a host switch.
+  it('keys an override-less pane by the default Windows shell', () => {
+    withWindowsRenderer(() => {
+      expect(
+        resolveCodexPaneSelectionLaneKey({
+          state: laneState({
+            terminalWindowsShell: 'wsl.exe',
+            terminalWindowsWslDistro: 'Ubuntu',
+            worktreePath: 'C:\\code\\app'
+          }),
+          tab: { worktreeId: 'wt1', shellOverride: undefined },
+          ptyId: 'pty-1'
+        })
+      ).toBe('wsl:Ubuntu')
+    })
+  })
+
+  // Why: the startup cwd is deliberately unconstrained (#7685), and main keys
+  // the lane off it, so a pane split across filesystems must follow the cwd.
+  it('follows the pane startup cwd out of the workspace filesystem', () => {
     expect(
       resolveCodexPaneSelectionLaneKey({
-        state: laneState({ terminalWindowsWslDistro: 'Ubuntu' }),
-        tab: HOST_TAB,
+        state: laneState({ worktreePath: 'C:\\code\\app' }),
+        tab: {
+          worktreeId: 'wt1',
+          shellOverride: undefined,
+          startupCwd: '\\\\wsl.localhost\\Ubuntu\\home\\dev'
+        },
         ptyId: 'pty-1'
       })
-    ).toBe('host')
+    ).toBe('wsl:Ubuntu')
   })
 
   it('reads the distro from a folder workspace path too', () => {
@@ -163,13 +221,13 @@ describe('getCodexAccountSwitchLaneMatcher', () => {
     expect(ubuntuSwitch('host')).toBe(false)
   })
 
-  // Why a family: selecting the system default with no distro clears EVERY wsl
-  // slot, and `add` stores the concrete distro it discovered. Matching only
-  // `wsl:__default__` would leave those panes stranded with no notice.
-  it('claims every WSL distro when the switch named none', () => {
+  // Why a family: clearing a distro-less WSL selection nulls EVERY wsl slot, so
+  // matching only `wsl:__default__` would leave those panes stranded, unnoticed.
+  it('claims every WSL distro when the change cleared them all', () => {
     const wslDefaultSwitch = getCodexAccountSwitchLaneMatcher({
       settings: null,
-      target: { runtime: 'wsl', wslDistro: null }
+      target: { runtime: 'wsl', wslDistro: null },
+      clearsEveryWslDistro: true
     })
     expect(wslDefaultSwitch('wsl:__default__')).toBe(true)
     expect(wslDefaultSwitch('wsl:Ubuntu')).toBe(true)
@@ -179,6 +237,19 @@ describe('getCodexAccountSwitchLaneMatcher', () => {
     expect(wslDefaultSwitch('env:env-1')).toBe(false)
     expect(wslDefaultSwitch('ssh-connection')).toBe(false)
     expect(wslDefaultSwitch('remote-runtime')).toBe(false)
+  })
+
+  // Why the negative half matters: pointing a distro-less WSL row at a real
+  // account writes only the `__default__` slot, so claiming the family there
+  // would card — and mute — every sibling distro's healthy Codex pane.
+  it('keeps a distro-less WSL selection off sibling distro panes', () => {
+    const wslDefaultSelect = getCodexAccountSwitchLaneMatcher({
+      settings: null,
+      target: { runtime: 'wsl', wslDistro: null }
+    })
+    expect(wslDefaultSelect('wsl:__default__')).toBe(true)
+    expect(wslDefaultSelect('wsl:Ubuntu')).toBe(false)
+    expect(wslDefaultSelect('host')).toBe(false)
   })
 
   it('scopes a switch made against a runtime environment to that machine', () => {
