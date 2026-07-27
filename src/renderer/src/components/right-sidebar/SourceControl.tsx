@@ -45,6 +45,8 @@ import { WORKSPACE_FILE_PATH_MIME } from '@/lib/workspace-file-drag'
 import { isFolderRepo } from '../../../../shared/repo-kind'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
+import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
+import { getScreenSubmitModifierLabel, isScreenSubmitShortcut } from '@/lib/screen-submit-shortcut'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -95,6 +97,7 @@ import {
   namespaceSourceControlTreeDirectoryKeys,
   type SourceControlTreeNode
 } from './source-control-tree'
+import { compareGitStatusEntries } from './source-control-status-sort'
 import {
   collectListSelectionEntries,
   getSubmoduleExpansionKey,
@@ -264,6 +267,7 @@ import {
   resolveCreatePrIntentRemoteStep,
   type CreatePrIntentRunToken
 } from './source-control-create-pr-intent-flow'
+import { resolveVisibleCreatePrHeaderAction } from './source-control-create-pr-intent-state'
 import { resolveBlockedCreateReviewNoticeMessage } from './source-control-create-review-blocked-action'
 import {
   buildLoadingHostedReviewCreationEligibility,
@@ -288,6 +292,7 @@ import {
 } from './source-control-hosted-review-push-target'
 import { buildSourceControlManualReviewUrlFromContext } from './source-control-manual-review-url'
 import { parseRemoteRepo } from './source-control-remote-repo'
+export { HostedReviewHeaderLink } from './hosted-review-header-chrome'
 import {
   createRunningCommitMessageGenerationRecord,
   getCommitMessageGenerationRecordKey,
@@ -2802,6 +2807,11 @@ function SourceControlInner(): React.JSX.Element {
     ]
   )
 
+  const openHostedReviewInChecks = useCallback(() => {
+    setRightSidebarOpen(true)
+    setRightSidebarTab('checks')
+  }, [setRightSidebarOpen, setRightSidebarTab])
+
   const handleBranchChangedByPullRequestGeneration = useCallback(async (): Promise<void> => {
     // Why: AI PR detail generation may rebase before summarizing, so refresh status if HEAD moved before the user submits the draft.
     await refreshActiveGitStatusAfterMutation()
@@ -4230,6 +4240,10 @@ function SourceControlInner(): React.JSX.Element {
     (!createPrHeaderAction.disabled || isCreatingPr || prGenerating)
       ? createPrHeaderAction
       : null
+  const visibleCreatePrHeaderAction = resolveVisibleCreatePrHeaderAction({
+    createPrHeaderAction
+  })
+
   const dropdownItems: DropdownEntry[] = useMemo(
     () =>
       resolveDropdownItems({
@@ -4696,6 +4710,26 @@ function SourceControlInner(): React.JSX.Element {
     remoteStatusForActions,
     runCreatePrIntent
   ])
+
+  const handleSourceControlKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>): void => {
+      handleSourceControlCommitShortcut(event, primaryAction, handlePrimaryClick)
+    },
+    [handlePrimaryClick, primaryAction]
+  )
+
+  const handleCreatePrHeaderClick = useCallback((): void => {
+    if (!createPrHeaderAction || createPrHeaderAction.disabled) {
+      return
+    }
+    if (createPrHeaderAction.kind === 'create_pr') {
+      void handleCreatePullRequest()
+      return
+    }
+    if (createPrHeaderAction.kind === 'create_pr_intent') {
+      void runCreatePrIntent()
+    }
+  }, [createPrHeaderAction, handleCreatePullRequest, runCreatePrIntent])
 
   const branchCompareInFlightRef = useRef(false)
   const branchCompareRerunRef = useRef(false)
@@ -5424,13 +5458,22 @@ function SourceControlInner(): React.JSX.Element {
 
   return (
     <>
-      <div ref={setSourceControlRoot} className="relative flex h-full flex-col overflow-hidden">
+      <div
+        ref={setSourceControlRoot}
+        className="relative flex h-full flex-col overflow-hidden"
+        onKeyDown={handleSourceControlKeyDown}
+      >
         <SourceControlHeaderToolbar
-          gitIdentityDisplay={gitIdentityDisplay}
           filterQuery={filterQuery}
           filterExpanded={filterExpanded}
           onFilterQueryChange={setFilterQuery}
           onFilterExpandedChange={setFilterExpanded}
+          visibleCreatePrHeaderAction={visibleCreatePrHeaderAction}
+          hostedReview={hostedReview}
+          isCreatePrIntentInFlight={isCreatePrIntentInFlight}
+          isCreatingPr={isCreatingPr || prGenerating}
+          onCreatePrHeaderClick={handleCreatePrHeaderClick}
+          onOpenHostedReviewInChecks={openHostedReviewInChecks}
           sourceControlViewMode={sourceControlViewMode}
           viewModeToggleDisabled={settings === null}
           onToggleViewMode={handleToggleSourceControlViewMode}
@@ -5441,6 +5484,7 @@ function SourceControlInner(): React.JSX.Element {
           onExpandNotes={() => setDiffCommentsExpanded(true)}
           branchSummary={branchSummary}
           compareBaseRef={compareBaseRef}
+          headDisplay={gitIdentityDisplay}
           upstreamStatus={remoteStatus}
           manualReviewUrl={manualReviewUrl}
         />
@@ -5488,6 +5532,7 @@ function SourceControlInner(): React.JSX.Element {
                   groupId={activeGroupId ?? activeWorktreeId}
                   comments={diffCommentsForActive}
                   triggerClassName="size-6"
+                  respondToOpenRequest
                 />
                 {diffCommentCount > 0 && (
                   <TooltipProvider delayDuration={400}>
@@ -6292,6 +6337,7 @@ function SourceControlInner(): React.JSX.Element {
         settings={settings}
         repo={activeRepo ?? null}
         discoveryHostKey={sourceControlAiDiscoveryHostKey}
+        linkedIssue={activeWorktree?.linkedIssue ?? null}
         onGenerate={(params) => {
           void handleGenerate({ sourceControlAiResolvedParams: params })
         }}
@@ -6313,6 +6359,7 @@ function SourceControlInner(): React.JSX.Element {
         settings={settings}
         repo={activeRepo ?? null}
         discoveryHostKey={sourceControlAiDiscoveryHostKey}
+        linkedIssue={activeWorktree?.linkedIssue ?? null}
         onGenerate={(params) => {
           void handleGeneratePullRequestFields({ sourceControlAiResolvedParams: params })
         }}
@@ -6324,6 +6371,20 @@ function SourceControlInner(): React.JSX.Element {
 
 const SourceControl = React.memo(SourceControlInner)
 export default SourceControl
+
+export function handleSourceControlCommitShortcut(
+  event: React.KeyboardEvent<HTMLElement>,
+  primaryAction: Pick<PrimaryAction, 'disabled' | 'kind'>,
+  onCommit: () => void
+): void {
+  if (primaryAction.disabled || primaryAction.kind !== 'commit' || !isScreenSubmitShortcut(event)) {
+    return
+  }
+  // Why: the handler lives on the Source Control root, so the shortcut cannot fire from the editor, terminal, or another sidebar tab.
+  event.preventDefault()
+  event.stopPropagation()
+  onCommit()
+}
 
 type CommitAreaProps = {
   worktreeId: string | null
@@ -6657,8 +6718,11 @@ export function CommitArea({
                 </Button>
               </span>
             </TooltipTrigger>
-            <TooltipContent side="top" sideOffset={6} className="max-w-72">
-              {primaryAction.title}
+            <TooltipContent side="top" sideOffset={6} className="flex max-w-72 items-center gap-2">
+              <span>{primaryAction.title}</span>
+              {primaryAction.kind === 'commit' ? (
+                <ShortcutKeyCombo keys={[getScreenSubmitModifierLabel(), 'Enter']} />
+              ) : null}
             </TooltipContent>
           </Tooltip>
           <DropdownMenu>
@@ -7790,6 +7854,7 @@ const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
     <SourceControlEntryContextMenu
       currentWorktreeId={currentWorktreeId}
       absolutePath={joinPath(worktreePath, entry.path)}
+      relativePath={entry.path}
       connectionId={connectionId}
       onView={() => onOpen(entry)}
       onRevealInExplorer={onRevealInExplorer}
@@ -8039,6 +8104,7 @@ function BranchEntryRow({
     <SourceControlEntryContextMenu
       currentWorktreeId={currentWorktreeId}
       absolutePath={joinPath(worktreePath, entry.path)}
+      relativePath={entry.path}
       connectionId={connectionId}
       onView={() => onOpen()}
       onRevealInExplorer={onRevealInExplorer}
@@ -8147,21 +8213,4 @@ export function ActionButton({
       </TooltipContent>
     </Tooltip>
   )
-}
-
-function compareGitStatusEntries(a: GitStatusEntry, b: GitStatusEntry): number {
-  return (
-    getConflictSortRank(a) - getConflictSortRank(b) ||
-    a.path.localeCompare(b.path, undefined, { numeric: true })
-  )
-}
-
-function getConflictSortRank(entry: GitStatusEntry): number {
-  if (entry.conflictStatus === 'unresolved') {
-    return 0
-  }
-  if (entry.conflictStatus === 'resolved_locally') {
-    return 1
-  }
-  return 2
 }
