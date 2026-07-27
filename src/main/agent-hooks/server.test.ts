@@ -6597,6 +6597,32 @@ describe('Last-status persistence', () => {
     }
   })
 
+  it('never persists leadStopWithLiveSubagents, so a restart cannot re-suppress a completion', async () => {
+    const server = new AgentHookServer()
+    await server.start({ env: 'production', userDataPath })
+    try {
+      await postHookEvent(server, buildBody({ hook_event_name: 'SessionStart' }), '/hook/codex')
+      await postHookEvent(
+        server,
+        buildBody({
+          hook_event_name: 'SubagentStart',
+          agent_id: '11111111-2222-4333-8444-555555555555',
+          agent_type: 'explore'
+        }),
+        '/hook/codex'
+      )
+      await postHookEvent(server, buildBody({ hook_event_name: 'Stop' }), '/hook/codex')
+      server.flushStatusPersistSync()
+      const persisted = JSON.parse(readFileSync(lastStatusPath(), 'utf8'))
+      // Why: the flag describes one live hook delivery. Rehydrating it would make the
+      // notification gate suppress the first real completion after every restart (#4375).
+      expect(persisted.entries[PANE].payload.state).toBe('done')
+      expect(persisted.entries[PANE].payload).not.toHaveProperty('leadStopWithLiveSubagents')
+    } finally {
+      server.stop()
+    }
+  })
+
   it('treats a corrupt file as empty hydration without throwing', async () => {
     mkdirSync(join(userDataPath, 'agent-hooks'), { recursive: true })
     writeFileSync(lastStatusPath(), 'not-json{{', 'utf8')
