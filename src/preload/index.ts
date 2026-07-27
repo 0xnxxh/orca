@@ -2159,6 +2159,16 @@ const api = {
     }
   },
 
+  macosTccPrompts: {
+    onThreshold: (callback: (payload: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: unknown): void =>
+        callback(payload)
+      ipcRenderer.on('macosTccPrompts:threshold', listener)
+      return () => ipcRenderer.removeListener('macosTccPrompts:threshold', listener)
+    },
+    dismiss: (): Promise<void> => ipcRenderer.invoke('macosTccPrompts:dismiss')
+  },
+
   developerPermissions: {
     getStatus: (): Promise<unknown> => ipcRenderer.invoke('developerPermissions:getStatus'),
     request: (args: { id: string }): Promise<unknown> =>

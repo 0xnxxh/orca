@@ -754,6 +754,7 @@ function createWebPreloadApi(): Partial<PreloadApi> {
     claudeAccounts: createAccountsApi(),
     cli: createCliApi(),
     agentHooks: createAgentHooksApi(),
+    macosTccPrompts: createMacosTccPromptsApi(),
     developerPermissions: createDeveloperPermissionsApi(),
     computerUsePermissions: createComputerUsePermissionsApi(),
     updater: createUpdaterApi(),
@@ -2741,6 +2742,14 @@ function createAgentHooksApi(): NonNullable<Partial<PreloadApi>['agentHooks']> {
     copilotStatus: () => status('copilot'),
     hermesStatus: () => status('hermes'),
     devinStatus: () => status('devin')
+  }
+}
+
+function createMacosTccPromptsApi(): NonNullable<Partial<PreloadApi>['macosTccPrompts']> {
+  // Why: TCC is a macOS-desktop concept; the web client has no log stream to watch.
+  return {
+    onThreshold: () => noopUnsubscribe,
+    dismiss: () => Promise.resolve()
   }
 }
 

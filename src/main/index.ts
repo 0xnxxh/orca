@@ -3,6 +3,7 @@ import { existsSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import os from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type Tray } from 'electron'
+import { stopTccPromptNotice } from './macos-tcc-prompt-notice'
 import { electronApp, is } from '@electron-toolkit/utils'
 import * as QRCode from 'qrcode'
 import {
@@ -2404,6 +2405,8 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
+  // Why: `log stream` ignores a closed stdout, so it outlives quit unless killed here.
+  stopTccPromptNotice()
   if (isQuittingForUpdate()) {
     recordUpdaterLifecycle('before_quit_allowed', undefined, {
       message: 'before-quit allowed for update install'

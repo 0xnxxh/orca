@@ -9,6 +9,7 @@ import type {
   UpdateCheckOptions,
   WorktreeStartupLaunch
 } from '../../shared/types'
+import { dismissTccPromptNotice, initTccPromptNotice } from '../macos-tcc-prompt-notice'
 import { registerRepoHandlers } from '../ipc/repos'
 import { registerWorktreeHandlers } from '../ipc/worktrees'
 import { registerWorkspaceCleanupHandlers } from '../ipc/workspace-cleanup'
@@ -129,6 +130,12 @@ export function attachMainWindowServices(
   registerSshHandlers(store, () => mainWindow, runtime)
   registerRemoteWorkspaceHandlers(store, () => mainWindow)
   registerFileDropRelay(mainWindow)
+  // Why: macOS-only inside; counts TCC dialogs raised in Orca's name so the FDA
+  // hint reaches only users macOS is actually prompting (#9756).
+  initTccPromptNotice(mainWindow)
+  ipcMain.handle('macosTccPrompts:dismiss', () => {
+    dismissTccPromptNotice()
+  })
   // Why: setupAutoUpdater sync-require()s electron-updater (slow on cold Windows w/ Defender, #7225), so defer past first paint; timer fallback covers crash-looping renderers.
   let updaterSetupDone = false
   const setupAutoUpdaterDeferred = (): void => {

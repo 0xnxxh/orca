@@ -2255,6 +2255,13 @@ export type PreloadApi = {
     unsubscribe: (ptyId: string) => Promise<void>
     onData: (callback: (payload: TerminalPreviewDataPayload) => void) => () => void
   }
+  macosTccPrompts: {
+    /** Fires once macOS has raised its Nth consent dialog naming Orca (#9756). */
+    onThreshold: (
+      callback: (payload: { promptCount: number; accessingBinaryName?: string }) => void
+    ) => () => void
+    dismiss: () => Promise<void>
+  }
   developerPermissions: {
     getStatus: () => Promise<DeveloperPermissionState[]>
     request: (args: { id: DeveloperPermissionId }) => Promise<DeveloperPermissionRequestResult>

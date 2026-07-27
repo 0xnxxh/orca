@@ -109,6 +109,7 @@ import {
 } from './runtime/sync-runtime-graph'
 import { useWebSessionTabsSync } from './runtime/web-session-tabs-sync'
 import { useGlobalFileDrop } from './hooks/useGlobalFileDrop'
+import { useMacosTccPromptNotice } from './hooks/useMacosTccPromptNotice'
 import { useRadixBodyPointerEventsRecovery } from './hooks/useRadixBodyPointerEventsRecovery'
 import { registerUpdaterBeforeUnloadBypass } from './lib/updater-beforeunload'
 import {
@@ -715,6 +716,7 @@ function App(): React.JSX.Element {
   // Why: wire file-change watching at App level so the editor keeps hearing FS changes when Explorer unmounts (right-sidebar switches to Source Control/Checks).
   useEditorExternalWatch()
   useGlobalFileDrop()
+  useMacosTccPromptNotice()
   useAutoAckViewedAgent()
   useDashboardPopoutBridge(settings?.experimentalAgentDashboardPopout === true)
 
