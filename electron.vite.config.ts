@@ -277,6 +277,9 @@ export const electronViteConfig: UserConfig = {
       // stay listed — overriding input otherwise drops electron-vite's default
       // renderer entry.
       rollupOptions: {
+        // Why: shared chunks must never import an HTML entry whose module mounts
+        // a different React root.
+        preserveEntrySignatures: 'strict',
         input: {
           index: resolve('src/renderer/index.html'),
           popout: resolve('src/renderer/popout.html'),

@@ -2,10 +2,10 @@ name: Install Node dependencies
 description: Installs the Node toolchain and repository dependencies for Linux CI jobs.
 
 inputs:
-  ignore-scripts:
-    description: Skip dependency lifecycle scripts when the job does not need native runtimes.
+  native-runtime:
+    description: Native runtime to prepare after the script-free install (none, node, or electron).
     required: false
-    default: 'false'
+    default: none
 
 runs:
   using: composite
@@ -22,9 +22,22 @@ runs:
         node-version-file: package.json
         cache: pnpm
 
+    - name: Validate native runtime
+      shell: bash
+      env:
+        NATIVE_RUNTIME: ${{ inputs.native-runtime }}
+      run: |
+        case "$NATIVE_RUNTIME" in
+          none|node|electron) ;;
+          *)
+            echo "::error::native-runtime must be none, node, or electron"
+            exit 2
+            ;;
+        esac
+
     # pnpm's bundled gyp_main.py is not executable on fresh Linux runners.
     - name: Use external node-gyp
-      if: inputs.ignore-scripts != 'true'
+      if: inputs.native-runtime != 'none'
       shell: bash
       run: |
         npm install -g node-gyp@11.5.0
@@ -40,15 +53,19 @@ runs:
 
     - name: Install dependencies
       shell: bash
-      env:
-        IGNORE_SCRIPTS: ${{ inputs.ignore-scripts }}
       run: |
-        install_args=(--no-frozen-lockfile --prefer-frozen-lockfile=false --os=current --os=win32 --cpu=current)
-        if [ "$IGNORE_SCRIPTS" = "true" ]; then
-          install_args+=(--ignore-scripts)
-        elif [ "$IGNORE_SCRIPTS" != "false" ]; then
-          echo "::error::ignore-scripts must be true or false"
-          exit 2
-        fi
-        pnpm install "${install_args[@]}"
+        pnpm install \
+          --no-frozen-lockfile \
+          --prefer-frozen-lockfile=false \
+          --os=current \
+          --os=win32 \
+          --cpu=current \
+          --ignore-scripts
         git diff --exit-code package.json pnpm-lock.yaml
+
+    - name: Prepare native runtime
+      if: inputs.native-runtime != 'none'
+      shell: bash
+      env:
+        NATIVE_RUNTIME: ${{ inputs.native-runtime }}
+      run: node config/scripts/ensure-native-runtime.mjs --runtime="$NATIVE_RUNTIME"

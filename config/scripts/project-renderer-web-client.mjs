@@ -19,6 +19,36 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 const selectedFiles = new Set(['web-index.html'])
 const visitedEntries = new Set()
 
+function assertEntryIsolation() {
+  const entryKeys = new Set(
+    Object.entries(manifest)
+      .filter(([, entry]) => entry?.isEntry === true)
+      .map(([key]) => key)
+  )
+
+  for (const sourceEntry of entryKeys) {
+    const visited = new Set()
+    const pending = [sourceEntry]
+    while (pending.length > 0) {
+      const key = pending.pop()
+      if (visited.has(key)) {
+        continue
+      }
+      visited.add(key)
+      const entry = manifest[key]
+      if (!entry || typeof entry !== 'object') {
+        throw new Error(`Renderer manifest is missing entry: ${key}`)
+      }
+      for (const dependency of [...(entry.imports ?? []), ...(entry.dynamicImports ?? [])]) {
+        if (entryKeys.has(dependency) && dependency !== sourceEntry) {
+          throw new Error(`Renderer entry ${sourceEntry} executes entry ${dependency}`)
+        }
+        pending.push(dependency)
+      }
+    }
+  }
+}
+
 function addOutputPath(outputPath) {
   if (
     typeof outputPath !== 'string' ||
@@ -107,6 +137,7 @@ async function minifyWebOutput() {
   )
 }
 
+assertEntryIsolation()
 visitManifestEntry('web-index.html')
 includeReferencedOutputs()
 

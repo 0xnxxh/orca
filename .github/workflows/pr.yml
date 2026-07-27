@@ -24,8 +24,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/install-node-dependencies
-        with:
-          ignore-scripts: 'true'
 
       - name: Lint
         run: pnpm exec oxlint --format github
@@ -73,8 +71,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/install-node-dependencies
-        with:
-          ignore-scripts: 'true'
 
       - run: pnpm typecheck
 
@@ -89,8 +85,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/install-node-dependencies
-        with:
-          ignore-scripts: 'true'
 
       - name: Verify Git binary compatibility matrix
         run: |
@@ -144,10 +138,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y zsh
 
       - uses: ./.github/actions/install-node-dependencies
+        with:
+          native-runtime: node
 
       - name: Test real shell contracts
         run: |
-          node config/scripts/ensure-native-runtime.mjs --runtime=node
           pnpm exec vitest run --config config/vitest.config.ts \
             src/main/daemon/shell-ready.test.ts \
             src/main/daemon/node-pty-fd-leak.test.ts \
@@ -172,7 +167,7 @@ jobs:
 
       - uses: ./.github/actions/install-node-dependencies
         with:
-          ignore-scripts: 'true'
+          native-runtime: node
 
       - name: Install Electron package binary for tests
         run: node config/scripts/install-electron-package-binary.mjs
@@ -198,10 +193,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: ./.github/actions/install-node-dependencies
-        with:
-          ignore-scripts: 'true'
-
       - name: Cache electron-builder downloads
         uses: actions/cache@v5
         with:
@@ -212,16 +203,17 @@ jobs:
           restore-keys: |
             electron-builder-linux-
 
-      # Native preparation does not touch the bundle output directories.
+      - uses: ./.github/actions/install-node-dependencies
+        with:
+          native-runtime: electron
+
       - name: Build package inputs
         run: |
-          pnpm run ensure:electron-runtime &
-          pids=("$!")
-
           status=0
           pnpm run build:cli || status=1
 
           scripts=(build:relay build:electron-vite:parallel)
+          pids=()
           for script in "${scripts[@]}"; do
             pnpm run "$script" &
             pids+=("$!")

@@ -26,4 +26,10 @@ describe('Electron Vite output contract', () => {
     expect(external('@xterm/headless', undefined, false)).toBe(false)
     expect(external('@xterm/addon-serialize', undefined, false)).toBe(false)
   })
+
+  it('isolates renderer entry side effects behind strict facades', () => {
+    expect(electronViteConfig.renderer?.build?.rollupOptions?.preserveEntrySignatures).toBe(
+      'strict'
+    )
+  })
 })

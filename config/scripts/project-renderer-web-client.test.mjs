@@ -98,4 +98,20 @@ describe('renderer web client projection', () => {
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('Renderer manifest is missing entry: web-index.html')
   })
+
+  it('rejects renderer entries that execute another entry root', () => {
+    const root = createRendererFixture()
+    const manifestPath = join(root, 'out/renderer/.vite/manifest.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    manifest['web-index.html'].dynamicImports.push('index.html')
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: root,
+      encoding: 'utf8'
+    })
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('Renderer entry web-index.html executes entry index.html')
+  })
 })

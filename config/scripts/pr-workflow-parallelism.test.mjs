@@ -49,15 +49,18 @@ describe('PR workflow parallelism', () => {
     const shellStep = workflow.jobs.shell_contracts.steps.find(
       (step) => step.name === 'Test real shell contracts'
     )
+    const shellInstall = workflow.jobs.shell_contracts.steps.find(
+      (step) => step.uses === './.github/actions/install-node-dependencies'
+    )
 
     expect(workflow.jobs.test.steps.some((step) => step.name === 'Install zsh')).toBe(false)
     expect(workflow.jobs.shell_contracts.steps.some((step) => step.name === 'Install zsh')).toBe(
       true
     )
+    expect(shellInstall.with['native-runtime']).toBe('node')
     for (const testFile of nativeShellContractFiles) {
       expect(shellStep.run).toContain(testFile)
     }
-    expect(shellStep.run).toContain('ensure-native-runtime.mjs --runtime=node')
   })
 
   it('keeps every real-zsh test in the dedicated shell lane', () => {
@@ -74,7 +77,6 @@ describe('PR workflow parallelism', () => {
     )
 
     expect(buildStep.run).toContain('scripts=(build:relay build:electron-vite:parallel)')
-    expect(buildStep.run).toContain('pnpm run ensure:electron-runtime &')
     expect(buildStep.run).toContain('pnpm run "$script" &')
     expect(
       workflow.jobs.package.steps.find(
@@ -94,41 +96,45 @@ describe('PR workflow parallelism', () => {
     expect(steps[nodeIndex].with.cache).toBe('pnpm')
   })
 
-  it('skips lifecycle scripts outside native-runtime test setup', () => {
-    for (const jobName of [
-      'static_analysis',
-      'typecheck',
-      'git_compatibility',
-      'test',
-      'package'
-    ]) {
-      const installStep = workflow.jobs[jobName].steps.find(
-        (step) => step.uses === './.github/actions/install-node-dependencies'
-      )
-      expect(installStep.with['ignore-scripts'], jobName).toBe('true')
-    }
-
-    const shellInstall = workflow.jobs.shell_contracts.steps.find(
+  it('restores Electron downloads before preparing the package runtime', () => {
+    const steps = workflow.jobs.package.steps
+    const cacheIndex = steps.findIndex((step) => step.name === 'Cache electron-builder downloads')
+    const installIndex = steps.findIndex(
       (step) => step.uses === './.github/actions/install-node-dependencies'
     )
-    expect(shellInstall.with).toBeUndefined()
+
+    expect(cacheIndex).toBeLessThan(installIndex)
+  })
+
+  it('prepares each native runtime before its consumers start', () => {
+    const installFor = (jobName) =>
+      workflow.jobs[jobName].steps.find(
+        (step) => step.uses === './.github/actions/install-node-dependencies'
+      )
+
+    for (const jobName of ['static_analysis', 'typecheck', 'git_compatibility']) {
+      expect(installFor(jobName).with, jobName).toBeUndefined()
+    }
+    expect(installFor('shell_contracts').with['native-runtime']).toBe('node')
+    expect(installFor('test').with['native-runtime']).toBe('node')
+    expect(installFor('package').with['native-runtime']).toBe('electron')
+
     expect(
       dependencyAction.runs.steps.find((step) => step.name === 'Use external node-gyp').if
-    ).toBe("inputs.ignore-scripts != 'true'")
+    ).toBe("inputs.native-runtime != 'none'")
     const dependencyInstall = dependencyAction.runs.steps.find(
       (step) => step.name === 'Install dependencies'
     )
-    expect(dependencyInstall.env.IGNORE_SCRIPTS).toBe('${{ inputs.ignore-scripts }}')
-    expect(dependencyInstall.run).toContain(
-      '--no-frozen-lockfile --prefer-frozen-lockfile=false --os=current --os=win32 --cpu=current'
+    expect(dependencyInstall.run).toContain('--no-frozen-lockfile')
+    expect(dependencyInstall.run).toContain('--ignore-scripts')
+    const prepareRuntime = dependencyAction.runs.steps.find(
+      (step) => step.name === 'Prepare native runtime'
     )
-    expect(dependencyInstall.run).toContain('install_args+=(--ignore-scripts)')
-    expect(workflow.jobs.test.steps.find((step) => step.name === 'Test shard').run).not.toContain(
-      'ensure-native-runtime'
-    )
+    expect(prepareRuntime.if).toBe("inputs.native-runtime != 'none'")
+    expect(prepareRuntime.run).toContain('ensure-native-runtime.mjs --runtime="$NATIVE_RUNTIME"')
   })
 
-  it('reuses native preparation only after the concurrent runtime gate', () => {
+  it('reuses native preparation after the dependency action gate', () => {
     const buildStep = workflow.jobs.package.steps.find(
       (step) => step.name === 'Build package inputs'
     )
@@ -136,7 +142,7 @@ describe('PR workflow parallelism', () => {
       (step) => step.name === 'Package unpacked app'
     )
 
-    expect(buildStep.run).toContain('pnpm run ensure:electron-runtime &')
+    expect(buildStep.run).not.toContain('ensure:electron-runtime')
     expect(packageStep.env.ORCA_REUSE_PREPARED_NATIVE_RUNTIME).toBe('1')
   })
 
