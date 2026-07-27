@@ -11,6 +11,7 @@ import {
 } from './project-combobox-matching'
 import { ProjectOptionDetail, ProjectOptionMark, ProjectOptionRow } from './ProjectComboboxRow'
 import { useRecentProjectIds } from './use-recent-project-ids'
+import { useWheelScrollable } from './use-wheel-scrollable'
 
 type ProjectComboboxProps = {
   options: readonly NewWorkspaceProjectOption[]
@@ -57,7 +58,9 @@ export default function ProjectCombobox({
     [query]
   )
   const inputRef = useRef<HTMLInputElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
+  // Wheel shim: react-remove-scroll (Radix Dialog) cancels wheel events for
+  // this portaled pane, so the list needs to scroll itself.
+  const { ref: listRef, setNode: setListNode } = useWheelScrollable<HTMLDivElement>()
   const listId = React.useId()
 
   const recentIds = useRecentProjectIds()
@@ -82,11 +85,13 @@ export default function ProjectCombobox({
   // A committed pick shows as the field's own content; typing replaces it.
   const committed = selected !== null && query.length === 0
 
+  // Keep the armed row in view as arrow keys walk past the visible window.
+  // `listRef` is a stable ref object, so reading `.current` here needs no dep.
   React.useEffect(() => {
     if (open) {
       listRef.current?.querySelector('[data-armed="true"]')?.scrollIntoView({ block: 'nearest' })
     }
-  }, [open, armedIndex, rowKeys.length])
+  }, [listRef, open, armedIndex, rowKeys.length])
 
   const commit = useCallback(
     (key: string | null): void => {
@@ -122,8 +127,13 @@ export default function ProjectCombobox({
         commit(armedRowKey)
         return
       }
-      if (event.key === 'Escape' && open) {
+      // Why: not gated on `open` — a leftover query with the list closed would
+      // otherwise strand the field showing text that matches nothing and hides
+      // the committed project. Escape always restores the committed display,
+      // and only bubbles (to close the dialog) when there's nothing to undo.
+      if (event.key === 'Escape' && (open || query.length > 0)) {
         event.preventDefault()
+        event.stopPropagation()
         setOpen(false)
         setQuery('')
         return
@@ -135,7 +145,7 @@ export default function ProjectCombobox({
         setOpen(true)
       }
     },
-    [armProject, armedIndex, armedRowKey, commit, committed, open, rowKeys, selected]
+    [armProject, armedIndex, armedRowKey, commit, committed, open, query, rowKeys, selected]
   )
 
   return (
@@ -148,7 +158,7 @@ export default function ProjectCombobox({
             setOpen(true)
           }}
           className={cn(
-            'flex h-8 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-transparent px-2.5 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30',
+            'flex h-9 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-transparent px-2.5 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30',
             invalid && 'border-destructive ring-destructive/20 dark:ring-destructive/40',
             triggerClassName
           )}
@@ -190,13 +200,20 @@ export default function ProjectCombobox({
             {committed && selected ? (
               <div
                 aria-hidden="true"
-                className="pointer-events-none absolute inset-0 flex items-center gap-2 text-sm"
+                className="pointer-events-none absolute inset-0 flex items-center text-sm"
               >
-                <span className="min-w-0 max-w-[50%] shrink truncate">{selected.displayName}</span>
-                <ProjectOptionDetail
-                  detail={selected.detail}
-                  className="min-w-0 flex-1 shrink-[999] justify-end text-[11px] text-muted-foreground"
-                />
+                {/* Why: the outer row centres this group in the field, while the
+                    group itself is baseline-aligned — centring two different
+                    type sizes leaves the smaller one sitting visibly high. */}
+                <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                  <span className="min-w-0 max-w-[50%] shrink truncate">
+                    {selected.displayName}
+                  </span>
+                  <ProjectOptionDetail
+                    detail={selected.detail}
+                    className="min-w-0 flex-1 shrink-[999] justify-end text-xs text-muted-foreground"
+                  />
+                </div>
               </div>
             ) : null}
           </div>
@@ -239,9 +256,13 @@ export default function ProjectCombobox({
           )}
           className="flex min-h-0 flex-col"
         >
+          {/* Why: `presentation` — this element exists to scroll, and an
+              unroled div between a listbox and its options breaks the
+              ownership relationship assistive tech relies on. */}
           <div
-            ref={listRef}
-            className="max-h-64 min-h-0 flex-1 overflow-y-auto p-1 scrollbar-sleek"
+            ref={setListNode}
+            role="presentation"
+            className="max-h-72 min-h-0 flex-1 overflow-y-auto p-1 scrollbar-sleek"
           >
             {matches.length === 0 ? (
               <p className="px-2 py-5 text-center text-[13px] text-muted-foreground">
@@ -257,9 +278,15 @@ export default function ProjectCombobox({
               </p>
             ) : null}
             {sections.map((section) => (
-              <div key={section.key}>
+              // Why: `role="group"` — a bare div between a listbox and its
+              // options breaks the ownership relationship for screen readers,
+              // which is the only thing that makes the headings announceable.
+              <div key={section.key} role="group" aria-label={section.heading ?? undefined}>
                 {section.heading ? (
-                  <div className="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-[0.05em] text-muted-foreground uppercase">
+                  <div
+                    aria-hidden="true"
+                    className="px-2 pt-2.5 pb-1 text-[11px] font-semibold tracking-[0.05em] text-muted-foreground uppercase"
+                  >
                     {section.heading}
                   </div>
                 ) : null}
@@ -290,7 +317,7 @@ export default function ProjectCombobox({
               onMouseMove={() => armProject(ADD_PROJECT_KEY)}
               onClick={() => commit(ADD_PROJECT_KEY)}
               className={cn(
-                'flex h-7 shrink-0 cursor-default items-center gap-2 border-t border-border px-2 text-[13px]',
+                'flex h-9 shrink-0 cursor-default items-center gap-2 border-t border-border px-2 text-sm',
                 armedRowKey === ADD_PROJECT_KEY && 'bg-accent text-accent-foreground'
               )}
             >

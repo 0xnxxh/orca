@@ -74,7 +74,7 @@ export function ProjectOptionDetail({
     )
   }
   return (
-    <span className={cn('flex min-w-0 items-center overflow-hidden', className)} title={detail}>
+    <span className={cn('flex min-w-0 items-baseline overflow-hidden', className)} title={detail}>
       {/* Head collapses first; the tail only truncates once the head is gone. */}
       <span className="min-w-0 shrink-[999] truncate">{split.head}</span>
       <span className="min-w-0 shrink truncate">/{split.tail}</span>
@@ -114,12 +114,18 @@ export function ProjectOptionRow({
       onMouseMove={onArm}
       onClick={onCommit}
       className={cn(
-        'flex h-7 cursor-default items-center gap-2 rounded-sm px-2 text-[13px]',
+        // Why: `items-baseline` (not `items-center`) — the name and its smaller
+        // detail line sit on one baseline, so the two type sizes read as one
+        // line rather than two boxes centred against each other.
+        'flex h-8 cursor-default items-baseline gap-2 rounded-sm px-2 text-sm',
         armed && 'bg-accent text-accent-foreground',
         current && !armed && 'bg-accent/60'
       )}
     >
-      <ProjectOptionMark option={option} />
+      {/* The mark is a dot, not text, so it centres on the row itself. */}
+      <span className="flex h-8 shrink-0 items-center">
+        <ProjectOptionMark option={option} />
+      </span>
       {/* Name keeps up to half the row; the path absorbs the rest so a deep
           path can't squeeze the name down to "chec…". */}
       <MatchedText
@@ -131,14 +137,15 @@ export function ProjectOptionRow({
         detail={option.detail}
         hits={detailHits}
         className={cn(
-          'ml-auto min-w-0 flex-1 shrink-[999] justify-end pl-2 text-right text-[11px]',
+          'ml-auto min-w-0 flex-1 shrink-[999] justify-end pl-2 text-right text-xs',
           ambiguous ? 'text-foreground/80' : 'text-muted-foreground'
         )}
       />
       {/* Takes space only while armed, so an unarmed row spends its full width
           on the path and the cap visibly claims it back on hover. */}
       {armed ? (
-        <span className="shrink-0 pl-1.5 text-muted-foreground">
+        // A key cap is a chip, not text, so it centres on the row.
+        <span className="flex h-8 shrink-0 items-center pl-1.5 text-muted-foreground">
           <ShortcutKeyCombo keys={['↵']} keyCapClassName="min-w-5 px-1 py-0 text-[10px]" />
         </span>
       ) : null}

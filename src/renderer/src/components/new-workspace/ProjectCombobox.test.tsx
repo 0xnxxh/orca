@@ -7,8 +7,21 @@ import type { NewWorkspaceProjectOption } from '@/lib/new-workspace-project-opti
 import ProjectCombobox from './ProjectCombobox'
 
 // Render the popover inline so assertions can reach the list without a portal.
+// `onOpenChange` is exposed on a button so a test can close the popover the way
+// Radix does on Escape — independently of the component's own key handler.
 vi.mock('@/components/ui/popover', () => ({
-  Popover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  Popover: ({
+    children,
+    onOpenChange
+  }: {
+    children: React.ReactNode
+    onOpenChange?: (open: boolean) => void
+  }) => (
+    <div>
+      <button type="button" data-test-close-popover onClick={() => onOpenChange?.(false)} />
+      {children}
+    </div>
+  ),
   PopoverAnchor: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   PopoverContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>
 }))
@@ -322,5 +335,59 @@ describe('ProjectCombobox', () => {
 
     expect(onAddProject).toHaveBeenCalledTimes(1)
     expect(onValueChange).not.toHaveBeenCalled()
+  })
+
+  it('restores the committed project on Escape instead of stranding a stale query', () => {
+    act(() => {
+      root.render(
+        <ProjectCombobox options={projects} value="github:stablyai/orca" onValueChange={vi.fn()} />
+      )
+    })
+    openList()
+    type('zzzznomatch')
+    expect(field().value).toBe('zzzznomatch')
+    // Radix closes the popover itself on Escape/outside-click, leaving a closed
+    // list with a live query — the state that used to strand the field showing
+    // text matching nothing while hiding the committed project.
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('[data-test-close-popover]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    act(() => {
+      field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+
+    expect(field().value).toBe('')
+    const shell = container.querySelector('[data-project-combobox-root="true"]')
+    expect(shell?.textContent).toContain('orca')
+  })
+
+  it('owns every option from the listbox, with no unroled wrapper in between', () => {
+    act(() => {
+      root.render(
+        <ProjectCombobox
+          options={projects}
+          value={null}
+          onValueChange={vi.fn()}
+          onAddProject={vi.fn()}
+        />
+      )
+    })
+    openList()
+
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox).toBeTruthy()
+    const options = Array.from(listbox?.querySelectorAll('[role="option"]') ?? [])
+    expect(options.length).toBeGreaterThan(0)
+    for (const option of options) {
+      let parent = option.parentElement
+      while (parent && parent !== listbox) {
+        // A bare wrapper here breaks the listbox → option relationship for AT.
+        expect(parent.getAttribute('role')).toBeTruthy()
+        parent = parent.parentElement
+      }
+    }
   })
 })
