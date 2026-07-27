@@ -62,6 +62,7 @@ const MODEL_PRICING: Record<string, ClaudeModelPricing> = {
   'claude-fable-5': { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
   'claude-opus-5': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   // Why: Sonnet 5 bills its full 1M window at flat rates, so no long-context tier here.
+  // Why: standard rates, not the $2/$10 introductory rate ending 2026-08-31 — no date dimension.
   'claude-sonnet-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   'claude-opus-4-7': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
