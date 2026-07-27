@@ -15,7 +15,8 @@ export function ProjectOptionMark({
   return option.kind === 'project-group' ? (
     <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
   ) : (
-    <RepoBadgeMark color={option.badgeColor} className="rounded-full" />
+    // Square, matching the mark everywhere else (jump palette, sidebar).
+    <RepoBadgeMark color={option.badgeColor} />
   )
 }
 

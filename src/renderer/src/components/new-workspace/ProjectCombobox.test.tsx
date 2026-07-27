@@ -364,6 +364,45 @@ describe('ProjectCombobox', () => {
     expect(shell?.textContent).toContain('orca')
   })
 
+  it('drops an uncommitted query when the list closes, so junk text never persists', () => {
+    act(() => {
+      root.render(
+        <ProjectCombobox options={projects} value="github:stablyai/orca" onValueChange={vi.fn()} />
+      )
+    })
+    openList()
+    type('asasdasd')
+    expect(field().value).toBe('asasdasd')
+
+    // Blur / outside-click closes via Radix, not the key handler.
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('[data-test-close-popover]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(field().value).toBe('')
+    const shell = container.querySelector('[data-project-combobox-root="true"]')
+    expect(shell?.textContent).toContain('orca')
+  })
+
+  it('marks the field invalid so a failed create press can turn it red', () => {
+    act(() => {
+      root.render(
+        <ProjectCombobox
+          options={projects}
+          value={null}
+          onValueChange={vi.fn()}
+          invalid
+          describedBy="project-error"
+        />
+      )
+    })
+
+    expect(field().getAttribute('aria-invalid')).toBe('true')
+    expect(field().getAttribute('aria-describedby')).toBe('project-error')
+  })
+
   it('owns every option from the listbox, with no unroled wrapper in between', () => {
     act(() => {
       root.render(

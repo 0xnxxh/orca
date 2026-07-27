@@ -27,6 +27,11 @@ type ProjectComboboxProps = {
 
 const ADD_PROJECT_KEY = 'add-project'
 
+/** True when an event target is the field/anchor this popover belongs to. */
+function isWithinCombobox(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[data-project-combobox-root="true"]') !== null
+}
+
 /**
  * Type-ahead project picker: the field *is* the search, so there's no trigger
  * wrapping a second search box. Exactly one row is armed at any time and Enter
@@ -148,8 +153,18 @@ export default function ProjectCombobox({
     [armProject, armedIndex, armedRowKey, commit, committed, open, query, rowKeys, selected]
   )
 
+  // Why: a query only means something while the list is open. Closing without
+  // committing (blur, outside click, Esc) must drop it, or the field is left
+  // showing text that matches nothing and hides the selected project.
+  const handleOpenChange = useCallback((next: boolean): void => {
+    setOpen(next)
+    if (!next) {
+      setQuery('')
+    }
+  }, [])
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverAnchor asChild>
         <div
           data-project-combobox-root="true"
@@ -251,6 +266,20 @@ export default function ProjectCombobox({
         // not steal it on open, nor yank it back on close after a pick.
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
+        // Why: the field lives in the anchor, not inside the content, so Radix
+        // sees a focus/pointer event "outside" the layer and dismisses it the
+        // instant you tab in. Keep the layer open whenever the interaction is
+        // within this control; genuine outside events still close it.
+        onFocusOutside={(event) => {
+          if (isWithinCombobox(event.target)) {
+            event.preventDefault()
+          }
+        }}
+        onInteractOutside={(event) => {
+          if (isWithinCombobox(event.target)) {
+            event.preventDefault()
+          }
+        }}
       >
         {/* The listbox wraps a scrolling pane plus the pinned Add row, so both
             stay `option` children of one listbox. */}
@@ -272,10 +301,10 @@ export default function ProjectCombobox({
             className="max-h-72 min-h-0 flex-1 overflow-y-auto p-1 scrollbar-sleek"
           >
             {matches.length === 0 ? (
-              // Why: sized and aligned like a row rather than a centred block —
-              // a tall centred panel next to 32px rows reads as a different
-              // kind of surface and makes an empty result feel like an error.
-              <p className="flex h-8 items-center px-2 text-sm text-muted-foreground">
+              // Why: row-height rather than a tall centred block — a 60px panel
+              // next to 32px rows reads as a different kind of surface and
+              // makes an empty result feel like an error.
+              <p className="flex h-8 items-center justify-center px-2 text-sm text-muted-foreground">
                 {options.length === 0
                   ? translate(
                       'auto.components.new.workspace.ProjectCombobox.noProjects',
