@@ -888,7 +888,7 @@ function settingsForKnownRepoOwner(
     : ({ activeRuntimeEnvironmentId: null } as AppState['settings'])
 }
 
-function settingsForWorktreeOwner(
+function trySettingsForWorktreeOwner(
   state: Pick<
     AppState,
     | 'repos'
@@ -903,12 +903,44 @@ function settingsForWorktreeOwner(
     | 'removedRuntimeEnvironmentIds'
   >,
   worktreeId: string
-) {
+): AppState['settings'] | null {
   const route = resolveWorktreeOperationRoute(state, worktreeId)
   if (!route) {
-    throw new Error(WORKTREE_REMOVAL_AMBIGUOUS_ERROR)
+    return null
   }
   return settingsForWorktreeOperationRoute(state.settings, route)
+}
+
+function settingsForWorktreeOwner(
+  state: Parameters<typeof trySettingsForWorktreeOwner>[0],
+  worktreeId: string
+) {
+  const settings = trySettingsForWorktreeOwner(state, worktreeId)
+  if (!settings) {
+    throw new Error(WORKTREE_REMOVAL_AMBIGUOUS_ERROR)
+  }
+  return settings
+}
+
+function persistPassiveWorktreeMetaForOwner(
+  get: WorktreeSliceGet,
+  worktreeId: string,
+  updates: Partial<WorktreeMeta>,
+  errorLabel: string
+): void {
+  const ownerSettings = trySettingsForWorktreeOwner(get(), worktreeId)
+  if (!ownerSettings) {
+    console.warn(`Skipped ${errorLabel}: workspace identity is ambiguous across hosts`, worktreeId)
+    return
+  }
+  void persistWorktreeMeta(ownerSettings, worktreeId, updates).catch((err) => {
+    if (isRuntimeSelectorNotFoundError(err)) {
+      void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
+      return
+    }
+    console.error(`Failed to ${errorLabel}:`, err)
+    void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
+  })
 }
 
 async function listDetectedWorktreesForRepo(
@@ -4167,17 +4199,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       return
     }
 
-    void persistWorktreeMeta(settingsForWorktreeOwner(get(), worktreeId), worktreeId, {
-      isUnread: true,
-      lastActivityAt: now
-    }).catch((err) => {
-      if (isRuntimeSelectorNotFoundError(err)) {
-        void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
-        return
-      }
-      console.error('Failed to persist unread worktree state:', err)
-      void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
-    })
+    persistPassiveWorktreeMetaForOwner(
+      get,
+      worktreeId,
+      { isUnread: true, lastActivityAt: now },
+      'persist unread worktree state'
+    )
   },
 
   observeTerminalGitHubPullRequestLink: (worktreeId, link) => {
@@ -4291,16 +4318,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       return
     }
 
-    void persistWorktreeMeta(settingsForWorktreeOwner(get(), worktreeId), worktreeId, {
-      isUnread: false
-    }).catch((err) => {
-      if (isRuntimeSelectorNotFoundError(err)) {
-        void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
-        return
-      }
-      console.error('Failed to persist cleared unread worktree state:', err)
-      void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
-    })
+    persistPassiveWorktreeMetaForOwner(
+      get,
+      worktreeId,
+      { isUnread: false },
+      'persist cleared unread worktree state'
+    )
   },
 
   bumpWorktreeActivity: (worktreeId) => {
@@ -4367,7 +4390,11 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       return
     }
 
-    void persistWorktreeMeta(settingsForWorktreeOwner(get(), worktreeId), worktreeId, {
+    const ownerSettings = trySettingsForWorktreeOwner(get(), worktreeId)
+    if (!ownerSettings) {
+      return
+    }
+    void persistWorktreeMeta(ownerSettings, worktreeId, {
       lastActivityAt: now
     }).catch((err) => {
       if (isRuntimeSelectorNotFoundError(err)) {
@@ -4804,22 +4831,12 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         void get().updateFolderWorkspace(workspaceScope.folderWorkspaceId, { isUnread: false })
         return
       }
-      const updates: Partial<WorktreeMeta> = {
-        isUnread: false
-      }
-
-      void persistWorktreeMeta(
-        settingsForWorktreeOwner(get(), worktreeId),
+      persistPassiveWorktreeMetaForOwner(
+        get,
         worktreeId,
-        updates
-      ).catch((err) => {
-        if (isRuntimeSelectorNotFoundError(err)) {
-          void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
-          return
-        }
-        console.error('Failed to persist worktree activation state:', err)
-        void get().fetchWorktrees(getRepoIdFromWorktreeId(worktreeId))
-      })
+        { isUnread: false },
+        'persist worktree activation state'
+      )
     }
   },
 
