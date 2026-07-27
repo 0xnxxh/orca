@@ -1368,6 +1368,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       delete nextAutomaticAgentResumeClaimsByTabId[tabId]
       const nextNativeChatLaunchPromptByTabId = { ...s.nativeChatLaunchPromptByTabId }
       delete nextNativeChatLaunchPromptByTabId[tabId]
+      const nextNativeChatLaunchDraftByTabId = { ...s.nativeChatLaunchDraftByTabId }
+      delete nextNativeChatLaunchDraftByTabId[tabId]
       const nextPendingInitialCwdByTabId = { ...s.pendingInitialCwdByTabId }
       delete nextPendingInitialCwdByTabId[tabId]
       const nextPendingSetupSplitByTabId = { ...s.pendingSetupSplitByTabId }
@@ -1449,6 +1451,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         pendingStartupByTabId: nextPendingStartupByTabId,
         automaticAgentResumeClaimsByTabId: nextAutomaticAgentResumeClaimsByTabId,
         nativeChatLaunchPromptByTabId: nextNativeChatLaunchPromptByTabId,
+        nativeChatLaunchDraftByTabId: nextNativeChatLaunchDraftByTabId,
         pendingInitialCwdByTabId: nextPendingInitialCwdByTabId,
         pendingSetupSplitByTabId: nextPendingSetupSplitByTabId,
         pendingIssueCommandSplitByTabId: nextPendingIssueCommandSplitByTabId,
