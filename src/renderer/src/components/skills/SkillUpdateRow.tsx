@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronDown, Circle, XCircle } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, Circle, XCircle } from 'lucide-react'
 import type { SkillFreshnessGroupModel } from './skill-freshness-grouping'
 import { translate } from '@/i18n/i18n'
 import { Badge } from '@/components/ui/badge'
@@ -10,14 +10,10 @@ import { skippedReason } from './skill-freshness-skipped-reason'
 export type SkillRowState = 'available' | 'blocked' | 'pending' | 'done' | 'failed'
 
 /**
- * The single status slot, sitting between the name and the location count.
- *
- * Why one slot rather than a leading icon column: a leading icon has nothing to
- * show in the resting state, and reserving the box for it just indents every
- * name past an empty gap. Swapping badge for icon in place keeps the name
- * flush-left and the row's right edge fixed in every state.
+ * Leading status glyph. Absent for `available` on purpose: an empty reserved box
+ * would just indent the name past a gap with nothing in it.
  */
-function StateSlot({ state }: { state: SkillRowState }): React.JSX.Element {
+function StateIcon({ state }: { state: SkillRowState }): React.JSX.Element | null {
   switch (state) {
     case 'done':
       return <CheckCircle2 className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
@@ -26,31 +22,44 @@ function StateSlot({ state }: { state: SkillRowState }): React.JSX.Element {
     case 'pending':
       return <Circle className="size-4 shrink-0 text-muted-foreground" />
     case 'blocked':
-      return (
-        <Badge
-          variant="outline"
-          className="shrink-0 border-amber-600/50 text-amber-700 dark:border-amber-400/40 dark:text-amber-400"
-        >
-          {translate('auto.components.skills.SkillFreshnessRow.statusCantUpdate', 'Skipped')}
-        </Badge>
-      )
+      return <AlertTriangle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
     case 'available':
-      return (
-        <Badge variant="secondary" className="shrink-0">
-          {translate(
-            'auto.components.skills.SkillFreshnessRow.statusUpdateAvailable',
-            'Update available'
-          )}
-        </Badge>
-      )
+      return null
   }
+}
+
+/** Sits immediately right of the name, so the label reads as part of it. */
+function StateBadge({ state }: { state: SkillRowState }): React.JSX.Element | null {
+  if (state === 'blocked') {
+    return (
+      <Badge
+        variant="outline"
+        className="shrink-0 border-amber-600/50 text-amber-700 dark:border-amber-400/40 dark:text-amber-400"
+      >
+        {translate('auto.components.skills.SkillFreshnessRow.statusCantUpdate', 'Skipped')}
+      </Badge>
+    )
+  }
+  if (state === 'available') {
+    return (
+      <Badge variant="secondary" className="shrink-0">
+        {translate(
+          'auto.components.skills.SkillFreshnessRow.statusUpdateAvailable',
+          'Update available'
+        )}
+      </Badge>
+    )
+  }
+  // Why: once a run owns the row the leading glyph carries the state. A stale
+  // "Update available" beside a green check would contradict it.
+  return null
 }
 
 /**
  * One skill in the update dialog, used unchanged in every state.
  *
  * The header keeps identical geometry from "update available" through running to
- * the result — only the status slot's contents change — so pressing Update
+ * the result — the row keeps its place and its right edge — so pressing Update
  * doesn't replace the dialog's layout with a different one. Locations live
  * behind a per-skill disclosure instead of being dumped inline, because a skill
  * with several plugin-cache copies otherwise buries the actions.
@@ -76,10 +85,13 @@ export function SkillUpdateRow({
           state === 'pending' ? 'opacity-60' : ''
         }`}
       >
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
-          {group.name}
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <StateIcon state={state} />
+          <span className="min-w-0 truncate text-[13px] font-medium text-foreground">
+            {group.name}
+          </span>
+          <StateBadge state={state} />
         </span>
-        <StateSlot state={state} />
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
           {locationCount === 1
             ? translate('auto.components.skills.SkillUpdateRow.oneLocation', '1 location')
