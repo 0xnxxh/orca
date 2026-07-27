@@ -50,10 +50,6 @@ export function armTerminalInputQuarantine(tabId: string, now: number = Date.now
   quarantineByTabId.set(tabId, { armedAt: now, lastInputAt: null })
 }
 
-export function clearTerminalInputQuarantine(tabId: string): void {
-  quarantineByTabId.delete(tabId)
-}
-
 export function isTerminalInputQuarantined(tabId: string): boolean {
   return quarantineByTabId.has(tabId)
 }

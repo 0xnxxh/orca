@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import {
   _resetTerminalInputQuarantineForTests,
   armTerminalInputQuarantine,
-  clearTerminalInputQuarantine,
   isTerminalInputQuarantined,
   shouldDropQuarantinedTerminalInput
 } from './terminal-input-quarantine'
@@ -86,12 +85,6 @@ describe('terminal input quarantine', () => {
     armTerminalInputQuarantine(TAB, 0)
     expect(shouldDropQuarantinedTerminalInput('tab-2', 'a', REATTACH_MS)).toBe(false)
     expect(shouldDropQuarantinedTerminalInput(TAB, 'a', REATTACH_MS)).toBe(true)
-  })
-
-  it('clears explicitly', () => {
-    armTerminalInputQuarantine(TAB, 0)
-    clearTerminalInputQuarantine(TAB)
-    expect(shouldDropQuarantinedTerminalInput(TAB, 'a', REATTACH_MS)).toBe(false)
   })
 
   it('prunes expired entries for tabs that closed mid-quarantine', () => {
