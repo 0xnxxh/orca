@@ -144,16 +144,48 @@ describe('notifyCodexPaneBoundForStaleSweep', () => {
     vi.mocked(window.api.pty.inspectProcess).mockRejectedValue(new Error('terminal_gone'))
 
     notifyCodexPaneBoundForStaleSweep('pty-1')
-    await vi.advanceTimersByTimeAsync(60_000)
+    // Well past the last rung (35.8s), so this pins the ceiling, not the clock.
+    await vi.advanceTimersByTimeAsync(120_000)
 
-    expect(window.api.pty.inspectProcess).toHaveBeenCalledTimes(3)
+    expect(window.api.pty.inspectProcess).toHaveBeenCalledTimes(5)
+    // Why: the count alone only bounds the first two minutes — a rung past the
+    // window would still read as 5. An empty queue is what proves the ladder
+    // ended rather than merely moved out of view.
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('still sweeps a pane whose reattach outlives the first three rungs', async () => {
+    // Regression: live Windows 11 runs raised the notice on the third rung
+    // (5.8s) in all three samples, i.e. the ladder ended exactly where the
+    // slowest measured box landed. A colder reattach falls past it, and the
+    // failure is silent — no card, so the pane keeps running the old account.
+    vi.mocked(window.api.codexAccounts.listStalePanes).mockResolvedValue([STALE_PANE])
+    vi.mocked(window.api.pty.inspectProcess)
+      .mockRejectedValueOnce(new Error('terminal_gone'))
+      .mockRejectedValueOnce(new Error('terminal_gone'))
+      .mockRejectedValueOnce(new Error('terminal_gone'))
+
+    notifyCodexPaneBoundForStaleSweep('pty-1')
+    // t = 5800: rungs 1-3 are spent and nothing has been raised.
+    await vi.advanceTimersByTimeAsync(5_800)
+    expect(inspectCallCountFor('pty-1')).toBe(3)
+    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
+
+    // t = 15800: the fourth rung is the one that catches this pane.
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+    expect(inspectCallCountFor('pty-1')).toBe(4)
   })
 
   it('spends a pane its full retry ladder even when another pane binds later', async () => {
     // Regression: one shared timer used to drain every queued PTY, so a pane
     // already waiting on its 1500ms rung had the next rung consumed by the newer
-    // pane's shorter delay — exhausting its 3 attempts ~2.5s early and dropping
-    // a Windows daemon reattach that had not settled yet.
+    // pane's shorter delay — burning through its ladder early and dropping a
+    // Windows daemon reattach that had not settled yet.
     useAppStore.setState({ ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-2'] } })
     vi.mocked(window.api.pty.inspectProcess).mockRejectedValue(new Error('terminal_gone'))
 
