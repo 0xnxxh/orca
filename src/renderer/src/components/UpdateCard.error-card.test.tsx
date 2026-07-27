@@ -6,6 +6,7 @@ import { UpdateCard } from './UpdateCard'
 
 const openUrl = vi.fn()
 const download = vi.fn()
+const check = vi.fn()
 
 function renderAfterAvailableStatus(): void {
   useAppStore.setState({
@@ -26,6 +27,7 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState(), true)
   openUrl.mockReset()
   download.mockReset()
+  check.mockReset()
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
@@ -34,7 +36,7 @@ beforeEach(() => {
       shell: { openUrl },
       ui: { set: vi.fn().mockResolvedValue(undefined) },
       updater: {
-        check: vi.fn(),
+        check,
         dismissNudge: vi.fn(),
         download,
         quitAndInstall: vi.fn().mockResolvedValue(undefined)
@@ -124,5 +126,7 @@ describe('UpdateCard local builds', () => {
     )
     expect(screen.getByText('Local Build Error')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Download Manually' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Choose Another Build' }))
+    expect(check).toHaveBeenCalledWith({ localBuild: true })
   })
 })

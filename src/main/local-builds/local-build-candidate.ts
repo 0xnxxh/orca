@@ -153,7 +153,8 @@ async function readCompatibility(zipFile: FileHandle): Promise<LocalBuildCompati
   let stdout: string
   try {
     stdout = await extractCompatibility(zipFile)
-  } catch {
+  } catch (error) {
+    console.warn('[local-build] Could not read compatibility metadata:', error)
     throw new Error(
       'This build predates local switching or is missing its signed compatibility metadata.'
     )
