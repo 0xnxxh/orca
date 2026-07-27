@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { electronViteConfig } from '../../electron.vite.config'
+
+const targetConfig = readFileSync('config/electron-vite-target.config.ts', 'utf8')
 
 describe('Electron Vite output contract', () => {
   it('keeps main-process and plain-Node entries at stable CommonJS paths', () => {
@@ -31,5 +34,9 @@ describe('Electron Vite output contract', () => {
     expect(electronViteConfig.renderer?.build?.rollupOptions?.preserveEntrySignatures).toBe(
       'strict'
     )
+  })
+
+  it('rejects prototype properties as build targets', () => {
+    expect(targetConfig).toContain('Object.prototype.hasOwnProperty.call(configByTarget, target)')
   })
 })

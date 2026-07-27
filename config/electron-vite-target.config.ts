@@ -8,7 +8,7 @@ const configByTarget = {
   renderer: { renderer: electronViteConfig.renderer }
 }
 
-if (!target || !(target in configByTarget)) {
+if (!target || !Object.prototype.hasOwnProperty.call(configByTarget, target)) {
   throw new Error(`Invalid ORCA_ELECTRON_VITE_TARGET: ${target ?? '<unset>'}`)
 }
 

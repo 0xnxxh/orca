@@ -33,6 +33,10 @@ describe('PR workflow parallelism', () => {
     expect(workflow.concurrency['cancel-in-progress']).toBe(true)
   })
 
+  it('grants the PR workflow read-only repository access', () => {
+    expect(workflow.permissions).toEqual({ contents: 'read' })
+  })
+
   it('shards the general test suite across sixteen runners', () => {
     expect(workflow.jobs.test.strategy.matrix.shard).toEqual(
       Array.from({ length: 16 }, (_, index) => index + 1)
@@ -103,6 +107,8 @@ describe('PR workflow parallelism', () => {
       (step) => step.uses === './.github/actions/install-node-dependencies'
     )
 
+    expect(cacheIndex).toBeGreaterThanOrEqual(0)
+    expect(installIndex).toBeGreaterThanOrEqual(0)
     expect(cacheIndex).toBeLessThan(installIndex)
   })
 
@@ -127,6 +133,12 @@ describe('PR workflow parallelism', () => {
     )
     expect(dependencyInstall.run).toContain('--no-frozen-lockfile')
     expect(dependencyInstall.run).toContain('--ignore-scripts')
+    expect(dependencyInstall.run).not.toContain('--os=')
+    expect(dependencyInstall.run).not.toContain('--cpu=')
+    expect(packageJson.pnpm.supportedArchitectures.os).toEqual(
+      expect.arrayContaining(['current', 'win32'])
+    )
+    expect(packageJson.pnpm.supportedArchitectures.cpu).toContain('current')
     const prepareRuntime = dependencyAction.runs.steps.find(
       (step) => step.name === 'Prepare native runtime'
     )

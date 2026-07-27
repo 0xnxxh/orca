@@ -57,9 +57,6 @@ runs:
         pnpm install \
           --no-frozen-lockfile \
           --prefer-frozen-lockfile=false \
-          --os=current \
-          --os=win32 \
-          --cpu=current \
           --ignore-scripts
         git diff --exit-code package.json pnpm-lock.yaml
 
