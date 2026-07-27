@@ -3169,7 +3169,11 @@ function buildCodexStatusPayload(
   promptText: string,
   paneKey: string,
   hookPayload: Record<string, unknown>,
-  options: { stateName: 'working' | 'waiting' | 'done'; updateLead: boolean }
+  options: {
+    stateName: 'working' | 'waiting' | 'done'
+    updateLead: boolean
+    leadStopWithLiveSubagents?: boolean
+  }
 ): ParsedAgentStatusPayload | null {
   const snapshot = options.updateLead
     ? resolveToolState(state, paneKey, extractToolFields('codex', eventName, hookPayload), {
@@ -3189,7 +3193,8 @@ function buildCodexStatusPayload(
     toolInput: snapshot.toolInput,
     interactivePrompt: snapshot.interactivePrompt,
     lastAssistantMessage: snapshot.lastAssistantMessage,
-    subagents: codexRosterToSnapshots(state.codexSubagentRosterByPaneKey.get(paneKey))
+    subagents: codexRosterToSnapshots(state.codexSubagentRosterByPaneKey.get(paneKey)),
+    leadStopWithLiveSubagents: options.leadStopWithLiveSubagents
   })
 }
 
@@ -3283,12 +3288,14 @@ function normalizeCodexEvent(
     return buildCodexChildDrivenStatusPayload(state, eventName, paneKey, hookPayload)
   }
 
-  // Why: a lead Stop isn't "done" while children still run, so the roster must gate it before
-  // being retired. SessionStart is exempt — its roster belongs to the process that just exited.
-  const effectiveState =
-    eventName === 'SessionStart'
-      ? stateName
-      : codexRosterEffectiveState(state.codexSubagentRosterByPaneKey.get(paneKey), stateName)
+  // Why: the roster is retired below, which makes a lead Stop indistinguishable from the final
+  // SubagentStop (both `done` with no children). Capture whether children were still live BEFORE
+  // the reap so notification can tell a real turn end from a mid-turn one (#4375). SessionStart is
+  // exempt — its roster belongs to the process that just exited.
+  const leadStopWithLiveSubagents =
+    eventName === 'Stop' &&
+    codexRosterEffectiveState(state.codexSubagentRosterByPaneKey.get(paneKey), stateName) !==
+      stateName
   if (eventName === 'SessionStart') {
     // Why: a pane can host a new Codex process after the old one exited without child Stop hooks.
     state.codexSubagentRosterByPaneKey.delete(paneKey)
@@ -3304,8 +3311,9 @@ function normalizeCodexEvent(
       (eventName === 'SessionStart' ? undefined : previousLead?.model)
   })
   return buildCodexStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
-    stateName: effectiveState,
-    updateLead: true
+    stateName,
+    updateLead: true,
+    leadStopWithLiveSubagents
   })
 }
 

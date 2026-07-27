@@ -242,6 +242,43 @@ describe('issue #4375 — non-turn-end notification spam', () => {
     expect(restarted?.payload.state).toBe('working')
   })
 
+  it('gates notification without downgrading the reported state of a lead Stop', () => {
+    // Why: an earlier cut of this fix gated by rewriting `state` to 'working', which silently
+    // broke the sidebar/persistence contract that a root Stop retires child rows and reports
+    // 'done' (server.test.ts). The suppression signal must ride alongside `done`, not replace it.
+    const listenerState: HookListenerState = createHookListenerState()
+    const send = (
+      ev: string,
+      p?: Record<string, unknown>
+    ): ReturnType<typeof normalizeHookPayload> =>
+      normalizeHookPayload(
+        listenerState,
+        'codex',
+        {
+          paneKey: PANE_KEY,
+          tabId: 'tab-1',
+          worktreeId: WORKTREE_ID,
+          hook_event_name: ev,
+          payload: { hook_event_name: ev, ...p }
+        },
+        'test-env'
+      )
+
+    send('UserPromptSubmit', { prompt: 'go' })
+    send('SubagentStart', { agent_id: 'child-1', agent_type: 'reviewer' })
+
+    const leadStop = send('Stop')
+    expect(leadStop?.payload.state).toBe('done')
+    expect(leadStop?.payload.subagents).toBeUndefined()
+    expect(leadStop?.payload.leadStopWithLiveSubagents).toBe(true)
+
+    // The child's own Stop is a real turn end: same shape, but no suppression flag.
+    send('PreToolUse', { agent_id: 'child-1', tool_name: 'Bash', tool_input: { command: 'y' } })
+    const childStop = send('SubagentStop', { agent_id: 'child-1' })
+    expect(childStop?.payload.state).toBe('done')
+    expect(childStop?.payload.leadStopWithLiveSubagents).toBeUndefined()
+  })
+
   // KNOWN-OPEN residual, deliberately out of scope for the roster fix. A bare mid-turn
   // Stop (no subagent) that resumes AFTER the 1.5s quiet window still notifies. There is
   // no principled bound to widen the window to, and widening it delays every real Codex

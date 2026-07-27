@@ -1927,6 +1927,12 @@ export class AgentHookServer {
         continue
       }
       const { promptInteractionKey: _promptInteractionKey, ...persistedPayload } = payload
+      // Why: leadStopWithLiveSubagents describes one live hook delivery, not restorable pane
+      // state — a rehydrated one would re-suppress the first completion after restart (#4375).
+      if (persistedPayload.payload?.leadStopWithLiveSubagents) {
+        const { leadStopWithLiveSubagents: _live, ...inner } = persistedPayload.payload
+        persistedPayload.payload = inner
+      }
       entries[paneKey] = persistedPayload as EnrichedAgentHookEventPayload
     }
     const file: LastStatusFile = { version: LAST_STATUS_FILE_VERSION, entries }
