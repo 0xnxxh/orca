@@ -18,7 +18,15 @@ export function listFolderWorkspaceChildRepos(repos: readonly Repo[], folderPath
       (candidate) => !isFolderRepo(candidate) && isPathInsideOrEqual(folderPath, candidate.path)
     )
     .filter((candidate) => relativePathInsideRoot(folderPath, candidate.path) !== '')
-    .sort((left, right) => right.path.length - left.path.length)
+    // Why: deepest first, measured on the normalized path. Raw length inverts when
+    // two repos spell the same host differently — `\\wsl$\Ubuntu\repo\nested` (30)
+    // is shorter than its own ancestor `\\wsl.localhost\Ubuntu\repo` (32), which
+    // would route the nested repo's files to the ancestor.
+    .sort(
+      (left, right) =>
+        normalizeRuntimePathForComparison(right.path).length -
+        normalizeRuntimePathForComparison(left.path).length
+    )
   // Why: the same directory can be registered twice (imported once directly and
   // once by a folder scan). Without this the merged status lists every file twice
   // and a commit runs against the repo twice.
@@ -71,31 +79,6 @@ export function matchFolderWorkspaceChildRepo(
   return null
 }
 
-/**
- * Combine per-child-repo results for an op that has no path to route on. Every
- * child either succeeded or reports why it did not, so a partial outcome is
- * described rather than reported as one blanket success or failure.
- */
-export function summarizeFolderWorkspaceFanOut(
-  results: readonly { repoName: string; error?: string }[]
-): { success: boolean; error?: string } {
-  const failures = results.filter((result) => result.error !== undefined)
-  if (failures.length === 0) {
-    return { success: true }
-  }
-  // Why: naming the repo matters most when only some of them failed — the user
-  // has to know which ones still need attention.
-  const detail = failures.map((failure) => `${failure.repoName}: ${failure.error}`).join('; ')
-  if (failures.length === results.length) {
-    return { success: false, error: detail }
-  }
-  const succeeded = results.length - failures.length
-  return {
-    success: false,
-    error: `Committed ${succeeded} of ${results.length} repos. Failed — ${detail}`
-  }
-}
-
 /** Prefix a child repo's status entry path so it stays addressable from the workspace root. */
 export function prefixFolderWorkspaceEntryPath(
   folderPath: string,
@@ -136,13 +119,15 @@ export function mergeFolderWorkspaceGitStatus(
     didHitLimit ||= status.didHitLimit === true
     statusLength += status.statusLength ?? status.entries.length
   }
+  // Why: no single HEAD/branch/upstream describes N repos, so those stay unset
+  // rather than reporting one child's state as the whole workspace's. The same
+  // applies to a conflict: two repos mid-merge have no one answer, and picking
+  // the first would offer an abort button that silently means "abort that one".
+  const conflicted = perRepo.filter(({ status }) => status.conflictOperation !== 'unknown')
   return {
     entries,
-    // Why: no single HEAD/branch/upstream describes N repos, so those stay unset
-    // rather than reporting one child's state as the whole workspace's.
     conflictOperation:
-      perRepo.find(({ status }) => status.conflictOperation !== 'unknown')?.status
-        .conflictOperation ?? 'unknown',
+      conflicted.length === 1 ? conflicted[0]!.status.conflictOperation : 'unknown',
     ...(ignoredPaths.length > 0 ? { ignoredPaths } : {}),
     ...(didHitLimit ? { didHitLimit: true } : {}),
     statusLength

@@ -126,7 +126,7 @@ function normalizeRuntimeGitRelativePath(filePath: string): string {
   return relativePath
 }
 
-type RuntimeGitTarget = {
+export type RuntimeGitTarget = {
   worktree: ResolvedRuntimeGitWorktree
   repo?: Repo
   connectionId?: string

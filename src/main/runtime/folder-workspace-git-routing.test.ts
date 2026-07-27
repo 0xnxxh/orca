@@ -290,23 +290,7 @@ describe('#6357 monorepo folder workspace', () => {
     expect(status.entries.every((entry) => entry.area !== 'staged')).toBe(true)
   })
 
-  it('K: commit has no path to route on, so it commits every child repo with a staged index', async () => {
-    buildFixture()
-    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
-    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
-    await runtime.bulkStageRuntimeGitPaths(selector, [
-      'fint_api/src/app.ts',
-      'fint-portal/src/app.ts'
-    ])
-    await expect(runtime.commitRuntimeGit(selector, 'span two repos')).resolves.toEqual({
-      success: true
-    })
-    for (const dir of [CHILD_API, join(CONTAINER, 'fint-portal')]) {
-      expect(git(dir, 'log', '-1', '--pretty=%s').trim()).toBe('span two repos')
-    }
-  })
-
-  it('K2: a child repo with nothing staged is skipped, not committed empty', async () => {
+  it('K: commit routes to the one child repo that has a staged index', async () => {
     buildFixture()
     const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
     const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
@@ -314,8 +298,45 @@ describe('#6357 monorepo folder workspace', () => {
     // Why: staging only one repo is the common case — the user edited one project.
     await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
     await expect(runtime.commitRuntimeGit(selector, 'only api')).resolves.toEqual({ success: true })
-    expect(git(CHILD_API, 'rev-list', '--count', 'HEAD').trim()).toBe('2')
+    expect(git(CHILD_API, 'log', '-1', '--pretty=%s').trim()).toBe('only api')
     expect(git(portal, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
+  })
+
+  it('K2: staging across two repos is refused before either is committed', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.bulkStageRuntimeGitPaths(selector, [
+      'fint_api/src/app.ts',
+      'fint-portal/src/app.ts'
+    ])
+    // Why: git has no cross-repo transaction. Committing repo 1 then failing on
+    // repo 2 leaves a half-done commit that `{ success, error }` cannot describe
+    // and the user cannot undo from the UI — so refuse before mutating anything.
+    const result = await runtime.commitRuntimeGit(selector, 'span two repos')
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('fint-api-repo')
+    expect(result.error).toContain('fint-portal-repo')
+    for (const dir of [CHILD_API, join(CONTAINER, 'fint-portal')]) {
+      expect(git(dir, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
+    }
+  })
+
+  it('K5: a child repo that cannot be inspected fails the commit instead of committing around it', async () => {
+    buildFixture()
+    // Why: the repo we cannot read could be the one the user staged. Committing
+    // the others and reporting success is how a staged file is silently skipped.
+    const unreadable = join(CONTAINER, 'fint-detached')
+    mkdirSync(unreadable, { recursive: true })
+    const runtime = new OrcaRuntimeService(
+      makeStore({ repos: [...allRepos(), repo('fint-detached-repo', unreadable, 'git')] }) as never
+    )
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    const result = await runtime.commitRuntimeGit(selector, 'api only')
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('fint-detached-repo')
+    expect(git(CHILD_API, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
   })
 
   it('K3: committing with nothing staged anywhere reports it instead of silently succeeding', async () => {
@@ -357,14 +378,98 @@ describe('#6357 monorepo folder workspace', () => {
     expect(await runtime.getRuntimeGitConflictOperation(`path:${CHILD_API}`)).toBe('unknown')
   })
 
-  it('L2: aborting when no child repo is mid-operation settles instead of erroring', async () => {
+  it('L2: aborting when no child repo is mid-operation says so instead of reporting ok', async () => {
     buildFixture()
     const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
     const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
-    // Why: `git merge --abort` errors with no merge in progress; fanning that out
-    // would make a no-op abort fail for a workspace but succeed for a single repo.
-    await expect(runtime.abortRuntimeGitMerge(selector)).resolves.toEqual({ ok: true })
-    await expect(runtime.abortRuntimeGitRebase(selector)).resolves.toEqual({ ok: true })
+    // Why: a single repo's `git merge --abort` errors with no merge in progress.
+    // Returning ok here would be the only path where the user is told a conflict
+    // was cleared that never existed.
+    await expect(runtime.abortRuntimeGitMerge(selector)).rejects.toThrow(
+      'No repository in this workspace has a merge in progress.'
+    )
+    await expect(runtime.abortRuntimeGitRebase(selector)).rejects.toThrow(
+      'No repository in this workspace has a rebase in progress.'
+    )
+  })
+
+  it('L3: a failed abort propagates rather than reporting ok on a still-conflicted repo', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    git(CHILD_API, 'checkout', '-q', '--', '.')
+    git(CHILD_API, 'checkout', '-q', '-b', 'other')
+    writeFileSync(join(CHILD_API, 'src', 'app.ts'), 'other branch\n')
+    git(CHILD_API, 'commit', '-qam', 'other')
+    git(CHILD_API, 'checkout', '-q', 'master')
+    writeFileSync(join(CHILD_API, 'src', 'app.ts'), 'master branch\n')
+    git(CHILD_API, 'commit', '-qam', 'master')
+    expect(() => git(CHILD_API, 'merge', 'other')).toThrow()
+    // Why: a terminal running git in the same repo holds index.lock, and the
+    // abort fails against it. The repo stays conflicted, so the user must not be
+    // told the conflict was cleared.
+    writeFileSync(join(CHILD_API, '.git', 'index.lock'), '')
+    await expect(runtime.abortRuntimeGitMerge(selector)).rejects.toThrow()
+    rmSync(join(CHILD_API, '.git', 'index.lock'), { force: true })
+    expect(await runtime.getRuntimeGitConflictOperation(`path:${CHILD_API}`)).toBe('merge')
+  })
+
+  it('L4: two child repos mid-merge is refused rather than aborting an arbitrary one', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    for (const dir of [CHILD_API, join(CONTAINER, 'fint-portal')]) {
+      git(dir, 'checkout', '-q', '--', '.')
+      git(dir, 'checkout', '-q', '-b', 'other')
+      writeFileSync(join(dir, 'src', 'app.ts'), 'other branch\n')
+      git(dir, 'commit', '-qam', 'other')
+      git(dir, 'checkout', '-q', 'master')
+      writeFileSync(join(dir, 'src', 'app.ts'), 'master branch\n')
+      git(dir, 'commit', '-qam', 'master')
+      expect(() => git(dir, 'merge', 'other')).toThrow()
+    }
+    await expect(runtime.abortRuntimeGitMerge(selector)).rejects.toThrow('More than one repository')
+    // Why: neither may be aborted — the user picked no repo, so we pick none.
+    for (const dir of [CHILD_API, join(CONTAINER, 'fint-portal')]) {
+      expect(await runtime.getRuntimeGitConflictOperation(`path:${dir}`)).toBe('merge')
+    }
+    // Why: with two conflicts there is no single workspace-level answer either.
+    expect((await runtime.getRuntimeGitStatus(selector)).conflictOperation).toBe('unknown')
+  })
+
+  it('M: commit-message generation routes to the same child repo the commit would', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    // Why: before routing, this threw `selector_not_found` — the mobile commit
+    // screen's Generate button was dead for every folder workspace. Stub the
+    // single-repo implementation so the assertion is about which selector it is
+    // handed, not about reaching a drafting model.
+    const inner = vi
+      .spyOn(
+        runtime['gitCommands'] as { generateRuntimeCommitMessage: (...args: never[]) => unknown },
+        'generateRuntimeCommitMessage'
+      )
+      .mockResolvedValue({ success: true, message: 'drafted' } as never)
+    await expect(runtime.generateRuntimeCommitMessage(selector)).resolves.toEqual({
+      success: true,
+      message: 'drafted'
+    })
+    const routedSelector = String(inner.mock.calls[0]?.[0])
+    expect(routedSelector).not.toBe(selector)
+    // Why: the child repo's own worktree id — the same target the commit picks.
+    const commitTarget = await runtime.getRuntimeGitStatus(routedSelector)
+    expect(commitTarget.entries.map((entry) => entry.path)).toContain('src/app.ts')
+    inner.mockRestore()
+  })
+
+  it('M2: generation reports no staged changes rather than a resolution error', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    const result = await runtime.generateRuntimeCommitMessage(selector)
+    expect(result).toEqual({ success: false, error: 'No staged changes to summarize.' })
   })
 
   it('E: the real child git worktree resolves fine when its repo is registered', async () => {

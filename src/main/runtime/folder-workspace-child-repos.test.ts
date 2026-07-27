@@ -32,6 +32,33 @@ describe('listFolderWorkspaceChildRepos', () => {
     expect(listFolderWorkspaceChildRepos([repo('self', FOLDER)], FOLDER)).toEqual([])
   })
 
+  it('orders deepest-first by normalized path, not raw string length', () => {
+    // Why: `\\wsl$\...\repo\nested` (30 chars) is shorter than its own ancestor
+    // `\\wsl.localhost\...\repo` (32) even though it is one level deeper. Sorting
+    // on raw length puts the ancestor first and routes the nested repo's files
+    // to it. Both spellings normalize to the same //wsl/ubuntu root.
+    const wslFolder = '\\\\wsl.localhost\\Ubuntu\\work'
+    const ancestor = repo('ancestor', '\\\\wsl.localhost\\Ubuntu\\work\\repo')
+    const nested = repo('nested-wsl', '\\\\wsl$\\Ubuntu\\work\\repo\\nested')
+    expect(ancestor.path.length).toBeGreaterThan(nested.path.length)
+    expect(
+      listFolderWorkspaceChildRepos([ancestor, nested], wslFolder).map((entry) => entry.id)
+    ).toEqual(['nested-wsl', 'ancestor'])
+  })
+
+  it('routes a file to the nested repo when the two spell the WSL host differently', () => {
+    const wslFolder = '\\\\wsl.localhost\\Ubuntu\\work'
+    const ancestor = repo('ancestor', '\\\\wsl.localhost\\Ubuntu\\work\\repo')
+    const nested = repo('nested-wsl', '\\\\wsl$\\Ubuntu\\work\\repo\\nested')
+    const match = matchFolderWorkspaceChildRepo(
+      [ancestor, nested],
+      wslFolder,
+      'repo/nested/src/app.ts'
+    )
+    expect(match?.repo.id).toBe('nested-wsl')
+    expect(match?.rebasedRelativePath).toBe('src/app.ts')
+  })
+
   it('keeps one entry when the same directory is registered twice', () => {
     // Why: a duplicate registration would list every file twice in the merged
     // status and run the commit against that repo twice.
@@ -126,12 +153,22 @@ describe('mergeFolderWorkspaceGitStatus', () => {
     expect(merged.upstreamStatus).toBeUndefined()
   })
 
-  it('surfaces a conflict from any child repo', () => {
+  it('surfaces a conflict when exactly one child repo has one', () => {
     const merged = mergeFolderWorkspaceGitStatus(FOLDER, [
       { repo: API, status: status([]) },
       { repo: PORTAL, status: { entries: [], conflictOperation: 'rebase' } }
     ])
     expect(merged.conflictOperation).toBe('rebase')
+  })
+
+  it('reports unknown when two child repos are conflicted', () => {
+    // Why: "rebase" here would offer one abort button for two repos, and it would
+    // silently mean whichever repo happened to come first.
+    const merged = mergeFolderWorkspaceGitStatus(FOLDER, [
+      { repo: API, status: { entries: [], conflictOperation: 'merge' } },
+      { repo: PORTAL, status: { entries: [], conflictOperation: 'rebase' } }
+    ])
+    expect(merged.conflictOperation).toBe('unknown')
   })
 
   it('propagates a truncation flag so the UI still warns', () => {
