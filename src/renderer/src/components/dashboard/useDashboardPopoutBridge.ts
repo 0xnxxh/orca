@@ -27,7 +27,15 @@ export function dashboardSnapshotInputsChanged(
     state.runtimePaneTitlesByTabId !== previousState.runtimePaneTitlesByTabId ||
     state.acknowledgedAgentsByPaneKey !== previousState.acknowledgedAgentsByPaneKey ||
     // Why: freshness can change a bucket without replacing any backing map.
-    state.agentStatusEpoch !== previousState.agentStatusEpoch
+    state.agentStatusEpoch !== previousState.agentStatusEpoch ||
+    // Why: each card carries the host-input profile its preview terminal keys
+    // against. A stale profile encodes bytes for the wrong host, so the slices
+    // that resolve it have to republish too — all are low-frequency except the
+    // foreground agent, whose churn the publish throttle already absorbs.
+    state.sshConnectionStates !== previousState.sshConnectionStates ||
+    state.sshStateByEnvironment !== previousState.sshStateByEnvironment ||
+    state.runtimeStatusByEnvironmentId !== previousState.runtimeStatusByEnvironmentId ||
+    state.paneForegroundAgentByPaneKey !== previousState.paneForegroundAgentByPaneKey
   )
 }
 

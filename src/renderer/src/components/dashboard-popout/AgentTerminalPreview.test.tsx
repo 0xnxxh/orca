@@ -22,6 +22,8 @@ const terminalHarness = vi.hoisted(() => ({
     reset: ReturnType<typeof vi.fn>
     paste: ReturnType<typeof vi.fn>
     input: ReturnType<typeof vi.fn>
+    scrollToTop: ReturnType<typeof vi.fn>
+    scrollToBottom: ReturnType<typeof vi.fn>
     modes: { bracketedPasteMode: boolean }
     selectionText: string
     customKeyHandler: ((event: KeyboardEvent) => boolean) | null
@@ -72,6 +74,11 @@ vi.mock('@xterm/xterm', () => ({
       this.onDataListener?.(data)
     })
     element = document.createElement('div')
+    unicode = { activeVersion: '6', versions: ['6', '11'], register: vi.fn() }
+    loadAddon = vi.fn()
+    attachCustomWheelEventHandler = vi.fn()
+    scrollToTop = vi.fn()
+    scrollToBottom = vi.fn()
     getSelection = vi.fn(() => this.selectionText)
     attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
       this.customKeyHandler = handler
@@ -86,7 +93,8 @@ vi.mock('@xterm/xterm', () => ({
     }
   }
 }))
-vi.mock('@/lib/pane-manager/pane-terminal-options', () => ({
+vi.mock(import('@/lib/pane-manager/pane-terminal-options'), async (importOriginal) => ({
+  ...(await importOriginal()),
   buildDefaultTerminalOptions: () => ({})
 }))
 vi.mock('@/components/terminal-pane/terminal-user-input-signal', () => ({
@@ -344,6 +352,99 @@ describe('AgentTerminalPreview', () => {
     await act(async () => emitAppMenuPaste!())
     expect(readClipboardText).not.toHaveBeenCalled()
     expect(terminalHarness.instances[0]!.paste).not.toHaveBeenCalled()
+  })
+
+  it('sends the word-kill byte on Ctrl+Backspace and blocks xterm handling', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'Backspace',
+      code: 'Backspace',
+      ctrlKey: true,
+      cancelable: true
+    })
+    const handled = terminal.customKeyHandler!(keydown)
+
+    expect(handled).toBe(false)
+    expect(keydown.defaultPrevented).toBe(true)
+    expect(terminal.input).toHaveBeenCalledWith('\x17')
+    await waitFor(() => expect(input).toHaveBeenCalledWith('pty-1', '\x17'))
+  })
+
+  it('swallows a pane-scoped chord instead of leaking its control byte to the agent', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    // Ctrl+Shift+D splits a pane on Linux; xterm would otherwise send Ctrl+D.
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'D',
+      code: 'KeyD',
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true
+    })
+    const handled = terminal.customKeyHandler!(keydown)
+
+    expect(handled).toBe(false)
+    expect(keydown.defaultPrevented).toBe(true)
+    expect(terminal.input).not.toHaveBeenCalled()
+    expect(input).not.toHaveBeenCalled()
+  })
+
+  it('defers Option chords to xterm once the TUI negotiates kitty keyboard mode', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    const altBackspace = (): KeyboardEvent =>
+      new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', altKey: true })
+    expect(terminal.customKeyHandler!(altBackspace())).toBe(false)
+    expect(terminal.input).toHaveBeenCalledWith('\x1b\x7f')
+
+    // The agent's TUI pushes kitty flags (CSI > 1 u) on the live stream.
+    act(() => {
+      emitData?.({ type: 'data', ptyId: 'pty-1', data: '\x1b[>1u', bytes: 5 })
+    })
+    terminal.input.mockClear()
+
+    expect(terminal.customKeyHandler!(altBackspace())).toBe(true)
+    expect(terminal.input).not.toHaveBeenCalled()
+  })
+
+  it('scrolls the viewport on the macOS scrollback chord', async () => {
+    platformState.value = 'darwin'
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    const handled = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', { key: 'ArrowUp', code: 'ArrowUp', metaKey: true })
+    )
+
+    expect(handled).toBe(false)
+    expect(terminal.scrollToTop).toHaveBeenCalled()
+    expect(terminal.input).not.toHaveBeenCalled()
+  })
+
+  it('leaves an unmodified Backspace to xterm', async () => {
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    const handled = terminal.customKeyHandler!(
+      new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', cancelable: true })
+    )
+
+    expect(handled).toBe(true)
+    expect(terminal.input).not.toHaveBeenCalled()
   })
 
   it('leaves plain Ctrl+V to the Edit-menu accelerator but handles the shifted paste chord', async () => {

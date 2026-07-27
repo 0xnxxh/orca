@@ -6,6 +6,10 @@ import type {
   DashboardSnapshot
 } from '../../../../shared/dashboard-snapshot'
 import { parsePaneKey } from '../../../../shared/stable-pane-id'
+import {
+  resolveDashboardCardTerminalInput,
+  type DashboardCardTerminalInputState
+} from './dashboard-card-terminal-input'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
 import { applyAgentRowLineage } from './agent-row-lineage'
 import { lastEnteredDoneAt } from './agent-finished-timestamp'
@@ -43,7 +47,16 @@ export type DashboardSnapshotState = Pick<
   | 'ptyIdsByTabId'
   | 'runtimePaneTitlesByTabId'
   | 'acknowledgedAgentsByPaneKey'
->
+> &
+  Partial<DashboardCardTerminalInputState>
+
+function readClientOsRelease(): string | undefined {
+  try {
+    return window.api?.platform?.get?.()?.osRelease
+  } catch {
+    return undefined
+  }
+}
 
 function bucketForState(state: DashboardAgentRow['state']): DashboardBucket {
   switch (state) {
@@ -82,6 +95,13 @@ export function buildDashboardSnapshot(
   now: number
 ): DashboardSnapshot {
   const cards: DashboardCard[] = []
+  const clientUserAgent = typeof navigator === 'undefined' ? '' : navigator.userAgent
+  const clientPlatform = clientUserAgent.includes('Mac')
+    ? 'darwin'
+    : clientUserAgent.includes('Windows')
+      ? 'win32'
+      : 'linux'
+  const clientOsRelease = readClientOsRelease()
   const activeWorktrees: {
     repo: AppState['repos'][number]
     worktree: AppState['worktreesByRepo'][string][number]
@@ -169,6 +189,20 @@ export function buildDashboardSnapshot(
           : null
       const dotState = row.state as DashboardCardDotState
       const bucket = bucketForState(row.state)
+      // Why: only a live pty can open a preview terminal, so the host-input
+      // resolution stays off the board's hot path for every other row.
+      const terminalInput = ptyId
+        ? resolveDashboardCardTerminalInput(state, {
+            worktreeId,
+            paneKey: routingPaneKey,
+            cwd: row.tab.startupCwd ?? worktree.path,
+            shellOverride: row.tab.shellOverride,
+            launchAgent: row.tab.launchAgent,
+            clientPlatform,
+            userAgent: clientUserAgent,
+            osRelease: clientOsRelease
+          })
+        : null
 
       cards.push({
         paneKey: row.paneKey,
@@ -193,7 +227,8 @@ export function buildDashboardSnapshot(
         unseen:
           !isTitleDerived &&
           (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt,
-        askSummary: bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined
+        askSummary: bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined,
+        ...(terminalInput ? { terminalInput } : {})
       })
     }
   }

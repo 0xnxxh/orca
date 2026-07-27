@@ -33,6 +33,11 @@ export function useLiveDashboardSnapshot(): DashboardSnapshot {
     () =>
       buildDashboardSnapshot(
         {
+          // Why: each card's host-input profile reads connection/runtime/agent
+          // slices this hook does not subscribe to (they would re-render the
+          // board on unrelated churn). Read them non-reactively — the profile
+          // re-derives on the next rebuild, which agent activity already drives.
+          ...useAppStore.getState(),
           repos,
           worktreesByRepo,
           tabsByWorktree,
