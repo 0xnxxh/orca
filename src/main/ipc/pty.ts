@@ -4472,7 +4472,6 @@ export function registerPtyHandlers(
       // Why: SSH can strip ORCA_PANE_KEY when remote hooks are off; IPC tab/leaf metadata still names the pane.
       const reservationPaneKey = metadataPaneKey ?? validatedPaneKey
       const validatedLeafId = verifiedLeafId ?? metadataLeafId
-      let env: Record<string, string> | undefined = baseEnv
       const effectiveShellOverride = terminalRuntimeOptions.shellOverride
       const nativeWindowsConptySpawn = isNativeWindowsLocalPtySpawn({
         connectionId: args.connectionId,
@@ -4498,6 +4497,9 @@ export function registerPtyHandlers(
       const codexResumeHome = codexResumeLaunch.codexResumeHome
       const launchCommand = codexResumeLaunch.command
       baseEnv = stripSequencedStartupResumeArgv(baseEnv, codexResumeLaunch)
+      // Why: declared after the strip so a local-provider spawn cannot capture the
+      // pre-strip env — only the daemon branch below re-derives this from baseEnv.
+      let env: Record<string, string> | undefined = baseEnv
       const selectedCodexHomePath = isDaemonHostSpawn
         ? getCompatibleSelectedCodexHomePath(
             codexSelectionTarget,

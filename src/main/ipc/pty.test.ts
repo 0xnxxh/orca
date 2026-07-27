@@ -2097,6 +2097,42 @@ describe('registerPtyHandlers', () => {
         expect(daemonSpawn.mock.calls.at(-1)![0].env.ORCA_SEQUENCED_STARTUP_COMMAND).toBe(sequenced)
       })
 
+      posixOnlyIt(
+        'strips the sequenced startup command on the local-provider spawn path too',
+        async () => {
+          // Why: the daemon branch is the only one that re-derives the spawn env from
+          // baseEnv, so a local spawn is where a strip that lands on the wrong variable
+          // silently survives — and the wrapper would `eval` the resume anyway.
+          const mockProc = createMockProc()
+          spawnMock.mockReturnValue(mockProc.proc)
+          registerWithTrustedHomes([OTHER_HOME], OTHER_HOME)
+
+          await spawnCodexResume(ORIGIN_ROLLOUT, {
+            env: { ORCA_SEQUENCED_STARTUP_COMMAND: `codex 'resume' '${RESUME_SESSION_ID}'` }
+          })
+
+          const env = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
+          expect(env.ORCA_SEQUENCED_STARTUP_COMMAND).toBe('codex')
+        }
+      )
+
+      posixOnlyIt(
+        'leaves the local-provider sequenced startup command alone when provenance is verified',
+        async () => {
+          const mockProc = createMockProc()
+          spawnMock.mockReturnValue(mockProc.proc)
+          registerWithTrustedHomes([ORIGIN_HOME], OTHER_HOME)
+          const sequenced = `codex 'resume' '${RESUME_SESSION_ID}'`
+
+          await spawnCodexResume(ORIGIN_ROLLOUT, {
+            env: { ORCA_SEQUENCED_STARTUP_COMMAND: sequenced }
+          })
+
+          const env = spawnMock.mock.calls.at(-1)![2].env as Record<string, string>
+          expect(env.ORCA_SEQUENCED_STARTUP_COMMAND).toBe(sequenced)
+        }
+      )
+
       it('omits the notice on a reattach that never ran this launch command', async () => {
         setupResumeDaemonProvider({ isReattach: true })
         registerWithTrustedHomes([OTHER_HOME], OTHER_HOME)
