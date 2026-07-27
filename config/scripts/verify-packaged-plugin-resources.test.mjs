@@ -65,8 +65,10 @@ describe('verify packaged plugin resources', () => {
         await writeFile(path, (await readFile(path, 'utf8')).replace(/\r?\n/g, '\r\n'))
       }
 
+      // Every file is rewritten, so the first mismatch is whichever plugin sorts
+      // first — don't pin a name a later branch can reorder.
       expect(() => verifyPackagedPluginResources(resourcesDir)).toThrow(
-        'packaged bytes do not match stablyai.orca-navigation-shortcuts'
+        /packaged bytes do not match stablyai\./
       )
     } finally {
       await rm(resourcesDir, { recursive: true, force: true })
