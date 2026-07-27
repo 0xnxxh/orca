@@ -1,0 +1,8 @@
+/* Vite's root is this folder, so Tailwind v4 auto-detection would only scan the
+   lab and skip every class used by the real components under src/renderer.
+   Declare both roots explicitly so shipped primitives and new variant styles
+   both compile. */
+@import '../../src/renderer/src/assets/main.css';
+
+@source '../../src/renderer/src';
+@source '.';
