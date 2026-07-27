@@ -2,6 +2,7 @@ import type { ManagedPaneInternal } from './pane-manager-types'
 import { reattachWebglIfNeeded } from './pane-webgl-reattach'
 import { resetWebglTextureAtlas } from './pane-webgl-renderer'
 import { releaseAbandonedSynchronizedOutput } from './terminal-synchronized-output-release'
+import { clearTerminalRenderModel } from './terminal-render-model-clear'
 
 function scheduleSettledFrame(callback: () => void): void {
   if (typeof globalThis.requestAnimationFrame !== 'function') {
@@ -49,14 +50,21 @@ export function schedulePaneRevealRepaint(getPanes: () => Iterable<ManagedPaneIn
 }
 
 /**
- * Presents already-visible panes without clearing the shared glyph atlas.
+ * Repaints already-visible panes without clearing the shared glyph atlas.
  *
- * Why: a plain window refocus never hid its panes, so their WebGL model is
- * already current — a `refresh` re-presents the live buffer (covering a
- * compositor that dropped frames while occluded). Using the atlas-clearing
- * reveal repaint here would wipe the atlas shared by every same-config pane and
- * re-arm the mid-stream page-merge garble race (xterm.js issue 4480); this path
- * must stay texture-atlas-preserving.
+ * Why the model clear: a `refresh` alone is diff-based, so it skips every cell
+ * whose cached model entry still matches the buffer. An occluded window (the
+ * "switch away to the desktop" case) can lose its canvas contents while that
+ * model stays populated, and the refresh then skips exactly the cells that went
+ * stale — the pane keeps presenting pre-hide pixels until a resize rebuilds
+ * everything. Clearing the model first makes the refresh a guaranteed full
+ * repaint.
+ *
+ * Why not the atlas-clearing reveal repaint: that wipes the atlas shared by
+ * every same-config pane and re-arms the mid-stream page-merge garble race
+ * (xterm.js issue 4480). Clearing only the model repaints this pane in full
+ * while leaving sibling panes' glyphs intact, so this path stays
+ * texture-atlas-preserving.
  */
 export function schedulePaneRevealPresent(getPanes: () => Iterable<ManagedPaneInternal>): void {
   forEachPaneOnSettledFrame(getPanes, (pane) => {
@@ -65,6 +73,7 @@ export function schedulePaneRevealPresent(getPanes: () => Iterable<ManagedPaneIn
     // latched, RenderService buffers refreshes instead of rendering them, so
     // this present would paint nothing. See terminal-synchronized-output-release.
     releaseAbandonedSynchronizedOutput(pane.terminal)
+    clearTerminalRenderModel(pane.terminal)
     if (pane.terminal.rows > 0) {
       pane.terminal.refresh(0, pane.terminal.rows - 1)
     }

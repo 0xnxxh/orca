@@ -9,6 +9,7 @@ import {
 } from './terminal-webgl-auto-policy'
 import { safeFitAndThen } from './pane-fit'
 import { releaseAbandonedSynchronizedOutput } from './terminal-synchronized-output-release'
+import { clearTerminalRenderModel } from './terminal-render-model-clear'
 
 export const ENABLE_WEBGL_RENDERER = true
 let suggestedRendererType: 'dom' | undefined
@@ -137,7 +138,16 @@ export function resetWebglTextureAtlas(pane: ManagedPaneInternal): void {
     // Why: rapid TUI redraws can corrupt xterm's WebGL glyph atlas without a
     // context-loss event. Clearing the atlas preserves GPU rendering and forces
     // a fresh paint when the pane becomes visible/focused again.
-    pane.webglAddon?.clearTextureAtlas()
+    if (pane.webglAddon) {
+      pane.webglAddon.clearTextureAtlas()
+    } else {
+      // Why: clearTextureAtlas is what clears the render model on the WebGL
+      // path. Without an addon nothing invalidates it, so the refresh below
+      // would diff against a model the occluded canvas no longer matches and
+      // skip the stale cells. Clear it explicitly so DOM-rendered panes get the
+      // same guaranteed full repaint.
+      clearTerminalRenderModel(pane.terminal)
+    }
     // Why: on reveal xterm's IntersectionObserver can still report the pane as
     // not intersecting, so a plain refresh() is swallowed by RenderService's
     // paused-render gate and the cleared model never repaints (stale bottom rows
