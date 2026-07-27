@@ -118,6 +118,52 @@ describe('install-electron-package-binary', () => {
     }
   })
 
+  it('fails after exhausting transient Electron download retries', () => {
+    const projectDir = mkTempProject()
+
+    try {
+      writeFakeElectronPackage(projectDir)
+      writeFakeElectronGet(projectDir, {
+        downloadFailures: 5,
+        downloadErrorCode: 'ECONNRESET'
+      })
+      writeFakeExtractor(projectDir, { createExecutable: true })
+
+      const result = runInstallScript(projectDir, {
+        ORCA_ELECTRON_PACKAGE_RETRY_DELAYS_MS: '0,0'
+      })
+
+      expect(result.status).toBe(1)
+      expect(
+        readFileSync(join(projectDir, 'electron-get.log'), 'utf8').trim().split('\n')
+      ).toHaveLength(3)
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects invalid Electron download retry delays before downloading', () => {
+    const projectDir = mkTempProject()
+
+    try {
+      writeFakeElectronPackage(projectDir)
+      writeFakeElectronGet(projectDir)
+      writeFakeExtractor(projectDir, { createExecutable: true })
+
+      const result = runInstallScript(projectDir, {
+        ORCA_ELECTRON_PACKAGE_RETRY_DELAYS_MS: '0,nope'
+      })
+
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain(
+        'ORCA_ELECTRON_PACKAGE_RETRY_DELAYS_MS must contain non-negative integers'
+      )
+      expect(existsSync(join(projectDir, 'electron-get.log'))).toBe(false)
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true })
+    }
+  })
+
   it('does not retry permanent Electron download failures', () => {
     const projectDir = mkTempProject()
 
