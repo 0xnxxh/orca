@@ -31,6 +31,7 @@ import {
   getTerminalUrlOpenHint,
   installFilePathLinkClickFallback
 } from './terminal-link-handlers'
+import { terminalUrlOpenHintOptionsFor } from './terminal-link-open-hints'
 import { createTerminalHandleLinkProvider } from './terminal-handle-links'
 import type { LinkHandlerDeps } from './terminal-link-handlers'
 import { handleOscLink } from './terminal-osc-link-routing'
@@ -780,10 +781,7 @@ export function useTerminalPaneLifecycle({
     const fileOpenLinkHint = getTerminalFileOpenHint()
     // Why: read settingsRef at fire time so toggling link routing applies without recreating panes.
     const getUrlOpenLinkHint = (): string =>
-      getTerminalUrlOpenHint({
-        openLinksInApp: settingsRef.current?.openLinksInApp === true,
-        modifierInverts: settingsRef.current?.openLinksInAppModifierInverts === true
-      })
+      getTerminalUrlOpenHint(terminalUrlOpenHintOptionsFor(settingsRef.current))
     const osc7UncHost = extractUncHost(startupCwd)
 
     let releaseWebviewDragPassthrough: (() => void) | null = null

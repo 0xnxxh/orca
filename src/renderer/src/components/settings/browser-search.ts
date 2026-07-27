@@ -16,15 +16,13 @@ function getDefaultBrowserShortcutPlatform(): BrowserShortcutPlatform {
   }
 }
 
-export function getBrowserLinkRoutingShortcutLabel(platform: BrowserShortcutPlatform): string {
-  return platform.isMac ? '⇧⌘-click' : 'Shift+Ctrl+click'
-}
-
-// Why: the modifier sentence moved to the nested "Hold Shift to open in …" row —
-// once that row can invert the routing, "always uses your system browser" is no
-// longer true, and the child row states the live destination instead.
-export function getBrowserLinkRoutingDescription(platform: BrowserShortcutPlatform): string {
-  return `Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor. ${getBrowserLinkRoutingShortcutLabel(platform)} opens a link the other way.`
+// Why: the modifier sentence moved to the nested "Hold Shift to open in …" row.
+// Once that row can invert the routing, no single sentence here is true in every
+// state — "always uses your system browser" breaks when inverting is on, and
+// "opens a link the other way" breaks in the default state where it is off. The
+// chord is now stated only by the child row, which knows the live destination.
+export function getBrowserLinkRoutingDescription(): string {
+  return "Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor."
 }
 
 export function getBrowserPaneSearchEntries(
@@ -99,7 +97,7 @@ export function getBrowserPaneSearchEntries(
     },
     {
       title: translate('auto.components.settings.browser.search.5cb082b3e3', 'Link Routing'),
-      description: getBrowserLinkRoutingDescription(platform),
+      description: getBrowserLinkRoutingDescription(),
       keywords: [
         ...translateSearchKeyword('auto.components.settings.browser.search.2d2d995c58', 'browser'),
         ...translateSearchKeyword('auto.components.settings.browser.search.44d14df30d', 'preview'),
@@ -142,6 +140,9 @@ export function getBrowserPaneSearchEntries(
           'auto.components.settings.browser.search.linkRoutingModifier.opposite',
           'opposite'
         ),
+        // Why: the row renders live copy but this entry is built with openLinksInApp
+        // false, so index the other title too or the row is unfindable by its own text.
+        getLinkRoutingModifierTitle(true),
         platform.isMac ? 'cmd' : 'ctrl'
       ]
     },

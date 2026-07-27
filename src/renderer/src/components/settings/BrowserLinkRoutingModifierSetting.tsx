@@ -1,5 +1,4 @@
 import type { GlobalSettings } from '../../../../shared/types'
-import { translate } from '@/i18n/i18n'
 import { SearchableSetting } from './SearchableSetting'
 import { SettingsSwitchRow } from './SettingsFormControls'
 import {
@@ -48,10 +47,6 @@ export function BrowserLinkRoutingModifierSetting({
               openLinksInAppModifierInverts: settings.openLinksInAppModifierInverts !== true
             })
           }
-          ariaLabel={translate(
-            'auto.components.settings.BrowserLinkRoutingModifierSetting.toggleLabel',
-            'Toggle inverted link routing modifier'
-          )}
         />
       </div>
     </SearchableSetting>

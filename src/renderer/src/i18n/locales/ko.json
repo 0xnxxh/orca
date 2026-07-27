@@ -7528,6 +7528,12 @@
             "8dd4805991": "파일",
             "68d1db8929": "markdown",
             "90425d313c": "Shift",
+            "linkRoutingModifier": {
+              "routing": "라우팅",
+              "modifier": "수정자",
+              "invert": "반전",
+              "opposite": "반대"
+            },
             "72c58f7792": "웹뷰",
             "82ba1c80ea": "로컬호스트",
             "bea27bac4b": "링크",
@@ -9724,11 +9730,10 @@
           "legacyHelp": "Update this server manually once to enable remote updates."
         },
         "BrowserLinkRoutingModifierSetting": {
-          "toggleLabel": "Toggle inverted link routing modifier",
           "titleSystem": "Hold Shift to open in your web browser",
           "titleOrca": "Hold Shift to open in Orca",
           "descriptionSystem": "Links open in Orca, so {{chord}}+click sends one to your system browser instead.",
-          "descriptionOrca": "Links open in your system browser, so {{chord}}+click opens one in Orca's built-in browser instead."
+          "descriptionOrca": "Links open in your system browser. When enabled, {{chord}}+click opens one in Orca's built-in browser instead."
         }
       },
       "right": {

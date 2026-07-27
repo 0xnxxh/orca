@@ -1,26 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import {
-  getBrowserLinkRoutingDescription,
-  getBrowserLinkRoutingShortcutLabel,
-  getBrowserPaneSearchEntries
-} from './browser-search'
+import { getBrowserLinkRoutingDescription, getBrowserPaneSearchEntries } from './browser-search'
 import {
   getLinkRoutingModifierDescription,
   getLinkRoutingModifierTitle
 } from './browser-link-routing-modifier-copy'
 
 describe('browser settings search copy', () => {
-  it('uses macOS shortcut symbols for Link Routing copy and search metadata', () => {
-    expect(getBrowserLinkRoutingShortcutLabel({ isMac: true })).toBe('⇧⌘-click')
-
-    const description = getBrowserLinkRoutingDescription({ isMac: true })
-    expect(description).toContain('⇧⌘-click')
-    expect(description).not.toContain('Cmd/Ctrl')
-
+  it('uses macOS shortcut keywords for Link Routing search metadata', () => {
     const linkRoutingEntry = getBrowserPaneSearchEntries({ isMac: true }).find(
       (entry) => entry.title === 'Link Routing'
     )
-    expect(linkRoutingEntry?.description).toBe(description)
+    expect(linkRoutingEntry?.description).toBe(getBrowserLinkRoutingDescription())
     expect(linkRoutingEntry?.keywords).toContain('cmd')
     expect(linkRoutingEntry?.keywords).not.toContain('ctrl')
 
@@ -30,19 +20,21 @@ describe('browser settings search copy', () => {
     expect(defaultZoomEntry?.keywords).toContain('zoom')
   })
 
-  it('uses Ctrl shortcut text for Link Routing copy and search metadata off macOS', () => {
-    expect(getBrowserLinkRoutingShortcutLabel({ isMac: false })).toBe('Shift+Ctrl+click')
-
-    const description = getBrowserLinkRoutingDescription({ isMac: false })
-    expect(description).toContain('Shift+Ctrl+click')
-    expect(description).not.toContain('Cmd/Ctrl')
-
+  it('uses Ctrl shortcut keywords for Link Routing search metadata off macOS', () => {
     const linkRoutingEntry = getBrowserPaneSearchEntries({ isMac: false }).find(
       (entry) => entry.title === 'Link Routing'
     )
-    expect(linkRoutingEntry?.description).toBe(description)
+    expect(linkRoutingEntry?.description).toBe(getBrowserLinkRoutingDescription())
     expect(linkRoutingEntry?.keywords).toContain('ctrl')
     expect(linkRoutingEntry?.keywords).not.toContain('cmd')
+  })
+
+  // Why: the modifier can now invert, so no fixed sentence here is true in every
+  // state — the nested row owns that claim and states the live destination.
+  it('leaves the modifier claim to the nested row', () => {
+    const description = getBrowserLinkRoutingDescription()
+    expect(description).not.toContain('click')
+    expect(description).not.toContain('system browser')
   })
 })
 
@@ -82,5 +74,20 @@ describe('browser link routing modifier copy', () => {
     expect(getLinkRoutingModifierDescription({ openLinksInApp: true, isMac: true })).toContain(
       'system browser'
     )
+  })
+
+  // Why: the toggle is off by default, so present-tense "opens one in Orca" would
+  // describe behavior the user does not have yet.
+  it('phrases the Orca branch as enabled-state copy', () => {
+    expect(getLinkRoutingModifierDescription({ openLinksInApp: false, isMac: true })).toContain(
+      'When enabled'
+    )
+  })
+
+  // Why: the entry is built with openLinksInApp false, so without this the row is
+  // unfindable by the title it actually renders when Link Routing is on.
+  it('indexes both titles so the row is findable in either routing state', () => {
+    const entry = getBrowserPaneSearchEntries({ isMac: true })[4]
+    expect(entry?.keywords).toContain(getLinkRoutingModifierTitle(true))
   })
 })

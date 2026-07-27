@@ -111,6 +111,29 @@ describe('createPaneDOM link tooltips', () => {
     )
   })
 
+  // Why: the only PaneManager consumer passes linkOpenHint, so the hardcoded fallback
+  // is unreachable in production — without this, dropping the option stays green.
+  it('re-resolves the caller hint on every hover so setting changes apply live', () => {
+    const leafId = '11111111-1111-4111-8111-111111111111' as TerminalLeafId
+    let hint = 'first hint'
+    const pane = createPaneDOM(
+      1,
+      leafId,
+      { linkOpenHint: () => hint },
+      { active: null } as never,
+      {} as never,
+      vi.fn(),
+      vi.fn()
+    )
+
+    webLinksAddonMock.options?.hover?.({} as MouseEvent, 'http://localhost:5180/')
+    expect(pane.linkTooltip.textContent).toBe('http://localhost:5180/ (first hint)')
+
+    hint = 'second hint'
+    webLinksAddonMock.options?.hover?.({} as MouseEvent, 'http://localhost:5180/')
+    expect(pane.linkTooltip.textContent).toBe('http://localhost:5180/ (second hint)')
+  })
+
   it('lets callers replace WebLinks hover text for display-only labels', async () => {
     const labeledText = 'http://main.orca.localhost:60016/ (localhost:5180; click to open)'
     const leafId = '11111111-1111-4111-8111-111111111111' as TerminalLeafId

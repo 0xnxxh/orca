@@ -7528,6 +7528,12 @@
             "8dd4805991": "文件",
             "68d1db8929": "markdown",
             "90425d313c": "转移",
+            "linkRoutingModifier": {
+              "routing": "路由",
+              "modifier": "修饰键",
+              "invert": "反转",
+              "opposite": "相反"
+            },
             "72c58f7792": "网页视图",
             "82ba1c80ea": "本地主机",
             "bea27bac4b": "链接",
@@ -9724,11 +9730,10 @@
           "legacyHelp": "Update this server manually once to enable remote updates."
         },
         "BrowserLinkRoutingModifierSetting": {
-          "toggleLabel": "Toggle inverted link routing modifier",
           "titleSystem": "Hold Shift to open in your web browser",
           "titleOrca": "Hold Shift to open in Orca",
           "descriptionSystem": "Links open in Orca, so {{chord}}+click sends one to your system browser instead.",
-          "descriptionOrca": "Links open in your system browser, so {{chord}}+click opens one in Orca's built-in browser instead."
+          "descriptionOrca": "Links open in your system browser. When enabled, {{chord}}+click opens one in Orca's built-in browser instead."
         }
       },
       "right": {

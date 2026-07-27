@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getTerminalUrlOpenHint } from './terminal-link-open-hints'
+import { getTerminalUrlOpenHint, terminalUrlOpenHintOptionsFor } from './terminal-link-open-hints'
 
 function stubPlatform(isMac: boolean): void {
   vi.stubGlobal('navigator', { userAgent: isMac ? 'Mac OS X' : 'Windows NT 10.0' })
@@ -43,5 +43,47 @@ describe('getTerminalUrlOpenHint', () => {
     expect(getTerminalUrlOpenHint({ openLinksInApp: false, modifierInverts: true })).toBe(
       'Ctrl+click to open or Shift+Ctrl+click to open in Orca'
     )
+  })
+})
+
+describe('terminalUrlOpenHintOptionsFor', () => {
+  it('reports inversion when links open externally on a local runtime', () => {
+    expect(
+      terminalUrlOpenHintOptionsFor({
+        openLinksInApp: false,
+        openLinksInAppModifierInverts: true
+      })
+    ).toEqual({ openLinksInApp: false, modifierInverts: true })
+  })
+
+  // Why: openHttpLink refuses to route a remote-owned URL into Orca, so promising
+  // "open in Orca" there would advertise a click that lands somewhere else.
+  it('drops inversion while a remote runtime is active', () => {
+    stubPlatform(true)
+    const options = terminalUrlOpenHintOptionsFor({
+      openLinksInApp: false,
+      openLinksInAppModifierInverts: true,
+      activeRuntimeEnvironmentId: 'remote-1'
+    })
+
+    expect(options.modifierInverts).toBe(false)
+    expect(getTerminalUrlOpenHint(options)).toContain('for system browser')
+  })
+
+  it('ignores a blank runtime id', () => {
+    expect(
+      terminalUrlOpenHintOptionsFor({
+        openLinksInApp: false,
+        openLinksInAppModifierInverts: true,
+        activeRuntimeEnvironmentId: '   '
+      }).modifierInverts
+    ).toBe(true)
+  })
+
+  it('tolerates missing settings', () => {
+    expect(terminalUrlOpenHintOptionsFor(null)).toEqual({
+      openLinksInApp: false,
+      modifierInverts: false
+    })
   })
 })

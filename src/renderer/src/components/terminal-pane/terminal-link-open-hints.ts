@@ -25,6 +25,26 @@ export type TerminalUrlOpenHintOptions = {
   modifierInverts?: boolean
 }
 
+// Why: openHttpLink only routes to Orca when the source is local, so a remote runtime
+// pins every link to the system browser and inverting cannot reach Orca there.
+export function terminalUrlOpenHintOptionsFor(
+  settings:
+    | {
+        openLinksInApp?: boolean
+        openLinksInAppModifierInverts?: boolean
+        activeRuntimeEnvironmentId?: string | null
+      }
+    | null
+    | undefined
+): TerminalUrlOpenHintOptions {
+  return {
+    openLinksInApp: settings?.openLinksInApp === true,
+    modifierInverts:
+      settings?.openLinksInAppModifierInverts === true &&
+      !settings?.activeRuntimeEnvironmentId?.trim()
+  }
+}
+
 // Why: with modifierInverts on, Shift no longer always means "system browser" —
 // it means "the other one" — so the hint has to name the actual destination.
 export function getTerminalUrlOpenHint(options: TerminalUrlOpenHintOptions = {}): string {

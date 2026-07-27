@@ -107,7 +107,7 @@ export function BrowserPane({
   const showCookies = matchesSettingsSearch(searchQuery, [getBrowserPaneSearchEntries()[6]])
   const showBrowserUse = matchesSettingsSearch(searchQuery, getBrowserUsePaneSearchEntries())
   const isMac = isMacUserAgent()
-  const linkRoutingDescription = getBrowserLinkRoutingDescription({ isMac })
+  const linkRoutingDescription = getBrowserLinkRoutingDescription()
   const hostLabelOverrides = useMemo(() => getHostDisplayLabelOverrides(settings), [settings])
   const browserSessionHostOptions = useMemo(
     () =>
