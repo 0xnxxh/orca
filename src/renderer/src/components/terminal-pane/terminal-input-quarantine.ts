@@ -36,9 +36,9 @@ function containsLineTerminator(data: string): boolean {
   return LINE_TERMINATORS.some((terminator) => data.includes(terminator))
 }
 
-/** Arm only when the endpoint was actually replaced. A recovery that keeps the
- *  same live shell has no mangled line to suppress, and quarantining there
- *  would eat a legitimate command. */
+/** Arm only when the endpoint stopped accepting writes and may have been
+ *  replaced. A recovery that always keeps the same live shell has no mangled
+ *  line to suppress, and quarantining there would eat a legitimate command. */
 export function armTerminalInputQuarantine(tabId: string, now: number = Date.now()): void {
   // Prune first: entries are only meaningful for QUARANTINE_MAX_MS, and a tab
   // closed mid-quarantine would otherwise leave one behind forever.
