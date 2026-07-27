@@ -217,7 +217,8 @@ describe('launchAgentInNewTab Windows shell quoting', () => {
     expect(mockQueueTabStartupCommand).toHaveBeenCalledWith(
       'tab-1',
       expect.objectContaining({
-        command: 'codex "--model" "gpt-5" "fix the spinner"'
+        command: 'codex "--model" "gpt-5" "fix the spinner"',
+        agentArgsOverride: '--model gpt-5'
       })
     )
   })

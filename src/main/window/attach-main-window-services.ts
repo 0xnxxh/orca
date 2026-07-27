@@ -23,14 +23,15 @@ import { registerSshHandlers } from '../ipc/ssh'
 import { registerRemoteWorkspaceHandlers } from '../ipc/remote-workspace'
 import { browserManager } from '../browser/browser-manager'
 import { hasSystemMediaAccess, requestSystemMediaAccess } from '../browser/browser-media-access'
-import type { OrcaRuntimeService } from '../runtime/orca-runtime'
+import type { OrcaRuntimeService, RuntimeWorktreeLifecycleEvent } from '../runtime/orca-runtime'
 import {
   checkForUpdatesFromMenu,
   downloadUpdate,
   getUpdateStatus,
   quitAndInstall,
   setupAutoUpdater,
-  dismissNudge
+  dismissNudge,
+  type UpdateInstallMode
 } from '../updater'
 import { scheduleHistoryGc } from '../terminal-history'
 import { hydrateLocalPtyRegistryAtBoot } from '../memory/hydrate-local-pty-registry'
@@ -82,11 +83,15 @@ export function attachMainWindowServices(
     // Why: lets the PTY orphan sweep skip the one crash-recovery reload (#5787).
     isRecoveryReloadInFlight?: (webContentsId: number) => boolean
     onBeforeUpdateQuit?: () => void | Promise<void>
+    updateInstallMode?: UpdateInstallMode
+    onWorktreeLifecycle?: (event: RuntimeWorktreeLifecycleEvent) => void
   }
 ): void {
   registerAppReloadHandler(mainWindow, options?.onBeforeRendererReload)
   registerRepoHandlers(mainWindow, store)
-  registerWorktreeHandlers(mainWindow, store, runtime)
+  registerWorktreeHandlers(mainWindow, store, runtime, {
+    onWorktreeLifecycle: options?.onWorktreeLifecycle
+  })
   // Why: repo/settings mutations resync watchers through this attached main-window context.
   setWorktreeBaseDirectoryWatcherSyncContext(store, mainWindow)
   scheduleWorktreeBaseDirectoryWatcherSync(store, mainWindow)
@@ -158,7 +163,8 @@ export function attachMainWindowServices(
       },
       setDismissedUpdateNudgeId: (id) => {
         store.updateUI({ dismissedUpdateNudgeId: id })
-      }
+      },
+      installMode: options?.updateInstallMode
     })
     logStartupMilestone('updater-setup-done')
   }

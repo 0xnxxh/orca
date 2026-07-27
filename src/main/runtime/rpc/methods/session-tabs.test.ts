@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { RpcDispatcher } from '../dispatcher'
 import type { RpcRequest } from '../core'
 import type { OrcaRuntimeService } from '../../orca-runtime'
+import { SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import { SESSION_TAB_METHODS } from './session-tabs'
 
 function makeRequest(method: string, params?: unknown): RpcRequest {
@@ -66,6 +67,202 @@ describe('session tab RPC methods', () => {
       navigation: 'caller'
     })
   })
+
+  it('refuses a reasonless close without invoking destructive runtime logic', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      refuseUnattributedMobileSessionTabClose: vi.fn().mockResolvedValue({
+        closed: true,
+        refused: true,
+        snapshotRepublished: true
+      }),
+      closeMobileSessionTab: vi.fn()
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('session.tabs.close', { worktree: 'id:wt-1', tabId: 'tab-1' })
+    )
+
+    expect(response).toMatchObject({
+      ok: true,
+      result: { closed: true, refused: true, snapshotRepublished: true }
+    })
+    expect(runtime.refuseUnattributedMobileSessionTabClose).toHaveBeenCalledWith('id:wt-1', 'tab-1')
+    expect(runtime.closeMobileSessionTab).not.toHaveBeenCalled()
+  })
+
+  it('passes explicit user intent to host adjudication', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      refuseUnattributedMobileSessionTabClose: vi.fn(),
+      closeMobileSessionTab: vi.fn().mockResolvedValue({ closed: true })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('session.tabs.close', {
+        worktree: 'id:wt-1',
+        tabId: 'tab-1',
+        reason: 'user'
+      })
+    )
+
+    expect(response.ok).toBe(true)
+    expect(runtime.closeMobileSessionTab).toHaveBeenCalledWith('id:wt-1', 'tab-1', {
+      reason: 'user'
+    })
+    expect(runtime.refuseUnattributedMobileSessionTabClose).not.toHaveBeenCalled()
+  })
+
+  it('preserves explicit user closes from current runtime clients', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      refuseUnattributedMobileSessionTabClose: vi.fn(),
+      closeMobileSessionTab: vi.fn().mockResolvedValue({ closed: true })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
+    const replies: string[] = []
+
+    await dispatcher.dispatchStreaming(
+      makeRequest('session.tabs.close', {
+        worktree: 'id:wt-1',
+        tabId: 'tab-1',
+        reason: 'user'
+      }),
+      (response) => replies.push(response),
+      { clientKind: 'runtime', pairedDeviceId: 'current-runtime' }
+    )
+
+    expect(replies).toHaveLength(1)
+    expect(runtime.closeMobileSessionTab).toHaveBeenCalledWith('id:wt-1', 'tab-1', {
+      reason: 'user'
+    })
+    expect(runtime.refuseUnattributedMobileSessionTabClose).not.toHaveBeenCalled()
+  })
+
+  it('preserves reasonless explicit closes from authenticated legacy mobile clients', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      refuseUnattributedMobileSessionTabClose: vi.fn(),
+      closeMobileSessionTab: vi.fn().mockResolvedValue({ closed: true })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
+    const replies: string[] = []
+
+    await dispatcher.dispatchStreaming(
+      makeRequest('session.tabs.close', { worktree: 'id:wt-1', tabId: 'tab-1' }),
+      (response) => replies.push(response),
+      { clientKind: 'mobile' }
+    )
+
+    expect(replies).toHaveLength(1)
+    expect(runtime.closeMobileSessionTab).toHaveBeenCalledWith('id:wt-1', 'tab-1', {
+      reason: 'user'
+    })
+    expect(runtime.refuseUnattributedMobileSessionTabClose).not.toHaveBeenCalled()
+  })
+
+  it('preserves reasonless closes from authenticated legacy runtime clients', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      refuseUnattributedMobileSessionTabClose: vi.fn(),
+      closeMobileSessionTab: vi.fn().mockResolvedValue({ closed: true })
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
+    const replies: string[] = []
+
+    await dispatcher.dispatchStreaming(
+      makeRequest('session.tabs.close', { worktree: 'id:wt-1', tabId: 'tab-1' }),
+      (response) => replies.push(response),
+      { clientKind: 'runtime', pairedDeviceId: 'legacy-runtime' }
+    )
+
+    expect(replies).toHaveLength(1)
+    expect(runtime.closeMobileSessionTab).toHaveBeenCalledWith('id:wt-1', 'tab-1', {
+      reason: 'user'
+    })
+    expect(runtime.refuseUnattributedMobileSessionTabClose).not.toHaveBeenCalled()
+  })
+
+  it('refuses reasonless closes from runtime clients that negotiated explicit intent', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      refuseUnattributedMobileSessionTabClose: vi.fn().mockResolvedValue({
+        closed: true,
+        refused: true,
+        refusalReason: 'missing-intent',
+        snapshotRepublished: true
+      }),
+      closeMobileSessionTab: vi.fn()
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
+    const replies: string[] = []
+
+    await dispatcher.dispatchStreaming(
+      makeRequest('session.tabs.close', { worktree: 'id:wt-1', tabId: 'tab-1' }),
+      (response) => replies.push(response),
+      {
+        clientKind: 'runtime',
+        pairedDeviceId: 'current-runtime',
+        clientCapabilities: [SESSION_TAB_CLOSE_INTENT_RUNTIME_CAPABILITY]
+      }
+    )
+
+    expect(replies).toHaveLength(1)
+    expect(runtime.refuseUnattributedMobileSessionTabClose).toHaveBeenCalledWith('id:wt-1', 'tab-1')
+    expect(runtime.closeMobileSessionTab).not.toHaveBeenCalled()
+  })
+
+  it.each(['pty-exit', 'cleanup'] as const)(
+    'rejects %s on the legacy close endpoint before host adjudication',
+    async (reason) => {
+      const runtime = {
+        getRuntimeId: () => 'test-runtime',
+        closeMobileSessionTab: vi.fn()
+      } as unknown as OrcaRuntimeService
+      const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
+
+      const response = await dispatcher.dispatch(
+        makeRequest('session.tabs.close', {
+          worktree: 'id:wt-1',
+          tabId: 'tab-1',
+          reason
+        })
+      )
+
+      expect(response.ok).toBe(false)
+      expect(runtime.closeMobileSessionTab).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['pty-exit', 'cleanup'] as const)(
+    'binds a %s lifecycle close to the observed publication and terminal',
+    async (reason) => {
+      const runtime = {
+        getRuntimeId: () => 'test-runtime',
+        closeMobileSessionTab: vi.fn().mockResolvedValue({ closed: true })
+      } as unknown as OrcaRuntimeService
+      const dispatcher = new RpcDispatcher({ runtime, methods: SESSION_TAB_METHODS })
+
+      const response = await dispatcher.dispatch(
+        makeRequest('session.tabs.closeLifecycle', {
+          worktree: 'id:wt-1',
+          tabId: 'tab-1',
+          reason,
+          publicationEpoch: 'epoch-1',
+          terminal: 'term-1'
+        })
+      )
+
+      expect(response.ok).toBe(true)
+      expect(runtime.closeMobileSessionTab).toHaveBeenCalledWith('id:wt-1', 'tab-1', {
+        reason,
+        expectedPublicationEpoch: 'epoch-1',
+        expectedTerminalHandle: 'term-1'
+      })
+    }
+  )
 
   it('dispatches tab moves through the runtime', async () => {
     const runtime = {
@@ -143,7 +340,7 @@ describe('session tab RPC methods', () => {
     })
   })
 
-  it('dispatches terminal creation with the requested tab group', async () => {
+  it('dispatches ordinary terminal creation with the requested tab group', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
       createMobileSessionTerminal: vi.fn().mockResolvedValue({
@@ -202,7 +399,9 @@ describe('session tab RPC methods', () => {
       activate: true,
       select: undefined,
       clientNavigationId: undefined,
-      navigation: 'all'
+      navigation: 'all',
+      clientMutationId: undefined,
+      signal: undefined
     })
   })
 
@@ -238,7 +437,7 @@ describe('session tab RPC methods', () => {
     )
   })
 
-  it('dispatches terminal creation with a requested agent preset', async () => {
+  it('preserves legacy agent creation for mixed-version clients', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
       createMobileSessionTerminal: vi.fn().mockResolvedValue({
@@ -271,13 +470,16 @@ describe('session tab RPC methods', () => {
       afterTabId: undefined,
       targetGroupId: undefined,
       command: undefined,
+      cwd: undefined,
       startupCommandDelivery: undefined,
       agent: 'codex',
       agentPrompt: 'Review this diff',
       activate: undefined,
       select: undefined,
       clientNavigationId: undefined,
-      navigation: 'all'
+      navigation: 'all',
+      clientMutationId: undefined,
+      signal: undefined
     })
   })
 
