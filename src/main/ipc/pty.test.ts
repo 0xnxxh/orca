@@ -13632,8 +13632,8 @@ describe('registerPtyHandlers', () => {
       }
     })
 
-    // Why: the shared mirror hot-swaps to the selected account, so guessing here
-    // would raise a restart notice that blocks a correctly-signed-in pane's input.
+    // Why: an unowned home cannot be named, so guessing here would raise a
+    // restart notice that blocks a correctly-signed-in pane's input.
     expect(recordCodexPaneAccountMock).not.toHaveBeenCalled()
     expect(forgetCodexPaneAccountMock).toHaveBeenCalledWith('pty-resumed')
   })
