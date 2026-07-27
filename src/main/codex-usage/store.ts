@@ -261,6 +261,12 @@ function normalizeModelForPricing(model: string | null): string | null {
   if (normalized === 'gpt-5.6-luna' || normalized.startsWith('gpt-5.6-luna-')) {
     return 'gpt-5.6-luna'
   }
+  // Why: OpenAI routes the bare `gpt-5.6` alias to Sol. Match it exactly — a
+  // `gpt-5.6-` prefix match would swallow the tier IDs above and any future
+  // cheaper variant.
+  if (normalized === 'gpt-5.6') {
+    return 'gpt-5.6-sol'
+  }
   return null
 }
 

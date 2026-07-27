@@ -343,27 +343,34 @@ describe('ClaudeUsageStore', () => {
 
   it('does not collapse Opus 4.5 or Sonnet 4.5 usage into Claude 5 pricing', async () => {
     const store = createStoreWithState({
-      dailyAggregates: [
-        {
-          day: '2026-04-09',
-          model: 'claude-sonnet-4-5-20250929',
-          projectKey: 'worktree:repo-1::/workspace/repo-a',
-          projectLabel: 'Repo A',
-          repoId: 'repo-1',
-          worktreeId: 'repo-1::/workspace/repo-a',
-          turnCount: 1,
-          zeroCacheReadTurnCount: 0,
-          inputTokens: 300_000,
-          outputTokens: 300_000,
-          cacheReadTokens: 300_000,
-          cacheWriteTokens: 300_000
-        }
-      ]
+      dailyAggregates: ['claude-sonnet-4-5-20250929', 'claude-opus-4-5-20251101'].map((model) => ({
+        day: '2026-04-09',
+        model,
+        projectKey: 'worktree:repo-1::/workspace/repo-a',
+        projectLabel: 'Repo A',
+        repoId: 'repo-1',
+        worktreeId: 'repo-1::/workspace/repo-a',
+        turnCount: 1,
+        zeroCacheReadTurnCount: 0,
+        inputTokens: 300_000,
+        outputTokens: 300_000,
+        cacheReadTokens: 300_000,
+        cacheWriteTokens: 300_000
+      }))
     })
 
-    const summary = await store.getSummary('orca', '30d')
+    const breakdown = await store.getBreakdown('orca', '30d', 'model')
 
-    expect(summary.estimatedCostUsd).toBeCloseTo(8.07)
+    // Why: the 4.5 tier premium only survives if `-4-5-` never matches the `-5`
+    // family regex, so this doubles as the digit-boundary proof for both families.
+    expect(
+      breakdown.find((row) => row.key === 'claude-sonnet-4-5-20250929')?.estimatedCostUsd
+    ).toBeCloseTo(8.07)
+    // Why: Opus 4.5 and Opus 5 share rates today, so this pins the rate rather
+    // than the routing — it fails only if the two ever diverge.
+    expect(
+      breakdown.find((row) => row.key === 'claude-opus-4-5-20251101')?.estimatedCostUsd
+    ).toBeCloseTo(11.025)
   })
 
   it('prices unknown newer Opus 4 point releases with current Opus rates', async () => {
