@@ -12,11 +12,15 @@
  * the shared glyph-atlas rebuild all render zero rows. The canvas keeps
  * compositing pre-hide pixels while xterm's buffer is perfectly correct.
  *
- * xterm's own 1s safety timeout only re-arms on the NEXT `bufferRows` call, so
- * a TUI that goes quiet (an agent waiting on input) can sit garbled
- * indefinitely. Resizing the window "fixes" it because SIGWINCH makes the TUI
- * repaint, and that repaint's closing `?2026l` clears the latch — which is
- * exactly the workaround users report (STA-2694).
+ * xterm's 1s safety timeout does NOT bound this: it is armed only inside
+ * `bufferRows`, and `refreshRows` returns at its `_isPaused` check first — so
+ * while a pane is occluded nothing reaches `bufferRows` and no timer is ever
+ * pending. A pane hidden mid-frame holds the latch with no watchdog behind it,
+ * indefinitely. (terminal-reveal-draw-command-probe.spec.ts asserts exactly
+ * this: latch set, `_timeout === undefined`, and a repaint drawing 0 instances.)
+ * Resizing the window "fixes" it because SIGWINCH makes the TUI repaint, and
+ * that repaint's closing `?2026l` clears the latch — exactly the workaround
+ * users report (STA-2694).
  *
  * Reveal is a safe place to drop the latch: a frame opened before the pane was
  * hidden can no longer be completed atomically, and its content is already in

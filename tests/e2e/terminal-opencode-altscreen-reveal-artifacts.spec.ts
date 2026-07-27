@@ -1,22 +1,37 @@
 /**
- * STA-2694 repro: switching away from a workspace running an alt-screen AI TUI
- * (OpenCode/OpenTUI, also Claude Code and grok) and returning later shows a
- * garbled/distorted terminal that only a manual window resize repairs.
+ * STA-2694 repro attempt: switching away from a workspace running an alt-screen
+ * AI TUI (OpenCode/OpenTUI, also Claude Code and grok) and returning later shows
+ * a garbled/distorted terminal that only a manual window resize repairs.
  *
- * Why a new spec next to terminal-inline-tui-reveal-convergence.spec.ts: that
- * one drives the INLINE shape (normal buffer, live block glued to the bottom,
- * history scrolling into scrollback). OpenCode runs FULL-SCREEN on the
- * alternate buffer and repaints absolutely-positioned rows — nothing scrolls,
- * so no row ever self-heals through the scroll path, and a row that paints
- * wrong stays wrong until a resize rebuilds the render model. The inline spec's
- * assertions (viewport anchored to baseY, input-box row present, frame
- * advancing) all pass while the canvas is visibly garbled, because they read
- * xterm's BUFFER. This spec asserts the PIXELS.
+ * Why this spec exists next to terminal-inline-tui-reveal-convergence.spec.ts:
+ * that one drives the INLINE shape (normal buffer, live block glued to the
+ * bottom, history scrolling into scrollback). OpenCode runs FULL-SCREEN on the
+ * alternate buffer and repaints absolutely-positioned rows — nothing scrolls, so
+ * no row ever self-heals through the scroll path. These tests cover that shape
+ * across the hide/reveal boundaries (worktree switch, cold park, idle agent,
+ * desktop hide) and guard the convergence properties we CAN observe: the buffer
+ * converges to the live frame, the pane stays on the alt screen, and xterm's
+ * grid, the fit proposal, and the PTY-applied size all agree without a resize.
  *
- * The decisive assertion is resize-referenced: capture the revealed pane, then
- * force the repair the user performs by hand (a window resize), and require the
- * revealed pixels to already match the repaired pixels. "A resize fixes it" is
- * the literal user report, so "identical to post-resize" is the literal fix.
+ * ⚠ These tests do NOT observe the CANVAS. Two pixel oracles were tried here and
+ * both were proven blind by injecting the exact defect (freeze
+ * RenderService.refreshRows, then write new content, so the buffer advances
+ * while the canvas cannot):
+ *
+ *   1. Canvas-vs-buffer ink sampling (the render-desync sentinel's method).
+ *      `drawImage` on a non-preserveDrawingBuffer WebGL canvas hands back a
+ *      re-rendered copy, so it reported 0 missing cells against 5263 cells of
+ *      text the canvas had never drawn.
+ *   2. Screenshot comparison against a forced repaint. Playwright's screenshot
+ *      drives a fresh compositor frame, which HEALS the stale paint before it
+ *      is captured; and the "repair" calls the same repaint code the reveal
+ *      already ran, so a defect shared by both shots cancels out.
+ *
+ * Pixels are the wrong layer for this: anything that reads them can trigger the
+ * repaint that hides the bug. terminal-reveal-draw-command-probe.spec.ts solves
+ * that by counting the WebGL draw commands a repaint issues, which cannot be
+ * healed after the fact — use it for paint questions and this spec for buffer,
+ * geometry, and PTY-size convergence.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -594,6 +609,119 @@ test.describe('OpenCode alt-screen reveal artifacts (STA-2694)', () => {
       await assertBufferConverged(orcaPage, testInfo, setup, 'parked-reveal')
       await assertRevealPixelsNeedNoRepair(orcaPage, testInfo, setup, 'parked-reveal')
     } finally {
+      await setup.stop()
+    }
+  })
+
+  // The field condition the other tests miss: the agent is IDLE when you come
+  // back. Every test above keeps the TUI streaming across the reveal, so live
+  // frames repaint whatever the reveal got wrong — the defect heals itself
+  // before any assertion runs. A real OpenCode session sits waiting for input,
+  // so nothing arrives to heal it, and whatever the reveal painted is what the
+  // user stares at until they resize the window.
+  test('parked reveal of an IDLE alt-screen agent paints without a manual repair', async ({
+    orcaPage
+  }, testInfo) => {
+    test.setTimeout(240_000)
+    const setup = await startStreamingAltScreenTui(orcaPage, testInfo)
+    try {
+      test.skip(
+        !(await hasWebglPane(orcaPage, setup.tabId)),
+        'WebGL renderer unavailable in this environment'
+      )
+      // Go idle BEFORE hiding, cleanly between brackets — a settled agent
+      // holding its last full-screen frame.
+      await sendToTerminal(orcaPage, setup.ptyId, 'ORCA_FREEZE_NOW').catch(() => {})
+      await orcaPage.waitForTimeout(2_000)
+      const idleFrame = latestMatch(
+        (await probeRevealedPane(orcaPage, setup.tabId))?.screenRows.join('\n') ?? '',
+        FRAME_RE
+      )
+      expect(idleFrame, 'fixture never painted a frame before going idle').toBeGreaterThan(0)
+
+      // Cold-park the idle tab: renderer torn down, so the reveal must restore
+      // and repaint entirely from the snapshot with no live output to help.
+      await createActiveTerminalTab(orcaPage, setup.worktreeId)
+      await createActiveTerminalTab(orcaPage, setup.worktreeId)
+      await waitForTabParked(orcaPage, setup.tabId, { parkDelayMs: PARKING_DELAY_MS })
+      await orcaPage.waitForTimeout(3_000)
+
+      await withCpuThrottle(orcaPage, 6, async () => {
+        await activateTerminalTab(orcaPage, setup.tabId)
+        await waitForActiveTerminalManager(orcaPage, 30_000)
+        await orcaPage.waitForTimeout(3_000)
+      })
+
+      // The same frame must still be on screen — the agent produced nothing new.
+      const revealedProbe = await probeRevealedPane(orcaPage, setup.tabId)
+      expect(
+        revealedProbe?.bufferType,
+        `idle-parked-reveal: pane is not on the alt screen: ${describeProbe(revealedProbe)}`
+      ).toBe('alternate')
+      expect(
+        latestMatch(revealedProbe?.screenRows.join('\n') ?? '', FRAME_RE),
+        `idle-parked-reveal: idle frame lost across the park: ${describeProbe(revealedProbe)}`
+      ).toBeGreaterThan(0)
+
+      await assertRevealPixelsNeedNoRepair(orcaPage, testInfo, setup, 'idle-parked-reveal')
+    } finally {
+      await setup.stop()
+    }
+  })
+
+  // The LITERAL user action: "switch away to the desktop". That is an OS-level
+  // window hide/occlusion, not in-app navigation — it flips
+  // document.visibilityState, releases the WebGL context, and comes back
+  // through the window-wake recovery path rather than the worktree-reveal path.
+  // The pane never unmounts and its worktree never changes, so none of the
+  // reveal-repaint machinery the other tests exercise even runs.
+  test('@headful desktop switch away and back paints an idle agent without a manual repair', async ({
+    orcaPage,
+    electronApp
+  }, testInfo) => {
+    test.setTimeout(240_000)
+    const setup = await startStreamingAltScreenTui(orcaPage, testInfo)
+    try {
+      test.skip(
+        !(await hasWebglPane(orcaPage, setup.tabId)),
+        'WebGL renderer unavailable in this environment'
+      )
+      // Idle agent holding a full-screen frame — the field state on return.
+      await sendToTerminal(orcaPage, setup.ptyId, 'ORCA_FREEZE_NOW').catch(() => {})
+      await orcaPage.waitForTimeout(2_000)
+
+      // Switch away to the desktop: hide the window entirely.
+      await electronApp.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        if (!window) {
+          throw new Error('No Electron window')
+        }
+        window.hide()
+      })
+      await orcaPage.waitForTimeout(4_000)
+
+      // ...and come back to it.
+      await electronApp.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0]
+        if (!window) {
+          throw new Error('No Electron window')
+        }
+        window.show()
+        window.focus()
+      })
+      await orcaPage.waitForTimeout(3_000)
+
+      const revealedProbe = await probeRevealedPane(orcaPage, setup.tabId)
+      expect(
+        revealedProbe?.bufferType,
+        `desktop-return: pane is not on the alt screen: ${describeProbe(revealedProbe)}`
+      ).toBe('alternate')
+
+      await assertRevealPixelsNeedNoRepair(orcaPage, testInfo, setup, 'desktop-return')
+    } finally {
+      await electronApp
+        .evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.show())
+        .catch(() => {})
       await setup.stop()
     }
   })
