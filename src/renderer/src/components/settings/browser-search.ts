@@ -16,11 +16,8 @@ function getDefaultBrowserShortcutPlatform(): BrowserShortcutPlatform {
   }
 }
 
-// Why: the modifier sentence moved to the nested "Hold Shift to open in …" row.
-// Once that row can invert the routing, no single sentence here is true in every
-// state — "always uses your system browser" breaks when inverting is on, and
-// "opens a link the other way" breaks in the default state where it is off. The
-// chord is now stated only by the child row, which knows the live destination.
+// Why: no fixed modifier sentence is true in every state once inverting exists, so
+// the nested row states the chord instead — it knows the live destination.
 export function getBrowserLinkRoutingDescription(): string {
   return "Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor."
 }

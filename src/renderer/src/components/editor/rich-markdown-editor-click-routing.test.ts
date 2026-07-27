@@ -14,9 +14,8 @@ beforeEach(() => {
   openHttpLinkMock.mockReset()
 })
 
-// Why: the preview half of this same decision is pinned with an identical options
-// shape in markdown-preview-links.test.ts — the two together keep the editor and
-// preview of one file from routing a link two different ways.
+// Why: markdown-preview-links.test.ts pins the preview half with the same options
+// shape, so together they stop one file's link routing two ways.
 function clickExternalLinkWithShift(sourceOwner: HttpLinkSourceOwner, isMac = true): boolean {
   const href = 'https://example.com/docs'
   const view = {
