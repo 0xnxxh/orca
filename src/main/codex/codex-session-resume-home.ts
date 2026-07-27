@@ -104,7 +104,14 @@ export function claimsCodexRolloutLayout(transcriptPath: string | undefined): bo
  * directly. Everything else is ordered by normalized path so no winner ever
  * depends on the order accounts happen to sit in settings.
  *
- * Both inputs are required, not optional: a caller that forgot one would
+ * The shared runtime mirror ranks above the remaining homes because winning is
+ * not inert for it: it is the only home that triggers the legacy migration into
+ * the real system home (prepareLegacySharedCodexSessionResume), which is how a
+ * system-default selection resumes on ~/.codex instead of some account's home.
+ * Letting a per-account home outrank it by mere path order would silently route
+ * that selection to an account the user did not pick.
+ *
+ * All inputs are required, not optional: a caller that forgot one would
  * silently degrade to pure path order, which is the accident this exists to
  * remove. The selection arrives as a thunk because resolving it stats the
  * account's ownership marker, and the far more common provenance-present
@@ -114,16 +121,23 @@ function rankTrustedCodexHomesForRescan(args: {
   trustedCodexHomes: readonly string[]
   getSelectedAccountCodexHome: () => string | null
   systemCodexHomePath: string | null
+  sharedRuntimeCodexHomePath: string | null
 }): string[] {
-  const selected = args.getSelectedAccountCodexHome()?.trim()
-  const system = args.systemCodexHomePath?.trim()
-  const selectedComparison = selected ? normalizeRuntimePathForComparison(selected) : null
-  const systemComparison = system ? normalizeRuntimePathForComparison(system) : null
+  const toComparisonHome = (value: string | null | undefined): string | null => {
+    const trimmed = value?.trim()
+    return trimmed ? normalizeRuntimePathForComparison(trimmed) : null
+  }
+  const selectedComparison = toComparisonHome(args.getSelectedAccountCodexHome())
+  const systemComparison = toComparisonHome(args.systemCodexHomePath)
+  const sharedRuntimeComparison = toComparisonHome(args.sharedRuntimeCodexHomePath)
   const rankOf = (comparisonHome: string): number => {
     if (selectedComparison && comparisonHome === selectedComparison) {
       return 0
     }
-    return systemComparison && comparisonHome === systemComparison ? 1 : 2
+    if (systemComparison && comparisonHome === systemComparison) {
+      return 1
+    }
+    return sharedRuntimeComparison && comparisonHome === sharedRuntimeComparison ? 2 : 3
   }
   return args.trustedCodexHomes
     .map((homePath) => ({ homePath, comparisonHome: normalizeRuntimePathForComparison(homePath) }))
@@ -147,6 +161,7 @@ export async function findTrustedCodexSessionResume(args: {
   trustedCodexHomes: readonly string[]
   getSelectedAccountCodexHome: () => string | null
   systemCodexHomePath: string | null
+  sharedRuntimeCodexHomePath: string | null
   fileIsRegular?: (filePath: string) => boolean
   listSessionFiles?: (sessionsRoot: string) => AsyncIterable<string>
 }): Promise<{ homePath: string; transcriptPath: string } | null> {

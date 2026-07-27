@@ -176,7 +176,7 @@ import {
   claimsCodexRolloutLayout,
   findTrustedCodexSessionResume
 } from './codex/codex-session-resume-home'
-import { getSystemCodexHomePath } from './codex/codex-home-paths'
+import { getOrcaManagedCodexHomePath, getSystemCodexHomePath } from './codex/codex-home-paths'
 import { normalizeRuntimePathForComparison } from '../shared/cross-platform-path'
 import type { AgentProviderSessionMetadata } from '../shared/agent-session-resume'
 import { getDefaultWslDistro } from './wsl'
@@ -857,7 +857,10 @@ async function prepareCodexSessionResumeForLaunch(args: {
     // rank it by the current selection so settings insertion order can never decide the account.
     // Lazy: only the legacy branch ranks, so a provenance-present resume never stats the marker.
     getSelectedAccountCodexHome: () => codexRuntimeHome!.getSelectedHostAccountCodexHomePath(),
-    systemCodexHomePath: systemHomePath
+    systemCodexHomePath: systemHomePath,
+    // Why: the mirror winning is what triggers the migration into ~/.codex below, so it must
+    // outrank the path-sorted account homes or a system-default selection resumes as an account.
+    sharedRuntimeCodexHomePath: getOrcaManagedCodexHomePath()
   })
   if (!sessionSource) {
     // Why: an unverifiable Codex rollout still blocks; only paths that never claimed Codex

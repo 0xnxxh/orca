@@ -13,7 +13,8 @@ const tempRoots: string[] = []
 // Why: the ranking inputs are required by design; cases below that never reach the rescan stay neutral.
 const withoutHomeRanking = {
   getSelectedAccountCodexHome: (): string | null => null,
-  systemCodexHomePath: null
+  systemCodexHomePath: null,
+  sharedRuntimeCodexHomePath: null
 }
 
 afterEach(() => {
@@ -274,6 +275,7 @@ describe('findTrustedCodexSessionResume legacy-rescan home ranking', () => {
           trustedCodexHomes,
           getSelectedAccountCodexHome: () => accountBHome,
           systemCodexHomePath: systemHome,
+          sharedRuntimeCodexHomePath: sharedMirror,
           listSessionFiles: listRolloutInEveryHome
         })
       ).resolves.toEqual({ homePath: accountBHome, transcriptPath: rolloutIn(accountBHome) })
@@ -288,15 +290,36 @@ describe('findTrustedCodexSessionResume legacy-rescan home ranking', () => {
         trustedCodexHomes: [sharedMirror, accountAHome, systemHome],
         getSelectedAccountCodexHome: () => null,
         systemCodexHomePath: systemHome,
+        sharedRuntimeCodexHomePath: sharedMirror,
         listSessionFiles: listRolloutInEveryHome
       })
     ).resolves.toEqual({ homePath: systemHome, transcriptPath: rolloutIn(systemHome) })
   })
 
+  // Why: `/Users/…` already wins the tier-3 byte order, so the case above cannot tell the
+  // system-home tier apart from the path tie-break. Pin it with a home that sorts last.
+  it('ranks the real system home above the others even when its path sorts last', async () => {
+    const lateSortingSystemHome = join('/var', 'lib', 'orca', '.codex')
+    await expect(
+      findTrustedCodexSessionResume({
+        sessionId,
+        transcriptPath: undefined,
+        trustedCodexHomes: [sharedMirror, accountAHome, lateSortingSystemHome],
+        getSelectedAccountCodexHome: () => null,
+        systemCodexHomePath: lateSortingSystemHome,
+        sharedRuntimeCodexHomePath: sharedMirror,
+        listSessionFiles: listRolloutInEveryHome
+      })
+    ).resolves.toEqual({
+      homePath: lateSortingSystemHome,
+      transcriptPath: rolloutIn(lateSortingSystemHome)
+    })
+  })
+
   it('orders the remaining homes by path so insertion order never decides', async () => {
     for (const trustedCodexHomes of [
-      [accountBHome, sharedMirror, accountAHome],
-      [accountAHome, accountBHome, sharedMirror]
+      [accountBHome, accountAHome],
+      [accountAHome, accountBHome]
     ]) {
       await expect(
         findTrustedCodexSessionResume({
@@ -305,25 +328,30 @@ describe('findTrustedCodexSessionResume legacy-rescan home ranking', () => {
           trustedCodexHomes,
           getSelectedAccountCodexHome: () => null,
           systemCodexHomePath: systemHome,
+          sharedRuntimeCodexHomePath: sharedMirror,
           listSessionFiles: listRolloutInEveryHome
         })
       ).resolves.toEqual({ homePath: accountAHome, transcriptPath: rolloutIn(accountAHome) })
     }
   })
 
-  it('prefers a per-account home over the shared mirror when the system home lacks the id', async () => {
-    // Why: 'codex-accounts' sorts before 'codex-runtime-home', so tier 3 flips the pre-ranking
-    // winner here. Deliberate: the mirror is hot-swapped and names no account, the account home does.
+  // Why: the mirror is the only home whose win migrates the rollout into ~/.codex
+  // (prepareLegacySharedCodexSessionResume), which is how a system-default selection resumes on the
+  // real home. 'codex-accounts' sorts before 'codex-runtime-home', so path order alone would hand
+  // that selection to an arbitrary account instead. One-shot legacy migration already copies
+  // per-account rollouts into the mirror, so both really do hold the id.
+  it('prefers the shared mirror over a per-account home when the system home lacks the id', async () => {
     await expect(
       findTrustedCodexSessionResume({
         sessionId,
         transcriptPath: undefined,
-        trustedCodexHomes: [systemHome, sharedMirror, accountAHome],
+        trustedCodexHomes: [systemHome, accountAHome, sharedMirror],
         getSelectedAccountCodexHome: () => null,
         systemCodexHomePath: systemHome,
+        sharedRuntimeCodexHomePath: sharedMirror,
         listSessionFiles: listRolloutIn(sharedMirror, accountAHome)
       })
-    ).resolves.toEqual({ homePath: accountAHome, transcriptPath: rolloutIn(accountAHome) })
+    ).resolves.toEqual({ homePath: sharedMirror, transcriptPath: rolloutIn(sharedMirror) })
   })
 
   it('ranks Windows homes case-insensitively and keeps the caller path spelling', async () => {
@@ -345,6 +373,7 @@ describe('findTrustedCodexSessionResume legacy-rescan home ranking', () => {
         // Why: settings and discovery can disagree on drive/segment case; the selection must still match.
         getSelectedAccountCodexHome: () => windowsAccountBHome.toLowerCase(),
         systemCodexHomePath: windowsSystemHome,
+        sharedRuntimeCodexHomePath: null,
         listSessionFiles
       })
     ).resolves.toEqual({
@@ -361,6 +390,7 @@ describe('findTrustedCodexSessionResume legacy-rescan home ranking', () => {
         trustedCodexHomes: [systemHome, sharedMirror, accountAHome, accountBHome],
         getSelectedAccountCodexHome: () => accountAHome,
         systemCodexHomePath: systemHome,
+        sharedRuntimeCodexHomePath: sharedMirror,
         listSessionFiles: listRolloutIn(accountBHome)
       })
     ).resolves.toEqual({ homePath: accountBHome, transcriptPath: rolloutIn(accountBHome) })
@@ -378,6 +408,7 @@ describe('findTrustedCodexSessionResume legacy-rescan home ranking', () => {
         trustedCodexHomes: [systemHome, accountAHome, accountBHome],
         getSelectedAccountCodexHome: () => accountAHome,
         systemCodexHomePath: systemHome,
+        sharedRuntimeCodexHomePath: sharedMirror,
         fileIsRegular: () => false,
         listSessionFiles
       })
