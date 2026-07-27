@@ -24,7 +24,14 @@ export type AgentBackgroundSessionTestState = {
       | { kind: 'windows-host' }
       | { kind: 'wsl'; distro: string | null }
   }[]
-  repos: { id: string; connectionId: string | null; path: string }[]
+  repos: { id: string; connectionId: string | null; path: string; projectGroupId?: string | null }[]
+  folderWorkspaces: {
+    id: string
+    projectGroupId: string
+    folderPath: string
+    connectionId?: string | null
+  }[]
+  projectGroups: { id: string; parentGroupId?: string | null; connectionId?: string | null }[]
   worktreesByRepo: Record<
     string,
     { id: string; repoId: string; projectId: string; path: string; displayName: string }[]
@@ -88,6 +95,8 @@ export function createAgentBackgroundSessionTestState(mocks: {
         }
       ]
     },
+    folderWorkspaces: [] as AgentBackgroundSessionTestState['folderWorkspaces'],
+    projectGroups: [] as AgentBackgroundSessionTestState['projectGroups'],
     tabsByWorktree: { 'wt-1': [] as { id: string; title: string }[] },
     terminalLayoutsByTabId: {} as Record<
       string,
@@ -123,6 +132,8 @@ export function resetAgentBackgroundSessionTestState(state: AgentBackgroundSessi
   }
   state.projects = [{ id: 'repo-1', localWindowsRuntimePreference: { kind: 'inherit-global' } }]
   state.repos = [{ id: 'repo-1', connectionId: null, path: '/repo' }]
+  state.folderWorkspaces = []
+  state.projectGroups = []
   state.worktreesByRepo = {
     'repo-1': [
       {

@@ -434,4 +434,54 @@ describe('launchAgentBackgroundSession remote runtime and SSH startup delivery',
     })
     expect(mockDispatchEvent).not.toHaveBeenCalled()
   })
+
+  it('spawns an SSH folder-workspace automation on the owning host, not locally', async () => {
+    // A folder workspace has no repo row — its synthetic repoId is
+    // `folder-workspace:<groupId>` — so repo-derived routing resolves no
+    // connection and spawns LOCALLY with a path that only exists on the remote
+    // host. Ownership must come from the workspace scope instead (#2989).
+    state.repos = [
+      { id: 'repo-1', connectionId: 'ssh-1', path: '/srv/proj/api', projectGroupId: 'grp-1' }
+    ]
+    state.projectGroups = [{ id: 'grp-1', parentGroupId: null, connectionId: 'ssh-1' }]
+    state.folderWorkspaces = [
+      { id: 'fw-1', projectGroupId: 'grp-1', folderPath: '/srv/proj', connectionId: 'ssh-1' }
+    ]
+    state.getKnownWorktreeById = (worktreeId: string) =>
+      worktreeId === 'folder:fw-1' ? { id: 'folder:fw-1', path: '/srv/proj' } : undefined
+    const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
+
+    await launchAgentBackgroundSession({
+      agent: 'claude',
+      worktreeId: 'folder:fw-1',
+      prompt: 'run the automation'
+    })
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId: 'ssh-1', cwd: '/srv/proj' })
+    )
+  })
+
+  it('keeps a local folder workspace on the local host', async () => {
+    state.repos = [
+      { id: 'repo-1', connectionId: null, path: '/home/me/proj/api', projectGroupId: 'grp-1' }
+    ]
+    state.projectGroups = [{ id: 'grp-1', parentGroupId: null, connectionId: null }]
+    state.folderWorkspaces = [
+      { id: 'fw-1', projectGroupId: 'grp-1', folderPath: '/home/me/proj', connectionId: null }
+    ]
+    state.getKnownWorktreeById = (worktreeId: string) =>
+      worktreeId === 'folder:fw-1' ? { id: 'folder:fw-1', path: '/home/me/proj' } : undefined
+    const { launchAgentBackgroundSession } = await import('./launch-agent-background-session')
+
+    await launchAgentBackgroundSession({
+      agent: 'claude',
+      worktreeId: 'folder:fw-1',
+      prompt: 'run the automation'
+    })
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionId: null, cwd: '/home/me/proj' })
+    )
+  })
 })
