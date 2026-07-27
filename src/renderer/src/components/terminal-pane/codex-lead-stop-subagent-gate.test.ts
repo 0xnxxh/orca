@@ -307,11 +307,13 @@ describe('issue #4375 — non-turn-end notification spam', () => {
     expect(leadStop.leadStopWithLiveSubagents).toBe(true)
   })
 
-  // KNOWN-OPEN residual, deliberately out of scope for the roster fix. A bare mid-turn
-  // Stop (no subagent) that resumes AFTER the 1.5s quiet window still notifies. There is
-  // no principled bound to widen the window to, and widening it delays every real Codex
-  // completion; the correct fix is retracting the banner via notifications:dismiss on the
-  // resuming 'working' hook. Pinned here so that change flips this test.
+  // KNOWN-OPEN residual, deliberately out of scope for the roster fix, and the reason this PR
+  // does NOT close #4375: a bare mid-turn Stop (no subagent) that resumes AFTER the 1.5s quiet
+  // window still notifies, which is the "notification after tool calls or reasoning" the issue
+  // reports. There is no principled bound to widen the window to, and widening it delays every
+  // real Codex completion; the correct fix is retracting the banner via notifications:dismiss on
+  // the resuming 'working' hook, which needs a notification id plumbed back through
+  // dispatchCompletion (currently `=> void`). Pinned here so that change flips this test.
   it('KNOWN-OPEN: a bare mid-turn Stop resuming after the quiet window still notifies', () => {
     const calls = drive('codex', [
       { ev: 'UserPromptSubmit', p: { prompt: 'run tests' } },
