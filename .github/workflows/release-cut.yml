@@ -1499,7 +1499,6 @@ jobs:
             Write-Warning 'Restored pre-rebuild installer; this release ships with unsigned inner binaries.'
           }
       # ── End Windows inner-binary signing ───────────────────────────────
-
       - name: Upload unsigned Windows installer for SignPath
         if: matrix.platform == 'win'
         id: upload-unsigned-windows-installer
@@ -1700,9 +1699,14 @@ jobs:
             # tree — 7z parses the NSIS exe directly as its embedded payload.
             # Resolve 7za via app-builder-lib; electron-builder 26.9+ dropped the
             # bundled 7zip-bin package the old hardcoded path relied on (#6487).
-            $7za = (node config/scripts/resolve-7za-path.mjs).Trim()
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $7za)) {
-              throw "Could not resolve a 7za executable for the inner-binary evidence gate: $7za"
+            $7zaOutput = node config/scripts/resolve-7za-path.mjs
+            $7zaExitCode = $LASTEXITCODE
+            if ($7zaExitCode -ne 0) {
+              throw "The 7za resolver exited with code $7zaExitCode for the inner-binary evidence gate."
+            }
+            $7za = ($7zaOutput | Out-String).Trim()
+            if ([string]::IsNullOrWhiteSpace($7za) -or -not (Test-Path -LiteralPath $7za -PathType Leaf)) {
+              throw "The 7za resolver returned an invalid path for the inner-binary evidence gate: $7za"
             }
             New-Item -ItemType Directory -Path inner-evidence-extract -Force | Out-Null
             & $7za x 'dist/orca-windows-setup.exe' '-oinner-evidence-extract' -y | Out-Null

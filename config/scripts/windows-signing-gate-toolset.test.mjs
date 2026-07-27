@@ -75,7 +75,7 @@ function scanSpans(source) {
 
 /** `source` with the named span kinds blanked to spaces — same length, so indices still line up. */
 function blank(source, spans, kinds) {
-  const chars = [...source]
+  const chars = source.split('')
   for (const span of spans) {
     if (!kinds.includes(span.kind)) {
       continue
@@ -186,13 +186,27 @@ describe('Windows signing gates resolve 7za through the toolset resolver (#6487)
       expect(workflowSource(name)).toContain('node config/scripts/resolve-7za-path.mjs')
     })
 
-    // Why scope-checked: downgrading this `throw` to a `Write-Host` warning
-    // restores the original silent fail-open — the gate extracts nothing, finds
-    // no files, and reports success. A `toContain` on the guard condition alone
-    // does not notice.
-    it(`${name} aborts the gate when 7za cannot be resolved`, () => {
+    it(`${name} checks resolver failure before trimming its output`, () => {
       const source = workflowSource(name)
-      const guard = blockAfter(source, '$LASTEXITCODE -ne 0 -or -not (Test-Path $7za)')
+      const code = codeOf(source)
+      const resolveIndex = code.indexOf('$7zaOutput = node config/scripts/resolve-7za-path.mjs')
+      const exitCodeIndex = code.indexOf('$7zaExitCode = $LASTEXITCODE')
+      const exitGuard = blockAfter(source, 'if ($7zaExitCode -ne 0)')
+      const trimIndex = code.indexOf('$7za = ($7zaOutput | Out-String).Trim()')
+
+      expect(resolveIndex).toBeGreaterThan(-1)
+      expect(exitCodeIndex).toBeGreaterThan(resolveIndex)
+      expect(exitGuard.start).toBeGreaterThan(exitCodeIndex)
+      expect(exitGuard.code).toMatch(/\bthrow\b/)
+      expect(trimIndex).toBeGreaterThan(exitGuard.end)
+    })
+
+    it(`${name} rejects an empty or non-file 7za path`, () => {
+      const source = workflowSource(name)
+      const guard = blockAfter(
+        source,
+        'if ([string]::IsNullOrWhiteSpace($7za) -or -not (Test-Path -LiteralPath $7za -PathType Leaf))'
+      )
       expect(guard.code).toMatch(/\bthrow\b/)
     })
   }
