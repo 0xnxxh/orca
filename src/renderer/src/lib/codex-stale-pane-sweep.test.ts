@@ -148,6 +148,10 @@ describe('notifyCodexPaneBoundForStaleSweep', () => {
     await vi.advanceTimersByTimeAsync(120_000)
 
     expect(window.api.pty.inspectProcess).toHaveBeenCalledTimes(5)
+    // Why: the count alone only bounds the first two minutes — a rung past the
+    // window would still read as 5. An empty queue is what proves the ladder
+    // ended rather than merely moved out of view.
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('still sweeps a pane whose reattach outlives the first three rungs', async () => {
