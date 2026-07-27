@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
-import { execFile } from 'node:child_process'
-import { createReadStream } from 'node:fs'
-import { lstat, readFile, realpath, stat } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { constants } from 'node:fs'
+import { lstat, open, realpath, type FileHandle } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { promisify } from 'node:util'
 import { parse, stringify } from 'yaml'
 import {
   LOCAL_BUILD_COMPATIBILITY_FILENAME,
@@ -13,7 +12,6 @@ import {
 } from '../../shared/local-build-compatibility'
 import { isValidAppVersion } from '../../shared/app-version'
 
-const execFileAsync = promisify(execFile)
 const MAX_MANIFEST_BYTES = 256 * 1024
 const MAX_COMPATIBILITY_BYTES = 64 * 1024
 const MAX_UPDATE_FILES = 8
@@ -30,11 +28,12 @@ export type LocalBuildCandidate = {
   version: string
   compatibility: LocalBuildCompatibility
   manifestContent: string
-  artifacts: Map<string, string>
+  artifacts: Map<string, { file: FileHandle; size: number }>
+  close: () => Promise<void>
 }
 
 type LocalBuildCandidateLoaderOptions = {
-  readCompatibility?: (zipPath: string) => Promise<LocalBuildCompatibility>
+  readCompatibility?: (zipFile: FileHandle) => Promise<LocalBuildCompatibility>
 }
 
 function parseManifestFile(value: unknown): ManifestFile {
@@ -90,10 +89,10 @@ function parseManifest(value: unknown): { version: string; files: ManifestFile[]
   return { version: record.version, files: zipFiles.map(parseManifestFile) }
 }
 
-async function hashFile(filePath: string): Promise<string> {
+async function hashFile(file: FileHandle): Promise<string> {
   const hash = createHash('sha512')
   await new Promise<void>((resolve, reject) => {
-    const stream = createReadStream(filePath)
+    const stream = file.createReadStream({ autoClose: false, start: 0 })
     stream.on('data', (chunk) => hash.update(chunk))
     stream.on('error', reject)
     stream.on('end', resolve)
@@ -112,14 +111,48 @@ async function assertContainedRegularFile(rootPath: string, filePath: string): P
   }
 }
 
-async function readCompatibility(zipPath: string): Promise<LocalBuildCompatibility> {
+function extractCompatibility(zipFile: FileHandle): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      '/usr/bin/unzip',
+      ['-p', '/dev/fd/3', `Orca.app/Contents/Resources/${LOCAL_BUILD_COMPATIBILITY_FILENAME}`],
+      { stdio: ['ignore', 'pipe', 'ignore', zipFile.fd] }
+    )
+    const chunks: Buffer[] = []
+    let outputBytes = 0
+    let outputError: Error | null = null
+    const stdout = child.stdout
+    if (!stdout) {
+      child.kill()
+      reject(new Error('Could not read compatibility metadata.'))
+      return
+    }
+    stdout.on('data', (chunk: Buffer) => {
+      outputBytes += chunk.length
+      if (outputBytes > MAX_COMPATIBILITY_BYTES) {
+        outputError = new Error('Compatibility metadata is too large.')
+        child.kill()
+        return
+      }
+      chunks.push(chunk)
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (outputError) {
+        reject(outputError)
+      } else if (code !== 0) {
+        reject(new Error(`unzip exited with status ${code ?? 'unknown'}.`))
+      } else {
+        resolve(Buffer.concat(chunks).toString('utf8'))
+      }
+    })
+  })
+}
+
+async function readCompatibility(zipFile: FileHandle): Promise<LocalBuildCompatibility> {
   let stdout: string
   try {
-    ;({ stdout } = await execFileAsync(
-      '/usr/bin/unzip',
-      ['-p', zipPath, `Orca.app/Contents/Resources/${LOCAL_BUILD_COMPATIBILITY_FILENAME}`],
-      { encoding: 'utf8', maxBuffer: MAX_COMPATIBILITY_BYTES }
-    ))
+    stdout = await extractCompatibility(zipFile)
   } catch {
     throw new Error(
       'This build predates local switching or is missing its signed compatibility metadata.'
@@ -139,25 +172,34 @@ async function validateArtifact(
   rootPath: string,
   manifestFile: ManifestFile,
   manifestVersion: string,
-  compatibilityReader: (zipPath: string) => Promise<LocalBuildCompatibility>
-): Promise<{ compatibility: LocalBuildCompatibility; path: string }> {
+  compatibilityReader: (zipFile: FileHandle) => Promise<LocalBuildCompatibility>
+): Promise<{ compatibility: LocalBuildCompatibility; file: FileHandle; size: number }> {
   const filePath = join(rootPath, manifestFile.url)
   await assertContainedRegularFile(rootPath, filePath)
-  const fileStats = await stat(filePath)
-  if (fileStats.size <= 0 || fileStats.size > MAX_ZIP_BYTES) {
-    throw new Error('The selected local build ZIP has an invalid size.')
+  const file = await open(
+    filePath,
+    constants.O_RDONLY | (typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0)
+  )
+  try {
+    const fileStats = await file.stat()
+    if (!fileStats.isFile() || fileStats.size <= 0 || fileStats.size > MAX_ZIP_BYTES) {
+      throw new Error('The selected local build ZIP has an invalid size.')
+    }
+    if (manifestFile.size !== undefined && fileStats.size !== manifestFile.size) {
+      throw new Error(`Size verification failed for ${manifestFile.url}.`)
+    }
+    if ((await hashFile(file)) !== manifestFile.sha512) {
+      throw new Error(`SHA-512 verification failed for ${manifestFile.url}.`)
+    }
+    const compatibility = await compatibilityReader(file)
+    if (compatibility.appId !== ORCA_APP_ID || compatibility.version !== manifestVersion) {
+      throw new Error('The selected ZIP does not match its update manifest.')
+    }
+    return { compatibility, file, size: fileStats.size }
+  } catch (error) {
+    await file.close()
+    throw error
   }
-  if (manifestFile.size !== undefined && fileStats.size !== manifestFile.size) {
-    throw new Error(`Size verification failed for ${manifestFile.url}.`)
-  }
-  if ((await hashFile(filePath)) !== manifestFile.sha512) {
-    throw new Error(`SHA-512 verification failed for ${manifestFile.url}.`)
-  }
-  const compatibility = await compatibilityReader(filePath)
-  if (compatibility.appId !== ORCA_APP_ID || compatibility.version !== manifestVersion) {
-    throw new Error('The selected ZIP does not match its update manifest.')
-  }
-  return { compatibility, path: filePath }
 }
 
 export async function loadLocalBuildCandidate(
@@ -169,25 +211,51 @@ export async function loadLocalBuildCandidate(
     throw new Error('Select the latest-mac.yml generated by pn build:mac.')
   }
   await assertContainedRegularFile(dirname(manifestPath), manifestPath)
-  const manifestStats = await stat(manifestPath)
-  if (manifestStats.size <= 0 || manifestStats.size > MAX_MANIFEST_BYTES) {
-    throw new Error('The selected update manifest is too large.')
+  const manifestFile = await open(
+    manifestPath,
+    constants.O_RDONLY | (typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0)
+  )
+  let manifestText: string
+  try {
+    const manifestStats = await manifestFile.stat()
+    if (
+      !manifestStats.isFile() ||
+      manifestStats.size <= 0 ||
+      manifestStats.size > MAX_MANIFEST_BYTES
+    ) {
+      throw new Error('The selected update manifest is too large.')
+    }
+    manifestText = await manifestFile.readFile('utf8')
+  } finally {
+    await manifestFile.close()
   }
-  const manifest = parseManifest(parse(await readFile(manifestPath, 'utf8'), { maxAliasCount: 0 }))
+  const manifest = parseManifest(parse(manifestText, { maxAliasCount: 0 }))
   const rootPath = dirname(manifestPath)
   const compatibilityReader = options.readCompatibility ?? readCompatibility
-  const validated = await Promise.all(
+  const validationResults = await Promise.allSettled(
     manifest.files.map((file) =>
       validateArtifact(rootPath, file, manifest.version, compatibilityReader)
     )
   )
+  const validated = validationResults
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value)
+  const failed = validationResults.find((result) => result.status === 'rejected')
+  if (failed?.status === 'rejected') {
+    await Promise.all(validated.map((entry) => entry.file.close()))
+    throw failed.reason
+  }
   const matching = validated
     .map((entry, index) => ({ ...entry, manifestFile: manifest.files[index] }))
     .filter((entry) => entry.compatibility.architecture === architecture)
   if (matching.length !== 1) {
+    await Promise.all(validated.map((entry) => entry.file.close()))
     throw new Error(`The manifest must contain exactly one ${architecture} Orca ZIP.`)
   }
   const target = matching[0]
+  await Promise.all(
+    validated.filter((entry) => entry.file !== target.file).map((entry) => entry.file.close())
+  )
   const sanitizedFile = {
     url: target.manifestFile.url,
     sha512: target.manifestFile.sha512,
@@ -202,6 +270,9 @@ export async function loadLocalBuildCandidate(
       path: sanitizedFile.url,
       sha512: sanitizedFile.sha512
     }),
-    artifacts: new Map([[target.manifestFile.url, target.path]])
+    artifacts: new Map([[target.manifestFile.url, { file: target.file, size: target.size }]]),
+    close: async () => {
+      await target.file.close()
+    }
   }
 }

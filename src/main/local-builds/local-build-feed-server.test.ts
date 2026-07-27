@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -10,10 +10,12 @@ describe('startLocalBuildFeed', () => {
     const directory = await mkdtemp(join(tmpdir(), 'orca-local-feed-'))
     const artifactPath = join(directory, 'orca-macos-arm64.zip')
     await writeFile(artifactPath, 'zip')
+    const artifactFile = await open(artifactPath, 'r')
     const candidate = {
       version: '1.2.3-local.1',
       manifestContent: 'version: 1.2.3-local.1\n',
-      artifacts: new Map([['orca-macos-arm64.zip', artifactPath]])
+      artifacts: new Map([['orca-macos-arm64.zip', { file: artifactFile, size: 3 }]]),
+      close: () => artifactFile.close()
     } as LocalBuildCandidate
     const feed = await startLocalBuildFeed(candidate)
     try {

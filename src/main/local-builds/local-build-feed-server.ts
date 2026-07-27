@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto'
-import { createReadStream } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { LocalBuildCandidate } from './local-build-candidate'
 
@@ -42,8 +41,8 @@ export async function startLocalBuildFeed(candidate: LocalBuildCandidate): Promi
       response.end(candidate.manifestContent)
       return
     }
-    const artifactPath = candidate.artifacts.get(filename)
-    if (!artifactPath) {
+    const artifact = candidate.artifacts.get(filename)
+    if (!artifact) {
       response.writeHead(404).end()
       return
     }
@@ -51,8 +50,14 @@ export async function startLocalBuildFeed(candidate: LocalBuildCandidate): Promi
       'Cache-Control': 'no-store',
       'Content-Type': 'application/zip'
     })
-    const stream = createReadStream(artifactPath)
+    const stream = artifact.file.createReadStream({
+      autoClose: false,
+      start: 0,
+      end: artifact.size - 1
+    })
     stream.on('error', () => response.destroy())
+    response.on('error', () => stream.destroy())
+    response.on('close', () => stream.destroy())
     stream.pipe(response)
   })
   await new Promise<void>((resolve, reject) => {
@@ -62,14 +67,26 @@ export async function startLocalBuildFeed(candidate: LocalBuildCandidate): Promi
       server.on('error', (error) => console.warn('[updater] Local build feed error:', error))
       resolve()
     })
+  }).catch(async (error) => {
+    await candidate.close()
+    throw error
   })
   const address = server.address()
   if (!address || typeof address === 'string') {
     await closeServer(server)
+    await candidate.close()
     throw new Error('Could not start the local update feed.')
   }
+  let closed = false
   return {
     url: `http://127.0.0.1:${address.port}${prefix}`,
-    close: () => closeServer(server)
+    close: async () => {
+      if (closed) {
+        return
+      }
+      closed = true
+      await closeServer(server)
+      await candidate.close()
+    }
   }
 }

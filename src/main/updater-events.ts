@@ -41,6 +41,7 @@ type UpdaterHandlerContext = {
   performQuitAndInstall: () => void | Promise<void>
   shouldDeferMacQuitForInstall: () => boolean
   recordCompletedUpdateCheck: () => void
+  restoreReleaseUpdateSource: () => void
   sendCheckFailureStatus: (
     message: string,
     userInitiated?: boolean,
@@ -82,6 +83,7 @@ export function registerAutoUpdaterHandlers({
   performQuitAndInstall,
   shouldDeferMacQuitForInstall,
   recordCompletedUpdateCheck,
+  restoreReleaseUpdateSource,
   sendCheckFailureStatus,
   sendErrorStatus,
   sendStatus,
@@ -223,9 +225,10 @@ export function registerAutoUpdaterHandlers({
     const missingManifestFallback = consumeMissingManifestPrereleaseFallbackResult()
     const publishingWindowLastGoodCheck = getPublishingWindowLastGoodCheck()
     const wasUserInitiated = missingManifestFallback?.userInitiated ?? getUserInitiatedCheck()
+    const localBuildCheck = isLocalBuildCheck()
     setUserInitiatedCheck(false)
     clearAvailableUpdateContext()
-    if (!isLocalBuildCheck()) {
+    if (!localBuildCheck) {
       if (missingManifestFallback || publishingWindowLastGoodCheck) {
         // Why: last-good not-available is a transient release-transition outcome; keep the short retry, don't suppress for 24h.
         scheduleAutomaticUpdateCheck(AUTO_UPDATE_RETRY_INTERVAL_MS)
@@ -237,6 +240,9 @@ export function registerAutoUpdaterHandlers({
       }
     }
     sendStatus({ state: 'not-available', userInitiated: wasUserInitiated || undefined })
+    if (localBuildCheck) {
+      restoreReleaseUpdateSource()
+    }
   })
 
   autoUpdater.on('download-progress', (progress) => {
@@ -296,5 +302,8 @@ export function registerAutoUpdaterHandlers({
       return
     }
     sendErrorStatus(message, wasUserInitiated || undefined)
+    if (isLocalBuildCheck()) {
+      restoreReleaseUpdateSource()
+    }
   })
 }

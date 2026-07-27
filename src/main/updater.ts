@@ -162,6 +162,19 @@ function restoreReleaseUpdateSource(): void {
   }
 }
 
+function sendLocalBuildErrorAndRestore(message: string, userInitiated?: boolean): void {
+  clearAvailableUpdateContext()
+  if (
+    currentStatus.state !== 'error' ||
+    currentStatus.message !== message ||
+    currentStatus.userInitiated !== userInitiated ||
+    currentStatus.source !== 'local'
+  ) {
+    sendStatus({ state: 'error', message, userInitiated, source: 'local' })
+  }
+  restoreReleaseUpdateSource()
+}
+
 function clearPrereleaseFallbackContext(): void {
   pendingPrereleaseFallback = null
 }
@@ -796,9 +809,7 @@ async function sendCheckFailureStatus(
   sourceError?: unknown
 ): Promise<void> {
   if (activeUpdateSource === 'local') {
-    closeLocalBuildFeed()
-    clearAvailableUpdateContext()
-    sendErrorStatus(message, userInitiated)
+    sendLocalBuildErrorAndRestore(message, userInitiated)
     return
   }
   const failureKey = getCheckFailureKey(message, userInitiated)
@@ -1354,8 +1365,10 @@ export function checkForUpdatesFromMenu(options?: UpdateCheckOptions): void {
 
 async function checkForLocalBuildFromMenu(): Promise<void> {
   if (process.platform !== 'darwin') {
-    activeUpdateSource = 'local'
-    sendErrorStatus('Local build switching is currently available only on macOS.', true)
+    sendLocalBuildErrorAndRestore(
+      'Local build switching is currently available only on macOS.',
+      true
+    )
     return
   }
   if (currentStatus.state === 'checking' || currentStatus.state === 'downloading') {
@@ -1394,11 +1407,8 @@ async function checkForLocalBuildFromMenu(): Promise<void> {
     await updater.checkForUpdates()
     handleSettledUpdateCheckPromise(attemptId)
   } catch (error) {
-    closeLocalBuildFeed()
-    clearAvailableUpdateContext()
-    activeUpdateSource = 'local'
     userInitiatedCheck = false
-    sendErrorStatus(String((error as Error)?.message ?? error), true)
+    sendLocalBuildErrorAndRestore(String((error as Error)?.message ?? error), true)
   } finally {
     localBuildSelectionInProgress = false
   }
@@ -1602,6 +1612,7 @@ export function setupAutoUpdater(
     shouldSuppressMissingManifestPrereleaseFallbackEvent,
     suppressMissingManifestPrereleaseFallbackPromiseFailure,
     recordCompletedUpdateCheck,
+    restoreReleaseUpdateSource,
     sendStatus,
     scheduleAutomaticUpdateCheck,
     clearBackgroundCheckLaunchPending,
@@ -1670,6 +1681,7 @@ export function downloadUpdate(): void {
     return
   }
   downloadInFlight = true
+  const localBuildDownload = activeUpdateSource === 'local'
   beginMacUpdateDownload()
   // Why: setup can take seconds before progress emits; surface acceptance now so the action never looks inert.
   sendStatus({ state: 'downloading', percent: 0, version })
@@ -1677,6 +1689,11 @@ export function downloadUpdate(): void {
     .downloadUpdate()
     .catch((err) => {
       downloadInFlight = false
-      sendErrorStatus(String(err?.message ?? err))
+      const message = String(err?.message ?? err)
+      if (localBuildDownload) {
+        sendLocalBuildErrorAndRestore(message)
+      } else {
+        sendErrorStatus(message)
+      }
     })
 }

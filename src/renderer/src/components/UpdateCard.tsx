@@ -340,17 +340,12 @@ export function UpdateCard() {
                   'The selected build could not be used.'
                 ),
             detail: status.message,
-            primaryAction: cachedVersion
-              ? {
-                  label: translate('auto.components.UpdateCard.48565a32bc', 'Retry Download'),
-                  onClick: handleUpdate
-                }
-              : {
-                  label: translate('auto.components.UpdateCard.37d45c9ec1', 'Choose Another Build'),
-                  onClick: () => {
-                    void window.api.updater.check({ localBuild: true })
-                  }
-                }
+            primaryAction: {
+              label: translate('auto.components.UpdateCard.37d45c9ec1', 'Choose Another Build'),
+              onClick: () => {
+                void window.api.updater.check({ localBuild: true })
+              }
+            }
           }
         : isHttp2UpdateError
           ? {
