@@ -10,10 +10,15 @@ import {
 // a hint, and a pane that never resolves must not become a polling loop.
 const SWEEP_ATTEMPT_DELAYS_MS = [300, 1500, 4000] as const
 
-const queuedPtyIds = new Set<string>()
+// Why: each PTY owns its rung, so the queue has to carry a per-PTY due time. One
+// shared timer coalesces the startup burst, but it must always target the
+// EARLIEST due entry — a single timer that drained everything let one pane's
+// short delay consume another's later rung and cut its ladder short.
+const dueAtByPtyId = new Map<string, number>()
 const attemptsByPtyId = new Map<string, number>()
 const notifiedPtyIds = new Set<string>()
 let flushTimer: ReturnType<typeof setTimeout> | null = null
+let flushTimerDueAt: number | null = null
 
 /**
  * Queues a stale-account check for a PTY that has just bound to a pane.
@@ -27,8 +32,8 @@ export function notifyCodexPaneBoundForStaleSweep(ptyId: string): void {
   if (notifiedPtyIds.has(ptyId)) {
     return
   }
-  queuedPtyIds.add(ptyId)
-  arm(SWEEP_ATTEMPT_DELAYS_MS[0])
+  queue(ptyId, SWEEP_ATTEMPT_DELAYS_MS[0])
+  armForEarliestDue()
 }
 
 export function resetCodexStalePaneSweepForTests(): void {
@@ -36,19 +41,61 @@ export function resetCodexStalePaneSweepForTests(): void {
     clearTimeout(flushTimer)
     flushTimer = null
   }
-  queuedPtyIds.clear()
+  flushTimerDueAt = null
+  dueAtByPtyId.clear()
   attemptsByPtyId.clear()
   notifiedPtyIds.clear()
 }
 
-function arm(delayMs: number): void {
-  if (flushTimer !== null) {
+function queue(ptyId: string, delayMs: number): void {
+  const dueAt = Date.now() + delayMs
+  const existing = dueAtByPtyId.get(ptyId)
+  // Why: a rebind of an already-queued PTY must never push its look later.
+  dueAtByPtyId.set(ptyId, existing === undefined ? dueAt : Math.min(existing, dueAt))
+}
+
+function armForEarliestDue(): void {
+  let earliestDueAt: number | null = null
+  for (const dueAt of dueAtByPtyId.values()) {
+    if (earliestDueAt === null || dueAt < earliestDueAt) {
+      earliestDueAt = dueAt
+    }
+  }
+  if (earliestDueAt === null) {
     return
   }
-  flushTimer = setTimeout(() => {
-    flushTimer = null
-    void flush()
-  }, delayMs)
+  if (flushTimer !== null) {
+    if (flushTimerDueAt !== null && flushTimerDueAt <= earliestDueAt) {
+      return
+    }
+    clearTimeout(flushTimer)
+  }
+  flushTimerDueAt = earliestDueAt
+  flushTimer = setTimeout(
+    () => {
+      flushTimer = null
+      flushTimerDueAt = null
+      void flush()
+    },
+    Math.max(0, earliestDueAt - Date.now())
+  )
+}
+
+function takeDuePtyIds(): string[] {
+  const now = Date.now()
+  const duePtyIds: string[] = []
+  for (const [ptyId, dueAt] of dueAtByPtyId) {
+    // Why: folding a never-inspected PTY into an earlier sweep is what coalesces
+    // the startup burst, and costs it nothing. A PTY already waiting on a retry
+    // rung must wait for its own due time, or that rung is spent for free.
+    if (dueAt <= now || !attemptsByPtyId.has(ptyId)) {
+      duePtyIds.push(ptyId)
+    }
+  }
+  for (const ptyId of duePtyIds) {
+    dueAtByPtyId.delete(ptyId)
+  }
+  return duePtyIds
 }
 
 function shouldRetry(scan: CodexPaneScanResult): boolean {
@@ -59,9 +106,10 @@ function shouldRetry(scan: CodexPaneScanResult): boolean {
 }
 
 async function flush(): Promise<void> {
-  const ptyIds = [...queuedPtyIds]
-  queuedPtyIds.clear()
+  const ptyIds = takeDuePtyIds()
   if (ptyIds.length === 0) {
+    // Why: a timer can fire a hair early; re-aim it rather than dropping the queue.
+    armForEarliestDue()
     return
   }
 
@@ -74,7 +122,6 @@ async function flush(): Promise<void> {
   }
 
   const scanByPtyId = new Map(scans.map((scan) => [scan.ptyId, scan]))
-  let nextDelayMs: number | null = null
   for (const ptyId of ptyIds) {
     const scan = scanByPtyId.get(ptyId)
     if (scan?.notified === true) {
@@ -95,11 +142,8 @@ async function flush(): Promise<void> {
       continue
     }
     attemptsByPtyId.set(ptyId, attempt)
-    queuedPtyIds.add(ptyId)
-    nextDelayMs = nextDelayMs === null ? delayMs : Math.min(nextDelayMs, delayMs)
+    queue(ptyId, delayMs)
   }
 
-  if (nextDelayMs !== null) {
-    arm(nextDelayMs)
-  }
+  armForEarliestDue()
 }

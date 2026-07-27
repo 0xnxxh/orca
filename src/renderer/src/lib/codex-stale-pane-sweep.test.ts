@@ -14,6 +14,10 @@ const STALE_PANE = {
   activeAccountId: 'account-b'
 }
 
+function inspectCallCountFor(ptyId: string): number {
+  return vi.mocked(window.api.pty.inspectProcess).mock.calls.filter(([id]) => id === ptyId).length
+}
+
 describe('notifyCodexPaneBoundForStaleSweep', () => {
   const originalWindow = (globalThis as { window?: typeof window }).window
 
@@ -104,6 +108,22 @@ describe('notifyCodexPaneBoundForStaleSweep', () => {
     })
   })
 
+  it('still coalesces a burst whose binds land milliseconds apart', async () => {
+    // Real startup binds are staggered, so per-PTY due times must not turn one
+    // sweep into one registry round-trip per pane.
+    useAppStore.setState({ ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-2'] } })
+    vi.mocked(window.api.codexAccounts.listStalePanes).mockResolvedValue([STALE_PANE])
+
+    notifyCodexPaneBoundForStaleSweep('pty-1')
+    await vi.advanceTimersByTimeAsync(10)
+    notifyCodexPaneBoundForStaleSweep('pty-2')
+    await vi.advanceTimersByTimeAsync(290)
+
+    expect(window.api.codexAccounts.listStalePanes).toHaveBeenCalledExactlyOnceWith({
+      ptyIds: ['pty-1', 'pty-2']
+    })
+  })
+
   it('retries a PTY whose process read is unusable until the reattach settles', async () => {
     vi.mocked(window.api.codexAccounts.listStalePanes).mockResolvedValue([STALE_PANE])
     vi.mocked(window.api.pty.inspectProcess).mockRejectedValueOnce(new Error('terminal_gone'))
@@ -127,6 +147,39 @@ describe('notifyCodexPaneBoundForStaleSweep', () => {
     await vi.advanceTimersByTimeAsync(60_000)
 
     expect(window.api.pty.inspectProcess).toHaveBeenCalledTimes(3)
+  })
+
+  it('spends a pane its full retry ladder even when another pane binds later', async () => {
+    // Regression: one shared timer used to drain every queued PTY, so a pane
+    // already waiting on its 1500ms rung had the next rung consumed by the newer
+    // pane's shorter delay — exhausting its 3 attempts ~2.5s early and dropping
+    // a Windows daemon reattach that had not settled yet.
+    useAppStore.setState({ ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-2'] } })
+    vi.mocked(window.api.pty.inspectProcess).mockRejectedValue(new Error('terminal_gone'))
+
+    notifyCodexPaneBoundForStaleSweep('pty-1')
+    await vi.advanceTimersByTimeAsync(310)
+    notifyCodexPaneBoundForStaleSweep('pty-2')
+
+    // t = 3310: past pty-1's second look (1800), well before its third (5800).
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(inspectCallCountFor('pty-1')).toBe(2)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(inspectCallCountFor('pty-1')).toBe(3)
+  })
+
+  it('does not park a fresh bind behind a pending retry wait', async () => {
+    useAppStore.setState({ ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-2'] } })
+    vi.mocked(window.api.pty.inspectProcess).mockRejectedValue(new Error('terminal_gone'))
+
+    notifyCodexPaneBoundForStaleSweep('pty-1')
+    await vi.advanceTimersByTimeAsync(310)
+    notifyCodexPaneBoundForStaleSweep('pty-2')
+    await vi.advanceTimersByTimeAsync(300)
+
+    // The pending timer was pty-1's 1500ms rung; pty-2 must not inherit that wait.
+    expect(inspectCallCountFor('pty-2')).toBe(1)
   })
 
   it('stops retrying a pane the registry reports as not stale', async () => {
