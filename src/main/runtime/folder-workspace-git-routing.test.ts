@@ -472,6 +472,108 @@ describe('#6357 monorepo folder workspace', () => {
     expect(result).toEqual({ success: false, error: 'No staged changes to summarize.' })
   })
 
+  it('K6: a child repo with a corrupt index fails the commit instead of committing around it', async () => {
+    buildFixture()
+    const portal = join(CONTAINER, 'fint-portal')
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    // Why: `getStatus` catches a failed git read and resolves an EMPTY result, so a
+    // repo whose index cannot be parsed looks exactly like a clean one. Selecting on
+    // that reading commits a different repo and reports success — the corrupt repo
+    // could be the one the user staged. K5 covers an unresolvable target; this covers
+    // a resolvable target with an unreadable index, which took a different code path.
+    writeFileSync(join(portal, '.git', 'index'), 'not an index')
+    const result = await runtime.commitRuntimeGit(selector, 'api only')
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('fint-portal-repo')
+    expect(git(CHILD_API, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
+  })
+
+  it('K7: a staged file sorting past the status entry cap is still seen as staged', async () => {
+    buildFixture()
+    const portal = join(CONTAINER, 'fint-portal')
+    git(CHILD_API, 'checkout', '-q', '--', '.')
+    rmSync(join(CHILD_API, 'src', 'new-file.ts'), { force: true })
+    // Why: `getStatus` stops at DEFAULT_GIT_STATUS_LIMIT (1000) entries. Git emits
+    // porcelain rows in path order, so >1000 merely-modified files sorting ahead of
+    // the staged one push it past the cap — the staged row never reaches the caller
+    // and the repo reads as clean. The commit then goes to a different child repo and
+    // reports success. The probe asks git a yes/no question, which has no cap.
+    mkdirSync(join(portal, 'bulk'), { recursive: true })
+    for (let index = 0; index < 1200; index += 1) {
+      writeFileSync(join(portal, 'bulk', `aaa-${String(index).padStart(4, '0')}.ts`), 'export {}\n')
+    }
+    writeFileSync(join(portal, 'zzz-staged.ts'), 'export const staged = 1\n')
+    git(portal, 'add', '-A')
+    git(portal, 'commit', '-qm', 'bulk baseline')
+    for (let index = 0; index < 1200; index += 1) {
+      writeFileSync(join(portal, 'bulk', `aaa-${String(index).padStart(4, '0')}.ts`), 'edited\n')
+    }
+    writeFileSync(join(portal, 'zzz-staged.ts'), 'export const staged = 2\n')
+    git(portal, 'add', 'zzz-staged.ts')
+    // Guard the premise: the staged row really is past the cap, so this test would
+    // pass for the wrong reason if the fixture ever stopped exceeding it.
+    const rows = git(portal, 'status', '--porcelain=v2', '--untracked-files=all').split('\n')
+    expect(rows.findIndex((row) => row.includes('zzz-staged.ts'))).toBeGreaterThan(1000)
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await expect(runtime.commitRuntimeGit(selector, 'bulk portal')).resolves.toEqual({
+      success: true
+    })
+    expect(git(portal, 'log', '-1', '--pretty=%s').trim()).toBe('bulk portal')
+    expect(git(CHILD_API, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
+  })
+
+  it('L5: an unreadable child repo fails the abort instead of aborting a different one', async () => {
+    buildFixture()
+    const portal = join(CONTAINER, 'fint-portal')
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    git(CHILD_API, 'checkout', '-q', '--', '.')
+    git(CHILD_API, 'checkout', '-q', '-b', 'other')
+    writeFileSync(join(CHILD_API, 'src', 'app.ts'), 'other branch\n')
+    git(CHILD_API, 'commit', '-qam', 'other')
+    git(CHILD_API, 'checkout', '-q', 'master')
+    writeFileSync(join(CHILD_API, 'src', 'app.ts'), 'master branch\n')
+    git(CHILD_API, 'commit', '-qam', 'master')
+    expect(() => git(CHILD_API, 'merge', 'other')).toThrow()
+    // Why: an unreadable repo reads as merely un-conflicted, so the abort would go to
+    // the one repo we CAN read — which may not be the one the user is looking at.
+    writeFileSync(join(portal, '.git', 'index'), 'not an index')
+    await expect(runtime.abortRuntimeGitMerge(selector)).rejects.toThrow('fint-portal-repo')
+    expect(await runtime.getRuntimeGitConflictOperation(`path:${CHILD_API}`)).toBe('merge')
+  })
+
+  it('M3: cancelling generation reaches the child repo instead of dying on the folder selector', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    // Why: generation re-enters by the child's selector, so its cancel lane is keyed
+    // to the child path. Passing the folder selector straight through threw
+    // `selector_not_found`, and every caller is fire-and-forget — so Cancel silently
+    // did nothing and the draft kept running.
+    const inner = vi
+      .spyOn(
+        runtime['gitCommands'] as {
+          cancelRuntimeGenerateCommitMessage: (...args: never[]) => unknown
+        },
+        'cancelRuntimeGenerateCommitMessage'
+      )
+      .mockResolvedValue({ ok: true } as never)
+    await expect(runtime.cancelRuntimeGenerateCommitMessage(selector)).resolves.toEqual({
+      ok: true
+    })
+    const routed = inner.mock.calls.map((call) => String(call[0]))
+    expect(routed).not.toContain(selector)
+    expect(routed.length).toBeGreaterThan(0)
+    // Why: the lane the generation actually started under must be among them.
+    const staged = await runtime.getRuntimeGitStatus(routed[0] as string)
+    expect(staged.entries.length).toBeGreaterThan(0)
+    inner.mockRestore()
+  })
+
   it('E: the real child git worktree resolves fine when its repo is registered', async () => {
     buildFixture()
     const runtime = new OrcaRuntimeService(makeStore() as never)

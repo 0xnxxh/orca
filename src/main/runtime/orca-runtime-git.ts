@@ -135,7 +135,7 @@ export type RuntimeGitTarget = {
   rebasedRelativePath?: string
 }
 
-function localGitOptionsForTarget(target: RuntimeGitTarget): GitRuntimeOptions {
+export function localGitOptionsForTarget(target: RuntimeGitTarget): GitRuntimeOptions {
   return target.connectionId ? {} : (target.localGitOptions ?? {})
 }
 

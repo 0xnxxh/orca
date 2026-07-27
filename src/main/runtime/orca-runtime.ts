@@ -459,6 +459,10 @@ import { RuntimeEmulatorCommands, setEmulatorBridge } from './orca-runtime-emula
 import type { EmulatorBridge } from '../emulator/emulator-bridge'
 import { RuntimeFileCommands } from './orca-runtime-files'
 import {
+  assertChildRepoIndexReadable,
+  probeChildRepoHasStagedChanges
+} from './folder-workspace-child-repo-probe'
+import {
   abortRuntimeGitForTarget,
   commitRuntimeGitForTarget,
   getRuntimeGitStatusForTarget,
@@ -7162,7 +7166,9 @@ export class OrcaRuntimeService {
   discoverRuntimeCommitMessageModels: RuntimeGitCommands['discoverRuntimeCommitMessageModels'] =
     this.gitCommands.discoverRuntimeCommitMessageModels.bind(this.gitCommands)
   cancelRuntimeGenerateCommitMessage: RuntimeGitCommands['cancelRuntimeGenerateCommitMessage'] =
-    this.gitCommands.cancelRuntimeGenerateCommitMessage.bind(this.gitCommands)
+    async (selector) =>
+      (await this.cancelFolderWorkspaceGenerateCommitMessage(selector)) ??
+      (await this.gitCommands.cancelRuntimeGenerateCommitMessage(selector))
   generateRuntimePullRequestFields: RuntimeGitCommands['generateRuntimePullRequestFields'] =
     this.gitCommands.generateRuntimePullRequestFields.bind(this.gitCommands)
   cancelRuntimeGeneratePullRequestFields: RuntimeGitCommands['cancelRuntimeGeneratePullRequestFields'] =
@@ -24235,7 +24241,7 @@ export class OrcaRuntimeService {
    */
   private async inspectFolderWorkspaceChildRepos(
     folderPath: string,
-    isSubject: (status: GitStatusResult) => boolean
+    isSubject: (target: RuntimeGitTarget) => Promise<boolean>
   ): Promise<FolderWorkspaceChildCandidate<RuntimeGitTarget>[]> {
     const childRepos = listFolderWorkspaceChildRepos(this.requireStore().getRepos(), folderPath)
     return Promise.all(
@@ -24246,8 +24252,7 @@ export class OrcaRuntimeService {
           return { repoName, error: 'no resolvable git worktree' }
         }
         try {
-          const status = await getRuntimeGitStatusForTarget(target)
-          return { target, repoName, selected: isSubject(status) }
+          return { target, repoName, selected: await isSubject(target) }
         } catch (error) {
           return {
             target,
@@ -24272,8 +24277,9 @@ export class OrcaRuntimeService {
       return null
     }
     return selectFolderWorkspaceCommitTarget(
-      await this.inspectFolderWorkspaceChildRepos(folderWorkspace.folderPath, (status) =>
-        status.entries.some((entry) => entry.area === 'staged')
+      await this.inspectFolderWorkspaceChildRepos(
+        folderWorkspace.folderPath,
+        probeChildRepoHasStagedChanges
       )
     )
   }
@@ -24340,6 +24346,52 @@ export class OrcaRuntimeService {
   }
 
   /**
+   * Cancel a commit-message generation started under a folder-workspace selector.
+   * The generation re-entered by the child's own selector, so its cancel lane is
+   * keyed to that child's path — the folder selector resolves to no worktree and
+   * would just throw `selector_not_found`, leaving Cancel silently dead.
+   *
+   * Why cancel every child rather than re-select the staged one: selection is a
+   * fresh read, and staging can change between generate and cancel, so it can
+   * name a different repo than the one actually generating. Both cancel paths are
+   * cwd-keyed best-effort no-ops when nothing is in flight, so the broadest
+   * correct move is to signal every lane this selector could have started.
+   * Returns null when the selector is not a folder workspace.
+   */
+  private async cancelFolderWorkspaceGenerateCommitMessage(
+    selector: string
+  ): Promise<{ ok: true } | null> {
+    const scope = await this.resolveFolderWorkspaceLaunchScope(selector)
+    const folderWorkspace = scope?.folderWorkspace
+    if (!folderWorkspace) {
+      return null
+    }
+    const childRepos = listFolderWorkspaceChildRepos(
+      this.requireStore().getRepos(),
+      folderWorkspace.folderPath
+    )
+    await Promise.all(
+      childRepos.map(async (repo) => {
+        const target = await this.resolveChildRepoGitTarget(repo)
+        if (!target) {
+          return
+        }
+        // Why swallow: a child that cannot be reached has nothing in flight to
+        // cancel, and one unreachable repo must not strand the others.
+        await this.gitCommands
+          .cancelRuntimeGenerateCommitMessage(`id:${target.worktree.id}`)
+          .catch((error: unknown) => {
+            console.warn('[runtime] folder-workspace commit-message cancel failed', {
+              repo: repo.path,
+              error
+            })
+          })
+      })
+    )
+    return { ok: true }
+  }
+
+  /**
    * Abort an in-progress merge/rebase for a folder-workspace selector. Like commit
    * this carries no path, so it resolves the one child repo actually in that
    * conflict state. A failed abort propagates — reporting `ok` for a repo that is
@@ -24356,10 +24408,14 @@ export class OrcaRuntimeService {
       return null
     }
     const selected = selectFolderWorkspaceAbortTarget(
-      await this.inspectFolderWorkspaceChildRepos(
-        folderWorkspace.folderPath,
-        (status) => status.conflictOperation === operation
-      ),
+      await this.inspectFolderWorkspaceChildRepos(folderWorkspace.folderPath, async (target) => {
+        // Why both reads: only `getStatus` distinguishes merge from rebase (its
+        // gitdir markers), but it reports an unreadable repo as un-conflicted.
+        // The probe throws on that, so an unreadable repo fails closed here
+        // instead of handing the abort to a different repo.
+        await assertChildRepoIndexReadable(target)
+        return (await getRuntimeGitStatusForTarget(target)).conflictOperation === operation
+      }),
       operation
     )
     if (!selected.ok) {
