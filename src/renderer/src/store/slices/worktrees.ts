@@ -922,6 +922,18 @@ function settingsForWorktreeOwner(
   return settings
 }
 
+// Why: activity bumps fire on every PTY event, so an ambiguous workspace would warn continuously.
+// One line per workspace is enough to diagnose it (#10634).
+const ambiguousOwnerWarnedWorktreeIds = new Set<string>()
+
+function warnAmbiguousOwnerOnce(worktreeId: string, errorLabel: string): void {
+  if (ambiguousOwnerWarnedWorktreeIds.has(worktreeId)) {
+    return
+  }
+  ambiguousOwnerWarnedWorktreeIds.add(worktreeId)
+  console.warn(`Skipped ${errorLabel}: workspace identity is ambiguous across hosts`, worktreeId)
+}
+
 function persistPassiveWorktreeMetaForOwner(
   get: WorktreeSliceGet,
   worktreeId: string,
@@ -930,7 +942,7 @@ function persistPassiveWorktreeMetaForOwner(
 ): void {
   const ownerSettings = trySettingsForWorktreeOwner(get(), worktreeId)
   if (!ownerSettings) {
-    console.warn(`Skipped ${errorLabel}: workspace identity is ambiguous across hosts`, worktreeId)
+    warnAmbiguousOwnerOnce(worktreeId, errorLabel)
     return
   }
   void persistWorktreeMeta(ownerSettings, worktreeId, updates).catch((err) => {
@@ -4392,6 +4404,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
     const ownerSettings = trySettingsForWorktreeOwner(get(), worktreeId)
     if (!ownerSettings) {
+      warnAmbiguousOwnerOnce(worktreeId, 'persist worktree activity timestamp')
       return
     }
     void persistWorktreeMeta(ownerSettings, worktreeId, {
