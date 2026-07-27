@@ -5,7 +5,6 @@ import { useSidebarResize } from '@/hooks/useSidebarResize'
 import SidebarHeader from './SidebarHeader'
 import SidebarNav from './SidebarNav'
 import SetupScriptPromptCard from './SetupScriptPromptCard'
-import { FullDiskAccessNudge } from './FullDiskAccessNudge'
 import WorktreeList from './WorktreeList'
 import SidebarToolbar from './SidebarToolbar'
 import WorkspaceKanbanDrawer from './WorkspaceKanbanDrawer'
@@ -156,8 +155,6 @@ function Sidebar({
             />
 
             <SetupScriptPromptCard />
-
-            <FullDiskAccessNudge />
 
             {/* Fixed bottom toolbar */}
             <SidebarToolbar

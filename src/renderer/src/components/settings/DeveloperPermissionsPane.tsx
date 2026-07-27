@@ -105,7 +105,7 @@ const PERMISSIONS: PermissionDefinition[] = [
     get description() {
       return translate(
         'auto.components.settings.DeveloperPermissionsPane.7ca17b62c8',
-        'Recommended when projects, worktrees, or symlinked files touch macOS-protected folders.'
+        "macOS names Orca when the agents it runs read other apps' data, because Orca is the responsible process for terminal commands. Granting this reduces those prompts. Terminals run in a separate helper, so grant Orca Helper too and restart Orca."
       )
     },
     actionLabel: 'Open Settings',

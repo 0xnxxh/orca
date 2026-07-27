@@ -4827,17 +4827,6 @@
           "cancel": "Cancel",
           "forget": "Remove from Orca",
           "reconnectAndDelete": "Reconnect & Delete"
-        },
-        "FullDiskAccessNudge": {
-          "granted": "Full Disk Access granted",
-          "openedPrivacy": "Opened macOS Privacy & Security",
-          "requestError": "Could not open System Settings",
-          "title": "Reduce macOS permission prompts",
-          "dismissAriaLabel": "Dismiss Full Disk Access suggestion",
-          "dismiss": "Dismiss",
-          "body": "These prompts come from Orca and the agents it runs reading other apps' data. Full Disk Access reduces them; terminal sessions may still prompt separately.",
-          "opening": "Opening…",
-          "openSystemSettings": "Open System Settings"
         }
       },
       "shared": {
@@ -5463,7 +5452,7 @@
           "e7bb06007c": "Local Network",
           "4a73f5217a": "Apple Events for scripts that control other local apps.",
           "e119f0d66b": "Automation",
-          "7ca17b62c8": "Recommended when projects, worktrees, or symlinked files touch macOS-protected folders.",
+          "7ca17b62c8": "macOS names Orca when the agents it runs read other apps' data, because Orca is the responsible process for terminal commands. Granting this reduces those prompts. Terminals run in a separate helper, so grant Orca Helper too and restart Orca.",
           "c566bca278": "Full Disk Access",
           "9f35980756": "Keystroke injection, window control, and UI automation tools.",
           "5b2f22ca2d": "Accessibility",
