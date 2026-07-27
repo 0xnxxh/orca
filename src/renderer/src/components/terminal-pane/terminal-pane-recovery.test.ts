@@ -34,7 +34,7 @@ beforeEach(() => {
   vi.stubGlobal('window', {
     api: { pty: { hasPty: mocks.hasPty } }
   })
-  vi.spyOn(console, 'error').mockImplementation(() => {})
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 
 afterEach(() => {
