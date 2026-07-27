@@ -39,8 +39,10 @@ export function matchFolderWorkspaceChildRepo(
     return null
   }
   const absolutePath = resolveRuntimePath(folderPath, relativePath)
-  // Why: a `..` segment can escape the workspace, which must not silently
-  // resolve to an unrelated repo the user never opened.
+  // Why: a `..` segment must not silently resolve to a repo the user never opened.
+  // Defense-in-depth today — the loop below only considers repos already inside
+  // `folderPath`, so anything it could match is inside the folder anyway. This
+  // stops that from being load-bearing if the candidate filter ever widens.
   if (relativePathInsideRoot(folderPath, absolutePath) === null) {
     return null
   }

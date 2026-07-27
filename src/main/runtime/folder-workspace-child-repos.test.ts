@@ -54,6 +54,16 @@ describe('matchFolderWorkspaceChildRepo', () => {
     expect(matchFolderWorkspaceChildRepo([API, OUTSIDE], FOLDER, '../other/x.ts')).toBeNull()
   })
 
+  it('routes a `..` path that normalizes back inside the workspace', () => {
+    // Why: normalization, not the escape guard, is what decides this. A path can
+    // only reach a child repo if it is already inside the folder, since child repos
+    // are filtered to the folder — so the guard rejects nothing a match would have
+    // accepted. It stays as defense-in-depth if that filter ever changes.
+    expect(
+      matchFolderWorkspaceChildRepo([API], FOLDER, 'fint_api/../../fint/fint_api/src/app.ts')
+    ).toEqual({ repo: API, rebasedRelativePath: 'src/app.ts' })
+  })
+
   it('returns null for a path in the folder but outside every child repo', () => {
     expect(matchFolderWorkspaceChildRepo([API], FOLDER, 'README.md')).toBeNull()
   })
