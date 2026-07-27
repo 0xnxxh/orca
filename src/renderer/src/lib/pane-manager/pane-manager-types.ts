@@ -60,6 +60,8 @@ export type PaneManagerOptions = {
   terminalOptions?: (paneId: number) => Partial<ITerminalOptions>
   terminalTuiScrollSensitivity?: () => number | undefined
   onLinkClick?: (event: MouseEvent | undefined, url: string) => void
+  /** Resolved per hover so link-routing setting changes apply without recreating panes. */
+  linkOpenHint?: () => string
   formatLinkTooltip?: (
     url: string,
     openLinkHint: string

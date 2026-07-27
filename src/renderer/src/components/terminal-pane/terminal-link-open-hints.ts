@@ -20,7 +20,20 @@ export function getTerminalHtmlFileOpenHint(): string {
     : 'Ctrl+click to open or Shift+Ctrl+click for default browser'
 }
 
-export function getTerminalUrlOpenHint(): string {
+export type TerminalUrlOpenHintOptions = {
+  openLinksInApp?: boolean
+  modifierInverts?: boolean
+}
+
+// Why: with modifierInverts on, Shift no longer always means "system browser" —
+// it means "the other one" — so the hint has to name the actual destination.
+export function getTerminalUrlOpenHint(options: TerminalUrlOpenHintOptions = {}): string {
+  const invertsToOrca = options.modifierInverts === true && options.openLinksInApp !== true
+  if (invertsToOrca) {
+    return isMacPlatform()
+      ? '⌘+click to open or ⇧⌘+click to open in Orca'
+      : 'Ctrl+click to open or Shift+Ctrl+click to open in Orca'
+  }
   return isMacPlatform()
     ? '⌘+click to open or ⇧⌘+click for system browser'
     : 'Ctrl+click to open or Shift+Ctrl+click for system browser'

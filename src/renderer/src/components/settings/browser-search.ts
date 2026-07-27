@@ -1,6 +1,10 @@
 import type { SettingsSearchEntry } from './settings-search'
 import { translate } from '@/i18n/i18n'
 import { translateSearchKeyword } from './settings-search-keywords'
+import {
+  getLinkRoutingModifierDescription,
+  getLinkRoutingModifierTitle
+} from './browser-link-routing-modifier-copy'
 
 type BrowserShortcutPlatform = {
   isMac: boolean
@@ -16,8 +20,11 @@ export function getBrowserLinkRoutingShortcutLabel(platform: BrowserShortcutPlat
   return platform.isMac ? '⇧⌘-click' : 'Shift+Ctrl+click'
 }
 
+// Why: the modifier sentence moved to the nested "Hold Shift to open in …" row —
+// once that row can invert the routing, "always uses your system browser" is no
+// longer true, and the child row states the live destination instead.
 export function getBrowserLinkRoutingDescription(platform: BrowserShortcutPlatform): string {
-  return `Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor. ${getBrowserLinkRoutingShortcutLabel(platform)} always uses your system browser.`
+  return `Open http(s) links in Orca's built-in browser — from the terminal, markdown, and the editor. ${getBrowserLinkRoutingShortcutLabel(platform)} opens a link the other way.`
 }
 
 export function getBrowserPaneSearchEntries(
@@ -107,6 +114,35 @@ export function getBrowserPaneSearchEntries(
         ...translateSearchKeyword('auto.components.settings.browser.search.68d1db8929', 'markdown'),
         ...translateSearchKeyword('auto.components.settings.browser.search.8dd4805991', 'file'),
         ...translateSearchKeyword('auto.components.settings.browser.search.a7a07d5415', 'editor')
+      ]
+    },
+    {
+      title: getLinkRoutingModifierTitle(false),
+      description: getLinkRoutingModifierDescription({
+        openLinksInApp: false,
+        isMac: platform.isMac
+      }),
+      keywords: [
+        ...translateSearchKeyword('auto.components.settings.browser.search.2d2d995c58', 'browser'),
+        ...translateSearchKeyword('auto.components.settings.browser.search.bea27bac4b', 'links'),
+        ...translateSearchKeyword('auto.components.settings.browser.search.90425d313c', 'shift'),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.linkRoutingModifier.routing',
+          'routing'
+        ),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.linkRoutingModifier.modifier',
+          'modifier'
+        ),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.linkRoutingModifier.invert',
+          'invert'
+        ),
+        ...translateSearchKeyword(
+          'auto.components.settings.browser.search.linkRoutingModifier.opposite',
+          'opposite'
+        ),
+        platform.isMac ? 'cmd' : 'ctrl'
       ]
     },
     {

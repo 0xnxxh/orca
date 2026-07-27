@@ -1,0 +1,31 @@
+import { translate } from '@/i18n/i18n'
+
+/**
+ * Title and description both name the destination the modifier reaches, which is
+ * the opposite of wherever Link Routing points. Kept out of the component so the
+ * settings-search index and the component render identical strings.
+ */
+export function getLinkRoutingModifierTitle(openLinksInApp: boolean): string {
+  return openLinksInApp
+    ? translate(
+        'auto.components.settings.BrowserLinkRoutingModifierSetting.titleSystem',
+        'Hold Shift to open in your web browser'
+      )
+    : translate(
+        'auto.components.settings.BrowserLinkRoutingModifierSetting.titleOrca',
+        'Hold Shift to open in Orca'
+      )
+}
+
+export function getLinkRoutingModifierDescription({
+  openLinksInApp,
+  isMac
+}: {
+  openLinksInApp: boolean
+  isMac: boolean
+}): string {
+  const chord = isMac ? '⇧⌘' : 'Shift+Ctrl'
+  return openLinksInApp
+    ? `Links open in Orca, so ${chord}+click sends one to your system browser instead.`
+    : `Links open in your system browser, so ${chord}+click opens one in Orca's built-in browser instead.`
+}
