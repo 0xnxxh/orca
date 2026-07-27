@@ -172,6 +172,7 @@ export function isAiVaultSessionRecoverableEmpty(
 export type AiVaultScanIssue = {
   executionHostId?: ExecutionHostId
   agent: AiVaultAgent
+  kind?: 'host' | 'scope'
   path: string
   message: string
 }
@@ -183,6 +184,7 @@ export type AiVaultListArgs = {
   // guarantee a scoped view still surfaces its own (possibly older) sessions.
   scopePaths?: readonly string[]
   executionHostScope?: ExecutionHostScope
+  requestToken?: string
 }
 
 export type AiVaultListResult = {
