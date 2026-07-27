@@ -1,11 +1,36 @@
 #!/usr/bin/env node
-// Mirrors the production terminal byte-measurement paths at their real budgets: the output
-// batcher push and the snapshot budget scan. Every scenario
-// asserts which BRANCH of the new arm ran, so a fixture cannot silently stop testing anything.
+// Benchmarks the production terminal byte-measurement exports at their real budgets: the output
+// batcher push and the snapshot budget scan. Every scenario asserts whether production invoked
+// Buffer.byteLength, so implementation drift cannot preserve stale speedup claims.
+import { spawnSync } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import fs from 'node:fs'
+import nodeModule from 'node:module'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+
+if (!process.execArgv.includes('--experimental-transform-types')) {
+  const result = spawnSync(
+    process.execPath,
+    ['--experimental-transform-types', '--no-warnings', import.meta.filename],
+    { stdio: 'inherit' }
+  )
+  process.exit(result.status ?? 1)
+}
+
+// The app's TS sources import siblings without an extension; Node's ESM resolver needs it.
+nodeModule.registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier.startsWith('.') && !/\.[cm]?[jt]s$/.test(specifier) && context.parentURL) {
+      const candidate = new URL(`${specifier}.ts`, context.parentURL)
+      if (fs.existsSync(fileURLToPath(candidate))) {
+        return { url: candidate.href, shortCircuit: true }
+      }
+    }
+    return nextResolve(specifier, context)
+  }
+})
 
 const ROOT = path.resolve(import.meta.dirname, '../..')
 const ITERATIONS = Number(process.env.ORCA_BYTE_LENGTH_BENCH_ITERATIONS ?? '61')
@@ -20,24 +45,7 @@ function readSource(relative) {
   return fs.readFileSync(path.join(ROOT, relative), 'utf8')
 }
 
-// Re-read the production constants and CALL FORMS so this benchmark fails loudly if the
-// code it claims to mirror drifts. Matching call shapes, not bare words.
-const FLOW_CONTROL_SOURCE = readSource('src/shared/terminal-multiplex-flow-control.ts')
 const TERMINAL_SOURCE = readSource('src/main/runtime/rpc/methods/terminal.ts')
-const BYTE_LENGTH_SOURCE = readSource('src/main/runtime/rpc/terminal-stream-byte-length.ts')
-const CLIPBOARD_SOURCE = readSource('src/shared/clipboard-text.ts')
-
-function requireConstant(source, name, label) {
-  const match = new RegExp(`export const ${name} = ([^\\n]+)`).exec(source)
-  if (!match) {
-    throw new Error(`${label} is stale: ${name} is no longer exported`)
-  }
-  const value = Number(new Function(`return (${match[1].trim()})`)())
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${label} is stale: ${name} is not a positive integer`)
-  }
-  return value
-}
 
 function requireCallForm(source, needle, label) {
   if (!source.includes(needle)) {
@@ -45,21 +53,20 @@ function requireCallForm(source, needle, label) {
   }
 }
 
-const TERMINAL_OUTPUT_BATCH_MAX_BYTES = requireConstant(
-  FLOW_CONTROL_SOURCE,
-  'TERMINAL_OUTPUT_BATCH_MAX_BYTES',
-  'terminal-multiplex-flow-control'
+const { TERMINAL_OUTPUT_BATCH_MAX_BYTES, TERMINAL_STREAM_CHUNK_BYTES } = await import(
+  new URL('../../src/shared/terminal-multiplex-flow-control.ts', import.meta.url).href
 )
-const TERMINAL_STREAM_CHUNK_BYTES = requireConstant(
-  FLOW_CONTROL_SOURCE,
-  'TERMINAL_STREAM_CHUNK_BYTES',
-  'terminal-multiplex-flow-control'
+const { measureClipboardTextByteLength } = await import(
+  new URL('../../src/shared/clipboard-text.ts', import.meta.url).href
 )
-const MIN_NATIVE_BYTE_LENGTH_CODE_UNITS = requireConstant(
-  BYTE_LENGTH_SOURCE,
-  'MIN_NATIVE_BYTE_LENGTH_CODE_UNITS',
-  'terminal-stream-byte-length'
+const {
+  MIN_NATIVE_BYTE_LENGTH_CODE_UNITS,
+  measureTerminalStreamByteLength,
+  terminalStreamByteLengthExceeds
+} = await import(
+  new URL('../../src/main/runtime/rpc/terminal-stream-byte-length.ts', import.meta.url).href
 )
+
 const REQUESTED_SNAPSHOT_BYTE_BUDGET = (() => {
   const match = /const REQUESTED_SNAPSHOT_BYTE_BUDGET = ([^\n]+)/.exec(TERMINAL_SOURCE)
   if (!match) {
@@ -68,116 +75,32 @@ const REQUESTED_SNAPSHOT_BYTE_BUDGET = (() => {
   return Number(new Function(`return (${match[1].trim()})`)())
 })()
 
-// The batcher push still measures against a remaining-budget stopAfterBytes.
 requireCallForm(TERMINAL_SOURCE, 'measureTerminalStreamByteLength(data, {', 'terminal.ts')
 requireCallForm(TERMINAL_SOURCE, 'stopAfterBytes: remainingBudget', 'terminal.ts')
-// The snapshot scans still go through the boolean-only exceeds gate.
 requireCallForm(
   TERMINAL_SOURCE,
   'terminalStreamByteLengthExceeds(data, REQUESTED_SNAPSHOT_BYTE_BUDGET)',
   'terminal.ts'
 )
-// The new module still routes the over-limit case back through the legacy partial scan.
-requireCallForm(
-  BYTE_LENGTH_SOURCE,
-  'return measureClipboardTextByteLength(data, options)',
-  'terminal-stream-byte-length.ts'
-)
-requireCallForm(
-  BYTE_LENGTH_SOURCE,
-  'data.length * MAX_UTF8_BYTES_PER_CODE_UNIT <= (stopAfterBytes as number)',
-  'terminal-stream-byte-length.ts'
-)
-requireCallForm(
-  BYTE_LENGTH_SOURCE,
-  'data.length >= MIN_NATIVE_BYTE_LENGTH_CODE_UNITS &&',
-  'terminal-stream-byte-length.ts'
-)
-requireCallForm(
-  CLIPBOARD_SOURCE,
-  'export function measureClipboardTextByteLength(',
-  'shared/clipboard-text.ts'
-)
 
-// ---- OLD ARM: byte-for-byte copy of shared/clipboard-text.ts measureClipboardTextByteLength,
-// which is exactly what terminal.ts called on every one of these paths before the change.
-function legacyUtf8ByteLengthForCodePoint(codePoint) {
-  if (codePoint <= 0x7f) {
-    return 1
+const nativeByteLength = Buffer.byteLength
+function runWithNativeCallCount(fn) {
+  let calls = 0
+  Buffer.byteLength = (...args) => {
+    calls += 1
+    return Reflect.apply(nativeByteLength, Buffer, args)
   }
-  if (codePoint <= 0x7ff) {
-    return 2
+  try {
+    return { output: fn(), calls }
+  } finally {
+    Buffer.byteLength = nativeByteLength
   }
-  if (codePoint <= 0xffff) {
-    return 3
-  }
-  return 4
 }
 
-function legacyMeasure(text, options = {}) {
-  const stopAfterBytes = options.stopAfterBytes
-  let byteLength = 0
-  for (let index = 0; index < text.length; index += 1) {
-    const codePoint = text.codePointAt(index) ?? 0
-    byteLength += legacyUtf8ByteLengthForCodePoint(codePoint)
-    if (Number.isFinite(stopAfterBytes) && byteLength > (stopAfterBytes ?? 0)) {
-      return { byteLength, exceededLimit: true }
-    }
-    if (codePoint > 0xffff) {
-      index += 1
-    }
-  }
-  return { byteLength, exceededLimit: false }
-}
-
-// ---- NEW ARM: mirrors src/main/runtime/rpc/terminal-stream-byte-length.ts, with a branch
-// counter so `assertExercised` can prove which path ran instead of guessing from the input.
-const MAX_UTF8_BYTES_PER_CODE_UNIT = (() => {
-  const match = /const MAX_UTF8_BYTES_PER_CODE_UNIT = (\d+)/.exec(BYTE_LENGTH_SOURCE)
-  if (!match) {
-    throw new Error('terminal-stream-byte-length.ts is stale: MAX_UTF8_BYTES_PER_CODE_UNIT is gone')
-  }
-  return Number(match[1])
-})()
-
-const BRANCH = { nativeFastPath: 0, scanFallback: 0, lengthShortCircuit: 0 }
-
-function newMeasure(data, options = {}) {
-  const stopAfterBytes = options.stopAfterBytes
-  if (!Number.isFinite(stopAfterBytes)) {
-    BRANCH.nativeFastPath += 1
-    return { byteLength: Buffer.byteLength(data, 'utf8'), exceededLimit: false }
-  }
-  if (
-    data.length >= MIN_NATIVE_BYTE_LENGTH_CODE_UNITS &&
-    data.length * MAX_UTF8_BYTES_PER_CODE_UNIT <= stopAfterBytes
-  ) {
-    BRANCH.nativeFastPath += 1
-    return { byteLength: Buffer.byteLength(data, 'utf8'), exceededLimit: false }
-  }
-  BRANCH.scanFallback += 1
-  return legacyMeasure(data, options)
-}
-
-function newExceeds(data, maxBytes) {
-  if (data.length === 0 || !Number.isFinite(maxBytes)) {
-    return false
-  }
-  if (data.length > maxBytes) {
-    BRANCH.lengthShortCircuit += 1
-    return true
-  }
-  if (data.length < MIN_NATIVE_BYTE_LENGTH_CODE_UNITS) {
-    BRANCH.scanFallback += 1
-    return legacyMeasure(data, { stopAfterBytes: maxBytes }).exceededLimit
-  }
-  BRANCH.nativeFastPath += 1
-  return Buffer.byteLength(data, 'utf8') > maxBytes
-}
-
-function legacyExceeds(data, maxBytes) {
-  return legacyMeasure(data, { stopAfterBytes: maxBytes }).exceededLimit
-}
+// ---- OLD ARM: the production implementation terminal.ts called before this change.
+const legacyMeasure = measureClipboardTextByteLength
+const legacyExceeds = (data, maxBytes) =>
+  measureClipboardTextByteLength(data, { stopAfterBytes: maxBytes }).exceededLimit
 
 // ---- Fixtures. Deterministic, seeded, and varied per sample so V8 cannot hoist.
 function mulberry32(seed) {
@@ -233,7 +156,7 @@ function makeTerminalTextUnderBytes(byteBudget, sampleId) {
 // cannot short-circuit, but pack 3-byte BMP scalars so the legacy scan bails out after only a
 // THIRD of the string while Buffer.byteLength still walks all of it.
 function makeEarlyTripText(byteBudget, sampleId) {
-  const tripUnits = Math.ceil((byteBudget + 1) / MAX_UTF8_BYTES_PER_CODE_UNIT)
+  const tripUnits = Math.ceil((byteBudget + 1) / 3)
   const marker = String.fromCharCode(0x4e00 + (sampleId % 4096))
   const prefix = `${marker}${'走'.repeat(tripUnits - 1)}`
   return `${prefix}${'a'.repeat(byteBudget - tripUnits)}`
@@ -272,22 +195,21 @@ function runScenario(scenario) {
       for (let repeat = 0; repeat < repeats; repeat += 1) {
         inputs.push(scenario.make(batch * repeats + repeat))
       }
-      for (const input of inputs) {
-        const legacyOutput = scenario.legacy(input)
-        const branchBefore = { ...BRANCH }
-        const nextOutput = scenario.next(input)
+      const legacyOutputs = inputs.map(scenario.legacy)
+      const observed = runWithNativeCallCount(() => inputs.map(scenario.next))
+      for (let inputIndex = 0; inputIndex < inputs.length; inputIndex += 1) {
+        const input = inputs[inputIndex]
+        const legacyOutput = legacyOutputs[inputIndex]
+        const nextOutput = observed.output[inputIndex]
         if (!scenario.equal(legacyOutput, nextOutput)) {
           throw new Error(
             `${scenario.label}: arms disagree on ${JSON.stringify(input.slice(0, 40))}`
           )
         }
-        scenario.assertExercised(legacyOutput, input, {
-          nativeFastPath: BRANCH.nativeFastPath - branchBefore.nativeFastPath,
-          scanFallback: BRANCH.scanFallback - branchBefore.scanFallback,
-          lengthShortCircuit: BRANCH.lengthShortCircuit - branchBefore.lengthShortCircuit
-        })
+        scenario.assertResult(legacyOutput, input)
         validatedPairs += 1
       }
+      scenario.assertNativeCalls(inputs.length, observed.calls)
       let legacyResult
       let nextResult
       if (legacyFirst) {
@@ -311,14 +233,14 @@ const measurementEqual = (a, b) =>
 const measurementChecksum = (m) => m.byteLength + (m.exceededLimit ? 1 : 0)
 const booleanChecksum = (value) => (value ? 1 : 0)
 
-// Every scenario must state which branch it is testing. `expectBranch` is checked on EVERY
-// sample against a live counter inside the new arm, so a fixture that stops reaching the
-// branch it claims to exercise fails the benchmark instead of quietly reporting 1.00x.
+// Every scenario states which production branch it expects. Native fixtures require exactly one
+// Buffer.byteLength call per input; fallback fixtures require none.
 function requireBranch(expected) {
-  return (counts) => {
-    if (counts[expected] !== 1) {
+  return (inputCount, calls) => {
+    const expectedCalls = expected === 'nativeFastPath' ? inputCount : 0
+    if (calls !== expectedCalls) {
       throw new Error(
-        `expected the ${expected} branch to run exactly once, got ${JSON.stringify(counts)}`
+        `expected the production ${expected} branch (${expectedCalls} Buffer.byteLength calls), got ${calls}`
       )
     }
   }
@@ -329,13 +251,14 @@ const batchScenario = (label, make, options = {}) => ({
   make,
   repeats: options.repeats,
   legacy: (input) => legacyMeasure(input, { stopAfterBytes: TERMINAL_OUTPUT_BATCH_MAX_BYTES }),
-  next: (input) => newMeasure(input, { stopAfterBytes: TERMINAL_OUTPUT_BATCH_MAX_BYTES }),
+  next: (input) =>
+    measureTerminalStreamByteLength(input, {
+      stopAfterBytes: TERMINAL_OUTPUT_BATCH_MAX_BYTES
+    }),
   equal: measurementEqual,
   checksum: measurementChecksum,
-  assertExercised: (out, input, counts) => {
-    options.assert?.(out, input)
-    requireBranch(options.branch)(counts)
-  }
+  assertResult: (out, input) => options.assert?.(out, input),
+  assertNativeCalls: requireBranch(options.branch)
 })
 
 const gateScenario = (label, budget, make, options = {}) => ({
@@ -343,13 +266,11 @@ const gateScenario = (label, budget, make, options = {}) => ({
   make,
   repeats: options.repeats,
   legacy: (input) => legacyExceeds(input, budget),
-  next: (input) => newExceeds(input, budget),
+  next: (input) => terminalStreamByteLengthExceeds(input, budget),
   equal: (a, b) => a === b,
   checksum: booleanChecksum,
-  assertExercised: (out, input, counts) => {
-    options.assert?.(out, input)
-    requireBranch(options.branch)(counts)
-  }
+  assertResult: (out, input) => options.assert?.(out, input),
+  assertNativeCalls: requireBranch(options.branch)
 })
 
 const scenarios = [
@@ -477,20 +398,19 @@ for (const scenario of scenarios) {
     `${pad('bytes', 10)} ${pad('legacy', 12)} ${pad('new', 12)} ${pad('speedup', 9)}  branch`
   )
   for (const codeUnits of [4, 8, 16, 64, 256, 1024, 4096]) {
-    const before = { ...BRANCH }
+    const expectedBranch =
+      codeUnits >= MIN_NATIVE_BYTE_LENGTH_CODE_UNITS ? 'nativeFastPath' : 'scanFallback'
     const { legacy, next } = runScenario(
       batchScenario(`sweep ${codeUnits}`, (sampleId) => makeInteractiveText(codeUnits, sampleId), {
-        branch: codeUnits >= MIN_NATIVE_BYTE_LENGTH_CODE_UNITS ? 'nativeFastPath' : 'scanFallback',
+        branch: expectedBranch,
         repeats: Math.max(64, Math.min(4096, Math.ceil(2 ** 18 / codeUnits)))
       })
     )
-    const branch = BRANCH.nativeFastPath > before.nativeFastPath ? 'native' : 'scan (unchanged)'
+    const branch = expectedBranch === 'nativeFastPath' ? 'native' : 'scan (unchanged)'
     console.log(
       `${pad(`${codeUnits} B`, 10)} ${pad(formatTime(legacy), 12)} ${pad(formatTime(next), 12)} ${pad(`${(legacy / next).toFixed(2)}x`, 9)}  ${branch}`
     )
   }
 }
 
-console.log(
-  `\nvalidated=${validatedPairs} measured pairs, branches=${JSON.stringify(BRANCH)}, result checksum=${resultChecksum >>> 0}`
-)
+console.log(`\nvalidated=${validatedPairs} measured pairs, result checksum=${resultChecksum >>> 0}`)
