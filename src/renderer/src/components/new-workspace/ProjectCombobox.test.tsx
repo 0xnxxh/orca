@@ -6,33 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NewWorkspaceProjectOption } from '@/lib/new-workspace-project-options'
 import ProjectCombobox from './ProjectCombobox'
 
+// Render the popover inline so assertions can reach the list without a portal.
 vi.mock('@/components/ui/popover', () => ({
   Popover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  PopoverContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  PopoverTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>
+  PopoverAnchor: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  PopoverContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>
 }))
 
-vi.mock('@/components/ui/command', () => ({
-  Command: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  CommandEmpty: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  CommandInput: React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
-    (props, ref) => <input ref={ref} {...props} />
-  ),
-  CommandList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  CommandItem: ({
-    children,
-    onSelect,
-    value
-  }: {
-    children: React.ReactNode
-    onSelect?: (value: string) => void
-    value: string
-  }) => (
-    <button type="button" data-command-value={value} onClick={() => onSelect?.(value)}>
-      {children}
-    </button>
-  )
-}))
+vi.mock('./use-recent-project-ids', () => ({ useRecentProjectIds: () => [] }))
 
 let container: HTMLDivElement
 let root: Root
@@ -66,6 +47,41 @@ const projects: NewWorkspaceProjectOption[] = [
   }
 ]
 
+function field(): HTMLInputElement {
+  const node = container.querySelector<HTMLInputElement>(
+    'input[data-project-combobox-root="true"][role="combobox"]'
+  )
+  if (!node) {
+    throw new Error('project combobox field not found')
+  }
+  return node
+}
+
+function openList(): void {
+  act(() => {
+    field().dispatchEvent(new FocusEvent('focus', { bubbles: true }))
+  })
+}
+
+function rowFor(optionId: string): HTMLElement {
+  const row = Array.from(container.querySelectorAll<HTMLElement>('[role="option"]')).find((node) =>
+    node.textContent?.includes(optionId)
+  )
+  if (!row) {
+    throw new Error(`row not found for ${optionId}`)
+  }
+  return row
+}
+
+function type(value: string): void {
+  const input = field()
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -87,9 +103,24 @@ describe('ProjectCombobox', () => {
       )
     })
 
-    const trigger = container.querySelector('[data-project-combobox-root="true"][role="combobox"]')
-    expect(trigger?.textContent).toContain('orca')
-    expect(trigger?.textContent).not.toContain('SSH')
+    const shell = container.querySelector('[data-project-combobox-root="true"]')
+    expect(shell?.textContent).toContain('orca')
+    expect(shell?.textContent).not.toContain('SSH')
+  })
+
+  it('keeps a focusable combobox that composer focus helpers can target', () => {
+    act(() => {
+      root.render(<ProjectCombobox options={projects} value={null} onValueChange={vi.fn()} />)
+    })
+
+    const trigger = container.querySelector<HTMLElement>(
+      '[data-project-combobox-root="true"][role="combobox"]'
+    )
+    expect(trigger).toBeTruthy()
+    act(() => {
+      trigger?.focus()
+    })
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('selects projects by logical project id', () => {
@@ -104,10 +135,9 @@ describe('ProjectCombobox', () => {
         />
       )
     })
+    openList()
     act(() => {
-      container
-        .querySelector<HTMLButtonElement>('[data-command-value="github:stablyai/noqa"]')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      rowFor('stablyai/noqa').dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
     expect(onValueChange).toHaveBeenCalledWith('github:stablyai/noqa')
@@ -126,14 +156,13 @@ describe('ProjectCombobox', () => {
       )
     })
 
-    const trigger = container.querySelector('[data-project-combobox-root="true"][role="combobox"]')
-    expect(trigger?.textContent).toContain('Platform')
+    const shell = container.querySelector('[data-project-combobox-root="true"]')
+    expect(shell?.textContent).toContain('Platform')
+    openList()
     expect(container.textContent).toContain('/tmp/platform')
 
     act(() => {
-      container
-        .querySelector<HTMLButtonElement>('[data-command-value="project-group:folder-group"]')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      rowFor('/tmp/platform').dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
     expect(onValueChange).toHaveBeenCalledWith('project-group:folder-group')
@@ -152,16 +181,45 @@ describe('ProjectCombobox', () => {
         />
       )
     })
+    openList()
 
-    const addButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.includes('Add a new project')
+    const addRow = Array.from(container.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (node) => node.textContent?.includes('Add a new project')
     )
-    expect(addButton).toBeTruthy()
+    expect(addRow).toBeTruthy()
 
     act(() => {
-      addButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      addRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
+    expect(onAddProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps "Add a new project" reachable when the search matches nothing', () => {
+    const onAddProject = vi.fn()
+
+    act(() => {
+      root.render(
+        <ProjectCombobox
+          options={projects}
+          value={null}
+          onValueChange={vi.fn()}
+          onAddProject={onAddProject}
+        />
+      )
+    })
+    openList()
+    type('zzzznomatch')
+
+    expect(container.textContent).toContain('No projects match your search.')
+    const addRow = Array.from(container.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (node) => node.textContent?.includes('Add a new project')
+    )
+    expect(addRow).toBeTruthy()
+
+    act(() => {
+      addRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
     expect(onAddProject).toHaveBeenCalledTimes(1)
   })
 
@@ -169,6 +227,7 @@ describe('ProjectCombobox', () => {
     act(() => {
       root.render(<ProjectCombobox options={projects} value={null} onValueChange={vi.fn()} />)
     })
+    openList()
 
     expect(container.textContent).not.toContain('Add a new project')
   })
@@ -198,8 +257,70 @@ describe('ProjectCombobox', () => {
         <ProjectCombobox options={duplicateProjects} value={null} onValueChange={vi.fn()} />
       )
     })
+    openList()
 
     expect(container.textContent).toContain('/workspace/storefront/merchant')
     expect(container.textContent).toContain('/workspace/admin/merchant')
+  })
+
+  it('filters as the user types, without a second search box', () => {
+    act(() => {
+      root.render(<ProjectCombobox options={projects} value={null} onValueChange={vi.fn()} />)
+    })
+    openList()
+    // The field itself is the only text input in the control.
+    expect(container.querySelectorAll('input')).toHaveLength(1)
+
+    type('noq')
+    expect(container.textContent).toContain('stablyai/noqa')
+    expect(container.textContent).not.toContain('stablyai/orca')
+  })
+
+  it('commits the armed row on Enter', () => {
+    const onValueChange = vi.fn()
+    const onValueSelected = vi.fn()
+
+    act(() => {
+      root.render(
+        <ProjectCombobox
+          options={projects}
+          value={null}
+          onValueChange={onValueChange}
+          onValueSelected={onValueSelected}
+        />
+      )
+    })
+    openList()
+    type('noq')
+    act(() => {
+      field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    expect(onValueChange).toHaveBeenCalledWith('github:stablyai/noqa')
+    expect(onValueSelected).toHaveBeenCalledWith('github:stablyai/noqa')
+  })
+
+  it('arms "Add a new project" when a query matches nothing, so Enter is never a wrong guess', () => {
+    const onAddProject = vi.fn()
+    const onValueChange = vi.fn()
+
+    act(() => {
+      root.render(
+        <ProjectCombobox
+          options={projects}
+          value={null}
+          onValueChange={onValueChange}
+          onAddProject={onAddProject}
+        />
+      )
+    })
+    openList()
+    type('zzzznomatch')
+    act(() => {
+      field().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    expect(onAddProject).toHaveBeenCalledTimes(1)
+    expect(onValueChange).not.toHaveBeenCalled()
   })
 })
