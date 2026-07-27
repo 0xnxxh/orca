@@ -4,7 +4,7 @@ import { inspectRuntimeTerminalProcess } from '@/runtime/runtime-terminal-inspec
 import { translate } from '@/i18n/i18n'
 import { isCodexRestartEligiblePane } from './codex-pane-restart-eligibility'
 import {
-  getCodexAccountSwitchLaneKey,
+  getCodexAccountSwitchLaneMatcher,
   isLocalCodexSelectionLaneKey,
   resolveCodexPaneSelectionLaneKey
 } from './codex-pane-selection-lane'
@@ -104,13 +104,12 @@ export async function markLiveCodexSessionsForRestart(args: {
   target?: CodexAccountSelectionTarget | null
 }): Promise<void> {
   const state = useAppStore.getState()
-  const switchLaneKey = getCodexAccountSwitchLaneKey({
-    settings: state.settings,
-    target: args.target
-  })
   const scans = await scanCodexPanes(state, {
     ptyIdFilter: null,
-    isLaneInScope: (laneKey) => laneKey === switchLaneKey
+    isLaneInScope: getCodexAccountSwitchLaneMatcher({
+      settings: state.settings,
+      target: args.target
+    })
   })
   const liveCodexSessionPtyIds = scans.filter((scan) => scan.eligible).map((scan) => scan.ptyId)
   if (liveCodexSessionPtyIds.length === 0) {
