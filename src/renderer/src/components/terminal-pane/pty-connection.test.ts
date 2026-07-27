@@ -4651,6 +4651,45 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).not.toHaveBeenCalled()
   })
 
+  it('keeps a bound pane with no notice typing while a sibling holds a queued restart', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+
+    const transport = createMockTransport('pty-plain-shell')
+    transportFactoryQueue.push(transport)
+    mockStoreState = {
+      ...mockStoreState,
+      // Why: a requested restart hides the prompt, so blocking this record-less
+      // pane through `tab.ptyId` would leave a dead keyboard and nothing to answer.
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: 'pty-sibling' }] },
+      ptyIdsByTabId: { 'tab-1': ['pty-plain-shell', 'pty-sibling'] },
+      codexRestartNoticeByPtyId: {
+        'pty-sibling': { previousAccountLabel: 'A', nextAccountLabel: 'B', restartRequested: true }
+      }
+    }
+
+    const pane = createPane(1)
+    let onDataHandler: ((data: string) => void) | null = null
+    pane.terminal.onData = vi.fn(((handler: (data: string) => void) => {
+      onDataHandler = handler
+      return { dispose: vi.fn() }
+    }) as typeof pane.terminal.onData)
+    const manager = createManager(1)
+    const deps = createDeps({
+      paneTransportsRef: { current: new Map([[2, createMockTransport('pty-sibling')]]) }
+    })
+
+    connectPanePty(pane as never, manager as never, deps as never)
+
+    expect(onDataHandler).toBeDefined()
+    if (!onDataHandler) {
+      throw new Error('expected onData handler to be registered')
+    }
+    ;(onDataHandler as (data: string) => void)('a')
+
+    expect((transport.getPtyId as unknown as () => string | null)()).toBe('pty-plain-shell')
+    expect(transport.sendInput).toHaveBeenCalledWith('a')
+  })
+
   it('keeps blocking input on a pane whose restart is requested but not yet run', async () => {
     const { connectPanePty } = await import('./pty-connection')
 
