@@ -10,13 +10,7 @@ import {
 
 type LaneState = Pick<
   AppState,
-  | 'activeRepoId'
-  | 'activeWorktreeId'
-  | 'folderWorkspaces'
-  | 'projects'
-  | 'repos'
-  | 'settings'
-  | 'worktreesByRepo'
+  'folderWorkspaces' | 'projects' | 'repos' | 'settings' | 'worktreesByRepo'
 >
 
 function laneState(args?: {
@@ -25,6 +19,7 @@ function laneState(args?: {
   folderPath?: string
   terminalWindowsShell?: string
   terminalWindowsWslDistro?: string | null
+  projectWslDistro?: string
 }): LaneState {
   return {
     folderWorkspaces: args?.folderPath ? [{ id: 'fw1', folderPath: args.folderPath }] : [],
@@ -33,8 +28,18 @@ function laneState(args?: {
       ...(args?.terminalWindowsShell ? { terminalWindowsShell: args.terminalWindowsShell } : {}),
       terminalWindowsWslDistro: args?.terminalWindowsWslDistro ?? null
     },
+    repos: [{ id: 'repo1', path: 'C:\\code\\app' }],
+    projects: args?.projectWslDistro
+      ? [
+          {
+            id: 'proj1',
+            sourceRepoIds: ['repo1'],
+            localWindowsRuntimePreference: { kind: 'wsl', distro: args.projectWslDistro }
+          }
+        ]
+      : [],
     worktreesByRepo: {
-      repo1: [{ id: 'wt1', path: args?.worktreePath ?? '/Users/dev/code/orca' }]
+      repo1: [{ id: 'wt1', repoId: 'repo1', path: args?.worktreePath ?? '/Users/dev/code/orca' }]
     }
   } as unknown as LaneState
 }
@@ -147,6 +152,33 @@ describe('resolveCodexPaneSelectionLaneKey', () => {
     ).toBe('wsl:Ubuntu')
   })
 
+  it("keys a pane by its own project's WSL distro", () => {
+    withWindowsRenderer(() => {
+      expect(
+        resolveCodexPaneSelectionLaneKey({
+          state: laneState({ projectWslDistro: 'Debian', worktreePath: 'C:\\code\\app' }),
+          tab: HOST_TAB,
+          ptyId: 'pty-1'
+        })
+      ).toBe('wsl:Debian')
+    })
+  })
+
+  // Why: a folder workspace has no repo, and the project-runtime helper falls
+  // back to the ACTIVE repo — which would give this pane a lane belonging to
+  // whatever repo is selected, and mute it whenever that repo's distro changed.
+  it('never lends another repo\u2019s project runtime to a folder workspace pane', () => {
+    withWindowsRenderer(() => {
+      expect(
+        resolveCodexPaneSelectionLaneKey({
+          state: laneState({ projectWslDistro: 'Debian', folderPath: 'C:\\srv\\app' }),
+          tab: { worktreeId: 'folder:fw1', shellOverride: undefined },
+          ptyId: 'pty-1'
+        })
+      ).toBe('host')
+    })
+  })
+
   it('reads the distro from a folder workspace path too', () => {
     expect(
       resolveCodexPaneSelectionLaneKey({
@@ -250,6 +282,20 @@ describe('getCodexAccountSwitchLaneMatcher', () => {
     expect(wslDefaultSelect('wsl:__default__')).toBe(true)
     expect(wslDefaultSelect('wsl:Ubuntu')).toBe(false)
     expect(wslDefaultSelect('host')).toBe(false)
+  })
+
+  // Why: StatusBar passes clearsEveryWslDistro for the "System default" row of
+  // EVERY WSL group, including a concrete-distro one, where the clear lands in
+  // that slot alone. Without the null-distro condition it would mute them all.
+  it('keeps a cleared concrete-distro row off the other distros', () => {
+    const ubuntuClear = getCodexAccountSwitchLaneMatcher({
+      settings: null,
+      target: { runtime: 'wsl', wslDistro: 'Ubuntu' },
+      clearsEveryWslDistro: true
+    })
+    expect(ubuntuClear('wsl:Ubuntu')).toBe(true)
+    expect(ubuntuClear('wsl:Debian')).toBe(false)
+    expect(ubuntuClear('wsl:__default__')).toBe(false)
   })
 
   it('scopes a switch made against a runtime environment to that machine', () => {

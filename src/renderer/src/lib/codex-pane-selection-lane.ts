@@ -6,17 +6,13 @@ import {
   normalizeCodexAccountSelectionTarget,
   type CodexAccountSelectionTarget
 } from '../../../shared/codex-selection-lane'
-import {
-  isWslShellName,
-  resolveLocalWindowsTerminalRuntimeOptions,
-  type LocalWindowsTerminalRuntimeOptions
-} from '../../../shared/local-windows-terminal-runtime'
+import { getRepoExecutionHostId, LOCAL_EXECUTION_HOST_ID } from '../../../shared/execution-host'
+import { isWslShellName } from '../../../shared/local-windows-terminal-runtime'
 import { parseAppSshPtyId } from '../../../shared/ssh-pty-id'
 import { resolveTerminalStartupCwd } from '../../../shared/terminal-startup-cwd'
 import type { GlobalSettings, TerminalTab } from '../../../shared/types'
 import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 import { parseWslUncPath } from '../../../shared/wsl-paths'
-import { getLocalProjectExecutionRuntimeContext } from './local-preflight-context'
 import { getRendererAppPlatform } from './renderer-app-platform'
 
 type RuntimeEnvironmentSettings = Pick<GlobalSettings, 'activeRuntimeEnvironmentId'>
@@ -24,13 +20,7 @@ type RuntimeEnvironmentSettings = Pick<GlobalSettings, 'activeRuntimeEnvironment
 /** Everything the pane lane needs: the workspace path plus the project runtime inputs. */
 type CodexPaneLaneState = Pick<
   AppState,
-  | 'activeRepoId'
-  | 'activeWorktreeId'
-  | 'folderWorkspaces'
-  | 'projects'
-  | 'repos'
-  | 'settings'
-  | 'worktreesByRepo'
+  'folderWorkspaces' | 'projects' | 'repos' | 'settings' | 'worktreesByRepo'
 >
 
 /**
@@ -139,50 +129,52 @@ function resolveLocalPaneSelectionTarget(args: {
     ? (resolveTerminalStartupCwd(workspacePath, args.tab.startupCwd) ?? workspacePath)
     : null
   const wslPath = paneCwd ? parseWslUncPath(paneCwd) : null
-  const terminalRuntime = resolveLocalPaneTerminalRuntime(args)
-  if (wslPath || isWslShellName(terminalRuntime.shellOverride)) {
-    return {
-      runtime: 'wsl',
-      wslDistro: wslPath?.distro ?? terminalRuntime.terminalWindowsWslDistro
-    }
+  if (wslPath) {
+    return { runtime: 'wsl', wslDistro: wslPath.distro }
   }
-  return { runtime: 'host' }
-}
-
-/**
- * The shell and distro the launch resolved, not merely the ones the tab asked for.
- *
- * Why the tab's own fields are not enough: pty.ts runs the request through
- * resolveLocalWindowsTerminalRuntimeOptions and hands the result to
- * getCodexSelectionTargetForPty — so an unset shellOverride still lands on WSL
- * when that is the Windows default, and the distro comes from the resolved
- * runtime. Reading only the tab would key such a pane `host` (a host switch then
- * mutes a working WSL pane) or `wsl:__default__` (its own distro's switch never
- * reaches it, which is #10757 returning).
- */
-function resolveLocalPaneTerminalRuntime(args: {
-  state: CodexPaneLaneState
-  tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>
-}): LocalWindowsTerminalRuntimeOptions {
   // Why the platform gate: pty.ts only consults the Windows terminal runtime on
   // win32, so elsewhere the tab's own override is the whole answer.
   if (getRendererAppPlatform() !== 'win32') {
-    return { shellOverride: args.tab.shellOverride, terminalWindowsWslDistro: null }
+    return isWslShellName(args.tab.shellOverride)
+      ? { runtime: 'wsl', wslDistro: null }
+      : { runtime: 'host' }
   }
-  const projectRuntime = getLocalProjectExecutionRuntimeContext(args.state, args.tab.worktreeId)
-  if (projectRuntime?.status === 'repair-required') {
-    // Why not delegate: resolveLocalWindowsTerminalRuntimeOptions throws here.
-    // A spawn-time refusal is not a lane answer, and the pane still means WSL.
-    return {
-      shellOverride: 'wsl.exe',
-      terminalWindowsWslDistro: projectRuntime.repair.preferredRuntime.distro
-    }
+  const projectWslDistro = resolveProjectWslDistro(args.state, args.tab.worktreeId)
+  // Why the settings shell too: main resolves `requestedShellOverride ?? settingsShell`,
+  // so an unset override still means WSL when that is the Windows default. Reading
+  // only the tab would key such a pane `host` and mute it on a host switch.
+  const shell = args.tab.shellOverride ?? args.state.settings?.terminalWindowsShell
+  if (projectWslDistro === null && !isWslShellName(shell)) {
+    return { runtime: 'host' }
   }
-  return resolveLocalWindowsTerminalRuntimeOptions({
-    requestedShellOverride: args.tab.shellOverride,
-    settings: args.state.settings ?? undefined,
-    projectRuntime
-  })
+  return {
+    runtime: 'wsl',
+    wslDistro: projectWslDistro ?? args.state.settings?.terminalWindowsWslDistro ?? null
+  }
+}
+
+/**
+ * The WSL distro a project runtime pins this pane to, or null for none.
+ *
+ * Why this walks repo -> project by hand instead of calling
+ * getLocalProjectExecutionRuntimeContext: that helper falls back to the ACTIVE
+ * repo when the worktree is not a git worktree, so a folder-workspace pane would
+ * take whichever repo happens to be selected — a lane that changes under the
+ * pane. It also synthesizes a runtime where main has none. Main resolves
+ * strictly repo -> project (resolveLocalProjectRuntimeForRepo), so mirror that.
+ */
+function resolveProjectWslDistro(state: CodexPaneLaneState, worktreeId: string): string | null {
+  const worktree = Object.values(state.worktreesByRepo ?? {})
+    .flat()
+    .find((entry) => entry.id === worktreeId)
+  const repo = worktree ? (state.repos ?? []).find((entry) => entry.id === worktree.repoId) : null
+  if (!repo || getRepoExecutionHostId(repo) !== LOCAL_EXECUTION_HOST_ID) {
+    return null
+  }
+  const preference = (state.projects ?? []).find((entry) =>
+    entry.sourceRepoIds?.includes(repo.id)
+  )?.localWindowsRuntimePreference
+  return preference?.kind === 'wsl' ? (preference.distro ?? null) : null
 }
 
 function getWorkspacePath(
@@ -192,12 +184,12 @@ function getWorkspacePath(
   const parsed = parseWorkspaceKey(worktreeId)
   if (parsed?.type === 'folder') {
     return (
-      state.folderWorkspaces.find((workspace) => workspace.id === parsed.folderWorkspaceId)
+      (state.folderWorkspaces ?? []).find((workspace) => workspace.id === parsed.folderWorkspaceId)
         ?.folderPath ?? null
     )
   }
   return (
-    Object.values(state.worktreesByRepo)
+    Object.values(state.worktreesByRepo ?? {})
       .flat()
       .find((entry) => entry.id === worktreeId)?.path ?? null
   )

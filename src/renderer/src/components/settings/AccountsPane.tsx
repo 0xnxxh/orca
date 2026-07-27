@@ -747,10 +747,14 @@ export function AccountsPane({
       if (shouldPromptRestart) {
         // Why: `add` creates the managed home against the machine's own distro,
         // so the slot it wrote is the created account's — not this row's, which
-        // may still say "WSL default".
+        // may still say "WSL default". Found by diffing the roster rather than
+        // by the row's active id, which resolves to null once two distro slots
+        // are filled and would send the notice to the wrong lane.
         const addedAccount =
           action === 'adding'
-            ? next.accounts.find((account) => account.id === nextActiveAccountId)
+            ? next.accounts.find(
+                (account) => !codexAccounts.accounts.some((prior) => prior.id === account.id)
+              )
             : undefined
         void markLiveCodexSessionsForRestart({
           previousAccountLabel: getCodexAccountLabel(codexAccounts, previousActiveAccountId),
