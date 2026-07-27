@@ -69,7 +69,9 @@ function allRepos(): Repo[] {
   ]
 }
 
-function makeStore(overrides: { repos?: Repo[] } = {}): unknown {
+function makeStore(
+  overrides: { repos?: Repo[]; extraFolderWorkspaces?: FolderWorkspace[] } = {}
+): unknown {
   const folderRepo: Repo = {
     id: 'folder-repo',
     path: CONTAINER,
@@ -144,7 +146,26 @@ function makeStore(overrides: { repos?: Repo[] } = {}): unknown {
     }),
     getProjects: () => [],
     getProjectGroups: () => [group],
-    getFolderWorkspaces: () => [folderWorkspace]
+    getFolderWorkspaces: () => [folderWorkspace, ...(overrides.extraFolderWorkspaces ?? [])]
+  }
+}
+
+/** A second workspace record over the same container path — the shape a shared path takes. */
+function siblingFolderWorkspace(id: string): FolderWorkspace {
+  return {
+    id,
+    projectGroupId: GROUP_ID,
+    name: 'Refund fix (other host)',
+    folderPath: CONTAINER,
+    linkedTask: null,
+    comment: '',
+    isArchived: false,
+    isUnread: false,
+    isPinned: false,
+    sortOrder: 1,
+    lastActivityAt: 1,
+    createdAt: 1,
+    updatedAt: 1
   }
 }
 
@@ -705,26 +726,36 @@ describe('#6357 monorepo folder workspace', () => {
     expect(cancel).toHaveBeenCalledTimes(1)
     releases[1]?.()
     await Promise.all(both)
+    // Both settled: the refcount must reach zero rather than stranding a lane at 1.
+    expect((runtime['folderWorkspaceCommitMessageLanes'] as Map<string, unknown>).size).toBe(0)
     generate.mockRestore()
     cancel.mockRestore()
   })
 
-  it('M7: Cancel does not reach a same-path workspace belonging to another host', async () => {
+  it('M7: Cancel from a workspace sharing the container path leaves the other one running', async () => {
     buildFixture()
-    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const OTHER_WS_ID = 'fw-2'
+    const runtime = new OrcaRuntimeService(
+      makeStore({
+        repos: allRepos(),
+        extraFolderWorkspaces: [siblingFolderWorkspace(OTHER_WS_ID)]
+      }) as never
+    )
     const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
     await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    // Why: two workspace records can name the same container — the same POSIX path on two
+    // SSH hosts is the reachable case. Keyed by that path they collapse into one lane
+    // entry, so a Cancel arriving for one resolves the *other's* recorded child selector
+    // and kills a draft its user never cancelled.
     const run = await withInFlightGeneration(runtime, selector)
-    // Why: keying the lane map by normalized path alone conflates two workspaces that
-    // share a POSIX path on different SSH hosts, so one host's Cancel would resolve the
-    // other host's recorded child selector and kill its draft. Keying by workspace id
-    // makes a lookup for any other workspace miss, in flight or not.
-    const lanes = runtime['folderWorkspaceCommitMessageLanes'] as Map<string, Map<string, number>>
-    // The key is the workspace id, not any spelling of the shared container path.
-    expect([...lanes.keys()]).toEqual([FOLDER_WS_ID])
-    expect([...lanes.keys()].some((key) => key.includes(CONTAINER))).toBe(false)
+    await runtime.cancelRuntimeGenerateCommitMessage(`id:${folderWorkspaceKey(OTHER_WS_ID)}`)
+    // The other workspace has nothing in flight, so it must signal no child at all.
+    expect(run.cancelSelectors()).toEqual([])
+    // ...and the first workspace's lane survives to be cancelled by its own owner.
+    await runtime.cancelRuntimeGenerateCommitMessage(selector)
+    expect(run.cancelSelectors()).toEqual(run.generateSelectors())
     await run.settle()
-    expect(lanes.size).toBe(0)
+    expect((runtime['folderWorkspaceCommitMessageLanes'] as Map<string, unknown>).size).toBe(0)
   })
 
   it('E: the real child git worktree resolves fine when its repo is registered', async () => {
