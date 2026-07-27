@@ -1367,9 +1367,12 @@ function buildMobileTerminalSurfaceTabs(
     : undefined
   const savedPtyIdsByLeafId = sanitizedSavedLayout?.ptyIdsByLeafId ?? {}
   const terminalTheme = resolveMobileTerminalTheme(state, systemPrefersDark)
-  const launchDraftText = state.nativeChatLaunchDraftByTabId?.[terminal.id]?.text.trim()
-    ? state.nativeChatLaunchDraftByTabId[terminal.id].text
-    : null
+  // Agent-matched like the desktop consumer: a pane whose agent changed keeps its
+  // tab id, so an unmatched seed would prefill the new agent's chat with stale text.
+  const seededLaunchDraft = state.nativeChatLaunchDraftByTabId?.[terminal.id]
+  const launchDraftEntry =
+    seededLaunchDraft && seededLaunchDraft.agent === terminal.launchAgent ? seededLaunchDraft : null
+  const launchDraftText = launchDraftEntry?.text.trim() ? launchDraftEntry.text : null
   const container = registered?.getContainer()
   const firstChild = container?.firstElementChild
   const liveLayoutRoot = serializePaneTree(

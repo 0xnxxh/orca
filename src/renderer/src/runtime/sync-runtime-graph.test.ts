@@ -726,6 +726,38 @@ describe('buildMobileSessionTabSnapshots', () => {
     ])
   })
 
+  it('withholds a launch draft seeded for a different agent than the tab runs', () => {
+    // The seed is keyed by tab id, which survives an agent switch. Desktop's
+    // consumer declines on mismatch; publishing anyway would prefill the new
+    // agent's mobile chat with the previous agent's link.
+    const leafId = '11111111-1111-4111-8111-111111111111'
+    const state = makeState({
+      tabsByWorktree: {
+        'wt-1': [{ id: 'term-1', title: 'Terminal 1', launchAgent: 'codex' }]
+      } as unknown as AppState['tabsByWorktree'],
+      terminalLayoutsByTabId: {
+        'term-1': {
+          root: { type: 'leaf', leafId },
+          activeLeafId: leafId,
+          expandedLeafId: null,
+          ptyIdsByLeafId: { [leafId]: 'pty-1' }
+        }
+      } as unknown as AppState['terminalLayoutsByTabId'],
+      nativeChatLaunchDraftByTabId: {
+        'term-1': {
+          tabId: 'term-1',
+          agent: 'claude',
+          text: 'https://github.com/o/r/issues/12',
+          createdAt: 1
+        }
+      }
+    })
+
+    const snapshot = buildMobileSessionTabSnapshots(state)[0]
+
+    expect(snapshot?.tabs[0]).not.toHaveProperty('launchDraft')
+  })
+
   it('preserves source-control diff metadata for mobile file tabs', () => {
     const diffId = 'wt-1::diff::unstaged::src/app.ts'
     const state = makeState({
