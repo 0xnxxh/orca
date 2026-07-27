@@ -7214,7 +7214,10 @@ export class OrcaRuntimeService {
     }
     const repos = this.requireStore().getRepos()
     // Why: one bulk request can span several child repos, so paths are grouped by
-    // owning repo and each group runs as its own git invocation.
+    // owning repo and each group runs as its own git invocation. Resolution is
+    // all-or-nothing — one unowned path rejects the batch before any git runs —
+    // but execution is not: the caller's loop has no rollback, so a repo failing
+    // midway leaves earlier repos already staged.
     const byRepoId = new Map<string, { repo: Repo; relativePaths: string[] }>()
     for (const relativePath of relativePaths) {
       const match = matchFolderWorkspaceChildRepo(repos, folderPath, relativePath)

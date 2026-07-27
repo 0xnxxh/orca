@@ -31,6 +31,13 @@ describe('listFolderWorkspaceChildRepos', () => {
   it('excludes the folder repo itself even when registered as a git repo', () => {
     expect(listFolderWorkspaceChildRepos([repo('self', FOLDER)], FOLDER)).toEqual([])
   })
+
+  it('keeps one entry when the same directory is registered twice', () => {
+    // Why: a duplicate registration would list every file twice in the merged
+    // status and run the commit against that repo twice.
+    const dupe = repo('api-again', API.path)
+    expect(listFolderWorkspaceChildRepos([API, dupe], FOLDER).map((e) => e.id)).toEqual(['api'])
+  })
 })
 
 describe('matchFolderWorkspaceChildRepo', () => {

@@ -2,6 +2,7 @@ import type { GitStatusEntry, GitStatusResult, Repo } from '../../shared/types'
 import { isFolderRepo } from '../../shared/repo-kind'
 import {
   isPathInsideOrEqual,
+  normalizeRuntimePathForComparison,
   relativePathInsideRoot,
   resolveRuntimePath
 } from '../../shared/cross-platform-path'
@@ -12,12 +13,23 @@ import {
  * must be routed to whichever child repo owns the requested path.
  */
 export function listFolderWorkspaceChildRepos(repos: readonly Repo[], folderPath: string): Repo[] {
-  return repos
+  const matching = repos
     .filter(
       (candidate) => !isFolderRepo(candidate) && isPathInsideOrEqual(folderPath, candidate.path)
     )
     .filter((candidate) => relativePathInsideRoot(folderPath, candidate.path) !== '')
     .sort((left, right) => right.path.length - left.path.length)
+  // Why: the same directory can be registered twice (imported once directly and
+  // once by a folder scan). Without this the merged status lists every file twice
+  // and a commit runs against the repo twice.
+  const byPath = new Map<string, Repo>()
+  for (const repo of matching) {
+    const key = normalizeRuntimePathForComparison(repo.path)
+    if (!byPath.has(key)) {
+      byPath.set(key, repo)
+    }
+  }
+  return [...byPath.values()]
 }
 
 export type FolderWorkspaceChildRepoMatch = {
