@@ -14,9 +14,10 @@ beforeEach(() => {
   openHttpLinkMock.mockReset()
 })
 
-// Why: the rich editor and the markdown preview render the same file, so a link
-// clicked in either must reach the same destination.
-function clickExternalLinkWithShift(sourceOwner: HttpLinkSourceOwner): boolean {
+// Why: the preview half of this same decision is pinned with an identical options
+// shape in markdown-preview-links.test.ts — the two together keep the editor and
+// preview of one file from routing a link two different ways.
+function clickExternalLinkWithShift(sourceOwner: HttpLinkSourceOwner, isMac = true): boolean {
   const href = 'https://example.com/docs'
   const view = {
     state: {
@@ -32,9 +33,9 @@ function clickExternalLinkWithShift(sourceOwner: HttpLinkSourceOwner): boolean {
   return handleRichMarkdownEditorClick({
     activateMarkdownLink: vi.fn(),
     editorRef: { current: {} } as unknown as MutableRefObject<unknown>,
-    event: { metaKey: true, ctrlKey: false, shiftKey: true } as MouseEvent,
+    event: { metaKey: isMac, ctrlKey: !isMac, shiftKey: true } as MouseEvent,
     filePath: '/repo/docs/README.md',
-    isMac: true,
+    isMac,
     htmlSuperscriptLinkContext: {
       getSnapshot: () => ({ sourceOwner })
     },
@@ -61,9 +62,20 @@ describe('rich markdown editor Shift+modifier click on external links', () => {
     })
   })
 
-  // Why: openHttpLink refuses to route a non-local source into Orca, so the owner
-  // has to survive the hop or an SSH file's links could land in the wrong browser.
-  it('preserves a non-local source owner so remote files stay out of Orca', () => {
+  // Why: AGENTS.md — Shift+Ctrl is the chord off macOS, and modKey reads a
+  // different event field there.
+  it('uses the Ctrl chord off macOS', () => {
+    expect(clickExternalLinkWithShift({ kind: 'local' }, false)).toBe(true)
+    expect(openHttpLinkMock).toHaveBeenCalledWith('https://example.com/docs', {
+      worktreeId: 'wt-1',
+      modifierHeld: true,
+      sourceOwner: { kind: 'local' }
+    })
+  })
+
+  // Why: the owner has to survive the hop; openHttpLink is what then refuses to put
+  // a non-local source in Orca (enforced in http-link-routing.test.ts, not here).
+  it('forwards a non-local source owner untouched', () => {
     const sourceOwner = { kind: 'ssh', connectionId: 'conn-1' } as HttpLinkSourceOwner
 
     expect(clickExternalLinkWithShift(sourceOwner)).toBe(true)
