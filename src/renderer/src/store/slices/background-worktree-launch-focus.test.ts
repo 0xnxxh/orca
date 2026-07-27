@@ -60,6 +60,16 @@ describe('setActiveTabTypeForWorktree', () => {
     expect(store.getState()).toBe(before)
   })
 
+  it('still fixes a desynced global when the viewed target is already stamped', () => {
+    const store = createStoreViewing('wt-a')
+    // Remembered type already matches, but the visible pane disagrees.
+    store.setState({ activeTabType: 'editor', activeTabTypeByWorktree: { 'wt-a': 'terminal' } })
+
+    store.getState().setActiveTabTypeForWorktree('wt-a', 'terminal')
+
+    expect(store.getState().activeTabType).toBe('terminal')
+  })
+
   it('leaves the viewed pane alone when a background target is already stamped', () => {
     const store = createStoreViewing('wt-b')
     store.setState({ activeTabType: 'editor', activeTabTypeByWorktree: { 'wt-a': 'terminal' } })
