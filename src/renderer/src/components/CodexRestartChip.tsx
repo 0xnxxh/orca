@@ -151,10 +151,17 @@ function LoudRestartOverlay({
   const titleId = useId()
   const bodyId = useId()
   const rootRef = useRef<HTMLDivElement>(null)
-  const restartRef = useRef<HTMLButtonElement>(null)
 
-  // Why: focus Restart only when the user isn't typing elsewhere; unconditional
-  // autoFocus would steal keys from an active composer or terminal input.
+  // Why: move focus to the card only when the user isn't typing elsewhere;
+  // unconditional autoFocus would steal keys from an active composer.
+  //
+  // The target is the dialog itself, never Restart. This card is mounted per
+  // WORKTREE (a sibling of the split layout), so its focus scope is every
+  // terminal in the worktree — a notice for one pane lands while the user may
+  // be typing in a different, perfectly healthy pane. With Restart focused, the
+  // next Space/Enter of their prose queued a restart of every stale pane here
+  // and destroyed those sessions. Focus must not land on a destructive action
+  // the user never aimed at. See #10863.
   useEffect(() => {
     if (!isVisible) {
       return
@@ -165,7 +172,7 @@ function LoudRestartOverlay({
     }
     const paneScope = root.parentElement
     if (shouldFocusMobileDriverAction(document.activeElement, document.body, paneScope)) {
-      restartRef.current?.focus()
+      root.focus()
     }
   }, [isVisible, noticeKey])
 
@@ -173,10 +180,13 @@ function LoudRestartOverlay({
     <div
       ref={rootRef}
       role="dialog"
+      // Why: programmatically focusable so the card can take focus itself, but
+      // out of the Tab order — Tab from here still reaches Restart/Keep.
+      tabIndex={-1}
       aria-live="assertive"
       aria-labelledby={titleId}
       aria-describedby={bodyId}
-      className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center p-6"
+      className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center p-6 outline-none"
     >
       <div className="pointer-events-auto flex w-full max-w-[30rem] flex-col gap-3 rounded-lg border border-border bg-card p-6 pb-5 text-card-foreground shadow-xs">
         <div className="flex items-start gap-3">
@@ -207,7 +217,7 @@ function LoudRestartOverlay({
           <Button type="button" variant="outline" size="sm" onClick={onDismiss}>
             {translate('auto.components.CodexRestartChip.6133594b12', 'Keep old account')}
           </Button>
-          <Button ref={restartRef} type="button" variant="default" size="sm" onClick={onRestart}>
+          <Button type="button" variant="default" size="sm" onClick={onRestart}>
             <RefreshCw />
             {translate('auto.components.CodexRestartChip.c72a5fb234', 'Restart')}
           </Button>

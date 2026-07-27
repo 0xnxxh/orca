@@ -234,15 +234,13 @@ describe('CodexRestartChip helpers', () => {
       },
       ptyIdsByTabId: { 'tab-1': ['pty-1'] }
     })
-    useAppStore
-      .getState()
-      .markCodexRestartNotices([
-        {
-          ptyId: 'pty-1',
-          previousAccountLabel: 'old@example.com',
-          nextAccountLabel: 'new@example.com'
-        }
-      ])
+    useAppStore.getState().markCodexRestartNotices([
+      {
+        ptyId: 'pty-1',
+        previousAccountLabel: 'old@example.com',
+        nextAccountLabel: 'new@example.com'
+      }
+    ])
     await act(async () => {
       root.render(React.createElement(CodexRestartChip, { worktreeId: 'worktree-1' }))
     })
@@ -292,15 +290,13 @@ describe('CodexRestartChip helpers', () => {
       },
       ptyIdsByTabId: { 'tab-1': ['pty-1'] }
     })
-    useAppStore
-      .getState()
-      .markCodexRestartNotices([
-        {
-          ptyId: 'pty-1',
-          previousAccountLabel: 'old@example.com',
-          nextAccountLabel: 'new@example.com'
-        }
-      ])
+    useAppStore.getState().markCodexRestartNotices([
+      {
+        ptyId: 'pty-1',
+        previousAccountLabel: 'old@example.com',
+        nextAccountLabel: 'new@example.com'
+      }
+    ])
     await act(async () => {
       root.render(React.createElement(CodexRestartChip, { worktreeId: 'worktree-1' }))
     })
@@ -367,5 +363,84 @@ describe('CodexRestartChip helpers', () => {
     // Why: the pane still has to restart; only the prompt is answered.
     expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({ 'pty-1': true })
     expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']?.restartRequested).toBe(true)
+  })
+})
+
+describe('CodexRestartChip focus target', () => {
+  function renderWithFocusedSiblingPane(): HTMLTextAreaElement {
+    // Mirrors Terminal.tsx, which mounts the chip as a SIBLING of the split
+    // layout — so the chip's parentElement is the whole worktree surface and
+    // its focus scope covers every pane in it, not just the stale one.
+    const splitLayout = document.createElement('div')
+    const healthyPaneInput = document.createElement('textarea')
+    healthyPaneInput.className = 'xterm-helper-textarea'
+    splitLayout.appendChild(healthyPaneInput)
+    container.appendChild(splitLayout)
+    healthyPaneInput.focus()
+
+    useAppStore.setState({
+      tabsByWorktree: {
+        'worktree-1': [
+          {
+            id: 'tab-1',
+            worktreeId: 'worktree-1',
+            title: 'Terminal',
+            customTitle: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1,
+            ptyId: null
+          }
+        ]
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] }
+    })
+    useAppStore
+      .getState()
+      .markCodexRestartNotices([
+        {
+          ptyId: 'pty-1',
+          previousAccountLabel: 'old@example.com',
+          nextAccountLabel: 'new@example.com'
+        }
+      ])
+    return healthyPaneInput
+  }
+
+  it('never parks focus on Restart, so a stray keystroke cannot kill the session', async () => {
+    renderWithFocusedSiblingPane()
+
+    await act(async () => {
+      root.render(React.createElement(CodexRestartChip, { worktreeId: 'worktree-1' }))
+    })
+
+    // Regression (#10863): focus used to land on Restart. The card is worktree
+    // scoped, so it fires while the user is typing in a DIFFERENT, healthy pane
+    // — and the next Space/Enter of their prose restarted every stale pane here.
+    const restartButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent?.trim() === 'Restart'
+    )
+    expect(restartButton).toBeDefined()
+    expect(document.activeElement).not.toBe(restartButton)
+    expect((document.activeElement as HTMLElement | null)?.getAttribute('role')).toBe('dialog')
+
+    // The keystroke that used to destroy the session now does nothing.
+    await act(async () => {
+      ;(document.activeElement as HTMLElement | null)?.click()
+    })
+    expect(useAppStore.getState().pendingCodexPaneRestartIds).toEqual({})
+  })
+
+  it('still moves focus off the terminal so the card is reachable by keyboard', async () => {
+    const healthyPaneInput = renderWithFocusedSiblingPane()
+
+    await act(async () => {
+      root.render(React.createElement(CodexRestartChip, { worktreeId: 'worktree-1' }))
+    })
+
+    // Why: the fix must not turn into "never take focus" — assistive tech and
+    // keyboard users still need to land on the dialog and Tab to its actions.
+    expect(document.activeElement).not.toBe(healthyPaneInput)
+    expect(document.activeElement).toBe(container.querySelector('[role="dialog"]'))
   })
 })
