@@ -828,16 +828,17 @@ function isCodexPaneStale(args: {
     return false
   }
   // Why: a bound pane's own record is the last word — its ptyId is exactly the
-  // shell its keystrokes reach. `tab.ptyId` names whichever pane bound last, so
-  // in a split tab consulting it would kill this pane's keyboard over a
-  // sibling's notice, with no prompt on screen once that sibling is answered.
+  // shell its keystrokes reach. `tab.ptyId` holds one sibling's id, not this
+  // pane's, so in a split tab consulting it would kill this pane's keyboard over
+  // that sibling's notice, with no prompt on screen once the sibling is answered.
   if (args.panePtyId) {
     return blocksCodexPaneInput(codexRestartNoticeByPtyId[args.panePtyId])
   }
 
   // Why: only an unbound pane needs the tab's persisted id. Both transports
   // refuse writes while their pty binding is null, so a keystroke here arms
-  // recovery, which reattaches to that id — the shell this pane is about to own.
+  // recovery — a coarser signal than a bound pane's own record, but the tab's id
+  // is the only evidence available of which shell this pane is about to own.
   const tab = (state.tabsByWorktree[args.worktreeId] ?? []).find((entry) => entry.id === args.tabId)
   if (tab?.ptyId && blocksCodexPaneInput(codexRestartNoticeByPtyId[tab.ptyId])) {
     return true
