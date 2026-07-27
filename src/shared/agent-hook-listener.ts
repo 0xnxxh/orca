@@ -3316,8 +3316,15 @@ function normalizeCodexEvent(
       normalizeOptionalField(hookPayload['model'], AGENT_MODEL_MAX_LENGTH) ??
       (eventName === 'SessionStart' ? undefined : previousLead?.model)
   })
+  // Why: read the roster AFTER the reap. A blocked child must still hold the pane at `waiting` on
+  // non-Stop lead events, but on Stop the roster is already empty so this stays `done` — the root
+  // Stop contract in agent-hooks/server.ts depends on that.
+  const effectiveState = codexRosterEffectiveState(
+    state.codexSubagentRosterByPaneKey.get(paneKey),
+    stateName
+  )
   return buildCodexStatusPayload(state, eventName, promptText, paneKey, hookPayload, {
-    stateName,
+    stateName: effectiveState,
     updateLead: true,
     leadStopWithLiveSubagents
   })
