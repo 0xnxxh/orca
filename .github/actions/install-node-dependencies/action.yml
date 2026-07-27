@@ -1,0 +1,54 @@
+name: Install Node dependencies
+description: Installs the Node toolchain and repository dependencies for Linux CI jobs.
+
+inputs:
+  ignore-scripts:
+    description: Skip dependency lifecycle scripts when the job does not need native runtimes.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # setup-node needs pnpm on PATH to locate and restore its store.
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v6
+      with:
+        run_install: false
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version-file: package.json
+        cache: pnpm
+
+    # pnpm's bundled gyp_main.py is not executable on fresh Linux runners.
+    - name: Use external node-gyp
+      if: inputs.ignore-scripts != 'true'
+      shell: bash
+      run: |
+        npm install -g node-gyp@11.5.0
+        echo "npm_config_node_gyp=$(npm root -g)/node-gyp/bin/node-gyp.js" >> "$GITHUB_ENV"
+
+    - name: Prepare dependency install
+      shell: bash
+      run: |
+        if [ -e node_modules ]; then
+          ls -ld node_modules
+          rm -rf node_modules
+        fi
+
+    - name: Install dependencies
+      shell: bash
+      env:
+        IGNORE_SCRIPTS: ${{ inputs.ignore-scripts }}
+      run: |
+        install_args=(--no-frozen-lockfile --prefer-frozen-lockfile=false --os=current --os=win32 --cpu=current)
+        if [ "$IGNORE_SCRIPTS" = "true" ]; then
+          install_args+=(--ignore-scripts)
+        elif [ "$IGNORE_SCRIPTS" != "false" ]; then
+          echo "::error::ignore-scripts must be true or false"
+          exit 2
+        fi
+        pnpm install "${install_args[@]}"
+        git diff --exit-code package.json pnpm-lock.yaml
