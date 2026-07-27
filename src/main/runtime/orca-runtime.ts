@@ -2934,10 +2934,14 @@ export class OrcaRuntimeService {
     | null
   private readonly agentSessionClaimSigner: AgentSessionClaimSigner
   private readonly agentSessionCreateOperations = new Map<string, AgentSessionCreateOperation>()
-  // Normalized folder-workspace path -> the child selectors its in-flight commit-message
-  // generations are running under. Cancellation is keyed by cwd, so without this a
-  // workspace-level Cancel would also kill a draft running in an unrelated child repo.
-  private readonly folderWorkspaceCommitMessageLanes = new Map<string, Set<string>>()
+  // Folder-workspace id -> child selector -> how many of its commit-message generations are
+  // in flight there. Cancellation is keyed by cwd, so without this a workspace-level Cancel
+  // would also kill a draft running in an unrelated child repo.
+  // Why id and not path: the same POSIX path can name two different workspaces on two SSH
+  // hosts, and one host's Cancel must not reach the other's draft.
+  // Why a count and not a Set: two clients can generate into the same child, and the first
+  // to settle would otherwise clear the lane while the second is still running.
+  private readonly folderWorkspaceCommitMessageLanes = new Map<string, Map<string, number>>()
   private sshRelayRecoveryGenerationByTargetId = new Map<string, number>()
   private accountServices: RuntimeAccountServices | null = null
   private commitMessageAgentEnv: CommitMessageAgentEnvironmentResolvers | null = null
@@ -24274,7 +24278,7 @@ export class OrcaRuntimeService {
    * callers can fall through to the single-repo path.
    */
   private async selectFolderWorkspaceStagedTarget(selector: string): Promise<{
-    folderPath: string
+    folderWorkspaceId: string
     selection: { ok: true; target: RuntimeGitTarget } | { ok: false; error: string }
   } | null> {
     const scope = await this.resolveFolderWorkspaceLaunchScope(selector)
@@ -24283,7 +24287,7 @@ export class OrcaRuntimeService {
       return null
     }
     return {
-      folderPath: folderWorkspace.folderPath,
+      folderWorkspaceId: folderWorkspace.id,
       selection: selectFolderWorkspaceCommitTarget(
         await this.inspectFolderWorkspaceChildRepos(
           folderWorkspace.folderPath,
@@ -24353,14 +24357,19 @@ export class OrcaRuntimeService {
     // Remembering the lane this call actually started is the only way Cancel can
     // hit that one and nothing else.
     const childSelector = `id:${selected.selection.target.worktree.id}`
-    const key = normalizeRuntimePathForComparison(selected.folderPath)
-    const lanes = this.folderWorkspaceCommitMessageLanes.get(key) ?? new Set<string>()
-    lanes.add(childSelector)
+    const key = selected.folderWorkspaceId
+    const lanes = this.folderWorkspaceCommitMessageLanes.get(key) ?? new Map<string, number>()
+    lanes.set(childSelector, (lanes.get(childSelector) ?? 0) + 1)
     this.folderWorkspaceCommitMessageLanes.set(key, lanes)
     try {
       return await this.gitCommands.generateRuntimeCommitMessage(childSelector, settingsOverride)
     } finally {
-      lanes.delete(childSelector)
+      const remaining = (lanes.get(childSelector) ?? 1) - 1
+      if (remaining > 0) {
+        lanes.set(childSelector, remaining)
+      } else {
+        lanes.delete(childSelector)
+      }
       if (lanes.size === 0) {
         this.folderWorkspaceCommitMessageLanes.delete(key)
       }
@@ -24377,6 +24386,7 @@ export class OrcaRuntimeService {
    * every child would abort a draft another view started in a *different* child
    * repo. `folderWorkspaceCommitMessageLanes` holds exactly the children this
    * workspace's own generations are running in, so nothing else is touched.
+   * Keyed by workspace id, so a same-path workspace on another SSH host is not reached.
    * Returns null when the selector is not a folder workspace.
    */
   private async cancelFolderWorkspaceGenerateCommitMessage(
@@ -24387,11 +24397,9 @@ export class OrcaRuntimeService {
     if (!folderWorkspace) {
       return null
     }
-    const lanes = this.folderWorkspaceCommitMessageLanes.get(
-      normalizeRuntimePathForComparison(folderWorkspace.folderPath)
-    )
+    const lanes = this.folderWorkspaceCommitMessageLanes.get(folderWorkspace.id)
     await Promise.all(
-      [...(lanes ?? [])].map(async (childSelector) =>
+      [...(lanes?.keys() ?? [])].map(async (childSelector) =>
         // Why swallow: a child that cannot be reached has nothing in flight to
         // cancel, and one unreachable repo must not strand the others.
         this.gitCommands

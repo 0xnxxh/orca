@@ -663,6 +663,70 @@ describe('#6357 monorepo folder workspace', () => {
     cancel.mockRestore()
   })
 
+  it('M6: a settled generation does not clear the lane of one still running in the same child', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    // Two clients (two windows on the same workspace) generate into the same child.
+    const releases: (() => void)[] = []
+    const generate = vi
+      .spyOn(
+        runtime['gitCommands'] as { generateRuntimeCommitMessage: (...args: never[]) => unknown },
+        'generateRuntimeCommitMessage'
+      )
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            releases.push(() => resolve({ success: true, message: 'drafted' }))
+          }) as never
+      )
+    const cancel = vi
+      .spyOn(
+        runtime['gitCommands'] as {
+          cancelRuntimeGenerateCommitMessage: (...args: never[]) => unknown
+        },
+        'cancelRuntimeGenerateCommitMessage'
+      )
+      .mockResolvedValue({ ok: true } as never)
+    const both = [
+      runtime.generateRuntimeCommitMessage(selector),
+      runtime.generateRuntimeCommitMessage(selector)
+    ]
+    await vi.waitFor(() => expect(releases).toHaveLength(2))
+    // Release one and await the race, not a named handle: both generations resolve their
+    // target concurrently, so which one reaches the spy first is not ordered. `finally`
+    // runs before the outer promise settles, so this pins "one has fully released its lane".
+    releases[0]?.()
+    await Promise.race(both)
+    // Why: a Set keyed by selector loses multiplicity, so that one `finally` deleted the
+    // lane and left the other draft with no way to be cancelled at all.
+    await runtime.cancelRuntimeGenerateCommitMessage(selector)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    releases[1]?.()
+    await Promise.all(both)
+    generate.mockRestore()
+    cancel.mockRestore()
+  })
+
+  it('M7: Cancel does not reach a same-path workspace belonging to another host', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    const run = await withInFlightGeneration(runtime, selector)
+    // Why: keying the lane map by normalized path alone conflates two workspaces that
+    // share a POSIX path on different SSH hosts, so one host's Cancel would resolve the
+    // other host's recorded child selector and kill its draft. Keying by workspace id
+    // makes a lookup for any other workspace miss, in flight or not.
+    const lanes = runtime['folderWorkspaceCommitMessageLanes'] as Map<string, Map<string, number>>
+    // The key is the workspace id, not any spelling of the shared container path.
+    expect([...lanes.keys()]).toEqual([FOLDER_WS_ID])
+    expect([...lanes.keys()].some((key) => key.includes(CONTAINER))).toBe(false)
+    await run.settle()
+    expect(lanes.size).toBe(0)
+  })
+
   it('E: the real child git worktree resolves fine when its repo is registered', async () => {
     buildFixture()
     const runtime = new OrcaRuntimeService(makeStore() as never)
