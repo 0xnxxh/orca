@@ -30,7 +30,8 @@ type UpdaterHandlerContext = {
   getUserInitiatedCheck: () => boolean
   handleQuitAndInstallFailure: () => boolean
   isQuitAndInstallHandoffActive: () => boolean
-  hasNewerDownloadedVersion: () => boolean
+  hasInstallableDownloadedVersion: () => boolean
+  isLocalBuildCheck: () => boolean
   shouldHandleUpdaterErrorEvent: () => boolean
   clearUpdateAvailableEventPending: (attemptId: number | null) => void
   isActiveUpdateCheckAttempt: (attemptId: number) => boolean
@@ -70,7 +71,8 @@ export function registerAutoUpdaterHandlers({
   getUserInitiatedCheck,
   handleQuitAndInstallFailure,
   isQuitAndInstallHandoffActive,
-  hasNewerDownloadedVersion,
+  hasInstallableDownloadedVersion,
+  isLocalBuildCheck,
   shouldHandleUpdaterErrorEvent,
   clearUpdateAvailableEventPending,
   isActiveUpdateCheckAttempt,
@@ -93,9 +95,9 @@ export function registerAutoUpdaterHandlers({
   // Why: electron-updater fires 'update-downloaded' before Squirrel.Mac finishes; track readiness to avoid a premature "ready".
   if (process.platform === 'darwin') {
     nativeUpdater.on('update-downloaded', () => {
-      const hasNewerVersion = hasNewerDownloadedVersion()
-      handleMacInstallerReady(hasNewerVersion, performQuitAndInstall, () => {
-        // Send the held 'downloaded' status now, only if the staged version is newer.
+      const hasInstallableVersion = hasInstallableDownloadedVersion()
+      handleMacInstallerReady(hasInstallableVersion, performQuitAndInstall, () => {
+        // Send the held status only while its staged build is still installable.
         sendStatus({
           state: 'downloaded',
           version: getPendingInstallVersion(),
@@ -121,7 +123,7 @@ export function registerAutoUpdaterHandlers({
     if (
       deferMacQuitUntilInstallerReady(
         getCurrentStatus(),
-        hasNewerDownloadedVersion(),
+        hasInstallableDownloadedVersion(),
         getPendingInstallVersion,
         sendStatus
       )
@@ -158,8 +160,8 @@ export function registerAutoUpdaterHandlers({
     const wasUserInitiated = missingManifestFallback?.userInitiated ?? getUserInitiatedCheck()
     setUserInitiatedCheck(false)
 
-    // Guard: don't show an update that isn't actually newer than what's running.
-    if (compareVersions(info.version, app.getVersion()) <= 0) {
+    // Release checks remain newer-only; validated local builds may intentionally downgrade.
+    if (!isLocalBuildCheck() && compareVersions(info.version, app.getVersion()) <= 0) {
       clearAvailableUpdateContext()
       if (missingManifestFallback || publishingWindowLastGoodCheck) {
         // Why: a current-version fallback manifest means the primary is transiently missing; keep the short retry cadence.
@@ -178,7 +180,9 @@ export function registerAutoUpdaterHandlers({
     markUpdateAvailableEventPending(attemptId)
     void (async () => {
       try {
-        const changelog = await fetchChangelog(info.version, app.getVersion()).catch(() => null)
+        const changelog = isLocalBuildCheck()
+          ? null
+          : await fetchChangelog(info.version, app.getVersion()).catch(() => null)
 
         // Why: async fetch may take seconds; bail if a newer event superseded this attempt to avoid a stale 'available' broadcast.
         if (!isActiveUpdateCheckAttempt(attemptId)) {
@@ -191,13 +195,15 @@ export function registerAutoUpdaterHandlers({
         // Why: side effects must run after the guard so a concurrent 'error' during the fetch can't leave orphaned state.
         setAvailableVersion(info.version)
         setAvailableReleaseUrl(null)
-        if (missingManifestFallback || publishingWindowLastGoodCheck) {
-          // Why: last-good release is a temporary fallback; keep probing so users can move to the newest tag once it publishes.
-          scheduleAutomaticUpdateCheck(AUTO_UPDATE_RETRY_INTERVAL_MS)
-        } else {
-          recordCompletedUpdateCheck()
-          if (!wasUserInitiated) {
-            scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
+        if (!isLocalBuildCheck()) {
+          if (missingManifestFallback || publishingWindowLastGoodCheck) {
+            // Why: last-good release is a temporary fallback; keep probing so users can move to the newest tag once it publishes.
+            scheduleAutomaticUpdateCheck(AUTO_UPDATE_RETRY_INTERVAL_MS)
+          } else {
+            recordCompletedUpdateCheck()
+            if (!wasUserInitiated) {
+              scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
+            }
           }
         }
 
@@ -219,13 +225,15 @@ export function registerAutoUpdaterHandlers({
     const wasUserInitiated = missingManifestFallback?.userInitiated ?? getUserInitiatedCheck()
     setUserInitiatedCheck(false)
     clearAvailableUpdateContext()
-    if (missingManifestFallback || publishingWindowLastGoodCheck) {
-      // Why: last-good not-available is a transient release-transition outcome; keep the short retry, don't suppress for 24h.
-      scheduleAutomaticUpdateCheck(AUTO_UPDATE_RETRY_INTERVAL_MS)
-    } else {
-      recordCompletedUpdateCheck()
-      if (!wasUserInitiated) {
-        scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
+    if (!isLocalBuildCheck()) {
+      if (missingManifestFallback || publishingWindowLastGoodCheck) {
+        // Why: last-good not-available is a transient release-transition outcome; keep the short retry, don't suppress for 24h.
+        scheduleAutomaticUpdateCheck(AUTO_UPDATE_RETRY_INTERVAL_MS)
+      } else {
+        recordCompletedUpdateCheck()
+        if (!wasUserInitiated) {
+          scheduleAutomaticUpdateCheck(AUTO_UPDATE_CHECK_INTERVAL_MS)
+        }
       }
     }
     sendStatus({ state: 'not-available', userInitiated: wasUserInitiated || undefined })
@@ -242,8 +250,8 @@ export function registerAutoUpdaterHandlers({
 
   autoUpdater.on('update-downloaded', (info) => {
     clearBackgroundCheckLaunchPending()
-    // Skip the banner for non-newer versions (same-version or stale cached updates).
-    if (compareVersions(info.version, app.getVersion()) <= 0) {
+    // Release downloads remain newer-only; the local source was validated before checking.
+    if (!isLocalBuildCheck() && compareVersions(info.version, app.getVersion()) <= 0) {
       clearAvailableUpdateContext()
       sendStatus({ state: 'not-available' })
       return

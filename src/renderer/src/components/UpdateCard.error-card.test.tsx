@@ -94,3 +94,35 @@ describe('UpdateCard Windows signature failures', () => {
     )
   })
 })
+
+describe('UpdateCard local builds', () => {
+  it('does not link local versions to GitHub release downloads', () => {
+    useAppStore.setState({
+      updateStatus: {
+        state: 'available',
+        version: '1.4.100-local.1.abc',
+        changelog: null,
+        source: 'local'
+      },
+      updateChangelog: null,
+      dismissedUpdateVersion: null,
+      updateCardCollapsed: false,
+      updateReassuranceSeen: true
+    })
+    render(<UpdateCard />)
+
+    expect(screen.queryByText('Release notes')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }))
+    expect(download).toHaveBeenCalledTimes(1)
+
+    act(() =>
+      useAppStore.getState().setUpdateStatus({
+        state: 'error',
+        message: 'signature rejected',
+        source: 'local'
+      })
+    )
+    expect(screen.getByText('Local Build Error')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Download Manually' })).toBeNull()
+  })
+})
