@@ -191,19 +191,32 @@ describe('Orca cloud transport failure reporting', () => {
     )
   })
 
-  it('lets callers keep redirect refusal and the request timeout', async () => {
+  it('forwards the caller timeout signal', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
     const signal = AbortSignal.timeout(30_000)
 
     await orcaCloudFetch('https://login.onorca.dev/v1/desktop/auth/session', {
       method: 'POST',
-      redirect: 'error',
       signal
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ signal }))
+  })
+
+  // The two invariants that keep tokens from reaching another origin are
+  // enforced by the transport, not by call-site convention.
+  it('refuses to let a caller follow redirects or attach session cookies', async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+
+    await orcaCloudFetch('https://login.onorca.dev/v1/desktop/auth/session', {
+      method: 'POST',
+      redirect: 'follow',
+      credentials: 'include'
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ redirect: 'error', signal })
+      expect.objectContaining({ redirect: 'error', credentials: 'omit' })
     )
   })
 })

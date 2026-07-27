@@ -161,16 +161,19 @@ export async function orcaCloudFetch(url: string, init: RequestInit): Promise<Re
         })
       })
       try {
-        // credentials:'omit' is load-bearing, not cosmetic — verified against
-        // Electron: net.fetch attaches default-session cookies unless told not
-        // to, which undici never did cross-origin. Token endpoints authenticate
-        // from the body or the Bearer header, so no ambient session state
-        // belongs on them. cache:'no-store' likewise keeps Chromium from
-        // serving a stale roster on the one GET route.
         const response = await net.fetch(url, {
-          credentials: 'omit',
+          // cache:'no-store' keeps Chromium from serving a stale roster on the
+          // one GET route; a caller may override it.
           cache: 'no-store',
-          ...init
+          ...init,
+          // Set after the spread so no call site can weaken them. Following a
+          // redirect would re-send a code verifier or refresh token to another
+          // origin, and net.fetch attaches default-session cookies unless told
+          // otherwise (verified against Electron) — which undici never did
+          // cross-origin. These endpoints authenticate from the body or the
+          // Bearer header, so ambient session state has no business on them.
+          redirect: 'error',
+          credentials: 'omit'
         })
         span.setAttribute('orcaCloud.status', response.status)
         return response
