@@ -11,6 +11,7 @@ import { redactPtyIdForDiagnostics } from '../../shared/pty-delivery-diagnostics
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../shared/constants'
 import type { TuiAgent } from '../../shared/types'
 import type { AgentSessionOwnerBinding } from '../../shared/agent-session-host-authority'
+import { AGENT_SESSION_CLAIM_DIGEST_VERSION } from '../../shared/agent-session-host-authority'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
 
 const isWindowsHost = process.platform === 'win32'
@@ -5690,6 +5691,63 @@ describe('registerPtyHandlers', () => {
       immediate: true,
       keepHistory: false
     })
+  })
+
+  it('reports agent ownership through pty:listSessions so the renderer cannot guess it', async () => {
+    registerPtyHandlers(mainWindow as never)
+    // Why: the renderer's binding map is empty during restore, so agent ownership is the only
+    // positive liveness evidence it has. Dropping it here force-killed live sessions (#8459).
+    const owner = {
+      claim: {
+        digestVersion: AGENT_SESSION_CLAIM_DIGEST_VERSION,
+        keyId: 'key-1',
+        identityDigest: 'a'.repeat(43),
+        worktreeScopeDigest: 'b'.repeat(43),
+        agent: 'codex'
+      },
+      generation: 'gen-1',
+      phase: 'live',
+      ptyId: 'agent-pty',
+      surface: {
+        worktreeId: 'repo::/workspace',
+        tabId: 'tab',
+        leafId: '11111111-1111-4111-8111-111111111111',
+        terminalHandle: 'term_claimed'
+      }
+    }
+    setLocalPtyProvider({
+      spawn: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      clearBuffer: vi.fn(),
+      acknowledgeDataEvent: vi.fn(),
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(async () => [
+        { id: 'agent-pty', cwd: '/workspace', title: 'codex', agentSessionOwners: [owner] },
+        { id: 'plain-pty', cwd: '/tmp', title: 'zsh' }
+      ]),
+      attach: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn()
+    } as never)
+
+    const sessions = (await handlers.get('pty:listSessions')!(null, undefined)) as {
+      id: string
+      hasAgentOwner: boolean
+    }[]
+
+    expect(sessions.find((s) => s.id === 'agent-pty')?.hasAgentOwner).toBe(true)
+    expect(sessions.find((s) => s.id === 'plain-pty')?.hasAgentOwner).toBe(false)
   })
 
   it('kills app-scoped SSH PTY ids through the parsed provider when ownership is not rebuilt', async () => {

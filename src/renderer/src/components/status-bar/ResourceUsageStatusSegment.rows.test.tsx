@@ -45,6 +45,7 @@ function makeSession(overrides: Partial<UnifiedSessionRow>): UnifiedSessionRow {
     pid: 100,
     label: 'zsh',
     bound: true,
+    hasAgentOwner: false,
     tabId: 'tab-1',
     cpu: 1,
     memory: 100,

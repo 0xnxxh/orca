@@ -5,7 +5,7 @@ import type { DaemonSession } from './resource-usage-merge-types'
 import { useResourceSessionInventory } from './use-resource-session-inventory'
 
 function session(id: string): DaemonSession {
-  return { id, cwd: '/workspace', title: id }
+  return { id, cwd: '/workspace', title: id, hasAgentOwner: false }
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {

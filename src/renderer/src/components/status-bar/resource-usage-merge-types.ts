@@ -4,15 +4,13 @@ import type {
   TerminalTab,
   Worktree
 } from '../../../../shared/types'
+import type { PtyListedSession } from '../../../../shared/pty-listed-session'
 
 /** `null` === "no local sample" (e.g. SSH PTY); UI renders as em-dash. */
 export type Metric = number | null
 
-export type DaemonSession = {
-  id: string
-  cwd: string
-  title: string
-}
+/** One `pty.listSessions()` row. Aliased so ownership evidence cannot be dropped locally. */
+export type DaemonSession = PtyListedSession
 
 export type UnifiedSessionRow = {
   sessionId: string
@@ -20,6 +18,8 @@ export type UnifiedSessionRow = {
   pid: number
   label: string
   bound: boolean
+  /** An agent holds this session. Destroying it discards live work, so it always confirms. */
+  hasAgentOwner: boolean
   tabId: string | null
   cpu: Metric
   memory: Metric

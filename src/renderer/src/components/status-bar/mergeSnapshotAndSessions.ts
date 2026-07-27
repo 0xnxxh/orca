@@ -142,6 +142,11 @@ export function mergeSnapshotAndSessions(
   // sessions do not appear as Resource Manager orphans before their pane mounts.
   const index = buildResourceSessionBindingIndex(ctx)
   const boundPtyIds = index.boundPtyIds
+  // Why: the daemon list is the only place agent ownership is reported. Snapshot-derived rows
+  // describe the same sessions by id, so carry it across rather than letting them report `false`.
+  const agentOwnedSessionIds = new Set(
+    daemonSessions.filter((session) => session.hasAgentOwner).map((session) => session.id)
+  )
 
   function isRepoRemote(repoId: string): boolean {
     // Why: missing entry === we don't know about this repo (typically the
@@ -202,6 +207,7 @@ export function mergeSnapshotAndSessions(
           pid: s.pid,
           label: resolveSnapshotSessionLabel(s, wt.worktreeId, ctx),
           bound: ctx.workspaceSessionReady && boundPtyIds.has(s.sessionId),
+          hasAgentOwner: agentOwnedSessionIds.has(s.sessionId),
           tabId,
           cpu: s.cpu,
           memory: s.memory,
@@ -289,6 +295,7 @@ export function mergeSnapshotAndSessions(
       pid: 0,
       label: resolveDaemonSessionLabel(session, worktreeId, tabId, ctx),
       bound: ctx.workspaceSessionReady && boundPtyIds.has(session.id),
+      hasAgentOwner: session.hasAgentOwner,
       tabId,
       cpu: null,
       memory: null,
