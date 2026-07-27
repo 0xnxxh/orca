@@ -26,12 +26,16 @@ function laneState(args?: {
   terminalWindowsShell?: string
   terminalWindowsWslDistro?: string | null
   projectWslDistro?: string
+  localWindowsRuntimeDefault?: { kind: 'wsl'; distro: string | null }
 }): LaneState {
   return {
     folderWorkspaces: args?.folderPath ? [{ id: 'fw1', folderPath: args.folderPath }] : [],
     settings: {
       activeRuntimeEnvironmentId: args?.activeRuntimeEnvironmentId ?? null,
       ...(args?.terminalWindowsShell ? { terminalWindowsShell: args.terminalWindowsShell } : {}),
+      ...(args?.localWindowsRuntimeDefault
+        ? { localWindowsRuntimeDefault: args.localWindowsRuntimeDefault }
+        : {}),
       terminalWindowsWslDistro: args?.terminalWindowsWslDistro ?? null
     },
     repos: [{ id: 'repo1', path: 'C:\\code\\app' }],
@@ -174,21 +178,36 @@ describe('resolveCodexPaneSelectionLaneKey', () => {
     })
   })
 
-  // Why: a floating terminal has no workspace root, so its startup cwd is used
-  // verbatim (resolveTerminalStartupCwdForWorkspace). Resolving it against a
-  // root that does not exist would key a live WSL pane `host` and mute it.
-  it('keys a floating terminal by its own startup cwd', () => {
+  // Why: a floating terminal's cwd never reaches the tab, so it is keyed by its
+  // shell. Pinning that it does not throw or resolve against some other
+  // workspace's root, which is what the lane would otherwise inherit.
+  it('keys a floating terminal by its shell, not another workspace root', () => {
     expect(
       resolveCodexPaneSelectionLaneKey({
-        state: laneState(),
-        tab: {
-          worktreeId: 'global-floating-terminal',
-          shellOverride: undefined,
-          startupCwd: '\\\\wsl.localhost\\Ubuntu\\home\\dev'
-        },
+        state: laneState({ worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\dev' }),
+        tab: { worktreeId: 'global-floating-terminal', shellOverride: undefined },
         ptyId: 'pty-1'
       })
-    ).toBe('wsl:Ubuntu')
+    ).toBe('host')
+  })
+
+  // Why: resolveLocalWindowsTerminalRuntimeOptions THROWS on repair-required,
+  // and this runs outside scanCodexPanes' per-pane failure guard — so without
+  // the early return the Promise.all rejects and EVERY pane in the batch loses
+  // its notice, not just this one.
+  it('answers a repair-required runtime instead of throwing the batch away', () => {
+    withWindowsRenderer(() => {
+      expect(
+        resolveCodexPaneSelectionLaneKey({
+          state: laneState({
+            localWindowsRuntimeDefault: { kind: 'wsl', distro: null },
+            worktreePath: 'C:\\code\\app'
+          }),
+          tab: HOST_TAB,
+          ptyId: 'pty-1'
+        })
+      ).toBe('wsl:__default__')
+    })
   })
 
   it('reads the distro from a folder workspace path too', () => {
