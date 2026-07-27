@@ -259,7 +259,8 @@ async function executeWorktreeCreation(
     request: preparedRequest,
     worktreeId: worktree.id,
     primaryTabId,
-    startupTerminalTabId: result.startupTerminal?.tabId
+    startupTerminalTabId: result.startupTerminal?.tabId,
+    backendSpawned
   })
   if (preparedRequest.startupPlan && !backendSpawned) {
     void ensureAgentStartupInTerminal({

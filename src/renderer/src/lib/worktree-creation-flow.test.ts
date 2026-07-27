@@ -99,6 +99,7 @@ beforeEach(() => {
   store.repos = []
   store.pendingWorktreeCreations = { 'creation-1': makePendingCreation(makeRequest()) }
   store.createWorktree.mockImplementation(() => new Promise(() => {}))
+  store.tabsByWorktree = {}
   vi.mocked(ensureWorktreeHasInitialTerminal).mockReturnValue('tab-1')
 })
 
@@ -660,6 +661,39 @@ describe('staged background worktree creation', () => {
         text: 'https://github.com/o/r/issues/12',
         createdAt: expect.any(Number)
       })
+    )
+  })
+
+  it('seeds the backend-spawned agent tab, not the worktree default terminal tab', async () => {
+    // Repo default tabs ("dev server", "logs", …) make activation's primaryTabId
+    // a tab that runs no agent; main's startup terminal is the agent's own tab.
+    store.activeView = 'terminal'
+    store.activePendingCreationId = 'creation-1'
+    store.tabsByWorktree = { 'wt-1': [{ id: 'dev-server' }, { id: 'agent-tab' }] }
+    store.createWorktree.mockResolvedValueOnce({
+      worktree: { id: 'wt-1', repoId: 'repo-1', path: '/repo/wt-1' },
+      startupTerminal: { tabId: 'agent-tab', spawned: true }
+    })
+    vi.mocked(activateAndRevealWorktree).mockReturnValueOnce({ primaryTabId: 'dev-server' })
+
+    continueBackgroundWorktreeCreation(
+      'creation-1',
+      makeRequest({
+        agent: 'claude',
+        startupPlan: {
+          agent: 'claude',
+          launchCommand: 'claude --prefill x',
+          expectedProcess: 'claude',
+          followupPrompt: null,
+          launchConfig: { agentArgs: '', agentEnv: {} }
+        },
+        launchDraftPrompt: 'https://github.com/o/r/issues/12'
+      })
+    )
+
+    await vi.waitFor(() => expect(store.seedNativeChatLaunchDraft).toHaveBeenCalled())
+    expect(store.seedNativeChatLaunchDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ tabId: 'agent-tab' })
     )
   })
 
