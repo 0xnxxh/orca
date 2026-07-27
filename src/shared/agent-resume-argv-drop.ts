@@ -26,7 +26,7 @@ function resumeArgvSuffixCandidates(resumeArgs: readonly string[]): string[] {
 function stripSuffix(command: string, suffix: string): string | null {
   const base = command.slice(0, command.length - suffix.length)
   // Why: require a whitespace boundary so `codex resume-foo` can't match `resume`.
-  if (!command.endsWith(suffix) || base.length === 0 || !/\s$/.test(base)) {
+  if (!command.endsWith(suffix) || !/\s$/.test(base)) {
     return null
   }
   const trimmed = base.trimEnd()
@@ -42,9 +42,8 @@ export function dropAgentResumeArgvFromCommand(args: {
   command: string
   agent: ResumableTuiAgent
   providerSession: AgentProviderSessionMetadata
-  ompResumeFilePath?: string | null
 }): AgentResumeArgvDrop {
-  const argv = getAgentResumeArgv(args.agent, args.providerSession, args.ompResumeFilePath)
+  const argv = getAgentResumeArgv(args.agent, args.providerSession)
   const resumeArgs = argv?.slice(1) ?? []
   const locator = resumeArgs.at(-1)
   const command = args.command.trimEnd()

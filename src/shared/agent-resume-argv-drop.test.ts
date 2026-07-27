@@ -97,6 +97,30 @@ describe('dropAgentResumeArgvFromCommand', () => {
     ).toEqual({ status: 'unrecognized' })
   })
 
+  it('drops a resume argv left with trailing whitespace by a persisted command', () => {
+    // Why: the suffix match is anchored to the end, so an unnormalized command would
+    // fall through to `unrecognized` and refuse an otherwise strippable launch.
+    expect(
+      dropAgentResumeArgvFromCommand({
+        command: `codex 'resume' '${CODEX_SESSION.id}'  \n`,
+        agent: 'codex',
+        providerSession: CODEX_SESSION
+      })
+    ).toEqual({ status: 'dropped', command: 'codex' })
+  })
+
+  it('refuses when the locator also appears outside the trailing resume argv', () => {
+    // Why: stripping the suffix would leave the id behind in the cwd, so the launch is
+    // not actually resume-free and must not be reported as dropped.
+    expect(
+      dropAgentResumeArgvFromCommand({
+        command: `cd '/tmp/${CODEX_SESSION.id}' && codex 'resume' '${CODEX_SESSION.id}'`,
+        agent: 'codex',
+        providerSession: CODEX_SESSION
+      })
+    ).toEqual({ status: 'unrecognized' })
+  })
+
   it('drops the resume argv for the other resumable agents too', () => {
     expect(
       dropAgentResumeArgvFromCommand({

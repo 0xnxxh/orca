@@ -167,7 +167,11 @@ import type { CodexSessionResumePreparation } from '../codex/codex-session-resum
 import { dropUnverifiedCodexResumeArgv } from '../codex/codex-unverified-resume-launch'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
 import { buildConfiguredProxyEnv, type NetworkProxySettings } from '../../shared/network-proxy'
-import { resolveSetupAgentSequenceLaunchCommand } from '../../shared/setup-agent-sequencing'
+import {
+  resolveSetupAgentSequenceLaunchCommand,
+  SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV
+} from '../../shared/setup-agent-sequencing'
+import { dropAgentResumeArgvFromCommand } from '../../shared/agent-resume-argv-drop'
 import { parseWorkspaceKey } from '../../shared/workspace-scope'
 import { getStartupTerminalColorQueryReplyColors } from './terminal-startup-color-query-replies'
 import {
@@ -3154,6 +3158,8 @@ export function registerPtyHandlers(
     codexResumeHome: { codexHomePath: string } | null
     command: string | undefined
     notifyResumeUnavailable: boolean
+    droppedResumeArgv: boolean
+    providerSession: AgentProviderSessionMetadata | null
   }
 
   /** Kept separate from resolveCodexResumeLaunch so non-Codex spawns never await:
@@ -3161,7 +3167,9 @@ export function registerPtyHandlers(
   const noCodexResumeLaunch = (command: string | undefined): CodexResumeLaunch => ({
     codexResumeHome: null,
     command,
-    notifyResumeUnavailable: false
+    notifyResumeUnavailable: false,
+    droppedResumeArgv: false,
+    providerSession: null
   })
 
   /** The command a Codex launch actually runs: unchanged when provenance is verified,
@@ -3171,19 +3179,53 @@ export function registerPtyHandlers(
     preparation: NonNullable<ReturnType<typeof prepareCodexResumeHome>>
   ): Promise<CodexResumeLaunch> =>
     preparation.preparation.then((prepared) => {
+      const providerSession = preparation.providerSession
       if (prepared?.outcome !== 'fresh') {
-        return { codexResumeHome: prepared ?? null, command, notifyResumeUnavailable: false }
+        return {
+          codexResumeHome: prepared ?? null,
+          command,
+          notifyResumeUnavailable: false,
+          droppedResumeArgv: false,
+          providerSession
+        }
       }
       const dropped = dropUnverifiedCodexResumeArgv({
         command,
-        providerSession: preparation.providerSession
+        providerSession,
+        claimedCodexProvenance: prepared.claimedCodexProvenance
       })
       return {
         codexResumeHome: null,
         command: dropped.command,
-        notifyResumeUnavailable: dropped.droppedResumeArgv && prepared.claimedCodexProvenance
+        // Why: staying silent only makes sense for metadata that positively belongs to
+        // another agent; a resume with no transcript path at all still owes the user a notice.
+        notifyResumeUnavailable:
+          dropped.droppedResumeArgv &&
+          (prepared.claimedCodexProvenance || !providerSession.transcriptPath),
+        droppedResumeArgv: dropped.droppedResumeArgv,
+        providerSession
       }
     })
+
+  /** Why: buildPtyHostEnv prefers ORCA_SEQUENCED_STARTUP_COMMAND over the launch command
+   *  and the sequenced wrapper `eval`s it, so a dropped resume argv has to go there too. */
+  const stripSequencedStartupResumeArgv = <T extends Record<string, string> | undefined>(
+    env: T,
+    launch: CodexResumeLaunch
+  ): T => {
+    const sequenced = env?.[SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV]
+    if (!env || !sequenced || !launch.droppedResumeArgv || !launch.providerSession) {
+      return env
+    }
+    const drop = dropAgentResumeArgvFromCommand({
+      command: sequenced,
+      agent: 'codex',
+      providerSession: launch.providerSession
+    })
+    return drop.status === 'dropped'
+      ? { ...env, [SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV]: drop.command }
+      : env
+  }
 
   // Why: route through getProviderForPty() so CLI commands work for remote PTYs too; localProvider would silently fail for them.
   runtime?.setPtyController({
@@ -3227,6 +3269,8 @@ export function registerPtyHandlers(
         ? await resolveCodexResumeLaunch(args.command, codexResumePreparation)
         : noCodexResumeLaunch(args.command)
       const codexResumeHome = codexResumeLaunch.codexResumeHome
+      // Why: the drop still applies here, but this controller's result has no field for
+      // notifyResumeUnavailable — runtime/relay panes start fresh without the notice.
       const launchCommand = codexResumeLaunch.command
       const claudeAuth =
         isClaudeLaunch && prepareClaudeAuth ? await prepareClaudeAuth(codexSelectionTarget) : null
@@ -3296,6 +3340,7 @@ export function registerPtyHandlers(
         ? { ...sshScopedEnv, ...claudeAuth.envPatch }
         : sshScopedEnv
       const requestedAgentTeamsPath = env?.ORCA_AGENT_TEAMS_TEAM_ID ? env.PATH : undefined
+      env = stripSequencedStartupResumeArgv(env, codexResumeLaunch)
       if (args.preAllocatedHandle) {
         env = { ...env, ORCA_TERMINAL_HANDLE: args.preAllocatedHandle }
       }
@@ -4452,6 +4497,7 @@ export function registerPtyHandlers(
         : noCodexResumeLaunch(args.command)
       const codexResumeHome = codexResumeLaunch.codexResumeHome
       const launchCommand = codexResumeLaunch.command
+      baseEnv = stripSequencedStartupResumeArgv(baseEnv, codexResumeLaunch)
       const selectedCodexHomePath = isDaemonHostSpawn
         ? getCompatibleSelectedCodexHomePath(
             codexSelectionTarget,

@@ -4502,12 +4502,17 @@ export function connectPanePty(
     if (ownsStartupDraftPaste && !connectionId && !shouldDeliverStartupViaTerminalPaste) {
       armStartupDraftReadinessObservation()
     }
-    let sessionRestoredBannerShown = false
+    let sessionRestoredBannerShown: SessionRestoredBannerReason | null = null
     const showSessionRestoredBanner = (reason: SessionRestoredBannerReason = 'restored'): void => {
-      if (sessionRestoredBannerShown) {
+      // Why: a plain 'restored' banner must not latch out the later 'resume-unavailable'
+      // upgrade — the pane would keep claiming a session it never got back.
+      if (
+        sessionRestoredBannerShown === reason ||
+        sessionRestoredBannerShown === 'resume-unavailable'
+      ) {
         return
       }
-      sessionRestoredBannerShown = true
+      sessionRestoredBannerShown = reason
       deps.onShowSessionRestoredBanner(pane.id, reason)
     }
     const getColdRestoreAgentResumePlatform = (): NodeJS.Platform => {

@@ -152,6 +152,17 @@ describe('session restored banner pane state', () => {
     expect(paneText(freshPane)).toBe(SESSION_RESUME_UNAVAILABLE_BANNER_TEXT)
   })
 
+  it('upgrades a restored pane to resume-unavailable and keeps identity otherwise', () => {
+    // Why: the reason must win over the earlier one — a pane that turned out to be a fresh
+    // session cannot keep claiming a restore. Identity is what stops a needless re-render.
+    const restored = new Map<number, 'restored'>([[1, 'restored']])
+
+    expect(addSessionRestoredBannerPaneId(restored, 1, 'resume-unavailable')).toEqual(
+      new Map([[1, 'resume-unavailable']])
+    )
+    expect(addSessionRestoredBannerPaneId(restored, 1, 'restored')).toBe(restored)
+  })
+
   it('dismisses only the interacted pane for pointer and key events', () => {
     const firstPane = createPane(1)
     const secondPane = createPane(2)
