@@ -223,10 +223,15 @@ describe('notifyCodexPaneBoundForStaleSweep', () => {
     notifyCodexPaneBoundForStaleSweep('pty-2')
     // t = 600: pty-2's sweep is the one that throws; pty-1 is not due and untouched.
     await vi.advanceTimersByTimeAsync(300)
+    // Why: assert the throw really landed on a sweep pty-1 was absent from, or a
+    // later change to the flush sequence could leave this passing while the
+    // stranding it exists to catch is no longer being set up at all.
+    expect(window.api.codexAccounts.listStalePanes).toHaveBeenCalledWith({ ptyIds: ['pty-2'] })
     expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
 
     await vi.advanceTimersByTimeAsync(1200)
 
+    expect(window.api.codexAccounts.listStalePanes).toHaveBeenCalledWith({ ptyIds: ['pty-1'] })
     expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
       previousAccountLabel: ACCOUNT_A,
       nextAccountLabel: ACCOUNT_B
