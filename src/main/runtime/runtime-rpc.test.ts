@@ -389,6 +389,12 @@ describe('OrcaRuntimeRpcServer', () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
     const server = new OrcaRuntimeRpcServer({ runtime: new OrcaRuntimeService(), userDataPath })
     await server.start()
+    const watch = server['metadataOwnershipWatch']
+    if (!watch) {
+      throw new Error('start() must arm the metadata ownership watch')
+    }
+    // Why: the republish guard alone would keep this test green, so assert the timer teardown itself.
+    const watchStop = vi.spyOn(watch, 'stop')
     await server.stop()
 
     writeRuntimeMetadata(userDataPath, {
@@ -400,6 +406,8 @@ describe('OrcaRuntimeRpcServer', () => {
     })
     server.checkRuntimeMetadataOwnership()
 
+    expect(watchStop).toHaveBeenCalledTimes(1)
+    expect(server['metadataOwnershipWatch']).toBeNull()
     expect(readRuntimeMetadata(userDataPath)).toMatchObject({ runtimeId: 'rt_second_instance' })
   })
 

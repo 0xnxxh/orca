@@ -1035,7 +1035,7 @@ export class OrcaRuntimeRpcServer {
     })
   }
 
-  /** Why: lets startup/activation paths force an immediate discovery-record repair instead of waiting for the next poll. */
+  /** Why: test-only seam — runs one ownership check instead of waiting out the poll interval. */
   checkRuntimeMetadataOwnership(): void {
     this.metadataOwnershipWatch?.check()
   }
