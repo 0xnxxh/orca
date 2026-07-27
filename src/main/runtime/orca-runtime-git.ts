@@ -183,6 +183,46 @@ export async function getRuntimeGitStatusForTarget(
     : getGitStatus(target.worktree.path, gitOptions)
 }
 
+/**
+ * Commit for an already-resolved target. Exported for the same reason as
+ * `getRuntimeGitStatusForTarget` — a folder workspace commits each child repo
+ * it resolved itself.
+ */
+export async function commitRuntimeGitForTarget(
+  target: RuntimeGitTarget,
+  message: string
+): Promise<{ success: boolean; error?: string }> {
+  const provider = target.connectionId ? getSshGitProvider(target.connectionId) : null
+  if (target.connectionId) {
+    if (!provider) {
+      throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+    }
+    return provider.commit(target.worktree.path, message)
+  }
+  return commitChanges(target.worktree.path, message, localGitOptionsForTarget(target))
+}
+
+/** Abort an in-progress merge or rebase for an already-resolved target. */
+export async function abortRuntimeGitForTarget(
+  target: RuntimeGitTarget,
+  operation: 'merge' | 'rebase'
+): Promise<void> {
+  const provider = target.connectionId ? getSshGitProvider(target.connectionId) : null
+  if (target.connectionId) {
+    if (!provider) {
+      throw new Error(SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE)
+    }
+    await (operation === 'merge'
+      ? provider.abortMerge(target.worktree.path)
+      : provider.abortRebase(target.worktree.path))
+    return
+  }
+  const gitOptions = localGitOptionsForTarget(target)
+  await (operation === 'merge'
+    ? abortMerge(target.worktree.path, gitOptions)
+    : abortRebase(target.worktree.path, gitOptions))
+}
+
 /** One resolved target plus the subset of the requested paths it owns, already rebased. */
 export type RuntimeGitTargetPathGroup = {
   target: RuntimeGitTarget

@@ -57,6 +57,31 @@ export function matchFolderWorkspaceChildRepo(
   return null
 }
 
+/**
+ * Combine per-child-repo results for an op that has no path to route on. Every
+ * child either succeeded or reports why it did not, so a partial outcome is
+ * described rather than reported as one blanket success or failure.
+ */
+export function summarizeFolderWorkspaceFanOut(
+  results: readonly { repoName: string; error?: string }[]
+): { success: boolean; error?: string } {
+  const failures = results.filter((result) => result.error !== undefined)
+  if (failures.length === 0) {
+    return { success: true }
+  }
+  // Why: naming the repo matters most when only some of them failed — the user
+  // has to know which ones still need attention.
+  const detail = failures.map((failure) => `${failure.repoName}: ${failure.error}`).join('; ')
+  if (failures.length === results.length) {
+    return { success: false, error: detail }
+  }
+  const succeeded = results.length - failures.length
+  return {
+    success: false,
+    error: `Committed ${succeeded} of ${results.length} repos. Failed — ${detail}`
+  }
+}
+
 /** Prefix a child repo's status entry path so it stays addressable from the workspace root. */
 export function prefixFolderWorkspaceEntryPath(
   folderPath: string,

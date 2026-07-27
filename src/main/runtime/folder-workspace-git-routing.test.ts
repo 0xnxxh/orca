@@ -276,6 +276,83 @@ describe('#6357 monorepo folder workspace', () => {
     expect(status.entries.every((entry) => entry.area !== 'staged')).toBe(true)
   })
 
+  it('K: commit has no path to route on, so it commits every child repo with a staged index', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await runtime.bulkStageRuntimeGitPaths(selector, [
+      'fint_api/src/app.ts',
+      'fint-portal/src/app.ts'
+    ])
+    await expect(runtime.commitRuntimeGit(selector, 'span two repos')).resolves.toEqual({
+      success: true
+    })
+    for (const dir of [CHILD_API, join(CONTAINER, 'fint-portal')]) {
+      expect(git(dir, 'log', '-1', '--pretty=%s').trim()).toBe('span two repos')
+    }
+  })
+
+  it('K2: a child repo with nothing staged is skipped, not committed empty', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    const portal = join(CONTAINER, 'fint-portal')
+    // Why: staging only one repo is the common case — the user edited one project.
+    await runtime.stageRuntimeGitPath(selector, 'fint_api/src/app.ts')
+    await expect(runtime.commitRuntimeGit(selector, 'only api')).resolves.toEqual({ success: true })
+    expect(git(CHILD_API, 'rev-list', '--count', 'HEAD').trim()).toBe('2')
+    expect(git(portal, 'rev-list', '--count', 'HEAD').trim()).toBe('1')
+  })
+
+  it('K3: committing with nothing staged anywhere reports it instead of silently succeeding', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    await expect(runtime.commitRuntimeGit(selector, 'nothing here')).resolves.toEqual({
+      success: false,
+      error: 'nothing to commit'
+    })
+  })
+
+  it('K4: an empty message is rejected for a folder workspace too', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    // Why: routing around the single-repo path must not drop its validation.
+    await expect(runtime.commitRuntimeGit(selector, '   ')).rejects.toThrow(
+      'Commit message is required'
+    )
+  })
+
+  it('L: abort targets only the child repo actually mid-merge', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    // Build a real conflicting merge in one child repo only.
+    git(CHILD_API, 'checkout', '-q', '--', '.')
+    git(CHILD_API, 'checkout', '-q', '-b', 'other')
+    writeFileSync(join(CHILD_API, 'src', 'app.ts'), 'other branch\n')
+    git(CHILD_API, 'commit', '-qam', 'other')
+    git(CHILD_API, 'checkout', '-q', 'master')
+    writeFileSync(join(CHILD_API, 'src', 'app.ts'), 'master branch\n')
+    git(CHILD_API, 'commit', '-qam', 'master')
+    expect(() => git(CHILD_API, 'merge', 'other')).toThrow()
+    expect(await runtime.getRuntimeGitConflictOperation(`path:${CHILD_API}`)).toBe('merge')
+
+    await expect(runtime.abortRuntimeGitMerge(selector)).resolves.toEqual({ ok: true })
+    expect(await runtime.getRuntimeGitConflictOperation(`path:${CHILD_API}`)).toBe('unknown')
+  })
+
+  it('L2: aborting when no child repo is mid-operation settles instead of erroring', async () => {
+    buildFixture()
+    const runtime = new OrcaRuntimeService(makeStore({ repos: allRepos() }) as never)
+    const selector = `id:${folderWorkspaceKey(FOLDER_WS_ID)}`
+    // Why: `git merge --abort` errors with no merge in progress; fanning that out
+    // would make a no-op abort fail for a workspace but succeed for a single repo.
+    await expect(runtime.abortRuntimeGitMerge(selector)).resolves.toEqual({ ok: true })
+    await expect(runtime.abortRuntimeGitRebase(selector)).resolves.toEqual({ ok: true })
+  })
+
   it('E: the real child git worktree resolves fine when its repo is registered', async () => {
     buildFixture()
     const runtime = new OrcaRuntimeService(makeStore() as never)

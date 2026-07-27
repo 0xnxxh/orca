@@ -90,7 +90,7 @@ import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-messag
 import { GIT_FETCH_SKIP_AUTO_MAINTENANCE_CONFIG_ARGS } from '../../shared/git-fetch-auto-maintenance'
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 import { mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { resolveWorktreeCreateBase } from '../worktree-create-base'
 import { resolveWorktreeAddBaseRef } from '../../shared/worktree-base-ref'
@@ -303,7 +303,8 @@ import type { GitStatusResult } from '../../shared/types'
 import {
   listFolderWorkspaceChildRepos,
   matchFolderWorkspaceChildRepo,
-  mergeFolderWorkspaceGitStatus
+  mergeFolderWorkspaceGitStatus,
+  summarizeFolderWorkspaceFanOut
 } from './folder-workspace-child-repos'
 import { resolveTerminalStartupCwd } from '../../shared/terminal-startup-cwd'
 import { isWslUncPath, parseWslUncPath } from '../../shared/wsl-paths'
@@ -454,6 +455,8 @@ import { RuntimeEmulatorCommands, setEmulatorBridge } from './orca-runtime-emula
 import type { EmulatorBridge } from '../emulator/emulator-bridge'
 import { RuntimeFileCommands } from './orca-runtime-files'
 import {
+  abortRuntimeGitForTarget,
+  commitRuntimeGitForTarget,
   getRuntimeGitStatusForTarget,
   RuntimeGitCommands,
   type RuntimeGitTargetPathGroup
@@ -7103,10 +7106,14 @@ export class OrcaRuntimeService {
     this.gitCommands.getRuntimeGitHistory.bind(this.gitCommands)
   getRuntimeGitConflictOperation: RuntimeGitCommands['getRuntimeGitConflictOperation'] =
     this.gitCommands.getRuntimeGitConflictOperation.bind(this.gitCommands)
-  abortRuntimeGitMerge: RuntimeGitCommands['abortRuntimeGitMerge'] =
-    this.gitCommands.abortRuntimeGitMerge.bind(this.gitCommands)
-  abortRuntimeGitRebase: RuntimeGitCommands['abortRuntimeGitRebase'] =
-    this.gitCommands.abortRuntimeGitRebase.bind(this.gitCommands)
+  // Why: like status, these carry no path to route on, so a folder workspace fans
+  // out across the child repos that are actually in the relevant state.
+  abortRuntimeGitMerge: RuntimeGitCommands['abortRuntimeGitMerge'] = async (selector) =>
+    (await this.abortFolderWorkspaceGit(selector, 'merge')) ??
+    (await this.gitCommands.abortRuntimeGitMerge(selector))
+  abortRuntimeGitRebase: RuntimeGitCommands['abortRuntimeGitRebase'] = async (selector) =>
+    (await this.abortFolderWorkspaceGit(selector, 'rebase')) ??
+    (await this.gitCommands.abortRuntimeGitRebase(selector))
   checkoutRuntimeGitBranch: RuntimeGitCommands['checkoutRuntimeGitBranch'] =
     this.gitCommands.checkoutRuntimeGitBranch.bind(this.gitCommands)
   listRuntimeGitLocalBranches: RuntimeGitCommands['listRuntimeGitLocalBranches'] =
@@ -7138,9 +7145,9 @@ export class OrcaRuntimeService {
     this.gitCommands.getRuntimeGitBranchDiff.bind(this.gitCommands)
   getRuntimeGitCommitDiff: RuntimeGitCommands['getRuntimeGitCommitDiff'] =
     this.gitCommands.getRuntimeGitCommitDiff.bind(this.gitCommands)
-  commitRuntimeGit: RuntimeGitCommands['commitRuntimeGit'] = this.gitCommands.commitRuntimeGit.bind(
-    this.gitCommands
-  )
+  commitRuntimeGit: RuntimeGitCommands['commitRuntimeGit'] = async (selector, message) =>
+    (await this.commitFolderWorkspaceGit(selector, message)) ??
+    (await this.gitCommands.commitRuntimeGit(selector, message))
   generateRuntimeCommitMessage: RuntimeGitCommands['generateRuntimeCommitMessage'] =
     this.gitCommands.generateRuntimeCommitMessage.bind(this.gitCommands)
   discoverRuntimeCommitMessageModels: RuntimeGitCommands['discoverRuntimeCommitMessageModels'] =
@@ -24196,6 +24203,105 @@ export class OrcaRuntimeService {
       folderPath,
       perRepo.filter((entry) => entry !== null)
     )
+  }
+
+  /**
+   * Commit for a folder-workspace selector. `git.commit` carries no path, so there
+   * is nothing to route on — instead commit every child repo that actually has
+   * something staged, which is the set the merged status just showed the user as
+   * staged. Child repos with an empty index are skipped rather than reporting
+   * "nothing to commit". Returns null when the selector is not a folder workspace.
+   */
+  private async commitFolderWorkspaceGit(
+    selector: string,
+    message: string
+  ): Promise<{ success: boolean; error?: string } | null> {
+    const scope = await this.resolveFolderWorkspaceLaunchScope(selector)
+    const folderWorkspace = scope?.folderWorkspace
+    if (!folderWorkspace) {
+      return null
+    }
+    // Why: the single-repo path validates this before resolving; routing around it
+    // must not make an empty message reachable only for folder workspaces.
+    if (message.trim().length === 0) {
+      throw new Error('Commit message is required')
+    }
+    const childRepos = listFolderWorkspaceChildRepos(
+      this.requireStore().getRepos(),
+      folderWorkspace.folderPath
+    )
+    const staged = await Promise.all(
+      childRepos.map(async (repo) => {
+        const target = await this.resolveChildRepoGitTarget(repo)
+        if (!target) {
+          return null
+        }
+        const status = await getRuntimeGitStatusForTarget(target).catch(() => null)
+        const hasStaged = status?.entries.some((entry) => entry.area === 'staged') === true
+        return hasStaged ? { repo, target } : null
+      })
+    )
+    const targets = staged.filter((entry) => entry !== null)
+    if (targets.length === 0) {
+      // Why: matches what a single-repo commit reports for an empty index, so the
+      // renderer's existing failure copy stays accurate.
+      return { success: false, error: 'nothing to commit' }
+    }
+    const results = await Promise.all(
+      targets.map(async ({ repo, target }) => {
+        const repoName = repo.displayName || basename(repo.path)
+        try {
+          const result = await commitRuntimeGitForTarget(target, message)
+          return { repoName, ...(result.success ? {} : { error: result.error ?? 'Commit failed' }) }
+        } catch (error) {
+          return { repoName, error: error instanceof Error ? error.message : 'Commit failed' }
+        }
+      })
+    )
+    return summarizeFolderWorkspaceFanOut(results)
+  }
+
+  /**
+   * Abort an in-progress merge/rebase for a folder-workspace selector. Like commit
+   * this carries no path, so it targets every child repo that is actually in that
+   * conflict state — aborting a repo that is not mid-operation would error.
+   * Returns null when the selector is not a folder workspace.
+   */
+  private async abortFolderWorkspaceGit(
+    selector: string,
+    operation: 'merge' | 'rebase'
+  ): Promise<{ ok: true } | null> {
+    const scope = await this.resolveFolderWorkspaceLaunchScope(selector)
+    const folderWorkspace = scope?.folderWorkspace
+    if (!folderWorkspace) {
+      return null
+    }
+    const childRepos = listFolderWorkspaceChildRepos(
+      this.requireStore().getRepos(),
+      folderWorkspace.folderPath
+    )
+    const inOperation = await Promise.all(
+      childRepos.map(async (repo) => {
+        const target = await this.resolveChildRepoGitTarget(repo)
+        if (!target) {
+          return null
+        }
+        const detected = await this.gitCommands
+          .getRuntimeGitConflictOperation(`id:${target.worktree.id}`)
+          .catch(() => 'unknown' as const)
+        // Why: belt-and-braces. Git already refuses `merge --abort` on a mid-rebase
+        // repo (and vice versa), so this narrows what we run rather than what we
+        // prevent — it keeps N-1 pointless failing git invocations off the wire.
+        return detected === operation ? target : null
+      })
+    )
+    const targets = inOperation.filter((target) => target !== null)
+    // Why: aborting nothing is not an error — the conflict may have been resolved
+    // in a terminal already, and the renderer only needs the state to settle.
+    await Promise.all(
+      targets.map((target) => abortRuntimeGitForTarget(target, operation).catch(() => undefined))
+    )
+    return { ok: true }
   }
 
   private folderWorkspaceToResolvedWorktree(folderWorkspace: FolderWorkspace): ResolvedWorktree {
