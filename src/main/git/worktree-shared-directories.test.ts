@@ -1,9 +1,17 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { resolveWorktreeSharedDirectories } from './worktree-shared-directories'
+import {
+  getConfiguredWorktreeSharedDirectories,
+  resolveWorktreeSharedDirectories
+} from './worktree-shared-directories'
+import {
+  createWorktreeSharedPaths,
+  findExistingWorktreeSymlinkPaths
+} from '../ipc/worktree-symlinks'
+import { assertWorktreeCleanForRemoval } from './worktree'
 
 const git = (args: string[], cwd: string): void => {
   execFileSync('git', args, { cwd, stdio: 'ignore' })
@@ -117,5 +125,105 @@ describe('resolveWorktreeSharedDirectories', () => {
     writeOrcaYaml('worktree:\n  sharedDirectories:\n    - apps/web/.cache\n')
 
     expect(await resolveWorktreeSharedDirectories(repo)).toEqual(['apps/web/.cache'])
+  })
+})
+
+describe('getConfiguredWorktreeSharedDirectories', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'orca-shared-dirs-config-'))
+  })
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns the configured names without existence or gitignore filtering', () => {
+    // Why: neither directory exists, yet removal still needs both names to
+    // recognize and unlink the symlinks a previous creation left behind.
+    writeFileSync(
+      join(repo, 'orca.yaml'),
+      'worktree:\n  sharedDirectories:\n    - node_modules\n    - .cache\n'
+    )
+
+    expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual(['node_modules', '.cache'])
+  })
+
+  it('returns [] when orca.yaml is absent or has no worktree key', () => {
+    expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual([])
+
+    writeFileSync(join(repo, 'orca.yaml'), 'scripts:\n  setup: pnpm install\n')
+    expect(getConfiguredWorktreeSharedDirectories(repo)).toEqual([])
+  })
+})
+
+// Why: `node_modules/` is a directory-only ignore rule. It matches the primary's
+// real directory, so the shared directory resolves, but never the worktree's
+// symlink — Git reports that link as untracked and refuses a non-force removal
+// unless deletion is told to tolerate it.
+describe('shared directories and worktree removal', () => {
+  let root: string
+  let primary: string
+  let worktree: string
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'orca-shared-dirs-removal-'))
+    primary = join(root, 'primary')
+    worktree = join(root, 'worktree')
+    mkdirSync(primary)
+    git(['init', '-q', '-b', 'main'], primary)
+    git(['config', 'user.email', 'test@example.com'], primary)
+    git(['config', 'user.name', 'Test'], primary)
+    writeFileSync(join(primary, '.gitignore'), 'node_modules/\n')
+    writeFileSync(
+      join(primary, 'orca.yaml'),
+      'worktree:\n  sharedDirectories:\n    - node_modules\n'
+    )
+    git(['add', '-A'], primary)
+    git(['commit', '-qm', 'init'], primary)
+    mkdirSync(join(primary, 'node_modules'))
+    git(['worktree', 'add', '-q', worktree, '-b', 'feature'], primary)
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('leaves a worktree removable without force after sharing a directory', async () => {
+    await createWorktreeSharedPaths(
+      primary,
+      worktree,
+      await resolveWorktreeSharedDirectories(primary)
+    )
+    expect(lstatSync(join(worktree, 'node_modules')).isSymbolicLink()).toBe(true)
+
+    const ignoredLinkedPaths = await findExistingWorktreeSymlinkPaths(
+      worktree,
+      getConfiguredWorktreeSharedDirectories(primary)
+    )
+
+    expect(ignoredLinkedPaths).toEqual(['node_modules'])
+    await expect(
+      assertWorktreeCleanForRemoval(worktree, false, { ignoredUntrackedPaths: ignoredLinkedPaths })
+    ).resolves.toBeUndefined()
+  })
+
+  it('still refuses removal for real untracked changes next to a shared directory', async () => {
+    await createWorktreeSharedPaths(
+      primary,
+      worktree,
+      await resolveWorktreeSharedDirectories(primary)
+    )
+    writeFileSync(join(worktree, 'scratch.txt'), 'unsaved work')
+
+    await expect(
+      assertWorktreeCleanForRemoval(worktree, false, {
+        ignoredUntrackedPaths: await findExistingWorktreeSymlinkPaths(
+          worktree,
+          getConfiguredWorktreeSharedDirectories(primary)
+        )
+      })
+    ).rejects.toThrow('uncommitted or untracked')
   })
 })

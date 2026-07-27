@@ -99,6 +99,7 @@ import type { OrcaRuntimeService, RuntimeWorktreeLifecycleEvent } from '../runti
 import { killAllProcessesForWorktree } from '../runtime/worktree-teardown'
 import { clearProviderPtyState, getLocalPtyProvider, getSshPtyProvider } from './pty'
 import { findExistingWorktreeSymlinkPaths, removeWorktreeLinkedPaths } from './worktree-symlinks'
+import { getConfiguredWorktreeSharedDirectories } from '../git/worktree-shared-directories'
 import { track } from '../telemetry/client'
 import { getCohortAtEmit } from '../telemetry/cohort-classifier'
 import { workspaceSourceSchema, type WorkspaceSource } from '../../shared/telemetry-events'
@@ -1767,7 +1768,15 @@ export function registerWorktreeHandlers(
           )
         }
 
-        const linkedPaths = repo.symlinkPaths ?? []
+        // Why: `orca.yaml` shared directories are symlinked in too, and a
+        // directory-only ignore rule leaves those links untracked, so removal must
+        // tolerate and unlink them exactly like the per-user shared paths.
+        const linkedPaths = Array.from(
+          new Set([
+            ...(repo.symlinkPaths ?? []),
+            ...getConfiguredWorktreeSharedDirectories(repo.path)
+          ])
+        )
         const ignoredLinkedPaths = args.force
           ? []
           : await findExistingWorktreeSymlinkPaths(canonicalWorktreePath, linkedPaths)

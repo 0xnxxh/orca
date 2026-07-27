@@ -7,6 +7,17 @@ import { loadHooks } from '../hooks'
 // Why: a fresh worktree has no node_modules/.cache, and copying them is slow and
 // duplicates disk; `orca.yaml` names the ones every worktree should share instead.
 
+/** The configured `worktree.sharedDirectories` names, before any existence or
+ *  gitignore filtering.
+ *
+ *  Why deletion can't reuse the resolver below: a directory-only ignore rule
+ *  (`node_modules/`) matches the primary's real directory but never the
+ *  worktree's symlink, so Git reports that symlink as untracked. Removal has to
+ *  tolerate and unlink it, and the resolver would have already dropped it. */
+export function getConfiguredWorktreeSharedDirectories(repoPath: string): string[] {
+  return loadHooks(repoPath)?.worktree?.sharedDirectories ?? []
+}
+
 /** Resolve `worktree.sharedDirectories` from the repo-root `orca.yaml` to
  *  concrete repo-relative directories to symlink into a new worktree.
  *
