@@ -160,15 +160,13 @@ import {
 import { setTerminalViewAttributes } from '../runtime/terminal-view-attribute-store'
 import { validateTerminalViewAttributes } from '../../shared/terminal-view-attributes'
 import type { PtyModelRestoreReason } from '../../shared/pty-model-restore-marker'
-import {
-  getCodexSelectionLaneKey,
-  getSelectedCodexAccountIdForTarget,
-  type CodexAccountSelectionTarget
-} from '../codex-accounts/runtime-selection'
+import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
 import {
   forgetCodexPaneAccount,
   recordCodexPaneAccount
 } from '../codex/codex-pane-account-registry'
+import { resolveCodexPaneLaunchAccount } from '../codex/codex-pane-launch-account'
+import { getSystemCodexHomePath } from '../codex/codex-home-paths'
 import { isCodexSystemDefaultRealHomeEnabled } from '../codex/codex-real-home-flag'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
 import { buildConfiguredProxyEnv, type NetworkProxySettings } from '../../shared/network-proxy'
@@ -832,27 +830,33 @@ function getCompatibleSelectedCodexHomePath(
 // way to tell later that a pane still runs Codex as the previously selected
 // account. A reattach inherits that baked environment rather than choosing one,
 // so re-recording it under the current selection would erase the very evidence
-// that the pane is stale. A resume-pinned pane is deliberately on its session's
-// own account, so it is forgotten rather than recorded as stale.
+// that the pane is stale.
 function recordCodexPaneAccountForSpawn(args: {
   ptyId: string | undefined
   isDaemonHostSpawn: boolean
   isReattach: boolean
   pinnedByResume: boolean
+  launchCodexHomePath: string | null
   target: CodexAccountSelectionTarget
   settings: GlobalSettings | undefined
 }): void {
   if (!args.ptyId || !args.isDaemonHostSpawn || args.isReattach) {
     return
   }
-  if (args.pinnedByResume || !args.settings) {
+  const record = args.settings
+    ? resolveCodexPaneLaunchAccount({
+        pinnedByResume: args.pinnedByResume,
+        launchCodexHomePath: args.launchCodexHomePath,
+        systemCodexHomePath: getSystemCodexHomePath(),
+        settings: args.settings,
+        target: args.target
+      })
+    : null
+  if (!record) {
     forgetCodexPaneAccount(args.ptyId)
     return
   }
-  recordCodexPaneAccount(args.ptyId, {
-    selectionKey: getCodexSelectionLaneKey(args.target),
-    accountId: getSelectedCodexAccountIdForTarget(args.settings, args.target)
-  })
+  recordCodexPaneAccount(args.ptyId, record)
 }
 
 function readEnvWithProcessFallback(
@@ -3699,6 +3703,7 @@ export function registerPtyHandlers(
           isDaemonHostSpawn,
           isReattach: result.isReattach === true,
           pinnedByResume: Boolean(codexResumeHome),
+          launchCodexHomePath: selectedCodexHomePath,
           target: codexSelectionTarget,
           settings: getSettings?.()
         })
@@ -4741,6 +4746,7 @@ export function registerPtyHandlers(
           isDaemonHostSpawn,
           isReattach: result.isReattach === true,
           pinnedByResume: Boolean(codexResumeHome),
+          launchCodexHomePath: selectedCodexHomePath,
           target: codexSelectionTarget,
           settings: getSettings?.()
         })
