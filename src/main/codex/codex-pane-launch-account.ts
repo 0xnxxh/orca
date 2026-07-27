@@ -66,8 +66,11 @@ function resolveCodexHomeOwnerAccountId(args: {
       getCodexSelectionLaneKey(getCodexSelectionTargetForAccount(account)) === laneKey &&
       normalizeRuntimePathForComparison(account.managedHomePath) === launchHome
   )
-  // Why: the shared runtime mirror hot-swaps to whichever account is selected, so
-  // an unattributable home is no evidence the pane is on a different one. A
-  // wrong restart notice silently drops every keystroke in that terminal.
+  // Why: an unowned home cannot be named, and naming the account a pane is stuck
+  // on is the prompt's whole job — so decline rather than guess. A wrong notice
+  // silently drops every keystroke in that terminal. Note the shared runtime
+  // mirror only hot-swaps to the current selection on the legacy flag-OFF lane;
+  // a pane resumed into it after the per-account rollout is genuinely stale but
+  // still unnameable, so that cohort stays unreported.
   return owner ? owner.id : undefined
 }
