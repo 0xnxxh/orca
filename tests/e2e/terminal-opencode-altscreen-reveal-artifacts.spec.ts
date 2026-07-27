@@ -404,20 +404,20 @@ async function assertBufferConverged(
 }
 
 /**
- * The decisive paint assertion: geometry-stable repaint equivalence.
+ * SECONDARY, WEAK check: geometry-stable repaint equivalence.
  *
- * The user's workaround is "resize the window and it repairs", but a resize is
- * NOT a sound oracle here — it changes the grid, and a full-screen alt-buffer
- * TUI that is not repainting will have its rows clipped/shifted, so the
- * before/after images differ for reasons unrelated to the defect.
+ * Freeze the TUI, screenshot, force a clean rebuild in-app (atlas clear + full
+ * refresh), screenshot again, and require the two to match.
  *
- * What a resize actually does that repairs the display is rebuild every pane's
- * render model and glyph atlas from the xterm buffer. So do exactly that, with
- * the geometry held fixed: freeze the TUI, screenshot, force a clean rebuild
- * in-app (atlas clear + full refresh), screenshot again. Same buffer, same
- * grid, same pixels expected. Any difference means the revealed canvas was
- * showing something other than a faithful render of its own buffer — stale or
- * garbled cells — which is precisely STA-2694.
+ * Why weak, despite looking decisive: the "repair" runs the same repaint code
+ * the reveal already ran, so a defect present in BOTH shots cancels out and the
+ * comparison reports success. Injecting a frozen renderer proved that blind
+ * spot. Treat a green result as "the reveal did not leave a repaint-visible
+ * difference", never as proof the canvas painted correctly.
+ *
+ * The sound paint oracles live elsewhere: terminal-reveal-draw-command-probe
+ * counts WebGL draw commands (unhealable after the fact), and
+ * terminal-reveal-latch-visual-evidence captures the stale pixels directly.
  */
 async function assertRevealPixelsNeedNoRepair(
   page: Page,
@@ -754,6 +754,14 @@ test.describe('OpenCode alt-screen reveal artifacts (STA-2694)', () => {
 
       const otherWorktreeId = await switchToOtherWorktree(orcaPage, setup.worktreeId)
       test.skip(!otherWorktreeId, 'test session has a single worktree; cannot surface-hide')
+      // Why re-check here: the pane was still VISIBLE between the freeze and this
+      // switch, so refreshes reached bufferRows and armed xterm's 1s watchdog. If
+      // it fired before the hide, the pane is now unlatched and the final
+      // assertion would pass without the defect ever existing.
+      expect(
+        await readSynchronizedOutputLatch(orcaPage, setup.tabId),
+        'the watchdog cleared the latch before the hide, so this run proves nothing'
+      ).toBe(true)
       await orcaPage.waitForTimeout(2_500)
       await switchToWorktree(orcaPage, setup.worktreeId)
       await activateTerminalTab(orcaPage, setup.tabId)

@@ -120,29 +120,30 @@ test.describe('synchronized-output release performance (STA-2694)', () => {
       })
       const writeMs = performance.now() - start
       const drawsAfterStream = drawCalls
+      if (!modes) {
+        throw new Error('decPrivateModes unavailable — the measurement would be vacuous')
+      }
 
-      // Now time the release function itself across the same number of calls,
-      // in the steady-state case where nothing is latched (the common path).
-      const latchedBefore = modes?.synchronizedOutput === true
+      // Time the REAL production path in its steady state (nothing latched).
+      // Driving resetWebglTextureAtlases rather than a copy of the early-out is
+      // the point: a future change that makes the release scan the buffer shows
+      // up here instead of hiding behind a hand-written mirror.
+      const drawsBeforeIdleResets = drawCalls
       const releaseStart = performance.now()
       for (let i = 0; i < FRAMES; i++) {
-        // Mirrors releaseAbandonedSynchronizedOutput's early-out: read the mode,
-        // return when it is not latched. This is the whole steady-state cost.
-        const current = (
-          terminal._core as { coreService?: { decPrivateModes?: { synchronizedOutput?: boolean } } }
-        ).coreService?.decPrivateModes
-        if (current?.synchronizedOutput === true) {
-          current.synchronizedOutput = false
+        for (const manager of window.__paneManagers?.values() ?? []) {
+          ;(manager as { resetWebglTextureAtlases?: () => void }).resetWebglTextureAtlases?.()
         }
       }
       const releaseMs = performance.now() - releaseStart
+      const drawsDuringIdleResets = drawCalls - drawsBeforeIdleResets
 
       return {
         writeMs,
         releaseMs,
         drawsAfterStream,
-        latchedBefore,
-        latchedAfterStream: modes?.synchronizedOutput === true,
+        drawsDuringIdleResets,
+        latchedAfterStream: modes.synchronizedOutput === true,
         frames: FRAMES
       }
     })
@@ -151,23 +152,34 @@ test.describe('synchronized-output release performance (STA-2694)', () => {
       `[perf] ${result.frames} bracketed frames written in ${result.writeMs.toFixed(1)}ms`
     )
     console.log(
-      `[perf] ${result.frames} release early-outs took ${result.releaseMs.toFixed(3)}ms ` +
+      `[perf] ${result.frames} unlatched atlas resets took ${result.releaseMs.toFixed(3)}ms ` +
         `(${((result.releaseMs / result.frames) * 1000).toFixed(2)}µs each)`
     )
-    console.log(`[perf] draw calls during stream: ${result.drawsAfterStream}`)
+    console.log(
+      `[perf] draws during stream: ${result.drawsAfterStream}, ` +
+        `during idle resets: ${result.drawsDuringIdleResets}`
+    )
 
     // A healthy TUI closes every frame it opens, so the latch is clear and the
     // release is a pure early-out that changes nothing.
     expect(result.latchedAfterStream, 'a fully-bracketed stream should leave no latch behind').toBe(
       false
     )
-    // The steady-state path must be negligible: well under a microsecond per
-    // call amortized. Generous bound so this is a regression guard, not a
-    // machine-speed flake.
+    // The title's "no extra draws" claim, actually asserted: a bracketed stream
+    // that never abandons a frame must not provoke synchronous repaints.
+    expect(
+      result.drawsAfterStream,
+      `a fully-bracketed stream forced ${result.drawsAfterStream} synchronous draws`
+    ).toBe(0)
+    // Measured ~0.04ms per full atlas-reset call on CI-class hardware. Note this
+    // is the cost of the WHOLE recovery (atlas clear + refresh), not the release
+    // alone — the release itself is the early-out that contributes ~nothing, as
+    // the zero draw counts above show. Bound at 10x measured so it catches a
+    // change that makes this scan the buffer per pane without flaking on speed.
     expect(
       result.releaseMs / result.frames,
-      `release early-out cost ${result.releaseMs / result.frames}ms per call, expected < 0.01ms`
-    ).toBeLessThan(0.01)
+      `unlatched reset cost ${result.releaseMs / result.frames}ms per call, expected < 0.4ms`
+    ).toBeLessThan(0.4)
   })
 
   // Worst case: every reveal finds a latched frame, so the release does its full
@@ -218,15 +230,22 @@ test.describe('synchronized-output release performance (STA-2694)', () => {
       const modes = (
         terminal._core as { coreService?: { decPrivateModes?: { synchronizedOutput?: boolean } } }
       ).coreService?.decPrivateModes
+      if (!modes) {
+        // Without this the latch is never set, the recovery has nothing to do,
+        // and every assertion below passes without exercising the fix.
+        throw new Error('decPrivateModes unavailable — the latched path would be vacuous')
+      }
       const REVEALS = 50
       drawCalls = 0
       const start = performance.now()
+      let latchSurvivedAReset = false
       for (let i = 0; i < REVEALS; i++) {
-        if (modes) {
-          modes.synchronizedOutput = true
-        }
+        modes.synchronizedOutput = true
         for (const manager of window.__paneManagers?.values() ?? []) {
           ;(manager as { resetWebglTextureAtlases?: () => void }).resetWebglTextureAtlases?.()
+        }
+        if (modes.synchronizedOutput) {
+          latchSurvivedAReset = true
         }
       }
       const elapsedMs = performance.now() - start
@@ -234,7 +253,8 @@ test.describe('synchronized-output release performance (STA-2694)', () => {
         elapsedMs,
         reveals: REVEALS,
         drawCalls,
-        stillLatched: modes?.synchronizedOutput === true
+        latchSurvivedAReset,
+        stillLatched: modes.synchronizedOutput === true
       }
     })
 
@@ -244,6 +264,17 @@ test.describe('synchronized-output release performance (STA-2694)', () => {
     )
 
     expect(result.stillLatched, 'the latch must be cleared by the recovery path').toBe(false)
+    // Every iteration must clear it, not just the last one.
+    expect(
+      result.latchSurvivedAReset,
+      'a reset left the latch set, so the release did not run on every reveal'
+    ).toBe(false)
+    // "exactly once per reveal": the recovery repaints through the render-pause
+    // release, so draws must scale with reveals rather than multiplying per pane.
+    expect(
+      result.drawCalls,
+      `${result.drawCalls} draws across ${result.reveals} reveals exceeds one repaint each`
+    ).toBeLessThanOrEqual(result.reveals * 3)
     // Reveal is a one-shot user action, so even the full path has ample headroom;
     // this guards against a future change making it scan the buffer per pane.
     expect(

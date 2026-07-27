@@ -72,7 +72,10 @@ function tick() {
   process.stdout.write(`\x1b[?2026h\x1b[?25l${fullFrame()}\x1b[?25h\x1b[?2026l`)
   if (heartbeatPath) {
     try {
-      fs.writeFileSync(heartbeatPath, String(frame))
+      // Why write-then-rename: writeFileSync truncates before writing, so a
+      // concurrent reader can see '' and read it as frame 0.
+      fs.writeFileSync(`${heartbeatPath}.tmp`, String(frame))
+      fs.renameSync(`${heartbeatPath}.tmp`, heartbeatPath)
     } catch {
       // heartbeat is best-effort; the stream itself is the product
     }

@@ -385,12 +385,20 @@ test.describe('reveal draw-command oracle (STA-2694)', () => {
 
     // What the production fix does at both reveal repaint entry points.
     const released = await orcaPage.evaluate(() => {
+      let invoked = 0
       for (const manager of window.__paneManagers?.values() ?? []) {
-        ;(manager as { scheduleRevealPresent?: () => void }).scheduleRevealPresent?.()
+        const schedule = (manager as { scheduleRevealPresent?: () => void }).scheduleRevealPresent
+        if (typeof schedule === 'function') {
+          schedule.call(manager)
+          invoked++
+        }
       }
-      return true
+      return invoked
     })
-    expect(released).toBe(true)
+    // Why count rather than assume: scheduleRevealPresent is optional-chained,
+    // so a missing test hook would otherwise surface below as "the fix did not
+    // release the latch" and misattribute the failure to production code.
+    expect(released, 'no pane manager exposed scheduleRevealPresent').toBeGreaterThan(0)
     await orcaPage.waitForTimeout(500)
 
     const afterRelease = await forceRefreshAndRead(orcaPage)
@@ -469,11 +477,18 @@ test.describe('reveal draw-command oracle (STA-2694)', () => {
     expect(whileLatched.drawCalls, 'expected the stranded latch to swallow the repaint').toBe(0)
 
     // The production fix, at the real reveal entry point.
-    await orcaPage.evaluate(() => {
+    const invokedReveal = await orcaPage.evaluate(() => {
+      let invoked = 0
       for (const manager of window.__paneManagers?.values() ?? []) {
-        ;(manager as { scheduleRevealPresent?: () => void }).scheduleRevealPresent?.()
+        const schedule = (manager as { scheduleRevealPresent?: () => void }).scheduleRevealPresent
+        if (typeof schedule === 'function') {
+          schedule.call(manager)
+          invoked++
+        }
       }
+      return invoked
     })
+    expect(invokedReveal, 'no pane manager exposed scheduleRevealPresent').toBeGreaterThan(0)
     await orcaPage.waitForTimeout(600)
 
     const afterFix = await forceRefreshAndRead(orcaPage)
