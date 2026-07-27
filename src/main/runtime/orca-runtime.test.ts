@@ -7160,7 +7160,21 @@ describe('OrcaRuntimeService', () => {
   })
 
   it('refuses SSH hosts instead of setting the project up on the local machine', async () => {
-    const spawnSpy = vi.spyOn(gitRunner, 'gitSpawn')
+    // Why: both inputs must be paths the pre-guard code would have accepted. An unwritable
+    // destination fails at mkdir and a non-repo path fails at isGitRepo, which would leave the
+    // side-effect assertions below unable to observe the local clone/probe they exist to catch.
+    const destination = await mkdtemp(join(tmpdir(), 'orca-runtime-ssh-guard-'))
+    const existingFolder = join(destination, 'orca')
+    mkdirSync(existingFolder, { recursive: true })
+    execFileSync('git', ['init'], { cwd: existingFolder, stdio: 'ignore' })
+    const spawnSpy = vi.spyOn(gitRunner, 'gitSpawn').mockImplementation(() => {
+      // Why: unreachable while the guard holds; stubbed so a regression records the call
+      // instead of shelling out to a real network clone.
+      const proc = new EventEmitter() as EventEmitter & { stderr: EventEmitter }
+      proc.stderr = new EventEmitter()
+      queueMicrotask(() => proc.emit('close', 1, null))
+      return proc as never
+    })
     const repos: Record<string, unknown>[] = []
     const runtimeStore = {
       ...store,
@@ -7172,29 +7186,37 @@ describe('OrcaRuntimeService', () => {
     const runtime = new OrcaRuntimeService(runtimeStore as never)
 
     try {
-      await expect(
-        runtime.setupProjectClone({
+      const cloneError = await runtime
+        .setupProjectClone({
           projectId: 'github:stablyai/orca',
           hostId: 'ssh:openclaw',
           url: 'https://example.com/orca.git',
-          destination: '/home/brennan'
+          destination
         })
-      ).rejects.toThrow(/SSH hosts are not supported/)
-
-      await expect(
-        runtime.setupProjectExistingFolder({
+        .catch((error: unknown) => error)
+      const existingFolderError = await runtime
+        .setupProjectExistingFolder({
           projectId: 'github:stablyai/orca',
           hostId: 'ssh:openclaw',
-          path: '/home/brennan/orca',
+          path: existingFolder,
           kind: 'git'
         })
-      ).rejects.toThrow(/SSH hosts are not supported/)
+        .catch((error: unknown) => error)
 
-      // Why: the defect was a silent local clone/probe recorded as remote, not a bad message.
+      // Why: the defect was a silent local clone/probe recorded as remote, not a bad message,
+      // so the absent side effects are asserted before the wording. Both calls are awaited
+      // first so a regression reports the corruption rather than stopping at the first throw.
       expect(spawnSpy).not.toHaveBeenCalled()
       expect(repos).toHaveLength(0)
+      expect(cloneError).toMatchObject({
+        message: expect.stringMatching(/SSH hosts are not supported/)
+      })
+      expect(existingFolderError).toMatchObject({
+        message: expect.stringMatching(/SSH hosts are not supported/)
+      })
     } finally {
       spawnSpy.mockRestore()
+      await rm(destination, { recursive: true, force: true })
     }
   })
 
