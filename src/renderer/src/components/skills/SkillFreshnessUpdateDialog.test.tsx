@@ -49,15 +49,22 @@ vi.mock('@/components/ui/dialog', () => ({
 }))
 
 vi.mock('@/components/ui/collapsible', () => ({
+  // Forward data-* props: the unified skill row tags its Collapsible root with
+  // the identifiers the assertions below read.
   Collapsible: ({
     children,
-    defaultOpen = false
+    defaultOpen = false,
+    ...rest
   }: {
     children?: ReactNode
     defaultOpen?: boolean
-  }) => {
+  } & Record<string, unknown>) => {
     const [open] = useState(defaultOpen)
-    return <div data-collapsible-open={String(open)}>{children}</div>
+    return (
+      <div {...rest} data-collapsible-open={String(open)}>
+        {children}
+      </div>
+    )
   },
   CollapsibleTrigger: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   CollapsibleContent: ({ children }: { children?: ReactNode }) => <div>{children}</div>
@@ -214,7 +221,7 @@ describe('SkillFreshnessUpdateDialog', () => {
     expect(container?.textContent).toContain('keeps running in the background')
     expect(container?.querySelector('[role="progressbar"]')).not.toBeNull()
     expect(
-      container?.querySelector('[data-skill-result="orca-cli"]')?.getAttribute('data-status')
+      container?.querySelector('[data-skill-row="orca-cli"]')?.getAttribute('data-state-label')
     ).toBe('pending')
   })
 
@@ -240,7 +247,7 @@ describe('SkillFreshnessUpdateDialog', () => {
 
     expect(container?.textContent).toContain('Updated 1 skill')
     expect(
-      container?.querySelector('[data-skill-result="orca-cli"]')?.getAttribute('data-status')
+      container?.querySelector('[data-skill-row="orca-cli"]')?.getAttribute('data-state-label')
     ).toBe('done')
     expect(findButton('Done')).toBeDefined()
     // The re-scan is what makes the result trustworthy, so it must be requested.
@@ -267,13 +274,63 @@ describe('SkillFreshnessUpdateDialog', () => {
 
     expect(container?.textContent).toContain('Updated 1 of 2 skills')
     expect(
-      container?.querySelector('[data-skill-result="orca-cli"]')?.getAttribute('data-status')
+      container?.querySelector('[data-skill-row="orca-cli"]')?.getAttribute('data-state-label')
     ).toBe('done')
     expect(
-      container?.querySelector('[data-skill-result="orchestration"]')?.getAttribute('data-status')
+      container?.querySelector('[data-skill-row="orchestration"]')?.getAttribute('data-state-label')
     ).toBe('failed')
     expect(container?.textContent).toContain('skills update exited with code 1')
     expect(findButton('Retry')).toBeDefined()
+  })
+
+  it('keeps the same row elements across the whole run instead of swapping layouts', async () => {
+    await renderDialog()
+    await openViaRequest()
+    const before = container?.querySelector('[data-skill-row="orca-cli"]')
+    expect(before?.getAttribute('data-state-label')).toBe('available')
+
+    await emitRun({ state: 'running', names: ['orca-cli'], startedAt: 1, output: '' })
+    const during = container?.querySelector('[data-skill-row="orca-cli"]')
+    expect(during).toBe(before)
+    expect(during?.getAttribute('data-state-label')).toBe('pending')
+
+    // The re-scan makes the skill current, which would otherwise drop it from
+    // the group list and blank the row out mid-transition.
+    mocks.inventory = {
+      schemaVersion: 1,
+      installations: [placement('orca-cli', { status: 'current', installedReleaseRevision: 2 })],
+      eligibleUpdateNames: [],
+      scannedAt: 5
+    }
+    await emitRun({ state: 'success', names: ['orca-cli'], finishedAt: 2, output: 'done' })
+    await rerender()
+    const after = container?.querySelector('[data-skill-row="orca-cli"]')
+    expect(after).toBe(before)
+    expect(after?.getAttribute('data-state-label')).toBe('done')
+  })
+
+  it('collapses each skill’s locations behind its own disclosure', async () => {
+    mocks.inventory = {
+      schemaVersion: 1,
+      installations: [
+        placement('orca-cli'),
+        placement('orca-cli', {
+          rootId: 'plugin',
+          topology: 'plugin-cache',
+          status: 'inaccessible'
+        })
+      ],
+      eligibleUpdateNames: ['orca-cli'],
+      scannedAt: 1
+    }
+    await renderDialog()
+    await openViaRequest()
+
+    const row = container?.querySelector('[data-skill-row="orca-cli"]')
+    expect(row).not.toBeNull()
+    // Closed by default — the paths are behind the row's own trigger.
+    expect(row?.getAttribute('data-collapsible-open')).toBe('false')
+    expect(container?.textContent).toContain('2 locations')
   })
 
   it('shows the captured log verbatim without parsing it', async () => {

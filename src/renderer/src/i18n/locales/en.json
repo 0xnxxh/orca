@@ -3815,6 +3815,10 @@
         "SkillUpdateResultRows": {
           "stillOutdated": "Still out of date after the update ran."
         },
+        "SkillUpdateRow": {
+          "oneLocation": "1 location",
+          "manyLocations": "{{value0}} locations"
+        },
         "SkillFreshnessStatusPill": {
           "updateAvailable": "Update available",
           "upToDate": "Up to date",

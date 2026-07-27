@@ -15,8 +15,7 @@ import {
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { groupSkillFreshness } from './skill-freshness-grouping'
-import { SkillFreshnessGroup } from './skill-freshness-group'
-import { SkillUpdateResultRows } from './skill-update-result-rows'
+import { SkillUpdateRow } from './SkillUpdateRow'
 import { SummaryHeadline, summarizeInventory } from './skill-freshness-summary-headline'
 import {
   acknowledgeSkillUpdateRun,
@@ -67,16 +66,39 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const inventory = state.inventory
   const eligibleNames = useMemo(() => inventory?.eligibleUpdateNames ?? [], [inventory])
+  const isRunning = run.state === 'running'
+  const showResult = run.state === 'success' || run.state === 'error'
+  const runNames = useMemo(() => (run.state === 'idle' ? [] : run.names), [run])
   const groups = useMemo(
     () =>
-      inventory ? groupSkillFreshness(inventory.installations, inventory.eligibleUpdateNames) : [],
-    [inventory]
+      inventory
+        ? groupSkillFreshness(inventory.installations, inventory.eligibleUpdateNames, runNames)
+        : [],
+    [inventory, runNames]
   )
   const hasBlockedGroup = groups.some((group) => group.status === 'cannot-update')
   const blockedCount = groups.filter((group) => group.status === 'cannot-update').length
   const summaryKind = summarizeInventory(inventory, hasBlockedGroup)
-  const isRunning = run.state === 'running'
-  const showResult = run.state === 'success' || run.state === 'error'
+
+  // Why: one row list for every state. The rows are identical objects across the
+  // transition, so pressing Update changes each row's leading icon in place
+  // instead of swapping the dialog's body for a different component.
+  const rows = useMemo(() => {
+    const failed = new Set(run.state === 'error' ? run.failedNames : [])
+    const inRun = new Set(runNames)
+    return groups.map((group) => {
+      if (inRun.has(group.name)) {
+        if (isRunning) {
+          return { group, state: 'pending' as const }
+        }
+        return { group, state: failed.has(group.name) ? ('failed' as const) : ('done' as const) }
+      }
+      return {
+        group,
+        state: group.status === 'cannot-update' ? ('blocked' as const) : ('available' as const)
+      }
+    })
+  }, [groups, isRunning, run, runNames])
 
   const handleOpenChange = (next: boolean): void => {
     if (next) {
@@ -193,27 +215,27 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
         )}
 
         {isRunning ? (
-          <>
-            {/* Indeterminate on purpose: the CLI reports no parseable progress. */}
-            <div
-              role="progressbar"
-              aria-label={translate(
-                'auto.components.skills.SkillFreshnessUpdateDialog.progressAria',
-                'Updating skills'
-              )}
-              className="h-1 overflow-hidden rounded-full bg-secondary"
-            >
-              <div className="h-full w-2/5 animate-[skill-update-slide_1.35s_ease-in-out_infinite] rounded-full bg-primary motion-reduce:w-full motion-reduce:animate-none motion-reduce:opacity-40" />
-            </div>
-            <SkillUpdateResultRows names={run.names} pending />
-          </>
+          // Indeterminate on purpose: the CLI reports no parseable progress.
+          <div
+            role="progressbar"
+            aria-label={translate(
+              'auto.components.skills.SkillFreshnessUpdateDialog.progressAria',
+              'Updating skills'
+            )}
+            className="h-1 overflow-hidden rounded-full bg-secondary"
+          >
+            <div className="h-full w-2/5 animate-[skill-update-slide_1.35s_ease-in-out_infinite] rounded-full bg-primary motion-reduce:w-full motion-reduce:animate-none motion-reduce:opacity-40" />
+          </div>
         ) : null}
 
-        {showResult ? (
-          <SkillUpdateResultRows
-            names={run.names}
-            failedNames={run.state === 'error' ? run.failedNames : []}
-          />
+        {rows.length > 0 ? (
+          <div className="min-w-0">
+            <TooltipProvider>
+              {rows.map((row) => (
+                <SkillUpdateRow key={row.group.name} group={row.group} state={row.state} />
+              ))}
+            </TooltipProvider>
+          </div>
         ) : null}
 
         {run.state === 'error' ? (
@@ -251,16 +273,6 @@ export function SkillFreshnessUpdateDialog(): React.JSX.Element {
         ) : null}
 
         {isRunning || showResult ? <RunLog output={run.output} /> : null}
-
-        {!isRunning && !showResult && groups.length > 0 ? (
-          <div className="min-w-0 divide-y divide-border/40">
-            <TooltipProvider>
-              {groups.map((group) => (
-                <SkillFreshnessGroup key={group.name} group={group} />
-              ))}
-            </TooltipProvider>
-          </div>
-        ) : null}
 
         <DialogFooter className="sm:justify-between">
           {isRunning || showResult ? (
