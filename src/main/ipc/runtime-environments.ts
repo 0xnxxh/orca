@@ -14,8 +14,8 @@ import type { RuntimeStatus } from '../../shared/runtime-types'
 import type { RuntimeRpcResponse } from '../../shared/runtime-rpc-envelope'
 import type { RemoteRuntimeSubscription } from '../../shared/remote-runtime-client'
 import type { Store } from '../persistence'
-import { clearActiveRuntimeEnvironmentFocusIfMatches } from '../runtime-environment-focus-self-heal'
 import { closeRemoteRuntimeRequestConnection } from './runtime-environment-request-connections'
+import { registerRuntimeEnvironmentRecoveryHandler } from './runtime-environment-recovery-handler'
 import {
   advanceRuntimeEnvironmentTransportGeneration,
   getRuntimeEnvironmentTransportGeneration
@@ -80,9 +80,7 @@ export function registerRuntimeEnvironmentHandlers(store: Store): void {
   }
   ipcMain.removeAllListeners('runtimeEnvironments:subscriptionBinary')
 
-  ipcMain.handle('runtimeEnvironments:list', (): PublicKnownRuntimeEnvironment[] =>
-    listPublicRuntimeEnvironments()
-  )
+  ipcMain.handle('runtimeEnvironments:list', listPublicRuntimeEnvironments)
   ipcMain.handle(
     'runtimeEnvironments:addFromPairingCode',
     (
@@ -92,21 +90,22 @@ export function registerRuntimeEnvironmentHandlers(store: Store): void {
       environment: redactRuntimeEnvironment(addEnvironmentFromPairingCode(getUserDataPath(), args))
     })
   )
-  ipcMain.handle(
-    'runtimeEnvironments:resolve',
-    (_event, args: { selector: string }): PublicKnownRuntimeEnvironment =>
-      redactRuntimeEnvironment(resolveEnvironment(getUserDataPath(), args.selector))
+  ipcMain.handle('runtimeEnvironments:resolve', (_event, args: { selector: string }) =>
+    redactRuntimeEnvironment(resolveEnvironment(getUserDataPath(), args.selector))
   )
   ipcMain.handle(
     'runtimeEnvironments:remove',
     (_event, args: { selector: string }): { removed: PublicKnownRuntimeEnvironment } => {
+      const environment = resolveEnvironment(getUserDataPath(), args.selector)
+      if (store.getSettings().activeRuntimeEnvironmentId === environment.id) {
+        throw new Error('Choose another Active Server in Advanced before removing this server.')
+      }
       const removed = removeEnvironment(getUserDataPath(), args.selector)
       invalidateRuntimeEnvironmentTransport(removed.id)
       if (args.selector !== removed.id) {
         closeRemoteRuntimeRequestConnection(args.selector)
         clearSharedControlSupport(args.selector)
       }
-      clearActiveRuntimeEnvironmentFocusIfMatches(store, removed.id)
       return { removed: redactRuntimeEnvironment(removed) }
     }
   )
@@ -124,6 +123,7 @@ export function registerRuntimeEnvironmentHandlers(store: Store): void {
       return { disconnected: redactRuntimeEnvironment(environment) }
     }
   )
+  registerRuntimeEnvironmentRecoveryHandler()
   ipcMain.handle(
     'runtimeEnvironments:getStatus',
     async (
