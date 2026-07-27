@@ -84,6 +84,7 @@ type MonacoEditorProps = {
   revealMatchLength?: number
   markdownDocuments?: MarkdownDocument[]
   worktreeId?: string
+  runtimeEnvironmentId?: string | null
   markdownAnnotationsEnabled?: boolean
   conflictDecorationsEnabled?: boolean
   readOnly?: boolean
@@ -110,6 +111,7 @@ export default function MonacoEditor({
   revealMatchLength,
   markdownDocuments,
   worktreeId,
+  runtimeEnvironmentId,
   markdownAnnotationsEnabled = false,
   conflictDecorationsEnabled = false,
   readOnly = false,
@@ -208,11 +210,15 @@ export default function MonacoEditor({
       return
     }
     if (language === 'markdown' && markdownDocuments) {
-      setMarkdownDocCompletionDocuments(modelKey, markdownDocuments)
+      setMarkdownDocCompletionDocuments(
+        modelKey,
+        JSON.stringify([runtimeEnvironmentId ?? '', worktreeId ?? modelKey]),
+        markdownDocuments
+      )
     } else {
       clearMarkdownDocCompletionDocuments(modelKey)
     }
-  }, [language, markdownDocuments])
+  }, [language, markdownDocuments, runtimeEnvironmentId, worktreeId])
 
   const shouldShowMarkdownAnnotations =
     markdownAnnotationsEnabled && language === 'markdown' && Boolean(worktreeId)
