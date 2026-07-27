@@ -105,6 +105,11 @@ export const AgentKanbanCard = memo(
     // neutral so the tint keeps meaning something.
     const needsYou = card.bucket === 'attention'
     const isDone = card.dotState === 'done'
+    // Why: the session's own name heads the card. Without one the worktree is
+    // the best heading left — and then the footer drops it rather than say it
+    // twice.
+    const heading = card.conversationName ?? card.worktreeName
+    const worktreeInFooter = card.conversationName !== undefined
 
     return (
       <button
@@ -135,7 +140,7 @@ export const AgentKanbanCard = memo(
               card.unseen ? 'font-semibold text-foreground' : 'font-normal text-muted-foreground'
             )}
           >
-            {card.worktreeName}
+            {heading}
           </span>
           {/* The summary pill already carries the attention glyph. */}
           {card.askSummary ? null : <AgentStateDot state={card.dotState} className="ml-auto" />}
@@ -145,15 +150,9 @@ export const AgentKanbanCard = memo(
           <div className="flex flex-col gap-0.5">
             {card.lastUserMessage ? (
               <div className="line-clamp-1 text-[11px] leading-snug text-muted-foreground">
-                {/* Why: the chat's own name identifies the conversation far
-                    better than "You" does; fall back when none resolves. */}
-                <span
-                  className={cn(
-                    'font-medium',
-                    card.conversationName ? 'text-foreground/70' : 'text-foreground/45'
-                  )}
-                >
-                  {card.conversationName ?? translate('dashboardPopout.card.you', 'You')}
+                {/* Why: plain "You" again — the session's name now heads the card. */}
+                <span className="font-medium text-foreground/45">
+                  {translate('dashboardPopout.card.you', 'You')}
                 </span>{' '}
                 {card.lastUserMessage}
               </div>
@@ -180,9 +179,9 @@ export const AgentKanbanCard = memo(
           </div>
         ) : null}
 
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          {/* Why: the repo's own icon never truncates and never competes with
-              the worktree name; the name itself lives in the tooltip. */}
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          {/* Why: the project reads as an icon so its name can't crowd the
+              worktree sitting next to it; the name lives in the tooltip. */}
           <Tooltip>
             <TooltipTrigger asChild>
               <span
@@ -196,8 +195,9 @@ export const AgentKanbanCard = memo(
               {card.repoName}
             </TooltipContent>
           </Tooltip>
+          {worktreeInFooter ? <span className="truncate">{card.worktreeName}</span> : null}
           {displayTimestamp(card) > 0 ? (
-            <span className="ml-auto shrink-0 tabular-nums">
+            <span className="ml-auto shrink-0 pl-1 tabular-nums">
               {formatStartedAgo(displayTimestamp(card), now)}
             </span>
           ) : null}

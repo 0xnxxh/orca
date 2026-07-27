@@ -127,17 +127,30 @@ describe('AgentKanbanCard', () => {
     expect(idleClassName).not.toContain('amber')
   })
 
-  it('labels the user message with the conversation name, falling back to "You"', () => {
-    renderCard({
+  it('heads the card with the conversation name and drops the worktree to the footer', () => {
+    const { container } = renderCard({
       card: card({ lastUserMessage: 'ship it', conversationName: 'Sparse-checkout parser' }),
       now: 2_000
     })
-    expect(screen.getByText('Sparse-checkout parser')).toBeInTheDocument()
-    expect(screen.queryByText('You')).not.toBeInTheDocument()
 
-    cleanup()
-    renderCard({ card: card({ lastUserMessage: 'ship it' }), now: 2_000 })
+    const [header, footer] = [
+      container.querySelector('button')!.firstElementChild!,
+      container.querySelector('button')!.lastElementChild!
+    ]
+    expect(header).toHaveTextContent('Sparse-checkout parser')
+    expect(header).not.toHaveTextContent('dashboard-review')
+    expect(footer).toHaveTextContent('dashboard-review')
+    // The message line is attributed to the user again — the name moved up.
     expect(screen.getByText('You')).toBeInTheDocument()
+  })
+
+  it('heads the card with the worktree when no name resolves, without repeating it', () => {
+    const { container } = renderCard({ card: card({ lastUserMessage: 'ship it' }), now: 2_000 })
+
+    expect(screen.getAllByText('dashboard-review')).toHaveLength(1)
+    expect(container.querySelector('button')!.firstElementChild).toHaveTextContent(
+      'dashboard-review'
+    )
   })
 
   it('shows the repo as an icon labelled with its name instead of inline text', () => {
