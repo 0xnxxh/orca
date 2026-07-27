@@ -10,6 +10,7 @@ import {
   isTerminalInputTooLargeWithDeferredMeasurement,
   iterateTerminalInputChunks
 } from '../../../../shared/terminal-input'
+import { yieldToEventLoop } from '../../../../shared/event-loop-yield'
 import { isRuntimeOwnedSshTargetId } from '../../../../shared/execution-host'
 import {
   ptyDataHandlers,
@@ -622,10 +623,6 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
     commit: clearAccumulatedState
   }
 
-  function yieldToInputWriteDrain(): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, 0))
-  }
-
   async function writeAcceptedPtyInput(id: string, data: string): Promise<boolean> {
     try {
       const tooLarge = isTerminalInputTooLargeWithDeferredMeasurement(data)
@@ -644,7 +641,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
         }
         chunk = chunks.next()
         if (!chunk.done) {
-          await yieldToInputWriteDrain()
+          await yieldToEventLoop()
         }
       }
       return true

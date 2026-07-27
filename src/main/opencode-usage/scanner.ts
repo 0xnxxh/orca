@@ -145,7 +145,7 @@ export async function getProcessedDatabaseInfo(
 }
 
 async function yieldToEventLoop(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setImmediate(resolve))
 }
 
 function getProjectJoin(db: Database.Database): string {
