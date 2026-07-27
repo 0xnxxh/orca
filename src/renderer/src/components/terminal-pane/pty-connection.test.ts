@@ -96,6 +96,7 @@ async function renderHeadlessTerminalState(
 }
 
 const toastInfo = vi.fn()
+const notifyCodexPaneBoundForStaleSweep = vi.fn()
 const LEAF_1 = '11111111-1111-4111-8111-111111111111' as const
 const LEAF_2 = '22222222-2222-4222-8222-222222222222' as const
 const UUID_RE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -326,6 +327,10 @@ vi.mock('sonner', () => ({
   toast: {
     info: toastInfo
   }
+}))
+
+vi.mock('@/lib/codex-stale-pane-sweep', () => ({
+  notifyCodexPaneBoundForStaleSweep
 }))
 
 // Why: the working→idle test invokes the real useNotificationDispatch hook outside React, so useCallback must pass through (safe suite-wide: no test here renders React).
@@ -4327,6 +4332,9 @@ describe('connectPanePty', () => {
     expect(pane.container.dataset.ptyId).toBe('pty-daemon-reattach')
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(1, 'pty-daemon-reattach')
     expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'pty-daemon-reattach')
+    // Why: the restored shell keeps the CODEX_HOME it was spawned with, and this
+    // bind is the first moment the daemon PTY can be inspected for it.
+    expect(notifyCodexPaneBoundForStaleSweep).toHaveBeenCalledWith('pty-daemon-reattach')
   })
 
   it('drops xterm onData while pane is replaying restored bytes', async () => {
@@ -6330,6 +6338,10 @@ describe('connectPanePty', () => {
     expect(transport.attach).not.toHaveBeenCalled()
     await Promise.resolve()
     expect(deps.syncPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'leaf-pty-2')
+    // Why: a pane that outlived the app reaches its PTY only through this
+    // restored-session reattach, so the stale-account sweep must be queued here
+    // too — the fresh-spawn chokepoint never runs for it.
+    expect(notifyCodexPaneBoundForStaleSweep).toHaveBeenCalledWith('leaf-pty-2')
   })
 
   it('resizes a reattached PTY to the current grid when the pane narrows before reattach resolves', async () => {
