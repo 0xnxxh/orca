@@ -105,6 +105,17 @@ function shouldRetry(scan: CodexPaneScanResult): boolean {
   return !scan.eligible && (scan.inconclusive || scan.launchedCodex)
 }
 
+function queueNextRung(ptyId: string): void {
+  const attempt = (attemptsByPtyId.get(ptyId) ?? 0) + 1
+  const delayMs = SWEEP_ATTEMPT_DELAYS_MS[attempt]
+  if (delayMs === undefined) {
+    attemptsByPtyId.delete(ptyId)
+    return
+  }
+  attemptsByPtyId.set(ptyId, attempt)
+  queue(ptyId, delayMs)
+}
+
 async function flush(): Promise<void> {
   const ptyIds = takeDuePtyIds()
   if (ptyIds.length === 0) {
@@ -118,6 +129,14 @@ async function flush(): Promise<void> {
     scans = await markRestoredStaleCodexSessionsForRestart({ ptyIds })
   } catch (err) {
     console.warn('Codex stale-pane restart sweep failed:', err)
+    // Why: a thrown sweep is no more conclusive than an unusable process read, so
+    // spend a rung rather than dropping these panes. Re-aiming is what keeps the
+    // panes this sweep never touched — parked on a later rung, and no longer
+    // holding the timer — from being stranded with nothing left to fire them.
+    for (const ptyId of ptyIds) {
+      queueNextRung(ptyId)
+    }
+    armForEarliestDue()
     return
   }
 
@@ -135,14 +154,7 @@ async function flush(): Promise<void> {
       attemptsByPtyId.delete(ptyId)
       continue
     }
-    const attempt = (attemptsByPtyId.get(ptyId) ?? 0) + 1
-    const delayMs = SWEEP_ATTEMPT_DELAYS_MS[attempt]
-    if (delayMs === undefined) {
-      attemptsByPtyId.delete(ptyId)
-      continue
-    }
-    attemptsByPtyId.set(ptyId, attempt)
-    queue(ptyId, delayMs)
+    queueNextRung(ptyId)
   }
 
   armForEarliestDue()

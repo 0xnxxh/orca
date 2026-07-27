@@ -182,6 +182,52 @@ describe('notifyCodexPaneBoundForStaleSweep', () => {
     expect(inspectCallCountFor('pty-2')).toBe(1)
   })
 
+  it('retries a pane whose sweep threw instead of dropping it', async () => {
+    // Why: listStalePanes reads the on-disk pane-account registry and is the one
+    // call in the sweep with no catch of its own, so a transient rejection must
+    // spend a rung like any other unusable read.
+    vi.mocked(window.api.codexAccounts.listStalePanes)
+      .mockRejectedValueOnce(new Error('registry unreadable'))
+      .mockResolvedValue([STALE_PANE])
+
+    notifyCodexPaneBoundForStaleSweep('pty-1')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
+
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+  })
+
+  it('still fires a pane waiting on a later rung when an earlier sweep throws', async () => {
+    // Regression: the failing sweep took its own PTYs out of the queue and
+    // returned without re-aiming the timer, so pty-1 — parked on its 1500ms rung
+    // and never touched by that sweep — was left with nothing to fire it, ever.
+    useAppStore.setState({ ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-2'] } })
+    vi.mocked(window.api.pty.inspectProcess).mockRejectedValueOnce(new Error('terminal_gone'))
+    vi.mocked(window.api.codexAccounts.listStalePanes)
+      .mockRejectedValueOnce(new Error('registry unreadable'))
+      .mockResolvedValue([STALE_PANE])
+
+    notifyCodexPaneBoundForStaleSweep('pty-1')
+    // t = 300: pty-1 reads inconclusive and parks on its 1500ms rung (due 1800).
+    await vi.advanceTimersByTimeAsync(300)
+    notifyCodexPaneBoundForStaleSweep('pty-2')
+    // t = 600: pty-2's sweep is the one that throws; pty-1 is not due and untouched.
+    await vi.advanceTimersByTimeAsync(300)
+    expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
+
+    await vi.advanceTimersByTimeAsync(1200)
+
+    expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+      previousAccountLabel: ACCOUNT_A,
+      nextAccountLabel: ACCOUNT_B
+    })
+  })
+
   it('stops retrying a pane the registry reports as not stale', async () => {
     notifyCodexPaneBoundForStaleSweep('pty-1')
     await vi.advanceTimersByTimeAsync(60_000)
