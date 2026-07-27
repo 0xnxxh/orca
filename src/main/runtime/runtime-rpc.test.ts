@@ -26,6 +26,7 @@ import {
 import { decrypt, deriveSharedKey, encrypt, generateKeyPair } from './rpc/e2ee-crypto'
 import { DeviceRegistry } from './device-registry'
 import { DEVICE_REGISTRY_FILENAME, E2EE_KEYPAIR_FILENAME } from './mobile-pairing-files'
+import { ORCHESTRATION_CONTRACT_VERSION } from '../../shared/protocol-version'
 
 vi.mock('../git/worktree', () => ({
   listWorktrees: vi.fn().mockResolvedValue([
@@ -60,7 +61,7 @@ async function sendRequest(
       resolve(JSON.parse(message) as Record<string, unknown>)
     })
     socket.on('connect', () => {
-      socket.write(`${JSON.stringify(request)}\n`)
+      socket.write(`${JSON.stringify(withCurrentOrchestrationContract(request))}\n`)
     })
   })
 }
@@ -111,10 +112,18 @@ function openFramedSession(endpoint: string, request: Record<string, unknown>): 
       }
     })
     socket.on('connect', () => {
-      socket.write(`${JSON.stringify(request)}\n`)
+      socket.write(`${JSON.stringify(withCurrentOrchestrationContract(request))}\n`)
     })
   })
   return { socket, frames, done }
+}
+
+function withCurrentOrchestrationContract(
+  request: Record<string, unknown>
+): Record<string, unknown> {
+  return typeof request.method === 'string' && request.method.startsWith('orchestration.')
+    ? { ...request, orchestrationContractVersion: ORCHESTRATION_CONTRACT_VERSION }
+    : request
 }
 
 function sleep(ms: number): Promise<void> {
@@ -128,6 +137,18 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<voi
       throw new Error('timed out waiting for condition')
     }
     await sleep(20)
+  }
+}
+
+function seedSupervisedAskWorkers(db: OrchestrationDb, workerHandles: string[]): void {
+  const run = db.createRun({
+    objective: 'Exercise ask admission',
+    coordinatorHandle: 'term_coord',
+    coordinatorPaneKey: 'tab_coord:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  })
+  for (const workerHandle of workerHandles) {
+    const task = db.createTask({ spec: 'Wait for coordinator input', runId: run.id })
+    db.createDispatchContext(task.id, workerHandle)
   }
 }
 
@@ -1285,12 +1306,14 @@ describe('OrcaRuntimeRpcServer', () => {
 
     try {
       const first = server['handleWebSocketMessage'](
-        JSON.stringify({
-          id: 'req_wait',
-          method: 'orchestration.check',
-          deviceToken: entry.token,
-          params: { terminal: 'term_wait', wait: true, timeoutMs: 10_000 }
-        }),
+        JSON.stringify(
+          withCurrentOrchestrationContract({
+            id: 'req_wait',
+            method: 'orchestration.check',
+            deviceToken: entry.token,
+            params: { terminal: 'term_wait', wait: true, timeoutMs: 10_000 }
+          })
+        ),
         (response) => replies.push(JSON.parse(response) as Record<string, unknown>),
         () => {},
         undefined,
@@ -1300,12 +1323,14 @@ describe('OrcaRuntimeRpcServer', () => {
       await waitFor(() => server['activeLongPolls'] === 1)
 
       await server['handleWebSocketMessage'](
-        JSON.stringify({
-          id: 'req_busy',
-          method: 'orchestration.check',
-          deviceToken: entry.token,
-          params: { terminal: 'term_busy', wait: true, timeoutMs: 10_000 }
-        }),
+        JSON.stringify(
+          withCurrentOrchestrationContract({
+            id: 'req_busy',
+            method: 'orchestration.check',
+            deviceToken: entry.token,
+            params: { terminal: 'term_busy', wait: true, timeoutMs: 10_000 }
+          })
+        ),
         (response) => replies.push(JSON.parse(response) as Record<string, unknown>),
         () => {},
         undefined,
@@ -1327,6 +1352,95 @@ describe('OrcaRuntimeRpcServer', () => {
 
       expect(server['activeLongPolls']).toBe(0)
       expect(replies).toContainEqual(expect.objectContaining({ id: 'req_wait', ok: true }))
+    } finally {
+      db.close()
+      await server.stop()
+    }
+  })
+
+  it('applies the ask sub-cap on the WebSocket path and releases both counters on close', async () => {
+    const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+    const runtime = new OrcaRuntimeService()
+    const db = new OrchestrationDb(':memory:')
+    runtime.setOrchestrationDb(db)
+    seedSupervisedAskWorkers(db, ['term_w0', 'term_w1', 'term_w2'])
+    // Why: cap 4 → ask sub-cap 2, so the third ask must be shed while waits keep the other half.
+    const server = new OrcaRuntimeRpcServer({
+      runtime,
+      userDataPath,
+      enableWebSocket: false,
+      longPollCap: 4
+    })
+    server['deviceRegistry'] = new DeviceRegistry(userDataPath)
+    // Why: 'runtime' scope, not 'mobile' — orchestration.ask is absent from the mobile allowlist.
+    const entry = server['deviceRegistry']!.addDevice('runtime-test', 'runtime')
+    const ws = new FakeWebSocket()
+    server['mobileSocketWiring'] = {
+      getConnectionId: () => 'conn-test'
+    } as unknown as NonNullable<(typeof server)['mobileSocketWiring']>
+    const replies: Record<string, unknown>[] = []
+    const push = (response: string): void => {
+      replies.push(JSON.parse(response) as Record<string, unknown>)
+    }
+    const dispatch = (id: string, method: string, params: unknown): Promise<void> =>
+      server['handleWebSocketMessage'](
+        JSON.stringify(
+          withCurrentOrchestrationContract({ id, method, deviceToken: entry.token, params })
+        ),
+        push,
+        () => {},
+        undefined,
+        ws as unknown as WebSocket
+      )
+
+    try {
+      const asks = [0, 1].map((i) =>
+        dispatch(`req_ask_${i}`, 'orchestration.ask', {
+          from: `term_w${i}`,
+          to: 'term_coord',
+          question: 'proceed?',
+          timeoutMs: 10_000
+        })
+      )
+      // Why: gate on the pre-existing total so a missing sub-cap fails on the shed below, not here.
+      await waitFor(() => server['activeLongPolls'] === 2)
+
+      await dispatch('req_ask_overflow', 'orchestration.ask', {
+        from: 'term_w2',
+        to: 'term_coord',
+        question: 'proceed?',
+        timeoutMs: 10_000
+      })
+      expect(replies).toContainEqual(
+        expect.objectContaining({
+          id: 'req_ask_overflow',
+          ok: false,
+          error: expect.objectContaining({
+            code: 'runtime_busy',
+            message: 'orchestration.ask capacity reached; retry with backoff'
+          })
+        })
+      )
+      // Shedding the ask must not burn a slot from the reserved half.
+      expect(server['activeLongPolls']).toBe(2)
+      expect(server['activeAskLongPolls']).toBe(2)
+
+      const wait = dispatch('req_check_wait', 'orchestration.check', {
+        terminal: 'term_other',
+        wait: true,
+        timeoutMs: 10_000
+      })
+      await waitFor(() => server['activeLongPolls'] === 3)
+      expect(server['activeAskLongPolls']).toBe(2)
+
+      ws.readyState = 3
+      ws.emit('close')
+      await Promise.all([...asks, wait])
+
+      expect(server['activeLongPolls']).toBe(0)
+      expect(server['activeAskLongPolls']).toBe(0)
+      expect(replies).toContainEqual(expect.objectContaining({ id: 'req_ask_0', ok: true }))
+      expect(replies).toContainEqual(expect.objectContaining({ id: 'req_check_wait', ok: true }))
     } finally {
       db.close()
       await server.stop()
@@ -3946,6 +4060,17 @@ describe('OrcaRuntimeRpcServer', () => {
       const runtime = new OrcaRuntimeService()
       const db = new OrchestrationDb(':memory:')
       runtime.setOrchestrationDb(db)
+      const askerPaneKey = 'tab_asker:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      vi.spyOn(runtime, 'getTerminalPaneKey').mockImplementation((handle) =>
+        handle === 'term_asker' ? askerPaneKey : null
+      )
+      const run = db.createRun({
+        objective: 'Keepalive test',
+        coordinatorHandle: 'term_nobody',
+        coordinatorPaneKey: 'tab_coord:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+      })
+      const task = db.createTask({ spec: 'Wait for an answer', runId: run.id })
+      db.createDispatchContext(task.id, 'term_asker', askerPaneKey)
       const server = new OrcaRuntimeRpcServer({
         runtime,
         userDataPath,
@@ -4284,6 +4409,167 @@ describe('OrcaRuntimeRpcServer', () => {
         a.socket.destroy()
         await a.done
       } finally {
+        db.close()
+        await server.stop()
+      }
+    })
+
+    it('reserves long-poll headroom for terminal.wait when orchestration.ask floods', async () => {
+      const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+      const runtime = new OrcaRuntimeService()
+      const db = new OrchestrationDb(':memory:')
+      runtime.setOrchestrationDb(db)
+      seedSupervisedAskWorkers(db, ['term_w0', 'term_w1', 'term_w2', 'term_w3'])
+      // Why: cap 4 → ask sub-cap 2, so 4 concurrent asks can only take half the budget.
+      const server = new OrcaRuntimeRpcServer({
+        runtime,
+        userDataPath,
+        keepaliveIntervalMs: 1000,
+        longPollCap: 4
+      })
+      runtime.attachWindow(1)
+      runtime.syncWindowGraph(1, {
+        tabs: [
+          {
+            tabId: 'tab-1',
+            worktreeId: 'repo-1::/tmp/worktree-a',
+            title: 'Terminal 1',
+            activeLeafId: 'pane:1',
+            layout: null
+          }
+        ],
+        leaves: [
+          {
+            tabId: 'tab-1',
+            worktreeId: 'repo-1::/tmp/worktree-a',
+            leafId: 'pane:1',
+            paneRuntimeId: 1,
+            ptyId: 'pty-1'
+          }
+        ]
+      })
+      await server.start()
+
+      const asks: ReturnType<typeof openFramedSession>[] = []
+      try {
+        const metadata = readRuntimeMetadata(userDataPath)
+        const endpoint = metadata!.transports[0]!.endpoint
+        const listResponse = await sendRequest(endpoint, {
+          id: 'req_list',
+          authToken: metadata!.authToken,
+          method: 'terminal.list'
+        })
+        const handle = (listResponse.result as { terminals: { handle: string }[] }).terminals[0]!
+          .handle
+
+        // Four workers block in ask; distinct `from` handles so no reply wakes another.
+        for (let i = 0; i < 4; i++) {
+          asks.push(
+            openFramedSession(endpoint, {
+              id: `req_ask_${i}`,
+              authToken: metadata!.authToken,
+              method: 'orchestration.ask',
+              params: {
+                from: `term_w${i}`,
+                to: 'term_coord',
+                question: 'proceed?',
+                timeoutMs: 10_000
+              }
+            })
+          )
+        }
+        // Let every ask reach the admission fence before probing the reserved half.
+        await waitFor(() => server['activeLongPolls'] >= 2)
+        await sleep(100)
+
+        // The reserved half still admits a terminal.wait from any other client.
+        const admitted = openFramedSession(endpoint, {
+          id: 'req_terminal_wait',
+          authToken: metadata!.authToken,
+          method: 'terminal.wait',
+          params: { terminal: handle, for: 'tui-idle', timeoutMs: 50 }
+        })
+        await admitted.done
+        expect(admitted.frames.find((f) => f.ok !== undefined)).toMatchObject({
+          id: 'req_terminal_wait',
+          ok: false,
+          error: { code: 'timeout' }
+        })
+
+        // …and a check --wait too, which shares the same reserved class.
+        const check = openFramedSession(endpoint, {
+          id: 'req_check_wait',
+          authToken: metadata!.authToken,
+          method: 'orchestration.check',
+          params: { terminal: 'term_other', wait: true, timeoutMs: 100 }
+        })
+        await check.done
+        expect(check.frames.find((f) => f.ok !== undefined)).toMatchObject({
+          id: 'req_check_wait',
+          ok: true
+        })
+
+        // Overflow asks are shed, not queued: the sub-cap holds at half the budget.
+        expect(server['activeAskLongPolls']).toBe(2)
+        const shed = asks
+          .map((a) => a.frames.find((f) => f.ok !== undefined))
+          .filter((f) => f !== undefined)
+        expect(shed).toHaveLength(2)
+        expect(shed[0]).toMatchObject({ ok: false, error: { code: 'runtime_busy' } })
+      } finally {
+        for (const ask of asks) {
+          ask.socket.destroy()
+        }
+        await Promise.all(asks.map((ask) => ask.done))
+        db.close()
+        await server.stop()
+      }
+    })
+
+    it('keeps the full cap available to terminal.wait and check --wait', async () => {
+      const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
+      const runtime = new OrcaRuntimeService()
+      const db = new OrchestrationDb(':memory:')
+      runtime.setOrchestrationDb(db)
+      const server = new OrcaRuntimeRpcServer({
+        runtime,
+        userDataPath,
+        keepaliveIntervalMs: 1000,
+        longPollCap: 4
+      })
+      await server.start()
+
+      const waits: ReturnType<typeof openFramedSession>[] = []
+      try {
+        const metadata = readRuntimeMetadata(userDataPath)
+        const endpoint = metadata!.transports[0]!.endpoint
+
+        // The ask sub-cap must not narrow the budget for the reserved class.
+        for (let i = 0; i < 4; i++) {
+          waits.push(
+            openFramedSession(endpoint, {
+              id: `req_wait_${i}`,
+              authToken: metadata!.authToken,
+              method: 'orchestration.check',
+              params: { terminal: `term_${i}`, wait: true, timeoutMs: 10_000 }
+            })
+          )
+        }
+        await waitFor(() => server['activeLongPolls'] === 4)
+        expect(server['activeAskLongPolls']).toBe(0)
+
+        const overflow = await sendRequest(endpoint, {
+          id: 'req_overflow',
+          authToken: metadata!.authToken,
+          method: 'orchestration.check',
+          params: { terminal: 'term_overflow', wait: true, timeoutMs: 5_000 }
+        })
+        expect(overflow).toMatchObject({ ok: false, error: { code: 'runtime_busy' } })
+      } finally {
+        for (const wait of waits) {
+          wait.socket.destroy()
+        }
+        await Promise.all(waits.map((wait) => wait.done))
         db.close()
         await server.stop()
       }
