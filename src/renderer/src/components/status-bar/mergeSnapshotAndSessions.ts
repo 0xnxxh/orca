@@ -143,9 +143,10 @@ export function mergeSnapshotAndSessions(
   const index = buildResourceSessionBindingIndex(ctx)
   const boundPtyIds = index.boundPtyIds
   // Why: the daemon list is the only place agent ownership is reported. Snapshot-derived rows
-  // describe the same sessions by id, so carry it across rather than letting them report `false`.
-  const agentOwnedSessionIds = new Set(
-    daemonSessions.filter((session) => session.hasAgentOwner).map((session) => session.id)
+  // describe the same sessions by id, so carry it across rather than inventing an answer; a
+  // session the daemon never listed is 'unknown', not 'absent'.
+  const ownershipBySessionId = new Map(
+    daemonSessions.map((session) => [session.id, session.agentOwnership])
   )
 
   function isRepoRemote(repoId: string): boolean {
@@ -207,7 +208,7 @@ export function mergeSnapshotAndSessions(
           pid: s.pid,
           label: resolveSnapshotSessionLabel(s, wt.worktreeId, ctx),
           bound: ctx.workspaceSessionReady && boundPtyIds.has(s.sessionId),
-          hasAgentOwner: agentOwnedSessionIds.has(s.sessionId),
+          agentOwnership: ownershipBySessionId.get(s.sessionId) ?? 'unknown',
           tabId,
           cpu: s.cpu,
           memory: s.memory,
@@ -295,7 +296,7 @@ export function mergeSnapshotAndSessions(
       pid: 0,
       label: resolveDaemonSessionLabel(session, worktreeId, tabId, ctx),
       bound: ctx.workspaceSessionReady && boundPtyIds.has(session.id),
-      hasAgentOwner: session.hasAgentOwner,
+      agentOwnership: session.agentOwnership,
       tabId,
       cpu: null,
       memory: null,

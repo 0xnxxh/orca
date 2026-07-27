@@ -83,9 +83,14 @@ describe('resource session bindings', () => {
   it('counts only daemon sessions without live or restorable tab bindings', () => {
     const count = countUnboundDaemonSessions(
       [
-        { id: 'pty-live', cwd: '/workspace', title: 'live', hasAgentOwner: false },
-        { id: 'pty-restored', cwd: '/workspace', title: 'restored', hasAgentOwner: false },
-        { id: 'pty-orphan', cwd: '/tmp', title: 'orphan', hasAgentOwner: false }
+        { id: 'pty-live', cwd: '/workspace', title: 'live', agentOwnership: 'absent' as const },
+        {
+          id: 'pty-restored',
+          cwd: '/workspace',
+          title: 'restored',
+          agentOwnership: 'absent' as const
+        },
+        { id: 'pty-orphan', cwd: '/tmp', title: 'orphan', agentOwnership: 'absent' as const }
       ],
       {
         ptyIdsByTabId: { 'tab-live': ['pty-live'] },
@@ -112,7 +117,14 @@ describe('resource session bindings', () => {
     expect(buildResourceSessionBindingIndex(inputs).boundPtyIds.has('pty-deferred')).toBe(true)
     expect(
       selectUnboundDaemonSessions(
-        [{ id: 'pty-deferred', cwd: '/workspace', title: 'agent', hasAgentOwner: false }],
+        [
+          {
+            id: 'pty-deferred',
+            cwd: '/workspace',
+            title: 'agent',
+            agentOwnership: 'absent' as const
+          }
+        ],
         inputs
       )
     ).toEqual([])
@@ -138,8 +150,8 @@ describe('resource session bindings', () => {
       workspaceSessionReady: true
     }
     const sessions = [
-      { id: 'pty-agent', cwd: '/workspace', title: 'codex', hasAgentOwner: true },
-      { id: 'pty-shell', cwd: '/tmp', title: 'shell', hasAgentOwner: false }
+      { id: 'pty-agent', cwd: '/workspace', title: 'codex', agentOwnership: 'present' as const },
+      { id: 'pty-shell', cwd: '/tmp', title: 'shell', agentOwnership: 'absent' as const }
     ]
 
     expect(selectUnboundDaemonSessions(sessions, inputs).map((s) => s.id)).toEqual(['pty-shell'])
@@ -155,10 +167,15 @@ describe('resource session bindings', () => {
       workspaceSessionReady: true
     }
     const sessions = [
-      { id: 'pty-live', cwd: '/workspace', title: 'live', hasAgentOwner: false },
-      { id: 'pty-deferred', cwd: '/workspace', title: 'deferred', hasAgentOwner: false },
-      { id: 'pty-agent', cwd: '/workspace', title: 'codex', hasAgentOwner: true },
-      { id: 'pty-orphan', cwd: '/tmp', title: 'orphan', hasAgentOwner: false }
+      { id: 'pty-live', cwd: '/workspace', title: 'live', agentOwnership: 'absent' as const },
+      {
+        id: 'pty-deferred',
+        cwd: '/workspace',
+        title: 'deferred',
+        agentOwnership: 'absent' as const
+      },
+      { id: 'pty-agent', cwd: '/workspace', title: 'codex', agentOwnership: 'present' as const },
+      { id: 'pty-orphan', cwd: '/tmp', title: 'orphan', agentOwnership: 'absent' as const }
     ]
 
     expect(selectUnboundDaemonSessions(sessions, inputs).map((s) => s.id)).toEqual(['pty-orphan'])
@@ -167,8 +184,28 @@ describe('resource session bindings', () => {
     )
   })
 
+  it('never offers a session whose ownership could not be established', () => {
+    // Why: a legacy daemon generation or an older SSH relay cannot serialize claims, so it reports
+    // no owners for a session that may well have one. Unknown must never read as absent (#8459).
+    const inputs = {
+      ptyIdsByTabId: {},
+      tabsByWorktree: {},
+      terminalLayoutsByTabId: {},
+      workspaceSessionReady: true
+    }
+    const sessions = [
+      { id: 'pty-legacy', cwd: '/workspace', title: 'shell', agentOwnership: 'unknown' as const },
+      { id: 'pty-known', cwd: '/tmp', title: 'shell', agentOwnership: 'absent' as const }
+    ]
+
+    expect(selectUnboundDaemonSessions(sessions, inputs).map((s) => s.id)).toEqual(['pty-known'])
+    expect(countUnboundDaemonSessions(sessions, inputs)).toBe(1)
+  })
+
   it('offers nothing while the workspace session is still loading', () => {
-    const sessions = [{ id: 'pty-any', cwd: '/tmp', title: 'shell', hasAgentOwner: false }]
+    const sessions = [
+      { id: 'pty-any', cwd: '/tmp', title: 'shell', agentOwnership: 'absent' as const }
+    ]
     const inputs = {
       ptyIdsByTabId: {},
       tabsByWorktree: {},

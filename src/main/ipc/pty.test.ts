@@ -5736,6 +5736,8 @@ describe('registerPtyHandlers', () => {
         { id: 'agent-pty', cwd: '/workspace', title: 'codex', agentSessionOwners: [owner] },
         { id: 'plain-pty', cwd: '/tmp', title: 'zsh' }
       ]),
+      // Why: this provider serializes claims, so its silence about an owner is authoritative.
+      providesAgentSessionOwnerListings: () => true,
       attach: vi.fn(),
       getDefaultShell: vi.fn(),
       getProfiles: vi.fn()
@@ -5743,11 +5745,47 @@ describe('registerPtyHandlers', () => {
 
     const sessions = (await handlers.get('pty:listSessions')!(null, undefined)) as {
       id: string
-      hasAgentOwner: boolean
+      agentOwnership: string
     }[]
 
-    expect(sessions.find((s) => s.id === 'agent-pty')?.hasAgentOwner).toBe(true)
-    expect(sessions.find((s) => s.id === 'plain-pty')?.hasAgentOwner).toBe(false)
+    expect(sessions.find((s) => s.id === 'agent-pty')?.agentOwnership).toBe('present')
+    expect(sessions.find((s) => s.id === 'plain-pty')?.agentOwnership).toBe('absent')
+  })
+
+  it('reports unknown ownership when the provider cannot serialize claims', async () => {
+    registerPtyHandlers(mainWindow as never)
+    // Why: a legacy daemon generation or older SSH relay lists no owners for a session that may
+    // have one. Reporting that silence as 'absent' is what let live agent sessions be killed (#8459).
+    setLocalPtyProvider({
+      spawn: vi.fn(),
+      write: vi.fn(),
+      resize: vi.fn(),
+      shutdown: vi.fn(),
+      sendSignal: vi.fn(),
+      getCwd: vi.fn(),
+      getInitialCwd: vi.fn(),
+      clearBuffer: vi.fn(),
+      acknowledgeDataEvent: vi.fn(),
+      hasChildProcesses: vi.fn(),
+      getForegroundProcess: vi.fn(),
+      serialize: vi.fn(),
+      revive: vi.fn(),
+      onData: vi.fn(() => () => {}),
+      onReplay: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      listProcesses: vi.fn(async () => [{ id: 'legacy-pty', cwd: '/workspace', title: 'zsh' }]),
+      providesAgentSessionOwnerListings: () => false,
+      attach: vi.fn(),
+      getDefaultShell: vi.fn(),
+      getProfiles: vi.fn()
+    } as never)
+
+    const sessions = (await handlers.get('pty:listSessions')!(null, undefined)) as {
+      id: string
+      agentOwnership: string
+    }[]
+
+    expect(sessions.find((s) => s.id === 'legacy-pty')?.agentOwnership).toBe('unknown')
   })
 
   it('kills app-scoped SSH PTY ids through the parsed provider when ownership is not rebuilt', async () => {

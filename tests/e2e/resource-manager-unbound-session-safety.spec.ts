@@ -150,18 +150,28 @@ test.describe('Resource Manager unbound-session safety', () => {
         'A live warm-reattached session was unbound after restore completed; orphan cleanup would target it'
       ).toBe(true)
 
-      // The ownership field must survive the real IPC boundary, not just the unit-test mock:
-      // a structured-clone drop or a preload contract mismatch would surface here as undefined.
-      const ownershipReported = await secondLaunch.page.evaluate(async (expected: string) => {
+      // Ownership evidence must survive the real IPC boundary, not just the unit-test mock: a
+      // structured-clone drop or preload contract mismatch would surface here as undefined.
+      // Asserting the exact arm matters — a stub returning a constant would satisfy a typeof check.
+      const ownership = await secondLaunch.page.evaluate(async (expected: string) => {
         const sessions = await window.api.pty.listSessions()
-        return sessions
-          .filter((s) => s.id === expected)
-          .map((s) => typeof s.hasAgentOwner === 'boolean')
+        return sessions.filter((s) => s.id === expected).map((s) => s.agentOwnership)
       }, ptyId)
       expect(
-        ownershipReported,
-        'pty:listSessions dropped hasAgentOwner across the real IPC boundary'
-      ).toEqual([true])
+        ownership,
+        'pty:listSessions did not report a valid agentOwnership arm across the real IPC boundary'
+      ).toHaveLength(1)
+      expect(
+        ['present', 'absent', 'unknown'],
+        'agentOwnership crossed IPC as an unrecognized value'
+      ).toContain(ownership[0])
+
+      // A plain shell under the live local provider must be PROVEN unowned, not merely unknown —
+      // otherwise the tri-state would be reporting "unknown" for everything and proving nothing.
+      expect(
+        ownership[0],
+        'The live local provider reported non-authoritative ownership for its own session'
+      ).toBe('absent')
     } finally {
       if (firstApp) {
         await session.close(firstApp).catch(() => {})

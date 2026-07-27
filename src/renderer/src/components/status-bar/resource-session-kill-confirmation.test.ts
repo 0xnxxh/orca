@@ -9,7 +9,7 @@ function row(overrides: Partial<UnifiedSessionRow> = {}): UnifiedSessionRow {
     pid: 0,
     label: 'zsh',
     bound: false,
-    hasAgentOwner: false,
+    agentOwnership: 'absent',
     tabId: null,
     cpu: null,
     memory: null,
@@ -24,10 +24,16 @@ describe('resource session kill confirmation', () => {
   })
 
   it('confirms before killing an agent-owned session that has no binding', () => {
-    expect(requiresKillConfirmation(row({ bound: false, hasAgentOwner: true }))).toBe(true)
+    expect(requiresKillConfirmation(row({ bound: false, agentOwnership: 'present' }))).toBe(true)
   })
 
-  it('skips the prompt only when the session is both unbound and unclaimed', () => {
+  it('confirms when ownership could not be established at all', () => {
+    // Why: a provider that cannot serialize claims reports no owners for a session that may have
+    // one. Treating that silence as proof of absence is the #8459 defect.
+    expect(requiresKillConfirmation(row({ bound: false, agentOwnership: 'unknown' }))).toBe(true)
+  })
+
+  it('skips the prompt only on proven absence with no binding', () => {
     expect(requiresKillConfirmation(row())).toBe(false)
   })
 })

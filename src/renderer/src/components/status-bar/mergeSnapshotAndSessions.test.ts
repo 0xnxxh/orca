@@ -7,6 +7,7 @@ import type {
   WorktreeMemory
 } from '../../../../shared/types'
 import { mergeSnapshotAndSessions, UNATTRIBUTED_REPO_ID } from './mergeSnapshotAndSessions'
+import { requiresKillConfirmation } from './resource-session-kill-confirmation'
 import type { DaemonSession, MergeContext } from './resource-usage-merge-types'
 
 function emptyAppMemory() {
@@ -156,7 +157,7 @@ describe('mergeSnapshotAndSessions', () => {
       sessions: [{ sessionId: 'pty-1', paneKey: null, pid: 999, cpu: 0.1, memory: 50_000_000 }]
     }
     const ds: DaemonSession[] = [
-      { id: 'pty-1', cwd: '/Users/me/Triton', title: 'shell', hasAgentOwner: false }
+      { id: 'pty-1', cwd: '/Users/me/Triton', title: 'shell', agentOwnership: 'absent' as const }
     ]
     const out = mergeSnapshotAndSessions(makeSnapshot([wt]), ds, baseCtx())
     expect(out[0].worktrees[0].sessions).toHaveLength(1)
@@ -182,15 +183,57 @@ describe('mergeSnapshotAndSessions', () => {
       sessions: [{ sessionId: 'pty-agent', paneKey: null, pid: 999, cpu: 0.1, memory: 50_000_000 }]
     }
     const ds: DaemonSession[] = [
-      { id: 'pty-agent', cwd: '/Users/me/Triton', title: 'codex', hasAgentOwner: true }
+      {
+        id: 'pty-agent',
+        cwd: '/Users/me/Triton',
+        title: 'codex',
+        agentOwnership: 'present' as const
+      }
     ]
 
     const out = mergeSnapshotAndSessions(makeSnapshot([wt]), ds, baseCtx())
 
     expect(out[0].worktrees[0].sessions[0]).toMatchObject({
       sessionId: 'pty-agent',
-      hasAgentOwner: true
+      agentOwnership: 'present' as const
     })
+  })
+
+  it('binds a deferred SSH row so its single-row kill cannot skip confirmation', () => {
+    // Why: the bulk selector already excluded these, but the rendered row took its own path.
+    // An unbound row with no agent skips the dialog entirely — the same #8459 defect, one click over.
+    const sessionId = 'orca::/remote/Stingray@@deferred1'
+    const out = mergeSnapshotAndSessions(
+      null,
+      [{ id: sessionId, cwd: '', title: 'orca/Stingray', agentOwnership: 'absent' as const }],
+      baseCtx({
+        tabsByWorktree: { 'orca::/remote/Stingray': [makeTab('tab-ssh')] },
+        deferredSshSessionIdsByTabId: { 'tab-ssh': sessionId },
+        repoConnectionIdById: new Map([['orca', 'ssh-conn-1']])
+      })
+    )
+
+    const row = out[0].worktrees[0].sessions[0]
+    expect(row).toMatchObject({ sessionId, bound: true, tabId: 'tab-ssh' })
+    expect(requiresKillConfirmation(row)).toBe(true)
+  })
+
+  it('treats a snapshot row the daemon never listed as unknown ownership, not absent', () => {
+    const wt: WorktreeMemory = {
+      worktreeId: 'orca::/Users/me/Triton',
+      worktreeName: 'Triton',
+      repoId: 'orca',
+      repoName: 'ORCA',
+      cpu: 0.1,
+      memory: 50_000_000,
+      history: [],
+      sessions: [{ sessionId: 'pty-only-local', paneKey: null, pid: 7, cpu: 0.1, memory: 1 }]
+    }
+
+    const out = mergeSnapshotAndSessions(makeSnapshot([wt]), [], baseCtx())
+
+    expect(out[0].worktrees[0].sessions[0]).toMatchObject({ agentOwnership: 'unknown' })
+    expect(requiresKillConfirmation(out[0].worktrees[0].sessions[0])).toBe(true)
   })
 
   it('@@ parse: an SSH-style session id resolves to its worktree group', () => {
@@ -199,7 +242,7 @@ describe('mergeSnapshotAndSessions', () => {
         id: 'orca::/remote/Stingray@@abcd1234',
         cwd: '',
         title: 'orca/Stingray',
-        hasAgentOwner: false
+        agentOwnership: 'absent' as const
       }
     ]
     const ctx = baseCtx({
@@ -240,7 +283,7 @@ describe('mergeSnapshotAndSessions', () => {
         id: 'orca::/local/Triton@@deadbeef',
         cwd: '/local/Triton',
         title: 'orca/Triton',
-        hasAgentOwner: false
+        agentOwnership: 'absent' as const
       }
     ]
     const ctx = baseCtx({
@@ -260,7 +303,12 @@ describe('mergeSnapshotAndSessions', () => {
   it('tab walk wins over @@ parse when they disagree', () => {
     const tabId = 'tab-xyz'
     const ds: DaemonSession[] = [
-      { id: 'orca::/wrong/path@@feedface', cwd: '', title: 'orca', hasAgentOwner: false }
+      {
+        id: 'orca::/wrong/path@@feedface',
+        cwd: '',
+        title: 'orca',
+        agentOwnership: 'absent' as const
+      }
     ]
     const ctx = baseCtx({
       tabsByWorktree: {
@@ -278,7 +326,12 @@ describe('mergeSnapshotAndSessions', () => {
     const tabId = 'tab-restored'
     const sessionId = 'orca::/Users/me/Triton@@deferred'
     const ds: DaemonSession[] = [
-      { id: sessionId, cwd: '/Users/me/Triton', title: 'orca/Triton', hasAgentOwner: false }
+      {
+        id: sessionId,
+        cwd: '/Users/me/Triton',
+        title: 'orca/Triton',
+        agentOwnership: 'absent' as const
+      }
     ]
     const restoredTab = { ...makeTab(tabId, 'Restored'), ptyId: sessionId }
     const ctx = baseCtx({
@@ -319,7 +372,7 @@ describe('mergeSnapshotAndSessions', () => {
         id: 'remote-repo::/remote/Stingray@@1234',
         cwd: '',
         title: 'remote/Stingray',
-        hasAgentOwner: false
+        agentOwnership: 'absent' as const
       }
     ]
     const ctx = baseCtx({
@@ -362,10 +415,20 @@ describe('mergeSnapshotAndSessions', () => {
         id: 'runtime-repo::/runtime/Wt@@future-runtime',
         cwd: '',
         title: 'runtime/Wt',
-        hasAgentOwner: false
+        agentOwnership: 'absent' as const
       },
-      { id: 'ssh-repo::/remote/Wt@@ssh-session', cwd: '', title: 'ssh/Wt', hasAgentOwner: false },
-      { id: 'opaque-local-orphan', cwd: '', title: 'orphan shell', hasAgentOwner: false }
+      {
+        id: 'ssh-repo::/remote/Wt@@ssh-session',
+        cwd: '',
+        title: 'ssh/Wt',
+        agentOwnership: 'absent' as const
+      },
+      {
+        id: 'opaque-local-orphan',
+        cwd: '',
+        title: 'orphan shell',
+        agentOwnership: 'absent' as const
+      }
     ]
     const ctx = baseCtx({
       repoConnectionIdById: new Map<string, string | null>([
@@ -409,7 +472,7 @@ describe('mergeSnapshotAndSessions', () => {
     // to. The chip should stay off; the row still surfaces in the
     // unattributed bucket with `—` cells because we have no sample.
     const ds: DaemonSession[] = [
-      { id: 'opaque-id-without-prefix', cwd: '', title: 'shell', hasAgentOwner: false }
+      { id: 'opaque-id-without-prefix', cwd: '', title: 'shell', agentOwnership: 'absent' as const }
     ]
     const out = mergeSnapshotAndSessions(null, ds, baseCtx())
     expect(out).toHaveLength(1)
@@ -463,7 +526,12 @@ describe('mergeSnapshotAndSessions', () => {
 
   it('remote-orphan interaction state: null metrics + bound=false', () => {
     const ds: DaemonSession[] = [
-      { id: 'orca::/remote/Wt@@deadbeef', cwd: '', title: 'orca/Wt', hasAgentOwner: false }
+      {
+        id: 'orca::/remote/Wt@@deadbeef',
+        cwd: '',
+        title: 'orca/Wt',
+        agentOwnership: 'absent' as const
+      }
     ]
     const out = mergeSnapshotAndSessions(null, ds, baseCtx())
     const session = out[0].worktrees[0].sessions[0]
@@ -478,7 +546,7 @@ describe('mergeSnapshotAndSessions', () => {
 
   it('uses repoDisplayNameById to humanize new project groups when available', () => {
     const ds: DaemonSession[] = [
-      { id: 'stably-ai/orca::/remote/Wt@@1', cwd: '', title: '', hasAgentOwner: false }
+      { id: 'stably-ai/orca::/remote/Wt@@1', cwd: '', title: '', agentOwnership: 'absent' as const }
     ]
     const ctx = baseCtx({
       repoDisplayNameById: new Map([['stably-ai/orca', 'ORCA']])

@@ -5514,7 +5514,7 @@ export function registerPtyHandlers(
       registeredPtyProviders(),
       ({ provider, connectionId }) =>
         connectionId === null ? provider.listProcesses() : provider.listProcesses().catch(() => []),
-      ({ connectionId }, sessions) => {
+      ({ provider, connectionId }, sessions) => {
         for (const rawSession of sessions) {
           const session = admission.admit(rawSession)
           // Why: kill actions only send back the PTY id, so rebuild ownership while listing to keep reconnect-discovered remote sessions routed to their provider.
@@ -5523,10 +5523,15 @@ export function registerPtyHandlers(
             id: session.id,
             cwd: session.cwd,
             title: session.title,
-            // Why: an agent bound to this session is proof work is running, independent of whether
-            // this renderer has a tab binding yet. Without it the UI can only guess, and guessed
-            // "orphan" force-killed live agent sessions (#8459).
-            hasAgentOwner: (session.agentSessionOwners?.length ?? 0) > 0
+            // Why: the renderer's binding map is empty during restore, so ownership is the only
+            // liveness evidence it has. Absence is authoritative only from a provider that
+            // serializes claims — otherwise it is 'unknown', never 'absent' (#8459).
+            agentOwnership:
+              (session.agentSessionOwners?.length ?? 0) > 0
+                ? 'present'
+                : provider.providesAgentSessionOwnerListings?.(session.id) === true
+                  ? 'absent'
+                  : 'unknown'
           })
         }
       }

@@ -1,4 +1,5 @@
 import type { TerminalLayoutSnapshot, TerminalTab } from '../../../../shared/types'
+import { mayDestroyWithoutOwnerEvidence } from '../../../../shared/pty-listed-session'
 import type { DaemonSession } from './resource-usage-merge-types'
 
 export type ResourceSessionBindingInputs = {
@@ -97,9 +98,11 @@ export function selectUnboundDaemonSessions(
     return []
   }
   const { boundPtyIds } = buildResourceSessionBindingIndex(inputs)
-  // Why hasAgentOwner short-circuits: an agent holding the session is positive proof work is
-  // running. This renderer's binding map is empty during restore, so it cannot decide alone.
-  return sessions.filter((session) => !boundPtyIds.has(session.id) && !session.hasAgentOwner)
+  // Why the ownership check: this renderer's binding map is empty during restore, so it cannot
+  // decide alone. Only proven absence of an owner qualifies — 'unknown' protects.
+  return sessions.filter(
+    (session) => !boundPtyIds.has(session.id) && mayDestroyWithoutOwnerEvidence(session)
+  )
 }
 
 export function countUnboundDaemonSessions(

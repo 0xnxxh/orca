@@ -931,11 +931,11 @@ export function ResourceUsageStatusSegment({
     () =>
       open
         ? mergeSnapshotAndSessions(resourceSnapshot, sessions, {
-            tabsByWorktree,
-            ptyIdsByTabId,
-            terminalLayoutsByTabId,
+            // Why spread: the rows and the bulk selector must classify from the identical binding
+            // inputs. Re-listing them here let the row path miss deferred SSH sessions, so their
+            // single-row kill skipped confirmation while bulk cleanup correctly spared them (#8459).
+            ...resourceSessionBindings,
             runtimePaneTitlesByTabId,
-            workspaceSessionReady,
             repoDisplayNameById,
             repoConnectionIdById,
             repoRuntimeScopedById,
@@ -947,11 +947,8 @@ export function ResourceUsageStatusSegment({
       open,
       resourceSnapshot,
       sessions,
-      tabsByWorktree,
-      ptyIdsByTabId,
-      terminalLayoutsByTabId,
+      resourceSessionBindings,
       runtimePaneTitlesByTabId,
-      workspaceSessionReady,
       repoDisplayNameById,
       repoConnectionIdById,
       repoRuntimeScopedById,
