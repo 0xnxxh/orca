@@ -3133,12 +3133,17 @@ export function reconcileRemoteCodexState(
   if (payload.subagents) {
     seedCodexSubagentRoster(roster, payload.subagents)
   }
+  let leadStopWithLiveSubagents = false
   if (agentId) {
     if (eventName === 'SubagentStop') {
       finishCodexSubagent(roster, agentId)
     }
   } else {
     const leadState = codexLeadStateForHookEvent(eventName)
+    // Why: same pre-reap capture as the local path — SSH/relay panes reach the notification
+    // coordinator through here, so without it remote Codex leads keep spamming (#4375).
+    leadStopWithLiveSubagents =
+      eventName === 'Stop' && codexRosterEffectiveState(roster, 'done') !== 'done'
     if (eventName === 'SessionStart' || eventName === 'Stop') {
       roster.clear()
     }
@@ -3159,7 +3164,8 @@ export function reconcileRemoteCodexState(
     ...payload,
     state: codexRosterEffectiveState(roster, lead.state),
     model: lead.model ?? payload.model,
-    subagents: codexRosterToSnapshots(roster)
+    subagents: codexRosterToSnapshots(roster),
+    ...(leadStopWithLiveSubagents ? { leadStopWithLiveSubagents: true } : {})
   }
 }
 

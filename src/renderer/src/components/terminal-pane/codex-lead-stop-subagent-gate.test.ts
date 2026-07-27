@@ -7,6 +7,7 @@ import { dispatchTerminalNotification } from './use-notification-dispatch'
 import {
   createHookListenerState,
   normalizeHookPayload,
+  reconcileRemoteCodexState,
   type HookListenerState
 } from '../../../../shared/agent-hook-listener'
 import type { AgentHookSource } from '../../../../shared/agent-hook-relay'
@@ -277,6 +278,33 @@ describe('issue #4375 — non-turn-end notification spam', () => {
     const childStop = send('SubagentStop', { agent_id: 'child-1' })
     expect(childStop?.payload.state).toBe('done')
     expect(childStop?.payload.leadStopWithLiveSubagents).toBeUndefined()
+  })
+
+  it('gates a lead Stop arriving over SSH/relay, which reconciles on a separate path', () => {
+    // Why: remote panes never reach normalizeHookPayload's codex branch — the main process
+    // re-derives their roster in reconcileRemoteCodexState, which does its own reap. Without the
+    // same pre-reap capture there, the fix would cover local Codex only.
+    const listenerState: HookListenerState = createHookListenerState()
+    const remote = (
+      ev: string,
+      agentId: string | undefined,
+      payload: Parameters<typeof reconcileRemoteCodexState>[4],
+      previous?: Parameters<typeof reconcileRemoteCodexState>[5]
+    ): ReturnType<typeof reconcileRemoteCodexState> =>
+      reconcileRemoteCodexState(listenerState, PANE_KEY, ev, agentId, payload, previous)
+
+    const working = { state: 'working', prompt: 'go', agentType: 'codex' } as const
+    remote('UserPromptSubmit', undefined, { ...working })
+    // The relay reports the live child roster alongside the lead's own state.
+    remote('SubagentStart', 'child-1', {
+      ...working,
+      subagents: [{ id: 'child-1', state: 'working', agentType: 'reviewer', startedAt: Date.now() }]
+    })
+
+    const leadStop = remote('Stop', undefined, { state: 'done', prompt: 'go', agentType: 'codex' })
+    expect(leadStop.state).toBe('done')
+    expect(leadStop.subagents).toBeUndefined()
+    expect(leadStop.leadStopWithLiveSubagents).toBe(true)
   })
 
   // KNOWN-OPEN residual, deliberately out of scope for the roster fix. A bare mid-turn
