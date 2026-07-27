@@ -24,7 +24,17 @@ export default function DialogFrame({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[calc(100vh-2rem)] flex-col overflow-hidden sm:max-w-lg">
+      <DialogContent
+        className="flex max-h-[calc(100vh-2rem)] flex-col overflow-hidden sm:max-w-lg"
+        // Mirror the real composer: focus the name field, not whatever Radix
+        // picks first (which would pop the Add-project tooltip on open).
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          ;(event.currentTarget as HTMLElement)
+            .querySelector<HTMLElement>('[data-lab-name-input="true"]')
+            ?.focus({ preventScroll: true })
+        }}
+      >
         <DialogTitle className="text-base font-semibold">Create worktree</DialogTitle>
         <div className="min-w-0 space-y-4">
           <Component
@@ -38,6 +48,7 @@ export default function DialogFrame({
             <label className="block text-xs font-medium text-muted-foreground">Name</label>
             <input
               type="text"
+              data-lab-name-input="true"
               placeholder="Search issues, PRs, or branches"
               className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1.5 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
             />

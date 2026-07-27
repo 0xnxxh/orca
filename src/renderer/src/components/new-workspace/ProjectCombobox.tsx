@@ -239,7 +239,14 @@ export default function ProjectCombobox({
       <PopoverContent
         align="start"
         sideOffset={4}
-        className="flex w-[var(--radix-popover-trigger-width)] min-w-[17rem] flex-col p-0"
+        // Why opaque + no fade: this popover lands directly on the composer
+        // dialog, not the app canvas. The shared surface is translucent and
+        // fades 0→1, so mid-animation the Name field underneath reads straight
+        // through the list — two layers at once, which is the "double flash".
+        // An opaque surface that zooms without fading resolves it. (`bg-popover`
+        // alone loses to the primitive's arbitrary-value background, hence the
+        // matching arbitrary form.) Every other caller keeps the blur and fade.
+        className="flex w-[var(--radix-popover-trigger-width)] min-w-[17rem] flex-col bg-[var(--popover)] p-0 data-[state=closed]:fade-out-100 data-[state=open]:fade-in-100 dark:bg-[var(--popover)]"
         // Focus stays in the field — it's the search box — so the popover must
         // not steal it on open, nor yank it back on close after a pick.
         onOpenAutoFocus={(event) => event.preventDefault()}
@@ -265,7 +272,10 @@ export default function ProjectCombobox({
             className="max-h-72 min-h-0 flex-1 overflow-y-auto p-1 scrollbar-sleek"
           >
             {matches.length === 0 ? (
-              <p className="px-2 py-5 text-center text-[13px] text-muted-foreground">
+              // Why: sized and aligned like a row rather than a centred block —
+              // a tall centred panel next to 32px rows reads as a different
+              // kind of surface and makes an empty result feel like an error.
+              <p className="flex h-8 items-center px-2 text-sm text-muted-foreground">
                 {options.length === 0
                   ? translate(
                       'auto.components.new.workspace.ProjectCombobox.noProjects',
