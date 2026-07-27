@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 // Benchmark: routing one `fs.changed` relay notification to SSH watch registrations.
 //
+// Run with:  npx tsx config/scripts/ssh-watch-fanout-benchmark.mjs
+// The bare `node` shebang will NOT work: this imports cross-platform-path.ts directly
+// so both arms fold paths exactly as production does, and plain node cannot load .ts.
+//
 // routeSshFilesystemWatchNotification called isPathInsideOrEqual(root, event.path)
 // for every (registration x event) pair. That helper NFC-normalizes BOTH sides, so
 // each event path was re-normalized once per watch root, and each root was
@@ -122,10 +126,25 @@ function collect(roots, events, route) {
   return seen.join('\n')
 }
 
+const ROUNDS = 6
+
+function timeArm(route, roots, events) {
+  const noop = () => undefined
+  const start = performance.now()
+  for (let index = 0; index < ITERATIONS; index += 1) {
+    route(roots, events, noop)
+  }
+  return (performance.now() - start) / ITERATIONS
+}
+
 // Why interleaved: running one arm's whole batch before the other's lets CPU
 // frequency drift and background load correlate with the arm being measured. On a
-// loaded machine that alone swung the 12x200 row between 6.7x and 23.3x. Alternating
-// per round and taking per-arm medians keeps the drift common to both.
+// loaded machine that alone swung the 12x200 row between 6.7x and 23.3x.
+//
+// Why the order also flips: measuring `before` first in every round would hand the
+// second slot to `after` every time, so any within-round drift (thermal ramp, a GC
+// settling) would bias the ratio one way. An even ROUNDS count gives each arm the
+// first slot exactly half the time, and the per-arm median absorbs the rest.
 function measureInterleaved(roots, events) {
   const noop = () => undefined
   for (let index = 0; index < WARMUP; index += 1) {
@@ -134,22 +153,23 @@ function measureInterleaved(roots, events) {
   }
   const beforeSamples = []
   const afterSamples = []
-  for (let round = 0; round < 5; round += 1) {
-    let start = performance.now()
-    for (let index = 0; index < ITERATIONS; index += 1) {
-      routeBefore(roots, events, noop)
+  for (let round = 0; round < ROUNDS; round += 1) {
+    if (round % 2 === 0) {
+      beforeSamples.push(timeArm(routeBefore, roots, events))
+      afterSamples.push(timeArm(routeAfter, roots, events))
+    } else {
+      afterSamples.push(timeArm(routeAfter, roots, events))
+      beforeSamples.push(timeArm(routeBefore, roots, events))
     }
-    beforeSamples.push((performance.now() - start) / ITERATIONS)
-
-    start = performance.now()
-    for (let index = 0; index < ITERATIONS; index += 1) {
-      routeAfter(roots, events, noop)
-    }
-    afterSamples.push((performance.now() - start) / ITERATIONS)
   }
-  beforeSamples.sort((a, b) => a - b)
-  afterSamples.sort((a, b) => a - b)
-  return { beforeMs: beforeSamples[2], afterMs: afterSamples[2] }
+  return { beforeMs: median(beforeSamples), afterMs: median(afterSamples) }
+}
+
+// Why the mean of the middle pair: ROUNDS is even, so there is no single midpoint.
+function median(samples) {
+  const sorted = [...samples].sort((a, b) => a - b)
+  const mid = sorted.length / 2
+  return (sorted[mid - 1] + sorted[mid]) / 2
 }
 
 const pad = (value, width) => String(value).padStart(width)
