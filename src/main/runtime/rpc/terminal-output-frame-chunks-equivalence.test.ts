@@ -237,6 +237,16 @@ describe('iterateTerminalOutputFrameChunks equivalence with the pre-optimization
     }
   })
 
+  it('preserves legacy addition rounding for unsafe sequence values', () => {
+    const data = 'x'.repeat(TERMINAL_STREAM_CHUNK_BYTES + 1)
+    const seq = 9_007_199_254_740_994
+    const meta = seqPreservingMeta(data, seq)
+
+    expectEquivalent(data, meta, 'unsafe seq rounding')
+    const frames = [...iterateTerminalOutputFrameChunks(data, meta)]
+    expect(frames.at(-1)?.seq).toBe(9_007_199_254_740_992)
+  })
+
   it('matches on multi-byte-only payloads at every UTF-8 width', () => {
     // UTF-8 width boundaries: 1|2 at U+0080, 2|3 at U+0800, 3|4 at U+10000.
     for (const unit of [

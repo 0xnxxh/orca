@@ -79,7 +79,7 @@ const CLIPBOARD_SOURCE = readFileSync(
 // the function would satisfy a substring check.
 for (const [source, label, marker] of [
   [CHUNK_SOURCE, 'terminal-output-frame-chunks.ts', "Buffer.byteLength(data, 'utf8')"],
-  [CHUNK_SOURCE, 'terminal-output-frame-chunks.ts', 'text: data.slice(chunkStart, end)'],
+  [CHUNK_SOURCE, 'terminal-output-frame-chunks.ts', 'const text = data.slice(chunkStart, end)'],
   [CHUNK_SOURCE, 'terminal-output-frame-chunks.ts', 'data.charCodeAt(index + 1)'],
   [CLIPBOARD_SOURCE, 'clipboard-text.ts', 'export function measureClipboardTextByteLength('],
   [CLIPBOARD_SOURCE, 'clipboard-text.ts', 'text.codePointAt(index)']

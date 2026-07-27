@@ -53,11 +53,12 @@ export function* iterateTerminalOutputFrameChunks(
   let delayedChunk: { text: string; seq?: number } | null = null
 
   // Why two offsets instead of an accumulator: the emitted text is always the contiguous
-  // substring from chunkStart to end, and startSeq + chunkStart + text.length is startSeq + end.
+  // substring from chunkStart to end. Keep the legacy addition order for unsafe sequence values.
   const takeChunk = (end: number): { text: string; seq?: number } => {
+    const text = data.slice(chunkStart, end)
     const current = {
-      text: data.slice(chunkStart, end),
-      seq: canPreserveChunkSeq ? startSeq! + end : undefined
+      text,
+      seq: canPreserveChunkSeq ? startSeq! + chunkStart + text.length : undefined
     }
     chunkStart = end
     chunkBytes = 0
