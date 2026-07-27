@@ -103,6 +103,64 @@ describe('extractAndroidVersionCandidates', () => {
     expect(getRecommendedAndroidVersion(1_000)).toBeNull()
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it('retries a cold failure well before the success TTL', async () => {
+    let networkUp = false
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('/git/matching-refs/')
+        ? networkUp
+          ? jsonResponse([{ ref: 'refs/tags/mobile-android-v0.0.50' }])
+          : jsonResponse({ message: 'offline' }, 503)
+        : jsonResponse({
+            tag_name: 'mobile-android-v0.0.50',
+            draft: false,
+            assets: [{ name: 'app-release.apk' }]
+          })
+    )
+    __setAndroidReleaseFeedFetcherForTests(fetchMock)
+
+    // Cold failure: no prior known version, so the host advertises nothing.
+    expect(getRecommendedAndroidVersion(1_000)).toBeNull()
+    await vi.waitFor(() => expect(isAndroidReleaseFeedRefreshPending()).toBe(false))
+    expect(fetchMock).toHaveBeenCalledOnce()
+
+    // Still inside the short failure TTL — no retry yet.
+    expect(getRecommendedAndroidVersion(9 * 60_000)).toBeNull()
+    expect(fetchMock).toHaveBeenCalledOnce()
+
+    // Past the failure TTL but far inside the 6h success TTL: retry anyway.
+    networkUp = true
+    expect(getRecommendedAndroidVersion(11 * 60_000)).toBeNull()
+    await vi.waitFor(() => expect(isAndroidReleaseFeedRefreshPending()).toBe(false))
+
+    expect(getRecommendedAndroidVersion(11 * 60_000)).toBe('0.0.50')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not re-fetch a successful refresh before the 6h TTL', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('/git/matching-refs/')
+        ? jsonResponse([{ ref: 'refs/tags/mobile-android-v0.0.51' }])
+        : jsonResponse({
+            tag_name: 'mobile-android-v0.0.51',
+            draft: false,
+            assets: [{ name: 'app-release.apk' }]
+          })
+    )
+    __setAndroidReleaseFeedFetcherForTests(fetchMock)
+
+    expect(getRecommendedAndroidVersion(1_000)).toBeNull()
+    await vi.waitFor(() => expect(isAndroidReleaseFeedRefreshPending()).toBe(false))
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    // Well past the failure TTL, still inside the success TTL — no refresh.
+    expect(getRecommendedAndroidVersion(60 * 60_000)).toBe('0.0.51')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    // Past 6h: a success does eventually revalidate.
+    expect(getRecommendedAndroidVersion(7 * 60 * 60_000)).toBe('0.0.51')
+    expect(isAndroidReleaseFeedRefreshPending()).toBe(true)
+  })
 })
 
 function jsonResponse(body: unknown, status = 200): Response {

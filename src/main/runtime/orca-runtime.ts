@@ -3687,9 +3687,6 @@ export class OrcaRuntimeService {
       hostPlatform: process.platform,
       terminalWindowsShell: this.store?.getSettings?.().terminalWindowsShell ?? null,
       floatingWorkspaceEnabled: this.store?.getSettings?.().floatingTerminalEnabled !== false,
-      // Why: the main process stamps its version into the env at startup;
-      // omit rather than fabricate when running outside that bootstrap (tests).
-      appVersion: process.env.ORCA_APP_VERSION,
       // Why: derived live from GitHub Releases (cached, fail-open) instead of a
       // hand-bumped constant, so releases need no recommendation bookkeeping; omitted
       // entirely when unknown. iOS defers to the App Store (no soft nudge).

@@ -1763,16 +1763,6 @@ describe('OrcaRuntimeService', () => {
     expect(status.minCompatibleMobileVersion).toBeGreaterThanOrEqual(0)
   })
 
-  it('reports app version on status', () => {
-    vi.stubEnv('ORCA_APP_VERSION', '9.9.9-test')
-    try {
-      const status = createRuntime().getStatus()
-      expect(status.appVersion).toBe('9.9.9-test')
-    } finally {
-      vi.unstubAllEnvs()
-    }
-  })
-
   it('omits an unknown mobile recommendation, then reports cached Android', () => {
     __setAndroidReleaseFeedCacheForTests(null)
     try {

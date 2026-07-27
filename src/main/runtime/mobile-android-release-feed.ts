@@ -12,6 +12,11 @@ const FETCH_TIMEOUT_MS = 5000
 // Why: a mobile build ships ~monthly, so a long TTL keeps this to a few
 // unauthenticated GitHub calls per day per host while staying fresh enough.
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000
+// Why: a cold failure (autostart before Wi-Fi/VPN associates) would otherwise black
+// out the nudge for a full TTL, and mobile schedules no follow-up read once the
+// refresh settles. Retry soon instead; a 10-minute floor is ~6 calls/hour against
+// GitHub's 60/hr unauthenticated budget.
+const FAILED_CACHE_TTL_MS = 10 * 60 * 1000
 // Why: only exact Android release tags count, so suffixed RC builds never nudge stable users.
 const ANDROID_TAG_REF_RE = /^refs\/tags\/mobile-android-v(\d+\.\d+\.\d+)$/
 // Why: malformed/orphaned tags must not turn one refresh into unbounded API fanout.
@@ -30,6 +35,7 @@ type AndroidRelease = {
 type CacheState = {
   version: string | null
   fetchedAt: number
+  failed: boolean
 }
 
 type GitHubResponse = Pick<Response, 'ok' | 'status' | 'json'>
@@ -132,12 +138,15 @@ function refreshInBackground(now: number): void {
   inFlight = fetchLatestAndroidVersion()
     .then((version) => {
       // Why: keep the last-known version on a failed refresh (null result) so a
-      // transient outage doesn't drop an already-correct nudge; only the
-      // timestamp advances, deferring the next retry by one TTL.
-      cache = { version: version ?? cache?.version ?? null, fetchedAt: now }
+      // transient outage doesn't drop an already-correct nudge.
+      cache = {
+        version: version ?? cache?.version ?? null,
+        fetchedAt: now,
+        failed: version === null
+      }
     })
     .catch(() => {
-      cache = { version: cache?.version ?? null, fetchedAt: now }
+      cache = { version: cache?.version ?? null, fetchedAt: now, failed: true }
     })
     .finally(() => {
       inFlight = null
@@ -149,7 +158,8 @@ function refreshInBackground(now: number): void {
 // (stale-while-revalidate). First call returns null (no banner) until the first
 // fetch lands, which is the correct fail-open default.
 export function getRecommendedAndroidVersion(nowMs: number): string | null {
-  if (cache === null || nowMs - cache.fetchedAt > CACHE_TTL_MS) {
+  const ttl = cache?.failed === true ? FAILED_CACHE_TTL_MS : CACHE_TTL_MS
+  if (cache === null || nowMs - cache.fetchedAt > ttl) {
     refreshInBackground(nowMs)
   }
   return cache?.version ?? null
@@ -169,7 +179,7 @@ export function __resetAndroidReleaseFeedCacheForTests(): void {
 // Test-only: seed the cache with a fresh value so status.get reads it without
 // hitting the network.
 export function __setAndroidReleaseFeedCacheForTests(version: string | null): void {
-  cache = { version, fetchedAt: Date.now() }
+  cache = { version, fetchedAt: Date.now(), failed: false }
   inFlight = null
 }
 

@@ -90,8 +90,6 @@ export type RuntimeStatus = {
   // Why: mobile gates its Floating Workspace entry on this; absent on older
   // hosts, false when the user disabled the feature in desktop settings.
   floatingWorkspaceEnabled?: boolean
-  // Why: this host's own app version (semver); informational only, never gating.
-  appVersion?: string
   // Why: per-platform release trains can diverge; absent on older hosts and
   // mobile fails open (no update nudge).
   recommendedMobileAppVersions?: RecommendedMobileAppVersions
