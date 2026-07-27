@@ -4,7 +4,6 @@ import { isAbsolute, join } from 'node:path'
 import os from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type Tray } from 'electron'
 import { electronApp, is } from '@electron-toolkit/utils'
-import * as QRCode from 'qrcode'
 import {
   Store,
   initDataPath,
@@ -174,7 +173,7 @@ import { prepareLegacySharedCodexSessionResume } from './codex/codex-legacy-sess
 import { resolveHostCodexSessionSourceHome } from './codex/codex-session-source-home'
 import type { CodexSessionResumePreparation } from './codex/codex-session-resume-home'
 import { prepareCodexSessionResume } from './codex/codex-session-resume-preparation'
-import { getSystemCodexHomePath } from './codex/codex-home-paths'
+import { getOrcaManagedCodexHomePath, getSystemCodexHomePath } from './codex/codex-home-paths'
 import { normalizeRuntimePathForComparison } from '../shared/cross-platform-path'
 import type { AgentProviderSessionMetadata } from '../shared/agent-session-resume'
 import { getDefaultWslDistro } from './wsl'
@@ -854,6 +853,14 @@ async function prepareCodexSessionResumeForLaunch(args: {
     sessionId: args.providerSession.id,
     transcriptPath: args.providerSession.transcriptPath,
     trustedCodexHomes: trustedHomes,
+    // Why: the legacy id rescan's winning home becomes this pane's CODEX_HOME, i.e. its account;
+    // rank it by the current selection so settings insertion order can never decide the account.
+    // Lazy: only the legacy branch ranks, so a provenance-present resume never stats the marker.
+    getSelectedAccountCodexHome: () => codexRuntimeHome!.getSelectedHostAccountCodexHomePath(),
+    systemCodexHomePath: systemHomePath,
+    // Why: the mirror winning is what triggers the migration into ~/.codex below, so it must
+    // outrank the path-sorted account homes or a system-default selection resumes as an account.
+    sharedRuntimeCodexHomePath: getOrcaManagedCodexHomePath(),
     resolveVerifiedResumeHome: async (sessionSource) => {
       let migrated = { useRealCodexHome: false }
       try {
@@ -1551,6 +1558,9 @@ function getBundledWebClientRoot(): string | undefined {
 }
 
 async function renderTerminalPairingQr(pairingUrl: string): Promise<string | null> {
+  // Why dynamic: qrcode is only reachable from mobile pairing, so launch should
+  // not parse it for the majority who never pair a device.
+  const QRCode = await import('qrcode')
   try {
     return await QRCode.toString(pairingUrl, { type: 'terminal', small: true })
   } catch {

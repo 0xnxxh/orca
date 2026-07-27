@@ -1864,6 +1864,11 @@ describe('registerPtyHandlers', () => {
             sessionId: providerSession.id,
             transcriptPath: providerSession.transcriptPath,
             trustedCodexHomes: trustedHomes,
+            // Why: these cases assert the argv drop, never the legacy rescan's home ranking
+            // (#10801) — each passes a single trusted home, so no ranking can move the winner.
+            getSelectedAccountCodexHome: () => null,
+            systemCodexHomePath: null,
+            sharedRuntimeCodexHomePath: null,
             fileIsRegular: () => true,
             resolveVerifiedResumeHome: async (source) => source.homePath
           })
