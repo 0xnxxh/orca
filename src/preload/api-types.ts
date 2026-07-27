@@ -344,7 +344,11 @@ import type {
   ShellOpenLocalPathResult
 } from '../shared/shell-open-types'
 import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../shared/skills'
-import type { SkillFreshnessInventory } from '../shared/skill-freshness'
+import type {
+  SkillFreshnessInventory,
+  SkillUpdateRun,
+  SkillUpdateStartResult
+} from '../shared/skill-freshness'
 import type {
   CrashReportBreadcrumbData,
   CrashReportCopyDiagnosticsArgs,
@@ -2321,6 +2325,11 @@ export type PreloadApi = {
   skills: {
     discover: (target?: SkillDiscoveryTarget) => Promise<SkillDiscoveryResult>
     freshnessInventory: () => Promise<SkillFreshnessInventory>
+    startUpdateRun: (names: string[]) => Promise<SkillUpdateStartResult>
+    cancelUpdateRun: () => Promise<void>
+    acknowledgeUpdateRun: () => Promise<void>
+    getUpdateRun: () => Promise<SkillUpdateRun>
+    onUpdateRun: (callback: (run: SkillUpdateRun) => void) => () => void
   }
   pet: {
     import: () => Promise<CustomPet | null>

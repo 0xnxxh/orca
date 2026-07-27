@@ -3344,6 +3344,19 @@
                 "rssDescription": "常駐セットサイズ（RSS）の合計です。共有ページやエイリアスされたページは複数のプロセスに含まれる場合があります。"
               }
             }
+          },
+          "SkillUpdateStatusSegment": {
+            "runningLabel": "Updating skills",
+            "runningOne": "Updating {{value0}}…",
+            "runningMany": "Updating {{value0}} skills…",
+            "runningAria": "Skills updating. Click to open details.",
+            "successLabel": "Skills updated",
+            "successOne": "Updated {{value0}}",
+            "successMany": "Updated {{value0}} skills",
+            "successAria": "Skills updated. Click to open details.",
+            "errorLabel": "Update failed",
+            "errorTooltip": "Skill update failed — click to see details",
+            "errorAria": "Skill update failed. Click to open details."
           }
         }
       },
@@ -3755,12 +3768,26 @@
           "success": "インストール済みの Orca スキルはすべて最新です。",
           "attention": "一部のインストール済み Orca スキルは自動的に更新できません。",
           "attentionDescription": "更新できない理由は、更新の詳細を開いて確認してください。",
-          "details": "更新の詳細",
-          "terminalTitle": "Orca スキルを更新",
-          "terminalDescription": "入力済みのコマンドを確認し、Enter キーを押して実行してください。",
-          "terminalAria": "Orca スキル更新ターミナル",
           "checkNow": "今すぐ確認",
-          "close": "閉じる"
+          "close": "閉じる",
+          "blockedOne": "1 skill can't be updated automatically.",
+          "blockedMany": "{{value0}} skills can't be updated automatically.",
+          "runningOne": "Updating 1 skill…",
+          "runningMany": "Updating {{value0}} skills…",
+          "runningDescription": "You can close this window — it keeps running in the background.",
+          "progressAria": "Updating skills",
+          "updatedOne": "Updated 1 skill",
+          "updatedMany": "Updated {{value0}} skills",
+          "updatedPartial": "Updated {{value0}} of {{value1}} skills",
+          "errorTitle": "The update didn't finish",
+          "retry": "Retry",
+          "copyCommand": "Copy command",
+          "copied": "Copied",
+          "showLog": "Show log",
+          "updating": "Updating…",
+          "updateActionOne": "Update 1 skill",
+          "updateActionMany": "Update {{value0}} skills",
+          "done": "Done"
         },
         "SkillFreshnessStatusPill": {
           "updateAvailable": "更新があります",
@@ -3768,6 +3795,9 @@
           "installed": "インストール済み",
           "details": "Details",
           "needsAttention": "Needs attention"
+        },
+        "SkillUpdateResultRows": {
+          "stillOutdated": "Still out of date after the update ran."
         }
       },
       "sidebar": {

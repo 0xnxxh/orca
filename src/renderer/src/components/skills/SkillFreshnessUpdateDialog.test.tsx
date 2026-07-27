@@ -1,30 +1,25 @@
 // @vitest-environment happy-dom
 
-import { act, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { act, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   SkillFreshnessInstallation,
-  SkillFreshnessInventory
+  SkillFreshnessInventory,
+  SkillUpdateRun
 } from '../../../../shared/skill-freshness'
 import { SkillFreshnessUpdateDialog } from './SkillFreshnessUpdateDialog'
 import {
   consumeSkillFreshnessUpdateDialogRequest,
   requestSkillFreshnessUpdateDialog
 } from './skill-freshness-update-dialog'
+import { _resetSkillUpdateRunStore } from './skill-update-run-store'
 
 const mocks = vi.hoisted(() => ({
   inventory: null as SkillFreshnessInventory | null,
   loading: false,
   error: null as string | null,
   refresh: vi.fn(),
-  terminalProps: [] as {
-    command: string
-    description: string
-    onInteracted?: (method: 'keyboard' | 'pointer', event?: { key?: string }) => void
-    onTerminalExit?: () => void
-  }[],
-  terminalCommits: [] as [command: string, inert: boolean][],
   notifyChanged: vi.fn()
 }))
 
@@ -39,25 +34,6 @@ vi.mock('@/hooks/useSkillFreshness', () => ({
 
 vi.mock('@/hooks/useInstalledAgentSkills', () => ({
   notifyInstalledAgentSkillsChanged: mocks.notifyChanged
-}))
-
-vi.mock('@/components/onboarding/OnboardingInlineCommandTerminal', () => ({
-  OnboardingInlineCommandTerminal: (props: (typeof mocks.terminalProps)[number]) => {
-    const terminalRef = useRef<HTMLDivElement>(null)
-    mocks.terminalProps.push(props)
-    useLayoutEffect(() => {
-      mocks.terminalCommits.push([
-        props.command,
-        terminalRef.current?.parentElement?.inert ?? false
-      ])
-    })
-    return (
-      <div ref={terminalRef} data-testid="update-terminal">
-        {props.command}
-        <textarea data-testid="update-terminal-input" />
-      </div>
-    )
-  }
 }))
 
 // Radix Dialog/Collapsible internals (portal, focus-scope) are exercised in
@@ -80,14 +56,24 @@ vi.mock('@/components/ui/collapsible', () => ({
     children?: ReactNode
     defaultOpen?: boolean
   }) => {
-    // Model Radix's uncontrolled default: changing defaultOpen only matters
-    // when the keyed disclosure remounts.
     const [open] = useState(defaultOpen)
     return <div data-collapsible-open={String(open)}>{children}</div>
   },
   CollapsibleTrigger: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
   CollapsibleContent: ({ children }: { children?: ReactNode }) => <div>{children}</div>
 }))
+
+const skillsApi = {
+  startUpdateRun: vi.fn(async () => ({ started: true as const })),
+  cancelUpdateRun: vi.fn(async () => {}),
+  acknowledgeUpdateRun: vi.fn(async () => {}),
+  getUpdateRun: vi.fn(async (): Promise<SkillUpdateRun> => ({ state: 'idle' })),
+  onUpdateRun: vi.fn((callback: (run: SkillUpdateRun) => void) => {
+    pushRun = callback
+    return () => {}
+  })
+}
+let pushRun: ((run: SkillUpdateRun) => void) | null = null
 
 function placement(
   name: string,
@@ -149,26 +135,41 @@ async function openViaRequest(): Promise<void> {
   })
 }
 
-async function clickButton(label: string): Promise<void> {
-  const button = Array.from(container?.querySelectorAll('button') ?? []).find(
+function findButton(label: string): HTMLButtonElement | undefined {
+  return Array.from(container?.querySelectorAll('button') ?? []).find(
     (candidate) => candidate.textContent?.trim() === label
   )
-  expect(button).toBeDefined()
+}
+
+async function clickButton(label: string): Promise<void> {
+  const button = findButton(label)
+  expect(button, `expected a "${label}" button`).toBeDefined()
   await act(async () => {
     button?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  })
+}
+
+async function emitRun(run: SkillUpdateRun): Promise<void> {
+  await act(async () => {
+    pushRun?.(run)
   })
 }
 
 describe('SkillFreshnessUpdateDialog', () => {
   beforeEach(() => {
     consumeSkillFreshnessUpdateDialogRequest()
+    _resetSkillUpdateRunStore()
+    pushRun = null
     mocks.inventory = eligibleInventory()
     mocks.loading = false
     mocks.error = null
     mocks.refresh.mockReset()
     mocks.notifyChanged.mockReset()
-    mocks.terminalProps.length = 0
-    mocks.terminalCommits.length = 0
+    skillsApi.startUpdateRun.mockClear()
+    skillsApi.cancelUpdateRun.mockClear()
+    skillsApi.acknowledgeUpdateRun.mockClear()
+    skillsApi.getUpdateRun.mockClear()
+    ;(window as unknown as { api: { skills: typeof skillsApi } }).api = { skills: skillsApi }
   })
 
   afterEach(async () => {
@@ -185,233 +186,147 @@ describe('SkillFreshnessUpdateDialog', () => {
     expect(container?.querySelector('[data-dialog-open]')).toBeNull()
   })
 
-  it('shows the eligible summary and the exact pre-filled draft command', async () => {
+  it('offers a primary update action and never renders a terminal', async () => {
     await renderDialog()
     await openViaRequest()
 
     expect(container?.textContent).toContain('Update skills')
-    expect(container?.textContent).toContain('1 skill can be updated safely')
-    expect(mocks.terminalProps.at(-1)).toMatchObject({
-      command: 'npx skills update orca-cli --global',
-      description: 'Review the pre-filled command, then press Enter to run it.'
-    })
+    expect(container?.textContent).toContain('1 update available')
+    expect(findButton('Update 1 skill')).toBeDefined()
+    expect(container?.querySelector('[data-testid="update-terminal"]')).toBeNull()
+    expect(container?.textContent).not.toContain('press Enter')
   })
 
-  it('resolves a request made before inventory loads once a safe command arrives', async () => {
-    mocks.inventory = null
-    await openViaRequest()
+  it('starts a background run with the eligible names', async () => {
     await renderDialog()
+    await openViaRequest()
+    await clickButton('Update 1 skill')
 
-    expect(container?.querySelector('[data-dialog-open]')).not.toBeNull()
-    expect(mocks.terminalProps).toEqual([])
+    expect(skillsApi.startUpdateRun).toHaveBeenCalledWith(['orca-cli'])
+  })
 
-    mocks.inventory = eligibleInventory()
-    await rerender()
+  it('shows indeterminate progress and says the run survives closing', async () => {
+    await renderDialog()
+    await openViaRequest()
+    await emitRun({ state: 'running', names: ['orca-cli'], startedAt: 1, output: '' })
 
-    expect(mocks.terminalProps.at(-1)?.command).toBe('npx skills update orca-cli --global')
+    expect(container?.textContent).toContain('Updating 1 skill…')
+    expect(container?.textContent).toContain('keeps running in the background')
+    expect(container?.querySelector('[role="progressbar"]')).not.toBeNull()
+    expect(
+      container?.querySelector('[data-skill-result="orca-cli"]')?.getAttribute('data-status')
+    ).toBe('pending')
+  })
+
+  it('does not cancel the run when the dialog is closed', async () => {
+    await renderDialog()
+    await openViaRequest()
+    await emitRun({ state: 'running', names: ['orca-cli'], startedAt: 1, output: '' })
+    await clickButton('Close')
+
+    expect(container?.querySelector('[data-dialog-open]')).toBeNull()
+    expect(skillsApi.cancelUpdateRun).not.toHaveBeenCalled()
+  })
+
+  it('reports per-skill success once the run settles', async () => {
+    await renderDialog()
+    await openViaRequest()
+    await emitRun({
+      state: 'success',
+      names: ['orca-cli'],
+      finishedAt: 2,
+      output: '✓ Updated 1 skill(s)'
+    })
+
+    expect(container?.textContent).toContain('Updated 1 skill')
+    expect(
+      container?.querySelector('[data-skill-result="orca-cli"]')?.getAttribute('data-status')
+    ).toBe('done')
+    expect(findButton('Done')).toBeDefined()
+    // The re-scan is what makes the result trustworthy, so it must be requested.
+    expect(mocks.notifyChanged).toHaveBeenCalled()
+  })
+
+  it('attributes failures to the names the re-scan says are still outdated', async () => {
+    mocks.inventory = {
+      schemaVersion: 1,
+      installations: [placement('orca-cli'), placement('orchestration')],
+      eligibleUpdateNames: ['orca-cli', 'orchestration'],
+      scannedAt: 1
+    }
+    await renderDialog()
+    await openViaRequest()
+    await emitRun({
+      state: 'error',
+      names: ['orca-cli', 'orchestration'],
+      failedNames: ['orchestration'],
+      finishedAt: 3,
+      output: '✗ Failed to update orchestration',
+      message: 'skills update exited with code 1'
+    })
+
+    expect(container?.textContent).toContain('Updated 1 of 2 skills')
+    expect(
+      container?.querySelector('[data-skill-result="orca-cli"]')?.getAttribute('data-status')
+    ).toBe('done')
+    expect(
+      container?.querySelector('[data-skill-result="orchestration"]')?.getAttribute('data-status')
+    ).toBe('failed')
+    expect(container?.textContent).toContain('skills update exited with code 1')
+    expect(findButton('Retry')).toBeDefined()
+  })
+
+  it('shows the captured log verbatim without parsing it', async () => {
+    await renderDialog()
+    await openViaRequest()
+    await emitRun({
+      state: 'success',
+      names: ['orca-cli'],
+      finishedAt: 2,
+      output: 'Checking skills from source: stablyai/orca\n  ✓ Updated orca-cli'
+    })
+
+    expect(container?.querySelector('pre')?.textContent).toContain(
+      'Checking skills from source: stablyai/orca'
+    )
   })
 
   it('shows the up-to-date state once every installation is current', async () => {
-    await renderDialog()
-    await openViaRequest()
-    mocks.terminalCommits.length = 0
-
     mocks.inventory = {
       schemaVersion: 1,
-      installations: [
-        placement('orca-cli', { status: 'current', observedPackageDigest: 'current' })
-      ],
+      installations: [placement('orca-cli', { status: 'current', installedReleaseRevision: 2 })],
       eligibleUpdateNames: [],
       scannedAt: 2
     }
-    await rerender()
-
-    expect(mocks.terminalCommits).toContainEqual(['npx skills update orca-cli --global', true])
-    expect(container?.textContent).toContain('All installed Orca skills are up to date.')
-    expect(container?.querySelector('[data-testid="update-terminal"]')).toBeNull()
-  })
-
-  it('auto-expands Details when a rescan changes the result to blocked', async () => {
     await renderDialog()
     await openViaRequest()
-    expect(container?.querySelector('[data-collapsible-open="false"]')).not.toBeNull()
-
-    mocks.inventory = {
-      schemaVersion: 1,
-      installations: [placement('orca-cli', { topology: 'read-only' })],
-      eligibleUpdateNames: [],
-      scannedAt: 2
-    }
-    await rerender()
-
-    expect(container?.querySelector('[data-collapsible-open="true"]')).not.toBeNull()
-  })
-
-  it('does not replace or tear down a submitted command during a rescan', async () => {
-    await renderDialog()
-    await openViaRequest()
-
-    await act(async () => {
-      mocks.terminalProps.at(-1)?.onInteracted?.('keyboard', { key: 'Enter' })
-    })
-    mocks.inventory = null
-    mocks.loading = true
-    await rerender()
-
-    expect(container?.querySelector('[data-testid="update-terminal"]')?.textContent).toBe(
-      'npx skills update orca-cli --global'
-    )
-
-    mocks.inventory = {
-      schemaVersion: 1,
-      installations: [
-        placement('orca-cli', { status: 'current', observedPackageDigest: 'current' })
-      ],
-      eligibleUpdateNames: [],
-      scannedAt: 2
-    }
-    mocks.loading = false
-    await rerender()
 
     expect(container?.textContent).toContain('All installed Orca skills are up to date.')
-    expect(container?.querySelector('[data-testid="update-terminal"]')?.textContent).toBe(
-      'npx skills update orca-cli --global'
-    )
+    expect(findButton('Update 1 skill')).toBeUndefined()
   })
 
-  it('keeps the same terminal inert while inventory is revalidated', async () => {
-    await renderDialog()
-    await openViaRequest()
-    const firstTerminal = container?.querySelector('[data-testid="update-terminal"]')
-    const terminalInput = container?.querySelector<HTMLTextAreaElement>(
-      '[data-testid="update-terminal-input"]'
-    )
-    const terminalWrapper = container?.querySelector<HTMLElement>('[data-skill-update-terminal]')
-    terminalInput?.focus()
-    expect(firstTerminal).not.toBeNull()
-    expect(terminalWrapper?.hasAttribute('inert')).toBe(false)
-
-    mocks.inventory = null
-    mocks.loading = true
-    await rerender()
-
-    expect(container?.textContent).toContain('Checking installed Orca skills')
-    expect(container?.querySelector('[data-testid="update-terminal"]')).toBe(firstTerminal)
-    expect(terminalWrapper?.hasAttribute('inert')).toBe(true)
-    terminalInput?.blur()
-
-    mocks.inventory = { ...eligibleInventory(), scannedAt: 2 }
-    mocks.loading = false
-    await rerender()
-
-    expect(container?.querySelector('[data-testid="update-terminal"]')).toBe(firstTerminal)
-    expect(terminalWrapper?.hasAttribute('inert')).toBe(false)
-    expect(document.activeElement).toBe(terminalInput)
-
-    mocks.inventory = null
-    mocks.loading = true
-    await rerender()
-    const closeButton = Array.from(container?.querySelectorAll('button') ?? []).find(
-      (candidate) => candidate.textContent?.trim() === 'Close'
-    )
-    closeButton?.focus()
-    mocks.inventory = { ...eligibleInventory(), scannedAt: 3 }
-    mocks.loading = false
-    await rerender()
-
-    expect(document.activeElement).toBe(closeButton)
-  })
-
-  it('shows a failed scan as an error instead of indefinite progress', async () => {
-    mocks.inventory = null
-    mocks.error = 'Could not inspect installed skills.'
-    await renderDialog()
-    await openViaRequest()
-
-    expect(container?.textContent).toContain('Could not inspect installed skills.')
-    expect(container?.textContent).not.toContain('Checking installed Orca skills')
-    expect(container?.querySelector('[data-testid="update-terminal"]')).toBeNull()
-  })
-
-  it('creates a fresh draft after a terminal exits and the rescan still finds an update', async () => {
-    await renderDialog()
-    await openViaRequest()
-    const firstTerminal = mocks.terminalProps.at(-1)
-
-    await act(async () => {
-      firstTerminal?.onTerminalExit?.()
-    })
-    expect(mocks.notifyChanged).toHaveBeenCalledTimes(1)
-    expect(container?.querySelector('[data-testid="update-terminal"]')).toBeNull()
-
-    mocks.inventory = { ...eligibleInventory(), scannedAt: 2 }
-    await rerender()
-
-    expect(container?.querySelector('[data-testid="update-terminal"]')?.textContent).toBe(
-      'npx skills update orca-cli --global'
-    )
-    expect(mocks.terminalProps.at(-1)).not.toBe(firstTerminal)
-  })
-
-  it('explains a poisoned sibling in Details without offering a command', async () => {
+  it('keeps skills it cannot update visible with their reason', async () => {
     mocks.inventory = {
       schemaVersion: 1,
-      installations: [
-        placement('orca-cli'),
-        placement('orca-cli', {
-          id: 'repo-copy',
-          rootId: 'repo',
-          sourceKind: 'repo',
-          topology: 'repo-scope',
-          status: 'unrecognized',
-          unresolvedPath: '/repo/.agents/skills/orca-cli'
-        })
-      ],
+      installations: [placement('computer-use', { topology: 'repo-scope' })],
       eligibleUpdateNames: [],
-      scannedAt: 1
+      scannedAt: 3
     }
     await renderDialog()
     await openViaRequest()
 
-    expect(container?.textContent).toContain(
-      'it may be modified, or a different skill with the same name'
-    )
-    expect(container?.textContent).toContain('Unrecognized')
-    expect(container?.querySelector('[data-testid="update-terminal"]')).toBeNull()
+    expect(container?.textContent).toContain('computer-use')
+    expect(container?.textContent).toContain('Skipped')
   })
 
-  it('explains a self-blocked read-only placement without blaming a sibling', async () => {
-    mocks.inventory = {
-      schemaVersion: 1,
-      installations: [placement('orca-cli', { topology: 'read-only' })],
-      eligibleUpdateNames: [],
-      scannedAt: 1
-    }
+  it('surfaces a scan error instead of a stale summary', async () => {
+    mocks.inventory = null
+    mocks.error = 'Missing canonical agent skills root'
     await renderDialog()
     await openViaRequest()
+    await rerender()
 
-    expect(container?.textContent).toContain(
-      'read-only location, so Orca left it out of the update'
-    )
-    expect(container?.textContent).toContain('Read only')
-  })
-
-  it('re-inventories installed skills when the dialog closes', async () => {
-    await renderDialog()
-    await openViaRequest()
-
-    await clickButton('Close')
-
-    expect(mocks.notifyChanged).toHaveBeenCalledTimes(1)
-    expect(container?.querySelector('[data-dialog-open]')).toBeNull()
-  })
-
-  it('forces a re-check from the Re-check affordance', async () => {
-    await renderDialog()
-    await openViaRequest()
-
-    await clickButton('Re-check')
-
-    expect(mocks.refresh).toHaveBeenCalledTimes(1)
+    expect(container?.textContent).toContain('Missing canonical agent skills root')
+    expect(findButton('Update 1 skill')).toBeUndefined()
   })
 })

@@ -112,10 +112,13 @@ export function SkillFreshnessGroup({
         {group.locations.map((location) => (
           <div
             key={location.id}
-            className="flex min-w-0 flex-wrap items-center gap-2 border-l-2 border-border/60 pl-3"
+            className="flex min-w-0 items-center gap-2 border-l-2 border-border/60 pl-3"
           >
+            {/* Why: plugin-cache paths nest arbitrarily deep. Without an explicit
+                shrink basis the unbreakable string sets the dialog's width and
+                pushes the footer actions off-screen. */}
             <span
-              className="truncate font-mono text-[11px] text-muted-foreground"
+              className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
               title={location.path}
             >
               {location.path}
@@ -123,7 +126,7 @@ export function SkillFreshnessGroup({
             {location.chip ? (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Badge variant="outline" className="cursor-help border-dashed">
+                  <Badge variant="outline" className="shrink-0 cursor-help border-dashed">
                     {chipLabel(location.chip)}
                   </Badge>
                 </TooltipTrigger>

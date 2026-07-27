@@ -3344,6 +3344,19 @@
                 "rssDescription": "Suma del tamaño del conjunto residente (RSS). Las páginas compartidas o con alias pueden aparecer en más de un proceso."
               }
             }
+          },
+          "SkillUpdateStatusSegment": {
+            "runningLabel": "Updating skills",
+            "runningOne": "Updating {{value0}}…",
+            "runningMany": "Updating {{value0}} skills…",
+            "runningAria": "Skills updating. Click to open details.",
+            "successLabel": "Skills updated",
+            "successOne": "Updated {{value0}}",
+            "successMany": "Updated {{value0}} skills",
+            "successAria": "Skills updated. Click to open details.",
+            "errorLabel": "Update failed",
+            "errorTooltip": "Skill update failed — click to see details",
+            "errorAria": "Skill update failed. Click to open details."
           }
         }
       },
@@ -3755,12 +3768,26 @@
           "success": "Todas las skills de Orca instaladas están actualizadas.",
           "attention": "Algunas skills de Orca instaladas no se pueden actualizar automáticamente.",
           "attentionDescription": "Abre Detalles de la actualización para ver por qué no se puede actualizar cada una.",
-          "details": "Detalles de la actualización",
-          "terminalTitle": "Actualizar skills de Orca",
-          "terminalDescription": "Revisa el comando pre-rellenado y pulsa Intro para ejecutarlo.",
-          "terminalAria": "Terminal de actualización de skills de Orca",
           "checkNow": "Comprobar ahora",
-          "close": "Cerrar"
+          "close": "Cerrar",
+          "blockedOne": "1 skill can't be updated automatically.",
+          "blockedMany": "{{value0}} skills can't be updated automatically.",
+          "runningOne": "Updating 1 skill…",
+          "runningMany": "Updating {{value0}} skills…",
+          "runningDescription": "You can close this window — it keeps running in the background.",
+          "progressAria": "Updating skills",
+          "updatedOne": "Updated 1 skill",
+          "updatedMany": "Updated {{value0}} skills",
+          "updatedPartial": "Updated {{value0}} of {{value1}} skills",
+          "errorTitle": "The update didn't finish",
+          "retry": "Retry",
+          "copyCommand": "Copy command",
+          "copied": "Copied",
+          "showLog": "Show log",
+          "updating": "Updating…",
+          "updateActionOne": "Update 1 skill",
+          "updateActionMany": "Update {{value0}} skills",
+          "done": "Done"
         },
         "SkillFreshnessStatusPill": {
           "updateAvailable": "Actualización disponible",
@@ -3768,6 +3795,9 @@
           "installed": "Instalado",
           "details": "Details",
           "needsAttention": "Needs attention"
+        },
+        "SkillUpdateResultRows": {
+          "stillOutdated": "Still out of date after the update ran."
         }
       },
       "sidebar": {
