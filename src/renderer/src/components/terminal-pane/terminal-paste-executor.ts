@@ -1,4 +1,3 @@
-import { yieldToEventLoop } from '../../../../shared/event-loop-yield'
 import { BRACKETED_PASTE_END, BRACKETED_PASTE_START } from './terminal-bracketed-paste'
 import { iterateTerminalPastePlanChunks } from './terminal-paste-chunks'
 import { createRedactedPasteExecutionDiagnostic } from './terminal-paste-diagnostics'
@@ -31,7 +30,7 @@ export async function executeTerminalPastePlan(
     writePty,
     isTargetCurrent,
     canContinue,
-    yieldToEventLoop: yieldBetweenChunks = yieldToEventLoop,
+    yieldToEventLoop = defaultYieldToEventLoop,
     operationTimeoutMs = getTerminalPasteOperationTimeoutMs(plan),
     now = defaultNow
   }: ExecuteTerminalPastePlanArgs
@@ -102,7 +101,7 @@ export async function executeTerminalPastePlan(
     } else if (chunk === BRACKETED_PASTE_END) {
       bracketedPasteOpen = false
     }
-    await yieldBetweenChunks()
+    await yieldToEventLoop()
   }
   return finish('pasted', chunksWritten)
 }
@@ -140,4 +139,8 @@ function result(
 
 function defaultNow(): number {
   return globalThis.performance?.now?.() ?? Date.now()
+}
+
+function defaultYieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
 }

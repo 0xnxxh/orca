@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { yieldToEventLoop } from './event-loop-yield'
+import { getPendingRendererYieldCountForTesting, yieldToEventLoop } from './event-loop-yield'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -18,8 +18,9 @@ describe('yieldToEventLoop', () => {
     expect(scheduleImmediate).toHaveBeenCalledOnce()
   })
 
-  it('posts one macrotask per renderer yield', async () => {
+  it('releases callbacks during sustained concurrent renderer yields', async () => {
     const postMessage = vi.fn()
+    let peakPendingAfterResolution = 0
     vi.stubEnv('VITEST', 'false')
     vi.stubGlobal('window', {})
     vi.stubGlobal(
@@ -29,14 +30,25 @@ describe('yieldToEventLoop', () => {
         port2 = {
           postMessage: (data: unknown): void => {
             postMessage(data)
-            queueMicrotask(() => this.port1.onmessage?.({ data } as MessageEvent))
+            setTimeout(() => this.port1.onmessage?.({ data } as MessageEvent), 0)
           }
         }
       }
     )
 
-    await Promise.all([yieldToEventLoop(), yieldToEventLoop()])
+    const runProducer = async (): Promise<void> => {
+      for (let index = 0; index < 20; index += 1) {
+        await yieldToEventLoop()
+        peakPendingAfterResolution = Math.max(
+          peakPendingAfterResolution,
+          getPendingRendererYieldCountForTesting()
+        )
+      }
+    }
+    await Promise.all([runProducer(), runProducer()])
 
-    expect(postMessage).toHaveBeenCalledTimes(2)
+    expect(postMessage).toHaveBeenCalledTimes(40)
+    expect(peakPendingAfterResolution).toBeLessThanOrEqual(1)
+    expect(getPendingRendererYieldCountForTesting()).toBe(0)
   })
 })

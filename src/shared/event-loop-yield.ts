@@ -2,8 +2,8 @@ type ImmediateGlobal = typeof globalThis & {
   setImmediate?: (callback: () => void) => unknown
 }
 
-const pendingRendererYields: (() => void)[] = []
-let nextRendererYieldIndex = 0
+const pendingRendererYields = new Map<number, () => void>()
+let nextRendererYieldId = 0
 let rendererYieldChannel: MessageChannel | null = null
 
 function isVitestEnvironment(): boolean {
@@ -13,22 +13,25 @@ function isVitestEnvironment(): boolean {
 function getRendererYieldChannel(): MessageChannel {
   if (!rendererYieldChannel) {
     rendererYieldChannel = new globalThis.MessageChannel()
-    rendererYieldChannel.port1.onmessage = () => {
-      const resolve = pendingRendererYields[nextRendererYieldIndex]
+    rendererYieldChannel.port1.onmessage = (event) => {
+      const yieldId = event.data
+      const resolve = typeof yieldId === 'number' ? pendingRendererYields.get(yieldId) : undefined
       if (!resolve) {
         return
       }
-      nextRendererYieldIndex += 1
-      if (nextRendererYieldIndex === pendingRendererYields.length) {
-        pendingRendererYields.length = 0
-        nextRendererYieldIndex = 0
-      }
+      pendingRendererYields.delete(yieldId)
       resolve()
     }
   }
   return rendererYieldChannel
 }
 
+/** @internal */
+export function getPendingRendererYieldCountForTesting(): number {
+  return pendingRendererYields.size
+}
+
+/** Yields to another runnable task without a timer clamp when supported. */
 export function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => {
     // Vitest fake timers cannot advance MessageChannel tasks.
@@ -45,8 +48,10 @@ export function yieldToEventLoop(): Promise<void> {
 
     if (typeof globalThis.MessageChannel === 'function') {
       // Posted tasks avoid Chromium's nested-timer clamp while still yielding to input and paint.
-      pendingRendererYields.push(resolve)
-      getRendererYieldChannel().port2.postMessage(undefined)
+      const yieldId = nextRendererYieldId
+      nextRendererYieldId += 1
+      pendingRendererYields.set(yieldId, resolve)
+      getRendererYieldChannel().port2.postMessage(yieldId)
       return
     }
 
