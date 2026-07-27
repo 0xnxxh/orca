@@ -194,6 +194,27 @@ describe('sendMobileNativeChatMessage', () => {
     )
   })
 
+  it('sends the text verbatim when clearInputFirst is not set', async () => {
+    // An image send pastes the image (behind its own leading Ctrl+U) before this
+    // text write; a clear byte here would kill the pasted image off the input line.
+    const client = clientWithResponse({
+      id: 'request',
+      ok: true,
+      result: { send: { accepted: true } },
+      _meta: { runtimeId: 'runtime' }
+    })
+
+    await sendMobileNativeChatMessage({
+      client,
+      terminal: 'term',
+      text: 'what is this',
+      clearInputFirst: false
+    })
+    const sent = vi.mocked(client.sendRequest).mock.calls[0]?.[1] as { text: string }
+    expect(sent.text).toBe('what is this')
+    expect(sent.text.startsWith('\x15')).toBe(false)
+  })
+
   it('sends a single non-submitting Escape for prompt cancellation', async () => {
     const client = clientWithResponse({
       id: 'request',

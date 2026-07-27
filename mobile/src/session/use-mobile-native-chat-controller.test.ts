@@ -213,6 +213,27 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
     expect(restoreRejectedDraft).not.toHaveBeenCalled()
   })
 
+  it('pre-clears the input line for a text-only send but never for an image send', async () => {
+    // The image path pastes the image behind its OWN leading Ctrl+U and then calls
+    // this send; a second clear here wipes the image off the input line and the
+    // agent receives text alone while the echo bubble still shows the thumbnail.
+    sendWithOutcome.mockResolvedValue('accepted')
+
+    await act(async () => {
+      await controller!.handleNativeChatSend('answer')
+    })
+    expect(sendWithOutcome).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: 'answer', clearInputFirst: true })
+    )
+
+    await act(async () => {
+      await controller!.handleNativeChatSend('look', ['file:///a.jpg'])
+    })
+    expect(sendWithOutcome).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: 'look', clearInputFirst: false })
+    )
+  })
+
   it('holds an unknown-outcome send without posting the optimistic echo', async () => {
     sendWithOutcome.mockResolvedValue('unknown')
     let accepted = false
