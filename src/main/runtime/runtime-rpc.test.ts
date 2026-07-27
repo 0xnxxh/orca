@@ -367,14 +367,19 @@ describe('OrcaRuntimeRpcServer', () => {
 
   it('leaves runtime metadata owned by a live sibling runtime untouched', async () => {
     const userDataPath = mkdtempSync(join(tmpdir(), 'orca-runtime-rpc-'))
-    const server = new OrcaRuntimeRpcServer({ runtime: new OrcaRuntimeService(), userDataPath })
+    // Why: a synthetic owned pid frees the always-alive process.pid to stand in for
+    // the sibling — Windows never assigns pid 1, so hardcoding it there reads as dead.
+    const server = new OrcaRuntimeRpcServer({
+      runtime: new OrcaRuntimeService(),
+      userDataPath,
+      pid: 4242
+    })
     await server.start()
 
     writeRuntimeMetadata(userDataPath, {
-      // Why: pid 1 is always alive and never this process, so it stands in for a live sibling runtime.
       runtimeId: 'rt_live_sibling',
-      pid: 1,
-      transports: [{ kind: 'unix', endpoint: join(userDataPath, 'o-1-rt2.sock') }],
+      pid: process.pid,
+      transports: [{ kind: 'unix', endpoint: join(userDataPath, `o-${process.pid}-rt2.sock`) }],
       authToken: 'sibling-token',
       startedAt: 1
     })
