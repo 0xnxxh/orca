@@ -2903,6 +2903,7 @@ const api = {
     check: (options) => ipcRenderer.invoke('updater:check', options),
     download: () => ipcRenderer.invoke('updater:download'),
     dismissNudge: () => ipcRenderer.invoke('updater:dismissNudge'),
+    dismissAvailableUpdate: () => ipcRenderer.invoke('updater:dismissAvailableUpdate'),
     quitAndInstall: async (): Promise<void> => {
       await prepareRendererForAppRestart(window, {
         startedEventName: ORCA_UPDATER_QUIT_AND_INSTALL_STARTED_EVENT,
