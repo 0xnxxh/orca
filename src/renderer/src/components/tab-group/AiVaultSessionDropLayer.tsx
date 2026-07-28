@@ -10,13 +10,11 @@ import {
   AI_VAULT_SESSION_DRAG_START_EVENT,
   clearAiVaultSessionDragData,
   hasAiVaultSessionDragData,
-  readAiVaultSessionDragData,
-  type AiVaultSessionDragPayload
+  readAiVaultSessionDragData
 } from '@/lib/ai-vault-session-drag'
 import {
-  buildAiVaultResumeStartupForWorktree,
-  getAiVaultAgentProviderSession,
-  type AiVaultResumeStartup
+  buildAiVaultDropRepinStartup,
+  getAiVaultAgentProviderSession
 } from '@/lib/ai-vault-resume-command'
 import { launchAiVaultSessionInNewTab } from '@/lib/launch-ai-vault-session'
 import { aiVaultSessionNeedsResumePreparation } from '@/lib/ai-vault-session-resume-preparation'
@@ -54,30 +52,6 @@ function getZoneOverlayStyle(rect: DOMRect, layerRect: DOMRect, zone: TabDropZon
 
 function containsPoint(rect: DOMRect, x: number, y: number): boolean {
   return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
-}
-
-function buildRepinnedDropStartup(
-  payload: AiVaultSessionDragPayload,
-  substituteCodexHome: string,
-  worktreeId: string
-): AiVaultResumeStartup | null {
-  if (!payload.sessionCwd || !payload.sessionFilePath) {
-    return null
-  }
-  const state = useAppStore.getState()
-  return buildAiVaultResumeStartupForWorktree({
-    state,
-    worktreeId,
-    session: {
-      agent: payload.agent,
-      sessionId: payload.sessionId,
-      cwd: payload.sessionCwd,
-      codexHome: substituteCodexHome,
-      executionHostId: payload.sessionExecutionHostId,
-      filePath: payload.sessionFilePath
-    },
-    commandOverride: state.settings?.agentCmdOverrides?.[payload.agent]
-  })
 }
 
 function resolvePaneDropTarget(
@@ -260,14 +234,22 @@ export default function AiVaultSessionDropLayer({
           const startup = result.useRealCodexHome
             ? payload.realHomeStartup
             : result.substituteCodexHome
-              ? // Why: the drag payload's command pins the recorded home, so a
-                // repin must rebuild; without a payload cwd the prebuilt
-                // command still resumes, just without the repin.
-                (buildRepinnedDropStartup(payload, result.substituteCodexHome, worktreeId) ??
-                payload)
+              ? buildAiVaultDropRepinStartup({
+                  state: useAppStore.getState(),
+                  payload,
+                  substituteCodexHome: result.substituteCodexHome,
+                  worktreeId
+                })
               : payload
           if (!startup) {
-            throw new Error('Orca could not prepare this legacy Codex session. Retry resume.')
+            // Why: the host just proved the prebuilt command pins another
+            // account's home, so an unrepinnable payload (older serializer)
+            // must fail loudly rather than silently resume under it.
+            throw new Error(
+              result.substituteCodexHome
+                ? 'This session was dragged from an older Orca window, so Orca cannot retarget it to the selected Codex account. Resume it from the Session History panel instead.'
+                : 'Orca could not prepare this legacy Codex session. Retry resume.'
+            )
           }
           const providerSession = getAiVaultAgentProviderSession({
             agent: payload.agent,
