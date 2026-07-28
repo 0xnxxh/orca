@@ -1,4 +1,5 @@
 import type { PtySourceDeliveryIdentity } from '../shared/pty-source-credit-contract'
+import type { PtySourceRecoveryCheckpoint } from '../shared/pty-source-recovery-contract'
 import type { RelayDispatcher, SinkWriteSettlement } from './dispatcher'
 import {
   PTY_SOURCE_SCHEDULER_MAX_FRAMES,
@@ -11,9 +12,10 @@ export type RelayPtySourceDeliveryRecord = {
   identity: PtySourceDeliveryIdentity
   displayEnd: number
   activating: boolean
+  activationRecoveryRequest: PtySourceRecoveryCheckpoint | null
   sealed: boolean
   legacyExitAccepted: boolean
-  sourceExitAccepted: boolean
+  sourceExitState: 'idle' | 'pending' | 'published'
   sending: boolean
   turnFrames: number
   turnSourceSu: number

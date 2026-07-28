@@ -5,11 +5,16 @@ import type {
   PtySourceRecoveryResult
 } from '../shared/pty-source-recovery-contract'
 import {
-  onceSinkSettlement,
+  pendingPtySourceRecoveryResult,
+  registerPtySourceActivationSettlement,
+  samePtySourceRecoveryRequest
+} from './relay-pty-source-activation'
+import {
   RelayPtySourceSendScheduler,
   type RelayPtySourceDeliveryRecord,
   type RelayPtySourcePublicationCounters
 } from './relay-pty-source-send-scheduler'
+import { sealAndPublishPtySourceExit } from './relay-pty-source-exit-publication'
 import type { RelayDispatcher, RequestContext } from './dispatcher'
 import type { RelayPtySourceOutput } from './relay-pty-source-output'
 import type { SshPtyConsumerSessionAdapter } from './ssh-pty-consumer-session-adapter'
@@ -68,12 +73,20 @@ export class RelayPtySourcePublication {
     }
     if (current?.clientId === context.clientId) {
       this.sender.releaseRotationFence(current)
+      if (current.activating && current.activationRecoveryRequest) {
+        if (!samePtySourceRecoveryRequest(current.activationRecoveryRequest, recovery)) {
+          return this.publishRestoreRequired(id, context, 'checkpointUnavailable')
+        }
+        this.registerActivationSettlement(id, current, context)
+        return pendingPtySourceRecoveryResult(current)
+      }
       return 'existing'
     }
     let identity: PtySourceDeliveryIdentity | null = null
     let displayEnd = 0
     let recoveryCheckpointSourceEndSu: number | null = null
     let recoveryEndSu: number | null = null
+    let recoveryWasSealed = false
     if (!current && recovery) {
       return this.publishRestoreRequired(id, context, 'deliveryUnavailable')
     }
@@ -100,6 +113,7 @@ export class RelayPtySourcePublication {
         displayEnd = current.displayEnd
         recoveryCheckpointSourceEndSu = recovery.acceptedSourceEndSu
         recoveryEndSu = snapshot.receivedEndSu
+        recoveryWasSealed = snapshot.state === 'sealed-unsettled'
         this.counters.rotated++
       } catch (error) {
         return this.requireRestore(
@@ -122,9 +136,11 @@ export class RelayPtySourcePublication {
       identity,
       displayEnd,
       activating: true,
-      sealed: false,
+      activationRecoveryRequest:
+        recovery?.status === 'checkpoint' ? Object.freeze({ ...recovery }) : null,
+      sealed: recoveryWasSealed,
       legacyExitAccepted: false,
-      sourceExitAccepted: false,
+      sourceExitState: 'idle',
       sending: false,
       turnFrames: 0,
       turnSourceSu: 0,
@@ -136,30 +152,9 @@ export class RelayPtySourcePublication {
       rotationPending: false
     }
     this.deliveries.set(id, record)
-    context.onResponseSettled((result) => {
-      if (this.deliveries.get(id) !== record) {
-        return
-      }
-      if (!result.ok) {
-        this.session.cancelDelivery(record.identity, 'activation-publication-failed')
-        this.deliveries.delete(id)
-        return
-      }
-      record.activating = false
-      this.sender.completeRecoveryIfReady(record)
-      this.sender.pump(record)
-      this.onCapacity(id)
-    })
+    this.registerActivationSettlement(id, record, context)
     if (recoveryEndSu !== null && recoveryCheckpointSourceEndSu !== null) {
-      return Object.freeze({
-        status: 'pending',
-        clientGeneration: identity.clientGeneration,
-        ownerGeneration: identity.ownerGeneration,
-        ptyIncarnation: identity.ptyIncarnation,
-        deliveryToken: identity.deliveryToken,
-        checkpointSourceEndSu: recoveryCheckpointSourceEndSu,
-        recoveryEndSu
-      })
+      return pendingPtySourceRecoveryResult(record)
     }
     return current ? 'rotated' : 'opened'
   }
@@ -221,60 +216,48 @@ export class RelayPtySourcePublication {
     if (!record) {
       return false
     }
-    if (record.restoreRequired) {
-      const published = this.dispatcher.tryNotifyPtyExit(params)
-      if (published && this.deliveries.get(params.id) === record) {
-        this.deliveries.delete(params.id)
-      }
-      return published
-    }
-    if (!record.sealed) {
-      this.session.sealDelivery(record.identity)
-      record.sealed = true
-    }
-    this.sender.pump(record)
-    const snapshot = this.session.sourceDeliverySnapshot(record.identity)
-    if (snapshot.sentEndSu !== snapshot.receivedEndSu) {
-      return false
-    }
-    if (!record.legacyExitAccepted) {
-      record.legacyExitAccepted = this.dispatcher.tryNotifyPtyExitToMatchingClients(
-        (clientId) => this.session.deliveryMode(clientId) !== 'source-owner',
-        params
-      )
-      if (!record.legacyExitAccepted) {
-        return false
-      }
-    }
-    if (record.sourceExitAccepted) {
-      return true
-    }
-    const settle = onceSinkSettlement((result) => {
-      try {
-        this.session.settleExitPublication(record.identity, result)
-        if (result.ok) {
-          this.counters.exitCommitted++
-        } else {
-          this.counters.exitRolledBack++
-        }
-        this.sender.pruneClosed(params.id, record)
-      } finally {
-        this.onCapacity(params.id)
-      }
-    })
-    record.sourceExitAccepted = this.dispatcher.tryNotifyPtyExitToClient(
-      record.clientId,
+    return sealAndPublishPtySourceExit({
       params,
-      settle
-    )
-    return record.sourceExitAccepted
+      record,
+      deliveries: this.deliveries,
+      dispatcher: this.dispatcher,
+      session: this.session,
+      sender: this.sender,
+      counters: this.counters,
+      onCapacity: this.onCapacity
+    })
   }
 
   onCreditAvailable = (id: string): void => this.sender.onCreditAvailable(id)
 
+  exitPublicationSettled(id: string): boolean {
+    const record = this.deliveries.get(id)
+    if (!record || record.sourceExitState !== 'published') {
+      return false
+    }
+    this.sender.pruneClosed(id, record)
+    return true
+  }
+
   getDebugSnapshot = () => this.sender.getDebugSnapshot()
 
   dispose = (): void => this.sender.dispose()
+
+  private registerActivationSettlement(
+    id: string,
+    record: RelayPtySourceDeliveryRecord,
+    context: RequestContext
+  ): void {
+    registerPtySourceActivationSettlement({
+      id,
+      record,
+      context,
+      deliveries: this.deliveries,
+      session: this.session,
+      sender: this.sender,
+      onCapacity: this.onCapacity
+    })
+  }
 
   private requireRestore(
     id: string,

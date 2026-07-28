@@ -3096,7 +3096,7 @@
       "providers": ["local", "daemon", "ssh", "remote-runtime"],
       "coveredPlatforms": ["macos"],
       "coveredProviders": ["ssh"],
-      "coverageNotes": "Local macOS evidence covers main-process pending-output caps, runtime path-provenance history reuse, saturated-tail wait detection, direct-SSH source retention/accounting, decoder input bounds, and bounded reconnect scheduling through deterministic unit contracts. A macOS-hosted Docker OpenSSH run exercises the deployed Linux relay and SSH provider with an exact 256 KiB source-credit plateau, concurrent PTY typing, fixed-size filesystem frames, Git churn, and owner-lease reconnect. It does not cover local/daemon, paired remote-runtime, headed desktop, headless orca serve, prior-version daemons, WSL, Windows named pipes/ConPTY, folder workspaces, or mixed-version clients.",
+      "coverageNotes": "Local macOS evidence covers main-process pending-output caps, runtime path-provenance history reuse, saturated-tail wait detection, direct-SSH source retention/accounting, decoder input bounds, and bounded reconnect scheduling through deterministic unit contracts. A joined main/runtime oracle exercises renderer-sourced headed semantics and headless-model snapshot semantics without launching a live paired server. Separately, a macOS-hosted Docker OpenSSH run exercises only the deployed Linux relay and direct SSH provider, with an exact 256 KiB source-credit plateau, concurrent PTY typing, fixed-size filesystem frames, Git churn, and owner-lease reconnect. Neither deterministic topology labels nor Docker SSH constitute live headed desktop or headless orca serve pairing evidence; local/daemon, prior-version daemons, WSL, Windows named pipes/ConPTY, folder workspaces, and mixed-version clients also remain uncovered.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6836",
         "https://github.com/stablyai/orca/pull/6858",
@@ -3104,13 +3104,15 @@
         "https://github.com/stablyai/orca/pull/7054"
       ],
       "invariant": "High-volume terminal output must stay bounded across daemon socket writes, SSH relay writer/decoder/source retention/reconnect, main model and projection admission, runtime metadata, detectors, and tail checks, main-to-renderer in-flight bytes, renderer scheduler queues, and hidden-output restore without starving focused input. Negotiated SSH spans remain exact and contiguous through exit, cancellation, recovery, desktop projection, and required remote replacement.",
-      "oracle": "The current executable slice injects main-process renderer backlog pressure, then asserts unchanged path-provenance history reuse for pathless output, ordinary terminal-wait detection without a joined-tail allocation and with full prompt-family continuity, per-PTY and total pending-output caps, preserved sequenced-tail metadata, active-pending protection ahead of background trimming, and ACK-gated in-flight bounds. Direct-SSH contracts additionally prove one-write ownership across write(false)/drain, liveness rebasing, source-obligation terminality before ACK publication, immutable desktop/remote mappings with rollback, token-scoped exit cancellation, exact checkpoint-to-recoveryEnd continuity, stale-owner one-shot retry, no physical PTY teardown on recovery failure, 16 MiB-plus-1 MiB decoder caps, charged per-PTY/session retention budgets, and eight-wide isolated reattach. The live Electron perf oracle adds hidden-output floods, renderer scheduler queue depth, dropped-output-zero normal scenarios, and active key latency budgets before promotion.",
+      "oracle": "The current executable slice injects main-process renderer backlog pressure, then asserts unchanged path-provenance history reuse for pathless output, ordinary terminal-wait detection without a joined-tail allocation and with full prompt-family continuity, per-PTY and total pending-output caps, preserved sequenced-tail metadata, active-pending protection ahead of background trimming, and ACK-gated in-flight bounds. The joined source-intake/multiplex oracle blocks renderer or headless serialization, admits one snapshot-covered span and one trailing span, requires replacement reservation only after the authoritative sequence is known, advances upstream ACK eligibility exactly to the covered boundary after SnapshotEnd, and delivers then ACKs the trailing span through the ordinary live path without cancellation. Direct-SSH contracts additionally prove one-write ownership across write(false)/drain, liveness rebasing, failed-exit retention through late ACK or exact recovery, response-settlement cancellation authority, token-scoped exit cancellation, exact checkpoint-to-recoveryEnd continuity, stale-owner one-shot retry, no physical PTY teardown on recovery failure, 16 MiB-plus-1 MiB decoder caps, charged per-PTY/session retention budgets, and eight-wide isolated reattach. The live Electron perf oracle adds hidden-output floods, renderer scheduler queue depth, dropped-output-zero normal scenarios, and active key latency budgets before promotion.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/pty.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime-path-candidate-history.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/runtime/orca-runtime.test.ts src/main/runtime/orca-runtime-tail-wait-memo.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/providers/ssh-pty-provider.test.ts src/main/ssh/ssh-relay-session.test.ts src/main/ssh/ssh-relay-session-data-delivery.test.ts src/main/ssh/ssh-relay-session-incarnation.test.ts src/main/ssh/ssh-relay-session-reconnect-incarnation.test.ts src/main/ssh/ssh-relay-session-terminal-error.test.ts src/main/ssh/ssh-pty-recovery-retention-budget.test.ts src/main/ssh/relay-protocol-backpressure.test.ts src/relay/protocol-backpressure.test.ts src/relay/pty-source-credit-ledger.test.ts src/relay/pty-source-credit-scheduler.test.ts src/relay/relay-pty-source-publication.test.ts src/relay/ssh-pty-source-credit-adapter.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/relay/relay-pty-source-recovery-interleavings.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ssh/ssh-relay-session-recovery-races.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/shared/pty-consumer-session.test.ts src/main/ipc/ssh-pty-output-intake.test.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts src/main/ssh/ssh-multiplexer-transport-writer.test.ts src/main/ssh/ssh-channel-multiplexer.test.ts src/main/ssh/ssh-pty-source-credit-rollout.test.ts src/main/ssh/ssh-relay-deploy.test.ts src/relay/dispatcher-client-writer.test.ts --reporter=dot",
         "ORCA_E2E_SSH_DOCKER=1 ORCA_SSH_PTY_SOURCE_CREDIT_V1=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
       ],
@@ -3132,6 +3134,7 @@
         "src/relay/pty-source-credit-ledger.test.ts",
         "src/relay/pty-source-credit-scheduler.test.ts",
         "src/relay/relay-pty-source-publication.test.ts",
+        "src/relay/relay-pty-source-recovery-interleavings.test.ts",
         "src/relay/ssh-pty-source-credit-adapter.test.ts",
         "src/shared/pty-consumer-session.test.ts",
         "src/main/ipc/ssh-pty-output-intake.test.ts",
@@ -3204,6 +3207,14 @@
           ]
         },
         {
+          "file": "src/relay/relay-pty-source-recovery-interleavings.test.ts",
+          "assertions": [
+            "failed exit publication retains sealed delivery for late cumulative ACK and exact token recovery",
+            "exact owner recovery republishes exit without reopening source admission",
+            "request cancellation remains authoritative through writer settlement and retry returns the same replacement recovery identity"
+          ]
+        },
+        {
           "file": "src/main/ssh/relay-protocol-backpressure.test.ts",
           "assertions": [
             "main SSH decoder accepts one maximum frame plus 1 MiB partial input and rejects one extra byte"
@@ -3226,9 +3237,18 @@
         {
           "file": "src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts",
           "assertions": [
-            "headed and headless replacement commits only after current-generation SnapshotEnd sequence coverage",
+            "replacement reserves only immutable spans whose retained model-sequence end is covered by the authoritative snapshot",
+            "renderer-sourced and headless-sourced replacement commits only after current-generation SnapshotEnd sequence coverage",
             "failed or stale replacement rolls back to the live stream obligation",
             "late detach and replacement commit prune spans already reclaimed by cancellation proof"
+          ]
+        },
+        {
+          "file": "src/main/runtime/rpc/terminal-multiplex.test.ts",
+          "assertions": [
+            "blocked renderer and headless snapshot serialization admits one covered and one trailing source span",
+            "SnapshotEnd makes exactly the covered span upstream-ACK eligible while the trailing span is delivered and ACKed live",
+            "snapshot replacement, trailing replay, and exit complete without provider cancellation or retained obligation"
           ]
         },
         {
@@ -3316,6 +3336,15 @@
           "summary": "13 deterministic SSH relay/session/source/decoder unit files passed with 161 tests; no live topology was exercised."
         },
         {
+          "date": "2026-07-28",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/ssh-pty-remote-source-range-consumers.test.ts src/main/runtime/rpc/terminal-multiplex.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 5.77,
+          "summary": "Two deterministic main/runtime files passed 59 tests, including the joined renderer/headless snapshot-admission oracle; no live paired server or Docker topology was exercised."
+        },
+        {
           "date": "2026-07-27",
           "runner": "local",
           "platform": "macos",
@@ -3335,7 +3364,7 @@
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "Tests assert pathless runtime output reuses unchanged path-provenance history with zero old-candidate byte scans, ordinary saturated terminal tails retain no rebuilt wait text or repeated phrase scans while every blocked/ready prompt family remains live, main pending renderer output is capped per PTY and in total, direct-SSH source/recovery memory and both frame decoders stay within exact caps, and 50-PTY reconnect isolates slow/failing siblings. The new controls failed before the fixes with serial reattach, UTF-8-only accounting, and roughly 32 MiB decoder retention. Existing renderer tests cover replay/backlog slices. Needs daemon-stream contract coverage and broader hidden-output/input-latency perf artifacts before promotion."
+        "evidence": "Tests assert pathless runtime output reuses unchanged path-provenance history with zero old-candidate byte scans, ordinary saturated terminal tails retain no rebuilt wait text or repeated phrase scans while every blocked/ready prompt family remains live, main pending renderer output is capped per PTY and in total, direct-SSH source/recovery memory and both frame decoders stay within exact caps, and 50-PTY reconnect isolates slow/failing siblings. Before the snapshot-admission fix, the focused consumer oracle failed because the trailing span entered transferring instead of remaining open; after retaining model-sequence ends and reserving at the serialized fence, the joined main/runtime oracle passed for renderer and headless sources with upstream boundaries 4 then 8. Other controls previously failed with serial reattach, UTF-8-only accounting, and roughly 32 MiB decoder retention. Needs daemon-stream contract coverage and broader hidden-output/input-latency perf artifacts before promotion."
       },
       "performanceBudget": {
         "required": true,

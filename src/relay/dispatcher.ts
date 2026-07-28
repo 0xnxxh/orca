@@ -679,6 +679,7 @@ export class RelayDispatcher {
         }
       }
       responseSettledHandlers.clear()
+      this.requestAborts.delete(abortKey)
     }
     const context: RequestContext = {
       clientId: client.id,
@@ -699,7 +700,16 @@ export class RelayDispatcher {
         settleResponse({ ok: false, error: new Error('Relay request became stale') })
         return
       }
-      this.sendResponse(client, req.id, result, undefined, settleResponse)
+      const accepted = this.sendResponse(client, req.id, result, undefined, (settlement) => {
+        settleResponse(
+          context.isStale()
+            ? { ok: false, error: new Error('Relay request became stale') }
+            : settlement
+        )
+      })
+      if (!accepted) {
+        settleResponse({ ok: false, error: new Error('Relay response was not admitted') })
+      }
     } catch (err) {
       if (context.isStale()) {
         settleResponse({ ok: false, error: new Error('Relay request became stale') })
@@ -707,14 +717,15 @@ export class RelayDispatcher {
       }
       const message = err instanceof Error ? err.message : String(err)
       const code = (err as { code?: number }).code ?? -32000
-      this.sendResponse(client, req.id, undefined, { code, message }, (result) => {
+      const accepted = this.sendResponse(client, req.id, undefined, { code, message }, (result) => {
         settleResponse({
           ok: false,
           error: result.ok ? new Error(message) : result.error
         })
       })
-    } finally {
-      this.requestAborts.delete(abortKey)
+      if (!accepted) {
+        settleResponse({ ok: false, error: new Error('Relay error response was not admitted') })
+      }
     }
   }
 

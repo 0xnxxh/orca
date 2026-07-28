@@ -1009,7 +1009,10 @@ export class PtyHandler {
       return
     }
     if (this.sourcePublication?.accepts(id)) {
-      if (!this.sourcePublication.sealAndPublishExit(exit)) {
+      if (
+        !this.sourcePublication.sealAndPublishExit(exit) ||
+        !this.sourcePublication.exitPublicationSettled(id)
+      ) {
         return
       }
       this.pendingExitByPty.delete(id)

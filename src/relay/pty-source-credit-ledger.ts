@@ -193,7 +193,6 @@ export class RelayPtySourceCreditLedger {
       throw new Error('PTY source delivery is not sealed')
     }
     if (!result.ok) {
-      record.state = 'closing'
       return
     }
     if (record.pendingSend || record.sentEndSu !== record.receivedEndSu) {

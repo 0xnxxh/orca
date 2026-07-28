@@ -101,7 +101,11 @@ export class SshPtyOutputIntake {
         try {
           projection = this.projections.commit(reservation)
           if (sourceReservation) {
-            this.sourceObligations.commit(sourceReservation, event.id)
+            this.sourceObligations.commit(
+              sourceReservation,
+              event.id,
+              projection.identity.sequenceEnd
+            )
           }
         } catch (error) {
           if (sourceReservation) {

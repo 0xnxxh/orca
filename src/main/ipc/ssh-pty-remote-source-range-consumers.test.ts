@@ -74,7 +74,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', sourceSpan.spanId, reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', sourceSpan.spanId, reservation.requiredConsumers, 4)
 
     consumers.hooks.settle({ ...stream, streamGeneration: 'stale' }, [range('span-1')])
     expect(ledger.obligation('span-1', 'remote:consumer-1').state).toBe('open')
@@ -96,7 +96,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
         ...consumers.requiredConsumers('pty-1')
       ])
       ledger.commit(reservation)
-      consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+      consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
 
       const replacement = consumers.hooks.reserveReplacement(stream, 4, 'initial-snapshot')
 
@@ -116,6 +116,43 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
     }
   )
 
+  it('reserves only spans covered by the authoritative snapshot sequence', () => {
+    const ledger = createCoordinator()
+    const consumers = new SshPtyRemoteSourceRangeConsumers(ledger)
+    const stream = { ptyId: 'pty-1', consumerId: 'consumer-1', streamGeneration: 'stream-1' }
+    ledger.open(identity)
+    consumers.hooks.attach(stream)
+    const covered = ledger.reserve(identity, span('span-covered'), [
+      'model',
+      ...consumers.requiredConsumers('pty-1')
+    ])
+    ledger.commit(covered)
+    consumers.trackSpan('pty-1', 'span-covered', covered.requiredConsumers, 4)
+    const trailingSpan = {
+      ...span('span-trailing'),
+      sourceStartSu: 4,
+      sourceEndSu: 8,
+      displayStart: 4,
+      displayEnd: 8
+    }
+    const trailing = ledger.reserve(identity, trailingSpan, [
+      'model',
+      ...consumers.requiredConsumers('pty-1')
+    ])
+    ledger.commit(trailing)
+    consumers.trackSpan('pty-1', 'span-trailing', trailing.requiredConsumers, 8)
+
+    const replacement = consumers.hooks.reserveReplacement(stream, 4, 'initial-snapshot')
+
+    expect(replacement).not.toBeNull()
+    expect(ledger.obligation('span-covered', 'remote:consumer-1')).toMatchObject({
+      state: 'transferring'
+    })
+    expect(ledger.obligation('span-trailing', 'remote:consumer-1')).toMatchObject({
+      state: 'open'
+    })
+  })
+
   it('rolls a failed replacement publication back to the live stream obligation', () => {
     const ledger = createCoordinator()
     const consumers = new SshPtyRemoteSourceRangeConsumers(ledger)
@@ -127,7 +164,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
 
     const replacement = consumers.hooks.reserveReplacement(stream, 4, 'initial-snapshot')
     expect(consumers.hooks.rollbackReplacement(replacement!, 'snapshot-write-failed')).toBe(true)
@@ -148,7 +185,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
 
     consumers.hooks.settle(stream, [
       range('span-1', {
@@ -182,7 +219,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
 
     consumers.hooks.cancel(stream, [], 'stream-detached')
 
@@ -204,7 +241,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
     const replacement = consumers.hooks.reserveReplacement(stream, 4, 'initial-snapshot')
 
     consumers.hooks.cancel(stream, [], 'connection-closed')
@@ -229,7 +266,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
 
     expect(() =>
       consumers.hooks.reserveReplacement(
@@ -252,7 +289,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
     const replacement = consumers.hooks.reserveReplacement(stream, 4, 'initial-snapshot')
 
     consumers.closeGeneration(identity.providerGeneration, 'provider-replaced')
@@ -274,7 +311,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
     ledger.seal(identity)
     ledger.beginExitTimeout(identity)
     ledger.applyCancellationProof(identity, { sentEndSu: 4, creditedEndSu: 0 })
@@ -295,7 +332,7 @@ describe('SshPtyRemoteSourceRangeConsumers', () => {
       ...consumers.requiredConsumers('pty-1')
     ])
     ledger.commit(reservation)
-    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers)
+    consumers.trackSpan('pty-1', 'span-1', reservation.requiredConsumers, 4)
     const replacement = consumers.hooks.reserveReplacement(stream, 4, 'initial-snapshot')
     ledger.seal(identity)
     ledger.beginExitTimeout(identity)

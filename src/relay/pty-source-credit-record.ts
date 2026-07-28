@@ -267,6 +267,7 @@ export function createReplacementDeliveryRecord(
   }
   old.attemptedEndSu = null
   const replacement = createDeliveryRecord(newIdentity, windowSu, acceptedSourceEndSu)
+  replacement.state = old.state === 'sealed-unsettled' ? 'sealed-unsettled' : 'active'
   replacement.receivedEndSu = old.receivedEndSu
   replacement.spans = old.spans
     .filter((span) => span.sourceEndSu > acceptedSourceEndSu)

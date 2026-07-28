@@ -75,12 +75,17 @@ export class SshPtyOutputSourceObligations {
     })
   }
 
-  commit(reservation: SshPtyOutputSourceReservation, ptyId: string): void {
+  commit(
+    reservation: SshPtyOutputSourceReservation,
+    ptyId: string,
+    modelSequenceEnd: number
+  ): void {
     this.coordinator.commit(reservation.admission)
     this.remoteConsumers.trackSpan(
       ptyId,
       reservation.span.spanId,
-      reservation.admission.requiredConsumers
+      reservation.admission.requiredConsumers,
+      modelSequenceEnd
     )
   }
 

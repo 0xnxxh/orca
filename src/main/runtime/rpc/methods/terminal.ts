@@ -2415,18 +2415,6 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             return
           }
 
-          const replacementIdentity = {
-            ptyId,
-            consumerId: stream.remoteDesktopSubscriptionKey,
-            streamGeneration: stream.streamGeneration
-          }
-          stream.sourceRangeReplacement = stream.ackOutputSourceRanges
-            ? runtime.reserveRemoteTerminalSourceRangeReplacement(
-                replacementIdentity,
-                runtime.getPtyOutputSequence(ptyId),
-                'initial-snapshot'
-              )
-            : null
           let read = await runtime.readTerminal(request.terminal)
           let serialized = await serializeBudgetedMobileSnapshot(runtime, ptyId, isMobile)
           if (closed || streams.get(request.streamId) !== stream) {
@@ -2472,6 +2460,20 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
               initialOutputOverflowed ||
               (serialized ? read.truncated : isTerminalReadPayloadIncomplete(read))
           })
+          stream.sourceRangeReplacement =
+            stream.ackOutputSourceRanges &&
+            serialized?.source !== undefined &&
+            typeof serialized.seq === 'number'
+              ? runtime.reserveRemoteTerminalSourceRangeReplacement(
+                  {
+                    ptyId,
+                    consumerId: stream.remoteDesktopSubscriptionKey,
+                    streamGeneration: stream.streamGeneration
+                  },
+                  serialized.seq,
+                  'initial-snapshot'
+                )
+              : null
           const snapshotPublication = sendSnapshotFrames(
             (opcode, payload) => sendFrame(request.streamId, opcode, payload),
             {

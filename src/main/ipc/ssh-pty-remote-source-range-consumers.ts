@@ -23,7 +23,13 @@ function uniqueSpanIds(ranges: readonly TerminalOutputSourceRange[]): string[] {
 
 type RemoteConsumerState = {
   streamGeneration: string
-  spans: Map<string, PtySourceSpan>
+  spans: Map<
+    string,
+    Readonly<{
+      identity: PtySourceSpan
+      modelSequenceEnd: number
+    }>
+  >
   ackedEndBySpan: Map<string, number>
 }
 
@@ -60,11 +66,21 @@ export class SshPtyRemoteSourceRangeConsumers {
   trackSpan(
     ptyId: string,
     spanId: string,
-    requiredConsumers: readonly SshPtySourceConsumerId[]
+    requiredConsumers: readonly SshPtySourceConsumerId[],
+    modelSequenceEnd: number
   ): void {
+    if (!Number.isSafeInteger(modelSequenceEnd) || modelSequenceEnd < 0) {
+      throw new Error('ssh_remote_source_range_model_sequence_invalid')
+    }
     for (const [consumerId, state] of this.consumersByPty.get(ptyId) ?? []) {
       if (requiredConsumers.includes(`remote:${consumerId}`)) {
-        state.spans.set(spanId, this.coordinator.spanIdentity(spanId))
+        state.spans.set(
+          spanId,
+          Object.freeze({
+            identity: this.coordinator.spanIdentity(spanId),
+            modelSequenceEnd
+          })
+        )
       }
     }
   }
@@ -73,8 +89,8 @@ export class SshPtyRemoteSourceRangeConsumers {
     this.replacements.closeGeneration(providerGeneration, reason)
     for (const consumers of this.consumersByPty.values()) {
       for (const state of consumers.values()) {
-        for (const [spanId, source] of state.spans) {
-          if (source.providerGeneration === providerGeneration) {
+        for (const [spanId, tracked] of state.spans) {
+          if (tracked.identity.providerGeneration === providerGeneration) {
             state.spans.delete(spanId)
             state.ackedEndBySpan.delete(spanId)
           }
@@ -114,10 +130,11 @@ export class SshPtyRemoteSourceRangeConsumers {
     const nextEnds = new Map(state.ackedEndBySpan)
     const completed = new Set<string>()
     for (const range of ranges) {
-      const source = state.spans.get(range.spanId)
-      if (!source) {
+      const tracked = state.spans.get(range.spanId)
+      if (!tracked) {
         continue
       }
+      const source = tracked.identity
       if (!this.coordinator.hasRetainedSpan(range.spanId)) {
         state.spans.delete(range.spanId)
         nextEnds.delete(range.spanId)
@@ -138,12 +155,13 @@ export class SshPtyRemoteSourceRangeConsumers {
     }
     state.ackedEndBySpan = nextEnds
     for (const spanId of completed) {
-      const source = state.spans.get(spanId)
-      if (!source || !this.coordinator.hasRetainedSpan(spanId)) {
+      const tracked = state.spans.get(spanId)
+      if (!tracked || !this.coordinator.hasRetainedSpan(spanId)) {
         state.spans.delete(spanId)
         state.ackedEndBySpan.delete(spanId)
         continue
       }
+      const source = tracked.identity
       this.coordinator.settle({
         identity: source,
         spanId,
@@ -173,7 +191,9 @@ export class SshPtyRemoteSourceRangeConsumers {
         state.ackedEndBySpan.delete(spanId)
       }
     }
-    const spanIds = Array.from(state.spans.keys())
+    const spanIds = Array.from(state.spans)
+      .filter(([, tracked]) => tracked.modelSequenceEnd <= requiredSeq)
+      .map(([spanId]) => spanId)
     return this.replacements.reserve(identity, spanIds, requiredSeq, reason)
   }
 
@@ -218,10 +238,11 @@ export class SshPtyRemoteSourceRangeConsumers {
       ...uniqueSpanIds(ranges).filter((spanId) => state.spans.has(spanId))
     ])
     for (const spanId of spanIds) {
-      const source = state.spans.get(spanId)
-      if (!source || !this.coordinator.hasRetainedSpan(spanId)) {
+      const tracked = state.spans.get(spanId)
+      if (!tracked || !this.coordinator.hasRetainedSpan(spanId)) {
         continue
       }
+      const source = tracked.identity
       const transition = { identity: source, spanId, consumer, reason }
       if (this.coordinator.beginTransfer(transition, consumer)) {
         this.coordinator.cancelTransfer(transition)
