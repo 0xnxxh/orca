@@ -4,7 +4,7 @@ import type * as GitUsernameModule from '../git/git-username'
 import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import type { CreateWorktreeResult, GitWorktreeInfo, Worktree } from '../../shared/types'
+import type { CreateWorktreeResult, GitWorktreeInfo, Repo, Worktree } from '../../shared/types'
 import type { ProviderRequestId } from '../../shared/detected-worktree-provider-contract'
 import { toSshExecutionHostId } from '../../shared/execution-host'
 import * as localWorktreeFilesystem from '../local-worktree-filesystem'
@@ -2468,6 +2468,48 @@ describe('registerWorktreeHandlers', () => {
     })
   })
 
+  it('rejects malformed and contradictory repo host provenance', async () => {
+    const provider = { listWorktrees: vi.fn().mockResolvedValue([]) }
+    getSshGitProviderMock.mockReturnValue(provider)
+    const request = {
+      providerRequestId: 'request-1' as ProviderRequestId,
+      repoId: 'repo-1',
+      executionHostId: toSshExecutionHostId('target-a'),
+      expectedAuthority: getSshProviderAuthority('target-a')
+    }
+    const baseRepo = {
+      id: 'repo-1',
+      path: '/remote/repo',
+      displayName: 'repo',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'target-a'
+    }
+
+    store.getRepos.mockReturnValue([{ ...baseRepo, executionHostId: 'ssh:%' }])
+    const malformed = await handlers['worktrees:listDetected'](ipcEvent, request)
+
+    store.getRepos.mockReturnValue([
+      {
+        ...baseRepo,
+        executionHostId: toSshExecutionHostId('target-b')
+      }
+    ])
+    const contradictory = await handlers['worktrees:listDetected'](ipcEvent, request)
+
+    expect(malformed).toMatchObject({
+      status: 'rejected',
+      providerRequestId: 'request-1',
+      executionHostId: 'ssh:target-a'
+    })
+    expect(contradictory).toMatchObject({
+      status: 'rejected',
+      providerRequestId: 'request-1',
+      executionHostId: 'ssh:target-a'
+    })
+    expect(provider.listWorktrees).not.toHaveBeenCalled()
+  })
+
   it('returns a local discriminant without SSH authority fields', async () => {
     listWorktreesMock.mockResolvedValue([])
 
@@ -2757,6 +2799,64 @@ describe('registerWorktreeHandlers', () => {
     expect(store.setWorktreeMeta).not.toHaveBeenCalled()
     expect(store.removeWorktreeLineage).not.toHaveBeenCalled()
   })
+
+  it.each([
+    ['malformed', 'ssh:%'],
+    ['contradictory', toSshExecutionHostId('target-b')]
+  ])(
+    'rejects %s repo provenance introduced during the SSH await',
+    async (_caseName, invalidExecutionHostId) => {
+      let resolveList: (worktrees: GitWorktreeInfo[]) => void = () => {}
+      const provider = {
+        listWorktrees: vi.fn(
+          () =>
+            new Promise<GitWorktreeInfo[]>((resolve) => {
+              resolveList = resolve
+            })
+        )
+      }
+      const sshRepo = {
+        id: 'repo-1',
+        path: '/remote/repo',
+        displayName: 'repo',
+        badgeColor: '#000',
+        addedAt: 0,
+        connectionId: 'target-a'
+      }
+      let repos: Repo[] = [sshRepo]
+      store.getRepos.mockImplementation(() => repos)
+      getSshGitProviderMock.mockReturnValue(provider)
+
+      const pending = handlers['worktrees:listDetected'](ipcEvent, {
+        providerRequestId: `request-${_caseName}` as ProviderRequestId,
+        repoId: sshRepo.id,
+        executionHostId: toSshExecutionHostId('target-a'),
+        expectedAuthority: getSshProviderAuthority('target-a')
+      })
+      await Promise.resolve()
+      repos = [
+        sshRepo,
+        {
+          ...sshRepo,
+          path: '/remote/conflicting-repo',
+          executionHostId: invalidExecutionHostId as Repo['executionHostId']
+        }
+      ]
+      resolveList([
+        {
+          path: '/remote/repo',
+          head: 'stale-head',
+          branch: 'refs/heads/main',
+          isBare: false,
+          isMainWorktree: true
+        }
+      ])
+
+      await expect(pending).resolves.toMatchObject({ status: 'stale' })
+      expect(store.setWorktreeMeta).not.toHaveBeenCalled()
+      expect(store.removeWorktreeLineage).not.toHaveBeenCalled()
+    }
+  )
 
   it('aborts all old-authority SSH calls on rotation with target isolation', async () => {
     const repos = [

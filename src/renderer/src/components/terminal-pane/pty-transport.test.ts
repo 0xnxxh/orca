@@ -501,6 +501,38 @@ describe('createIpcPtyTransport', () => {
     expect(transport.isConnected()).toBe(false)
   })
 
+  it('rejects a buffered dead-session exit before publishing its final frame', async () => {
+    const { bufferPreHandlerPtyData, bufferPreHandlerPtyExit, clearPreHandlerPtyState } =
+      await import('./pty-pre-handler-buffer')
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    const onDataCallback = vi.fn()
+    const onExitCallback = vi.fn()
+    const onDisconnect = vi.fn()
+    const onPtyExit = vi.fn()
+    const sessionId = 'stale-dead-parked-session'
+    bufferPreHandlerPtyData(sessionId, 'stale final output')
+    bufferPreHandlerPtyExit(sessionId, 17)
+
+    const transport = createIpcPtyTransport({ onPtyExit })
+    const result = await transport.connect({
+      url: '',
+      sessionId,
+      admitPtyId: () => false,
+      callbacks: { onData: onDataCallback, onExit: onExitCallback, onDisconnect }
+    })
+
+    expect(result).toEqual({ id: sessionId })
+    expect(spawn).not.toHaveBeenCalled()
+    expect(onDataCallback).not.toHaveBeenCalled()
+    expect(onExitCallback).not.toHaveBeenCalled()
+    expect(onDisconnect).not.toHaveBeenCalled()
+    expect(onPtyExit).not.toHaveBeenCalled()
+    expect(window.api.pty.kill).not.toHaveBeenCalled()
+    expect(transport.isConnected()).toBe(false)
+    clearPreHandlerPtyState(sessionId)
+  })
+
   it('returns startup cwd fallback metadata to the connection layer', async () => {
     const { createIpcPtyTransport } = await import('./pty-transport')
     const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
@@ -2069,14 +2101,33 @@ describe('createIpcPtyTransport', () => {
     const onPtyExit = vi.fn()
     const kill = window.api.pty.kill as unknown as ReturnType<typeof vi.fn>
     const transport = createIpcPtyTransport({ onPtyExit })
+    const onDataCallback = vi.fn()
+    const onReplayData = vi.fn()
+    const onWriteUnavailableCallback = vi.fn()
+    const onExitCallback = vi.fn()
+    const onDisconnect = vi.fn()
 
     transport.attach({
       existingPtyId: 'pty-obsolete',
-      callbacks: {}
+      callbacks: {
+        onData: onDataCallback,
+        onReplayData,
+        onWriteUnavailable: onWriteUnavailableCallback,
+        onExit: onExitCallback,
+        onDisconnect
+      }
     })
     transport.detach?.({ preserveExitObserver: false })
+    onData?.({ id: 'pty-obsolete', data: 'stale data' })
+    onReplay?.({ id: 'pty-obsolete', data: 'stale replay' })
+    onWriteUnavailable?.({ id: 'pty-obsolete' })
     onExit?.({ id: 'pty-obsolete', code: 0 })
 
+    expect(onDataCallback).not.toHaveBeenCalled()
+    expect(onReplayData).not.toHaveBeenCalled()
+    expect(onWriteUnavailableCallback).not.toHaveBeenCalled()
+    expect(onExitCallback).not.toHaveBeenCalled()
+    expect(onDisconnect).not.toHaveBeenCalled()
     expect(onPtyExit).not.toHaveBeenCalled()
     expect(kill).not.toHaveBeenCalled()
   })

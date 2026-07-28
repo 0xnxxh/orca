@@ -3323,10 +3323,7 @@ export function connectPanePty(
   let directSshPaneRetrySettlementCancelled = false
   const directSshPaneRetrySettlementTimers = new Set<ReturnType<typeof setTimeout>>()
   const directSshPaneRetryTimedPromises = new WeakSet<object>()
-  const capturedDirectSshRetryStateMatches = (
-    ptyId: string,
-    requirePendingAttempt: boolean
-  ): boolean => {
+  const capturedDirectSshRetryLeaseMatches = (): boolean => {
     if (!directSshRetryAttempt) {
       return true
     }
@@ -3337,11 +3334,8 @@ export function connectPanePty(
     const currentTab = (currentState.tabsByWorktree[deps.worktreeId] ?? []).find(
       (candidate) => candidate.id === deps.tabId
     )
-    const parsedPtyId = parseAppSshPtyId(ptyId)
     if (
-      parsedPtyId?.connectionId !== directSshRetryAttempt.authority.targetId ||
-      currentConnection?.status !== 'connected' ||
-      currentConnection.providerEpoch !== directSshRetryAttempt.authority.providerEpoch ||
+      currentConnection?.providerEpoch !== directSshRetryAttempt.authority.providerEpoch ||
       currentConnection.connectionGeneration !==
         directSshRetryAttempt.authority.connectionGeneration ||
       (currentTab?.generation ?? 0) !== directSshRetryAttempt.tabGeneration
@@ -3353,27 +3347,35 @@ export function connectPanePty(
       pendingAttempt?.attemptId === directSshRetryAttempt.attemptId &&
       directSshAuthoritiesEqual(pendingAttempt.authority, directSshRetryAttempt.authority) &&
       pendingAttempt.tabGeneration === directSshRetryAttempt.tabGeneration
-    if (pendingMatches) {
-      return true
-    }
     const liveBinding = currentState.directSshLivePtyBindingByTabId?.[deps.tabId]
     const liveBindingMatchesAttempt =
       liveBinding?.attemptId === directSshRetryAttempt.attemptId &&
       directSshAuthoritiesEqual(liveBinding.authority, directSshRetryAttempt.authority) &&
       liveBinding.tabGeneration === directSshRetryAttempt.tabGeneration
+    return pendingMatches || liveBindingMatchesAttempt
+  }
+  const capturedDirectSshRetryStateMatches = (ptyId: string): boolean => {
+    if (!directSshRetryAttempt) {
+      return true
+    }
+    const currentConnection = useAppStore
+      .getState()
+      .sshConnectionStates.get(directSshRetryAttempt.authority.targetId)
     return (
-      liveBindingMatchesAttempt || (!requirePendingAttempt && capturedDirectSshRetryPtyAccepted)
+      parseAppSshPtyId(ptyId)?.connectionId === directSshRetryAttempt.authority.targetId &&
+      currentConnection?.status === 'connected' &&
+      capturedDirectSshRetryLeaseMatches()
     )
   }
   const claimCapturedDirectSshRetryPty = (ptyId: string): boolean => {
-    if (!capturedDirectSshRetryStateMatches(ptyId, !capturedDirectSshRetryPtyAccepted)) {
+    if (!capturedDirectSshRetryStateMatches(ptyId)) {
       return false
     }
     capturedDirectSshRetryPtyAccepted = directSshRetryAttempt !== undefined
     return true
   }
   const canAdoptCapturedDirectSshRetryPty = (ptyId: string): boolean => {
-    const canAdopt = capturedDirectSshRetryStateMatches(ptyId, false)
+    const canAdopt = capturedDirectSshRetryStateMatches(ptyId)
     if (canAdopt && directSshRetryAttempt) {
       capturedDirectSshRetryPtyAccepted = true
     }
@@ -7477,6 +7479,16 @@ export function connectPanePty(
       }
     }
 
+    const isCapturedDirectSshReattachCurrent = (ptyId: string): boolean =>
+      !directSshRetryAttempt || capturedDirectSshRetryStateMatches(ptyId)
+    const rejectObsoleteDirectSshReattach = (ptyId: string | null | undefined): boolean => {
+      if (!directSshRetryAttempt || (ptyId && claimCapturedDirectSshRetryPty(ptyId))) {
+        return false
+      }
+      transport.detach?.({ preserveExitObserver: false })
+      return true
+    }
+
     const handleReattachResult = async (
       result: PtyConnectResult | string | void,
       staleSessionId?: string | null,
@@ -7497,6 +7509,13 @@ export function connectPanePty(
         return true
       }
 
+      const retryPtyId =
+        connectResult?.id ??
+        (typeof result === 'string' ? result : (staleSessionId ?? transport.getPtyId()))
+      if (rejectObsoleteDirectSshReattach(retryPtyId)) {
+        // Why: an obsolete reattach must stop consuming frames without killing the durable PTY a newer lease may adopt.
+        return false
+      }
       const ptyId =
         connectResult?.id ?? (typeof result === 'string' ? result : transport.getPtyId())
       if (!ptyId) {
@@ -7542,11 +7561,6 @@ export function connectPanePty(
         startFreshColdRestoreAgentResume(coldRestoreStartup, {
           forceBlankRestoredViewport: true
         })
-        return false
-      }
-      if (!claimCapturedDirectSshRetryPty(ptyId)) {
-        // Why: an obsolete reattach must stop consuming frames without killing the durable PTY a newer lease may adopt.
-        transport.detach?.({ preserveExitObserver: false })
         return false
       }
       const isCurrentReattachPayload = (): boolean => {
@@ -7845,7 +7859,7 @@ export function connectPanePty(
             console.warn('[pty-connection] needsPassphrasePrompt probe failed:', err)
             // Why: on probe failure fall through to auto-connect rather than stranding the tab — a stuck tab is worse than a surprising prompt.
           }
-          if (disposed) {
+          if (disposed || !capturedDirectSshRetryLeaseMatches()) {
             return
           }
           if (needsPrompt) {
@@ -7910,7 +7924,7 @@ export function connectPanePty(
                   finish(currentOutcome)
                 }
               })
-              if (disposed) {
+              if (disposed || !capturedDirectSshRetryLeaseMatches()) {
                 return
               }
               if (outcome === 'cancelled') {
@@ -7925,11 +7939,11 @@ export function connectPanePty(
 
           // Why: wait for the shared SSH connection (multiple panes/tabs may need it) before PTY reattach, rather than returning early when it's in-flight.
           const connectResult = await waitForSshConnection(connectionId)
-          if (!connectResult.connected) {
-            reportError(`SSH connection failed: ${connectResult.error}`)
+          if (disposed || !capturedDirectSshRetryLeaseMatches()) {
             return
           }
-          if (disposed) {
+          if (!connectResult.connected) {
+            reportError(`SSH connection failed: ${connectResult.error}`)
             return
           }
           useAppStore.getState().removeDeferredSshReconnectTarget(connectionId)
@@ -7955,6 +7969,9 @@ export function connectPanePty(
             const outputCallbacks = captureTransportOutputCallbacks((message) => {
               if (isSshSessionExpiredError(message)) {
                 expiredReattachError = true
+                return
+              }
+              if (!isCapturedDirectSshReattachCurrent(pendingSessionId)) {
                 return
               }
               reportError(message)
@@ -8017,6 +8034,9 @@ export function connectPanePty(
                   if (disposed) {
                     return
                   }
+                  if (rejectObsoleteDirectSshReattach(pendingSessionId)) {
+                    return
+                  }
                   deps.clearExitedPanePtyLayoutBinding(pane.id, pendingSessionId)
                   deps.clearTabPtyId(deps.tabId, pendingSessionId)
                   startFreshColdRestoreAgentResume(coldRestoreStartup, {
@@ -8058,6 +8078,9 @@ export function connectPanePty(
                 }
                 console.warn(`[pty-connection] Reattach FAILED for tab=${deps.tabId}:`, err)
                 if (disposed || outputCallbacks.generation !== transportStreamGeneration) {
+                  return
+                }
+                if (rejectObsoleteDirectSshReattach(pendingSessionId)) {
                   return
                 }
                 if (isSshSessionExpiredError(err)) {
@@ -8182,6 +8205,9 @@ export function connectPanePty(
           expiredReattachError = true
           return
         }
+        if (!isCapturedDirectSshReattachCurrent(deferredReattachSessionId)) {
+          return
+        }
         reportError(message)
       })
       beginReattachLiveDataDeferral(outputCallbacks.generation)
@@ -8232,6 +8258,9 @@ export function connectPanePty(
             if (disposed) {
               return
             }
+            if (rejectObsoleteDirectSshReattach(deferredReattachSessionId)) {
+              return
+            }
             deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)
             deps.clearTabPtyId(deps.tabId, deferredReattachSessionId)
             startFreshColdRestoreAgentResume(coldRestoreStartup, {
@@ -8273,6 +8302,9 @@ export function connectPanePty(
           }
           const message = err instanceof Error ? err.message : String(err)
           if (outputCallbacks.generation !== transportStreamGeneration) {
+            return
+          }
+          if (rejectObsoleteDirectSshReattach(deferredReattachSessionId)) {
             return
           }
           warnTerminalLifecycleAnomaly('restored PTY reattach threw', {

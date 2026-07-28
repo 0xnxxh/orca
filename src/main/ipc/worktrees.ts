@@ -40,6 +40,7 @@ import {
   getRepoExecutionHostId,
   LOCAL_EXECUTION_HOST_ID,
   parseExecutionHostId,
+  toSshExecutionHostId,
   type ExecutionHostId
 } from '../../shared/execution-host'
 import {
@@ -1045,18 +1046,49 @@ function hasConflictingStoredWorktreeOwner(
   })
 }
 
+type RepoOwnershipEvidence =
+  | { status: 'owned'; hostId: ExecutionHostId }
+  | { status: 'malformed' }
+  | { status: 'contradictory' }
+
+function resolveRepoOwnershipEvidence(repo: Repo): RepoOwnershipEvidence {
+  const hasExplicitHost = repo.executionHostId !== null && repo.executionHostId !== undefined
+  const explicitHost = hasExplicitHost ? parseExecutionHostId(repo.executionHostId) : null
+  if (hasExplicitHost && !explicitHost) {
+    return { status: 'malformed' }
+  }
+  const hasConnection = repo.connectionId !== null && repo.connectionId !== undefined
+  const connectionId = hasConnection ? repo.connectionId?.trim() : null
+  if (hasConnection && !connectionId) {
+    return { status: 'malformed' }
+  }
+  const connectionHostId = connectionId ? toSshExecutionHostId(connectionId) : null
+  if (explicitHost && connectionHostId && explicitHost.id !== connectionHostId) {
+    return { status: 'contradictory' }
+  }
+  return {
+    status: 'owned',
+    hostId: explicitHost?.id ?? connectionHostId ?? LOCAL_EXECUTION_HOST_ID
+  }
+}
+
 function findExactRepoOwner(
   store: Store,
   repoId: string,
   executionHostId?: ExecutionHostId
 ): Repo | undefined {
-  const matches = store
-    .getRepos()
-    .filter(
-      (repo) =>
-        repo.id === repoId &&
-        (executionHostId === undefined || getRepoExecutionHostId(repo) === executionHostId)
+  const candidates = store.getRepos().filter((repo) => repo.id === repoId)
+  const evidence = candidates.map(resolveRepoOwnershipEvidence)
+  if (evidence.some((owner) => owner.status !== 'owned')) {
+    return undefined
+  }
+  const matches = candidates.filter((_, index) => {
+    const owner = evidence[index]
+    return (
+      owner?.status === 'owned' &&
+      (executionHostId === undefined || owner.hostId === executionHostId)
     )
+  })
   return matches.length === 1 ? matches[0] : undefined
 }
 
@@ -1262,20 +1294,14 @@ function createLineageResolutionContext(store: Store): LineageResolutionContext 
 }
 
 function resolveRepoLineageOwner(repo: Repo): LineageOwner {
-  const explicit = repo.executionHostId ? parseExecutionHostId(repo.executionHostId) : null
-  if (repo.executionHostId && !explicit) {
+  const owner = resolveRepoOwnershipEvidence(repo)
+  if (owner.status === 'malformed') {
     return { status: 'ambiguous' }
   }
-  const connectionHost = repo.connectionId
-    ? parseExecutionHostId(`ssh:${encodeURIComponent(repo.connectionId)}`)
-    : null
-  if (explicit && connectionHost && explicit.id !== connectionHost.id) {
+  if (owner.status === 'contradictory') {
     return { status: 'contradictory' }
   }
-  const hostId = explicit?.id ?? connectionHost?.id ?? LOCAL_EXECUTION_HOST_ID
-  return parseExecutionHostId(hostId)?.kind === 'runtime'
-    ? { status: 'runtime' }
-    : { status: 'owned', hostId }
+  return parseExecutionHostId(owner.hostId)?.kind === 'runtime' ? { status: 'runtime' } : owner
 }
 
 function resolveWorktreeLineageOwner(
@@ -1628,6 +1654,12 @@ async function listHostQualifiedDetectedWorktrees(
     }
   }
 
+  const repoCandidates = store.getRepos().filter((candidate) => candidate.id === args.repoId)
+  if (
+    repoCandidates.some((candidate) => resolveRepoOwnershipEvidence(candidate).status !== 'owned')
+  ) {
+    return rejected('rejected')
+  }
   const repo = findExactRepoOwner(store, args.repoId, args.executionHostId)
   if (!repo) {
     return rejected('ambiguous-owner')
