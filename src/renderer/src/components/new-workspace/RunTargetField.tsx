@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 import type { ExecutionHostId } from '../../../../shared/execution-host'
 import { HostRowIcon } from './RunTargetComboboxRow'
+import { COMBOBOX_FIELD_SHELL } from './type-ahead-combobox-styles'
 
 /**
  * The run-target field: a text input that *is* the search box, painted over
@@ -50,7 +51,7 @@ export default function RunTargetField({
           inputRef.current?.focus()
           onOpenRequest()
         }}
-        className="flex h-9 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-transparent px-2.5 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30"
+        className={COMBOBOX_FIELD_SHELL}
       >
         <span className="flex w-4 shrink-0 items-center justify-center">
           {committed ? (

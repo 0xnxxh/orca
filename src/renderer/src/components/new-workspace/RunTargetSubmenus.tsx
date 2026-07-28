@@ -10,11 +10,9 @@ import {
   RUN_TARGET_ADD_HOST_KEY,
   type EphemeralVmRecipeOption
 } from './run-target-options'
+import { COMBOBOX_POPOVER_SURFACE } from './type-ahead-combobox-styles'
 
-// Matches the main list's surface: opaque and unfaded, because these land over
-// the composer dialog where a translucent fade shows the form underneath.
-const SUBMENU_CONTENT =
-  'w-72 bg-[var(--popover)] p-1 data-[state=closed]:fade-out-100 data-[state=open]:fade-in-100 dark:bg-[var(--popover)]'
+const SUBMENU_CONTENT = cn('w-72 p-1', COMBOBOX_POPOVER_SURFACE)
 
 /** The "Per-Workspace Environment" row and its nested recipe list. */
 export function RecipesSubmenuRow({

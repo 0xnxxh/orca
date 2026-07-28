@@ -1,11 +1,13 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import { Popover, PopoverContent } from '@/components/ui/popover'
+import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 import type {
   NeedsSetupProjectHostOption,
   ProjectHostSetupOption
 } from '@/lib/project-host-setup-options'
-import { useWheelScrollable } from './use-wheel-scrollable'
+import { isWithinComboboxRoot, useTypeAheadCombobox } from './use-type-ahead-combobox'
+import { COMBOBOX_POPOVER_SURFACE } from './type-ahead-combobox-styles'
 import {
   ConnectHostButton,
   HostRowIcon,
@@ -34,12 +36,7 @@ type RunTargetComboboxProps = {
   onConnectHost?: (option: NeedsSetupProjectHostOption) => Promise<void> | void
 }
 
-/** True when an event target is the field/anchor this popover belongs to. */
-function isWithinCombobox(target: EventTarget | null): boolean {
-  return (
-    target instanceof Element && target.closest('[data-run-target-combobox-root="true"]') !== null
-  )
-}
+const ROOT_ATTRIBUTE = 'data-run-target-combobox-root'
 
 /**
  * Run-target picker, built to match the project picker: the field *is* the
@@ -61,20 +58,20 @@ export default function RunTargetCombobox({
   onAddSshHost,
   onConnectHost
 }: RunTargetComboboxProps): React.JSX.Element {
-  const [query, setQuery] = useState('')
-  const [open, setOpen] = useState(false)
   const [submenu, setSubmenu] = useState<'recipes' | 'add-host' | null>(null)
-  // Armed by key (not index) so a host list arriving late over SSH can't slide
-  // a different target under a keypress the user already aimed. The query it
-  // was aimed at rides along, so a newer query drops it during render.
-  const [armed, setArmed] = useState<{ key: string; query: string } | null>(null)
   // Track in-flight connects per host so one stalling connect never blocks the others.
   const [connectingHostIds, setConnectingHostIds] = useState<ReadonlySet<string>>(() => new Set())
-  const inputRef = useRef<HTMLInputElement>(null)
-  const { ref: listRef, setNode: setListNode } = useWheelScrollable<HTMLDivElement>()
-  const listId = React.useId()
 
   const hasAddHost = Boolean(onAddSshHost || onAddRemoteServer)
+  const deriveRowKeys = useCallback(
+    (query: string): string[] =>
+      buildRunTargetRows({ hostOptions, recipes, query, hasAddHost }).rows.map((row) => row.key),
+    [hasAddHost, hostOptions, recipes]
+  )
+  const combobox = useTypeAheadCombobox(deriveRowKeys)
+  const { query, setQuery, open, setOpen, armedKey, arm, moveArm, inputRef, listId, setListNode } =
+    combobox
+
   const { rows, matchedRecipes } = useMemo(
     () => buildRunTargetRows({ hostOptions, recipes, query, hasAddHost }),
     [hasAddHost, hostOptions, query, recipes]
@@ -86,25 +83,15 @@ export default function RunTargetCombobox({
   const selectedHost =
     readyHostOptions.find((option) => option.id === hostValue) ?? readyHostOptions[0] ?? null
   const selectedRecipe = recipes.find((recipe) => recipe.id === recipeValue) ?? null
-
-  const armProject = useCallback((key: string) => setArmed({ key, query }), [query])
-  const armedKey = armed !== null && armed.query === query ? armed.key : null
-  const armedIndex = Math.max(armedKey === null ? -1 : rows.findIndex((r) => r.key === armedKey), 0)
-  const armedRow = rows[armedIndex] ?? null
+  const armedRow = rows.find((row) => row.key === armedKey) ?? rows[0] ?? null
   // Only a committed selection paints the field; typing replaces it.
   const committed = query.length === 0 && (selectedRecipe !== null || selectedHost !== null)
 
-  React.useEffect(() => {
-    if (open) {
-      listRef.current?.querySelector('[data-armed="true"]')?.scrollIntoView({ block: 'nearest' })
-    }
-  }, [listRef, open, armedIndex, rows.length])
-
+  // Closing also drops any open submenu, which the shared hook doesn't know about.
   const close = useCallback((): void => {
-    setOpen(false)
-    setQuery('')
+    combobox.close()
     setSubmenu(null)
-  }, [])
+  }, [combobox])
 
   const selectHost = useCallback(
     (setupId: string): void => {
@@ -172,12 +159,8 @@ export default function RunTargetCombobox({
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         setOpen(true)
-        const step = event.key === 'ArrowDown' ? 1 : -1
-        const nextKey = rows[Math.min(Math.max(armedIndex + step, 0), rows.length - 1)]?.key
-        if (nextKey !== undefined) {
-          armProject(nextKey)
-          setSubmenu(null)
-        }
+        moveArm(event.key === 'ArrowDown' ? 1 : -1)
+        setSubmenu(null)
         return
       }
       if ((event.key === 'Enter' || event.key === 'ArrowRight') && open) {
@@ -196,11 +179,9 @@ export default function RunTargetCombobox({
         close()
       }
     },
-    [activate, armProject, armedIndex, armedRow, close, open, query, rows, submenu]
+    [activate, armedRow, close, moveArm, open, query, setOpen, submenu]
   )
 
-  // A query only means something while the list is open; closing without
-  // committing drops it so the field never shows text matching nothing.
   const handleOpenChange = useCallback(
     (next: boolean): void => {
       if (next) {
@@ -209,7 +190,7 @@ export default function RunTargetCombobox({
       }
       close()
     },
-    [close]
+    [close, setOpen]
   )
 
   const fieldLabel = selectedRecipe
@@ -242,20 +223,21 @@ export default function RunTargetCombobox({
       <PopoverContent
         align="start"
         sideOffset={4}
-        // Opaque + no fade: this lands on the composer dialog, so a translucent
-        // fade would show the field underneath mid-animation.
-        className="flex w-[var(--radix-popover-trigger-width)] min-w-[18rem] flex-col bg-[var(--popover)] p-0 data-[state=closed]:fade-out-100 data-[state=open]:fade-in-100 dark:bg-[var(--popover)]"
+        className={cn(
+          'flex w-[var(--radix-popover-trigger-width)] min-w-[18rem] flex-col p-0',
+          COMBOBOX_POPOVER_SURFACE
+        )}
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
         // The field lives in the anchor, not the content, so Radix would see a
         // focus/pointer event "outside" and dismiss the instant you tab in.
         onFocusOutside={(event) => {
-          if (isWithinCombobox(event.target)) {
+          if (isWithinComboboxRoot(event.target, ROOT_ATTRIBUTE)) {
             event.preventDefault()
           }
         }}
         onInteractOutside={(event) => {
-          if (isWithinCombobox(event.target)) {
+          if (isWithinComboboxRoot(event.target, ROOT_ATTRIBUTE)) {
             event.preventDefault()
           }
         }}
@@ -299,7 +281,7 @@ export default function RunTargetCombobox({
                     current={selectedRecipe === null && row.option.id === selectedHost?.id}
                     optionId={optionId}
                     onArm={() => {
-                      armProject(row.key)
+                      arm(row.key)
                       setSubmenu(null)
                     }}
                     onCommit={() => selectHost(row.option.id)}
@@ -329,7 +311,7 @@ export default function RunTargetCombobox({
                     dimmed
                     optionId={optionId}
                     onArm={() => {
-                      armProject(row.key)
+                      arm(row.key)
                       setSubmenu(null)
                     }}
                     onCommit={() => {}}
@@ -355,7 +337,7 @@ export default function RunTargetCombobox({
                   recipes={matchedRecipes}
                   selectedRecipeId={selectedRecipe?.id ?? null}
                   onArm={() => {
-                    armProject(row.key)
+                    arm(row.key)
                     setSubmenu('recipes')
                   }}
                   onSelectRecipe={selectRecipe}
@@ -370,7 +352,7 @@ export default function RunTargetCombobox({
               armed={armedRow?.key === RUN_TARGET_ADD_HOST_KEY}
               optionId={armedRow?.key === RUN_TARGET_ADD_HOST_KEY ? `${listId}-armed` : undefined}
               onArm={() => {
-                armProject(RUN_TARGET_ADD_HOST_KEY)
+                arm(RUN_TARGET_ADD_HOST_KEY)
                 setSubmenu('add-host')
               }}
               {...(onAddSshHost

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useMemo } from 'react'
 import { ChevronDown, FolderPlus } from 'lucide-react'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
@@ -11,7 +11,8 @@ import {
 } from './project-combobox-matching'
 import { ProjectOptionDetail, ProjectOptionMark, ProjectOptionRow } from './ProjectComboboxRow'
 import { useRecentProjectIds } from './use-recent-project-ids'
-import { useWheelScrollable } from './use-wheel-scrollable'
+import { isWithinComboboxRoot, useTypeAheadCombobox } from './use-type-ahead-combobox'
+import { COMBOBOX_FIELD_SHELL, COMBOBOX_POPOVER_SURFACE } from './type-ahead-combobox-styles'
 
 type ProjectComboboxProps = {
   options: readonly NewWorkspaceProjectOption[]
@@ -26,11 +27,7 @@ type ProjectComboboxProps = {
 }
 
 const ADD_PROJECT_KEY = 'add-project'
-
-/** True when an event target is the field/anchor this popover belongs to. */
-function isWithinCombobox(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest('[data-project-combobox-root="true"]') !== null
-}
+const ROOT_ATTRIBUTE = 'data-project-combobox-root'
 
 /**
  * Type-ahead project picker: the field *is* the search, so there's no trigger
@@ -50,26 +47,31 @@ export default function ProjectCombobox({
   invalid = false,
   describedBy
 }: ProjectComboboxProps): React.JSX.Element {
-  const [query, setQuery] = useState('')
-  const [open, setOpen] = useState(false)
-  // Armed is tracked by key, not index, so a list arriving late (SSH) can't
-  // slide a different project under a keypress the user already aimed. The
-  // query it was aimed at rides along, so a newer query drops it during render
-  // rather than needing a reset effect.
-  const [armed, setArmed] = useState<{ key: string; query: string } | null>(null)
-  const armProject = useCallback(
-    (key: string) => setArmed({ key, query }),
-    // `query` is read at call time; the ref-free closure is refreshed each render.
-    [query]
-  )
-  const inputRef = useRef<HTMLInputElement>(null)
-  // Wheel shim: react-remove-scroll (Radix Dialog) cancels wheel events for
-  // this portaled pane, so the list needs to scroll itself.
-  const { ref: listRef, setNode: setListNode } = useWheelScrollable<HTMLDivElement>()
-  const listId = React.useId()
-
   const recentIds = useRecentProjectIds()
-  const ambiguous = useMemo(() => getAmbiguousProjectOptionIds(options), [options])
+  // Ranking depends on the query the hook owns, so rows are derived from it and
+  // handed back; `matches`/`sections` are recomputed from the same query below.
+  const deriveRowKeys = useCallback(
+    (query: string): string[] => [
+      ...rankProjectOptions(options, query, recentIds).map((match) => match.option.id),
+      ...(onAddProject ? [ADD_PROJECT_KEY] : [])
+    ],
+    [onAddProject, options, recentIds]
+  )
+  const {
+    query,
+    setQuery,
+    open,
+    setOpen,
+    close,
+    handleOpenChange,
+    armedKey,
+    arm,
+    moveArm,
+    inputRef,
+    listId,
+    setListNode
+  } = useTypeAheadCombobox(deriveRowKeys)
+
   const matches = useMemo(
     () => rankProjectOptions(options, query, recentIds),
     [options, query, recentIds]
@@ -78,33 +80,17 @@ export default function ProjectCombobox({
     () => sectionProjectOptions(matches, query, recentIds),
     [matches, query, recentIds]
   )
-  const rowKeys = useMemo(
-    () => [...matches.map((m) => m.option.id), ...(onAddProject ? [ADD_PROJECT_KEY] : [])],
-    [matches, onAddProject]
-  )
-  // A stale arm (aimed at an earlier query) falls back to the top row.
-  const armedKey = armed !== null && armed.query === query ? armed.key : null
-  const armedIndex = Math.max(armedKey === null ? -1 : rowKeys.indexOf(armedKey), 0)
-  const armedRowKey = rowKeys[armedIndex] ?? null
+  const ambiguous = useMemo(() => getAmbiguousProjectOptionIds(options), [options])
   const selected = options.find((option) => option.id === value) ?? null
   // A committed pick shows as the field's own content; typing replaces it.
   const committed = selected !== null && query.length === 0
-
-  // Keep the armed row in view as arrow keys walk past the visible window.
-  // `listRef` is a stable ref object, so reading `.current` here needs no dep.
-  React.useEffect(() => {
-    if (open) {
-      listRef.current?.querySelector('[data-armed="true"]')?.scrollIntoView({ block: 'nearest' })
-    }
-  }, [listRef, open, armedIndex, rowKeys.length])
 
   const commit = useCallback(
     (key: string | null): void => {
       if (key === null) {
         return
       }
-      setOpen(false)
-      setQuery('')
+      close()
       if (key === ADD_PROJECT_KEY) {
         onAddProject?.()
         return
@@ -112,7 +98,7 @@ export default function ProjectCombobox({
       onValueChange(key)
       onValueSelected?.(key)
     },
-    [onAddProject, onValueChange, onValueSelected]
+    [close, onAddProject, onValueChange, onValueSelected]
   )
 
   const handleKeyDown = useCallback(
@@ -120,16 +106,12 @@ export default function ProjectCombobox({
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         setOpen(true)
-        const step = event.key === 'ArrowDown' ? 1 : -1
-        const nextKey = rowKeys[Math.min(Math.max(armedIndex + step, 0), rowKeys.length - 1)]
-        if (nextKey !== undefined) {
-          armProject(nextKey)
-        }
+        moveArm(event.key === 'ArrowDown' ? 1 : -1)
         return
       }
       if (event.key === 'Enter' && open) {
         event.preventDefault()
-        commit(armedRowKey)
+        commit(armedKey)
         return
       }
       // Why: not gated on `open` — a leftover query with the list closed would
@@ -139,8 +121,7 @@ export default function ProjectCombobox({
       if (event.key === 'Escape' && (open || query.length > 0)) {
         event.preventDefault()
         event.stopPropagation()
-        setOpen(false)
-        setQuery('')
+        close()
         return
       }
       // Backspace on a committed pick unsticks it back into editable text.
@@ -150,18 +131,8 @@ export default function ProjectCombobox({
         setOpen(true)
       }
     },
-    [armProject, armedIndex, armedRowKey, commit, committed, open, query, rowKeys, selected]
+    [armedKey, close, commit, committed, moveArm, open, query, selected, setOpen, setQuery]
   )
-
-  // Why: a query only means something while the list is open. Closing without
-  // committing (blur, outside click, Esc) must drop it, or the field is left
-  // showing text that matches nothing and hides the selected project.
-  const handleOpenChange = useCallback((next: boolean): void => {
-    setOpen(next)
-    if (!next) {
-      setQuery('')
-    }
-  }, [])
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -173,7 +144,7 @@ export default function ProjectCombobox({
             setOpen(true)
           }}
           className={cn(
-            'flex h-9 w-full min-w-0 items-center gap-2 rounded-md border border-input bg-transparent px-2.5 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30',
+            COMBOBOX_FIELD_SHELL,
             invalid && 'border-destructive ring-destructive/20 dark:ring-destructive/40',
             triggerClassName
           )}
@@ -194,7 +165,7 @@ export default function ProjectCombobox({
               aria-expanded={open}
               aria-controls={listId}
               aria-autocomplete="list"
-              aria-activedescendant={open && armedRowKey ? `${listId}-armed` : undefined}
+              aria-activedescendant={open && armedKey ? `${listId}-armed` : undefined}
               aria-invalid={invalid ? true : undefined}
               aria-describedby={describedBy}
               value={query}
@@ -261,7 +232,10 @@ export default function ProjectCombobox({
         // An opaque surface that zooms without fading resolves it. (`bg-popover`
         // alone loses to the primitive's arbitrary-value background, hence the
         // matching arbitrary form.) Every other caller keeps the blur and fade.
-        className="flex w-[var(--radix-popover-trigger-width)] min-w-[17rem] flex-col bg-[var(--popover)] p-0 data-[state=closed]:fade-out-100 data-[state=open]:fade-in-100 dark:bg-[var(--popover)]"
+        className={cn(
+          'flex w-[var(--radix-popover-trigger-width)] min-w-[17rem] flex-col p-0',
+          COMBOBOX_POPOVER_SURFACE
+        )}
         // Focus stays in the field — it's the search box — so the popover must
         // not steal it on open, nor yank it back on close after a pick.
         onOpenAutoFocus={(event) => event.preventDefault()}
@@ -271,12 +245,12 @@ export default function ProjectCombobox({
         // instant you tab in. Keep the layer open whenever the interaction is
         // within this control; genuine outside events still close it.
         onFocusOutside={(event) => {
-          if (isWithinCombobox(event.target)) {
+          if (isWithinComboboxRoot(event.target, ROOT_ATTRIBUTE)) {
             event.preventDefault()
           }
         }}
         onInteractOutside={(event) => {
-          if (isWithinCombobox(event.target)) {
+          if (isWithinComboboxRoot(event.target, ROOT_ATTRIBUTE)) {
             event.preventDefault()
           }
         }}
@@ -335,11 +309,11 @@ export default function ProjectCombobox({
                     option={scored.option}
                     nameHits={scored.nameHits}
                     detailHits={scored.detailHits}
-                    armed={armedRowKey === scored.option.id}
+                    armed={armedKey === scored.option.id}
                     current={scored.option.id === value}
                     ambiguous={ambiguous.has(scored.option.id)}
-                    optionId={armedRowKey === scored.option.id ? `${listId}-armed` : undefined}
-                    onArm={() => armProject(scored.option.id)}
+                    optionId={armedKey === scored.option.id ? `${listId}-armed` : undefined}
+                    onArm={() => arm(scored.option.id)}
                     onCommit={() => commit(scored.option.id)}
                   />
                 ))}
@@ -349,15 +323,15 @@ export default function ProjectCombobox({
           {onAddProject ? (
             <div
               role="option"
-              id={armedRowKey === ADD_PROJECT_KEY ? `${listId}-armed` : undefined}
-              aria-selected={armedRowKey === ADD_PROJECT_KEY}
-              data-armed={armedRowKey === ADD_PROJECT_KEY || undefined}
+              id={armedKey === ADD_PROJECT_KEY ? `${listId}-armed` : undefined}
+              aria-selected={armedKey === ADD_PROJECT_KEY}
+              data-armed={armedKey === ADD_PROJECT_KEY || undefined}
               onMouseDown={(event) => event.preventDefault()}
-              onMouseMove={() => armProject(ADD_PROJECT_KEY)}
+              onMouseMove={() => arm(ADD_PROJECT_KEY)}
               onClick={() => commit(ADD_PROJECT_KEY)}
               className={cn(
                 'flex h-9 shrink-0 cursor-default items-center gap-2 border-t border-border px-2 text-sm',
-                armedRowKey === ADD_PROJECT_KEY && 'bg-accent text-accent-foreground'
+                armedKey === ADD_PROJECT_KEY && 'bg-accent text-accent-foreground'
               )}
             >
               <FolderPlus className="size-3.5 shrink-0 text-muted-foreground" />
