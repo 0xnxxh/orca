@@ -3,6 +3,7 @@ import type { GlobalSettings, OrcaWorkspaceLayout, Repo } from '../../shared/typ
 import { isWindowsAbsolutePathLike, resolveRuntimePath } from '../../shared/cross-platform-path'
 import { isWslUncPath } from '../../shared/wsl-paths'
 import { splitWorktreeId } from '../../shared/worktree-id'
+import { replaceKnownEmojiWithShortcodes } from '../../shared/emoji-shortcode-catalog'
 import { getWslHome, parseWslPath } from '../wsl'
 
 type WorktreePathSettings = Pick<GlobalSettings, 'nestWorkspaces' | 'workspaceDir'>
@@ -25,7 +26,7 @@ export function sanitizeWorktreeName(input: string): string {
   // name workspaces in their own language. Git ref-format permits non-ASCII
   // bytes, and modern filesystems handle UTF-8 paths. Only strip characters
   // git or the filesystem actually rejects.
-  const sanitized = input
+  const sanitized = replaceKnownEmojiWithShortcodes(input)
     .trim()
     .replace(/[^\p{L}\p{N}._-]+/gu, '-')
     .replace(/-+/g, '-')
