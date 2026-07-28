@@ -8,7 +8,8 @@ import {
   SSH_DETECTED_PORT_ADVERTISED_URL_MAX_UTF8_BYTES,
   SSH_DETECTED_PORT_PROCESS_NAME_MAX_UTF8_BYTES,
   SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES,
-  SSH_RETAINED_IDENTIFIER_MAX_UTF8_BYTES
+  SSH_RETAINED_IDENTIFIER_MAX_UTF8_BYTES,
+  admitSshConnectionStateForAuthorityReconciliation
 } from './ssh-retained-payload-admission'
 
 describe('SSH retained payload admission', () => {
@@ -57,6 +58,28 @@ describe('SSH retained payload admission', () => {
           providerEpoch: 'x'.repeat(SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES + 1),
           connectionGeneration: 3
         },
+        'ssh-a'
+      )
+    ).toBeNull()
+  })
+
+  it('normalizes only partial authority for bounded reconciliation', () => {
+    const state = {
+      targetId: 'ssh-a',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    }
+
+    expect(
+      admitSshConnectionStateForAuthorityReconciliation(
+        { ...state, providerEpoch: 'provider-a' },
+        'ssh-a'
+      )
+    ).toEqual({ ...state, providerEpoch: null })
+    expect(
+      admitSshConnectionStateForAuthorityReconciliation(
+        { ...state, providerEpoch: '', connectionGeneration: 3 },
         'ssh-a'
       )
     ).toBeNull()

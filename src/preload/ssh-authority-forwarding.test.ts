@@ -66,7 +66,7 @@ describe('native preload SSH authority forwarding', () => {
     await import('./index')
     const api = exposeInMainWorld.mock.calls.find(([name]) => name === 'api')?.[1] as PreloadApi
 
-    await expect(api.ssh.getState({ targetId: 'ssh-1' })).resolves.toBe(state)
+    await expect(api.ssh.getState({ targetId: 'ssh-1' })).resolves.toEqual(state)
     expect(invoke).toHaveBeenCalledWith('ssh:getState', { targetId: 'ssh-1' })
 
     const onStateChanged = vi.fn()
@@ -78,10 +78,10 @@ describe('native preload SSH authority forwarding', () => {
     listener({}, { targetId: 'ssh-1', state })
 
     expect(onStateChanged).toHaveBeenCalledWith({ targetId: 'ssh-1', state })
-    expect(onStateChanged.mock.calls[0]?.[0].state).toBe(state)
+    expect(onStateChanged.mock.calls[0]?.[0].state).toEqual(state)
   })
 
-  it('does not synthesize the missing half of partial compatibility states', async () => {
+  it('normalizes partial compatibility authority to unknown for reconciliation', async () => {
     const partialState = {
       targetId: 'ssh-1',
       status: 'connected',
@@ -94,8 +94,13 @@ describe('native preload SSH authority forwarding', () => {
     const api = exposeInMainWorld.mock.calls.find(([name]) => name === 'api')?.[1] as PreloadApi
 
     const returned = await api.ssh.getState({ targetId: 'ssh-1' })
-    expect(returned).toBe(partialState)
-    expect(returned).not.toHaveProperty('connectionGeneration')
+    expect(returned).toEqual({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0,
+      providerEpoch: null
+    })
 
     const onStateChanged = vi.fn()
     api.ssh.onStateChanged(onStateChanged)
@@ -105,7 +110,40 @@ describe('native preload SSH authority forwarding', () => {
     ) => void
     listener({}, { targetId: 'ssh-1', state: partialState })
 
-    expect(onStateChanged.mock.calls[0]?.[0].state).toBe(partialState)
-    expect(onStateChanged.mock.calls[0]?.[0].state).not.toHaveProperty('connectionGeneration')
+    expect(onStateChanged.mock.calls[0]?.[0].state).toEqual({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0,
+      providerEpoch: null
+    })
+  })
+
+  it('drops malformed full authority before it reaches the renderer', async () => {
+    await import('./index')
+    const api = exposeInMainWorld.mock.calls.find(([name]) => name === 'api')?.[1] as PreloadApi
+    const onStateChanged = vi.fn()
+    api.ssh.onStateChanged(onStateChanged)
+    const listener = on.mock.calls.find(([channel]) => channel === 'ssh:state-changed')?.[1] as (
+      event: unknown,
+      data: { targetId: string; state: SshConnectionState }
+    ) => void
+
+    listener(
+      {},
+      {
+        targetId: 'ssh-1',
+        state: {
+          targetId: 'ssh-1',
+          status: 'connected',
+          error: null,
+          reconnectAttempt: 0,
+          providerEpoch: '' as SshProviderEpoch,
+          connectionGeneration: 29
+        }
+      }
+    )
+
+    expect(onStateChanged).not.toHaveBeenCalled()
   })
 })

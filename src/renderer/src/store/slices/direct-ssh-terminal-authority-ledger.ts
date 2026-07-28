@@ -161,57 +161,77 @@ export function transferDirectSshPaneDetachLedger(
   const targetTab = tabs.find((tab) => tab.id === args.targetTabId)
   const live = state.directSshLivePtyBindingByTabId[args.sourceTabId]
   const pending = state.directSshPaneRetryByTabId[args.sourceTabId]
-  const sourceLease =
-    live && sourceTab && liveBindingMatches(sourceTab, live, live.authority)
-      ? live
-      : pending &&
-          sourceTab &&
-          pending.tabGeneration === (sourceTab.generation ?? 0) &&
-          [args.detachedPtyId, args.sourcePtyId].some(
-            (ptyId) => parseAppSshPtyId(ptyId ?? '')?.connectionId === pending.authority.targetId
-          )
-        ? pending
-        : null
+  const liveLease =
+    live && sourceTab && liveBindingMatches(sourceTab, live, live.authority) ? live : null
+  const pendingLease =
+    pending &&
+    sourceTab &&
+    pending.tabGeneration === (sourceTab.generation ?? 0) &&
+    [args.detachedPtyId, args.sourcePtyId].some(
+      (ptyId) => parseAppSshPtyId(ptyId ?? '')?.connectionId === pending.authority.targetId
+    )
+      ? pending
+      : null
+  const sourceLease = liveLease ?? pendingLease
   const authority = sourceLease?.authority
+  const targetHasPendingContinuation = Boolean(
+    targetTab && !args.detachedPtyId && targetTab.pendingActivationSpawn
+  )
   if (
     sourceLease &&
     authority &&
     targetTab &&
-    args.detachedPtyId &&
+    (args.detachedPtyId || targetHasPendingContinuation) &&
     args.isAuthorityCurrent(authority)
   ) {
     const nextLiveBindings = { ...directSshLivePtyBindingByTabId }
+    const sourceHasPendingContinuation = Boolean(
+      sourceTab && !args.sourcePtyId && sourceTab.pendingActivationSpawn
+    )
     if (
       sourceTab &&
-      args.sourcePtyId &&
-      parseAppSshPtyId(args.sourcePtyId)?.connectionId === authority.targetId
+      ((args.sourcePtyId &&
+        parseAppSshPtyId(args.sourcePtyId)?.connectionId === authority.targetId) ||
+        sourceHasPendingContinuation)
     ) {
-      if (live) {
+      if (liveLease) {
         nextLiveBindings[args.sourceTabId] = {
           attemptId: sourceLease.attemptId,
           authority,
           tabGeneration: sourceTab.generation ?? 0,
-          ptyId: args.sourcePtyId
+          ptyId: args.sourcePtyId ?? liveLease.ptyId
         }
-      } else if (pending) {
+      } else if (pendingLease) {
         directSshPaneRetryByTabId = {
           ...directSshPaneRetryByTabId,
-          [args.sourceTabId]: pending
+          [args.sourceTabId]: pendingLease
         }
       }
     }
-    nextLiveBindings[args.targetTabId] = {
-      attemptId: sourceLease.attemptId,
-      authority,
-      tabGeneration: targetTab.generation ?? 0,
-      ptyId: args.detachedPtyId
+    if (args.detachedPtyId || liveLease) {
+      nextLiveBindings[args.targetTabId] = {
+        attemptId: sourceLease.attemptId,
+        authority,
+        tabGeneration: targetTab.generation ?? 0,
+        ptyId: args.detachedPtyId ?? liveLease!.ptyId
+      }
+    } else if (pendingLease) {
+      directSshPaneRetryByTabId = {
+        ...directSshPaneRetryByTabId,
+        [args.targetTabId]: {
+          ...pendingLease,
+          tabGeneration: targetTab.generation ?? 0
+        }
+      }
     }
     directSshLivePtyBindingByTabId = nextLiveBindings
     const history = state.directSshPaneRetryHistoryByTabId[args.sourceTabId]
     if (history && directSshAuthoritiesEqual(history.authority, authority)) {
       directSshPaneRetryHistoryByTabId = {
         ...directSshPaneRetryHistoryByTabId,
-        ...(args.sourcePtyId ? { [args.sourceTabId]: history } : {}),
+        ...(args.sourcePtyId || sourceHasPendingContinuation
+          ? { [args.sourceTabId]: history }
+          : {}),
         [args.targetTabId]: history
       }
     }

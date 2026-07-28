@@ -241,6 +241,25 @@ describe('applyRuntimeEnvironmentSshStateChanged', () => {
     expect(useAppStore.getState().sshConnectionStates.size).toBe(0)
   })
 
+  it('rejects partial authority before retaining a runtime-owned state', () => {
+    const envId = nextEnvId()
+    useAppStore
+      .getState()
+      .setEnvironmentSshTargetsMetadata(envId, [{ id: 'ssh-1', label: 'devbox' }])
+
+    applyRuntimeEnvironmentSshStateChanged(envId, 'ssh-1', {
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0,
+      providerEpoch: 'partial-provider-epoch' as SshProviderEpoch
+    })
+
+    expect(
+      useAppStore.getState().sshStateByEnvironment.get(envId)?.connectionStates.has('ssh-1')
+    ).toBe(false)
+  })
+
   it('does not touch another environment bucket or local state (no cross-pollution)', () => {
     const envA = nextEnvId()
     const envB = nextEnvId()

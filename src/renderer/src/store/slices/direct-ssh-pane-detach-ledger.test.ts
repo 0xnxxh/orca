@@ -129,4 +129,95 @@ describe('direct SSH split-pane detach ledger', () => {
       expect(store.getState().retryDirectSshTargetPanes(authority, 2)).toBe(0)
     }
   )
+
+  it('preserves source continuation when its sibling has not bound yet', () => {
+    const store = createSplitDetachStore()
+    const attemptId = 'split-detach' as DirectSshPaneRetryAttemptId
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: state.tabsByWorktree[WORKTREE_ID].map((tab) =>
+          tab.id === SOURCE_TAB_ID ? { ...tab, pendingActivationSpawn: true } : tab
+        )
+      },
+      ptyIdsByTabId: {
+        ...state.ptyIdsByTabId,
+        [SOURCE_TAB_ID]: [PRIMARY_PTY_ID]
+      }
+    }))
+
+    store.getState().syncPaneDetachPtyOwnership({
+      detachedLeafId: DETACHED_LEAF_ID,
+      detachedPtyId: PRIMARY_PTY_ID,
+      sourceLayout: {
+        root: { type: 'leaf', leafId: SURVIVOR_LEAF_ID },
+        activeLeafId: SURVIVOR_LEAF_ID,
+        expandedLeafId: null,
+        ptyIdsByLeafId: {}
+      },
+      sourceTabId: SOURCE_TAB_ID,
+      targetTabId: TARGET_TAB_ID
+    })
+
+    expect(store.getState().directSshLivePtyBindingByTabId[SOURCE_TAB_ID]).toMatchObject({
+      attemptId
+    })
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0]).toMatchObject({
+      ptyId: null,
+      pendingActivationSpawn: true
+    })
+
+    store.getState().updateTabPtyId(SOURCE_TAB_ID, SIBLING_PTY_ID, undefined, attemptId)
+
+    expect(store.getState().directSshLivePtyBindingByTabId[SOURCE_TAB_ID]).toMatchObject({
+      attemptId,
+      ptyId: SIBLING_PTY_ID
+    })
+    expect(store.getState().ptyIdsByTabId[SOURCE_TAB_ID]).toEqual([SIBLING_PTY_ID])
+  })
+
+  it('projects an empty continuation gap to both unbound detach sides', () => {
+    const store = createSplitDetachStore()
+    const attemptId = 'split-detach' as DirectSshPaneRetryAttemptId
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: state.tabsByWorktree[WORKTREE_ID].map((tab) => ({
+          ...tab,
+          ptyId: null,
+          pendingActivationSpawn: true
+        }))
+      },
+      ptyIdsByTabId: {
+        ...state.ptyIdsByTabId,
+        [SOURCE_TAB_ID]: []
+      }
+    }))
+
+    store.getState().syncPaneDetachPtyOwnership({
+      detachedLeafId: DETACHED_LEAF_ID,
+      detachedPtyId: null,
+      sourceLayout: {
+        root: { type: 'leaf', leafId: SURVIVOR_LEAF_ID },
+        activeLeafId: SURVIVOR_LEAF_ID,
+        expandedLeafId: null,
+        ptyIdsByLeafId: {}
+      },
+      sourceTabId: SOURCE_TAB_ID,
+      targetTabId: TARGET_TAB_ID
+    })
+
+    expect(store.getState().directSshLivePtyBindingByTabId[SOURCE_TAB_ID]).toMatchObject({
+      attemptId
+    })
+    expect(store.getState().directSshLivePtyBindingByTabId[TARGET_TAB_ID]).toMatchObject({
+      attemptId
+    })
+
+    store.getState().updateTabPtyId(SOURCE_TAB_ID, SIBLING_PTY_ID, undefined, attemptId)
+    store.getState().updateTabPtyId(TARGET_TAB_ID, PRIMARY_PTY_ID, undefined, attemptId)
+
+    expect(store.getState().ptyIdsByTabId[SOURCE_TAB_ID]).toEqual([SIBLING_PTY_ID])
+    expect(store.getState().ptyIdsByTabId[TARGET_TAB_ID]).toEqual([PRIMARY_PTY_ID])
+  })
 })

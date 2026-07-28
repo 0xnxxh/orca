@@ -216,15 +216,16 @@ describe('subscribeRuntimeClientEvents', () => {
     })
   })
 
-  it('does not synthesize a generation for a partial runtime authority', async () => {
+  it('rejects a partial runtime authority instead of retaining it', async () => {
     let capturedOnResponse: ((response: unknown) => void) | undefined
     const subscribe = vi.fn(async (_args, nextCallbacks) => {
       capturedOnResponse = (nextCallbacks as { onResponse: (response: unknown) => void }).onResponse
       return { subscriptionId: 'sub-1', unsubscribe: vi.fn() }
     })
     const onEvent = vi.fn()
+    const onError = vi.fn()
     vi.stubGlobal('window', { api: { runtimeEnvironments: { subscribe } } })
-    await subscribeRuntimeClientEvents('env-1', onEvent)
+    await subscribeRuntimeClientEvents('env-1', onEvent, onError)
     if (!capturedOnResponse) {
       throw new Error('Expected subscription callbacks')
     }
@@ -244,17 +245,7 @@ describe('subscribeRuntimeClientEvents', () => {
       }
     })
 
-    expect(onEvent).toHaveBeenCalledWith({
-      type: 'sshStateChanged',
-      targetId: 'ssh-1',
-      state: {
-        targetId: 'ssh-1',
-        status: 'connected',
-        error: null,
-        reconnectAttempt: 0,
-        providerEpoch: 'partial-provider-epoch'
-      }
-    })
-    expect(onEvent.mock.calls[0]?.[0].state).not.toHaveProperty('connectionGeneration')
+    expect(onEvent).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.any(String) }))
   })
 })

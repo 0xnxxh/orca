@@ -84,6 +84,33 @@ export function admitSshConnectionState(
   }
 }
 
+export function admitSshConnectionStateForAuthorityReconciliation(
+  value: unknown,
+  expectedTargetId: string
+): SshConnectionState | null {
+  const admitted = admitSshConnectionState(value, expectedTargetId)
+  if (admitted || !value || typeof value !== 'object') {
+    return admitted
+  }
+  const input = value as Record<string, unknown>
+  const hasProviderEpoch = input.providerEpoch !== undefined && input.providerEpoch !== null
+  const hasConnectionGeneration = input.connectionGeneration !== undefined
+  if (hasProviderEpoch === hasConnectionGeneration) {
+    return null
+  }
+  return admitSshConnectionState(
+    {
+      targetId: input.targetId,
+      status: input.status,
+      error: input.error,
+      reconnectAttempt: input.reconnectAttempt,
+      supportsFolderDownload: input.supportsFolderDownload,
+      remotePlatform: input.remotePlatform
+    },
+    expectedTargetId
+  )
+}
+
 function isSshProviderEpoch(value: unknown): value is SshProviderEpoch {
   return (
     typeof value === 'string' &&
