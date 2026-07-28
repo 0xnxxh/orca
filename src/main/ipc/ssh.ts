@@ -848,12 +848,14 @@ export function registerSshHandlers(
 
     // Why: serialize concurrent ssh:connect for the same target; interleaved connects otherwise leak the first session.
     const existing = connectInFlight.get(targetId)
+    let replacePendingTransport = false
     if (existing) {
       if (isCurrentConnectAttempt(targetId, existing.authority)) {
         return existing.promise
       }
       if (connectInFlight.get(targetId) === existing) {
         connectInFlight.delete(targetId)
+        replacePendingTransport = true
       }
     }
     if (!isCurrentSshProviderAuthority(observedAuthority)) {
@@ -861,7 +863,7 @@ export function registerSshHandlers(
     }
 
     pendingTransportReconnects.delete(targetId)
-    const promise = doConnect(targetId)
+    const promise = doConnect(targetId, replacePendingTransport)
     const attempt = { authority: getSshProviderAuthority(targetId), promise }
     connectInFlight.set(targetId, attempt)
     try {
@@ -880,7 +882,10 @@ export function registerSshHandlers(
     return connectTarget(args.targetId)
   })
 
-  async function doConnect(targetId: string): Promise<SshConnectionState> {
+  async function doConnect(
+    targetId: string,
+    replacePendingTransport = false
+  ): Promise<SshConnectionState> {
     const target = sshStore!.getTarget(targetId)
     if (!target) {
       throw new Error(`SSH target "${targetId}" not found`)
@@ -905,6 +910,12 @@ export function registerSshHandlers(
 
     const authority = rotateSshProviderAuthority(targetId)
     clearRelayStateOverride(targetId)
+    const pendingTransportDisconnect = replacePendingTransport
+      ? connectionManager!.disconnect(targetId).then(
+          () => ({ ok: true }) as const,
+          (error: unknown) => ({ ok: false, error }) as const
+        )
+      : null
     let conn
     // Why: tear down any existing session first to avoid leaking its multiplexer, providers, and timers (double-connect / reconnect-after-error).
     if (existingSession) {
@@ -917,6 +928,16 @@ export function registerSshHandlers(
       activeSessions.delete(targetId)
       clearRelayLostBackoff(targetId)
       clearRelayStateOverride(targetId)
+    }
+
+    if (pendingTransportDisconnect) {
+      const disconnectResult = await pendingTransportDisconnect
+      if (!disconnectResult.ok) {
+        throw disconnectResult.error
+      }
+      if (!isCurrentConnectAttempt(targetId, authority)) {
+        throw connectCancelledError()
+      }
     }
 
     // Why: create the session early so onStateChange sees it in 'deploying' and skips reconnect logic.

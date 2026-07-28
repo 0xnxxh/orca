@@ -3713,7 +3713,7 @@
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/startup/ssh-startup-reconnect.test.ts src/renderer/src/lib/resolved-worktree-execution-host.test.ts src/renderer/src/components/terminal/background-terminal-worktree-mount.test.ts src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-lifecycle.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/runtime/remote-runtime-session-tabs-inflight.test.ts src/renderer/src/runtime/web-session-terminal-handle-events.test.ts src/renderer/src/store/slices/terminal-pty-identity-replacement.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-recovery-state.test.ts src/renderer/src/components/terminal-pane/TerminalRemoteRuntimeReconnectBanner.test.tsx src/renderer/src/components/terminal-pane/terminal-remote-runtime-recovery-ui-state.test.ts src/shared/remote-runtime-socket-liveness.test.ts src/shared/remote-runtime-shared-control-connection.test.ts src/shared/remote-runtime-shared-control-socket-generation.test.ts src/shared/remote-runtime-client-error-classification.test.ts src/main/runtime/rpc/remote-runtime-server-heartbeat.test.ts src/main/runtime/rpc/methods/terminal-create-idempotency.test.ts src/main/runtime/orca-runtime-terminal-create-idempotency.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-pane-detach-ledger.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/store/slices/terminals-hydration.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/terminal-pane-tab-detach.test.ts --reporter=dot",
-        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/repos-remote.test.ts src/main/ipc/ssh.test.ts src/main/ipc/worktrees.test.ts src/main/runtime/public-ssh-state.test.ts src/main/ssh/ssh-provider-authority.test.ts src/preload/ssh-authority-forwarding.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/runtime/runtime-environment-ssh-state.test.ts src/shared/ssh-retained-payload-admission.test.ts src/shared/ssh-types.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/repos-remote.test.ts src/main/ipc/ssh.test.ts src/main/ipc/worktrees.test.ts src/main/runtime/public-ssh-state.test.ts src/main/ssh/ssh-connection-manager.test.ts src/main/ssh/ssh-provider-authority.test.ts src/preload/ssh-authority-forwarding.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/runtime/runtime-environment-ssh-state.test.ts src/shared/ssh-retained-payload-admission.test.ts src/shared/ssh-types.test.ts --reporter=dot",
         "pnpm exec electron-vite build --mode e2e",
         "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/terminal-cold-activation-deferral.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-cold-activation-restore.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
@@ -3754,6 +3754,7 @@
         "src/main/ipc/ssh.test.ts",
         "src/main/ipc/worktrees.test.ts",
         "src/main/runtime/public-ssh-state.test.ts",
+        "src/main/ssh/ssh-connection-manager.test.ts",
         "src/main/ssh/ssh-provider-authority.test.ts",
         "src/preload/ssh-authority-forwarding.test.ts",
         "src/renderer/src/runtime/runtime-client-events.test.ts",
@@ -3904,7 +3905,13 @@
           "file": "src/main/ipc/ssh.test.ts",
           "assertions": [
             "concurrent same-authority connects share one provider attempt",
-            "authority rotation replaces a stale in-flight connect and stale completion cannot clobber the fresh session"
+            "authority rotation starts stale transport cancellation before teardown, concurrent fresh callers share one replacement, and stale completion cannot clobber the fresh session"
+          ]
+        },
+        {
+          "file": "src/main/ssh/ssh-connection-manager.test.ts",
+          "assertions": [
+            "disconnect invalidates a pending transport attempt immediately so late rejection or resolution cannot remove the replacement"
           ]
         },
         {
@@ -4060,30 +4067,30 @@
           "summary": "Eleven direct SSH files and 627 tests passed, adding primary-exit continuation-gap, pending-only and live null-PTY two-sided split-detach authority, delayed post-success sibling admission, and stale-authority provider retirement."
         },
         {
-          "date": "2026-07-27",
+          "date": "2026-07-28",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/repos-remote.test.ts src/main/ipc/ssh.test.ts src/main/ipc/worktrees.test.ts src/main/runtime/public-ssh-state.test.ts src/main/ssh/ssh-provider-authority.test.ts src/preload/ssh-authority-forwarding.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/runtime/runtime-environment-ssh-state.test.ts src/shared/ssh-retained-payload-admission.test.ts src/shared/ssh-types.test.ts --reporter=dot",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/repos-remote.test.ts src/main/ipc/ssh.test.ts src/main/ipc/worktrees.test.ts src/main/runtime/public-ssh-state.test.ts src/main/ssh/ssh-connection-manager.test.ts src/main/ssh/ssh-provider-authority.test.ts src/preload/ssh-authority-forwarding.test.ts src/renderer/src/runtime/runtime-client-events.test.ts src/renderer/src/runtime/runtime-environment-ssh-state.test.ts src/shared/ssh-retained-payload-admission.test.ts src/shared/ssh-types.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 2.8,
-          "summary": "Ten main, preload, runtime, and shared authority files and 409 tests passed, including production admission of retained SSH state and detected-port payloads."
+          "durationSeconds": 4.1,
+          "summary": "Eleven main, preload, runtime, and shared authority files and 416 tests passed, including production admission of retained SSH state and detected-port payloads plus fenced replacement of a stale in-progress transport."
         },
         {
-          "date": "2026-07-27",
+          "date": "2026-07-28",
           "runner": "local",
           "platform": "macos",
           "command": "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 56.2,
-          "summary": "Four Electron Docker SSH tests passed, including exact-authority repo/worktree hydration, live terminal input before and after disconnect/reconnect, and an independent container-visible remote proof file."
+          "durationSeconds": 55.4,
+          "summary": "Four Electron Docker SSH tests passed, including exact-authority repo/worktree hydration, two concurrent immutable file streams under Git churn, live terminal input before and after disconnect/reconnect, and an independent container-visible remote proof file."
         },
         {
-          "date": "2026-07-27",
+          "date": "2026-07-28",
           "runner": "local",
           "platform": "macos",
           "command": "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-cold-activation-restore.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 13.5,
+          "durationSeconds": 13,
           "summary": "One Electron journey passed after exact-authority hydration; six restored SSH terminal managers remounted after renderer reload and remote input reached the Linux target."
         }
       ],
@@ -4093,11 +4100,11 @@
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "Focused renderer contracts, one current 627-test direct SSH run, and current Docker/Linux reconnect and six-terminal cold-restore journeys pass locally. One full Docker pressure run timed out waiting for its seeded secondary worktree; the exact case and an immediate full 4/4 rerun passed. Live multi-target fanout still needs CI soak history before promotion."
+        "evidence": "Focused renderer contracts, one current 627-test direct SSH run, and current Docker/Linux reconnect and six-terminal cold-restore journeys pass locally. One pressure run entered reconnect while waiting for its seventh marker; later runs delivered all markers but exposed an independent disappearing-second-file fixture race. The corrected two-reader single-file load passed the complete 4/4 suite while retaining concurrent stream pressure. Live multi-target fanout still needs CI soak history before promotion."
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "The remote-runtime fault tests failed before the recovery changes by leaving a cold restored subscription detached, reporting connected before authoritative replay, delivering a fatal setup error twice, and allowing an unknown create outcome to spawn again after process-local state was lost. On exact pre-fix HEAD 939719443, the split-pane store, fresh-spawn, and reattach oracles failed because the first success removed pending authority and the sibling could not bind; the same three oracles pass after live bindings retain the exact attempt ID. On exact committed HEAD d501f2e96, primary-exit-before-sibling and primary/non-primary split-detach oracles failed because live authority was deleted during the empty gap or transferred to only one resulting tab; all three pass after continuation-gap preservation and two-sided detach projection. On exact committed HEAD d44ea382b with test-only oracles, a pending-only all-null detach deleted the attempt ledger, a sibling mounted after first success committed without its lease, and that sibling could bind after authority rotation; all three pass after pending-only projection and retained-live-lease capture with provider retirement. Other direct SSH tests encode red conditions for non-atomic binding clear, cross-target retry, folder omission, duplicate same-authority attempts, hydration overwrite, terminal finalization delayed behind provider work, obsolete-authority pending-spawn adoption, Git lineage namespace mismatch, and snapshot PTY hint promotion without exact-attempt acknowledgement. Existing SSH and stale-handle reattach coverage remains green. Needs WSL, paired-close, and a patched live remote-runtime partition journey before promotion."
+        "evidence": "The remote-runtime fault tests failed before the recovery changes by leaving a cold restored subscription detached, reporting connected before authoritative replay, delivering a fatal setup error twice, and allowing an unknown create outcome to spawn again after process-local state was lost. On exact pre-fix HEAD 939719443, the split-pane store, fresh-spawn, and reattach oracles failed because the first success removed pending authority and the sibling could not bind; the same three oracles pass after live bindings retain the exact attempt ID. On exact committed HEAD d501f2e96, primary-exit-before-sibling and primary/non-primary split-detach oracles failed because live authority was deleted during the empty gap or transferred to only one resulting tab; all three pass after continuation-gap preservation and two-sided detach projection. On exact committed HEAD d44ea382b with test-only oracles, a pending-only all-null detach deleted the attempt ledger, a sibling mounted after first success committed without its lease, and that sibling could bind after authority rotation; all three pass after pending-only projection and retained-live-lease capture with provider retirement. On exact committed HEAD 9fa84dacf, the production-manager in-progress oracle rejected the fresh authority and the forward-removal barrier delayed stale transport cancellation; both pass after replacement starts cancellation immediately, shares concurrent fresh callers, and waits for teardown before connecting. Other direct SSH tests encode red conditions for non-atomic binding clear, cross-target retry, folder omission, duplicate same-authority attempts, hydration overwrite, terminal finalization delayed behind provider work, obsolete-authority pending-spawn adoption, Git lineage namespace mismatch, and snapshot PTY hint promotion without exact-attempt acknowledgement. Existing SSH and stale-handle reattach coverage remains green. Needs WSL, paired-close, and a patched live remote-runtime partition journey before promotion."
       },
       "performanceBudget": {
         "required": true,

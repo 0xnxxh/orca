@@ -1558,15 +1558,39 @@ describe('SSH IPC handlers', () => {
       username: 'deploy'
     }
     let resolveStaleConnect!: (connection: unknown) => void
+    let resolveForwardRemoval!: () => void
+    let resolveTransportDisconnect!: () => void
+    let transportConnectPending = false
     mockSshStore.getTarget.mockReturnValue(target)
     mockSshStore.addTarget.mockReturnValue(target)
     mockConnectionManager.connect
       .mockReturnValueOnce(
         new Promise((resolve) => {
+          transportConnectPending = true
           resolveStaleConnect = resolve
         })
       )
-      .mockResolvedValueOnce({})
+      .mockImplementationOnce(async () => {
+        if (transportConnectPending) {
+          throw new Error('Connection to Server is already in progress')
+        }
+        return {}
+      })
+    mockConnectionManager.disconnect.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTransportDisconnect = () => {
+            transportConnectPending = false
+            resolve()
+          }
+        })
+    )
+    mockPortForwardManager.removeAllForwards.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveForwardRemoval = resolve
+        })
+    )
     mockConnectionManager.getState.mockReturnValue({
       targetId: 'ssh-1',
       status: 'connected',
@@ -1589,6 +1613,16 @@ describe('SSH IPC handlers', () => {
     const freshConnect = handlers.get('ssh:connect')!(null, {
       targetId: 'ssh-1'
     }) as Promise<SshConnectionState>
+    await vi.waitFor(() =>
+      expect(mockPortForwardManager.removeAllForwards).toHaveBeenCalledWith('ssh-1')
+    )
+    await vi.waitFor(() => expect(mockConnectionManager.disconnect).toHaveBeenCalledWith('ssh-1'))
+    const sharedFreshConnect = handlers.get('ssh:connect')!(null, {
+      targetId: 'ssh-1'
+    }) as Promise<SshConnectionState>
+    expect(mockConnectionManager.connect).toHaveBeenCalledTimes(1)
+    resolveForwardRemoval()
+    resolveTransportDisconnect()
     await vi.waitFor(() => expect(mockConnectionManager.connect).toHaveBeenCalledTimes(2))
 
     resolveStaleConnect({})
@@ -1596,6 +1630,10 @@ describe('SSH IPC handlers', () => {
     await expect(staleConnect).rejects.toThrow('SSH connection attempt was cancelled')
     await expect(sharedStaleConnect).rejects.toThrow('SSH connection attempt was cancelled')
     await expect(freshConnect).resolves.toMatchObject({ targetId: 'ssh-1', status: 'connected' })
+    await expect(sharedFreshConnect).resolves.toMatchObject({
+      targetId: 'ssh-1',
+      status: 'connected'
+    })
     expect(mockDeployAndLaunchRelay).toHaveBeenCalledTimes(1)
   })
 

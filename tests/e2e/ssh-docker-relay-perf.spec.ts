@@ -274,15 +274,12 @@ test.describe('Docker SSH relay perf', () => {
       const runId = String(Date.now())
       // Large remote binaries: each read streams ~8MB of fs.streamChunk frames
       // over the same SSH channel that carries the pty echo.
-      const loadFiles = [
-        `${DOCKER_SSH_RELAY_REMOTE_REPO_PATH}/stream-load-a.png`,
-        `${DOCKER_SSH_RELAY_REMOTE_REPO_PATH}/stream-load-b.png`
-      ]
+      const loadFile = `/tmp/orca-relay-load-${runId}.png`
+      const loadFiles = [loadFile, loadFile]
       await execInTerminal(
         orcaPage,
         ptyId,
-        `dd if=/dev/urandom of=${shellQuote(loadFiles[0])} bs=1M count=8 status=none && ` +
-          `dd if=/dev/urandom of=${shellQuote(loadFiles[1])} bs=1M count=8 status=none && ` +
+        `dd if=/dev/urandom of=${shellQuote(loadFile)} bs=1M count=8 status=none && ` +
           `echo LOAD_FILES_READY_${runId}`
       )
       await waitForTerminalOutput(orcaPage, `LOAD_FILES_READY_${runId}`, 60_000, 80_000)
