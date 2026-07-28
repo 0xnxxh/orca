@@ -15,6 +15,7 @@ enum MobileWebPackageStoreTests {
     try rejectsMalformedManifests(root: root.appendingPathComponent("manifests"))
     acceptsOnlyExactCanonicalAssetPaths()
     acceptsOnlyExactSha256Tokens()
+    acceptsOnlyExactAssetMetadata()
     try rejectsQuotedNumericManifestFields(root: root.appendingPathComponent("scalar-types"))
     try rejectsBooleanNumericManifestFields(root: root.appendingPathComponent("boolean-types"))
     try rejectsOversizedManifestInput(root: root.appendingPathComponent("manifest-limit"))
@@ -132,6 +133,56 @@ enum MobileWebPackageStoreTests {
 
     precondition(invalid.allSatisfy { !isMobileWebSha256($0) })
     precondition(isMobileWebSha256(String(repeating: "a", count: 64)))
+  }
+
+  private static func acceptsOnlyExactAssetMetadata() {
+    let hash = String(repeating: "a", count: 64)
+    let valid = [
+      ("index.html", hash, "text/html; charset=utf-8", "document"),
+      ("assets/\(hash).css", hash, "text/css; charset=utf-8", "style"),
+      ("assets/\(hash).js", hash, "text/javascript; charset=utf-8", "script"),
+      ("assets/\(hash).png", hash, "image/png", "image"),
+      ("assets/\(hash).svg", hash, "image/svg+xml; charset=utf-8", "image"),
+      ("assets/\(hash).wasm", hash, "application/wasm", "wasm"),
+      ("assets/\(hash).webp", hash, "image/webp", "image"),
+      ("assets/\(hash).woff2", hash, "font/woff2", "font"),
+    ]
+    let invalid = [
+      ("assets/\(hash).js", hash, "text/css; charset=utf-8", "script"),
+      ("assets/\(hash).js", hash, "text/javascript; charset=utf-8", "style"),
+      ("assets/\(hash).png", hash, "image/png; charset=utf-8", "image"),
+      ("assets/\(hash).JS", hash, "text/javascript; charset=utf-8", "script"),
+      ("assets/\(hash).txt", hash, "text/plain; charset=utf-8", "document"),
+      (
+        "assets/\(hash).js",
+        String(repeating: "b", count: 64),
+        "text/javascript; charset=utf-8",
+        "script"
+      ),
+      ("index.html", hash, "text/html; charset=UTF-8", "document"),
+      ("index.html", hash, "text/html; charset=utf-8", "document "),
+    ]
+
+    precondition(
+      valid.allSatisfy {
+        isValidMobileWebAssetMetadata(
+          path: $0.0,
+          hash: $0.1,
+          contentType: $0.2,
+          role: $0.3
+        )
+      }
+    )
+    precondition(
+      invalid.allSatisfy {
+        !isValidMobileWebAssetMetadata(
+          path: $0.0,
+          hash: $0.1,
+          contentType: $0.2,
+          role: $0.3
+        )
+      }
+    )
   }
 
   private static func rejectsQuotedNumericManifestFields(root: URL) throws {

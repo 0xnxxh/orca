@@ -25,24 +25,14 @@ const MobileWebContentTypeSchema = z.enum([
   'application/wasm'
 ])
 
-const CONTENT_TYPE_BY_EXTENSION = {
-  css: 'text/css; charset=utf-8',
-  js: 'text/javascript; charset=utf-8',
-  png: 'image/png',
-  svg: 'image/svg+xml; charset=utf-8',
-  wasm: 'application/wasm',
-  webp: 'image/webp',
-  woff2: 'font/woff2'
-} as const
-
-const ROLE_BY_EXTENSION = {
-  css: 'style',
-  js: 'script',
-  png: 'image',
-  svg: 'image',
-  wasm: 'wasm',
-  webp: 'image',
-  woff2: 'font'
+export const MOBILE_WEB_ASSET_METADATA_BY_EXTENSION = {
+  css: { contentType: 'text/css; charset=utf-8', role: 'style' },
+  js: { contentType: 'text/javascript; charset=utf-8', role: 'script' },
+  png: { contentType: 'image/png', role: 'image' },
+  svg: { contentType: 'image/svg+xml; charset=utf-8', role: 'image' },
+  wasm: { contentType: 'application/wasm', role: 'wasm' },
+  webp: { contentType: 'image/webp', role: 'image' },
+  woff2: { contentType: 'font/woff2', role: 'font' }
 } as const
 
 const MobileWebAssetPathSchema = z
@@ -112,6 +102,29 @@ export function isMobileWebAssetPath(path: string): boolean {
   return path.split('/').every((segment) => segment !== '.' && segment !== '..')
 }
 
+export function isMobileWebAssetMetadata(
+  path: string,
+  sha256: string,
+  contentType: string,
+  role: string
+): boolean {
+  if (!isMobileWebAssetPath(path) || !isMobileWebSha256(sha256)) {
+    return false
+  }
+  if (role === 'document') {
+    return path === 'index.html' && contentType === 'text/html; charset=utf-8'
+  }
+  const match = CONTENT_ADDRESSED_PATH_PATTERN.exec(path)
+  if (!match || match[0] !== path || match[1] !== sha256) {
+    return false
+  }
+  const metadata =
+    MOBILE_WEB_ASSET_METADATA_BY_EXTENSION[
+      match[2] as keyof typeof MOBILE_WEB_ASSET_METADATA_BY_EXTENSION
+    ]
+  return metadata.contentType === contentType && metadata.role === role
+}
+
 function isMobileWebSha256(value: string): boolean {
   return SHA256_PATTERN.exec(value)?.[0] === value
 }
@@ -136,32 +149,10 @@ export function serializeMobileWebManifestForBuildId(manifest: MobileWebManifest
 }
 
 function validateContentAddressedAsset(asset: MobileWebAsset, context: z.RefinementCtx): void {
-  if (asset.role === 'document') {
-    if (asset.path !== 'index.html' || asset.contentType !== 'text/html; charset=utf-8') {
-      context.addIssue({
-        code: 'custom',
-        message: 'The document asset must be index.html with the HTML content type'
-      })
-    }
-    return
-  }
-
-  const match = CONTENT_ADDRESSED_PATH_PATTERN.exec(asset.path)
-  if (!match || match[1] !== asset.sha256) {
+  if (!isMobileWebAssetMetadata(asset.path, asset.sha256, asset.contentType, asset.role)) {
     context.addIssue({
       code: 'custom',
-      message: 'Non-document asset path must contain its complete SHA-256'
-    })
-    return
-  }
-  const extension = match[2] as keyof typeof CONTENT_TYPE_BY_EXTENSION
-  if (
-    CONTENT_TYPE_BY_EXTENSION[extension] !== asset.contentType ||
-    ROLE_BY_EXTENSION[extension] !== asset.role
-  ) {
-    context.addIssue({
-      code: 'custom',
-      message: 'Asset extension, content type, and role must agree'
+      message: 'Asset path, hash, content type, and role must agree'
     })
   }
 }

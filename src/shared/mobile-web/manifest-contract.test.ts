@@ -3,8 +3,10 @@ import {
   MOBILE_WEB_MANIFEST_SCHEMA_VERSION,
   MOBILE_WEB_MAX_ASSET_BYTES,
   MOBILE_WEB_MAX_ASSET_COUNT,
+  MobileWebAssetSchema,
   MobileWebManifestSchema,
   isMobileWebAssetPath,
+  isMobileWebAssetMetadata,
   serializeMobileWebManifestForBuildId,
   supportsMobileWebBridgeVersion,
   type MobileWebManifest
@@ -118,6 +120,36 @@ describe('mobile web manifest contract', () => {
     const manifest = validManifest()
     manifest.assets[0] = { ...manifest.assets[0]!, contentType: 'text/css; charset=utf-8' }
     expect(MobileWebManifestSchema.safeParse(manifest).success).toBe(false)
+  })
+
+  it.each([
+    ['index.html', DOCUMENT_HASH, 'text/html; charset=utf-8', 'document'],
+    [`assets/${SCRIPT_HASH}.css`, SCRIPT_HASH, 'text/css; charset=utf-8', 'style'],
+    [`assets/${SCRIPT_HASH}.js`, SCRIPT_HASH, 'text/javascript; charset=utf-8', 'script'],
+    [`assets/${SCRIPT_HASH}.png`, SCRIPT_HASH, 'image/png', 'image'],
+    [`assets/${SCRIPT_HASH}.svg`, SCRIPT_HASH, 'image/svg+xml; charset=utf-8', 'image'],
+    [`assets/${SCRIPT_HASH}.wasm`, SCRIPT_HASH, 'application/wasm', 'wasm'],
+    [`assets/${SCRIPT_HASH}.webp`, SCRIPT_HASH, 'image/webp', 'image'],
+    [`assets/${SCRIPT_HASH}.woff2`, SCRIPT_HASH, 'font/woff2', 'font']
+  ])('accepts exact asset metadata for %s', (path, hash, contentType, role) => {
+    expect(isMobileWebAssetMetadata(path, hash, contentType, role)).toBe(true)
+    expect(
+      MobileWebAssetSchema.safeParse({ path, sha256: hash, byteLength: 1, contentType, role })
+        .success
+    ).toBe(true)
+  })
+
+  it.each([
+    [`assets/${SCRIPT_HASH}.js`, SCRIPT_HASH, 'text/css; charset=utf-8', 'script'],
+    [`assets/${SCRIPT_HASH}.js`, SCRIPT_HASH, 'text/javascript; charset=utf-8', 'style'],
+    [`assets/${SCRIPT_HASH}.png`, SCRIPT_HASH, 'image/png; charset=utf-8', 'image'],
+    [`assets/${SCRIPT_HASH}.JS`, SCRIPT_HASH, 'text/javascript; charset=utf-8', 'script'],
+    [`assets/${SCRIPT_HASH}.txt`, SCRIPT_HASH, 'text/plain; charset=utf-8', 'document'],
+    [`assets/${SCRIPT_HASH}.js`, STYLE_HASH, 'text/javascript; charset=utf-8', 'script'],
+    ['index.html', DOCUMENT_HASH, 'text/html; charset=UTF-8', 'document'],
+    ['index.html', DOCUMENT_HASH, 'text/html; charset=utf-8', 'document ']
+  ])('rejects mismatched asset metadata for %s', (path, hash, contentType, role) => {
+    expect(isMobileWebAssetMetadata(path, hash, contentType, role)).toBe(false)
   })
 
   it('requires one document matching the entrypoint', () => {

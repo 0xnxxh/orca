@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { MOBILE_WEB_MAX_ASSET_BYTES } from '../../../src/shared/mobile-web/manifest-contract'
+import {
+  MOBILE_WEB_ASSET_METADATA_BY_EXTENSION,
+  MOBILE_WEB_MAX_ASSET_BYTES
+} from '../../../src/shared/mobile-web/manifest-contract'
 
 const iosStoreSource = readFileSync(
   new URL('../../packages/expo-mobile-web-shell/ios/MobileWebPackageStore.swift', import.meta.url),
@@ -57,4 +60,42 @@ describe('mobile web native bridge compatibility', () => {
     expect(androidStoreSource).toContain('private const val ASSET_BYTE_LIMIT = 10 * 1024 * 1024')
     expect(androidStoreSource).toContain('length in 1..ASSET_BYTE_LIMIT')
   })
+
+  it('keeps native extension, MIME, and role maps aligned with the shared manifest', () => {
+    const expected = Object.entries(MOBILE_WEB_ASSET_METADATA_BY_EXTENSION).map(
+      ([extension, metadata]) => ({
+        extension,
+        contentType: metadata.contentType,
+        role: metadata.role
+      })
+    )
+
+    expect(nativeAssetMetadata(iosStoreSource, 'assetMetadataByExtension', 'swift')).toEqual(
+      expected
+    )
+    expect(
+      nativeAssetMetadata(androidStoreSource, 'ASSET_METADATA_BY_EXTENSION', 'kotlin')
+    ).toEqual(expected)
+  })
 })
+
+function nativeAssetMetadata(
+  source: string,
+  declaration: string,
+  language: 'swift' | 'kotlin'
+): Array<{ extension: string; contentType: string; role: string }> {
+  const start = source.indexOf(declaration)
+  const end = source.indexOf(language === 'swift' ? '\n]\n' : '\n)\n', start)
+  if (start < 0 || end < 0) {
+    return []
+  }
+  const pattern =
+    language === 'swift'
+      ? /^\s*"([^"]+)": \("([^"]+)", "([^"]+)"\),?$/gm
+      : /^\s*"([^"]+)" to \("([^"]+)" to "([^"]+)"\),?$/gm
+  return [...source.slice(start, end).matchAll(pattern)].map((match) => ({
+    extension: match[1]!,
+    contentType: match[2]!,
+    role: match[3]!
+  }))
+}

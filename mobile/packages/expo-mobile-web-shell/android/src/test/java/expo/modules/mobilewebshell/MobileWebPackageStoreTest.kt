@@ -103,6 +103,38 @@ class MobileWebPackageStoreTest {
   }
 
   @Test
+  fun acceptsOnlyExactAssetMetadata() {
+    val hash = "a".repeat(64)
+    val valid = listOf(
+      arrayOf("index.html", hash, "text/html; charset=utf-8", "document"),
+      arrayOf("assets/$hash.css", hash, "text/css; charset=utf-8", "style"),
+      arrayOf("assets/$hash.js", hash, "text/javascript; charset=utf-8", "script"),
+      arrayOf("assets/$hash.png", hash, "image/png", "image"),
+      arrayOf("assets/$hash.svg", hash, "image/svg+xml; charset=utf-8", "image"),
+      arrayOf("assets/$hash.wasm", hash, "application/wasm", "wasm"),
+      arrayOf("assets/$hash.webp", hash, "image/webp", "image"),
+      arrayOf("assets/$hash.woff2", hash, "font/woff2", "font")
+    )
+    val invalid = listOf(
+      arrayOf("assets/$hash.js", hash, "text/css; charset=utf-8", "script"),
+      arrayOf("assets/$hash.js", hash, "text/javascript; charset=utf-8", "style"),
+      arrayOf("assets/$hash.png", hash, "image/png; charset=utf-8", "image"),
+      arrayOf("assets/$hash.JS", hash, "text/javascript; charset=utf-8", "script"),
+      arrayOf("assets/$hash.txt", hash, "text/plain; charset=utf-8", "document"),
+      arrayOf("assets/$hash.js", "b".repeat(64), "text/javascript; charset=utf-8", "script"),
+      arrayOf("index.html", hash, "text/html; charset=UTF-8", "document"),
+      arrayOf("index.html", hash, "text/html; charset=utf-8", "document ")
+    )
+
+    valid.forEach { (path, assetHash, contentType, role) ->
+      assertEquals(path, true, isValidMobileWebAssetMetadata(path, assetHash, contentType, role))
+    }
+    invalid.forEach { (path, assetHash, contentType, role) ->
+      assertFalse(path, isValidMobileWebAssetMetadata(path, assetHash, contentType, role))
+    }
+  }
+
+  @Test
   fun rejectsQuotedNumericManifestFieldsBeforeCreatingAStage() {
     val root = temporary.newFolder()
     val store = MobileWebPackageStore(root)

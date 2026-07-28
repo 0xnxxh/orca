@@ -8,6 +8,15 @@ private let manifestJsonByteLimit = 256 * 1024
 private let assetByteLimit = 10 * 1024 * 1024
 private let sha256Pattern = "^[a-f0-9]{64}$"
 private let safePathPattern = "^[A-Za-z0-9._/-]+$"
+private let assetMetadataByExtension: [String: (String, String)] = [
+  "css": ("text/css; charset=utf-8", "style"),
+  "js": ("text/javascript; charset=utf-8", "script"),
+  "png": ("image/png", "image"),
+  "svg": ("image/svg+xml; charset=utf-8", "image"),
+  "wasm": ("application/wasm", "wasm"),
+  "webp": ("image/webp", "image"),
+  "woff2": ("font/woff2", "font"),
+]
 
 struct MobileWebAssetRecord {
   let path: String
@@ -527,7 +536,12 @@ final class MobileWebPackageStore {
         length <= assetByteLimit,
         records[path] == nil,
         previousPath == nil || previousPath! < path,
-        isValidAssetMetadata(path: path, hash: hash, contentType: contentType, role: role)
+        isValidMobileWebAssetMetadata(
+          path: path,
+          hash: hash,
+          contentType: contentType,
+          role: role
+        )
       else {
         throw MobileWebStoreError("mobile_web_stage_manifest_invalid")
       }
@@ -936,24 +950,18 @@ func isSafeMobileWebAssetPath(_ path: String) -> Bool {
   }
 }
 
-private func isValidAssetMetadata(
+func isValidMobileWebAssetMetadata(
   path: String,
   hash: String,
   contentType: String,
   role: String
 ) -> Bool {
+  guard isSafeMobileWebAssetPath(path), isMobileWebSha256(hash) else {
+    return false
+  }
   if role == "document" {
     return path == "index.html" && contentType == "text/html; charset=utf-8"
   }
-  let values: [String: (String, String)] = [
-    "css": ("text/css; charset=utf-8", "style"),
-    "js": ("text/javascript; charset=utf-8", "script"),
-    "png": ("image/png", "image"),
-    "svg": ("image/svg+xml; charset=utf-8", "image"),
-    "wasm": ("application/wasm", "wasm"),
-    "webp": ("image/webp", "image"),
-    "woff2": ("font/woff2", "font"),
-  ]
   let components = path.split(separator: "/")
   guard
     components.count == 2,
@@ -964,7 +972,7 @@ private func isValidAssetMetadata(
   }
   let filenameHash = String(components[1][..<separator])
   let fileExtension = String(components[1][components[1].index(after: separator)...])
-  guard let expected = values[fileExtension] else { return false }
+  guard let expected = assetMetadataByExtension[fileExtension] else { return false }
   return filenameHash == hash && expected.0 == contentType && expected.1 == role
 }
 

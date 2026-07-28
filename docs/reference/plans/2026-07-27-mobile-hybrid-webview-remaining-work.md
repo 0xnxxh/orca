@@ -173,6 +173,9 @@ Shared application SHA-256, Git object ID, bridge/session ID, domain token, and
 base64 schemas now require full-string matches through one protocol-token
 contract. The directly loaded manifest applies the same exact hash rule
 locally, and the mirrored native SHA corpus enforces it on Swift and Kotlin.
+The manifest now exports the exact extension/MIME/role map. Source-parity tests
+require both native maps to match, and all three runtimes pass the same eight
+valid and eight mutated metadata cases.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -224,8 +227,9 @@ cross-scope races, privacy/authorization audit, and independent review.
       18-case path corpus passes in TypeScript, Swift, and Kotlin. All shared
       hash, Git object, bridge/session ID, domain token, and base64 schemas also
       require exact full-string matches; native Swift/Kotlin SHA corpora pass. A
-      fresh exact-app rerun, generated mutation, and the other listed boundaries
-      remain.
+      shared extension/MIME/role map now has exact native source parity and
+      mirrored valid/mutated coverage. A fresh exact-app rerun, generated
+      mutation, and the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,

@@ -1551,11 +1551,14 @@ copy.
   manifest contract applies the same exact hash rule without adding a runtime
   dependency to the Node packager. This closes the trailing-newline ambiguity
   in terminal input, bridge envelopes, package chunks, revisions, and native
-  Swift hashes; Kotlin already used full-string matching. The packager and
-  verifier now consume one document-CSP contract, and source tests require the
-  iOS and Android response policies to match its exact directive sequence.
-  Broader generated mutation, MIME/CSP behavior, and persisted-cache metadata
-  fuzzing remains open.
+  Swift hashes; Kotlin already used full-string matching. The manifest now also
+  exports one exact extension/MIME/role map. Source-parity tests require the
+  Swift and Kotlin maps to match it, and mirrored valid/mutated corpora reject
+  case, charset, role, extension, and hash mismatches. The packager and verifier
+  consume one document-CSP contract, and source tests require the iOS and
+  Android response policies to match its exact directive sequence. Broader
+  generated mutation, CSP behavior, and persisted-cache metadata fuzzing
+  remains open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -1775,6 +1778,13 @@ base64url tokens. The mirrored Swift/Kotlin SHA corpus passes the Swift native
 fault executable and refreshed 76-task Android suite. Node/mobile typechecks,
 lint, formatting, max-lines, and diff hygiene pass. The rebuilt production RNW
 package verifies as `b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`:
+49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes.
+
+The exact asset-metadata slice passes all 24 shared mobile-web files / 203 tests,
+the 4-test native source-parity file, the Swift native fault executable, and the
+refreshed 76-task Android suite. Both typechecks, lint, formatting, max-lines,
+and diff hygiene pass. A fresh production RNW build remains
+`b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`:
 49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |

@@ -2730,10 +2730,13 @@ accepting the reviewed relative form. Shared application SHA-256, Git object
 ID, bridge/session ID, domain token, and base64 schemas also require full-string
 matches through one protocol-token contract. The directly loaded manifest
 contract applies the same exact hash rule locally, and the mirrored native SHA
-corpus enforces it on Swift and Kotlin. The RNW packager and verifier consume
-one document-CSP contract, and source tests require both native response
-policies to match its exact directive sequence. Generated mutation and the
-remaining MIME/CSP/cache corpus are still required.
+corpus enforces it on Swift and Kotlin. The manifest also exports the exact
+extension/MIME/role map; source-parity tests require both native maps to match
+it, and mirrored valid/mutated corpora reject case, charset, role, extension,
+and hash mismatches. The RNW packager and verifier consume one document-CSP
+contract, and source tests require both native response policies to match its
+exact directive sequence. Generated mutation and the remaining CSP/cache corpus
+are still required.
 
 ## App Store Gate
 

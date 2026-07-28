@@ -487,7 +487,7 @@ IDs, and unrelated provider state never enter the page result.
 
 | Contract                         | Status                                          | Source                                                                                                                                       |
 | -------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-asset manifest v1          | Implemented and focused-test passing            | One exact path predicate and mirrored TypeScript/Swift/Kotlin path corpus; exact scalar types before staging                                 |
+| Multi-asset manifest v1          | Implemented and focused-test passing            | Exact path and extension/MIME/role maps with mirrored TypeScript/Swift/Kotlin corpora; exact scalar types before staging                     |
 | Manifest resource bounds         | Implemented, measured, and focused-test passing | 256 KiB/raw manifest before native parse; 48 KiB chunks / 65,536 base64 chars before native decode; 10 MiB/asset, 32 MiB/package, 256 assets |
 | Document CSP                     | Implemented and focused-test passing            | One shared directive contract drives packaging/verification and exact-sequence checks for both native response policies                      |
 | Bridge envelope and capabilities | Implemented and focused-test passing            | `src/shared/mobile-web/bridge-contract.ts`; bounded native-chat schemas and remaining operation payload schemas                              |
@@ -512,6 +512,10 @@ directly loaded manifest contract applies the same exact hash rule locally.
 Bridge envelopes, terminal streams, package delivery, file content,
 source-control revisions, and provider-review contracts consume full-string
 predicates rather than newline-permissive end-anchored Zod regexes.
+The manifest's extension/MIME/role table is now authoritative for source-parity
+tests over both native maps. Each runtime also passes the same eight valid and
+eight mismatched metadata cases, including case, charset, role, extension, and
+hash mutations.
 
 ## Next Inventory Action
 

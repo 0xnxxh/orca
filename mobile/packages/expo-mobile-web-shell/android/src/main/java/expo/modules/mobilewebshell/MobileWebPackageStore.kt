@@ -17,6 +17,15 @@ private const val MANIFEST_JSON_BYTE_LIMIT = 256 * 1024
 private const val ASSET_BYTE_LIMIT = 10 * 1024 * 1024
 private val SHA256_PATTERN = Regex("^[a-f0-9]{64}$")
 private val SAFE_PATH_PATTERN = Regex("^[A-Za-z0-9._/-]+$")
+private val ASSET_METADATA_BY_EXTENSION = mapOf(
+  "css" to ("text/css; charset=utf-8" to "style"),
+  "js" to ("text/javascript; charset=utf-8" to "script"),
+  "png" to ("image/png" to "image"),
+  "svg" to ("image/svg+xml; charset=utf-8" to "image"),
+  "wasm" to ("application/wasm" to "wasm"),
+  "webp" to ("image/webp" to "image"),
+  "woff2" to ("font/woff2" to "font")
+)
 
 private data class MobileWebAssetRecord(
   val path: String,
@@ -381,7 +390,7 @@ internal class MobileWebPackageStore internal constructor(
           length in 1..ASSET_BYTE_LIMIT &&
           path !in assets &&
           (previousPath?.let { it < path } ?: true) &&
-          isValidAssetMetadata(path, hash, contentType, role)
+          isValidMobileWebAssetMetadata(path, hash, contentType, role)
       ) { "mobile_web_stage_manifest_invalid" }
       assets[path] = MobileWebAssetRecord(path, hash, length, contentType, role)
       totalBytes += length
@@ -622,31 +631,23 @@ internal fun isSafeMobileWebAssetPath(path: String): Boolean =
 
 internal fun isMobileWebSha256(value: String): Boolean = SHA256_PATTERN.matches(value)
 
-private fun isValidAssetMetadata(
+internal fun isValidMobileWebAssetMetadata(
   path: String,
   hash: String,
   contentType: String,
   role: String
 ): Boolean {
+  if (!isSafeMobileWebAssetPath(path) || !isMobileWebSha256(hash)) return false
   if (role == "document") {
     return path == "index.html" && contentType == "text/html; charset=utf-8"
   }
-  val expected = mapOf(
-    "css" to ("text/css; charset=utf-8" to "style"),
-    "js" to ("text/javascript; charset=utf-8" to "script"),
-    "png" to ("image/png" to "image"),
-    "svg" to ("image/svg+xml; charset=utf-8" to "image"),
-    "wasm" to ("application/wasm" to "wasm"),
-    "webp" to ("image/webp" to "image"),
-    "woff2" to ("font/woff2" to "font")
-  )
   val components = path.split('/')
   if (components.size != 2 || components[0] != "assets") return false
   val separator = components[1].lastIndexOf('.')
   if (separator <= 0) return false
   val fileHash = components[1].substring(0, separator)
   val extension = components[1].substring(separator + 1)
-  val expectedMetadata = expected[extension] ?: return false
+  val expectedMetadata = ASSET_METADATA_BY_EXTENSION[extension] ?: return false
   return fileHash == hash && expectedMetadata.first == contentType && expectedMetadata.second == role
 }
 
