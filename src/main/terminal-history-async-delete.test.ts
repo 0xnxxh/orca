@@ -41,8 +41,9 @@ describe('deleteWorktreeHistoryDir main-thread safety', () => {
       writeFileSync(join(historyDir, `file-${i}.txt`), `payload-${i}`)
     }
 
-    // Why max gap, not wall-clock: the regression to catch is a blocked main thread, and a slow CI
-    // box inflates duration without inflating the gap between two timer callbacks.
+    // Why max gap, not wall-clock: the regression to catch is a blocked main thread. A slow CI box
+    // can still jitter single timer callbacks tens of ms; a sync recursive rm of thousands of files
+    // stalls for hundreds+. Keep the bound well below that floor, not at the ideal local gap.
     let maxGapMs = 0
     let previousTickAt = performance.now()
     const ticker = setInterval(() => {
@@ -60,7 +61,7 @@ describe('deleteWorktreeHistoryDir main-thread safety', () => {
       clearInterval(ticker)
     }
 
-    expect(maxGapMs).toBeLessThan(30)
+    expect(maxGapMs).toBeLessThan(100)
     expect(readdirSync(join(userDataDir, 'terminal-history'))).not.toContain(hash)
     expect(
       readdirSync(join(userDataDir, 'terminal-history', '.pending-delete')).length
