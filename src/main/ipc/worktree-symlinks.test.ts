@@ -19,6 +19,7 @@ import {
   createWorktreeLinkedPaths,
   createWorktreeSharedPaths,
   createWorktreeSymlinks,
+  worktreeSymlinkTypeCandidates,
   findExistingWorktreeSymlinkPaths,
   removeWorktreeLinkedPaths,
   removeWorktreeSymlinks
@@ -392,6 +393,31 @@ describe('createWorktreeSymlinks', () => {
     expect(cloneWorktreePath).not.toHaveBeenCalled()
     expect(lstatSync(join(worktree, '.env')).isSymbolicLink()).toBe(true)
     expect(readlinkSync(join(worktree, '.env'))).toBe(join(primary, '.env'))
+  })
+})
+
+// Why: a plain `fs.symlink` needs Developer Mode or admin on Windows, so an
+// ordinary Windows user gets EPERM and silently ends up with no shared
+// directory at all. A junction needs no privilege — but it cannot target a UNC
+// path, which is exactly where a WSL project's repo lives, so the symlink has
+// to stay as a fallback rather than be replaced.
+describe('worktreeSymlinkTypeCandidates', () => {
+  it('tries a junction before a symlink for a directory on Windows', () => {
+    expect(worktreeSymlinkTypeCandidates('win32', true)).toEqual(['junction', 'dir'])
+  })
+
+  it('keeps the symlink fallback so a UNC (WSL) target still works', () => {
+    expect(worktreeSymlinkTypeCandidates('win32', true).at(-1)).toBe('dir')
+  })
+
+  it('never uses a junction for a file, which junctions cannot represent', () => {
+    expect(worktreeSymlinkTypeCandidates('win32', false)).toEqual(['file'])
+  })
+
+  it('makes exactly one attempt off Windows, where the type is ignored', () => {
+    expect(worktreeSymlinkTypeCandidates('darwin', true)).toEqual(['dir'])
+    expect(worktreeSymlinkTypeCandidates('linux', true)).toEqual(['dir'])
+    expect(worktreeSymlinkTypeCandidates('linux', false)).toEqual(['file'])
   })
 })
 

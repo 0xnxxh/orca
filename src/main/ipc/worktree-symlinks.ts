@@ -35,17 +35,49 @@ type WorktreeLinkedPathOptions = {
 // each worktree an independent node_modules, defeating one-install-serves-all.
 type WorktreeMaterializeMode = 'link' | 'copy' | 'share'
 
+/** The `fs.symlink` types to attempt, in order, for one materialized path.
+ *
+ *  Why more than one on Windows: a plain symlink needs Developer Mode or admin,
+ *  so an ordinary Windows user gets EPERM and silently ends up with no shared
+ *  directory at all. A directory junction needs no privilege, so try it first.
+ *
+ *  Why still fall back to a symlink: a junction cannot point at a UNC path, and
+ *  a WSL project's repo lives behind one (`\\wsl.localhost\<Distro>\...`). The
+ *  fallback keeps that case working exactly as it does today. */
+export function worktreeSymlinkTypeCandidates(
+  platform: NodeJS.Platform,
+  sourceIsDirectory: boolean
+): ('junction' | 'dir' | 'file')[] {
+  if (!sourceIsDirectory) {
+    return ['file']
+  }
+  return platform === 'win32' ? ['junction', 'dir'] : ['dir']
+}
+
 async function symlinkWorktreePath(
   source: string,
   target: string,
-  sourceIsDirectory: boolean
+  sourceIsDirectory: boolean,
+  platform: NodeJS.Platform
 ): Promise<void> {
   await mkdir(dirname(target), { recursive: true })
-  // Why: Windows requires an explicit `type` ('dir' vs 'file' vs
-  // 'junction') for `fs.symlink`. On POSIX the argument is ignored, so
-  // passing it unconditionally is safe and removes a Windows-only
-  // failure mode when Node can't auto-detect from the source.
-  await symlink(source, target, sourceIsDirectory ? 'dir' : 'file')
+  // Why: Windows requires an explicit `type` ('dir' vs 'file' vs 'junction')
+  // for `fs.symlink`. On POSIX the argument is ignored, so passing it
+  // unconditionally is safe and removes a Windows-only failure mode when Node
+  // can't auto-detect from the source.
+  const candidates = worktreeSymlinkTypeCandidates(platform, sourceIsDirectory)
+  for (let index = 0; index < candidates.length; index++) {
+    try {
+      // Why: `source` is always absolute (`resolve()` guarantees it), which a
+      // junction requires.
+      await symlink(source, target, candidates[index])
+      return
+    } catch (error) {
+      if (index === candidates.length - 1) {
+        throw error
+      }
+    }
+  }
 }
 
 async function copyWorktreePath(source: string, target: string): Promise<void> {
@@ -118,7 +150,7 @@ async function createWorktreeLinkedPath(
     await copyWorktreePath(copySource, target)
     return
   }
-  await symlinkWorktreePath(source, target, sourceIsDirectory)
+  await symlinkWorktreePath(source, target, sourceIsDirectory, options.platform ?? process.platform)
 }
 
 /** Whether this copy will land as an APFS clone rather than a byte-for-byte
