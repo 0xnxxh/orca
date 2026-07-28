@@ -156,14 +156,15 @@ async function readCompatibility(zipFile: FileHandle): Promise<LocalBuildCompati
   } catch (error) {
     console.warn('[local-build] Could not read compatibility metadata:', error)
     throw new Error(
-      'This build predates local switching or is missing its signed compatibility metadata.'
+      'This build predates local switching or is missing its signed compatibility metadata.',
+      { cause: error }
     )
   }
   try {
     return parseLocalBuildCompatibility(JSON.parse(stdout))
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error('The selected build has malformed compatibility metadata.')
+      throw new Error('The selected build has malformed compatibility metadata.', { cause: error })
     }
     throw error
   }

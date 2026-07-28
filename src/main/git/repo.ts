@@ -848,7 +848,7 @@ export async function getDefaultRemote(
     if (error instanceof Error) {
       throw error
     }
-    throw new Error('Failed to resolve default remote for repo.')
+    throw new Error('Failed to resolve default remote for repo.', { cause: error })
   }
 }
 

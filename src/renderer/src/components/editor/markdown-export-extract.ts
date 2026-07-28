@@ -109,7 +109,7 @@ async function readBlobImageAsDataUrl(src: string): Promise<string> {
     return `data:${blob.type || 'application/octet-stream'};base64,${bytesToBase64(bytes)}`
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`Failed to inline image for PDF export: ${message}`)
+    throw new Error(`Failed to inline image for PDF export: ${message}`, { cause: error })
   }
 }
 

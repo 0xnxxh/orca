@@ -107,7 +107,9 @@ async function launchFixture(
     try {
       await stopChild(child, `fixture v${protocolVersion}`)
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], 'Fixture startup and cleanup both failed')
+      throw new AggregateError([error, cleanupError], 'Fixture startup and cleanup both failed', {
+        cause: cleanupError
+      })
     }
     throw error
   }

@@ -1634,7 +1634,8 @@ export function registerWorktreeHandlers(
           assertWorktreeUnlockedForRemoval(registeredWorktree)
         } catch (error) {
           throw new Error(
-            formatWorktreeRemovalError(error, canonicalWorktreePath, args.force ?? false)
+            formatWorktreeRemovalError(error, canonicalWorktreePath, args.force ?? false),
+            { cause: error }
           )
         }
 
@@ -1763,7 +1764,8 @@ export function registerWorktreeHandlers(
           assertWorktreeUnlockedForRemoval(refreshedRegisteredWorktree)
         } catch (error) {
           throw new Error(
-            formatWorktreeRemovalError(error, canonicalWorktreePath, args.force ?? false)
+            formatWorktreeRemovalError(error, canonicalWorktreePath, args.force ?? false),
+            { cause: error }
           )
         }
 
@@ -1787,7 +1789,8 @@ export function registerWorktreeHandlers(
         } catch (error) {
           if (!isOrphanCompatiblePreflightError(error)) {
             throw new Error(
-              formatWorktreeRemovalError(error, canonicalWorktreePath, args.force ?? false)
+              formatWorktreeRemovalError(error, canonicalWorktreePath, args.force ?? false),
+              { cause: error }
             )
           }
           // Why: Git can still classify this as an orphan after preflight; keep strict PTY teardown before any recursive fallback deletion.
@@ -1880,7 +1883,8 @@ export function registerWorktreeHandlers(
               return {}
             } else {
               throw new Error(
-                formatWorktreeRemovalError(error, canonicalWorktreePath, args.force ?? false)
+                formatWorktreeRemovalError(error, canonicalWorktreePath, args.force ?? false),
+                { cause: error }
               )
             }
           }

@@ -59,7 +59,8 @@ export async function publishPluginInstall(input: {
     } catch (rollbackError) {
       throw new AggregateError(
         [publicationError, rollbackError],
-        'plugin install publication and pointer rollback both failed'
+        'plugin install publication and pointer rollback both failed',
+        { cause: rollbackError }
       )
     }
     throw publicationError

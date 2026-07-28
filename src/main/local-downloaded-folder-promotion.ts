@@ -260,7 +260,7 @@ export async function promoteLocalDownloadedFolder(
   } catch (error) {
     await rollbackPublishedEntries(publishedEntries)
     if (isEEXIST(error)) {
-      throw new Error('Destination folder already exists')
+      throw new Error('Destination folder already exists', { cause: error })
     }
     throw error
   }

@@ -187,7 +187,8 @@ test.describe('Localhost SSH', () => {
             const message = err instanceof Error ? err.message : String(err)
             throw new Error(
               `Failed to connect to localhost SSH target ${target.username}@${target.host || target.configHost}:${target.port}. ` +
-                `Ensure sshd is running and key/agent auth is non-interactive. ${message}`
+                `Ensure sshd is running and key/agent auth is non-interactive. ${message}`,
+              { cause: err }
             )
           }
 

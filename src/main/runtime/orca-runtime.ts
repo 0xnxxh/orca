@@ -184,7 +184,20 @@ import type {
   TuiAgent,
   WorkspaceCreateTelemetrySource,
   WorkspaceSessionState,
-  DirEntry
+  DirEntry,
+  GitHubIssueUpdate,
+  GitHubPullRequestStateUpdate,
+  GitHubPRFile,
+  GitHubPRReviewCommentInput,
+  GitLabIssueUpdate,
+  GitLabMRInlineCommentInput,
+  GitLabProjectRef,
+  GitLabWorkItem,
+  ListWorkItemsResult,
+  MRListState,
+  PRRefreshOutcome,
+  ClaudeRateLimitAccountsState,
+  CodexRateLimitAccountsState
 } from '../../shared/types'
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
 import {
@@ -237,7 +250,65 @@ import type {
 } from '../../shared/linear-agent-access'
 import {
   HEADLESS_RUNTIME_WINDOW_ID,
-  type RuntimeDesktopWindowStatus
+  type RuntimeDesktopWindowStatus,
+  type RuntimeGraphStatus,
+  type RuntimeRepoSearchRefs,
+  type RuntimeTerminalRead,
+  type RuntimeTerminalRename,
+  type RuntimeTerminalAgentStatus,
+  type RuntimeTerminalSend,
+  type RuntimeTerminalCreate,
+  type RuntimeTerminalPresentation,
+  type RuntimeTerminalSplit,
+  type RuntimeTerminalFocus,
+  type RuntimeTerminalClose,
+  type RuntimeTerminalListResult,
+  type RuntimeTerminalOrphanAdoptionRequest,
+  type RuntimeTerminalOrphanAdoptionResult,
+  type RuntimeWorktreeTerminalSleepResult,
+  type RuntimeTerminalResolvePane,
+  type RuntimeTerminalState,
+  type RuntimeStatus,
+  type RuntimeSyncWindowGraphResult,
+  type RuntimeTerminalWait,
+  type RuntimeTerminalWaitBlockedReason,
+  type RuntimeTerminalWaitCondition,
+  type RuntimeWorktreePsSummary,
+  type RuntimeWorktreeAgentRow,
+  type RuntimeWorktreeStatus,
+  type RuntimeSpeechModelSummary,
+  type RuntimeSpeechSetupState,
+  type RuntimeTerminalShow,
+  type RuntimeTerminalSummary,
+  type RuntimeTerminalVisualGroupNode,
+  type RuntimeTerminalVisualLayout,
+  type RuntimeTerminalVisualLayoutNode,
+  type RuntimeTerminalVisualPaneNode,
+  type RuntimeTerminalVisualTab,
+  type RuntimeSyncedLeaf,
+  type RuntimeSyncedTab,
+  type RuntimeMarkdownReadTabResult,
+  type RuntimeMarkdownSaveTabResult,
+  type RuntimeMobileSessionCreateTerminalResult,
+  type RuntimeMobileSessionClientTab,
+  type RuntimeMobileSessionTabCloseResult,
+  type RuntimeMobileSessionMarkdownTab,
+  type RuntimeMobileSessionTabMove,
+  type RuntimeMobileSessionTabMoveResult,
+  type RuntimeMobileSessionTabGroup,
+  type RuntimeMobileSessionSnapshotTab,
+  type RuntimeMobileSessionTerminalTab,
+  type RuntimeMobileSessionBrowserTab,
+  type RuntimeMobileSessionTabsRemovedResult,
+  type RuntimeMobileSessionTabsResult,
+  type RuntimeMobileSessionTabsSnapshot,
+  type RuntimeSessionTabCloseReason,
+  type RuntimeBrowserDriverState,
+  type RuntimeTerminalDriverState,
+  type RuntimeSyncWindowGraph,
+  type RuntimeWorktreeListResult,
+  type BrowserTabInfo,
+  type BrowserScreencastResult
 } from '../../shared/runtime-types'
 import {
   LINEAR_SEARCH_MAX_LIMIT,
@@ -377,66 +448,6 @@ import {
   scanWorkspacePortProbes
 } from '../ports/workspace-port-ownership'
 import { advertisedUrlWatcher } from '../ports/advertised-url-watcher'
-import type {
-  RuntimeGraphStatus,
-  RuntimeRepoSearchRefs,
-  RuntimeTerminalRead,
-  RuntimeTerminalRename,
-  RuntimeTerminalAgentStatus,
-  RuntimeTerminalSend,
-  RuntimeTerminalCreate,
-  RuntimeTerminalPresentation,
-  RuntimeTerminalSplit,
-  RuntimeTerminalFocus,
-  RuntimeTerminalClose,
-  RuntimeTerminalListResult,
-  RuntimeTerminalOrphanAdoptionRequest,
-  RuntimeTerminalOrphanAdoptionResult,
-  RuntimeWorktreeTerminalSleepResult,
-  RuntimeTerminalResolvePane,
-  RuntimeTerminalState,
-  RuntimeStatus,
-  RuntimeSyncWindowGraphResult,
-  RuntimeTerminalWait,
-  RuntimeTerminalWaitBlockedReason,
-  RuntimeTerminalWaitCondition,
-  RuntimeWorktreePsSummary,
-  RuntimeWorktreeAgentRow,
-  RuntimeWorktreeStatus,
-  RuntimeSpeechModelSummary,
-  RuntimeSpeechSetupState,
-  RuntimeTerminalShow,
-  RuntimeTerminalSummary,
-  RuntimeTerminalVisualGroupNode,
-  RuntimeTerminalVisualLayout,
-  RuntimeTerminalVisualLayoutNode,
-  RuntimeTerminalVisualPaneNode,
-  RuntimeTerminalVisualTab,
-  RuntimeSyncedLeaf,
-  RuntimeSyncedTab,
-  RuntimeMarkdownReadTabResult,
-  RuntimeMarkdownSaveTabResult,
-  RuntimeMobileSessionCreateTerminalResult,
-  RuntimeMobileSessionClientTab,
-  RuntimeMobileSessionTabCloseResult,
-  RuntimeMobileSessionMarkdownTab,
-  RuntimeMobileSessionTabMove,
-  RuntimeMobileSessionTabMoveResult,
-  RuntimeMobileSessionTabGroup,
-  RuntimeMobileSessionSnapshotTab,
-  RuntimeMobileSessionTerminalTab,
-  RuntimeMobileSessionBrowserTab,
-  RuntimeMobileSessionTabsRemovedResult,
-  RuntimeMobileSessionTabsResult,
-  RuntimeMobileSessionTabsSnapshot,
-  RuntimeSessionTabCloseReason,
-  RuntimeBrowserDriverState,
-  RuntimeTerminalDriverState,
-  RuntimeSyncWindowGraph,
-  RuntimeWorktreeListResult,
-  BrowserTabInfo,
-  BrowserScreencastResult
-} from '../../shared/runtime-types'
 import type { AutomationService } from '../automations/service'
 import { RuntimeBrowserCommands } from './orca-runtime-browser'
 import { RemoteRuntimeTerminalCreateIdempotency } from './remote-runtime-terminal-create-idempotency'
@@ -474,7 +485,13 @@ import {
   deriveClientSessionTabSelection,
   projectClientSessionTabSelection
 } from './client-session-tab-selection'
-import type { PtyProviderBufferSnapshot } from '../providers/types'
+import type {
+  PtyProviderBufferSnapshot,
+  IFilesystemProvider,
+  IPtyProvider,
+  PtyProcessInfo,
+  PtyTransientFact
+} from '../providers/types'
 import { ClaudeAgentTeamsService } from './claude-agent-teams-service'
 import type {
   AgentTeamsTmuxCompatRequest,
@@ -579,19 +596,6 @@ import {
   type GitLabIssueListState
 } from '../gitlab/gitlab-preload-args'
 import { recordGitLabProjectRecent } from '../gitlab/gitlab-project-recents'
-import type {
-  GitHubIssueUpdate,
-  GitHubPullRequestStateUpdate,
-  GitHubPRFile,
-  GitHubPRReviewCommentInput,
-  GitLabIssueUpdate,
-  GitLabMRInlineCommentInput,
-  GitLabProjectRef,
-  GitLabWorkItem,
-  ListWorkItemsResult,
-  MRListState,
-  PRRefreshOutcome
-} from '../../shared/types'
 import { inspectSetupScriptImportCandidates } from '../../shared/setup-script-imports'
 import type {
   CreateHostedReviewInput,
@@ -894,12 +898,6 @@ import {
   createMobileSessionTabsNotifyCoalescer,
   type MobileSessionTabsNotifyCoalescer
 } from './mobile-session-tabs-notify-coalescer'
-import type {
-  IFilesystemProvider,
-  IPtyProvider,
-  PtyProcessInfo,
-  PtyTransientFact
-} from '../providers/types'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
   assertFolderWorkspacePathUsable,
@@ -922,7 +920,6 @@ import type {
 } from '../codex-accounts/service'
 import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
 import type { RateLimitService } from '../rate-limits/service'
-import type { ClaudeRateLimitAccountsState, CodexRateLimitAccountsState } from '../../shared/types'
 import { applyPRBotAuthorOverride } from '../../shared/pr-bot-author-overrides'
 import type { CodexRateLimitResetOutcome, RateLimitState } from '../../shared/rate-limit-types'
 import type { CodexResetCreditExpectedScope } from '../../shared/codex-reset-credit-scope'
@@ -1116,7 +1113,7 @@ function normalizeSparsePresetDirectoriesForSave(directories: string[]): string[
       err instanceof Error &&
       err.message === 'Sparse checkout directories must be repo-relative paths.'
     ) {
-      throw new Error('Preset directories must be repo-relative paths.')
+      throw new Error('Preset directories must be repo-relative paths.', { cause: err })
     }
     throw err
   }
@@ -10364,7 +10361,9 @@ export class OrcaRuntimeService {
         modelId
       })
     } catch (error) {
-      throw new Error(getSpeechModelDeletionErrorCode(error) ?? 'voice_model_delete_failed')
+      throw new Error(getSpeechModelDeletionErrorCode(error) ?? 'voice_model_delete_failed', {
+        cause: error
+      })
     }
     return this.listMobileSpeechModels()
   }
@@ -14440,7 +14439,7 @@ export class OrcaRuntimeService {
         options.reserveWrite?.(ptyId)
       } catch (error) {
         if (options.suffixFailureError) {
-          throw new Error(options.suffixFailureError)
+          throw new Error(options.suffixFailureError, { cause: error })
         }
         throw error
       }
@@ -14528,7 +14527,7 @@ export class OrcaRuntimeService {
       await options.beforeWrite?.(ptyId)
     } catch (error) {
       if (options.suffixFailureError) {
-        throw new Error(options.suffixFailureError)
+        throw new Error(options.suffixFailureError, { cause: error })
       }
       throw error
     }
@@ -21410,7 +21409,9 @@ export class OrcaRuntimeService {
       try {
         assertWorktreeUnlockedForRemoval(registeredWorktree)
       } catch (error) {
-        throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force))
+        throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force), {
+          cause: error
+        })
       }
 
       // Why: a prior forced Windows recovery can delete the directory but leave
@@ -21531,7 +21532,9 @@ export class OrcaRuntimeService {
         // recheck before linked-path, watcher, or terminal teardown side effects.
         assertWorktreeUnlockedForRemoval(refreshedRegisteredWorktree)
       } catch (error) {
-        throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force))
+        throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force), {
+          cause: error
+        })
       }
 
       const linkedPaths = repo.symlinkPaths ?? []
@@ -21553,7 +21556,9 @@ export class OrcaRuntimeService {
             : assertWorktreeCleanForRemoval(canonicalWorktreePath, force))
       } catch (error) {
         if (!isOrphanCompatiblePreflightError(error)) {
-          throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force))
+          throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force), {
+            cause: error
+          })
         }
         // Why: Git can still classify this as an orphan after preflight;
         // retain strict PTY teardown before any recursive fallback deletion.
@@ -21645,7 +21650,9 @@ export class OrcaRuntimeService {
               ...(warning ? { warning } : {})
             }
           } else {
-            throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force))
+            throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force), {
+              cause: error
+            })
           }
         }
         removalCompleted = true

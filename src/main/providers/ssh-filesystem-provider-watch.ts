@@ -148,7 +148,9 @@ export async function closeSshFilesystemWatch(
     if (!isMethodNotFoundError(error)) {
       throw error
     }
-    throw new Error('Remote watcher teardown is unavailable. Reconnect the SSH target and retry.')
+    throw new Error('Remote watcher teardown is unavailable. Reconnect the SSH target and retry.', {
+      cause: error
+    })
   }
   registrations.get(rootKey)?.callbacks.clear()
   registrations.get(rootKey)?.terminalCallbacks.clear()

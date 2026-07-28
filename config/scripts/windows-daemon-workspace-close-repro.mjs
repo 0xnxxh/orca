@@ -356,7 +356,9 @@ async function main() {
     )
   } catch (error) {
     const daemonLog = existsSync(daemonLogPath) ? readFileSync(daemonLogPath, 'utf8') : ''
-    throw new Error(`${error.message}\nstderr:\n${stderr}\ndaemon.log:\n${daemonLog}`)
+    throw new Error(`${error.message}\nstderr:\n${stderr}\ndaemon.log:\n${daemonLog}`, {
+      cause: error
+    })
   } finally {
     rpc?.close()
     await stopChild(child)

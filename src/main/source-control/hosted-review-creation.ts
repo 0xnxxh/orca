@@ -226,7 +226,7 @@ async function getHostedReviewUpstreamStatus(
     if (isNoUpstreamError(error)) {
       return { hasUpstream: false, ahead: 0, behind: 0 }
     }
-    throw new Error(normalizeGitErrorMessage(error, 'upstream'))
+    throw new Error(normalizeGitErrorMessage(error, 'upstream'), { cause: error })
   }
 }
 

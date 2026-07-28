@@ -33,8 +33,10 @@ export type OpenInMenuEntry = {
   command?: string
 }
 
+export const NO_OPEN_IN_APPLICATIONS: readonly OpenInApplication[] = []
+
 export function getWorktreeOpenInEntries(
-  openInApplications: OpenInApplication[],
+  openInApplications: readonly OpenInApplication[],
   fileManagerLabel: string
 ): OpenInMenuEntry[] {
   return [
@@ -302,7 +304,9 @@ export function WorktreeOpenInMenuItems({
   labelPrefix = ''
 }: WorktreeOpenInMenuItemsProps): React.JSX.Element {
   const openInWorktreePath = useOpenInWorktreePath({ worktreePath, connectionId })
-  const openInApplications = useAppStore((s) => s.settings?.openInApplications ?? [])
+  const openInApplications = useAppStore(
+    (s) => s.settings?.openInApplications ?? NO_OPEN_IN_APPLICATIONS
+  )
   const settings = useAppStore((s) => s.settings)
   const fileManagerLabel = getLocalFileManagerLabel()
   const entries = getWorktreeOpenInEntries(openInApplications, fileManagerLabel)

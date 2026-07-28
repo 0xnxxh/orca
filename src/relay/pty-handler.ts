@@ -1088,7 +1088,7 @@ export class PtyHandler {
       // Why: Windows loads conpty.node only on first spawn, so handle that late binding failure here.
       if (isMissingNodePtyNativeBinding(error)) {
         this.invalidatePtyModuleAfterBindingFailure()
-        throw new Error(formatNodePtyUnavailableMessage(process.platform))
+        throw new Error(formatNodePtyUnavailableMessage(process.platform), { cause: error })
       }
       throw error
     }

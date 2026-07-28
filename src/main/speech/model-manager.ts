@@ -531,7 +531,8 @@ export class ModelManager {
         if (retryAfterMs !== undefined && retryAfterMs > MAX_RETRY_AFTER_MS) {
           const statusCode = (err as HttpStatusError).httpStatusCode
           throw new Error(
-            `HTTP ${statusCode}; server requested retry after ${Math.ceil(retryAfterMs / 1_000)} seconds`
+            `HTTP ${statusCode}; server requested retry after ${Math.ceil(retryAfterMs / 1_000)} seconds`,
+            { cause: err }
           )
         }
         console.warn(

@@ -57,7 +57,9 @@ async function runOrcaCliOnce(args: string[]): Promise<CliResult> {
   } catch (error) {
     if (error && typeof error === 'object' && 'stdout' in error && 'stderr' in error) {
       const output = error as { message: string; stdout: string; stderr: string }
-      throw new Error(`${output.message}\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`)
+      throw new Error(`${output.message}\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`, {
+        cause: error
+      })
     }
     throw error
   }

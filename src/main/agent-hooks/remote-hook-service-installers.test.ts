@@ -7,8 +7,8 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { CodexHookService } from '../codex/hook-service'
-import { DroidHookService } from '../droid/hook-service'
+import { CodexHookService, codexHookService } from '../codex/hook-service'
+import { DroidHookService, droidHookService } from '../droid/hook-service'
 import { CursorHookService } from '../cursor/hook-service'
 import { CommandCodeHookService } from '../command-code/hook-service'
 import { GeminiHookService } from '../gemini/hook-service'
@@ -24,10 +24,8 @@ import { openClaudeHookService } from '../openclaude/hook-service'
 import { ampHookService } from '../amp/hook-service'
 import { antigravityHookService } from '../antigravity/hook-service'
 import { claudeHookService } from '../claude/hook-service'
-import { codexHookService } from '../codex/hook-service'
 import { copilotHookService } from '../copilot/hook-service'
 import { cursorHookService } from '../cursor/hook-service'
-import { droidHookService } from '../droid/hook-service'
 import { commandCodeHookService } from '../command-code/hook-service'
 import { geminiHookService } from '../gemini/hook-service'
 import { devinHookService } from '../devin/hook-service'

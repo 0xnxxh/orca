@@ -17,6 +17,7 @@ import { getLocalFileManagerLabel } from '@/lib/local-file-manager-label'
 import {
   getOpenInEntryAvailability,
   getWorktreeOpenInEntries,
+  NO_OPEN_IN_APPLICATIONS,
   openOpenInAppsSettings,
   openWorktreePath
 } from '@/components/sidebar/WorktreeOpenInMenu'
@@ -42,7 +43,9 @@ export function SourceControlEntryContextMenu({
   onOpenChange,
   children
 }: SourceControlEntryContextMenuProps): React.JSX.Element {
-  const openInApplications = useAppStore((s) => s.settings?.openInApplications ?? [])
+  const openInApplications = useAppStore(
+    (s) => s.settings?.openInApplications ?? NO_OPEN_IN_APPLICATIONS
+  )
   const settings = useAppStore((s) => s.settings)
   const fileManagerLabel = getLocalFileManagerLabel()
   const openInEntries = React.useMemo(

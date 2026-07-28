@@ -123,7 +123,8 @@ export class SshFilesystemProvider implements IFilesystemProvider {
     } catch (err) {
       if (isMethodNotFoundError(err)) {
         throw new Error(
-          'Remote terminal artifact access is unavailable. Reconnect the SSH target before retrying.'
+          'Remote terminal artifact access is unavailable. Reconnect the SSH target before retrying.',
+          { cause: err }
         )
       }
       throw err
@@ -178,7 +179,8 @@ export class SshFilesystemProvider implements IFilesystemProvider {
     } catch (err) {
       if (isMethodNotFoundError(err)) {
         throw new Error(
-          'Remote terminal artifact access is unavailable. Reconnect the SSH target before retrying.'
+          'Remote terminal artifact access is unavailable. Reconnect the SSH target before retrying.',
+          { cause: err }
         )
       }
       throw err
@@ -231,7 +233,7 @@ export class SshFilesystemProvider implements IFilesystemProvider {
         throw err
       }
       if (!this.createSftp) {
-        throw new Error('remote_lstat_unavailable')
+        throw new Error('remote_lstat_unavailable', { cause: err })
       }
       const sftp = await this.createSftp()
       try {
@@ -282,7 +284,9 @@ export class SshFilesystemProvider implements IFilesystemProvider {
       if (isMethodNotFoundError(err)) {
         // Why: falling back to raw fs.rename can silently clobber the target on
         // older relays. Fail closed and let reconnect deploy the safe relay.
-        throw new Error('Remote safe rename is unavailable. Reconnect the SSH target and retry.')
+        throw new Error('Remote safe rename is unavailable. Reconnect the SSH target and retry.', {
+          cause: err
+        })
       }
       throw err
     }

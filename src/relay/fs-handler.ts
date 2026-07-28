@@ -308,7 +308,7 @@ export class FsHandler {
     } catch (error) {
       const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined
       if (code === 'EEXIST' || code === 'ERR_FS_CP_EEXIST') {
-        throw new Error('EEXIST: destination already exists')
+        throw new Error('EEXIST: destination already exists', { cause: error })
       }
       throw error
     }
@@ -411,7 +411,7 @@ export class FsHandler {
         return await listFilesWithGit(rootPath, excludePathPrefixes, { signal, maxResults })
       } catch (err) {
         if (isQuickOpenReaddirBudgetError(err)) {
-          throw new Error(await buildInstallRgMessage(err))
+          throw new Error(await buildInstallRgMessage(err), { cause: err })
         }
         throw err
       }
@@ -429,7 +429,7 @@ export class FsHandler {
       if (isFileListingCancellation(err)) {
         throw err
       }
-      throw new Error(await buildInstallRgMessage(err))
+      throw new Error(await buildInstallRgMessage(err), { cause: err })
     }
   }
 

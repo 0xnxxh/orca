@@ -149,7 +149,8 @@ async function assertHubTerminal(page: Page, repoId: string, marker: string): Pr
       }
     })
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`
+      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`,
+      { cause: error }
     )
   }
   await focusActiveTerminalInput(page)
@@ -217,7 +218,8 @@ async function assertWebTerminal(page: Page, worktreeId: string, marker: string)
       }
     }, worktreeId)
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`
+      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`,
+      { cause: error }
     )
   }
   await expect(page.locator('[data-rendered-active-worktree-id]')).toHaveAttribute(
@@ -283,7 +285,8 @@ async function assertWebTerminal(page: Page, worktreeId: string, marker: string)
       }
     })
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`
+      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`,
+      { cause: error }
     )
   }
   await expect
@@ -448,7 +451,8 @@ async function assertRuntimeTerminalClose(
       { closedPtyId: ptyId, environmentId: client.environmentId }
     )
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`
+      `${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostic)}`,
+      { cause: error }
     )
   }
 }

@@ -116,7 +116,9 @@ async function createParentDirectoriesForNewFile(args: {
       }
       const stat = await args.operations.statRuntimePath(args.context, currentPath)
       if (!stat.isDirectory) {
-        throw new Error(`Cannot create file because ${currentPath} is not a directory.`)
+        throw new Error(`Cannot create file because ${currentPath} is not a directory.`, {
+          cause: error
+        })
       }
     }
   }

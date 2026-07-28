@@ -57,7 +57,8 @@ export async function readPluginMarketplaceIndex(
     )
   } catch (error) {
     throw new Error(
-      `invalid ${PLUGIN_MARKETPLACE_FILENAME}: ${error instanceof Error ? error.message : String(error)}`
+      `invalid ${PLUGIN_MARKETPLACE_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
     )
   }
 }

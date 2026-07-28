@@ -86,7 +86,9 @@ export async function createTextMateTokensProvider(
       error instanceof Error &&
       error.message.includes(`No grammar provided for <${options.scopeName}>`)
     ) {
-      throw new Error(`No TextMate grammar registered for scope ${options.scopeName}`)
+      throw new Error(`No TextMate grammar registered for scope ${options.scopeName}`, {
+        cause: error
+      })
     }
     throw error
   }

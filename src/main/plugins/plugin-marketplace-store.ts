@@ -135,7 +135,8 @@ export class PluginMarketplaceStore {
         return null
       }
       throw new Error(
-        `marketplace snapshot is invalid: ${error instanceof Error ? error.message : String(error)}`
+        `marketplace snapshot is invalid: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
       )
     }
   }
@@ -162,7 +163,8 @@ export class PluginMarketplaceStore {
         return
       }
       throw new Error(
-        `marketplace sources are invalid: ${error instanceof Error ? error.message : String(error)}`
+        `marketplace sources are invalid: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
       )
     }
   }

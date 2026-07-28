@@ -50,7 +50,7 @@ export async function selectCloudOrgWithMutationFence(input: {
         refreshed.cloud.userId !== cloud.userId ||
         refreshed.cloud.cloudProfileId !== cloud.cloudProfileId
       ) {
-        throw new Error('orca_cloud_identity_changed_during_org_selection')
+        throw new Error('orca_cloud_identity_changed_during_org_selection', { cause: error })
       }
       workingSession = {
         accessToken: refreshed.accessToken,

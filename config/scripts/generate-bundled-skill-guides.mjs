@@ -62,7 +62,8 @@ function parseFrontmatter(markdown, sourcePath) {
     values = parse(match[1])
   } catch (error) {
     throw new Error(
-      `Guide source has invalid YAML frontmatter: ${sourcePath}: ${error instanceof Error ? error.message : String(error)}`
+      `Guide source has invalid YAML frontmatter: ${sourcePath}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error }
     )
   }
   if (

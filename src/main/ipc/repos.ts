@@ -426,11 +426,13 @@ async function cloneRemoteRepo(
     )
   } catch (err) {
     if (controller.signal.aborted) {
-      throw new Error('Clone aborted')
+      throw new Error('Clone aborted', { cause: err })
     }
     const message = err instanceof Error ? err.message : String(err)
     if (message.startsWith('Clone failed:')) {
-      throw new Error(`Clone failed: ${getGitCloneFailureMessage(message, { clonePath })}`)
+      throw new Error(`Clone failed: ${getGitCloneFailureMessage(message, { clonePath })}`, {
+        cause: err
+      })
     }
     throw err
   } finally {
@@ -2576,7 +2578,7 @@ function normalizeSparsePresetDirectories(directories: string[]): string[] {
       err instanceof Error &&
       err.message === 'Sparse checkout directories must be repo-relative paths.'
     ) {
-      throw new Error('Preset directories must be repo-relative paths.')
+      throw new Error('Preset directories must be repo-relative paths.', { cause: err })
     }
     throw err
   }
