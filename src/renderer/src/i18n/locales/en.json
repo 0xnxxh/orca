@@ -4947,6 +4947,10 @@
           "image": "Image",
           "expand": "Expand image",
           "close": "Close"
+        },
+        "WorktreeDeveloperMenu": {
+          "developer": "Developer",
+          "parkTerminal": "Park terminal"
         }
       },
       "shared": {
@@ -13940,6 +13944,11 @@
           "installed": "Installed",
           "searchLabel": "Search plugins",
           "searchPlaceholder": "Search plugins, categories, or publishers"
+        }
+      },
+      "terminalPane": {
+        "useManualTerminalWorktreeParking": {
+          "cannotPark": "These terminals cannot be parked safely."
         }
       }
     },

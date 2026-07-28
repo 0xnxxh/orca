@@ -6631,6 +6631,53 @@ describe('connectPanePty', () => {
     expect(deps.updateTabPtyId).not.toHaveBeenCalledWith('tab-1', otherTabPtyId)
   })
 
+  it('fresh-spawns a shell into any PTY-less tab, so agent launches must never publish one', async () => {
+    // Why: #2989 depends on PTY-less tabs taking this legitimate fresh-shell path.
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport()
+    transport.connect.mockImplementation(async (opts: { sessionId?: string }) => {
+      if (opts.sessionId) {
+        return { id: opts.sessionId }
+      }
+      const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+        | ((ptyId: string) => void)
+        | undefined
+      onPtySpawn?.('stray-shell-pty')
+      return 'stray-shell-pty'
+    })
+    transportFactoryQueue.push(transport)
+    // Reproduce the pre-fix gap between createTab and PTY binding.
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
+      ptyIdsByTabId: { 'tab-1': [] },
+      terminalLayoutsByTabId: {
+        'tab-1': {
+          root: { type: 'leaf', leafId: LEAF_1 },
+          activeLeafId: LEAF_1,
+          expandedLeafId: null
+        }
+      },
+      agentLaunchConfigByPaneKey: {
+        [`tab-1:${LEAF_1}`]: {
+          launchConfig: { agentCommand: 'claude', agentArgs: '', agentEnv: {} },
+          identity: { agentType: 'claude' }
+        }
+      }
+    } as StoreState
+    const deps = createDeps()
+
+    const pane = createPane(1)
+    connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks()
+
+    // Launch registration alone cannot identify a PTY to attach.
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ url: '', cols: expect.any(Number) })
+    )
+    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'stray-shell-pty')
+  })
+
   it('spawns a fresh PTY when a restored daemon split session cannot reattach', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
@@ -9923,14 +9970,62 @@ describe('connectPanePty', () => {
       expect(recordPaneMode2031Subscription).toHaveBeenCalledWith(1, 'dark')
     })
 
-    it('reports the gate-managed predicate on the binding for the xterm 2031 observer', async () => {
+    it('retires the fact-registered subscription when the TUI withdraws it', async () => {
+      // The counterpart to the test above. A gated pane never sees the withdrawal bytes
+      // (main drops them) and both the chunk scanner and xterm's CSI handler are disabled
+      // for it, so this fact is the only observer that can retire the subscription. Left
+      // registered, the next theme flip pushes CSI 997 at the shell that replaced the TUI.
+      enableMainAuthority()
+      const paneMode2031Ref = { current: new Map<number, boolean>() }
+      const paneLastThemeModeRef = { current: new Map<number, 'dark' | 'light'>() }
+      const deps = createDeps({
+        isVisibleRef: { current: false },
+        paneMode2031Ref,
+        paneLastThemeModeRef,
+        // Exactly what use-terminal-pane-lifecycle wires up for this callback.
+        recordPaneMode2031Subscription: (paneId: number, repliedMode: 'dark' | 'light') => {
+          paneMode2031Ref.current.set(paneId, true)
+          paneLastThemeModeRef.current.set(paneId, repliedMode)
+        }
+      })
+      await connectHiddenPane(deps)
+      const transportOptions = createdTransportOptions.at(-1) as {
+        onPtySpawn?: (ptyId: string) => void
+      }
+      transportOptions.onPtySpawn?.('pty-id')
+      const factsHandler = await import('./terminal-side-effect-facts-handler')
+      factsHandler._dispatchTerminalSideEffectBatchForTest({
+        ptyId: 'pty-id',
+        seq: 12,
+        facts: [{ kind: '2031-subscribe' }]
+      })
+      expect(paneMode2031Ref.current.get(1)).toBe(true)
+
+      factsHandler._dispatchTerminalSideEffectBatchForTest({
+        ptyId: 'pty-id',
+        seq: 24,
+        facts: [{ kind: '2031-unsubscribe' }]
+      })
+
+      expect(paneMode2031Ref.current.get(1)).toBeUndefined()
+      expect(paneLastThemeModeRef.current.get(1)).toBeUndefined()
+    })
+
+    it('leaves the chunk scanner silent on a gate-managed PTY', async () => {
+      // Main's '2031-subscribe' fact already answers these; a chunk-boundary reply here
+      // would answer the same subscribe a second time.
       enableMainAuthority()
       const deps = createDeps({ isVisibleRef: { current: false } })
-      const { binding } = await connectHiddenPane(deps)
-      const bindingWithPredicate = binding as typeof binding & {
-        isHiddenDeliveryGateManagedPty: () => boolean
-      }
-      expect(bindingWithPredicate.isHiddenDeliveryGateManagedPty()).toBe(true)
+      const { transport, dataCallback } = await connectHiddenPane(deps)
+      const before = transport.sendInput.mock.calls.length
+
+      dataCallback('\x1b[?2031h')
+
+      const replies = transport.sendInput.mock.calls
+        .slice(before)
+        .flat()
+        .filter((arg) => String(arg).includes('997'))
+      expect(replies).toEqual([])
     })
 
     it('declares hidden-at-spawn on connect for hidden panes', async () => {
@@ -9970,13 +10065,7 @@ describe('connectPanePty', () => {
         terminalHiddenDeliveryGate: false
       } as StoreState['settings']
       const deps = createDeps({ isVisibleRef: { current: false } })
-      const { transport, dataCallback, binding } = await connectHiddenPane(deps)
-      // Why: the lifecycle's xterm CSI observer consults this predicate — kill switch off keeps the legacy xterm reply path.
-      expect(
-        (
-          binding as typeof binding & { isHiddenDeliveryGateManagedPty: () => boolean }
-        ).isHiddenDeliveryGateManagedPty()
-      ).toBe(false)
+      const { transport, dataCallback } = await connectHiddenPane(deps)
       const transportOptions = createdTransportOptions.at(-1) as {
         onPtySpawn?: (ptyId: string) => void
       }
@@ -10244,10 +10333,11 @@ describe('connectPanePty', () => {
         pane: ReturnType<typeof createPane>
         dataCallback: (data: string, meta?: { seq?: number; rawLength?: number }) => void
         getMainBufferSnapshot: ReturnType<typeof vi.fn>
+        transport: MockTransport
       }> {
         enableMainAuthority()
         const deps = createDeps({ isVisibleRef: { current: true } })
-        const { pane, dataCallback } = await connectHiddenPane(deps)
+        const { pane, dataCallback, transport } = await connectHiddenPane(deps)
         const transportOptions = createdTransportOptions.at(-1) as {
           onPtySpawn?: (ptyId: string) => void
         }
@@ -10275,7 +10365,7 @@ describe('connectPanePty', () => {
           expect.any(Function)
         )
         pane.terminal.write.mockClear()
-        return { pane, dataCallback, getMainBufferSnapshot }
+        return { pane, dataCallback, getMainBufferSnapshot, transport }
       }
 
       function writtenData(pane: ReturnType<typeof createPane>): string {
@@ -10294,6 +10384,26 @@ describe('connectPanePty', () => {
         dataCallback('NEW', { seq: 67, rawLength: 3 })
         await flushAsyncTicks(8)
         expect(writtenData(pane)).toContain('NEW')
+      })
+
+      it('answers a 2031 subscribe on a chunk the restored snapshot drops as duplicate', async () => {
+        // Why the scan runs before reconciliation: the snapshot restore replays bytes
+        // into xterm without answering queries, so this live delivery is the only
+        // chance to reply. Dropping the chunk as a duplicate must not drop the query.
+        // Gate off so the chunk scanner (not main's fact) owns this pane's reply.
+        enableMainAuthority()
+        mockStoreState.settings = {
+          ...mockStoreState.settings,
+          terminalHiddenDeliveryGate: false
+        } as StoreState['settings']
+        const { pane, dataCallback, transport } = await restoreVisiblePaneToBaseline()
+        transport.sendInput.mockClear()
+
+        dataCallback(`SUB\x1b[?2031h`, { seq: 60, rawLength: 11 })
+        await flushAsyncTicks(8)
+
+        expect(writtenData(pane)).not.toContain('SUB')
+        expect(transport.sendInput).toHaveBeenCalledWith('\x1b[?997;1n')
       })
 
       it('slices a partial overlap when raw and clean lengths match', async () => {
@@ -10987,7 +11097,7 @@ describe('connectPanePty', () => {
     binding.dispose()
   })
 
-  it('writes mode 2031 through hidden xterm instead of side-channel answering it', async () => {
+  it('answers a mode 2031 subscribe once, from the raw chunk boundary', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
@@ -11015,13 +11125,179 @@ describe('connectPanePty', () => {
       capturedDataCallback.current?.('\x1b[?2031h')
       vi.advanceTimersByTime(50)
 
-      expect(transport.sendInput).not.toHaveBeenCalled()
+      // Why the scanner and not xterm's CSI handler: xterm batches PTY chunks into one
+      // parse, so only this layer knows the chunk ended still subscribed (#9993).
+      expect(transport.sendInput).toHaveBeenCalledTimes(1)
+      expect(transport.sendInput).toHaveBeenCalledWith('\x1b[?997;2n')
+      // The bytes still reach xterm so the emulator tracks the mode itself.
       expect(pane.terminal.write).toHaveBeenCalledWith('\x1b[?2031h')
     } finally {
       vi.useRealTimers()
     }
 
     binding.dispose()
+  })
+
+  // Why these three: fish 4.7.1 enables and disables 2031 around *every* prompt with no
+  // opt-out, so back-to-back chunks each carrying a toggle are the normal case, not an edge
+  // case. Each chunk owes exactly one decision, and xterm cannot make it — it parses several
+  // chunks in one synchronous batch, so a reply deferred to the parser is either dropped or
+  // answered against a subscription a later chunk already withdrew (#9993).
+  describe('mode 2031 replies are decided per raw PTY chunk', () => {
+    async function connectVisiblePane(): Promise<{
+      transport: ReturnType<typeof createMockTransport>
+      deps: ReturnType<typeof createDeps>
+      emit: (data: string, meta?: { droppedOutput?: boolean }) => void
+      dispose: () => void
+    }> {
+      const { connectPanePty } = await import('./pty-connection')
+      const transport = createMockTransport('pty-id')
+      const captured: {
+        current: ((data: string, meta?: { droppedOutput?: boolean }) => void) | null
+      } = { current: null }
+      transport.connect.mockImplementation(
+        async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+          captured.current = callbacks.onData ?? null
+          return 'pty-id'
+        }
+      )
+      transportFactoryQueue.push(transport)
+      mockStoreState = {
+        ...mockStoreState,
+        settings: { ...mockStoreState.settings, theme: 'light' }
+      }
+      const pane = createPane(1)
+      const manager = createManager(1)
+      const deps = createDeps({ isVisibleRef: { current: true } })
+      const binding = connectPanePty(pane as never, manager as never, deps as never)
+      await flushAsyncTicks(6)
+      return {
+        transport,
+        deps,
+        emit: (data: string, meta?: { droppedOutput?: boolean }) => captured.current?.(data, meta),
+        dispose: () => binding.dispose()
+      }
+    }
+
+    const replies = (transport: { sendInput: { mock: { calls: unknown[][] } } }): unknown[] =>
+      transport.sendInput.mock.calls.flat().filter((arg) => String(arg).includes('997'))
+
+    it('answers a chunk that ends subscribed even when the next chunk withdraws', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      // Two separate PTY chunks. xterm would parse both in one batch and see only the net
+      // result; the first chunk still owes a reply.
+      emit('\x1b[?2031h')
+      emit('\x1b[?2031l')
+      expect(replies(transport)).toEqual(['\x1b[?997;2n'])
+      dispose()
+    })
+
+    it('answers each chunk that ends subscribed', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      emit('\x1b[?2031h')
+      emit('\x1b[?2031l\x1b[?2031h')
+      expect(replies(transport)).toHaveLength(2)
+      dispose()
+    })
+
+    it('stays silent when one chunk both subscribes and withdraws', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      // The fish prompt case: the subscription is gone before the program could read a reply.
+      emit('\x1b[?2031h prompt \x1b[?2031l')
+      expect(replies(transport)).toEqual([])
+      dispose()
+    })
+
+    it('stays silent when the withdrawal is split across two chunks', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      emit('\x1b[?2031h prompt \x1b[?20')
+      expect(replies(transport)).toEqual([])
+      emit('31l')
+      expect(replies(transport)).toEqual([])
+      dispose()
+    })
+
+    it('stays silent when an unrelated private mode appends a split withdrawal', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      emit('\x1b[?2031h prompt \x1b[?25')
+      expect(replies(transport)).toEqual([])
+      emit(';2031l')
+      expect(replies(transport)).toEqual([])
+      dispose()
+    })
+
+    it('answers after an ambiguous tail resolves to another mode', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      emit('\x1b[?2031h drawing \x1b[?20')
+      expect(replies(transport)).toEqual([])
+      emit('25h')
+      expect(replies(transport)).toEqual(['\x1b[?997;2n'])
+      dispose()
+    })
+
+    // One fish prompt cycle, exactly as fish's tty_handoff.rs emits it.
+    const FISH_PROMPT_HANDOFF = '\x1b[?2031h\x1b[0m~/orca \x1b[32m❯\x1b[0m \x1b[?2031l'
+
+    it('stays silent across three fish prompts', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      emit(FISH_PROMPT_HANDOFF)
+      emit(FISH_PROMPT_HANDOFF)
+      emit(FISH_PROMPT_HANDOFF)
+      expect(replies(transport)).toEqual([])
+      dispose()
+    })
+
+    it('leaves no stale subscription behind after a fish prompt cycle', async () => {
+      const { deps, emit, dispose } = await connectVisiblePane()
+      emit(FISH_PROMPT_HANDOFF)
+      // A later theme flip must not push CSI 997 at a shell that unsubscribed.
+      expect(deps.paneMode2031Ref.current.get(1)).toBeUndefined()
+      dispose()
+    })
+
+    it('answers once when a TUI subscribes at the end of a fish prompt chunk', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      emit(`${FISH_PROMPT_HANDOFF}\x1b[?2031h`)
+      expect(replies(transport)).toHaveLength(1)
+      dispose()
+    })
+
+    it('answers a subscribe whose withdrawal never arrives', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      // A real TUI: subscribe now, unsubscribe minutes later on exit.
+      emit('\x1b[?2031h')
+      emit('painting the ui')
+      expect(replies(transport)).toHaveLength(1)
+      dispose()
+    })
+
+    it('drops a live subscription when a later chunk withdraws it', async () => {
+      const { deps, emit, dispose } = await connectVisiblePane()
+      // A TUI that exits: the earlier chunk really did register, so the withdrawal has
+      // state to undo — otherwise a theme flip pushes CSI 997 at the shell that replaced it.
+      emit('\x1b[?2031h')
+      expect(deps.paneMode2031Ref.current.get(1)).toBe(true)
+      emit('\x1b[?2031l')
+      expect(deps.paneMode2031Ref.current.get(1)).toBeUndefined()
+      expect(deps.paneLastThemeModeRef.current.get(1)).toBeUndefined()
+      dispose()
+    })
+
+    it('discards a half-read escape prefix when the pane swaps PTYs', async () => {
+      const { transport, emit, dispose } = await connectVisiblePane()
+      // Why: the tail is a byte range from the old stream. Splicing it onto the first
+      // chunk of a replacement PTY fabricates a subscribe no program ever sent.
+      transport.serializeBuffer = vi.fn().mockResolvedValue(null)
+      emit('\x1b[?20')
+      // droppedOutput latches the hidden-restore PTY id, which is what detects the swap.
+      emit('', { droppedOutput: true })
+      transport.getPtyId.mockReturnValue('pty-id-2')
+
+      emit('31h')
+
+      expect(replies(transport)).toEqual([])
+      dispose()
+    })
   })
 
   it('answers hidden Codex mode 2031 subscribes split across becoming visible', async () => {
@@ -11605,10 +11881,11 @@ describe('connectPanePty', () => {
       getMainBufferSnapshot.mockClear()
 
       // Main hit the per-PTY pending cap and sent the droppedOutput sentinel: the stream has a gap, so repaint from the authoritative main-owned buffer.
-      capturedDataCallback.current?.('', { droppedOutput: true })
+      capturedDataCallback.current?.('\x1b[?2031h', { droppedOutput: true })
       await flushAsyncTicks(20)
 
       expect(getMainBufferSnapshot).toHaveBeenCalled()
+      expect(transport.sendInput).toHaveBeenCalledWith('\x1b[?997;1n')
       expect(pane.terminal.write).toHaveBeenCalledWith(
         expect.stringContaining('healed from snapshot'),
         expect.any(Function)
