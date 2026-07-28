@@ -8,6 +8,11 @@ export type WorkspaceSpaceScanLimits = {
   maxRetainedBytes: number
 }
 
+/**
+ * Tracks entries the traversal is holding right now, not entries it has ever
+ * seen. Counters fall again as directory listings are dispatched and dropped,
+ * so the caps bound live heap rather than total tree size.
+ */
 export type WorkspaceSpaceScanBudget = {
   entries: number
   retainedBytes: number
@@ -17,7 +22,7 @@ export type WorkspaceSpaceScanBudget = {
 export class WorkspaceSpaceScanCapacityError extends Error {
   constructor() {
     super(
-      'Workspace is too large to scan safely (limit: 100,000 entries or 64 MiB retained scan state)'
+      'Workspace is too large to scan safely (limit: 100,000 entries or 64 MiB of live scan state)'
     )
     this.name = 'WorkspaceSpaceScanCapacityError'
   }
@@ -63,20 +68,47 @@ export function retainWorkspaceSpaceScanEntry(
   budget.retainedBytes = retainedBytes
 }
 
+// Why: callers must return a listing's charge once they drop it, so the caps
+// track live retention instead of accumulating across the whole traversal.
+export function releaseWorkspaceSpaceScanEntries(
+  budget: WorkspaceSpaceScanBudget,
+  entryCount: number,
+  retainedBytes: number
+): void {
+  budget.entries = Math.max(0, budget.entries - entryCount)
+  budget.retainedBytes = Math.max(0, budget.retainedBytes - retainedBytes)
+}
+
+export type WorkspaceSpaceDirectoryAdmission<TEntry> = {
+  entries: TEntry[]
+  /** Charge held against the budget until the caller releases this listing. */
+  retainedBytes: number
+}
+
 export async function collectWorkspaceSpaceDirectoryEntries<TEntry>(
   directory: AsyncIterable<TEntry> | Iterable<TEntry>,
   parentPath: string,
   entryName: (entry: TEntry) => string,
   budget: WorkspaceSpaceScanBudget,
   checkCancelled: () => void
-): Promise<TEntry[]> {
+): Promise<WorkspaceSpaceDirectoryAdmission<TEntry>> {
   const entries: TEntry[] = []
-  for await (const entry of directory) {
-    checkCancelled()
-    retainWorkspaceSpaceScanEntry(budget, parentPath, entryName(entry))
-    entries.push(entry)
+  let retainedBytes = 0
+  try {
+    for await (const entry of directory) {
+      checkCancelled()
+      const name = entryName(entry)
+      retainWorkspaceSpaceScanEntry(budget, parentPath, name)
+      retainedBytes += estimateWorkspaceSpaceEntryRetainedBytes(parentPath, name)
+      entries.push(entry)
+    }
+  } catch (error) {
+    // Why: a rejected or cancelled listing is never handed to the caller, so
+    // nothing would otherwise return the charge already taken for it.
+    releaseWorkspaceSpaceScanEntries(budget, entries.length, retainedBytes)
+    throw error
   }
-  return entries
+  return { entries, retainedBytes }
 }
 
 function clampLimit(value: number | undefined, maximum: number): number {
