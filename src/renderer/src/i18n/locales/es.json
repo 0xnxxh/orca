@@ -5670,15 +5670,15 @@
             "defaultViewNative": "Chat UI"
           },
           "agentDashboard": {
-            "title": "Agent Dashboard",
-            "description": "Kanban board for monitoring agents across worktrees, in-window or as a pop-out.",
-            "copy": "Adds an Agent Dashboard entry to the left sidebar. Open it to monitor attention, working, and idle agents and jump into their live terminals.",
-            "toggleLabel": "Toggle Agent Dashboard",
-            "modeLabel": "Open as",
-            "modeCopy": "Show the dashboard as an in-window board beside the sidebar or a separate pop-out window.",
-            "modeAriaLabel": "Agent Dashboard open mode",
-            "modeInWindow": "In-window",
-            "modePopout": "Pop-out"
+            "title": "Panel de agentes",
+            "description": "Tablero Kanban para monitorear agentes en diferentes worktrees, en ventana o como ventana emergente.",
+            "copy": "Agrega una entrada del Panel de agentes a la barra lateral izquierda. Ábrelo para monitorear agentes en atención, trabajando y en pausa, y saltar a sus terminales en vivo.",
+            "toggleLabel": "Alternar Panel de agentes",
+            "modeLabel": "Abrir como",
+            "modeCopy": "Muestra el tablero como un panel en ventana junto a la barra lateral o como una ventana emergente separada.",
+            "modeAriaLabel": "Modo de apertura del Panel de agentes",
+            "modeInWindow": "En ventana",
+            "modePopout": "Ventana emergente"
           }
         },
         "FloatingWorkspacePane": {
@@ -7873,8 +7873,8 @@
               "grok": "grok"
             },
             "agentDashboard": {
-              "title": "Agent Dashboard",
-              "description": "Kanban board for monitoring agents across worktrees, in-window or as a pop-out."
+              "title": "Panel de agentes",
+              "description": "Tablero Kanban para monitorear agentes en diferentes worktrees, en ventana o como ventana emergente."
             }
           }
         },
@@ -12297,7 +12297,7 @@
           "35cc27aeb2": "en Control de código fuente",
           "e3b9a6ce02": "más",
           "1da745c551": "Enviado",
-          "84898c548d": "Borrar ",
+          "84898c548d": "Borrar",
           "88b70d0ef5": "Copiar",
           "bb84b4c374": "Notas de IA",
           "948a5fd6c8": "Borrar notas",
@@ -14244,12 +14244,12 @@
       "close": "Close"
     },
     "close": "Close dashboard",
-    "settings": "Agent Dashboard settings",
-    "settingsTooltip": "Board settings"
+    "settings": "Configuración del Panel de agentes",
+    "settingsTooltip": "Configuración del tablero"
   },
   "dashboard": {
     "sidebar": {
-      "label": "Agent Dashboard"
+      "label": "Panel de agentes"
     }
   },
   "browser": {

@@ -775,7 +775,7 @@
         "9263e75f49": "Codex는 이전 계정을 사용하고 있습니다",
         "a4c8e1b2f7": "Codex가 아직 {{value0}} 계정으로 로그인되어 있습니다",
         "d3e8a1f4b2": "계정 전환됨",
-        "9375620cc3": "이 세션을 다시 시작하여 {{value0}}을(를) 사용하세요.这样做之前，它将保留在之前的账户上。",
+        "9375620cc3": "{{value0}}을(를) 사용하려면 이 세션을 다시 시작하세요. 다시 시작하기 전까지는 이전 계정이 유지됩니다.",
         "6133594b12": "이전 계정 유지"
       },
       "FirstLaunchBanner": {
@@ -5655,15 +5655,15 @@
             "defaultViewNative": "Chat UI"
           },
           "agentDashboard": {
-            "title": "Agent Dashboard",
-            "description": "Kanban board for monitoring agents across worktrees, in-window or as a pop-out.",
-            "copy": "Adds an Agent Dashboard entry to the left sidebar. Open it to monitor attention, working, and idle agents and jump into their live terminals.",
-            "toggleLabel": "Toggle Agent Dashboard",
-            "modeLabel": "Open as",
-            "modeCopy": "Show the dashboard as an in-window board beside the sidebar or a separate pop-out window.",
-            "modeAriaLabel": "Agent Dashboard open mode",
-            "modeInWindow": "In-window",
-            "modePopout": "Pop-out"
+            "title": "에이전트 대시보드",
+            "description": "워크트리 전반에 걸친 에이전트를 모니터링하는 칸반 보드. 윈도우 내 또는 팝업으로 표시됩니다.",
+            "copy": "왼쪽 사이드바에 에이전트 대시보드 항목을 추가합니다. 열면 주의 중, 작업 중, 유휴 상태의 에이전트를 모니터링하고 라이브 터미널로 이동할 수 있습니다.",
+            "toggleLabel": "에이전트 대시보드 전환",
+            "modeLabel": "열기 형식",
+            "modeCopy": "대시보드를 사이드바 옆 윈도우 내 보드 또는 별도의 팝업 윈도우로 표시합니다.",
+            "modeAriaLabel": "에이전트 대시보드 열기 모드",
+            "modeInWindow": "윈도우 내",
+            "modePopout": "팝업"
           }
         },
         "FloatingWorkspacePane": {
@@ -7858,8 +7858,8 @@
               "grok": "grok"
             },
             "agentDashboard": {
-              "title": "Agent Dashboard",
-              "description": "Kanban board for monitoring agents across worktrees, in-window or as a pop-out."
+              "title": "에이전트 대시보드",
+              "description": "워크트리 전반에 걸친 에이전트를 모니터링하는 칸반 보드. 윈도우 내 또는 팝업으로 표시됩니다."
             }
           }
         },
@@ -9512,8 +9512,8 @@
           "downloadProgress": "{{value0}} 다운로드 진행률",
           "liveTabOne": "1개 활성 탭",
           "liveTabs": "{{value0}}개 활성 탭",
-          "livePaneOne": "1개 활성 패인",
-          "livePanes": "{{value0}}개 활성 패인"
+          "livePaneOne": "1개 활성 패널",
+          "livePanes": "{{value0}}개 활성 패널"
         },
         "RemoteServerUpdateStatus": {
           "checking": "확인 중…",
@@ -9625,7 +9625,7 @@
           "loading": "마켓플레이스 플러그인 로딩 중…",
           "tryAgain": "다시 시도",
           "noSourcesTitle": "마켓플레이스 미구성",
-          "noSources": "플러그인을 brows하려면 공식, 커뮤니티 또는 비공개 Git 마켓플레이스를 추가하세요.",
+          "noSources": "플러그인을 탐색하려면 공식, 커뮤니티 또는 비공개 Git 마켓플레이스를 추가하세요.",
           "addSource": "마켓플레이스 추가",
           "noResultsTitle": "일치하는 플러그인 없음",
           "noResults": "이 검색에 일치하는 마켓플레이스 플러그인이 없습니다.",
@@ -9686,7 +9686,7 @@
           "official": "공식",
           "owner": "소유자: {{value0}}",
           "pinnedCommit": "{{value0}}에 고정됨",
-          "stale": "새로고침 실패. 마지막으로 유효한 캐시된 인덱스를 brows하고 있습니다.",
+          "stale": "새로고침 실패. 마지막으로 유효한 캐시된 인덱스를 탐색하고 있습니다.",
           "refreshLabel": "{{value0}} 새로고침",
           "removeLabel": "{{value0}} 제거",
           "done": "완료"
@@ -9711,7 +9711,7 @@
           "noInstalledResultsTitle": "일치하는 플러그인 없음",
           "noInstalledResults": "이 검색에 일치하는 설치된 플러그인이 없습니다.",
           "emptyTitle": "아직 설치된 플러그인이 없습니다",
-          "empty": "모든 탭을 brows하여 마켓플레이스에서 플러그인을 설치하세요.",
+          "empty": "모든 탭을 둘러보며 마켓플레이스에서 플러그인을 설치하세요.",
           "loadFailed": "플러그인을 로드할 수 없습니다.",
           "settingsUpdateFailed": "플러그인 설정을 저장할 수 없습니다.",
           "install": "플러그인 설치",
@@ -14244,12 +14244,12 @@
       "close": "Close"
     },
     "close": "Close dashboard",
-    "settings": "Agent Dashboard settings",
-    "settingsTooltip": "Board settings"
+    "settings": "에이전트 대시보드 설정",
+    "settingsTooltip": "보드 설정"
   },
   "dashboard": {
     "sidebar": {
-      "label": "Agent Dashboard"
+      "label": "에이전트 대시보드"
     }
   },
   "browser": {

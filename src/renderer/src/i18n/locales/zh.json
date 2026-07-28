@@ -775,7 +775,7 @@
         "9263e75f49": "Codex 正在使用之前的账户",
         "a4c8e1b2f7": "Codex 仍以 {{value0}} 身份登录",
         "d3e8a1f4b2": "账户已切换",
-        "9375620cc3": "重启此会话以使用 {{value0}}。在你执行之前，它将保留在之前的账户上。",
+        "9375620cc3": "重启此会话以使用 {{value0}}。在重启之前，它将继续使用旧账户。",
         "6133594b12": "保留旧账户"
       },
       "FirstLaunchBanner": {
@@ -835,7 +835,7 @@
         "b1ac991806": "{{value0}} 失败",
         "checksNeedActionChip": "{{value0}} 个需要操作",
         "311d0cee55": "{{value0}} 通过",
-        "e52bed9264": "尚未报告任何检查",
+        "e52bed9264": "尚未报告任何 CI 检查",
         "90020cc1f3": "此PR尚未报告检查。",
         "ecffebc251": "未找到检查",
         "5dddefdf58": "在 GitHub 中打开",
@@ -1329,7 +1329,7 @@
         "ae2a34c7b8": "{{value0}} 失败",
         "checksNeedActionChip": "{{value0}} 个需要操作",
         "7c5035931a": "{{value0}} 通过",
-        "a18d01cda3": "尚未报告任何检查",
+        "a18d01cda3": "尚未报告任何 CI 检查",
         "3912daf310": "此PR尚未报告检查。",
         "45877f5089": "未找到检查",
         "85e62c5266": "已启动 AI 智能体处理失败的检查。",
@@ -3353,7 +3353,7 @@
             "title": "使用量",
             "openDetails": "查看使用详情",
             "notSignedIn": "未登录",
-            "allAgents": "所有代理",
+            "allAgents": "所有智能体",
             "usageDetails": "使用详情与历史",
             "loadingUsage": "正在加载使用量…",
             "usageUnavailable": "使用量不可用",
@@ -5655,15 +5655,15 @@
             "defaultViewNative": "Chat UI"
           },
           "agentDashboard": {
-            "title": "Agent Dashboard",
-            "description": "Kanban board for monitoring agents across worktrees, in-window or as a pop-out.",
-            "copy": "Adds an Agent Dashboard entry to the left sidebar. Open it to monitor attention, working, and idle agents and jump into their live terminals.",
-            "toggleLabel": "Toggle Agent Dashboard",
-            "modeLabel": "Open as",
-            "modeCopy": "Show the dashboard as an in-window board beside the sidebar or a separate pop-out window.",
-            "modeAriaLabel": "Agent Dashboard open mode",
-            "modeInWindow": "In-window",
-            "modePopout": "Pop-out"
+            "title": "智能体仪表盘",
+            "description": "用于监控跨工作树的智能体的看板，支持窗口内或弹出窗口显示。",
+            "copy": "在左侧边栏添加智能体仪表盘入口。打开它可以监控关注中、工作中和空闲的智能体，并跳转到其实时终端。",
+            "toggleLabel": "切换智能体仪表盘",
+            "modeLabel": "打开方式",
+            "modeCopy": "将仪表盘显示为侧边栏旁的窗口内看板，或单独的弹出窗口。",
+            "modeAriaLabel": "智能体仪表盘打开模式",
+            "modeInWindow": "窗口内",
+            "modePopout": "弹出窗口"
           }
         },
         "FloatingWorkspacePane": {
@@ -7858,8 +7858,8 @@
               "grok": "grok"
             },
             "agentDashboard": {
-              "title": "Agent Dashboard",
-              "description": "Kanban board for monitoring agents across worktrees, in-window or as a pop-out."
+              "title": "智能体仪表盘",
+              "description": "用于监控跨工作树的智能体的看板，支持窗口内或弹出窗口显示。"
             }
           }
         },
@@ -9533,7 +9533,7 @@
         },
         "PluginConsentDialog": {
           "workerTrust": "后台工作进程 — 运行自己的进程",
-          "instructionalTrust": "指令内容 — 在用户或代理权限下运行",
+          "instructionalTrust": "指令内容 — 在用户或智能体权限下运行",
           "declarativeTrust": "声明式内容 — 无插件代码",
           "panelTrust": "面板或主机集成内容 — 无工作进程",
           "trustShortWorker": "工作进程",
@@ -9548,7 +9548,7 @@
           "reconsent": "权限、工作进程信任级别或指令内容自您上次审查此插件以来已更改。在运行之前请再次审查。",
           "capabilities": "此插件可以",
           "warning": "这些权限限制了插件如何使用 Orca 的 API。其工作进程仍作为普通进程在您的计算机上运行，可以完全访问您的文件、网络和其他进程。",
-          "instructionalWarning": "此插件没有工作进程。其指令内容在您或代理使用时仍可能引发操作。在启用之前，请审查以下指令和命令。",
+          "instructionalWarning": "此插件没有工作进程。其指令内容在您或智能体使用时仍可能引发操作。在启用之前，请审查以下指令和命令。",
           "panelWarning": "这些权限限制了插件如何使用 Orca 的 API。此插件没有后台工作进程。",
           "declarativeWarning": "此插件仅贡献经过验证的内容。它不运行后台工作进程，也不接收对 Orca API 的访问。",
           "keepDisabled": "保持禁用",
@@ -9559,7 +9559,7 @@
             "notificationsShow": "显示标有插件名称的桌面通知",
             "storage": "在插件自己的存储文件夹中存储数据",
             "secrets": "在插件自己的加密保险库中存储和读取密钥",
-            "eventsSubscribe": "在工作树创建或移除以及代理状态更改时获得通知",
+            "eventsSubscribe": "在工作树创建或移除以及智能体状态更改时获得通知",
             "settingsOwn": "读取和更改插件自己的设置"
           },
           "decisionFailed": "无法保存权限决定。请重试。"
@@ -10363,7 +10363,7 @@
                 "74c6885b8a": "更多评论动作",
                 "cbcc4ab3db": "显示前 100 项检查",
                 "0dca6bfab5": "打开检查详细信息",
-                "991f50c7e4": "尚未报告任何检查",
+                "991f50c7e4": "尚未报告任何 CI 检查",
                 "9ad98f2a17": "待办的",
                 "5e52f4ef7f": "失败",
                 "02ca4f9074": "通过",
@@ -12300,9 +12300,9 @@
           "84898c548d": "清除",
           "88b70d0ef5": "复制",
           "bb84b4c374": "AI 笔记",
-          "948a5fd6c8": "清晰的笔记",
+          "948a5fd6c8": "清除笔记",
           "0f806a2ab1": "取消",
-          "80a286d8f5": "从这个工作树？",
+          "80a286d8f5": "从此工作树中清除？",
           "7e7ca60816": "更改的文件",
           "b6c3b84476": "显示文件树",
           "39f8007549": "评审冲突",
@@ -14244,12 +14244,12 @@
       "close": "Close"
     },
     "close": "Close dashboard",
-    "settings": "Agent Dashboard settings",
-    "settingsTooltip": "Board settings"
+    "settings": "智能体仪表盘设置",
+    "settingsTooltip": "看板设置"
   },
   "dashboard": {
     "sidebar": {
-      "label": "Agent Dashboard"
+      "label": "智能体仪表盘"
     }
   },
   "browser": {
