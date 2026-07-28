@@ -194,7 +194,9 @@ async function fireReadyToShow(mainWindow: MainWindowStub): Promise<void> {
     | (() => void)
     | undefined
   handler?.()
-  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => {
+    setImmediate(resolve)
+  })
 }
 
 describe('attachMainWindowServices', () => {

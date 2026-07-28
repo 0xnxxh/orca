@@ -138,7 +138,9 @@ describe('MacosTccPromptWatch', () => {
     stdout.write(`${PREFLIGHT_LINE}\n`)
     stdout.write(`${REAL_PROMPT_LINE}\n`) // another app is responsible
     stdout.write(`${ORCA_APPDATA_LINE}\n`)
-    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
 
     expect(onPrompt).toHaveBeenCalledTimes(1)
     expect(onPrompt.mock.calls[0][0]).toMatchObject({

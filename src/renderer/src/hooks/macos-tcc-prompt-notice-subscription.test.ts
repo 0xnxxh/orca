@@ -118,7 +118,9 @@ describe('subscribeToMacosTccPromptNotice', () => {
       },
       onNotice
     )
-    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
 
     expect(consumePending).toHaveBeenCalledTimes(2)
     expect(onNotice).toHaveBeenCalledTimes(2)
@@ -144,7 +146,9 @@ describe('subscribeToMacosTccPromptNotice', () => {
         throw new Error('persistent failure')
       }
     )
-    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
 
     expect(consumePending).toHaveBeenCalledTimes(2)
     expect(releasePending).toHaveBeenCalledTimes(2)
@@ -160,7 +164,9 @@ describe('subscribeToMacosTccPromptNotice', () => {
         throw new Error('display failure')
       }
     )
-    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
 
     expect(rejectedConsume).toHaveBeenCalledOnce()
     expect(rejectedRelease).toHaveBeenCalledWith(22)
@@ -233,7 +239,9 @@ describe('subscribeToMacosTccPromptNotice', () => {
       },
       onNotice
     )
-    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => {
+      setImmediate(resolve)
+    })
 
     expect(onNotice).toHaveBeenCalledOnce()
     expect(releasePending).toHaveBeenCalledWith(13)
