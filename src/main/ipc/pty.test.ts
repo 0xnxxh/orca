@@ -14191,7 +14191,12 @@ describe('registerPtyHandlers', () => {
       getSettings as never,
       undefined,
       undefined,
-      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/origin/home' }) }
+      {
+        prepareCodexSessionResume: async () => ({
+          outcome: 'resume' as const,
+          codexHomePath: '/managed/origin/home'
+        })
+      }
     )
 
     await handlers.get('pty:spawn')!(null, {
@@ -14237,7 +14242,12 @@ describe('registerPtyHandlers', () => {
       getSettings as never,
       undefined,
       undefined,
-      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/shared-mirror/home' }) }
+      {
+        prepareCodexSessionResume: async () => ({
+          outcome: 'resume' as const,
+          codexHomePath: '/managed/shared-mirror/home'
+        })
+      }
     )
 
     await handlers.get('pty:spawn')!(null, {
@@ -14299,7 +14309,12 @@ describe('registerPtyHandlers', () => {
       getSettings as never,
       undefined,
       undefined,
-      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/origin/home' }) }
+      {
+        prepareCodexSessionResume: async () => ({
+          outcome: 'resume' as const,
+          codexHomePath: '/managed/origin/home'
+        })
+      }
     )
     const controller = runtime.setPtyController.mock.calls[0]?.[0] as RuntimeSpawnController
 
@@ -14357,7 +14372,12 @@ describe('registerPtyHandlers', () => {
       getSettings as never,
       undefined,
       undefined,
-      { prepareCodexSessionResume: async () => ({ codexHomePath: '/managed/shared-mirror/home' }) }
+      {
+        prepareCodexSessionResume: async () => ({
+          outcome: 'resume' as const,
+          codexHomePath: '/managed/shared-mirror/home'
+        })
+      }
     )
     const controller = runtime.setPtyController.mock.calls[0]?.[0] as RuntimeSpawnController
 
