@@ -29,13 +29,15 @@ export function useNativeChatLaunchDraftSignal(args: {
   const baselineRef = useRef<{ key: string; baseline: NativeChatLaunchDraftTurnBaseline } | null>(
     null
   )
-  const baselineKey =
-    paneLaunchDraft && !transcriptLoading
-      ? `${paneLaunchDraft.tabId} ${paneLaunchDraft.createdAt}`
-      : null
+  // Keyed on draft identity alone: a reload mid-draft must not discard a
+  // baseline already taken from a settled transcript — re-taking it from the
+  // fuller list would swallow the very user turn that resolves the draft.
+  const baselineKey = paneLaunchDraft
+    ? `${paneLaunchDraft.tabId} ${paneLaunchDraft.createdAt}`
+    : null
   if (baselineKey === null) {
     baselineRef.current = null
-  } else if (baselineRef.current?.key !== baselineKey) {
+  } else if (baselineRef.current?.key !== baselineKey && !transcriptLoading) {
     baselineRef.current = {
       key: baselineKey,
       baseline: nativeChatLaunchDraftTurnBaseline(messages)

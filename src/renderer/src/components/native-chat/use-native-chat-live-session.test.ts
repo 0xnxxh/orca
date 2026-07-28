@@ -856,6 +856,22 @@ describe('useNativeChatLiveSession — notFound retry (#8401)', () => {
     expect(latest?.messages.map((m) => m.id)).toContain('a-early')
   })
 
+  it("still reports the loading readPhase while a live 'working' hook masks the status", async () => {
+    // `status` is not a truthful read-in-flight signal: live work outranks it.
+    // The launch-draft baseline must never be snapshotted on that empty list.
+    vi.useFakeTimers()
+    useAppStore.setState({
+      agentStatusByPaneKey: { [PANE]: { state: 'working', stateStartedAt: 1 } as never }
+    })
+    const transport = getMockTransport('env-1', { autoSnapshot: false })
+    transport.readSession.mockResolvedValue({ error: 'No transcript found', notFound: true })
+
+    await render({ paneKey: PANE, agent: AGENT, sessionId: SESSION, runtimeEnvironmentId: 'env-1' })
+
+    expect(latest?.status).toBe('working')
+    expect(latest?.readPhase).toBe('loading')
+  })
+
   it('renders live-appended content even when the initial read settled into a permanent error', async () => {
     const transport = getMockTransport('env-1', { autoSnapshot: false })
     transport.readSession.mockResolvedValueOnce({ error: 'unreadable transcript' })

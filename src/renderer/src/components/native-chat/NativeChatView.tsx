@@ -148,7 +148,7 @@ function NativeChatResolvedView({
     terminalTabId,
     agent,
     messages: session.messages,
-    transcriptLoading: session.status === 'loading'
+    transcriptLoading: session.readPhase === 'loading'
   })
   // The live-session merge reconciles hooks with replayable transcript turn
   // boundaries; all working consumers must use that one lifecycle decision.

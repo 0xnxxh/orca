@@ -151,6 +151,30 @@ describe('useNativeChatLaunchDraftSignal', () => {
     expect(result.current.launchDraftResolved).toBe(true)
   })
 
+  it('keeps a settled baseline across a later transcript reload', () => {
+    // Discarding it and re-taking from the fuller list would swallow the very
+    // user turn that resolves the draft, so a stale prefill gets re-adopted.
+    const { result, rerender } = renderSignal([])
+    expect(result.current.launchDraftResolved).toBe(false)
+
+    // Provably older than the seed, so only the baseline can resolve it.
+    const turn = userTurn('u1', SEEDED_AT - 600_000)
+    rerender({ messages: [turn], transcriptLoading: true })
+    expect(result.current.launchDraftResolved).toBe(false)
+
+    rerender({ messages: [turn], transcriptLoading: false })
+    expect(result.current.launchDraftResolved).toBe(true)
+  })
+
+  it('does not resolve from an in-flight transcript that still shows recent turns', () => {
+    // A read in flight can still be rendering the previous generation's tail;
+    // those turns say nothing about this draft.
+    const { result } = renderSignal([userTurn('u1', SEEDED_AT)], true)
+
+    expect(result.current.launchDraftResolved).toBe(false)
+    expect(result.current.launchDraft).not.toBeNull()
+  })
+
   it('ignores a draft seeded for another agent', () => {
     mocks.storeState.nativeChatLaunchDraftByTabId = {
       'tab-1': launchDraft({ agent: 'codex', createdAt: SEEDED_AT })
