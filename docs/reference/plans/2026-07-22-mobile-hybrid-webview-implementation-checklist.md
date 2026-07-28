@@ -27,8 +27,8 @@
   now pass; iOS Simulator and Android emulator manual previous-generation
   recovery, cache clear/redownload, and corrupt-active cold fallback now pass
   through the native recovery surface; the exact iOS Simulator and Android API
-  36 Source Control and Review journeys and the full post-rebase validation
-  matrix now pass
+  36 Agent History, Source Control, and Review journeys and the full
+  post-rebase validation matrix now pass
 - **Last updated:** July 28, 2026
 - **Design:**
   [`2026-07-22-mobile-hybrid-webview-single-pr-migration.md`](./2026-07-22-mobile-hybrid-webview-single-pr-migration.md)
@@ -857,7 +857,12 @@ recovery, or physical-device gates.
   threshold (observed 2.2677%), a mean-channel-difference budget of 4
   (observed 2.5663), and a vertical header-landmark budget of 0.005
   (observed 0.00075). The status bar alone is masked. The full live
-  accessibility and remaining screen/device/state matrix remain open.
+  accessibility and remaining screen/device/state matrix remain open. The
+  Pixel 9 Pro API 36 emulator now also passes the same existing route's three
+  scopes, lazy preview, search/no-match/clear flow, synthetic Resume rejection,
+  and native-touch Resume into a second Session tab. That fresh paired-app run
+  continues through Source Control, changed-file handoff, standalone Review,
+  both isolation probes, and the Android bridge log audit.
 - [x] Implement approvals and elicitation/question flows. The existing prompt
       cards call a named response operation that freshly verifies the exact
       workspace, tab, terminal, agent, provider session, and transcript before
@@ -2436,5 +2441,7 @@ copy.
 | 2026-07-28 | Complete | The exact Pixel 9 Pro API 36 arm64 Debug APK was rebuilt, installed, paired to a disposable Desktop runtime, entered the unchanged workspace and Session UI, opened Source Control, opened a changed file as a second Session diff tab, and verified standalone Review. Deliberate-red network/navigation isolation ended with zero sentinel observations.                                                                              |
 | 2026-07-28 | Complete | The Android route harness now clears and audits fresh logcat. The final journey contains no Expo bridge rejection, Kotlin conversion/cast failure, or fatal process error. Focused coverage passes 6 files / 41 tests, Android native module tests pass, mobile and RNW typechecks/lints/formatting/max-lines pass, and the final rebased RNW verifier passes build `f852d8525d2b0e20d79262d74ce3ef74bfa73c3e55b95176bfb1b467beafae61`. |
 | 2026-07-28 | Complete | Rebased the single migration commit onto `origin/main` at `1fa9ffb5e`; the sole root-package conflict retained upstream's current code-quality script shape and the migration's dedicated mobile-web lint. The branch remains one commit ahead and zero behind.                                                                                                                                                                         |
-| 2026-07-28 | Complete | Final post-rebase validation passes 550 mobile files / 3,285 tests with 2 expected skips and 3,769 root files / 39,207 tests with 62 expected skips. Root/mobile/RNW typechecks, lint, formatting, reliability gates, localization, max-lines, the verified 49-asset RNW package, and the rebuilt Android journey all pass.                                                                                                             |
+| 2026-07-28 | Complete | The Pixel 9 Pro API 36 route gate now seeds a disposable Agent History fixture and passes Workspace/Project/All scopes, lazy preview, search/no-match/clear, synthetic privileged-resume rejection, and native-touch resume into a second Session tab. The same app session then opens Source Control, a third changed-file Session tab, standalone Review, both isolation probes, and a clean bridge log audit.                        |
+| 2026-07-28 | Complete | Rebased both migration commits without conflict onto current `origin/main` at `0404f27b3`. The branch is two commits ahead and zero behind.                                                                                                                                                                                                                                                                                             |
+| 2026-07-28 | Complete | Final validation passes 551 mobile files / 3,286 tests with 2 expected skips and 3,770 root files / 39,212 tests with 62 expected skips. Root/mobile/RNW typechecks, lint, formatting, reliability gates, localization, max-lines, the verified 49-asset RNW package, and the rebuilt Android journey all pass.                                                                                                                         |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

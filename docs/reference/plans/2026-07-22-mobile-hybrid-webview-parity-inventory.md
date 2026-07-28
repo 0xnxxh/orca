@@ -3,7 +3,7 @@
 - **Status:** In progress; route, terminal, native, persisted-state, UX-state,
   accessibility/input, notification, native-chat, and UI-preservation
   boundaries frozen
-- **Last updated:** July 27, 2026
+- **Last updated:** July 28, 2026
 - **Design:**
   [`2026-07-22-mobile-hybrid-webview-single-pr-migration.md`](./2026-07-22-mobile-hybrid-webview-single-pr-migration.md)
 - **Checklist:**
@@ -66,11 +66,11 @@ but is a component, not a route. It migrates with the session UI.
 | `mobile/app/h/[hostId]/accounts.tsx`                    | Host agent-account usage and selection                                             | Mobile web app | Complete: the same screen uses typed native/web host-account adapters                                                                                                                   |
 | `mobile/app/h/[hostId]/tasks.tsx`                       | Host task providers, task details, mutations, workspace creation                   | Mobile web app | Complete on iOS Simulator: same route/presentation with strict native/web operations                                                                                                    |
 | `mobile/app/h/[hostId]/session/[worktreeId].tsx`        | Sessions, tabs, terminal, browser, native chat, files, attachments, dictation      | Mobile web app | Reuse current session presentation; native-chat/agent-state slice is adapter-complete and awaiting live parity evidence                                                                 |
-| `mobile/app/h/[hostId]/agent-history/[worktreeId].tsx`  | Agent session history and resume                                                   | Mobile web app | Same panel/list presentation now mounted with bounded opaque snapshot/preview/resume operations; live hosted parity remains                                                             |
+| `mobile/app/h/[hostId]/agent-history/[worktreeId].tsx`  | Agent session history and resume                                                   | Mobile web app | Complete on iOS and Android emulators: same panel/list presentation, bounded opaque snapshot/preview/resume operations, scopes, search, and trusted-resume mediation                    |
 | `mobile/app/h/[hostId]/files/[worktreeId].tsx`          | File explorer                                                                      | Mobile web app | Complete at adapter level: the same `MobileFileExplorerPanel` is mounted by a thin hosted route with bounded opaque directory reads and native-shell reconnect                          |
 | `mobile/app/h/[hostId]/files/preview/[worktreeId].tsx`  | File, Markdown, image, editable, HTML, and Mermaid previews                        | Mobile web app | Reuse current preview UI; HTML is sanitized in a hash-bound inert frame, while native/hosted Mermaid use the locally bundled hash-authorized engine and unchanged fallback presentation |
-| `mobile/app/h/[hostId]/source-control/[worktreeId].tsx` | Source-control hub                                                                 | Mobile web app | Complete on iOS Simulator: same `MobileSourceControlPanel`, including Session-origin changed-file handoff; Android route evidence remains                                               |
-| `mobile/app/h/[hostId]/review/[worktreeId].tsx`         | Diff review and comments                                                           | Mobile web app | Complete on iOS Simulator: same review presentation and virtualization; standalone controls verified independently                                                                      |
+| `mobile/app/h/[hostId]/source-control/[worktreeId].tsx` | Source-control hub                                                                 | Mobile web app | Complete on iOS and Android emulators: same `MobileSourceControlPanel`, including Session-origin changed-file handoff                                                                   |
+| `mobile/app/h/[hostId]/review/[worktreeId].tsx`         | Diff review and comments                                                           | Mobile web app | Complete on iOS and Android emulators: same review presentation and virtualization; standalone controls verified independently                                                          |
 | `mobile/app/h/[hostId]/history/[worktreeId].tsx`        | Legacy source-control history redirect                                             | Mobile web app | Complete: provider-neutral compatibility redirect preserves the history segment during rollout                                                                                          |
 | `mobile/app/h/[hostId]/pr/[worktreeId].tsx`             | Legacy pull-request redirect                                                       | Mobile web app | Complete: provider-neutral compatibility redirect preserves the pull-request segment during rollout                                                                                     |
 | `mobile/app/hybrid-prototype.tsx`                       | Experimental single-document Option B prototype                                    | Remove         | Replace with production host route after all gates pass                                                                                                                                 |
@@ -472,13 +472,14 @@ IDs, and unrelated provider state never enter the page result.
 
 ## Next Inventory Action
 
-The dedicated hosted Files, Preview, Source Control, and Review routes now
-mount the unchanged presentations through native/web adapters. The iPhone 17
-Pro Simulator verifies Session-origin changed-file handoff, standalone Review,
-and both isolation probes. Provider-neutral History and PR compatibility
-redirects are present. Run the same Source Control/Review route evidence on
-Android after restoring the Android SDK/AVD, then close the remaining
-native-versus-hosted interaction matrix.
+The dedicated hosted Files, Preview, Source Control, Review, and Agent History
+routes mount the unchanged presentations through native/web adapters. The
+iPhone 17 Pro Simulator verifies Session-origin changed-file handoff,
+standalone Review, and both isolation probes. The Pixel 9 Pro API 36 emulator
+now verifies those paths in the same fresh app session as Agent History scopes,
+preview, filtering, synthetic-resume rejection, and native-touch resume.
+Provider-neutral History and PR compatibility redirects are present. Close the
+remaining native-versus-hosted interaction matrix.
 
 The interrupted-transcript versus hook-status mismatch and a real structured
 prompt response pass Host 37 Simulator replay. Current package `4b7df7d4…`

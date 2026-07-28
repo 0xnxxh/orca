@@ -112,6 +112,7 @@ describe('hosted iOS Source Control and Review journey', () => {
       sessionDocument: {
         href: 'orca-mobile-web://build/h/host/session/workspace'
       },
+      expectedSessionDiffText: '3 tabs',
       timeoutMs: 30_000,
       tapPoint
     })
@@ -121,5 +122,9 @@ describe('hosted iOS Source Control and Review journey', () => {
       'Open source control',
       'Open changed file mobile/app/index.tsx'
     ])
+    expect(mocks.waitForDocument).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ expectedText: '3 tabs' })
+    )
   })
 })

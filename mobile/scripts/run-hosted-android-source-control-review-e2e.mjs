@@ -5,6 +5,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
 import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
+import { verifyHostedAndroidAgentHistoryJourney } from './hosted-android-agent-history-journey.mjs'
 import {
   tapHostedAndroidAccessibilityControl,
   tapHostedAndroidPoint,
@@ -83,6 +84,7 @@ async function main() {
         logSuccess: () => {}
       })
     )
+    runtime.env.ORCA_E2E_MOBILE_AGENT_HISTORY_FIXTURE = '1'
     await stage('test workspace registration', () =>
       registerWorktreeForPairingRuntime(runtime, worktree, {
         orca: runOrca,
@@ -175,11 +177,21 @@ async function main() {
         timeoutMs: options.timeoutMs
       })
     )
+    const agentHistoryResult = await stage('Agent History journey', () =>
+      verifyHostedAndroidAgentHistoryJourney({
+        discoveryUrl,
+        emulator,
+        sessionDocument,
+        timeoutMs: options.timeoutMs
+      })
+    )
+    const { returnedSessionDocument, ...agentHistory } = agentHistoryResult
     const sourceControlReview = await stage('Source Control and Review journey', () =>
       verifyHostedSourceControlReviewJourney({
         discoveryUrl,
         emulator,
-        sessionDocument,
+        sessionDocument: returnedSessionDocument,
+        expectedSessionDiffText: '3 tabs',
         timeoutMs: options.timeoutMs,
         tapPoint: tapHostedAndroidJourneyControl
       })
@@ -217,6 +229,7 @@ async function main() {
           device: await runAndroidAdb(adb, ['shell', 'getprop', 'ro.product.model']),
           pid: inspector.pid,
           workspace: expectedWorkspace,
+          agentHistory,
           sourceControlReview,
           networkIsolation,
           navigationIsolation,

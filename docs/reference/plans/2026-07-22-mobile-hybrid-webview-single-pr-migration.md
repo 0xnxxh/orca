@@ -2092,6 +2092,14 @@ accessibility finding remains open. This is not completion of the phone/tablet,
 shell-state, route,
 screen-reader, or physical-device matrix.
 
+The Pixel 9 Pro API 36 emulator now exercises that same hosted Agent History
+presentation in a freshly installed paired app. Workspace/Project/All scopes,
+lazy preview, search/no-match/clear, synthetic privileged-resume rejection, and
+native-touch resume into a second Session tab pass. The same authenticated
+WebView then opens Source Control, a changed file as a third Session tab, and
+standalone Review before passing the network/navigation isolation probes and
+fresh Android bridge-log audit.
+
 Native route ownership now has exact-app lifecycle evidence too. A
 gesture-gated request from the unchanged hosted Session records only a
 request-scoped Terminal Settings intent, posts the broker success response, and

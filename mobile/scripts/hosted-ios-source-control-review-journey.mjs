@@ -11,20 +11,16 @@ export async function verifyHostedSourceControlReviewJourney({
   emulator,
   sessionDocument,
   timeoutMs,
+  expectedSessionDiffText = '2 tabs',
   tapPoint = tapHostedIosPoint
 }) {
-  const sourceControlPoint = await journeyStep('measure Open source control', () =>
-    readHostedWebViewControlPoint(sessionDocument, 'Open source control')
-  )
-  await journeyStep('tap Open source control', () =>
-    tapPoint(emulator, sourceControlPoint, 'Open source control')
-  )
   const sourceControl = await journeyStep('wait for Source Control route', () =>
-    waitForVisibleHostedWebView({
+    openSourceControlRoute({
       discoveryUrl,
-      expectedText: 'Source Control',
-      expectedHrefIncludes: '/source-control/',
-      timeoutMs
+      emulator,
+      sessionDocument,
+      timeoutMs,
+      tapPoint
     })
   )
   const sourceState = await journeyStep('read populated Source Control state', () =>
@@ -51,7 +47,7 @@ export async function verifyHostedSourceControlReviewJourney({
   const sessionDiff = await journeyStep('wait for Session diff route', () =>
     waitForVisibleHostedWebView({
       discoveryUrl,
-      expectedText: '2 tabs',
+      expectedText: expectedSessionDiffText,
       expectedHrefIncludes: '/session/',
       requireInteractiveControls: false,
       timeoutMs
@@ -82,6 +78,31 @@ export async function verifyHostedSourceControlReviewJourney({
     reviewRoute: reviewState.href,
     reviewControls: ['Back', 'Open review actions']
   }
+}
+
+async function openSourceControlRoute({
+  discoveryUrl,
+  emulator,
+  sessionDocument,
+  timeoutMs,
+  tapPoint
+}) {
+  let lastError = new Error('Source Control route did not open')
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const point = await readHostedWebViewControlPoint(sessionDocument, 'Open source control')
+      await tapPoint(emulator, point, 'Open source control')
+      return await waitForVisibleHostedWebView({
+        discoveryUrl,
+        expectedText: 'Source Control',
+        expectedHrefIncludes: '/source-control/',
+        timeoutMs: Math.min(timeoutMs, 3_000)
+      })
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError
 }
 
 async function waitForChangedFileState(document, timeoutMs) {

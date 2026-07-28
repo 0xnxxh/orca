@@ -37,9 +37,15 @@ verifies standalone Review. The deliberate-red network/navigation isolation
 probe records zero escaped traffic, and the embedded log audit records no Expo
 bridge rejection, Kotlin conversion/cast error, or fatal process error.
 
-The migration is rebased onto `origin/main` at `1fa9ffb5e`. Post-rebase
-validation passes 550 mobile files / 3,285 tests with 2 expected skips and
-3,769 root files / 39,207 tests with 62 expected skips. All project typechecks,
+The Android route gate now also seeds a disposable Agent History fixture and
+verifies the unchanged screen's Workspace/Project/All scopes, lazy preview,
+search/no-match/clear flow, rejection of synthetic privileged activation, and
+native-touch resume into a second Session tab before continuing through Source
+Control and Review.
+
+The migration is rebased onto `origin/main` at `0404f27b3`. Post-rebase
+validation passes 551 mobile files / 3,286 tests with 2 expected skips and
+3,770 root files / 39,212 tests with 62 expected skips. All project typechecks,
 root/mobile/mobile-web lint, reliability gates, and the max-lines ratchet pass.
 The independently verified React Native Web package is
 `f852d8525d2b0e20d79262d74ce3ef74bfa73c3e55b95176bfb1b467beafae61`:
