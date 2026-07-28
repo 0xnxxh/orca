@@ -6389,6 +6389,53 @@ describe('connectPanePty', () => {
     expect(deps.updateTabPtyId).not.toHaveBeenCalledWith('tab-1', otherTabPtyId)
   })
 
+  it('fresh-spawns a shell into any PTY-less tab, so agent launches must never publish one', async () => {
+    // Why: #2989 depends on PTY-less tabs taking this legitimate fresh-shell path.
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport()
+    transport.connect.mockImplementation(async (opts: { sessionId?: string }) => {
+      if (opts.sessionId) {
+        return { id: opts.sessionId }
+      }
+      const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+        | ((ptyId: string) => void)
+        | undefined
+      onPtySpawn?.('stray-shell-pty')
+      return 'stray-shell-pty'
+    })
+    transportFactoryQueue.push(transport)
+    // Reproduce the pre-fix gap between createTab and PTY binding.
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: null }] },
+      ptyIdsByTabId: { 'tab-1': [] },
+      terminalLayoutsByTabId: {
+        'tab-1': {
+          root: { type: 'leaf', leafId: LEAF_1 },
+          activeLeafId: LEAF_1,
+          expandedLeafId: null
+        }
+      },
+      agentLaunchConfigByPaneKey: {
+        [`tab-1:${LEAF_1}`]: {
+          launchConfig: { agentCommand: 'claude', agentArgs: '', agentEnv: {} },
+          identity: { agentType: 'claude' }
+        }
+      }
+    } as StoreState
+    const deps = createDeps()
+
+    const pane = createPane(1)
+    connectPanePty(pane as never, createManager(1) as never, deps as never)
+    await flushAsyncTicks()
+
+    // Launch registration alone cannot identify a PTY to attach.
+    expect(transport.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ url: '', cols: expect.any(Number) })
+    )
+    expect(deps.updateTabPtyId).toHaveBeenCalledWith('tab-1', 'stray-shell-pty')
+  })
+
   it('spawns a fresh PTY when a restored daemon split session cannot reattach', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport()
