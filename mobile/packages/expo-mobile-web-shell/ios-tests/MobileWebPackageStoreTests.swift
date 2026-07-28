@@ -25,7 +25,9 @@ enum MobileWebPackageStoreTests {
     try rejectsOversizedPersistedFiles(root: root.appendingPathComponent("persisted-limits"))
     try activatesAndRecoversPreviousGeneration(root: root.appendingPathComponent("rollback"))
     try fallsBackFromCorruptActiveGeneration(root: root.appendingPathComponent("corrupt-active"))
-    try rejectsNumericActivationFields(root: root.appendingPathComponent("activation-types"))
+    try MobileWebActivationMetadataTests.run(
+      root: root.appendingPathComponent("activation-types")
+    )
     try rejectsLowStorage(root: root.appendingPathComponent("low-storage"))
     try evictsUnprotectedGeneration(root: root.appendingPathComponent("eviction"))
     try evictsAnotherHostForGlobalQuota(root: root.appendingPathComponent("global-eviction"))
@@ -511,31 +513,6 @@ enum MobileWebPackageStoreTests {
 
     precondition(recovered["buildId"] == previous.buildId)
     precondition(!FileManager.default.fileExists(atPath: currentDocument.path))
-  }
-
-  private static func rejectsNumericActivationFields(root: URL) throws {
-    let store = MobileWebPackageStore(cacheRoot: root)
-    let hostRoot = root.appendingPathComponent(sha256Hex(Data("paired-host".utf8)))
-    try FileManager.default.createDirectory(at: hostRoot, withIntermediateDirectories: true)
-    let numericHash = String(repeating: "1", count: 64)
-    let validHash = String(repeating: "a", count: 64)
-    let invalid = [
-      #"{"active":\#(numericHash)}"#,
-      #"{"active":"\#(validHash)","previous":\#(numericHash)}"#,
-    ]
-
-    for activation in invalid {
-      try Data(activation.utf8).write(to: hostRoot.appendingPathComponent("activation.json"))
-      precondition(
-        throwsCode("mobile_web_activation_invalid") {
-          _ = try store.openSession(
-            hostIdentity: "paired-host",
-            buildId: nil,
-            bridgeVersion: 1
-          )
-        }
-      )
-    }
   }
 
   private static func rejectsLowStorage(root: URL) throws {

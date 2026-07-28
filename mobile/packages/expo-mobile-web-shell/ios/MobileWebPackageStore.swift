@@ -41,11 +41,6 @@ struct MobileWebAssetResponse {
   let isDocument: Bool
 }
 
-private struct MobileWebActivationRecord: Codable {
-  let active: String
-  let previous: String?
-}
-
 private final class MobileWebSessionRecord {
   let hostKey: String
   let buildId: String
@@ -648,11 +643,7 @@ final class MobileWebPackageStore {
         byteLimit: activationJsonByteLimit,
         overflowCode: "mobile_web_activation_invalid"
       )
-      let activation = try JSONDecoder().decode(MobileWebActivationRecord.self, from: data)
-      guard
-        isMobileWebSha256(activation.active),
-        activation.previous == nil || isMobileWebSha256(activation.previous!)
-      else {
+      guard let activation = parseMobileWebActivationRecord(data) else {
         throw MobileWebStoreError("mobile_web_activation_invalid")
       }
       return activation

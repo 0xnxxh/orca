@@ -382,27 +382,6 @@ class MobileWebPackageStoreTest {
   }
 
   @Test
-  fun rejectsNumericActivationFields() {
-    val root = temporary.newFolder()
-    val store = MobileWebPackageStore(root)
-    val hostRoot = File(root, sha256Hex("paired-host".toByteArray()))
-    require(hostRoot.mkdirs())
-    val numericHash = "1".repeat(64)
-    val validHash = "a".repeat(64)
-
-    listOf(
-      """{"active":$numericHash}""",
-      """{"active":"$validHash","previous":$numericHash}"""
-    ).forEach { activation ->
-      File(hostRoot, "activation.json").writeText(activation)
-      val error = assertThrows(IllegalArgumentException::class.java) {
-        store.openSession("paired-host", null, 1)
-      }
-      assertEquals("mobile_web_activation_invalid", error.message)
-    }
-  }
-
-  @Test
   fun rejectsLowStorageBeforeCreatingAStage() {
     val root = temporary.newFolder()
     val store = MobileWebPackageStore(

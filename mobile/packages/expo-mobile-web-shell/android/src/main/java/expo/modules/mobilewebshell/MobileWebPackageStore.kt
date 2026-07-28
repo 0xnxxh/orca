@@ -458,23 +458,13 @@ internal class MobileWebPackageStore internal constructor(
   }
 
   private fun readActivation(hostRoot: File): Pair<String, String?> = try {
-    val value = parseJsonObject(
+    parseMobileWebActivationRecord(
       readMobileWebFile(
         File(hostRoot, "activation.json"),
         ACTIVATION_JSON_BYTE_LIMIT,
         "mobile_web_activation_invalid"
       ).toString(Charsets.UTF_8)
-    )
-    require(value.keys().asSequence().toSet().let { it == setOf("active") || it == setOf("active", "previous") })
-    val active = strictJsonString(value, "active") ?: ""
-    val previous = if (value.has("previous") && !value.isNull("previous")) {
-      strictJsonString(value, "previous")
-        ?: throw IllegalArgumentException("mobile_web_activation_invalid")
-    } else {
-      null
-    }
-    require(isMobileWebSha256(active) && (previous == null || isMobileWebSha256(previous)))
-    active to previous
+    ).let { it.active to it.previous }
   } catch (_: Exception) {
     throw IllegalArgumentException("mobile_web_activation_invalid")
   }

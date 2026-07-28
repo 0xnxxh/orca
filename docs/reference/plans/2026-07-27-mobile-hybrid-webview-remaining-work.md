@@ -206,6 +206,11 @@ Post-runbook validation passes 569 mobile files / 3,378 tests with 2 expected
 skips. Mobile and mobile-web typechecks/lints, reliability, max-lines,
 formatting, diff hygiene, and the unchanged `b17ead7a…` package verification
 pass.
+Native activation metadata now consumes one exact object on both platforms.
+The mirrored two-valid/eleven-invalid corpus closes unknown fields, null and
+non-string hashes, identical active/previous generations, and trailing tokens.
+The iOS native fault executable, Android Debug unit/Release Kotlin gates, and
+the same broader validation pass.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -244,9 +249,11 @@ cross-scope races, privacy/authorization audit, and independent review.
       `NSNumber`/`CFBoolean` integer bridging. Chunk base64 is capped at 65,536
       characters in the shared schema and both native stores before decode; its
       bounded request/chunk mutation corpus passes. Native activation metadata
-      rejects numeric active/previous hashes with the same stable error on both
-      platforms. Both native stores cap each raw manifest at 256 KiB before JSON
-      parsing. Android now requires the exact root document URL and rejects
+      accepts only exact `active` and optional distinct `previous` string
+      hashes. Its mirrored missing/null/Boolean/numeric/array/uppercase/
+      duplicate/unknown/trailing-token corpus fails with the same stable error
+      on both platforms. Both native stores cap each raw manifest at 256 KiB
+      before JSON parsing. Android now requires the exact root document URL and rejects
       percent-encoded or query-bearing asset requests. One document-CSP contract
       now drives packaging/verification and exact native source parity.
       Manifest and package RPC reuse one exact path predicate, and the same

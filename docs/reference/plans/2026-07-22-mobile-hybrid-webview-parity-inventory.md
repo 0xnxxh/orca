@@ -521,7 +521,10 @@ Persisted primary and canonical manifests now use 256 KiB bounded readers,
 activation records use a 1 KiB bounded reader, and assets use their declared
 length on both native platforms. Each path reads only one overflow byte before
 failing with its stable error, and mirrored Swift/Kotlin oversized-file faults
-pass.
+pass. Activation parsing is also exact on both platforms: only `active` and an
+optional distinct `previous` string hash are accepted, while the mirrored
+shape/type/trailing-token corpus fails with
+`mobile_web_activation_invalid`.
 The standalone renderer-based workspace, session, files, terminal,
 source-control, and review presentation is also removed with its Vite-only
 package path. A production-source boundary requires `src/mobile-web/` to remain

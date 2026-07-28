@@ -2732,10 +2732,12 @@ JSON scalar types. The shared chunk envelope also caps base64 at the exact
 encoding, decoded-length mismatch, and extra fields. Swift and Kotlin enforce
 that encoded ceiling before invoking their native decoders and cap each raw
 manifest document at 256 KiB before JSON parsing. Native activation metadata
-likewise requires string-typed active and previous hashes on both platforms;
-hash-shaped JSON numbers fail with
-`mobile_web_activation_invalid`. Manifest and package-RPC schemas now share one
-exact asset-path predicate. A mirrored TypeScript, Swift, and Kotlin corpus
+now accepts only an exact object containing string-typed `active` and optional
+distinct `previous` hashes. A mirrored Swift/Kotlin corpus rejects missing,
+null, Boolean, numeric, array, uppercase, duplicate-generation, unknown-field,
+and trailing-token mutations with `mobile_web_activation_invalid`. Manifest
+and package-RPC schemas now share one exact asset-path predicate. A mirrored
+TypeScript, Swift, and Kotlin corpus
 rejects empty, absolute, traversal, repeated-separator, percent-encoded, query,
 fragment, backslash, non-ASCII, overlong, and trailing-newline paths while
 accepting the reviewed relative form. Shared application SHA-256, Git object
@@ -2752,7 +2754,7 @@ canonical manifest reads at 256 KiB, activation records at 1 KiB, and asset
 reads at the manifest-declared length before hashing or parsing. Each reader
 consumes at most one overflow byte, and mirrored Swift/Kotlin faults preserve
 the stable generation and activation errors. Generated mutation and the
-remaining CSP/cache corpus are still required.
+remaining CSP/generation-directory cache corpus are still required.
 
 ## App Store Gate
 

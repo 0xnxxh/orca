@@ -1548,10 +1548,13 @@ copy.
   type-confused, noncanonical, length-mismatched, and extra-field responses.
   Swift and Kotlin enforce the same encoded ceiling before base64 decoding.
   They also cap each raw manifest document at 256 KiB before JSON parsing.
-  Native activation records also require exact string-typed active/previous
-  hashes; numeric hash-shaped values fail with the same stable error on iOS and
-  Android. Manifest and package-RPC schemas now share one exact asset-path
-  predicate. A mirrored TypeScript, Swift, and Kotlin corpus rejects empty,
+  Native activation records now accept only an exact object containing
+  string-typed `active` and optional distinct `previous` hashes. The mirrored
+  Swift/Kotlin corpus rejects missing, null, Boolean, numeric, array, uppercase,
+  duplicate-generation, unknown-field, and trailing-token mutations with
+  `mobile_web_activation_invalid`. Manifest and package-RPC schemas now share
+  one exact asset-path predicate. A mirrored TypeScript, Swift, and Kotlin
+  corpus rejects empty,
   absolute, traversal, repeated-separator, percent-encoded, query, fragment,
   backslash, non-ASCII, overlong, and trailing-newline paths while accepting
   only the reviewed relative form. Shared application SHA-256, Git object ID,
@@ -1570,7 +1573,7 @@ copy.
   activation metadata at most 1 KiB plus one, and assets at most their declared
   length plus one on both platforms. Mirrored Swift/Kotlin faults preserve the
   stable generation and activation errors. Broader generated mutation, CSP
-  behavior, and cache metadata fuzzing remains open.
+  behavior, and generation-directory cache fuzzing remains open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -2643,4 +2646,6 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-28 | Complete | The first production bridge release policy is frozen at exact v2. Production packaging imports the shared range, additive features stay on v2 through capability negotiation, and a future floor cannot retire until its replacement has shipped in at least two stable mobile releases and the supported shell minimum advances.                                                                                                       |
 | 2026-07-28 | Complete | The production rollback runbook now distinguishes bad Desktop packages from native-shell/store incidents, maps automatic and manual host-scoped recovery, requires corrected release artifacts rather than cache mutation, defines privacy-safe support evidence, and preserves final physical/store-signed drills as open release gates.                                                                                               |
 | 2026-07-28 | Complete | Post-runbook validation passes 569 mobile files / 3,378 tests with 2 expected skips. Mobile and mobile-web typechecks/lints, reliability, max-lines, formatting, diff hygiene, and the unchanged `b17ead7a…` 49-asset package verification pass.                                                                                                                                                                                        |
+| 2026-07-28 | Finding  | Swift `Decodable` ignored unknown activation fields, both stores admitted an explicit null or identical previous generation, and Android `JSONObject` accepted a valid activation object followed by trailing tokens. Both native stores now consume one exact activation object with only distinct lowercase string hashes.                                                                                                            |
+| 2026-07-28 | Complete | The mirrored two-valid/eleven-invalid activation corpus passes the iOS native fault executable and Android Debug unit/Release Kotlin gates. Full mobile validation remains 569 files / 3,378 tests with 2 expected skips; typechecks, lints, reliability, max-lines, formatting, diff hygiene, and unchanged `b17ead7a…` package verification pass.                                                                                     |
 | 2026-07-28 | Next     | Complete the remaining gated cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                                 |
