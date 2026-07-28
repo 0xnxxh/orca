@@ -13,6 +13,12 @@ import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { ElectronApplication, FrameLocator, Page, TestInfo } from '@stablyai/playwright-test'
 import { expect, test } from './helpers/orca-app'
+import {
+  readPanelNavigationObserver,
+  startPanelNavigationObserver,
+  stopPanelNavigationObserver,
+  type PanelNavigationObservation
+} from './helpers/plugin-panel-navigation-observer'
 
 type InstalledPanel = {
   pluginKey: string
@@ -188,7 +194,10 @@ async function inspectElectronFrameProcesses(
   }, pageUrl)
 }
 
-test('contains hostile panel network and navigation probes', async ({ orcaPage }, testInfo) => {
+test('contains hostile panel network and navigation probes', async ({
+  electronApp,
+  orcaPage
+}, testInfo) => {
   testInfo.annotations.push({ type: 'maturity', description: 'experimental' })
   const server = await startPermissiveProbeServer()
   const pluginRoot = await materializeHostilePlugin(server.origin)
@@ -196,6 +205,9 @@ test('contains hostile panel network and navigation probes', async ({ orcaPage }
   const appUrl = orcaPage.url()
   const browserEvents: string[] = []
   const panelDocuments: PanelDocumentSnapshot[] = []
+  const replacedNavigations: { destinations: string[]; probe: string }[] = []
+  let navigationObservation: PanelNavigationObservation | null = null
+  let navigationProbeStarted = false
   orcaPage.on('console', (message) => {
     browserEvents.push(`console:${message.type()}:${message.text()}`)
   })
@@ -273,20 +285,73 @@ test('contains hostile panel network and navigation probes', async ({ orcaPage }
     expect(orcaPage.url()).toBe(appUrl)
     await expect(iframe).toBeVisible()
 
+    await startPanelNavigationObserver(electronApp, appUrl)
+    navigationProbeStarted = true
     const initialDocument = await readPanelDocument(frame)
     panelDocuments.push(initialDocument)
     for (const navigation of [
-      { button: 'Try top navigation', probe: 'top-navigation' },
-      { button: 'Try self navigation', probe: 'self-navigation' },
-      { button: 'Try anchor and form navigation', probe: 'anchor-form-navigation' },
-      { button: 'Try meta refresh navigation', probe: 'meta-refresh-navigation' }
+      {
+        button: 'Try top navigation',
+        destinations: [`${server.origin}/`],
+        probe: 'top-navigation'
+      },
+      {
+        button: 'Try self navigation',
+        destinations: [`${server.origin}/self-navigation`],
+        probe: 'self-navigation'
+      },
+      {
+        button: 'Try anchor and form navigation',
+        destinations: [`${server.origin}/anchor-navigation`, `${server.origin}/form-navigation`],
+        probe: 'anchor-form-navigation'
+      },
+      {
+        button: 'Try meta refresh navigation',
+        destinations: [`${server.origin}/meta-refresh`],
+        probe: 'meta-refresh-navigation'
+      }
     ]) {
-      await frame.getByRole('button', { name: navigation.button }).click()
-      await expect(frame.locator(`[data-probe="${navigation.probe}"]`)).toHaveAttribute(
-        'data-contained',
-        'true',
-        { timeout: 5_000 }
+      const sourceDocumentId = `source:${navigation.probe}`
+      const sourceDocumentKey = `__orcaNavigationProbeDocument:${navigation.probe}`
+      await frame.locator('html').evaluate(
+        (element, sourceDocument) => {
+          Object.defineProperty(element.ownerDocument, sourceDocument.key, {
+            value: sourceDocument.id
+          })
+        },
+        { id: sourceDocumentId, key: sourceDocumentKey }
       )
+      await frame.getByRole('button', { name: navigation.button }).click()
+      let outcome = 'pending'
+      await expect
+        .poll(
+          async () => {
+            outcome = await frame.locator('html').evaluate(
+              (element, expected) => {
+                const result = element.querySelector(`[data-probe="${expected.probe}"]`)
+                const contained = result?.getAttribute('data-contained')
+                if (contained) {
+                  return contained === 'true' ? 'contained' : 'escaped'
+                }
+                return Reflect.get(element.ownerDocument, expected.documentKey) ===
+                  expected.documentId
+                  ? 'pending'
+                  : 'replaced'
+              },
+              {
+                documentId: sourceDocumentId,
+                documentKey: sourceDocumentKey,
+                probe: navigation.probe
+              }
+            )
+            return outcome
+          },
+          { timeout: 5_000 }
+        )
+        .toMatch(/^(contained|replaced)$/)
+      if (outcome === 'replaced') {
+        replacedNavigations.push(navigation)
+      }
       const currentDocument = await readPanelDocument(frame)
       panelDocuments.push(currentDocument)
       expect(currentDocument.url).toBe(initialDocument.url)
@@ -294,18 +359,48 @@ test('contains hostile panel network and navigation probes', async ({ orcaPage }
       expect(server.requests).toEqual([])
       expect(orcaPage.url()).toBe(appUrl)
     }
+    navigationObservation = await readPanelNavigationObserver(electronApp)
+    const attemptedProbeNavigations = navigationObservation.willFrameNavigations.filter(({ url }) =>
+      url.startsWith(server.origin)
+    )
+    expect(attemptedProbeNavigations.length).toBeGreaterThan(0)
+    expect(attemptedProbeNavigations.every(({ defaultPrevented }) => defaultPrevented)).toBe(true)
+    for (const navigation of replacedNavigations) {
+      expect(
+        navigation.destinations.some((destination) =>
+          attemptedProbeNavigations.some(
+            (attempt) => attempt.url === destination && attempt.defaultPrevented
+          )
+        ),
+        `${navigation.probe} replacement must follow an authoritative blocked navigation`
+      ).toBe(true)
+    }
+    expect(
+      navigationObservation.didFrameNavigations.filter(({ url }) => url.startsWith(server.origin))
+    ).toEqual([])
+    expect(navigationObservation.externalUrls).toEqual([])
   } finally {
-    await attachProbeRequests(testInfo, server.requests)
-    await testInfo.attach('hostile-panel-browser-events', {
-      body: Buffer.from(browserEvents.join('\n')),
-      contentType: 'text/plain'
-    })
-    await testInfo.attach('hostile-panel-documents', {
-      body: Buffer.from(JSON.stringify(panelDocuments, null, 2)),
-      contentType: 'application/json'
-    })
-    await server.close()
-    await rm(tempRoot, { recursive: true, force: true })
+    try {
+      if (navigationProbeStarted) {
+        navigationObservation = await stopPanelNavigationObserver(electronApp)
+      }
+    } finally {
+      await attachProbeRequests(testInfo, server.requests)
+      await testInfo.attach('hostile-panel-browser-events', {
+        body: Buffer.from(browserEvents.join('\n')),
+        contentType: 'text/plain'
+      })
+      await testInfo.attach('hostile-panel-documents', {
+        body: Buffer.from(JSON.stringify(panelDocuments, null, 2)),
+        contentType: 'application/json'
+      })
+      await testInfo.attach('hostile-panel-navigation-observation', {
+        body: Buffer.from(JSON.stringify(navigationObservation, null, 2)),
+        contentType: 'application/json'
+      })
+      await server.close()
+      await rm(tempRoot, { recursive: true, force: true })
+    }
   }
 })
 
