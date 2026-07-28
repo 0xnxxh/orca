@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { ChevronDown, ChevronRight } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../../theme/mobile-theme'
+import { useMobilePrShellOperations } from '../../platform/mobile-pr-shell-operations'
 import { MermaidDiagram } from './MermaidDiagram'
 import { isAllowedMarkdownLinkUrl } from './markdown-link-scheme'
 import {
@@ -141,13 +142,6 @@ function BlockView({ block, base }: { block: MarkdownBlock; base: number }) {
   }
 }
 
-function openMarkdownLink(url: string): void {
-  if (!isAllowedMarkdownLinkUrl(url)) {
-    return
-  }
-  void Linking.openURL(url).catch(() => {})
-}
-
 function alignToFlex(align: CellAlign | undefined): 'flex-start' | 'center' | 'flex-end' {
   if (align === 'center') {
     return 'center'
@@ -203,6 +197,7 @@ function TableBlock({
 }
 
 function Inline({ text, base }: { text: string; base: number }) {
+  const shell = useMobilePrShellOperations()
   const tokens = useMemo<InlineToken[]>(() => {
     try {
       return parseInline(text)
@@ -236,7 +231,15 @@ function Inline({ text, base }: { text: string; base: number }) {
         }
         if (token.kind === 'link') {
           return (
-            <Text key={i} style={styles.link} onPress={() => openMarkdownLink(token.url)}>
+            <Text
+              key={i}
+              style={styles.link}
+              onPress={() => {
+                if (isAllowedMarkdownLinkUrl(token.url)) {
+                  void shell.openExternal(token.url).catch(() => {})
+                }
+              }}
+            >
               {token.text}
             </Text>
           )

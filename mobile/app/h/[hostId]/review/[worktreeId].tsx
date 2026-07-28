@@ -7,9 +7,14 @@ import {
 } from '../../../../src/session/mobile-diff-review-screen-model'
 import { normalizeReviewAreaParam } from '../../../../src/session/mobile-diff-review-positioning'
 import { useMobileDiffReviewController } from '../../../../src/session/use-mobile-diff-review-controller'
-import { useForceReconnect, useHostClient } from '../../../../src/transport/client-context'
+import type { HostDiffReviewBinding } from '../../../../src/session/host-diff-review-binding'
+import { useHostDiffReviewBinding } from '../../../../src/session/use-host-diff-review-binding'
 
-export default function MobileDiffReviewScreen() {
+export function MobileDiffReviewRoute({
+  binding
+}: {
+  binding?: HostDiffReviewBinding
+} = {}) {
   const params = useLocalSearchParams<{
     hostId?: string | string[]
     worktreeId?: string | string[]
@@ -29,8 +34,7 @@ export default function MobileDiffReviewScreen() {
     [initialArea, initialFile]
   )
   const router = useRouter()
-  const { client, state: connState } = useHostClient(hostId)
-  const forceReconnect = useForceReconnect()
+  const host = useHostDiffReviewBinding(hostId, binding)
 
   const openSession = useCallback(() => {
     const query = name ? `?${new URLSearchParams({ name }).toString()}` : ''
@@ -40,16 +44,21 @@ export default function MobileDiffReviewScreen() {
   }, [hostId, name, router, worktreeId])
 
   const controller = useMobileDiffReviewController({
-    client,
-    connState,
+    client: host.client,
+    connState: host.connectionState,
     hostId,
     worktreeId,
     name,
     initialFilter,
     initialTarget,
     onOpenSession: openSession,
-    onReconnect: forceReconnect
+    onReconnect: host.reconnect,
+    device: host.device
   })
 
   return <MobileDiffReviewScreenView controller={controller} onBack={() => router.back()} />
+}
+
+export default function MobileDiffReviewScreen() {
+  return <MobileDiffReviewRoute />
 }

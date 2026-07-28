@@ -7,6 +7,7 @@ import {
 import type { TerminalLiveAccessoryInput } from './terminal-live-accessory-input'
 import { sendTerminalLiveControlAfterPendingFlush } from './terminal-live-control-send-order'
 import type { TerminalLiveInputSender } from './terminal-live-input-sender'
+import { setTerminalLiveInputNativeText } from './terminal-live-input-native-text'
 
 export type TerminalLiveAccessoryInputCommitResult =
   | { readonly kind: 'allow-raw' }
@@ -80,7 +81,7 @@ export function useTerminalLiveAccessoryInputCommit({
           // Why: accessory buttons do not emit native TextInput edits, so the
           // field is edited here and the mirror diff syncs the PTY echo.
           setLiveInputCapture(editedText)
-          liveInputRef.current?.setNativeProps({ text: editedText })
+          setTerminalLiveInputNativeText(liveInputRef.current, editedText)
           applyLiveInputMirror(activeHandle, editedText)
           return { kind: 'handled' }
         }

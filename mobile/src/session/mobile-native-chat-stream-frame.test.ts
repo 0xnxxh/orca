@@ -320,6 +320,20 @@ describe('applyMobileNativeChatStreamFrame', () => {
     })
   })
 
+  it('retains explicit interruption lifecycle evidence with transcript frames', () => {
+    const merger = createNativeChatMerger()
+    const lifecycle = { state: 'interrupted' as const, turnId: 'turn-1', timestamp: 123 }
+
+    expect(
+      applyMobileNativeChatStreamFrame({
+        merger,
+        frame: { type: 'snapshot', messages: [], lifecycle },
+        limit: 40,
+        replaceSnapshot: true
+      })
+    ).toEqual({ kind: 'messages', messages: [], lifecycle })
+  })
+
   it('surfaces snapshot errors and ignores unrelated frames', () => {
     const merger = createNativeChatMerger()
     expect(

@@ -2179,6 +2179,8 @@ describe('OrcaRuntimeService', () => {
             url: 'https://localhost:3443/',
             title: 'Local HTTPS',
             active: true,
+            canGoBack: true,
+            canGoForward: false,
             loadError: {
               code: -202,
               description: 'ERR_CERT_AUTHORITY_INVALID',
@@ -2203,6 +2205,8 @@ describe('OrcaRuntimeService', () => {
       expect.objectContaining({
         type: 'browser',
         browserPageId: 'page-certificate-error',
+        canGoBack: true,
+        canGoForward: false,
         loadError: {
           code: -202,
           description: 'ERR_CERT_AUTHORITY_INVALID',
@@ -2256,6 +2260,7 @@ describe('OrcaRuntimeService', () => {
 
     // Absent vs explicit null loadError are equivalent (the JSON.stringify trap).
     expect(unchanged([{ ...base }], [{ ...base, loadError: null }])).toBe(true)
+    expect(unchanged([{ ...base }], [{ ...base, canGoBack: true }])).toBe(false)
     expect(unchanged([{ ...base, loadError: err }], [{ ...base, loadError: { ...err } }])).toBe(
       true
     )
@@ -18357,6 +18362,80 @@ describe('OrcaRuntimeService', () => {
     unsubscribe()
   })
 
+  it('publishes stale hydrated provider sessions without stale mobile activity', async () => {
+    const now = Date.now()
+    const paneKey = `hook-session-tab:${HEADLESS_LEAF_ID}`
+    const spawn = vi.fn().mockResolvedValue({ id: 'hook-session-pty' })
+    const runtime = new OrcaRuntimeService(store, undefined, {
+      getAgentStatusSnapshot: () => [
+        {
+          paneKey,
+          state: 'working',
+          prompt: '',
+          agentType: 'codex',
+          connectionId: null,
+          receivedAt: now - AGENT_STATUS_STALE_AFTER_MS - 1,
+          stateStartedAt: now - AGENT_STATUS_STALE_AFTER_MS - 100,
+          tabId: 'hook-session-tab',
+          worktreeId: TEST_WORKTREE_ID,
+          launchToken: 'launch-1',
+          providerSession: {
+            key: 'session_id',
+            id: 'provider-session-1',
+            transcriptPath: '/private/codex-session.jsonl'
+          }
+        }
+      ]
+    })
+    runtime.setPtyController({
+      spawn,
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null
+    })
+
+    await runtime.createTerminal(`id:${TEST_WORKTREE_ID}`, {
+      tabId: 'hook-session-tab',
+      leafId: HEADLESS_LEAF_ID,
+      launchAgent: 'codex',
+      launchToken: 'launch-1'
+    })
+
+    const snapshot = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+
+    expect(snapshot.tabs[0]).toEqual(
+      expect.objectContaining({
+        type: 'terminal',
+        launchAgent: 'codex',
+        agentStatus: expect.objectContaining({
+          state: 'done',
+          providerSession: {
+            key: 'session_id',
+            id: 'provider-session-1',
+            transcriptPath: '/private/codex-session.jsonl'
+          }
+        })
+      })
+    )
+    const terminal = snapshot.tabs[0]
+    expect(terminal?.type === 'terminal' && terminal.agentStatus?.agentType).toBeUndefined()
+    expect(terminal?.type === 'terminal' && terminal.status === 'ready').toBe(true)
+    if (terminal?.type !== 'terminal' || terminal.status !== 'ready') {
+      throw new Error('Expected a ready terminal')
+    }
+    expect(runtime.resolveNativeChatTranscriptBinding(terminal.terminal)).toEqual({
+      worktreeId: TEST_WORKTREE_ID,
+      connectionId: null,
+      agent: 'codex',
+      providerSession: {
+        key: 'session_id',
+        id: 'provider-session-1',
+        transcriptPath: '/private/codex-session.jsonl'
+      }
+    })
+    expect(runtime.resolveNativeChatTranscriptBinding('term_stale')).toBeNull()
+  })
+
   // Why: restored OMP panes can retain the hook while the wrapped Pi owns foreground (#6364).
   it('keeps an OMP hook labeled OMP when the wrapped pi child owns the foreground', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'omp-flicker-pty' })
@@ -23516,7 +23595,9 @@ describe('OrcaRuntimeService', () => {
           index: 0,
           url: 'https://live.example/',
           title: 'Live Browser',
-          active: true
+          active: true,
+          canGoBack: true,
+          canGoForward: false
         }
       ]
     }))
@@ -23573,6 +23654,8 @@ describe('OrcaRuntimeService', () => {
         browserPageId: 'browser-page-live',
         url: 'https://live.example/',
         title: 'Live Browser',
+        canGoBack: true,
+        canGoForward: false,
         isActive: true
       })
     ])
@@ -26431,6 +26514,133 @@ describe('OrcaRuntimeService', () => {
     expect(closeSessionTab).toHaveBeenCalledWith('browser-unified-1', TEST_WORKTREE_ID)
   })
 
+  it('creates and persists file tabs when the headless runtime has no renderer notifier', async () => {
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal()
+    )
+    const flushOrThrow = vi.fn()
+    const runtime = new OrcaRuntimeService({ ...runtimeStore, flushOrThrow } as never)
+
+    ;(
+      runtime as unknown as {
+        openMobileSessionFile(worktreeId: string, filePath: string, relativePath: string): void
+      }
+    ).openMobileSessionFile(TEST_WORKTREE_ID, `${TEST_WORKTREE_PATH}/README.md`, 'README.md')
+
+    const snapshot = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    const fileTab = snapshot.tabs.find((tab) => tab.type === 'file')
+
+    expect(fileTab).toMatchObject({
+      type: 'file',
+      id: expect.stringMatching(UUID_RE),
+      title: 'README.md',
+      relativePath: 'README.md',
+      mode: 'edit',
+      isActive: true
+    })
+    expect(snapshot.activeTabId).toBe(fileTab?.id)
+    expect(getSession().openFilesByWorktree?.[TEST_WORKTREE_ID]).toEqual([
+      expect.objectContaining({
+        filePath: `${TEST_WORKTREE_PATH}/README.md`,
+        relativePath: 'README.md'
+      })
+    ])
+    expect(getSession().unifiedTabs?.[TEST_WORKTREE_ID]).toEqual([
+      expect.objectContaining({
+        id: fileTab?.id,
+        entityId: `${TEST_WORKTREE_PATH}/README.md`,
+        contentType: 'editor'
+      })
+    ])
+    expect(flushOrThrow).toHaveBeenCalledOnce()
+  })
+
+  it('creates a live diff tab when the headless runtime has no renderer notifier', async () => {
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal()
+    )
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+
+    ;(
+      runtime as unknown as {
+        openMobileSessionDiff(
+          worktreeId: string,
+          filePath: string,
+          relativePath: string,
+          staged: boolean
+        ): void
+      }
+    ).openMobileSessionDiff(TEST_WORKTREE_ID, `${TEST_WORKTREE_PATH}/README.md`, 'README.md', true)
+
+    const snapshot = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    expect(snapshot.tabs.find((tab) => tab.type === 'file')).toMatchObject({
+      relativePath: 'README.md',
+      mode: 'diff',
+      diffSource: 'staged',
+      isActive: true
+    })
+    expect(getSession().openFilesByWorktree?.[TEST_WORKTREE_ID]).toBeUndefined()
+    expect(getSession().unifiedTabs?.[TEST_WORKTREE_ID]).toBeUndefined()
+  })
+
+  it('closes a headless file tab without requiring a renderer notifier', async () => {
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal()
+    )
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    const internals = runtime as unknown as {
+      openMobileSessionFile(worktreeId: string, filePath: string, relativePath: string): void
+    }
+    internals.openMobileSessionFile(
+      TEST_WORKTREE_ID,
+      `${TEST_WORKTREE_PATH}/README.md`,
+      'README.md'
+    )
+    const opened = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    const fileTab = opened.tabs.find((tab) => tab.type === 'file')
+    expect(fileTab).toBeDefined()
+
+    await runtime.closeMobileSessionTab(`id:${TEST_WORKTREE_ID}`, fileTab!.id, {
+      reason: 'user'
+    })
+
+    const closed = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    expect(closed.tabs.some((tab) => tab.type === 'file')).toBe(false)
+    expect(closed.activeTabType).toBe('terminal')
+    expect(getSession().openFilesByWorktree?.[TEST_WORKTREE_ID]).toEqual([])
+    expect(getSession().unifiedTabs?.[TEST_WORKTREE_ID]).toEqual([])
+  })
+
+  it('restores persisted headless file tabs without exposing path-derived tab ids', async () => {
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(
+      makeWorkspaceSessionWithHeadlessTerminal()
+    )
+    const original = new OrcaRuntimeService(runtimeStore as never)
+    const originalInternals = original as unknown as {
+      openMobileSessionFile(worktreeId: string, filePath: string, relativePath: string): void
+    }
+    originalInternals.openMobileSessionFile(
+      TEST_WORKTREE_ID,
+      `${TEST_WORKTREE_PATH}/src/app.ts`,
+      'src/app.ts'
+    )
+    const persistedId = getSession().unifiedTabs?.[TEST_WORKTREE_ID]?.find(
+      (tab) => tab.contentType === 'editor'
+    )?.id
+
+    const restarted = new OrcaRuntimeService(runtimeStore as never)
+    const restored = await restarted.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    const fileTab = restored.tabs.find((tab) => tab.type === 'file')
+
+    expect(fileTab).toMatchObject({
+      id: persistedId,
+      relativePath: 'src/app.ts',
+      language: 'plaintext',
+      isActive: true
+    })
+    expect(fileTab?.id).not.toContain(TEST_WORKTREE_PATH)
+  })
+
   it('creates mobile session terminals in a headless runtime server', async () => {
     const spawn = vi.fn().mockResolvedValue({ id: 'pty-headless' })
     const runtime = new OrcaRuntimeService(store)
@@ -29012,6 +29222,58 @@ describe('OrcaRuntimeService', () => {
       connectionId: 'ssh-1',
       materializeRenderer: false
     })
+  })
+
+  it('publishes unavailable mobile workspace transport when an SSH relay detaches', async () => {
+    const remoteRepo = { ...store.getRepo(TEST_REPO_ID)!, connectionId: 'ssh-1' }
+    let relayAvailable = true
+    const runtime = new OrcaRuntimeService(
+      {
+        ...store,
+        getRepos: () => [remoteRepo],
+        getRepo: (id: string) => (id === TEST_REPO_ID ? remoteRepo : undefined)
+      } as never,
+      undefined,
+      {
+        getSshProvider: () => (relayAvailable ? ({} as IPtyProvider) : undefined)
+      }
+    )
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [
+        {
+          worktree: TEST_WORKTREE_ID,
+          publicationEpoch: 'ssh-transport',
+          snapshotVersion: 1,
+          activeGroupId: 'group-1',
+          activeTabId: 'tab-1::pane:1',
+          activeTabType: 'terminal',
+          tabs: [
+            {
+              type: 'terminal',
+              id: 'tab-1::pane:1',
+              parentTabId: 'tab-1',
+              leafId: 'pane:1',
+              title: 'Claude',
+              isActive: true
+            }
+          ]
+        }
+      ]
+    })
+    const events: RuntimeMobileSessionTabsResult[] = []
+    runtime.onMobileSessionTabsChanged((snapshot) => events.push(snapshot))
+
+    relayAvailable = false
+    runtime.notifySshRelayUnavailable('ssh-1')
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        worktree: TEST_WORKTREE_ID,
+        workspaceTransportState: 'unavailable'
+      })
+    ])
   })
 
   it('uses only a recent expired SSH lease as a bounded pane-recovery tombstone', async () => {

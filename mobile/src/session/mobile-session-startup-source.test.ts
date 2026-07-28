@@ -23,57 +23,36 @@ function sliceBetween(startPattern: string, endPattern: string): string {
 }
 
 describe('mobile session startup', () => {
-  it('auto-creates one terminal for a newly created empty session', () => {
-    expect(source).toContain('useWorktreeSessionTabsLoaded(worktreeId)')
+  it('auto-creates one terminal for an initially empty connected session', () => {
+    expect(source).toContain('const initialEmptySessionAutoCreateRef = useRef<string | null>(null)')
+    expect(source).toContain('initialEmptySessionAutoCreateRef.current = null')
+
+    const autoCreateEffect = sliceBetween(
+      'if (\n      (!client && !sessionTabOperations) ||\n      !showEmptyState',
+      'const terminalSummary ='
+    )
+    expect(autoCreateEffect).toContain('initialEmptySessionAutoCreateRef.current === worktreeId')
+    expect(autoCreateEffect).toContain('initialEmptySessionAutoCreateRef.current = worktreeId')
+    expect(autoCreateEffect).toContain("setCreateError('')")
+    expect(autoCreateEffect).toContain('void handleCreateTerminal()')
     expect(source).toContain(
-      'initialSessionAutoCreateRef.current = createInitialSessionAutoCreateState()'
+      'const hostedAdapterCreate = !client && sessionTabOperations && !options'
     )
-
-    const autoCreateCall = sliceBetween(
-      'useInitialSessionTerminalAutoCreate({',
-      'const connectionVerdict ='
-    )
-    expect(autoCreateCall).toContain('stateRef: initialSessionAutoCreateRef')
-    expect(autoCreateCall).toContain(
-      'consumeCreationRoute: () => router.setParams({ created: undefined })'
-    )
-    expect(autoCreateCall).toContain("newlyCreatedWorkspace: created === '1'")
-    expect(autoCreateCall).toContain('visibleTabCount: visibleTabs.length')
-    expect(autoCreateCall).toContain('createTerminal: () => void handleCreateTerminal()')
-
-    expect(autoCreateHookSource).toContain('shouldAutoCreateInitialSessionTerminal({')
-    expect(autoCreateHookSource).toContain('stateRef.current.autoCreatedForWorktree === worktreeId')
-    expect(autoCreateHookSource).toContain('stateRef.current.autoCreatedForWorktree = worktreeId')
-    expect(autoCreateHookSource).toContain("connState === 'connected'")
-    expect(autoCreateHookSource).toContain('(visibleTabCount > 0 || activeHandle !== null)')
-    // Why: both callbacks are re-created every render, so the effect must reach them
-    // through useEffectEvent rather than deps or a render-time ref write.
-    expect(autoCreateHookSource).toContain('useEffectEvent(args.consumeCreationRoute)')
-    expect(autoCreateHookSource).toContain('useEffectEvent(args.createTerminal)')
-    expect(autoCreateHookSource).toContain('consumeCreationRoute()')
-    expect(autoCreateHookSource).toContain('createTerminal()')
-  })
-
-  it('arms the auto-create only until the route has published a tab (#9717)', () => {
-    // Emptiness after a populated list is a close, not a cold hydrate.
-    expect(source).toContain(
-      'initialSessionAutoCreateRef.current.sawSessionTabs ||= nextTabs.length > 0'
-    )
-
-    const autoCreateCall = sliceBetween(
-      'useInitialSessionTerminalAutoCreate({',
-      'const connectionVerdict ='
-    )
-    expect(autoCreateCall).toContain('stateRef: initialSessionAutoCreateRef')
-    expect(autoCreateHookSource).toContain('sawSessionTabs: stateRef.current.sawSessionTabs')
+    expect(source).toContain('sessionTabOperations.createAgent(worktreeId, agent)')
+    expect(source).toContain('sessionTabOperations.createBlank(worktreeId)')
   })
 
   it('delegates stream ownership while retaining the exact terminal polling cadence', () => {
     expect(source).toContain('useMobileSessionTabsReconciliation<')
     expect(source).toContain('const applicationRevision = ++appliedSessionTabsRevisionRef.current')
     expect(source).toContain('getApplicationRevision: getSessionTabsApplicationRevision')
+    expect(source).toContain('sessionTabOperations,')
     expect(source).not.toContain("client.subscribe(\n      'session.tabs.subscribe'")
-    expect(reconciliationHookSource).toContain("client.subscribe(\n      'session.tabs.subscribe'")
+    expect(reconciliationHookSource).toContain(
+      "directClient.subscribe(\n      'session.tabs.subscribe'"
+    )
+    expect(reconciliationHookSource).toContain('sessionTabOperations.snapshot(worktreeId)')
+    expect(reconciliationHookSource).toContain('sessionTabOperations.subscribe(')
     expect(reconciliationHookSource).toContain(
       "if (AppState.currentState !== 'active') {\n          controller.setReconciliationActive(false)"
     )
@@ -111,9 +90,10 @@ describe('mobile session startup', () => {
       'const hostQueryReplyInputSupportedRef = useRef(false)',
       '// Why: read deviceToken from host record'
     )
-    const probeStart = capabilityEffect.indexOf('startRuntimeCapabilityProbe(client,')
+    const probeStart = capabilityEffect.indexOf('startRuntimeCapabilityRead(')
 
     expect(probeStart).toBeGreaterThanOrEqual(0)
+    expect(capabilityEffect).toContain('sessionTabOperations.runtimeCapabilities()')
     for (const reset of [
       'setBrowserScreencastSupported(null)',
       'setAgentSessionHistorySupported(null)',
@@ -134,19 +114,14 @@ describe('mobile session startup', () => {
     expect(source).toContain('pendingTerminalActivationAttemptRef.current = null')
 
     const pendingActivationEffect = sliceBetween(
-      "if (!client || connState !== 'connected' || !activePendingTerminalTab) {",
+      "if (!sessionTabOperations || connState !== 'connected' || !activePendingTerminalTab) {",
       'const showLoadingState ='
     )
     expect(pendingActivationEffect).toContain(
       'pendingTerminalActivationAttemptRef.current === activationKey'
     )
-    expect(pendingActivationEffect).toContain('activateMobileSessionTab(client,')
-    expect(pendingActivationEffect).toContain('tabId: activePendingTerminalTab.id')
-    expect(pendingActivationEffect).toContain('leafId: activePendingTerminalTab.leafId')
-    expect(pendingActivationEffect).toContain('notifyClients: false')
-    expect(pendingActivationEffect).toContain("navigation: 'caller'")
     expect(pendingActivationEffect).toContain(
-      'applySessionTabs((response as RpcSuccess).result as SessionTabsResult)'
+      'activateSessionTab(activePendingTerminalTab.id, activePendingTerminalTab.leafId)'
     )
     expect(pendingActivationEffect).toContain('scheduleDelayedAction(() => void fetchSessionTabs()')
   })
@@ -158,19 +133,22 @@ describe('mobile session startup', () => {
     )
 
     expect(readyTerminalSwitch).not.toContain('focusMobileTerminal(client, handle)')
-    expect(readyTerminalSwitch).toContain('activateMobileSessionTab(client,')
-    expect(readyTerminalSwitch).toContain('notifyClients: false')
-    expect(readyTerminalSwitch).toContain("navigation: 'caller'")
+    expect(readyTerminalSwitch).toContain('activateSessionTab(matchingTab.id)')
   })
 
-  it('keeps background and pending session-tab activation local to the phone', () => {
-    const activationRequests = source.split('activateMobileSessionTab(client,').slice(1)
+  it('opens the unchanged setup sheet for synchronous dictation setup failures', () => {
+    const startDictation = sliceBetween(
+      'const startDictation = useCallback(',
+      'const cancelDictation = useCallback('
+    )
 
-    expect(activationRequests).toHaveLength(4)
-    for (const request of activationRequests) {
-      expect(request.slice(0, request.indexOf('})'))).toContain('notifyClients: false')
-      expect(request.slice(0, request.indexOf('})'))).toContain("navigation: 'caller'")
-    }
+    expect(startDictation).toContain('isDictationSetupRequiredError(message)')
+    expect(startDictation).toContain('setShowDictationSetup(true)')
+  })
+
+  it('routes every session-tab activation through the named platform boundary', () => {
+    expect(source.match(/activateSessionTab\(/g)).toHaveLength(4)
+    expect(source).not.toContain("sendRequest('session.tabs.activate'")
   })
 
   it('keeps dynamic agent rows above fixed New Tab actions', () => {
@@ -185,5 +163,6 @@ describe('mobile session startup', () => {
     expect(newTabActions.indexOf("label: 'Browser'")).toBeLessThan(
       newTabActions.indexOf("label: 'Markdown Note'")
     )
+    expect(newTabActions).toContain("label: 'Browser',\n                  closeBeforePress: true")
   })
 })

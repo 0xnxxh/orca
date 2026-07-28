@@ -72,6 +72,24 @@ describe('resolveMobileNativeChat', () => {
     ).toEqual({ agent: 'codex', sessionId: null, transcriptPath: null })
   })
 
+  it('uses the opaque hosted session identity instead of provider metadata', () => {
+    expect(
+      resolveMobileNativeChat({
+        type: 'terminal',
+        launchAgent: 'claude',
+        nativeChatSessionId: `native_chat_0_${'01'.repeat(16)}`,
+        agentStatus: {
+          state: 'waiting',
+          agentType: 'claude'
+        }
+      })
+    ).toEqual({
+      agent: 'claude',
+      sessionId: `native_chat_0_${'01'.repeat(16)}`,
+      transcriptPath: null
+    })
+  })
+
   it('admits OpenClaude with its distinct agent identity', () => {
     expect(resolveMobileNativeChat({ type: 'terminal', launchAgent: 'openclaude' })).toEqual({
       agent: 'openclaude',
@@ -84,7 +102,7 @@ describe('resolveMobileNativeChat', () => {
     expect(resolveMobileNativeChat({ type: 'terminal', launchAgent: 'gemini' })).toBeNull()
   })
 
-  it('admits Grok only when its transcript is readable by the serving host', () => {
+  it('admits Grok for local, runtime-owned, and classic SSH transcript readers', () => {
     const tab = { type: 'terminal', launchAgent: 'grok' }
     expect(resolveMobileNativeChat(tab, isMobileNativeChatTranscriptReadable(null))).toMatchObject({
       agent: 'grok'
@@ -94,7 +112,7 @@ describe('resolveMobileNativeChat', () => {
     ).toMatchObject({ agent: 'grok' })
     expect(
       resolveMobileNativeChat(tab, isMobileNativeChatTranscriptReadable('model-a-ssh'))
-    ).toBeNull()
+    ).toMatchObject({ agent: 'grok' })
   })
 
   // Why: omp's hook reports no transcript path either, so mobile can only show

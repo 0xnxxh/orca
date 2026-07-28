@@ -12,6 +12,16 @@ type Props = {
 
 const HostStatusGatesContext = createContext<HostStatusGates | null>(null)
 
+export function HostProtocolGatesProvider({
+  value,
+  children
+}: {
+  value: HostStatusGates
+  children: ReactNode
+}) {
+  return <HostStatusGatesContext.Provider value={value}>{children}</HostStatusGatesContext.Provider>
+}
+
 export function useHostProtocolGates(): HostStatusGates {
   const gates = useContext(HostStatusGatesContext)
   if (!gates) {

@@ -1,0 +1,145 @@
+import {
+  MobileWebNativeChatPrepareCommitPayloadSchema,
+  MobileWebNativeChatPrepareCommitResultSchema,
+  MobileWebNativeChatRespondPayloadSchema,
+  MobileWebNativeChatSendMessagePayloadSchema,
+  MobileWebNativeChatSendResultSchema,
+  MobileWebNativeChatStopPayloadSchema,
+  type MobileWebNativeChatSendResult
+} from '../../../src/shared/mobile-web/native-chat-operation-contract'
+import { pasteMobileNativeChatImagePaths } from '../session/mobile-native-chat-image-send'
+import {
+  MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS,
+  type MobileNativeChatSendOutcome
+} from '../session/mobile-native-chat-send'
+import { isTerminalSendRpcAccepted } from '../terminal/terminal-send-rpc-response'
+import type { RpcClient } from '../transport/rpc-client'
+import { isRpcDeliveryUnknown } from '../transport/rpc-delivery-ambiguity'
+import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
+import { resolveFreshMobileWebNativeChatPageBinding } from './mobile-web-native-chat-binding'
+import { validateMobileWebNativeChatDeadline } from './mobile-web-native-chat-deadline'
+import type { MobileWebNativeChatAuthority } from './mobile-web-native-chat-authority'
+import type { MobileWebWorkspaceAuthority } from './mobile-web-workspace-authority'
+
+const TERMINAL_OPERATIONS = new Set(['sendMessage', 'prepareCommit', 'respond', 'stop'])
+
+export function isMobileWebNativeChatTerminalOperation(operation: string): boolean {
+  return TERMINAL_OPERATIONS.has(operation)
+}
+
+export async function executeMobileWebNativeChatTerminalOperation(args: {
+  operation: string
+  payload: unknown
+  client: RpcClient
+  terminalClientId: string
+  workspaceAuthority: MobileWebWorkspaceAuthority
+  nativeChatAuthority: MobileWebNativeChatAuthority
+}): Promise<unknown> {
+  if (args.operation === 'sendMessage') {
+    const payload = MobileWebNativeChatSendMessagePayloadSchema.parse(args.payload)
+    validateMobileWebNativeChatDeadline(payload.deadline)
+    const binding = await resolveTerminalBinding(args, payload)
+    return sendResult(
+      await sendTerminal(
+        args.client,
+        binding.hostTerminalId!,
+        payload.text,
+        true,
+        args.terminalClientId,
+        payload.deadline
+      )
+    )
+  }
+  if (args.operation === 'prepareCommit') {
+    const payload = MobileWebNativeChatPrepareCommitPayloadSchema.parse(args.payload)
+    validateMobileWebNativeChatDeadline(payload.deadline)
+    const binding = await resolveTerminalBinding(args, payload)
+    const prepared = await pasteMobileNativeChatImagePaths({
+      client: args.client,
+      terminal: binding.hostTerminalId!,
+      deviceToken: args.terminalClientId,
+      imagePaths: [],
+      deadline: payload.deadline
+    })
+    return MobileWebNativeChatPrepareCommitResultSchema.parse({ prepared })
+  }
+  if (args.operation === 'respond') {
+    const payload = MobileWebNativeChatRespondPayloadSchema.parse(args.payload)
+    validateMobileWebNativeChatDeadline(payload.deadline)
+    const binding = await resolveTerminalBinding(args, payload)
+    return sendResult(
+      await sendTerminal(
+        args.client,
+        binding.hostTerminalId!,
+        payload.text,
+        payload.enter,
+        args.terminalClientId,
+        payload.deadline
+      )
+    )
+  }
+  const payload = MobileWebNativeChatStopPayloadSchema.parse(args.payload)
+  validateMobileWebNativeChatDeadline(payload.deadline)
+  const binding = await resolveTerminalBinding(args, payload)
+  return sendResult(
+    await sendTerminal(
+      args.client,
+      binding.hostTerminalId!,
+      String.fromCharCode(27),
+      true,
+      args.terminalClientId,
+      payload.deadline
+    )
+  )
+}
+
+function resolveTerminalBinding(
+  args: {
+    client: RpcClient
+    workspaceAuthority: MobileWebWorkspaceAuthority
+    nativeChatAuthority: MobileWebNativeChatAuthority
+  },
+  payload: { workspaceId: string; sessionId: string }
+) {
+  return resolveFreshMobileWebNativeChatPageBinding(
+    args,
+    payload.workspaceId,
+    payload.sessionId,
+    true
+  )
+}
+
+async function sendTerminal(
+  client: RpcClient,
+  terminal: string,
+  text: string,
+  enter: boolean,
+  clientId: string,
+  deadline: number
+): Promise<MobileNativeChatSendOutcome> {
+  const timeoutMs = deadline - Date.now()
+  if (timeoutMs < MOBILE_NATIVE_CHAT_MIN_WRITE_TIMEOUT_MS) {
+    return 'rejected'
+  }
+  try {
+    const response = await client.sendRequest(
+      'terminal.send',
+      {
+        terminal,
+        text,
+        enter,
+        client: { id: clientId, type: 'mobile' }
+      },
+      { timeoutMs, budgetSpansConnect: true }
+    )
+    return isTerminalSendRpcAccepted(response) ? 'accepted' : 'rejected'
+  } catch (error) {
+    return isRpcDeliveryUnknown(error) || isLogicalClientCutoverError(error)
+      ? 'unknown'
+      : 'rejected'
+  }
+}
+
+function sendResult(outcome: MobileWebNativeChatSendResult['outcome']) {
+  return MobileWebNativeChatSendResultSchema.parse({ outcome })
+}

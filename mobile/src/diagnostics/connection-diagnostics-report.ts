@@ -1,12 +1,11 @@
 import { isTailscaleEndpoint } from '../../../src/shared/remote-runtime-tailscale-hint'
+import type { MobileWebDiagnosticsSnapshot } from '../mobile-web/mobile-web-diagnostics-store'
 import type { ConnectionLogEntry, ConnectionState } from '../transport/types'
-import { formatEndpoint } from './host-reachability'
 
 // Why: one shareable text blob answering everything we historically had to
 // ask reporters one message at a time (endpoint type, state, attempt count,
 // last-connected, versions, and the reconnect lifecycle log).
 export function buildConnectionDiagnosticsReport(args: {
-  hostName: string
   endpoint: string
   state: ConnectionState
   reconnectAttempts: number
@@ -14,6 +13,7 @@ export function buildConnectionDiagnosticsReport(args: {
   platform: string
   appVersion: string
   entries: readonly ConnectionLogEntry[]
+  mobileWeb?: MobileWebDiagnosticsSnapshot
   nowMs?: number
 }): string {
   const now = args.nowMs ?? Date.now()
@@ -21,27 +21,49 @@ export function buildConnectionDiagnosticsReport(args: {
   lines.push('Orca Mobile connection diagnostics')
   lines.push(`Generated: ${new Date(now).toISOString()}`)
   lines.push(`App: Orca Mobile ${args.appVersion} · ${args.platform}`)
-  lines.push(`Host: ${args.hostName}`)
-  lines.push(
-    `Endpoint: ${formatEndpoint(args.endpoint)}${isTailscaleEndpoint(args.endpoint) ? ' (Tailscale)' : ''}`
-  )
+  lines.push('Host: selected paired desktop')
+  lines.push(`Connection path: ${isTailscaleEndpoint(args.endpoint) ? 'Tailscale' : 'Standard'}`)
   lines.push(`State: ${args.state} (reconnect attempts: ${args.reconnectAttempts})`)
   lines.push(
     args.lastConnectedAt == null
       ? 'Last connected: never this session'
       : `Last connected: ${new Date(args.lastConnectedAt).toISOString()} (${formatAgo(now - args.lastConnectedAt)} ago)`
   )
+  if (args.mobileWeb) {
+    const diagnostics = args.mobileWeb
+    lines.push('')
+    lines.push('Hosted workspace interface')
+    lines.push(`Bridge: ${diagnostics.bridgeVersion}`)
+    lines.push(`Package: ${diagnostics.packageStatus} (${diagnostics.packageSource})`)
+    lines.push(`Build: ${diagnostics.buildId?.slice(0, 12) ?? 'none'}`)
+    lines.push(`Activation: ${formatDuration(diagnostics.activationMs)}`)
+    lines.push(`Refresh: ${formatDuration(diagnostics.refreshMs)}`)
+    lines.push(`Health: ${diagnostics.healthStatus}`)
+    lines.push(`Recoveries: ${diagnostics.recoveryCount}`)
+    lines.push(
+      `Terminal resyncs: ${diagnostics.terminalResyncCount} (last: ${diagnostics.terminalLastResyncReason ?? 'none'})`
+    )
+    lines.push(`Terminal flow overflows: ${diagnostics.terminalOverflowCount}`)
+    lines.push(`Terminal max ACK lag: ${formatDuration(diagnostics.terminalAckLagMaxMs)}`)
+    lines.push(
+      `Terminal outstanding high water: ${diagnostics.terminalOutstandingBytesHighWater} bytes`
+    )
+    lines.push(`Last failure: ${diagnostics.lastFailureCode ?? 'none'}`)
+  }
   lines.push('')
   if (args.entries.length === 0) {
     lines.push('No connection events recorded this session.')
   } else {
     lines.push(`Connection log (${args.entries.length} events, oldest first):`)
     for (const entry of args.entries) {
-      const detail = entry.detail ? ` — ${entry.detail}` : ''
-      lines.push(`${new Date(entry.ts).toISOString()} [${entry.level}] ${entry.message}${detail}`)
+      lines.push(`${new Date(entry.ts).toISOString()} [${entry.level}] ${entry.message}`)
     }
   }
   return lines.join('\n')
+}
+
+function formatDuration(durationMs: number | null): string {
+  return durationMs === null ? 'not measured' : `${durationMs} ms`
 }
 
 function formatAgo(ms: number): string {

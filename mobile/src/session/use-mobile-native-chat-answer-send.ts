@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
-import type { RpcClient } from '../transport/rpc-client'
+import type {
+  HostSessionNativeChatOperations,
+  HostSessionNativeChatTarget
+} from './host-session-native-chat-operations'
 import { MOBILE_NATIVE_CHAT_QUESTION_STEP_MS } from './mobile-native-chat-answer-stepping'
 import {
   buildAskAnswerKeys,
@@ -9,11 +12,7 @@ import {
   type AskAnswerSelection,
   type AskPrompt
 } from './mobile-native-chat-ask'
-import {
-  openMobileNativeChatSendBudget,
-  sendMobileNativeChatMessageWithOutcome
-} from './mobile-native-chat-send'
-import { healMobileNativeChatStaleInput } from './mobile-native-chat-stale-input'
+import { openMobileNativeChatSendBudget } from './mobile-native-chat-send'
 import {
   acquireMobileNativeChatTerminalWrite,
   releaseMobileNativeChatTerminalWrite
@@ -53,35 +52,19 @@ function sanitizeAskFreeText(text: string): string {
  * a detached chain can never write PTY bytes to a stale pane.
  */
 export function useMobileNativeChatAnswerSend(args: {
-  client: RpcClient | null
+  operations: HostSessionNativeChatOperations | null
   enabled: boolean
-  handleRef: MutableRefObject<string | null>
-  deviceTokenRef: MutableRefObject<string | null>
+  targetRef: MutableRefObject<HostSessionNativeChatTarget | null>
   agentRef: MutableRefObject<string | null>
   /** Changes on chat session swap; cancels pending writes when it does. */
   sessionId: string | null
   streamIdentity: string
   onSendError: (message: string) => void
 }): MobileNativeChatAnswerSend {
-  const {
-    client,
-    enabled,
-    handleRef,
-    deviceTokenRef,
-    agentRef,
-    sessionId,
-    streamIdentity,
-    onSendError
-  } = args
+  const { operations, enabled, targetRef, agentRef, sessionId, streamIdentity, onSendError } = args
   const generationRef = useRef(0)
-  const activeRouteRef = useRef({ client, enabled, sessionId, streamIdentity })
-  activeRouteRef.current = { client, enabled, sessionId, streamIdentity }
-  // Per-terminal count of this hook's chains sharing one write-lock hold: a
-  // superseding answer inherits the cancelled chain's hold (it re-enters before
-  // the old chain unwinds), and only the last chain out releases the lock.
-  const writeHoldsRef = useRef(new Map<string, number>())
-  // Successors wait for the prior RPC and inherit any delivery ambiguity.
-  const writeTurnsRef = useRef(new Map<string, Promise<boolean>>())
+  const activeRouteRef = useRef({ operations, enabled, sessionId, streamIdentity })
+  activeRouteRef.current = { operations, enabled, sessionId, streamIdentity }
   const delaysRef = useRef<
     Set<{ timer: ReturnType<typeof setTimeout>; resolve: (completed: boolean) => void }>
   >(new Set())
@@ -101,12 +84,12 @@ export function useMobileNativeChatAnswerSend(args: {
       cancelPending()
     }
     return cancelPending
-  }, [client, enabled, sessionId, streamIdentity, cancelPending])
+  }, [operations, enabled, sessionId, streamIdentity, cancelPending])
 
   const answerAsk = useCallback(
     async (prompt: AskPrompt, selections: AskAnswerSelection[]): Promise<boolean> => {
-      const handle = handleRef.current
-      if (!client || !handle || !enabled) {
+      const target = targetRef.current
+      if (!operations || !target || !enabled) {
         onSendError('Answer not sent (disconnected)')
         return false
       }
@@ -135,18 +118,74 @@ export function useMobileNativeChatAnswerSend(args: {
       const generation = generationRef.current
       let sawUnknownOutcome = false
       let sawAcceptedGroup = false
-      let predecessorSafe = true
-      try {
-        predecessorSafe = await previousTurn
-        if (!predecessorSafe) {
-          // Fenced. Report it: the card re-enables on a false result, so silence
-          // here is indistinguishable from a dead button. "Check chat" rather than
-          // a bare "not sent" because the PREVIOUS answer's keys may have landed.
-          // Gate on the turn slot, not the generation: a dropped input lease bumps
-          // the generation without writing the Escape that Stop and ask-cancel do,
-          // so the card is still up and silence there strands an advanced selector.
-          if (writeTurnsRef.current.get(handle) === turn) {
-            onSendError('Answer not sent — check chat before retrying')
+      // One budget for the whole answer instead of a fresh timeout per keystroke
+      // group, which let an N-group selector hold the card for N × the send timeout.
+      // It bounds transport time only: each deliberate pacing wait is credited back
+      // below, so a long multi-question answer still gets a full budget to write in.
+      let deadline = openMobileNativeChatSendBudget()
+      const sendTerminal = async (body: string, enter: boolean): Promise<boolean> => {
+        const activeRoute = activeRouteRef.current
+        if (
+          !activeRoute.enabled ||
+          activeRoute.operations !== operations ||
+          activeRoute.sessionId !== sessionId ||
+          activeRoute.streamIdentity !== streamIdentity ||
+          targetRef.current !== target
+        ) {
+          return false
+        }
+        const outcome = await operations.respond(target, body, enter, deadline)
+        if (outcome === 'unknown') {
+          sawUnknownOutcome = true
+        }
+        if (outcome === 'accepted') {
+          sawAcceptedGroup = true
+        }
+        return outcome === 'accepted'
+      }
+      const wait = (ms: number): Promise<boolean> =>
+        new Promise((resolve) => {
+          const delay = {
+            timer: setTimeout(() => {
+              delaysRef.current.delete(delay)
+              resolve(generationRef.current === generation)
+            }, ms),
+            resolve
+          }
+          delaysRef.current.add(delay)
+        })
+      const fail = (): false => {
+        if (generationRef.current === generation) {
+          // Why: keystrokes that may have landed (ack lost / path cutover) must
+          // not read as a definite failure — a blind resend could double-step
+          // the selector. An earlier group that WAS accepted is the same hazard
+          // in definite form: a multi-question answer whose shared budget ran out
+          // mid-sequence left the remote selector half-stepped, and telling the
+          // user nothing was sent invites a retry on top of the advanced state.
+          onSendError(
+            sawAcceptedGroup
+              ? 'Answer partly sent — check chat before retrying'
+              : sawUnknownOutcome
+                ? 'Answer unconfirmed — check chat before retrying'
+                : 'Answer not sent'
+          )
+        }
+        return false
+      }
+      // Grok commits pasted labels; Claude and Codex need their selector-specific
+      // keystrokes paced so each step renders before the next lands.
+      if (!shouldStepNativeChatAskAnswer(agentRef.current)) {
+        // This shape pastes the label into the composer and commits it, so an
+        // orphaned image paste would be submitted along with the answer (#10228).
+        // The selector shapes below deliberately skip the heal: their keys are
+        // `enter: false` for an active overlay, and a single-select answer is a
+        // bare option digit that cannot submit the line at all, so clearing there
+        // would consume the marker still protecting the next real message.
+        // Desktop splits it identically — use-native-chat-interactive-send.ts
+        // routes only the pasted-label shape through the clearing sender.
+        if (!(await operations.prepareCommit(target, deadline))) {
+          if (generationRef.current === generation) {
+            onSendError('Answer not sent')
           }
           return false
         }
@@ -303,9 +342,8 @@ export function useMobileNativeChatAnswerSend(args: {
       agentRef,
       enabled,
       cancelPending,
-      client,
-      deviceTokenRef,
-      handleRef,
+      operations,
+      targetRef,
       onSendError,
       sessionId,
       streamIdentity

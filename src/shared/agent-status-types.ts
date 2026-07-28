@@ -4,6 +4,13 @@
 
 import type { AgentProviderSessionMetadata } from './agent-session-resume'
 import {
+  AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH,
+  AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH,
+  AGENT_STATUS_TOOL_INPUT_MAX_LENGTH,
+  AGENT_STATUS_TOOL_NAME_MAX_LENGTH,
+  AGENT_TYPE_MAX_LENGTH
+} from './agent-status-limits'
+import {
   normalizeInteractivePromptField,
   normalizeOptionalField,
   normalizeOptionalMultilineField,
@@ -12,6 +19,13 @@ import {
 import { assertJsonTextStructureWithinLimits } from './json-text-structure-limit'
 
 export { AGENT_STATUS_MAX_FIELD_LENGTH } from './agent-status-field-normalization'
+export {
+  AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH,
+  AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH,
+  AGENT_STATUS_TOOL_INPUT_MAX_LENGTH,
+  AGENT_STATUS_TOOL_NAME_MAX_LENGTH,
+  AGENT_TYPE_MAX_LENGTH
+} from './agent-status-limits'
 
 export const AGENT_STATUS_STATES = ['working', 'blocked', 'waiting', 'done'] as const
 export type AgentStatusState = (typeof AGENT_STATUS_STATES)[number]
@@ -251,16 +265,6 @@ export type AgentStatusClearIpcPayload =
       clearedAt: number
     }
 
-/** Maximum character length for the toolName field. */
-export const AGENT_STATUS_TOOL_NAME_MAX_LENGTH = 60
-/** Maximum character length for the toolInput preview. */
-export const AGENT_STATUS_TOOL_INPUT_MAX_LENGTH = 160
-/** Maximum character length for the lastAssistantMessage preview.
- *  Why: 8 KB fits a multi-paragraph summary while bounding per-pane cache against a buggy/malicious agent spamming huge strings. */
-export const AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH = 8000
-/** Maximum character length for the interactivePrompt field.
- *  Why: holds full AskUserQuestion JSON — truncating to a preview like toolInput would corrupt it and drop options; capped to still bound cache growth. */
-export const AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH = 16000
 /**
  * Freshness threshold for explicit agent status: retained past this so WorktreeCard's
  * sidebar dot can decay "working" back to "active" when the hook stream goes silent.
@@ -283,8 +287,6 @@ export function isFreshNonDoneAgentStatus(
 
 // Why: ReadonlySet<string> so .has() accepts any string without a cast here; the narrowing cast stays on the return line where it's proven safe.
 const VALID_STATES: ReadonlySet<string> = new Set<string>(AGENT_STATUS_STATES)
-/** Maximum character length for the agentType label. Truncated on parse. */
-export const AGENT_TYPE_MAX_LENGTH = 40
 export const AGENT_MODEL_MAX_LENGTH = 120
 
 /** Maximum subagent child rows carried per status entry. Bounds per-pane cache

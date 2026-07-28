@@ -1,0 +1,91 @@
+import { activateHostedWebViewControl } from './hosted-webview-cdp-session.mjs'
+
+export async function activateHostedWorkspaceRow(
+  document,
+  workspaceName,
+  activateControl = activateHostedWebViewControl,
+  timeoutMs = 30_000,
+  resolveDocument
+) {
+  const deadline = Date.now() + timeoutMs
+  let activeDocument = document
+  let lastError
+  while (Date.now() < deadline) {
+    try {
+      await activateHostedWorkspaceRowOnce(activeDocument, workspaceName, activateControl)
+      return
+    } catch (error) {
+      if (isStaleDocument(error) && resolveDocument) {
+        activeDocument = await resolveDocument()
+        continue
+      }
+      if (!isMissingControl(error)) {
+        throw error
+      }
+      lastError = error
+      await delay(250)
+    }
+  }
+  throw lastError ?? new Error(`Hosted WebView control was not found: ${workspaceName}`)
+}
+
+async function activateHostedWorkspaceRowOnce(document, workspaceName, activateControl) {
+  try {
+    await activateControl(document, {
+      kind: 'label',
+      value: `Open ${workspaceName}`
+    })
+    return
+  } catch (error) {
+    if (!isMissingControl(error)) {
+      throw error
+    }
+  }
+  try {
+    await activateControl(document, {
+      kind: 'text',
+      value: workspaceName,
+      ignoreCase: true,
+      occurrence: 1
+    })
+  } catch (error) {
+    if (!isMissingControl(error)) {
+      throw error
+    }
+    await activateControl(document, {
+      kind: 'text',
+      value: workspaceName,
+      ignoreCase: true
+    })
+    await delay(250)
+    try {
+      await activateControl(document, {
+        kind: 'text',
+        value: workspaceName,
+        ignoreCase: true,
+        occurrence: 1
+      })
+    } catch (fallbackError) {
+      if (isStaleDocument(fallbackError)) {
+        return
+      }
+      throw fallbackError
+    }
+  }
+}
+
+function isMissingControl(error) {
+  return error instanceof Error && error.message.includes('control was not found')
+}
+
+function isStaleDocument(error) {
+  return (
+    error instanceof Error &&
+    (error.message.includes('CDP connection closed') ||
+      error.message.includes('Unexpected server response: 500'))
+  )
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}

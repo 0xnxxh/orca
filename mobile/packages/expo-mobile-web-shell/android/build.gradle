@@ -1,0 +1,36 @@
+apply plugin: 'com.android.library'
+
+group = 'expo.modules.mobilewebshell'
+version = '0.0.1'
+
+def expoModulesCorePlugin = new File(project(':expo-modules-core').projectDir.absolutePath, 'ExpoModulesCorePlugin.gradle')
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+useDefaultAndroidSdkVersions()
+
+android {
+  namespace 'expo.modules.mobilewebshell'
+}
+
+dependencies {
+  implementation 'androidx.webkit:webkit:1.14.0'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.json:json:20240303'
+}
+
+def processInterruptionTest = tasks.register('testDebugProcessInterruption', JavaExec) {
+  dependsOn 'compileDebugUnitTestKotlin'
+  mainClass = 'expo.modules.mobilewebshell.MobileWebPackageStoreProcessInterruptionMain'
+}
+
+afterEvaluate {
+  def debugUnitTest = tasks.named('testDebugUnitTest', Test)
+  processInterruptionTest.configure {
+    classpath = debugUnitTest.get().classpath
+  }
+  debugUnitTest.configure {
+    finalizedBy processInterruptionTest
+  }
+}

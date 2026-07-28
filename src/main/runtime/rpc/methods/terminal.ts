@@ -327,15 +327,33 @@ async function sendTerminalStreamInput(
   runtime: OrcaRuntimeService,
   args: {
     terminal: string
+    ptyId: string
     text: string
     client: TerminalViewportClient | undefined
     isMobile: boolean
+    inputKind: 'input' | 'query-reply'
   }
 ): Promise<TerminalStreamInputOutcome> {
   const action = { text: args.text, enter: false, interrupt: false }
   const clientId = args.isMobile ? args.client?.id : undefined
   const floorClaim: MobileInputFloorClaimHolder = { current: null }
   try {
+    if (args.inputKind === 'query-reply') {
+      if (!clientId || !isTerminalQueryReply(args.text)) {
+        return
+      }
+      await runtime.sendTerminal(args.terminal, action, {
+        beforeWrite: (writePtyId) => {
+          if (
+            writePtyId !== args.ptyId ||
+            !runtime.isMobileTerminalQueryReplyAuthority(args.ptyId, clientId)
+          ) {
+            throw new Error('mobile_query_reply_authority_unavailable')
+          }
+        }
+      })
+      return
+    }
     if (!clientId) {
       const result = await runtime.sendTerminal(args.terminal, action)
       return result.accepted ? 'delivered' : 'rejected'
@@ -2144,7 +2162,10 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           }
           return
         }
-        if (frame.opcode === TerminalStreamOpcode.Input) {
+        if (
+          frame.opcode === TerminalStreamOpcode.Input ||
+          frame.opcode === TerminalStreamOpcode.QueryReply
+        ) {
           const text = decodeTerminalStreamText(frame.payload)
           if (!text) {
             return
@@ -2160,9 +2181,11 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
             }
             const outcome = await sendTerminalStreamInput(runtime, {
               terminal: stream.terminal,
+              ptyId: stream.ptyId,
               text,
               client: stream.client,
-              isMobile: stream.isMobile
+              isMobile: stream.isMobile,
+              inputKind: frame.opcode === TerminalStreamOpcode.QueryReply ? 'query-reply' : 'input'
             })
             notifyStreamWriteUnavailable(stream, outcome)
           })
@@ -3157,7 +3180,10 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
           if (closed) {
             return
           }
-          if (frame.opcode === TerminalStreamOpcode.Input) {
+          if (
+            frame.opcode === TerminalStreamOpcode.Input ||
+            frame.opcode === TerminalStreamOpcode.QueryReply
+          ) {
             const text = decodeTerminalStreamText(frame.payload)
             if (!text) {
               return
@@ -3171,9 +3197,12 @@ export const TERMINAL_METHODS: RpcAnyMethod[] = [
               }
               const outcome = await sendTerminalStreamInput(runtime, {
                 terminal: params.terminal,
+                ptyId,
                 text,
                 client: params.client,
-                isMobile
+                isMobile,
+                inputKind:
+                  frame.opcode === TerminalStreamOpcode.QueryReply ? 'query-reply' : 'input'
               })
               if (!closed && outcome === 'rejected' && supportsWriteUnavailable) {
                 sendFrame(TerminalStreamOpcode.WriteUnavailable)

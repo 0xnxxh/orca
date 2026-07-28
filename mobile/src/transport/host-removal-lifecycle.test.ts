@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const removeHostMock = vi.hoisted(() => vi.fn())
 const asyncStorage = vi.hoisted(() => ({
   getItem: vi.fn(async () => null),
   setItem: vi.fn(async () => undefined),
@@ -11,9 +10,30 @@ const asyncStorage = vi.hoisted(() => ({
 }))
 
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: asyncStorage }))
+const {
+  removeHostMock,
+  deleteConnectionLogMock,
+  removeMobileWebHostCacheMock,
+  clearMobileWebColdResumeRouteForHostMock
+} = vi.hoisted(() => ({
+  removeHostMock: vi.fn(),
+  deleteConnectionLogMock: vi.fn(),
+  removeMobileWebHostCacheMock: vi.fn(),
+  clearMobileWebColdResumeRouteForHostMock: vi.fn()
+}))
 
 vi.mock('./host-store', () => ({
   removeHost: (hostId: string) => removeHostMock(hostId)
+}))
+vi.mock('./connection-log-buffer', () => ({
+  connectionLogStore: { delete: deleteConnectionLogMock }
+}))
+vi.mock('../mobile-web/mobile-web-native-stager', () => ({
+  removeMobileWebHostCache: (publicKey: string) => removeMobileWebHostCacheMock(publicKey)
+}))
+vi.mock('../mobile-web/mobile-web-cold-resume-route', () => ({
+  clearMobileWebColdResumeRouteForHost: (hostId: string) =>
+    clearMobileWebColdResumeRouteForHostMock(hostId)
 }))
 
 import { removeHostAndCloseClient } from './host-removal-lifecycle'
@@ -27,6 +47,9 @@ describe('host removal lifecycle', () => {
     removeHostMock.mockReset()
     asyncStorage.removeItem.mockClear()
     resetHostNotificationSessionsForTests()
+    deleteConnectionLogMock.mockReset()
+    removeMobileWebHostCacheMock.mockReset().mockResolvedValue(undefined)
+    clearMobileWebColdResumeRouteForHostMock.mockReset().mockResolvedValue(undefined)
   })
 
   it('closes the client only after metadata removal commits', async () => {
@@ -38,21 +61,24 @@ describe('host removal lifecycle', () => {
     )
     const closeHostClient = vi.fn()
 
-    const removal = removeHostAndCloseClient('host-1', closeHostClient)
+    const removal = removeHostAndCloseClient('host-1', 'public-key-1', closeHostClient)
     expect(closeHostClient).not.toHaveBeenCalled()
     commitRemoval?.()
     await removal
 
     expect(closeHostClient).toHaveBeenCalledWith('host-1')
+    expect(deleteConnectionLogMock).toHaveBeenCalledWith('host-1')
+    expect(removeMobileWebHostCacheMock).toHaveBeenCalledWith('public-key-1')
+    expect(clearMobileWebColdResumeRouteForHostMock).toHaveBeenCalledWith('host-1')
   })
 
   it('keeps the client open when metadata removal fails', async () => {
     removeHostMock.mockRejectedValue(new Error('storage unavailable'))
     const closeHostClient = vi.fn()
 
-    await expect(removeHostAndCloseClient('host-1', closeHostClient)).rejects.toThrow(
-      'storage unavailable'
-    )
+    await expect(
+      removeHostAndCloseClient('host-1', 'public-key-1', closeHostClient)
+    ).rejects.toThrow('storage unavailable')
     expect(closeHostClient).not.toHaveBeenCalled()
   })
 
@@ -66,7 +92,7 @@ describe('host removal lifecycle', () => {
     session.lastDeliveredSeq = 42
     session.lastDeliveredEpoch = 'epoch-A'
 
-    await removeHostAndCloseClient('host-1', vi.fn())
+    await removeHostAndCloseClient('host-1', 'public-key-1', vi.fn())
 
     // A fresh session for the same id — not the retained one.
     const afterRemoval = getHostNotificationSession('host-1')
@@ -82,10 +108,49 @@ describe('host removal lifecycle', () => {
     // catch-up would then start above the real cut and drop everything below it.
     removeHostMock.mockResolvedValue(undefined)
 
-    await removeHostAndCloseClient('host-1', vi.fn())
+    await removeHostAndCloseClient('host-1', 'public-key-1', vi.fn())
     // clearWatermark is fire-and-forget; let its microtask land.
     await Promise.resolve()
 
     expect(asyncStorage.removeItem).toHaveBeenCalledWith('orca:mobileNotificationsWatermark:host-1')
+  })
+
+  it('keeps pairing metadata and the live client when native cache deletion fails', async () => {
+    removeMobileWebHostCacheMock.mockRejectedValue(new Error('native cache unavailable'))
+    const closeHostClient = vi.fn()
+
+    await expect(
+      removeHostAndCloseClient('host-1', 'public-key-1', closeHostClient)
+    ).rejects.toThrow('native cache unavailable')
+
+    expect(removeHostMock).not.toHaveBeenCalled()
+    expect(closeHostClient).not.toHaveBeenCalled()
+    expect(deleteConnectionLogMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps pairing metadata when cold-route cleanup cannot commit', async () => {
+    clearMobileWebColdResumeRouteForHostMock.mockRejectedValue(
+      new Error('route storage unavailable')
+    )
+    const closeHostClient = vi.fn()
+
+    await expect(
+      removeHostAndCloseClient('host-1', 'public-key-1', closeHostClient)
+    ).rejects.toThrow('route storage unavailable')
+
+    expect(removeHostMock).not.toHaveBeenCalled()
+    expect(closeHostClient).not.toHaveBeenCalled()
+  })
+
+  it('forgets removed-host logs even when client teardown throws', async () => {
+    removeHostMock.mockResolvedValue(undefined)
+    const closeHostClient = vi.fn(() => {
+      throw new Error('close failed')
+    })
+
+    await expect(
+      removeHostAndCloseClient('host-1', 'public-key-1', closeHostClient)
+    ).rejects.toThrow('close failed')
+    expect(deleteConnectionLogMock).toHaveBeenCalledWith('host-1')
   })
 })

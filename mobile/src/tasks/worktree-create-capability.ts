@@ -3,6 +3,7 @@ import type { RpcClient } from '../transport/rpc-client'
 import { isLogicalClientCutoverError } from '../transport/stable-logical-rpc-client'
 import type { RpcSuccess } from '../transport/types'
 import { MOBILE_TASKS_CAPABILITY } from './mobile-tasks-capability'
+import type { HostWorkspaceCreationOperations } from '../worktree/host-workspace-creation-operations'
 
 // Why: older hosts strip worktree.create's clientMutationId, so mobile must not
 // replay an ambiguous create unless the host advertises idempotency support.
@@ -49,7 +50,7 @@ export async function readNewWorktreeRuntimeCapabilities(
 }
 
 export function useNewWorktreeRuntimeCapabilities(
-  client: RpcClient | null,
+  operations: HostWorkspaceCreationOperations | null,
   enabled: boolean
 ): {
   tasksSupported: boolean
@@ -57,25 +58,25 @@ export function useNewWorktreeRuntimeCapabilities(
 } {
   const [tasksSupported, setTasksSupported] = useState(false)
   const capabilityProbeRef = useRef<{
-    client: RpcClient | null
+    operations: HostWorkspaceCreationOperations | null
     promise: Promise<NewWorktreeRuntimeCapabilities>
   } | null>(null)
   const getCapabilities = useCallback((): Promise<NewWorktreeRuntimeCapabilities> => {
-    if (!capabilityProbeRef.current || capabilityProbeRef.current.client !== client) {
+    if (!capabilityProbeRef.current || capabilityProbeRef.current.operations !== operations) {
       // Why: a queued tap can reach Create before passive effects run; lazily
       // starting one shared probe keeps that path from failing open.
       capabilityProbeRef.current = {
-        client,
-        promise: client
-          ? readNewWorktreeRuntimeCapabilities(client)
+        operations,
+        promise: operations
+          ? operations.readRuntimeCapabilities()
           : Promise.resolve(UNSUPPORTED_CAPABILITIES)
       }
     }
     return capabilityProbeRef.current.promise
-  }, [client])
+  }, [operations])
 
   useEffect(() => {
-    if (!enabled || !client) {
+    if (!enabled || !operations) {
       return
     }
     let stale = false
@@ -87,7 +88,7 @@ export function useNewWorktreeRuntimeCapabilities(
     return () => {
       stale = true
     }
-  }, [client, enabled, getCapabilities, setTasksSupported])
+  }, [operations, enabled, getCapabilities, setTasksSupported])
 
   const getWorktreeCreateCutoverSupport = useCallback(
     () => getCapabilities().then((capabilities) => capabilities.idempotentWorktreeCreateSupported),

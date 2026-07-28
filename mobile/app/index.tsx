@@ -643,7 +643,7 @@ export default function HomeScreen() {
     }
     const hostToRemove = confirmRemove
     try {
-      await removeHostAndCloseClient(hostToRemove.id, closeHostClient)
+      await removeHostAndCloseClient(hostToRemove.id, hostToRemove.publicKeyB64, closeHostClient)
       setConfirmRemove(null)
       setHostCatalog(await loadHostCatalog())
     } catch {
@@ -664,6 +664,7 @@ export default function HomeScreen() {
           <Text style={styles.brandName}>Orca</Text>
         </View>
         <Pressable
+          accessibilityLabel="Open settings"
           style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
           onPress={() => router.push('/settings')}
         >

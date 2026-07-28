@@ -337,6 +337,7 @@ export type RuntimeMobileSessionTabsResult = {
   worktree: string
   publicationEpoch: string
   snapshotVersion: number
+  workspaceTransportState?: 'available' | 'unavailable'
   /** Live-only targeted command; omitted from durable/list snapshots so reconnect cannot replay navigation. */
   navigationIntent?: 'follow'
   activeGroupId: string | null
@@ -965,6 +966,16 @@ export type BrowserScreencastDialogClosedResult = {
   type: 'dialogClosed'
 }
 
+export type BrowserScreencastNavigationResult = {
+  type: 'navigation'
+  tab: {
+    url: string
+    title: string
+    canGoBack: boolean
+    canGoForward: boolean
+  }
+}
+
 export type BrowserScreencastErrorResult = {
   type: 'error'
   message: string
@@ -975,6 +986,7 @@ export type BrowserScreencastResult =
   | BrowserScreencastEndResult
   | BrowserScreencastDialogResult
   | BrowserScreencastDialogClosedResult
+  | BrowserScreencastNavigationResult
   | BrowserScreencastErrorResult
 
 export type BrowserEvalResult = {
@@ -988,6 +1000,8 @@ export type BrowserTabInfo = {
   url: string
   title: string
   active: boolean
+  canGoBack?: boolean
+  canGoForward?: boolean
   // Why: a failed load leaves getURL() at chrome-error://; surface the structured
   // error so an agent driving the browser can tell a bypassable certificate
   // failure from an ordinary network error the way the UI can.

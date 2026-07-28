@@ -13,30 +13,37 @@ export function startRuntimeCapabilityProbe(
   client: RpcClient,
   onCapabilities: (capabilities: readonly string[]) => void
 ): () => void {
+  return startRuntimeCapabilityRead(async () => {
+    const response = await client.sendRequest('status.get')
+    if (!response.ok) {
+      throw new Error('runtime_capability_probe_failed')
+    }
+    const result = (response as RpcSuccess).result
+    const rawCapabilities =
+      result && typeof result === 'object'
+        ? (result as { capabilities?: unknown }).capabilities
+        : null
+    return Array.isArray(rawCapabilities) &&
+      rawCapabilities.every((value) => typeof value === 'string')
+      ? rawCapabilities
+      : []
+  }, onCapabilities)
+}
+
+export function startRuntimeCapabilityRead<T>(
+  readCapabilities: () => Promise<T>,
+  onCapabilities: (capabilities: T) => void
+): () => void {
   let cancelled = false
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let failureRetries = 0
 
   function attempt(): void {
-    void client.sendRequest('status.get').then(
-      (response) => {
+    void readCapabilities().then(
+      (capabilities) => {
         if (cancelled) {
           return
         }
-        if (!response.ok) {
-          scheduleRetry(false)
-          return
-        }
-        const result = (response as RpcSuccess).result
-        const rawCapabilities =
-          result && typeof result === 'object'
-            ? (result as { capabilities?: unknown }).capabilities
-            : null
-        const capabilities =
-          Array.isArray(rawCapabilities) &&
-          rawCapabilities.every((value) => typeof value === 'string')
-            ? rawCapabilities
-            : []
         onCapabilities(capabilities)
       },
       (error: unknown) => {

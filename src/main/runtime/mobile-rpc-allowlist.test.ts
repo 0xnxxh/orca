@@ -15,6 +15,14 @@ const MOBILE_DYNAMIC_RPC_METHODS = [
   'github.updatePRState',
   'gitlab.updateIssue',
   'gitlab.updateMR',
+  // Prototype asset requests pass through a downloader callback, so they are
+  // not visible to the literal sendRequest scan.
+  'mobileWeb.prototype.chunk',
+  'mobileWeb.prototype.manifest',
+  // Production asset requests will also pass through the native package
+  // downloader rather than literal feature call sites.
+  'mobileWeb.package.asset',
+  'mobileWeb.package.manifest',
   // PR-sidebar reads/mutations: the mobile github-pr-rpc/mutations wrappers pass
   // the method name as a positional arg to sendGithubPrRead/sendMutation, so the
   // literal sendRequest('...') scan below cannot see them. List them here so the

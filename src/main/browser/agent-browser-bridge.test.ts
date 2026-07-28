@@ -91,12 +91,21 @@ function mockBrowserManager(
   } as unknown as BrowserManager
 }
 
-function mockWebContents(id: number, url = 'https://example.com', title = 'Example') {
+function mockWebContents(
+  id: number,
+  url = 'https://example.com',
+  title = 'Example',
+  navigation = { canGoBack: false, canGoForward: false }
+) {
   let currentUrl = url
   return {
     id,
     getURL: () => currentUrl,
     getTitle: () => title,
+    navigationHistory: {
+      canGoBack: vi.fn(() => navigation.canGoBack),
+      canGoForward: vi.fn(() => navigation.canGoForward)
+    },
     loadURL: vi.fn(async (nextUrl: string) => {
       currentUrl = nextUrl
     }),
@@ -546,7 +555,10 @@ describe('AgentBrowserBridge', () => {
         ['tab-a', 'wt-1'],
         ['tab-b', 'wt-2']
       ])
-      const wc1 = mockWebContents(1, 'https://a.com', 'A')
+      const wc1 = mockWebContents(1, 'https://a.com', 'A', {
+        canGoBack: true,
+        canGoForward: false
+      })
       const wc2 = mockWebContents(2, 'https://b.com', 'B')
       webContentsFromIdMock.mockImplementation((id: number) => (id === 1 ? wc1 : wc2))
 
@@ -555,6 +567,7 @@ describe('AgentBrowserBridge', () => {
       expect(result.tabs).toHaveLength(1)
       expect(result.tabs[0].browserPageId).toBe('tab-a')
       expect(result.tabs[0].url).toBe('https://a.com')
+      expect(result.tabs[0]).toMatchObject({ canGoBack: true, canGoForward: false })
     })
 
     it('surfaces the browser-manager load error on each listed tab', () => {

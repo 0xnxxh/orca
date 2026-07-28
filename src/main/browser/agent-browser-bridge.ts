@@ -50,6 +50,7 @@ import type {
 import { assertClipboardTextWriteWithinLimitWithYield } from '../../shared/clipboard-text'
 import { normalizeBrowserNavigationUrl } from '../../shared/browser-url'
 import { iterateBrowserTextInsertionChunks } from './browser-text-insertion'
+import { readGuestNavigationState } from './browser-guest-navigation-state'
 
 // Why: must exceed agent-browser's internal timeouts (goto 30s, wait 60s) so the bridge never kills a command before its own timeout fires.
 const EXEC_TIMEOUT_MS = 90_000
@@ -751,6 +752,7 @@ export class AgentBrowserBridge {
         url: loadError?.validatedUrl ?? wc.getURL() ?? '',
         title: wc.getTitle() ?? '',
         active: wcId === activeWcId,
+        ...readGuestNavigationState(wc),
         loadError,
         certificateFailure
       })

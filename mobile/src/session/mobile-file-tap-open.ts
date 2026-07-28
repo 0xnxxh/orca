@@ -1,12 +1,7 @@
-import type {
-  RuntimeFileOpenResult,
-  RuntimeTerminalPathResolution
-} from '../../../src/shared/runtime-types'
 import { filesystemPathToFileUri } from '../../../src/shared/file-uri-path'
 import { createMobileFilePreviewHref } from '../files/mobile-file-preview-route'
 import { classifyMobileArtifact } from './mobile-artifact-kind'
-import type { RpcClient } from '../transport/rpc-client'
-import type { RpcSuccess } from '../transport/types'
+import type { HostSessionTerminalFileOperations } from './host-session-terminal-file-operations'
 import { shouldActivateOpenedMobileSessionTab } from './opened-mobile-session-tab'
 
 export type FileTapSessionTab = {
@@ -14,12 +9,12 @@ export type FileTapSessionTab = {
   relativePath?: string
 }
 
-export type OpenMobileFileTapOptions<T extends FileTapSessionTab> = {
-  client: Pick<RpcClient, 'sendRequest'>
+type OpenMobileTerminalFileTapOptions<T extends TerminalFileTapSessionTab> = {
+  operations: HostSessionTerminalFileOperations
   hostId: string
   worktreeId: string
   worktreeName?: string
-  terminalHandle?: string | null
+  terminalHandle: string
   pathText: string
   cwd?: string | null
   line: number | null
@@ -69,28 +64,20 @@ function reportOpenFailure<T extends FileTapSessionTab>(
 async function openMobileFileTapAsync<T extends FileTapSessionTab>(
   options: OpenMobileFileTapOptions<T>
 ): Promise<void> {
-  const worktree = `id:${options.worktreeId}`
-  const response = await options.client.sendRequest(
-    'files.resolveTerminalPath',
-    {
-      worktree,
-      pathText: options.pathText,
-      // Why: opts into sibling-workspace resolutions; this caller honors resolved.worktree.
-      crossWorkspace: true,
-      ...(options.terminalHandle && options.terminalHandle.trim().length > 0
-        ? { terminal: options.terminalHandle }
-        : {}),
-      ...(options.cwd && options.cwd.trim().length > 0 ? { cwd: options.cwd } : {})
-    },
-    { timeoutMs: 10_000 }
-  )
-  if (!response.ok) {
-    reportOpenFailure(options)
+  const terminalHandle = options.terminalHandle?.trim()
+  if (!terminalHandle) {
     return
   }
-  const resolved = (response as RpcSuccess).result as RuntimeTerminalPathResolution
-  if (!resolved.exists || resolved.isDirectory) {
-    reportOpenFailure(options)
+  const resolved = await options.operations.resolveTerminalPath({
+    workspaceId: options.worktreeId,
+    tabId: terminalHandle,
+    terminalHandle,
+    pathText: options.pathText,
+    cwd: options.cwd?.trim() || null,
+    line: options.line,
+    column: options.column
+  })
+  if (!resolved) {
     return
   }
   // Not a failure: the user moved off the source tab mid-resolve.
@@ -102,21 +89,21 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
   const resolvedWorktreeName =
     resolvedWorktreeId === options.worktreeId ? options.worktreeName : undefined
 
-  if (resolved.openTarget?.kind === 'absolute-file') {
-    options.triggerOpenFeedback()
+  if (resolved.kind === 'native-artifact') {
+    triggerMobileTerminalOpenFeedback(options.triggerOpenFeedback)
     options.pushPreviewRoute(
       createMobileFilePreviewHref({
         hostId: options.hostId,
         worktreeId: resolvedWorktreeId,
         source: 'terminalArtifact',
-        absolutePath: resolved.openTarget.absolutePath,
-        grantId: resolved.openTarget.grantId,
+        absolutePath: resolved.absolutePath,
+        grantId: resolved.grantId,
         pathText: options.pathText,
         ...(options.cwd && options.cwd.trim().length > 0 ? { cwd: options.cwd } : {}),
         ...(options.terminalHandle && options.terminalHandle.trim().length > 0
           ? { terminal: options.terminalHandle }
           : {}),
-        name: displayNameFromPath(resolved.openTarget.absolutePath),
+        name: displayNameFromPath(resolved.absolutePath),
         ...(options.line !== null ? { line: String(options.line) } : {}),
         ...(options.column !== null ? { column: String(options.column) } : {}),
         ...(resolvedWorktreeName ? { worktreeName: resolvedWorktreeName } : {})
@@ -124,21 +111,13 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
     )
     return
   }
-
-  const openedPath =
-    resolved.openTarget?.kind === 'worktree-file'
-      ? resolved.openTarget.relativePath
-      : resolved.relativePath
-  if (!openedPath) {
-    reportOpenFailure(options)
+  if (resolved.kind === 'web-artifact') {
     return
   }
-  options.triggerOpenFeedback()
-  if (
-    resolvedWorktreeId !== options.worktreeId ||
-    options.line !== null ||
-    options.column !== null
-  ) {
+
+  const openedPath = resolved.relativePath
+  triggerMobileTerminalOpenFeedback(options.triggerOpenFeedback)
+  if (options.line !== null || options.column !== null) {
     options.pushPreviewRoute(
       createMobileFilePreviewHref({
         hostId: options.hostId,
@@ -153,28 +132,11 @@ async function openMobileFileTapAsync<T extends FileTapSessionTab>(
     )
     return
   }
-  if (
-    classifyMobileArtifact(openedPath) === 'html' &&
-    resolved.openTarget?.kind === 'worktree-file' &&
-    resolved.openTarget.provider === 'local'
-  ) {
-    options.openBrowser(filesystemPathToFileUri(resolved.openTarget.absolutePath))
+  if (classifyMobileArtifact(openedPath) === 'html' && resolved.localAbsolutePath) {
+    options.openBrowser(filesystemPathToFileUri(resolved.localAbsolutePath))
     return
   }
-  const openResponse = await options.client.sendRequest(
-    'files.open',
-    { worktree: resolvedWorktree, relativePath: openedPath },
-    { timeoutMs: 15_000 }
-  )
-  if (!openResponse.ok) {
-    reportOpenFailure(options)
-    return
-  }
-  const openResult = (openResponse as RpcSuccess).result as RuntimeFileOpenResult
-  if (!openResult.opened) {
-    reportOpenFailure(options)
-    return
-  }
+  await options.operations.openWorktreeFile(options.worktreeId, openedPath)
   scheduleOpenedWorktreeTabActivation(options, openedPath)
 }
 
@@ -208,4 +170,12 @@ function scheduleOpenedWorktreeTabActivation<T extends FileTapSessionTab>(
 
 function displayNameFromPath(path: string): string | undefined {
   return path.split(/[\\/]/).findLast(Boolean)
+}
+
+function triggerMobileTerminalOpenFeedback(trigger: () => void): void {
+  try {
+    trigger()
+  } catch {
+    // Optional tactile feedback must not block the requested navigation.
+  }
 }

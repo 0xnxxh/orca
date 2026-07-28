@@ -1,9 +1,8 @@
 /* eslint-disable max-lines -- Why: relay filesystem request handling shares
    path expansion, file IO, search, streaming reads, and Space scans. */
-import { readdir, writeFile, stat, lstat, mkdir, rename, cp, rm, realpath } from 'node:fs/promises'
+import { writeFile, stat, lstat, mkdir, rename, cp, rm, realpath } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import type { RelayDispatcher, RequestContext } from './dispatcher'
 import { sortDirEntries } from '../shared/file-name-sort'
 import type { RelayContext } from './context'
@@ -27,8 +26,10 @@ import { isQuickOpenReaddirBudgetError } from '../shared/quick-open-readdir-walk
 import { buildExcludePathPrefixes } from '../shared/quick-open-filter'
 import { buildInstallRgMessage } from './fs-handler-install-rg'
 import { readRelayFileContent, readRelayFileStreamMetadata } from './fs-handler-file-read'
+import { readRelayFileChunk } from './fs-handler-file-chunk'
 import {
   readVerifiedTerminalArtifact,
+  readVerifiedTerminalArtifactChunk,
   writeVerifiedTerminalArtifact
 } from './fs-handler-terminal-artifact'
 import { RelayStreamRegistry } from './fs-stream-registry'
@@ -37,24 +38,27 @@ import { buildRelayCommandEnv } from './relay-command-env'
 import { assertNoClobberRenameDestinationAvailable } from '../shared/filesystem-rename-collision'
 import { RelayFilesystemWatchRegistry } from './relay-filesystem-watch-registry'
 import type { RelayWatcherProcessPool } from './relay-watcher-process-pool'
+import {
+  MOBILE_FILE_DIRECTORY_MAX_ENTRIES,
+  MOBILE_FILE_DIRECTORY_MAX_RETAINED_BYTES
+} from '../shared/mobile-file-directory-limit'
+import { readMobileRelayDirectory } from './mobile-file-directory-reader'
+import { readRelayFilesystemDirectory } from './filesystem-directory-reader'
+import type { FilesystemDirectoryListingLimits } from '../shared/filesystem-directory-listing-limit'
+import { listRelayMarkdownDocumentPaths } from './markdown-document-listing'
+import { resolveQuickOpenResultLimit } from '../shared/quick-open-listing-limits'
 
-async function isDirectoryEntry(
-  dirPath: string,
-  entry: { name: string; isDirectory(): boolean; isSymbolicLink(): boolean }
-): Promise<boolean> {
-  if (entry.isDirectory()) {
-    return true
+function readDirectoryLimitsFromParams(
+  params: Record<string, unknown>
+): Partial<FilesystemDirectoryListingLimits> {
+  const limits: Partial<FilesystemDirectoryListingLimits> = {}
+  if (typeof params.maxEntries === 'number') {
+    limits.maxEntries = params.maxEntries
   }
-  if (!entry.isSymbolicLink()) {
-    return false
+  if (typeof params.maxRetainedBytes === 'number') {
+    limits.maxRetainedBytes = params.maxRetainedBytes
   }
-  try {
-    // Why: the file explorer needs target type for symlinked directories so a
-    // workspace link to an external folder expands instead of opening as a file.
-    return (await stat(join(dirPath, entry.name))).isDirectory()
-  } catch {
-    return false
-  }
+  return limits
 }
 
 function fileStatFromLstat(stats: Awaited<ReturnType<typeof lstat>>) {
@@ -103,9 +107,14 @@ export class FsHandler {
 
   private registerHandlers(): void {
     this.dispatcher.onRequest('fs.readDir', (p) => this.readDir(p))
+    this.dispatcher.onRequest('fs.readDirBounded', (p) => this.readDir(p))
     this.dispatcher.onRequest('fs.readFile', (p) => this.readFile(p))
+    this.dispatcher.onRequest('fs.readFileChunk', (p) => this.readFileChunk(p))
     this.dispatcher.onRequest('fs.readFileStream', (p, c) => this.readFileStream(p, c))
     this.dispatcher.onRequest('fs.readTerminalArtifact', (p) => this.readTerminalArtifact(p))
+    this.dispatcher.onRequest('fs.readTerminalArtifactChunk', (p) =>
+      this.readTerminalArtifactChunk(p)
+    )
     this.dispatcher.onRequest('fs.tempDir', () => this.tempDir())
     this.dispatcher.onRequest('fs.writeFile', (p) => this.writeFile(p))
     this.dispatcher.onRequest('fs.writeTerminalArtifact', (p) => this.writeTerminalArtifact(p))
@@ -121,6 +130,9 @@ export class FsHandler {
     this.dispatcher.onRequest('fs.realpath', (p) => this.realpath(p))
     this.dispatcher.onRequest('fs.search', (p) => this.search(p))
     this.dispatcher.onRequest('fs.listFiles', (p, c) => this.listFiles(p, c))
+    this.dispatcher.onRequest('fs.listMarkdownDocuments', (p, c) =>
+      listRelayMarkdownDocumentPaths(expandTilde(p.rootPath as string), c.signal)
+    )
     this.dispatcher.onRequest('fs.workspaceSpaceScan', (p, c) => this.workspaceSpaceScan(p, c))
     this.dispatcher.onRequest('fs.watch', (p, context) =>
       this.watchRegistry.watch(
@@ -141,15 +153,24 @@ export class FsHandler {
 
   private async readDir(params: Record<string, unknown>) {
     const dirPath = expandTilde(params.dirPath as string)
-    const entries = await readdir(dirPath, { withFileTypes: true })
-    const mapped = await Promise.all(
-      entries.map(async (entry) => ({
-        name: entry.name,
-        isDirectory: await isDirectoryEntry(dirPath, entry),
-        isSymlink: entry.isSymbolicLink()
-      }))
-    )
-    return sortDirEntries(mapped)
+    if (
+      params.maxEntries === MOBILE_FILE_DIRECTORY_MAX_ENTRIES &&
+      params.maxRetainedBytes === MOBILE_FILE_DIRECTORY_MAX_RETAINED_BYTES
+    ) {
+      return this.sortDirectoryEntries(await readMobileRelayDirectory(dirPath))
+    }
+    return readRelayFilesystemDirectory(dirPath, readDirectoryLimitsFromParams(params))
+  }
+
+  private sortDirectoryEntries<T extends { name: string; isDirectory: boolean }>(
+    entries: T[]
+  ): T[] {
+    return entries.sort((left, right) => {
+      if (left.isDirectory !== right.isDirectory) {
+        return left.isDirectory ? -1 : 1
+      }
+      return left.name.localeCompare(right.name)
+    })
   }
 
   private async readFile(params: Record<string, unknown>) {
@@ -157,8 +178,23 @@ export class FsHandler {
     return readRelayFileContent(filePath)
   }
 
+  private async readFileChunk(params: Record<string, unknown>) {
+    return readRelayFileChunk({
+      filePath: expandTilde(params.filePath as string),
+      offset: params.offset as number,
+      length: params.length as number
+    })
+  }
+
   private async readTerminalArtifact(params: Record<string, unknown>) {
     return readVerifiedTerminalArtifact({
+      ...params,
+      filePath: expandTilde(params.filePath as string)
+    })
+  }
+
+  private async readTerminalArtifactChunk(params: Record<string, unknown>) {
+    return readVerifiedTerminalArtifactChunk({
       ...params,
       filePath: expandTilde(params.filePath as string)
     })
@@ -352,12 +388,13 @@ export class FsHandler {
 
   private listFiles(params: Record<string, unknown>, context?: RequestContext): Promise<string[]> {
     const rootPath = expandTilde(params.rootPath as string)
-    const maxResults =
+    const requestedMaxResults =
       typeof params.maxResults === 'number' &&
       Number.isInteger(params.maxResults) &&
       params.maxResults > 0
-        ? Math.min(params.maxResults, 20_001)
+        ? params.maxResults
         : undefined
+    const maxResults = resolveQuickOpenResultLimit(requestedMaxResults)
     // Why: the main-to-relay RPC adds excludePaths so nested linked worktrees
     // don't get double-scanned. The shared helper validates the shape and
     // normalizes into root-relative prefixes; malformed input yields [] so
@@ -378,7 +415,7 @@ export class FsHandler {
     rootPath: string,
     excludePathPrefixes: string[],
     signal: AbortSignal,
-    maxResults?: number
+    maxResults: number
   ): Promise<string[]> {
     const rgAvailable = await checkRgAvailable()
     throwIfFileListingCancelled(signal)

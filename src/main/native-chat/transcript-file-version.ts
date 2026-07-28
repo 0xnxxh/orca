@@ -1,20 +1,16 @@
-import { stat } from 'node:fs/promises'
+import {
+  localTranscriptFileSource,
+  type TranscriptFileSource,
+  type TranscriptFileVersion
+} from './transcript-file-source'
 
-export type TranscriptFileVersion = {
-  identity: string
-  size: number
-  mtimeMs: number
-  ctimeMs: number
-}
+export type { TranscriptFileVersion } from './transcript-file-source'
 
-export async function readTranscriptFileVersion(filePath: string): Promise<TranscriptFileVersion> {
-  const value = await stat(filePath)
-  return {
-    identity: `${value.dev}:${value.ino}`,
-    size: value.size,
-    mtimeMs: value.mtimeMs,
-    ctimeMs: value.ctimeMs
-  }
+export async function readTranscriptFileVersion(
+  filePath: string,
+  fileSource: TranscriptFileSource = localTranscriptFileSource
+): Promise<TranscriptFileVersion> {
+  return fileSource.stat(filePath)
 }
 
 export function transcriptFileVersionChanged(

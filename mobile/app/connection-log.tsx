@@ -15,6 +15,7 @@ import {
   useReconnectAttempt
 } from '../src/transport/client-context-connection-metrics'
 import { buildConnectionDiagnosticsReport } from '../src/diagnostics/connection-diagnostics-report'
+import { mobileWebDiagnosticsStore } from '../src/mobile-web/mobile-web-diagnostics-store'
 import type { ConnectionLogEntry, HostProfile } from '../src/transport/types'
 
 // Why: getSnapshot must be referentially stable when there's no data —
@@ -60,25 +61,34 @@ export default function ConnectionLogScreen() {
     [selectedId]
   )
   const entries = useSyncExternalStore(subscribe, getSnapshot)
+  const subscribeMobileWeb = useCallback(
+    (listener: () => void) => mobileWebDiagnosticsStore.subscribe(listener),
+    []
+  )
+  const getMobileWebSnapshot = useCallback(
+    () => mobileWebDiagnosticsStore.get(selectedId),
+    [selectedId]
+  )
+  const mobileWebDiagnostics = useSyncExternalStore(subscribeMobileWeb, getMobileWebSnapshot)
 
   const copyDiagnostics = useCallback(async () => {
     if (!selected) {
       return
     }
     const report = buildConnectionDiagnosticsReport({
-      hostName: selected.name,
       endpoint: selected.endpoint,
       state,
       reconnectAttempts,
       lastConnectedAt,
       platform: `${Platform.OS} ${Platform.Version ?? ''}`.trim(),
       appVersion: Constants.expoConfig?.version ?? 'unknown',
-      entries
+      entries,
+      mobileWeb: mobileWebDiagnostics
     })
     await Clipboard.setStringAsync(report)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-  }, [selected, state, reconnectAttempts, lastConnectedAt, entries])
+  }, [selected, state, reconnectAttempts, lastConnectedAt, entries, mobileWebDiagnostics])
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]}>

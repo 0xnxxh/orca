@@ -141,12 +141,14 @@ function Prose({
   block,
   invert,
   fontScale,
-  onOpenFile
+  onOpenFile,
+  onOpenLink
 }: {
   block: NativeChatBlock
   invert?: boolean
   fontScale: number
   onOpenFile?: (relativePath: string) => void
+  onOpenLink?: (url: string) => void
 }): React.JSX.Element | null {
   if (isTextBlock(block)) {
     // Inverted (user) bubbles use a fixed dark-on-light text rather than the
@@ -157,7 +159,12 @@ function Prose({
       )
     }
     return (
-      <MobileMarkdown content={block.text} textScale={1.25 * fontScale} onOpenFile={onOpenFile} />
+      <MobileMarkdown
+        content={block.text}
+        textScale={1.25 * fontScale}
+        onOpenFile={onOpenFile}
+        onOpenLink={onOpenLink}
+      />
     )
   }
   if (isImageRefBlock(block)) {
@@ -284,7 +291,8 @@ function MobileNativeChatMessageImpl({
   fontScale = 1,
   messageIndex,
   onScrollToMessage,
-  onOpenFile
+  onOpenFile,
+  onOpenLink
 }: {
   message: NativeChatMessage
   queued?: boolean
@@ -296,6 +304,7 @@ function MobileNativeChatMessageImpl({
   /** Ask the list to align this message's top to the top of the viewport. */
   onScrollToMessage?: (index: number) => void
   onOpenFile?: (relativePath: string) => void
+  onOpenLink?: (url: string) => void
 }): React.JSX.Element {
   const isUser = message.role === 'user'
   const isReasoning = message.role === 'reasoning'
@@ -362,6 +371,7 @@ function MobileNativeChatMessageImpl({
             invert={isUser}
             fontScale={fontScale}
             onOpenFile={onOpenFile}
+            onOpenLink={onOpenLink}
           />
         ))}
         {tools.length > 0 ? (

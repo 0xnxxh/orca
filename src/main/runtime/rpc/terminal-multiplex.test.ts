@@ -3727,6 +3727,115 @@ describe('terminal multiplex RPC', () => {
     await dispatchPromise
   })
 
+  it('writes only authorized mobile query-reply frames without claiming the input floor', async () => {
+    const messages: string[] = []
+    const handlers = new Map<
+      number,
+      (frame: NonNullable<ReturnType<typeof decodeTerminalStreamFrame>>) => void
+    >()
+    const cleanups = new Map<string, () => void>()
+    const write = vi.fn()
+    let hasQueryReplyAuthority = true
+    const beginMobileInputFloor = vi.fn()
+    const isMobileTerminalQueryReplyAuthority = vi.fn(() => hasQueryReplyAuthority)
+    const runtime = stubRuntime({
+      resolveLiveLeafForHandle: vi.fn().mockReturnValue({ ptyId: 'pty-1' }),
+      readTerminal: vi.fn().mockResolvedValue({ tail: [], truncated: false }),
+      serializeTerminalBuffer: vi.fn().mockResolvedValue(null),
+      getTerminalSize: vi.fn().mockReturnValue({ cols: 80, rows: 24 }),
+      getMobileDisplayMode: vi.fn().mockReturnValue('auto'),
+      getLayout: vi.fn().mockReturnValue({ seq: 1 }),
+      isTerminalAlternateScreen: vi.fn().mockReturnValue(false),
+      handleMobileSubscribe: vi.fn().mockResolvedValue(undefined),
+      handleMobileUnsubscribe: vi.fn(),
+      subscribeToTerminalData: vi.fn().mockReturnValue(vi.fn()),
+      subscribeToTerminalResize: vi.fn().mockReturnValue(vi.fn()),
+      subscribeToFitOverrideChanges: vi.fn().mockReturnValue(vi.fn()),
+      subscribeToDriverChanges: vi.fn().mockReturnValue(vi.fn()),
+      getTerminalFitOverride: vi.fn().mockReturnValue(null),
+      getDriver: vi.fn().mockReturnValue({ kind: 'mobile', clientId: 'phone-1' }),
+      registerSubscriptionCleanup: vi.fn((id: string, cleanup: () => void) => {
+        cleanups.set(id, cleanup)
+      }),
+      cleanupSubscription: vi.fn((id: string) => {
+        const cleanup = cleanups.get(id)
+        cleanups.delete(id)
+        cleanup?.()
+      }),
+      waitForTerminal: vi.fn(() => new Promise<RuntimeTerminalWait>(() => {})),
+      sendTerminal: vi.fn().mockImplementation(async (_handle, action, options) => {
+        await options?.beforeWrite?.('pty-1')
+        write(action.text)
+        return { accepted: true }
+      }),
+      beginMobileInputFloor,
+      isMobileTerminalQueryReplyAuthority
+    })
+    const dispatcher = new RpcDispatcher({ runtime, methods: TERMINAL_METHODS })
+    const dispatchPromise = dispatcher.dispatchStreaming(
+      makeRequest('terminal.multiplex', {}),
+      (message) => messages.push(message),
+      {
+        connectionId: 'conn-query-reply',
+        sendBinary: vi.fn(),
+        registerBinaryStreamHandler: (streamId, handler) => {
+          handlers.set(streamId, handler)
+          return () => handlers.delete(streamId)
+        }
+      }
+    )
+
+    await vi.waitFor(() =>
+      expect(messages.some((message) => JSON.parse(message).result?.type === 'ready')).toBe(true)
+    )
+    handlers.get(0)?.(
+      decodeTerminalStreamFrame(
+        encodeTerminalStreamFrame({
+          opcode: TerminalStreamOpcode.Subscribe,
+          streamId: 0,
+          seq: 1,
+          payload: encodeTerminalStreamJson({
+            streamId: 16,
+            terminal: 'terminal-1',
+            client: { id: 'phone-1', type: 'mobile' },
+            viewport: { cols: 80, rows: 24 }
+          })
+        })
+      )!
+    )
+    await vi.waitFor(() => expect(handlers.has(16)).toBe(true))
+
+    const sendQueryReply = (text: string, seq: number): void => {
+      handlers.get(16)?.(
+        decodeTerminalStreamFrame(
+          encodeTerminalStreamFrame({
+            opcode: TerminalStreamOpcode.QueryReply,
+            streamId: 16,
+            seq,
+            payload: encodeTerminalStreamText(text)
+          })
+        )!
+      )
+    }
+    sendQueryReply('\x1b[0n', 2)
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('\x1b[0n'))
+    expect(beginMobileInputFloor).not.toHaveBeenCalled()
+    expect(isMobileTerminalQueryReplyAuthority).toHaveBeenCalledWith('pty-1', 'phone-1')
+
+    sendQueryReply('ordinary input', 3)
+    await Promise.resolve()
+    expect(runtime.sendTerminal).toHaveBeenCalledTimes(1)
+
+    hasQueryReplyAuthority = false
+    sendQueryReply('\x1b[3;1R', 4)
+    await vi.waitFor(() => expect(runtime.sendTerminal).toHaveBeenCalledTimes(2))
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(beginMobileInputFloor).not.toHaveBeenCalled()
+
+    runtime.cleanupSubscription('terminal-multiplex:conn-query-reply')
+    await dispatchPromise
+  })
+
   it('preserves LF input frames before writing to the subscribed PTY', async () => {
     const messages: string[] = []
     const handlers = new Map<

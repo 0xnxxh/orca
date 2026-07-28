@@ -121,6 +121,18 @@ export const TERMINAL_FILE_LINK_TAP_CONFORMANCE_CASES: TerminalFileLinkTapConfor
     expected: { pathText: '/tmp/b.txt', line: null, column: null }
   },
   {
+    name: 'first of two adjacent absolute paths',
+    lineText: '/etc/hosts /tmp/output.png',
+    tapText: 'hosts',
+    expected: { pathText: '/etc/hosts', line: null, column: null }
+  },
+  {
+    name: 'second of two adjacent absolute paths',
+    lineText: '/etc/hosts /tmp/output.png',
+    tapText: 'output',
+    expected: { pathText: '/tmp/output.png', line: null, column: null }
+  },
+  {
     name: 'surrounding punctuation',
     lineText: 'open (src/a.ts) now',
     tapText: 'a.ts',

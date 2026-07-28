@@ -806,7 +806,7 @@ describe('RuntimeFileCommands', () => {
       tempDirs = []
     })
 
-    async function tempFile(name: string, content: string): Promise<string> {
+    async function tempFile(name: string, content: string | Uint8Array): Promise<string> {
       const dir = await mkdtemp(join(tmpdir(), 'orca-terminal-artifact-'))
       tempDirs.push(dir)
       const filePath = join(dir, name)
@@ -1821,6 +1821,63 @@ describe('RuntimeFileCommands', () => {
           'client-b'
         )
       ).rejects.toThrow('terminal_file_grant_mismatch')
+    })
+
+    it('reads bounded terminal artifact ranges only through the owning exact grant', async () => {
+      const artifactPath = await tempFile('result.bin', Buffer.from([0, 1, 2, 3, 255]))
+      const { commands } = createRuntimeFileCommands({ path: '/repo' })
+      resolveAuthorizedPathMock.mockImplementation(async (p: string) => p)
+
+      const result = await resolveTerminalArtifactPath(commands, artifactPath)
+      const target = absoluteFileTarget(result)
+
+      await expect(
+        commands.readTerminalArtifactChunk(
+          'id:wt-1',
+          target.grantId,
+          target.absolutePath,
+          2,
+          2,
+          5,
+          'client-a'
+        )
+      ).resolves.toEqual({
+        contentBase64: Buffer.from([2, 3]).toString('base64'),
+        bytesRead: 2,
+        eof: false
+      })
+      await expect(
+        commands.readTerminalArtifactChunk(
+          'id:wt-1',
+          target.grantId,
+          target.absolutePath,
+          0,
+          2,
+          5,
+          'client-b'
+        )
+      ).rejects.toThrow('terminal_file_grant_mismatch')
+    })
+
+    it('rejects terminal artifact ranges above the broker-provided total limit', async () => {
+      const artifactPath = await tempFile('result.bin', Buffer.alloc(5))
+      const { commands } = createRuntimeFileCommands({ path: '/repo' })
+      resolveAuthorizedPathMock.mockImplementation(async (p: string) => p)
+
+      const result = await resolveTerminalArtifactPath(commands, artifactPath)
+      const target = absoluteFileTarget(result)
+
+      await expect(
+        commands.readTerminalArtifactChunk(
+          'id:wt-1',
+          target.grantId,
+          target.absolutePath,
+          0,
+          4,
+          4,
+          'client-a'
+        )
+      ).rejects.toThrow('file_too_large')
     })
 
     it('revokes absolute terminal artifact grants when the owning client disconnects', async () => {

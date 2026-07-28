@@ -39,7 +39,9 @@ import { EMULATOR_METHODS } from './emulator'
 import { PAIRING_METHODS } from './pairing'
 import { UPDATER_METHODS } from './updater'
 import { AGENT_SESSION_METHODS } from './agent-session'
-import { ARTIFACT_METHODS } from './artifacts'
+import { MOBILE_WEB_PROTOTYPE_METHODS } from './mobile-web-prototype'
+import { MOBILE_WEB_PACKAGE_METHODS } from './mobile-web-package'
+import { MOBILE_FILE_WRITE_METHODS } from './mobile-file-write-if-unchanged'
 
 // Why: a flat manifest keeps registration order explicit and provides one
 // grep-point for "what methods does the RPC server expose?" — useful when
@@ -67,6 +69,7 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
   ...SESSION_TAB_METHODS,
   ...NATIVE_CHAT_METHODS,
   ...FILE_METHODS,
+  ...MOBILE_FILE_WRITE_METHODS,
   ...GIT_METHODS,
   ...GITHUB_METHODS,
   ...GITLAB_METHODS,
@@ -85,5 +88,7 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
   ...CLIENT_UI_METHODS,
   ...EMULATOR_METHODS,
   ...PAIRING_METHODS,
-  ...UPDATER_METHODS
+  ...UPDATER_METHODS,
+  ...MOBILE_WEB_PACKAGE_METHODS,
+  ...MOBILE_WEB_PROTOTYPE_METHODS
 ]

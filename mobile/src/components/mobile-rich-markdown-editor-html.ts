@@ -1,16 +1,20 @@
+import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../../src/shared/mobile-web/markdown-editor-csp'
 import { colors } from '../theme/mobile-theme'
+import * as markdownEditorFrameScript from './mobile-rich-markdown-editor-frame-script'
 import { MOBILE_RICH_MARKDOWN_KEYBOARD_INSET_SCRIPT } from './mobile-rich-markdown-editor-keyboard-inset-script'
+export { escapeInjectedJavaScriptString } from './mobile-rich-markdown-editor-script-string'
 
-export function escapeInjectedJavaScriptString(value: string): string {
-  return JSON.stringify(value).replace(/<\/script/gi, '<\\/script')
-}
+export { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../../src/shared/mobile-web/markdown-editor-csp'
 
-export function buildMobileRichMarkdownEditorHtml(): string {
+const MOBILE_RICH_MARKDOWN_EDITOR_FRAME_CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH}; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'" />`
+
+export function buildMobileRichMarkdownEditorHtml(_options?: { isolatedFrame?: boolean }): string {
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  ${MOBILE_RICH_MARKDOWN_EDITOR_FRAME_CSP}
   <style>
     :root {
       color-scheme: dark;
@@ -213,10 +217,8 @@ export function buildMobileRichMarkdownEditorHtml(): string {
       var documentGeneration = 0;
       var editable = true;
       var suppressInput = false;
-
-      function post(message) {
-        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(message));
-      }
+      var frameToken = window.parent === window ? '' : window.name;
+${markdownEditorFrameScript.MOBILE_RICH_MARKDOWN_EDITOR_POST_SCRIPT}
 
       function decodeMarkdownEntities(value) {
         return String(value).replace(/&(#x[0-9a-f]+|#\\d+|amp|lt|gt|quot|apos);/gi, function (match, entity) {
@@ -248,9 +250,9 @@ export function buildMobileRichMarkdownEditorHtml(): string {
         return escapeHtml(value).replace(/\\n/g, ' ');
       }
 
-      function isSafeUrl(value) {
+      function isSafeUrl(value, allowDataImage) {
         var trimmed = String(value || '').trim();
-        return !/^javascript:/i.test(trimmed);
+        return /^https?:\\/\\/[^\\s]+$/i.test(trimmed) || (allowDataImage === true && /^data:image\\/(?:png|jpeg|gif|webp|bmp);base64,[a-z0-9+/=]+$/i.test(trimmed));
       }
 
       function splitTableRow(line) {
@@ -276,7 +278,7 @@ export function buildMobileRichMarkdownEditorHtml(): string {
           var token = match[0];
           var image = token.match(/^!\\[([^\\]]*)\\]\\(([^)]+)\\)$/);
           var link = token.match(/^\\[([^\\]]+)\\]\\(([^)]+)\\)$/);
-          if (image && isSafeUrl(image[2])) {
+          if (image && isSafeUrl(image[2], true)) {
             output += '<img src="' + escapeAttr(image[2]) + '" alt="' + escapeAttr(image[1] || '') + '" />';
           } else if (link && isSafeUrl(link[2])) {
             output += '<a href="' + escapeAttr(link[2]) + '">' + renderInline(link[1]) + '</a>';
@@ -622,14 +624,16 @@ export function buildMobileRichMarkdownEditorHtml(): string {
         else if (command === 'taskList') document.execCommand('insertHTML', false, '<ul data-type="taskList"><li data-checked="false"><label contenteditable="false"><input type="checkbox" /></label><div><p>Task</p></div></li></ul>');
         else if (command === 'link') {
           var href = window.prompt('Link URL');
-          if (href && isSafeUrl(href)) document.execCommand('createLink', false, href);
+          if (href && isSafeUrl(href, false)) document.execCommand('createLink', false, href);
         } else if (command === 'image') {
           var src = window.prompt('Image URL');
-          if (src && isSafeUrl(src)) document.execCommand('insertImage', false, src);
+          if (src && isSafeUrl(src, true)) document.execCommand('insertImage', false, src);
         }
         syncTaskCheckboxesDisabled();
         emitChange();
       }
+
+${markdownEditorFrameScript.MOBILE_RICH_MARKDOWN_EDITOR_HOST_MESSAGE_SCRIPT}
 
       editor.addEventListener('input', function () {
         if (editable) emitChange();

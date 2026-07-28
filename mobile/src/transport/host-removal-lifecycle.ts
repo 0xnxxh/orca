@@ -3,18 +3,27 @@ import {
   forgetHostNotificationSession
 } from '../notifications/notification-reconnect-catchup'
 import { removeHost } from './host-store'
+import { connectionLogStore } from './connection-log-buffer'
+import { removeMobileWebHostCache } from '../mobile-web/mobile-web-native-stager'
+import { clearMobileWebColdResumeRouteForHost } from '../mobile-web/mobile-web-cold-resume-route'
 
 export async function removeHostAndCloseClient(
   hostId: string,
+  hostPublicKey: string,
   closeHostClient: (hostId: string) => void
 ): Promise<void> {
+  // Why: cache deletion is recoverable by redownload, while a completed unpair must not leave host code behind.
+  await removeMobileWebHostCache(hostPublicKey)
+  await clearMobileWebColdResumeRouteForHost(hostId)
   // Why: closing before the metadata commit can strand a still-paired host on
   // storage failure; closing immediately after success prevents socket leaks.
   await removeHost(hostId)
-  closeHostClient(hostId)
-  // Why: the notification session outlives the socket by design (it must survive
-  // reconnects), so removal is the only thing that can retire it. Left behind, a
-  // re-pair of the same host would inherit a watermark for a counter it never saw.
-  forgetHostNotificationSession(hostId)
-  void clearWatermark(hostId)
+  try {
+    closeHostClient(hostId)
+  } finally {
+    // Why: host-scoped process state must not survive a completed unpair.
+    forgetHostNotificationSession(hostId)
+    void clearWatermark(hostId)
+    connectionLogStore.delete(hostId)
+  }
 }

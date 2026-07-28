@@ -1,0 +1,476 @@
+import CryptoKit
+import Foundation
+
+@main
+enum MobileWebPackageStoreTests {
+  static func main() throws {
+    if try MobileWebPackageStoreProcessInterruptionTests.runIfChild() {
+      return
+    }
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("orca-mobile-web-store-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try stagesAndReadsExactGeneration(root: root.appendingPathComponent("verified"))
+    try rejectsMalformedManifests(root: root.appendingPathComponent("manifests"))
+    try deletesInterruptedStage(root: root.appendingPathComponent("interrupted"))
+    try rejectsIncompleteAndCorruptGeneration(root: root.appendingPathComponent("corrupt"))
+    try activatesAndRecoversPreviousGeneration(root: root.appendingPathComponent("rollback"))
+    try fallsBackFromCorruptActiveGeneration(root: root.appendingPathComponent("corrupt-active"))
+    try rejectsLowStorage(root: root.appendingPathComponent("low-storage"))
+    try evictsUnprotectedGeneration(root: root.appendingPathComponent("eviction"))
+    try evictsAnotherHostForGlobalQuota(root: root.appendingPathComponent("global-eviction"))
+    try removesOnlySelectedHost(root: root.appendingPathComponent("remove-host"))
+    try MobileWebPackageStoreProcessInterruptionTests.verify(
+      root: root.appendingPathComponent("process-interruption"),
+    )
+  }
+
+  private static func stagesAndReadsExactGeneration(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let fixture = try packageFixture()
+    try stagePackage(store: store, host: "paired-host", fixture: fixture)
+    let session = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: fixture.buildId,
+      bridgeVersion: 1
+    )
+    let asset = try store.readAsset(
+      sessionId: session["sessionId"]!,
+      path: "index.html"
+    )
+    precondition(session["buildId"] == fixture.buildId)
+    precondition(asset.contentType == "text/html; charset=utf-8")
+    precondition(asset.data == fixture.bytes)
+    precondition(
+      throwsCode("mobile_web_generation_invalid") {
+        _ = try store.openSession(
+          hostIdentity: "different-host",
+          buildId: fixture.buildId,
+          bridgeVersion: 1
+        )
+      }
+    )
+  }
+
+  private static func rejectsMalformedManifests(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let valid = try packageFixture()
+    let invalid = [
+      PackageFixture(
+        bytes: valid.bytes,
+        canonical: valid.canonical + " ",
+        manifest: valid.manifest,
+        buildId: valid.buildId
+      ),
+      try packageFixture { manifest in
+        mutateAsset(&manifest) { $0["path"] = "../index.html" }
+      },
+      try packageFixture { manifest in
+        mutateAsset(&manifest) { $0["contentType"] = "application/octet-stream" }
+      },
+      try packageFixture { manifest in
+        manifest["totalBytes"] = valid.bytes.count + 1
+      },
+    ]
+    for fixture in invalid {
+      precondition(
+        throwsError {
+          _ = try store.beginStage(
+            hostIdentity: "paired-host",
+            manifestJson: fixture.manifest,
+            canonicalManifestJson: fixture.canonical
+          )
+        }
+      )
+    }
+  }
+
+  private static func deletesInterruptedStage(root: URL) throws {
+    let first = MobileWebPackageStore(cacheRoot: root)
+    let fixture = try packageFixture()
+    let stageId = try first.beginStage(
+      hostIdentity: "paired-host",
+      manifestJson: fixture.manifest,
+      canonicalManifestJson: fixture.canonical
+    )
+    let staging =
+      root
+      .appendingPathComponent(sha256Hex(Data("paired-host".utf8)))
+      .appendingPathComponent("staging")
+    let stagedBeforeRestart = try FileManager.default.contentsOfDirectory(atPath: staging.path)
+    precondition(stagedBeforeRestart.count == 1)
+
+    _ = MobileWebPackageStore(cacheRoot: root)
+
+    let stagedAfterRestart = try FileManager.default.contentsOfDirectory(atPath: staging.path)
+    precondition(stagedAfterRestart.isEmpty)
+    precondition(
+      throwsError {
+        try first.writeAssetChunk(
+          stageId: stageId,
+          path: "index.html",
+          offset: 0,
+          dataBase64: fixture.bytes.base64EncodedString(),
+          chunkSha256: sha256Hex(fixture.bytes)
+        )
+      }
+    )
+  }
+
+  private static func rejectsIncompleteAndCorruptGeneration(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let fixture = try packageFixture()
+    let incomplete = try store.beginStage(
+      hostIdentity: "paired-host",
+      manifestJson: fixture.manifest,
+      canonicalManifestJson: fixture.canonical
+    )
+    precondition(throwsError { _ = try store.commitStage(stageId: incomplete) })
+    store.abortStage(stageId: incomplete)
+    try stagePackage(store: store, host: "paired-host", fixture: fixture)
+    let session = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: fixture.buildId,
+      bridgeVersion: 1
+    )
+    let document =
+      root
+      .appendingPathComponent(sha256Hex(Data("paired-host".utf8)))
+      .appendingPathComponent("generations")
+      .appendingPathComponent(fixture.buildId)
+      .appendingPathComponent("index.html")
+    try Data("corrupt".utf8).write(to: document)
+    precondition(
+      throwsCode("mobile_web_generation_invalid") {
+        _ = try store.readAsset(sessionId: session["sessionId"]!, path: "index.html")
+      }
+    )
+    precondition(
+      throwsCode("mobile_web_generation_invalid") {
+        _ = try store.openSession(
+          hostIdentity: "paired-host",
+          buildId: fixture.buildId,
+          bridgeVersion: 1
+        )
+      }
+    )
+  }
+
+  private static func activatesAndRecoversPreviousGeneration(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let previous = try packageFixture(content: "<!doctype html><title>Previous</title>")
+    let current = try packageFixture(content: "<!doctype html><title>Current</title>")
+    try stagePackage(store: store, host: "paired-host", fixture: previous)
+    let previousSession = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: previous.buildId,
+      bridgeVersion: 1
+    )
+    let previousActivation = try store.markSessionHealthy(
+      sessionId: previousSession["sessionId"]!
+    )
+    precondition(previousActivation == previous.buildId)
+    try stagePackage(store: store, host: "paired-host", fixture: current)
+    let currentSession = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: current.buildId,
+      bridgeVersion: 1
+    )
+    let currentActivation = try store.markSessionHealthy(
+      sessionId: currentSession["sessionId"]!
+    )
+    precondition(currentActivation == current.buildId)
+
+    let recovered = try store.recoverSession(sessionId: currentSession["sessionId"]!)
+    precondition(recovered["buildId"] == previous.buildId)
+    let active = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: nil,
+      bridgeVersion: 1
+    )
+    precondition(active["buildId"] == previous.buildId)
+  }
+
+  private static func fallsBackFromCorruptActiveGeneration(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let previous = try packageFixture(content: "<!doctype html><title>Previous</title>")
+    let current = try packageFixture(content: "<!doctype html><title>Current</title>")
+    try stagePackage(store: store, host: "paired-host", fixture: previous)
+    let previousSession = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: previous.buildId,
+      bridgeVersion: 1
+    )
+    _ = try store.markSessionHealthy(sessionId: previousSession["sessionId"]!)
+    store.closeSession(sessionId: previousSession["sessionId"]!)
+    try stagePackage(store: store, host: "paired-host", fixture: current)
+    let currentSession = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: current.buildId,
+      bridgeVersion: 1
+    )
+    _ = try store.markSessionHealthy(sessionId: currentSession["sessionId"]!)
+    store.closeSession(sessionId: currentSession["sessionId"]!)
+    let currentDocument =
+      root
+      .appendingPathComponent(sha256Hex(Data("paired-host".utf8)))
+      .appendingPathComponent("generations")
+      .appendingPathComponent(current.buildId)
+      .appendingPathComponent("index.html")
+    try Data("corrupt".utf8).write(to: currentDocument)
+
+    let recovered = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: nil,
+      bridgeVersion: 1
+    )
+
+    precondition(recovered["buildId"] == previous.buildId)
+    precondition(!FileManager.default.fileExists(atPath: currentDocument.path))
+  }
+
+  private static func rejectsLowStorage(root: URL) throws {
+    let store = MobileWebPackageStore(
+      cacheRoot: root,
+      availableStorageBytes: { _ in mobileWebMinimumFreeStorageBytes }
+    )
+    let fixture = try packageFixture()
+
+    precondition(
+      throwsCode("mobile_web_cache_storage_unavailable") {
+        _ = try store.beginStage(
+          hostIdentity: "paired-host",
+          manifestJson: fixture.manifest,
+          canonicalManifestJson: fixture.canonical
+        )
+      }
+    )
+    let staging =
+      root
+      .appendingPathComponent(sha256Hex(Data("paired-host".utf8)))
+      .appendingPathComponent("staging")
+    let staged = try? FileManager.default.contentsOfDirectory(atPath: staging.path)
+    precondition(staged?.isEmpty != false)
+  }
+
+  private static func evictsUnprotectedGeneration(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let active = try packageFixture(content: "<!doctype html><title>Active</title>")
+    try stagePackage(store: store, host: "paired-host", fixture: active)
+    let activeSession = try store.openSession(
+      hostIdentity: "paired-host",
+      buildId: active.buildId,
+      bridgeVersion: 1
+    )
+    _ = try store.markSessionHealthy(sessionId: activeSession["sessionId"]!)
+    let hostKey = sha256Hex(Data("paired-host".utf8))
+    let staleRoot = try createSparseGeneration(
+      root: root,
+      hostKey: hostKey,
+      buildId: String(repeating: "a", count: 64),
+      byteLength: mobileWebPerHostCacheByteLimit
+    )
+    let fixture = try packageFixture(content: "<!doctype html><title>Next</title>")
+
+    let stageId = try store.beginStage(
+      hostIdentity: "paired-host",
+      manifestJson: fixture.manifest,
+      canonicalManifestJson: fixture.canonical
+    )
+
+    precondition(!FileManager.default.fileExists(atPath: staleRoot.path))
+    let activeAsset = try store.readAsset(
+      sessionId: activeSession["sessionId"]!,
+      path: "index.html"
+    )
+    precondition(activeAsset.data == active.bytes)
+    store.abortStage(stageId: stageId)
+  }
+
+  private static func evictsAnotherHostForGlobalQuota(root: URL) throws {
+    let staleRoot = try createSparseGeneration(
+      root: root,
+      hostKey: sha256Hex(Data("other-host".utf8)),
+      buildId: String(repeating: "b", count: 64),
+      byteLength: mobileWebGlobalCacheByteLimit
+    )
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let fixture = try packageFixture()
+
+    let stageId = try store.beginStage(
+      hostIdentity: "paired-host",
+      manifestJson: fixture.manifest,
+      canonicalManifestJson: fixture.canonical
+    )
+
+    precondition(!FileManager.default.fileExists(atPath: staleRoot.path))
+    store.abortStage(stageId: stageId)
+  }
+
+  private static func removesOnlySelectedHost(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let removed = try packageFixture(content: "<!doctype html><title>Removed</title>")
+    let retained = try packageFixture(content: "<!doctype html><title>Retained</title>")
+    try stagePackage(store: store, host: "removed-host", fixture: removed)
+    try stagePackage(store: store, host: "retained-host", fixture: retained)
+    let removedSession = try store.openSession(
+      hostIdentity: "removed-host",
+      buildId: removed.buildId,
+      bridgeVersion: 1
+    )
+    let retainedSession = try store.openSession(
+      hostIdentity: "retained-host",
+      buildId: retained.buildId,
+      bridgeVersion: 1
+    )
+    let interruptedStage = try store.beginStage(
+      hostIdentity: "removed-host",
+      manifestJson: removed.manifest,
+      canonicalManifestJson: removed.canonical
+    )
+
+    try store.removeHost(hostIdentity: "removed-host")
+
+    let removedRoot = root.appendingPathComponent(sha256Hex(Data("removed-host".utf8)))
+    precondition(!FileManager.default.fileExists(atPath: removedRoot.path))
+    precondition(
+      throwsCode("mobile_web_asset_unavailable") {
+        _ = try store.readAsset(sessionId: removedSession["sessionId"]!, path: "index.html")
+      }
+    )
+    precondition(
+      throwsCode("mobile_web_stage_unknown") {
+        try store.writeAssetChunk(
+          stageId: interruptedStage,
+          path: "index.html",
+          offset: 0,
+          dataBase64: "YQ==",
+          chunkSha256: sha256Hex(Data("a".utf8))
+        )
+      }
+    )
+    let asset = try store.readAsset(
+      sessionId: retainedSession["sessionId"]!,
+      path: "index.html"
+    )
+    precondition(asset.data == retained.bytes)
+  }
+
+  private static func stagePackage(
+    store: MobileWebPackageStore,
+    host: String,
+    fixture: PackageFixture
+  ) throws {
+    let stageId = try store.beginStage(
+      hostIdentity: host,
+      manifestJson: fixture.manifest,
+      canonicalManifestJson: fixture.canonical
+    )
+    try store.writeAssetChunk(
+      stageId: stageId,
+      path: "index.html",
+      offset: 0,
+      dataBase64: fixture.bytes.base64EncodedString(),
+      chunkSha256: sha256Hex(fixture.bytes)
+    )
+    try store.finishAsset(stageId: stageId, path: "index.html")
+    let committed = try store.commitStage(stageId: stageId)
+    precondition(committed == fixture.buildId)
+  }
+
+  private static func createSparseGeneration(
+    root: URL,
+    hostKey: String,
+    buildId: String,
+    byteLength: Int64
+  ) throws -> URL {
+    let generation =
+      root
+      .appendingPathComponent(hostKey)
+      .appendingPathComponent("generations")
+      .appendingPathComponent(buildId)
+    try FileManager.default.createDirectory(at: generation, withIntermediateDirectories: true)
+    let file = generation.appendingPathComponent("stale.bin")
+    FileManager.default.createFile(atPath: file.path, contents: nil)
+    let handle = try FileHandle(forWritingTo: file)
+    try handle.truncate(atOffset: UInt64(byteLength))
+    try handle.close()
+    return generation
+  }
+
+  private static func packageFixture(
+    content: String = "<!doctype html><title>Orca</title>",
+    mutate: (inout [String: Any]) -> Void = { _ in }
+  ) throws -> PackageFixture {
+    let bytes = Data(content.utf8)
+    var canonical: [String: Any] = [
+      "schemaVersion": 1,
+      "bridge": ["minimum": 1, "testedThrough": 1],
+      "entrypoint": "index.html",
+      "totalBytes": bytes.count,
+      "assets": [
+        [
+          "path": "index.html",
+          "sha256": sha256Hex(bytes),
+          "byteLength": bytes.count,
+          "contentType": "text/html; charset=utf-8",
+          "role": "document",
+        ]
+      ],
+    ]
+    mutate(&canonical)
+    let canonicalData = try JSONSerialization.data(
+      withJSONObject: canonical,
+      options: [.sortedKeys]
+    )
+    let buildId = sha256Hex(canonicalData)
+    var manifest = canonical
+    manifest["buildId"] = buildId
+    let manifestData = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+    return PackageFixture(
+      bytes: bytes,
+      canonical: String(decoding: canonicalData, as: UTF8.self),
+      manifest: String(decoding: manifestData, as: UTF8.self),
+      buildId: buildId
+    )
+  }
+
+  private static func mutateAsset(
+    _ manifest: inout [String: Any],
+    mutate: (inout [String: Any]) -> Void
+  ) {
+    var assets = manifest["assets"] as! [[String: Any]]
+    mutate(&assets[0])
+    manifest["assets"] = assets
+  }
+
+  private static func throwsError(_ body: () throws -> Void) -> Bool {
+    do {
+      try body()
+      return false
+    } catch {
+      return true
+    }
+  }
+
+  private static func throwsCode(_ code: String, _ body: () throws -> Void) -> Bool {
+    do {
+      try body()
+      return false
+    } catch {
+      return error.localizedDescription == code
+    }
+  }
+}
+
+private struct PackageFixture {
+  let bytes: Data
+  let canonical: String
+  let manifest: String
+  let buildId: String
+}
+
+private func sha256Hex(_ data: Data) -> String {
+  SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { View, Text, StyleSheet, SectionList, Pressable, Alert, RefreshControl } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from 'expo-router'
+import { useFocusEffect, useLocalSearchParams } from 'expo-router'
 import {
   Search,
   X,
@@ -20,14 +20,7 @@ import {
   PanelLeftClose,
   SquareTerminal
 } from 'lucide-react-native'
-import type { RpcClient } from '../../../src/transport/rpc-client'
-import { loadHosts, updateLastConnected } from '../../../src/transport/host-store'
-import { removeHostAndCloseClient } from '../../../src/transport/host-removal-lifecycle'
-import {
-  useHostClient,
-  useCloseHost,
-  useForceReconnect
-} from '../../../src/transport/client-context'
+import { useHostClient } from '../../../src/transport/client-context'
 import { useWorktreeResync } from '../../../src/transport/use-worktree-resync'
 import { startHostWorktreeRefresh } from '../../../src/worktree/host-worktree-refresh'
 import {
@@ -38,7 +31,6 @@ import {
   classifyConnection,
   type ConnectionVerdict
 } from '../../../src/transport/connection-health'
-import type { RpcSuccess } from '../../../src/transport/types'
 import { StatusDot } from '../../../src/components/StatusDot'
 import { NewWorktreeModalController } from '../../../src/components/NewWorktreeModalController'
 import { NewWorkspaceFab, FAB_SIZE } from '../../../src/components/NewWorkspaceFab'
@@ -59,12 +51,8 @@ import { HostRouteNoticeBanner } from '../../../src/components/HostRouteNoticeBa
 import { visibleHostRouteNotice } from '../../../src/host-route-notice'
 import { MobileSearchField } from '../../../src/components/MobileSearchField'
 import { WorkspaceDetailPlaceholder } from '../../../src/components/WorkspaceDetailPlaceholder'
-import { getCachedWorktrees, setCachedWorktrees } from '../../../src/cache/worktree-cache'
-import { setCachedRepos } from '../../../src/cache/repo-cache'
 import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
 import { useResponsiveLayout } from '../../../src/layout/responsive-layout'
-import { leaveHostRoute } from '../../../src/host-route-exit'
-import { loadPinnedIds, savePinnedIds } from '../../../src/storage/preferences'
 import {
   createInitialHostRouteActionState,
   hostNewWorktreeSessionRoute,
@@ -95,9 +83,17 @@ import {
   WORKSPACE_GROUP_OPTIONS as GROUP_OPTIONS,
   WORKSPACE_SORT_OPTIONS as SORT_OPTIONS
 } from '../../../src/worktree/workspace-list-picker-options'
-import type { RepoSummary } from '../../../src/worktree/host-worktree-rpc-types'
+import type { HostWorkspaceOperations } from '../../../src/worktree/host-workspace-operations'
+import type { HostScreenHostState } from '../../../src/worktree/host-screen-host-state'
+import { defaultHostScreenHostState } from '../../../src/worktree/default-host-screen-host-state'
+import { defaultHostWorkspaceOperations } from '../../../src/worktree/default-host-workspace-operations'
+import { defaultHostWorkspaceCreationOperations } from '../../../src/worktree/default-host-workspace-creation-operations'
+import { useDefaultHostScreenShellOperations } from '../../../src/worktree/default-host-screen-shell-operations'
+import type { HostScreenShellOperations } from '../../../src/worktree/host-screen-shell-operations'
+import type { HostWorkspaceCreationOperations } from '../../../src/worktree/host-workspace-creation-operations'
 import type { WorkspaceStatusDefinition } from '../../../../src/shared/types'
 import { DEFAULT_MOBILE_WORKSPACE_STATUSES } from '../../../src/worktree/mobile-workspace-statuses'
+import type { ConnectionState } from '../../../src/transport/types'
 
 function isErrorVerdict(v: ConnectionVerdict): boolean {
   return v.kind === 'warning' || v.kind === 'unreachable' || v.kind === 'auth-failed'
@@ -112,44 +108,66 @@ type HostScreenProps = {
   hostId?: string
   action?: string
   onHideSidebar?: () => void
+  workspaceOperations?: HostWorkspaceOperations
+  workspaceCreationOperations?: HostWorkspaceCreationOperations
+  connectionState?: ConnectionState
+  connectionMetrics?: {
+    reconnectAttempts: number
+    lastConnectedAt: number | null
+  }
+  nativeHostBinding?: boolean
+  hostState?: HostScreenHostState
+  shellOperations?: HostScreenShellOperations
 }
 
 export function HostScreen({
   embedded = false,
   hostId: hostIdProp,
   action: actionProp,
-  onHideSidebar
+  onHideSidebar,
+  workspaceOperations: workspaceOperationsProp,
+  workspaceCreationOperations: workspaceCreationOperationsProp,
+  connectionState: connectionStateProp,
+  connectionMetrics,
+  nativeHostBinding = true,
+  hostState: hostStateProp,
+  shellOperations: shellOperationsProp
 }: HostScreenProps = {}) {
   const params = useLocalSearchParams<{ hostId: string; action?: string; notice?: string }>()
   const hostId = hostIdProp ?? params.hostId
   const action = actionProp ?? params.action
-  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null)
-  const noticeParam = params.notice?.trim()
-  const routeNotice = visibleHostRouteNotice(embedded, noticeParam, dismissedNotice)
-  const router = useRouter()
-  const pathname = usePathname()
   const insets = useSafeAreaInsets()
+  const hostState = hostStateProp ?? defaultHostScreenHostState
   // Why: cap and center the list on wide/tablet canvases; on phones isWideLayout is false so it stays edge-to-edge.
   const { isWideLayout, contentMaxWidth } = useResponsiveLayout()
-  const [initialCache] = useState(() =>
-    hostId ? (getCachedWorktrees(hostId) as Worktree[] | null) : null
-  )
+  const [initialCache] = useState(() => (hostId ? hostState.cachedWorkspaces(hostId) : null))
   // Shared client per host owned by RpcClientProvider. See docs/mobile-shared-client-per-host.md.
-  const { client, state: connState } = useHostClient(hostId)
-  const reconnectAttempts = useReconnectAttempt(hostId)
-  const lastConnectedAt = useLastConnectedAt(hostId)
-  const clientRef = useRef<RpcClient | null>(null)
+  const nativeHost = useHostClient(nativeHostBinding ? hostId : undefined)
+  const client = nativeHost.client
+  const connState = connectionStateProp ?? nativeHost.state
+  const workspaceOperations = useMemo(
+    () => workspaceOperationsProp ?? (client ? defaultHostWorkspaceOperations(client) : null),
+    [client, workspaceOperationsProp]
+  )
+  const workspaceCreationOperations = useMemo(
+    () =>
+      workspaceCreationOperationsProp ??
+      (client ? defaultHostWorkspaceCreationOperations(client) : null),
+    [client, workspaceCreationOperationsProp]
+  )
+  const nativeReconnectAttempts = useReconnectAttempt(hostId)
+  const nativeLastConnectedAt = useLastConnectedAt(hostId)
+  const reconnectAttempts = connectionMetrics?.reconnectAttempts ?? nativeReconnectAttempts
+  const lastConnectedAt = connectionMetrics?.lastConnectedAt ?? nativeLastConnectedAt
+  const defaultShellOperations = useDefaultHostScreenShellOperations({ hostId, embedded })
+  const shellOperations = shellOperationsProp ?? defaultShellOperations
+  const workspaceOperationsRef = useRef<HostWorkspaceOperations | null>(null)
   const fetchWorktreesInFlightRef = useRef(false)
-  // Why: useRef, not useMemo — React may discard memoized values, which would silently
-  // reset the snapshot token this object exists to own.
-  const worktreeCatalogRef = useRef(new WorktreeCatalogSnapshotClient())
-  const fetchRepoMetadataInFlightRef = useRef(new WeakSet<RpcClient>())
-  const fetchRepoMetadataPendingRef = useRef(new WeakSet<RpcClient>())
+  const fetchRepoMetadataInFlightRef = useRef(new WeakSet<HostWorkspaceOperations>())
+  const fetchRepoMetadataPendingRef = useRef(new WeakSet<HostWorkspaceOperations>())
   const repoMetadataFetchedAtRef = useRef(0)
   const newWorktreeModalRef = useRef<{ open: () => void }>(null)
   const newWorktreeModalVisibleRef = useRef(false)
-  const closeHostClient = useCloseHost()
-  const forceReconnectHost = useForceReconnect()
   const [worktrees, setWorktrees] = useState<Worktree[]>(initialCache ?? [])
   const [worktreesLoaded, setWorktreesLoaded] = useState(initialCache != null)
   // Why (STA-3123): error code of the last failed worktree.ps, so a broken catalog
@@ -162,6 +180,7 @@ export function HostScreen({
   const [repoColorsByName, setRepoColorsByName] = useState<Map<string, string>>(new Map())
   const [repoIconsByName, setRepoIconsByName] = useState<Map<string, RepoIcon>>(new Map())
   const [hostName, setHostName] = useState('')
+  const [hostPublicKey, setHostPublicKey] = useState('')
   const [error, setError] = useState('')
   const [lastKnownWorktrees, setLastKnownWorktrees] = useState<Worktree[]>(initialCache ?? [])
   const [search, setSearch] = useState('')
@@ -191,9 +210,6 @@ export function HostScreen({
   )
   const [sleptIds, setSleptIds] = useState<Set<string>>(new Set())
 
-  const leaveHost = useCallback(() => {
-    leaveHostRoute(router)
-  }, [router])
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   // Why: ref so the ui.get merge and ui.set writes read the latest values without re-creating callbacks on every state change.
@@ -241,7 +257,7 @@ export function HostScreen({
     (patch: Partial<MobileViewState>) => {
       const next: MobileViewState = { ...viewStateRef.current, ...patch }
       applyViewState(next)
-      if (!client) {
+      if (!workspaceOperations) {
         return
       }
       // alwaysShowDefaultBranchWorkspace is deliberately absent: mobile reads it
@@ -255,11 +271,11 @@ export function HostScreen({
         filterRepoIds: next.filterRepoIds,
         collapsedGroups: next.collapsedGroups
       }
-      void client.sendRequest('ui.set', payload).catch(() => {
+      void workspaceOperations.setViewSettings(payload).catch(() => {
         // Best-effort: view settings are a convenience preference.
       })
     },
-    [client, applyViewState]
+    [workspaceOperations, applyViewState]
   )
 
   const openNewWorktreeModal = useCallback(() => {
@@ -288,7 +304,7 @@ export function HostScreen({
     }
     let stale = false
     void (async () => {
-      const pins = await loadPinnedIds(hostId)
+      const pins = await hostState.loadPinnedWorkspaceIds(hostId)
       if (stale) {
         return
       }
@@ -297,44 +313,40 @@ export function HostScreen({
     return () => {
       stale = true
     }
-  }, [hostId])
+  }, [hostId, hostState])
 
   // Merge the desktop's shared view settings (PersistedUIState) onto local state so desktop changes appear here.
   const syncViewSettingsFromDesktop = useCallback(async () => {
-    if (!client || connState !== 'connected') {
+    if (!workspaceOperations || connState !== 'connected') {
       return
     }
-    const requestClient = client
+    const requestOperations = workspaceOperations
     const requestHostId = hostId
     try {
-      const response = await requestClient.sendRequest('ui.get')
-      if (clientRef.current !== requestClient || hostId !== requestHostId || !response.ok) {
-        return
-      }
-      const ui = ((response as RpcSuccess).result as { ui?: WorkspaceViewSettings }).ui
-      if (!ui) {
+      const ui = await requestOperations.getViewSettings()
+      if (workspaceOperationsRef.current !== requestOperations || hostId !== requestHostId || !ui) {
         return
       }
       applyViewState(applyDesktopViewSettings(viewStateRef.current, ui))
     } catch {
       // Transient transport failure; retry on the next focus/connect.
     }
-  }, [client, connState, hostId, applyViewState])
+  }, [workspaceOperations, connState, hostId, applyViewState])
 
-  // Why: mirror client into a ref so imperative call sites read it without re-subscribing.
+  // Why: imperative refreshes must reject responses from an adapter replaced during reconnect.
   useEffect(() => {
-    clientRef.current = client
-  }, [client])
+    workspaceOperationsRef.current = workspaceOperations
+  }, [workspaceOperations])
 
   useEffect(() => {
     setHostName('')
+    setHostPublicKey('')
     setError('')
     setRepoColorsByName(new Map())
     setRepoIconsByName(new Map())
     repoMetadataFetchedAtRef.current = 0
     // Why: useState initializer runs only on first mount, so re-seed the cache when Expo Router reuses this screen for a new hostId.
-    const freshCache = hostId ? (getCachedWorktrees(hostId) as Worktree[] | null) : null
-    setCatalogError(null)
+    const freshCache = hostId ? hostState.cachedWorkspaces(hostId) : null
     if (freshCache) {
       setWorktrees(freshCache)
       setLastKnownWorktrees(freshCache)
@@ -348,31 +360,31 @@ export function HostScreen({
       return
     }
     let stale = false
-    void loadHosts().then((hosts) => {
+    void hostState.loadIdentity(hostId).then((host) => {
       if (stale) {
         return
       }
-      const host = hosts.find((h) => h.id === hostId)
       if (!host) {
         setError('Host not found')
         return
       }
       setHostName(host.name)
-      void updateLastConnected(host.id)
+      setHostPublicKey(host.publicKeyB64)
+      void hostState.recordConnected(hostId)
     })
     return () => {
       stale = true
     }
-  }, [hostId])
+  }, [hostId, hostState])
 
   const fetchRepoMetadata = useCallback(
     async (options: { force?: boolean; queueIfInFlight?: boolean } = {}) => {
-      if (!client || connState !== 'connected' || !hostId) {
+      if (!workspaceOperations || connState !== 'connected' || !hostId) {
         return
       }
-      if (fetchRepoMetadataInFlightRef.current.has(client)) {
+      if (fetchRepoMetadataInFlightRef.current.has(workspaceOperations)) {
         if (options.queueIfInFlight) {
-          fetchRepoMetadataPendingRef.current.add(client)
+          fetchRepoMetadataPendingRef.current.add(workspaceOperations)
         }
         return
       }
@@ -380,22 +392,21 @@ export function HostScreen({
       if (!options.force && now - repoMetadataFetchedAtRef.current < REPO_METADATA_REFRESH_MS) {
         return
       }
-      fetchRepoMetadataInFlightRef.current.add(client)
-      const requestClient = client,
+      fetchRepoMetadataInFlightRef.current.add(workspaceOperations)
+      const requestOperations = workspaceOperations,
         requestHostId = hostId
       try {
         do {
-          fetchRepoMetadataPendingRef.current.delete(requestClient)
-          const repoResponse = await requestClient.sendRequest('repo.list')
-          if (clientRef.current !== requestClient || hostId !== requestHostId || !repoResponse.ok) {
+          fetchRepoMetadataPendingRef.current.delete(requestOperations)
+          const repos = await requestOperations.listRepos()
+          if (workspaceOperationsRef.current !== requestOperations || hostId !== requestHostId) {
             return
           }
-          const repoResult = (repoResponse as RpcSuccess).result as { repos: RepoSummary[] }
           repoMetadataFetchedAtRef.current = Date.now()
-          setCachedRepos(requestHostId, repoResult.repos)
+          hostState.cacheRepositories(requestHostId, repos)
           setRepoColorsByName(
             new Map(
-              repoResult.repos.map((repo) => [
+              repos.map((repo) => [
                 repo.displayName,
                 repo.badgeColor || repoColor(repo.displayName)
               ])
@@ -403,25 +414,25 @@ export function HostScreen({
           )
           setRepoIconsByName(
             new Map(
-              repoResult.repos.flatMap((repo) =>
+              repos.flatMap((repo) =>
                 repo.repoIcon ? [[repo.displayName, repo.repoIcon] as const] : []
               )
             )
           )
-          setRepoIdsByName(new Map(repoResult.repos.map((repo) => [repo.displayName, repo.id])))
-        } while (fetchRepoMetadataPendingRef.current.has(requestClient))
+          setRepoIdsByName(new Map(repos.map((repo) => [repo.displayName, repo.id])))
+        } while (fetchRepoMetadataPendingRef.current.has(requestOperations))
       } catch {
         // Repo metadata is decorative; the next refresh can retry.
       } finally {
-        fetchRepoMetadataInFlightRef.current.delete(requestClient)
+        fetchRepoMetadataInFlightRef.current.delete(requestOperations)
       }
     },
-    [client, connState, hostId]
+    [workspaceOperations, connState, hostId, hostState]
   )
 
   const fetchWorktrees = useCallback(
     async (options: { allowDuringModal?: boolean } = {}) => {
-      if (!client || connState !== 'connected') {
+      if (!workspaceOperations || connState !== 'connected') {
         return
       }
       if (!options.allowDuringModal && newWorktreeModalVisibleRef.current) {
@@ -432,77 +443,65 @@ export function HostScreen({
         return
       }
       fetchWorktreesInFlightRef.current = true
-      const requestClient = client
+      const requestOperations = workspaceOperations
       const requestHostId = hostId
 
       try {
-        const fetched = await worktreeCatalogRef.current.fetch(requestClient, requestHostId)
-        if (clientRef.current !== requestClient || hostId !== requestHostId) {
+        // Why: request the complete host list; each transport adapter owns its safe batching.
+        const nextWorktrees = await requestOperations.listWorkspaces(10000)
+        if (workspaceOperationsRef.current !== requestOperations || hostId !== requestHostId) {
           return
         }
         if (!options.allowDuringModal && newWorktreeModalVisibleRef.current) {
           return
         }
-        // Why (STA-3123): a failed catalog request must not pass for "0 worktrees";
-        // surface it so a broken remote host is diagnosable instead of looking empty.
-        if (fetched.kind === 'request_failed') {
-          setCatalogError(fetched.code)
-          return
+        // Why: reuse the existing array on identical snapshots to keep SectionList/sort rebuilds off the tap path.
+        setWorktrees((current) =>
+          areWorktreeListsEqual(current, nextWorktrees) ? current : nextWorktrees
+        )
+        setLastKnownWorktrees((current) =>
+          areWorktreeListsEqual(current, nextWorktrees) ? current : nextWorktrees
+        )
+        setWorktreesLoaded(true)
+        // Why (#8498): overwrite the home-written cache with the confirmed snapshot so a reconnect/remount can't serve a stale list.
+        if (hostId) {
+          hostState.cacheWorkspaces(hostId, nextWorktrees)
         }
-        if (fetched.pending.admission.kind === 'invalid') {
-          setCatalogError('invalid_response')
-        }
-        // Why: unchanged responses still yield the confirmed rows, so every poll reasserts
-        // host truth over optimistic local edits regardless of payload size.
-        const confirmed = worktreeCatalogRef.current.admit(fetched.pending)
-        if (confirmed) {
-          setCatalogError(null)
-          // Why: reuse the existing array on identical snapshots to keep SectionList/sort rebuilds off the tap path.
-          setWorktrees((current) =>
-            areWorktreeListsEqual(current, confirmed) ? current : confirmed
-          )
-          setLastKnownWorktrees((current) =>
-            areWorktreeListsEqual(current, confirmed) ? current : confirmed
-          )
-          setWorktreesLoaded(true)
-          // Why (#8498): overwrite the home-written cache with the confirmed snapshot so a reconnect/remount can't serve a stale list.
-          if (hostId) {
-            setCachedWorktrees(hostId, confirmed, { proven: true })
+        // Drop the optimistic active override once the host reports it active, so later desktop changes win.
+        setOptimisticActiveWorktreeId((pending) =>
+          pending && nextWorktrees.some((w) => w.worktreeId === pending && w.isActive)
+            ? null
+            : pending
+        )
+
+        // Clear optimistic sleep overrides once the server confirms inactive (liveTerminalCount === 0).
+        setSleptIds((prev) => {
+          if (prev.size === 0) {
+            return prev
           }
-          // Drop the optimistic active override once the host reports it active, so later desktop changes win.
-          setOptimisticActiveWorktreeId((pending) =>
-            pending && confirmed.some((w) => w.worktreeId === pending && w.isActive)
-              ? null
-              : pending
-          )
+          const still = new Set<string>()
+          for (const id of prev) {
+            const wt = nextWorktrees.find((w) => w.worktreeId === id)
+            if (wt && wt.liveTerminalCount > 0) {
+              still.add(id)
+            }
+          }
+          return still.size === prev.size ? prev : still
+        })
 
-          // Clear optimistic sleep overrides once the server confirms inactive (liveTerminalCount === 0).
-          setSleptIds((prev) => {
-            if (prev.size === 0) {
-              return prev
-            }
-            const still = new Set<string>()
-            for (const id of prev) {
-              const wt = confirmed.find((w) => w.worktreeId === id)
-              if (wt && wt.liveTerminalCount > 0) {
-                still.add(id)
-              }
-            }
-            return still.size === prev.size ? prev : still
-          })
-
-          // Sync pin state from server so desktop-initiated pins reflect without relying on stale AsyncStorage.
-          const serverPinned = new Set(confirmed.filter((w) => w.isPinned).map((w) => w.worktreeId))
-          setPinnedIds((prev) => {
-            if (serverPinned.size === prev.size && [...serverPinned].every((id) => prev.has(id))) {
-              return prev
-            }
-            if (hostId) {
-              void savePinnedIds(hostId, serverPinned)
-            }
-            return serverPinned
-          })
-        }
+        // Sync pin state from server so desktop-initiated pins reflect without relying on stale AsyncStorage.
+        const serverPinned = new Set(
+          nextWorktrees.filter((w) => w.isPinned).map((w) => w.worktreeId)
+        )
+        setPinnedIds((prev) => {
+          if (serverPinned.size === prev.size && [...serverPinned].every((id) => prev.has(id))) {
+            return prev
+          }
+          if (hostId) {
+            void hostState.savePinnedWorkspaceIds(hostId, serverPinned)
+          }
+          return serverPinned
+        })
       } catch {
         // Will retry on reconnect
         if (clientRef.current === requestClient && hostId === requestHostId) {
@@ -512,24 +511,33 @@ export function HostScreen({
         fetchWorktreesInFlightRef.current = false
       }
     },
-    [client, connState, hostId]
+    [workspaceOperations, connState, hostId, hostState]
   )
 
   useFocusEffect(
     useCallback(() => {
       // Why: focus nudges reconnect and probes a possibly half-open socket; empty deps fire per focus, not per state flip (which defeats backoff).
-      // 'focus' keeps a healthy relay green — probe, never suspend (S2 grey blink).
-      clientRef.current?.notifyForeground('focus')
+      workspaceOperationsRef.current?.notifyForeground()
     }, [])
   )
 
   const startWorktreeRefresh = useCallback(() => {
-    if (!client || connState !== 'connected') {
+    if (!workspaceOperations || connState !== 'connected') {
       return
     }
     void syncViewSettingsFromDesktop()
-    return startHostWorktreeRefresh({ client, fetchWorktrees, fetchRepoMetadata })
-  }, [client, connState, fetchWorktrees, fetchRepoMetadata, syncViewSettingsFromDesktop])
+    return startHostWorktreeRefresh({
+      operations: workspaceOperations,
+      fetchWorktrees,
+      fetchRepoMetadata
+    })
+  }, [
+    workspaceOperations,
+    connState,
+    fetchWorktrees,
+    fetchRepoMetadata,
+    syncViewSettingsFromDesktop
+  ])
 
   useFocusEffect(
     useCallback(() => {
@@ -549,7 +557,7 @@ export function HostScreen({
 
   // Why (#8498): steady-state polls miss the transition INTO 'connected' after background/sleep, when the cache is stalest.
   const { refreshing, onRefresh } = useWorktreeResync({
-    client,
+    available: workspaceOperations !== null,
     connState,
     fetchWorktrees,
     fetchRepoMetadata
@@ -565,12 +573,12 @@ export function HostScreen({
           next.delete(worktreeId)
         }
         if (hostId) {
-          void savePinnedIds(hostId, next)
+          void hostState.savePinnedWorkspaceIds(hostId, next)
         }
         return next
       })
     },
-    [hostId]
+    [hostId, hostState]
   )
 
   const togglePin = useCallback(
@@ -590,21 +598,16 @@ export function HostScreen({
 
       updateLocalPins(worktreeId, newPinned)
 
-      if (client) {
-        client
-          .sendRequest('worktree.set', {
-            worktree: `id:${worktreeId}`,
-            isPinned: newPinned
-          })
-          .catch(() => {})
+      if (workspaceOperations) {
+        void workspaceOperations.setPinned(worktreeId, newPinned).catch(() => {})
       }
     },
-    [client, worktrees, pinnedIds, updateLocalPins]
+    [workspaceOperations, worktrees, pinnedIds, updateLocalPins]
   )
 
   const handleDeleteWorktree = useCallback(
     async (item: Worktree) => {
-      if (!client) {
+      if (!workspaceOperations) {
         return
       }
 
@@ -614,11 +617,8 @@ export function HostScreen({
       setLastKnownWorktrees(removeFromList)
 
       try {
-        const response = await client.sendRequest('worktree.rm', {
-          worktree: `id:${item.worktreeId}`,
-          force: true
-        })
-        if (!response.ok) {
+        const removed = await workspaceOperations.removeWorkspace(item.worktreeId)
+        if (!removed) {
           setWorktrees((prev) => [...prev, item])
           setLastKnownWorktrees((prev) => [...prev, item])
         }
@@ -628,7 +628,7 @@ export function HostScreen({
         setLastKnownWorktrees((prev) => [...prev, item])
       }
     },
-    [client, fetchWorktrees]
+    [workspaceOperations, fetchWorktrees]
   )
 
   const handleRemoveHost = useCallback(async () => {
@@ -636,49 +636,27 @@ export function HostScreen({
       return
     }
     try {
-      await removeHostAndCloseClient(hostId, closeHostClient)
-      leaveHost()
+      await shellOperations.removeHost(hostPublicKey)
+      shellOperations.leaveHost()
     } catch {
       // Why: removal can fail while still paired; re-open confirm (ConfirmModal closes on confirm).
       setConfirmRemoveHost(true)
       Alert.alert('Could not remove host', 'Please try again.')
     }
-  }, [hostId, leaveHost, closeHostClient])
+  }, [hostId, hostPublicKey, shellOperations])
 
-  const navigateFromHostList = useCallback(
-    (target: string) => {
-      if (!embedded) {
-        router.push(target)
-        return
-      }
-      if (pathname === (target.split('?')[0] ?? target)) {
-        return
-      }
-      if (pathname === `/h/${hostId}`) {
-        router.push(target)
-        return
-      }
-      router.replace(target)
-    },
-    [embedded, hostId, pathname, router]
-  )
+  const navigateFromHostList = shellOperations.navigateFromHostList
 
   const openWorktreeSession = useCallback(
     (item: Worktree) => {
       setOptimisticActiveWorktreeId(item.worktreeId)
-      if (client && connState === 'connected') {
-        void client
-          .sendRequest('worktree.activate', {
-            worktree: `id:${item.worktreeId}`,
-            notifyClients: false,
-            navigation: 'caller'
-          })
-          .catch(() => null)
+      if (workspaceOperations && connState === 'connected') {
+        void workspaceOperations.activateWorkspace(item.worktreeId).catch(() => null)
       }
       const target = `/h/${hostId}/session/${encodeURIComponent(item.worktreeId)}?name=${encodeURIComponent(item.displayName || item.repo)}`
       navigateFromHostList(target)
     },
-    [client, connState, hostId, navigateFromHostList]
+    [workspaceOperations, connState, hostId, navigateFromHostList]
   )
 
   const openFloatingWorkspace = useCallback(() => {
@@ -806,7 +784,7 @@ export function HostScreen({
         <View style={styles.statusBar}>
           <Pressable
             style={styles.backButton}
-            onPress={leaveHost}
+            onPress={shellOperations.leaveHost}
             accessibilityRole="button"
             accessibilityLabel="Back to hosts"
             hitSlop={8}
@@ -839,7 +817,7 @@ export function HostScreen({
                     return (
                       <Pressable
                         style={styles.reconnectButton}
-                        onPress={() => void forceReconnectHost(hostId!)}
+                        onPress={() => void shellOperations.reconnect()}
                         hitSlop={8}
                       >
                         <Text style={styles.reconnectButtonText}>Reconnect</Text>
@@ -1100,8 +1078,8 @@ export function HostScreen({
       {connState === 'auth-failed' && (
         <AuthFailedBanner
           canRetry={!!hostId}
-          onRetry={() => hostId && void forceReconnectHost(hostId)}
-          onRepair={() => router.push('/pair-scan')}
+          onRetry={() => hostId && void shellOperations.reconnect()}
+          onRepair={shellOperations.repairPairing}
           onRemove={() => setConfirmRemoveHost(true)}
         />
       )}
@@ -1351,12 +1329,10 @@ export function HostScreen({
                       label: 'Sleep',
                       icon: Moon,
                       onPress: () => {
-                        if (client) {
+                        if (workspaceOperations) {
                           setSleptIds((prev) => new Set(prev).add(actionTarget.worktreeId))
-                          void client
-                            .sendRequest('worktree.sleep', {
-                              worktree: `id:${actionTarget.worktreeId}`
-                            })
+                          void workspaceOperations
+                            .sleepWorkspace(actionTarget.worktreeId)
                             .catch(() => null)
                         }
                         setActionTarget(null)
@@ -1395,7 +1371,7 @@ export function HostScreen({
       <NewWorktreeModalController
         ref={newWorktreeModalRef}
         routeVisible={showNewWorktree}
-        client={client}
+        operations={workspaceCreationOperations}
         hostId={hostId}
         existingWorktreePaths={existingWorktreePaths}
         existingWorktrees={worktrees}

@@ -1,8 +1,14 @@
+import { createHash } from 'node:crypto'
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH } from '../../src/shared/mobile-web/markdown-editor-csp'
+import {
+  MOBILE_WEB_MANIFEST_SCHEMA_VERSION,
+  serializeMobileWebManifestForBuildId
+} from '../../src/shared/mobile-web/manifest-contract'
 
 const require = createRequire(import.meta.url)
 const electronBuilderConfig = require('../electron-builder.config.cjs')
@@ -121,6 +127,10 @@ describe('electron-builder config', () => {
       expect(electronBuilderConfig[platform].extraResources).toEqual(
         expect.arrayContaining([bundledPluginResources])
       )
+      expect(electronBuilderConfig[platform].extraResources).toContainEqual({
+        from: 'out/mobile-web-rnw',
+        to: 'mobile-web'
+      })
     }
     expect(electronBuilderConfig.mac.extraResources).toEqual(
       expect.arrayContaining([
@@ -640,19 +650,7 @@ describe('electron-builder config', () => {
           'console.error("Usage: daemon-entry <socket>"); process.exit(1)\n',
           'utf8'
         )
-        const unpackedCliDir = join(resourcesDir, 'app.asar.unpacked', 'out', 'cli')
-        await mkdir(join(unpackedCliDir, 'handlers'), { recursive: true })
-        await writeFile(join(unpackedCliDir, 'handlers', 'skills.js'), '', 'utf8')
-        await writeFile(
-          join(unpackedCliDir, 'index.js'),
-          [
-            'const args = process.argv.slice(2)',
-            "if (args[1] === 'list') console.log(JSON.stringify({ topics: [{ name: 'orca-cli' }, { name: 'computer-use' }] }))",
-            "else if (args[1] === 'get') console.log(`---\\nname: ${args[2]}\\n---`)",
-            'else console.log(JSON.stringify({ executed: false }))'
-          ].join('\n'),
-          'utf8'
-        )
+        await createMobileWebResourceFixture(resourcesDir)
         await writeFile(launcherPath, '#!/usr/bin/env bash\n', { encoding: 'utf8', mode: 0o644 })
 
         await electronBuilderConfig.afterPack({
@@ -703,3 +701,63 @@ describe('electron-builder config', () => {
     })
   })
 })
+
+async function createMobileWebResourceFixture(resourcesDir) {
+  const root = join(resourcesDir, 'mobile-web')
+  const script = Buffer.from('globalThis.__orcaPackagedMobileWeb=true', 'utf8')
+  const scriptHash = sha256(script)
+  const scriptPath = `assets/${scriptHash}.js`
+  const csp = [
+    "default-src 'none'",
+    `script-src 'self' ${MOBILE_RICH_MARKDOWN_EDITOR_SCRIPT_CSP_HASH}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self'",
+    "connect-src 'none'",
+    "media-src 'none'",
+    "object-src 'none'",
+    'frame-src data:',
+    'child-src data:',
+    "worker-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'"
+  ].join(';')
+  const document = Buffer.from(
+    `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}"><script src="./${scriptPath}"></script>`,
+    'utf8'
+  )
+  const assets = [
+    {
+      path: scriptPath,
+      sha256: scriptHash,
+      byteLength: script.byteLength,
+      contentType: 'text/javascript; charset=utf-8',
+      role: 'script'
+    },
+    {
+      path: 'index.html',
+      sha256: sha256(document),
+      byteLength: document.byteLength,
+      contentType: 'text/html; charset=utf-8',
+      role: 'document'
+    }
+  ]
+  const seed = {
+    schemaVersion: MOBILE_WEB_MANIFEST_SCHEMA_VERSION,
+    buildId: '0'.repeat(64),
+    bridge: { minimum: 2, testedThrough: 2 },
+    entrypoint: 'index.html',
+    totalBytes: assets.reduce((total, asset) => total + asset.byteLength, 0),
+    assets
+  }
+  const manifest = { ...seed, buildId: sha256(serializeMobileWebManifestForBuildId(seed)) }
+  await mkdir(join(root, 'assets'), { recursive: true })
+  await writeFile(join(root, scriptPath), script)
+  await writeFile(join(root, 'index.html'), document)
+  await writeFile(join(root, 'manifest.json'), JSON.stringify(manifest))
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex')
+}

@@ -1,0 +1,80 @@
+import { describe, expect, it, vi } from 'vitest'
+import {
+  MobileWebNavigationIntentBuffer,
+  shouldHandoffNotificationToMobileWeb
+} from './mobile-web-navigation-intent-buffer'
+
+describe('mobile web navigation intent buffer', () => {
+  it('retains only the latest bounded native target across listener timing', () => {
+    const buffer = new MobileWebNavigationIntentBuffer()
+    const first = buffer.publish({ kind: 'host', hostId: 'host-one' })
+    const listener = vi.fn()
+
+    const unsubscribe = buffer.subscribe(listener)
+    expect(listener).toHaveBeenLastCalledWith({
+      sequence: first.sequence,
+      source: 'notification',
+      hostId: 'host-one',
+      target: { kind: 'workspaceList' }
+    })
+    expect(buffer.hasListener()).toBe(true)
+
+    const second = buffer.publish({
+      kind: 'session',
+      hostId: 'host-two',
+      hostWorkspaceId: 'repo::/private/worktree'
+    })
+    expect(second.sequence).toBeGreaterThan(first.sequence)
+    expect(listener).toHaveBeenLastCalledWith({
+      sequence: second.sequence,
+      source: 'notification',
+      hostId: 'host-two',
+      target: { kind: 'session', hostWorkspaceId: 'repo::/private/worktree' }
+    })
+    expect(JSON.stringify(second)).not.toContain('http')
+
+    expect(buffer.consume(first.sequence)).toBe(false)
+    expect(buffer.isCurrent(second.sequence)).toBe(true)
+    expect(buffer.consume(second.sequence)).toBe(true)
+    expect(buffer.isCurrent(second.sequence)).toBe(false)
+
+    unsubscribe()
+    expect(buffer.hasListener()).toBe(false)
+  })
+
+  it('supersedes an unconsumed intent before a delayed resolver can commit it', () => {
+    const buffer = new MobileWebNavigationIntentBuffer()
+    const first = buffer.publish({
+      kind: 'session',
+      hostId: 'host',
+      hostWorkspaceId: 'workspace-one'
+    })
+    const second = buffer.publish({
+      kind: 'session',
+      hostId: 'host',
+      hostWorkspaceId: 'workspace-two'
+    })
+
+    expect(buffer.isCurrent(first.sequence)).toBe(false)
+    expect(buffer.isCurrent(second.sequence)).toBe(true)
+  })
+
+  it('labels cold restoration without changing the shared sequence domain', () => {
+    const buffer = new MobileWebNavigationIntentBuffer()
+    const restored = buffer.publish(
+      { kind: 'session', hostId: 'host', hostWorkspaceId: 'workspace' },
+      'coldResume'
+    )
+    const notification = buffer.publish({ kind: 'host', hostId: 'host' })
+
+    expect(restored.source).toBe('coldResume')
+    expect(notification.source).toBe('notification')
+    expect(notification.sequence).toBeGreaterThan(restored.sequence)
+  })
+
+  it('uses hosted handoff only while the Hybrid route has a live consumer', () => {
+    expect(shouldHandoffNotificationToMobileWeb('/hybrid', true)).toBe(true)
+    expect(shouldHandoffNotificationToMobileWeb('/hybrid', false)).toBe(false)
+    expect(shouldHandoffNotificationToMobileWeb('/h/paired-host', true)).toBe(false)
+  })
+})

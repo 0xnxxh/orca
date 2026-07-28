@@ -1,0 +1,278 @@
+import { Buffer } from 'buffer'
+import { sha256 } from '@noble/hashes/sha256'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  MOBILE_WEB_MANIFEST_SCHEMA_VERSION,
+  MOBILE_WEB_PACKAGE_CHUNK_BYTES,
+  serializeMobileWebManifestForBuildId,
+  type MobileWebAsset,
+  type MobileWebManifest
+} from '../../../src/shared/mobile-web/manifest-contract'
+import type { RpcResponse } from '../transport/types'
+import {
+  MobileWebPackageDownloadError,
+  downloadMobileWebPackage,
+  mobileWebPackageDownloadFailureCode,
+  type MobileWebPackageRequest,
+  type MobileWebPackageStager
+} from './mobile-web-package-downloader'
+
+type Fixture = {
+  manifest: MobileWebManifest
+  bytesByPath: Map<string, Uint8Array>
+  request: MobileWebPackageRequest
+}
+
+describe('mobile web package downloader', () => {
+  it('reports only stable package failure codes to diagnostics', () => {
+    expect(
+      mobileWebPackageDownloadFailureCode(new MobileWebPackageDownloadError('invalid_manifest'))
+    ).toBe('invalid_manifest')
+    expect(mobileWebPackageDownloadFailureCode(new Error('/private/host/path'))).toBe(
+      'native_session_error'
+    )
+  })
+
+  it('validates and stages every package asset in bounded chunks', async () => {
+    const fixture = createFixture()
+    const stager = createStager()
+
+    const result = await downloadMobileWebPackage(fixture.request, stager, {
+      shellBridgeVersion: 1
+    })
+
+    expect(result.manifest).toEqual(fixture.manifest)
+    expect(result.commit).toEqual({ generation: fixture.manifest.buildId })
+    expect(stager.begin).toHaveBeenCalledOnce()
+    expect(stager.finishAsset).toHaveBeenCalledTimes(fixture.manifest.assets.length)
+    expect(stager.commit).toHaveBeenCalledOnce()
+    expect(stager.abort).not.toHaveBeenCalled()
+    const written = Buffer.concat(
+      stager.writeAssetChunk.mock.calls.map((call) => Buffer.from(call[2]))
+    )
+    expect(written.byteLength).toBe(fixture.manifest.totalBytes)
+  })
+
+  it('rejects a non-canonical manifest build identity before staging', async () => {
+    const fixture = createFixture({ invalidBuildIdentity: true })
+    const stager = createStager()
+
+    await expect(
+      downloadMobileWebPackage(fixture.request, stager, { shellBridgeVersion: 1 })
+    ).rejects.toMatchObject({ code: 'invalid_manifest' })
+    expect(stager.begin).not.toHaveBeenCalled()
+  })
+
+  it('rejects a package requiring a newer native bridge before staging', async () => {
+    const fixture = createFixture({ bridgeMinimum: 2 })
+    const stager = createStager()
+
+    await expect(
+      downloadMobileWebPackage(fixture.request, stager, { shellBridgeVersion: 1 })
+    ).rejects.toMatchObject({ code: 'incompatible_bridge' })
+    expect(stager.begin).not.toHaveBeenCalled()
+  })
+
+  it('rejects a package not tested through the current native bridge before staging', async () => {
+    const fixture = createFixture({ bridgeTestedThrough: 1 })
+    const stager = createStager()
+
+    await expect(
+      downloadMobileWebPackage(fixture.request, stager, { shellBridgeVersion: 2 })
+    ).rejects.toMatchObject({ code: 'incompatible_bridge' })
+    expect(stager.begin).not.toHaveBeenCalled()
+  })
+
+  it('aborts staging when a chunk fails integrity validation', async () => {
+    const fixture = createFixture({ corruptFirstChunk: true })
+    const stager = createStager()
+
+    await expect(
+      downloadMobileWebPackage(fixture.request, stager, { shellBridgeVersion: 1 })
+    ).rejects.toMatchObject({ code: 'invalid_chunk' })
+    expect(stager.abort).toHaveBeenCalledOnce()
+    expect(stager.commit).not.toHaveBeenCalled()
+  })
+
+  it('rejects an asset whose valid chunks do not match its manifest hash', async () => {
+    const fixture = createFixture({ alterFirstChunkWithMatchingHash: true })
+    const stager = createStager()
+
+    await expect(
+      downloadMobileWebPackage(fixture.request, stager, { shellBridgeVersion: 1 })
+    ).rejects.toMatchObject({ code: 'asset_integrity_failed' })
+    expect(stager.abort).toHaveBeenCalledOnce()
+    expect(stager.finishAsset).not.toHaveBeenCalled()
+  })
+
+  it.each(['writeAssetChunk', 'finishAsset', 'commit'] as const)(
+    'aborts partial staging when %s fails',
+    async (method) => {
+      const fixture = createFixture()
+      const stager = createStager()
+      stager[method].mockRejectedValueOnce(new Error('native storage detail'))
+
+      await expect(
+        downloadMobileWebPackage(fixture.request, stager, { shellBridgeVersion: 1 })
+      ).rejects.toMatchObject({ code: 'staging_failed' })
+      expect(stager.abort).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('does not let abort cleanup failure mask the classified staging failure', async () => {
+    const fixture = createFixture({ corruptFirstChunk: true })
+    const stager = createStager()
+    stager.abort.mockRejectedValueOnce(new Error('cleanup detail'))
+
+    await expect(
+      downloadMobileWebPackage(fixture.request, stager, { shellBridgeVersion: 1 })
+    ).rejects.toMatchObject({ code: 'invalid_chunk' })
+  })
+
+  it('aborts staging when the selected host session is cancelled', async () => {
+    const controller = new AbortController()
+    const fixture = createFixture({ afterFirstChunk: () => controller.abort() })
+    const stager = createStager()
+
+    await expect(
+      downloadMobileWebPackage(fixture.request, stager, {
+        shellBridgeVersion: 1,
+        signal: controller.signal
+      })
+    ).rejects.toMatchObject({ code: 'cancelled' })
+    expect(stager.abort).toHaveBeenCalledOnce()
+    expect(stager.commit).not.toHaveBeenCalled()
+  })
+
+  it('never forwards an unexpected host error string', async () => {
+    const stager = createStager()
+    const request = vi.fn(async (): Promise<RpcResponse> => failure('/private/cache denied'))
+
+    await expect(
+      downloadMobileWebPackage(request, stager, { shellBridgeVersion: 1 })
+    ).rejects.toEqual(new MobileWebPackageDownloadError('host_rejected_request'))
+  })
+
+  it('maps host protocol failures to stable diagnostic categories', async () => {
+    const stager = createStager()
+    const request = vi.fn(
+      async (): Promise<RpcResponse> =>
+        failure('Unknown method with host details', 'method_not_found')
+    )
+
+    await expect(
+      downloadMobileWebPackage(request, stager, { shellBridgeVersion: 1 })
+    ).rejects.toEqual(new MobileWebPackageDownloadError('host_method_unavailable'))
+  })
+})
+
+function createFixture(
+  options: {
+    bridgeMinimum?: number
+    bridgeTestedThrough?: number
+    corruptFirstChunk?: boolean
+    alterFirstChunkWithMatchingHash?: boolean
+    invalidBuildIdentity?: boolean
+    afterFirstChunk?: () => void
+  } = {}
+): Fixture {
+  const document = Buffer.from('<!doctype html><title>Orca</title>')
+  const script = Buffer.alloc(MOBILE_WEB_PACKAGE_CHUNK_BYTES + 7, 0x61)
+  const assets: MobileWebAsset[] = [
+    asset('index.html', document, 'text/html; charset=utf-8', 'document'),
+    asset(`assets/${sha256Hex(script)}.js`, script, 'text/javascript; charset=utf-8', 'script')
+  ].sort((left, right) => left.path.localeCompare(right.path))
+  const manifestSeed: MobileWebManifest = {
+    schemaVersion: MOBILE_WEB_MANIFEST_SCHEMA_VERSION,
+    buildId: '0'.repeat(64),
+    bridge: {
+      minimum: options.bridgeMinimum ?? 1,
+      testedThrough: options.bridgeTestedThrough ?? 2
+    },
+    entrypoint: 'index.html',
+    totalBytes: assets.reduce((total, candidate) => total + candidate.byteLength, 0),
+    assets
+  }
+  const manifest = {
+    ...manifestSeed,
+    buildId: sha256Hex(Buffer.from(serializeMobileWebManifestForBuildId(manifestSeed)))
+  }
+  const bytesByPath = new Map([
+    ['index.html', document],
+    [assets.find((candidate) => candidate.role === 'script')!.path, script]
+  ])
+  let chunkCount = 0
+  const request = vi.fn(async (method: string, params?: unknown): Promise<RpcResponse> => {
+    if (method === 'mobileWeb.package.manifest') {
+      return success({
+        manifest: options.invalidBuildIdentity
+          ? { ...manifest, buildId: 'f'.repeat(64) }
+          : manifest,
+        chunkBytes: MOBILE_WEB_PACKAGE_CHUNK_BYTES
+      })
+    }
+    const assetParams = params as { buildId: string; path: string; offset: number }
+    const bytes = bytesByPath.get(assetParams.path)!
+    const chunk = bytes.subarray(
+      assetParams.offset,
+      Math.min(assetParams.offset + MOBILE_WEB_PACKAGE_CHUNK_BYTES, bytes.byteLength)
+    )
+    chunkCount += 1
+    const data =
+      options.corruptFirstChunk && chunkCount === 1
+        ? Buffer.from('corrupt')
+        : options.alterFirstChunkWithMatchingHash && chunkCount === 1
+          ? Buffer.from(chunk).fill(0x62, 0, 1)
+          : chunk
+    const response = success({
+      buildId: assetParams.buildId,
+      path: assetParams.path,
+      offset: assetParams.offset,
+      byteLength: chunk.byteLength,
+      sha256: sha256Hex(options.alterFirstChunkWithMatchingHash && chunkCount === 1 ? data : chunk),
+      dataBase64: Buffer.from(data).toString('base64'),
+      eof: assetParams.offset + chunk.byteLength === bytes.byteLength
+    })
+    if (chunkCount === 1) {
+      options.afterFirstChunk?.()
+    }
+    return response
+  })
+  return { manifest, bytesByPath, request }
+}
+
+function createStager() {
+  return {
+    begin: vi.fn(async () => {}),
+    writeAssetChunk: vi.fn(async () => {}),
+    finishAsset: vi.fn(async () => {}),
+    commit: vi.fn(async (manifest: MobileWebManifest) => ({ generation: manifest.buildId })),
+    abort: vi.fn(async () => {})
+  } satisfies MobileWebPackageStager<{ generation: string }>
+}
+
+function asset(
+  path: string,
+  bytes: Uint8Array,
+  contentType: MobileWebAsset['contentType'],
+  role: MobileWebAsset['role']
+): MobileWebAsset {
+  return { path, sha256: sha256Hex(bytes), byteLength: bytes.byteLength, contentType, role }
+}
+
+function success(result: unknown): RpcResponse {
+  return { id: 'request', ok: true, result, _meta: { runtimeId: 'runtime' } }
+}
+
+function failure(message: string, code = 'invalid_argument'): RpcResponse {
+  return {
+    id: 'request',
+    ok: false,
+    error: { code, message },
+    _meta: { runtimeId: 'runtime' }
+  }
+}
+
+function sha256Hex(bytes: Uint8Array): string {
+  return Buffer.from(sha256(bytes)).toString('hex')
+}

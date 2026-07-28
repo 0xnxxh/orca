@@ -1,4 +1,7 @@
-import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import type {
+  NativeChatMessage,
+  NativeChatTurnLifecycle
+} from '../../../src/shared/native-chat-types'
 import { applyAppend, replaceList, type NativeChatMerger } from './mobile-native-chat-merge'
 
 export type MobileNativeChatStreamFrame = {
@@ -8,6 +11,7 @@ export type MobileNativeChatStreamFrame = {
   beforeOffset?: number
   error?: string
   message?: string
+  lifecycle?: NativeChatTurnLifecycle
 }
 
 export type AppliedMobileNativeChatFrame =
@@ -19,10 +23,7 @@ export type AppliedMobileNativeChatFrame =
       hasMore?: boolean
       beforeOffset?: number
       cursorInvalidated?: boolean
-      /** The frame replaced the whole retained window (replacement, first
-       *  snapshot, or a replay snapshot disjoint from local history) — the
-       *  caller must reset its paging window/cursor to the frame's. */
-      windowReplaced?: boolean
+      lifecycle?: NativeChatTurnLifecycle
     }
 
 function replayRetainedTailStart(
@@ -89,8 +90,8 @@ export function applyMobileNativeChatStreamFrame(args: {
       kind: 'messages',
       messages: merger.list,
       hasMore: frame.hasMore,
-      windowReplaced: true,
-      ...(frame.beforeOffset == null ? {} : { beforeOffset: frame.beforeOffset })
+      ...(frame.beforeOffset == null ? {} : { beforeOffset: frame.beforeOffset }),
+      ...(frame.lifecycle === undefined ? {} : { lifecycle: frame.lifecycle })
     }
   }
   const previousFirstId = merger.list[0]?.id
@@ -102,16 +103,7 @@ export function applyMobileNativeChatStreamFrame(args: {
     messages,
     // Why: once the bounded live window drops its oldest row, the snapshot's
     // byte cursor no longer describes the oldest retained message.
-    ...(cursorInvalidated ? { cursorInvalidated: true } : {}),
-    // A trimmed replay creates page-able history even if the prior window had
-    // none; otherwise only a replay sharing our oldest row owns its metadata.
-    ...(frame.type === 'snapshot' && cursorInvalidated
-      ? { hasMore: true }
-      : replayStillStartsAtOldest
-        ? {
-            ...(frame.hasMore == null ? {} : { hasMore: frame.hasMore }),
-            ...(frame.beforeOffset == null ? {} : { beforeOffset: frame.beforeOffset })
-          }
-        : {})
+    ...(previousFirstId && messages[0]?.id !== previousFirstId ? { cursorInvalidated: true } : {}),
+    ...(frame.lifecycle === undefined ? {} : { lifecycle: frame.lifecycle })
   }
 }

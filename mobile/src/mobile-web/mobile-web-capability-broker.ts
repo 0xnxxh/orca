@@ -1,0 +1,300 @@
+import {
+  MOBILE_WEB_BRIDGE_MAX_PENDING_REQUESTS,
+  type MobileWebBridgePageMessage,
+  type MobileWebResumeRoute
+} from '../../../src/shared/mobile-web/bridge-contract'
+import type { RpcClient } from '../transport/rpc-client'
+import {
+  isRetryableMobileWebBridgeError,
+  MobileWebBrokerError,
+  mobileWebBridgeErrorCode
+} from './mobile-web-broker-error'
+import { MobileWebOperationRateLimiter } from './mobile-web-operation-rate-limiter'
+import { MobileWebCommitMessageGeneration } from './mobile-web-commit-message-generation'
+import { MobileWebCapabilitySubscriptions } from './mobile-web-capability-subscriptions'
+import { MOBILE_WEB_PRODUCTION_GRANTS } from './mobile-web-production-grants'
+import { MobileWebTerminalStreams } from './mobile-web-terminal-streams'
+import { MobileWebSpeechAuthority } from './mobile-web-speech-authority'
+import { executeMobileWebCapabilityRequest } from './mobile-web-capability-execution'
+import { MobileWebCapabilityAuthorities } from './mobile-web-capability-authorities'
+import type { MobileWebCapabilityBrokerOptions } from './mobile-web-capability-broker-options'
+import { MobileWebBrokerMessageSender } from './mobile-web-broker-message-sender'
+import { MobileWebBrokerReplayGuard } from './mobile-web-broker-replay-guard'
+import { rememberMobileWebBrokerRoute } from './mobile-web-broker-route-memory'
+import { resolveMobileWebHostNavigationRoute } from './mobile-web-host-navigation-route'
+import {
+  mobileWebEncodedByteLength,
+  mobileWebAgentHistoryContinuation,
+  mobileWebOperationKey,
+  mobileWebPendingForOperation,
+  mobileWebRequestExpectsSubscription,
+  mobileWebWorkspaceSnapshotContinuation
+} from './mobile-web-request-accounting'
+
+type PageRequest = Extract<MobileWebBridgePageMessage, { type: 'request' }>
+type PendingRequest = { operationKey: string; cancelled: boolean }
+export { MOBILE_WEB_PRODUCTION_GRANTS } from './mobile-web-production-grants'
+
+export class MobileWebCapabilityBroker {
+  private readonly pending = new Map<string, PendingRequest>()
+  private readonly replay = new MobileWebBrokerReplayGuard()
+  private readonly subscriptions: MobileWebCapabilitySubscriptions
+  private readonly terminalStreams: MobileWebTerminalStreams
+  private readonly speechAuthority = new MobileWebSpeechAuthority()
+  private readonly rateLimiter: MobileWebOperationRateLimiter
+  private readonly commitMessageGeneration = new MobileWebCommitMessageGeneration()
+  private readonly authorities: MobileWebCapabilityAuthorities
+  private readonly messages: MobileWebBrokerMessageSender
+  private disposed = false
+
+  constructor(private readonly options: MobileWebCapabilityBrokerOptions) {
+    this.rateLimiter = new MobileWebOperationRateLimiter(options.now ?? Date.now)
+    this.authorities = new MobileWebCapabilityAuthorities(options)
+    this.messages = new MobileWebBrokerMessageSender({
+      context: options.context,
+      isActive: () => !this.disposed && options.isActive(),
+      postMessage: options.postMessage
+    })
+    this.subscriptions = new MobileWebCapabilitySubscriptions({
+      isActive: () => !this.disposed && this.options.isActive(),
+      messages: this.messages,
+      browserAuthority: this.authorities.browser,
+      nativeChatAuthority: this.authorities.nativeChat,
+      workspaceAuthority: this.authorities.workspace
+    })
+    this.terminalStreams = new MobileWebTerminalStreams({
+      isActive: () => !this.disposed && this.options.isActive(),
+      clientId: options.terminalClientId,
+      now: options.now,
+      onFlowMetrics: options.onTerminalFlowMetrics,
+      onResync: options.onTerminalResync,
+      workspaceAuthority: this.authorities.workspace,
+      postEvent: (subscriptionId, sequence, event) =>
+        this.messages.event(subscriptionId, sequence, event)
+    })
+  }
+
+  async handle(message: MobileWebBridgePageMessage): Promise<void> {
+    if (this.disposed || !this.options.isActive()) {
+      return
+    }
+    if (message.type === 'cancel') {
+      await this.cancel(message.target, message.id)
+      return
+    }
+    if (message.type !== 'request') {
+      return
+    }
+    await this.handleRequest(message)
+  }
+
+  dispose(): void {
+    this.disposed = true
+    this.commitMessageGeneration.dispose()
+    this.subscriptions.dispose()
+    this.terminalStreams.dispose(this.options.getClient())
+    this.speechAuthority.dispose()
+    this.authorities.clear()
+    this.pending.clear()
+    this.replay.clear()
+    this.rateLimiter.clear()
+  }
+
+  replaceClient(client: RpcClient | null): void {
+    this.authorities.clear()
+    this.commitMessageGeneration.replaceClient(client)
+    this.subscriptions.dispose()
+    this.terminalStreams.dispose(null)
+    this.speechAuthority.replaceClient()
+    for (const [requestId, pending] of this.pending) {
+      pending.cancelled = true
+      this.pending.delete(requestId)
+      void this.messages.error(requestId, 'cancelled', false)
+    }
+  }
+  updateConnectionState(state: 'connecting' | 'connected' | 'offline' | 'recovering'): void {
+    if (state === 'connected') {
+      return
+    }
+    this.authorities.terminalArtifact.clear()
+    void this.speechAuthority.cancel('disconnected')
+  }
+  updateAppForegroundState(foreground: boolean): void {
+    if (!foreground) {
+      this.speechAuthority.cancelForAppBackground()
+    }
+  }
+  rememberRoute(route: MobileWebResumeRoute): void {
+    rememberMobileWebBrokerRoute(
+      !this.disposed && this.options.isActive(),
+      route,
+      this.authorities.workspace,
+      this.options
+    )
+  }
+  async resolveNavigationRoute(hostWorkspaceId: string): Promise<MobileWebResumeRoute> {
+    if (this.disposed || !this.options.isActive()) {
+      throw new MobileWebBrokerError('cancelled')
+    }
+    return resolveMobileWebHostNavigationRoute(
+      hostWorkspaceId,
+      this.connectedClient(),
+      this.authorities.workspace
+    )
+  }
+  private async handleRequest(request: PageRequest): Promise<void> {
+    if (!this.replay.acceptRequest(request.requestId, this.pending.has(request.requestId))) {
+      await this.messages.error(request.requestId, 'invalid_request', false)
+      return
+    }
+
+    const grant = MOBILE_WEB_PRODUCTION_GRANTS.find(
+      (value) => value.capability === request.capability && value.operation === request.operation
+    )
+    const expectsSubscription = mobileWebRequestExpectsSubscription(request)
+    if (!grant || (request.mode === 'subscription') !== expectsSubscription) {
+      await this.messages.error(request.requestId, 'unsupported_capability', false)
+      return
+    }
+    if (
+      request.mode === 'subscription' &&
+      !this.replay.acceptSubscription(request.subscriptionId)
+    ) {
+      await this.messages.error(request.requestId, 'invalid_request', false)
+      return
+    }
+    if (mobileWebEncodedByteLength(request.payload) > grant.limits.maxRequestBytes) {
+      await this.messages.error(request.requestId, 'too_large', false)
+      return
+    }
+    if (
+      this.pending.size >= MOBILE_WEB_BRIDGE_MAX_PENDING_REQUESTS ||
+      mobileWebPendingForOperation(this.pending.values(), mobileWebOperationKey(request)) +
+        this.subscriptions.countForOperation(mobileWebOperationKey(request)) +
+        this.terminalStreams.countForOperation(mobileWebOperationKey(request)) +
+        this.speechAuthority.countForOperation(mobileWebOperationKey(request)) >=
+        grant.limits.maxConcurrent
+    ) {
+      await this.messages.error(request.requestId, 'rate_limited', true)
+      return
+    }
+    if (
+      !mobileWebWorkspaceSnapshotContinuation(request) &&
+      !mobileWebAgentHistoryContinuation(request) &&
+      !this.rateLimiter.take(mobileWebOperationKey(request), grant)
+    ) {
+      await this.messages.error(request.requestId, 'rate_limited', true)
+      return
+    }
+
+    const pending: PendingRequest = {
+      operationKey: mobileWebOperationKey(request),
+      cancelled: false
+    }
+    this.pending.set(request.requestId, pending)
+    try {
+      const payload = await this.execute(request)
+      if (!this.isPending(request.requestId, pending)) {
+        return
+      }
+      this.pending.delete(request.requestId)
+      if (mobileWebEncodedByteLength(payload) > grant.limits.maxResponseBytes) {
+        await this.messages.error(request.requestId, 'unavailable', false)
+      } else {
+        await this.messages.success(request.requestId, payload)
+      }
+    } catch (error) {
+      this.subscriptions.cancelByRequest(request.requestId)
+      this.terminalStreams.cancelByRequest(request.requestId, this.options.getClient())
+      this.speechAuthority.cancelByRequest(request.requestId)
+      if (this.isPending(request.requestId, pending)) {
+        this.pending.delete(request.requestId)
+        const code = mobileWebBridgeErrorCode(error)
+        await this.messages.error(request.requestId, code, isRetryableMobileWebBridgeError(code))
+      }
+    } finally {
+      if (this.pending.get(request.requestId) === pending) {
+        this.pending.delete(request.requestId)
+      }
+    }
+  }
+
+  private async execute(request: PageRequest): Promise<unknown> {
+    return executeMobileWebCapabilityRequest({
+      request,
+      connectedClient: () => this.connectedClient(),
+      terminalClientId: this.options.terminalClientId,
+      nativeAuthority: this.options.nativeAuthority,
+      agentHistoryAuthority: this.authorities.agentHistory,
+      agentHistoryPager: this.authorities.agentHistoryPager,
+      agentHistoryResume: this.authorities.agentHistoryResume,
+      accountSubscriptions: this.subscriptions.account,
+      browserStreams: this.subscriptions.browser,
+      nativeChatSubscriptions: this.subscriptions.nativeChat,
+      sessionSubscriptions: this.subscriptions.session,
+      sourceControlSubscriptions: this.subscriptions.sourceControl,
+      speechAuthority: this.speechAuthority,
+      postSpeechEvent: (subscriptionId, sequence, event) =>
+        this.messages.event(subscriptionId, sequence, event),
+      workspaceSubscriptions: this.subscriptions.workspace,
+      terminalStreams: this.terminalStreams,
+      commitMessageGeneration: this.commitMessageGeneration,
+      browserAuthority: this.authorities.browser,
+      nativeChatAuthority: this.authorities.nativeChat,
+      terminalArtifactAuthority: this.authorities.terminalArtifact,
+      taskTargetAuthority: this.authorities.taskTarget,
+      taskProjectTable: this.authorities.taskProjectTable,
+      workspaceAuthority: this.authorities.workspace,
+      workspaceSnapshots: this.authorities.workspaceSnapshots,
+      navigationAuthority: this.options.navigationAuthority
+    })
+  }
+
+  private connectedClient(): RpcClient {
+    if (!this.options.isConnected()) {
+      throw new MobileWebBrokerError('not_connected')
+    }
+    const client = this.options.getClient()
+    if (!client) {
+      throw new MobileWebBrokerError('not_connected')
+    }
+    return client
+  }
+
+  private async cancel(target: 'request' | 'subscription', id: string): Promise<void> {
+    if (target === 'subscription') {
+      const requestId =
+        this.subscriptions.cancel(id) ??
+        this.terminalStreams.cancel(id, this.options.getClient()) ??
+        this.speechAuthority.cancelSubscription(id)
+      if (requestId) {
+        const pending = this.pending.get(requestId)
+        if (pending) {
+          pending.cancelled = true
+          this.pending.delete(requestId)
+        }
+      }
+      return
+    }
+    const pending = this.pending.get(id)
+    if (!pending) {
+      return
+    }
+    pending.cancelled = true
+    this.pending.delete(id)
+    await this.commitMessageGeneration.cancelByRequest(id)
+    this.subscriptions.cancelByRequest(id)
+    this.terminalStreams.cancelByRequest(id, this.options.getClient())
+    this.speechAuthority.cancelByRequest(id)
+    await this.messages.error(id, 'cancelled', false)
+  }
+
+  private isPending(requestId: string, pending: PendingRequest): boolean {
+    return (
+      !pending.cancelled &&
+      !this.disposed &&
+      this.options.isActive() &&
+      this.pending.get(requestId) === pending
+    )
+  }
+}

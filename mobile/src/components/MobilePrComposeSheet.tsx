@@ -1,7 +1,10 @@
-import { Linking } from 'react-native'
 import { BottomDrawer } from './BottomDrawer'
 import { MobilePrComposeForm, type PrComposePrefill } from './pr-sidebar/MobilePrComposeForm'
 import type { RpcClient } from '../transport/rpc-client'
+import {
+  MobilePrShellOperationsProvider,
+  type MobilePrShellOperations
+} from '../platform/mobile-pr-shell-operations'
 
 type Props = {
   visible: boolean
@@ -12,6 +15,7 @@ type Props = {
   head?: string | null
   onClose: () => void
   onCreated: (url: string, warning?: string) => void
+  shellOperations: MobilePrShellOperations
 }
 
 // BottomDrawer wrapper around the inline compose form, for full-screen roots
@@ -24,29 +28,25 @@ export function MobilePrComposeSheet({
   prefill,
   head,
   onClose,
-  onCreated
+  onCreated,
+  shellOperations
 }: Props) {
   return (
     <BottomDrawer visible={visible} onClose={onClose}>
       {/* Why: key on visible + prefill fields so reopening (or a new prefill)
           remounts the form with fresh initial values; the previous sheet reset
           its fields via an effect on the same signals. */}
-      <MobilePrComposeForm
-        key={`${visible}:${prefill.title}:${prefill.base}:${prefill.body}`}
-        client={client}
-        worktreeId={worktreeId}
-        prefill={prefill}
-        head={head}
-        onCancel={onClose}
-        onCreated={onCreated}
-      />
+      <MobilePrShellOperationsProvider operations={shellOperations}>
+        <MobilePrComposeForm
+          key={`${visible}:${prefill.title}:${prefill.base}:${prefill.body}`}
+          client={client}
+          worktreeId={worktreeId}
+          prefill={prefill}
+          head={head}
+          onCancel={onClose}
+          onCreated={onCreated}
+        />
+      </MobilePrShellOperationsProvider>
     </BottomDrawer>
   )
-}
-
-export function openMobilePrUrl(url: string): void {
-  // Why: Linking.openURL rejects when iOS/Android can't open the URL (no app,
-  // bad scheme, etc.). Without a catch that surfaces as LogBox "Uncaught
-  // (in promise) Error: Unable to open URL…" over the PR screen.
-  void Linking.openURL(url).catch(() => {})
 }

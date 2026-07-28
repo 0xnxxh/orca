@@ -150,4 +150,28 @@ describe('mobile terminal records', () => {
       )
     ).toBe(false)
   })
+
+  it('treats native-chat authority changes as session-tab changes', () => {
+    const base: MobileTerminalSessionTab = {
+      type: 'terminal',
+      id: 'term-1::leaf-1',
+      title: 'Terminal',
+      status: 'ready',
+      terminal: 'pty-1',
+      isActive: true
+    }
+
+    expect(
+      mobileSessionTabsEqual(
+        [base],
+        [
+          {
+            ...base,
+            launchAgent: 'claude',
+            nativeChatSessionId: 'native-chat-session'
+          }
+        ]
+      )
+    ).toBe(false)
+  })
 })

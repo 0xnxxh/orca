@@ -14,15 +14,30 @@ type MobileDictationAudioChunkQueue = {
   failActiveDictation: (dictationId: string, err: unknown) => void
 }
 
+export const MOBILE_DICTATION_MAX_PENDING_CHUNKS = 256
+
 export function enqueueMobileDictationAudioChunk(
   client: RpcClient,
   dictationId: string,
   event: MicrophoneDataEvent,
   queue: MobileDictationAudioChunkQueue
 ): void {
+  if (queue.pendingChunks.size >= MOBILE_DICTATION_MAX_PENDING_CHUNKS) {
+    queue.failActiveDictation(
+      dictationId,
+      new Error(MOBILE_DICTATION_CONNECTION_SLOW_ERROR_MESSAGE)
+    )
+    return
+  }
   const raw = event.data
   const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw)
   const byteLength = bytes.byteLength
+  const sampleRate =
+    typeof event.sampleRate === 'number' &&
+    Number.isFinite(event.sampleRate) &&
+    event.sampleRate > 0
+      ? event.sampleRate
+      : MOBILE_DICTATION_PCM_SAMPLE_RATE
   if (!queue.pendingAudioBudget.tryReserve(byteLength)) {
     queue.failActiveDictation(
       dictationId,
@@ -34,7 +49,7 @@ export function enqueueMobileDictationAudioChunk(
     .sendRequest('speech.dictation.chunk', {
       dictationId,
       audioBase64: bytesToBase64(bytes),
-      sampleRate: MOBILE_DICTATION_PCM_SAMPLE_RATE
+      sampleRate
     })
     .then((response) => {
       if (!response.ok) {

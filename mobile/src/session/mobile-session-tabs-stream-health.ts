@@ -22,8 +22,10 @@ type RequestCohort = {
 }
 
 type ControllerOptions<Result, Tab> = {
-  client: RpcClient
-  scope: string
+  client?: RpcClient
+  scope?: string
+  requestSnapshot?: () => Promise<Result>
+  getGeneration?: () => number
   apply: (result: Result) => SessionTabsApplyOutcome<Tab>
   consumeAccepted: (
     result: Result,
@@ -234,19 +236,17 @@ export class MobileSessionTabsStreamHealth<Result, Tab> {
   private async runRequest(owner: RequestOwner): Promise<boolean> {
     try {
       this.options.onFetchStarted?.()
-      const response = await this.options.client.sendRequest('session.tabs.list', {
-        worktree: this.options.scope
-      })
+      const read = await this.readSnapshot()
       if (!this.isCurrentGeneration(owner.generation)) {
         return false
       }
-      if (!response.ok) {
-        if (owner.barrier === this.barrier) {
-          this.options.onFetchFailed?.(response as RpcFailure)
+      if (!read.ok) {
+        if (owner.barrier === this.barrier && read.failure) {
+          this.options.onFetchFailed?.(read.failure)
         }
         return false
       }
-      const result = (response as RpcSuccess).result as Result
+      const result = read.result
       if (owner.barrier !== this.barrier) {
         return false
       }
@@ -299,10 +299,32 @@ export class MobileSessionTabsStreamHealth<Result, Tab> {
   }
 
   private readGeneration(): number {
-    return (this.options.client as GenerationClient).getGeneration?.() ?? 0
+    return (
+      this.options.getGeneration?.() ??
+      (this.options.client as GenerationClient | undefined)?.getGeneration?.() ??
+      0
+    )
   }
 
   private readApplicationRevision(): number {
     return Math.max(this.applicationRevision, this.options.getApplicationRevision?.() ?? 0)
+  }
+
+  private async readSnapshot(): Promise<
+    { ok: true; result: Result } | { ok: false; failure?: RpcFailure }
+  > {
+    if (this.options.requestSnapshot) {
+      return { ok: true, result: await this.options.requestSnapshot() }
+    }
+    if (!this.options.client || !this.options.scope) {
+      throw new Error('session_snapshot_source_missing')
+    }
+    const response = await this.options.client.sendRequest('session.tabs.list', {
+      worktree: this.options.scope
+    })
+    if (!response.ok) {
+      return { ok: false, failure: response as RpcFailure }
+    }
+    return { ok: true, result: (response as RpcSuccess).result as Result }
   }
 }

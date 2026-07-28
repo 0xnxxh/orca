@@ -13,9 +13,14 @@ export type ConnectedDockerSshRelayTarget = {
 }
 
 type DockerSshRelayConnectionOptions = {
+  connectTimeoutMs?: number
   relayGracePeriodSeconds?: number
   remotePath?: string
   viaProxyJump?: boolean
+}
+
+type DockerSshRelayReconnectOptions = {
+  connectTimeoutMs?: number
 }
 
 export async function connectDockerSshRelayTarget(
@@ -24,7 +29,7 @@ export async function connectDockerSshRelayTarget(
   options: DockerSshRelayConnectionOptions = {}
 ): Promise<ConnectedDockerSshRelayTarget> {
   return page.evaluate(
-    async ({ target, remotePath, relayGracePeriodSeconds, viaProxyJump }) => {
+    async ({ connectTimeoutMs, target, remotePath, relayGracePeriodSeconds, viaProxyJump }) => {
       const store = window.__store
       if (!store) {
         throw new Error('Store unavailable')
@@ -32,6 +37,9 @@ export async function connectDockerSshRelayTarget(
       const credentialUnsub = window.api.ssh.onCredentialRequest((request) => {
         void window.api.ssh.submitCredential({ requestId: request.requestId, value: null })
       })
+      let connectTimer: ReturnType<typeof setTimeout> | null = null
+      let connectTimedOut = false
+      let createdTargetId: string | null = null
       try {
         const { target: createdTarget, repoReadoptions } = await window.api.ssh.addTarget({
           target: {
@@ -46,8 +54,25 @@ export async function connectDockerSshRelayTarget(
             relayGracePeriodSeconds
           }
         })
+        createdTargetId = createdTarget.id
         store.getState().recordSshRepoReadoptions(repoReadoptions)
-        const state = await window.api.ssh.connect({ targetId: createdTarget.id })
+        const connectPromise = window.api.ssh.connect({ targetId: createdTarget.id })
+        const state =
+          connectTimeoutMs === undefined
+            ? await connectPromise
+            : await Promise.race([
+                connectPromise,
+                new Promise<never>((_resolve, reject) => {
+                  connectTimer = setTimeout(() => {
+                    connectTimedOut = true
+                    reject(
+                      new Error(
+                        `Timed out connecting Docker SSH target after ${connectTimeoutMs}ms`
+                      )
+                    )
+                  }, connectTimeoutMs)
+                })
+              ])
         if (!state || state.status !== 'connected') {
           throw new Error(`SSH target did not connect: ${JSON.stringify(state)}`)
         }
@@ -156,11 +181,20 @@ export async function connectDockerSshRelayTarget(
           repoId: result.repo.id,
           worktreeId: worktree.id
         }
+      } catch (error) {
+        if (connectTimedOut && createdTargetId) {
+          void window.api.ssh.disconnect({ targetId: createdTargetId }).catch(() => undefined)
+        }
+        throw error
       } finally {
+        if (connectTimer !== null) {
+          clearTimeout(connectTimer)
+        }
         credentialUnsub()
       }
     },
     {
+      connectTimeoutMs: options.connectTimeoutMs,
       target,
       remotePath:
         options.remotePath ??
@@ -188,10 +222,11 @@ export async function resetDockerSshRelayTarget(page: Page, targetId: string): P
 async function performDockerSshRelayReconnect(
   page: Page,
   targetId: string,
-  disconnectFirst: boolean
+  disconnectFirst: boolean,
+  options: DockerSshRelayReconnectOptions
 ): Promise<void> {
   await page.evaluate(
-    async ({ targetId, disconnectFirst }) => {
+    async ({ connectTimeoutMs, targetId, disconnectFirst }) => {
       const store = window.__store
       if (!store) {
         throw new Error('Store unavailable')
@@ -199,23 +234,57 @@ async function performDockerSshRelayReconnect(
       if (disconnectFirst) {
         await window.api.ssh.disconnect({ targetId })
       }
-      const state = await window.api.ssh.connect({ targetId })
-      if (!state || state.status !== 'connected') {
-        throw new Error(`SSH target did not reconnect: ${JSON.stringify(state)}`)
+      let connectTimer: ReturnType<typeof setTimeout> | null = null
+      let connectTimedOut = false
+      try {
+        const connectPromise = window.api.ssh.connect({ targetId })
+        const state =
+          connectTimeoutMs === undefined
+            ? await connectPromise
+            : await Promise.race([
+                connectPromise,
+                new Promise<never>((_resolve, reject) => {
+                  connectTimer = setTimeout(() => {
+                    connectTimedOut = true
+                    reject(
+                      new Error(
+                        `Timed out reconnecting Docker SSH target after ${connectTimeoutMs}ms`
+                      )
+                    )
+                  }, connectTimeoutMs)
+                })
+              ])
+        if (!state || state.status !== 'connected') {
+          throw new Error(`SSH target did not reconnect: ${JSON.stringify(state)}`)
+        }
+        store.getState().setSshConnectionState(targetId, state)
+      } catch (error) {
+        if (connectTimedOut) {
+          void window.api.ssh.disconnect({ targetId }).catch(() => undefined)
+        }
+        throw error
+      } finally {
+        if (connectTimer !== null) {
+          clearTimeout(connectTimer)
+        }
       }
-      store.getState().setSshConnectionState(targetId, state)
     },
-    { targetId, disconnectFirst }
+    { connectTimeoutMs: options.connectTimeoutMs, targetId, disconnectFirst }
   )
 }
 
-export async function reconnectDockerSshRelayTarget(page: Page, targetId: string): Promise<void> {
-  return performDockerSshRelayReconnect(page, targetId, true)
+export async function reconnectDockerSshRelayTarget(
+  page: Page,
+  targetId: string,
+  options: DockerSshRelayReconnectOptions = {}
+): Promise<void> {
+  return performDockerSshRelayReconnect(page, targetId, true, options)
 }
 
 export async function reconnectDisconnectedDockerSshRelayTarget(
   page: Page,
-  targetId: string
+  targetId: string,
+  options: DockerSshRelayReconnectOptions = {}
 ): Promise<void> {
-  return performDockerSshRelayReconnect(page, targetId, false)
+  return performDockerSshRelayReconnect(page, targetId, false, options)
 }

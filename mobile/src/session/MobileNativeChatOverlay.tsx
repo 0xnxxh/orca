@@ -24,6 +24,7 @@ type Props = {
   sendErrorMessage: string | null
   /** Drops that failure once a later send succeeds. */
   onClearSendError: () => void
+  onOpenLink: (url: string) => void
   keyboardInset: number
 }
 
@@ -43,6 +44,7 @@ export function MobileNativeChatOverlay({
   inputLockReason,
   sendErrorMessage,
   onClearSendError,
+  onOpenLink,
   keyboardInset
 }: Props): React.JSX.Element | null {
   const session = controller.nativeChatSession
@@ -76,7 +78,8 @@ export function MobileNativeChatOverlay({
         onAnswerQuestion={controller.handleNativeChatQuestionAnswer}
         permission={controller.nativeChatPermission}
         onRespondPermission={controller.handleNativeChatRespondPermission}
-        onOpenFile={onOpenFile}
+        onOpenFile={controller.handleNativeChatOpenFile}
+        onOpenLink={onOpenLink}
         hasMore={session.hasMore}
         loadingEarlier={session.loadingEarlier}
         onLoadEarlier={session.loadEarlier}

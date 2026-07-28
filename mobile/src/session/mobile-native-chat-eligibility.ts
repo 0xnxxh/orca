@@ -1,18 +1,12 @@
-import type { AgentStatusEntry } from '../../../src/shared/agent-status-types'
-import { isRuntimeOwnedSshTargetId } from '../../../src/shared/execution-host'
-import {
-  isNativeChatSupportedAgent,
-  nativeChatRequiresLocalTranscript
-} from '../../../src/shared/native-chat-agent-support'
+import type { MobileWebNativeChatAgentStatus } from '../../../src/shared/mobile-web/native-chat-operation-contract'
+import { isNativeChatSupportedAgent } from '../../../src/shared/native-chat-agent-support'
 
-// Why: native chat renders an agent's own JSONL transcript, and the host
-// resolver knows these transcript layouts. Agents whose hook reports no
-// transcript path (Grok, omp) are additionally gated on host readability,
-// because Model-A SSH stores their transcript on the remote target.
+// Why: undefined means the workspace owner could not be resolved. Local,
+// runtime-owned, and classic SSH owners all have bounded transcript readers.
 export function isMobileNativeChatTranscriptReadable(
   connectionId: string | null | undefined
 ): boolean {
-  return connectionId === null || isRuntimeOwnedSshTargetId(connectionId)
+  return connectionId !== undefined
 }
 
 export type MobileNativeChatResolution = {
@@ -28,10 +22,17 @@ export type MobileNativeChatResolution = {
 export type MobileNativeChatTab = {
   type: string
   launchAgent?: string | null
-  agentStatus?: AgentStatusEntry | null
+  agentStatus?: MobileNativeChatAgentStatusWithProvider | null
   /** Host-provided launch context still parked as an unsent TUI-input draft. */
   launchDraft?: string
-  launchDraftCreatedAt?: number
+  nativeChatSessionId?: string | null
+}
+
+export type MobileNativeChatAgentStatusWithProvider = MobileWebNativeChatAgentStatus & {
+  providerSession?: {
+    id: string
+    transcriptPath?: string
+  }
 }
 
 /** Resolve a session tab to the transcript identity native chat needs, or
@@ -59,7 +60,7 @@ export function resolveMobileNativeChat(
   }
   return {
     agent,
-    sessionId: tab.agentStatus?.providerSession?.id ?? null,
+    sessionId: tab.nativeChatSessionId ?? tab.agentStatus?.providerSession?.id ?? null,
     transcriptPath: tab.agentStatus?.providerSession?.transcriptPath ?? null
   }
 }

@@ -41,7 +41,7 @@ import { TerminalKittyKeyboardModeTracker } from '../../shared/terminal-kitty-ke
 import {
   AGENT_STATUS_STALE_AFTER_MS,
   isFreshNonDoneAgentStatus,
-  pickParsedAgentStatusPayload,
+  normalizeAgentStatusPayload,
   type AgentStatusIpcPayload,
   type ParsedAgentStatusPayload,
   type AgentStatusOrchestrationContext,
@@ -264,6 +264,10 @@ import {
 } from '../../shared/tab-activation-intent'
 import type { SshConnectionState } from '../../shared/ssh-types'
 import { getPublicSshState } from './public-ssh-state'
+import {
+  RuntimeSshRelayRecoveryGenerations,
+  type RuntimeSshRelayRecoveryGenerationLease
+} from './runtime-ssh-relay-recovery-generations'
 import { closeTerminalTabInWorkspaceSession } from '../../shared/workspace-session-terminal-tab-close'
 import type {
   LinearCurrentIssueContextHints,
@@ -334,6 +338,7 @@ import {
   type RuntimeMobileSessionCreateTerminalResult,
   type RuntimeMobileSessionClientTab,
   type RuntimeMobileSessionTabCloseResult,
+  type RuntimeMobileSessionFileTab,
   type RuntimeMobileSessionMarkdownTab,
   type RuntimeMobileSessionTabMove,
   type RuntimeMobileSessionTabMoveResult,
@@ -523,6 +528,10 @@ import {
   buildHeadlessTabGroupSplit
 } from './headless-tab-group-split-layout'
 import {
+  closeHeadlessMobileSessionFileTab,
+  openHeadlessMobileSessionFileTab
+} from './headless-mobile-session-file-tabs'
+import {
   hasExactTerminalOrphanGroupLayout,
   mergeTerminalOrphanGroupLayout
 } from './terminal-orphan-topology'
@@ -667,12 +676,17 @@ import type {
   HostedReviewCreationEligibilityArgs,
   HostedReviewInfo
 } from '../../shared/hosted-review'
+import type {
+  HostedReviewSubmissionInput,
+  HostedReviewSubmissionResult
+} from '../../shared/hosted-review-submission'
 import { getHostedReviewForBranch as getHostedReviewForBranchFromRepo } from '../source-control/hosted-review'
 import type { ForgeProviderId } from '../source-control/forge-provider'
 import {
   createHostedReview as createHostedReviewFromRepo,
   getHostedReviewCreationEligibility as getHostedReviewCreationEligibilityFromRepo
 } from '../source-control/hosted-review-creation'
+import { submitHostedReview as submitHostedReviewFromRepo } from '../source-control/hosted-review-submission'
 import {
   getLocalProjectGitExecOptions,
   getLocalProjectWorktreeGitOptions,
@@ -1483,6 +1497,13 @@ export type RuntimeTerminalAgentStatusEvent = {
   worktreeId?: string
   connectionId?: string | null
   payload: ParsedAgentStatusPayload
+}
+
+export type RuntimeNativeChatTranscriptBinding = {
+  worktreeId: string
+  connectionId: string | null
+  agent: string | null
+  providerSession: AgentProviderSessionMetadata | null
 }
 
 type RuntimePtyTitleTrackerEntry = {
@@ -2778,11 +2799,21 @@ async function hasLocalWorktreeBaseRef(
   )
 }
 
-function getSetupRunnerCommandPlatformForLaunch(
-  setup: CreateWorktreeResult['setup'],
-  fallbackPlatform: 'windows' | 'posix'
-): 'windows' | 'posix' {
-  return getSetupRunnerCommandPlatformForPath(setup?.runnerScriptPath ?? '', fallbackPlatform)
+function normalizeMobileHookStatus(
+  status: AgentStatusIpcPayload | null,
+  fresh: boolean
+): ParsedAgentStatusPayload | null {
+  if (!status || (!fresh && !status.providerSession)) {
+    return null
+  }
+  const payload = normalizeAgentStatusPayload(status)
+  if (!payload) {
+    return null
+  }
+  if (!fresh) {
+    delete payload.agentType
+  }
+  return payload
 }
 
 export class OrcaRuntimeService {
@@ -3335,7 +3366,7 @@ export class OrcaRuntimeService {
     string,
     OrchestrationCompatibilitySshAttachmentAuthority
   >()
-  private sshRelayRecoveryGenerationByTargetId = new Map<string, number>()
+  private readonly sshRelayRecoveryGenerations = new RuntimeSshRelayRecoveryGenerations()
   private legacyWorkerTerminalRecoveryQueue: Promise<void> = Promise.resolve()
   private legacyWorkerTerminalRecoveryRetries = new Map<
     string,
@@ -4849,7 +4880,12 @@ export class OrcaRuntimeService {
     const worktreeIds = new Set<string>()
     for (const hostId of hostIds) {
       const session = this.store?.getWorkspaceSession?.(hostId)
-      for (const worktreeId of Object.keys(session?.tabsByWorktree ?? {})) {
+      const sessionWorktreeIds = new Set([
+        ...Object.keys(session?.tabsByWorktree ?? {}),
+        ...Object.keys(session?.openFilesByWorktree ?? {}),
+        ...Object.keys(session?.unifiedTabs ?? {})
+      ])
+      for (const worktreeId of sessionWorktreeIds) {
         if (repoIds.has(getRepoIdFromWorktreeId(worktreeId))) {
           worktreeIds.add(worktreeId)
         }
@@ -5339,7 +5375,7 @@ export class OrcaRuntimeService {
   // Why: SSH state changes originate in main's ssh handlers, not in runtime
   // methods, so they need a public entry point onto the client-event stream.
   notifySshStateChanged(targetId: string, state: SshConnectionState): void {
-    this.bumpSshRelayRecoveryGeneration(targetId)
+    this.sshRelayRecoveryGenerations.invalidate(targetId)
     this.invalidateSshWorktreeScanCache(targetId)
     if (state.status !== 'connected') {
       this.cancelLegacyWorkerTerminalRecoveryRetry(`ssh:${targetId}`)
@@ -5347,13 +5383,24 @@ export class OrcaRuntimeService {
     this.emitClientEvent({ type: 'sshStateChanged', targetId, state: getPublicSshState(state)! })
   }
 
+  notifySshRelayUnavailable(targetId: string): void {
+    this.sshRelayRecoveryGenerations.invalidate(targetId)
+    const worktreeIds = this.collectMobileSessionWorktreeIdsForSshTarget(targetId)
+    for (const worktreeId of worktreeIds) {
+      this.notifyMobileSessionTabsChangedNow(worktreeId)
+    }
+  }
+
   notifySshRelayReady(targetId: string): void {
-    const generation = this.bumpSshRelayRecoveryGeneration(targetId)
+    const generationLease = this.sshRelayRecoveryGenerations.begin(targetId)
+    if (!generationLease) {
+      return
+    }
     const publish = async (): Promise<void> => {
       try {
-        await this.publishRecoveredSshMobileSessionTabs(targetId, generation)
+        await this.publishRecoveredSshMobileSessionTabs(targetId, generationLease)
       } catch (error) {
-        if (this.sshRelayRecoveryGenerationByTargetId.get(targetId) === generation) {
+        if (generationLease.isCurrent()) {
           console.warn('[runtime] failed to publish recovered SSH session tabs', {
             targetId,
             error
@@ -5375,7 +5422,7 @@ export class OrcaRuntimeService {
         await publish()
       })
       .catch((error) => {
-        if (this.sshRelayRecoveryGenerationByTargetId.get(targetId) !== generation) {
+        if (!generationLease.isCurrent()) {
           return
         }
         console.warn('[orchestration] legacy worker reconcile failed on relay ready', {
@@ -5383,36 +5430,14 @@ export class OrcaRuntimeService {
           error
         })
       })
-  }
-
-  private bumpSshRelayRecoveryGeneration(targetId: string): number {
-    const generation = (this.sshRelayRecoveryGenerationByTargetId.get(targetId) ?? 0) + 1
-    this.sshRelayRecoveryGenerationByTargetId.set(targetId, generation)
-    return generation
+      .finally(() => generationLease.release())
   }
 
   private async publishRecoveredSshMobileSessionTabs(
     targetId: string,
-    generation: number
+    generationLease: RuntimeSshRelayRecoveryGenerationLease
   ): Promise<void> {
-    const repoIds = new Set(
-      (this.store?.getRepos() ?? [])
-        .filter((repo) => repo.connectionId === targetId)
-        .map((repo) => repo.id)
-    )
-    if (repoIds.size === 0) {
-      return
-    }
-    const worktreeIds = new Set<string>()
-    for (const worktreeId of [
-      ...this.getKnownWorkspaceSessionWorktreeIds(),
-      ...this.mobileSessionTabsByWorktree.keys()
-    ]) {
-      const parsed = splitWorktreeId(worktreeId)
-      if (parsed && repoIds.has(parsed.repoId)) {
-        worktreeIds.add(worktreeId)
-      }
-    }
+    const worktreeIds = this.collectMobileSessionWorktreeIdsForSshTarget(targetId)
     if (worktreeIds.size === 0) {
       return
     }
@@ -5425,12 +5450,34 @@ export class OrcaRuntimeService {
       })
     }
     await this.refreshMobileSessionPtyRecords()
-    if (this.sshRelayRecoveryGenerationByTargetId.get(targetId) !== generation) {
+    if (!generationLease.isCurrent()) {
       return
     }
     for (const worktreeId of worktreeIds) {
       this.notifyMobileSessionTabsChangedNow(worktreeId)
     }
+  }
+
+  private collectMobileSessionWorktreeIdsForSshTarget(targetId: string): Set<string> {
+    const repoIds = new Set(
+      (this.store?.getRepos() ?? [])
+        .filter((repo) => repo.connectionId === targetId)
+        .map((repo) => repo.id)
+    )
+    if (repoIds.size === 0) {
+      return new Set()
+    }
+    const worktreeIds = new Set<string>()
+    for (const worktreeId of [
+      ...this.getKnownWorkspaceSessionWorktreeIds(),
+      ...this.mobileSessionTabsByWorktree.keys()
+    ]) {
+      const parsed = splitWorktreeId(worktreeId)
+      if (parsed && repoIds.has(parsed.repoId)) {
+        worktreeIds.add(worktreeId)
+      }
+    }
+    return worktreeIds
   }
 
   invalidateSshWorktreeScanCache(targetId: string): void {
@@ -5974,13 +6021,22 @@ export class OrcaRuntimeService {
       // so include them on every hydrate regardless of the onlyRuntimeOwnedTerminals
       // filter, which is about terminal PTY ownership and never applies to browsers.
       const browserTabs = this.buildHeadlessMobileSessionBrowserTabs(entryWorktreeId)
-      const tabs: RuntimeMobileSessionSnapshotTab[] = [...terminalTabs, ...browserTabs]
+      const fileTabs =
+        options.onlyRuntimeOwnedTerminals === true
+          ? []
+          : this.buildHeadlessMobileSessionFileTabs(entryWorktreeId, session)
+      const tabs: RuntimeMobileSessionSnapshotTab[] = [...terminalTabs, ...fileTabs, ...browserTabs]
       if (tabs.length === 0) {
         continue
       }
-      const activeTab = this.pickHeadlessActiveTerminalTab(terminalTabs)
+      const activeTab =
+        fileTabs.find((tab) => tab.isActive) ??
+        this.pickHeadlessActiveTerminalTab(terminalTabs) ??
+        browserTabs.find((tab) => tab.isActive) ??
+        null
       const tabOrder = [
         ...this.collectHeadlessParentTabOrder(terminalTabs),
+        ...fileTabs.map((tab) => tab.id),
         ...browserTabs.map((tab) => tab.id)
       ]
       const groupId = this.getHeadlessMobileSessionGroupId(entryWorktreeId)
@@ -6013,7 +6069,7 @@ export class OrcaRuntimeService {
           ? mergedActiveTab.parentTabId
           : mergedActiveTab.id
         : null
-      const nextTabGroups: RuntimeMobileSessionTabGroup[] = hasPersistedSplit
+      const baseTabGroups: RuntimeMobileSessionTabGroup[] = hasPersistedSplit
         ? this.appendBrowserTabOrder(
             this.distributeHeadlessTabsAcrossGroups(
               persistedGroups.map((group) => ({
@@ -6045,11 +6101,22 @@ export class OrcaRuntimeService {
               {
                 id: groupId,
                 activeTabId: mergedActiveTab?.id
-                  ? (activeTab?.parentTabId ?? mergedActiveTab.id)
+                  ? mergedActiveTab.type === 'terminal'
+                    ? mergedActiveTab.parentTabId
+                    : mergedActiveTab.id
                   : (tabOrder[0] ?? null),
                 tabOrder
               }
             ]
+      const nextTabGroups = this.appendBrowserTabOrder(
+        baseTabGroups,
+        fileTabs.map((tab) => tab.id),
+        undefined,
+        this.collectBrowserGroupAssignment(
+          persistedGroups ?? existing?.tabGroups ?? [],
+          fileTabs.map((tab) => tab.id)
+        )
+      )
       // Why: merging runtime tabs INTO a renderer publication must not reclass
       // the snapshot as headless-built — the preservation predicate would then
       // treat the renderer's own tabs as runtime-owned and resurrect tabs the
@@ -6065,7 +6132,11 @@ export class OrcaRuntimeService {
           ? this.getMergedMobileSessionPublicationEpoch(existing, tabs)
           : `headless-hydrated:${Date.now().toString(36)}`,
         snapshotVersion: (existing?.snapshotVersion ?? 0) + 1,
-        activeGroupId: existing?.activeGroupId ?? groupId,
+        activeGroupId:
+          existing?.activeGroupId ??
+          session.activeGroupIdByWorktree?.[entryWorktreeId] ??
+          nextTabGroups[0]?.id ??
+          groupId,
         activeTabId: mergedActiveTab?.id ?? null,
         activeTabType: mergedActiveTab?.type ?? null,
         tabGroups: nextTabGroups,
@@ -7019,6 +7090,81 @@ export class OrcaRuntimeService {
       })
   }
 
+  private buildHeadlessMobileSessionFileTabs(
+    worktreeId: string,
+    session: WorkspaceSessionState
+  ): RuntimeMobileSessionFileTab[] {
+    const openFiles = session.openFilesByWorktree?.[worktreeId] ?? []
+    if (openFiles.length === 0) {
+      return []
+    }
+    const filesByPath = new Map(openFiles.map((file) => [file.filePath, file]))
+    const unifiedFileTabs = (session.unifiedTabs?.[worktreeId] ?? []).filter(
+      (tab) => tab.contentType === 'editor'
+    )
+    const activeGroupId = session.activeGroupIdByWorktree?.[worktreeId]
+    const activeGroup =
+      session.tabGroups?.[worktreeId]?.find((group) => group.id === activeGroupId) ??
+      session.tabGroups?.[worktreeId]?.[0]
+    const tabs = unifiedFileTabs.flatMap((tab): RuntimeMobileSessionFileTab[] => {
+      const file = filesByPath.get(tab.entityId)
+      if (!file) {
+        return []
+      }
+      return [
+        {
+          type: 'file',
+          id: this.safeHeadlessMobileSessionFileTabId(tab.id, file.filePath),
+          title: file.relativePath.split(/[\\/]/).findLast(Boolean) ?? file.relativePath,
+          filePath: file.filePath,
+          relativePath: file.relativePath,
+          language: file.language,
+          mode: 'edit',
+          isDirty: file.dirtyDraftContent !== undefined,
+          color: tab.color,
+          isPinned: tab.isPinned === true,
+          isActive:
+            activeGroup?.activeTabId === tab.id ||
+            (session.activeTabTypeByWorktree?.[worktreeId] === 'editor' &&
+              session.activeFileIdByWorktree?.[worktreeId] === file.filePath)
+        }
+      ]
+    })
+    const representedPaths = new Set(tabs.map((tab) => tab.filePath))
+    for (const file of openFiles) {
+      if (representedPaths.has(file.filePath)) {
+        continue
+      }
+      tabs.push({
+        type: 'file',
+        id: this.safeHeadlessMobileSessionFileTabId(file.filePath, file.filePath),
+        title: file.relativePath.split(/[\\/]/).findLast(Boolean) ?? file.relativePath,
+        filePath: file.filePath,
+        relativePath: file.relativePath,
+        language: file.language,
+        mode: 'edit',
+        isDirty: file.dirtyDraftContent !== undefined,
+        isActive:
+          session.activeTabTypeByWorktree?.[worktreeId] === 'editor' &&
+          session.activeFileIdByWorktree?.[worktreeId] === file.filePath
+      })
+    }
+    return tabs
+  }
+
+  private safeHeadlessMobileSessionFileTabId(tabId: string, filePath: string): string {
+    if (
+      tabId.length <= 512 &&
+      !tabId.includes('/') &&
+      !tabId.includes('\\') &&
+      !isAbsolute(tabId) &&
+      !isWindowsAbsolutePathLike(tabId)
+    ) {
+      return tabId
+    }
+    return `headless-file-${createHash('sha256').update(filePath).digest('hex')}`
+  }
+
   // Why: headless serve backs browser panes with offscreen WebContents that live
   // only in the BrowserManager, never in a renderer graph. Without surfacing them
   // as session tabs, a session.tabs snapshot (e.g. on terminal open) prunes the
@@ -7042,8 +7188,8 @@ export class OrcaRuntimeService {
         browserPageId: tab.browserPageId,
         url: tab.url || 'about:blank',
         loading: false,
-        canGoBack: false,
-        canGoForward: false,
+        canGoBack: tab.canGoBack === true,
+        canGoForward: tab.canGoForward === true,
         loadError: tab.loadError ?? undefined,
         certificateFailure: tab.certificateFailure ?? undefined,
         ...(persistedProps ? { color: persistedProps.color } : {}),
@@ -7070,6 +7216,8 @@ export class OrcaRuntimeService {
         tab.id === prev.id &&
         tab.title === prev.title &&
         tab.url === prev.url &&
+        tab.canGoBack === prev.canGoBack &&
+        tab.canGoForward === prev.canGoForward &&
         tab.isActive === prev.isActive &&
         (tab.isPinned ?? false) === (prev.isPinned ?? false) &&
         (tab.color ?? null) === (prev.color ?? null) &&
@@ -8066,6 +8214,8 @@ export class OrcaRuntimeService {
       // route closeSessionTab to. Close the page directly and drop it from the
       // snapshot so paired clients stop showing it.
       await this.closeHeadlessMobileBrowserTab(worktreeId, snapshot!, tab)
+    } else if (tab.type === 'file' && !this.notifier?.closeSessionTab) {
+      this.closeHeadlessMobileSessionFile(worktreeId, snapshot!, tab)
     } else {
       this.notifier?.closeSessionTab?.(tab.id, worktreeId)
     }
@@ -8845,6 +8995,227 @@ export class OrcaRuntimeService {
     return await this.notifier.saveMobileMarkdownTab(worktreeId, tabId, baseVersion, content)
   }
 
+  private openMobileSessionFile(
+    worktreeId: string,
+    filePath: string,
+    relativePath: string,
+    runtimeEnvironmentId?: string | null
+  ): void {
+    if (this.notifier?.openFile) {
+      this.notifier.openFile(worktreeId, filePath, relativePath, runtimeEnvironmentId)
+      return
+    }
+    this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
+    const nextSnapshot = openHeadlessMobileSessionFileTab(
+      this.mobileSessionTabsByWorktree.get(worktreeId),
+      {
+        worktreeId,
+        filePath,
+        relativePath,
+        language: 'plaintext',
+        tabId: randomUUID(),
+        defaultGroupId: this.getHeadlessMobileSessionGroupId(worktreeId),
+        now: Date.now()
+      }
+    )
+    const fileTab = nextSnapshot.tabs.find(
+      (tab): tab is RuntimeMobileSessionFileTab =>
+        tab.type === 'file' && tab.id === nextSnapshot.activeTabId
+    )
+    if (!fileTab) {
+      throw new Error('file_tab_unavailable')
+    }
+    this.persistHeadlessMobileSessionFileTab(worktreeId, fileTab, nextSnapshot)
+    this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
+    this.emitMobileSessionTabsSnapshot(nextSnapshot)
+  }
+
+  private openMobileSessionDiff(
+    worktreeId: string,
+    filePath: string,
+    relativePath: string,
+    staged: boolean,
+    runtimeEnvironmentId?: string | null
+  ): void {
+    if (this.notifier?.openDiff) {
+      this.notifier.openDiff(worktreeId, filePath, relativePath, staged, runtimeEnvironmentId)
+      return
+    }
+    this.hydrateHeadlessMobileSessionTabsFromWorkspaceSession(worktreeId)
+    const nextSnapshot = openHeadlessMobileSessionFileTab(
+      this.mobileSessionTabsByWorktree.get(worktreeId),
+      {
+        worktreeId,
+        filePath,
+        relativePath,
+        language: 'plaintext',
+        mode: 'diff',
+        diffSource: staged ? 'staged' : 'unstaged',
+        tabId: randomUUID(),
+        defaultGroupId: this.getHeadlessMobileSessionGroupId(worktreeId),
+        now: Date.now()
+      }
+    )
+    this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
+    this.emitMobileSessionTabsSnapshot(nextSnapshot)
+  }
+
+  private persistHeadlessMobileSessionFileTab(
+    worktreeId: string,
+    fileTab: RuntimeMobileSessionFileTab,
+    snapshot: RuntimeMobileSessionTabsSnapshot
+  ): void {
+    const session = this.getWorkspaceSessionForWorktree(worktreeId)
+    if (!session || !this.store?.setWorkspaceSession) {
+      return
+    }
+    const openFiles = (session.openFilesByWorktree?.[worktreeId] ?? []).filter(
+      (file) => file.filePath !== fileTab.filePath
+    )
+    const unifiedTabs = (session.unifiedTabs?.[worktreeId] ?? []).filter(
+      (tab) => tab.id !== fileTab.id && tab.entityId !== fileTab.filePath
+    )
+    const existingUnifiedTab = session.unifiedTabs?.[worktreeId]?.find(
+      (tab) => tab.id === fileTab.id || tab.entityId === fileTab.filePath
+    )
+    const groupId =
+      snapshot.tabGroups?.find((group) => group.tabOrder.includes(fileTab.id))?.id ??
+      snapshot.activeGroupId ??
+      this.getHeadlessMobileSessionGroupId(worktreeId)
+    const nextSession: WorkspaceSessionState = {
+      ...session,
+      openFilesByWorktree: {
+        ...session.openFilesByWorktree,
+        [worktreeId]: [
+          ...openFiles,
+          {
+            filePath: fileTab.filePath,
+            relativePath: fileTab.relativePath,
+            worktreeId,
+            language: fileTab.language
+          }
+        ]
+      },
+      activeFileIdByWorktree: {
+        ...session.activeFileIdByWorktree,
+        [worktreeId]: fileTab.filePath
+      },
+      activeTabTypeByWorktree: {
+        ...session.activeTabTypeByWorktree,
+        [worktreeId]: 'editor'
+      },
+      unifiedTabs: {
+        ...session.unifiedTabs,
+        [worktreeId]: [
+          ...unifiedTabs,
+          {
+            id: fileTab.id,
+            entityId: fileTab.filePath,
+            groupId,
+            worktreeId,
+            contentType: 'editor',
+            label: fileTab.title,
+            customLabel: existingUnifiedTab?.customLabel ?? null,
+            color: fileTab.color ?? existingUnifiedTab?.color ?? null,
+            sortOrder:
+              existingUnifiedTab?.sortOrder ??
+              Math.max(-1, ...unifiedTabs.map((tab) => tab.sortOrder)) + 1,
+            createdAt: existingUnifiedTab?.createdAt ?? Date.now(),
+            isPreview: existingUnifiedTab?.isPreview ?? false,
+            isPinned: fileTab.isPinned ?? existingUnifiedTab?.isPinned ?? false
+          }
+        ]
+      },
+      tabGroups: {
+        ...session.tabGroups,
+        [worktreeId]: (snapshot.tabGroups ?? []).map((group) => ({ ...group, worktreeId }))
+      },
+      activeGroupIdByWorktree: {
+        ...session.activeGroupIdByWorktree,
+        [worktreeId]: groupId
+      }
+    }
+    this.commitHeadlessMobileSessionFilePersistence(worktreeId, session, nextSession)
+  }
+
+  private closeHeadlessMobileSessionFile(
+    worktreeId: string,
+    snapshot: RuntimeMobileSessionTabsSnapshot,
+    fileTab: RuntimeMobileSessionFileTab
+  ): void {
+    const nextSnapshot = closeHeadlessMobileSessionFileTab(snapshot, fileTab.id, Date.now())
+    if (fileTab.mode === 'diff') {
+      this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
+      this.emitMobileSessionTabsSnapshot(nextSnapshot)
+      return
+    }
+    const session = this.getWorkspaceSessionForWorktree(worktreeId)
+    if (session && this.store?.setWorkspaceSession) {
+      const nextActiveTab = nextSnapshot.tabs.find((tab) => tab.id === nextSnapshot.activeTabId)
+      const nextActiveFile =
+        nextActiveTab?.type === 'file' || nextActiveTab?.type === 'markdown' ? nextActiveTab : null
+      const nextActiveTopLevelId =
+        nextActiveTab?.type === 'terminal' ? nextActiveTab.parentTabId : (nextActiveTab?.id ?? null)
+      const nextSession: WorkspaceSessionState = {
+        ...session,
+        openFilesByWorktree: {
+          ...session.openFilesByWorktree,
+          [worktreeId]: (session.openFilesByWorktree?.[worktreeId] ?? []).filter(
+            (file) => file.filePath !== fileTab.filePath
+          )
+        },
+        unifiedTabs: {
+          ...session.unifiedTabs,
+          [worktreeId]: (session.unifiedTabs?.[worktreeId] ?? []).filter(
+            (tab) => tab.id !== fileTab.id && tab.entityId !== fileTab.filePath
+          )
+        },
+        tabGroups: {
+          ...session.tabGroups,
+          [worktreeId]: (nextSnapshot.tabGroups ?? []).map((group) => ({ ...group, worktreeId }))
+        },
+        activeGroupIdByWorktree: {
+          ...session.activeGroupIdByWorktree,
+          ...(nextSnapshot.activeGroupId ? { [worktreeId]: nextSnapshot.activeGroupId } : {})
+        },
+        activeFileIdByWorktree: {
+          ...session.activeFileIdByWorktree,
+          [worktreeId]: nextActiveFile?.filePath ?? null
+        },
+        activeTabIdByWorktree: {
+          ...session.activeTabIdByWorktree,
+          [worktreeId]: nextActiveTopLevelId
+        },
+        activeTabTypeByWorktree: {
+          ...session.activeTabTypeByWorktree,
+          [worktreeId]:
+            nextSnapshot.activeTabType === 'browser'
+              ? 'browser'
+              : nextSnapshot.activeTabType === 'file' || nextSnapshot.activeTabType === 'markdown'
+                ? 'editor'
+                : 'terminal'
+        }
+      }
+      this.commitHeadlessMobileSessionFilePersistence(worktreeId, session, nextSession)
+    }
+    this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
+    this.emitMobileSessionTabsSnapshot(nextSnapshot)
+  }
+
+  private commitHeadlessMobileSessionFilePersistence(
+    worktreeId: string,
+    previous: WorkspaceSessionState,
+    next: WorkspaceSessionState
+  ): void {
+    try {
+      this.setWorkspaceSessionForWorktree(worktreeId, next)
+      this.store?.flushOrThrow?.()
+    } catch (error) {
+      this.setWorkspaceSessionForWorktree(worktreeId, previous)
+      throw error
+    }
+  }
+
   private readonly fileCommands = new RuntimeFileCommands({
     getRuntimeId: () => this.runtimeId,
     requireStore: () => this.requireStore(),
@@ -8859,18 +9230,10 @@ export class OrcaRuntimeService {
     hasRecentTerminalOutputPath: (terminalHandle, pathText, absolutePath) =>
       this.hasRecentTerminalOutputPath(terminalHandle, pathText, absolutePath),
     resolveRuntimeGitTarget: (selector) => this.resolveRuntimeGitTarget(selector),
-    openFile: (worktreeId, filePath, relativePath, runtimeEnvironmentId) => {
-      if (!this.notifier?.openFile) {
-        throw new Error('renderer_unavailable')
-      }
-      this.notifier.openFile(worktreeId, filePath, relativePath, runtimeEnvironmentId)
-    },
-    openDiff: (worktreeId, filePath, relativePath, staged, runtimeEnvironmentId) => {
-      if (!this.notifier?.openDiff) {
-        throw new Error('renderer_unavailable')
-      }
-      this.notifier.openDiff(worktreeId, filePath, relativePath, staged, runtimeEnvironmentId)
-    }
+    openFile: (worktreeId, filePath, relativePath, runtimeEnvironmentId) =>
+      this.openMobileSessionFile(worktreeId, filePath, relativePath, runtimeEnvironmentId),
+    openDiff: (worktreeId, filePath, relativePath, staged, runtimeEnvironmentId) =>
+      this.openMobileSessionDiff(worktreeId, filePath, relativePath, staged, runtimeEnvironmentId)
   })
 
   listMobileFiles: RuntimeFileCommands['listMobileFiles'] = this.fileCommands.listMobileFiles.bind(
@@ -8893,6 +9256,8 @@ export class OrcaRuntimeService {
     this.fileCommands.readTerminalArtifactFile.bind(this.fileCommands)
   readTerminalArtifactPreview: RuntimeFileCommands['readTerminalArtifactPreview'] =
     this.fileCommands.readTerminalArtifactPreview.bind(this.fileCommands)
+  readTerminalArtifactChunk: RuntimeFileCommands['readTerminalArtifactChunk'] =
+    this.fileCommands.readTerminalArtifactChunk.bind(this.fileCommands)
   writeTerminalArtifactFile: RuntimeFileCommands['writeTerminalArtifactFile'] =
     this.fileCommands.writeTerminalArtifactFile.bind(this.fileCommands)
   revokeTerminalFileGrantsForClient: RuntimeFileCommands['revokeTerminalFileGrantsForClient'] =
@@ -12559,6 +12924,27 @@ export class OrcaRuntimeService {
     const ptyId = this.resolveLeafForHandle(handle)?.ptyId
     const pty = ptyId ? this.ptysById.get(ptyId) : null
     return pty ? { worktreeId: pty.worktreeId, connectionId: pty.connectionId } : null
+  }
+
+  resolveNativeChatTranscriptBinding(handle: string): RuntimeNativeChatTranscriptBinding | null {
+    const terminalContext = this.resolveTerminalContext(handle)
+    const snapshot = terminalContext
+      ? this.mobileSessionTabsByWorktree.get(terminalContext.worktreeId)
+      : null
+    if (!terminalContext || !snapshot) {
+      return null
+    }
+    const terminal = this.toMobileSessionTabsResult(snapshot).tabs.find(
+      (tab) => tab.type === 'terminal' && tab.status === 'ready' && tab.terminal === handle
+    )
+    if (!terminal || terminal.type !== 'terminal') {
+      return null
+    }
+    return {
+      ...terminalContext,
+      agent: terminal.agentStatus?.agentType ?? terminal.launchAgent ?? null,
+      providerSession: terminal.agentStatus?.providerSession ?? null
+    }
   }
 
   // Why: remote clients cannot resolve this runtime's WSL project preference,
@@ -19726,6 +20112,20 @@ export class OrcaRuntimeService {
       })
     }
     return result
+  }
+
+  async submitHostedReview(
+    args: HostedReviewSubmissionInput & { repoSelector: string }
+  ): Promise<HostedReviewSubmissionResult> {
+    const repo = await this.resolveRepoSelector(args.repoSelector)
+    const { repoSelector: _repoSelector, ...input } = args
+    return submitHostedReviewFromRepo(
+      repo.path,
+      input,
+      repo.issueSourcePreference,
+      repo.connectionId ?? null,
+      this.getHostedReviewExecutionOptions(repo)
+    )
   }
 
   async listGitLabRepoWorkItems(
@@ -30312,6 +30712,15 @@ export class OrcaRuntimeService {
     snapshot: RuntimeMobileSessionTabsSnapshot
   ): RuntimeMobileSessionTabsResult {
     const tabs: RuntimeMobileSessionClientTab[] = []
+    const workspaceRepoId = splitWorktreeIdForFilesystem(snapshot.worktree)?.repoId
+    const workspaceConnectionId = workspaceRepoId
+      ? (this.store?.getRepo?.(workspaceRepoId)?.connectionId ?? null)
+      : null
+    let workspaceTransportState: 'available' | 'unavailable' =
+      workspaceConnectionId &&
+      (!this.getSshProviderFn || !this.getSshProviderFn(workspaceConnectionId))
+        ? 'unavailable'
+        : 'available'
     const liveBrowserTabsByPageId = this.getLiveBrowserTabsByPageId(snapshot.worktree)
     // Production reads hook rows by pane; the snapshot fallback remains for tests
     // and embedders that have not adopted the narrow getter.
@@ -30349,6 +30758,8 @@ export class OrcaRuntimeService {
           ...tab,
           title: liveTab.title || tab.title,
           url: liveTab.url || tab.url,
+          canGoBack: liveTab.canGoBack === true,
+          canGoForward: liveTab.canGoForward === true,
           // Why: bridge "active" means active BrowserView/webContents, not active Orca tab; preserve the renderer's session focus.
           isActive: tab.isActive
         })
@@ -30382,6 +30793,13 @@ export class OrcaRuntimeService {
         ? makePaneKey(tab.parentTabId, tab.leafId)
         : `${tab.parentTabId}:${legacyPaneId ?? tab.leafId}`
       const mobileStatusPty = livePty ?? pty
+      const transportConnectionId = liveLeafPty?.connectionId ?? pty?.connectionId
+      if (
+        transportConnectionId &&
+        (!this.getSshProviderFn || !this.getSshProviderFn(transportConnectionId))
+      ) {
+        workspaceTransportState = 'unavailable'
+      }
       // Why: headless hooks live only in main's retained rows; reuse this lookup
       // for both title ownership and status publication so the two cannot diverge.
       const retainedAgentStatus = tab.agentStatus
@@ -30559,6 +30977,7 @@ export class OrcaRuntimeService {
       worktree: snapshot.worktree,
       publicationEpoch: snapshot.publicationEpoch,
       snapshotVersion: snapshot.snapshotVersion,
+      workspaceTransportState,
       activeGroupId,
       activeTabId: active?.id ?? null,
       activeTabType: active?.type ?? null,
@@ -30577,21 +30996,26 @@ export class OrcaRuntimeService {
     getHookRowsForPane: (paneKey: string) => AgentStatusIpcPayload[]
   ): { agentStatus: AgentStatusEntry } | Record<string, never> {
     const paneKey = this.getMobileTerminalPaneKey(tab)
-    // Why: neither the OSC-retained row nor a title-derived status can carry a
-    // provider session — only the hook payload does, and headless serve has no
-    // renderer to publish `tab.agentStatus`. Without it mobile native chat has no
-    // transcript to address and sits on the empty state forever.
-    const hookRow = this.getHookAgentRowForPane(getHookRowsForPane(paneKey))
-    // Why: the hook row is evidence in its own right. Returning early on a missing
-    // PTY status/retained row put this check ahead of the only headless carrier, so
-    // an agent that reported its session but never emitted a recognized title got no
-    // `agentStatus` at all — exactly the hook-only case the fallback exists for.
-    if (!pty?.lastAgentStatus && !retained && !hookRow.agentType && !hookRow.providerSession) {
+    const providerRow = this.getHookAgentRowForPane(getHookRowsForPane(paneKey))
+    const hookStatus = this.getAgentHookStatusForMobileTab(paneKey, pty, tab)
+    const hookIsFresh =
+      hookStatus !== null && Date.now() - hookStatus.receivedAt <= AGENT_STATUS_STALE_AFTER_MS
+    const hookPayload = normalizeMobileHookStatus(hookStatus, hookIsFresh)
+    const preferHookPayload =
+      hookPayload !== null &&
+      hookIsFresh &&
+      (!retained || hookStatus!.receivedAt >= retained.updatedAt)
+    const useRetainedPayload = retained !== null && !preferHookPayload
+    const payload = useRetainedPayload ? retained.payload : hookPayload
+    const providerSession =
+      hookStatus?.providerSession &&
+      (!hookStatus.agentType || !payload?.agentType || hookStatus.agentType === payload.agentType)
+        ? hookStatus.providerSession
+        : providerRow.providerSession
+    const hookAgent = payload?.agentType ?? providerRow.agentType
+    if (!pty?.lastAgentStatus && !payload && !hookAgent && !providerSession) {
       return {}
     }
-    const providerSession = hookRow.providerSession
-      ? { providerSession: hookRow.providerSession }
-      : {}
     const leaf = this.leaves.get(this.getLeafKey(tab.parentTabId, tab.leafId)) ?? null
     const trackerOnlyTitle = this.getUnpersistedTrackedTitleForPty(
       pty?.ptyId ?? leaf?.ptyId ?? null
@@ -30608,22 +31032,13 @@ export class OrcaRuntimeService {
           )
         : null
     const ptyTitleClassification = classifyAgentTitle(ptyTitle)
-    const nonAgentTitle = ptyTitle !== null && ptyTitleClassification !== 'agent'
-    if (nonAgentTitle) {
-      // Why: non-agent title = shell reclaimed the pane; suppress to clear stuck spinners (#1437), though a live hook signal survives.
-      const hasLiveHookSignal =
-        retained?.payload.interactivePrompt != null ||
-        retained?.payload.toolName != null ||
-        // Why: a pending question is never inherited across hook events (unlike
-        // `toolName`), so it proves the agent is parked on a selector right now.
-        hookRow.live?.payload.interactivePrompt != null ||
-        // Why: headless serve has no renderer to retain an OSC row, so a fresh hook
-        // agentType is the only live signal a hook-only pane can offer — and an agent
-        // that reports over HTTP need never set a title this gate would recognize.
-        // Scoped to panes with no PTY status at all, so it cannot revive a spinner:
-        // this branch publishes `done`. It only keeps the transcript addressable.
-        (!pty?.lastAgentStatus && (hookRow.agentType != null || hookRow.providerSession != null))
-      if (!hasLiveHookSignal) {
+    const hasLiveHookSignal = payload?.interactivePrompt != null || payload?.toolName != null
+    const suppressActivity =
+      (!useRetainedPayload && !hookIsFresh) ||
+      (ptyTitle !== null && ptyTitleClassification !== 'agent' && !hasLiveHookSignal)
+    if (ptyTitle !== null && ptyTitleClassification !== 'agent') {
+      // A provider session remains addressable even after an idle shell title wins.
+      if (!hasLiveHookSignal && !providerSession) {
         return {}
       }
     }
@@ -30631,7 +31046,7 @@ export class OrcaRuntimeService {
     const ownerAgent =
       resolvePaneAgentOwner({
         launchAgent: tab.launchAgent ?? pty?.launchAgent ?? null,
-        hookAgent: retained?.payload.agentType ?? hookRow.agentType
+        hookAgent
       }) ??
       pty?.foregroundAgent ??
       null
@@ -30640,23 +31055,32 @@ export class OrcaRuntimeService {
       ownerAgent
     )
     // Why: OSC 9999 hook payload carries real state/prompt/agent; without preferring it, hook-only transitions never surfaced (#7970).
-    const liveRow = retained ?? this.resolveHookLiveAgentRow(hookRow.live, pty, nonAgentTitle)
-    if (liveRow) {
+    if (payload) {
+      const updatedAt = useRetainedPayload ? retained.updatedAt : hookStatus!.receivedAt
+      const stateStartedAt = useRetainedPayload
+        ? retained.stateStartedAt
+        : hookStatus!.stateStartedAt
       return {
         agentStatus: normalizeCompatibleAgentStatusEntryForOwner(
           {
-            ...liveRow.payload,
+            ...(suppressActivity
+              ? {
+                  state: 'done' as const,
+                  prompt: '',
+                  ...(payload.agentType ? { agentType: payload.agentType } : {})
+                }
+              : payload),
             paneKey,
-            updatedAt: liveRow.updatedAt,
-            stateStartedAt: liveRow.stateStartedAt,
+            updatedAt,
+            stateStartedAt,
             stateHistory: [],
+            ...(providerSession ? { providerSession } : {}),
             ...(terminalHandle ? { terminalHandle } : {}),
-            ...((pty?.worktreeId ?? liveRow.worktreeId)
-              ? { worktreeId: pty?.worktreeId ?? liveRow.worktreeId }
+            ...((pty?.worktreeId ?? retained?.worktreeId ?? hookStatus?.worktreeId)
+              ? { worktreeId: pty?.worktreeId ?? retained?.worktreeId ?? hookStatus?.worktreeId }
               : {}),
             tabId: tab.parentTabId,
-            terminalTitle,
-            ...providerSession
+            terminalTitle
           },
           ownerAgent
         )
@@ -30688,7 +31112,7 @@ export class OrcaRuntimeService {
         tabId: tab.parentTabId,
         terminalTitle,
         stateHistory: [],
-        ...providerSession
+        ...(providerSession ? { providerSession } : {})
       }
     }
   }
@@ -30817,6 +31241,29 @@ export class OrcaRuntimeService {
       return null
     }
     return retained
+  }
+
+  private getAgentHookStatusForMobileTab(
+    paneKey: string,
+    pty: RuntimePtyWorktreeRecord | null,
+    tab: RuntimeMobileSessionTerminalTab
+  ): AgentStatusIpcPayload | null {
+    let result: AgentStatusIpcPayload | null = null
+    for (const entry of this.getAgentStatusSnapshotFn?.() ?? []) {
+      if (
+        entry.paneKey !== paneKey ||
+        (entry.tabId && entry.tabId !== tab.parentTabId) ||
+        (pty && entry.connectionId !== pty.connectionId) ||
+        (pty?.worktreeId && entry.worktreeId && entry.worktreeId !== pty.worktreeId) ||
+        (pty?.launchToken && entry.launchToken && entry.launchToken !== pty.launchToken)
+      ) {
+        continue
+      }
+      if (!result || entry.receivedAt > result.receivedAt) {
+        result = entry
+      }
+    }
+    return result
   }
 
   private findPtyForMobileTerminalTab(

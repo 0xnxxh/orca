@@ -1,0 +1,285 @@
+import {
+  AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH,
+  AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH,
+  AGENT_STATUS_TOOL_INPUT_MAX_LENGTH,
+  AGENT_STATUS_TOOL_NAME_MAX_LENGTH,
+  AGENT_TYPE_MAX_LENGTH
+} from '../../../src/shared/agent-status-types'
+import {
+  MobileWebRelativePathSchema,
+  MOBILE_WEB_SESSION_TAB_LIMIT,
+  MobileWebSessionSnapshotResultSchema,
+  type MobileWebSessionSnapshotResult,
+  type MobileWebSessionTab
+} from '../../../src/shared/mobile-web/bridge-operation-contract'
+import type { MobileWebBrowserAuthority } from './mobile-web-browser-authority'
+import type {
+  MobileWebHostNativeChatBinding,
+  MobileWebNativeChatAuthority
+} from './mobile-web-native-chat-authority'
+
+const TAB_TYPES = ['terminal', 'markdown', 'file', 'browser'] as const
+
+export function mobileWebSessionSnapshot(
+  result: unknown,
+  hostWorkspaceId: string,
+  pageWorkspaceId: string,
+  browserAuthority: MobileWebBrowserAuthority,
+  nativeChatAuthority: MobileWebNativeChatAuthority
+): MobileWebSessionSnapshotResult {
+  if (
+    !isRecord(result) ||
+    result.worktree !== hostWorkspaceId ||
+    typeof result.publicationEpoch !== 'string' ||
+    !result.publicationEpoch ||
+    result.publicationEpoch.length > 128 ||
+    typeof result.snapshotVersion !== 'number' ||
+    !Number.isSafeInteger(result.snapshotVersion) ||
+    result.snapshotVersion < 0 ||
+    !Array.isArray(result.tabs)
+  ) {
+    throw new Error('mobile_web_session_snapshot_invalid')
+  }
+
+  const browserPageIds = result.tabs.flatMap((value): string[] => {
+    if (
+      isRecord(value) &&
+      value.type === 'browser' &&
+      typeof value.browserPageId === 'string' &&
+      value.browserPageId.length > 0 &&
+      value.browserPageId.length <= 512
+    ) {
+      return [value.browserPageId]
+    }
+    return []
+  })
+  browserAuthority.synchronizeWorkspace(hostWorkspaceId, browserPageIds)
+  const nativeChatBindings = result.tabs.flatMap((value): MobileWebHostNativeChatBinding[] => {
+    const binding = mobileWebNativeChatBinding(value, hostWorkspaceId)
+    return binding ? [binding] : []
+  })
+  nativeChatAuthority.synchronizeWorkspace(hostWorkspaceId, nativeChatBindings)
+  const tabs = result.tabs
+    .slice(0, MOBILE_WEB_SESSION_TAB_LIMIT)
+    .flatMap((value): MobileWebSessionTab[] => {
+      const tab = mobileWebSessionTab(value, hostWorkspaceId, browserAuthority, nativeChatAuthority)
+      return tab ? [tab] : []
+    })
+  const activeTabId =
+    result.activeTabType === 'browser'
+      ? (tabs.find((tab) => tab.type === 'browser' && tab.isActive)?.id ?? null)
+      : boundedNullableText(result.activeTabId, 512)
+
+  const parsed = MobileWebSessionSnapshotResultSchema.safeParse({
+    workspaceId: pageWorkspaceId,
+    publicationEpoch: result.publicationEpoch,
+    snapshotVersion: result.snapshotVersion,
+    workspaceTransportState:
+      result.workspaceTransportState === 'unavailable' ? 'unavailable' : 'available',
+    activeTabId,
+    activeTabType: isTabType(result.activeTabType) ? result.activeTabType : null,
+    tabs,
+    truncated: result.tabs.length > tabs.length
+  })
+  if (!parsed.success) {
+    throw new Error('mobile_web_session_snapshot_invalid')
+  }
+  return parsed.data
+}
+
+function mobileWebSessionTab(
+  value: unknown,
+  hostWorkspaceId: string,
+  browserAuthority: MobileWebBrowserAuthority,
+  nativeChatAuthority: MobileWebNativeChatAuthority
+): MobileWebSessionTab | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    !value.id ||
+    value.id.length > 512 ||
+    !isTabType(value.type)
+  ) {
+    return null
+  }
+  const base = {
+    id: value.id,
+    title: boundedText(value.title, 240, fallbackTitle(value.type)),
+    isActive: value.isActive === true
+  }
+  if (value.type === 'terminal') {
+    const launchAgent = boundedOptionalText(value.launchAgent, AGENT_TYPE_MAX_LENGTH)
+    const agentStatus = mobileWebNativeChatAgentStatus(value.agentStatus)
+    const nativeChatBinding = mobileWebNativeChatBinding(value, hostWorkspaceId)
+    return {
+      ...base,
+      type: 'terminal',
+      status: value.status === 'pending-handle' ? 'pending-handle' : 'ready',
+      ...(launchAgent ? { launchAgent } : {}),
+      ...(agentStatus ? { agentStatus } : {}),
+      ...(nativeChatBinding
+        ? { nativeChatSessionId: nativeChatAuthority.register(nativeChatBinding) }
+        : {})
+    }
+  }
+  if (value.type === 'markdown') {
+    const relativePath = safeRelativePath(value.relativePath)
+    return {
+      ...base,
+      type: 'markdown',
+      ...(relativePath ? { relativePath } : {}),
+      ...(value.language === 'markdown' ? { language: 'markdown' as const } : {}),
+      ...(value.mode === 'edit' || value.mode === 'markdown-preview' ? { mode: value.mode } : {})
+    }
+  }
+  if (value.type === 'file') {
+    const relativePath = safeRelativePath(value.relativePath)
+    const language = boundedLanguage(value.language)
+    const mode = value.mode === 'edit' || value.mode === 'diff' ? value.mode : undefined
+    const diffSource = isFileDiffSource(value.diffSource) ? value.diffSource : undefined
+    return {
+      ...base,
+      type: 'file',
+      ...(relativePath ? { relativePath } : {}),
+      ...(language ? { language } : {}),
+      ...(mode ? { mode } : {}),
+      ...(diffSource ? { diffSource } : {})
+    }
+  }
+  if (
+    typeof value.browserPageId !== 'string' ||
+    !value.browserPageId ||
+    value.browserPageId.length > 512
+  ) {
+    return null
+  }
+  const browserPageId = browserAuthority.register(hostWorkspaceId, value.browserPageId)
+  return {
+    ...base,
+    id: browserPageId,
+    type: 'browser',
+    browserPageId,
+    url: boundedText(value.url, 4096, 'about:blank'),
+    loading: value.loading === true,
+    canGoBack: value.canGoBack === true,
+    canGoForward: value.canGoForward === true
+  }
+}
+
+function fallbackTitle(type: MobileWebSessionTab['type']): string {
+  return type === 'browser' ? 'Browser' : type[0].toUpperCase() + type.slice(1)
+}
+
+function boundedText(value: unknown, maximum: number, fallback: string): string {
+  return typeof value === 'string' && value.length > 0 ? value.slice(0, maximum) : fallback
+}
+
+function boundedNullableText(value: unknown, maximum: number): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximum ? value : null
+}
+
+function boundedOptionalText(value: unknown, maximum: number): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= maximum
+    ? value
+    : undefined
+}
+
+function mobileWebNativeChatAgentStatus(
+  value: unknown
+): Extract<MobileWebSessionTab, { type: 'terminal' }>['agentStatus'] {
+  if (!isRecord(value) || !isAgentState(value.state)) {
+    return undefined
+  }
+  const stateStartedAt = safeNonnegativeInteger(value.stateStartedAt)
+  return {
+    state: value.state,
+    ...(stateStartedAt === undefined ? {} : { stateStartedAt }),
+    ...(boundedOptionalText(value.agentType, AGENT_TYPE_MAX_LENGTH)
+      ? { agentType: value.agentType as string }
+      : {}),
+    ...(boundedOptionalText(value.toolName, AGENT_STATUS_TOOL_NAME_MAX_LENGTH)
+      ? { toolName: value.toolName as string }
+      : {}),
+    ...(boundedOptionalText(value.toolInput, AGENT_STATUS_TOOL_INPUT_MAX_LENGTH)
+      ? { toolInput: value.toolInput as string }
+      : {}),
+    ...(boundedOptionalText(value.interactivePrompt, AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH)
+      ? { interactivePrompt: value.interactivePrompt as string }
+      : {}),
+    ...(boundedOptionalText(value.lastAssistantMessage, AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH)
+      ? { lastAssistantMessage: value.lastAssistantMessage as string }
+      : {}),
+    ...(typeof value.interrupted === 'boolean' ? { interrupted: value.interrupted } : {})
+  }
+}
+
+function safeNonnegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= Number.MAX_SAFE_INTEGER
+    ? value
+    : undefined
+}
+
+function mobileWebNativeChatBinding(
+  value: unknown,
+  hostWorkspaceId: string
+): MobileWebHostNativeChatBinding | null {
+  if (
+    !isRecord(value) ||
+    value.type !== 'terminal' ||
+    typeof value.id !== 'string' ||
+    value.id.length === 0 ||
+    value.id.length > 512 ||
+    !isRecord(value.agentStatus) ||
+    !isRecord(value.agentStatus.providerSession)
+  ) {
+    return null
+  }
+  const agent =
+    boundedOptionalText(value.agentStatus.agentType, AGENT_TYPE_MAX_LENGTH) ??
+    boundedOptionalText(value.launchAgent, AGENT_TYPE_MAX_LENGTH)
+  const providerSessionId = boundedOptionalText(value.agentStatus.providerSession.id, 512)
+  if (!agent || !providerSessionId) {
+    return null
+  }
+  const transcriptPath = boundedOptionalText(
+    value.agentStatus.providerSession.transcriptPath,
+    16 * 1024
+  )
+  return {
+    hostWorkspaceId,
+    hostTabId: value.id,
+    hostTerminalId:
+      typeof value.terminal === 'string' && value.terminal.length > 0 ? value.terminal : null,
+    agent,
+    providerSessionId,
+    ...(transcriptPath ? { transcriptPath } : {})
+  }
+}
+
+function isAgentState(value: unknown): value is 'working' | 'blocked' | 'waiting' | 'done' {
+  return value === 'working' || value === 'blocked' || value === 'waiting' || value === 'done'
+}
+
+function isTabType(value: unknown): value is (typeof TAB_TYPES)[number] {
+  return TAB_TYPES.some((type) => type === value)
+}
+
+function safeRelativePath(value: unknown): string | undefined {
+  const parsed = MobileWebRelativePathSchema.safeParse(value)
+  return parsed.success ? parsed.data : undefined
+}
+
+function boundedLanguage(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Za-z0-9_+.-]{1,64}$/.test(value) ? value : undefined
+}
+
+function isFileDiffSource(value: unknown): value is 'staged' | 'unstaged' | 'branch' | 'commit' {
+  return value === 'staged' || value === 'unstaged' || value === 'branch' || value === 'commit'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}

@@ -46,6 +46,7 @@ import {
   type SnapshotResult
 } from './snapshot-engine'
 import { insertTextThroughCdp } from './browser-text-insertion'
+import { readGuestNavigationState } from './browser-guest-navigation-state'
 import type { BrowserManager } from './browser-manager'
 import { ANTI_DETECTION_SCRIPT } from './anti-detection'
 
@@ -968,7 +969,8 @@ export class CdpBridge {
         index,
         url: guest.getURL(),
         title: guest.getTitle(),
-        active: wcId === this.activeWebContentsId
+        active: wcId === this.activeWebContentsId,
+        ...readGuestNavigationState(guest)
       })
       index++
     }

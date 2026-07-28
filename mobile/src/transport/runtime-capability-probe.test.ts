@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { startRuntimeCapabilityProbe } from './runtime-capability-probe'
+import { startRuntimeCapabilityProbe, startRuntimeCapabilityRead } from './runtime-capability-probe'
 import { LogicalClientCutoverError } from './stable-logical-rpc-client'
 import type { RpcClient } from './rpc-client'
 import type { RpcResponse } from './types'
@@ -93,6 +93,22 @@ describe('startRuntimeCapabilityProbe', () => {
     await flushMicrotasks()
     expect(seen).toEqual([[]])
     expect(calls()).toBe(1)
+    cancel()
+  })
+
+  it('reuses the retry behavior for a named capability reader', async () => {
+    const read = vi
+      .fn<() => Promise<{ agentHistorySupported: boolean }>>()
+      .mockRejectedValueOnce(new LogicalClientCutoverError())
+      .mockResolvedValue({ agentHistorySupported: true })
+    const seen: { agentHistorySupported: boolean }[] = []
+    const cancel = startRuntimeCapabilityRead(read, (capabilities) => seen.push(capabilities))
+
+    await flushMicrotasks()
+    await vi.advanceTimersByTimeAsync(250)
+
+    expect(seen).toEqual([{ agentHistorySupported: true }])
+    expect(read).toHaveBeenCalledTimes(2)
     cancel()
   })
 

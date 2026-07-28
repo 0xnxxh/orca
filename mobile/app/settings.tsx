@@ -22,7 +22,8 @@ import {
   Globe,
   MessageSquare,
   Terminal as TerminalIcon,
-  KeyRound
+  KeyRound,
+  PanelsTopLeft
 } from 'lucide-react-native'
 import { colors, radii, spacing, typography } from '../src/theme/mobile-theme'
 import {
@@ -130,6 +131,17 @@ export default function SettingsScreen() {
           >
             <Globe size={16} color={colors.textSecondary} />
             <Text style={styles.rowLabel}>Browser</Text>
+            <ChevronRight size={16} color={colors.textMuted} />
+          </Pressable>
+          <View style={styles.separator} />
+          <Pressable
+            accessibilityLabel="Open hybrid workspace UI"
+            style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+            onPress={() => router.push('/hybrid')}
+          >
+            <PanelsTopLeft size={16} color={colors.textSecondary} />
+            <Text style={styles.rowLabel}>Hybrid workspace UI</Text>
+            <Text style={styles.rowMeta}>Experimental</Text>
             <ChevronRight size={16} color={colors.textMuted} />
           </Pressable>
           <View style={styles.separator} />
@@ -278,6 +290,13 @@ const styles = StyleSheet.create({
     fontSize: typography.bodySize,
     fontWeight: '500',
     color: colors.textPrimary
+  },
+  rowMeta: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5
   },
   credentialCleanupRow: {
     flexDirection: 'row',

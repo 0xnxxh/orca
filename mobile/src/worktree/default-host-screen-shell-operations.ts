@@ -1,0 +1,47 @@
+import { useMemo } from 'react'
+import { usePathname, useRouter } from 'expo-router'
+import { leaveHostRoute } from '../host-route-exit'
+import { useCloseHost, useForceReconnect } from '../transport/client-context'
+import { removeHostAndCloseClient } from '../transport/host-removal-lifecycle'
+import { navigateFromHostScreenList } from './host-screen-route-navigation'
+import type { HostScreenShellOperations } from './host-screen-shell-operations'
+
+export function useDefaultHostScreenShellOperations(args: {
+  hostId: string | undefined
+  embedded: boolean
+}): HostScreenShellOperations {
+  const router = useRouter()
+  const pathname = usePathname()
+  const closeHostClient = useCloseHost()
+  const forceReconnectHost = useForceReconnect()
+
+  return useMemo(
+    () => ({
+      leaveHost() {
+        leaveHostRoute(router)
+      },
+      navigateFromHostList(target: string) {
+        navigateFromHostScreenList({
+          router,
+          pathname,
+          target,
+          embedded: args.embedded,
+          hostId: args.hostId
+        })
+      },
+      reconnect() {
+        return args.hostId ? forceReconnectHost(args.hostId) : Promise.resolve()
+      },
+      repairPairing() {
+        router.push('/pair-scan')
+      },
+      removeHost(hostPublicKey: string) {
+        if (!args.hostId || !hostPublicKey) {
+          return Promise.reject(new Error('Host identity unavailable'))
+        }
+        return removeHostAndCloseClient(args.hostId, hostPublicKey, closeHostClient)
+      }
+    }),
+    [args.embedded, args.hostId, closeHostClient, forceReconnectHost, pathname, router]
+  )
+}

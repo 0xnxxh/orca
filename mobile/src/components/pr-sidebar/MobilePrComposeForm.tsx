@@ -11,7 +11,7 @@ import {
 import { colors } from '../../theme/mobile-theme'
 import type { RpcClient } from '../../transport/rpc-client'
 import type { RpcSuccess } from '../../transport/types'
-import { triggerError, triggerSuccess } from '../../platform/haptics'
+import { useMobilePrShellOperations } from '../../platform/mobile-pr-shell-operations'
 import {
   createMobilePr,
   getMobilePrCreateSuccessWarning,
@@ -51,6 +51,7 @@ export function MobilePrComposeForm({
   onCancel,
   onCreated
 }: Props) {
+  const shell = useMobilePrShellOperations()
   const copy = hostedReviewCopy(prefill.provider)
   const ReviewIcon = prefill.provider === 'gitlab' ? GitMerge : GitPullRequestArrow
   const [title, setTitle] = useState(prefill.title)
@@ -94,12 +95,12 @@ export function MobilePrComposeForm({
         setError(result.error)
       }
     } catch (err) {
-      triggerError()
+      shell.error()
       setError(err instanceof Error ? err.message : 'Failed to generate PR fields')
     } finally {
       setGenerating(false)
     }
-  }, [base, body, client, draft, generating, title, worktreeId])
+  }, [base, body, client, draft, generating, shell, title, worktreeId])
 
   const headRef = head ?? ''
   const baseConflict = base.trim().length > 0 && !isBaseHeadDistinct(base, headRef)
@@ -132,14 +133,14 @@ export function MobilePrComposeForm({
         pushBeforeCreate
       })
       if (outcome.ok) {
-        triggerSuccess()
+        shell.success()
         const warning = getMobilePrCreateSuccessWarning(outcome, prefill.provider)
         if (warning) {
           setError(warning)
         }
         onCreated(outcome.url, warning)
       } else {
-        triggerError()
+        shell.error()
         setError(outcome.error)
       }
     } finally {
@@ -156,6 +157,7 @@ export function MobilePrComposeForm({
     onCreated,
     prefill.provider,
     pushBeforeCreate,
+    shell,
     submitting,
     title,
     worktreeId

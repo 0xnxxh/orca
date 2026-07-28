@@ -9,6 +9,7 @@ import {
 } from '../../shared/browser-screencast-protocol'
 import { BrowserError } from './cdp-bridge'
 import { acquireElectronDebugger, type ElectronDebuggerLease } from './electron-debugger-lease'
+import { readGuestCdpNavigationState } from './browser-guest-navigation-state'
 import { readBrowserScreencastImageSize } from './browser-screencast-image-size'
 
 const DEBUGGER_COMMAND_TIMEOUT_MS = 8_000
@@ -35,6 +36,10 @@ export type BrowserScreencastSession = { stop: () => void; done: Promise<void> }
 type BrowserScreencastEvent =
   | { type: 'dialog'; dialogType: string; message: string }
   | { type: 'dialogClosed' }
+  | {
+      type: 'navigation'
+      tab: { url: string; title: string; canGoBack: boolean; canGoForward: boolean }
+    }
 
 type PendingScreencastFrame = {
   metadata: BrowserScreencastFrameMetadata
@@ -407,6 +412,8 @@ export async function startBrowserScreencast(
     clearPendingFrameTimer()
     dbg.removeListener('message', handleMessage as never)
     dbg.removeListener('detach', handleDetach as never)
+    webContents.removeListener('did-navigate', handleNavigation)
+    webContents.removeListener('did-navigate-in-page', handleNavigation)
     debuggerLease?.release()
     debuggerLease = null
     resolveDone()
@@ -415,6 +422,28 @@ export async function startBrowserScreencast(
   const handleDetach = (): void => {
     options.onError?.('Browser debugger detached while streaming.')
     finish()
+  }
+
+  let navigationStateGeneration = 0
+  const emitNavigationState = (): void => {
+    const generation = ++navigationStateGeneration
+    void readGuestCdpNavigationState(webContents).then((navigationState) => {
+      if (closed || generation !== navigationStateGeneration) {
+        return
+      }
+      options.onEvent?.({
+        type: 'navigation',
+        tab: {
+          url: webContents.getURL(),
+          title: webContents.getTitle(),
+          ...navigationState
+        }
+      })
+    })
+  }
+
+  const handleNavigation = (): void => {
+    emitNavigationState()
   }
 
   const handleMessage = (_event: unknown, method: string, params: unknown): void => {
@@ -443,11 +472,13 @@ export async function startBrowserScreencast(
         params && typeof params === 'object' ? (params as Record<string, unknown>) : {}
       const frame = payload.frame && typeof payload.frame === 'object' ? payload.frame : null
       if (!frame || !('parentId' in frame)) {
+        emitNavigationState()
         scheduleNavigationFrameCapture()
       }
       return
     }
     if (method === 'Page.loadEventFired') {
+      emitNavigationState()
       scheduleNavigationFrameCapture()
       return
     }
@@ -601,6 +632,8 @@ export async function startBrowserScreencast(
 
   dbg.on('message', handleMessage as never)
   dbg.on('detach', handleDetach as never)
+  webContents.on('did-navigate', handleNavigation)
+  webContents.on('did-navigate-in-page', handleNavigation)
 
   try {
     await sendDebuggerCommand(dbg, 'Page.enable')

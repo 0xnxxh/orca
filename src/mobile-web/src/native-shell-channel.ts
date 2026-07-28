@@ -1,0 +1,240 @@
+import {
+  createContext,
+  createElement,
+  useContext,
+  useEffect,
+  useState,
+  type ReactElement,
+  type ReactNode
+} from 'react'
+import {
+  MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES,
+  MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
+  MobileWebBridgeShellMessageSchema,
+  parseMobileWebBridgeShellMessage,
+  type MobileWebBridgeMessageContext,
+  type MobileWebBridgePageMessage,
+  type MobileWebResumeRoute
+} from '../../shared/mobile-web/bridge-contract'
+import { MobileWebBridgeClient } from './mobile-web-bridge-client'
+import {
+  nextMobileWebShellConnectionMetrics,
+  type MobileWebShellConnectionMetrics
+} from './mobile-web-shell-connection-metrics'
+import { subscribeToMobileWebShellMessages } from './native-shell-message-inbox'
+
+type MobileWebNativeWindow = Window & {
+  OrcaNative?: Readonly<{ postMessage(value: string): void }>
+}
+
+export type MobileWebNativeShellState = {
+  client: MobileWebBridgeClient | null
+  context: MobileWebBridgeMessageContext | null
+  connection: 'connecting' | 'connected' | 'offline' | 'recovering'
+  reconnectAttempts: number
+  lastConnectedAt: number | null
+  resumeRoute: MobileWebResumeRoute
+  routeRevision: number
+  rememberRoute: (route: MobileWebResumeRoute) => boolean
+}
+
+const MobileWebNativeShellContext = createContext<MobileWebNativeShellState | null>(null)
+
+export function MobileWebNativeShellProvider({ children }: { children: ReactNode }): ReactElement {
+  const state = useMobileWebNativeShellChannel()
+  return createElement(MobileWebNativeShellContext.Provider, { value: state }, children)
+}
+
+export function useMobileWebNativeShell(): MobileWebNativeShellState {
+  const state = useContext(MobileWebNativeShellContext)
+  if (!state) {
+    throw new Error('useMobileWebNativeShell must be used inside MobileWebNativeShellProvider')
+  }
+  return state
+}
+
+function useMobileWebNativeShellChannel(): MobileWebNativeShellState {
+  const [state, setState] = useState<MobileWebNativeShellState>({
+    client: null,
+    context: null,
+    connection: 'connecting',
+    reconnectAttempts: 0,
+    lastConnectedAt: null,
+    resumeRoute: { kind: 'workspaceList' },
+    routeRevision: 0,
+    rememberRoute: () => false
+  })
+
+  useEffect(() => {
+    let context: MobileWebBridgeMessageContext | null = null
+    let client: MobileWebBridgeClient | null = null
+    let metrics: MobileWebShellConnectionMetrics = {
+      reconnectAttempts: 0,
+      lastConnectedAt: null
+    }
+    let resumeRoute: MobileWebResumeRoute = { kind: 'workspaceList' }
+    let routeRevision = 0
+    let lastNavigationSequence = -1
+    let rememberRoute = (_route: MobileWebResumeRoute): boolean => false
+    let healthFrame = 0
+    let interactiveFrame = 0
+    const receive = (raw: string): void => {
+      if (new TextEncoder().encode(raw).byteLength > MOBILE_WEB_BRIDGE_MAX_MESSAGE_BYTES) {
+        return
+      }
+      const init = parseInitialMessage(raw)
+      if (init) {
+        const nextContext = { shellSessionId: init.shellSessionId, buildId: init.buildId }
+        const retainsContext = sameContext(context, nextContext)
+        metrics = nextMobileWebShellConnectionMetrics(metrics, init, retainsContext)
+        if (!retainsContext) {
+          resumeRoute = init.resumeRoute ?? { kind: 'workspaceList' }
+          routeRevision += 1
+          lastNavigationSequence = -1
+        }
+        rememberRoute = (route) => {
+          resumeRoute = route
+          setState((current) =>
+            sameContext(current.context, nextContext) ? { ...current, resumeRoute: route } : current
+          )
+          return postPageMessage({
+            version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
+            ...nextContext,
+            type: 'routeState',
+            route
+          })
+        }
+        if (retainsContext && client) {
+          setState({
+            client,
+            context,
+            connection: init.connection,
+            resumeRoute,
+            routeRevision,
+            rememberRoute,
+            ...metrics
+          })
+          postPageMessage({
+            version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
+            ...nextContext,
+            type: 'ready'
+          })
+          scheduleInteractiveHealth(nextContext)
+          return
+        }
+        client?.dispose()
+        context = nextContext
+        client = new MobileWebBridgeClient({
+          context,
+          grants: init.grants,
+          postMessage: postPageMessage
+        })
+        setState({
+          client,
+          context,
+          connection: init.connection,
+          resumeRoute,
+          routeRevision,
+          rememberRoute,
+          ...metrics
+        })
+        postPageMessage({
+          version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
+          ...context,
+          type: 'ready'
+        })
+        scheduleInteractiveHealth(context)
+        return
+      }
+      if (!context || !client) {
+        return
+      }
+      const activeContext = context
+      const parsed = parseMobileWebBridgeShellMessage(raw, activeContext)
+      if (!parsed.ok) {
+        return
+      }
+      if (parsed.value.type === 'navigation') {
+        if (parsed.value.sequence <= lastNavigationSequence) {
+          return
+        }
+        lastNavigationSequence = parsed.value.sequence
+        resumeRoute = parsed.value.route
+        routeRevision += 1
+        setState((current) =>
+          sameContext(current.context, activeContext)
+            ? { ...current, resumeRoute, routeRevision, rememberRoute }
+            : current
+        )
+        return
+      }
+      client.receive(parsed.value)
+      if (parsed.value.type === 'connection') {
+        metrics = nextMobileWebShellConnectionMetrics(metrics, parsed.value, true)
+        setState({
+          client,
+          context,
+          connection: parsed.value.state,
+          resumeRoute,
+          routeRevision,
+          rememberRoute,
+          ...metrics
+        })
+      }
+    }
+    const scheduleInteractiveHealth = (messageContext: MobileWebBridgeMessageContext): void => {
+      cancelAnimationFrame(healthFrame)
+      cancelAnimationFrame(interactiveFrame)
+      healthFrame = requestAnimationFrame(() => {
+        interactiveFrame = requestAnimationFrame(() => {
+          if (sameContext(context, messageContext)) {
+            postPageMessage({
+              version: MOBILE_WEB_BRIDGE_PROTOCOL_VERSION,
+              ...messageContext,
+              type: 'health',
+              state: 'interactive'
+            })
+          }
+        })
+      })
+    }
+    const unsubscribe = subscribeToMobileWebShellMessages(window, receive)
+    return () => {
+      unsubscribe()
+      client?.dispose()
+      cancelAnimationFrame(healthFrame)
+      cancelAnimationFrame(interactiveFrame)
+    }
+  }, [])
+
+  return state
+}
+
+function parseInitialMessage(raw: string) {
+  try {
+    const parsed = MobileWebBridgeShellMessageSchema.safeParse(JSON.parse(raw) as unknown)
+    return parsed.success && parsed.data.type === 'init' ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
+function postPageMessage(message: MobileWebBridgePageMessage): boolean {
+  const nativeWindow = window as MobileWebNativeWindow
+  if (!nativeWindow.OrcaNative) {
+    return false
+  }
+  try {
+    nativeWindow.OrcaNative.postMessage(JSON.stringify(message))
+    return true
+  } catch {
+    return false
+  }
+}
+
+function sameContext(
+  left: MobileWebBridgeMessageContext | null,
+  right: MobileWebBridgeMessageContext
+): boolean {
+  return left?.shellSessionId === right.shellSessionId && left.buildId === right.buildId
+}

@@ -2,13 +2,14 @@ import { createElement, type ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { TerminalQuickCommand } from '../../../src/shared/types'
-import type { RpcClient } from '../transport/rpc-client'
 import { MAX_QUICK_COMMANDS } from '../terminal/quick-commands'
 import { QuickCommandsSheet } from './QuickCommandsSheet'
 
 const mocks = vi.hoisted(() => ({
   alert: vi.fn(),
   commands: [] as TerminalQuickCommand[],
+  repoId: 'workspace-1' as string | null,
+  totalCount: 0,
   persist: vi.fn()
 }))
 const quickCommandEditorForm = 'QuickCommandEditorForm'
@@ -51,6 +52,8 @@ vi.mock('./use-quick-commands', () => ({
     loading: false,
     ready: true,
     error: null,
+    repoId: mocks.repoId,
+    totalCount: mocks.totalCount,
     persist: mocks.persist
   })
 }))
@@ -71,6 +74,8 @@ describe('QuickCommandsSheet', () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
     mocks.alert.mockReset()
     mocks.commands = []
+    mocks.repoId = 'workspace-1'
+    mocks.totalCount = 0
     mocks.persist.mockReset()
     const originalConsoleError = console.error
     consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
@@ -95,8 +100,8 @@ describe('QuickCommandsSheet', () => {
         createElement(QuickCommandsSheet, {
           visible: true,
           onClose,
-          client: {} as RpcClient,
-          repoId: 'repo-1',
+          operations: null,
+          workspaceId: 'workspace-1',
           repoName: 'Repo',
           onLaunch
         })
@@ -117,8 +122,8 @@ describe('QuickCommandsSheet', () => {
         createElement(QuickCommandsSheet, {
           visible: true,
           onClose: vi.fn(),
-          client: {} as RpcClient,
-          repoId: 'repo-1',
+          operations: null,
+          workspaceId: 'workspace-1',
           repoName: 'Repo',
           onLaunch: () => true
         })
@@ -145,6 +150,7 @@ describe('QuickCommandsSheet', () => {
   })
 
   it('keeps creation closed when the host command limit is reached', async () => {
+    mocks.totalCount = MAX_QUICK_COMMANDS
     mocks.commands = Array.from({ length: MAX_QUICK_COMMANDS }, (_, index) => ({
       ...command,
       id: `command-${index}`
@@ -154,8 +160,8 @@ describe('QuickCommandsSheet', () => {
         createElement(QuickCommandsSheet, {
           visible: true,
           onClose: vi.fn(),
-          client: {} as RpcClient,
-          repoId: 'repo-1',
+          operations: null,
+          workspaceId: 'workspace-1',
           repoName: 'Repo',
           onLaunch: () => true
         })
@@ -175,13 +181,15 @@ describe('QuickCommandsSheet', () => {
       scope: { type: 'repo', repoId: 'repo-1' }
     }
     mocks.commands = [command, repoCommand]
+    mocks.repoId = null
+    mocks.totalCount = 2
     await act(async () => {
       renderer = create(
         createElement(QuickCommandsSheet, {
           visible: true,
           onClose: vi.fn(),
-          client: {} as RpcClient,
-          repoId: null,
+          operations: null,
+          workspaceId: 'folder:workspace-1',
           repoName: 'Folder workspace',
           onLaunch: () => true
         })
@@ -203,8 +211,8 @@ describe('QuickCommandsSheet', () => {
         createElement(QuickCommandsSheet, {
           visible: true,
           onClose: vi.fn(),
-          client: {} as RpcClient,
-          repoId: 'repo-1',
+          operations: null,
+          workspaceId: 'workspace-1',
           repoName: 'Repo',
           onLaunch: () => true
         })

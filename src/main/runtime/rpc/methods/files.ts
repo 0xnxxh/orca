@@ -2,6 +2,8 @@
 import { z } from 'zod'
 import { defineMethod, defineStreamingMethod, type RpcAnyMethod } from '../core'
 import { runFileWatchStream } from './file-watch-stream-lifecycle'
+import { MOBILE_WEB_FILE_CHUNK_MAX_BYTES } from '../../../../shared/mobile-web/bridge-operation-contract'
+import { MOBILE_WEB_TERMINAL_ARTIFACT_RASTER_MAX_BYTES } from '../../../../shared/mobile-web/terminal-artifact-contract'
 
 let filesWatchSubscriptionSeq = 0
 const RUNTIME_FILE_BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/
@@ -90,6 +92,12 @@ const TerminalArtifactFile = WorktreeSelector.extend({
     .unknown()
     .transform((v) => (typeof v === 'string' ? v : ''))
     .pipe(z.string().min(1, 'Missing terminal artifact path'))
+})
+
+const TerminalArtifactFileChunk = TerminalArtifactFile.extend({
+  offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  length: z.number().int().min(1).max(MOBILE_WEB_FILE_CHUNK_MAX_BYTES),
+  maxBytes: z.number().int().min(1).max(MOBILE_WEB_TERMINAL_ARTIFACT_RASTER_MAX_BYTES)
 })
 
 const TerminalArtifactFileWrite = TerminalArtifactFile.extend({
@@ -279,6 +287,20 @@ export const FILE_METHODS: RpcAnyMethod[] = [
         params.worktree,
         params.grantId,
         params.absolutePath,
+        clientId
+      )
+  }),
+  defineMethod({
+    name: 'files.readTerminalArtifactChunk',
+    params: TerminalArtifactFileChunk,
+    handler: async (params, { runtime, clientId }) =>
+      runtime.readTerminalArtifactChunk(
+        params.worktree,
+        params.grantId,
+        params.absolutePath,
+        params.offset,
+        params.length,
+        params.maxBytes,
         clientId
       )
   }),

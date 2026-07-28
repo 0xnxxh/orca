@@ -13,11 +13,16 @@ import {
   markMobileNativeChatInputStale,
   resetMobileNativeChatStaleInputForTests
 } from './mobile-native-chat-stale-input'
-import {
-  acquireMobileNativeChatTerminalWrite,
-  releaseMobileNativeChatTerminalWrite,
-  resetMobileNativeChatTerminalWritesForTests
-} from './mobile-native-chat-terminal-write-lock'
+import { nativeHostSessionNativeChatOperations } from './native-host-session-native-chat-operations'
+
+const target = {
+  workspaceId: 'worktree',
+  agent: 'claude',
+  sessionId: 'session',
+  transcriptPath: null,
+  terminalId: 'terminal',
+  clientId: 'phone'
+}
 
 describe('sendMobileNativeChatPermissionResponse', () => {
   it('writes an approval as raw bytes without appending Return', async () => {
@@ -28,9 +33,10 @@ describe('sendMobileNativeChatPermissionResponse', () => {
 
     await expect(
       sendMobileNativeChatPermissionResponse({
-        client: { sendRequest } as unknown as RpcClient,
-        terminal: 'terminal',
-        deviceToken: 'phone',
+        operations: nativeHostSessionNativeChatOperations({
+          sendRequest
+        } as unknown as RpcClient),
+        target,
         text: '1'
       })
     ).resolves.toBe('accepted')
@@ -53,9 +59,10 @@ describe('sendMobileNativeChatPermissionResponse', () => {
 
     await expect(
       sendMobileNativeChatPermissionResponse({
-        client: { sendRequest } as unknown as RpcClient,
-        terminal: 'terminal',
-        deviceToken: null,
+        operations: nativeHostSessionNativeChatOperations({
+          sendRequest
+        } as unknown as RpcClient),
+        target: { ...target, clientId: null },
         text: '1'
       })
     ).resolves.toBe('unknown')
@@ -84,11 +91,13 @@ describe('useMobileNativeChatPermissionSend', () => {
       result: { send: { handle: 'terminal', accepted: true, bytesWritten: 1 } }
     })
     function Harness(): null {
+      const operations = nativeHostSessionNativeChatOperations({
+        sendRequest
+      } as unknown as RpcClient)
       respond = useMobileNativeChatPermissionSend({
-        client: { sendRequest } as unknown as RpcClient,
+        operations,
+        targetRef: { current: target },
         enabled: true,
-        handleRef: { current: 'terminal' },
-        deviceTokenRef: { current: null },
         onSendError: vi.fn()
       })
       return null

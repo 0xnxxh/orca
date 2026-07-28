@@ -25,6 +25,14 @@ import type { DirEntry, FsChangeEvent, SearchOptions, SearchResult } from '../..
 import { routeSshFilesystemWatchNotification } from './ssh-filesystem-watch-notifications'
 import type { WorkspaceSpaceDirectoryScanResult } from '../../shared/workspace-space-types'
 import { isWindowsRemoteHost, type RemoteHostPlatform } from '../ssh/ssh-remote-platform'
+import { SshFilesystemDirectoryReader } from './ssh-filesystem-directory-reader'
+import { requestSshMarkdownDocumentPaths } from './ssh-markdown-document-listing'
+import {
+  readSshFileChunk,
+  readSshTerminalArtifact,
+  readSshTerminalArtifactChunk
+} from './ssh-filesystem-bounded-file-reader'
+import { writeSshTerminalArtifact } from './ssh-filesystem-terminal-artifact-writer'
 const WORKSPACE_SPACE_SCAN_TIMEOUT_MS = 130_000
 
 export class SshFilesystemProvider implements IFilesystemProvider {
@@ -35,6 +43,7 @@ export class SshFilesystemProvider implements IFilesystemProvider {
   private tempDirPromise: Promise<string> | null = null
   private disposed = false
   private loggedStreamFallback = false
+  private readonly directoryReader: SshFilesystemDirectoryReader
   readonly downloadFolder?: IFilesystemProvider['downloadFolder']
 
   constructor(
@@ -46,11 +55,10 @@ export class SshFilesystemProvider implements IFilesystemProvider {
   ) {
     this.connectionId = connectionId
     this.mux = mux
+    this.directoryReader = new SshFilesystemDirectoryReader(mux)
 
     if (createSftp) {
-      // Why: system SSH has raw single-file transfer but no ssh2 SFTP channel;
-      // omitting this method makes folder capability truthful at the provider boundary.
-      // windowsRemotePaths is provider-owned (from host platform), not a caller option.
+      // Why: system SSH lacks an ssh2 SFTP channel, so only advertise folder transfer when available.
       const windowsRemotePaths = hostPlatform ? isWindowsRemoteHost(hostPlatform) : undefined
       this.downloadFolder = (sourcePath, destinationPath, options) =>
         downloadFolderViaSftp(createSftp, sourcePath, destinationPath, {
@@ -83,16 +91,15 @@ export class SshFilesystemProvider implements IFilesystemProvider {
     return this.connectionId
   }
 
-  async readDir(dirPath: string): Promise<DirEntry[]> {
-    return (await this.mux.request('fs.readDir', { dirPath })) as DirEntry[]
+  async readDir(
+    dirPath: string,
+    options?: { maxEntries?: number; maxRetainedBytes?: number }
+  ): Promise<DirEntry[]> {
+    return this.directoryReader.readDir(dirPath, options)
   }
 
   async readFile(filePath: string): Promise<FileReadResult> {
-    // Why: streaming is the default path so previews above the legacy single-
-    // frame budget (~12 MB after base64) don't hit MAX_MESSAGE_SIZE. Old relays
-    // that don't implement fs.readFileStream surface as MethodNotFound; we fall
-    // back to the legacy single-shot fs.readFile (which retains the old 10 MB
-    // cap on those hosts).
+    // Why: streaming avoids relay frame limits while old relays retain their legacy 10 MB path.
     try {
       return await readFileViaStream(this.mux, filePath)
     } catch (err) {
@@ -109,25 +116,28 @@ export class SshFilesystemProvider implements IFilesystemProvider {
     }
   }
 
+  async readFileChunk(
+    filePath: string,
+    offset: number,
+    length: number
+  ): Promise<{ contentBase64: string; bytesRead: number; eof: boolean }> {
+    return readSshFileChunk(this.mux, filePath, offset, length)
+  }
+
   async readTerminalArtifact(
     filePath: string,
     options: TerminalArtifactAccessOptions
   ): Promise<FileReadResult> {
-    try {
-      return (await this.mux.request('fs.readTerminalArtifact', {
-        filePath,
-        expectedRealPath: options.expectedRealPath,
-        expectedStatIdentity: options.expectedStatIdentity,
-        maxBytes: options.maxBytes
-      })) as FileReadResult
-    } catch (err) {
-      if (isMethodNotFoundError(err)) {
-        throw new Error(
-          'Remote terminal artifact access is unavailable. Reconnect the SSH target before retrying.'
-        )
-      }
-      throw err
-    }
+    return readSshTerminalArtifact(this.mux, filePath, options)
+  }
+
+  async readTerminalArtifactChunk(
+    filePath: string,
+    offset: number,
+    length: number,
+    options: TerminalArtifactAccessOptions
+  ): Promise<{ contentBase64: string; bytesRead: number; eof: boolean }> {
+    return readSshTerminalArtifactChunk(this.mux, filePath, offset, length, options)
   }
 
   async downloadFile(sourcePath: string, destinationPath: string): Promise<void> {
@@ -166,27 +176,7 @@ export class SshFilesystemProvider implements IFilesystemProvider {
     content: string,
     options: TerminalArtifactAccessOptions
   ): Promise<FileStat> {
-    let result: { stat?: FileStat }
-    try {
-      result = (await this.mux.request('fs.writeTerminalArtifact', {
-        filePath,
-        content,
-        expectedRealPath: options.expectedRealPath,
-        expectedStatIdentity: options.expectedStatIdentity,
-        maxBytes: options.maxBytes
-      })) as { stat?: FileStat }
-    } catch (err) {
-      if (isMethodNotFoundError(err)) {
-        throw new Error(
-          'Remote terminal artifact access is unavailable. Reconnect the SSH target before retrying.'
-        )
-      }
-      throw err
-    }
-    if (!result.stat) {
-      throw new Error('terminal_file_grant_stale')
-    }
-    return result.stat
+    return writeSshTerminalArtifact(this.mux, filePath, content, options)
   }
 
   async writeFileBase64(filePath: string, contentBase64: string): Promise<void> {
@@ -318,6 +308,8 @@ export class SshFilesystemProvider implements IFilesystemProvider {
       signal: options?.signal
     })) as string[]
   }
+
+  listMarkdownDocuments = (rootPath: string) => requestSshMarkdownDocumentPaths(this.mux, rootPath)
 
   async watch(
     rootPath: string,

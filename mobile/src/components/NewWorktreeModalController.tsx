@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from 'react'
 
-import type { RpcClient } from '../transport/rpc-client'
+import type { HostWorkspaceCreationOperations } from '../worktree/host-workspace-creation-operations'
 import { NewWorktreeModal } from './NewWorktreeModal'
 
 export type NewWorktreeModalControllerHandle = {
@@ -9,7 +9,7 @@ export type NewWorktreeModalControllerHandle = {
 
 type Props = {
   routeVisible: boolean
-  client: RpcClient | null
+  operations: HostWorkspaceCreationOperations | null
   hostId?: string
   existingWorktreePaths?: readonly string[]
   existingWorktrees?: readonly { repoId: string; branch: string }[]
@@ -22,7 +22,7 @@ export const NewWorktreeModalController = forwardRef<NewWorktreeModalControllerH
   function NewWorktreeModalController(
     {
       routeVisible,
-      client,
+      operations,
       hostId,
       existingWorktreePaths,
       existingWorktrees,
@@ -57,7 +57,7 @@ export const NewWorktreeModalController = forwardRef<NewWorktreeModalControllerH
     return (
       <NewWorktreeModal
         visible={visible}
-        client={client}
+        operations={operations}
         hostId={hostId}
         existingWorktreePaths={existingWorktreePaths}
         existingWorktrees={existingWorktrees}

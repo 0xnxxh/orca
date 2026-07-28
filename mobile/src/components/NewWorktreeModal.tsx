@@ -11,8 +11,6 @@ import {
   Keyboard
 } from 'react-native'
 import { ChevronDown, ChevronUp } from 'lucide-react-native'
-import type { RpcClient } from '../transport/rpc-client'
-import type { RpcResponse, RpcSuccess } from '../transport/types'
 import { colors, spacing, radii, typography } from '../theme/mobile-theme'
 import { BottomDrawer } from './BottomDrawer'
 import { BottomDrawerModalHost } from './bottom-drawer-modal-host'
@@ -24,12 +22,11 @@ import { deriveWorkspaceSshGate, workspaceSshStatusLabel } from '../tasks/worksp
 import {
   isSetupHookTrusted,
   normalizeSetupHookTrust,
-  persistSetupHookTrustApproval,
   wasSetupHookPreviouslyApproved,
   type SetupHookTrust
 } from '../tasks/setup-hook-trust'
 import { isMobileTuiAgentEnabled } from '../tasks/mobile-tui-agents'
-import type { PersistedTrustedOrcaHooks, TuiAgent } from '../../../src/shared/types'
+import type { PersistedTrustedOrcaHooks } from '../../../src/shared/types'
 import type { SshConnectionState } from '../../../src/shared/ssh-types'
 import {
   NEW_WORKTREE_AGENT_OPTIONS as AGENT_OPTIONS,
@@ -45,8 +42,6 @@ import {
   refreshMobileNewWorkspaceDialogSelectedRepo,
   resolveMobileNewWorkspaceDialogRepoId
 } from '../worktree/new-workspace-dialog-repo-selection'
-import { createBlankWorkspace } from '../tasks/blank-workspace-create'
-import { createWorkspaceFromComposerSource } from '../tasks/source-workspace-create'
 import { useNewWorktreeRuntimeCapabilities } from '../tasks/worktree-create-capability'
 import { normalizeWorkspaceAgent } from '../tasks/workspace-agent-selection'
 import {
@@ -63,31 +58,17 @@ import { SmartWorkspaceSourceField } from './SmartWorkspaceSourceField'
 import { SmartWorkspaceSourceDrawer } from './SmartWorkspaceSourceDrawer'
 import { SmartWorkspaceAdvancedFields } from './SmartWorkspaceAdvancedFields'
 import { SetupHookTrustDrawer, type SetupTrustPrompt } from './SetupHookTrustDrawer'
+import type {
+  HostWorkspaceCreationOperations,
+  NewWorkspaceRepository,
+  NewWorkspaceRuntimeSettings
+} from '../worktree/host-workspace-creation-operations'
 
-type Repo = {
-  id: string
-  displayName: string
-  path: string
-  badgeColor?: string
-  connectionId?: string | null
-  kind?: 'git' | 'folder'
-  upstream?: { owner: string; repo: string } | null
-  gitRemoteIdentity?: { remoteUrl?: string; canonicalKey?: string } | null
-}
+type Repo = NewWorkspaceRepository
 
 type SetupDecision = 'inherit' | 'run' | 'skip'
 type SetupRunPolicy = 'ask' | 'run-by-default' | 'skip-by-default'
-type RuntimeSettings = {
-  defaultTuiAgent?: TuiAgent | 'blank' | null
-  disabledTuiAgents?: TuiAgent[]
-}
-
-type RepoHooksResponse = {
-  hooks: { scripts?: { setup?: string } } | null
-  source: string | null
-  setupRunPolicy?: SetupRunPolicy
-  setupTrust?: SetupHookTrust
-}
+type RuntimeSettings = NewWorkspaceRuntimeSettings
 
 type SetupHookDetails = {
   repoId: string
@@ -124,7 +105,7 @@ function repoBadgeColor(repo: Repo | null): string {
 
 type Props = {
   visible: boolean
-  client: RpcClient | null
+  operations: HostWorkspaceCreationOperations | null
   hostId?: string
   // Why: existing worktree paths from the host so we can pick a unique
   // marine-creature default when the user leaves the name blank, matching
@@ -139,7 +120,7 @@ type Props = {
 
 export function NewWorktreeModal({
   visible,
-  client,
+  operations,
   hostId,
   existingWorktreePaths,
   existingWorktrees,
@@ -148,7 +129,7 @@ export function NewWorktreeModal({
 }: Props) {
   const openEpochRef = useRef(0)
   const wasVisibleRef = useRef(false)
-  const clientEpochRef = useRef({ client, epoch: 0 })
+  const operationsEpochRef = useRef({ operations, epoch: 0 })
 
   // Why: each drawer opening is a fresh form session; remounting resets local
   // form state before paint instead of clearing it in a visible-prop Effect.
@@ -156,15 +137,18 @@ export function NewWorktreeModal({
     openEpochRef.current += 1
   }
   wasVisibleRef.current = visible
-  if (clientEpochRef.current.client !== client) {
-    clientEpochRef.current = { client, epoch: clientEpochRef.current.epoch + 1 }
+  if (operationsEpochRef.current.operations !== operations) {
+    operationsEpochRef.current = {
+      operations,
+      epoch: operationsEpochRef.current.epoch + 1
+    }
   }
 
   return (
     <NewWorktreeModalContent
-      key={`${openEpochRef.current}:${clientEpochRef.current.epoch}`}
+      key={`${openEpochRef.current}:${operationsEpochRef.current.epoch}`}
       visible={visible}
-      client={client}
+      operations={operations}
       hostId={hostId}
       existingWorktreePaths={existingWorktreePaths}
       existingWorktrees={existingWorktrees}
@@ -176,7 +160,7 @@ export function NewWorktreeModal({
 
 function NewWorktreeModalContent({
   visible,
-  client,
+  operations,
   hostId,
   existingWorktreePaths,
   existingWorktrees,
@@ -201,7 +185,7 @@ function NewWorktreeModalContent({
   const [note, setNote] = useState('')
   const [availableProviders, setAvailableProviders] = useState<TaskProvider[]>([])
   const { tasksSupported, getWorktreeCreateCutoverSupport } = useNewWorktreeRuntimeCapabilities(
-    client,
+    operations,
     visible
   )
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -223,7 +207,7 @@ function NewWorktreeModalContent({
   )
 
   const composer = useMobileComposerSource({
-    client,
+    operations,
     selectedRepoId: selectedRepo?.id ?? null,
     worktreeBranches: selectedRepoWorktreeBranches,
     onError: setError
@@ -299,7 +283,7 @@ function NewWorktreeModalContent({
   }, [lastVisitedRepo.loaded, lastVisitedRepo.repoId, repos, selectedRepo, visible])
 
   useEffect(() => {
-    if (!visible || !client) {
+    if (!visible || !operations) {
       return
     }
     let stale = false
@@ -308,24 +292,21 @@ function NewWorktreeModalContent({
       setLoading(true)
     }
 
-    void client
-      .sendRequest('repo.list')
-      .then((repoResponse) => {
+    void operations
+      .listRepositories()
+      .then((nextRepos) => {
         if (stale) {
           return
         }
-        if (repoResponse.ok) {
-          const result = (repoResponse as RpcSuccess).result as { repos: Repo[] }
-          setRepos(result.repos)
-          if (hostId) {
-            setCachedRepos(hostId, result.repos)
-          }
-          setSelectedRepo((current) => {
-            // Why: the optimistic cache can include repos removed before the
-            // fresh repo.list returns; never create against a stale repo id.
-            return refreshMobileNewWorkspaceDialogSelectedRepo(result.repos, current)
-          })
+        setRepos(nextRepos)
+        if (hostId) {
+          setCachedRepos(hostId, nextRepos)
         }
+        setSelectedRepo((current) => {
+          // Why: the optimistic cache can include repos removed before the
+          // fresh repo.list returns; never create against a stale repo id.
+          return refreshMobileNewWorkspaceDialogSelectedRepo(nextRepos, current)
+        })
       })
       // Why (F10): a dropped connection rejects this call — keep the last-good list (the content
       // remounts with the new host's cache when the client changes) instead of emptying the picker.
@@ -341,48 +322,34 @@ function NewWorktreeModalContent({
       // linear.status timeout, which rejects rather than resolving {ok:false})
       // can't discard the already-resolved critical settings/ui results.
       const probes = Promise.allSettled([
-        client.sendRequest('preflight.check'),
-        client.sendRequest('linear.status')
+        operations.isGitLabCliInstalled(),
+        operations.isLinearConnected()
       ])
-      const okResult = (entry: PromiseSettledResult<RpcResponse>): RpcSuccess | null =>
-        entry.status === 'fulfilled' && entry.value.ok ? (entry.value as RpcSuccess) : null
       // Why: hydrate settings/trust the moment their own RPCs settle — gating them
       // on the probes (a first-open preflight.check can take seconds) widens the
       // window where an already-trusted setup hook spuriously re-prompts on create.
       const [settingsRes, uiRes] = await Promise.allSettled([
-        client.sendRequest('settings.get'),
-        client.sendRequest('ui.get')
+        operations.readRuntimeSettings(),
+        operations.readTrustedHooks()
       ])
       if (stale) {
         return
       }
 
-      const settingsResult = okResult(settingsRes)
-      const settingsValue = settingsResult
-        ? (
-            settingsResult.result as {
-              settings: RuntimeSettings & { visibleTaskProviders?: unknown }
-            }
-          ).settings
-        : null
+      const settingsValue = settingsRes.status === 'fulfilled' ? settingsRes.value : null
       if (settingsValue) {
         setRuntimeSettings(settingsValue)
       }
-      const uiResult = okResult(uiRes)
-      if (uiResult) {
-        const ui = (uiResult.result as { ui?: { trustedOrcaHooks?: PersistedTrustedOrcaHooks } }).ui
-        setTrustedOrcaHooks(ui?.trustedOrcaHooks ?? {})
+      if (uiRes.status === 'fulfilled') {
+        setTrustedOrcaHooks(uiRes.value)
       }
 
       const [preflightRes, linearRes] = await probes
       if (stale) {
         return
       }
-      const glabInstalled =
-        (okResult(preflightRes)?.result as { glab?: { installed?: boolean } } | undefined)?.glab
-          ?.installed === true
-      const linearConnected =
-        (okResult(linearRes)?.result as { connected?: boolean } | undefined)?.connected === true
+      const glabInstalled = preflightRes.status === 'fulfilled' && preflightRes.value
+      const linearConnected = linearRes.status === 'fulfilled' && linearRes.value
       const visibleProviders = normalizeVisibleTaskProviders(settingsValue?.visibleTaskProviders)
       setAvailableProviders(
         // Drop filterAvailableTaskProviders' forced 'github' fallback when the user
@@ -396,31 +363,20 @@ function NewWorktreeModalContent({
     return () => {
       stale = true
     }
-  }, [visible, client, hostId])
+  }, [visible, operations, hostId])
 
   useEffect(() => {
-    if (!visible || !client || !selectedRepoConnectionId) {
+    if (!visible || !operations || !selectedRepoConnectionId) {
       return
     }
     let stale = false
-    void client
-      .sendRequest('ssh.getState', { targetId: selectedRepoConnectionId })
-      .then((response) => {
+    void operations
+      .readSshState(selectedRepoConnectionId)
+      .then((state) => {
         if (stale) {
           return
         }
-        if (!response.ok) {
-          throw new Error(response.error.message)
-        }
-        const state = (response as RpcSuccess).result as { state?: SshConnectionState | null }
-        setSshState(
-          state.state ?? {
-            targetId: selectedRepoConnectionId,
-            status: 'disconnected',
-            error: null,
-            reconnectAttempt: 0
-          }
-        )
+        setSshState(state)
       })
       .catch((err) => {
         if (!stale) {
@@ -435,10 +391,10 @@ function NewWorktreeModalContent({
     return () => {
       stale = true
     }
-  }, [client, selectedRepoConnectionId, visible])
+  }, [operations, selectedRepoConnectionId, visible])
 
   useEffect(() => {
-    if (!visible || !client) {
+    if (!visible || !operations) {
       return
     }
     if (selectedRepoConnectionId && sshGate.status !== 'connected') {
@@ -447,17 +403,13 @@ function NewWorktreeModalContent({
     let stale = false
     void (async () => {
       try {
-        const response = selectedRepoConnectionId
-          ? await client.sendRequest('preflight.detectRemoteAgents', {
-              connectionId: selectedRepoConnectionId
-            })
-          : await client.sendRequest('preflight.detectAgents')
+        const agentIds = await operations.detectAgents(selectedRepoConnectionId)
         if (stale) {
           return
         }
         setDetectedAgentIdsState({
           connectionId: selectedRepoConnectionId,
-          ids: response.ok ? new Set((response as RpcSuccess).result as string[]) : new Set()
+          ids: new Set(agentIds)
         })
       } catch {
         if (!stale) {
@@ -468,37 +420,32 @@ function NewWorktreeModalContent({
     return () => {
       stale = true
     }
-  }, [client, selectedRepoConnectionId, sshGate.status, visible])
+  }, [operations, selectedRepoConnectionId, sshGate.status, visible])
 
   useEffect(() => {
-    if (!client || !selectedRepo) {
+    if (!operations || !selectedRepo) {
       return
     }
     let stale = false
     void (async () => {
       try {
-        const response = await client.sendRequest('repo.hooks', {
-          repo: `id:${selectedRepo.id}`
-        })
+        const result = await operations.readRepoHooks(selectedRepo.id)
         if (stale) {
           return
         }
-        if (response.ok) {
-          const result = (response as RpcSuccess).result as RepoHooksResponse
-          const cmd = result.hooks?.scripts?.setup?.trim() || null
-          const policy = result.setupRunPolicy ?? 'run-by-default'
-          setSetupHookDetails({
-            repoId: selectedRepo.id,
-            command: cmd,
-            source: result.source,
-            trust: normalizeSetupHookTrust(result.setupTrust),
-            runPolicy: policy
-          })
-          setSetupDecisionChoice(null)
-          setRunSetup(policy !== 'skip-by-default')
-          if (cmd && policy === 'ask') {
-            setShowAdvanced(true)
-          }
+        const cmd = result.hooks?.scripts?.setup?.trim() || null
+        const policy = result.setupRunPolicy ?? 'run-by-default'
+        setSetupHookDetails({
+          repoId: selectedRepo.id,
+          command: cmd,
+          source: result.source,
+          trust: normalizeSetupHookTrust(result.setupTrust),
+          runPolicy: policy
+        })
+        setSetupDecisionChoice(null)
+        setRunSetup(policy !== 'skip-by-default')
+        if (cmd && policy === 'ask') {
+          setShowAdvanced(true)
         }
       } catch {
         if (!stale) {
@@ -516,10 +463,10 @@ function NewWorktreeModalContent({
     return () => {
       stale = true
     }
-  }, [client, selectedRepo])
+  }, [operations, selectedRepo])
 
   async function connectSelectedSshRepo(): Promise<void> {
-    if (!client || !selectedRepoConnectionId) {
+    if (!operations || !selectedRepoConnectionId) {
       return
     }
     setSshConnectingTargetId(selectedRepoConnectionId)
@@ -530,23 +477,7 @@ function NewWorktreeModalContent({
       reconnectAttempt: 0
     })
     try {
-      const response = await client.sendRequest(
-        'ssh.connect',
-        { targetId: selectedRepoConnectionId },
-        { timeoutMs: 120_000 }
-      )
-      if (!response.ok) {
-        throw new Error(response.error.message)
-      }
-      const result = (response as RpcSuccess).result as { state?: SshConnectionState | null }
-      setSshState(
-        result.state ?? {
-          targetId: selectedRepoConnectionId,
-          status: 'connected',
-          error: null,
-          reconnectAttempt: 0
-        }
-      )
+      setSshState(await operations.connectSsh(selectedRepoConnectionId))
     } catch (err) {
       setSshState({
         targetId: selectedRepoConnectionId,
@@ -560,7 +491,7 @@ function NewWorktreeModalContent({
   }
 
   async function handleCreate(options: CreateOptions = {}) {
-    if (!client || !selectedRepo || createInFlightRef.current) {
+    if (!operations || !selectedRepo || createInFlightRef.current) {
       return
     }
     createInFlightRef.current = true
@@ -574,12 +505,9 @@ function NewWorktreeModalContent({
       }
       let latestRuntimeSettings = runtimeSettings
       try {
-        const settingsResponse = await client.sendRequest('settings.get')
-        if (settingsResponse.ok) {
-          const result = (settingsResponse as RpcSuccess).result as { settings: RuntimeSettings }
-          latestRuntimeSettings = result.settings
-          setRuntimeSettings(result.settings)
-        }
+        const settings = await operations.readRuntimeSettings()
+        latestRuntimeSettings = settings
+        setRuntimeSettings(settings)
       } catch {
         // Best-effort refresh; the runtime validates the same setting before spawning.
       }
@@ -636,26 +564,24 @@ function NewWorktreeModalContent({
         return
       }
 
-      const createdWithAgentId = selectedAgent.id !== '__blank__' ? selectedAgent.id : undefined
+      const agentChoice = normalizeWorkspaceAgent(selectedAgent.id) ?? 'blank'
       const trimmedNote = note.trim() || undefined
       const createSelection = composer.createSelection
       const result = createSelection
-        ? await createWorkspaceFromComposerSource({
-            client,
+        ? await operations.createWorkspaceFromSource({
             selection: createSelection,
             targetRepoId: selectedRepo.id,
             setupDecision,
-            agent: { choice: normalizeWorkspaceAgent(selectedAgent.id) ?? 'blank' },
+            agentChoice,
             workspaceName: trimmedName || undefined,
             note: trimmedNote,
             nameIsAutoManaged: composer.isNameAutoManaged,
             supportsIdempotentCutoverRetry: getWorktreeCreateCutoverSupport()
           })
-        : await createBlankWorkspace({
-            client,
+        : await operations.createBlankWorkspace({
             repoId: selectedRepo.id,
             baseName,
-            createdWithAgentId,
+            agentChoice,
             comment: trimmedNote,
             setupDecision,
             supportsIdempotentCutoverRetry: getWorktreeCreateCutoverSupport()
@@ -717,7 +643,7 @@ function NewWorktreeModalContent({
 
   async function approveSetupTrust(alwaysTrust: boolean): Promise<void> {
     if (
-      !client ||
+      !operations ||
       !setupTrustPrompt ||
       setupTrustActionInFlightRef.current ||
       createInFlightRef.current
@@ -727,8 +653,7 @@ function NewWorktreeModalContent({
     setupTrustActionInFlightRef.current = true
     setCreating(true)
     try {
-      const nextTrust = await persistSetupHookTrustApproval({
-        client,
+      const nextTrust = await operations.persistSetupTrust({
         trust: trustedOrcaHooks,
         repoId: setupTrustPrompt.repoId,
         contentHash: setupTrustPrompt.contentHash,
@@ -1008,7 +933,7 @@ function NewWorktreeModalContent({
           state lets each hosted overlay finish hiding before the next appears. */}
       <SmartWorkspaceSourceDrawer
         visible={visible && drawerView === 'source'}
-        client={client}
+        operations={operations}
         composer={composer}
         availability={sourceAvailability}
         repoId={selectedRepo?.id ?? null}

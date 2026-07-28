@@ -3,7 +3,6 @@ import type { ReactNode } from 'react'
 import {
   ActivityIndicator,
   FlatList,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -13,7 +12,6 @@ import {
   View
 } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
-import * as Clipboard from 'expo-clipboard'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import {
   AlertTriangle,
@@ -32,14 +30,13 @@ import {
   Send,
   X
 } from 'lucide-react-native'
-import type { RpcClient } from '../../../src/transport/rpc-client'
-import type { RpcSuccess } from '../../../src/transport/types'
 import { useHostClient } from '../../../src/transport/client-context'
 import {
   useLastConnectedAt,
   useReconnectAttempt
 } from '../../../src/transport/client-context-connection-metrics'
 import { classifyConnection } from '../../../src/transport/connection-health'
+import type { ConnectionState } from '../../../src/transport/types'
 import { StatusDot } from '../../../src/components/StatusDot'
 import { ActionSheetModal } from '../../../src/components/ActionSheetModal'
 import { BottomDrawer } from '../../../src/components/BottomDrawer'
@@ -60,15 +57,7 @@ import {
   resolveMobileSyntaxLanguage
 } from '../../../src/session/mobile-file-syntax'
 import { buildGitHubCheckSummary } from '../../../src/tasks/github-check-summary'
-import { buildGitLabCheckSummary } from '../../../src/tasks/gitlab-check-summary'
-import {
-  getHostedMergeLabel,
-  getHostedReviewLabel,
-  getHostedReviewSignalTone,
-  getHostedChecksLabel
-} from '../../../src/tasks/mobile-hosted-check-status'
-import { buildTaskWorkspaceCreateParams } from '../../../src/tasks/workspace-create-params'
-import { MOBILE_TASKS_CAPABILITY } from '../../../src/tasks/mobile-tasks-capability'
+import type { MobileComposerCreateSelection } from '../../../src/tasks/mobile-composer-source-types'
 import {
   filterWorkspaceAgents,
   isWorkspaceAgentEnabled,
@@ -87,7 +76,6 @@ import {
 } from '../../../src/tasks/github-project-repo-match'
 import {
   parseGitHubProjectInput as parseProjectInput,
-  type GitHubProjectOwnerType,
   type GitHubProjectPartialFailure,
   type GitHubProjectRef,
   type GitHubProjectSettings,
@@ -105,15 +93,56 @@ import {
   deriveWorkspaceSshGate,
   workspaceSshStatusLabel
 } from '../../../src/tasks/workspace-ssh-gate'
-import { WORKTREE_CREATE_TIMEOUT_MS } from '../../../src/tasks/workspace-create-timeout'
 import {
   isSetupHookTrusted,
   normalizeSetupHookTrust,
-  trustedOrcaHooksWithSetupApproval,
   wasSetupHookPreviouslyApproved
 } from '../../../src/tasks/setup-hook-trust'
 import { colors, radii, spacing, typography } from '../../../src/theme/mobile-theme'
-import { triggerMediumImpact } from '../../../src/platform/haptics'
+import type { HostTaskDeviceOperations } from '../../../src/tasks/host-task-device-operations'
+import { defaultHostTaskDeviceOperations } from '../../../src/tasks/default-host-task-device-operations'
+import type {
+  HostTaskBootstrap,
+  HostTaskLinearContext,
+  HostTaskReadOperations,
+  HostTaskRepository
+} from '../../../src/tasks/host-task-read-operations'
+import { defaultHostTaskReadOperations } from '../../../src/tasks/default-host-task-read-operations'
+import type { HostTaskPreferenceOperations } from '../../../src/tasks/host-task-preference-operations'
+import { defaultHostTaskPreferenceOperations } from '../../../src/tasks/default-host-task-preference-operations'
+import type { HostTaskListOperations } from '../../../src/tasks/host-task-list-operations'
+import { defaultHostTaskListOperations } from '../../../src/tasks/default-host-task-list-operations'
+import type { HostTaskDetailOperations } from '../../../src/tasks/host-task-detail-operations'
+import { defaultHostTaskDetailOperations } from '../../../src/tasks/default-host-task-detail-operations'
+import type {
+  HostTaskGitHubItemTarget,
+  HostTaskGitLabItemTarget,
+  HostTaskItemMutationOperations,
+  HostTaskItemMutationTarget
+} from '../../../src/tasks/host-task-item-mutation-operations'
+import { defaultHostTaskItemMutationOperations } from '../../../src/tasks/default-host-task-item-mutation-operations'
+import type { HostTaskItemReviewOperations } from '../../../src/tasks/host-task-item-review-operations'
+import { defaultHostTaskItemReviewOperations } from '../../../src/tasks/default-host-task-item-review-operations'
+import type { HostTaskItemFileOperations } from '../../../src/tasks/host-task-item-file-operations'
+import { defaultHostTaskItemFileOperations } from '../../../src/tasks/default-host-task-item-file-operations'
+import type {
+  HostTaskLinearOperations,
+  HostTaskLinearTarget
+} from '../../../src/tasks/host-task-linear-operations'
+import { defaultHostTaskLinearOperations } from '../../../src/tasks/default-host-task-linear-operations'
+import type { HostTaskProviderWriteOperations } from '../../../src/tasks/host-task-provider-write-operations'
+import { defaultHostTaskProviderWriteOperations } from '../../../src/tasks/default-host-task-provider-write-operations'
+import type { HostTaskProjectReadOperations } from '../../../src/tasks/host-task-project-read-operations'
+import { defaultHostTaskProjectReadOperations } from '../../../src/tasks/default-host-task-project-read-operations'
+import type {
+  HostTaskProjectItemTarget,
+  HostTaskProjectMutationOperations
+} from '../../../src/tasks/host-task-project-mutation-operations'
+import { defaultHostTaskProjectMutationOperations } from '../../../src/tasks/default-host-task-project-mutation-operations'
+import type { HostTaskProjectFileOperations } from '../../../src/tasks/host-task-project-file-operations'
+import { defaultHostTaskProjectFileOperations } from '../../../src/tasks/default-host-task-project-file-operations'
+import type { HostWorkspaceCreationOperations } from '../../../src/worktree/host-workspace-creation-operations'
+import { defaultHostWorkspaceCreationOperations } from '../../../src/worktree/default-host-workspace-creation-operations'
 import {
   type GitHubProjectSortDirection,
   type GitHubProjectTable as SharedGitHubProjectTable,
@@ -136,16 +165,16 @@ import {
 import { hasSettledHostRepoList } from '../../../src/tasks/host-repo-list'
 import { useHostRepoList } from '../../../src/tasks/use-host-repo-list'
 import { isHostedTaskRepo, reconcileRepoSelection } from '../../../src/tasks/hosted-repo-selection'
-import {
-  extractLinearIssueReadItems,
-  type LinearMobileIssue
-} from '../../../src/tasks/linear-mobile-issue-read'
+import type { LinearMobileIssue } from '../../../src/tasks/linear-mobile-issue-read'
 import { MOBILE_TUI_AGENT_AUTO_PICK_ORDER } from '../../../src/tasks/mobile-tui-agents'
 import { resolveComposerBranchSelection } from '../../../src/tasks/mobile-composer-branch-selection'
+import { clearMobileTaskCopyFeedbackTimer } from '../../../src/tasks/mobile-task-copy-feedback-timer'
+import { useMobileTaskCopyFeedback } from '../../../src/tasks/use-mobile-task-copy-feedback'
 import {
-  clearMobileTaskCopyFeedbackTimer,
-  scheduleMobileTaskCopyFeedbackReset
-} from '../../../src/tasks/mobile-task-copy-feedback-timer'
+  createMobileItemPrFileContentScope,
+  createMobileProjectPrFileContentScope,
+  useMobilePrFileContentCache
+} from '../../../src/tasks/use-mobile-pr-file-content-cache'
 import type {
   BaseRefSearchResult,
   GitHubOwnerRepo,
@@ -161,19 +190,7 @@ import {
   githubProjectIdentityKey as githubProjectKey
 } from '../../../../src/shared/github-project-identity'
 
-type RepoSummary = {
-  id: string
-  displayName: string
-  path: string
-  badgeColor?: string
-  kind?: 'git' | 'folder'
-  connectionId?: string | null
-  issueSourcePreference?: IssueSourcePreference
-  /** Fork parent resolved by the host; drives upstream Project row matching. */
-  upstream?: { owner: string; repo: string; host?: string } | null
-}
-
-type IssueSourcePreference = 'upstream' | 'origin' | 'auto'
+type RepoSummary = HostTaskRepository
 
 type GitHubWorkItem = {
   id: string
@@ -199,6 +216,7 @@ type GitHubWorkItem = {
   checksSummary?: ProviderCheckSummary
   mergeable?: GitHubPRMergeableState
   mergeStateStatus?: string | null
+  targetId?: string
 }
 type GitHubAssignableUser = {
   login: string
@@ -223,14 +241,12 @@ type GitHubRepoSources = {
   prs: GitHubOwnerRepo | null
   upstreamCandidate: GitHubOwnerRepo | null
 }
-type TaskRuntimeStatus = {
-  capabilities?: string[]
-}
 
 type TasksSupportState =
-  | { kind: 'unknown'; client: RpcClient | null }
-  | { kind: 'supported'; client: RpcClient }
-  | { kind: 'unsupported'; client: RpcClient }
+  | { kind: 'unknown'; operations: HostTaskReadOperations | null }
+  | { kind: 'supported'; operations: HostTaskReadOperations }
+  | { kind: 'unsupported'; operations: HostTaskReadOperations }
+
 type GitLabWorkItem = {
   id: string
   type: 'issue' | 'mr'
@@ -245,10 +261,7 @@ type GitLabWorkItem = {
   baseRefName?: string
   isCrossRepository?: boolean
   projectRef?: { host: string; path: string }
-  checksSummary?: ProviderCheckSummary
-  mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
-  reviewDecision?: HostedReviewDecision
-  reviewerCount?: number
+  targetId?: string
   repoId: string
   repoName: string
 }
@@ -264,12 +277,6 @@ type GitLabTodo = {
   authorUsername: string
   updatedAt: string
   state: 'pending' | 'done'
-}
-
-type GitPushTarget = {
-  remoteName: string
-  branchName: string
-  remoteUrl?: string
 }
 
 type SetupDecision = 'inherit' | 'run' | 'skip'
@@ -294,6 +301,7 @@ type LinearProject = {
 
 type LinearIssueChild = {
   id: string
+  targetId?: string
   identifier: string
   title: string
   url: string
@@ -308,13 +316,7 @@ type LinearState = {
   color?: string
 }
 
-type LinearTeam = {
-  id: string
-  workspaceId?: string
-  workspaceName?: string
-  name: string
-  key: string
-}
+type LinearTeam = HostTaskLinearContext['teams'][number]
 
 type DetailComment = {
   id: string | number
@@ -423,38 +425,9 @@ type TaskSort = 'updated' | 'repository'
 type DetailCommentGroup =
   | { kind: 'standalone'; comment: DetailComment }
   | { kind: 'thread'; threadId: string; root: DetailComment; replies: DetailComment[] }
-type TaskResumeState = {
-  githubMode?: 'items' | 'project'
-  githubItemsPreset?: GitHubPreset | 'all' | null
-  githubItemsQuery?: string
-  githubProjectHiddenFieldIdsByView?: Record<string, string[]>
-  linearPreset?: LinearFilter
-  linearQuery?: string
-}
-type RuntimeTaskSettings = {
-  defaultTuiAgent?: TuiAgent | 'blank' | null
-  disabledTuiAgents?: TuiAgent[]
-  agentCmdOverrides?: Record<string, string>
-  defaultTaskSource?: TaskProvider
-  defaultTaskViewPreset?: GitHubPreset | 'all'
-  visibleTaskProviders?: TaskProvider[]
-  defaultRepoSelection?: string[] | null
-  defaultLinearTeamSelection?: string[] | null
-  githubProjects?: GitHubProjectSettings
-}
-
-type LinearWorkspace = {
-  id: string
-  organizationName?: string
-  displayName?: string
-}
-
-type LinearStatusResponse = {
-  connected?: boolean
-  workspaces?: LinearWorkspace[]
-  selectedWorkspaceId?: string | 'all' | null
-  activeWorkspaceId?: string | null
-}
+type TaskResumeState = HostTaskBootstrap['taskResumeState']
+type RuntimeTaskSettings = HostTaskBootstrap['settings']
+type LinearWorkspace = HostTaskBootstrap['linearStatus']['workspaces'][number]
 
 type GitHubIssueType = {
   id: string
@@ -516,6 +489,7 @@ type GitHubProjectFieldMutationValue =
   | { kind: 'iteration'; iterationId: string }
 type GitHubProjectRow = {
   id: string
+  targetId?: string
   itemType: 'ISSUE' | 'PULL_REQUEST' | 'DRAFT_ISSUE' | 'REDACTED'
   content: {
     number: number | null
@@ -862,10 +836,6 @@ const EMPTY_GITHUB_PROJECT_SETTINGS: GitHubProjectSettings = {
   activeProject: null
 }
 
-function isSuccess(response: unknown): response is RpcSuccess {
-  return Boolean(response && typeof response === 'object' && (response as RpcSuccess).ok)
-}
-
 function taskTime(value: string): number {
   const time = Date.parse(value)
   return Number.isFinite(time) ? time : 0
@@ -959,6 +929,17 @@ function splitRepositorySlug(slug: string | null): { owner: string; repo: string
 function projectRowGitHubRepository(row: GitHubProjectRow, host: string): GitHubOwnerRepo | null {
   const slug = splitRepositorySlug(row.content.repository)
   return slug ? { ...slug, host } : null
+}
+
+function projectRowMutationTarget(
+  row: GitHubProjectRow,
+  host: string
+): HostTaskProjectItemTarget | null {
+  const slug = splitRepositorySlug(row.content.repository)
+  const type = projectRowType(row)
+  return slug && type && row.content.number
+    ? { ...slug, host, number: row.content.number, type, targetId: row.targetId }
+    : null
 }
 
 const GITHUB_PROJECT_OPTION_COLORS: Record<string, string> = {
@@ -1065,6 +1046,46 @@ function createGitLabTask(repo: RepoSummary, item: Omit<GitLabWorkItem, 'repoId'
     status: gitLabStatusLabel(source),
     updatedAt: item.updatedAt,
     source
+  }
+}
+
+function taskItemMutationTarget(
+  item: Extract<TaskItem, { provider: 'github' }>
+): HostTaskGitHubItemTarget
+function taskItemMutationTarget(
+  item: Extract<TaskItem, { provider: 'gitlab' }>
+): HostTaskGitLabItemTarget
+function taskItemMutationTarget(
+  item: Extract<TaskItem, { provider: 'github' | 'gitlab' }>
+): HostTaskItemMutationTarget
+function taskItemMutationTarget(
+  item: Extract<TaskItem, { provider: 'github' | 'gitlab' }>
+): HostTaskItemMutationTarget {
+  return item.provider === 'github'
+    ? {
+        provider: 'github',
+        repoId: item.source.repoId,
+        number: item.source.number,
+        type: item.source.type,
+        targetId: item.source.targetId
+      }
+    : {
+        provider: 'gitlab',
+        repoId: item.source.repoId,
+        number: item.source.number,
+        type: item.source.type,
+        projectRef: item.source.projectRef,
+        targetId: item.source.targetId
+      }
+}
+
+function taskLinearTarget(item: Extract<TaskItem, { provider: 'linear' }>): HostTaskLinearTarget {
+  return {
+    issueId: item.source.id,
+    workspaceId: item.source.workspaceId,
+    teamId: item.source.team.id,
+    projectId: item.source.project?.id,
+    targetId: item.source.targetId
   }
 }
 
@@ -2064,26 +2085,132 @@ function compareTasksByRepository(
   return repoComparison || compareTasksByUpdated(a, b)
 }
 
-export default function MobileTasksScreen() {
-  const { hostId, taskSource } = useLocalSearchParams<{ hostId: string; taskSource?: string }>()
+type MobileTasksScreenProps = {
+  hostId?: string
+  detailOperations?: HostTaskDetailOperations
+  deviceOperations?: HostTaskDeviceOperations
+  itemMutationOperations?: HostTaskItemMutationOperations
+  itemReviewOperations?: HostTaskItemReviewOperations
+  itemFileOperations?: HostTaskItemFileOperations
+  linearOperations?: HostTaskLinearOperations
+  providerWriteOperations?: HostTaskProviderWriteOperations
+  listOperations?: HostTaskListOperations
+  preferenceOperations?: HostTaskPreferenceOperations
+  projectFileOperations?: HostTaskProjectFileOperations
+  projectMutationOperations?: HostTaskProjectMutationOperations
+  projectReadOperations?: HostTaskProjectReadOperations
+  readOperations?: HostTaskReadOperations
+  workspaceCreationOperations?: HostWorkspaceCreationOperations
+  connectionState?: ConnectionState
+  connectionMetrics?: {
+    reconnectAttempts: number
+    lastConnectedAt: number | null
+  }
+  nativeHostBinding?: boolean
+}
+
+export default function MobileTasksScreen({
+  hostId: hostIdProp,
+  detailOperations,
+  deviceOperations = defaultHostTaskDeviceOperations(),
+  itemMutationOperations,
+  itemReviewOperations,
+  itemFileOperations,
+  linearOperations,
+  providerWriteOperations,
+  listOperations,
+  preferenceOperations,
+  projectFileOperations,
+  projectMutationOperations,
+  projectReadOperations,
+  readOperations,
+  workspaceCreationOperations,
+  connectionState,
+  connectionMetrics,
+  nativeHostBinding = true
+}: MobileTasksScreenProps = {}) {
+  const params = useLocalSearchParams<{ hostId: string; taskSource?: string }>()
+  const hostId = hostIdProp ?? params.hostId
+  const taskSource = params.taskSource
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const { client, state: connState } = useHostClient(hostId)
-  const reconnectAttempts = useReconnectAttempt(hostId)
-  const lastConnectedAt = useLastConnectedAt(hostId)
-  const clientRef = useRef<RpcClient | null>(null)
+  const nativeHost = useHostClient(nativeHostBinding ? hostId : undefined)
+  const client = nativeHost.client
+  const connState = connectionState ?? nativeHost.state
+  const handleOpenExternalUrl = useCallback(
+    (url: string) => {
+      void deviceOperations?.openExternalUrl(url).catch(() => {})
+    },
+    [deviceOperations]
+  )
+  const taskReadOperations = useMemo(
+    () => readOperations ?? (client ? defaultHostTaskReadOperations(client) : null),
+    [client, readOperations]
+  )
+  const taskPreferenceOperations = useMemo(
+    () => preferenceOperations ?? (client ? defaultHostTaskPreferenceOperations(client) : null),
+    [client, preferenceOperations]
+  )
+  const taskListOperations = useMemo(
+    () => listOperations ?? (client ? defaultHostTaskListOperations(client) : null),
+    [client, listOperations]
+  )
+  const taskDetailOperations = useMemo(
+    () => detailOperations ?? (client ? defaultHostTaskDetailOperations(client) : null),
+    [client, detailOperations]
+  )
+  const taskItemMutationOperations = useMemo(
+    () => itemMutationOperations ?? (client ? defaultHostTaskItemMutationOperations(client) : null),
+    [client, itemMutationOperations]
+  )
+  const taskItemReviewOperations = useMemo(
+    () => itemReviewOperations ?? (client ? defaultHostTaskItemReviewOperations(client) : null),
+    [client, itemReviewOperations]
+  )
+  const taskItemFileOperations = useMemo(
+    () => itemFileOperations ?? (client ? defaultHostTaskItemFileOperations(client) : null),
+    [client, itemFileOperations]
+  )
+  const taskLinearOperations = useMemo(
+    () => linearOperations ?? (client ? defaultHostTaskLinearOperations(client) : null),
+    [client, linearOperations]
+  )
+  const taskProviderWriteOperations = useMemo(
+    () =>
+      providerWriteOperations ?? (client ? defaultHostTaskProviderWriteOperations(client) : null),
+    [client, providerWriteOperations]
+  )
+  const taskProjectReadOperations = useMemo(
+    () => projectReadOperations ?? (client ? defaultHostTaskProjectReadOperations(client) : null),
+    [client, projectReadOperations]
+  )
+  const taskProjectMutationOperations = useMemo(
+    () =>
+      projectMutationOperations ??
+      (client ? defaultHostTaskProjectMutationOperations(client) : null),
+    [client, projectMutationOperations]
+  )
+  const taskProjectFileOperations = useMemo(
+    () => projectFileOperations ?? (client ? defaultHostTaskProjectFileOperations(client) : null),
+    [client, projectFileOperations]
+  )
+  const taskWorkspaceCreationOperations = useMemo(
+    () =>
+      workspaceCreationOperations ??
+      (client ? defaultHostWorkspaceCreationOperations(client) : null),
+    [client, workspaceCreationOperations]
+  )
+  const nativeReconnectAttempts = useReconnectAttempt(hostId)
+  const nativeLastConnectedAt = useLastConnectedAt(hostId)
+  const reconnectAttempts = connectionMetrics?.reconnectAttempts ?? nativeReconnectAttempts
+  const lastConnectedAt = connectionMetrics?.lastConnectedAt ?? nativeLastConnectedAt
+  const taskListOperationsRef = useRef<HostTaskListOperations | null>(null)
   const loadGenerationRef = useRef(0)
   const taskResumeRef = useRef<TaskResumeState>({})
   const repoList = useHostRepoList<RepoSummary>(
-    client,
-    client && connState === 'connected'
-      ? async () => {
-          const response = await client.sendRequest('repo.list')
-          if (!isSuccess(response)) {
-            throw new Error(response.error.message)
-          }
-          return (response.result as { repos: RepoSummary[] }).repos
-        }
+    taskReadOperations,
+    taskReadOperations && connState === 'connected'
+      ? () => taskReadOperations.listRepositories()
       : null
   )
   const repos = repoList.state.repos
@@ -2172,7 +2299,7 @@ export default function MobileTasksScreen() {
   const [refreshing, setRefreshing] = useState(false)
   const [tasksSupportState, setTasksSupportState] = useState<TasksSupportState>({
     kind: 'unknown',
-    client: null
+    operations: null
   })
   const [error, setError] = useState('')
   const [actionItem, setActionItem] = useState<ActionableTaskItem | null>(null)
@@ -2205,11 +2332,15 @@ export default function MobileTasksScreen() {
   const [itemReviewersDraft, setItemReviewersDraft] = useState('')
   const [itemReplyDrafts, setItemReplyDrafts] = useState<Record<string, string>>({})
   const [expandedPrFilePath, setExpandedPrFilePath] = useState<string | null>(null)
-  const [prFileContents, setPrFileContents] = useState<Record<string, GitHubPRFileContents>>({})
-  const [prFileLoadingPath, setPrFileLoadingPath] = useState<string | null>(null)
   const [prFileCommentDrafts, setPrFileCommentDrafts] = useState<Record<string, string>>({})
   const [copiedLinkKey, setCopiedLinkKey] = useState<string | null>(null)
   const copiedLinkResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { copyTaskLink, copyTextToClipboard } = useMobileTaskCopyFeedback({
+    operations: deviceOperations,
+    resetTimerRef: copiedLinkResetTimerRef,
+    setCopiedKey: setCopiedLinkKey,
+    setError
+  })
   const [expandedResolvedCommentGroups, setExpandedResolvedCommentGroups] = useState<Set<string>>(
     () => new Set()
   )
@@ -2345,14 +2476,14 @@ export default function MobileTasksScreen() {
   const linearMetadataItem = actionItem?.provider === 'linear' ? actionItem : linearStatusPickerItem
   const tasksSupported =
     connState === 'connected' &&
-    client != null &&
+    taskReadOperations != null &&
     tasksSupportState.kind === 'supported' &&
-    tasksSupportState.client === client
+    tasksSupportState.operations === taskReadOperations
   const tasksUnsupported =
     connState === 'connected' &&
-    client != null &&
+    taskReadOperations != null &&
     tasksSupportState.kind === 'unsupported' &&
-    tasksSupportState.client === client
+    tasksSupportState.operations === taskReadOperations
   const taskUiReady = tasksSupported && taskStateHydrated
   const activeGitHubProject = githubProjectSettings.activeProject
   const activeGitHubProjectHost = githubProjectHost(
@@ -2463,7 +2594,7 @@ export default function MobileTasksScreen() {
 
   useEffect(() => {
     if (
-      !client ||
+      !taskReadOperations ||
       connState !== 'connected' ||
       !tasksSupported ||
       !taskStateHydrated ||
@@ -2483,16 +2614,13 @@ export default function MobileTasksScreen() {
     let cancelled = false
     void mapWithConcurrency(missing, GITHUB_REPO_CONCURRENCY, async (repo) => {
       try {
-        const response = await client.sendRequest(
-          'github.repoSlug',
-          { repo: `id:${repo.id}` },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
+        return {
+          repoId: repo.id,
+          entry: {
+            path: repo.path,
+            repository: await taskReadOperations.resolveGitHubRepoSlug(repo.id)
+          }
         }
-        const result = response.result as GitHubOwnerRepo | null
-        return { repoId: repo.id, entry: { path: repo.path, repository: result } }
       } catch {
         // Cached so readiness settles; `failed` marks it for retry on refresh.
         return { repoId: repo.id, entry: { path: repo.path, repository: null, failed: true } }
@@ -2514,12 +2642,12 @@ export default function MobileTasksScreen() {
       cancelled = true
     }
   }, [
-    client,
     connState,
     githubMode,
     githubRepoSlugCache,
     hostedRepos,
     provider,
+    taskReadOperations,
     taskStateHydrated,
     tasksSupported
   ])
@@ -2545,6 +2673,22 @@ export default function MobileTasksScreen() {
     () => (projectRowItem ? findProjectRowRepo(projectRowItem) : null),
     [findProjectRowRepo, projectRowItem]
   )
+  const itemPrFileContentScope = createMobileItemPrFileContentScope(actionItem, detailPayload)
+  const projectPrFileContentScope = createMobileProjectPrFileContentScope(
+    projectRowItem,
+    projectRowHostedRepo,
+    projectRowDetail,
+    projectRowItem ? projectRowGitHubRepository(projectRowItem, activeGitHubProjectHost) : null
+  )
+  const activePrFileContentScope = projectRowItem
+    ? projectPrFileContentScope
+    : itemPrFileContentScope
+  const {
+    clear: clearPrFileContents,
+    contents: prFileContents,
+    load: loadPrFileContent,
+    loadingPath: prFileLoadingPath
+  } = useMobilePrFileContentCache(activePrFileContentScope)
   const itemReviewerCandidates = useMemo(() => {
     if (!actionItem || actionItem.provider !== 'github' || actionItem.source.type !== 'pr') {
       return []
@@ -2620,7 +2764,7 @@ export default function MobileTasksScreen() {
     return [...logins].sort().join(',')
   }, [projectRowDetail, projectRowItem?.content.assignees])
 
-  // Why: task-loading effects use this as a stale-client guard, so the ref
+  // Why: task-loading effects use this as a stale-adapter guard, so the ref
   // must be current before those passive effects can run after commit.
   const resetGitHubItemsState = useCallback(() => {
     setGithubRepoSources({})
@@ -2634,33 +2778,34 @@ export default function MobileTasksScreen() {
   // Why: Expo reuses this screen for the next host, so an effect reset runs a
   // render too late and the previous host's rows show under the new one. The
   // repo list resets itself; these are the other client-scoped caches.
-  const [boundClient, setBoundClient] = useState(client)
-  if (boundClient !== client) {
-    setBoundClient(client)
+  const [boundReadOperations, setBoundReadOperations] = useState(taskReadOperations)
+  if (boundReadOperations !== taskReadOperations) {
+    setBoundReadOperations(taskReadOperations)
     setItems([])
     setGithubRepoSlugCache({})
     resetGitHubItemsState()
   }
 
   useLayoutEffect(() => {
-    clientRef.current = client
-    // Why: ref writes belong in the commit phase. Doing this during render would
-    // leak out of a concurrent render React later abandons.
+    taskListOperationsRef.current = taskListOperations
+  }, [taskListOperations])
+
+  useLayoutEffect(() => {
     repoSelectionHydratedRef.current = false
-  }, [client])
+  }, [taskReadOperations])
 
   const persistTaskResumeState = useCallback(
     (updates: Partial<TaskResumeState>) => {
-      if (!client || !taskUiReady) {
+      if (!taskPreferenceOperations || !taskUiReady) {
         return
       }
       const next = { ...taskResumeRef.current, ...updates }
       taskResumeRef.current = next
-      void client.sendRequest('ui.set', { taskResumeState: next }).catch(() => {
+      void taskPreferenceOperations.updateResume(next).catch(() => {
         // Best-effort: desktop treats task resume as a convenience preference.
       })
     },
-    [client, taskUiReady]
+    [taskPreferenceOperations, taskUiReady]
   )
 
   const toggleGitHubProjectFieldVisibility = useCallback(
@@ -2690,77 +2835,75 @@ export default function MobileTasksScreen() {
 
   const persistTaskSource = useCallback(
     (nextProvider: TaskProvider) => {
-      if (!client || !taskUiReady) {
+      if (!taskPreferenceOperations || !taskUiReady) {
         return
       }
-      void client.sendRequest('settings.update', { defaultTaskSource: nextProvider }).catch(() => {
-        // Best-effort: a failed settings write should not block switching views.
-      })
+      void taskPreferenceOperations
+        .updateSettings({ defaultTaskSource: nextProvider })
+        .catch(() => {
+          // Best-effort: a failed settings write should not block switching views.
+        })
     },
-    [client, taskUiReady]
+    [taskPreferenceOperations, taskUiReady]
   )
 
   const persistRepoSelection = useCallback(
     (selection: Set<string>, allRepos: RepoSummary[]) => {
-      if (!client || !taskUiReady) {
+      if (!taskPreferenceOperations || !taskUiReady) {
         return
       }
       const nextSelection =
         selection.size === 0 || selection.size === allRepos.length ? null : [...selection]
       defaultRepoSelectionRef.current = nextSelection
-      void client
-        .sendRequest('settings.update', { defaultRepoSelection: nextSelection })
+      void taskPreferenceOperations
+        .updateSettings({ defaultRepoSelection: nextSelection })
         .catch(() => {
           // Best-effort: the in-memory repo picker already reflects the change.
         })
     },
-    [client, taskUiReady]
+    [taskPreferenceOperations, taskUiReady]
   )
 
   const persistDefaultGitHubPreset = useCallback(
     (preset: GitHubPreset) => {
       setDefaultGitHubPreset(preset)
-      if (!client || !taskUiReady) {
+      if (!taskPreferenceOperations || !taskUiReady) {
         return
       }
-      void client.sendRequest('settings.update', { defaultTaskViewPreset: preset }).catch(() => {
+      void taskPreferenceOperations.updateSettings({ defaultTaskViewPreset: preset }).catch(() => {
         // Best-effort: the current session still uses the selected preset.
       })
     },
-    [client, taskUiReady]
+    [taskPreferenceOperations, taskUiReady]
   )
 
   const persistGitHubProjectSettings = useCallback(
     (nextSettings: GitHubProjectSettings) => {
       setGithubProjectSettings(nextSettings)
-      if (!client || !taskUiReady) {
+      if (!taskPreferenceOperations || !taskUiReady) {
         return
       }
-      void client.sendRequest('settings.update', { githubProjects: nextSettings }).catch(() => {
+      void taskPreferenceOperations.updateSettings({ githubProjects: nextSettings }).catch(() => {
         // Best-effort: project selection can still work for the current session.
       })
     },
-    [client, taskUiReady]
+    [taskPreferenceOperations, taskUiReady]
   )
 
   const persistSetupHookTrust = useCallback(
     async (repoId: string, contentHash: string, alwaysTrust: boolean): Promise<void> => {
-      if (!client) {
+      if (!taskPreferenceOperations) {
         return
       }
-      const next = trustedOrcaHooksWithSetupApproval({
+      const next = await taskPreferenceOperations.persistSetupTrust({
         trust: trustedOrcaHooks,
         repoId,
         contentHash,
         alwaysTrust
       })
-      const response = await client.sendRequest('ui.set', { trustedOrcaHooks: next })
-      if (!isSuccess(response)) {
-        throw new Error(response.error.message)
-      }
       setTrustedOrcaHooks(next)
     },
-    [client, trustedOrcaHooks]
+    [taskPreferenceOperations, trustedOrcaHooks]
   )
 
   const resetWorkspaceCreateState = useCallback((): void => {
@@ -2798,7 +2941,7 @@ export default function MobileTasksScreen() {
   }, [])
 
   useEffect(() => {
-    if (!client || connState !== 'connected') {
+    if (!taskReadOperations || connState !== 'connected') {
       taskResumeRef.current = {}
       defaultRepoSelectionRef.current = null
       repoSelectionHydratedRef.current = false
@@ -2807,7 +2950,7 @@ export default function MobileTasksScreen() {
       setOrcaYamlTrustPrompt(null)
       setGithubProjectHiddenFieldIdsByView({})
       setTaskStateHydrated(false)
-      setTasksSupportState({ kind: 'unknown', client: null })
+      setTasksSupportState({ kind: 'unknown', operations: null })
       setShowLinearWorkspacePicker(false)
       setShowLinearTeamPicker(false)
       setShowLinearViewPicker(false)
@@ -2849,7 +2992,7 @@ export default function MobileTasksScreen() {
 
     let stale = false
     setTaskStateHydrated(false)
-    setTasksSupportState({ kind: 'unknown', client })
+    setTasksSupportState({ kind: 'unknown', operations: taskReadOperations })
     setShowLinearWorkspacePicker(false)
     setShowLinearTeamPicker(false)
     setShowLinearViewPicker(false)
@@ -2888,18 +3031,14 @@ export default function MobileTasksScreen() {
     resetWorkspaceCreateState()
 
     const hydrateTaskState = async (): Promise<void> => {
-      const statusResponse = await client.sendRequest('status.get')
+      const bootstrap = await taskReadOperations.bootstrap()
       if (stale) {
         return
       }
-      if (!isSuccess(statusResponse)) {
-        throw new Error(statusResponse.error.message)
-      }
-      const status = statusResponse.result as TaskRuntimeStatus
-      if (!status.capabilities?.includes(MOBILE_TASKS_CAPABILITY)) {
+      if (!bootstrap.supported) {
         // Why: Tasks is additive RPC surface, so old desktop builds can still
         // pair but must not receive the newer task-specific method calls.
-        setTasksSupportState({ kind: 'unsupported', client })
+        setTasksSupportState({ kind: 'unsupported', operations: taskReadOperations })
         setItems([])
         resetGitHubItemsState()
         setGithubProjectTable(null)
@@ -2943,49 +3082,20 @@ export default function MobileTasksScreen() {
         setTaskStateHydrated(false)
         return
       }
-      setTasksSupportState({ kind: 'supported', client })
+      setTasksSupportState({ kind: 'supported', operations: taskReadOperations })
       setError('')
-      const [settingsResponse, uiResponse, preflightResponse, linearStatusResponse] =
-        await Promise.all([
-          client.sendRequest('settings.get'),
-          client.sendRequest('ui.get'),
-          client.sendRequest('preflight.check'),
-          client.sendRequest('linear.status')
-        ])
-      if (stale) {
-        return
-      }
-
-      const settings = isSuccess(settingsResponse)
-        ? (((settingsResponse.result as { settings?: RuntimeTaskSettings }).settings ??
-            {}) as RuntimeTaskSettings)
-        : {}
+      const settings = bootstrap.settings
       setRuntimeTaskSettings(settings)
-      const uiState = isSuccess(uiResponse)
-        ? (
-            uiResponse.result as {
-              ui?: {
-                taskResumeState?: TaskResumeState
-                trustedOrcaHooks?: PersistedTrustedOrcaHooks
-              }
-            }
-          ).ui
-        : null
-      setTrustedOrcaHooks(uiState?.trustedOrcaHooks ?? {})
-      const resume = uiState?.taskResumeState ?? {}
+      setTrustedOrcaHooks(bootstrap.trustedOrcaHooks)
+      const resume = bootstrap.taskResumeState
       taskResumeRef.current = resume
       setGithubProjectHiddenFieldIdsByView(resume.githubProjectHiddenFieldIdsByView ?? {})
 
-      const preflight = isSuccess(preflightResponse)
-        ? (preflightResponse.result as { glab?: { installed?: boolean } })
-        : null
-      const linearStatus = isSuccess(linearStatusResponse)
-        ? (linearStatusResponse.result as LinearStatusResponse)
-        : null
+      const linearStatus = bootstrap.linearStatus
       const preferredProviders = normalizeVisibleTaskProviders(settings.visibleTaskProviders)
-      const linearIsConnected = linearStatus?.connected === true
+      const linearIsConnected = linearStatus.connected
       const availableProviders = filterAvailableTaskProviders(preferredProviders, {
-        gitlabInstalled: preflight?.glab?.installed === true,
+        gitlabInstalled: bootstrap.gitLabInstalled,
         linearConnected: linearIsConnected
       })
       const nextVisibleProviders =
@@ -3050,7 +3160,7 @@ export default function MobileTasksScreen() {
     return () => {
       stale = true
     }
-  }, [client, connState, requestedTaskSource, resetWorkspaceCreateState])
+  }, [connState, requestedTaskSource, resetWorkspaceCreateState, taskReadOperations])
 
   useEffect(() => {
     if (visibleProviders.includes(provider)) {
@@ -3081,58 +3191,45 @@ export default function MobileTasksScreen() {
   }, [repoList.state.status, repos])
 
   const loadLinearContext = useCallback(async (): Promise<void> => {
-    if (!client || connState !== 'connected' || !tasksSupported) {
+    if (!taskReadOperations || connState !== 'connected' || !tasksSupported) {
       return
     }
-    const statusResponse = await client.sendRequest('linear.status')
-    if (!isSuccess(statusResponse)) {
-      throw new Error(statusResponse.error.message)
-    }
-    const status = statusResponse.result as LinearStatusResponse
-    setLinearConnected(status.connected === true)
-    if (status.connected !== true) {
+    const context = await taskReadOperations.loadLinearContext()
+    setLinearConnected(context.status.connected)
+    if (!context.status.connected) {
       setLinearWorkspaces([])
       setLinearTeams([])
       setSelectedLinearTeamIds(new Set())
       setSelectedLinearWorkspaceId(null)
       return
     }
-    const workspaces = status.workspaces ?? []
-    const workspaceId =
-      status.selectedWorkspaceId ?? status.activeWorkspaceId ?? workspaces[0]?.id ?? null
+    const workspaces = context.status.workspaces
+    const workspaceId = context.status.selectedWorkspaceId
     setLinearWorkspaces(workspaces)
     setSelectedLinearWorkspaceId(workspaceId)
-
-    const teamsResponse = await client.sendRequest('linear.listTeams', {
-      workspaceId: workspaceId ?? undefined
-    })
-    if (!isSuccess(teamsResponse)) {
-      throw new Error(teamsResponse.error.message)
-    }
-    const teams = teamsResponse.result as LinearTeam[]
+    const teams = context.teams
     setLinearTeams(teams)
     setSelectedLinearTeamIds(reconcileTeamSelection(teams, defaultLinearTeamSelectionRef.current))
-  }, [client, connState, tasksSupported])
+  }, [connState, taskReadOperations, tasksSupported])
 
   const persistLinearTeamSelection = useCallback(
     (teamIds: Set<string>, allTeams: LinearTeam[]) => {
-      if (!client || !taskUiReady) {
+      if (!taskPreferenceOperations || !taskUiReady) {
         return
       }
       const selection = teamIds.size === allTeams.length ? null : [...teamIds]
       defaultLinearTeamSelectionRef.current = selection
-      void client
-        .sendRequest('settings.update', { defaultLinearTeamSelection: selection })
+      void taskPreferenceOperations
+        .updateSettings({ defaultLinearTeamSelection: selection })
         .catch(() => {
           // Best-effort preference persistence; the local picker state already changed.
         })
     },
-    [client, taskUiReady]
+    [taskPreferenceOperations, taskUiReady]
   )
 
   const fetchGitHubItemsPage = useCallback(
     async (
-      requestClient: RpcClient,
       queriedRepos: RepoSummary[],
       before?: string
     ): Promise<{
@@ -3147,24 +3244,26 @@ export default function MobileTasksScreen() {
         GITHUB_REPO_CONCURRENCY,
         async (repo) => {
           try {
-            const response = await requestClient.sendRequest('github.listWorkItems', {
-              repo: `id:${repo.id}`,
+            if (!taskListOperations) {
+              throw new Error('Task list operations are unavailable')
+            }
+            const envelope = await taskListOperations.listGitHub({
+              repoId: repo.id,
               limit: PER_REPO_FETCH_LIMIT,
               query: scopeGitHubTaskSearch(appliedQuery, githubKind),
               before
             })
-            if (!isSuccess(response)) {
-              throw new Error(response.error.message)
-            }
-            const envelope = response.result as {
-              items: Array<Omit<GitHubWorkItem, 'repoId' | 'repoName'>>
-              sources?: GitHubRepoSources
-              errors?: { issues?: { message: string } }
-              issueSourceFellBack?: true
-            }
             return {
-              items: envelope.items.map((item) => createGitHubTask(repo, item)),
-              sources: envelope.sources,
+              items: envelope.items.map((item) =>
+                createGitHubTask(repo, item as Omit<GitHubWorkItem, 'repoId' | 'repoName'>)
+              ),
+              sources: envelope.sources
+                ? {
+                    issues: envelope.sources.issues,
+                    prs: envelope.sources.prs ?? null,
+                    upstreamCandidate: envelope.sources.upstreamCandidate ?? null
+                  }
+                : undefined,
               sourceError: extractGitHubIssueSourceError(repo, envelope),
               sourceFallback: extractGitHubIssueSourceFallback(repo, envelope),
               repoId: repo.id
@@ -3212,28 +3311,23 @@ export default function MobileTasksScreen() {
         sourceFallbacks
       }
     },
-    [appliedQuery, githubKind]
+    [appliedQuery, githubKind, taskListOperations]
   )
 
   const countGitHubItems = useCallback(
-    async (requestClient: RpcClient, queriedRepos: RepoSummary[]): Promise<number> => {
+    async (queriedRepos: RepoSummary[]): Promise<number> => {
       const counts = await mapWithConcurrency(
         queriedRepos,
         GITHUB_REPO_CONCURRENCY,
         async (repo) => {
           try {
-            const response = await requestClient.sendRequest(
-              'github.countWorkItems',
-              {
-                repo: `id:${repo.id}`,
-                query: scopeGitHubTaskSearch(appliedQuery, githubKind)
-              },
-              { timeoutMs: 30_000 }
-            )
-            if (!isSuccess(response)) {
-              throw new Error(response.error.message)
+            if (!taskListOperations) {
+              return 0
             }
-            return typeof response.result === 'number' ? response.result : 0
+            return taskListOperations.countGitHub({
+              repoId: repo.id,
+              query: scopeGitHubTaskSearch(appliedQuery, githubKind)
+            })
           } catch (err) {
             const isExpectedSshSkip = isGitHubWorkItemsSshRemoteRequiredError(err)
             const logWorkItemCountFailure = isExpectedSshSkip ? console.log : console.warn
@@ -3248,19 +3342,25 @@ export default function MobileTasksScreen() {
       )
       return counts.reduce((sum, count) => sum + count, 0)
     },
-    [appliedQuery, githubKind]
+    [appliedQuery, githubKind, taskListOperations]
   )
 
   const loadTasks = useCallback(
     async (options: { silent?: boolean } = {}): Promise<void> => {
-      if (!client || connState !== 'connected' || !tasksSupported || !taskStateHydrated) {
+      if (
+        !taskListOperations ||
+        connState !== 'connected' ||
+        !tasksSupported ||
+        !taskStateHydrated
+      ) {
         return
       }
       const generation = loadGenerationRef.current + 1
       loadGenerationRef.current = generation
-      const requestClient = client
+      const requestOperations = taskListOperations
       const isCurrent = () =>
-        loadGenerationRef.current === generation && clientRef.current === requestClient
+        loadGenerationRef.current === generation &&
+        taskListOperationsRef.current === requestOperations
       setError('')
       if (options.silent) {
         setRefreshing(true)
@@ -3304,7 +3404,7 @@ export default function MobileTasksScreen() {
             return
           }
           if (provider === 'github') {
-            const page = await fetchGitHubItemsPage(requestClient, queriedRepos)
+            const page = await fetchGitHubItemsPage(queriedRepos)
             if (!isCurrent()) {
               return
             }
@@ -3318,7 +3418,7 @@ export default function MobileTasksScreen() {
             setGithubCurrentPage(0)
             setItems(page.items)
             if (selectedRepoIds.size > 0) {
-              void countGitHubItems(requestClient, queriedRepos).then((count) => {
+              void countGitHubItems(queriedRepos).then((count) => {
                 if (isCurrent()) {
                   setGithubTotalCount(count)
                 }
@@ -3336,17 +3436,12 @@ export default function MobileTasksScreen() {
             return
           }
           if (provider === 'gitlab' && gitlabView === 'todos') {
-            const response = await requestClient.sendRequest('gitlab.todos', {
-              repo: `id:${queriedRepos[0]!.id}`
-            })
-            if (!isSuccess(response)) {
-              throw new Error(response.error.message)
-            }
+            const todos = await taskListOperations.listGitLabTodos(queriedRepos[0]!.id)
             if (!isCurrent()) {
               return
             }
             setItems(
-              ((response.result as GitLabTodo[]) ?? [])
+              (todos as GitLabTodo[])
                 .map(createGitLabTodoTask)
                 .sort((a, b) => taskTime(b.updatedAt) - taskTime(a.updatedAt))
             )
@@ -3357,24 +3452,21 @@ export default function MobileTasksScreen() {
             GITHUB_REPO_CONCURRENCY,
             async (repo) => {
               try {
-                const response = await requestClient.sendRequest('gitlab.listWorkItems', {
-                  repo: `id:${repo.id}`,
+                const envelope = await taskListOperations.listGitLab({
+                  repoId: repo.id,
                   state: gitlabFilter,
                   page: 1,
                   perPage: GITLAB_PER_PAGE,
                   query: appliedQuery.trim() || undefined
                 })
-                if (!isSuccess(response)) {
-                  throw new Error(response.error.message)
-                }
-                const envelope = response.result as {
-                  items: Array<Omit<GitLabWorkItem, 'repoId' | 'repoName'>>
-                  error?: { type?: string; message: string }
-                }
                 if (envelope.error?.type && envelope.error.type !== 'not_found') {
                   return { items: [], error: envelope.error.message }
                 }
-                return { items: envelope.items.map((item) => createGitLabTask(repo, item)) }
+                return {
+                  items: envelope.items.map((item) =>
+                    createGitLabTask(repo, item as Omit<GitLabWorkItem, 'repoId' | 'repoName'>)
+                  )
+                }
               } catch (err) {
                 console.warn(`[mobile tasks] failed to fetch ${provider} work items`, repo.id, err)
                 return {
@@ -3405,21 +3497,11 @@ export default function MobileTasksScreen() {
           }
         } else {
           const normalizedQuery = appliedQuery.trim()
-          const response = normalizedQuery
-            ? await requestClient.sendRequest('linear.searchIssues', {
-                query: normalizedQuery,
-                limit: LINEAR_LIMIT,
-                workspaceId: selectedLinearWorkspaceId ?? undefined
-              })
-            : await requestClient.sendRequest('linear.listIssues', {
-                filter: linearFilter,
-                limit: LINEAR_LIMIT,
-                workspaceId: selectedLinearWorkspaceId ?? undefined
-              })
-          if (!isSuccess(response)) {
-            throw new Error(response.error.message)
-          }
-          const issues = extractLinearIssueReadItems(response.result)
+          const issues = await taskListOperations.listLinear({
+            ...(normalizedQuery ? { query: normalizedQuery } : { filter: linearFilter }),
+            limit: LINEAR_LIMIT,
+            workspaceId: selectedLinearWorkspaceId ?? undefined
+          })
           const filtered =
             selectedLinearTeamIds.size > 0
               ? issues.filter((issue) => selectedLinearTeamIds.has(issue.team.id))
@@ -3446,7 +3528,6 @@ export default function MobileTasksScreen() {
     },
     [
       appliedQuery,
-      client,
       connState,
       countGitHubItems,
       fetchGitHubItemsPage,
@@ -3464,12 +3545,13 @@ export default function MobileTasksScreen() {
       selectedLinearWorkspaceId,
       selectedRepoIds,
       taskStateHydrated,
+      taskListOperations,
       tasksSupported
     ]
   )
 
   const connectLinearAccount = useCallback(async (): Promise<void> => {
-    if (!client || connState !== 'connected' || !taskUiReady) {
+    if (!taskLinearOperations || connState !== 'connected' || !taskUiReady) {
       return
     }
     const apiKey = linearApiKeyDraft.trim()
@@ -3479,14 +3561,7 @@ export default function MobileTasksScreen() {
     setLinearConnectState('connecting')
     setLinearConnectError('')
     try {
-      const response = await client.sendRequest('linear.connect', { apiKey })
-      if (!isSuccess(response)) {
-        throw new Error(response.error.message)
-      }
-      const result = response.result as { ok?: boolean; error?: string }
-      if (result.ok === false) {
-        throw new Error(result.error ?? 'Failed to connect Linear')
-      }
+      await taskLinearOperations.connect(apiKey)
       setLinearApiKeyDraft('')
       setLinearConnectState('idle')
       setShowLinearConnect(false)
@@ -3500,7 +3575,14 @@ export default function MobileTasksScreen() {
       setLinearConnectState('error')
       setLinearConnectError(err instanceof Error ? err.message : 'Connection failed')
     }
-  }, [client, connState, linearApiKeyDraft, linearConnectState, loadLinearContext, taskUiReady])
+  }, [
+    connState,
+    linearApiKeyDraft,
+    linearConnectState,
+    loadLinearContext,
+    taskLinearOperations,
+    taskUiReady
+  ])
 
   const retryGitHubIssueSourceFetch = useCallback(
     async (repoPath: string): Promise<void> => {
@@ -3565,7 +3647,7 @@ export default function MobileTasksScreen() {
   const handleGitHubPageChange = useCallback(
     async (targetPage: number): Promise<void> => {
       if (
-        !client ||
+        !taskListOperations ||
         !tasksSupported ||
         targetPage < 0 ||
         githubPaginationLoading ||
@@ -3594,7 +3676,7 @@ export default function MobileTasksScreen() {
         let loadedPages = githubPages.length
         const nextPages: Array<Extract<TaskItem, { provider: 'github' }>[]> = []
         while (loadedPages <= targetPage) {
-          const page = await fetchGitHubItemsPage(client, selectedHostedRepos, cursor)
+          const page = await fetchGitHubItemsPage(selectedHostedRepos, cursor)
           if (page.items.length === 0) {
             break
           }
@@ -3621,71 +3703,52 @@ export default function MobileTasksScreen() {
       }
     },
     [
-      client,
       fetchGitHubItemsPage,
       githubPages,
       githubPaginationLoading,
       selectedHostedRepos,
+      taskListOperations,
       tasksSupported
     ]
   )
 
   const loadGitHubProjects = useCallback(async (): Promise<void> => {
-    if (!client || connState !== 'connected' || !tasksSupported) {
+    if (!taskProjectReadOperations || connState !== 'connected' || !tasksSupported) {
       return
     }
     setGithubProjectError('')
     setGithubProjectPartialFailures([])
-    const response = await client.sendRequest('github.project.listAccessible', {
-      host: 'github.com'
-    })
-    if (!isSuccess(response)) {
-      throw new Error(response.error.message)
-    }
-    const result = response.result as
-      | {
-          ok: true
-          projects: GitHubProjectSummary[]
-          partialFailures?: GitHubProjectPartialFailure[]
-        }
-      | { ok: false; error: { message: string } }
-    if (!result.ok) {
-      throw new Error(result.error.message)
-    }
+    const result = await taskProjectReadOperations.listAccessible('github.com')
     setGithubProjects(result.projects)
-    setGithubProjectPartialFailures(result.partialFailures ?? [])
-  }, [client, connState, tasksSupported])
+    setGithubProjectPartialFailures(result.partialFailures)
+  }, [connState, taskProjectReadOperations, tasksSupported])
 
   const loadGitHubProjectViews = useCallback(
     async (project: GitHubProjectRef): Promise<GitHubProjectViewSummary[]> => {
-      if (!client || connState !== 'connected' || !tasksSupported || !taskStateHydrated) {
+      if (
+        !taskProjectReadOperations ||
+        connState !== 'connected' ||
+        !tasksSupported ||
+        !taskStateHydrated
+      ) {
         return []
       }
-      const response = await client.sendRequest('github.project.listViews', {
+      const views = await taskProjectReadOperations.listViews({
         owner: project.owner,
         host: githubProjectHost(project.host),
         ownerType: project.ownerType,
-        projectNumber: project.number
+        number: project.number
       })
-      if (!isSuccess(response)) {
-        throw new Error(response.error.message)
-      }
-      const result = response.result as
-        | { ok: true; views: GitHubProjectViewSummary[] }
-        | { ok: false; error: { message: string } }
-      if (!result.ok) {
-        throw new Error(result.error.message)
-      }
-      setGithubProjectViews(result.views)
-      return result.views
+      setGithubProjectViews(views)
+      return views
     },
-    [client, connState, taskStateHydrated, tasksSupported]
+    [connState, taskProjectReadOperations, taskStateHydrated, tasksSupported]
   )
 
   const loadGitHubProjectTable = useCallback(
     async (options: { force?: boolean; queryOverride?: string } = {}): Promise<void> => {
       if (
-        !client ||
+        !taskProjectReadOperations ||
         connState !== 'connected' ||
         !tasksSupported ||
         !activeGitHubProject ||
@@ -3697,39 +3760,26 @@ export default function MobileTasksScreen() {
       setGithubProjectLoading(true)
       setGithubProjectError('')
       try {
-        const response = await client.sendRequest(
-          'github.project.viewTable',
-          {
-            owner: activeGitHubProject.owner,
-            host: activeGitHubProjectHost,
-            ownerType: activeGitHubProject.ownerType,
-            projectNumber: activeGitHubProject.number,
-            viewId: activeGitHubProjectViewId,
-            ...(options.queryOverride !== undefined ? { queryOverride: options.queryOverride } : {})
-          },
-          { timeoutMs: 60_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as
-          | { ok: true; data: GitHubProjectTable }
-          | { ok: false; error: { message: string }; totalCount?: number }
-        if (!result.ok) {
-          throw new Error(result.error.message)
-        }
-        setGithubProjectTable(result.data)
-        setGithubProjectSearch(options.queryOverride ?? result.data.selectedView.filter ?? '')
+        const table = await taskProjectReadOperations.loadTable({
+          owner: activeGitHubProject.owner,
+          host: activeGitHubProjectHost,
+          ownerType: activeGitHubProject.ownerType,
+          number: activeGitHubProject.number,
+          viewId: activeGitHubProjectViewId,
+          ...(options.queryOverride !== undefined ? { queryOverride: options.queryOverride } : {})
+        })
+        setGithubProjectTable(table)
+        setGithubProjectSearch(options.queryOverride ?? table.selectedView.filter ?? '')
         setGithubProjectViews((current) =>
-          current.some((view) => view.id === result.data.selectedView.id)
+          current.some((view) => view.id === table.selectedView.id)
             ? current
             : [
                 ...current,
                 {
-                  id: result.data.selectedView.id,
-                  number: result.data.selectedView.number,
-                  name: result.data.selectedView.name,
-                  layout: result.data.selectedView.layout
+                  id: table.selectedView.id,
+                  number: table.selectedView.number,
+                  name: table.selectedView.name,
+                  layout: table.selectedView.layout
                 }
               ]
         )
@@ -3744,8 +3794,8 @@ export default function MobileTasksScreen() {
       activeGitHubProject,
       activeGitHubProjectHost,
       activeGitHubProjectViewId,
-      client,
       connState,
+      taskProjectReadOperations,
       tasksSupported
     ]
   )
@@ -3837,7 +3887,12 @@ export default function MobileTasksScreen() {
   )
 
   const resolveGitHubProjectFromInput = useCallback(async (): Promise<void> => {
-    if (!client || connState !== 'connected' || !tasksSupported || !taskStateHydrated) {
+    if (
+      !taskProjectReadOperations ||
+      connState !== 'connected' ||
+      !tasksSupported ||
+      !taskStateHydrated
+    ) {
       return
     }
     const input = githubProjectPasteInput.trim()
@@ -3850,28 +3905,10 @@ export default function MobileTasksScreen() {
     setGithubProjectPasteError('')
     setGithubProjectError('')
     try {
-      const response = await client.sendRequest('github.project.resolveRef', {
+      const result = await taskProjectReadOperations.resolveRef({
         input,
         host: githubProjectHost(parsed.host)
       })
-      if (!isSuccess(response)) {
-        throw new Error(response.error.message)
-      }
-      const result = response.result as
-        | {
-            ok: true
-            owner: string
-            ownerType: GitHubProjectOwnerType
-            number: number
-            title: string
-            host?: string
-            viewNumber?: number
-          }
-        | { ok: false; error: { message: string } }
-      if (!result.ok) {
-        setGithubProjectPasteError(result.error.message)
-        return
-      }
       setGithubProjectPasteInput('')
       setShowGitHubProjectPicker(false)
       await selectGitHubProject(
@@ -3889,10 +3926,10 @@ export default function MobileTasksScreen() {
       setGithubProjectPasteBusy(false)
     }
   }, [
-    client,
     connState,
     githubProjectPasteInput,
     selectGitHubProject,
+    taskProjectReadOperations,
     taskStateHydrated,
     tasksSupported
   ])
@@ -4018,25 +4055,19 @@ export default function MobileTasksScreen() {
       )
       return
     }
-    if (!client) {
+    if (!taskLinearOperations) {
       return
     }
     let stale = false
     setCreateTeamId(null)
-    void client
-      .sendRequest('linear.listTeams')
-      .then((response) => {
+    void taskLinearOperations
+      .listTeams()
+      .then((teams) => {
         if (stale) {
           return
         }
-        if (isSuccess(response)) {
-          const teams = response.result as LinearTeam[]
-          setLinearTeams(teams)
-          setCreateTeamId((current) => current ?? teams[0]?.id ?? null)
-        } else {
-          setLinearTeams([])
-          setCreateTeamId(null)
-        }
+        setLinearTeams(teams)
+        setCreateTeamId((current) => current ?? teams[0]?.id ?? null)
       })
       .catch(() => {
         if (!stale) {
@@ -4047,10 +4078,17 @@ export default function MobileTasksScreen() {
     return () => {
       stale = true
     }
-  }, [client, hostedRepos, provider, showCreateTask, taskStateHydrated, tasksSupported])
+  }, [
+    hostedRepos,
+    provider,
+    showCreateTask,
+    taskLinearOperations,
+    taskStateHydrated,
+    tasksSupported
+  ])
 
   useEffect(() => {
-    if (!tasksSupported || !linearMetadataItem || !client) {
+    if (!tasksSupported || !linearMetadataItem || !taskLinearOperations) {
       setLinearStates([])
       setLinearCommentDraft('')
       setLinearSubIssueTitle('')
@@ -4060,21 +4098,13 @@ export default function MobileTasksScreen() {
     setLinearStatesLoading(true)
     setLinearCommentDraft('')
     setLinearSubIssueTitle('')
-    const baseParams = {
-      teamId: linearMetadataItem.source.team.id,
-      workspaceId: linearMetadataItem.source.workspaceId
-    }
-    void client
-      .sendRequest('linear.teamStates', baseParams)
-      .then((statesResponse) => {
+    void taskLinearOperations
+      .teamStates(taskLinearTarget(linearMetadataItem))
+      .then((states) => {
         if (stale) {
           return
         }
-        if (isSuccess(statesResponse)) {
-          setLinearStates(statesResponse.result as LinearState[])
-        } else {
-          setLinearStates([])
-        }
+        setLinearStates(states)
       })
       .catch(() => {
         if (!stale) {
@@ -4089,7 +4119,7 @@ export default function MobileTasksScreen() {
     return () => {
       stale = true
     }
-  }, [client, linearMetadataItem, tasksSupported])
+  }, [linearMetadataItem, taskLinearOperations, tasksSupported])
 
   useEffect(() => {
     if (!actionItem) {
@@ -4103,8 +4133,7 @@ export default function MobileTasksScreen() {
       setItemReviewersDraft('')
       setItemReplyDrafts({})
       setExpandedPrFilePath(null)
-      setPrFileContents({})
-      setPrFileLoadingPath(null)
+      clearPrFileContents()
       setPrFileCommentDrafts({})
       setExpandedResolvedCommentGroups(new Set())
       return
@@ -4119,11 +4148,10 @@ export default function MobileTasksScreen() {
     setItemReviewersDraft('')
     setItemReplyDrafts({})
     setExpandedPrFilePath(null)
-    setPrFileContents({})
-    setPrFileLoadingPath(null)
+    clearPrFileContents()
     setPrFileCommentDrafts({})
     setExpandedResolvedCommentGroups(new Set())
-  }, [actionItem])
+  }, [actionItem, clearPrFileContents])
 
   useEffect(() => {
     if (!detailPayload) {
@@ -4136,7 +4164,7 @@ export default function MobileTasksScreen() {
   }, [detailPayload])
 
   useEffect(() => {
-    if (!tasksSupported || !client || actionItem?.provider !== 'github') {
+    if (!tasksSupported || !taskDetailOperations || actionItem?.provider !== 'github') {
       setItemAvailableLabels([])
       setItemLabelsLoading(false)
       setItemLabelsError('')
@@ -4151,20 +4179,13 @@ export default function MobileTasksScreen() {
       setItemAvailableLabels([])
       setItemLabelsError('')
       setItemLabelsLoading(true)
-      void client
-        .sendRequest(
-          'github.listLabels',
-          { repo: `id:${actionItem.source.repoId}` },
-          { timeoutMs: 30_000 }
-        )
-        .then((response) => {
+      void taskDetailOperations
+        .listGitHubLabels(actionItem.source.repoId)
+        .then((labels) => {
           if (stale) {
             return
           }
-          if (!isSuccess(response)) {
-            throw new Error(response.error.message)
-          }
-          setItemAvailableLabels(response.result as string[])
+          setItemAvailableLabels(labels)
         })
         .catch((err) => {
           if (!stale) {
@@ -4185,20 +4206,13 @@ export default function MobileTasksScreen() {
     setItemAssignableUsers([])
     setItemAssignableUsersError('')
     setItemAssignableUsersLoading(true)
-    void client
-      .sendRequest(
-        'github.listAssignableUsers',
-        { repo: `id:${actionItem.source.repoId}` },
-        { timeoutMs: 30_000 }
-      )
-      .then((response) => {
+    void taskDetailOperations
+      .listGitHubAssignableUsers(actionItem.source.repoId)
+      .then((users) => {
         if (stale) {
           return
         }
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        setItemAssignableUsers(response.result as GitHubAssignableUser[])
+        setItemAssignableUsers(users)
       })
       .catch((err) => {
         if (!stale) {
@@ -4216,10 +4230,10 @@ export default function MobileTasksScreen() {
     return () => {
       stale = true
     }
-  }, [actionItem, client, tasksSupported])
+  }, [actionItem, taskDetailOperations, tasksSupported])
 
   useEffect(() => {
-    if (!tasksSupported || !actionItem || !client) {
+    if (!tasksSupported || !actionItem || !taskDetailOperations) {
       setDetailPayload(null)
       setDetailLoading(false)
       setDetailError('')
@@ -4233,106 +4247,42 @@ export default function MobileTasksScreen() {
 
     const loadDetails = async (): Promise<void> => {
       if (actionItem.provider === 'github') {
-        const response = await client.sendRequest(
-          'github.workItemDetails',
-          {
-            repo: `id:${actionItem.source.repoId}`,
-            number: actionItem.source.number,
-            type: actionItem.source.type
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const details = response.result as {
-          body?: string
-          comments?: DetailComment[]
-          item?: {
-            labels?: string[]
-            reviewDecision?: string | null
-            reviewRequests?: GitHubAssignableUser[]
-            latestReviews?: GitHubPRReviewSummary[]
-          }
-          assignees?: string[]
-          headSha?: string
-          baseSha?: string
-          pullRequestId?: string
-          checks?: GitHubDetailCheck[]
-          files?: Array<{
-            path: string
-            oldPath?: string
-            status?: GitHubDetailFile['status']
-            additions?: number
-            deletions?: number
-            isBinary?: boolean
-            viewerViewedState?: 'DISMISSED' | 'VIEWED' | 'UNVIEWED'
-          }>
-        } | null
-        if (!details) {
-          throw new Error('Details not found')
-        }
+        const details = await taskDetailOperations.loadGitHub({
+          repoId: actionItem.source.repoId,
+          number: actionItem.source.number,
+          type: actionItem.source.type
+        })
         if (!stale) {
           setDetailPayload({
             provider: 'github',
-            body: details.body ?? '',
-            comments: details.comments ?? [],
-            labels: details.item?.labels ?? actionItem.source.labels,
-            assignees: details.assignees ?? [],
-            reviewDecision: details.item?.reviewDecision ?? actionItem.source.reviewDecision,
-            reviewRequests: details.item?.reviewRequests ?? actionItem.source.reviewRequests ?? [],
-            latestReviews: details.item?.latestReviews ?? actionItem.source.latestReviews ?? [],
+            ...details,
+            labels: details.labels ?? actionItem.source.labels,
+            reviewDecision: details.reviewDecision ?? actionItem.source.reviewDecision,
+            reviewRequests: details.reviewRequests ?? actionItem.source.reviewRequests ?? [],
+            latestReviews: details.latestReviews ?? actionItem.source.latestReviews ?? [],
             headSha: details.headSha,
             baseSha: details.baseSha,
             pullRequestId: details.pullRequestId,
-            checks: details.checks ?? [],
-            files: details.files ?? []
+            checks: details.checks,
+            files: details.files
           })
         }
         return
       }
 
       if (actionItem.provider === 'gitlab') {
-        const response = await client.sendRequest(
-          'gitlab.workItemDetails',
-          {
-            repo: `id:${actionItem.source.repoId}`,
-            iid: actionItem.source.number,
-            type: actionItem.source.type,
-            projectRef: actionItem.source.projectRef
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const details = response.result as {
-          body?: string
-          comments?: DetailComment[]
-          item?: { labels?: string[]; mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' }
-          assignees?: string[]
-          pipelineJobs?: Array<{
-            id?: number
-            name: string
-            stage: string
-            status: string
-            webUrl?: string | null
-            duration?: number | null
-          }>
-          reviewers?: unknown[]
-          approvalState?: { approvalsRequired: number | null; approvalsLeft: number | null }
-        } | null
-        if (!details) {
-          throw new Error('Details not found')
-        }
+        const details = await taskDetailOperations.loadGitLab({
+          repoId: actionItem.source.repoId,
+          number: actionItem.source.number,
+          type: actionItem.source.type,
+          projectRef: actionItem.source.projectRef,
+          targetId: actionItem.source.targetId
+        })
         if (!stale) {
           setDetailPayload({
             provider: 'gitlab',
-            body: details.body ?? '',
-            comments: details.comments ?? [],
-            labels: details.item?.labels ?? actionItem.source.labels,
-            assignees: details.assignees ?? [],
-            pipelineJobs: details.pipelineJobs ?? []
+            ...details,
+            labels: details.labels ?? actionItem.source.labels
           })
           const checksSummary = buildGitLabCheckSummary(details.pipelineJobs ?? [])
           const reviewDecision: Exclude<HostedReviewDecision, null> | undefined =
@@ -4376,34 +4326,11 @@ export default function MobileTasksScreen() {
         return
       }
 
-      const [issueResponse, commentsResponse] = await Promise.all([
-        client.sendRequest(
-          'linear.getIssue',
-          {
-            id: actionItem.source.id,
-            workspaceId: actionItem.source.workspaceId
-          },
-          { timeoutMs: 30_000 }
-        ),
-        client.sendRequest(
-          'linear.issueComments',
-          {
-            issueId: actionItem.source.id,
-            workspaceId: actionItem.source.workspaceId
-          },
-          { timeoutMs: 30_000 }
-        )
-      ])
-      if (!isSuccess(issueResponse)) {
-        throw new Error(issueResponse.error.message)
-      }
-      const issue = issueResponse.result as LinearIssue | null
-      const comments = isSuccess(commentsResponse)
-        ? ((commentsResponse.result as DetailComment[]) ?? [])
-        : []
-      if (!issue) {
-        throw new Error('Details not found')
-      }
+      const { issue, comments } = await taskDetailOperations.loadLinear({
+        issueId: actionItem.source.id,
+        workspaceId: actionItem.source.workspaceId,
+        targetId: actionItem.source.targetId
+      })
       if (!stale) {
         setDetailPayload({
           provider: 'linear',
@@ -4446,7 +4373,7 @@ export default function MobileTasksScreen() {
     return () => {
       stale = true
     }
-  }, [actionItem, client, detailRefreshSeq, tasksSupported])
+  }, [actionItem, detailRefreshSeq, taskDetailOperations, tasksSupported])
 
   useEffect(() => {
     if (!projectRowItem) {
@@ -4460,8 +4387,7 @@ export default function MobileTasksScreen() {
       setProjectEditingCommentDraft('')
       setProjectReviewersDraft('')
       setExpandedPrFilePath(null)
-      setPrFileContents({})
-      setPrFileLoadingPath(null)
+      clearPrFileContents()
       setPrFileCommentDrafts({})
       setProjectFieldDrafts({})
       return
@@ -4476,8 +4402,7 @@ export default function MobileTasksScreen() {
     setProjectEditingCommentDraft('')
     setProjectReviewersDraft('')
     setExpandedPrFilePath(null)
-    setPrFileContents({})
-    setPrFileLoadingPath(null)
+    clearPrFileContents()
     setPrFileCommentDrafts({})
     setProjectFieldDrafts(
       Object.fromEntries(
@@ -4490,7 +4415,13 @@ export default function MobileTasksScreen() {
     setProjectRowDetail(null)
     setProjectRowDetailError('')
 
-    if (!tasksSupported || !client || !type || !slug || !projectRowItem.content.number) {
+    if (
+      !tasksSupported ||
+      !taskProjectReadOperations ||
+      !type ||
+      !slug ||
+      !projectRowItem.content.number
+    ) {
       setProjectRowDetailLoading(false)
       return
     }
@@ -4498,71 +4429,24 @@ export default function MobileTasksScreen() {
     let stale = false
     setProjectRowDetailLoading(true)
 
-    void client
-      .sendRequest(
-        'github.project.workItemDetailsBySlug',
-        {
-          owner: slug.owner,
-          repo: slug.repo,
-          host: activeGitHubProjectHost,
-          number: projectRowItem.content.number,
-          type
-        },
-        { timeoutMs: 30_000 }
-      )
-      .then((response) => {
+    void taskProjectReadOperations
+      .loadItemDetail({
+        owner: slug.owner,
+        repo: slug.repo,
+        host: activeGitHubProjectHost,
+        number: projectRowItem.content.number,
+        type
+      })
+      .then((details) => {
         if (stale) {
           return
         }
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as
-          | {
-              ok: true
-              details: {
-                body?: string
-                comments?: DetailComment[]
-                item?: {
-                  labels?: string[]
-                  reviewDecision?: string | null
-                  reviewRequests?: GitHubAssignableUser[]
-                  latestReviews?: GitHubPRReviewSummary[]
-                }
-                assignees?: string[]
-                headSha?: string
-                baseSha?: string
-                pullRequestId?: string
-                checks?: GitHubDetailCheck[]
-                files?: Array<{
-                  path: string
-                  oldPath?: string
-                  status?: GitHubDetailFile['status']
-                  additions?: number
-                  deletions?: number
-                  isBinary?: boolean
-                  viewerViewedState?: 'DISMISSED' | 'VIEWED' | 'UNVIEWED'
-                }>
-              }
-            }
-          | { ok: false; error: { message: string } }
-        if (!result.ok) {
-          throw new Error(result.error.message)
-        }
         setProjectRowDetail({
           provider: 'github',
-          body: result.details.body ?? '',
-          comments: result.details.comments ?? [],
-          labels: result.details.item?.labels ?? projectRowItem.content.labels.map((l) => l.name),
-          assignees: result.details.assignees ?? [],
-          reviewDecision: result.details.item?.reviewDecision,
-          reviewRequests: result.details.item?.reviewRequests ?? [],
-          latestReviews: result.details.item?.latestReviews ?? [],
-          headSha: result.details.headSha,
-          baseSha: result.details.baseSha,
-          pullRequestId: result.details.pullRequestId,
-          checks: result.details.checks ?? [],
-          files: result.details.files ?? []
+          ...details,
+          labels: details.labels ?? projectRowItem.content.labels.map((label) => label.name),
+          reviewRequests: details.reviewRequests ?? [],
+          latestReviews: details.latestReviews ?? []
         })
       })
       .catch((err) => {
@@ -4581,16 +4465,17 @@ export default function MobileTasksScreen() {
     }
   }, [
     activeGitHubProjectHost,
-    client,
+    clearPrFileContents,
     githubProjectTable,
     projectRowDetailRefreshSeq,
     projectRowItem,
+    taskProjectReadOperations,
     tasksSupported
   ])
 
   useEffect(() => {
     const slug = splitRepositorySlug(projectMetadataRepository)
-    if (!tasksSupported || !client || !slug) {
+    if (!tasksSupported || !taskProjectReadOperations || !slug) {
       setProjectAvailableLabels([])
       setProjectLabelsLoading(false)
       setProjectLabelsError('')
@@ -4601,26 +4486,13 @@ export default function MobileTasksScreen() {
     setProjectAvailableLabels([])
     setProjectLabelsError('')
     setProjectLabelsLoading(true)
-    void client
-      .sendRequest(
-        'github.project.listLabelsBySlug',
-        { owner: slug.owner, repo: slug.repo, host: activeGitHubProjectHost },
-        { timeoutMs: 30_000 }
-      )
-      .then((response) => {
+    void taskProjectReadOperations
+      .listItemLabels({ owner: slug.owner, repo: slug.repo, host: activeGitHubProjectHost })
+      .then((labels) => {
         if (stale) {
           return
         }
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as
-          | { ok: true; labels?: string[] }
-          | { ok: false; error?: { message?: string } }
-        if (!result.ok) {
-          throw new Error(result.error?.message ?? 'Failed to load labels')
-        }
-        setProjectAvailableLabels(result.labels ?? [])
+        setProjectAvailableLabels(labels)
       })
       .catch((err) => {
         if (!stale) {
@@ -4636,11 +4508,16 @@ export default function MobileTasksScreen() {
     return () => {
       stale = true
     }
-  }, [activeGitHubProjectHost, client, projectMetadataRepository, tasksSupported])
+  }, [
+    activeGitHubProjectHost,
+    projectMetadataRepository,
+    taskProjectReadOperations,
+    tasksSupported
+  ])
 
   useEffect(() => {
     const slug = splitRepositorySlug(projectMetadataRepository)
-    if (!tasksSupported || !client || !slug) {
+    if (!tasksSupported || !taskProjectReadOperations || !slug) {
       setProjectAssignableUsers([])
       setProjectAssignableUsersLoading(false)
       setProjectAssignableUsersError('')
@@ -4651,31 +4528,18 @@ export default function MobileTasksScreen() {
     setProjectAssignableUsers([])
     setProjectAssignableUsersError('')
     setProjectAssignableUsersLoading(true)
-    void client
-      .sendRequest(
-        'github.project.listAssignableUsersBySlug',
-        {
-          owner: slug.owner,
-          repo: slug.repo,
-          host: activeGitHubProjectHost,
-          ...(projectMetadataSeedLogins ? { seedLogins: projectMetadataSeedLogins.split(',') } : {})
-        },
-        { timeoutMs: 30_000 }
-      )
-      .then((response) => {
+    void taskProjectReadOperations
+      .listItemAssignableUsers({
+        owner: slug.owner,
+        repo: slug.repo,
+        host: activeGitHubProjectHost,
+        ...(projectMetadataSeedLogins ? { seedLogins: projectMetadataSeedLogins.split(',') } : {})
+      })
+      .then((users) => {
         if (stale) {
           return
         }
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as
-          | { ok: true; users?: GitHubAssignableUser[] }
-          | { ok: false; error?: { message?: string } }
-        if (!result.ok) {
-          throw new Error(result.error?.message ?? 'Failed to load assignees')
-        }
-        setProjectAssignableUsers(result.users ?? [])
+        setProjectAssignableUsers(users)
       })
       .catch((err) => {
         if (!stale) {
@@ -4695,15 +4559,15 @@ export default function MobileTasksScreen() {
     }
   }, [
     activeGitHubProjectHost,
-    client,
     projectMetadataRepository,
     projectMetadataSeedLogins,
+    taskProjectReadOperations,
     tasksSupported
   ])
 
   useEffect(() => {
     const slug = splitRepositorySlug(projectIssueTypeRepository)
-    if (!tasksSupported || !client || !slug) {
+    if (!tasksSupported || !taskProjectReadOperations || !slug) {
       setProjectIssueTypes([])
       setProjectIssueTypesLoading(false)
       setProjectIssueTypesError('')
@@ -4714,26 +4578,13 @@ export default function MobileTasksScreen() {
     setProjectIssueTypes([])
     setProjectIssueTypesError('')
     setProjectIssueTypesLoading(true)
-    void client
-      .sendRequest(
-        'github.project.listIssueTypesBySlug',
-        { owner: slug.owner, repo: slug.repo, host: activeGitHubProjectHost },
-        { timeoutMs: 30_000 }
-      )
-      .then((response) => {
+    void taskProjectReadOperations
+      .listIssueTypes({ owner: slug.owner, repo: slug.repo, host: activeGitHubProjectHost })
+      .then((types) => {
         if (stale) {
           return
         }
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as
-          | { ok: true; types?: GitHubIssueType[] }
-          | { ok: false; error?: { message?: string } }
-        if (!result.ok) {
-          throw new Error(result.error?.message ?? 'Failed to load issue types')
-        }
-        setProjectIssueTypes(result.types ?? [])
+        setProjectIssueTypes(types)
       })
       .catch((err) => {
         if (!stale) {
@@ -4751,7 +4602,12 @@ export default function MobileTasksScreen() {
     return () => {
       stale = true
     }
-  }, [activeGitHubProjectHost, client, projectIssueTypeRepository, tasksSupported])
+  }, [
+    activeGitHubProjectHost,
+    projectIssueTypeRepository,
+    taskProjectReadOperations,
+    tasksSupported
+  ])
 
   const getWorkspaceTargetRepo = useCallback(
     (item: ActionableTaskItem, repoIdOverride?: string): RepoSummary | null => {
@@ -4933,7 +4789,12 @@ export default function MobileTasksScreen() {
   }, [])
 
   useEffect(() => {
-    if (!tasksSupported || !client || !workspaceCreateDraft || !workspaceCreateTargetRepo) {
+    if (
+      !tasksSupported ||
+      !taskWorkspaceCreationOperations ||
+      !workspaceCreateDraft ||
+      !workspaceCreateTargetRepo
+    ) {
       setWorkspaceSparsePresets([])
       setWorkspaceSparsePresetsLoading(false)
       setWorkspaceSparsePresetsLoaded(false)
@@ -4956,16 +4817,12 @@ export default function MobileTasksScreen() {
     setWorkspaceSparsePresetsLoading(true)
     setWorkspaceSparsePresetsLoaded(false)
     setWorkspaceSparsePresetsError('')
-    void client
-      .sendRequest('repo.sparsePresets', { repo: `id:${workspaceCreateTargetRepo.id}` })
-      .then((response) => {
+    void taskWorkspaceCreationOperations
+      .listSparsePresets(workspaceCreateTargetRepo.id)
+      .then((presets) => {
         if (stale) {
           return
         }
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const presets = (response.result as { presets?: SparsePreset[] }).presets ?? []
         setWorkspaceSparsePresets(presets)
         setWorkspaceSparsePresetsLoaded(true)
         setWorkspaceSparsePresetId((current) =>
@@ -4992,7 +4849,7 @@ export default function MobileTasksScreen() {
       stale = true
     }
   }, [
-    client,
+    taskWorkspaceCreationOperations,
     tasksSupported,
     workspaceCreateDraft,
     workspaceCreateTargetRepo,
@@ -5001,7 +4858,7 @@ export default function MobileTasksScreen() {
 
   useEffect(() => {
     if (
-      !client ||
+      !taskWorkspaceCreationOperations ||
       !tasksSupported ||
       !workspaceCreateDraft ||
       !workspaceCreateTargetRepo ||
@@ -5023,27 +4880,13 @@ export default function MobileTasksScreen() {
     let stale = false
     setWorkspaceBaseBranchLoading(true)
     setWorkspaceBaseBranchError('')
-    void client
-      .sendRequest(
-        'repo.searchRefs',
-        { repo: `id:${workspaceCreateTargetRepo.id}`, query, limit: 20 },
-        { timeoutMs: 30_000 }
-      )
-      .then((response) => {
+    void taskWorkspaceCreationOperations
+      .searchBranches(workspaceCreateTargetRepo.id, query)
+      .then((results) => {
         if (stale) {
           return
         }
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          refDetails?: BaseRefSearchResult[]
-          refs?: string[]
-        }
-        setWorkspaceBaseBranchResults(
-          result.refDetails ??
-            (result.refs ?? []).map((refName) => ({ refName, localBranchName: refName }))
-        )
+        setWorkspaceBaseBranchResults(results)
       })
       .catch((err) => {
         if (!stale) {
@@ -5063,12 +4906,12 @@ export default function MobileTasksScreen() {
       stale = true
     }
   }, [
-    client,
     tasksSupported,
     showWorkspaceBaseBranchPicker,
     workspaceBaseBranchQuery,
     workspaceCreateDraft,
-    workspaceCreateTargetRepo
+    workspaceCreateTargetRepo,
+    taskWorkspaceCreationOperations
   ])
 
   const startNewWorkspaceSparsePreset = useCallback(() => {
@@ -5109,7 +4952,7 @@ export default function MobileTasksScreen() {
 
   const saveWorkspaceSparsePreset = useCallback(async (): Promise<void> => {
     if (
-      !client ||
+      !taskWorkspaceCreationOperations ||
       !tasksSupported ||
       !workspaceCreateTargetRepo ||
       !workspaceSparseDraft ||
@@ -5121,19 +4964,14 @@ export default function MobileTasksScreen() {
     setWorkspaceSparseSaving(true)
     setWorkspaceSparsePresetsError('')
     try {
-      const response = await client.sendRequest('repo.saveSparsePreset', {
-        repo: `id:${workspaceCreateTargetRepo.id}`,
-        ...(workspaceSparseDraft.presetId ? { id: workspaceSparseDraft.presetId } : {}),
-        name: workspaceSparseDraftName,
-        directories: workspaceSparseDraftParsed.directories
-      })
-      if (!isSuccess(response)) {
-        throw new Error(response.error.message)
-      }
-      const saved = (response.result as { preset?: SparsePreset }).preset
-      if (!saved) {
-        throw new Error('Failed to save sparse preset.')
-      }
+      const saved = await taskWorkspaceCreationOperations.saveSparsePreset(
+        workspaceCreateTargetRepo.id,
+        {
+          ...(workspaceSparseDraft.presetId ? { id: workspaceSparseDraft.presetId } : {}),
+          name: workspaceSparseDraftName,
+          directories: workspaceSparseDraftParsed.directories
+        }
+      )
       setWorkspaceSparsePresets((current) => {
         const withoutSaved = current.filter((preset) => preset.id !== saved.id)
         return sortSparsePresetsByName([...withoutSaved, saved])
@@ -5152,7 +4990,7 @@ export default function MobileTasksScreen() {
     }
   }, [
     canSaveWorkspaceSparseDraft,
-    client,
+    taskWorkspaceCreationOperations,
     tasksSupported,
     workspaceCreateTargetRepo,
     workspaceSparseDraft,
@@ -5162,31 +5000,25 @@ export default function MobileTasksScreen() {
   ])
 
   useEffect(() => {
-    if (!tasksSupported || !client || !workspaceCreateDraft || !workspaceCreateTargetConnectionId) {
+    if (
+      !tasksSupported ||
+      !taskWorkspaceCreationOperations ||
+      !workspaceCreateDraft ||
+      !workspaceCreateTargetConnectionId
+    ) {
       setWorkspaceSshState(null)
       setWorkspaceSshConnecting(false)
       return
     }
 
     let stale = false
-    void client
-      .sendRequest('ssh.getState', { targetId: workspaceCreateTargetConnectionId })
-      .then((response) => {
+    void taskWorkspaceCreationOperations
+      .readSshState(workspaceCreateTargetConnectionId)
+      .then((state) => {
         if (stale) {
           return
         }
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const state = (response.result as { state?: SshConnectionState | null }).state ?? null
-        setWorkspaceSshState(
-          state ?? {
-            targetId: workspaceCreateTargetConnectionId,
-            status: 'disconnected',
-            error: null,
-            reconnectAttempt: 0
-          }
-        )
+        setWorkspaceSshState(state)
       })
       .catch((err) => {
         if (!stale) {
@@ -5202,10 +5034,15 @@ export default function MobileTasksScreen() {
     return () => {
       stale = true
     }
-  }, [client, tasksSupported, workspaceCreateDraft, workspaceCreateTargetConnectionId])
+  }, [
+    taskWorkspaceCreationOperations,
+    tasksSupported,
+    workspaceCreateDraft,
+    workspaceCreateTargetConnectionId
+  ])
 
   const connectWorkspaceSshRepo = useCallback(async (): Promise<void> => {
-    if (!client || !tasksSupported || !workspaceCreateTargetConnectionId) {
+    if (!taskWorkspaceCreationOperations || !tasksSupported || !workspaceCreateTargetConnectionId) {
       return
     }
     setWorkspaceSshConnecting(true)
@@ -5216,22 +5053,8 @@ export default function MobileTasksScreen() {
       reconnectAttempt: 0
     })
     try {
-      const response = await client.sendRequest(
-        'ssh.connect',
-        { targetId: workspaceCreateTargetConnectionId },
-        { timeoutMs: 120_000 }
-      )
-      if (!isSuccess(response)) {
-        throw new Error(response.error.message)
-      }
-      const state = (response.result as { state?: SshConnectionState | null }).state
       setWorkspaceSshState(
-        state ?? {
-          targetId: workspaceCreateTargetConnectionId,
-          status: 'connected',
-          error: null,
-          reconnectAttempt: 0
-        }
+        await taskWorkspaceCreationOperations.connectSsh(workspaceCreateTargetConnectionId)
       )
     } catch (err) {
       setWorkspaceSshState({
@@ -5243,11 +5066,11 @@ export default function MobileTasksScreen() {
     } finally {
       setWorkspaceSshConnecting(false)
     }
-  }, [client, tasksSupported, workspaceCreateTargetConnectionId])
+  }, [taskWorkspaceCreationOperations, tasksSupported, workspaceCreateTargetConnectionId])
 
   const ensureWorkspaceSshReady = useCallback(
     async (repo: RepoSummary): Promise<void> => {
-      if (!repo.connectionId || !client || !tasksSupported) {
+      if (!repo.connectionId || !taskWorkspaceCreationOperations || !tasksSupported) {
         return
       }
       if (
@@ -5256,23 +5079,22 @@ export default function MobileTasksScreen() {
       ) {
         return
       }
-      const response = await client.sendRequest('ssh.getState', { targetId: repo.connectionId })
-      if (!isSuccess(response)) {
-        throw new Error(response.error.message)
-      }
-      const state = (response.result as { state?: SshConnectionState | null }).state ?? null
-      if (state) {
-        setWorkspaceSshState(state)
-      }
-      if (state?.status !== 'connected') {
+      const state = await taskWorkspaceCreationOperations.readSshState(repo.connectionId)
+      setWorkspaceSshState(state)
+      if (state.status !== 'connected') {
         throw new Error(`Connect ${repo.displayName} before creating a workspace.`)
       }
     },
-    [client, tasksSupported, workspaceSshState]
+    [taskWorkspaceCreationOperations, tasksSupported, workspaceSshState]
   )
 
   useEffect(() => {
-    if (!tasksSupported || !workspaceCreateDraft || !client || !workspaceCreateTargetRepo) {
+    if (
+      !tasksSupported ||
+      !workspaceCreateDraft ||
+      !taskWorkspaceCreationOperations ||
+      !workspaceCreateTargetRepo
+    ) {
       setWorkspaceDetectedAgentIds(null)
       return
     }
@@ -5284,19 +5106,13 @@ export default function MobileTasksScreen() {
     }
     let stale = false
     setWorkspaceDetectedAgentIds(null)
-    const request = workspaceCreateTargetRepo.connectionId
-      ? client.sendRequest('preflight.detectRemoteAgents', {
-          connectionId: workspaceCreateTargetRepo.connectionId
-        })
-      : client.sendRequest('preflight.detectAgents')
-    void request
-      .then((response) => {
+    void taskWorkspaceCreationOperations
+      .detectAgents(workspaceCreateTargetRepo.connectionId ?? null)
+      .then((agentIds) => {
         if (stale) {
           return
         }
-        setWorkspaceDetectedAgentIds(
-          isSuccess(response) ? new Set(response.result as string[]) : new Set()
-        )
+        setWorkspaceDetectedAgentIds(new Set(agentIds))
       })
       .catch(() => {
         if (!stale) {
@@ -5307,7 +5123,7 @@ export default function MobileTasksScreen() {
       stale = true
     }
   }, [
-    client,
+    taskWorkspaceCreationOperations,
     tasksSupported,
     workspaceCreateDraft,
     workspaceCreateSshStatus,
@@ -5354,14 +5170,10 @@ export default function MobileTasksScreen() {
           setupTrust?: RepoHooksResponse['setupTrust']
         }
     > => {
-      if (!client || !tasksSupported) {
+      if (!taskWorkspaceCreationOperations || !tasksSupported) {
         return { kind: 'decision', decision: override ?? 'inherit' }
       }
-      const response = await client.sendRequest('repo.hooks', { repo: `id:${repo.id}` })
-      if (!isSuccess(response)) {
-        throw new Error(response.error.message)
-      }
-      const result = response.result as RepoHooksResponse
+      const result = await taskWorkspaceCreationOperations.readRepoHooks(repo.id)
       const setupCommand = result.hooks?.scripts?.setup?.trim()
       const setupTrust = normalizeSetupHookTrust(result.setupTrust) ?? undefined
       if (!setupCommand) {
@@ -5380,7 +5192,7 @@ export default function MobileTasksScreen() {
         setupTrust
       }
     },
-    [client, tasksSupported]
+    [taskWorkspaceCreationOperations, tasksSupported]
   )
 
   const createWorkspace = useCallback(
@@ -5396,7 +5208,7 @@ export default function MobileTasksScreen() {
       sparseCheckoutOverride?: { directories: string[]; presetId?: string },
       approvedSetupContentHash?: string
     ): Promise<void> => {
-      if (!client || !tasksSupported || !taskStateHydrated) {
+      if (!taskWorkspaceCreationOperations || !tasksSupported || !taskStateHydrated) {
         return
       }
       setCreatingKey(item.key)
@@ -5413,13 +5225,9 @@ export default function MobileTasksScreen() {
         await ensureWorkspaceSshReady(targetRepo)
         let latestRuntimeTaskSettings = runtimeTaskSettings
         try {
-          const settingsResponse = await client.sendRequest('settings.get')
-          if (isSuccess(settingsResponse)) {
-            latestRuntimeTaskSettings = ((
-              settingsResponse.result as { settings?: RuntimeTaskSettings }
-            ).settings ?? {}) as RuntimeTaskSettings
-            setRuntimeTaskSettings(latestRuntimeTaskSettings)
-          }
+          latestRuntimeTaskSettings =
+            (await taskWorkspaceCreationOperations.readRuntimeSettings()) as RuntimeTaskSettings
+          setRuntimeTaskSettings(latestRuntimeTaskSettings)
         } catch {
           // Best-effort refresh; the runtime still validates agent availability before spawning.
         }
@@ -5491,128 +5299,116 @@ export default function MobileTasksScreen() {
           })
           return
         }
-        let params: Record<string, unknown>
+        let selection: MobileComposerCreateSelection
         if (item.provider === 'github') {
           const source = item.source
-          let prStartPoint: { baseBranch: string; pushTarget?: GitPushTarget } | undefined
+          let prStartPoint:
+            | Awaited<ReturnType<HostWorkspaceCreationOperations['resolvePrBase']>>
+            | undefined
           if (
             shouldResolveHostedReviewStartPoint({
               type: source.type,
               baseBranchOverride
             })
           ) {
-            const response = await client.sendRequest(
-              'worktree.resolvePrBase',
-              {
-                repo: `id:${source.repoId}`,
-                prNumber: source.number,
-                ...(source.branchName ? { headRefName: source.branchName } : {}),
-                ...(source.isCrossRepository !== undefined
-                  ? { isCrossRepository: source.isCrossRepository }
-                  : {})
-              },
-              { timeoutMs: 30_000 }
-            )
-            if (!isSuccess(response)) {
-              throw new Error(response.error.message)
-            }
-            const result = response.result as
-              | { baseBranch: string; pushTarget?: GitPushTarget }
-              | { error: string }
-            if ('error' in result) {
-              throw new Error(result.error)
-            }
-            prStartPoint = result
+            prStartPoint = await taskWorkspaceCreationOperations.resolvePrBase({
+              repoId: source.repoId,
+              prNumber: source.number,
+              headRefName: source.branchName,
+              baseRefName: source.baseRefName,
+              isCrossRepository: source.isCrossRepository
+            })
           }
-          params = buildTaskWorkspaceCreateParams({
-            item,
-            targetRepoId: targetRepo.id,
-            setupDecision,
-            agent: selectedAgent,
-            workspaceName: workspaceNameOverride,
-            note: comment,
-            baseBranch: baseBranchOverride,
-            branchNameOverride,
-            sparseCheckout: sparseCheckoutOverride,
-            hostedStartPoint: prStartPoint
-          })
+          selection = {
+            kind: 'work-item',
+            item: {
+              provider: 'github',
+              type: source.type,
+              number: source.number,
+              title: source.title,
+              url: source.url,
+              repoId: source.repoId
+            },
+            baseBranch: baseBranchOverride ?? prStartPoint?.baseBranch,
+            compareBaseRef: prStartPoint?.compareBaseRef,
+            pushTarget: prStartPoint?.pushTarget,
+            branchNameOverride: branchNameOverride ?? prStartPoint?.branchNameOverride
+          }
         } else if (item.provider === 'gitlab') {
           const source = item.source
-          let mrStartPoint: { baseBranch: string; pushTarget?: GitPushTarget } | undefined
+          let mrStartPoint:
+            | Awaited<ReturnType<HostWorkspaceCreationOperations['resolveMrBase']>>
+            | undefined
           if (
             shouldResolveHostedReviewStartPoint({
               type: source.type,
               baseBranchOverride
             })
           ) {
-            const response = await client.sendRequest(
-              'worktree.resolveMrBase',
-              {
-                repo: `id:${source.repoId}`,
-                mrIid: source.number,
-                ...(source.branchName ? { sourceBranch: source.branchName } : {}),
-                ...(source.isCrossRepository !== undefined
-                  ? { isCrossRepository: source.isCrossRepository }
-                  : {})
-              },
-              { timeoutMs: 30_000 }
-            )
-            if (!isSuccess(response)) {
-              throw new Error(response.error.message)
-            }
-            const result = response.result as
-              | { baseBranch: string; pushTarget?: GitPushTarget }
-              | { error: string }
-            if ('error' in result) {
-              throw new Error(result.error)
-            }
-            mrStartPoint = result
+            mrStartPoint = await taskWorkspaceCreationOperations.resolveMrBase({
+              repoId: source.repoId,
+              mrIid: source.number,
+              sourceBranch: source.branchName,
+              targetBranch: source.baseRefName,
+              isCrossRepository: source.isCrossRepository
+            })
           }
-          params = buildTaskWorkspaceCreateParams({
-            item,
-            targetRepoId: targetRepo.id,
-            setupDecision,
-            agent: selectedAgent,
-            workspaceName: workspaceNameOverride,
-            note: comment,
-            baseBranch: baseBranchOverride,
-            branchNameOverride,
-            sparseCheckout: sparseCheckoutOverride,
-            hostedStartPoint: mrStartPoint
-          })
+          selection = {
+            kind: 'work-item',
+            item: {
+              provider: 'gitlab',
+              type: source.type,
+              number: source.number,
+              title: source.title,
+              url: source.url,
+              repoId: source.repoId
+            },
+            baseBranch: baseBranchOverride ?? mrStartPoint?.baseBranch,
+            compareBaseRef: mrStartPoint?.compareBaseRef,
+            pushTarget: mrStartPoint?.pushTarget,
+            branchNameOverride: branchNameOverride ?? mrStartPoint?.branchNameOverride
+          }
         } else {
-          params = buildTaskWorkspaceCreateParams({
-            item,
-            targetRepoId: targetRepo.id,
-            setupDecision,
-            agent: selectedAgent,
-            workspaceName: workspaceNameOverride,
-            note: comment,
+          selection = {
+            kind: 'work-item',
+            item: {
+              provider: 'linear',
+              type: 'issue',
+              number: 0,
+              title: item.source.title,
+              url: item.source.url,
+              linearIdentifier: item.source.identifier,
+              linearWorkspaceId: item.source.workspaceId
+            },
             baseBranch: baseBranchOverride,
-            branchNameOverride,
-            sparseCheckout: sparseCheckoutOverride
-          })
+            branchNameOverride
+          }
         }
-        const response = await client.sendRequest('worktree.create', params, {
-          timeoutMs: WORKTREE_CREATE_TIMEOUT_MS
+        const result = await taskWorkspaceCreationOperations.createWorkspaceFromSource({
+          selection,
+          targetRepoId: targetRepo.id,
+          setupDecision,
+          agentChoice: selectedAgent,
+          workspaceName: workspaceNameOverride,
+          note: comment,
+          sparseCheckout: sparseCheckoutOverride,
+          supportsIdempotentCutoverRetry: taskWorkspaceCreationOperations
+            .readRuntimeCapabilities()
+            .then((capabilities) => capabilities.idempotentWorktreeCreateSupported)
         })
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          worktree: { id: string; displayName?: string }
-          warning?: string
+        if ('error' in result) {
+          throw new Error(result.error)
         }
         setActionItem(null)
         setWorkspaceCreateDraft(null)
         setSetupPrompt(null)
-        const name = result.worktree.displayName ?? item.title
+        const name = result.name ?? item.title
         const queryParams = new URLSearchParams({ name, created: '1' })
         if (result.warning) {
           queryParams.set('warning', result.warning)
         }
         router.push(
-          `/h/${hostId}/session/${encodeURIComponent(result.worktree.id)}?${queryParams.toString()}`
+          `/h/${hostId}/session/${encodeURIComponent(result.worktreeId)}?${queryParams.toString()}`
         )
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to create workspace')
@@ -5621,7 +5417,6 @@ export default function MobileTasksScreen() {
       }
     },
     [
-      client,
       ensureWorkspaceSshReady,
       getWorkspaceTargetRepo,
       hostId,
@@ -5629,6 +5424,7 @@ export default function MobileTasksScreen() {
       router,
       runtimeTaskSettings,
       taskStateHydrated,
+      taskWorkspaceCreationOperations,
       tasksSupported,
       trustedOrcaHooks,
       workspaceDetectedAgentIds
@@ -5694,37 +5490,17 @@ export default function MobileTasksScreen() {
       row: GitHubProjectRow,
       updates: { title?: string; body?: string; state?: 'open' | 'closed' }
     ): Promise<void> => {
-      if (!client || projectMutating) {
+      if (!taskProjectMutationOperations || projectMutating) {
         return
       }
-      const type = projectRowType(row)
-      const slug = splitRepositorySlug(row.content.repository)
-      if (!type || !slug || !row.content.number) {
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
+      if (!target) {
         setProjectRowDetailError('This project item cannot be edited from mobile.')
         return
       }
       setProjectMutating(true)
       try {
-        const response = await client.sendRequest(
-          type === 'issue'
-            ? 'github.project.updateIssueBySlug'
-            : 'github.project.updatePullRequestBySlug',
-          {
-            owner: slug.owner,
-            repo: slug.repo,
-            host: activeGitHubProjectHost,
-            number: row.content.number,
-            updates
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: { message?: string } }
-        if (result.ok === false) {
-          throw new Error(result.error?.message ?? 'Failed to update GitHub item')
-        }
+        await taskProjectMutationOperations.updateItem(target, updates)
         setProjectRowItem((current) => {
           if (!current || current.id !== row.id) {
             return current
@@ -5774,46 +5550,27 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, projectMutating]
+    [activeGitHubProjectHost, projectMutating, taskProjectMutationOperations]
   )
 
   const addProjectRowComment = useCallback(
     async (row: GitHubProjectRow): Promise<void> => {
-      if (!client || projectMutating) {
+      if (!taskProjectMutationOperations || projectMutating) {
         return
       }
-      const slug = splitRepositorySlug(row.content.repository)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       const body = projectCommentDraft.trim()
-      if (!slug || !row.content.number || !body) {
+      if (!target || !body) {
         return
       }
       setProjectMutating(true)
       try {
-        const response = await client.sendRequest(
-          'github.project.addIssueCommentBySlug',
-          {
-            owner: slug.owner,
-            repo: slug.repo,
-            host: activeGitHubProjectHost,
-            number: row.content.number,
-            body
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as
-          | { ok: true; comment?: DetailComment }
-          | { ok: false; error?: { message?: string } }
-        if (!result.ok) {
-          throw new Error(result.error?.message ?? 'Failed to add comment')
-        }
+        const comment = await taskProjectMutationOperations.addComment(target, body)
         setProjectCommentDraft('')
-        if (result.comment) {
+        if (comment) {
           setProjectRowDetail((current) =>
             current?.provider === 'github'
-              ? { ...current, comments: [...current.comments, result.comment as DetailComment] }
+              ? { ...current, comments: [...current.comments, comment as DetailComment] }
               : current
           )
         }
@@ -5823,49 +5580,25 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, projectCommentDraft, projectMutating]
+    [activeGitHubProjectHost, projectCommentDraft, projectMutating, taskProjectMutationOperations]
   )
 
   const updateProjectRowComment = useCallback(
     async (row: GitHubProjectRow, comment: DetailComment): Promise<void> => {
-      if (!client || projectMutating) {
+      if (!taskProjectMutationOperations || projectMutating) {
         return
       }
-      const slug = splitRepositorySlug(row.content.repository)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       const commentId = Number(comment.id)
       const body = projectEditingCommentDraft.trim()
-      if (!slug || !Number.isInteger(commentId) || commentId <= 0 || !body) {
+      if (!target || !Number.isInteger(commentId) || commentId <= 0 || !body) {
         setProjectRowDetailError('This project comment cannot be edited from mobile.')
         return
       }
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.project.updateIssueCommentBySlug',
-          {
-            owner: slug.owner,
-            repo: slug.repo,
-            host: activeGitHubProjectHost,
-            commentId,
-            body
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          error?: string | { message?: string }
-        }
-        if (result.ok === false) {
-          throw new Error(
-            typeof result.error === 'string'
-              ? result.error
-              : (result.error?.message ?? 'Failed to edit comment')
-          )
-        }
+        await taskProjectMutationOperations.updateComment(target, commentId, body)
         setProjectRowDetail((current) =>
           current?.provider === 'github'
             ? {
@@ -5884,47 +5617,29 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, projectEditingCommentDraft, projectMutating]
+    [
+      activeGitHubProjectHost,
+      projectEditingCommentDraft,
+      projectMutating,
+      taskProjectMutationOperations
+    ]
   )
 
   const deleteProjectRowComment = useCallback(
     async (row: GitHubProjectRow, comment: DetailComment): Promise<void> => {
-      if (!client || projectMutating) {
+      if (!taskProjectMutationOperations || projectMutating) {
         return
       }
-      const slug = splitRepositorySlug(row.content.repository)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       const commentId = Number(comment.id)
-      if (!slug || !Number.isInteger(commentId) || commentId <= 0) {
+      if (!target || !Number.isInteger(commentId) || commentId <= 0) {
         setProjectRowDetailError('This project comment cannot be deleted from mobile.')
         return
       }
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.project.deleteIssueCommentBySlug',
-          {
-            owner: slug.owner,
-            repo: slug.repo,
-            host: activeGitHubProjectHost,
-            commentId
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          error?: string | { message?: string }
-        }
-        if (result.ok === false) {
-          throw new Error(
-            typeof result.error === 'string'
-              ? result.error
-              : (result.error?.message ?? 'Failed to delete comment')
-          )
-        }
+        await taskProjectMutationOperations.deleteComment(target, commentId)
         setProjectRowDetail((current) =>
           current?.provider === 'github'
             ? {
@@ -5943,17 +5658,24 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, projectEditingCommentId, projectMutating]
+    [
+      activeGitHubProjectHost,
+      projectEditingCommentId,
+      projectMutating,
+      taskProjectMutationOperations
+    ]
   )
 
   const toggleProjectGitHubReviewThread = useCallback(
     async (row: GitHubProjectRow, comment: DetailComment): Promise<void> => {
       const repo = findProjectRowRepo(row)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       if (
-        !client ||
+        !taskProjectMutationOperations ||
         projectMutating ||
         row.itemType !== 'PULL_REQUEST' ||
         !repo ||
+        !target ||
         !comment.threadId
       ) {
         return
@@ -5962,22 +5684,12 @@ export default function MobileTasksScreen() {
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.resolveReviewThread',
-          {
-            repo: `id:${repo.id}`,
-            prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-            threadId: comment.threadId,
-            resolve
-          },
-          { timeoutMs: 30_000 }
+        await taskProjectMutationOperations.resolveReviewThread(
+          target,
+          repo.id,
+          comment.threadId,
+          resolve
         )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        if (response.result !== true) {
-          throw new Error(resolve ? 'Failed to resolve thread' : 'Failed to reopen thread')
-        }
         setProjectRowDetail((current) =>
           current?.provider === 'github'
             ? {
@@ -5998,13 +5710,14 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, findProjectRowRepo, projectMutating]
+    [activeGitHubProjectHost, findProjectRowRepo, projectMutating, taskProjectMutationOperations]
   )
 
   const replyToProjectGitHubComment = useCallback(
     async (row: GitHubProjectRow, comment: DetailComment): Promise<void> => {
       const repo = findProjectRowRepo(row)
-      if (!client || projectMutating || !repo || !row.content.number) {
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
+      if (!taskProjectMutationOperations || projectMutating || !repo || !target) {
         return
       }
       const key = String(comment.id)
@@ -6020,44 +5733,22 @@ export default function MobileTasksScreen() {
           comment.path &&
           typeof comment.line === 'number' &&
           typeof comment.id === 'number'
-        const response = canUseReviewReply
-          ? await client.sendRequest(
-              'github.addPRReviewCommentReply',
-              {
-                repo: `id:${repo.id}`,
-                prNumber: row.content.number,
-                prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-                commentId: comment.id,
-                body,
-                threadId: comment.threadId,
-                path: comment.path,
-                line: comment.line
-              },
-              { timeoutMs: 30_000 }
-            )
-          : await client.sendRequest(
-              'github.addIssueComment',
-              {
-                repo: `id:${repo.id}`,
-                number: row.content.number,
-                prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-                body: `@${commentAuthor(comment)} ${body}`,
-                type: projectRowType(row) ?? 'issue'
-              },
-              { timeoutMs: 30_000 }
-            )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
+        if (canUseReviewReply) {
+          await taskProjectMutationOperations.replyReviewComment(target, repo.id, {
+            commentId: comment.id as number,
+            body,
+            ...(comment.threadId ? { threadId: comment.threadId } : {}),
+            path: comment.path as string,
+            line: comment.line as number
+          })
+        } else {
+          await taskProjectMutationOperations.addConversationComment(
+            target,
+            repo.id,
+            `@${commentAuthor(comment)} ${body}`
+          )
         }
-        const result = response.result as {
-          ok?: boolean
-          error?: string
-          comment?: DetailComment
-        }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to reply')
-        }
-        const reply: DetailComment = result.comment ?? {
+        const reply: DetailComment = {
           id: `local-${Date.now()}`,
           body,
           createdAt: new Date().toISOString(),
@@ -6082,7 +5773,13 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, findProjectRowRepo, itemReplyDrafts, projectMutating]
+    [
+      activeGitHubProjectHost,
+      findProjectRowRepo,
+      itemReplyDrafts,
+      projectMutating,
+      taskProjectMutationOperations
+    ]
   )
 
   const mutateProjectRowMetadata = useCallback(
@@ -6095,34 +5792,17 @@ export default function MobileTasksScreen() {
         removeAssignees?: string[]
       }
     ): Promise<void> => {
-      if (!client || projectMutating) {
+      if (!taskProjectMutationOperations || projectMutating) {
         return
       }
-      const slug = splitRepositorySlug(row.content.repository)
-      if (!slug || !row.content.number) {
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
+      if (!target) {
         setProjectRowDetailError('This project item cannot be edited from mobile.')
         return
       }
       setProjectMutating(true)
       try {
-        const response = await client.sendRequest(
-          'github.project.updateIssueBySlug',
-          {
-            owner: slug.owner,
-            repo: slug.repo,
-            host: activeGitHubProjectHost,
-            number: row.content.number,
-            updates
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: { message?: string } }
-        if (result.ok === false) {
-          throw new Error(result.error?.message ?? 'Failed to update GitHub item')
-        }
+        await taskProjectMutationOperations.updateMetadata(target, updates)
         const applyContentUpdate = (candidate: GitHubProjectRow): GitHubProjectRow => {
           const labels = new Map(candidate.content.labels.map((label) => [label.name, label]))
           for (const label of updates.addLabels ?? []) {
@@ -6195,7 +5875,7 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, projectMutating]
+    [activeGitHubProjectHost, projectMutating, taskProjectMutationOperations]
   )
 
   const mutateProjectRowField = useCallback(
@@ -6204,36 +5884,25 @@ export default function MobileTasksScreen() {
       field: GitHubProjectField,
       value: GitHubProjectFieldMutationValue | null
     ): Promise<void> => {
-      if (!client || !githubProjectTable || projectMutating) {
+      if (!taskProjectMutationOperations || !githubProjectTable || projectMutating) {
+        return
+      }
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
+      if (!target) {
+        setProjectRowDetailError('This project field cannot be edited from mobile.')
         return
       }
       setProjectMutating(true)
       try {
-        const response = await client.sendRequest(
-          value === null ? 'github.project.clearItemField' : 'github.project.updateItemField',
-          value === null
-            ? {
-                projectId: githubProjectTable.project.id,
-                host: activeGitHubProjectHost,
-                itemId: row.id,
-                fieldId: field.id
-              }
-            : {
-                projectId: githubProjectTable.project.id,
-                host: activeGitHubProjectHost,
-                itemId: row.id,
-                fieldId: field.id,
-                value
-              },
-          { timeoutMs: 30_000 }
+        await taskProjectMutationOperations.updateField(
+          {
+            ...target,
+            projectId: githubProjectTable.project.id,
+            itemId: row.id
+          },
+          field.id,
+          value
         )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: { message?: string } }
-        if (result.ok === false) {
-          throw new Error(result.error?.message ?? 'Failed to update project field')
-        }
         const patchRow = (candidate: GitHubProjectRow): GitHubProjectRow => {
           const fieldValuesByFieldId = { ...candidate.fieldValuesByFieldId }
           if (value === null) {
@@ -6267,39 +5936,22 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, githubProjectTable, projectMutating]
+    [activeGitHubProjectHost, githubProjectTable, projectMutating, taskProjectMutationOperations]
   )
 
   const mutateProjectRowIssueType = useCallback(
     async (row: GitHubProjectRow, issueType: GitHubIssueType | null): Promise<void> => {
-      if (!client || projectMutating) {
+      if (!taskProjectMutationOperations || projectMutating) {
         return
       }
-      const slug = splitRepositorySlug(row.content.repository)
-      if (row.itemType !== 'ISSUE' || !slug || !row.content.number) {
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
+      if (row.itemType !== 'ISSUE' || !target || target.type !== 'issue') {
         setProjectRowDetailError('This project issue type cannot be edited from mobile.')
         return
       }
       setProjectMutating(true)
       try {
-        const response = await client.sendRequest(
-          'github.project.updateIssueTypeBySlug',
-          {
-            owner: slug.owner,
-            repo: slug.repo,
-            host: activeGitHubProjectHost,
-            number: row.content.number,
-            issueTypeId: issueType?.id ?? null
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: { message?: string } }
-        if (result.ok === false) {
-          throw new Error(result.error?.message ?? 'Failed to update issue type')
-        }
+        await taskProjectMutationOperations.updateIssueType(target, issueType?.id ?? null)
         const patchRow = (candidate: GitHubProjectRow): GitHubProjectRow => ({
           ...candidate,
           content: { ...candidate.content, issueType }
@@ -6323,13 +5975,20 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, projectMutating]
+    [activeGitHubProjectHost, projectMutating, taskProjectMutationOperations]
   )
 
   const requestProjectGitHubReviewers = useCallback(
     async (row: GitHubProjectRow, logins?: string[]): Promise<void> => {
       const repo = findProjectRowRepo(row)
-      if (!client || projectMutating || row.itemType !== 'PULL_REQUEST' || !repo) {
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
+      if (
+        !taskProjectMutationOperations ||
+        projectMutating ||
+        row.itemType !== 'PULL_REQUEST' ||
+        !repo ||
+        !target
+      ) {
         return
       }
       const reviewers = logins ?? splitReviewerList(projectReviewersDraft)
@@ -6339,23 +5998,7 @@ export default function MobileTasksScreen() {
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.requestPRReviewers',
-          {
-            repo: `id:${repo.id}`,
-            prNumber: row.content.number,
-            prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-            reviewers
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to request reviewers')
-        }
+        await taskProjectMutationOperations.requestReviewers(target, repo.id, reviewers)
         const nextReviewRequests = (() => {
           const byLogin = new Map<string, GitHubAssignableUser>()
           for (const reviewer of projectRowDetail?.provider === 'github'
@@ -6394,47 +6037,35 @@ export default function MobileTasksScreen() {
     },
     [
       activeGitHubProjectHost,
-      client,
       findProjectRowRepo,
       projectMutating,
       projectReviewersDraft,
-      projectRowDetail
+      projectRowDetail,
+      taskProjectMutationOperations
     ]
   )
 
   const refreshProjectGitHubChecks = useCallback(
     async (row: GitHubProjectRow): Promise<void> => {
       const repo = findProjectRowRepo(row)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       if (
-        !client ||
+        !taskProjectFileOperations ||
         projectMutating ||
         row.itemType !== 'PULL_REQUEST' ||
         !repo ||
-        !row.content.number
+        !target
       ) {
         return
       }
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.prChecks',
-          {
-            repo: `id:${repo.id}`,
-            prNumber: row.content.number,
-            prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-            headSha: projectRowDetail?.provider === 'github' ? projectRowDetail.headSha : undefined,
-            noCache: true
-          },
-          { timeoutMs: 30_000 }
+        const checks = await taskProjectFileOperations.refreshChecks(
+          target,
+          repo.id,
+          projectRowDetail?.provider === 'github' ? projectRowDetail.headSha : undefined
         )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        if (!Array.isArray(response.result)) {
-          throw new Error('Invalid checks response')
-        }
-        const checks = response.result as GitHubDetailCheck[]
         setProjectRowDetail((current) =>
           current?.provider === 'github' ? { ...current, checks } : current
         )
@@ -6444,42 +6075,37 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, findProjectRowRepo, projectMutating, projectRowDetail]
+    [
+      activeGitHubProjectHost,
+      findProjectRowRepo,
+      projectMutating,
+      projectRowDetail,
+      taskProjectFileOperations
+    ]
   )
 
   const rerunProjectGitHubChecks = useCallback(
     async (row: GitHubProjectRow, failedOnly: boolean): Promise<void> => {
       const repo = findProjectRowRepo(row)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       if (
-        !client ||
+        !taskProjectMutationOperations ||
         projectMutating ||
         row.itemType !== 'PULL_REQUEST' ||
         !repo ||
-        !row.content.number
+        !target
       ) {
         return
       }
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.rerunPRChecks',
-          {
-            repo: `id:${repo.id}`,
-            prNumber: row.content.number,
-            prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-            headSha: projectRowDetail?.provider === 'github' ? projectRowDetail.headSha : undefined,
-            failedOnly
-          },
-          { timeoutMs: 60_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to rerun checks')
-        }
+        await taskProjectMutationOperations.rerunChecks(target, repo.id, {
+          ...(projectRowDetail?.provider === 'github' && projectRowDetail.headSha
+            ? { headSha: projectRowDetail.headSha }
+            : {}),
+          failedOnly
+        })
         setProjectRowDetailRefreshSeq((current) => current + 1)
       } catch (err) {
         setProjectRowDetailError(err instanceof Error ? err.message : 'Failed to rerun checks')
@@ -6487,13 +6113,26 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, findProjectRowRepo, projectMutating, projectRowDetail]
+    [
+      activeGitHubProjectHost,
+      findProjectRowRepo,
+      projectMutating,
+      projectRowDetail,
+      taskProjectMutationOperations
+    ]
   )
 
   const toggleProjectGitHubFileViewed = useCallback(
     async (row: GitHubProjectRow, file: GitHubDetailFile): Promise<void> => {
       const repo = findProjectRowRepo(row)
-      if (!client || projectMutating || row.itemType !== 'PULL_REQUEST' || !repo) {
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
+      if (
+        !taskProjectFileOperations ||
+        projectMutating ||
+        row.itemType !== 'PULL_REQUEST' ||
+        !repo ||
+        !target
+      ) {
         return
       }
       if (projectRowDetail?.provider !== 'github' || !projectRowDetail.pullRequestId) {
@@ -6504,23 +6143,11 @@ export default function MobileTasksScreen() {
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.setPRFileViewed',
-          {
-            repo: `id:${repo.id}`,
-            prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-            pullRequestId: projectRowDetail.pullRequestId,
-            path: file.path,
-            viewed
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        if (response.result !== true) {
-          throw new Error('Failed to sync viewed state with GitHub.')
-        }
+        await taskProjectFileOperations.setFileViewed(target, repo.id, {
+          pullRequestId: projectRowDetail.pullRequestId,
+          path: file.path,
+          viewed
+        })
         setProjectRowDetail((current) =>
           current?.provider === 'github'
             ? {
@@ -6541,7 +6168,13 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, findProjectRowRepo, projectMutating, projectRowDetail]
+    [
+      activeGitHubProjectHost,
+      findProjectRowRepo,
+      projectMutating,
+      projectRowDetail,
+      taskProjectFileOperations
+    ]
   )
 
   const toggleProjectGitHubFileExpansion = useCallback(
@@ -6551,73 +6184,56 @@ export default function MobileTasksScreen() {
         return
       }
       setExpandedPrFilePath(file.path)
-      if (prFileContents[file.path]) {
-        return
-      }
       const repo = findProjectRowRepo(row)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       if (
-        !client ||
+        !taskProjectFileOperations ||
         row.itemType !== 'PULL_REQUEST' ||
         !repo ||
-        !row.content.number ||
+        !target ||
         projectRowDetail?.provider !== 'github' ||
         !projectRowDetail.headSha ||
-        !projectRowDetail.baseSha
+        !projectRowDetail.baseSha ||
+        !projectPrFileContentScope
       ) {
         setProjectRowDetailError('Unable to load file contents for this pull request.')
         return
       }
-      setPrFileLoadingPath(file.path)
-      setProjectRowDetailError('')
-      try {
-        const response = await client.sendRequest(
-          'github.prFileContents',
-          {
-            repo: `id:${repo.id}`,
-            prNumber: row.content.number,
-            prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
+      await loadPrFileContent(
+        projectPrFileContentScope,
+        file,
+        () =>
+          taskProjectFileOperations.loadFileContents(target, repo.id, {
             path: file.path,
-            oldPath: file.oldPath,
+            ...(file.oldPath ? { oldPath: file.oldPath } : {}),
             status: file.status ?? 'modified',
-            headSha: projectRowDetail.headSha,
-            baseSha: projectRowDetail.baseSha
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        setPrFileContents((current) => ({
-          ...current,
-          [file.path]: response.result as GitHubPRFileContents
-        }))
-      } catch (err) {
-        setProjectRowDetailError(
-          err instanceof Error ? err.message : 'Failed to load file contents'
-        )
-      } finally {
-        setPrFileLoadingPath(null)
-      }
+            headSha: projectRowDetail.headSha as string,
+            baseSha: projectRowDetail.baseSha as string
+          }),
+        setProjectRowDetailError
+      )
     },
     [
       activeGitHubProjectHost,
-      client,
       expandedPrFilePath,
       findProjectRowRepo,
-      prFileContents,
-      projectRowDetail
+      loadPrFileContent,
+      projectPrFileContentScope,
+      projectRowDetail,
+      taskProjectFileOperations
     ]
   )
 
   const addProjectGitHubFileReviewComment = useCallback(
     async (row: GitHubProjectRow, file: GitHubDetailFile, line: number): Promise<void> => {
       const repo = findProjectRowRepo(row)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       if (
-        !client ||
+        !taskProjectFileOperations ||
         projectMutating ||
         row.itemType !== 'PULL_REQUEST' ||
         !repo ||
-        !row.content.number
+        !target
       ) {
         return
       }
@@ -6633,31 +6249,13 @@ export default function MobileTasksScreen() {
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.addPRReviewComment',
-          {
-            repo: `id:${repo.id}`,
-            prNumber: row.content.number,
-            prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-            commitId: projectRowDetail.headSha,
-            path: file.path,
-            line,
-            body
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          error?: string
-          comment?: DetailComment
-        }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to add review comment')
-        }
-        const comment: DetailComment = result.comment ?? {
+        const addedComment = await taskProjectFileOperations.addInlineComment(target, repo.id, {
+          commitId: projectRowDetail.headSha,
+          path: file.path,
+          line,
+          body
+        })
+        const comment: DetailComment = addedComment ?? {
           id: `local-${Date.now()}`,
           author: 'You',
           body,
@@ -6685,23 +6283,24 @@ export default function MobileTasksScreen() {
     },
     [
       activeGitHubProjectHost,
-      client,
       findProjectRowRepo,
       prFileCommentDrafts,
       projectMutating,
-      projectRowDetail
+      projectRowDetail,
+      taskProjectFileOperations
     ]
   )
 
   const mergeProjectGitHubPullRequest = useCallback(
     async (row: GitHubProjectRow, method: HostedReviewMergeMethod): Promise<void> => {
       const repo = findProjectRowRepo(row)
+      const target = projectRowMutationTarget(row, activeGitHubProjectHost)
       if (
-        !client ||
+        !taskProjectMutationOperations ||
         projectMutating ||
         row.itemType !== 'PULL_REQUEST' ||
         !repo ||
-        !row.content.number
+        !target
       ) {
         return
       }
@@ -6711,23 +6310,7 @@ export default function MobileTasksScreen() {
       setProjectMutating(true)
       setProjectRowDetailError('')
       try {
-        const response = await client.sendRequest(
-          'github.mergePR',
-          {
-            repo: `id:${repo.id}`,
-            prNumber: row.content.number,
-            prRepo: projectRowGitHubRepository(row, activeGitHubProjectHost),
-            method
-          },
-          { timeoutMs: 60_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to merge pull request')
-        }
+        await taskProjectMutationOperations.merge(target, repo.id, method)
         setProjectRowItem((current) =>
           current?.id === row.id
             ? { ...current, content: { ...current.content, state: 'MERGED' } }
@@ -6753,39 +6336,22 @@ export default function MobileTasksScreen() {
         setProjectMutating(false)
       }
     },
-    [activeGitHubProjectHost, client, findProjectRowRepo, projectMutating]
+    [activeGitHubProjectHost, findProjectRowRepo, projectMutating, taskProjectMutationOperations]
   )
 
   const toggleGitHubStatus = useCallback(
     async (item: Extract<TaskItem, { provider: 'github' }>): Promise<void> => {
-      if (!client || mutatingStatus || item.source.state === 'merged') {
+      if (!taskItemMutationOperations || mutatingStatus || item.source.state === 'merged') {
         return
       }
       setMutatingStatus(true)
       setError('')
       const nextState = item.source.state === 'closed' ? 'open' : 'closed'
       try {
-        const method = item.source.type === 'issue' ? 'github.updateIssue' : 'github.updatePRState'
-        const params =
-          item.source.type === 'issue'
-            ? {
-                repo: `id:${item.source.repoId}`,
-                number: item.source.number,
-                updates: { state: nextState }
-              }
-            : {
-                repo: `id:${item.source.repoId}`,
-                prNumber: item.source.number,
-                updates: { state: nextState }
-              }
-        const response = await client.sendRequest(method, params)
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to update GitHub status')
-        }
+        await taskItemMutationOperations.setClosed(
+          taskItemMutationTarget(item),
+          nextState === 'closed'
+        )
         setActionItem(null)
         await loadTasks({ silent: true })
       } catch (err) {
@@ -6794,39 +6360,22 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, loadTasks, mutatingStatus]
+    [loadTasks, mutatingStatus, taskItemMutationOperations]
   )
 
   const toggleGitLabStatus = useCallback(
     async (item: Extract<TaskItem, { provider: 'gitlab' }>): Promise<void> => {
-      if (!client || mutatingStatus || item.source.state === 'merged') {
+      if (!taskItemMutationOperations || mutatingStatus || item.source.state === 'merged') {
         return
       }
       setMutatingStatus(true)
       setError('')
       const nextState = item.source.state === 'closed' ? 'opened' : 'closed'
       try {
-        const response =
-          item.source.type === 'issue'
-            ? await client.sendRequest('gitlab.updateIssue', {
-                repo: `id:${item.source.repoId}`,
-                number: item.source.number,
-                updates: { state: nextState },
-                projectRef: item.source.projectRef
-              })
-            : await client.sendRequest('gitlab.updateMRState', {
-                repo: `id:${item.source.repoId}`,
-                iid: item.source.number,
-                state: nextState,
-                projectRef: item.source.projectRef
-              })
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to update GitLab item')
-        }
+        await taskItemMutationOperations.setClosed(
+          taskItemMutationTarget(item),
+          nextState === 'closed'
+        )
         setActionItem(null)
         await loadTasks({ silent: true })
       } catch (err) {
@@ -6835,7 +6384,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, loadTasks, mutatingStatus]
+    [loadTasks, mutatingStatus, taskItemMutationOperations]
   )
 
   const updateGitHubIssueMetadata = useCallback(
@@ -6850,28 +6399,13 @@ export default function MobileTasksScreen() {
         removeAssignees?: string[]
       }
     ): Promise<void> => {
-      if (!client || mutatingStatus) {
+      if (!taskItemMutationOperations || mutatingStatus) {
         return
       }
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'github.updateIssue',
-          {
-            repo: `id:${item.source.repoId}`,
-            number: item.source.number,
-            updates
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to update GitHub issue')
-        }
+        await taskItemMutationOperations.updateMetadata(taskItemMutationTarget(item), updates)
 
         const nextLabels = [
           ...new Set([
@@ -6946,7 +6480,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, detailPayload, loadTasks, mutatingStatus]
+    [detailPayload, loadTasks, mutatingStatus, taskItemMutationOperations]
   )
 
   const updateGitHubPullRequestMetadata = useCallback(
@@ -6954,7 +6488,7 @@ export default function MobileTasksScreen() {
       item: Extract<TaskItem, { provider: 'github' }>,
       updates: { title?: string; body?: string }
     ): Promise<void> => {
-      if (!client || mutatingStatus || item.source.type !== 'pr') {
+      if (!taskItemMutationOperations || mutatingStatus || item.source.type !== 'pr') {
         return
       }
       const nextTitle = updates.title?.trim()
@@ -6964,25 +6498,10 @@ export default function MobileTasksScreen() {
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'github.updatePR',
-          {
-            repo: `id:${item.source.repoId}`,
-            prNumber: item.source.number,
-            updates: {
-              ...(nextTitle !== undefined ? { title: nextTitle } : {}),
-              ...(updates.body !== undefined ? { body: updates.body } : {})
-            }
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to update GitHub pull request')
-        }
+        await taskItemMutationOperations.updateMetadata(taskItemMutationTarget(item), {
+          ...(nextTitle !== undefined ? { title: nextTitle } : {}),
+          ...(updates.body !== undefined ? { body: updates.body } : {})
+        })
         if (nextTitle !== undefined) {
           setActionItem((current) =>
             current?.provider === 'github' && current.source.id === item.source.id
@@ -7017,7 +6536,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, loadTasks, mutatingStatus]
+    [loadTasks, mutatingStatus, taskItemMutationOperations]
   )
 
   const updateGitLabIssueMetadata = useCallback(
@@ -7032,40 +6551,13 @@ export default function MobileTasksScreen() {
         removeAssignees?: string[]
       }
     ): Promise<void> => {
-      if (!client || mutatingStatus) {
+      if (!taskItemMutationOperations || mutatingStatus) {
         return
       }
       setMutatingStatus(true)
       setError('')
       try {
-        const method = item.source.type === 'issue' ? 'gitlab.updateIssue' : 'gitlab.updateMR'
-        const params =
-          item.source.type === 'issue'
-            ? {
-                repo: `id:${item.source.repoId}`,
-                number: item.source.number,
-                updates,
-                projectRef: item.source.projectRef
-              }
-            : {
-                repo: `id:${item.source.repoId}`,
-                iid: item.source.number,
-                projectRef: item.source.projectRef,
-                updates: {
-                  title: updates.title,
-                  body: updates.body,
-                  addLabels: updates.addLabels,
-                  removeLabels: updates.removeLabels
-                }
-              }
-        const response = await client.sendRequest(method, params, { timeoutMs: 30_000 })
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to update GitLab item')
-        }
+        await taskItemMutationOperations.updateMetadata(taskItemMutationTarget(item), updates)
         const nextLabels = [
           ...new Set([
             ...(detailPayload?.provider === 'gitlab'
@@ -7141,14 +6633,14 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, detailPayload, loadTasks, mutatingStatus]
+    [detailPayload, loadTasks, mutatingStatus, taskItemMutationOperations]
   )
 
   const addHostedItemComment = useCallback(
     async (
       item: Extract<TaskItem, { provider: 'github' }> | Extract<TaskItem, { provider: 'gitlab' }>
     ): Promise<void> => {
-      if (!client || mutatingStatus) {
+      if (!taskItemReviewOperations || mutatingStatus) {
         return
       }
       const body = itemCommentDraft.trim()
@@ -7158,47 +6650,11 @@ export default function MobileTasksScreen() {
       setMutatingStatus(true)
       setError('')
       try {
-        const response =
-          item.provider === 'github'
-            ? await client.sendRequest(
-                'github.addIssueComment',
-                {
-                  repo: `id:${item.source.repoId}`,
-                  number: item.source.number,
-                  body,
-                  type: item.source.type
-                },
-                { timeoutMs: 30_000 }
-              )
-            : await client.sendRequest(
-                item.source.type === 'mr' ? 'gitlab.addMRComment' : 'gitlab.addIssueComment',
-                item.source.type === 'mr'
-                  ? {
-                      repo: `id:${item.source.repoId}`,
-                      iid: item.source.number,
-                      body,
-                      projectRef: item.source.projectRef
-                    }
-                  : {
-                      repo: `id:${item.source.repoId}`,
-                      number: item.source.number,
-                      body,
-                      projectRef: item.source.projectRef
-                    },
-                { timeoutMs: 30_000 }
-              )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          error?: string
-          comment?: DetailComment
-        }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to add comment')
-        }
-        const comment: DetailComment = result.comment ?? {
+        const addedComment = await taskItemReviewOperations.addComment(
+          taskItemMutationTarget(item),
+          body
+        )
+        const comment: DetailComment = addedComment ?? {
           id: `local-${Date.now()}`,
           body,
           createdAt: new Date().toISOString(),
@@ -7218,32 +6674,12 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, itemCommentDraft, mutatingStatus]
+    [itemCommentDraft, mutatingStatus, taskItemReviewOperations]
   )
-
-  const copyTaskLink = useCallback(async (key: string, url: string): Promise<void> => {
-    try {
-      await Clipboard.setStringAsync(url)
-      setCopiedLinkKey(key)
-      scheduleMobileTaskCopyFeedbackReset(copiedLinkResetTimerRef, key, setCopiedLinkKey)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to copy link')
-    }
-  }, [])
-
-  const copyTextToClipboard = useCallback(async (key: string, value: string): Promise<void> => {
-    try {
-      await Clipboard.setStringAsync(value)
-      setCopiedLinkKey(key)
-      scheduleMobileTaskCopyFeedbackReset(copiedLinkResetTimerRef, key, setCopiedLinkKey)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to copy text')
-    }
-  }, [])
 
   const requestGitHubReviewers = useCallback(
     async (item: Extract<TaskItem, { provider: 'github' }>, logins?: string[]): Promise<void> => {
-      if (!client || mutatingStatus || item.source.type !== 'pr') {
+      if (!taskItemReviewOperations || mutatingStatus || item.source.type !== 'pr') {
         return
       }
       const reviewers = logins ?? splitReviewerList(itemReviewersDraft)
@@ -7253,22 +6689,7 @@ export default function MobileTasksScreen() {
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'github.requestPRReviewers',
-          {
-            repo: `id:${item.source.repoId}`,
-            prNumber: item.source.number,
-            reviewers
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to request reviewers')
-        }
+        await taskItemReviewOperations.requestReviewers(taskItemMutationTarget(item), reviewers)
         const nextReviewRequests = (() => {
           const byLogin = new Map<string, GitHubAssignableUser>()
           for (const reviewer of detailPayload?.provider === 'github'
@@ -7323,34 +6744,21 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, detailPayload, itemReviewersDraft, mutatingStatus]
+    [detailPayload, itemReviewersDraft, mutatingStatus, taskItemReviewOperations]
   )
 
   const refreshGitHubChecks = useCallback(
     async (item: Extract<TaskItem, { provider: 'github' }>): Promise<void> => {
-      if (!client || mutatingStatus || item.source.type !== 'pr') {
+      if (!taskItemFileOperations || mutatingStatus || item.source.type !== 'pr') {
         return
       }
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'github.prChecks',
-          {
-            repo: `id:${item.source.repoId}`,
-            prNumber: item.source.number,
-            headSha: detailPayload?.provider === 'github' ? detailPayload.headSha : undefined,
-            noCache: true
-          },
-          { timeoutMs: 30_000 }
+        const checks = await taskItemFileOperations.refreshChecks(
+          taskItemMutationTarget(item),
+          detailPayload?.provider === 'github' ? detailPayload.headSha : undefined
         )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        if (!Array.isArray(response.result)) {
-          throw new Error('Invalid checks response')
-        }
-        const checks = response.result as GitHubDetailCheck[]
         const checksSummary = buildGitHubCheckSummary(checks)
         setDetailPayload((current) =>
           current?.provider === 'github' ? { ...current, checks } : current
@@ -7379,34 +6787,22 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, detailPayload, mutatingStatus]
+    [detailPayload, mutatingStatus, taskItemFileOperations]
   )
 
   const rerunGitHubChecks = useCallback(
     async (item: Extract<TaskItem, { provider: 'github' }>, failedOnly: boolean): Promise<void> => {
-      if (!client || mutatingStatus || item.source.type !== 'pr') {
+      if (!taskItemFileOperations || mutatingStatus || item.source.type !== 'pr') {
         return
       }
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'github.rerunPRChecks',
-          {
-            repo: `id:${item.source.repoId}`,
-            prNumber: item.source.number,
-            headSha: detailPayload?.provider === 'github' ? detailPayload.headSha : undefined,
-            failedOnly
-          },
-          { timeoutMs: 60_000 }
+        await taskItemFileOperations.rerunChecks(
+          taskItemMutationTarget(item),
+          detailPayload?.provider === 'github' ? detailPayload.headSha : undefined,
+          failedOnly
         )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to rerun checks')
-        }
         setDetailRefreshSeq((current) => current + 1)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to rerun checks')
@@ -7414,7 +6810,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, detailPayload, mutatingStatus]
+    [detailPayload, mutatingStatus, taskItemFileOperations]
   )
 
   const toggleGitHubFileViewed = useCallback(
@@ -7422,7 +6818,7 @@ export default function MobileTasksScreen() {
       item: Extract<TaskItem, { provider: 'github' }>,
       file: NonNullable<Extract<DetailPayload, { provider: 'github' }>['files'][number]>
     ): Promise<void> => {
-      if (!client || mutatingStatus || item.source.type !== 'pr') {
+      if (!taskItemFileOperations || mutatingStatus || item.source.type !== 'pr') {
         return
       }
       if (detailPayload?.provider !== 'github' || !detailPayload.pullRequestId) {
@@ -7433,22 +6829,11 @@ export default function MobileTasksScreen() {
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'github.setPRFileViewed',
-          {
-            repo: `id:${item.source.repoId}`,
-            pullRequestId: detailPayload.pullRequestId,
-            path: file.path,
-            viewed
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        if (response.result !== true) {
-          throw new Error('Failed to sync viewed state with GitHub.')
-        }
+        await taskItemFileOperations.setFileViewed(taskItemMutationTarget(item), {
+          pullRequestId: detailPayload.pullRequestId,
+          path: file.path,
+          viewed
+        })
         setDetailPayload((current) =>
           current?.provider === 'github'
             ? {
@@ -7467,7 +6852,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, detailPayload, mutatingStatus]
+    [detailPayload, mutatingStatus, taskItemFileOperations]
   )
 
   const toggleGitHubReviewThread = useCallback(
@@ -7475,28 +6860,23 @@ export default function MobileTasksScreen() {
       item: Extract<TaskItem, { provider: 'github' }>,
       comment: DetailComment
     ): Promise<void> => {
-      if (!client || mutatingStatus || item.source.type !== 'pr' || !comment.threadId) {
+      if (
+        !taskItemReviewOperations ||
+        mutatingStatus ||
+        item.source.type !== 'pr' ||
+        !comment.threadId
+      ) {
         return
       }
       const resolve = !comment.isResolved
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'github.resolveReviewThread',
-          {
-            repo: `id:${item.source.repoId}`,
-            threadId: comment.threadId,
-            resolve
-          },
-          { timeoutMs: 30_000 }
+        await taskItemReviewOperations.resolveThread(
+          taskItemMutationTarget(item),
+          comment.threadId,
+          resolve
         )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        if (response.result !== true) {
-          throw new Error(resolve ? 'Failed to resolve thread' : 'Failed to reopen thread')
-        }
         setDetailPayload((current) =>
           current?.provider === 'github'
             ? {
@@ -7515,7 +6895,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, mutatingStatus]
+    [mutatingStatus, taskItemReviewOperations]
   )
 
   const toggleGitHubFileExpansion = useCallback(
@@ -7528,49 +6908,41 @@ export default function MobileTasksScreen() {
         return
       }
       setExpandedPrFilePath(file.path)
-      if (prFileContents[file.path]) {
-        return
-      }
       if (
-        !client ||
+        !taskItemFileOperations ||
         item.source.type !== 'pr' ||
         detailPayload?.provider !== 'github' ||
         !detailPayload.headSha ||
-        !detailPayload.baseSha
+        !detailPayload.baseSha ||
+        !itemPrFileContentScope
       ) {
         setError('Unable to load file contents for this pull request.')
         return
       }
-      setPrFileLoadingPath(file.path)
-      setError('')
-      try {
-        const response = await client.sendRequest(
-          'github.prFileContents',
-          {
-            repo: `id:${item.source.repoId}`,
-            prNumber: item.source.number,
+      const headSha = detailPayload.headSha
+      const baseSha = detailPayload.baseSha
+      await loadPrFileContent(
+        itemPrFileContentScope,
+        file,
+        async () => {
+          return taskItemFileOperations.loadFileContents(taskItemMutationTarget(item), {
             path: file.path,
             oldPath: file.oldPath,
             status: file.status ?? 'modified',
-            headSha: detailPayload.headSha,
-            baseSha: detailPayload.baseSha
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        setPrFileContents((current) => ({
-          ...current,
-          [file.path]: response.result as GitHubPRFileContents
-        }))
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load file contents')
-      } finally {
-        setPrFileLoadingPath(null)
-      }
+            headSha,
+            baseSha
+          })
+        },
+        setError
+      )
     },
-    [client, detailPayload, expandedPrFilePath, prFileContents]
+    [
+      detailPayload,
+      expandedPrFilePath,
+      itemPrFileContentScope,
+      loadPrFileContent,
+      taskItemFileOperations
+    ]
   )
 
   const addGitHubFileReviewComment = useCallback(
@@ -7579,7 +6951,7 @@ export default function MobileTasksScreen() {
       file: GitHubDetailFile,
       line: number
     ): Promise<void> => {
-      if (!client || mutatingStatus || item.source.type !== 'pr') {
+      if (!taskItemFileOperations || mutatingStatus || item.source.type !== 'pr') {
         return
       }
       if (detailPayload?.provider !== 'github' || !detailPayload.headSha) {
@@ -7594,30 +6966,15 @@ export default function MobileTasksScreen() {
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'github.addPRReviewComment',
+        const comment: DetailComment = (await taskItemFileOperations.addInlineComment(
+          taskItemMutationTarget(item),
           {
-            repo: `id:${item.source.repoId}`,
-            prNumber: item.source.number,
             commitId: detailPayload.headSha,
             path: file.path,
             line,
             body
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          error?: string
-          comment?: DetailComment
-        }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to add review comment')
-        }
-        const comment: DetailComment = result.comment ?? {
+          }
+        )) ?? {
           id: `local-${Date.now()}`,
           author: 'You',
           body,
@@ -7641,7 +6998,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, detailPayload, mutatingStatus, prFileCommentDrafts]
+    [detailPayload, mutatingStatus, prFileCommentDrafts, taskItemFileOperations]
   )
 
   const replyToGitHubComment = useCallback(
@@ -7649,7 +7006,7 @@ export default function MobileTasksScreen() {
       item: Extract<TaskItem, { provider: 'github' }>,
       comment: DetailComment
     ): Promise<void> => {
-      if (!client || mutatingStatus) {
+      if (!taskItemReviewOperations || mutatingStatus) {
         return
       }
       const key = String(comment.id)
@@ -7665,42 +7022,21 @@ export default function MobileTasksScreen() {
           comment.path &&
           typeof comment.line === 'number' &&
           typeof comment.id === 'number'
-        const response = canUseReviewReply
-          ? await client.sendRequest(
-              'github.addPRReviewCommentReply',
-              {
-                repo: `id:${item.source.repoId}`,
-                prNumber: item.source.number,
-                commentId: comment.id,
-                body,
-                threadId: comment.threadId,
-                path: comment.path,
-                line: comment.line
-              },
-              { timeoutMs: 30_000 }
-            )
-          : await client.sendRequest(
-              'github.addIssueComment',
-              {
-                repo: `id:${item.source.repoId}`,
-                number: item.source.number,
-                body: `@${commentAuthor(comment)} ${body}`,
-                type: item.source.type
-              },
-              { timeoutMs: 30_000 }
-            )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
+        if (canUseReviewReply) {
+          await taskItemReviewOperations.replyReviewComment(taskItemMutationTarget(item), {
+            commentId: comment.id as number,
+            body,
+            ...(comment.threadId ? { threadId: comment.threadId } : {}),
+            path: comment.path as string,
+            line: comment.line as number
+          })
+        } else {
+          await taskItemReviewOperations.addComment(
+            taskItemMutationTarget(item),
+            `@${commentAuthor(comment)} ${body}`
+          )
         }
-        const result = response.result as {
-          ok?: boolean
-          error?: string
-          comment?: DetailComment
-        }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to reply')
-        }
-        const reply: DetailComment = result.comment ?? {
+        const reply: DetailComment = {
           id: `local-${Date.now()}`,
           body,
           createdAt: new Date().toISOString(),
@@ -7725,7 +7061,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, itemReplyDrafts, mutatingStatus]
+    [itemReplyDrafts, mutatingStatus, taskItemReviewOperations]
   )
 
   const mergeHostedReview = useCallback(
@@ -7733,7 +7069,7 @@ export default function MobileTasksScreen() {
       item: Extract<TaskItem, { provider: 'github' }> | Extract<TaskItem, { provider: 'gitlab' }>,
       method: HostedReviewMergeMethod
     ): Promise<void> => {
-      if (!client || mutatingStatus) {
+      if (!taskItemReviewOperations || mutatingStatus) {
         return
       }
       if (item.provider === 'github' && item.source.type !== 'pr') {
@@ -7749,34 +7085,7 @@ export default function MobileTasksScreen() {
       setMutatingStatus(true)
       setError('')
       try {
-        const response =
-          item.provider === 'github'
-            ? await client.sendRequest(
-                'github.mergePR',
-                {
-                  repo: `id:${item.source.repoId}`,
-                  prNumber: item.source.number,
-                  method
-                },
-                { timeoutMs: 60_000 }
-              )
-            : await client.sendRequest(
-                'gitlab.mergeMR',
-                {
-                  repo: `id:${item.source.repoId}`,
-                  iid: item.source.number,
-                  method,
-                  projectRef: item.source.projectRef
-                },
-                { timeoutMs: 60_000 }
-              )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to merge')
-        }
+        await taskItemReviewOperations.merge(taskItemMutationTarget(item), method)
         setActionItem(null)
         await loadTasks({ silent: true })
       } catch (err) {
@@ -7785,7 +7094,7 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, loadTasks, mutatingStatus]
+    [loadTasks, mutatingStatus, taskItemReviewOperations]
   )
 
   const setLinearStatus = useCallback(
@@ -7794,20 +7103,13 @@ export default function MobileTasksScreen() {
       state: LinearState,
       options: { closeDetail?: boolean } = {}
     ): Promise<void> => {
-      if (!client || !taskUiReady || mutatingStatus) {
+      if (!taskLinearOperations || !taskUiReady || mutatingStatus) {
         return
       }
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest('linear.updateIssue', {
-          id: item.source.id,
-          workspaceId: item.source.workspaceId,
-          updates: { stateId: state.id }
-        })
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
+        await taskLinearOperations.updateState(taskLinearTarget(item), state.id)
         const nextState = {
           name: state.name,
           type: state.type,
@@ -7839,12 +7141,12 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, loadTasks, mutatingStatus, taskUiReady]
+    [loadTasks, mutatingStatus, taskLinearOperations, taskUiReady]
   )
 
   const addLinearComment = useCallback(
     async (item: Extract<TaskItem, { provider: 'linear' }>): Promise<void> => {
-      if (!client || mutatingStatus) {
+      if (!taskLinearOperations || mutatingStatus) {
         return
       }
       const body = linearCommentDraft.trim()
@@ -7854,24 +7156,9 @@ export default function MobileTasksScreen() {
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'linear.addIssueComment',
-          {
-            issueId: item.source.id,
-            workspaceId: item.source.workspaceId,
-            body
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as { ok?: boolean; id?: string; error?: string }
-        if (result.ok === false) {
-          throw new Error(result.error ?? 'Failed to add comment')
-        }
+        const commentId = await taskLinearOperations.addComment(taskLinearTarget(item), body)
         const comment: DetailComment = {
-          id: result.id ?? `local-${Date.now()}`,
+          id: commentId ?? `local-${Date.now()}`,
           body,
           createdAt: new Date().toISOString(),
           user: { displayName: 'You' }
@@ -7888,29 +7175,23 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, linearCommentDraft, mutatingStatus]
+    [linearCommentDraft, mutatingStatus, taskLinearOperations]
   )
 
   const openLinearSubIssue = useCallback(
     async (child: LinearIssueChild, workspaceId?: string): Promise<void> => {
-      if (!client || mutatingStatus) {
+      if (!taskLinearOperations || mutatingStatus) {
         return
       }
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'linear.getIssue',
-          { id: child.id, workspaceId },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const issue = response.result as LinearIssue | null
-        if (!issue) {
-          throw new Error('Sub-issue not found')
-        }
+        const issue = await taskLinearOperations.loadIssue({
+          issueId: child.id,
+          workspaceId,
+          teamId: '',
+          targetId: child.targetId
+        })
         setActionItem(createLinearTask(issue) as Extract<TaskItem, { provider: 'linear' }>)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load Linear sub-issue')
@@ -7918,12 +7199,12 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, mutatingStatus]
+    [mutatingStatus, taskLinearOperations]
   )
 
   const createLinearSubIssue = useCallback(
     async (item: Extract<TaskItem, { provider: 'linear' }>): Promise<void> => {
-      if (!client || mutatingStatus) {
+      if (!taskLinearOperations || mutatingStatus) {
         return
       }
       const title = linearSubIssueTitle.trim()
@@ -7933,33 +7214,10 @@ export default function MobileTasksScreen() {
       setMutatingStatus(true)
       setError('')
       try {
-        const response = await client.sendRequest(
-          'linear.createIssue',
-          {
-            teamId: item.source.team.id,
-            title,
-            workspaceId: item.source.workspaceId,
-            parentIssueId: item.source.id,
-            projectId: item.source.project?.id ?? null
-          },
-          { timeoutMs: 30_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          id?: string
-          identifier?: string
-          title?: string
-          url?: string
-          error?: string
-        }
-        if (result.ok === false || !result.id || !result.identifier) {
-          throw new Error(result.error ?? 'Failed to create sub-issue')
-        }
+        const result = await taskLinearOperations.createSubIssue(taskLinearTarget(item), title)
         const child: LinearIssueChild = {
           id: result.id,
+          targetId: result.targetId,
           identifier: result.identifier,
           title: result.title ?? title,
           url: result.url ?? ''
@@ -7981,11 +7239,11 @@ export default function MobileTasksScreen() {
         setMutatingStatus(false)
       }
     },
-    [client, linearSubIssueTitle, mutatingStatus]
+    [linearSubIssueTitle, mutatingStatus, taskLinearOperations]
   )
 
   const createTask = useCallback(async (): Promise<void> => {
-    if (!client || !tasksSupported || !taskStateHydrated || creatingTask) {
+    if (!tasksSupported || !taskStateHydrated || creatingTask) {
       return
     }
     const title = createTitle.trim()
@@ -7996,34 +7254,21 @@ export default function MobileTasksScreen() {
     setError('')
     try {
       if (provider === 'github' || provider === 'gitlab') {
+        if (!taskProviderWriteOperations) {
+          throw new Error('Provider operations are unavailable.')
+        }
         const repo = hostedRepos.find((entry) => entry.id === createRepoId) ?? hostedRepos[0]
         if (!repo) {
           throw new Error(
             `Add a Git repository before creating a ${provider === 'github' ? 'GitHub' : 'GitLab'} issue.`
           )
         }
-        const response = await client.sendRequest(
-          provider === 'github' ? 'github.createIssue' : 'gitlab.createIssue',
-          {
-            repo: `id:${repo.id}`,
-            title,
-            body: createBody
-          }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          number?: number
-          url?: string
-          error?: string
-        }
-        if (result.ok === false) {
-          throw new Error(
-            result.error ?? `Failed to create ${provider === 'github' ? 'GitHub' : 'GitLab'} issue`
-          )
-        }
+        const result = await taskProviderWriteOperations.createIssue({
+          provider,
+          repoId: repo.id,
+          title,
+          body: createBody
+        })
         if (typeof result.number === 'number') {
           const createdAt = new Date().toISOString()
           if (provider === 'github') {
@@ -8057,33 +7302,22 @@ export default function MobileTasksScreen() {
           }
         }
       } else {
+        if (!taskLinearOperations) {
+          throw new Error('Linear operations are unavailable.')
+        }
         const team = linearTeams.find((entry) => entry.id === createTeamId) ?? linearTeams[0]
         if (!team) {
           throw new Error('Select a Linear team first.')
         }
-        const response = await client.sendRequest('linear.createIssue', {
-          teamId: team.id,
+        const result = await taskLinearOperations.createIssue({
+          team,
           title,
-          description: createBody.trim() || undefined,
-          workspaceId: team.workspaceId
+          description: createBody.trim() || undefined
         })
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
-        const result = response.result as {
-          ok?: boolean
-          id?: string
-          identifier?: string
-          title?: string
-          url?: string
-          error?: string
-        }
-        if (result.ok === false || !result.id || !result.identifier) {
-          throw new Error(result.error ?? 'Failed to create Linear issue')
-        }
         setActionItem(
           createLinearTask({
             id: result.id,
+            targetId: result.targetId,
             workspaceId: team.workspaceId,
             workspaceName: team.workspaceName,
             identifier: result.identifier,
@@ -8108,7 +7342,6 @@ export default function MobileTasksScreen() {
       setCreatingTask(false)
     }
   }, [
-    client,
     createBody,
     createRepoId,
     createTeamId,
@@ -8119,27 +7352,19 @@ export default function MobileTasksScreen() {
     loadTasks,
     provider,
     taskStateHydrated,
+    taskLinearOperations,
+    taskProviderWriteOperations,
     tasksSupported
   ])
 
   const setGitHubIssueSourcePreference = useCallback(
     async (repo: RepoSummary, preference: 'upstream' | 'origin'): Promise<void> => {
-      if (!client || !taskUiReady) {
+      if (!taskProviderWriteOperations || !taskUiReady) {
         return
       }
       setError('')
       try {
-        const response = await client.sendRequest(
-          'repo.update',
-          {
-            repo: `id:${repo.id}`,
-            updates: { issueSourcePreference: preference }
-          },
-          { timeoutMs: 15_000 }
-        )
-        if (!isSuccess(response)) {
-          throw new Error(response.error.message)
-        }
+        await taskProviderWriteOperations.updateIssueSource(repo.id, preference)
         // Why: the host owns issueSourcePreference, so re-read the list instead of
         // patching the cached copy and hoping the two stay in step.
         await repoListReload().catch(() => {})
@@ -8148,7 +7373,7 @@ export default function MobileTasksScreen() {
         setError(err instanceof Error ? err.message : 'Failed to update issue source')
       }
     },
-    [client, loadTasks, repoListReload, taskUiReady]
+    [loadTasks, repoListReload, taskProviderWriteOperations, taskUiReady]
   )
 
   const renderCommentComposer = (args: {
@@ -8209,7 +7434,7 @@ export default function MobileTasksScreen() {
         {commentAuthor(comment)}
         {commentDate(comment.createdAt) ? ` · ${commentDate(comment.createdAt)}` : ''}
       </Text>
-      <MobileMarkdown content={comment.body} />
+      <MobileMarkdown content={comment.body} onOpenLink={handleOpenExternalUrl} />
       {renderCommentReactions(comment)}
       {SHOW_MOBILE_COMMENT_THREAD_TOOLS &&
       actionItem?.provider === 'github' &&
@@ -8909,7 +8134,7 @@ export default function MobileTasksScreen() {
                         if (!taskUiReady) {
                           return
                         }
-                        void Linking.openURL(selectedGitHubProjectViewUrl)
+                        void deviceOperations.openExternalUrl(selectedGitHubProjectViewUrl)
                       }}
                     >
                       <ExternalLink size={14} color={colors.textSecondary} />
@@ -9327,7 +8552,7 @@ export default function MobileTasksScreen() {
                 <Pressable
                   style={({ pressed }) => [styles.taskRow, pressed && styles.taskRowPressed]}
                   onPress={() => {
-                    triggerMediumImpact()
+                    deviceOperations.hapticMediumImpact()
                     setProjectRowItem(row)
                   }}
                 >
@@ -9434,7 +8659,7 @@ export default function MobileTasksScreen() {
                       key={issue.id}
                       style={({ pressed }) => [styles.boardCard, pressed && styles.taskRowPressed]}
                       onPress={() => {
-                        triggerMediumImpact()
+                        deviceOperations.hapticMediumImpact()
                         setActionItem(
                           createLinearTask(issue) as Extract<TaskItem, { provider: 'linear' }>
                         )
@@ -9456,7 +8681,7 @@ export default function MobileTasksScreen() {
                           accessibilityLabel={`Change status from ${issue.state.name}`}
                           onPress={(event) => {
                             event.stopPropagation()
-                            triggerMediumImpact()
+                            deviceOperations.hapticMediumImpact()
                             setLinearStatusPickerItem(
                               createLinearTask(issue) as Extract<TaskItem, { provider: 'linear' }>
                             )
@@ -9520,7 +8745,7 @@ export default function MobileTasksScreen() {
                 <Pressable
                   style={({ pressed }) => [styles.taskRow, pressed && styles.taskRowPressed]}
                   onPress={() => {
-                    triggerMediumImpact()
+                    deviceOperations.hapticMediumImpact()
                     setActionItem(linearTask)
                   }}
                 >
@@ -9554,7 +8779,7 @@ export default function MobileTasksScreen() {
                         accessibilityLabel={`Change status from ${issue.state.name}`}
                         onPress={(event) => {
                           event.stopPropagation()
-                          triggerMediumImpact()
+                          deviceOperations.hapticMediumImpact()
                           setLinearStatusPickerItem(linearTask)
                         }}
                       >
@@ -9691,9 +8916,9 @@ export default function MobileTasksScreen() {
               <Pressable
                 style={({ pressed }) => [styles.taskRow, pressed && styles.taskRowPressed]}
                 onPress={() => {
-                  triggerMediumImpact()
+                  deviceOperations.hapticMediumImpact()
                   if (item.provider === 'gitlabTodo') {
-                    void Linking.openURL(item.source.targetUrl)
+                    void deviceOperations.openExternalUrl(item.source.targetUrl)
                     return
                   }
                   setActionItem(item)
@@ -10437,9 +9662,9 @@ export default function MobileTasksScreen() {
         onSelect={(workspaceId) => {
           setSelectedLinearWorkspaceId(workspaceId)
           setSelectedLinearTeamIds(new Set())
-          if (client) {
-            void client
-              .sendRequest('linear.selectWorkspace', { workspaceId })
+          if (taskLinearOperations) {
+            void taskLinearOperations
+              .selectWorkspace(workspaceId)
               .then(() => loadLinearContext())
               .catch((err) => {
                 setError(err instanceof Error ? err.message : 'Failed to switch workspace')
@@ -10853,7 +10078,9 @@ export default function MobileTasksScreen() {
           ) : null}
           <Pressable
             style={styles.inlineTextLink}
-            onPress={() => void Linking.openURL('https://linear.app/settings/account/security')}
+            onPress={() =>
+              void deviceOperations.openExternalUrl('https://linear.app/settings/account/security')
+            }
           >
             <ExternalLink size={13} color={colors.textSecondary} />
             <Text style={styles.inlineTextLinkText}>Linear Settings / Security / New API key</Text>
@@ -11613,7 +10840,7 @@ export default function MobileTasksScreen() {
                   style={styles.actionRow}
                   onPress={() => {
                     if (projectRepoNotInOrca.url) {
-                      void Linking.openURL(projectRepoNotInOrca.url)
+                      void deviceOperations.openExternalUrl(projectRepoNotInOrca.url)
                     }
                   }}
                 >
@@ -12113,7 +11340,11 @@ export default function MobileTasksScreen() {
                         >
                           <Text style={styles.inlineSaveText}>Save description</Text>
                         </Pressable>
-                        <MobileMarkdown content={projectBodyDraft} fallback="No description." />
+                        <MobileMarkdown
+                          content={projectBodyDraft}
+                          fallback="No description."
+                          onOpenLink={handleOpenExternalUrl}
+                        />
                       </View>
                     </>
                   ) : (
@@ -12124,7 +11355,11 @@ export default function MobileTasksScreen() {
                       </View>
                       <View style={styles.detailSection}>
                         <Text style={styles.detailSectionTitle}>Description</Text>
-                        <MobileMarkdown content={projectBodyDraft} fallback="No description." />
+                        <MobileMarkdown
+                          content={projectBodyDraft}
+                          fallback="No description."
+                          onOpenLink={handleOpenExternalUrl}
+                        />
                       </View>
                     </>
                   )}
@@ -12262,7 +11497,7 @@ export default function MobileTasksScreen() {
                                 disabled={!check.url}
                                 onPress={() => {
                                   if (check.url) {
-                                    void Linking.openURL(check.url)
+                                    void deviceOperations.openExternalUrl(check.url)
                                   }
                                 }}
                               >
@@ -12324,7 +11559,7 @@ export default function MobileTasksScreen() {
                                   ) : prFileContents[file.path] ? (
                                     <GitHubPrFileDiff
                                       filePath={file.path}
-                                      contents={prFileContents[file.path]}
+                                      contents={prFileContents[file.path]!}
                                       commentDrafts={prFileCommentDrafts}
                                       disabled={projectMutating}
                                       onCommentDraftChange={(draftKey, next) =>
@@ -12460,7 +11695,10 @@ export default function MobileTasksScreen() {
                                   </>
                                 ) : (
                                   <>
-                                    <MobileMarkdown content={comment.body} />
+                                    <MobileMarkdown
+                                      content={comment.body}
+                                      onOpenLink={handleOpenExternalUrl}
+                                    />
                                     {renderCommentReactions(comment)}
                                     {SHOW_MOBILE_COMMENT_THREAD_TOOLS ? (
                                       <View style={styles.inlineActionRow}>
@@ -12590,7 +11828,7 @@ export default function MobileTasksScreen() {
                     style={styles.actionRow}
                     onPress={() => {
                       if (projectRowItem.content.url) {
-                        void Linking.openURL(projectRowItem.content.url)
+                        void deviceOperations.openExternalUrl(projectRowItem.content.url)
                       }
                     }}
                   >
@@ -12816,7 +12054,11 @@ export default function MobileTasksScreen() {
                         >
                           <Text style={styles.inlineSaveText}>Save description</Text>
                         </Pressable>
-                        <MobileMarkdown content={itemBodyDraft} fallback="No description." />
+                        <MobileMarkdown
+                          content={itemBodyDraft}
+                          fallback="No description."
+                          onOpenLink={handleOpenExternalUrl}
+                        />
                       </>
                     ) : (
                       <MobileMarkdown
@@ -12826,6 +12068,7 @@ export default function MobileTasksScreen() {
                             : detailPayload.body
                         }
                         fallback="No description."
+                        onOpenLink={handleOpenExternalUrl}
                       />
                     )}
                   </View>
@@ -13209,7 +12452,7 @@ export default function MobileTasksScreen() {
                             disabled={!check.url}
                             onPress={() => {
                               if (check.url) {
-                                void Linking.openURL(check.url)
+                                void deviceOperations.openExternalUrl(check.url)
                               }
                             }}
                           >
@@ -13270,7 +12513,7 @@ export default function MobileTasksScreen() {
                                 ) : prFileContents[file.path] ? (
                                   <GitHubPrFileDiff
                                     filePath={file.path}
-                                    contents={prFileContents[file.path]}
+                                    contents={prFileContents[file.path]!}
                                     commentDrafts={prFileCommentDrafts}
                                     disabled={mutatingStatus}
                                     onCommentDraftChange={(draftKey, next) =>
@@ -13327,7 +12570,7 @@ export default function MobileTasksScreen() {
                               disabled={!job.webUrl}
                               onPress={() => {
                                 if (job.webUrl) {
-                                  void Linking.openURL(job.webUrl)
+                                  void deviceOperations.openExternalUrl(job.webUrl)
                                 }
                               }}
                             >
@@ -13455,7 +12698,7 @@ export default function MobileTasksScreen() {
               <View style={styles.actionSeparator} />
               <Pressable
                 style={styles.actionRow}
-                onPress={() => void Linking.openURL(actionItem.source.url)}
+                onPress={() => void deviceOperations.openExternalUrl(actionItem.source.url)}
               >
                 <ExternalLink size={16} color={colors.textPrimary} />
                 <Text style={styles.actionText}>{taskExternalOpenLabel(actionItem)}</Text>

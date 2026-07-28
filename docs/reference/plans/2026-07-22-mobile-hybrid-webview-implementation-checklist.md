@@ -1,0 +1,2440 @@
+# Mobile Hybrid WebView Implementation Checklist
+
+- **Status:** Production migration in progress; private-origin cache, typed
+  bridge, opaque workspace authority, unchanged New Workspace bridge,
+  workspace/session actions, emulator-verified shared terminal UI, and the
+  unchanged browser, dictation, accounts, Tasks, Agent History, and native-chat
+  UI behind typed hosted operations and live routes; strict Markdown transport and
+  shell-owned drafts now pass live render/edit/save/conflict/full-process
+  recovery, and pending native-chat delivery now passes full-process recovery
+  and reconciliation on iOS Simulator, while bounded SSH transcript authority,
+  the production hosted broker/client contract, and reconnect pass a real
+  Docker transport journey; hosted workspace, session, and native-chat reads
+  and production package delivery also cross the real mobile Relay client and
+  E2EE stack through a protocol-compatible local cell; the first automated
+  native-versus-hosted populated-screen gate now passes Agent History on the
+  iPhone 17 Pro Simulator; the hosted Session now hands Terminal Settings to the
+  existing native route and returns to the identical hosted session; native-chat
+  deadlines and gesture-gated image attachments preserve the unchanged composer
+  through opaque shell-owned references; the Android API 36 emulator now stages
+  the exact package, renders the unchanged workspace/session/terminal UI, and
+  carries terminal input through the paired Desktop; native Settings/About,
+  background speech interruption, accepted image upload, and lossless
+  pause/resume audio playback also pass on Android; the exact Android Debug APK
+  now also passes the deliberate-red private-origin network/navigation
+  isolation gate at a routed reserved-HTTPS URL with zero escaped traffic;
+  cross-platform package/cache fault tests and bounded bridge replay/race tests
+  now pass; iOS Simulator and Android emulator manual previous-generation
+  recovery, cache clear/redownload, and corrupt-active cold fallback now pass
+  through the native recovery surface; the exact iOS Simulator and Android API
+  36 Source Control and Review journeys and the full post-rebase validation
+  matrix now pass
+- **Last updated:** July 28, 2026
+- **Design:**
+  [`2026-07-22-mobile-hybrid-webview-single-pr-migration.md`](./2026-07-22-mobile-hybrid-webview-single-pr-migration.md)
+- **Decision analysis:**
+  [`2026-07-13-mobile-ota-update-infrastructure.html`](./2026-07-13-mobile-ota-update-infrastructure.html)
+- **Feature-parity inventory:**
+  [`2026-07-22-mobile-hybrid-webview-parity-inventory.md`](./2026-07-22-mobile-hybrid-webview-parity-inventory.md)
+- **Active remaining-work tracker:**
+  [`2026-07-27-mobile-hybrid-webview-remaining-work.md`](./2026-07-27-mobile-hybrid-webview-remaining-work.md)
+
+## How This Checklist Is Maintained
+
+This document retains detailed implementation evidence and decisions. Track
+open work in the active remaining-work tracker and update this evidence archive
+in the same commit as the work whose status changes.
+
+Use these states:
+
+- `[ ]` not started or not demonstrated.
+- `[~]` in progress; implementation or validation is incomplete.
+- `[x]` complete with evidence recorded in this document or the PR.
+- `[!]` blocked; record the blocker and the decision needed in the status log.
+
+An item is not complete merely because code exists. Mark it complete only after
+its focused tests and required manual validation pass. Do not mark physical
+device, security, release-build, or App Review work complete from simulator or
+unit-test evidence.
+
+At the end of every implementation session:
+
+1. Update the relevant checkboxes.
+2. Update the summary counts and current workstream.
+3. Add validation commands or artifact links to the evidence log.
+4. Add new risks, blockers, or decisions to the status log.
+5. Record the next concrete action.
+
+## Progress Summary
+
+| Workstream                         | State       | Completed | Notes                                                  |
+| ---------------------------------- | ----------- | --------: | ------------------------------------------------------ |
+| Prototype evidence                 | Complete    |       8/8 | Simulator-only bounded vertical slice                  |
+| Contracts and parity inventory     | Complete    |     10/10 | Route, RPC, native, state, and failure ledgers frozen  |
+| Mobile web build                   | In progress |      9/12 | Packaged macOS/SSH lookup verified                     |
+| Package delivery RPC               | In progress |      9/10 | Production names and RPC pass focused validation       |
+| Native asset origin and cache      | In progress |      7/15 | Cross-platform unit faults pass; device drills remain  |
+| Capability bridge                  | In progress |     10/17 | Replay/race hardening passes; binary matrix remains    |
+| Mobile web application shell       | In progress |      3/16 | Host/state/shell seams wired; routes open              |
+| Workspace and sessions             | In progress |      3/15 | Tabs/prompts/attachments pass; chat persistence passes |
+| Terminal                           | In progress |     11/19 | Shared route stream adapter exports                    |
+| Files, diffs, and source control   | In progress |      9/19 | Core Git and bounded text writes pass                  |
+| Remaining host/native features     | In progress |      4/13 | Core hosted paths and native settings handoff pass     |
+| Security and adversarial review    | In progress |      0/15 | iOS/Android emulator isolation passes; review open     |
+| Device and topology validation     | In progress |      0/18 | Direct iOS and Android emulators pass core journeys    |
+| App Store validation               | Not started |      0/10 | Production submission, not TestFlight                  |
+| Cutover and cleanup                | Not started |      0/12 | Last implementation workstream                         |
+| Release evidence and documentation | Not started |      0/10 | Required before merge                                  |
+
+**Current workstream:** Complete remaining parity, cutover cleanup, and the
+external release gates. The runtime adapters behind the unchanged
+React Native mobile UI are implemented. Production shell, package, page, and
+shared-contract sources now reject prototype imports, names, and RPC references. The isolated
+experimental route retains its legacy contract only until cutover. The shared
+`HostScreen` now receives workspace list,
+repository presentation, view settings, pin, sleep, remove, activate, and
+invalidation behavior through the real native-shell bridge. Host identity,
+last-connected history, native caches, and local pin persistence now sit behind
+a second platform boundary: native retains those authorities, while the hosted
+page receives shell-owned identity and no page persistence. Leaving a host,
+reconnect, pairing repair, and paired-host removal now use a third narrow
+shell-operations boundary without changing rendered JSX. The purpose-built web
+screens remain infrastructure fixtures and cannot be the cutover UI. The
+existing `NewWorktreeModalController`, `NewWorktreeModal`, Smart source drawer,
+and their view models now consume a named
+`HostWorkspaceCreationOperations` domain interface. Native maps that interface
+to the existing RPC behavior. Named page schemas and broker grants now cover
+repository/settings/trust/provider/SSH/agent/hook/capability reads with opaque
+repository and SSH authority; source search, base resolution, create
+operations, native revalidation, and the complete web adapter now pass focused
+round-trip tests. Populated Agent History now passes deterministic native-versus-
+hosted screenshot and interaction parity in portrait and landscape; the
+remaining routes, shell states, tablet/device classes, and accessibility
+matrix remain open.
+The unchanged session route now receives snapshot, subscription, blank-terminal
+creation, activation, and close behavior through `HostSessionTabOperations`;
+native retains the existing RPC mapping while the hosted route uses only the
+strict session bridge and opaque workspace/tab identifiers.
+Its existing `TerminalPaneView` now receives ordered snapshots/output through
+`HostSessionTerminalOperations`. Native retains the current terminal RPC and
+nested WebView implementation; web uses the bounded terminal stream and a
+platform-resolved xterm implementation of the same imperative component
+contract. Page output is ACKed only after that surface parses it, and input plus
+query replies remain ordered on the opaque tab-local stream. The exact
+content-addressed RNW package now passes a dedicated production verifier and
+the unchanged hosted route has passed paired simulator workspace entry,
+two-terminal create/input/switch/close, display-mode switching, rename, clear,
+back/reopen, rotation, background/foreground, and injected WebContent
+process-loss checks without the earlier blank screen recurring. Terminal file
+taps now open the exact existing `FileReader` presentation through strict
+file/tab adapters; close, reopen, and active-tab reuse pass without duplicate
+tabs. Session haptics, selected-text clipboard writes, phone-browser opening,
+terminal preference reads, and text-scale persistence now use a named
+`HostSessionDeviceOperations` boundary. The page receives only strict,
+rate-limited native operations; clipboard writes, external HTTP(S) URLs, and
+text-scale changes require a recent native-observed gesture. The shell retains
+only the current opaque workspace handle and bounded
+display name, so a single process loss returns to the open session without
+exposing a host path or durable ID. Health acknowledgement is tracked
+independently from unresolved initialization delivery, preventing a healthy
+page from being rolled back solely because initialization is still pending.
+The unchanged Attach control now routes through that same terminal operations
+boundary. The native shell owns permission, picker bytes, execution-host
+resolution, bounded upload, and ordered terminal injection; hosted JavaScript
+receives only a bounded status. Focused tests cover local and SSH authority,
+accepted/cancelled/denied/too-large outcomes, and the iPhone simulator uploaded
+a selected 2,808,983-byte photo to a shell-owned host temp file.
+The unchanged native-chat composer now also hydrates and coalesces drafts
+through `HostSessionChatDraftOperations`. Hosted reads and writes carry only
+opaque workspace/tab IDs; the broker resolves current host authority, and
+shell storage keys hash the paired host, exact web build, host workspace, and
+tab. Native mode uses the same bounded store behind its default adapter.
+Accepted optimistic chat messages now use a second bounded shell-owned store.
+The hosted page supplies only its opaque workspace and native-chat handles;
+the broker freshly verifies the exact workspace, tab, terminal, agent,
+provider session, and transcript binding before persistence. Durable keys hash
+paired host, exact build, host workspace, host tab, and provider session; they
+never contain a page handle. At most 16 pending records of 4,096 characters
+are retained, and presentation-only message IDs are regenerated after
+hydration rather than persisted. A full-process-loss simulator run stopped the
+owning shell and Codex process, queued a unique message, terminated Orca, and
+cold-restored Host 37 plus the unchanged session. The exact message reappeared
+as `Queued` from shell persistence, reached the original provider transcript
+after terminal input resumed, then lost the pending marker and disappeared
+from AsyncStorage after transcript reconciliation.
+The existing Markdown tab presentation now consumes injected
+`HostSessionMarkdownOperations` in native and hosted routes. Strict read/save
+calls freshly verify current Desktop tab authority, preserve version-conflict
+behavior, bound content to 256 KiB, and do not expose host paths or raw errors.
+Shell-owned Markdown drafts are isolated by hashed host, build, workspace, tab,
+and relative-path identity. They preserve stale base versions, serialize
+debounced writes and cleanup, and cannot hydrate over a newer edit. Focused
+round-trip and lifecycle tests pass. Host 37 then rendered the unchanged editor
+through a sandboxed React Native Web adapter, saved a live marker to disk,
+rejected a stale save after an independent host change, restored the exact
+unsaved draft after a full app terminate/launch, and cleared it after confirmed
+discard. The newer host file remained intact throughout.
+On iPhone 17 Pro Simulator, the unchanged hosted composer retained
+`DRAFT_RECOVERY_2026_07_24_ALPHA` after every simulator WebContent child was
+terminated. The first full app terminate/launch returned to the native host list
+and manual Host 37 plus `mobile-rearch` re-entry rehydrated the exact draft.
+Bounded cold-route persistence now stores only paired-host and host-workspace
+identity. On each launch the native shell verifies the host still exists,
+selects it, freshly resolves the workspace through current `worktree.ps`
+authority, and gives the hosted page a new opaque handle. It never persists or
+reuses a page handle. A second full app terminate/launch automatically restored
+Host 37 and the unchanged `mobile-rearch` session, while the exact draft
+remained under the same hashed host/build/workspace/tab key. Pairing deep links
+retain startup priority; explicit host-list navigation and host removal clear
+the route before authority is revoked.
+The existing `MobileBrowserPane` now consumes a named
+`HostSessionBrowserOperations` boundary without changing its JSX, styles, or
+gestures. Native retains the current browser implementation; hosted JavaScript
+receives only shell-session-scoped opaque page handles, bounded 128 KiB frame
+chunks, typed dialogs and navigation state, and named pointer, scroll,
+keyboard, navigate, reload, Back, and Forward operations. Browser events are
+sanitized on both sides of the bridge. CDP history plus Electron
+`did-navigate`/`did-navigate-in-page` triggers feed authoritative navigation
+state, and focused tests pass. A New Browser action-sheet sequencing fix closes
+the sheet before creating the tab through the existing UI. A clean simulator
+run against one current pairing server created and enumerated a browser tab,
+navigated twice, exercised Back, Forward, and Reload with matching URL/history
+state, survived portrait/landscape rotation, closed and reopened the tab, sent
+text to a focused page field, and moved focus with the existing Tab key.
+
+The unchanged dictation controls and setup drawer now consume a named
+`HostSessionDictationOperations` boundary. Raw PCM remains in the native shell
+and goes directly to Desktop speech RPCs; hosted JavaScript receives only setup
+metadata, lifecycle state, status, and a bounded final transcript. Start,
+configure, download, and delete are recent-gesture gated, and active speech
+authority is revoked on client replacement, disconnect, interruption,
+backpressure, or disposal. The iPhone 17 Pro Simulator passed permission,
+setup-required routing, model metadata, configure, model download, recording,
+processing, and transcript insertion through the unchanged UI. Simulator
+CoreAudio requires its native capture format and no voice-processing unit;
+the shell now reports the actual sample rate while real-device voice processing
+remains unchanged.
+
+The unchanged Accounts screen now consumes a named `HostAccountsOperations`
+boundary. The hosted route imports that same screen, while a strict
+`account.snapshot` / `account.select` / `account.subscribe` bridge exposes only
+bounded account IDs, emails, optional labels, and rate-limit state. Credentials,
+provider IDs, auth paths, and unrelated provider state stay native/Desktop-side.
+Selection requires a recent shell-observed gesture, and subscriptions are
+retired on route exit, cancellation, client replacement, and broker disposal.
+The iPhone simulator loaded the authoritative RNW package through the default
+development lookup, rendered the existing Accounts UI, refreshed, selected the
+system-default account through the gesture gate, and returned to the shared
+host screen.
+
+The unchanged Tasks route now injects typed read, preference, and device
+operations. Bootstrap capability/settings/UI/preflight state, repository
+inventory, Linear context, GitHub repository identity, task resume state,
+provider/repository/team defaults, GitHub Project preferences, setup-hook trust,
+branch search, SSH state/connect, agent detection, repository-hook reads,
+clipboard, haptics, and external URLs no longer require direct platform or raw
+RPC calls in the presentation. Tasks reuses the already-tested New Workspace
+operation contract for those creation reads. GitHub work-item list/count,
+GitLab work-item list/todos, and Linear issue list/search now use strict,
+bounded provider operations. GitHub labels/users/details, GitLab details, and
+Linear issue/comments now use the same named boundary. The page receives opaque
+repository handles, and GitLab provider host/path targets are replaced with
+revocable opaque item handles; the shell broker alone translates them for
+Desktop RPC. GitHub Project discovery, view listing, pasted-reference
+resolution, table snapshots, row details, labels, assignable users, and issue
+types now use strict reads too. The table remains one unchanged presentation
+model: native validates and retains a stable snapshot capped at 500 rows and
+8 MiB, while opaque single-use continuations deliver at most 50 rows and about
+180 KiB per page to the hosted adapter. The first mutation
+tranche now covers Project item title/body/state, issue comments,
+labels/assignees, Project fields, and issue types. Hosted writes carry only an
+opaque row target; the shell reloads the authoritative Project table and
+revalidates row identity and field membership before each Desktop mutation.
+Project PR thread resolve/reopen, review replies, conversation comments,
+reviewer requests, check reruns, and merge now additionally revalidate the
+opaque Orca repository handle against the fresh row slug before using the
+existing Desktop wrappers. Project check refresh, viewed-file state, file
+contents, and inline review comments now use a second named boundary with the
+same fresh row and repository-slug revalidation. File contents are limited to
+256 KiB per side and a 600 KiB operation response, and opaque page target/repo
+handles are stripped before the existing Desktop RPC executes. Non-Project
+GitHub/GitLab status and metadata writes now also use revocable opaque item
+targets and re-fetch current provider details before Desktop mutation.
+Provider comments, reviewer/thread/reply/merge actions, check refresh/reruns,
+viewed-file state, bounded file contents, and inline comments now use the same
+opaque target model. The shell reloads current provider details and derives
+PR, SHA, pull-request-node, file path/status, and inline-comment authority
+before Desktop RPC. Linear connection, workspace selection, state updates,
+comments, issue reads,
+top-level/subissue creation, and GitHub/GitLab issue creation now use bounded
+named operations with opaque provider and repository authority. Sparse-preset
+list/save and final workspace creation reuse the strict New Workspace domain
+boundary. The shell revalidates GitHub/GitLab/Linear identity and PR/MR base
+data, resolves agent commands and idempotency support natively, preserves
+sparse checkout and creation warnings, and returns only an opaque workspace
+handle. `tasks.tsx` contains no direct `sendRequest` call.
+
+The bridge transport audit found that those valid 600 KiB Tasks responses could
+still fail at the last native hop because the Swift and Kotlin WebView modules
+silently enforced a 256 KiB message ceiling. The shared contract and both
+native transports now accept a 640 KiB serialized envelope, while every
+operation grant remains capped at 600 KiB so 40 KiB stays reserved for
+authenticated envelope metadata. Focused schema, worst-case UTF-8 clipboard,
+and cross-language source-drift tests pass. A signed iOS Simulator build
+retained secure-store access and automatically restored Host 37 into the
+existing workspace after installation and a full terminate/launch.
+
+The hosted router now imports that exact `tasks.tsx` route and injects the web
+adapters. Explicit bootstrap/repository/GitHub projections discard unsupported
+Jira and unrelated Desktop settings, host-only repository metadata, origin
+candidates, and classified error detail before page schema validation. Host 34
+on the iPhone 17 Pro Simulator rendered the existing workspace and Tasks UI,
+exercised query refresh and expected provider-authentication recovery,
+provider/Linear setup surfaces, back navigation, rotation, and
+background/foreground without the earlier `invalid_request` response.
+
+Notification taps now stay native through paired-host validation, then enter a
+latest-only monotonic intent buffer only while the Hybrid route has a live
+consumer. The shell selects the intended paired host, waits for an authenticated
+connection, verified package session, matching broker, and page readiness, and
+freshly resolves the notification's Desktop workspace through `worktree.ps`.
+Only an opaque shell-session workspace handle crosses in a strict
+shell-to-page navigation message. Missing workspaces fall back to the hosted
+workspace list; delayed and out-of-order intents cannot cross a host, build, or
+shell replacement. Native routing remains unchanged outside Hybrid. The iOS
+Simulator proved foreground APNs intake, Hybrid host selection, and hosted
+workspace-list entry after correcting the Expo remote-push fixture to place
+custom data in its root `body` object. Host 37 now supplies a connected exact
+session fixture. The notification reaches iOS Notification Center with the
+correct payload, but the current serve-sim tap and Simulator accessibility
+paths dismiss the shade without delivering the default notification action, so
+exact-session restoration remains a live-device verification gate. Deterministic
+coverage now proves fail-closed paired-host storage reads, malformed workspace
+rejection, and newest-tap precedence even when older host reads finish later.
+
+Native chat and agent state now follow the same presentation-preserving
+architecture. The existing session route, `MobileNativeChatOverlay`,
+`MobileNativeChatView`, composer, message rows, and prompt cards remain the
+only rendered UI. A named `HostSessionNativeChatOperations` boundary supplies
+native and hosted implementations for bounded history, live transcript
+subscription, readability, composer sends, permission responses, question
+answers, paced stop, file search, and file opening. Session snapshots expose
+only bounded agent/tool/prompt/last-message state plus an opaque chat-session
+handle. Pane keys, terminal handles, workspace and connection IDs,
+orchestration state, provider session IDs, and transcript paths stay in the
+shell.
+
+The shell maps each opaque chat handle to the exact workspace, tab, terminal,
+agent, provider session, and transcript. It revokes that authority when the
+snapshot changes or the authenticated Desktop client, broker, or shell session
+is replaced. Every mutation first reloads `session.tabs.list` and verifies the
+full identity before invoking Desktop; stale authority is revoked before a
+terminal write. Hosted mutation results preserve
+`accepted`/`rejected`/`unknown`, where `unknown` covers both physical
+acknowledgement loss and Relay-to-Direct logical cutover so the page never
+blindly retries a possibly delivered message. The existing two-Escape stop
+sequence remains 80 ms apart and cancels its delayed step when authority,
+route, operation, or lifecycle state changes. Automated validation passes. On
+Host 37, verified hosted build `895357c5…` loaded the unchanged chat UI,
+replayed existing history, sent a prompt through opaque authority, and streamed
+the response back. The same run exercised stop, file search and mention
+selection, tab switching, background/foreground, and a cold app reconnect.
+Stop reached the Codex transcript as `Conversation interrupted`, but the
+hook-derived `Agent is working` indicator remained visible. The repair now
+retains strict, bounded transcript lifecycle evidence through both native and
+hosted adapters, forwards the hook turn start time, and suppresses a stale
+working hook only when a completed or interrupted transcript lifecycle is at
+least as new. Build `64ae13e9…` passed a cold-start Host 37 replay: a new
+120-second Codex turn showed the existing working state, the equivalent
+two-Escape stop added `Conversation interrupted`, and the working indicator
+cleared without JSX or style changes. A real Claude `AskUserQuestion` on the
+same Host 37 fixture then rendered the unchanged structured prompt card,
+selected Beta, and delivered `RECEIVED Beta` through opaque native authority.
+Structured prompts now suppress permission/question heuristics for their whole
+lifetime, so a lingering answered status cannot expose a duplicate fallback
+card.
+
+The SSH audit found one execution-owner violation below that unchanged UI:
+`nativeChat.readSession` and `nativeChat.subscribe` opened transcript paths
+through Desktop's local filesystem even when the terminal and transcript lived
+on a classic SSH provider. `TranscriptFileSource` now preserves the existing
+parsers and presentation while selecting either local bounded reads or exact
+provider-backed 64 KiB ranges. The runtime resolves the current terminal handle
+to its worktree, connection, agent, provider session, and transcript before
+selecting the provider. Disconnect is unavailable and never falls back to a
+same-path Desktop file; reconnect reacquires provider authority and resumes
+bounded reconciliation. An isolated Electron client plus independent paired
+runtime client, the production `MobileWebCapabilityBroker` and
+`MobileWebBridgeClient`, and a real Docker Linux sshd now pass remote hook
+publication, sanitized workspace discovery, opaque native-chat authority,
+initial read, stable `host_error` on disconnect, authority reacquisition, and
+appended-message recovery. This proves the SSH provider/relay subprocess plus
+hosted data/authority contract. A follow-up iPhone 17 Pro Simulator run paired
+the production shell to the same isolated Electron/Docker SSH topology as Host 38. The actual WebView rendered the unchanged repository, workspace, session,
+and terminal UI; typing
+`printf SSH_WEBVIEW_FILE_OK > /tmp/orca-ssh-webview-proof` through that terminal
+created the exact sentinel on the remote container. The repeatable SSH harness
+now performs the same topology with a fresh paired identity: it enters the
+actual `orca-mobile-web://` WKWebView, opens the unchanged workspace/session UI,
+uses the existing buffered command control, observes command plus carriage
+return through `OrcaNative`, and verifies the proof file inside Docker. The
+separate Direct harness starts an isolated paired runtime and Metro, selects
+that exact host by its public identity, enters the existing hybrid route,
+attaches through debug-only WebKit inspection, and asserts that the visible DOM
+contains the unchanged `mobile-rearch` workspace UI and interactive controls.
+The same durable SSH journey now also publishes a real remote Claude transcript,
+switches the unchanged session UI to chat, retains that chat with
+`Reconnecting…` while the classic SSH provider is unavailable, reconnects the
+existing PTY/provider, and renders the appended `remote recovered` message in
+the actual WKWebView. These prove Direct and classic SSH simulator
+presentation, including native-chat reconnect retention, but not mobile cloud
+Relay. The Android API 36 emulator now stages the exact RNW package, renders the
+unchanged workspace and session routes, and carries terminal input through the
+paired Desktop. It also passes shell-owned microphone permission, recording,
+stop, denial, process-loss recovery, ordinary background interruption, native
+Settings/About, accepted image upload, and pause/resume audio playback without
+byte loss. The exact arm64 Debug APK also retains its private document while a
+DEBUG-only probe attempts network loads and adversarial navigation; a reachable
+ADB-reversed sentinel records the deliberate red check and then zero traffic
+from the isolated WebView. The exact non-debuggable Release APK also cold-opens
+the unchanged hosted workspace on an API 36 Play Store `user/release-keys`
+image with no DevTools socket or discovery endpoint. Feature-specific Android
+outside those slices, live ambiguous-delivery, cloud Relay, production store
+signing, and physical-device evidence remain open.
+
+The exact iPhone 17 Pro Simulator app now also passes the unchanged hosted
+Source Control and Review journey. Session-origin changed files open a second
+Session diff tab, standalone Review retains its existing controls, and the same
+run passes the private-origin network and navigation isolation probes.
+
+The exact Pixel 9 Pro API 36 arm64 Debug APK now passes the same journey after a
+fresh native build and install. Android accessibility opens the unchanged
+Source Control hub and changed-file action, Session retains the second diff tab,
+and standalone Review retains Back and review-actions controls. The same run
+passes deliberate-red private-origin network/navigation isolation with zero
+escaped traffic and a clean native bridge log audit.
+
+**Next action:** Complete the remaining parity inventory and cutover cleanup
+before expanding the external validation matrix.
+Extend the deterministic native-versus-hosted screenshot fixture beyond the
+passing populated Agent History portrait case. The authoritative shared RNW
+route is now governed by a separate reviewed ceiling of 10 MiB total, 3 MiB
+gzip, 9.5 MiB of scripts, 256 KiB of styles, and 64 assets. The earlier 8 MiB /
+2 MiB / 7.5 MiB ceilings held before the existing Mermaid presentation was
+moved off its network-loaded executable. The current verified package is
+`f852d8525d2b0e20d79262d74ce3ef74bfa73c3e55b95176bfb1b467beafae61`,
+9,330,210 bytes / 2,697,838 bytes gzip across 49 assets. The lifecycle and
+prompt-card live evidence used earlier packages; the current package
+additionally carries the locally bundled Mermaid engine and preserves
+ambiguous hosted mutation outcomes.
+The original 2 MiB ceiling remains the infrastructure-fixture budget and is not
+used to justify stripping or forking the existing mobile UI. Keep repeated-loss
+rollback, terminal topology, the Android feature matrix, physical-device,
+security, and App Store gates open.
+
+## 0. Prototype Evidence
+
+- [x] Deliver a content-addressed HTML package over paired E2EE RPC.
+- [x] Enforce the measured build budgets: 2 MiB total, 512 KiB compressed,
+      1 MiB scripts, 256 KiB styles, and 48 KiB RPC chunks.
+- [x] Verify every chunk and the final package with SHA-256.
+- [x] Keep a verified last-known-good cache isolated per paired host.
+- [x] Lock WebView network, file, storage, popup, and navigation behavior.
+- [x] Expose only `workspace.list` and `haptic.selection` prototype capabilities.
+- [x] Guard delayed responses from crossing a host switch.
+- [x] Run the bounded simulator lifecycle and synthetic performance lab.
+
+Prototype limitations remain explicit: no physical device, App Review, real
+large-diff pipeline, or adversarial security validation passed in that bounded
+slice. The later production implementation has passed real terminal and route
+journeys on iOS and Android emulators, but not the full topology, stress,
+recovery, or physical-device gates.
+
+## 1. Contracts and Feature-Parity Inventory
+
+- [x] Inventory every route under `mobile/app/` and assign its production owner:
+      native shell or mobile web app.
+- [x] Inventory mobile RPC requests and subscriptions, including server-side
+      allowlist and authorization behavior. Source scanning freezes literal,
+      dynamic, and cleanup RPC methods against registration and the mobile
+      allowlist. The shared operation registry, production grants, schemas, and
+      named adapters now form the per-operation payload/result/bounds/topology
+      ledger; a focused test requires every registered operation to be granted
+      exactly once. The audit removed 12 unused ungranted bridge operations
+      instead of retaining speculative privileged surface.
+- [x] Inventory terminal input, output, resize, query-reply, recovery, and floor
+      ownership contracts.
+- [x] Inventory native capabilities, platform permissions, and user-gesture
+      requirements.
+- [x] Inventory persisted settings, drafts, sessions, caches, and migration
+      requirements. The parity inventory now freezes every JavaScript and
+      native package store, identity scope, resource bound, cleanup owner,
+      legacy source, and migration rule. A source-inventory test fails when a
+      new `AsyncStorage` or `SecureStore` boundary appears without review.
+- [x] Inventory loading, empty, offline, reconnect, incompatible, permission,
+      retained, recovery, partial-data, and error states. The parity inventory
+      separates shell/package states from feature-level states and records the
+      owner, required behavior, current evidence, and remaining live
+      validation for each.
+- [x] Inventory notification/deep-link destinations and host-routing behavior.
+- [x] Inventory accessibility behavior, keyboard/IME paths, and mobile gestures.
+      The parity inventory maps screen-reader semantics, focus, software and
+      hardware keyboards, composition, dictation/audio, gesture leases,
+      selection/clipboard/links, rotation/tablet, reduced motion, and text
+      scaling without treating source reuse as live platform proof.
+- [x] Define production manifest, bridge, terminal-stream, compatibility, and
+      stable error-code schemas.
+- [x] Define and test hard message, asset, file-count, package, concurrency,
+      subscription, and storage limits. Shared schemas and production grants
+      cap every bridge operation; global limits cover 640 KiB messages, 64
+      pending requests, 32 subscriptions, 256 package assets, 10 MiB per asset,
+      32 MiB per package, four 48 KiB package reads, bounded file/terminal
+      chunks and snapshots, plus 128 MiB per-host / 512 MiB global native cache
+      quotas with 16 MiB free-space reserve. Boundary, overflow, concurrency,
+      eviction, and cross-platform native-policy tests pass.
+
+## 2. Dedicated Mobile Web Build
+
+- [x] Add an isolated Vite validation harness for package and bridge work.
+- [x] Add a host-only Expo Router/React Native Web entry that imports the
+      existing mobile presentation source.
+- [x] Add isolated TypeScript, lint, formatting, and test coverage.
+- [~] Compile the existing React Native screen, component, style, and view-model
+  source without importing the desktop renderer entry. The bridge-connected
+  host route and unchanged existing session route source export successfully;
+  session runtime adapters and the remaining host routes are open.
+- [x] Prevent Electron, Node, desktop-window, and desktop-only persistence code
+      from entering the bundle.
+- [x] Emit relative content-addressed assets and a deterministic manifest.
+- [x] Disable runtime code download, `eval`, `new Function`, and remote source
+      maps.
+- [x] Generate and verify the production CSP against executable assets.
+- [x] Record compressed and uncompressed bundle-size budgets in CI.
+- [~] Package the build in macOS, Linux, Windows, and headless distributions.
+  Electron packaging now selects `out/mobile-web-rnw` for every desktop
+  platform and `afterPack` verifies the copied resource tree with the
+  production package verifier. An actual unpacked macOS arm64 app passed with
+  build `c24ff987…`; Linux, Windows, headless, and signed release artifacts
+  remain unverified.
+- [x] Verify packaged lookup works outside the source checkout and through the
+      Desktop-to-SSH execution topology. The packaged gate makes the unpacked
+      app's `Resources` directory both `process.resourcesPath` and the Desktop
+      cwd, so the source-output fallback is absent. The authenticated package
+      RPC returned build `c24ff987…`, then the actual iOS WKWebView rendered the
+      unchanged Docker SSH workspace, mutated its remote terminal, and
+      recovered native chat across SSH disconnect/reconnect.
+- [~] Replace the Vite validation presentation with the React Native Web build
+  and remove equivalent `src/mobile-web/` UI components. The existing
+  mobile UI now packages deterministically through the production asset
+  format. `build:mobile-web`, development lookup, and Electron packaging now
+  select the RNW artifact by default; the Vite presentation remains only as an
+  explicitly named infrastructure fixture until its tests migrate. Cutover is
+  still blocked on full route parity, device evidence, and distribution
+  packaging.
+
+## 3. Production Package Delivery RPC
+
+- [x] Replace prototype contracts and method names with production names.
+      Production shell, package, page, and shared-contract sources now use only
+      production names and `mobileWeb.package.*`. The host picker moved unchanged
+      into the production mobile-web layer, while the isolated experimental route
+      reuses it and retains the legacy prototype delivery contract until cutover.
+      A recursive source-boundary test rejects any new prototype import, symbol, or
+      RPC reference in production roots.
+- [x] Serve a canonical multi-asset manifest from packaged desktop output.
+- [x] Serve only manifest-declared content-addressed assets.
+- [x] Validate normalized paths, hashes, MIME types, roles, lengths, offsets,
+      and build identity.
+- [x] Preserve the 48 KiB initial chunk bound unless measured evidence supports
+      a reviewed change.
+- [x] Bound concurrent asset reads and total in-flight bytes per mobile client.
+- [x] Abort reads on disconnect, cancellation, build change, or client cleanup.
+- [x] Register every package method explicitly in the mobile RPC allowlist.
+- [x] Test malformed manifests, traversal, duplicate paths, stale builds,
+      offset errors, partial reads, and concurrency limits. Downloader fault
+      coverage now also rejects a forged canonical `buildId` before native
+      staging, corrupt chunks, a valid-chunk/invalid-aggregate asset, native
+      write/finish/commit failures, abort-cleanup failure, and cancellation.
+- [~] Verify production package RPC over Direct and Relay connections. Direct
+  iOS Simulator package activation passes. A deterministic
+  protocol-compatible local Relay cell now drives the real mobile package
+  downloader through the production mobile Relay session, NaCl E2EE v2,
+  Desktop `CloudRelayTransport`, and the production package asset provider. It
+  verifies a canonical document/script manifest, a multi-chunk script, exact
+  request offsets and staging order, per-chunk and final-asset SHA-256, assembled
+  bytes, and commit-after-all-assets. Production cloud Relay, realistic
+  latency/reconnect, and an actual Relay-backed WebView remain open.
+
+## 4. Native Asset Origin and Verified Cache
+
+- [~] Decide and document the public iOS/Android APIs used by the private asset
+  origin and locked WebView.
+- [~] Add the `@orca/expo-mobile-web-shell` Expo native module or its final
+  concretely named equivalent.
+- [x] Serve only active verified assets through the private
+      `orca-mobile-web://` origin. Swift and Kotlin store tests stage, open, and
+      read the exact generation while rejecting another paired-host namespace,
+      incomplete generations, and corruption both before open and after a
+      session has opened.
+- [~] Keep cache filesystem paths and host identity out of page-readable state.
+- [x] Enforce exact path, MIME, active-generation, session, and range checks.
+      Malformed identity, path, MIME, totals, host namespace, and corrupt
+      on-disk bytes fail with bounded store errors on both native platforms.
+- [x] Implement host-isolated staging downloads and per-asset verification.
+      Native fault fixtures cover exact chunks, incomplete stages, orphan-stage
+      cleanup on store restart, and host isolation.
+- [x] Verify canonical manifest/build identity before activation. The page-side
+      downloader recomputes the canonical SHA-256 before `beginStage`; Swift and
+      Kotlin recompute it again before creating native staging state.
+- [x] Commit complete generations atomically across process interruption.
+      Separate Swift and JVM child processes are forcibly terminated after stage
+      creation, partial chunk write, asset sync, generation rename, and atomic
+      activation replacement. Every reopened native store preserves a verified
+      active build, and both post-activation cases recover the previous build.
+- [~] Require page readiness and health acknowledgement before activation.
+  Health now clears its deadline independently of unresolved initialization
+  delivery, stale-session health cannot clear the active deadline, and a
+  replacement shell session supersedes the prior deadline.
+- [x] Retain active and previous healthy generations per host. Cross-platform
+      native tests activate two verified builds and recover the prior
+      generation without crossing the paired-host namespace. Cached cold opens
+      now also reject an invalid active generation, atomically promote a
+      compatible verified previous generation, and remove the invalid
+      generation when it is no longer protected.
+- [~] Detect crash loops and reactivate the previous healthy generation. The
+  exact Android Debug app receives three real Chromium renderer crashes through
+  `Page.crash` in 7.6 seconds. The exact iOS Debug simulator app receives three
+  real `com.apple.WebKit.WebContent` process kills in 11.9 seconds. Both remount
+  after the first two losses and atomically open a new native session on the
+  verified previous generation after the third. Physical-device and final
+  release-candidate rollback remain.
+- [x] Enforce per-host and global quotas with safe generation eviction.
+      Cross-platform store fixtures inject low free space before staging,
+      exercise per-host eviction while preserving an active generation, and
+      exercise global eviction from another host's unprotected generation.
+- [~] Delete cache, grants, downloads, and sessions when pairing is removed.
+- [~] Prove Expo prebuild and release builds work on iOS and Android. The exact
+  Android Release APK assembles across 944 Gradle tasks, preserves paired state
+  across reinstall, and cold-opens the unchanged hosted workspace on an API 36
+  Play Store `user/release-keys` image. It remains debug-keystore signed; iOS
+  Release and production store-signed artifacts remain open.
+- [~] Test corruption, partial writes, low storage, eviction, process kill,
+  missing desktop, and WebView process loss. Canonical-identity, chunk,
+  aggregate-asset, native write/finish/commit, cleanup, cancellation,
+  interrupted-stage, incomplete-generation, host-isolation, corrupt-open,
+  corrupt-read, low-storage, per-host/global eviction, pairing-removal, and
+  previous-generation recovery cases now pass. Separate Swift and JVM child
+  processes also survive forced termination at five persistent-state
+  boundaries. The exact Android app also passes three real renderer losses and
+  automatic previous-generation rollback. The exact iOS Simulator also passes
+  three real WebContent losses, native manual previous/cache-clear actions, and
+  corrupt-active cold fallback while Desktop is unavailable. Device storage
+  pressure, Android manual/corrupt-cache UI, physical devices, and final release
+  candidates remain open.
+
+## 5. Typed Capability Bridge
+
+- [~] Generate page/native types from the shared production schemas.
+- [x] Include protocol version, shell session, request/subscription ID, named
+      capability, and typed parameters in every request.
+- [x] Return typed results or stable error codes with matching session/ID.
+- [x] Negotiate exact capabilities, bridge version, and per-operation limits.
+- [x] Reject malformed JSON, unknown fields, unsupported versions, and unknown
+      capabilities. Missing protocol versions are `invalid_message`; explicit
+      out-of-range versions remain `unsupported_version`. Native-to-page inbox
+      delivery also requires a native `message` event whose source is `null`,
+      rejecting frame-originated spoofing before envelope validation.
+- [x] Reject oversized messages, duplicate IDs, excess requests, and rate-limit
+      violations before expensive work. The shared, Swift, and Kotlin
+      transports now enforce a 640 KiB serialized-envelope ceiling, while
+      operation grants allow at most 600 KiB and retain 40 KiB for envelope
+      metadata. Cross-language source tests prevent a native limit from
+      silently drifting below a broker-valid production response. Active and
+      recently retired request/subscription IDs remain replay-protected through
+      bounded windows rather than permanently exhausting long-lived sessions;
+      subscription request and subscription IDs must be distinct.
+- [~] Reject stale build, host, workspace, and shell sessions.
+- [x] Replace path-derived native worktree IDs and repository IDs with
+      shell-session-scoped opaque page handles; resolve and authorize each
+      handle natively, and revoke mappings on removal, host switch, or shell
+      replacement. Workspace snapshots/activation, session
+      reads/mutations/subscriptions, file reads/writes, terminal
+      streams/artifacts, source-control reads/mutations/sync/subscriptions,
+      commit generation/cancellation, and provider-review
+      reads/diffs/mutations/submission now resolve native IDs only inside their
+      named adapters. Client replacement revokes the authority and every
+      client-bound stream.
+- [x] Add cancellation and bounded subscription cleanup. Fault coverage now
+      exercises cancellation before/after dispatch, synchronous first-event
+      teardown, retired subscription replay, replay-window rollover, broker
+      disposal, and stale build/session suppression.
+- [~] Map host reads to explicit mobile-allowlisted RPC adapters.
+  Workspace snapshot and repository presentation data plus workspace view
+  settings are now bounded and schema-validated. Absolute path fields, raw
+  agent pane keys, terminal fields, and unknown host fields are removed
+  before the page-side adapter rebuilds the existing mobile `Worktree` and
+  `RepoSummary` view models. Opaque workspace handles remain open.
+  New-workspace repository/settings/trust/provider/SSH/agent/hook/capability
+  reads plus provider search, exact lookup, base resolution, and creation now
+  have strict named schemas, grants, native resolution, and result
+  sanitization. Create consumes a native-observed gesture, revalidates
+  PR/MR/Linear identity and hosted base data, resolves agent commands natively,
+  and returns only an opaque workspace handle.
+- [~] Map host mutations without bypassing Desktop authorization.
+  Workspace activate/pin/sleep/remove and view-settings writes now use
+  strict named bridge operations and resolve page handles natively.
+  Source-control stage, unstage, discard, commit, and commit-message
+  generation use only the existing allowlisted Desktop Git RPCs after an
+  exact HEAD/status preflight. Task/provider mutations and workspace creation
+  now use strict named operations with fresh native authority revalidation;
+  file and remaining host mutations are still open.
+- [ ] Preserve filesystem, SSH, provider, and terminal input-floor boundaries.
+- [~] Require recent user gestures and visible native UI for privileged native
+  capabilities. Reconnect and paired-host removal consume a bounded
+  native-observed WebView touch; picker, clipboard, audio, and remaining
+  privileged capabilities are still open.
+- [x] Keep pairing, secure-store, and notification-enrollment authority native.
+- [x] Remove every generic RPC or native invocation escape hatch.
+- [~] Test newer shell/older page and older shell/newer page degradation.
+  Download and native cache/session boundaries now reject shell versions
+  below `minimum` or above `testedThrough` before staging, opening, or
+  recovery. Shared, hook, Swift/Kotlin source-drift, and native compile
+  checks pass; the real multi-binary compatibility matrix remains open.
+- [x] Cancel all pending bridge work before host switch, removal, or WebView
+      replacement. Authenticated Desktop client replacement first cancels every
+      pending broker request, so a delayed result from the retired client
+      cannot cross into the current session.
+
+## 6. Mobile Web Application Shell
+
+- [~] Reuse the existing mobile host-workspace screen components from shared
+  source; do not maintain a parallel DOM/shadcn presentation. `HostScreen` now
+  selects native/web workspace and host-state adapters without changing its
+  rendered JSX or styles. The existing new-workspace component graph now
+  selects a complete strict web domain adapter without changing its JSX or
+  styles; emulator parity remains open.
+- [x] Keep paired-host identity, last-connected history, workspace/repository
+      caches, and local pin persistence native-owned. The hosted route supplies
+      shell-owned identity, uses no page persistence, and reaches native
+      workspace transport only through named bridge operations. Platform-safe
+      defaults prevent native state/transport imports from leaking into the web
+      runtime.
+- [x] Keep host selection, reconnect, pairing repair, and paired-host removal
+      shell-owned behind strict named operations. Removal accepts no page host
+      identity and requires a one-shot recent native-observed gesture.
+- [~] Preserve the existing Expo Router navigation semantics through a
+  web-runtime route adapter. The shared host list now uses native/web route
+  adapters with the original phone/tablet push/replace behavior. Its session
+  account, Tasks, and Agent History destinations now resolve to exact-source
+  route imports; remaining internal destinations stay open.
+- [~] Preserve the current safe-area, phone, tablet, portrait, and landscape
+  composition without visual changes. Portrait and landscape pass on the
+  current iPhone simulator. The populated Agent History portrait fixture also
+  constrains the shared header's vertical accessibility landmark; tablet,
+  remaining routes/states, and physical-device evidence remain.
+- [~] Preserve the exact current mobile colors, typography, spacing, elevation,
+  icons, and component selection from `origin/main`. Reconcile every
+  upstream mobile presentation change after rebase through the shared
+  source; do not freeze or fork an older web-only snapshot. The hosted
+  terminal route has a manual simulator capture and exact source identity.
+  Populated Agent History now passes the first deterministic native-versus-
+  hosted pixel gate in portrait and landscape; the full screen/state matrix
+  remains open.
+- [ ] Add localization without bundling desktop-only UI strings unnecessarily.
+- [~] Add native-provided connection state and accurate offline overlays. The
+  shell now supplies bounded retry count and last-connected time so the
+  unchanged screen preserves its current connection escalation, while
+  reconnect/repair/removal use strict shell operations. Full overlay and
+  emulator interaction parity remain open.
+- [~] Add loading, incompatible-build, permission, partial-data, and error
+  boundaries. Shell presentation is now an explicit tested state machine for
+  host selection, first-package loading, package unavailability, and a healthy
+  hosted interface. Dedicated compatibility copy distinguishes retained-cache
+  fallback from no-compatible-cache failure, and a regression test prevents a
+  late cache-open failure from overwriting the authoritative package error.
+  Feature-level and live offline/error interaction parity remains open.
+- [~] Add typed notification/deep-link route intake after native host selection.
+  The native shell validates the paired host, buffers only the latest monotonic
+  intent, waits for a matching authenticated package/page/broker session,
+  freshly resolves the Desktop workspace, and sends only an opaque route.
+  Foreground host selection and hosted entry pass on iOS Simulator. Automated
+  coverage proves newest-intent ordering; exact-session, missing-target,
+  background, cold-start, and consecutive-tap live evidence remains open.
+- [~] Add keyboard, focus, selection, screen-reader, reduced-motion, and zoom
+  foundations. The hosted document now disables iOS input auto-zoom at the
+  shell boundary, and Rename returns to the exact pre-keyboard viewport after
+  Save. Shell Back/Hosts/Retry/host-row controls now carry explicit names and
+  button roles; loading uses polite live regions and failures/warnings use
+  alerts. Live screen-reader, reduced-motion, hardware-keyboard/IME, and user
+  text-zoom validation remains open.
+- [x] Block browser-style navigation affordances that conflict with native app
+      behavior. iOS disables back/forward gestures and JavaScript windows,
+      returns no popup WebView, and rejects every non-session main-frame
+      navigation. Android disables multi-window/script-window support, rejects
+      popup creation, and enforces the same exact session-document boundary.
+      Focused source-contract coverage retains these controls on both platforms.
+- [~] Add deterministic native-versus-web screenshot and interaction fixtures;
+  treat any unapproved UI or behavior difference as a release blocker, and
+  verify the hosted entries mount the `origin/main` route/component graph
+  rather than fixture UI or copied presentation. The populated Agent History
+  route now captures native and hosted simulator screenshots, masks only the
+  changing status bar, enforces calibrated pixel budgets in portrait and
+  landscape plus a portrait vertical safe-area budget, and exercises scopes,
+  preview, search, reconnect, native-gesture Resume, and Back. Other
+  phone/tablet, loading/offline/error, and populated-route fixtures remain open.
+- [~] Add component and route tests for all shell states. Pure presentation
+  reducers cover every host-picker and package-shell branch; package-session
+  tests cover compatible/generic refresh failures with and without cache, and
+  source contracts freeze shell accessibility semantics. Full rendered route
+  interactions remain open.
+- [ ] Measure cached host-entry and first-package startup separately.
+- [~] Verify no routine launch depends on a reachable desktop when a healthy
+  cache exists.
+
+## 7. Workspace, Sessions, and Agents
+
+- [~] Implement worktree/workspace list, active state, and entry. Named reads,
+  mutations, invalidations, and the unchanged screen wiring pass focused
+  tests and production export. Opaque single-use continuations now cover up to
+  10,000 workspaces in 200-row/120 KiB pages from an 8 MiB native-only stable
+  snapshot; emulator interaction parity remains open.
+- [~] Run the existing `NewWorktreeModalController`, `NewWorktreeModal`, Smart
+  source picker, setup-trust prompt, and create behavior unchanged through
+  React Native Web. Direct `RpcClient` dependencies have been replaced by
+  named domain operations and native mapping tests pass. Bounded read schemas
+  and opaque repository/SSH resolution pass focused tests. Source search,
+  exact lookup, base resolution, gesture-gated creation, native
+  PR/MR/Linear revalidation, command isolation, opaque created-workspace
+  presentation, complete web adapter injection, and a real
+  page-client-to-broker round trip pass. Emulator visual and interaction parity
+  remains open.
+- [x] Implement session/tab snapshots and subscriptions.
+- [~] Implement create, activate, close, and restore behavior. Blank-terminal
+  create, activate, and explicit-user close pass focused tests and the strict
+  bridge implementation also has iOS Simulator validation. The unchanged
+  hosted UI created a second terminal, independently wrote through both tabs,
+  switched between them, and closed one without losing the route;
+  the unchanged session screen now consumes snapshot, subscription, activation,
+  blank-terminal creation, and close through native/web named adapters.
+  Agent creation now sends only a bounded agent ID and is admitted only after
+  the shell reloads current settings and detected agents. Saved Quick Commands
+  use the unchanged sheet through native/web adapters; the page receives only
+  global/current-repository commands with opaque repository scope and launches
+  by command ID. The shell re-reads the command, rejects cross-repository ID
+  collisions, revalidates agent authority, and keeps executable startup
+  delivery shell-ready. Insert-only text enters the existing terminal input
+  path only after its new hosted subscription is ready. Restore remains open
+  because Desktop's reopen stack is renderer-local and no paired/headless
+  restore RPC exists.
+- [~] Implement agent working, permission, question, done, and error states.
+  Session snapshots project only bounded agent/tool/prompt/last-message
+  state and an opaque native-chat handle into the unchanged screen. Live
+  working, completed, and interrupted turns render. Explicit transcript
+  lifecycle reconciles a stale hook working state by turn timestamp without
+  allowing an older completion to suppress a newly started turn.
+- [~] Implement Agent Session History and resume through the unchanged panel.
+  Native and hosted controllers now render one extracted copy of the existing
+  panel/list presentation. The production bridge exposes 64-row single-use
+  pages, five-message lazy previews, and opaque resume requests/results. It
+  deliberately excludes cwd, transcript paths, provider session IDs, commands,
+  execution-host identity, and raw scan issues. Stable random session handles
+  refresh their native binding, revoke removed rows, and clear with the bridge
+  session. Filtering, target resolution, legacy-session preparation, settings,
+  command generation, idempotent terminal creation, and terminal input remain
+  native. Resume consumes one recent native-observed gesture and returns only
+  an opaque target workspace for page-local navigation. Production RNW package
+  `c24ff987…` includes the exact-source hosted route and passes the independent
+  verifier. The actual iOS WKWebView now passes the unchanged Workspace →
+  Session → Agent History route, all three scopes, search/no-match/clear, a
+  lazy fixture preview, safe rejection of an untrusted synthetic Resume, a
+  successful native-accessibility-tree touch Resume that creates a second
+  terminal, and Back navigation to the Session route. A fresh-profile run then
+  stopped and relaunched the paired Desktop runtime on the same endpoint. The
+  hosted bridge observed `recovering` through failed connection attempts and
+  back to `connected` while the exact Agent History route and fixture remained
+  rendered; native Resume and Back still passed after recovery. Native and
+  hosted screenshots now pass a 3% changed-pixel budget at a 24-channel
+  threshold (observed 2.2677%), a mean-channel-difference budget of 4
+  (observed 2.5663), and a vertical header-landmark budget of 0.005
+  (observed 0.00075). The status bar alone is masked. The full live
+  accessibility and remaining screen/device/state matrix remain open.
+- [x] Implement approvals and elicitation/question flows. The existing prompt
+      cards call a named response operation that freshly verifies the exact
+      workspace, tab, terminal, agent, provider session, and transcript before
+      mutation. Host 37 rendered a real Claude `AskUserQuestion`, selected Beta
+      in the unchanged hosted card, and returned `RECEIVED Beta` to Claude.
+      Structured prompts suppress heuristic fallbacks until the prompt clears.
+- [~] Implement native-chat history, streaming, composer, stop, and resume.
+  The existing chat components now use native/default/web implementations
+  of `HostSessionNativeChatOperations`; no chat JSX or styles were copied.
+  Delivery is explicitly `accepted`, `rejected`, or `unknown`, and the
+  paced two-Escape stop cancels when its authority or lifecycle changes.
+  Direct iOS Simulator evidence passes history, send/stream, stop delivery,
+  file search/selection, tab switching, background/foreground, and cold
+  reconnect. The interrupted-working mismatch now passes deterministic and
+  live simulator replay, and a structured prompt-card response passes live.
+  Classic SSH transcript reads and reconnect pass through the production
+  hosted broker/client contract over a real Docker provider with exact runtime
+  authority and no local fallback. The durable actual-WKWebView journey now
+  passes remote transcript presentation, retained `Reconnecting…` UI during
+  provider loss, PTY/provider reattachment, and appended-message recovery
+  without changing the chat JSX or styles. A live Direct iOS Simulator run also dropped exactly
+  one post-dispatch `nativeChat.sendMessage` response: the terminal received
+  the prompt once, the unchanged composer retained its draft while the bridge
+  request remained unresolved, the transcript echo appeared, and reconciliation
+  cleared the draft after timeout without an automatic resend or false
+  `Message not sent` state. Resume and cloud Relay remain open.
+
+The full-process-loss run also exposed a bridge request-accounting defect:
+`nativeChat.subscribe` was granted and implemented but omitted from the
+subscription classifier, so a valid restored-session subscription failed as
+`unsupported_capability`. Request accounting now classifies `nativeChat` as a
+subscription namespace. A production-grant invariant and a complete
+restored-session broker/client round trip cover classification, opaque
+authority resolution, transcript event delivery, sanitization, and teardown.
+
+The hosted mutation adapter now also preserves page-bridge uncertainty. A
+posted request can time out, be cancelled by bridge teardown, or receive an
+invalid/internal reply after native or Desktop has already accepted the
+terminal write. Those outcomes are `unknown`, not definite `rejected`, so the
+existing composer keeps the draft and waits for transcript reconciliation
+instead of inviting an unsafe retry. Proven pre-dispatch failures such as
+`not_connected` remain `rejected`. Six focused tests cover send, response,
+stop, pre-dispatch rejection, and broker-outcome passthrough. Exact-source RNW
+build `302dc4b3…` verifies at 49 assets, 7,842,485 raw bytes, and 1,686,749
+gzip bytes. The E2E-only one-shot shell seam is inert unless
+`EXPO_PUBLIC_ORCA_E2E_MOBILE_WEB_DROP_RESPONSE_ONCE=nativeChat.sendMessage`.
+On Host 37 it dropped one executed send response: at 500 ms the draft remained
+with no error, at 3.5 seconds the transcript contained one matching user turn
+while the draft was still held, and at 18 and 23 seconds the draft was empty
+with one matching turn, one response, and no failure or unconfirmed-delivery
+copy.
+
+- [x] Implement photo attachments through native picker capabilities. The
+      unchanged Attach control routes through `HostSessionTerminalOperations`;
+      native owns picker bytes, local/SSH execution authority, bounded upload,
+      and ordered terminal injection. Two focused files / 9 tests cover
+      accepted, cancelled, permission-denied, too-large, floating-workspace,
+      and SSH cases. A selected 2,808,983-byte simulator photo reached a
+      shell-owned host temp file. Document selection, camera, live
+      denial/revocation, interruption, Android, and physical-device evidence
+      remain device/topology validation work.
+- [~] Implement draft and session persistence with host/build isolation.
+  Native-chat drafts now hydrate, coalesce writes, flush on tab/route teardown,
+  and clear after accepted delivery through a named native/web operations seam.
+  The hosted page supplies only opaque workspace/tab IDs; the broker resolves
+  host authority and shell storage hashes paired-host, exact-build, workspace,
+  and tab identity. Text is capped at the existing 4,096-character send bound.
+  Live iOS Simulator checks retain the exact draft across forced WebContent
+  loss and rehydrate it after a full app restart plus manual route re-entry.
+  Bounded native cold-route state now stores paired-host/workspace identity
+  only. Startup validates the paired host and freshly resolves the current
+  workspace through `worktree.ps` before issuing a new opaque page handle.
+  Pairing links win startup; explicit host-list navigation and paired-host
+  removal clear the route. A subsequent full terminate/launch automatically
+  restored Host 37 and the unchanged `mobile-rearch` session with the exact
+  draft still persisted. Accepted optimistic messages now persist in a
+  separately bounded store keyed by hashed host/build/workspace/tab/provider
+  session authority. Hosted calls carry only opaque page handles; the broker
+  freshly revalidates their complete native-chat binding, and presentation IDs
+  never enter storage. Hydration, duplicate occurrence reconciliation,
+  tab-switch settlement, corruption, bounds, and cross-authority isolation
+  pass focused tests. Verified build `8596775d…` restored the unchanged hosted
+  session after a signed simulator app restart. A full-process-loss run then
+  restored an in-flight pending message as `Queued`, delivered it to the
+  original provider transcript after terminal input resumed, removed the
+  marker, and cleared the persisted record after transcript reconciliation.
+  Cross-build migrations and physical-device/topology persistence remain open.
+
+  Markdown tabs now use injected native/default/web implementations of
+  `HostSessionMarkdownOperations` behind the same existing `SessionScreen`;
+  no Markdown JSX, styles, layout, or editing behavior was copied or
+  redesigned. Strict `markdownRead` and `markdownSave` operations re-list the
+  current Desktop tabs before every call and verify the exact host workspace,
+  tab, `markdown` type, and relative path. Content is base64 encoded and
+  limited to 256 KiB. Host paths and raw host errors never cross the page
+  boundary. Save uses the current document version for conflict detection,
+  while renderer-unavailable reads preserve the existing disk/read-only
+  fallback.
+
+  Shell-owned Markdown drafts now hydrate and persist through strict
+  `markdownDraftRead` and `markdownDraftWrite` operations. Their storage key
+  hashes paired host, exact web build, host workspace, host tab, and relative
+  path; no opaque page handle is durable. Writes are debounced and serialized,
+  late hydration cannot replace a newer user edit, and an older restored base
+  remains explicitly stale so Save conflicts instead of overwriting newer
+  Desktop content. Drafts clear after Save, confirmed discard, successful
+  close, and Copy/Discard-and-leave. Deterministic tests cover malformed and
+  oversized input, authority isolation, stale-base restoration,
+  hydration/edit races, serialized cleanup, and the headless read-only
+  fallback. A headless Host 37 file-open probe produced a file preview rather
+  than a live editable Desktop Markdown renderer, so that earlier run remains
+  only fallback evidence.
+
+  A visible paired Desktop later supplied a real editable Markdown tab. The
+  native `react-native-webview` surface cannot run inside the React Native Web
+  package, so the web platform adapter mounts the same editor document and
+  controller in an iframe with `sandbox="allow-scripts"` and no
+  `allow-same-origin`; no editor JSX, styles, toolbar, or behavior was
+  reimplemented. A random frame token travels through `window.name` so the
+  script bytes remain stable. Native response CSP and navigation originally
+  blocked the `data:` subframe, and the packaged meta CSP continued to block
+  the inline editor runtime even after native CSP allowed it. Native delegates
+  now allow only `data:` subframes, while both CSP layers allow only the exact
+  centralized editor script hash. Arbitrary inline script remains disabled.
+  The controller replays content and editability on every `ready` message to
+  close the WebKit child-ready/parent-listener race.
+
+  Host 37 on iPhone 17 Pro Simulator rendered real host content, saved a mobile
+  marker that was independently verified on disk, rejected a stale save after
+  an independent host change, and kept the newer host bytes intact. The broker
+  now preserves that renderer failure as stable `conflict` instead of generic
+  `host_error`, and the existing floating bar shows `Changed on desktop` with
+  Copy, Discard, and Save still visible. Full app termination restored the exact
+  unsaved mobile draft and stale base; confirmed discard loaded the newer host
+  file, and a second terminate/launch proved draft cleanup. In-flight
+  pending-message process loss and reconciliation now also pass. Migrations,
+  repeated loss, Relay/SSH persistence, Android, and physical-device
+  persistence evidence remain open.
+
+- [~] Preserve input leases and prevent simultaneous unintended writers.
+  Terminal input floors and native-chat identity revalidation are
+  implemented; full cross-topology and lifecycle evidence remains open.
+- [~] Prevent delayed results from crossing workspace, session, or host changes.
+  Native-chat subscriptions and delayed stop steps are now retired on
+  workspace, tab, client, broker, route, and shell-session changes.
+- [~] Cover Direct, Relay, and SSH-backed sessions. Automated transport and
+  stale-authority tests pass. A real Docker SSH provider journey passes
+  transcript publication, read, disconnect, and reconnect recovery through an
+  independent paired runtime client and the production hosted broker/page
+  client contract. Durable automation now opens that SSH workspace in the
+  actual iOS WKWebView, uses the unchanged buffered command UI, captures its
+  native-bridge write, verifies the terminal mutation on the remote container,
+  retains native chat with `Reconnecting…` during SSH loss, and renders an
+  appended transcript message after provider/PTY recovery. A deterministic
+  local relay-cell integration also carries a
+  production hosted workspace and session requests plus an opaque native-chat
+  transcript read through the real mobile Relay RPC session, NaCl E2EE v2,
+  Desktop transport, broker, and page client without exposing host identifiers,
+  provider sessions, or transcript paths. The production cloud service and
+  realistic Relay latency/reconnect remain open.
+- [~] Match current empty, loading, retained, reconnect, and failure behavior.
+  The cross-cutting behavior matrix is frozen, cached UI retention passes unit
+  and real SSH reconnect evidence, and shell package/loading/error copy is
+  deterministic. Per-route native-versus-hosted state fixtures remain open.
+- [ ] Complete accessibility and mobile interaction review for these surfaces.
+
+## 8. Real Terminal Migration
+
+- [x] Integrate the real xterm engine in the production mobile web build.
+- [x] Define `subscribe`, `input`, `queryReply`, `resize`, `visibility`,
+      `resync`, and `cancel` operations.
+- [x] Return bounded snapshot, geometry, stream ID, and starting sequence.
+- [x] Batch output by display cadence or bounded byte threshold.
+- [x] Add ACKs and a hard outstanding-byte window.
+- [x] Detect duplicate, reordered, and missing sequence ranges.
+- [x] Resync from the host-owned model after gaps or overflow.
+- [x] Preserve terminal floor ownership and guarded input writes.
+- [x] Preserve query-reply validation and elected subscriber behavior in the
+      broker. A paired iOS Simulator probe sent `ESC [ 5 n` from the PTY and
+      received the exact xterm reply `ESC [ 0 n` through the dedicated
+      query-reply opcode without claiming the user-input floor.
+- [~] Preserve delayed input, IME composition, dictation, accessory keys, and
+  paste ordering. The unchanged buffered/live/accessory input controller now
+  calls the named terminal boundary, whose page adapter splits input into
+  bounded ordered requests. Dictation, clipboard-image paste, and emulator IME
+  evidence remain open.
+- [~] Preserve resize/reflow, text zoom, selection, scroll, links, and file taps.
+  The existing terminal-pane contract now resolves to direct xterm on web and
+  exports successfully. Display-mode switching now passes through the unchanged
+  action sheet without a resubscribe loop. A real terminal path tap opens the
+  unchanged `FileReader`, creates exactly one file tab, reuses that tab after
+  switching away, and closes/reopens through the existing long-press sheet.
+  On iPhone 17 Pro Simulator, long-press selected `SELECT_ME_COPY`, the unchanged
+  Copy action showed `Copied`, and the native clipboard contained the exact
+  text. Tapping the adjacent HTTPS link opened the existing Orca browser tab and
+  loaded Example Domain. After selecting the existing Phone browser preference,
+  the same terminal link opened Example Domain in iOS Safari through the
+  shell-owned platform operation. Persisted pinch text zoom and broader
+  resize/reflow evidence remain open.
+- [~] Preserve WebGL fallback and surface/process recovery. A forced iOS
+  WebContent loss remounts the verified package, restores the exact open session
+  from a shell-session-scoped opaque route, and resubscribes the Terminal tab
+  without a blank screen. Repeated-loss rollback, WebGL fallback, Android, and
+  physical-device evidence remain open.
+- [x] Pause or bound hidden/background terminal delivery.
+- [x] Cancel Desktop/native/page resources on close, disconnect, host switch,
+      process loss, and pairing removal.
+- [~] Test local, WSL-relevant, Relay, and SSH terminal paths. Direct LAN/E2EE
+  passes on iOS Simulator, the durable actual-WKWebView Docker SSH command
+  mutation passes, and Relay focused transport tests pass; Relay end-to-end and
+  WSL-relevant paths remain open.
+- [~] Test sustained output, burst output, output during input, and multiple
+  panes without byte loss or unbounded memory. The parsed-credit simulation
+  passes eight streams and 512 MiB with an 8 MiB aggregate ceiling. A paired
+  two-terminal create/input/switch/close flow passes on iOS Simulator; sustained
+  paired page/native stress remains open.
+- [ ] Measure input latency, frame pacing, memory, battery, and thermals on
+      physical iOS and Android devices.
+- [~] Run foreground/background, rotation, reconnect, WebView loss, and cold
+  restore tests. Background/foreground, rotation, route back/reopen, and an
+  injected WebContent process loss with exact session restoration pass on iOS
+  Simulator. Repeated-loss rollback passes exact iOS and Android emulator apps;
+  reconnect and cold restore remain open.
+- [ ] Meet all terminal performance and correctness gates before cutover.
+
+## 9. Files, Diffs, and Source Control
+
+- [x] Preserve existing file-tab presentation and lifecycle through the hosted
+      session route. The strict adapter reconstructs the existing file view
+      model from bounded metadata; the iOS Simulator opened `README.md` from a
+      terminal tap, displayed its content, closed it through the existing tab
+      action sheet, reopened it, and reused it without creating a duplicate.
+- [x] Implement file tree, directory revisions, and path search. Directory
+      results are capped at 128 sanitized entries with deterministic SHA-256
+      revisions; breadcrumb navigation and bounded path search pass in the iOS
+      Simulator. The dedicated hosted Files route now mounts the unchanged
+      `MobileFileExplorerPanel` through native/web directory and reconnect
+      adapters; no file-tree JSX or styles are copied, and the legacy native
+      `files.list` compatibility fallback remains native-only.
+- [x] Implement bounded file reads, chunking, cancellation, and large-file UI.
+      Reads use exact 128 KiB chunks, validate offsets and decoded lengths, retain at
+      most 1 MiB, preserve split UTF-8 sequences, detect binary content, cancel on
+      navigation or host/workspace change, and expose explicit Load more/Cancel
+      controls.
+- [~] Implement text, syntax, Markdown, image, and terminal-artifact previews.
+  Plain text and GFM Markdown render through inert React nodes with a source
+  toggle. Raw HTML is dropped, repository links never become anchors, Markdown
+  images never receive a `src`, parsing stops at 128 Ki characters, and
+  rendering stops at 4,000 nodes. Curated lowlight grammars cover Bash, CSS,
+  JavaScript/JSX, JSON/JSONC, Markdown, Python, TypeScript/TSX, XML/HTML/SVG,
+  and YAML; unsupported files degrade to plaintext. Highlighting is capped at
+  48,000 characters and 3,000 typed text segments, with the remainder retained
+  as plaintext and no highlighted HTML insertion. Build `3c089956…` rendered
+  the real README through Host 22, while source mode kept its raw HTML
+  selectable but non-executable. Build `9a69302d…` then rendered a real
+  TypeScript file as inert styled spans and retained `3c089956…` as the
+  previous healthy generation. Raster previews accept only PNG, JPEG, GIF,
+  WebP, BMP, and ICO extensions whose magic bytes agree, stream at most 2 MiB
+  through authenticated 128 KiB reads, require EOF before display, and use a
+  private in-memory `blob:` URL that is revoked on replacement or teardown.
+  SVG and other binaries remain inert. Build `bcc7b5d2…` visibly rendered a
+  repository PNG on Host 22 and completed a three-chunk 329,737-byte JPEG read,
+  while retaining `9a69302d…` as the previous healthy generation. Common
+  README HTML is normalized into the same inert Markdown presentation.
+  Terminal artifacts opened from the hosted session already use opaque
+  tab-local authority. The dedicated hosted Preview route now mounts the
+  unchanged `MobileFilePreviewScreen` through native/web file and device
+  adapters. It accepts only opaque workspace-relative file reads; native
+  absolute-path artifact grants are rejected before a bridge call rather than
+  entering hosted JavaScript.
+- [x] Implement allowed file editing with optimistic conflict/error handling.
+      Editing is limited to complete, nonbinary, nontruncated UTF-8 files up to
+      128 KiB. The page supplies the SHA-256 revision of the bytes it opened;
+      native captures the local or SSH mutation owner, Desktop re-reads and
+      hashes the file immediately before invoking existing write authority, and
+      the page validates workspace, path, revision, and byte length in the
+      result. The write grant permits one concurrent request with a three-write
+      burst. This is optimistic conflict detection, not a filesystem-atomic
+      compare-and-swap: another writer could still race between Desktop's
+      preflight read and write. Host 22 passed a normal disk-visible save and
+      rejected a stale retained draft without overwriting Desktop's newer
+      content.
+- [x] Implement virtualized diffs and bounded retained document state. The
+      bridge caps status at 64 entries and each diff response at 96 rows; the
+      page caps previews at 4,000 rows and 1,000,000 retained characters,
+      requires the previous revision for continuation, and mounts only the
+      visible row window plus overscan.
+- [~] Implement diff navigation, comments, queued review state, and images.
+  Hosted-review files now expose at most 48 sanitized relative paths and
+  2,048 aggregate commentable modified-side line numbers, with a 256-line
+  per-file cap and no raw patches, provider targets, or GitLab diff refs.
+  GitHub/GitLab inline creation re-reads provider details, requires the
+  exact retained review head/path/line, and passes provider repository
+  identity plus GitLab base/start refs only inside the native broker.
+  Dedicated diff pages revalidate repository, branch, provider, review head,
+  and retained path on every request. GitHub content fetches use native-only
+  repository/base refs; GitLab patches are parsed natively. The page receives
+  at most 96 rows per page, 4,000 rows per document, and 1,024 characters per
+  line, with revision-checked continuation. Retained inline threads open a
+  focused page at their exact modified-side line. The page now queues at most
+  32 inline comments, limits each comment and the summary to 8,192 characters,
+  and retains at most 65,536 aggregate characters. Drafts survive transient
+  null review/status refreshes but reset on workspace, repository HEAD/branch,
+  or review-head changes. Ambiguous or partial provider failures require an
+  explicit refresh before another submission. Images remain open.
+- [x] Implement Git status and refresh/subscription behavior. The native broker
+      forwards only path-free `changed`, `overflow`, and `unavailable`
+      invalidations from the host-scoped watcher, unwatches after normal or
+      cancellation-before-ready cleanup, and never exposes absolute host paths.
+      The visible page refreshes immediately and also polls every 10 seconds for
+      `.git`-only changes; the iOS Simulator changed 187 → 188 → 187 when a root
+      probe file was added and removed without using manual Refresh.
+- [x] Implement stage, unstage, bulk operations, and discard confirmation.
+      Requests retain at most 32 unique paths, require the current HEAD and an
+      exact status-entry snapshot, reject unresolved/conflicting state before
+      invoking the existing provider-neutral Desktop Git RPCs, validate ordered
+      result identity, and cancel on client/workspace replacement. A dedicated
+      iOS Simulator repository passed tracked and untracked single operations
+      plus 32-path stage, unstage, and confirmed discard without touching
+      migration files.
+- [x] Implement commit and generated commit-message behavior. Both operations
+      require a full current HEAD and exact staged-entry snapshot; generation
+      rechecks that snapshot before returning a bounded draft, and cancellation
+      reaches the existing Desktop generator. Commit invokes only `git.commit`,
+      sanitizes failures, and returns the new HEAD without misreporting a
+      successful write if the follow-up refresh fails. Focused validation
+      passes in 6 root files / 33 tests and 4 Expo files / 24 tests. A paired
+      iOS Simulator staged through the WebView and committed
+      `Test(mobile): verify hybrid commit bridge`, advancing the isolated
+      repository from `51f4b079…` to `e7e38a5d…` and returning to zero changes.
+      The live generator exposed and recovered from the temporary Desktop's
+      `Claude CLI ... Not logged in` failure; automated generation success,
+      stale-snapshot rejection, cancellation, and client-replacement coverage
+      pass, while a live successful draft remains to be rerun with a logged-in
+      provider.
+- [x] Implement branches, history, checkout, compare, fetch, pull, push, rebase,
+      abort, and upstream state. Lists retain at most 128 branches, 100 commits,
+      or 128 compare entries, and aggregate responses remain below 192 KiB.
+      Every mutation carries the displayed HEAD, branch, and relevant upstream
+      snapshot; native rechecks repository identity and permits only a freshly
+      listed local checkout target or Orca's freshly resolved configured base.
+      Pull selects fast-forward only for behind-only state, push/publish never
+      exposes force-with-lease, and abort authority comes from current merge or
+      rebase state without depending on remote availability. Invalid host
+      paths/URLs and extra result fields are rejected, late requests cancel on
+      client/workspace replacement, and completed writes are not misreported
+      when only the follow-up refresh fails. Full validation passes in 3,317
+      root files / 35,009 tests and 337 Expo files / 2,388 tests. On paired
+      Direct iOS Simulator, the disposable repository passed checkout, fetch,
+      publish, fast-forward pull, non-force push, configured-base rebase, and
+      confirmed merge abort, then returned clean on `main`.
+- [~] Implement pull-request/merge-request discovery and review flows.
+  Provider-neutral discovery, sanitized summary/details, bounded
+  conversation and inline-thread display, GitHub/GitLab top-level comments,
+  GitHub inline-thread replies, and GitHub/GitLab thread resolve/reopen are
+  implemented. Every mutation revalidates HEAD, branch, provider, review,
+  and retained comment/thread identity. Inline creation additionally
+  revalidates review head, safe relative path, and a retained commentable
+  modified-side line while keeping GitLab diff refs and all provider targets
+  native-only. Queued submission revalidates repository and review identity,
+  allowed action, every retained path/line, and the provider result before it
+  reports completion. GitHub supports comment, approve, and request-changes;
+  GitLab degrades explicitly to comment-only submission. Provider targets and
+  raw failures remain native-only, and ambiguous outcomes block replay until
+  refresh. The exact iPhone 17 Pro Simulator app opens the unchanged Source
+  Control hub from Session, preserves Changes/Pull Request/Commits, opens a
+  changed file as a second Session diff tab through headless Desktop authority,
+  and independently renders standalone Review with Back and review-actions
+  controls. The exact Pixel 9 Pro API 36 arm64 Debug APK passes the same
+  Source Control, Session diff-tab, and standalone Review route sequence after
+  a fresh build/install, with Android accessibility driving the unchanged
+  controls. Review creation if required and safe live mutation evidence remain
+  open.
+- [~] Keep GitHub-specific and GitLab-specific behavior behind provider checks.
+  GitHub and GitLab use explicit adapters; Bitbucket, Azure DevOps, and
+  Gitea currently expose sanitized summary-only degradation. Provider
+  repository targets remain native-only and no generic provider RPC crosses
+  the bridge. Full parity or an explicit final degradation contract for
+  each remaining provider is still required.
+- [ ] Preserve Git 2.25 core-workflow compatibility and capability fallbacks.
+- [ ] Preserve native, WSL, SSH, and Relay execution-host scope.
+- [ ] Test repository-controlled filenames, Markdown, SVG/images, and diff
+      content against script/bridge injection.
+- [ ] Test large file counts, large diffs, binary files, conflicts, detached
+      state, missing upstream, and provider failures.
+- [ ] Complete physical-device diff/file performance validation.
+- [ ] Complete accessibility and mobile interaction review for these surfaces.
+
+## 10. Remaining Host and Native Features
+
+- [x] Implement task lists, details, pagination, mutations, and provider
+      differences. The existing 15k-line route remains the sole
+      presentation source and now accepts named read, preference, and
+      device-operation boundaries. Native and web adapters cover strict bootstrap,
+      repository, Linear-context, GitHub-slug, preference, setup-trust, clipboard,
+      haptic, HTTP(S), branch-search, SSH, agent-detection, and repository-hook
+      operations. Opaque repository handles round-trip through the broker without a
+      generic RPC tunnel. GitHub work-item list/count, GitLab work-item list/todos,
+      and Linear issue list/search now use strict bounded operations. GitHub
+      labels/users/details, GitLab details, and Linear issue/comments also use
+      bounded operations; revocable opaque GitLab target handles keep provider
+      host/path identity shell-only. GitHub Project discovery, view listing,
+      pasted-reference resolution, table snapshots, row details, labels,
+      assignable users, and issue types now use named bounded reads. Stable table
+      state remains native-only and reaches the unchanged Tasks model through
+      opaque, single-use bounded pages. Project item title/body/state, issue
+      comments, labels/assignees, fields, and issue types now use named mutations
+      with a fresh authoritative table revalidation before each write. Remaining
+      Project PR thread/reply/reviewer/check-rerun/merge writes also revalidate the
+      opaque repository handle against the fresh row slug. Project check refresh,
+      viewed-file state, bounded file contents, and inline review comments now use
+      the same revalidation through a separate named operation boundary; page
+      authority is removed before Desktop RPC. Non-Project GitHub/GitLab status and
+      metadata writes now use opaque item targets and fresh provider-detail
+      revalidation. Provider comments, review/file actions, Linear setup and
+      mutations, issue creation, sparse presets, and final workspace creation now
+      cross strict named operations. Task list, detail, assignable-user, and
+      Project-table result schemas discard remote avatar URLs before page state;
+      the unchanged presentation uses its existing initials or empty-avatar
+      fallback without weakening the network-denied CSP. The hosted router imports
+      the unchanged route and injects those adapters. Host 34 passed
+      workspace/Tasks entry, GitHub
+      query and recovery UI, provider/Linear setup surfaces, back navigation,
+      rotation, and background/foreground on iOS Simulator. Authenticated
+      destructive-provider evidence, Android, physical devices, accessibility,
+      topology, and adversarial validation remain in their dedicated gates.
+- [x] Implement host account listing and selection. The existing screen is the
+      only presentation source for native and hosted routes. Snapshot,
+      subscription, refresh, and gesture-gated selection pass focused tests;
+      the iPhone simulator loaded the RNW package by default, rendered the
+      unchanged Accounts UI, refreshed it, selected the system default, and
+      returned cleanly to the host list.
+- [x] Implement browser workspace controls and screencast lifecycle where kept.
+      The unchanged `MobileBrowserPane` uses injected native/hosted operations;
+      hosted frames are capped at 128 KiB chunks and page authority is opaque.
+      Pointer, scroll, keyboard, dialogs, navigate, reload, Back, Forward, and
+      navigation-state events pass focused tests. Create, two navigations, Back,
+      Forward, Reload, rotation, close/reopen, page text insertion, and Tab-key
+      focus movement pass against one current runtime on iOS Simulator. Android,
+      physical-device, topology, performance, and adversarial evidence remain in
+      their dedicated gates.
+- [~] Implement selection haptics with rate limiting. The strict shell-owned
+  haptic operation is rate-limited and injected into the unchanged session
+  route; physical-device feedback remains unverified.
+- [~] Implement clipboard reads/writes with gesture and privacy enforcement.
+  Selected-text writes are capped at 128 KiB, require a recent
+  native-observed gesture, and round-trip through the iOS Simulator
+  clipboard. Hosted availability checks expose only content types. Explicit
+  Paste actions now read text or images in the shell, preserve bracketed-paste
+  behavior, serialize with terminal input, and return only a bounded status to
+  the page. Live text/image paste, privacy-prompt, and denial evidence remain.
+- [~] Implement photo, camera, and document picker capabilities. The existing
+  Attach control now opens the shell-owned iOS permission flow and Photos
+  picker through a recent-gesture-gated terminal operation. Picker bytes,
+  cache paths, SSH connection identity, and uploaded temp paths remain
+  native-only; cancellation returns only a status. The unchanged native-chat
+  composer now receives session-scoped opaque image references and bounded JPEG
+  thumbnails, and its attach, paste, retry, unknown-delivery reconciliation,
+  healing, and release paths pass focused tests. Document selection, camera,
+  denial/revocation, physical-device, and exact-app live native-chat image
+  evidence remain. On the Pixel 9 Pro API 36 emulator, the unchanged Attach
+  control opens the real Android Photos picker. Sending the picker to Home and
+  bringing Orca back cancels the pending operation cleanly while retaining the
+  exact hosted session; no selected path or bytes enter the page. Accepted
+  selection also passes: the shell uploaded a 579-byte PNG to its own host temp
+  path, injected only that shell-owned path into the Desktop terminal, and an
+  independent SHA-256 check matched the source exactly.
+- [~] Implement microphone, dictation, and two-way audio lifecycle. The
+  unchanged mic controls and setup drawer use a strict typed subscription and
+  shell-owned speech authority. Raw PCM never enters hosted JavaScript;
+  Desktop receives bounded chunks with the native capture rate and performs
+  existing resampling. The iOS Simulator passes permission, setup metadata and
+  configuration, model download, recording, processing, transcript insertion,
+  cancellation cleanup, and client/session revocation tests. The Pixel 9 Pro
+  API 36 emulator now passes the first-run Android permission prompt, returns
+  directly to the unchanged `Listening` state after grant, emits sustained
+  native PCM, and stops back to idle. An existing grant avoids reopening the
+  permission activity. Explicit denial returns to the unchanged idle UI.
+  Revoking permission during recording causes Android to terminate the app
+  process; cold launch restores the cached package and exact session, and a
+  later recording proves Desktop speech authority was released. The shell
+  therefore treats only its in-flight permission activity as an expected
+  foreground transition, waits for active state before continuing, and still
+  invalidates the request on disconnect or authority replacement. An ordinary
+  Home transition during active recording now interrupts speech, retains the
+  exact hosted session and process, and permits a second recording after
+  foreground return. The Android output path also drains positive partial
+  `AudioTrack.write()` results and waits across a pause-induced zero write
+  instead of dropping the unwritten tail. The exact Debug app queued and wrote
+  all 64,000 PCM bytes across Pause/Resume, emitted nonzero output volume, and
+  stopped cleanly. Physical devices, simultaneous real-device capture/playback,
+  and real-device voice processing remain.
+- [x] Implement external-link destination choice and platform opening. Only
+      HTTP(S) URLs can reach the gesture-gated shell operation. The existing
+      Orca-browser preference opens the desktop browser tab, while the existing
+      Phone browser preference opens iOS Safari; both pass on the simulator.
+- [~] Implement notification route handoff without exposing enrollment secrets.
+  Enrollment and raw paired-host credentials remain native. Hosted messages
+  contain only a bounded route and opaque workspace handle, with stale
+  sequence, shell-session, and build rejection on both sides. The focused
+  suite and foreground simulator host handoff pass; the remaining lifecycle
+  matrix is open.
+- [~] Preserve native settings, onboarding, privacy, about, and diagnostics.
+  Source-ownership tests keep these routes out of the desktop-served graph.
+  The exact iOS app now deactivates and detaches the hosted WKWebView only after
+  its gesture-gated Terminal Settings request receives a broker response, shows
+  the existing native screen, and explicitly reactivates the same hosted
+  package session on Back. Native onboarding also passes the same fresh-profile
+  journey. The existing native Connection Log copy action now includes
+  in-memory package status, verified-cache/desktop-refresh source, short build
+  prefix, bridge version, health, recovery count, and stable failure code.
+  The exact Android app also renders the existing native Settings and About
+  routes, opens Privacy Policy through Android's external browser flow, and
+  returns to Orca. Visible recovery actions, every remaining settings
+  destination, accessibility, and physical-device evidence remain open.
+- [~] Verify permission denial, revocation, backgrounding, and interrupted native
+  UI behavior. The shell now clears its pending native-observed gesture whenever
+  `AppState` leaves `active`, and the shared gesture authority rejects even a
+  fresh touch while backgrounded or inactive. The same lifecycle signal cancels
+  an active shell-owned speech session as `interrupted`, releasing recording,
+  wake-lock, and Desktop dictation authority. Android grant and denial pass
+  through the real system permission activity. Android's live permission
+  revocation terminates the process by platform policy; the subsequent cold
+  restore returns to the same hosted session and can start a new recording
+  without leaked Desktop authority. Android picker interruption also returns to
+  the exact hosted session without exposing a result. An ordinary Home
+  transition during active recording now stops speech, retains the exact hosted
+  session and process, and permits a second recording after foreground return.
+  Physical-device behavior remains open.
+- [~] Verify every privileged native action has the intended user mediation.
+  Clipboard writes, external links, settings handoff, account selection/reset,
+  workspace creation, agent-history resume, image picking, speech control, and
+  terminal attachment/input operations consume the same foreground-aware native
+  gesture authority. A complete operation-by-operation audit and adversarial
+  runtime matrix remain open.
+- [ ] Close every remaining item in the feature-parity inventory.
+
+## 11. Security and Adversarial Review
+
+- [ ] Verify no durable credential reaches a URL, DOM, JavaScript state, Web
+      Storage, cache asset, log, crash report, analytics event, or fixture.
+- [~] Verify the WebView cannot make network requests. Static iOS/Android CSP
+  and native-origin controls are covered. Android also sets
+  `blockNetworkLoads`, and its download listener reports and rejects download
+  attempts. DEBUG-only iOS and Android document-start probes mark completed
+  `fetch`, XHR, WebSocket, and image attempts. Each gate builds and installs the
+  exact current Debug app before the real hosted WebView runs the corpus while
+  an independent loopback HTTP/WebSocket/TCP sentinel observes zero traffic.
+  Android additionally requires both `BuildConfig.DEBUG` and the debuggable
+  application flag, validates a loopback port and canonical UUID launch token,
+  and installs the probe only for `orca-mobile-web://` through the AndroidX
+  document-start API. The Android harness first proves emulator-to-sentinel
+  reachability through ADB reverse, clears that deliberate red observation,
+  cold-launches the exact arm64 APK, and verifies zero final observations.
+  The locally signed Release APK also cold-opens the hosted workspace on an API
+  36 Play Store `user/release-keys` image with no inspector socket, inaccessible
+  `/json/list`, and no fatal mobile-WebView logs. Physical-device,
+  production-store-signed runtime evidence and independent adversarial review
+  remain open.
+- [~] Verify navigation, redirects, popups, subframes, downloads, service
+  workers, and external schemes fail closed. The exact-app iOS Simulator gate
+  retains the private document after an external-scheme main-frame attempt,
+  observes native popup rejection and worker-registration rejection, attempts
+  an external redirect subframe and download, and records no loopback traffic.
+  iOS additionally rejects download navigation and non-displayable responses,
+  permits only the exact active private main document, and limits subframe
+  responses to displayable `data:` documents needed by the sandboxed shared
+  Markdown editor. The exact-app Android gate likewise retains the private
+  document, blocks popup and service-worker creation, attempts the redirect
+  subframe, download, and external scheme, and records no final sentinel
+  observation. The probe waits for the hosted bridge-ready marker because an
+  external-scheme main-frame attempt at the earliest document-start instant
+  interrupted Chromium's React Native Web bootstrap even though native policy
+  rejected the navigation. Physical-device, production-store-signed runtime,
+  and independent-review evidence remain open.
+- [ ] Verify only active manifest-declared executable assets can run.
+- [~] Run the XSS corpus through Markdown, HTML, SVG, filenames, diffs, terminal
+  links, task/provider content, and error messages. The shared rich Markdown
+  editor now applies the same strict CSP in native and hosted documents, admits
+  only HTTP(S) links and raster base64 `data:` images, and passes script, raw
+  HTML, SVG, event-handler, active-scheme, safe-link, and safe-raster cases. The
+  unchanged HTML Preview/Source presentation now renders repository HTML only
+  through a fixed hash-authorized sanitizer document in native and RNW. The
+  sanitizer decodes the raw base64 payload, allowlists inert presentation HTML,
+  rejects SVG/MathML/forms/frames/scripts/network sources and active CSS, and
+  emits only token-bound HTTP(S) link requests through the session device
+  capability. The focused HTML/SVG corpus passes. Read-only Markdown renders the
+  script/iframe/SVG/image corpus only as React text, admits link taps only for
+  bounded HTTP(S) URLs, and routes chat, task, and file-preview links through
+  their existing device capability. The legacy Mermaid diagram WebView no
+  longer downloads executable code or trusts every origin: native and RNW share
+  the existing diagram/fallback presentation around a locally bundled,
+  hash-authorized Mermaid/DOMPurify engine, strict Mermaid settings, sanitized
+  SVG output, a network-denied CSP, and a token-bound opaque hosted frame. Native
+  embeds the verified engine in its isolated document. Hosted WebKit receives
+  the exact compressed engine from the exact parent only after a typed,
+  token-bound `ready` message because large `data:` and `srcdoc` payloads were
+  truncated or skipped in simulator WebKit; the CSP engine hash still prevents
+  altered code from executing. Top-level `htmlLabels: false` keeps labels in
+  ordinary SVG text while the sanitizer forbids `foreignObject`. A temporary
+  local wrapper exercised the exact hosted opaque-frame document on iPhone 17
+  Pro Simulator: a normal diagram rendered visible `Start` and `Done` labels, a
+  malicious `click` directive created no accessible link and made zero sentinel
+  requests, and invalid source returned the typed error that maps to the
+  unchanged raw-source fallback. Focused document and package-budget boundaries
+  pass. The exact Orca app route, native nested component, Android,
+  physical-device, Release, filenames/diffs, terminal links, task/provider
+  fields outside Markdown, error messages, broader live adversarial interaction,
+  and independent review remain open.
+- [ ] Fuzz manifest, chunks, asset paths, MIME types, CSP, and cache metadata.
+- [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
+      subscription lifecycle.
+- [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
+- [ ] Attempt replay after host switch, removal, process loss, and reconnect.
+- [~] Attempt capability calls without gesture, permission, foreground state,
+  negotiated support, or correct origin. Focused operation tests reject missing
+  gestures, and the native gesture authority now rejects and revokes touches
+  outside foreground `AppState`. Permission revocation, origin attacks, and
+  exact-app background races remain open.
+- [ ] Verify Desktop repeats authorization for every mutation.
+- [ ] Verify cache and bridge identity use the paired cryptographic identity,
+      not endpoint or display name.
+- [ ] Verify all resource limits apply before allocation and during assembly.
+- [ ] Complete an independent threat-model and adversarial review.
+- [ ] Resolve every high-severity finding before cutover.
+
+## 12. Physical Device and Topology Validation
+
+- [ ] Test oldest supported low-memory physical iPhone.
+- [ ] Test current physical iPhone.
+- [ ] Test supported physical iPad or tablet layout.
+- [ ] Test oldest supported low-memory physical Android device/API.
+- [ ] Test current physical Android phone.
+- [ ] Test supported physical Android tablet or large-screen layout.
+- [~] Test current iOS simulator and Android emulator as repeatable CI/dev paths.
+  The iPhone 17 Pro Simulator passes the hosted workspace/session,
+  terminal, browser, dictation, Accounts, Tasks, notification-host handoff,
+  native-chat, Source Control/Review, and signed native-bridge rebuild
+  checkpoints. Android
+  autolinking resolves `:orca-expo-mobile-web-shell`, and its Debug Kotlin,
+  Java, unit-test, and APK assembly tasks pass with JDK 17 and Android SDK 36.
+  A Pixel 9 Pro API 36 emulator stages the exact package through paired Direct
+  E2EE, loads it at the locked private-origin root, renders the unchanged
+  workspace/session/terminal UI, and carries typed terminal input to the real
+  Desktop terminal. The repeatable Android security harness installs that exact
+  arm64 Debug APK, proves its ADB-reversed sentinel is reachable, then verifies
+  completed network/navigation probes, retained private origin, blocked popup
+  and service worker, and zero escaped traffic. A separate Release gate refuses
+  `userdebug` images, installs the non-debuggable APK on an API 36 Play Store
+  `user/release-keys` image, cold-opens the unchanged hosted workspace, and
+  requires both the DevTools socket and discovery endpoint to remain
+  unavailable. The broader Android route, lifecycle, production store signing,
+  physical-device, and accessibility matrix remains open. The opt-in
+  `pnpm run test:e2e:hosted-mobile-webview` command now rebuilds the matching
+  Desktop/RNW artifacts and drives a real Direct iOS WebView DOM assertion.
+  `pnpm run test:e2e:hosted-mobile-webview:ssh` drives the same actual WKWebView
+  against an isolated Docker SSH provider and verifies a remote terminal
+  mutation. The full Direct iOS path also passes native onboarding, populated
+  Agent History parity, Desktop restart/E2EE recovery, synthetic-gesture
+  rejection, native-touch Resume, Session return, native Terminal Settings, and
+  Back to the exact same hosted route. Cloud Relay presentation remains open.
+- [ ] Test macOS, Windows, Linux, and headless Desktop package delivery.
+- [~] Test Direct LAN connection. Host 37 passes the hosted native-chat round
+  trip over authenticated Direct LAN.
+- [ ] Test Relay connection with realistic latency.
+- [~] Test interruption, offline launch, reconnect, and endpoint change. The
+  simulator passes background/foreground and cold app reconnect to Host 37;
+  endpoint change and full host interruption remain open.
+- [~] Test native, WSL-relevant, and SSH workspace execution. A real Docker
+  Linux SSH target passes exact native-chat transcript authority, disconnect,
+  and reconnect through the SSH provider, relay subprocess, and production
+  hosted broker/page client. Durable actual-WKWebView automation also renders
+  the unchanged SSH workspace and mutates its remote terminal. Native,
+  WSL-relevant, broader SSH operations, cloud Relay, and native-chat rendering
+  after SSH reconnect remain.
+- [ ] Test two paired desktops with different web build/bridge versions.
+- [~] Test cold/warm launch, background/foreground, rotation, and process loss.
+  These pass across the recorded hosted simulator slices, including automatic
+  Host 37 workspace restoration after a full app terminate/launch. Android also
+  retains the exact hosted session across an ordinary active-recording
+  background/foreground transition; repeated-loss and physical-device evidence
+  remain open.
+- [ ] Test software/hardware keyboard, IME composition, dictation, and gestures.
+- [ ] Test VoiceOver, TalkBack, zoom/Dynamic Type behavior, and reduced motion.
+- [ ] Run 30-minute sustained use and repeated lifecycle loops without
+      progressive memory or performance degradation.
+- [ ] Record benchmark artifacts and compare against the current native app on
+      the same hardware.
+
+## 13. App Store Validation
+
+- [ ] Provision a stable internet-accessible review Desktop and representative
+      workspace data.
+- [ ] Provide durable review credentials, sample QR code, and exact pairing
+      instructions.
+- [ ] Exercise meaningful native pairing, connectivity, notification,
+      camera/picker, audio, permission, recovery, and diagnostic behavior.
+- [ ] Write accurate App Review notes describing desktop-served workspace UI and
+      native capability boundaries.
+- [ ] Build the production-shaped submission from a recorded PR commit.
+- [ ] Submit through production App Review; TestFlight alone does not count.
+- [ ] Record submission build, notes, reviewer questions, requested changes, and
+      disposition.
+- [ ] Obtain acceptance before deleting duplicate native workspace screens.
+- [ ] Resubmit the exact final release candidate if cutover materially changes
+      the accepted binary.
+- [ ] Treat rejection or required architectural redesign as a failed Option B
+      gate and return to Option A.
+
+## 14. Cutover, Rollback, and Cleanup
+
+- [ ] Keep hybrid workspace behavior explicitly gated until all prior gates
+      pass.
+- [ ] Make the production hybrid route the default from the reviewed commit.
+- [ ] Remove the Experimental Settings entry and prototype route.
+- [ ] Remove prototype contracts, package generator, RPC names, cache, bridge,
+      and test fixtures superseded by production implementations.
+- [ ] Remove the parallel `src/mobile-web/` presentation after parity and App
+      Store gates pass; retain the shared React Native component source rendered
+      through React Native Web.
+- [ ] Keep native pairing, recovery, permissions, settings, and diagnostics.
+- [~] Drill automatic rollback from a crash-looping staged package. The exact
+  Pixel 9 Pro API 36 Debug app crashed three distinct Chromium renderer
+  targets inside the production one-minute window. The first two retained
+  native session `E_AO…`, the third changed to `ScXR…`, and
+  `activation.json` moved from `bb86b378…` with previous `800db4d5…` to
+  active `800db4d5…` with no previous entry. The exact iPhone 17 Pro simulator
+  Debug app killed WebContent PIDs `69677`, `70416`, and `70512` in 11.9
+  seconds, remounted four distinct WebKit targets, made the same atomic
+  `bb86b378…` to `800db4d5…` activation change, and retained the unchanged
+  terminal UI. Physical devices and the final release candidate remain.
+- [~] Drill manual recovery to previous generation and cache clearing. On iOS
+  Simulator, native accessibility activated **Use previous**, atomically moved
+  `bb86b378…` over `800db4d5…`, then activated **Clear cache**, removed the host
+  cache, redownloaded `bb86b378…`, and reopened the hosted terminal. Android
+  emulator accessibility passes the same **Use previous** and **Clear cache**
+  sequence. Physical-device and final release-candidate drills remain.
+- [~] Drill corrupt cache, incompatible bridge, disconnected desktop, pairing
+  removal, and WebView loss. Cross-platform stores now cold-fallback from a
+  corrupt active generation to a compatible verified previous generation. The
+  rebuilt iOS Simulator shell rejected corrupt `48531616…`, atomically
+  activated `bb86b378…`, removed the corrupt generation, and rendered the
+  bridge-enabled cached reconnect UI while Desktop was unavailable. The other
+  scenarios and external-device matrix remain.
+- [ ] Document Desktop web-package rollback and native store-rollout rollback.
+- [ ] Run final full CI and packaged release builds.
+- [ ] Confirm no production names or imports still contain `prototype`.
+
+## 15. Release Evidence and Documentation
+
+- [ ] Update the architecture and mobile developer documentation.
+- [ ] Update support, privacy, troubleshooting, and recovery documentation.
+- [~] Add safe diagnostic fields for build, bridge, cache, activation, and
+  terminal resync state. The native in-memory store and existing Copy
+  diagnostics action now report bridge version, a 12-character build prefix,
+  cache/refresh source, package/health state, recovery count, and a stable
+  failure code. It also reports bounded cache/refresh activation duration,
+  total terminal resyncs, the last stable resync reason, and flow-overflow
+  count. Terminal flow observations now retain the maximum ACK lag and
+  outstanding-byte high-water mark. Every counter and measurement is host
+  scoped, excludes stream/workspace/terminal identity, and is rejected or
+  saturated at a fixed bound. After a 5,000-line hosted Android terminal
+  workload, the existing Copy action exported 87 ms maximum ACK lag, a
+  29,057-byte outstanding high-water mark, zero resyncs, and zero overflows.
+  Physical-device, sustained, hidden, disconnected, and multi-stream benchmark
+  exports remain open.
+- [~] Verify diagnostics contain no endpoint, credential, repository content,
+  terminal bytes, filename, or page payload data. The copied report no longer
+  includes the host display name, paired endpoint, raw connection-entry detail,
+  native session ID, cache path, or full build ID. Broader logging, crash-report,
+  and support-bundle audits remain open.
+- [ ] Attach the final feature-parity inventory to the PR.
+- [ ] Attach automated and manual test results.
+- [ ] Attach physical-device performance and lifecycle artifacts.
+- [ ] Attach the security review and resolved findings.
+- [ ] Attach App Review evidence and reviewer instructions.
+- [ ] Attach rollback drill results, screenshots, and final release checklist.
+
+## Performance Gates
+
+- [ ] Cached host entry is no more than 20% slower than the current native route
+      and interactive within two seconds on the lowest supported device.
+- [ ] A healthy cache makes package refresh non-blocking.
+- [ ] Package staging and activation are measured separately over Direct and
+      Relay paths.
+- [ ] Real terminal output has zero dropped, duplicate, or reordered bytes.
+- [ ] Terminal input latency and frame pacing meet the agreed physical-device
+      budget under real sustained output.
+- [ ] Terminal foreground, hidden, disconnected, and resync memory is bounded.
+- [ ] A real 4,000-row diff avoids repeated long tasks, progressive growth, and
+      WebView process loss.
+- [ ] Ten repeated host/session/terminal/diff cycles show no progressive
+      slowdown.
+- [ ] A 30-minute session stays within the recorded memory budget.
+- [ ] Battery, thermals, and GPU fallback are acceptable on low-end physical iOS
+      and Android devices.
+
+## Final Merge Gate
+
+- [ ] Every required checklist item is complete or explicitly removed from
+      scope through an approved design change.
+- [ ] No `[!]` blocker remains open.
+- [ ] No mandatory result is inferred from simulator-only evidence.
+- [ ] The production App Store gate has passed.
+- [ ] The final release candidate passes security, device, rollback, CI, and
+      packaged-build validation.
+- [ ] The design document, this checklist, and the code describe the same final
+      architecture.
+
+## Evidence Log
+
+| Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
+| ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-22 | Prototype               | Targeted package/cache/bridge tests                                                                                                                                                                                         | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Prototype               | Node typecheck, targeted lint/format, max-lines ratchet, Desktop Electron build                                                                                                                                             | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Prototype               | Full mobile validation: 309 test files, 2,235 tests passed, 2 skipped                                                                                                                                                       | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Prototype               | iPhone 17 Pro simulator lifecycle and offline-cache run                                                                                                                                                                     | Passed; simulator only                                                                                                                                                                            |
+| 2026-07-22 | Prototype               | Ten-run 330 KiB synthetic terminal/diff workload                                                                                                                                                                            | Passed; synthetic simulator evidence only                                                                                                                                                         |
+| 2026-07-22 | Contracts               | Production manifest contract: 13 focused tests                                                                                                                                                                              | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Contracts               | Node TypeScript check after manifest contract                                                                                                                                                                               | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Rebase                  | Rebased onto `origin/main` at `72a0a4dbb`; branch divergence `0/0`                                                                                                                                                          | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Rebase                  | Restored prototype: 19 root focused tests and 8 mobile focused tests                                                                                                                                                        | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Rebase                  | Mobile TypeScript check, targeted lint, and max-lines ratchet                                                                                                                                                               | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Rebase                  | Rebased again after `origin/main` advanced; now at `41751dd90`, divergence `0/0`                                                                                                                                            | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Contracts               | Manifest, bridge, and terminal contract suite: 33 focused tests                                                                                                                                                             | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Contracts               | Node TypeScript check after bridge and terminal contracts                                                                                                                                                                   | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Web build               | Bridge/manifest/terminal/import-boundary suite: 45 focused tests                                                                                                                                                            | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Web build               | Isolated mobile-web TypeScript check and lint                                                                                                                                                                               | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Web build               | Two deterministic production builds produced build `b94bfdf5…`                                                                                                                                                              | Passed; identical build identity                                                                                                                                                                  |
+| 2026-07-22 | Web build               | Manifest/hash/CSP/codegen/source-map/budget verifier                                                                                                                                                                        | Passed; 383,835 B / 153,137 B gzip                                                                                                                                                                |
+| 2026-07-22 | Rebase                  | Rebased onto current `origin/main` at `7a422712b`; branch divergence `0/0`                                                                                                                                                  | Passed; index shape preserved                                                                                                                                                                     |
+| 2026-07-22 | Package RPC             | Desktop contracts, package delivery, allowlist, and prototype: 66 focused tests                                                                                                                                             | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Package RPC             | Expo prototype cache/package/bridge: 8 focused tests                                                                                                                                                                        | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Package RPC             | Node, mobile-web, and Expo TypeScript checks plus targeted lint                                                                                                                                                             | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Package RPC             | Deterministic production build and independent verifier                                                                                                                                                                     | Passed; build `b94bfdf5…`                                                                                                                                                                         |
+| 2026-07-22 | Native cache            | Downloader and native-staging adapter: 7 focused Expo tests                                                                                                                                                                 | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Native cache            | Expo TypeScript, targeted lint, and iOS/Android autolinking                                                                                                                                                                 | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Native cache            | Full iOS Debug app build for iPhone 17 Pro simulator                                                                                                                                                                        | Passed; simulator build only                                                                                                                                                                      |
+| 2026-07-22 | Native cache            | Android Expo prebuild                                                                                                                                                                                                       | Passed; Kotlin compile awaits a JDK                                                                                                                                                               |
+| 2026-07-22 | Validation              | Combined production boundary: 70 root tests and 15 Expo tests                                                                                                                                                               | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Validation              | Typechecks, targeted lint, format, max-lines, diff hygiene, deterministic build                                                                                                                                             | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Rebase                  | Final rebase onto `origin/main` at `6d55c7fa1`; branch divergence `0/0`                                                                                                                                                     | Passed; index shape preserved                                                                                                                                                                     |
+| 2026-07-22 | Rebase                  | Rebased onto `origin/main` at `5b7fdd7ef`; branch divergence `0/0`                                                                                                                                                          | Passed; index shape preserved                                                                                                                                                                     |
+| 2026-07-22 | Rebase                  | Rebased onto `origin/main` at `bae29fd1e`; branch divergence `0/0`                                                                                                                                                          | Passed; index shape preserved                                                                                                                                                                     |
+| 2026-07-22 | Native cache            | Health/session lifecycle, host-removal, and process-failure suites: 10 tests                                                                                                                                                | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Native cache            | Production route and native module Expo TypeScript check plus targeted lint                                                                                                                                                 | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Native cache            | Android module `compileDebugKotlin` with JDK 17 and Android SDK 36                                                                                                                                                          | Passed; emulator runtime still pending                                                                                                                                                            |
+| 2026-07-22 | Native cache            | Full iOS Debug app build for iPhone 17 Pro simulator                                                                                                                                                                        | Passed; runtime lifecycle still pending                                                                                                                                                           |
+| 2026-07-22 | Rebase                  | Rebased onto current `origin/main` at `d152039e9`; branch divergence `0/0`                                                                                                                                                  | Passed; migration changes reapplied                                                                                                                                                               |
+| 2026-07-22 | Web build               | Checkout-built production package and independent verifier                                                                                                                                                                  | Passed; build `3145a32b…`, 457,610 B                                                                                                                                                              |
+| 2026-07-22 | Native cache            | iOS private-origin package, ready/health bridge, and cached disconnected launch                                                                                                                                             | Passed; iPhone 17 Pro simulator only                                                                                                                                                              |
+| 2026-07-22 | Native cache            | Bounded pre-listener bridge inbox race regression tests                                                                                                                                                                     | Passed; 2 focused tests                                                                                                                                                                           |
+| 2026-07-22 | Native cache            | Swift and Kotlin deterministic quota/eviction policy suites                                                                                                                                                                 | Passed; 4 scenarios on each platform                                                                                                                                                              |
+| 2026-07-22 | Native cache            | Android policy tests and `compileDebugKotlin`, JDK 17 / Android SDK 36                                                                                                                                                      | Passed; Android runtime still pending                                                                                                                                                             |
+| 2026-07-22 | Native cache            | Expo native target and full iOS Debug simulator app build                                                                                                                                                                   | Passed; fault injection still pending                                                                                                                                                             |
+| 2026-07-22 | Bridge                  | Page client, channel lifecycle, and shell-state suite: 22 focused web tests                                                                                                                                                 | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Bridge                  | Broker and serialized page-to-`worktree.ps` round trip: 7 focused Expo tests                                                                                                                                                | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Bridge                  | Mobile-web and Expo TypeScript checks plus targeted lint                                                                                                                                                                    | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Web build               | Independent package verifier after workspace shell and style-boundary changes                                                                                                                                               | Passed; build `d537c89f…`, 485,716 B                                                                                                                                                              |
+| 2026-07-22 | Native build            | Android policy tests/Kotlin compile and full signed iOS Debug simulator app build                                                                                                                                           | Passed; physical/release builds pending                                                                                                                                                           |
+| 2026-07-22 | Bridge                  | Live typed workspace snapshot and retained reconnecting state                                                                                                                                                               | Passed; iPhone 17 Pro simulator only                                                                                                                                                              |
+| 2026-07-22 | Rebase                  | Rebased onto current `origin/main` at `8685cdb3f`; branch divergence `0/0`                                                                                                                                                  | Passed; migration state restored exactly                                                                                                                                                          |
+| 2026-07-22 | Validation              | Full root TypeScript check and focused production boundary suite: 75 tests                                                                                                                                                  | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Validation              | Full Expo suite: 323 files, 2,310 tests passed, 2 skipped                                                                                                                                                                   | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Validation              | Mobile-web lint/build, package verifier, max-lines ratchet, and diff hygiene                                                                                                                                                | Passed; build `d537c89f…`                                                                                                                                                                         |
+| 2026-07-22 | Sessions                | Typed entry/snapshot/subscription clients, broker adapters, ordering, and cleanup                                                                                                                                           | Passed; 25 web and 26 Expo focused tests                                                                                                                                                          |
+| 2026-07-22 | Web build               | Independent verifier after session entry and live-update implementation                                                                                                                                                     | Passed; `77708ed1…`, 499,216 B / 183,956 B compressed                                                                                                                                             |
+| 2026-07-22 | Sessions                | Workspace entry plus live terminal add/remove metadata over paired E2EE                                                                                                                                                     | Passed; iPhone 17 Pro simulator only                                                                                                                                                              |
+| 2026-07-22 | Sessions                | Retained session version 2 after the paired runtime stopped                                                                                                                                                                 | Passed; reconnecting simulator state                                                                                                                                                              |
+| 2026-07-22 | Validation              | Full root TypeScript, max-lines ratchet, diff hygiene, and full Expo suite                                                                                                                                                  | Passed; 325 files, 2,315 passed, 2 skipped                                                                                                                                                        |
+| 2026-07-22 | Rebase                  | Rebased onto current `origin/main` at `56101422d`; branch divergence `0/0`                                                                                                                                                  | Passed; staged/unstaged shape preserved                                                                                                                                                           |
+| 2026-07-22 | Sessions                | Synchronous first-event subscription teardown regression                                                                                                                                                                    | Passed; host unsubscribe executes exactly once                                                                                                                                                    |
+| 2026-07-22 | Sessions                | Typed create/activate/close broker round trip and token-based interaction tests                                                                                                                                             | Passed; 14 web and 11 focused Expo tests                                                                                                                                                          |
+| 2026-07-22 | Web build               | Independent verifier after bounded session actions                                                                                                                                                                          | Passed; `c376e95e…`, 502,543 B / 184,893 B compressed                                                                                                                                             |
+| 2026-07-22 | Sessions                | Two creates, caller-local activation, and two closes over paired E2EE                                                                                                                                                       | Passed; iPhone 17 Pro simulator, versions 0 through 8                                                                                                                                             |
+| 2026-07-22 | Validation              | Full root TypeScript, lint, max-lines, diff hygiene, and full Expo suite                                                                                                                                                    | Passed; 327 files, 2,329 passed, 2 skipped                                                                                                                                                        |
+| 2026-07-22 | Terminal                | Real xterm page/runtime focused suite: 12 files, 42 tests                                                                                                                                                                   | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Terminal                | Expo terminal broker/transport focused suite: 7 files, 27 tests                                                                                                                                                             | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Validation              | Mobile, mobile-web, and Node TypeScript plus targeted lint/format/max-lines                                                                                                                                                 | Passed                                                                                                                                                                                            |
+| 2026-07-22 | Web build               | Independent manifest/hash/CSP/codegen verifier with real xterm                                                                                                                                                              | Passed; build `af1fd2c7…`                                                                                                                                                                         |
+| 2026-07-22 | Web build               | Measured production bundle                                                                                                                                                                                                  | 871,082 B / 276,344 B compressed                                                                                                                                                                  |
+| 2026-07-22 | Terminal                | Direct terminal snapshot, xterm render, typed input, live output, rotate/recover                                                                                                                                            | Passed; iPhone 17 Pro simulator only                                                                                                                                                              |
+| 2026-07-22 | Terminal                | Background/foreground resnapshot and close/unsubscribe cleanup                                                                                                                                                              | Passed; simulator restored to zero test terminals                                                                                                                                                 |
+| 2026-07-22 | Terminal                | React Native `Buffer` base64url compatibility regression                                                                                                                                                                    | Fixed and covered by snapshot-ID assertion                                                                                                                                                        |
+| 2026-07-22 | Rebase                  | Rebased onto current `origin/main` at `746a8f3e4`; branch divergence `0/0`                                                                                                                                                  | Passed; index shape preserved                                                                                                                                                                     |
+| 2026-07-22 | Terminal                | Opt-in parsed-credit/xterm benchmark: 1/4/8 viewers at 1/20/100 ms RTT                                                                                                                                                      | Passed; 512 MiB at 8 MiB max in-flight                                                                                                                                                            |
+| 2026-07-22 | Files                   | Relative-path/list/search/read contracts plus native sanitizing broker                                                                                                                                                      | Passed; 2 Expo files, 12 tests                                                                                                                                                                    |
+| 2026-07-22 | Files                   | Plain-text file index/search/preview UI and stale-host suppression                                                                                                                                                          | Passed; 11 mobile-web/shared tests                                                                                                                                                                |
+| 2026-07-23 | Files                   | Worst-case JSON expansion replaced by a 176 KiB base64-bounded UTF-8 envelope                                                                                                                                               | Passed; multi-byte boundary regression covered                                                                                                                                                    |
+| 2026-07-23 | Web build               | Independent verifier after bounded read-only file slice                                                                                                                                                                     | Passed; build `72f45ba9…`, 879,016 B / 278,584 B                                                                                                                                                  |
+| 2026-07-23 | Files                   | Hierarchical directory contract, SHA-256 revisions, breadcrumbs, and safe paths                                                                                                                                             | Passed; focused bridge/page tests and iOS Simulator                                                                                                                                               |
+| 2026-07-23 | Files                   | 128 KiB chunks, split UTF-8, binary detection, cancellation, and 1 MiB page cap                                                                                                                                             | Passed; 128 KiB and 256 KiB simulator reads                                                                                                                                                       |
+| 2026-07-23 | Files                   | Literal lowercase path search without ripgrep and bounded fallback inventory                                                                                                                                                | Passed; exact `mobile/pnpm-lock.yaml` result                                                                                                                                                      |
+| 2026-07-23 | Files                   | Large-file preview in bounded mobile viewport with explicit Load more                                                                                                                                                       | Passed; 131,072 bytes rendered in iOS Simulator                                                                                                                                                   |
+| 2026-07-23 | Web build               | Independent verifier after hierarchical and chunked file slice                                                                                                                                                              | Passed; build `4e324f8a…`, 890,447 B / 281,331 B                                                                                                                                                  |
+| 2026-07-23 | Validation              | Production boundary and Expo file/bridge suites                                                                                                                                                                             | Passed; 28 files/113 tests and 12 files/41 tests                                                                                                                                                  |
+| 2026-07-23 | Validation              | Node, mobile-web, Expo types; both lints; Expo format; max-lines; diff hygiene                                                                                                                                              | Passed                                                                                                                                                                                            |
+| 2026-07-23 | Rebase                  | Rebased onto current `origin/main` at `7ab601487`; branch divergence `0/0`                                                                                                                                                  | Passed; staged/unstaged shape preserved                                                                                                                                                           |
+| 2026-07-23 | Source control          | Provider-neutral status/diff contracts, brokers, page clients, and virtualization                                                                                                                                           | Passed; 23 files/90 tests and 12 files/41 tests                                                                                                                                                   |
+| 2026-07-23 | Web build               | Independent verifier after bounded source-control and diff slice                                                                                                                                                            | Passed; build `a29bf25a…`, 922,836 B / 289,718 B                                                                                                                                                  |
+| 2026-07-23 | Validation              | Node, mobile-web, Expo types; both lints; targeted shared lint; max-lines; hygiene                                                                                                                                          | Passed                                                                                                                                                                                            |
+| 2026-07-23 | Source control          | Real status plus paginated mixed diff over paired Direct E2EE on iPhone 17 Pro                                                                                                                                              | Passed; 64/181 changes, 672/2,291 rows loaded                                                                                                                                                     |
+| 2026-07-23 | Source control          | Live row-window virtualization while scrolling the retained 672-row document                                                                                                                                                | Passed; numbered context/add/delete rows observed                                                                                                                                                 |
+| 2026-07-23 | Rebase                  | Rebased onto current `origin/main` at `8a2361831`; branch divergence `0/0`                                                                                                                                                  | Passed; staged/unstaged shape preserved                                                                                                                                                           |
+| 2026-07-23 | Source control          | Path-free watcher invalidation plus visible-page polling and subscription cleanup                                                                                                                                           | Passed; 27 files/115 root tests, 18 files/61 Expo tests                                                                                                                                           |
+| 2026-07-23 | Source control          | Root probe added and removed without manual Refresh on paired iPhone 17 Pro                                                                                                                                                 | Passed; live count changed 187 → 188 → 187                                                                                                                                                        |
+| 2026-07-23 | Web build               | Independent verifier after source-control invalidation                                                                                                                                                                      | Passed; build `8c384169…`, 924,176 B / 290,096 B                                                                                                                                                  |
+| 2026-07-23 | Validation              | Node, mobile-web, Expo types; targeted lint; max-lines ratchet; Electron build                                                                                                                                              | Passed; known SSH-provider line baseline unchanged                                                                                                                                                |
+| 2026-07-23 | Source control          | HEAD/status preflight, bounded mutation brokers, grants, clients, and UI                                                                                                                                                    | Passed; 5 root files/28 tests and 2 Expo files/8 tests                                                                                                                                            |
+| 2026-07-23 | Source control          | Tracked/untracked single and 32-path bulk stage, unstage, and confirmed discard                                                                                                                                             | Passed; isolated paired iOS Simulator repository                                                                                                                                                  |
+| 2026-07-23 | Web build               | Dialog utilities added to the isolated style boundary and independent verifier                                                                                                                                              | Passed; build `56b1c586…`, 975,337 B / 304,666 B                                                                                                                                                  |
+| 2026-07-23 | Validation              | Mobile-web typecheck, lint, focused format, package hashes/CSP/budgets                                                                                                                                                      | Passed; live discard dialog centered in iOS WebView                                                                                                                                               |
+| 2026-07-23 | Source control          | Exact commit/generation contracts, preflight, cancellation, broker, client, and UI                                                                                                                                          | Passed; 6 root files/33 tests, 4 Expo files/24 tests                                                                                                                                              |
+| 2026-07-23 | Validation              | Node/mobile-web/Expo types, both lints, focused format, boundaries, max-lines                                                                                                                                               | Passed                                                                                                                                                                                            |
+| 2026-07-23 | Web build               | Independent manifest/hash/CSP/codegen/style/budget verifier after commit UI                                                                                                                                                 | Passed; build `373fc360…`, 982,269 B / 306,392 B                                                                                                                                                  |
+| 2026-07-23 | Source control          | Stage and real commit over paired Direct E2EE on iPhone 17 Pro                                                                                                                                                              | Passed; `51f4b079…` → `e7e38a5d…`, repository clean                                                                                                                                               |
+| 2026-07-23 | Source control          | Live generated-message start/cancel/error recovery                                                                                                                                                                          | Partial; temporary Claude CLI is not logged in                                                                                                                                                    |
+| 2026-07-23 | Terminal                | PTY `ESC [ 5 n` query through paired WebView/native/Desktop query-reply path                                                                                                                                                | Passed; exact `ESC [ 0 n` / `1b5b306e`, lab clean                                                                                                                                                 |
+| 2026-07-23 | Source control          | Bounded branches/history/compare contracts, grants, brokers, clients, and UI                                                                                                                                                | Passed; 12 root files/70 tests, full Expo 336/2,376                                                                                                                                               |
+| 2026-07-23 | Validation              | Node/mobile-web/Expo types, both lints, max-lines, and diff hygiene                                                                                                                                                         | Passed                                                                                                                                                                                            |
+| 2026-07-23 | Web build               | Independent manifest/hash/CSP/codegen/style/budget verifier                                                                                                                                                                 | Passed; `45b4c1f4…`, 1,011,440 B / 313,071 B                                                                                                                                                      |
+| 2026-07-23 | Source control          | Paired Direct branch/history/branch-compare/commit-compare on iPhone 17 Pro                                                                                                                                                 | Passed; temporary ancestor branch removed, lab clean                                                                                                                                              |
+| 2026-07-23 | Source control          | Strict sync contracts, preflight, cancellation, broker, client, and confirmation UI                                                                                                                                         | Passed; focused, type, lint, format, and max-lines gates                                                                                                                                          |
+| 2026-07-23 | Validation              | Full root and Expo suites after source-control sync                                                                                                                                                                         | Passed; root 3,317/35,009, Expo 337/2,388; expected skips                                                                                                                                         |
+| 2026-07-23 | Web build               | Independent manifest/hash/CSP/codegen/style/budget verifier after sync                                                                                                                                                      | Passed; `db652e2d…`, 1,022,864 B / 315,999 B                                                                                                                                                      |
+| 2026-07-23 | Source control          | Paired Direct checkout/fetch/publish/pull/push/rebase/merge-abort on iPhone 17 Pro                                                                                                                                          | Passed; no force push, disposable lab clean on `main`                                                                                                                                             |
+| 2026-07-23 | Hosted review           | Provider-neutral discovery, details, top-level comments, and provider degradation                                                                                                                                           | Passed; build `84d8f13e…` and focused contract/broker/UI tests                                                                                                                                    |
+| 2026-07-23 | Hosted review           | Paired Direct no-review discovery on iPhone 17 Pro                                                                                                                                                                          | Passed; branch identity shown and no external mutation                                                                                                                                            |
+| 2026-07-23 | Hosted review           | GitHub replies plus GitHub/GitLab thread resolve/reopen with identity revalidation                                                                                                                                          | Passed; 3 root files/11 tests and 19 Expo files/89 tests                                                                                                                                          |
+| 2026-07-23 | Validation              | Hosted-review typechecks, both lints, max-lines ratchet, and production web build                                                                                                                                           | Passed; `331b7c43…`, 1,040,049 B / 320,179 B                                                                                                                                                      |
+| 2026-07-23 | Hosted review           | Activated `331b7c43…` through paired Host 20 on iPhone 17 Pro                                                                                                                                                               | Passed; `refs/heads/mobile-rearch` reported no review                                                                                                                                             |
+| 2026-07-23 | Rebase                  | Rebased onto current `origin/main` at `8f40ddf32`; branch divergence `0/0`                                                                                                                                                  | Passed; five conflicts merged and index shape preserved                                                                                                                                           |
+| 2026-07-23 | Validation              | Full root and Expo suites after the memory-bounds rebase                                                                                                                                                                    | Passed; root 3,599/36,648, Expo 362/2,597; expected skips                                                                                                                                         |
+| 2026-07-23 | Validation              | Node/mobile-web/Expo types, both mobile lints, format, max-lines, and diff hygiene                                                                                                                                          | Passed; public RPC contract extracted without a bypass                                                                                                                                            |
+| 2026-07-23 | Web build               | Independent verifier after the memory-bounds rebase                                                                                                                                                                         | Passed; `331b7c43…`, 1,040,049 B / 320,179 B                                                                                                                                                      |
+| 2026-07-23 | Hosted review           | Bounded file metadata and exact GitHub/GitLab inline-comment authorization                                                                                                                                                  | Passed; 4 root files/18 tests and 3 Expo files/14 tests                                                                                                                                           |
+| 2026-07-23 | Validation              | Full root/Expo suites, types, both mobile lints, max-lines, build, and hygiene                                                                                                                                              | Passed; root 3,599/36,651, Expo 364/2,602; expected skips                                                                                                                                         |
+| 2026-07-23 | Web build               | Independent verifier after inline-comment UI and exact provider allowlist                                                                                                                                                   | Passed; `e0db84d6…`, 1,100,009 B / 339,117 B                                                                                                                                                      |
+| 2026-07-23 | Hosted review           | Activated `e0db84d6…` through paired Host 20 on iPhone 17 Pro                                                                                                                                                               | Passed; previous generation `331b7c43…`, no live review                                                                                                                                           |
+| 2026-07-23 | Hosted review           | Dedicated bounded GitHub/GitLab review diffs and exact diff-to-thread navigation                                                                                                                                            | Passed; 4 root files/18 tests and 1 Expo file/4 tests                                                                                                                                             |
+| 2026-07-23 | Validation              | Full root/Expo suites, all types, both mobile lints, format, max-lines, and hygiene                                                                                                                                         | Passed; root 3,601/36,660, Expo 365/2,606; expected skips                                                                                                                                         |
+| 2026-07-23 | Web build               | Independent verifier after dedicated hosted-review diff integration                                                                                                                                                         | Passed; `dc69b8ff…`, 1,109,948 B / 340,327 B                                                                                                                                                      |
+| 2026-07-23 | Hosted review           | Activated `dc69b8ff…` through paired Host 20 and reopened the real workspace                                                                                                                                                | Passed; previous generation `331b7c43…`, no live review                                                                                                                                           |
+| 2026-07-23 | Hosted review           | Bounded queued drafts plus GitHub verdict/comment and GitLab comment-only submission                                                                                                                                        | Passed; 4 root files/12 tests and full Expo 366/2,610                                                                                                                                             |
+| 2026-07-23 | Hosted review           | Provider preflight/result mismatch and ambiguous-replay protections                                                                                                                                                         | Passed; raw targets and failures remain native-only                                                                                                                                               |
+| 2026-07-23 | Validation              | Review-state cycle extraction, Expo/mobile-web types, both lints, format, hygiene                                                                                                                                           | Passed; full Expo suite has 2 expected skips                                                                                                                                                      |
+| 2026-07-23 | Web build               | Independent verifier after queued hosted-review submission                                                                                                                                                                  | Passed; `219c0e44…`, 1,118,291 B / 342,457 B                                                                                                                                                      |
+| 2026-07-23 | Hosted review           | Activated `219c0e44…` through paired Host 21 and rendered `mobile-rearch`                                                                                                                                                   | Passed; Direct E2EE iOS Simulator, no live hosted review                                                                                                                                          |
+| 2026-07-23 | Files                   | 128 KiB UTF-8 write contract, ownership preflight, exact revision and result checks                                                                                                                                         | Passed; 4 root files / 13 tests and 2 follow-up files / 8 tests                                                                                                                                   |
+| 2026-07-23 | Validation              | Full Expo suite plus all types, focused lints, max-lines, format, and diff hygiene                                                                                                                                          | Passed; 367 files, 2,613 passed, 2 skipped                                                                                                                                                        |
+| 2026-07-23 | Web build               | Independent verifier after bounded optimistic file editing                                                                                                                                                                  | Passed; `63311929…`, 1,123,835 B / 344,029 B                                                                                                                                                      |
+| 2026-07-23 | Files                   | Host 22 normal save followed by stale-draft conflict against a Desktop disk change                                                                                                                                          | Passed; newer Desktop content remained intact                                                                                                                                                     |
+| 2026-07-23 | Files                   | Inert GFM/source renderer, raw-HTML/URL/image rejection, and 4,000-node ceiling                                                                                                                                             | Passed; 2 files / 11 tests                                                                                                                                                                        |
+| 2026-07-23 | Web build               | Independent verifier after bounded Markdown preview                                                                                                                                                                         | Passed; `3c089956…`, 1,172,284 B / 359,093 B                                                                                                                                                      |
+| 2026-07-23 | Files                   | Host 22 rendered the real README and exposed raw HTML only as selectable source                                                                                                                                             | Passed; Direct E2EE iOS Simulator                                                                                                                                                                 |
+| 2026-07-23 | Files                   | Curated syntax grammars, plaintext fallback, and 48K/3,000 rendering bounds                                                                                                                                                 | Passed; 3 files / 14 focused tests                                                                                                                                                                |
+| 2026-07-23 | Web build               | Independent verifier after bounded syntax highlighting                                                                                                                                                                      | Passed; `9a69302d…`, 1,240,012 B / 380,067 B                                                                                                                                                      |
+| 2026-07-23 | Files                   | Host 22 rendered a real TypeScript file as inert styled text spans                                                                                                                                                          | Passed; Direct E2EE iOS Simulator                                                                                                                                                                 |
+| 2026-07-23 | Native cache            | Host 22 activated `9a69302d…` and retained `3c089956…` as previous                                                                                                                                                          | Passed; activation record inspected                                                                                                                                                               |
+| 2026-07-23 | Files                   | Raster signatures, 2 MiB cap, decode errors, cancellation, and object-URL revocation                                                                                                                                        | Passed; 4 files / 17 focused tests                                                                                                                                                                |
+| 2026-07-23 | Validation              | Full root suite after bounded raster previews                                                                                                                                                                               | Passed; 3,612 files / 36,701 tests, 7 / 59 skipped                                                                                                                                                |
+| 2026-07-23 | Web build               | CSP/package verifier after private raster object URLs                                                                                                                                                                       | Passed; `bcc7b5d2…`, 1,244,853 B / 381,646 B                                                                                                                                                      |
+| 2026-07-23 | Files                   | Host 22 visibly rendered a real repository PNG from authenticated bytes                                                                                                                                                     | Passed; Direct E2EE iOS Simulator                                                                                                                                                                 |
+| 2026-07-23 | Files                   | Host 22 assembled and decoded a 329,737-byte JPEG across three bounded chunks                                                                                                                                               | Passed; Direct E2EE iOS Simulator                                                                                                                                                                 |
+| 2026-07-23 | Native cache            | Host 22 activated `bcc7b5d2…` and retained `9a69302d…` as previous                                                                                                                                                          | Passed; activation record inspected                                                                                                                                                               |
+| 2026-07-23 | Emulator                | Worktree CLI selection, explicit path selector, focused lint/format, and live launch                                                                                                                                        | Passed; 6 tests, dev wrapper selected, attach and Metro ready                                                                                                                                     |
+| 2026-07-23 | Terminal links          | Adjacent absolute paths remain independent in shared, native, and web matchers                                                                                                                                              | Passed; root 56 and Expo 56 focused tests                                                                                                                                                         |
+| 2026-07-23 | Web build               | Independent verifier after terminal-link conformance                                                                                                                                                                        | Passed; `98947834…`, 1,255,636 B / 384,828 B                                                                                                                                                      |
+| 2026-07-23 | Bridge security         | Full `mobile/src/mobile-web` suite after opaque authority propagation                                                                                                                                                       | Passed; 27 files, 127 tests                                                                                                                                                                       |
+| 2026-07-23 | Bridge security         | Expo typecheck, full mobile-web oxlint including max-lines, and `git diff --check`                                                                                                                                          | Passed; staged OTA HTML remained the only staged file                                                                                                                                             |
+| 2026-07-23 | UI reuse                | Host-only Expo Web entry imports the existing `HostScreen` route source                                                                                                                                                     | Passed; 3,254 modules, 4,764,728 B / 883,991 B                                                                                                                                                    |
+| 2026-07-23 | UI reuse                | Web workspace adapter, opaque repository/settings/mutation path, and invalidations                                                                                                                                          | Passed; 29 mobile test files, 132 tests, typecheck, max-lines                                                                                                                                     |
+| 2026-07-23 | UI reuse                | Bridge-connected unchanged `HostScreen` production Expo Web export                                                                                                                                                          | Passed; 3,292 modules, 4,863,719 B / 902,648 B gzip                                                                                                                                               |
+| 2026-07-23 | Validation              | Workspace bridge client extraction, root/mobile types and lints, full Expo suite                                                                                                                                            | Passed; 378 files, 2,665 tests passed, 2 skipped                                                                                                                                                  |
+| 2026-07-23 | UI reuse                | Unchanged shared `HostScreen` export after workspace-client extraction                                                                                                                                                      | Passed; 3,294 modules, 4,864,671 B / 902,829 B gzip                                                                                                                                               |
+| 2026-07-23 | Workspace               | Stable opaque pagination, lifecycle revocation, host/list/message limits                                                                                                                                                    | Passed; Expo 379/2,668, root 2/24, focused 4/22                                                                                                                                                   |
+| 2026-07-23 | UI reuse                | Unchanged shared `HostScreen` export after bounded workspace pagination                                                                                                                                                     | Passed; 3,294 modules, 4,865,361 B / 903,001 B gzip                                                                                                                                               |
+| 2026-07-23 | UI reuse                | Shell-owned host-state adapter and platform-safe native/web defaults                                                                                                                                                        | Passed; typecheck, lint, 3 focused files / 7 tests                                                                                                                                                |
+| 2026-07-23 | UI reuse                | Shared `HostScreen` export after platform-safe state/transport defaults                                                                                                                                                     | Passed; 3,294 modules, 4,859,812 B / 901,464 B gzip                                                                                                                                               |
+| 2026-07-23 | UI reuse                | Bounded shell connection metrics through the existing mobile connection classifier                                                                                                                                          | Passed; root/mobile types, lint, 4 files / 23 focused tests                                                                                                                                       |
+| 2026-07-23 | UI reuse                | Shared `HostScreen` export with accurate hosted connection escalation                                                                                                                                                       | Passed; 3,284 modules, 4,860,772 B / 901,727 B gzip                                                                                                                                               |
+| 2026-07-23 | Shell boundary          | Named host-picker/repair/reconnect/removal page-client-to-native broker round trip                                                                                                                                          | Passed; 6 focused files / 13 tests                                                                                                                                                                |
+| 2026-07-23 | Validation              | Full Expo suite after shell-operation extraction                                                                                                                                                                            | Passed; 386 files, 2,682 passed, 2 skipped                                                                                                                                                        |
+| 2026-07-23 | UI reuse                | Unchanged shared `HostScreen` export after native shell-operation extraction                                                                                                                                                | Passed; 3,281 modules, 4,829,397 B / 892,234 B gzip                                                                                                                                               |
+| 2026-07-23 | UI reuse                | Existing new-workspace component graph moved from `RpcClient` to named domain operations                                                                                                                                    | Passed; mobile typecheck and 4 focused files / 27 tests                                                                                                                                           |
+| 2026-07-23 | Capability bridge       | Bounded new-workspace reads with opaque repo/SSH authority and command/path/error sanitization                                                                                                                              | Passed; root/mobile/mobile-web types and 3 focused broker tests                                                                                                                                   |
+| 2026-07-23 | UI reuse                | Shared-screen RNW export after the new-workspace read boundary                                                                                                                                                              | Passed; 3,276 modules, 4,824,309 B / 890,610 B gzip                                                                                                                                               |
+| 2026-07-23 | Capability bridge       | Strict New Workspace source/create schemas, native gesture and authority checks, provider/base revalidation, and full web adapter                                                                                           | Passed; 7 focused files / 16 tests plus 17 shared contract tests                                                                                                                                  |
+| 2026-07-23 | UI reuse                | Shared-screen RNW export with the unchanged New Workspace flow wired to the native-shell bridge                                                                                                                             | Passed; 3,254 modules, 4,839,155 B / 893,065 B gzip                                                                                                                                               |
+| 2026-07-23 | UI reuse                | Host-only router imports the exact existing mobile session route with no copied presentation                                                                                                                                | Passed; source-identity test and RNW export at 3,878 modules                                                                                                                                      |
+| 2026-07-23 | Web build               | RNW export after importing the complete existing session dependency graph                                                                                                                                                   | Passed build; 7,534,886 B / 1,611,201 B gzip, over budget                                                                                                                                         |
+| 2026-07-23 | UI reuse                | Existing session screen tab snapshot/subscription/activation/close moved behind native/web named operations                                                                                                                 | Passed; 10 focused files / 46 tests, mobile typecheck and lint                                                                                                                                    |
+| 2026-07-23 | Web build               | RNW export after wiring the unchanged session tab lifecycle to the strict bridge                                                                                                                                            | Passed; 3,897 modules, 7,535,308 B / 1,611,636 B gzip                                                                                                                                             |
+| 2026-07-23 | UI reuse                | Existing empty-session and explicit blank-terminal creation routed through the named native/web tab boundary                                                                                                                | Passed; 4 focused files / 15 tests, mobile typecheck and lint                                                                                                                                     |
+| 2026-07-23 | Terminal                | Existing session terminal controller wired to native/web named stream operations with parsed-output ACKs and ordered input                                                                                                  | Passed; 10 focused files / 29 tests plus all typechecks and lint                                                                                                                                  |
+| 2026-07-23 | Web build               | RNW export using the web implementation of the existing `TerminalWebView` component contract                                                                                                                                | Passed; 3,885 modules, 7,145,787 B / 1,506,128 B gzip + CSS                                                                                                                                       |
+| 2026-07-23 | Web packaging           | Two consecutive content-addressed RNW package builds                                                                                                                                                                        | Passed; build `3d164ad8…`, 49 assets, 7,198,343 B both times                                                                                                                                      |
+| 2026-07-23 | Web packaging           | Absolute-asset rewrite, strict-CSP HTML extraction, manifest/package-root tests, and runtime-code-generation drift guards                                                                                                   | Passed; 4 files / 12 tests; no remaining `eval`/`new Function`                                                                                                                                    |
+| 2026-07-23 | Validation              | Full Expo suite after shared session terminal and RNW packaging work                                                                                                                                                        | Passed; 400 files, 2,713 passed, 2 skipped                                                                                                                                                        |
+| 2026-07-23 | Web packaging           | Dedicated RNW hash/path/CSP/code-generation/file-set and reviewed-budget verifier                                                                                                                                           | Passed; `abd43c62…`, 49 assets, 7,201,072 B / 1,537,245 B gzip                                                                                                                                    |
+| 2026-07-23 | Terminal                | Paired unchanged RNW route created two terminals, wrote through both, switched tabs, and closed one                                                                                                                         | Passed; both PTYs connected/writable; no blank WebView                                                                                                                                            |
+| 2026-07-23 | Lifecycle               | Hosted session back/reopen, portrait/landscape rotation, and background/foreground                                                                                                                                          | Passed on iPhone 17 Pro Simulator; manual hosted capture taken                                                                                                                                    |
+| 2026-07-23 | Terminal actions        | Existing display-mode, Rename, and Clear actions through the strict hosted adapters                                                                                                                                         | Passed; mode stayed stable, rename updated, clear toast appeared                                                                                                                                  |
+| 2026-07-23 | Keyboard                | Rename focus, Save, keyboard dismissal, and hosted viewport restoration                                                                                                                                                     | Passed; session header returned to its original AX coordinates                                                                                                                                    |
+| 2026-07-23 | Lifecycle               | Forced iOS WebContent loss while the unchanged hosted Terminal session was open                                                                                                                                             | Passed; exact opaque session route and live Terminal restored                                                                                                                                     |
+| 2026-07-24 | Draft lifecycle         | Forced loss of every iOS Simulator WebContent child with an unsent hosted native-chat draft                                                                                                                                 | Passed; exact session, chat tab, and `DRAFT_RECOVERY_2026_07_24_ALPHA` restored                                                                                                                   |
+| 2026-07-24 | Draft lifecycle         | Full Orca app terminate/launch, then manual Host 37 and `mobile-rearch` route re-entry                                                                                                                                      | Draft passed; exact text rehydrated, but automatic cold route restoration did not                                                                                                                 |
+| 2026-07-24 | Cold route              | Persist paired-host/workspace identity, terminate/launch the full app, and freshly resolve through current `worktree.ps` authority                                                                                          | Passed; app bypassed host picker and restored Host 37 plus unchanged `mobile-rearch` session                                                                                                      |
+| 2026-07-24 | Cold route security     | Inspect bounded native state and post-launch draft storage without exposing unrelated app data                                                                                                                              | Passed; no opaque page handle persisted; exact hashed-key draft remained                                                                                                                          |
+| 2026-07-24 | Validation              | Full Expo suite, root/mobile/mobile-web types, both lints, focused root lint/bridge contract, max-lines, formatting, diff hygiene, and RNW verifier                                                                         | Passed; Expo 456/2,879 with 2 skips, bridge 31/31, build `777160683…` at 7,822,602 B / 1,681,144 B gzip                                                                                           |
+| 2026-07-23 | Web packaging           | Exact-source RNW build after viewport and process-loss route recovery                                                                                                                                                       | Passed; `3f546e32…`, 49 assets, 7,204,112 B / 1,538,161 B gzip                                                                                                                                    |
+| 2026-07-23 | Validation              | Route/bridge/package/terminal focused suites, both typechecks, lint, max-lines, format, and diff hygiene                                                                                                                    | Passed; 29 root tests and 39 Expo tests                                                                                                                                                           |
+| 2026-07-23 | File tabs               | Terminal path tap through the strict adapter into the unchanged `FileReader`, then close, reopen, and reuse                                                                                                                 | Passed on iPhone 17 Pro Simulator; no duplicate tab                                                                                                                                               |
+| 2026-07-23 | File tabs               | Headless persisted file-tab ownership plus native/web file and tab adapters                                                                                                                                                 | Passed; 872 runtime tests and 14 mobile adapter tests                                                                                                                                             |
+| 2026-07-23 | Lifecycle               | Health deadline isolation from unresolved initialization, stale shell sessions, and replacement sessions                                                                                                                    | Passed; 3 focused regression cases                                                                                                                                                                |
+| 2026-07-23 | Web packaging           | Shared-UI runtime package-root selection                                                                                                                                                                                    | `out/mobile-web-rnw` required; fixture fallback identified                                                                                                                                        |
+| 2026-07-23 | Web packaging           | Diagnostic-free exact-source RNW package build and verifier                                                                                                                                                                 | Passed; `774b677e…`, 49 assets, 7,491,898 B / 1,615,140 B gzip                                                                                                                                    |
+| 2026-07-23 | UI reuse                | Host 32 refreshed to the clean package with the unchanged `README.md` view open                                                                                                                                             | Passed; no probes or build-ID label; two real tabs retained                                                                                                                                       |
+| 2026-07-23 | Native boundary         | Shell-owned haptic, clipboard-write, external-open, terminal-preference, and text-scale contracts plus page/native round trips                                                                                              | Passed; 11 focused files / 55 tests, typechecks and lint                                                                                                                                          |
+| 2026-07-23 | Web packaging           | Exact-source RNW package after the session device-operation extraction                                                                                                                                                      | Passed; `0d6266a0…`, 49 assets, 7,493,967 B / 1,615,751 B gzip                                                                                                                                    |
+| 2026-07-23 | Lifecycle               | Clean iOS app process restart, Host 32 re-entry, package health, workspace entry, Terminal and existing README tab                                                                                                          | Passed; stale rejected-build state cleared; existing UI retained                                                                                                                                  |
+| 2026-07-23 | Terminal                | Long-press selection and Copy through the unchanged action sheet and shell-owned clipboard write                                                                                                                            | Passed; `Copied` shown; simulator clipboard=`SELECT_ME_COPY`                                                                                                                                      |
+| 2026-07-23 | Terminal links          | Detected HTTPS tap through the existing terminal link policy                                                                                                                                                                | Passed; existing Orca browser tab loaded Example Domain                                                                                                                                           |
+| 2026-07-23 | Terminal links          | Existing Phone browser preference plus gesture-gated shell-owned platform opening                                                                                                                                           | Passed; iOS Safari loaded Example Domain; default restored                                                                                                                                        |
+| 2026-07-23 | Browser                 | Existing `MobileBrowserPane` through typed native/hosted operations with opaque page authority and bounded frame assembly                                                                                                   | Passed; focused browser suites 134/134                                                                                                                                                            |
+| 2026-07-23 | Browser stream          | Main-frame navigation state from CDP history and Electron navigation triggers                                                                                                                                               | Passed; screencast stream 22/22                                                                                                                                                                   |
+| 2026-07-23 | Web packaging           | Exact-source RNW package after browser adapter and event sanitation                                                                                                                                                         | Passed; `73bbb4b5…`, 49 assets, 7,504,320 B / 1,617,742 B gzip                                                                                                                                    |
+| 2026-07-23 | Browser history         | Fresh current-runtime tab, two navigations, Back, Forward, and Reload with CLI/hosted state comparison                                                                                                                      | Passed on iPhone 17 Pro Simulator                                                                                                                                                                 |
+| 2026-07-23 | Browser lifecycle       | Portrait/landscape stream replacement plus close and reopen                                                                                                                                                                 | Passed; page removed and fresh opaque tab enumerated                                                                                                                                              |
+| 2026-07-23 | Browser input           | Hosted pointer focus, text insertion, and Tab-key focus movement on the httpbin form                                                                                                                                        | Passed; page value and next focused field verified                                                                                                                                                |
+| 2026-07-23 | Clipboard               | Shell-owned availability plus gesture-gated text/image terminal paste contracts with server-side input serialization                                                                                                        | Passed; 9 focused files / 38 tests and both typechecks                                                                                                                                            |
+| 2026-07-23 | Picker                  | Existing Attach control through the typed shell boundary into the iOS permission flow and Photos picker                                                                                                                     | Passed on iPhone 17 Pro Simulator; Cancel returned cleanly                                                                                                                                        |
+| 2026-07-23 | Web packaging           | Exact-source RNW package after clipboard/picker capability ownership                                                                                                                                                        | Passed; `8b80e6a3…`, 49 assets, 7,507,462 B / 1,618,365 B gzip                                                                                                                                    |
+| 2026-07-23 | Validation              | Full Expo suite, node/mobile/mobile-web types, both mobile lints, max-lines, package verifier, formatting, and diff hygiene                                                                                                 | Passed; 420 files / 2,778 passed / 2 skipped                                                                                                                                                      |
+| 2026-07-24 | Dictation bridge        | Gesture-gated shell speech authority, typed lifecycle subscription, setup operations, bounded transcript, and revocation tests                                                                                              | Passed; focused speech and session suites                                                                                                                                                         |
+| 2026-07-24 | Native audio            | iOS simulator capture uses the native tap format and reports its real sample rate; device voice processing remains unchanged                                                                                                | Full iOS Debug build passed                                                                                                                                                                       |
+| 2026-07-24 | Dictation setup         | Existing mic control opened the unchanged setup drawer, loaded models, configured Desktop, and downloaded Whisper Tiny                                                                                                      | Passed on iPhone 17 Pro Simulator over paired Direct/E2EE                                                                                                                                         |
+| 2026-07-24 | Dictation E2E           | Native recording, shell-to-Desktop PCM, Whisper processing, and final transcript insertion into the existing composer                                                                                                       | Passed; existing `Dictation inserted` feedback shown                                                                                                                                              |
+| 2026-07-24 | Validation              | Full Expo suite, focused hosted speech/session tests, all relevant type/lint/max-lines/diff gates, and exact-source RNW verifier                                                                                            | 426 files / 2,799 passed / 2 skipped; build `a849a0ab…`                                                                                                                                           |
+| 2026-07-24 | Root validation         | Full root Vitest suite after terminal-contract and browser navigation-state regression corrections                                                                                                                          | 3,622 files / 36,767 passed / 59 skipped                                                                                                                                                          |
+| 2026-07-24 | Accounts                | Exact-source screen adapters, strict projection, gesture gate, typed round trip, subscription cleanup, and hosted route identity                                                                                            | Focused suites passed                                                                                                                                                                             |
+| 2026-07-24 | Validation              | Full Expo suite after the Accounts slice plus mobile/mobile-web type, lint, max-lines, and diff gates                                                                                                                       | 430 files / 2,805 passed / 2 skipped                                                                                                                                                              |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after Accounts                                                                                                                                                                                     | `3451a695…`; 49 assets; 7,534,178 B / 1,622,288 B gzip                                                                                                                                            |
+| 2026-07-24 | Package cutover         | Development fallback, default desktop build, and macOS/Linux/Windows resource mapping select the RNW artifact                                                                                                               | Focused root tests, node typecheck, Electron build passed                                                                                                                                         |
+| 2026-07-24 | Accounts E2E            | Default package lookup, shared host route, Accounts snapshot/refresh/system-default selection/back                                                                                                                          | Passed on iPhone 17 Pro Simulator against Host 33                                                                                                                                                 |
+| 2026-07-24 | Tasks                   | First exact-source extraction: clipboard, haptic, and external-link device operations                                                                                                                                       | Mobile type/lint, 3 focused files / 5 tests, max-lines passed                                                                                                                                     |
+| 2026-07-24 | Tasks                   | Typed bootstrap/repository/Linear/GitHub-slug reads and task preference/setup-trust writes through opaque repository authority                                                                                              | Mobile/Node/mobile-web types, focused lint, 5 files/tests passed                                                                                                                                  |
+| 2026-07-24 | Tasks                   | Reused the strict New Workspace contract for branch search, SSH state/connect, agent detection, and repository-hook reads                                                                                                   | Existing presentation retained; mobile typecheck passed                                                                                                                                           |
+| 2026-07-24 | Tasks                   | Typed GitHub work-item list/count, GitLab work-item list/todos, and Linear issue list/search through opaque repository authority                                                                                            | Provider round trip, source boundary, types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after typed Tasks read/preference boundaries                                                                                                                                                       | `80526357…`; 49 assets; 7,540,475 B / 1,622,942 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | Typed GitHub labels/users/details, GitLab details, and Linear issue/comments; GitLab targets remain shell-only behind opaque IDs                                                                                            | 436 files / 2,811 passed / 2 skipped; types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after typed Tasks provider detail reads                                                                                                                                                            | `1a02598d…`; 49 assets; 7,553,630 B / 1,624,284 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | Typed GitHub Project discovery, view listing, and pasted-reference resolution through the existing Tasks presentation                                                                                                       | 436 files / 2,811 passed / 2 skipped; types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after the first GitHub Project read slice                                                                                                                                                          | `e1275ba7…`; 49 assets; 7,556,163 B / 1,624,644 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | Typed GitHub Project table, row details, labels, users, and issue types through bounded snapshots and opaque page continuations                                                                                             | 437 files / 2,813 passed / 2 skipped; types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after GitHub Project table and row metadata                                                                                                                                                        | `47010862…`; 49 assets; 7,563,714 B / 1,626,119 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | First Project mutation tranche with opaque targets and fresh table/field revalidation before each Desktop write                                                                                                             | 438 files / 2,814 passed / 2 skipped; types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after Project item/comment/metadata/field/type mutations                                                                                                                                           | `9682f3a2…`; 49 assets; 7,567,776 B / 1,626,697 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | Project PR threads, replies, conversations, reviewers, check reruns, and merge with fresh row plus repository-slug revalidation                                                                                             | 438 files / 2,814 passed / 2 skipped; types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after the Project PR mutation tranche                                                                                                                                                              | `6af6d0f2…`; 49 assets; 7,570,046 B / 1,627,130 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | Project check refresh, viewed-file state, bounded file contents, and inline comments with fresh row/repository revalidation                                                                                                 | 438 files / 2,814 passed / 2 skipped; types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after the Project check/file operation tranche                                                                                                                                                     | `8bdc3e7c…`; 49 assets; 7,572,535 B / 1,627,535 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | Non-Project GitHub/GitLab status and metadata writes through opaque item targets and fresh provider-detail revalidation                                                                                                     | 439 files / 2,815 passed / 2 skipped; types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after the first non-Project provider mutation tranche                                                                                                                                              | `ff0e9185…`; 49 assets; 7,574,066 B / 1,627,712 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | Non-Project provider comments, reviewer/thread/reply/merge actions, checks, viewed files, contents, and inline comments                                                                                                     | 439 files / 2,815 passed / 2 skipped; types, lint, ratchet passed                                                                                                                                 |
+| 2026-07-24 | Bridge security         | Hosted review/file operations derive current PR/SHA/node/file identity after opaque-target revalidation                                                                                                                     | 6 focused files / 21 tests; page identities ignored                                                                                                                                               |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after the complete non-Project provider review/file tranche                                                                                                                                        | `f07453bd…`; 49 assets; 7,579,972 B / 1,628,391 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks                   | Linear/provider creation and workspace-creation tail with opaque authority, native revalidation, sparse checkout, and warnings                                                                                              | 439 files / 2,816 passed / 2 skipped; types, lints, ratchet pass                                                                                                                                  |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after the complete Tasks operation extraction                                                                                                                                                      | `4b515fdc…`; 49 assets; 7,588,972 B / 1,629,708 B gzip                                                                                                                                            |
+| 2026-07-24 | Tasks E2E               | Exact existing hosted workspace and Tasks routes, query refresh/error recovery, provider/Linear surfaces, navigation, and lifecycle                                                                                         | Passed on iPhone 17 Pro Simulator against Host 34; no `invalid_request`                                                                                                                           |
+| 2026-07-24 | Bridge security         | Bootstrap, repository, GitHub source, and classified-error projections plus Jira/default/opaque-ID regression coverage                                                                                                      | Focused 2 files / 3 tests passed; host-only fields excluded                                                                                                                                       |
+| 2026-07-24 | Validation              | Full Expo suite, mobile/mobile-web lints, mobile/Node/mobile-web types, max-lines, diff hygiene, touched formatting, and RNW verifier                                                                                       | 441 files / 2,819 passed / 2 skipped; all gates passed                                                                                                                                            |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after mounted Tasks verification                                                                                                                                                                   | `898b3a82…`; 49 assets; 7,810,220 B / 1,678,528 B gzip                                                                                                                                            |
+| 2026-07-24 | Navigation              | Bounded notification targets, latest-only native intent buffer, fresh Desktop workspace resolution, and opaque shell-to-page routes                                                                                         | Full Expo suite: 445 files / 2,831 passed / 2 skipped                                                                                                                                             |
+| 2026-07-24 | Navigation              | Strict page channel context/sequence rejection and one-shot hosted route restoration                                                                                                                                        | Root focused suite: 2 files / 20 tests passed                                                                                                                                                     |
+| 2026-07-24 | Navigation E2E          | Foreground APNs tap with Expo-compatible remote-push data selected Host 34 and entered its hosted package                                                                                                                   | Passed host handoff; exact session blocked by disconnected fixture                                                                                                                                |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after typed notification navigation                                                                                                                                                                | `d35eef83…`; 49 assets; 7,810,631 B / 1,678,630 B gzip                                                                                                                                            |
+| 2026-07-24 | Native chat             | Bounded agent projection, opaque chat authority, history/subscription, sends, responses, paced stop, file search/open, and readability                                                                                      | Focused authority/operation/subscription and unchanged-UI adapter tests passed                                                                                                                    |
+| 2026-07-24 | Bridge security         | Chat projection strips pane/terminal/workspace/connection/orchestration/provider/transcript identity; writes freshly revalidate native authority                                                                            | Stale-authority, client-replacement, and ambiguous-delivery tests passed                                                                                                                          |
+| 2026-07-24 | Validation              | Full Expo suite, mobile/mobile-web/Node types, both lints, max-lines, root bridge/import tests, and exact-source RNW verifier                                                                                               | 448 files / 2,841 passed / 2 skipped; root 2 files / 20 tests passed                                                                                                                              |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after native-chat and agent-state adapters                                                                                                                                                         | `9a4b4609…`; 49 assets; 7,818,188 B / 1,680,107 B gzip                                                                                                                                            |
+| 2026-07-24 | Runtime projection      | Hook-server provider-session hydration for exact pane/tab/worktree/connection/launch-token identity; stale activity projects as done                                                                                        | Runtime suite passed: 870 tests                                                                                                                                                                   |
+| 2026-07-24 | Native chat E2E         | Existing history, opaque-authority send, streamed reply, stop, file search/selection, tab/app lifecycle, and cold reconnect on Host 37                                                                                      | Passed on iPhone 17 Pro Simulator with build `895357c5…`; interruption indicator defect recorded                                                                                                  |
+| 2026-07-24 | Validation              | Native-chat/bridge focused suites plus Node, mobile, and mobile-web typechecks                                                                                                                                              | Root 870 tests and Expo 12 files / 68 tests passed                                                                                                                                                |
+| 2026-07-24 | Web packaging           | Diagnostic-free exact-source RNW package after live native-chat validation                                                                                                                                                  | `1f4b87e4…`; 49 assets; 7,818,417 B / 1,680,180 B gzip                                                                                                                                            |
+| 2026-07-24 | Native chat             | Strict lifecycle projection, stream retention, source reset, and timestamp-based stale-hook reconciliation                                                                                                                  | Full Expo suite: 449 files / 2,852 passed / 2 skipped; types passed                                                                                                                               |
+| 2026-07-24 | Native chat E2E         | Cold-start 120-second Codex turn followed by equivalent two-Escape interruption on Host 37                                                                                                                                  | Existing working indicator cleared when `Conversation interrupted` arrived                                                                                                                        |
+| 2026-07-24 | Web packaging           | Exact-source RNW package containing lifecycle reconciliation                                                                                                                                                                | `64ae13e9…`; 49 assets; 7,819,415 B / 1,680,432 B gzip                                                                                                                                            |
+| 2026-07-24 | Validation              | Full root and Expo suites, all typechecks/lints, touched formatting, max-lines, diff hygiene, RNW verification, and Electron build                                                                                          | Root 36,769 passed / 59 skipped; Expo 2,852 passed / 2 skipped; all gates pass                                                                                                                    |
+| 2026-07-24 | Navigation security     | Paired-host storage failures now fail closed; malformed workspace identities cannot downgrade to host routes; older async resolutions are stale                                                                             | Full Expo suite: 449 files / 2,856 passed / 2 skipped; mobile types/lint/format pass                                                                                                              |
+| 2026-07-24 | Navigation E2E          | Connected Host 37 exact-session APNs fixture appears with the intended host/workspace payload in iOS Notification Center                                                                                                    | Default action not delivered by current serve-sim or Simulator AX controls; live route still open                                                                                                 |
+| 2026-07-24 | Native chat             | Structured asks suppress permission/question heuristics, including while an answered host status lingers                                                                                                                    | Focused 4 files / 16 tests and mobile typecheck/lint passed                                                                                                                                       |
+| 2026-07-24 | Native chat E2E         | Real Claude `AskUserQuestion` rendered by the unchanged hosted card; selected Beta and submitted through opaque authority                                                                                                   | Host 37 transcript confirmed `RECEIVED Beta` on iPhone 17 Pro Simulator                                                                                                                           |
+| 2026-07-24 | Web packaging           | Exact-source RNW package containing structured-prompt precedence                                                                                                                                                            | `87b61d1…`; 49 assets; 7,819,430 B / 1,680,439 B gzip                                                                                                                                             |
+| 2026-07-24 | SSH native chat         | Bounded local/provider transcript source, exact terminal/worktree/session/path authority, provider reacquisition, and no-local-fallback contracts                                                                           | 7 focused files / 69 tests passed                                                                                                                                                                 |
+| 2026-07-24 | SSH native chat E2E     | Isolated Electron plus independent paired runtime client and real Docker Linux sshd: remote hook/read, disconnect, reconnect, and append recovery                                                                           | Passed in 45.7 s; proves SSH provider/relay subprocess path, not mobile cloud Relay                                                                                                               |
+| 2026-07-24 | SSH hosted contract     | Production hosted broker/page client over real Docker SSH: sanitized workspace, opaque authority, read, disconnect, reconnect, and reacquisition                                                                            | Passed in 16.0 s with existing E2E build; subsequent manual run adds actual WebView presentation                                                                                                  |
+| 2026-07-24 | SSH hosted WebView      | Production iOS shell paired as Host 38 to isolated Electron/Docker SSH; unchanged repository, workspace, session, and terminal UI rendered                                                                                  | Passed manually in 2.3 min; terminal input created exact `SSH_WEBVIEW_FILE_OK` sentinel on the remote host                                                                                        |
+| 2026-07-25 | SSH WebView E2E         | `SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh`; actual WKWebView, unchanged UI, buffered command bridge, and Docker SSH mutation                                                                                | 1 passed in about 1.4 min; command plus CR captured and remote proof file verified                                                                                                                |
+| 2026-07-25 | Relay hosted bridge     | Real mobile Relay session, NaCl E2EE v2, Desktop transport, production broker/page client, and opaque workspace projection through a local cell                                                                             | 1 passed in 0.83 s; production cloud service, real latency/reconnect, and actual WebView remain open                                                                                              |
+| 2026-07-24 | Reliability gate        | Registered `native-chat.transcript-source-authority` with bounded-work, authority, disconnect, reconnect, and real-transport assertions                                                                                     | Experimental partial gate; CI soak and remaining platforms/topologies open                                                                                                                        |
+| 2026-07-24 | Chat ambiguity          | Hosted send/respond/stop preserve timeout, teardown, invalid-reply, and internal bridge uncertainty as `unknown`                                                                                                            | 1 focused file / 6 tests; mobile and mobile-web types plus focused lint pass                                                                                                                      |
+| 2026-07-24 | Chat ambiguity E2E      | Direct iOS WebView dropped one executed `nativeChat.sendMessage` response after Desktop accepted the terminal write                                                                                                         | One terminal delivery; draft held through 3.5 s echo, cleared after timeout by reconciliation; no resend/error                                                                                    |
+| 2026-07-24 | WebView automation      | Stable isolated Direct runtime, exact public-identity host selection, debug-only WebKit CDP, and visible unchanged hosted DOM assertion                                                                                     | Passed on iPhone 17 Pro Simulator in about 46 s; `mobile-rearch` visible with interactive controls                                                                                                |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after hosted bridge ambiguity repair                                                                                                                                                               | `302dc4b3…`; 49 assets; 7,842,485 B / 1,686,749 B gzip                                                                                                                                            |
+| 2026-07-24 | Validation              | Full Expo suite, runtime suite, all typechecks, focused/root/mobile-web lints, max-lines, reliability manifest, formatting, and diff hygiene                                                                                | Expo 450 files / 2,857 passed / 2 skipped; runtime 870 passed; all listed gates passed                                                                                                            |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after SSH transcript authority and hosted call-site updates                                                                                                                                        | `31e01f57…`; 49 assets; 7,819,381 B / 1,680,417 B gzip                                                                                                                                            |
+| 2026-07-24 | Attachments             | Hosted unchanged Attach hook, bounded result feedback, picker cancellation, local/SSH upload authority                                                                                                                      | 2 focused files / 9 tests passed                                                                                                                                                                  |
+| 2026-07-24 | Attachments E2E         | Selected a seeded photo through the native iOS picker from the unchanged hosted session                                                                                                                                     | Shell created a 2,808,983-byte host temp PNG; terminal Enter execution was not observed                                                                                                           |
+| 2026-07-24 | Attachment picker       | Long-pressed the unchanged Attach control to open the native iOS document picker and cancelled                                                                                                                              | Passed; selected-document upload remains open                                                                                                                                                     |
+| 2026-07-24 | Chat persistence        | Host/build/workspace/tab-isolated shell storage, authority resolution, adapters, hydration, coalescing, and teardown flush                                                                                                  | 6 focused mobile files / 41 tests plus 19 root bridge-contract tests passed                                                                                                                       |
+| 2026-07-24 | Bridge limits           | Shared 640 KiB envelope, 600 KiB operation, 40 KiB reserve, native-source drift, production-grant, and worst-case UTF-8 clipboard checks                                                                                    | 20 root bridge tests and 4 focused mobile tests passed                                                                                                                                            |
+| 2026-07-24 | Native iOS build        | Full Debug iPhone Simulator build with the 640 KiB Swift transport ceiling and local signing                                                                                                                                | Passed; `** BUILD SUCCEEDED **`                                                                                                                                                                   |
+| 2026-07-24 | Native iOS E2E          | Installed signed rebuild, terminated, relaunched, and inspected through `/tmp/om37 emulator ax`                                                                                                                             | Secure pairing remained readable; app bypassed pairing/host selection and restored Host 37 workspace UI                                                                                           |
+| 2026-07-24 | Native Android          | Expo autolinking, Debug Kotlin/Java compilation, and unit tests with JDK 17 / Android SDK 36                                                                                                                                | `:orca-expo-mobile-web-shell:testDebugUnitTest` passed                                                                                                                                            |
+| 2026-07-24 | Validation              | Full root and Expo suites, root/mobile/mobile-web typechecks and lints, max-lines, formatting, and diff hygiene                                                                                                             | Root 36,779 passed / 59 skipped; Expo 2,883 passed / 2 skipped; all listed gates passed                                                                                                           |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after native transport-limit alignment                                                                                                                                                             | `778ba8e4…`; 49 assets; 7,822,834 B / 1,681,212 B gzip                                                                                                                                            |
+| 2026-07-24 | Bridge compatibility    | Bidirectional manifest range checks, package-session version wiring, and Swift/Kotlin source-drift checks                                                                                                                   | 14 root manifest tests and 16 focused mobile tests passed                                                                                                                                         |
+| 2026-07-24 | Native compatibility    | Signed iOS Debug build and Android Debug Kotlin/Java plus module unit tests after native cache range enforcement                                                                                                            | Both native builds passed                                                                                                                                                                         |
+| 2026-07-24 | Compatibility E2E       | Installed signed compatibility rebuild and performed full terminate/launch through `/tmp/om37 emulator ax`                                                                                                                  | Existing bridge-v1 cache opened; secure Host 37 workspace restoration passed                                                                                                                      |
+| 2026-07-24 | Validation              | Full Expo suite, 46 focused root contract/import tests, all relevant types/lints, max-lines, formatting, diff hygiene, and RNW verification                                                                                 | Expo 459 files / 2,886 passed / 2 skipped; all listed gates passed                                                                                                                                |
+| 2026-07-24 | Markdown transport      | Strict read/save contracts, current-tab authority, bounded base64 content, conflict handling, and headless read-only fallback                                                                                               | Focused broker/client/round-trip tests passed                                                                                                                                                     |
+| 2026-07-24 | Markdown persistence    | Host/build/workspace/tab/path-isolated shell drafts, stale-base restore, hydration races, serialized cleanup, and clear semantics                                                                                           | Focused storage/coordinator/adapter tests passed                                                                                                                                                  |
+| 2026-07-24 | Validation              | Full mobile suite, root/mobile/mobile-web typechecks, both lints, max-lines, import/build verification, formatting, and diff hygiene                                                                                        | 466 files / 2,906 passed / 2 skipped; all listed gates passed                                                                                                                                     |
+| 2026-07-24 | Web packaging           | Exact-source RNW package after strict Markdown transport and draft persistence                                                                                                                                              | `2348cef32f978be858a374e406ecfc198eb398e427876094d794f9444867a3bb`; 49 assets; 7,837,165 B / 1,684,893 B gzip                                                                                     |
+| 2026-07-24 | Markdown E2E            | Opened a Markdown-named tab against headless Host 37 while the unchanged hosted session was active                                                                                                                          | Inconclusive; headless runtime projected a non-editable file preview, not a live Desktop Markdown renderer                                                                                        |
+| 2026-07-24 | Markdown editor         | Shared sandboxed web editor adapter, exact CSP hash, WebKit ready replay, stable conflict mapping, and concise conflict presentation                                                                                        | 6 focused files / 23 tests passed                                                                                                                                                                 |
+| 2026-07-24 | Markdown E2E            | Rendered real host Markdown, edited and saved through the unchanged hosted editor, then independently read the host file                                                                                                    | Passed; the saved mobile marker reached disk                                                                                                                                                      |
+| 2026-07-24 | Markdown conflict       | Changed the host file after an unsaved mobile edit, attempted Save, and inspected the existing conflict actions                                                                                                             | Passed; stable `conflict`, newer host bytes preserved, Copy/Discard/Save visible                                                                                                                  |
+| 2026-07-24 | Markdown recovery       | Terminated and launched the complete app with an unsaved stale draft, discarded it, then repeated terminate/launch                                                                                                          | Exact draft and stale state restored; discard reloaded host content; persisted draft cleanup passed                                                                                               |
+| 2026-07-24 | Validation              | Full mobile suite, root/mobile/mobile-web typechecks, both lints, max-lines, mobile formatting, plan formatting, and diff hygiene                                                                                           | 468 files / 2,914 passed / 2 skipped; all listed gates passed                                                                                                                                     |
+| 2026-07-24 | Web packaging           | Final exact-source RNW package after the shared Markdown editor and CSP/WebKit repairs                                                                                                                                      | `2d48c18c0e016e1514bdf60e170fd687911e5250111eafeed295f5d830023d86`; 49 assets; 7,842,295 B / 1,686,671 B gzip                                                                                     |
+| 2026-07-24 | Native iOS build        | Locally signed Debug iPhone Simulator build, install, package download, activation, and full terminate/launch                                                                                                               | `** BUILD SUCCEEDED **`; final package active with `045cf33e…` retained as previous                                                                                                               |
+| 2026-07-26 | Packaged web build      | Electron `afterPack` verification of the copied `Orca.app/Contents/Resources/mobile-web` tree in an actual unpacked macOS arm64 package                                                                                     | `c24ff987…`; 49 assets; 7,878,100 B / 1,695,710 B gzip                                                                                                                                            |
+| 2026-07-26 | Packaged SSH E2E        | `SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh:packaged`; packaged resource lookup, authenticated RPC, Docker SSH, actual iOS WKWebView                                                                          | Passed in 1.4 min with build `c24ff987…`                                                                                                                                                          |
+| 2026-07-27 | Native route E2E        | Fresh exact iOS Debug build; hosted Session → existing native Terminal Settings → Back                                                                                                                                      | Passed; native screen visible and exact hosted session route restored                                                                                                                             |
+| 2026-07-27 | Full exact-app E2E      | Native onboarding, network/navigation isolation, Agent History parity, Desktop restart/E2EE recovery, Resume, Session return, and native settings                                                                           | Passed on iPhone 17 Pro / iOS 26.5 Simulator                                                                                                                                                      |
+| 2026-07-27 | Native route checks     | Awaited Swift/Kotlin view commands, request-scoped response ordering, source ownership, helper/options regressions, mobile typecheck, and lint                                                                              | Passed; 7 files / 30 focused tests                                                                                                                                                                |
+| 2026-07-27 | Validation              | Full mobile suite, mobile typecheck/lint/format, max-lines ratchet, document formatting, and diff hygiene                                                                                                                   | Passed; 515 files / 3,121 tests with 2 expected skips; no max-lines suppression                                                                                                                   |
+| 2026-07-27 | Android native          | `:orca-expo-mobile-web-shell:testDebugUnitTest` and `:app:assembleDebug` with JDK 17 / Android SDK 36                                                                                                                       | Passed; full Debug APK assembled across 576 tasks                                                                                                                                                 |
+| 2026-07-27 | Android Release         | `:orca-expo-mobile-web-shell:compileReleaseKotlin` after private-origin root and callback-source repairs                                                                                                                    | Passed; 62 tasks, including final module Release Kotlin compilation                                                                                                                               |
+| 2026-07-27 | Android source gates    | Private-origin root routing and callback-source restrictions                                                                                                                                                                | Passed; 3 focused files / 11 tests                                                                                                                                                                |
+| 2026-07-27 | Android exact app       | Installed final Debug APK on Pixel 9 Pro API 36; paired Direct E2EE package stage, workspace/session entry, and hosted terminal input                                                                                       | Passed; `ANDROID_HOSTED_TERMINAL_2026_07_27` observed in Orca CLI and hosted xterm screenshot                                                                                                     |
+| 2026-07-27 | Validation              | Full mobile Vitest suite after Android runtime repairs                                                                                                                                                                      | Passed; 515 files / 3,122 tests with 2 expected skips                                                                                                                                             |
+| 2026-07-27 | Permission lifecycle    | Foreground-only gesture authority across native capability, navigation, speech, and image operation paths                                                                                                                   | Passed; 5 focused files / 27 tests, mobile typecheck, lint, and format                                                                                                                            |
+| 2026-07-27 | Native diagnostics      | Host-scoped package/bridge/cache/health/recovery store and privacy-bounded existing Copy diagnostics report                                                                                                                 | Passed; 4 focused files / 18 tests, mobile typecheck and lint                                                                                                                                     |
+| 2026-07-27 | Validation              | Full mobile suite after foreground mediation and native hybrid diagnostics                                                                                                                                                  | Passed; 516 files / 3,131 tests with 2 expected skips; format, max-lines, and diff hygiene pass                                                                                                   |
+| 2026-07-27 | Speech lifecycle        | Native `AppState` background handoff into broker-owned dictation cancellation                                                                                                                                               | Passed; 4 focused files / 34 tests, mobile typecheck, lint, and format                                                                                                                            |
+| 2026-07-27 | Validation              | Full mobile suite and all mobile typecheck, lint, format, max-lines, document-format, and diff-hygiene gates after speech lifecycle                                                                                         | Passed; 516 files / 3,132 tests with 2 expected skips                                                                                                                                             |
+| 2026-07-27 | Android speech          | Existing grant, first-run grant, sustained PCM, unchanged Listening state, stop, and explicit denial on Pixel 9 Pro API 36                                                                                                  | Passed in the exact Debug app; 16 kHz mono capture emitted about 32 KiB/s                                                                                                                         |
+| 2026-07-27 | Android revocation      | Revoked `RECORD_AUDIO` during live capture, cold-launched after Android process termination, restored the exact hosted session, then recorded again                                                                         | Passed; verified package/session recovered and Desktop speech authority did not leak                                                                                                              |
+| 2026-07-27 | Permission repair       | Shell-owned permission transition, foreground resumption, generation revalidation, grant/denial, active interruption, and broker routing                                                                                    | Passed; 4 focused files / 32 tests, mobile typecheck and lint                                                                                                                                     |
+| 2026-07-27 | Android picker          | Opened the real Photos picker from unchanged Attach, backgrounded through Home, then brought Orca to foreground                                                                                                             | Passed; pending picker cancelled and the exact hosted session remained usable                                                                                                                     |
+| 2026-07-27 | Hybrid diagnostics      | Bounded activation/refresh durations plus host-scoped terminal resync reason and overflow counters in existing Copy diagnostics                                                                                             | Passed; 8 focused files / 59 tests, mobile typecheck, lint, and max-lines                                                                                                                         |
+| 2026-07-27 | Validation              | Full mobile suite and all mobile typecheck, lint, format, max-lines, document-format, and diff-hygiene gates after Android permission and diagnostics work                                                                  | Passed; 516 files / 3,136 tests with 2 expected skips                                                                                                                                             |
+| 2026-07-27 | RNW package             | Exact-source production build and independent package verifier after Android permission and diagnostics work                                                                                                                | Passed; build `bb86b378f0aa0285b07793558d27647411bf61185b12af8b10682df23969c97e`, 49 assets, 9,179,679 raw bytes, and 2,663,276 gzip bytes                                                        |
+| 2026-07-27 | Terminal diagnostics    | End-to-end ACK-lag timing and outstanding-byte high-water aggregation through cumulative terminal flow control                                                                                                              | Passed; 3 focused files / 20 tests; mobile and RNW typechecks, lint, format, max-lines, and diff hygiene pass                                                                                     |
+| 2026-07-27 | Validation              | Full mobile suite and independent RNW production package verifier after terminal flow diagnostics                                                                                                                           | Passed; 516 files / 3,137 tests with 2 expected skips; RNW build remains `bb86b378…`, 49 assets, and 2,663,276 gzip bytes                                                                         |
+| 2026-07-27 | Android native UI       | Exact-app Settings and About routes plus Privacy Policy external-browser handoff and return                                                                                                                                 | Passed on Pixel 9 Pro API 36; native route content and `v0.0.32 (8)` remained outside the hosted document                                                                                         |
+| 2026-07-27 | Android interruption    | Pressed Home during active hosted dictation with an existing microphone grant, then foregrounded the same process and session                                                                                               | Passed; Listening returned to idle, exact hosted session/PID persisted, and a second recording started and stopped                                                                                |
+| 2026-07-27 | Android image upload    | Accepted the unchanged Attach picker, uploaded the selected PNG through shell-owned host authority, and injected its temp path into the Desktop terminal                                                                    | Passed; 579 bytes and SHA-256 `058144d94ecb1faea3a6af708ddf25e1e204a492d6011d30b38c1f95cc3933e6` matched exactly                                                                                  |
+| 2026-07-27 | Android audio defect    | Queued 64,000 PCM bytes through the linked native module, then paused and resumed during playback                                                                                                                           | Reproduced; the original engine wrote only 8,730 bytes because a pause-induced zero write discarded the tail                                                                                      |
+| 2026-07-27 | Android audio repair    | Partial-write drain, pause gate, zero-progress retry, cancellation, and invalid-result Kotlin tests; Debug APK rebuild and Release Kotlin compile                                                                           | Passed; 75 unit-test tasks, 571 Debug assembly tasks, and 367 Release compile tasks                                                                                                               |
+| 2026-07-27 | Android audio E2E       | Reinstalled the repaired Debug APK and probed `ExpoTwoWayAudio` through the live Hermes inspector during Pause/Resume/Stop                                                                                                  | Passed; 64,000 queued bytes equaled 64,000 written bytes, peak output volume was 0.6661, and `isPlaying` was false after Stop                                                                     |
+| 2026-07-27 | Validation              | Full mobile suite, mobile and RNW typechecks, mobile/RNW lint, formatting, max-lines, diff hygiene, Android unit/Debug/Release gates, and RNW verifier                                                                      | Passed; 516 files / 3,137 tests with 2 expected skips; RNW package remains `bb86b378…`, 49 assets, and 2,663,276 gzip bytes                                                                       |
+| 2026-07-27 | Live terminal metrics   | Sent `seq 1 5000` through the unchanged hosted Android terminal, then used the existing native Copy diagnostics action                                                                                                      | Passed; max ACK lag 87 ms, outstanding high water 29,057 bytes, 0 resyncs, and 0 flow overflows                                                                                                   |
+| 2026-07-27 | Package/bridge faults   | Canonical identity, chunk/aggregate corruption, native stage failures, cancellation, replay rollover, malformed envelopes, frame spoofing, stale context, and retired-client results                                        | Passed; 4 mobile files / 43 tests and 2 root bridge/channel files / 52 tests                                                                                                                      |
+| 2026-07-27 | Native cache faults     | Host-isolated exact staging/read, malformed metadata, interruption cleanup, incomplete/corrupt generations, corrupt read after open, low storage, safe per-host/global eviction, host removal, and active/previous recovery | Passed on Swift executable and Android JVM; Android reports 16 native tests                                                                                                                       |
+| 2026-07-27 | Android native          | Refreshed local package snapshot, native store tests, exact Debug APK assembly, and application Release Kotlin compilation                                                                                                  | Passed; 885 Gradle tasks in 1m32s against the exact post-cache sources                                                                                                                            |
+| 2026-07-27 | Validation              | Latest complete mobile and root suites before the native-only error-normalization repair                                                                                                                                    | Mobile 517 files / 3,150 passed / 2 skipped; root 3,548 files / 37,404 passed / 60 skipped                                                                                                        |
+| 2026-07-27 | Hosted task avatars     | List, detail, assignable-user, review, comment, Project-assignee, and Project-user-field contracts remove schema-valid remote avatar URLs before page state                                                                 | 3 contract tests and 4 task round-trip/pager files / 6 tests pass; Node, mobile, and mobile-web typechecks pass                                                                                   |
+| 2026-07-27 | Native process faults   | Real Swift/JVM child-process termination after stage creation, partial chunk write, asset sync, generation rename, and activation replacement, followed by a fresh store open                                               | Both stores pass all five boundaries; baseline stays active before activation and previous-generation recovery succeeds after activation                                                          |
+| 2026-07-27 | Android native          | Package JVM tests plus forced-process harness, exact Debug APK assembly, and application Release Kotlin compilation                                                                                                         | Passed across 886 Gradle tasks; existing JVM suite remains 16 tests                                                                                                                               |
+| 2026-07-27 | Android crash loop      | Three real Chromium renderer crashes against the exact cached app and active/previous native generations                                                                                                                    | Passed in 7.6 s; four distinct targets, automatic `bb86b378…` → `800db4d5…` activation, and visible terminal UI on the recovered session                                                          |
+| 2026-07-27 | iOS crash loop          | Three real WebContent process kills against the exact cached app and active/previous native generations                                                                                                                     | Passed in 11.9 s; four distinct targets, automatic `bb86b378…` → `800db4d5…` activation, and visible terminal UI on the recovered session                                                         |
+| 2026-07-27 | iOS manual recovery     | Activated native **Use previous**, then **Clear cache**, through simulator accessibility against a real active/previous package pair                                                                                        | Passed; previous activation was atomic, cache was removed, current `bb86b378…` redownloaded, and the hosted terminal reopened                                                                     |
+| 2026-07-27 | Corrupt-cache fallback  | Rebuilt the exact iOS Debug app in place, truncated active `48531616…/index.html`, cold-opened hybrid with the paired Desktop unavailable, and inspected cache plus WebKit                                                  | Passed; `bb86b378…` became the sole active generation, corrupt `48531616…` was removed, and private-origin cached reconnect UI rendered                                                           |
+| 2026-07-27 | Recovery validation     | Focused package-session/cache/CDP tests, mobile typecheck/lint, iOS native store executable, refreshed Android native JVM/process-interruption suite, formatting, max-lines, and diff hygiene                               | Passed; 4 files / 33 tests, 17 Android JVM tests, both native process harnesses, and no new max-lines bypass                                                                                      |
+| 2026-07-27 | Android manual recovery | Activated native **Use previous**, then **Clear cache**, through emulator accessibility against a real active/previous package pair                                                                                         | Passed; prior activation was atomic, selected-host cache was removed, current package redownloaded, and unchanged hosted UI reopened                                                              |
+| 2026-07-27 | Android corrupt cache   | Forged and activated corrupt `ffff…`, stopped Desktop, cold-opened the exact APK, and inspected cache plus the private document with the durable harness                                                                    | Passed; verified `48531616…` restored, forged generation removed, and bridge-ready workspace-list UI retained                                                                                     |
+| 2026-07-27 | Hosted storage boundary | Inert hosted AsyncStorage adapter, verifier rejection of executable `localStorage`, and terminal preference/accessory/custom-shortcut typed bridge operations                                                               | Passed; page-to-native shortcut read/write round trip and unchanged session adapter included in 7 focused files / 34 tests                                                                        |
+| 2026-07-27 | Android private origin  | Exact Debug APK at reserved HTTPS origin, main-frame fragment validation, hosted History API fragment retention, deliberate-red network/navigation corpus, and real routed terminal snapshot                                | Passed; `/h/.../session/...#<session>` retained, zero sentinel observations, bridge loaded one real tab, and fresh logcat had no prior exceptions                                                 |
+| 2026-07-27 | RNW package             | Exact-source build and independent verifier after hosted History API session binding                                                                                                                                        | Passed; build `8b5c9b64b4caa778603ff4e3845a7f3df9c6ed0f027560cd5447ed259ebbb0e8`, 49 assets, 9,178,634 raw bytes, 2,662,870 gzip bytes                                                            |
+| 2026-07-27 | Validation              | Focused bridge/origin/history tests, mobile and mobile-web typechecks/lints, max-lines ratchet, Android JVM/process tests, exact Debug assembly, and diff hygiene                                                           | Passed; 34 focused tests, 17 Android JVM tests, 577 Gradle tasks, and no new max-lines bypass                                                                                                     |
+| 2026-07-27 | Android Release build   | Exact `:app:assembleRelease` after application-debuggable gating of every packaged WebView enable path                                                                                                                      | Passed in 5m36s across 944 tasks; APK SHA-256 `cf20884424663170342cd9b38072f8dc47666e878489f148a0926f11e52c170f`                                                                                  |
+| 2026-07-27 | Android Release runtime | Installed the exact Release APK on API 36 Play Store `user/release-keys`, paired over Direct E2EE, then force-stopped and cold-opened the unchanged hosted workspace                                                        | Passed; package has no `DEBUGGABLE` flag, inspector socket is absent, `/json/list` is inaccessible, and fatal mobile-WebView log count is zero                                                    |
+| 2026-07-27 | Android Release signing | Verified the exact Release APK certificate with build-tools 36 `apksigner`                                                                                                                                                  | Locally signed with `CN=Android Debug`; production Play signing remains a separate release gate                                                                                                   |
+| 2026-07-27 | Release gate validation | Production-image verifier, explicit `userdebug` rejection, source contract, mobile lint, formatting, and diff hygiene                                                                                                       | Passed; focused source contract is 1 file / 18 tests                                                                                                                                              |
+| 2026-07-27 | Production naming       | Moved the shared host picker out of `hybrid-prototype`; scanned production shell, package, page, and shared-contract roots for prototype imports, symbols, and RPC names                                                    | Full mobile suite: 522 files / 3,171 passed / 2 skipped; mobile and RNW typechecks, lint, formatting, and diff hygiene passed                                                                     |
+| 2026-07-27 | Hosted Quick Commands   | Named snapshot/mutation/launch adapters, opaque repository projection, targeted host mutations, current-command reload, agent revalidation, shell-ready execution, and subscription-ready insert-only input                 | 45 focused tests and full mobile suite pass; 523 files / 3,183 passed / 2 skipped; mobile/RNW typechecks and lints, formatting, max-lines, and diff hygiene pass                                  |
+| 2026-07-27 | Hosted Files route      | Thin hosted route mounts the existing file explorer with opaque bounded directory reads, native-shell reconnect, and native-only legacy Desktop fallback                                                                    | 4 focused files / 16 tests and full mobile suite pass; 525 files / 3,186 passed / 2 skipped; mobile/RNW typechecks and lints, formatting, max-lines, and diff hygiene pass                        |
+| 2026-07-27 | Hosted Preview route    | Thin hosted route mounts the existing preview screen with opaque workspace-relative reads, shell-owned reconnect/external links, and rejection of native absolute-path artifact grants before bridge dispatch               | 5 focused files / 38 tests and full mobile suite pass; 527 files / 3,190 passed / 2 skipped; mobile/RNW typechecks and lints, formatting, and diff hygiene pass                                   |
+| 2026-07-27 | Hosted Source Control   | Session-origin `files.openDiff` through the strict review capability plus web-safe terminal input clearing                                                                                                                  | 5 focused files / 36 tests, targeted lint/format, Electron build, and diff hygiene pass                                                                                                           |
+| 2026-07-27 | RNW package             | Exact-source production build and independent verifier after the Source Control/Review repair and lint-safe bridge extraction                                                                                               | Passed; build `4b7df7d47a9b949b788c9f88bac5f68e8b18eb1ea7c615e16ebc4be126c8d07d`, 49 assets, 9,328,523 raw bytes, and 2,697,136 gzip bytes                                                        |
+| 2026-07-27 | iOS Source Control      | Exact hosted app opened Source Control from Session, opened a changed file as a second Session diff tab, then exercised standalone Review                                                                                   | Passed on iPhone 17 Pro Simulator; existing segments and review controls retained; network and navigation isolation probes passed                                                                 |
+| 2026-07-27 | Final validation pass   | Full mobile/root suites; mobile, RNW, Node, CLI, and renderer typechecks; full mobile/RNW lint; root reliability/max-lines/skill/localization-catalog phases; focused bridge/provider coverage                              | Passed; mobile 544 files / 3,248 tests with 2 skips; root 3,551 files / 37,420 tests with 60 skips; 56 focused tests; root localization coverage retains the recorded unrelated `Ghostty` finding |
+
+## Status and Decision Log
+
+| Date       | State    | Decision, blocker, or next action                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-22 | Decision | Option B remains preferred if security, real performance, physical-device, and App Store gates pass.                                                                                                                                                                                                                                                                                                                                    |
+| 2026-07-22 | Complete | Bounded prototype and simulator lab established enough feasibility to design the production migration.                                                                                                                                                                                                                                                                                                                                  |
+| 2026-07-22 | Open     | Terminal stress/recovery/topology, Android/physical devices, security review, and App Review remain unproven.                                                                                                                                                                                                                                                                                                                           |
+| 2026-07-22 | Started  | Froze route ownership and added the strict production multi-asset manifest contract and resource caps.                                                                                                                                                                                                                                                                                                                                  |
+| 2026-07-22 | Complete | Froze native and terminal inventories plus strict v1 bridge, stable-error, resource, and terminal-stream schemas.                                                                                                                                                                                                                                                                                                                       |
+| 2026-07-22 | Complete | Added an isolated, import-guarded, content-addressed mobile web build with strict CSP and deterministic manifest.                                                                                                                                                                                                                                                                                                                       |
+| 2026-07-22 | Complete | Added stable, bounded production package RPC with manifest-generation race detection and opaque error mapping.                                                                                                                                                                                                                                                                                                                          |
+| 2026-07-22 | Started  | Added an abortable production downloader and host-identity-keyed native staging cache; iOS app compilation passes.                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-22 | Complete | Private-origin iOS/Android views, native session APIs, and both Debug compilation boundaries pass.                                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-22 | Started  | Production route opens cache offline, refreshes independently, requires health, and guards host/session races.                                                                                                                                                                                                                                                                                                                          |
+| 2026-07-22 | Started  | WebView loss remounts; three losses per build/minute or missed health invokes atomic previous-build recovery.                                                                                                                                                                                                                                                                                                                           |
+| 2026-07-22 | Started  | Pairing removal now deletes the public-key-derived native cache before committing host metadata removal.                                                                                                                                                                                                                                                                                                                                |
+| 2026-07-22 | Started  | Added 128 MiB per-host / 512 MiB global reservation, safe deterministic eviction, low-storage errors, and orphan cleanup.                                                                                                                                                                                                                                                                                                               |
+| 2026-07-22 | Complete | iOS Simulator received the checkout-built package, completed ready/health, and reopened its verified cache offline.                                                                                                                                                                                                                                                                                                                     |
+| 2026-07-22 | Complete | Added bounded typed page/native clients with grants, stable errors, cancellation, rate limits, and no generic RPC.                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-22 | Complete | Verified the serialized page-to-broker-to-`worktree.ps` path and sanitized workspace result in focused tests.                                                                                                                                                                                                                                                                                                                           |
+| 2026-07-22 | Complete | Activated build `d537c89f…` in iOS Simulator, rendered the real workspace list, and retained it while reconnecting.                                                                                                                                                                                                                                                                                                                     |
+| 2026-07-22 | Next     | Add workspace entry plus session snapshots/subscriptions; keep Android runtime and cache fault injection explicit.                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-22 | Complete | Added exact workspace activation, bounded session snapshots, and sequenced live updates with explicit cleanup.                                                                                                                                                                                                                                                                                                                          |
+| 2026-07-22 | Complete | Activated build `77708ed1…`; a real terminal appeared at session v1, closed at v2, and v2 remained visible offline.                                                                                                                                                                                                                                                                                                                     |
+| 2026-07-22 | Next     | Add bounded tab actions, then start the real terminal stream; Android runtime and cache fault injection remain explicit.                                                                                                                                                                                                                                                                                                                |
+| 2026-07-22 | Complete | Added bounded session create/activate/close adapters with caller isolation, idempotency, explicit intent, and sanitizing.                                                                                                                                                                                                                                                                                                               |
+| 2026-07-22 | Complete | Activated build `c376e95e…`; created two terminals, switched active tab, closed both, and returned cleanly to version 8.                                                                                                                                                                                                                                                                                                                |
+| 2026-07-22 | Open     | Restore remains ungranted until Desktop has an explicit paired/headless restore authority instead of renderer-only state.                                                                                                                                                                                                                                                                                                               |
+| 2026-07-22 | Complete | Added typed Direct/Relay terminal multiplexing, native-only authority, bounded snapshots/output, ACKs, and resync.                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-22 | Complete | Added real xterm rendering, ordered input/ACK/resize scheduling, runtime floor/query authority, and visibility cleanup.                                                                                                                                                                                                                                                                                                                 |
+| 2026-07-22 | Complete | Build `af1fd2c7…` passed Direct iOS Simulator input/output, rotation, background recovery, and unsubscribe cleanup.                                                                                                                                                                                                                                                                                                                     |
+| 2026-07-22 | Open     | Relay end-to-end, SSH/WSL, reconnect/WebView loss, stress, Android, and physical devices remain.                                                                                                                                                                                                                                                                                                                                        |
+| 2026-07-22 | Next     | Run terminal stress/topology/recovery validation, then begin files, diffs, and provider-neutral source-control migration.                                                                                                                                                                                                                                                                                                               |
+| 2026-07-22 | Started  | Added bounded file list/search/read grants, native path/root sanitizing, and an inert plain-text preview UI.                                                                                                                                                                                                                                                                                                                            |
+| 2026-07-23 | Complete | Hierarchical directories, revisions, bounded search, cancellable chunks, and large-file text/binary handling pass.                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Complete | No-ripgrep mobile path search stays inside the fallback scan budget and returns the requested path on the live host.                                                                                                                                                                                                                                                                                                                    |
+| 2026-07-23 | Complete | Bounded provider-neutral Git status and revision-checked virtualized diff pagination pass focused and live simulator tests.                                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Host-scoped path-free status invalidation and the `.git` polling fallback pass focused tests and live iOS Simulator checks.                                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Open     | Rich previews, file mutations, Git mutations/reviews, and physical-device diff performance remain.                                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Next     | Add stage, unstage, bounded bulk, and explicitly confirmed discard operations with repository-state conflict handling.                                                                                                                                                                                                                                                                                                                  |
+| 2026-07-23 | Complete | Revision-bound stage, unstage, and discard pass single and 32-path bulk checks without a generic Git or bridge passthrough.                                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | The mobile style boundary now retains canonical dialog utilities; live destructive confirmation is centered and operable.                                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Open     | Rich previews, file writes, commits/branches/sync/reviews, and physical-device source-control performance remain.                                                                                                                                                                                                                                                                                                                       |
+| 2026-07-23 | Next     | Add bounded commit and generated commit-message behavior while preserving provider, Git 2.25, and execution-host scope.                                                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Complete | Exact staged-snapshot commit and generated-message behavior pass focused validation without a generic Git passthrough.                                                                                                                                                                                                                                                                                                                  |
+| 2026-07-23 | Complete | Build `373fc360…` made a real paired WebView commit and returned the isolated iOS Simulator repository to a clean state.                                                                                                                                                                                                                                                                                                                |
+| 2026-07-23 | Open     | A live generated draft awaits a logged-in Desktop AI provider; cancel and bounded provider-error recovery are verified.                                                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Complete | Exact terminal query replies pass paired Direct E2EE without taking the ordinary mobile input floor.                                                                                                                                                                                                                                                                                                                                    |
+| 2026-07-23 | Next     | Add bounded branch/history/compare behavior, then sync/rebase and provider-neutral review flows.                                                                                                                                                                                                                                                                                                                                        |
+| 2026-07-23 | Complete | Bounded local branches, sanitized history, and branch/commit comparisons pass focused, full Expo, build, and live checks.                                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Next     | Add bounded checkout plus upstream/fetch/pull/push/rebase/abort behavior, then provider-neutral review flows.                                                                                                                                                                                                                                                                                                                           |
+| 2026-07-23 | Complete | Exact repository-state sync operations pass strict contracts, full suites, production build, and paired iOS mutation checks.                                                                                                                                                                                                                                                                                                            |
+| 2026-07-23 | Complete | Provider-neutral review discovery, bounded GitHub/GitLab details, and top-level comments pass focused validation.                                                                                                                                                                                                                                                                                                                       |
+| 2026-07-23 | Complete | GitHub thread replies and GitHub/GitLab resolve/reopen revalidate repository, provider, review, and retained thread identity.                                                                                                                                                                                                                                                                                                           |
+| 2026-07-23 | Complete | Build `331b7c43…` rendered the hosted-review no-review path through paired Direct E2EE on iPhone 17 Pro.                                                                                                                                                                                                                                                                                                                                |
+| 2026-07-23 | Open     | Live provider mutations await disposable reviews; inline creation, queued reviews, diff integration, and review creation remain.                                                                                                                                                                                                                                                                                                        |
+| 2026-07-23 | Next     | Finish review parity and safe live mutation evidence while topology, recovery, Android, physical-device, and store gates remain explicit.                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Complete | Rebased onto `8f40ddf32`, retained upstream memory bounds plus hybrid transport behavior, and preserved the one-file index.                                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Post-rebase root/Expo full suites, all typechecks, lints, build verification, max-lines, formatting, and hygiene pass.                                                                                                                                                                                                                                                                                                                  |
+| 2026-07-23 | Complete | Added bounded changed-file metadata and exact-head/path/line GitHub/GitLab inline creation without exposing raw diffs or native targets.                                                                                                                                                                                                                                                                                                |
+| 2026-07-23 | Complete | Build `e0db84d6…` activated on paired Host 20 and retained `331b7c43…` as its native rollback generation.                                                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Open     | Live inline mutation still requires disposable GitHub/GitLab reviews; this branch has no hosted review.                                                                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Next     | Add dedicated review diffs, thread navigation, queued reviews, and any required review-creation flow.                                                                                                                                                                                                                                                                                                                                   |
+| 2026-07-23 | Complete | Added revision-checked GitHub/GitLab review diff pages while retaining provider targets, refs, contents, and raw patches natively.                                                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Complete | Retained inline comments now open the exact review file and modified-side line in a bounded virtualized diff.                                                                                                                                                                                                                                                                                                                           |
+| 2026-07-23 | Complete | Build `dc69b8ff…` activated on Host 20, retained `331b7c43…`, and reopened the real workspace through paired Direct E2EE.                                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Open     | Live review-diff reads and all mutations still require disposable GitHub/GitLab reviews; this branch has no hosted review.                                                                                                                                                                                                                                                                                                              |
+| 2026-07-23 | Next     | Add queued review state and provider submission, then collect safe live GitHub/GitLab evidence.                                                                                                                                                                                                                                                                                                                                         |
+| 2026-07-23 | Complete | Added bounded queued review drafts and provider submission with exact identity/action/line preflight and refresh-before-replay semantics.                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Complete | Removed the provider operations/submission Metro cycle by extracting shared review-state reads behind the same focused contracts.                                                                                                                                                                                                                                                                                                       |
+| 2026-07-23 | Complete | Build `219c0e44…` activated on Host 21 and rendered the real workspace through paired Direct E2EE on iOS Simulator.                                                                                                                                                                                                                                                                                                                     |
+| 2026-07-23 | Open     | Live provider reads/submissions still require disposable GitHub/GitLab reviews; no provider mutation is inferred from the no-review path.                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Next     | Collect safe disposable-provider evidence, decide review-creation scope, then continue file writes/rich previews and topology recovery.                                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Complete | Added bounded complete-file UTF-8 editing with native execution ownership, SHA-256 preflight, strict result identity, and stable conflicts.                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Host 22 wrote a file through the paired WebView, then rejected a stale retained draft after an independent Desktop disk change.                                                                                                                                                                                                                                                                                                         |
+| 2026-07-23 | Open     | File conflict detection is optimistic rather than an atomic filesystem CAS; topology, interruption, and adversarial races remain gates.                                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Next     | Add bounded inert rich previews, then collect disposable-provider and topology/recovery evidence without weakening the native fallback.                                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Complete | Bounded syntax highlighting preserves exact source text, degrades safely, and renders through inert React spans.                                                                                                                                                                                                                                                                                                                        |
+| 2026-07-23 | Complete | Build `9a69302d…` activated on Host 22 with `3c089956…` retained as its rollback generation.                                                                                                                                                                                                                                                                                                                                            |
+| 2026-07-23 | Next     | Add bounded authenticated raster-image previews, then terminal artifacts and common README HTML normalization.                                                                                                                                                                                                                                                                                                                          |
+| 2026-07-23 | Complete | Bounded raster previews validate extension/signature agreement and revoke private object URLs across lifecycle changes.                                                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Complete | Build `bcc7b5d2…` visibly rendered repository PNG/JPEG bytes and retained `9a69302d…` for rollback.                                                                                                                                                                                                                                                                                                                                     |
+| 2026-07-23 | Next     | Add exact-grant terminal-artifact previews, then normalize the limited README HTML subset without enabling arbitrary HTML.                                                                                                                                                                                                                                                                                                              |
+| 2026-07-23 | Decision | The `origin/main` mobile UI is the authoritative migration baseline; the web runtime must render the same React Native presentation source.                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Decision | The UI baseline advances with each `origin/main` rebase; upstream presentation changes must flow through shared source and parity fixtures.                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Open     | The purpose-built `src/mobile-web/` presentation proves infrastructure only and cannot satisfy the production cutover gate.                                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Added a host-only Expo/React Native Web entry importing the existing `HostScreen`; the 3,254-module source-reuse proof exports successfully.                                                                                                                                                                                                                                                                                            |
+| 2026-07-23 | Finding  | Native worktree IDs embed absolute host paths, so cutover requires opaque native-resolved workspace handles.                                                                                                                                                                                                                                                                                                                            |
+| 2026-07-23 | Complete | Expanded workspace, lineage, and agent sanitizers with a 120 KiB budget and an existing-`Worktree` presentation adapter.                                                                                                                                                                                                                                                                                                                |
+| 2026-07-23 | Complete | Added named native workspace operations and moved refresh subscriptions behind that interface without changing rendered UI.                                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Added shell-session opaque workspace/repository authority and propagated it through workspace, session, and core file operations.                                                                                                                                                                                                                                                                                                       |
+| 2026-07-23 | Complete | Propagated opaque workspace authority through terminal streams/artifacts, source control, commit generation, and provider-review operations.                                                                                                                                                                                                                                                                                            |
+| 2026-07-23 | Complete | Authenticated client replacement now revokes workspace/repository handles and retires all client-bound subscriptions and terminal streams.                                                                                                                                                                                                                                                                                              |
+| 2026-07-23 | Complete | Added strict repository/settings/pin/sleep/remove/invalidation operations and a web `HostWorkspaceOperations` adapter using opaque handles.                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Connected the unchanged shared `HostScreen` workspace slice to the native-shell channel; native continues using the native adapter.                                                                                                                                                                                                                                                                                                     |
+| 2026-07-23 | Finding  | The bridge-connected React Native Web script is 4,865,361 B / 903,001 B gzip, above the current production package budget.                                                                                                                                                                                                                                                                                                              |
+| 2026-07-23 | Next     | Add workspace pagination and remaining route/environment adapters, reduce/package the RNW build, then run emulator parity fixtures.                                                                                                                                                                                                                                                                                                     |
+| 2026-07-23 | Complete | Added stable bounded workspace pagination without changing the shared `HostScreen`; continuations are opaque, single-use, and lifecycle-bound.                                                                                                                                                                                                                                                                                          |
+| 2026-07-23 | Complete | Moved host identity, last-connected history, caches, and pin persistence behind native/web state adapters without changing presentation.                                                                                                                                                                                                                                                                                                |
+| 2026-07-23 | Complete | Added platform-safe defaults so the hosted export cannot pull native persistence or workspace transport through the shared screen fallback.                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Finding  | Platform-safe defaults reduced the RNW script to 4,859,812 B / 901,464 B gzip; it remains above the production package budget.                                                                                                                                                                                                                                                                                                          |
+| 2026-07-23 | Complete | Forwarded bounded reconnect metrics so the hosted route uses the unchanged native connection classifier without exposing host identity.                                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Finding  | The latest RNW export is 4,860,772 B / 901,727 B gzip and remains above the production package budget.                                                                                                                                                                                                                                                                                                                                  |
+| 2026-07-23 | Complete | Moved host exit, reconnect, repair, removal, and push/replace behavior behind native/web shell adapters without changing rendered JSX.                                                                                                                                                                                                                                                                                                  |
+| 2026-07-23 | Complete | Paired-host removal now accepts no page identity, consumes a recent native WebView touch, and runs the existing native cleanup lifecycle.                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Finding  | The shell-operation extraction reduced the RNW export to 4,829,397 B / 892,234 B gzip; the production package budget remains open.                                                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Decision | Screen migration requires source/component identity, not a visually similar rebuild; screenshot parity is an additional gate, not a substitute.                                                                                                                                                                                                                                                                                         |
+| 2026-07-23 | Started  | Moved the unchanged new-workspace controller, modal, source picker, trust flow, and create view models behind named domain operations.                                                                                                                                                                                                                                                                                                  |
+| 2026-07-23 | Complete | Added bounded new-workspace read schemas/grants with opaque repository/SSH resolution; paths, target IDs, raw errors, and commands stay native.                                                                                                                                                                                                                                                                                         |
+| 2026-07-23 | Finding  | The new-workspace read boundary exports at 4,824,309 B / 890,610 B gzip; the production package budget remains open.                                                                                                                                                                                                                                                                                                                    |
+| 2026-07-23 | Complete | New-workspace source search, exact lookup, base resolution, gesture-gated create, native revalidation, and the complete web adapter pass.                                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Open     | New Workspace emulator screenshot/interaction parity remains; automated bridge evidence does not prove visual, gesture, focus, or IME parity.                                                                                                                                                                                                                                                                                           |
+| 2026-07-23 | Started  | Mounted the existing session route by direct source import; the 3,878-module RNW build passes without a parallel presentation component.                                                                                                                                                                                                                                                                                                |
+| 2026-07-23 | Open     | The shared session route still reads native transport/storage/WebView/capability dependencies and is not functional through the strict bridge.                                                                                                                                                                                                                                                                                          |
+| 2026-07-23 | Complete | Session snapshot, subscription, activation, and close now use named native/web operations without changing the existing screen presentation.                                                                                                                                                                                                                                                                                            |
+| 2026-07-23 | Complete | Blank-terminal creation now uses the same native/web tab boundary; configured agent and quick-command launches remain native-only.                                                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Complete | Existing terminal pane now receives strict hosted snapshots/output and ordered input/query replies through a named platform boundary.                                                                                                                                                                                                                                                                                                   |
+| 2026-07-23 | Open     | Terminal display-mode/recovery/interaction parity, nonterminal content, and native capability seams remain incomplete.                                                                                                                                                                                                                                                                                                                  |
+| 2026-07-23 | Complete | The RNW export now enters the real content-addressed package format with relative hashed assets, strict CSP, and deterministic build identity.                                                                                                                                                                                                                                                                                          |
+| 2026-07-23 | Finding  | A full exact-source RNW route is 7.2 MiB raw / 1.54 MiB gzip; the 2 MiB prototype-fixture ceiling cannot represent the authoritative mobile UI.                                                                                                                                                                                                                                                                                         |
+| 2026-07-23 | Decision | Keep the prototype ceiling and add a distinct RNW ceiling: 8 MiB total, 2 MiB gzip, 7.5 MiB scripts, 256 KiB styles, and 64 assets.                                                                                                                                                                                                                                                                                                     |
+| 2026-07-23 | Complete | Build `abd43c62…` passes the dedicated RNW verifier and paired two-terminal plus lifecycle simulator checks without a blank screen.                                                                                                                                                                                                                                                                                                     |
+| 2026-07-23 | Open     | Deterministic native-versus-hosted fixtures, process-loss recovery, nonterminal content, native capabilities, and required device gates remain.                                                                                                                                                                                                                                                                                         |
+| 2026-07-23 | Next     | Finish terminal interaction/recovery adapters, then nonterminal tabs and remaining native capability seams through the unchanged shared UI.                                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Display-mode switching, Rename, and Clear now pass through the unchanged hosted action sheet; the mode loop and rename sequencing regressions have focused tests.                                                                                                                                                                                                                                                                       |
+| 2026-07-23 | Complete | The RNW document blocks iOS input auto-zoom, and the Rename keyboard path restores the exact hosted viewport after Save.                                                                                                                                                                                                                                                                                                                |
+| 2026-07-23 | Finding  | The first forced WebContent loss recovered without a blank screen but returned to the workspace list instead of the open session.                                                                                                                                                                                                                                                                                                       |
+| 2026-07-23 | Complete | Shell-session route retention now accepts only a current opaque workspace handle and bounded display name; a repeated forced loss restored the live Terminal session.                                                                                                                                                                                                                                                                   |
+| 2026-07-23 | Complete | Existing terminal file taps now open, close, reopen, and reuse the unchanged file-tab presentation through strict named adapters.                                                                                                                                                                                                                                                                                                       |
+| 2026-07-23 | Complete | Health acknowledgement clears its deadline even while initialization delivery is unresolved; stale sessions cannot clear the active deadline.                                                                                                                                                                                                                                                                                           |
+| 2026-07-23 | Finding  | Development runtime verification must select `out/mobile-web-rnw`; the default `out/mobile-web` path serves only the older infrastructure fixture.                                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Complete | Diagnostic-free build `774b677e…` passed verification and retained the real README file view on Host 32 without temporary probes.                                                                                                                                                                                                                                                                                                       |
+| 2026-07-23 | Open     | Repeated-loss rollback, reconnect/cold restore, selection/copy, external links, text zoom, Android, and physical-device recovery remain.                                                                                                                                                                                                                                                                                                |
+| 2026-07-23 | Next     | Finish selection/copy, external links, text zoom, and resize/reflow, then continue browser and remaining native-capability parity.                                                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Complete | Added strict shell-owned haptic, clipboard-write, external-open, terminal-preference, and text-scale operations without changing session JSX or styles.                                                                                                                                                                                                                                                                                 |
+| 2026-07-23 | Finding  | A foreground-only reopen retained the rejected build; a clean app process restart cleared that in-memory recovery state and the same package passed health.                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Build `0d6266a0…` retained the existing session UI, copied selected terminal text through native clipboard ownership, and opened the detected URL in Orca browser.                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Open     | Phone-browser opening, pinch-scale persistence, broader resize/reflow, clipboard reads/image paste, dictation, Android, and physical devices remain.                                                                                                                                                                                                                                                                                    |
+| 2026-07-23 | Next     | Verify phone-browser opening and text-scale persistence, then continue browser-pane and clipboard/picker capability ownership.                                                                                                                                                                                                                                                                                                          |
+| 2026-07-23 | Complete | The existing Phone browser setting now routes terminal HTTP(S) links through the shell-owned platform operation; iOS Safari loaded Example Domain.                                                                                                                                                                                                                                                                                      |
+| 2026-07-23 | Complete | Reused the existing browser pane through named operations; opaque page handles, 128 KiB frame chunks, input/dialog/navigation operations, and navigation events pass.                                                                                                                                                                                                                                                                   |
+| 2026-07-23 | Finding  | Five leftover pairing servers shared one advertised LAN address; the simulator was connected to two stale builds while the CLI targeted the newest runtime.                                                                                                                                                                                                                                                                             |
+| 2026-07-23 | Complete | Stopped only `mobile-rearch` pairing servers, paired one current runtime, and passed browser create/navigation/history/reload/rotation/close/reopen/input evidence.                                                                                                                                                                                                                                                                     |
+| 2026-07-23 | Complete | Clipboard type probing, shell-only text/image reads, terminal-ordered paste, and photo/document attachment contracts now expose only bounded status to hosted code.                                                                                                                                                                                                                                                                     |
+| 2026-07-23 | Complete | The unchanged Attach control opened the native iOS permission flow and Photos picker; Cancel returned without a toast or leaked path.                                                                                                                                                                                                                                                                                                   |
+| 2026-07-23 | Complete | Full Expo validation passes after the capability slice: 420 files, 2,778 tests passed, 2 expected skips, with all relevant type/lint/package gates green.                                                                                                                                                                                                                                                                               |
+| 2026-07-23 | Next     | Finish live paste/selected-asset and denial/interruption evidence, then continue dictation/audio, tasks/accounts, and notifications/deep links.                                                                                                                                                                                                                                                                                         |
+| 2026-07-24 | Complete | Hosted dictation reuses the existing controls, setup drawer, transcript routing, toasts, haptics, and composer without changing presentation.                                                                                                                                                                                                                                                                                           |
+| 2026-07-24 | Complete | Raw PCM stays in the shell; gesture-gated native authority streams directly to Desktop and exposes only typed state plus a bounded final transcript to the page.                                                                                                                                                                                                                                                                        |
+| 2026-07-24 | Finding  | iOS Simulator rejects forced 16 kHz input taps and voice-processing initialization; native-format capture fixes simulation without changing device voice processing.                                                                                                                                                                                                                                                                    |
+| 2026-07-24 | Complete | The paired simulator downloaded Whisper Tiny, recorded native audio, processed it on Desktop, and inserted the returned transcript through the unchanged composer.                                                                                                                                                                                                                                                                      |
+| 2026-07-24 | Complete | Accounts reuses the existing screen through strict native/web operations; projection, gesture-gated selection, and subscription cleanup pass automated validation.                                                                                                                                                                                                                                                                      |
+| 2026-07-24 | Complete | The default runtime/build/package paths now select `out/mobile-web-rnw`; Host 33 rendered that package and completed the Accounts flow without an environment override.                                                                                                                                                                                                                                                                 |
+| 2026-07-24 | Started  | Tasks keeps its existing presentation; its first native device dependencies now run through named native/web operations rather than direct platform imports.                                                                                                                                                                                                                                                                            |
+| 2026-07-24 | Complete | Tasks bootstrap, repository inventory, Linear context, GitHub slug resolution, preferences, and setup trust now cross strict typed operations with opaque repository handles.                                                                                                                                                                                                                                                           |
+| 2026-07-24 | Complete | GitHub work-item list/count, GitLab work-item list/todos, and Linear issue list/search now cross strict bounded operations without exposing real repository IDs.                                                                                                                                                                                                                                                                        |
+| 2026-07-24 | Complete | GitHub labels/users/details, GitLab details, and Linear issue/comments now cross strict bounded operations; GitLab target host/path remains shell-only and revocable.                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | GitHub Project discovery, view listing, and pasted-reference resolution now cross strict bounded operations without changing presentation.                                                                                                                                                                                                                                                                                              |
+| 2026-07-24 | Complete | GitHub Project table and row metadata now cross bounded project-read operations; the existing Tasks model reconstructs opaque continuation pages without presentation changes.                                                                                                                                                                                                                                                          |
+| 2026-07-24 | Complete | Project item/comment/metadata/field/type writes use opaque revocable row authority and freshly revalidate host row and field identity before mutation.                                                                                                                                                                                                                                                                                  |
+| 2026-07-24 | Complete | Project PR thread/reply/reviewer/check-rerun/merge writes revalidate both the fresh Project row and opaque repository-to-slug mapping before existing Desktop authority.                                                                                                                                                                                                                                                                |
+| 2026-07-24 | Complete | Project check/file operations revalidate fresh row/repository authority, bound file content, and strip opaque page handles before Desktop RPC.                                                                                                                                                                                                                                                                                          |
+| 2026-07-24 | Complete | Non-Project GitHub/GitLab status and metadata writes use revocable item handles and re-fetch provider details before Desktop mutation.                                                                                                                                                                                                                                                                                                  |
+| 2026-07-24 | Complete | Non-Project comments, reviewers, threads, replies, merge, checks, viewed files, contents, and inline comments use opaque handles plus fresh provider/file authority.                                                                                                                                                                                                                                                                    |
+| 2026-07-24 | Complete | Full Expo suite, all relevant types/lints, format, max-lines, diff hygiene, and RNW verifier pass after the provider review/file tranche.                                                                                                                                                                                                                                                                                               |
+| 2026-07-24 | Complete | Linear setup/mutations and GitHub/GitLab issue creation now use bounded operations; the shell reloads current provider state before every write.                                                                                                                                                                                                                                                                                        |
+| 2026-07-24 | Complete | Sparse-preset list/save and final workspace creation use the strict New Workspace boundary with native identity/base revalidation, sparse checkout, warnings, and opaque results.                                                                                                                                                                                                                                                       |
+| 2026-07-24 | Complete | Full Expo suite passes with 2,816 tests and 2 expected skips; all relevant types/lints, max-lines, diff hygiene, and RNW build `4b515fdc…` pass.                                                                                                                                                                                                                                                                                        |
+| 2026-07-24 | Complete | Mounted the unchanged Tasks route with its completed web adapters; Host 34 passed workspace/Tasks entry, provider/error surfaces, navigation, rotation, and lifecycle checks.                                                                                                                                                                                                                                                           |
+| 2026-07-24 | Complete | Explicit Tasks projections remove Jira/unrelated settings, host-only repository data, origin candidates, and classified error fields before page validation.                                                                                                                                                                                                                                                                            |
+| 2026-07-24 | Complete | Full Expo suite passes with 2,819 tests and 2 expected skips; all relevant types/lints, max-lines, diff hygiene, touched formatting, and RNW build `898b3a82…` pass.                                                                                                                                                                                                                                                                    |
+| 2026-07-24 | Finding  | Notification/deep-link handoff requires a native intent buffer plus host/package readiness and fresh opaque-workspace resolution; raw worktree IDs cannot enter hosted URLs.                                                                                                                                                                                                                                                            |
+| 2026-07-24 | Complete | Added strict notification intake, host/package/page readiness gates, fresh `worktree.ps` resolution, opaque navigation messages, stale suppression, and native fallback.                                                                                                                                                                                                                                                                |
+| 2026-07-24 | Finding  | Expo 55 maps simulator APNs custom data from the root `body` object; root-level Orca fields produce a valid but targetless response.                                                                                                                                                                                                                                                                                                    |
+| 2026-07-24 | Complete | Notification intake now fails closed when paired-host storage cannot be read, rejects malformed workspace identities, and suppresses older async resolutions after a newer tap.                                                                                                                                                                                                                                                         |
+| 2026-07-24 | Open     | Connected Host 37 receives the exact-session APNs fixture, but simulator controls do not deliver the default notification action; live exact/missing/background/cold evidence remains.                                                                                                                                                                                                                                                  |
+| 2026-07-24 | Complete | Full Expo suite, mobile/Node/mobile-web types and lints, root focused tests, max-lines, diff hygiene, and RNW build `d35eef83…` pass.                                                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | Native chat and agent-state now use strict native/web operations behind the unchanged session, chat, composer, message, and prompt-card presentation.                                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | Opaque chat authority binds the exact native workspace/tab/terminal/agent/provider/transcript identity, is freshly revalidated before writes, and is revoked on lifecycle changes.                                                                                                                                                                                                                                                      |
+| 2026-07-24 | Complete | Full Expo suite passes with 2,841 tests and 2 expected skips; types, lints, max-lines, root bridge/import tests, diff hygiene, and RNW build `9a4b4609…` pass.                                                                                                                                                                                                                                                                          |
+| 2026-07-24 | Finding  | Session projection previously lost provider-session identity because it consulted only OSC-retained payloads; authoritative hook snapshots now supply opaque chat authority.                                                                                                                                                                                                                                                            |
+| 2026-07-24 | Complete | Host 37 passes unchanged native-chat history, send/stream, stop delivery, file search/selection, switching, background/foreground, and cold reconnect on iOS Simulator.                                                                                                                                                                                                                                                                 |
+| 2026-07-24 | Complete | Transcript lifecycle now crosses strict native/hosted contracts and clears stale hook working state only when terminal evidence is at least as new as the hook turn.                                                                                                                                                                                                                                                                    |
+| 2026-07-24 | Complete | Host 37 build `64ae13e9…` passed cold-start working-to-interrupted reconciliation in the unchanged chat UI; the Orca emulator tap issue required equivalent host-side Escapes.                                                                                                                                                                                                                                                          |
+| 2026-07-24 | Complete | Full root/Expo suites, typechecks, lints, touched formatting, max-lines, diff hygiene, RNW verification, and Electron build pass after the repair.                                                                                                                                                                                                                                                                                      |
+| 2026-07-24 | Complete | Host 37 rendered the unchanged Claude question card and delivered its Beta selection end to end; lingering structured prompts cannot expose a duplicate heuristic card.                                                                                                                                                                                                                                                                 |
+| 2026-07-24 | Finding  | Classic SSH native-chat reads incorrectly opened remote transcript paths through Desktop `node:fs`; remote transcript paths are not local mirrors.                                                                                                                                                                                                                                                                                      |
+| 2026-07-24 | Complete | Added bounded provider transcript sources and exact runtime terminal/worktree/connection/agent/session/path authority with reconnect reacquisition and no local fallback.                                                                                                                                                                                                                                                               |
+| 2026-07-24 | Complete | Real Docker SSH E2E passes remote hook publication/read, disconnect unavailability, and reconnect append recovery through an independent paired runtime client.                                                                                                                                                                                                                                                                         |
+| 2026-07-24 | Complete | The same real SSH journey passes sanitized workspace discovery, opaque chat authority, read, `host_error`, and reconnect reacquisition through the production hosted broker/page client.                                                                                                                                                                                                                                                |
+| 2026-07-24 | Complete | Host 38 rendered the unchanged hosted repository, workspace, session, and terminal UI in the actual iOS WebView and wrote a verified sentinel through Docker SSH.                                                                                                                                                                                                                                                                       |
+| 2026-07-24 | Open     | Native-chat live ambiguous-delivery, cloud Relay, Android, and physical-device evidence remains; the 2026-07-26 rows supersede the SSH-reconnect gap.                                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | The unchanged hosted Attach control selected and uploaded a 2,808,983-byte iOS Simulator photo through shell-owned local authority; focused local/SSH/status tests pass.                                                                                                                                                                                                                                                                |
+| 2026-07-24 | Open     | Document selection, camera, live attachment denial/revocation, interruption, terminal Enter observation, Android, and physical-device evidence remain.                                                                                                                                                                                                                                                                                  |
+| 2026-07-24 | Complete | The unchanged chat composer now persists bounded drafts in shell storage isolated by hashed paired-host, exact-build, resolved workspace, and tab authority.                                                                                                                                                                                                                                                                            |
+| 2026-07-24 | Complete | Host 37 retained the exact unsent hosted chat draft across forced loss of every simulator WebContent child and across a full app restart followed by manual route re-entry.                                                                                                                                                                                                                                                             |
+| 2026-07-24 | Finding  | Before bounded cold-route state existed, a full app restart opened the native host list; draft persistence remained independent and rehydrated after manual route re-entry.                                                                                                                                                                                                                                                             |
+| 2026-07-24 | Complete | Cold launch now validates the paired host, freshly resolves persisted native workspace identity, and issues a new opaque page handle; pairing links retain priority.                                                                                                                                                                                                                                                                    |
+| 2026-07-24 | Complete | Explicit host-list navigation and paired-host removal clear the stored route; focused lifecycle tests cover stale/missing hosts and removal ordering.                                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | Full app terminate/launch bypassed the host picker and restored Host 37 plus the unchanged `mobile-rearch` session; the exact hashed-key chat draft remained.                                                                                                                                                                                                                                                                           |
+| 2026-07-24 | Complete | Accepted native-chat optimistic messages now persist as 16 bounded shell-owned records under hashed host/build/workspace/tab/provider-session authority; no page handle is durable.                                                                                                                                                                                                                                                     |
+| 2026-07-24 | Complete | Focused storage/hook/adapter/broker round trips pass hydration, reconciliation, tab-switch settlement, bounds, corruption, and hidden-authority isolation.                                                                                                                                                                                                                                                                              |
+| 2026-07-24 | Complete | Import-boundary verification caught and removed a native-storage import from shared RNW code; build `8596775d…` verified and restored the unchanged hosted simulator session.                                                                                                                                                                                                                                                           |
+| 2026-07-24 | Complete | Full Expo passes 462 files / 2,895 tests with 2 expected skips; 77 focused bridge/import tests, all type/lint/max-lines/diff gates, and the RNW verifier pass.                                                                                                                                                                                                                                                                          |
+| 2026-07-24 | Open     | At this checkpoint, live pending recovery and Markdown drafts were still open; later rows supersede only the deterministic draft gap.                                                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | Full Expo suite passes with 2,879 tests and 2 expected skips; all type/lint/max-lines/format/diff gates, 31 bridge/import tests, and RNW build `777160683…` pass.                                                                                                                                                                                                                                                                       |
+| 2026-07-24 | Finding  | Broker-valid 600 KiB Tasks responses could fail at the final native hop because both WebView modules still imposed an undocumented 256 KiB ceiling.                                                                                                                                                                                                                                                                                     |
+| 2026-07-24 | Complete | Shared grants and Swift/Kotlin transports now align on a 640 KiB envelope with a 600 KiB operation ceiling and 40 KiB metadata reserve.                                                                                                                                                                                                                                                                                                 |
+| 2026-07-24 | Complete | A locally signed iOS rebuild preserved keychain access and automatically restored Host 37's existing workspace through the updated native module.                                                                                                                                                                                                                                                                                       |
+| 2026-07-24 | Complete | Android autolinking, Debug Kotlin/Java compilation, and native-module unit tests pass with JDK 17 and Android SDK 36.                                                                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Open     | Android emulator runtime behavior, physical-device limits, and the remaining native-chat/notification/topology matrices are still required.                                                                                                                                                                                                                                                                                             |
+| 2026-07-24 | Complete | Full root/Expo suites, typechecks, lints, max-lines, formatting, diff hygiene, and RNW build `778ba8e4…` pass after the transport-limit repair.                                                                                                                                                                                                                                                                                         |
+| 2026-07-24 | Finding  | Cached pages were opened without bridge-range validation, and downloads checked `minimum` but not `testedThrough`; a store upgrade could enter an incompatible-page recovery loop.                                                                                                                                                                                                                                                      |
+| 2026-07-24 | Complete | Download, initial native cache open, and native recovery now require the shell bridge version inside the manifest's complete tested range.                                                                                                                                                                                                                                                                                              |
+| 2026-07-24 | Complete | Shared/focused checks, Swift and Kotlin builds, and signed iOS cold restoration pass after compatibility enforcement.                                                                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Open     | The real older/newer store-binary and Desktop-package matrix remains required before the bridge degradation checklist item can close.                                                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | Full Expo, focused root contracts/imports, types/lints, max-lines, formatting, diff hygiene, and RNW verification pass after compatibility enforcement.                                                                                                                                                                                                                                                                                 |
+| 2026-07-24 | Complete | Strict Markdown read/save and shell-owned draft persistence now reuse the unchanged session and Markdown presentation through injected native/web operations.                                                                                                                                                                                                                                                                           |
+| 2026-07-24 | Complete | Stale-base restoration, hydration/edit races, serialized cleanup, authority isolation, malformed/oversized rejection, and headless read-only fallback pass deterministic tests.                                                                                                                                                                                                                                                         |
+| 2026-07-24 | Complete | Full mobile passes 466 files / 2,906 tests with 2 expected skips; root/mobile/mobile-web types and lints, max-lines, diff hygiene, imports, and RNW verification pass.                                                                                                                                                                                                                                                                  |
+| 2026-07-24 | Complete | RNW build `2348cef32f978be858a374e406ecfc198eb398e427876094d794f9444867a3bb` contains 49 assets, 7,837,165 raw bytes, and 1,684,893 gzip bytes.                                                                                                                                                                                                                                                                                         |
+| 2026-07-24 | Finding  | Headless Host 37 projected a Markdown file as a non-editable file preview, so that probe is not evidence of live editable-Markdown parity or draft recovery.                                                                                                                                                                                                                                                                            |
+| 2026-07-24 | Open     | Live editable Markdown save/forced-loss restoration, pending-message forced loss, Relay/SSH, Android, physical-device persistence, and topology matrices remain.                                                                                                                                                                                                                                                                        |
+| 2026-07-24 | Next     | Capture editable Markdown save and forced-WebContent-loss evidence with a visible paired Desktop renderer, then continue notification and topology matrices.                                                                                                                                                                                                                                                                            |
+| 2026-07-24 | Complete | A visible paired Desktop supplied live unchanged-editor render/edit/save evidence; independent host mutation produced a stable conflict without overwriting newer bytes.                                                                                                                                                                                                                                                                |
+| 2026-07-24 | Complete | Full-process loss restored the exact unsaved stale Markdown draft; discard reloaded current host content, and a second cold launch proved draft cleanup.                                                                                                                                                                                                                                                                                |
+| 2026-07-24 | Finding  | React Native Web reuses the editor document and controller through a sandboxed iframe because `react-native-webview` cannot run in the hosted package; this is not a UI rewrite.                                                                                                                                                                                                                                                        |
+| 2026-07-24 | Complete | Final package `2d48c18c…` passed all listed automated gates, signed iOS build/install, activation, and cold launch while retaining the prior package for recovery.                                                                                                                                                                                                                                                                      |
+| 2026-07-24 | Finding  | `nativeChat.subscribe` was granted and implemented but omitted from bridge subscription request accounting, so restored-session subscriptions failed as `unsupported_capability`.                                                                                                                                                                                                                                                       |
+| 2026-07-24 | Complete | Classified `nativeChat` subscriptions and added a production-grant invariant plus a full restored-session broker/client subscription round trip with event sanitization and cleanup.                                                                                                                                                                                                                                                    |
+| 2026-07-24 | Complete | Full-process loss restored the exact optimistic message as `Queued`; resumed terminal input delivered it to the original transcript, then reconciliation removed the marker and record.                                                                                                                                                                                                                                                 |
+| 2026-07-24 | Complete | Clean package `2d48c18c…` is active; mobile-web type/lint, mobile formatting, max-lines, and diff hygiene pass, following the 469-file / 2,916-test full mobile run.                                                                                                                                                                                                                                                                    |
+| 2026-07-24 | Finding  | Hosted page-bridge timeout/teardown/invalid-reply failures were collapsed to definite `rejected` even though the terminal write could already have landed.                                                                                                                                                                                                                                                                              |
+| 2026-07-24 | Complete | Hosted send/respond/stop now preserve those post-dispatch failures as `unknown`; six focused tests and verified RNW build `302dc4b3…` pass.                                                                                                                                                                                                                                                                                             |
+| 2026-07-24 | Complete | Actual iOS WebView presentation over Docker SSH passed manually in 2.3 minutes; terminal input created and verified `/tmp/orca-ssh-webview-proof` on the remote host.                                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | E2E-only one-shot response loss proved an executed hosted send is delivered once, held as a draft until transcript evidence arrives, then cleared after timeout without resend/error.                                                                                                                                                                                                                                                   |
+| 2026-07-24 | Complete | Repeatable Direct iOS automation now launches the paired stack, selects the exact host, inspects the real debug WebView, and asserts visible unchanged hosted UI.                                                                                                                                                                                                                                                                       |
+| 2026-07-24 | Next     | Exercise the remaining notification/native-chat topology matrices, then run Android and physical-device, security, and production App Review gates.                                                                                                                                                                                                                                                                                     |
+| 2026-07-25 | Finding  | A stale cold-resume host could fight E2E public-key host selection and repeatedly replace `selectedHostId`, causing a maximum-update-depth loop.                                                                                                                                                                                                                                                                                        |
+| 2026-07-25 | Complete | Explicit E2E paired identity now takes precedence over persisted cold-resume state, with focused regression coverage for stale simulator state.                                                                                                                                                                                                                                                                                         |
+| 2026-07-25 | Complete | Durable Docker SSH automation opens the actual iOS WKWebView, renders the unchanged UI, emits a buffered terminal command plus CR, and verifies the remote proof file.                                                                                                                                                                                                                                                                  |
+| 2026-07-25 | Complete | A hosted workspace request crosses the real mobile Relay client, NaCl E2EE v2, Desktop CloudRelayTransport, production broker, and page client with opaque projection.                                                                                                                                                                                                                                                                  |
+| 2026-07-25 | Finding  | WebKit inspection reliably reads the hosted DOM but does not execute network-bearing evaluation expressions, so inspector timeouts cannot prove CSP network isolation.                                                                                                                                                                                                                                                                  |
+| 2026-07-25 | Complete | Removed the inconclusive network probe and restored the Direct actual-WKWebView gate; focused target-selection tests and the full paired simulator harness pass.                                                                                                                                                                                                                                                                        |
+| 2026-07-25 | Complete | A DEBUG-only native document-start probe executed fetch, XHR, WebSocket, and image attempts in the actual hosted iOS WKWebView; the loopback sentinel observed zero traffic.                                                                                                                                                                                                                                                            |
+| 2026-07-25 | Complete | The probe accepts only a simulator-scoped UUID and loopback port, is absent from Release builds, requires a four-attempt completion marker, and clears its launch environment afterward.                                                                                                                                                                                                                                                |
+| 2026-07-25 | Open     | Android runtime network isolation and independent adversarial review remain; the iOS Simulator result does not close the cross-platform security gate.                                                                                                                                                                                                                                                                                  |
+| 2026-07-25 | Open     | Production cloud Relay, realistic latency/reconnect, Relay native-chat/WebView evidence, Android, physical devices, topology matrices, security review, and App Review remain required.                                                                                                                                                                                                                                                 |
+| 2026-07-25 | Next     | Exercise the remaining notification/native-chat cloud Relay matrix, then run Android and physical-device, security, and production App Review gates.                                                                                                                                                                                                                                                                                    |
+| 2026-07-26 | Complete | The actual iOS WKWebView rendered `remote hello` from classic Docker SSH, stayed in the unchanged chat view with `Reconnecting…` during provider loss, and rendered `remote recovered` after PTY/provider reattachment.                                                                                                                                                                                                                 |
+| 2026-07-26 | Finding  | The initial reconnect failure was an E2E diagnostic truncation: the session route's retention hook was beyond the first 160 hooks. The bounded scan now reaches the controller and asserts retention before and during loss.                                                                                                                                                                                                            |
+| 2026-07-26 | Complete | Focused mobile bridge/retention tests pass 4 files / 18 tests; runtime/SSH relay tests pass 2 files / 908 tests; Node, mobile, and mobile-web typechecks, focused lint, reliability gates, max-lines, formatting, and diff hygiene pass.                                                                                                                                                                                                |
+| 2026-07-26 | Complete | The local protocol-compatible Relay cell now carries opaque workspace discovery, a sanitized session snapshot, and a native-chat transcript read through the real mobile Relay client, NaCl E2EE v2, Desktop transport, production broker, and page client.                                                                                                                                                                             |
+| 2026-07-26 | Complete | UX-state and accessibility/input ownership inventories now freeze shell/package/retained/recovery and platform-input behavior without treating source contracts as live-device evidence.                                                                                                                                                                                                                                                |
+| 2026-07-26 | Finding  | Concurrent cache-open and package-refresh failures could let a late generic cache hint overwrite a classified incompatibility/package warning.                                                                                                                                                                                                                                                                                          |
+| 2026-07-26 | Complete | Cache-open copy is now fallback-only; retained and uncached compatibility/generic failures plus all shell/host-picker presentation branches and accessibility semantics pass 3 focused files / 21 tests.                                                                                                                                                                                                                                |
+| 2026-07-26 | Complete | Full mobile validation passes 479 files / 2,968 tests with 2 expected skips; Node, mobile, and mobile-web typechecks, mobile lint/format, 50 reliability gates, max-lines ratchet, and diff hygiene pass.                                                                                                                                                                                                                               |
+| 2026-07-26 | Finding  | The unchanged hosted Session UI links to Agent Session History, but only workspace, Accounts, Tasks, and Session routes exist in the hosted route graph; history still performs direct host RPC and native resume construction.                                                                                                                                                                                                         |
+| 2026-07-26 | Complete | Added a browser-pure bounded Agent Session History contract for opaque paged rows, lazy previews, and native-authority resume results; 4 focused tests plus Node/mobile-web typechecks pass, including canonical agent-enum drift coverage.                                                                                                                                                                                             |
+| 2026-07-26 | Complete | Added the native Agent Session History authority with stable random handles, refreshed native bindings, stale-row revocation, bridge-session teardown, and invalid-random-source failure; 3 focused mobile tests, mobile typecheck, and lint pass.                                                                                                                                                                                      |
+| 2026-07-26 | Complete | Agent History snapshot/preview/resume now traverse registered grants, production broker/client, opaque authority, native projection/resume execution, and the shared existing panel presentation; focused source, pager, resume, round-trip, and grant tests pass.                                                                                                                                                                      |
+| 2026-07-26 | Complete | Added the strict `session.capabilities` operation so the hosted unchanged Session screen receives only four named booleans for browser screencast, Agent History, Quick Commands, and terminal query-reply input support; the raw host capability list never enters the page.                                                                                                                                                           |
+| 2026-07-26 | Complete | Exact-source RNW Agent History package `c24ff9878740fa6f711e55a2ef73eae6e62fed7eaa2896046724fa8cc5048c2e` verifies at 49 assets, 7,878,100 raw bytes, and 1,695,710 gzip bytes.                                                                                                                                                                                                                                                         |
+| 2026-07-26 | Finding  | WebKit can reject an inspector session opened immediately after another closes, and React Native Web retains hidden route controls; the E2E harness now retries page-side-tokenized actions exactly once, activates only visible controls, and requires expected route fragments.                                                                                                                                                       |
+| 2026-07-26 | Complete | The actual iOS WKWebView passes Workspace → Session → Agent History, Workspace/Project/All scopes, deterministic lazy preview, search/no-match/clear, synthetic Resume rejection by the native gesture gate, and verified `/agent-history/` → `/session/` Back navigation.                                                                                                                                                              |
+| 2026-07-26 | Complete | The same iPhone 17 Pro / iOS 26.5 Simulator run confirms the private `orca-mobile-web://` origin, authenticated Direct/E2EE host, and zero loopback observations from document-start fetch, XHR, WebSocket, and image attempts.                                                                                                                                                                                                         |
+| 2026-07-26 | Complete | Full mobile validation passes 486 files / 2,987 tests with 2 expected skips; Node, mobile, and mobile-web typechecks, mobile/mobile-web lint, 50 reliability gates, max-lines ratchet, focused formatting, RNW verification, and diff hygiene pass.                                                                                                                                                                                     |
+| 2026-07-26 | Complete | Orca emulator accessibility located the visible `Resume agent session` control and delivered a native normalized-coordinate tap. The native gesture gate admitted Resume, Desktop created a second terminal, and the unchanged hosted UI navigated to `/session/`; the synthetic CDP click remained rejected.                                                                                                                           |
+| 2026-07-26 | Finding  | The unchanged Agent History presentation has no visible reconnect label, so requiring a new native `Reconnecting` accessibility node would change the existing UI contract. The E2E harness instead observes authenticated shell connection messages and records retained route/text after the page update frame.                                                                                                                       |
+| 2026-07-26 | Complete | A fresh-profile paired Desktop restart produced `recovering` / failed retries / `connected` while the exact `/agent-history/` route and fixture stayed rendered. Synthetic Resume remained rejected; Orca emulator native touch still resumed, and Back returned to Session after recovery.                                                                                                                                             |
+| 2026-07-26 | Complete | Full mobile validation passes 491 files / 3,003 tests with 2 expected skips after the reconnect-controller and connection-observation coverage; focused formatting also passes.                                                                                                                                                                                                                                                         |
+| 2026-07-26 | Complete | A fresh-profile iPhone 17 Pro / iOS 26.5 Simulator run captured the same shared populated Agent History presentation natively and through RNW. The automated gate observed 2.2677% changed pixels against 3%, mean channel difference 2.5663 against 4, and vertical header delta 0.00075 against 0.005 while masking only the changing status bar.                                                                                     |
+| 2026-07-26 | Complete | The same fixture now passes landscape with 2.4386% changed pixels against 3% and mean channel difference 2.8236 against 4. WKWebView did not expose the hosted title through native AX after rotation, so landscape remains pixel-only and the missing rotated AX exposure stays in the accessibility backlog.                                                                                                                          |
+| 2026-07-26 | Complete | The same live gate passed all three scopes, preview, search/no-match/clear, retained route/content through Desktop restart, synthetic Resume rejection, native-touch Resume, Back, and zero loopback traffic from fetch/XHR/WebSocket/image attempts.                                                                                                                                                                                   |
+| 2026-07-26 | Complete | Disposable emulator pairing teardown now captures only daemon PIDs from its isolated profile, waits for graceful exit, escalates only those captured PIDs if required, and completes before the launcher exits. The passing E2E profile left no runtime or daemon process.                                                                                                                                                              |
+| 2026-07-26 | Complete | Full mobile validation passes 493 files / 3,016 tests with 2 expected skips; mobile typecheck, full lint/format, max-lines ratchet, focused screenshot/accessibility/cleanup checks, and diff hygiene also pass.                                                                                                                                                                                                                        |
+| 2026-07-26 | Complete | Electron packaging now fails if its copied mobile-web resource tree is missing or invalid. A real unpacked macOS arm64 app passed against build `c24ff987…`; local signing was unavailable and the unrelated macOS notification-status helper was absent.                                                                                                                                                                               |
+| 2026-07-26 | Complete | Packaged lookup now passes through the Desktop-to-SSH topology: the runtime used the real unpacked app `Resources/mobile-web` tree with no checkout fallback, authenticated RPC returned `c24ff987…`, and the actual iOS WKWebView completed remote terminal and reconnecting native-chat journeys.                                                                                                                                     |
+| 2026-07-26 | Complete | Post-landscape full mobile validation passes 493 files / 3,018 tests with 2 expected skips; Node, mobile-web, and mobile typechecks plus focused packaging tests, lint, formatting, max-lines, and diff hygiene pass.                                                                                                                                                                                                                   |
+| 2026-07-26 | Open     | Linux, Windows, headless, and signed-release artifacts remain required; the packaged macOS/SSH result does not close those platform or release gates.                                                                                                                                                                                                                                                                                   |
+| 2026-07-26 | Open     | The full live accessibility review remains; cloud Relay, Android/device, security, performance, packaged release, and App Review gates also remain open.                                                                                                                                                                                                                                                                                |
+| 2026-07-26 | Next     | Extend deterministic native-versus-hosted fixtures across the remaining phone/tablet, shell-state, and populated-route matrix, then complete adversarial and external platform/release gates without treating simulator evidence as a device or release result.                                                                                                                                                                         |
+| 2026-07-26 | Finding  | The first adversarial simulator run launched a stale installed shell, so its native-policy result did not describe the current worktree. The gate now builds the exact Debug target into worktree-scoped DerivedData and installs that app before pairing.                                                                                                                                                                              |
+| 2026-07-26 | Finding  | Disabling code signing removed simulator entitlements and broke keychain/accessibility behavior. The deterministic build now uses normal Xcode ad-hoc simulator signing rather than `CODE_SIGNING_ALLOWED=NO`.                                                                                                                                                                                                                          |
+| 2026-07-26 | Complete | The exact freshly built iPhone 17 Pro / iOS 26.5 Simulator app passed the security-only gate: fetch, XHR, WebSocket, image, redirect-frame, download, popup, worker, and external-scheme attempts retained the private document and produced zero loopback HTTP/WebSocket observations.                                                                                                                                                 |
+| 2026-07-26 | Finding  | Android CSP had drifted from the RNW package by forbidding runtime inline styles. Android now matches the verified package (`style-src 'self' 'unsafe-inline'`, sandboxed `data:` frame only), blocks network loads, and rejects download callbacks. The 2026-07-27 Android Debug build and emulator rows supersede this checkpoint's missing compile/runtime evidence.                                                                 |
+| 2026-07-26 | Finding  | The shared rich Markdown editor applied its strict document CSP only in the hosted iframe; the native document lacked the same network/script boundary, and its URL filter rejected only the literal `javascript:` prefix.                                                                                                                                                                                                              |
+| 2026-07-26 | Complete | Native and hosted rich Markdown editor documents now share the hash-bound CSP; links are limited to HTTP(S), image data to raster base64, and the script/HTML/SVG/event-handler/active-scheme corpus passes. The regenerated RNW package verifies as `5eae2f80…`, 49 assets, 7,878,234 raw bytes, and 1,695,768 gzip bytes.                                                                                                             |
+| 2026-07-26 | Finding  | The existing repository HTML preview directly executed file-controlled markup with JavaScript enabled, unrestricted native origin matching, network-capable resource attributes, and direct platform external-link opening.                                                                                                                                                                                                             |
+| 2026-07-26 | Complete | Native and RNW now share the unchanged HTML Preview/Source presentation while a hash-authorized, network-denied sanitizer shell renders only allowlisted inert HTML. SVG/MathML/forms/frames/scripts, event handlers, remote sources, active CSS and non-HTTP(S) links are rejected; valid link messages are token-bound and route through `HostSessionDeviceOperations`.                                                               |
+| 2026-07-26 | Complete | The HTML/SVG artifact suite passes 8 tests; native and mobile-web typechecks, focused oxlint, max-lines ratchet, diff hygiene, and RNW verification pass. Package `3b49c156…` contains 49 assets, 7,886,433 raw bytes, and 1,698,666 gzip bytes.                                                                                                                                                                                        |
+| 2026-07-26 | Complete | The exact freshly built iPhone 17 Pro / iOS 26.5 Simulator Debug app reran the security-only gate after the HTML sanitizer/package change: fetch, XHR, WebSocket, image, redirect-frame, download, popup, worker, and external-scheme attempts retained the private document and produced zero loopback traffic.                                                                                                                        |
+| 2026-07-26 | Finding  | Read-only Markdown rendered content through inert React elements but still admitted `mailto:` and opened links directly through `Linking`, bypassing the hosted/native device-operation seam.                                                                                                                                                                                                                                           |
+| 2026-07-26 | Complete | Read-only Markdown and the rich editor now share the native capability contract's bounded HTTP(S)-only URL normalizer. Chat, task descriptions/comments, and file previews inject their device capability; script/iframe/SVG/image markup creates no executable host element, and active-scheme taps are rejected.                                                                                                                      |
+| 2026-07-26 | Complete | Focused Markdown/capability coverage passes 6 files / 22 tests; the full Expo suite passes 494 files / 3,032 tests with 2 expected skips. Node, native and mobile-web typechecks, focused lint, max-lines and diff hygiene pass; RNW package `607496d6…` verifies at 49 assets, 7,886,730 raw bytes, and 1,698,811 gzip bytes.                                                                                                          |
+| 2026-07-26 | Finding  | The existing Mermaid diagram nested WebView downloaded executable JavaScript from jsDelivr, accepted every origin, and embedded repository diagram source in script-bearing HTML; hosted outer-network isolation would also make normal rendering fall back.                                                                                                                                                                            |
+| 2026-07-26 | Complete | Native and RNW now share the unchanged Mermaid diagram/fallback presentation around a locally bundled Mermaid/DOMPurify engine. The document denies network/frame/worker authority, hash-authorizes only the fixed runner and engine, uses strict Mermaid settings and sanitized SVG, bounds source/messages, and token-binds the opaque hosted frame.                                                                                  |
+| 2026-07-26 | Complete | Mermaid/manifest/package-budget coverage passes 4 files / 28 tests. Package `0ed202825ff748851aa38558b4f45c2d4d64298c2070341f95e496ad67926481` verifies at 49 assets, 9,152,136 raw bytes, and 2,657,302 gzip bytes under reviewed 10 MiB total, 3 MiB gzip, 9.5 MiB script, 256 KiB style, and 64-asset RNW ceilings.                                                                                                                  |
+| 2026-07-26 | Finding  | Simulator WebKit truncated or skipped the runner when the 1.26 MiB compressed Mermaid engine was embedded in a hosted `data:` URL or `srcdoc`; Mermaid 11.16 also ignores the deprecated `flowchart.htmlLabels` setting.                                                                                                                                                                                                                |
+| 2026-07-26 | Complete | Hosted mode now starts a small opaque `srcdoc`, accepts the exact compressed engine only from its exact parent after a typed token-bound `ready` message, and retains CSP hash authorization. Top-level `htmlLabels: false` produces ordinary SVG text while the sanitizer continues to forbid `foreignObject`.                                                                                                                         |
+| 2026-07-26 | Complete | The exact hosted opaque-frame document rendered visible labels, rejected a malicious `click` directive with no accessible link and zero loopback requests, and returned a typed error for invalid source on iPhone 17 Pro Simulator. This is document-level WebKit evidence, not exact-app, native-component, Android, physical-device, Release, or independent-review evidence.                                                        |
+| 2026-07-26 | Complete | Latest Mermaid coverage passes 7/7; package/manifest budgets pass 3 files / 22 tests; mobile, mobile-web, and Node typechecks, focused lint/format, max-lines, diff hygiene, and `build:mobile-web` pass. Package `8b4ca50092d615fc8063e81c4e5fc6ea71677882f2664849670c508da16323fb` verifies at 49 assets, 9,153,345 raw bytes, and 2,657,540 gzip bytes.                                                                              |
+| 2026-07-26 | Complete | The full Expo suite passes 495 files / 3,039 tests with 2 expected skips.                                                                                                                                                                                                                                                                                                                                                               |
+| 2026-07-26 | Finding  | The exact-app gate's blind normalized-coordinate pairing tap could report success while hitting an existing host's reconnect screen. It now resolves and taps the accessible `Pair` control through the same isolated Orca emulator profile; focused accessibility/runtime coverage passes 2 files / 9 tests.                                                                                                                           |
+| 2026-07-26 | Finding  | The shared/Desktop manifest accepted the reviewed 10 MiB asset ceiling, but Swift and Kotlin native stores still rejected assets above 8 MiB. The 9.15 MiB entry script therefore produced `staging_failed` and the first isolation pass exercised a prior healthy generation. Both stores now enforce 10 MiB, with a cross-platform source-contract regression.                                                                        |
+| 2026-07-26 | Complete | After rebuilding CLI/Electron and the exact ad-hoc-signed Debug app, a fresh paired host staged the current package without fallback. The iPhone 17 Pro / iOS 26.5 Simulator gate retained the private document across external navigation, popup, worker, redirect-frame, download, and external-scheme attempts; fetch, XHR, WebSocket, and image probes produced zero sentinel traffic.                                              |
+| 2026-07-26 | Next     | Continue the XSS corpus through filenames/diffs, terminal links, non-Markdown task/provider fields, and bounded error messages before manifest/cache and bridge adversarial fuzzing.                                                                                                                                                                                                                                                    |
+| 2026-07-26 | Complete | The post-fix full Expo suite passes 495 files / 3,040 tests with 2 expected skips.                                                                                                                                                                                                                                                                                                                                                      |
+| 2026-07-27 | Complete | Native-chat operations now carry one absolute deadline from page through bridge, shell, connection, and terminal RPC. Underfunded requests fail before host dispatch; terminal writes identify the mobile client, include connect time in the budget, and clear stale input with Ctrl+U before commit preparation.                                                                                                                      |
+| 2026-07-27 | Complete | The gesture-gated shell picker retains all host paths and bytes, returns only session-scoped `native_chat_image_*` references plus bounded JPEG thumbnails, and enforces workspace/session authority, reference caps, release, and revocation. The unchanged composer passes attach, paste, retry, unknown-delivery, healing, and cleanup coverage.                                                                                     |
+| 2026-07-27 | Complete | Full mobile validation passes 503 files / 3,095 tests with 2 expected skips; full root validation passes 3,547 files / 37,394 tests with 60 skips. Focused deadline/image coverage passes 66 mobile tests and 58 root bridge/package tests.                                                                                                                                                                                             |
+| 2026-07-27 | Complete | Post-split validation passes 97 focused SSH/provider tests and 14 focused mobile native-chat tests; Node, mobile, and mobile-web typechecks, mobile lint, touched-file formatting, 52 reliability gates, max-lines ratchet, and diff hygiene pass without a new suppression.                                                                                                                                                            |
+| 2026-07-27 | Complete | The exact-source production package and independent packaged-resource verifier pass for build `a5627b7c014d17902c7ab0be4b2f56e955c3a414352cdc7e8b39b52cae588a8f`: 49 assets, 9,178,686 raw bytes, and 2,663,076 gzip bytes. Packaging/configuration boundaries pass 5 files / 29 tests.                                                                                                                                                 |
+| 2026-07-27 | Finding  | Full root lint passes oxlint, switch exhaustiveness, styled-scrollbar, buffer, reliability, max-lines, skill, and localization-catalog gates, then fails the final localization-coverage audit on six unchanged `Ghostty` keyword entries in baseline settings-search files. Migration-owned lint is green; those unrelated files remain untouched.                                                                                     |
+| 2026-07-27 | Finding  | `react-native-screens` can freeze the blurred hybrid route before a React prop update removes its WKWebView. View-scoped `activateSessionView` / `deactivateSessionView` commands now provide an awaited main-thread lifecycle barrier around native route pushes and focus restoration.                                                                                                                                                |
+| 2026-07-27 | Complete | The exact-app Direct iOS journey shows the existing native Terminal Settings above the detached hosted view and returns to the identical hosted Session route. The corrected E2E Back coordinate is inside the iOS 26.5 native header hit target; focused and full journeys pass.                                                                                                                                                       |
+| 2026-07-27 | Complete | Full mobile validation now passes 515 files / 3,121 tests with 2 expected skips. Mobile typecheck, full lint and format checks, max-lines ratchet, document formatting, and diff hygiene pass after extracting the E2E option parser without a suppression.                                                                                                                                                                             |
+| 2026-07-27 | Finding  | Android staging treated an existing generation parent as a failed `mkdirs`, AndroidX rejected a host-specific custom-scheme listener rule, the CSP omitted custom-scheme asset behavior, and Expo Router loaded `/index.html` as an unmatched route. Staging now accepts existing parents, listener policy uses the valid scheme-wide rule, CSP matches the verified RNW package, and the origin root maps internally to `index.html`.  |
+| 2026-07-27 | Finding  | Chromium custom-scheme message callbacks may omit the source host. Android now admits only main-frame callbacks whose source host is absent or exactly the opaque session while the current WebView URL remains the active session's locked root; every envelope still carries the exact shell session/build context.                                                                                                                   |
+| 2026-07-27 | Complete | The Pixel 9 Pro API 36 emulator staged the exact package, rendered the unchanged workspace/session/terminal UI, and sent input through the real paired Desktop terminal. This closes only the core Android Debug emulator vertical slice.                                                                                                                                                                                               |
+| 2026-07-27 | Open     | Android feature-specific lifecycle/security/accessibility, production store signing, physical devices, full accessibility, adversarial review, sustained performance, Linux/Windows/headless release packaging, rollback drills, cloud Relay, and production App Review remain mandatory and open.                                                                                                                                      |
+| 2026-07-27 | Finding  | The network-denied CSP blocks remote GitHub avatar URLs in hosted mode. Preserve CSP; provide shell-delivered or inert fallback avatar data before parity can close.                                                                                                                                                                                                                                                                    |
+| 2026-07-27 | Complete | Task result contracts now replace every remote GitHub task avatar URL with `null` or `undefined` before page state, preserving the unchanged initials/empty-avatar fallback and the network-denied CSP.                                                                                                                                                                                                                                 |
+| 2026-07-27 | Complete | Final Android module Release Kotlin compilation passes after the private-origin root and callback-source repairs. Later rows record the locally signed Release runtime; production store signing remains separate.                                                                                                                                                                                                                      |
+| 2026-07-27 | Complete | All gesture-gated hosted native operations now consume one foreground-aware shell authority. Background/inactive transitions revoke the pending touch, and a fresh-looking timestamp cannot authorize a privileged call while the app is outside active `AppState`.                                                                                                                                                                     |
+| 2026-07-27 | Complete | The existing native Copy diagnostics report now includes bounded hybrid package, cache source, bridge, health, and recovery state while omitting host display name, endpoint value, raw log detail, session/cache identity, full build ID, and page data.                                                                                                                                                                               |
+| 2026-07-27 | Complete | Leaving foreground now revokes pending gesture authority and cancels shell-owned speech as interrupted; the existing speech cleanup releases recording, wake-lock, subscriptions, and remote dictation authority.                                                                                                                                                                                                                       |
+| 2026-07-27 | Complete | Post-speech full mobile validation passes 516 files / 3,132 tests with 2 expected skips; mobile typecheck, lint, format, max-lines, document-format, and diff-hygiene gates pass.                                                                                                                                                                                                                                                       |
+| 2026-07-27 | Finding  | Android's permission activity temporarily backgrounds Orca, so blanket background cancellation invalidated its own first-run dictation start. The authority now preserves only that in-flight shell prompt, waits for active state, and revalidates generation before audio initialization.                                                                                                                                             |
+| 2026-07-27 | Complete | Pixel 9 Pro API 36 passes existing-grant and first-run-grant recording, native PCM forwarding, unchanged Listening/stop states, and explicit denial. Revocation during recording terminates the app by Android policy; cold restore returns to the exact hosted session, and a later recording proves Desktop authority cleanup.                                                                                                        |
+| 2026-07-27 | Complete | The unchanged Attach control opens Android's real Photos picker. Home interruption followed by foreground return cancels the operation and retains the exact hosted session without exposing a path or bytes to the page.                                                                                                                                                                                                               |
+| 2026-07-27 | Complete | Existing Copy diagnostics now includes bounded cache/refresh activation timing, terminal resync count and stable last reason, and overflow count. No stream, terminal, workspace, session, endpoint, credential, filename, payload, or full build identity enters the report.                                                                                                                                                           |
+| 2026-07-27 | Complete | Terminal flow diagnostics now retain only the host-scoped maximum ACK lag and outstanding-byte high-water mark. Invalid or unbounded values are discarded, and the existing Copy report receives no stream, terminal, workspace, or payload identity.                                                                                                                                                                                   |
+| 2026-07-27 | Complete | Pixel 9 Pro API 36 renders the native Settings/About routes, hands Privacy Policy to Android, and returns to Orca; Home during live dictation interrupts speech without replacing the hosted session or leaking Desktop authority.                                                                                                                                                                                                      |
+| 2026-07-27 | Complete | Accepted Android image selection uploaded a byte-identical 579-byte PNG through shell-owned host authority; only the injected shell temp path reached the Desktop terminal.                                                                                                                                                                                                                                                             |
+| 2026-07-27 | Finding  | Android `AudioTrack.write()` returned positive partial writes, and pausing an in-flight write returned zero. The old engine discarded both unwritten tails.                                                                                                                                                                                                                                                                             |
+| 2026-07-27 | Complete | The playback writer now drains partial results, waits across pause/resume, retries zero progress only while playback remains active, and wakes on resume or cancellation. Kotlin unit, Debug assembly, and Release compile gates pass.                                                                                                                                                                                                  |
+| 2026-07-27 | Complete | The repaired exact app queued and wrote all 64,000 PCM bytes across Pause/Resume, emitted nonzero output volume, logged Stop, and reported `isPlaying=false` afterward.                                                                                                                                                                                                                                                                 |
+| 2026-07-27 | Complete | Latest validation passes 516 mobile files / 3,137 tests with 2 expected skips, mobile and RNW typechecks/lints, formatting, max-lines, diff hygiene, Android native gates, and the unchanged `bb86b378…` RNW verifier.                                                                                                                                                                                                                  |
+| 2026-07-27 | Complete | The existing native Copy diagnostics action exported a real 5,000-line hosted-terminal workload at 87 ms maximum ACK lag and 29,057 bytes outstanding high water with zero resyncs or overflows and no terminal/workspace/payload identity.                                                                                                                                                                                             |
+| 2026-07-27 | Finding  | Running the Android external-scheme attempt at the earliest document-start instant interrupted Chromium's React Native Web bootstrap even though native policy rejected navigation. The probe remains document-start-installed but waits for the hosted bridge-ready marker before executing.                                                                                                                                           |
+| 2026-07-27 | Complete | The exact Pixel 9 Pro API 36 arm64 Debug APK passes the Android isolation harness. Its ADB-reversed HTTP/WebSocket/TCP sentinel is deliberately reached and cleared before cold launch; fetch, XHR, WebSocket, image, popup, redirect-frame, download, worker, and external-scheme attempts retain the private document with zero final sentinel observations.                                                                          |
+| 2026-07-27 | Complete | Android isolation source/CDP coverage passes 14 tests; native probe coverage passes 7 Kotlin tests; exact arm64 Debug assembly, application Release Kotlin compilation, and the combined 849-task Gradle gate pass.                                                                                                                                                                                                                     |
+| 2026-07-27 | Complete | Latest validation passes 516 mobile files / 3,139 tests with 2 expected skips, mobile and RNW typechecks/lints, full mobile formatting, max-lines, and diff hygiene.                                                                                                                                                                                                                                                                    |
+| 2026-07-27 | Finding  | The page downloader accepted a schema-valid forged canonical `buildId` far enough to begin native staging. It now verifies the canonical SHA-256 before `beginStage`, while each native store independently verifies the identity again.                                                                                                                                                                                                |
+| 2026-07-27 | Complete | Swift and Kotlin cache fixtures now cover exact verified staging/read, malformed metadata, host isolation, interrupted-stage cleanup, incomplete/corrupt generations, corruption after session open, and active/previous recovery. Missing or corrupt generations return bounded errors rather than filesystem exceptions.                                                                                                              |
+| 2026-07-27 | Finding  | Permanent duplicate-ID sets exhausted long-lived broker sessions, and Desktop client replacement allowed an already-pending old-client result to race current authority. Bounded recent-ID windows preserve replay protection without exhaustion, and replacement now cancels pending work before installing the new client.                                                                                                            |
+| 2026-07-27 | Complete | Malformed-envelope coverage distinguishes missing and unsupported protocol versions, requires distinct request/subscription IDs, rejects frame-originated native-inbox messages, and covers stale build/session, cancellation, retired subscriptions, replay rollover, disposal, and delayed retired-client results.                                                                                                                    |
+| 2026-07-27 | Complete | Post-refresh Android evidence passes all 16 native JVM tests, exact Debug APK assembly, and application Release Kotlin compilation across 885 Gradle tasks; the Swift native cache executable and 95 focused mobile/root fault tests also pass.                                                                                                                                                                                         |
+| 2026-07-27 | Complete | Both native store harnesses now reject deterministic low space before staging, evict stale per-host content without touching the active generation, evict another host's unprotected generation for global pressure, and remove only the selected host's cache/session/stage authority.                                                                                                                                                 |
+| 2026-07-27 | Complete | Separate Swift and JVM children are forcibly terminated after stage creation, partial chunk write, asset sync, generation rename, and activation replacement. Fresh stores clean orphan stages, preserve the baseline before activation, and recover it as previous after activation.                                                                                                                                                   |
+| 2026-07-27 | Complete | The exact Pixel 9 Pro API 36 app survived three distinct Chromium renderer crashes in 7.6 seconds. It remounted the active native session twice, then changed session and activation from `bb86b378…` to verified previous build `800db4d5…` while retaining the visible terminal UI.                                                                                                                                                   |
+| 2026-07-27 | Complete | The exact iPhone 17 Pro simulator app survived real kills of three distinct `com.apple.WebKit.WebContent` processes in 11.9 seconds. It remounted four distinct WebKit targets, then changed session and activation from `bb86b378…` to verified previous build `800db4d5…` while retaining the visible terminal UI.                                                                                                                    |
+| 2026-07-27 | Complete | The native recovery surface retained warnings after health acknowledgement and exposed accessible Retry, Use previous, Clear cache, and Switch hosts actions. iOS Simulator manually recovered the previous generation and cleared/redownloaded the selected host cache without replacing the unchanged hosted UI.                                                                                                                      |
+| 2026-07-27 | Complete | Swift and Kotlin cached cold opens now reject an invalid active generation and atomically promote a compatible verified previous generation. Explicit build opens still fail closed, and an unprotected invalid generation is removed.                                                                                                                                                                                                  |
+| 2026-07-27 | Complete | After an in-place iOS Debug rebuild, corrupt active `48531616…` fell back to sole active `bb86b378…` with Desktop unavailable. WebKit showed the visible bridge-enabled private-origin cached reconnect UI, and the corrupt generation no longer existed.                                                                                                                                                                               |
+| 2026-07-27 | Complete | Recovery cleanup passes 33 focused tests, mobile typecheck and full lint, the iOS native store executable, and the refreshed Android suite with 17 JVM tests plus forced process interruption. Host catalog and package recovery responsibilities are split without changing the shared UI or adding a max-lines bypass.                                                                                                                |
+| 2026-07-27 | Finding  | Android custom-scheme routing could not mutate pathname/query through `history.replaceState`; reserved HTTPS fixed router compatibility, but intercepted main-frame URLs retained the session fragment and Expo Router later dropped it. Native now validates the exact main-frame fragment, and the hosted History API boundary preserves it across same-origin writes.                                                                |
+| 2026-07-27 | Complete | The exact routed Android package passes the deliberate-red isolation corpus at `https://orca-mobile-web.invalid/h/...#<session>` with zero escaped traffic. The bridge loaded a real terminal tab, and logcat contains none of the earlier storage, History API, or intercepted-response failures.                                                                                                                                      |
+| 2026-07-27 | Complete | Android emulator accessibility now passes **Use previous** and **Clear cache**. The durable corrupt-cache harness restores a verified previous generation offline and removes the forged active generation while retaining bridge-ready unchanged UI.                                                                                                                                                                                   |
+| 2026-07-27 | Complete | Hosted persistence is inert except for named shell-owned operations. Terminal accessory preferences and custom shortcut updates pass the typed page/client/broker/gesture/native-authority round trip; the verified RNW executable contains no page-owned storage calls.                                                                                                                                                                |
+| 2026-07-27 | Finding  | The non-debuggable APK remained inspectable on the original `userdebug` emulator because Chromium WebView 133 treats `eng`/`userdebug` Android builds as debug Android, enables DevTools unconditionally, and ignores the public disable call. This image cannot prove Release inspector isolation.                                                                                                                                     |
+| 2026-07-27 | Complete | All four packaged WebView debugging call paths now require the installed application's `FLAG_DEBUGGABLE`; the exact Release bytecode calls the custom disable path with `false`.                                                                                                                                                                                                                                                        |
+| 2026-07-27 | Complete | The exact post-hardening Release APK cold-opened the unchanged hosted workspace on an API 36 Play Store `user/release-keys` image with no inspector socket, inaccessible discovery endpoint, and no fatal mobile-WebView logs. The verifier rejects `userdebug` evidence.                                                                                                                                                               |
+| 2026-07-27 | Open     | The Release APK is locally debug-keystore signed. Production Play signing, physical devices, independent adversarial review, and the final exact release candidate remain mandatory.                                                                                                                                                                                                                                                    |
+| 2026-07-27 | Complete | Production shell, package, page, and shared-contract roots no longer reference prototype modules, symbols, contracts, or RPC names. The experimental fixture remains isolated until the final cutover removal gate.                                                                                                                                                                                                                     |
+| 2026-07-27 | Complete | The unchanged Source Control and Review UI now receives PR haptics, clipboard writes, and external URL opening through one required shell-operation context. Native routes retain Expo ownership; hosted routes use only the authenticated shell bridge. Twenty focused PR/source-control files pass 174 tests, both typechecks, lint, formatting, max-lines, and diff hygiene.                                                         |
+| 2026-07-27 | Complete | Hosted review metadata limits, duplicate keys, stale diff continuation, terminal mobile-client identity, input-floor rejection, and a provider mutation branch/HEAD race now have deterministic coverage. Review metadata documents its unavoidable optimistic preflight/write race. Six focused mobile files pass 30 tests and the shared contract passes 3 tests.                                                                     |
+| 2026-07-27 | Complete | Hosted legacy History and PR paths reuse the existing provider-neutral redirects into the unchanged Source Control hub, preserving the `history` and `pr` segment selections without provider-specific routing.                                                                                                                                                                                                                         |
+| 2026-07-27 | Finding  | Hosted Quick Command upsert initially revalidated the requested scope but not an existing command with the same guessed ID, allowing a cross-repository collision. The broker now rejects both guessed delete and upsert authority before mutation.                                                                                                                                                                                     |
+| 2026-07-27 | Complete | The unchanged Quick Commands sheet now loads, edits, deletes, and launches through strict native/web adapters. Hosted JavaScript never receives configured agent commands or durable repository identity and can launch only a freshly re-read authorized command ID.                                                                                                                                                                   |
+| 2026-07-27 | Complete | The production hosted route graph now mounts the unchanged dedicated Files and Preview screens through strict native/web operations. Preview retains its existing presentation while hosted reads use opaque workspace authority and native terminal-artifact URL authority remains outside the page.                                                                                                                                   |
+| 2026-07-27 | Complete | The exact iPhone 17 Pro Simulator app passes the unchanged hosted Source Control and Review journey. Session-origin file opens retain Session behavior, standalone Review is verified independently, and both isolation probes pass.                                                                                                                                                                                                    |
+| 2026-07-27 | Complete | Rebased onto `origin/main` at `48e31b3fc0` while preserving the latest native mobile presentation and the shared RNW route. The migration remains one commit ahead and zero behind.                                                                                                                                                                                                                                                     |
+| 2026-07-27 | Complete | Full post-rebase validation passes 548 mobile files / 3,275 tests with 2 expected skips and 3,763 root files / 39,159 tests with 62 expected skips. All project typechecks, root/mobile/RNW lint, reliability gates, and the max-lines ratchet pass; the prior `Ghostty` localization finding is resolved by the rebased baseline.                                                                                                      |
+| 2026-07-27 | Complete | The production RNW build and independent verifier pass for `9fcdaa8256b9962eb277977eb683f01de016aca1e5c05d8691b30903e4bdd8c8`: 49 assets, 9,330,249 raw bytes, and 2,697,856 gzip bytes.                                                                                                                                                                                                                                                |
+| 2026-07-27 | Complete | The exact iPhone 17 Pro Simulator rerun passes native onboarding, hosted Source Control, Session changed-file diff handoff, standalone Review, and private-origin network/navigation isolation with the cached native app.                                                                                                                                                                                                              |
+| 2026-07-28 | Finding  | Expo's Android view-owner injection rejected the original view command at runtime. Android now keeps the public React ref contract while routing session-scoped commands through a main-thread native view registry; inactive or retired session messages are dropped, and registry entries survive focus deactivation until view destruction.                                                                                          |
+| 2026-07-28 | Complete | The exact Pixel 9 Pro API 36 arm64 Debug APK was rebuilt, installed, paired to a disposable Desktop runtime, entered the unchanged workspace and Session UI, opened Source Control, opened a changed file as a second Session diff tab, and verified standalone Review. Deliberate-red network/navigation isolation ended with zero sentinel observations.                                                                              |
+| 2026-07-28 | Complete | The Android route harness now clears and audits fresh logcat. The final journey contains no Expo bridge rejection, Kotlin conversion/cast failure, or fatal process error. Focused coverage passes 6 files / 41 tests, Android native module tests pass, mobile and RNW typechecks/lints/formatting/max-lines pass, and the final rebased RNW verifier passes build `f852d8525d2b0e20d79262d74ce3ef74bfa73c3e55b95176bfb1b467beafae61`. |
+| 2026-07-28 | Complete | Rebased the single migration commit onto `origin/main` at `1fa9ffb5e`; the sole root-package conflict retained upstream's current code-quality script shape and the migration's dedicated mobile-web lint. The branch remains one commit ahead and zero behind.                                                                                                                                                                         |
+| 2026-07-28 | Complete | Final post-rebase validation passes 550 mobile files / 3,285 tests with 2 expected skips and 3,769 root files / 39,207 tests with 62 expected skips. Root/mobile/RNW typechecks, lint, formatting, reliability gates, localization, max-lines, the verified 49-asset RNW package, and the rebuilt Android journey all pass.                                                                                                             |
+| 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

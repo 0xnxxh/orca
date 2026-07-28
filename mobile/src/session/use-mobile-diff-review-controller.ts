@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FlatList } from 'react-native'
 import type { DiffComment } from '../../../src/shared/types'
-import type { ConnectionState } from '../transport/types'
-import type { RpcClient } from '../transport/rpc-client'
 import { getWorktreeLabel } from './worktree-label'
 import { getUnsentMobileDiffComments } from './mobile-diff-comment-edit'
 import {
@@ -12,12 +10,11 @@ import {
   type MobileDiffReviewQueueFilter,
   type MobileDiffReviewQueueItem
 } from './mobile-diff-review-queue'
+import { findMobileDiffReviewInitialIndex } from './mobile-diff-review-positioning'
 import {
-  findMobileDiffReviewInitialIndex,
-  type MobileDiffReviewInitialTarget
-} from './mobile-diff-review-positioning'
-import { loadMobileDiffReviewSnapshot } from './mobile-diff-review-loaders'
-import { useMobileDiffReviewDiffLoading } from './use-mobile-diff-review-diff-loading'
+  loadMobileDiffReviewDiff,
+  loadMobileDiffReviewSnapshot
+} from './mobile-diff-review-loaders'
 import { canOpenMobileBranchCompareDiff } from '../source-control/mobile-branch-compare'
 import type {
   ComposerState,
@@ -27,20 +24,9 @@ import type {
 } from './mobile-diff-review-screen-model'
 import { useMobileDiffReviewInteractions } from './use-mobile-diff-review-interactions'
 import { useMobilePrSidebarController } from './use-mobile-pr-sidebar-controller'
+import type { MobileDiffReviewControllerInput } from './mobile-diff-review-controller-input'
 
-type ControllerInput = {
-  client: RpcClient | null
-  connState: ConnectionState
-  hostId: string
-  worktreeId: string
-  name: string
-  initialFilter: MobileDiffReviewQueueFilter
-  initialTarget: MobileDiffReviewInitialTarget | null
-  onOpenSession: () => void
-  onReconnect: (hostId: string) => void | Promise<void>
-}
-
-export function useMobileDiffReviewController(input: ControllerInput) {
+export function useMobileDiffReviewController(input: MobileDiffReviewControllerInput) {
   const {
     client,
     connState,
@@ -50,7 +36,8 @@ export function useMobileDiffReviewController(input: ControllerInput) {
     initialFilter,
     initialTarget,
     onOpenSession,
-    onReconnect
+    onReconnect,
+    device
   } = input
   const listRef = useRef<FlatList<ReviewDiffLine> | null>(null)
   const loadGenerationRef = useRef(0)
@@ -149,8 +136,7 @@ export function useMobileDiffReviewController(input: ControllerInput) {
       return
     }
     seededInitialTargetRef.current = true
-    // Why: review data loads asynchronously; seed the tapped file only after the
-    // first real queue exists so the clamp effect cannot reset it back to zero.
+    // Seed only after the async queue exists so the clamp cannot reset the target.
     setCurrentIndex(findMobileDiffReviewInitialIndex(filteredQueue, initialTarget))
   }, [filteredQueue, initialTarget])
 
@@ -207,8 +193,6 @@ export function useMobileDiffReviewController(input: ControllerInput) {
     return map
   }, [commentsForCurrentItem])
 
-  // Head branch + SHA for the PR sidebar come from git.status (the review snapshot),
-  // not the branchCompare base ref. headOid is the branch-compare fallback for the SHA.
   const prSidebarBranch = screenState.kind === 'ready' ? (screenState.status.branch ?? null) : null
   const prSidebarHeadSha =
     screenState.kind === 'ready'
@@ -250,16 +234,16 @@ export function useMobileDiffReviewController(input: ControllerInput) {
     setShowCompletion,
     loadReviewData,
     onOpenSession,
-    onReconnect
+    onReconnect,
+    device
   })
 
   return {
     ...interactions,
     ...prSidebar,
-    // Exposed so the screen can thread the RPC client + worktree into the PR
-    // sidebar's lazy check-detail fetches (U5) and mutation actions (U6).
     client,
     connState,
+    device,
     worktreeId,
     prSidebarBranch,
     prSidebarHeadSha,

@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import { FLOATING_WORKSPACE_WORKTREE_ID } from './floating-workspace'
+import { nativeHostSessionNativeChatOperations } from './native-host-session-native-chat-operations'
 import { useMobileNativeChatReadability } from './use-mobile-native-chat-readability'
 
 describe('useMobileNativeChatReadability', () => {
@@ -30,8 +31,9 @@ describe('useMobileNativeChatReadability', () => {
     const client = {
       sendRequest
     } as unknown as RpcClient
+    const operations = nativeHostSessionNativeChatOperations(client)
     function Harness(): null {
-      readable = useMobileNativeChatReadability(client, worktreeId)
+      readable = useMobileNativeChatReadability(operations, worktreeId)
       return null
     }
     const original = console.error
@@ -62,9 +64,9 @@ describe('useMobileNativeChatReadability', () => {
     expect(readable).toBe(true)
   })
 
-  it('fails closed for Model-A SSH transcript hosts', async () => {
+  it('admits classic SSH transcript hosts', async () => {
     await mount('model-a-ssh')
-    expect(readable).toBe(false)
+    expect(readable).toBe(true)
   })
 
   it('treats the host-local floating workspace as readable without listing repos', async () => {
@@ -85,8 +87,9 @@ describe('useMobileNativeChatReadability', () => {
         })
         .mockImplementationOnce(() => new Promise((resolve) => (resolveNext = resolve)))
     } as unknown as RpcClient
+    const operations = nativeHostSessionNativeChatOperations(client)
     function Harness({ worktreeId }: { worktreeId: string }): null {
-      readable = useMobileNativeChatReadability(client, worktreeId)
+      readable = useMobileNativeChatReadability(operations, worktreeId)
       return null
     }
     const original = console.error
@@ -112,7 +115,7 @@ describe('useMobileNativeChatReadability', () => {
         })
         await Promise.resolve()
       })
-      expect(readable).toBe(false)
+      expect(readable).toBe(true)
     } finally {
       consoleSpy.mockRestore()
     }

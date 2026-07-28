@@ -3,6 +3,8 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
 import type { RpcClient } from '../transport/rpc-client'
+import { nativeHostSessionNativeChatOperations } from './native-host-session-native-chat-operations'
+import type { HostSessionNativeChatOperations } from './host-session-native-chat-operations'
 import {
   useMobileNativeChatSession,
   type MobileNativeChatSession
@@ -33,13 +35,15 @@ describe('useMobileNativeChatSession', () => {
     renderer = null
   })
 
-  function Harness({ client }: { client: RpcClient | null }): null {
+  function Harness({ operations }: { operations: HostSessionNativeChatOperations | null }): null {
     state = useMobileNativeChatSession({
-      client,
-      sourceIdentity: 'host-a\0workspace-a',
+      operations,
+      workspaceId: 'worktree',
       agent: 'claude',
       sessionId: 'session',
-      transcriptPath: null
+      transcriptPath: null,
+      terminalId: 'terminal',
+      clientId: 'device'
     })
     return null
   }
@@ -54,7 +58,11 @@ describe('useMobileNativeChatSession', () => {
     })
     try {
       await act(async () => {
-        renderer = create(createElement(Harness, { client }))
+        renderer = create(
+          createElement(Harness, {
+            operations: nativeHostSessionNativeChatOperations(client)
+          })
+        )
       })
     } finally {
       consoleSpy.mockRestore()
@@ -115,7 +123,7 @@ describe('useMobileNativeChatSession', () => {
     })
     await mount({ sendRequest, subscribe } as unknown as RpcClient)
     act(() => state?.loadEarlier())
-    await act(async () => renderer?.update(createElement(Harness, { client: null })))
+    await act(async () => renderer?.update(createElement(Harness, { operations: null })))
     await act(async () => {
       resolveEarlier({ ok: true, result: { messages: [message('stale-page')] } })
       await Promise.resolve()
@@ -124,6 +132,28 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.messages).toEqual([])
     expect(state?.status).toBe('idle')
     expect(state?.loadingEarlier).toBe(false)
+  })
+
+  it('retains explicit transcript lifecycle evidence and clears it with the source', async () => {
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, _params, onData) => {
+      emit = onData
+      onData({
+        type: 'snapshot',
+        messages: [],
+        lifecycle: { state: 'interrupted', turnId: 'turn-1', timestamp: 123 }
+      })
+      return () => {}
+    })
+    await mount({ sendRequest: vi.fn(), subscribe } as unknown as RpcClient)
+
+    expect(state?.lifecycle).toEqual({
+      state: 'interrupted',
+      turnId: 'turn-1',
+      timestamp: 123
+    })
+
+    await act(async () => renderer?.update(createElement(Harness, { operations: null })))
+    expect(state?.lifecycle).toBeUndefined()
   })
 
   it.each(['replacement', 'snapshot'] as const)(
@@ -170,7 +200,9 @@ describe('useMobileNativeChatSession', () => {
         agent: 'claude',
         sessionId: 'session',
         limit: 60,
-        beforeOffset: 500
+        beforeOffset: 500,
+        worktreeId: 'worktree',
+        terminal: 'terminal'
       })
     }
   )
@@ -429,7 +461,9 @@ describe('useMobileNativeChatSession', () => {
     expect(sendRequest).toHaveBeenLastCalledWith('nativeChat.readSession', {
       agent: 'claude',
       sessionId: 'session',
-      limit: 100
+      limit: 100,
+      worktreeId: 'worktree',
+      terminal: 'terminal'
     })
     expect(state?.messages.map((entry) => entry.id)).toEqual(['fresh-growing-tail'])
   })

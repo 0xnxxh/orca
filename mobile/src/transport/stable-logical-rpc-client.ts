@@ -147,6 +147,10 @@ export function createStableLogicalRpcClient(
       }
     },
 
+    sendTerminalBinaryFrame(frame) {
+      return !closed && !suspended && activeSession.sendTerminalBinaryFrame(frame)
+    },
+
     getState: () => state,
     getReconnectAttempt: () => activeSession.getReconnectAttempt(),
     getLastConnectedAt: () => activeSession.getLastConnectedAt(),

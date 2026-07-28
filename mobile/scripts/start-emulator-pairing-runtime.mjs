@@ -3,7 +3,18 @@ import { mkdirSync, mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-import readline from 'node:readline'
+import {
+  appendProcessOutputTail,
+  attachBoundedProcessLineReader
+} from './bounded-process-line-reader.mjs'
+import { seedEmulatorAgentHistoryFixture } from './emulator-agent-history-fixture.mjs'
+import { pairingEndpointPortFromUrl } from './emulator-pairing-public-key.mjs'
+import {
+  pairingDaemonPidsFromUserData,
+  pairingRuntimePidFromUserData,
+  signalPairingDaemons,
+  signalPairingRuntime
+} from './emulator-pairing-runtime-process.mjs'
 
 function primaryLanIp(lanIpCandidates) {
   return lanIpCandidates()[0] || '127.0.0.1'
@@ -13,6 +24,8 @@ export async function startHeadlessPairingRuntime({
   enabled,
   orcaCli,
   cwd,
+  runDirectory,
+  port,
   lanIpCandidates,
   logStep,
   logSuccess
@@ -22,7 +35,10 @@ export async function startHeadlessPairingRuntime({
   }
 
   logStep('0', 'Starting temporary desktop runtime for mobile pairing...')
-  const runDir = mkdtempSync(path.join(os.tmpdir(), 'orca-mobile-run.'))
+  const runDir = runDirectory
+    ? path.resolve(runDirectory)
+    : mkdtempSync(path.join(os.tmpdir(), 'orca-mobile-run.'))
+  mkdirSync(runDir, { recursive: true, mode: 0o700 })
   const userData = path.join(runDir, 'userData')
   // Why: the main-process E2E boot guard refuses to start with the real user
   // home, so the pairing runtime must hand it a matching disposable HOME.
@@ -31,11 +47,19 @@ export async function startHeadlessPairingRuntime({
   const pairingAddress = primaryLanIp(lanIpCandidates)
   const child = spawn(
     orcaCli,
-    ['serve', '--mobile-pairing', '--pairing-address', pairingAddress, '--json'],
+    [
+      'serve',
+      '--mobile-pairing',
+      '--pairing-address',
+      pairingAddress,
+      ...(port ? ['--port', String(port)] : []),
+      '--json'
+    ],
     {
       cwd,
       env: {
         ...process.env,
+        ORCA_DEV_USER_DATA_PATH: userData,
         ORCA_E2E_USER_DATA_DIR: userData,
         ORCA_E2E_HOME_DIR: homeDir,
         HOME: homeDir,
@@ -45,7 +69,7 @@ export async function startHeadlessPairingRuntime({
     }
   )
 
-  return await waitForPairingRuntime({ child, userData, pairingAddress, logSuccess })
+  return await waitForPairingRuntime({ child, userData, homeDir, pairingAddress, logSuccess })
 }
 
 export async function registerWorktreeForPairingRuntime(runtime, worktree, tools) {
@@ -59,40 +83,86 @@ export async function registerWorktreeForPairingRuntime(runtime, worktree, tools
     timeout: 60000
   })
   tools.logSuccess('Registered worktree for mobile runtime')
+  tools.logStep('0.2', 'Creating a visible mobile test terminal...')
+  await tools.orca(
+    [
+      'terminal',
+      'create',
+      '--worktree',
+      `path:${worktree}`,
+      '--title',
+      'Mobile Emulator',
+      '--json'
+    ],
+    {
+      cwd: worktree,
+      env: runtime.env,
+      timeout: 60000
+    }
+  )
+  tools.logSuccess('Created mobile test terminal')
+  if (runtime.env.ORCA_E2E_MOBILE_AGENT_HISTORY_FIXTURE === '1') {
+    seedEmulatorAgentHistoryFixture({
+      homeDir: runtime.homeDir,
+      workspacePath: worktree
+    })
+    tools.logSuccess('Created Agent History fixture')
+  }
 }
 
-async function waitForPairingRuntime({ child, userData, pairingAddress, logSuccess }) {
+async function waitForPairingRuntime({ child, userData, homeDir, pairingAddress, logSuccess }) {
   let output = ''
   let stderr = ''
   let resolved = false
   let exited = false
-  let rl = null
-  let rlErr = null
+  let closeStdout = () => {}
+  let closeStderr = () => {}
+  let resolveExit = () => {}
+  let runtimePid = null
+  let daemonPids = []
+  const exitPromise = new Promise((resolve) => {
+    resolveExit = resolve
+  })
 
-  const stop = () => {
+  const stop = async ({ shutdownDaemon = false } = {}) => {
+    signalPairingRuntime(runtimePid)
     if (!exited) {
       child.kill('SIGTERM')
     }
-    rl?.close()
-    rlErr?.close()
+    await Promise.race([exitPromise, delay(5_000)])
+    closeStdout()
+    closeStderr()
     child.stdout?.destroy()
     child.stderr?.destroy()
+    if (shutdownDaemon) {
+      signalPairingDaemons(daemonPids)
+      const gracefulTimeouts = await waitForProcessExit(daemonPids, 2_500)
+      signalPairingDaemons(gracefulTimeouts, process.kill, 'SIGKILL')
+      const forcedTimeouts = await waitForProcessExit(gracefulTimeouts, 2_500)
+      if (forcedTimeouts.length > 0) {
+        throw new Error(`Temporary pairing daemons did not exit: ${forcedTimeouts.join(', ')}`)
+      }
+    }
   }
 
-  const runtimeResult = (pairingUrl) => ({
-    pairingUrl,
-    userData,
-    process: child,
-    env: {
-      ...process.env,
-      ORCA_USER_DATA_PATH: userData,
-      // Why: `orca-dev` derives its own profile and ignores ORCA_USER_DATA_PATH, so
-      // without this an ORCA_CLI=orca-dev run would address the dev profile instead
-      // of this disposable runtime. Plain `orca` ignores it.
-      ORCA_DEV_USER_DATA_PATH: userData
-    },
-    stop
-  })
+  const runtimeResult = (pairingUrl) => {
+    runtimePid = pairingRuntimePidFromUserData(userData)
+    daemonPids = pairingDaemonPidsFromUserData(userData)
+    return {
+      pairingUrl,
+      port: pairingEndpointPortFromUrl(pairingUrl),
+      userData,
+      homeDir,
+      process: child,
+      env: {
+        ...process.env,
+        ORCA_USER_DATA_PATH: userData,
+        // Why: `orca-dev` derives its own profile and ignores ORCA_USER_DATA_PATH.
+        ORCA_DEV_USER_DATA_PATH: userData
+      },
+      stop
+    }
+  }
 
   return await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -123,15 +193,17 @@ async function waitForPairingRuntime({ child, userData, pairingAddress, logSucce
       reject(error)
     }
 
-    rl = readline.createInterface({ input: child.stdout })
-    rl.on('line', (line) => {
-      output += line + '\n'
+    closeStdout = attachBoundedProcessLineReader(child.stdout, (line) => {
+      if (!resolved) {
+        output = appendProcessOutputTail(output, line)
+      }
       handleRuntimeLine(line, finishResolve)
     })
 
-    rlErr = readline.createInterface({ input: child.stderr })
-    rlErr.on('line', (line) => {
-      stderr += line + '\n'
+    closeStderr = attachBoundedProcessLineReader(child.stderr, (line) => {
+      if (!resolved) {
+        stderr = appendProcessOutputTail(stderr, line)
+      }
     })
 
     child.on('error', (error) => {
@@ -140,12 +212,34 @@ async function waitForPairingRuntime({ child, userData, pairingAddress, logSucce
 
     child.on('exit', (code) => {
       exited = true
+      resolveExit()
       if (!resolved) {
         const detail = stderr.trim() || output.trim() || `exit code ${code}`
         finishReject(new Error(`Temporary desktop runtime exited before pairing: ${detail}`))
       }
     })
   })
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForProcessExit(pids, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (pids.some(isProcessAlive) && Date.now() < deadline) {
+    await delay(50)
+  }
+  return pids.filter(isProcessAlive)
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function handleRuntimeLine(line, finishResolve) {

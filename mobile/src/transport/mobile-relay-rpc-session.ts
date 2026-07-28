@@ -8,9 +8,15 @@ import { MobileRelayRpcStreams } from './mobile-relay-rpc-streams'
 import { MobileE2EEAuthenticationError } from './mobile-e2ee-v2-physical-channel'
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
+import { stringifyMobileOutboundJson } from './mobile-outbound-json'
 import { isRpcResponse } from './rpc-response-shape'
 import type { RpcClient } from './rpc-client'
 import type { ConnectionState, RpcResponse } from './types'
+import {
+  isMobileJsonStructureCapacityError,
+  parseMobileJsonTextWithinLimits
+} from './mobile-json-text-admission'
+import { encodeTerminalStreamFrame } from './terminal-stream-protocol'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -96,6 +102,9 @@ export function connectMobileRelayRpcSession(args: {
     updateTerminalSubscriptionViewport(terminal, viewport) {
       streams.updateTerminalViewport(terminal, viewport)
     },
+    sendTerminalBinaryFrame(frame) {
+      return link.sendBinary(encodeTerminalStreamFrame(frame))
+    },
     getState: () => state,
     getReconnectAttempt: () => 0,
     getLastConnectedAt: () => lastConnectedAt,
@@ -171,14 +180,23 @@ export function connectMobileRelayRpcSession(args: {
   }
 
   function sendFrame(request: { id: string; method: string; params?: unknown }): boolean {
-    return link.sendText(JSON.stringify({ ...request, deviceToken: args.deviceToken }))
+    try {
+      return link.sendText(
+        stringifyMobileOutboundJson({ ...request, deviceToken: args.deviceToken })
+      )
+    } catch {
+      return false
+    }
   }
 
   function handleText(plaintext: string): void {
     let value: unknown
     try {
-      value = JSON.parse(plaintext)
-    } catch {
+      value = parseMobileJsonTextWithinLimits(plaintext)
+    } catch (error) {
+      if (isMobileJsonStructureCapacityError(error)) {
+        throw error
+      }
       return
     }
     if (!isRpcResponse(value)) {

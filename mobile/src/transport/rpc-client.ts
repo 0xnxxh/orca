@@ -11,9 +11,7 @@ import {
   deriveSharedKey,
   publicKeyFromBase64,
   publicKeyToBase64,
-  encrypt,
-  decrypt,
-  decryptBytes
+  decrypt
 } from './e2ee'
 import {
   handleTerminalBinaryFrame,
@@ -23,6 +21,7 @@ import {
   decodeBrowserScreencastFrame,
   type BrowserScreencastFrame
 } from './browser-screencast-protocol'
+import type { RpcClientSubscribeOptions } from './rpc-client-subscribe-options'
 import {
   buildStreamUnsubscribe,
   buildTerminalUnsubscribeParams,
@@ -37,9 +36,22 @@ import {
 import { markRpcDeliveryUnknown } from './rpc-delivery-ambiguity'
 import { openRpcRequestBudget, resolvePostConnectRequestTimeout } from './rpc-request-budget'
 import { isRpcResponse } from './rpc-response-shape'
-import { createRpcActivityProbe } from './rpc-client-activity-probe'
-import { isStaleForegroundDial } from './rpc-stale-dial'
-import { websocketPayloadToUint8 } from './websocket-payload-bytes'
+import { createMobileInboundFrameQueue } from './mobile-inbound-frame-queue'
+import { createMobileDirectRpcOutbound } from './mobile-direct-rpc-outbound'
+import { createMobileDirectRpcSender } from './mobile-direct-rpc-sender'
+import { handleMobileRpcSocketBinaryMessage } from './mobile-rpc-binary-frame-handler'
+import { processMobileOutboundMemoryBudget } from './mobile-outbound-memory-budget'
+import { redactedWebSocketEndpoint } from './redacted-websocket-endpoint'
+import { tryParseMobileJsonTextWithinLimits } from './mobile-json-text-admission'
+import type { TerminalStreamFrame } from './terminal-stream-protocol'
+import { buildServerSubscriptionUnsubscribe } from './rpc-client-server-subscription'
+import {
+  encryptedTerminalMultiplexFrame,
+  routeTerminalMultiplexFrame
+} from './rpc-client-terminal-multiplex'
+import type { RpcClient, RpcClientSendRequestOptions } from './rpc-client-contract'
+
+export type { RpcClient } from './rpc-client-contract'
 
 type PendingRequest = {
   resolve: (response: RpcResponse) => void
@@ -52,25 +64,6 @@ type ConnectWaiter = {
   timeout: ReturnType<typeof setTimeout> | null
 }
 
-export type SendRequestOptions = {
-  timeoutMs?: number
-  /** Spend `timeoutMs` across connect-wait AND the request instead of giving each
-   *  phase its own. Interactive chat writes need it: they run as sequential loops
-   *  under one shared budget, so a per-phase clock lets the composer sit `sending`
-   *  for a multiple of the stated ceiling. Off by default — the long-running
-   *  callers (worktree create, dictation finish, credit reset) sized their budgets
-   *  against the post-connect clock, and squeezing them to the floor after a slow
-   *  reconnect would fail sends that used to land. */
-  budgetSpansConnect?: boolean
-  /** Reject immediately when not connected — a send parked in the connect wait
-   *  replays stale terminal bytes into the PTY after reconnect. */
-  failWhenDisconnected?: boolean
-}
-
-type SubscribeOptions = {
-  onBinaryFrame?: (frame: BrowserScreencastFrame) => void
-}
-
 type StreamingListener = (result: unknown) => void
 
 type StreamRequest = {
@@ -78,37 +71,10 @@ type StreamRequest = {
   params: unknown
   listener: StreamingListener
   onBinaryFrame?: (frame: BrowserScreencastFrame) => void
+  onTerminalBinaryFrame?: (frame: TerminalStreamFrame) => boolean
   subscriptionId?: string
   cancelled?: boolean
   sent?: boolean
-}
-
-export type RpcClient = {
-  sendRequest: (
-    method: string,
-    params?: unknown,
-    options?: SendRequestOptions
-  ) => Promise<RpcResponse>
-  subscribe: (
-    method: string,
-    params: unknown,
-    onData: StreamingListener,
-    options?: SubscribeOptions
-  ) => () => void
-  updateTerminalSubscriptionViewport: (
-    terminal: string,
-    viewport: { cols: number; rows: number }
-  ) => void
-  getState: () => ConnectionState
-  // 0 means never failed (reset once the handshake authenticates); the UI escalates "Reconnecting…" to "Can't connect" past a threshold.
-  getReconnectAttempt: () => number
-  // Last 'connected' timestamp (ms epoch); null = never connected. Lets the UI tell "never reachable" from "transient blip".
-  getLastConnectedAt: () => number | null
-  onStateChange: (listener: (state: ConnectionState) => void) => () => void
-  // Why: app-resume hook — iOS/Android can kill the TCP path while backgrounded; call on AppState 'active' to recover.
-  // The reason routes relay handling (probe vs replace); the direct socket probes regardless.
-  notifyForeground: (reason?: ForegroundNudgeReason) => void
-  close: () => void
 }
 
 // Why: tiered backoff — fast early entries recover blips; the slow tail avoids burning a SYN every 4s on an unreachable desktop.
@@ -163,7 +129,7 @@ export function connect(
     })
   }
   let ws: WebSocket | null = null
-  const synthesizedCloses = new RpcSynthesizedCloseIndex()
+  let outbound: ReturnType<typeof createMobileDirectRpcOutbound> | null = null
   let state: ConnectionState = 'disconnected'
   let requestCounter = 0
   let reconnectAttempt = 0
@@ -226,7 +192,7 @@ export function connect(
       to: next,
       dweltMs: dwelt,
       attempt: reconnectAttempt,
-      endpoint: redactSocketEndpoint(endpoint)
+      endpoint: redactedWebSocketEndpoint(endpoint)
     })
     if (next === 'connected') {
       lastConnectedAt = Date.now()
@@ -285,6 +251,11 @@ export function connect(
     return `rpc-${++requestCounter}-${Date.now()}`
   }
 
+  function disposeActiveOutbound(): void {
+    outbound?.dispose()
+    outbound = null
+  }
+
   function openConnection() {
     if (intentionallyClosed) {
       return
@@ -294,7 +265,7 @@ export function connect(
     wsConstructionCounter++
     console.log('[net] openConnection', {
       attempt: reconnectAttempt,
-      endpoint: redactSocketEndpoint(endpoint),
+      endpoint: redactedWebSocketEndpoint(endpoint),
       // Why: diagnostic for RN/OkHttp pool corruption — high wsCount + repeated 1006 closes means process-state stuck.
       wsCount: wsConstructionCounter,
       msSinceLastConnected: lastConnectedAt != null ? now - lastConnectedAt : null,
@@ -311,10 +282,46 @@ export function connect(
       redactSocketEndpoint(endpoint)
     )
 
+    if (!processMobileOutboundMemoryBudget.canRegisterBufferedAmount()) {
+      emitLog('error', 'WebSocket reconnect deferred', 'Retired socket buffers are still draining')
+      setState('reconnecting')
+      scheduleReconnect()
+      return
+    }
+
     ws = new WebSocket(endpoint)
     const openingWs = ws
-    let openingWsAuthenticated = false
-    let openingWsLastInboundAt: number | null = null
+    const closeForOverload = (direction: 'Inbound' | 'Outbound', detail: string): void => {
+      emitLog('error', `${direction} WebSocket overload`, detail)
+      openingWs.close()
+      if (ws === openingWs) {
+        handleSocketClosed(openingWs)
+      }
+    }
+    const openingOutbound = createMobileDirectRpcOutbound({
+      socket: openingWs,
+      isActive: () => ws === openingWs,
+      onOverflow: () => closeForOverload('Outbound', 'Mobile RPC outbound buffer overflow')
+    })
+    outbound = openingOutbound
+    const inboundQueue = createMobileInboundFrameQueue({
+      process: handleSocketMessage,
+      onError: (error) => closeForOverload('Inbound', error.message),
+      overflowMessage: 'Mobile RPC inbound buffer overflow',
+      frameTooLargeMessage: 'Mobile RPC inbound frame too large'
+    })
+    const ignoreStaleSocketEvent = (eventName: string): boolean => {
+      if (ws === openingWs) {
+        return false
+      }
+      // Why: RN can deliver callbacks from a timed-out socket after reconnect swapped in a replacement — ignore them.
+      console.log('[net] stale ws event ignored', {
+        eventName,
+        state,
+        attempt: reconnectAttempt
+      })
+      return true
+    }
 
     // Why: RN can leave opens pending forever on flaky handoffs — force reconnect if onopen never arrives.
     connectTimer = setTimeout(() => {
@@ -377,13 +384,11 @@ export function connect(
       if (isStaleRpcSocketEvent(ws, openingWs, 'message', state, reconnectAttempt)) {
         return
       }
-      void handleSocketMessage(event.data)
+      void inboundQueue.enqueue(event.data)
     }
 
-    async function handleSocketMessage(rawData: unknown) {
-      const receivedAt = Date.now()
-      lastInboundAt = receivedAt
-      openingWsLastInboundAt = receivedAt
+    function handleSocketMessage(rawData: unknown): Promise<void> | void {
+      lastInboundAt = Date.now()
       const raw = typeof rawData === 'string' ? rawData : null
 
       // Why: e2ee_ready is plaintext (precedes encrypted auth); e2ee_authenticated/e2ee_error are encrypted.
@@ -391,15 +396,11 @@ export function connect(
         if (raw === null) {
           return
         }
-        try {
-          const msg = JSON.parse(raw)
-          if (msg.type === 'e2ee_ready') {
-            emitLog('success', 'Received e2ee_ready', 'Sending device token')
-            sendEncrypted({ type: 'e2ee_auth', deviceToken })
-            return
-          }
-        } catch {
-          // Not plaintext JSON — fall through and try encrypted handshake messages.
+        const plaintextControl = tryParseMobileJsonTextWithinLimits<Record<string, unknown>>(raw)
+        if (plaintextControl?.type === 'e2ee_ready') {
+          emitLog('success', 'Received e2ee_ready', 'Sending device token')
+          sendEncrypted({ type: 'e2ee_auth', deviceToken })
+          return
         }
 
         if (!sharedKey || sharedKey.length !== 32) {
@@ -411,10 +412,14 @@ export function connect(
           return
         }
 
-        try {
-          const msg = JSON.parse(plaintext)
+        const msg = tryParseMobileJsonTextWithinLimits<Record<string, unknown>>(plaintext)
+        if (msg) {
           if (msg.type === 'e2ee_authenticated') {
-            clearHandshakeTimer()
+            openingOutbound.acknowledgeAuthentication()
+            if (handshakeTimer) {
+              clearTimeout(handshakeTimer)
+              handshakeTimer = null
+            }
             console.log('[net] e2ee_authenticated — connected', {
               streamCount: streamListeners.size
             })
@@ -445,13 +450,15 @@ export function connect(
                 removeStreamListener(id)
               }
             }
-          } else if (msg.type === 'e2ee_error' || (!msg.ok && msg.error?.code === 'unauthorized')) {
+          } else if (
+            msg.type === 'e2ee_error' ||
+            (!msg.ok && (msg.error as { code?: unknown } | undefined)?.code === 'unauthorized')
+          ) {
+            openingOutbound.acknowledgeAuthentication()
             console.log('[net] e2ee auth FAILED', { msgType: msg.type, error: msg.error })
             clearHandshakeTimer()
             handleAuthRejection('Unauthorized — pairing may be revoked')
           }
-        } catch {
-          // Not JSON — ignore during handshake.
         }
         return
       }
@@ -462,19 +469,12 @@ export function connect(
       }
 
       if (raw === null) {
-        const bytes = await websocketPayloadToUint8(rawData)
-        if (ws !== openingWs) {
-          return
-        }
-        if (!bytes) {
-          return
-        }
-        const plaintextBytes = decryptBytes(bytes, sharedKey)
-        if (!plaintextBytes) {
-          return
-        }
-        handleBinaryFrame(plaintextBytes)
-        return
+        return handleMobileRpcSocketBinaryMessage({
+          rawData,
+          key: sharedKey,
+          isCurrent: () => ws === openingWs,
+          onFrame: handleBinaryFrame
+        })
       }
 
       const plaintext = decrypt(raw, sharedKey)
@@ -482,15 +482,14 @@ export function connect(
         return
       }
 
-      let response: unknown
-      try {
-        response = JSON.parse(plaintext)
-      } catch {
+      const response = tryParseMobileJsonTextWithinLimits(plaintext)
+      if (response === null) {
         return
       }
       if (!isRpcResponse(response)) {
         return
       }
+      openingOutbound.acknowledge(response.id)
       recordValidatedInboundTraffic()
 
       // Why: a mid-session unauthorized may be transient (issue #5200) — handleAuthRejection retries before latching auth-failed.
@@ -581,15 +580,33 @@ export function connect(
     }
 
     ws.onclose = (event) => {
-      const closeCode = logRpcSocketClose({
-        event,
+      inboundQueue.dispose()
+      openingOutbound.socketClosed()
+      if (outbound === openingOutbound) {
+        disposeActiveOutbound()
+      }
+      const e = event as { code?: number; reason?: string; wasClean?: boolean } | undefined
+      const closeAt = Date.now()
+      // Why: time-since-construct classifies the failure — instant close = RST/unreachable, slow = SYN timeout/packet loss.
+      const constructToCloseMs = currentWsOpenedAt != null ? closeAt - currentWsOpenedAt : null
+      const aliveMs =
+        currentWsOpenedAt != null && state === 'connected' ? closeAt - currentWsOpenedAt : null
+      const inboundIdleMs = lastInboundAt != null ? closeAt - lastInboundAt : null
+      // Why: statically imported — a hot-reload bug came from a stale closure capturing a half-loaded module.
+      const closeEvent = describeSocketEvent(event)
+      console.log('[net] ws.onclose', {
+        code: e?.code,
+        reason: e?.reason,
+        wasClean: e?.wasClean,
         state,
         attempt: reconnectAttempt,
         intentionallyClosed,
-        endpoint: redactSocketEndpoint(endpoint),
-        constructedAt: now,
-        authenticated: openingWsAuthenticated,
-        lastInboundAt: openingWsLastInboundAt
+        endpoint: redactedWebSocketEndpoint(endpoint),
+        constructToCloseMs,
+        aliveMs,
+        inboundIdleMs,
+        eventKeys: closeEvent.keys,
+        eventStr: closeEvent.json
       })
       handleSocketClosed(openingWs, { closeCode })
     }
@@ -635,6 +652,7 @@ export function connect(
     }
     lastWsClosedAt = Date.now()
     clearConnectTimer()
+    disposeActiveOutbound()
     ws = null
     sharedKey = null
     activeBrowserScreencastRequestId = null
@@ -677,7 +695,7 @@ export function connect(
       console.log('[net] auth rejected — retrying handshake', {
         attempt: authRejectionCount,
         budget: AUTH_RETRY_BUDGET,
-        endpoint: redactSocketEndpoint(endpoint)
+        endpoint: redactedWebSocketEndpoint(endpoint)
       })
       emitLog(
         'warn',
@@ -691,6 +709,7 @@ export function connect(
       pendingBrowserScreencastRequestId = null
       // Why: close without setting intentionallyClosed so handleSocketClosed routes to reconnect and retries the handshake.
       const closing = ws
+      disposeActiveOutbound()
       ws = null
       sharedKey = null
       // Why: close cleanup stale-bails here, so mark active streams for replay.
@@ -707,9 +726,10 @@ export function connect(
     pendingBrowserScreencastRequestId = null
     console.log('[net] auth rejected — budget exhausted, latching auth-failed', {
       attempt: authRejectionCount,
-      endpoint: redactSocketEndpoint(endpoint)
+      endpoint: redactedWebSocketEndpoint(endpoint)
     })
     intentionallyClosed = true
+    disposeActiveOutbound()
     ws?.close()
     ws = null
     setState('auth-failed')
@@ -856,14 +876,6 @@ export function connect(
     disposeServerSubscriptionStream(id, stream)
   }
 
-  function disposeRuntimeClientEventsStream(id: string): void {
-    const stream = streamListeners.get(id)
-    if (!stream || stream.method !== 'runtime.clientEvents.subscribe') {
-      return
-    }
-    disposeServerSubscriptionStream(id, stream)
-  }
-
   function disposeServerSubscriptionStream(id: string, stream: StreamRequest): void {
     stream.cancelled = true
     if (stream.subscriptionId) {
@@ -888,6 +900,10 @@ export function connect(
       handleBrowserBinaryFrame(browserFrame)
       return
     }
+    if (routeTerminalMultiplexFrame(bytes, streamListeners.values())) {
+      recordValidatedInboundTraffic()
+      return
+    }
     handleTerminalBinaryFrame(bytes, {
       terminalSnapshots,
       getListener: (streamId) => terminalStreamListeners.get(streamId),
@@ -906,27 +922,13 @@ export function connect(
     stream.onBinaryFrame?.(frame)
   }
 
-  function sendEncrypted(request: unknown): boolean {
-    if (ws && ws.readyState === WebSocket.OPEN && sharedKey) {
-      ws.send(encrypt(JSON.stringify(request), sharedKey))
-      return true
-    }
-    console.log('[net] sendEncrypted FAILED — channel not ready', {
-      hasWs: !!ws,
-      readyState: ws?.readyState,
-      hasKey: !!sharedKey,
-      state
-    })
-    // Why: RN can drop onclose, leaving state 'connected' over a dead socket; force reconnect or every send silently fails forever.
-    if (state === 'connected' && ws && ws.readyState !== WebSocket.OPEN) {
-      console.log('[net] sendEncrypted detected ws desync — forcing reconnect', {
-        readyState: ws.readyState
-      })
-      synthesizedCloses.remember(ws, authenticationGeneration)
-      handleSocketClosed(ws, { timedOut: false })
-    }
-    return false
-  }
+  const sendEncrypted = createMobileDirectRpcSender({
+    getOutbound: () => outbound,
+    getSharedKey: () => sharedKey,
+    getSocket: () => ws,
+    getState: () => state,
+    onSocketDesync: (socket) => handleSocketClosed(socket, { timedOut: false })
+  })
 
   function sendBrowserScreencastUnsubscribe(subscriptionId: string): void {
     sendEncrypted({
@@ -941,16 +943,13 @@ export function connect(
     if (!stream.subscriptionId) {
       return
     }
-    if (stream.method === 'browser.screencast') {
-      sendBrowserScreencastUnsubscribe(stream.subscriptionId)
-      return
-    }
-    if (stream.method === 'runtime.clientEvents.subscribe') {
+    const unsubscribe = buildServerSubscriptionUnsubscribe(stream.method, stream.subscriptionId)
+    if (unsubscribe) {
       sendEncrypted({
         id: nextId(),
         deviceToken,
-        method: 'runtime.clientEvents.unsubscribe',
-        params: { subscriptionId: stream.subscriptionId }
+        method: unsubscribe.method,
+        params: unsubscribe.params
       })
     }
   }
@@ -972,7 +971,7 @@ export function connect(
     async sendRequest(
       method: string,
       params?: unknown,
-      options?: SendRequestOptions
+      options?: RpcClientSendRequestOptions
     ): Promise<RpcResponse> {
       const budget = openRpcRequestBudget(options)
       const waitStart = budget.startedAt
@@ -1025,14 +1024,15 @@ export function connect(
       method: string,
       params: unknown,
       onData: StreamingListener,
-      options?: SubscribeOptions
+      options?: RpcClientSubscribeOptions
     ): () => void {
       const id = nextId()
       const stream: StreamRequest = {
         method,
         params,
         listener: onData,
-        onBinaryFrame: options?.onBinaryFrame
+        onBinaryFrame: options?.onBinaryFrame,
+        onTerminalBinaryFrame: options?.onTerminalBinaryFrame
       }
       streamListeners.set(id, stream)
       if (method === 'browser.screencast') {
@@ -1065,8 +1065,12 @@ export function connect(
           disposeBrowserScreencastStream(id)
           return
         }
-        if (stream?.method === 'runtime.clientEvents.subscribe') {
-          disposeRuntimeClientEventsStream(id)
+        if (
+          stream?.method === 'runtime.clientEvents.subscribe' ||
+          stream?.method === 'accounts.subscribe' ||
+          stream?.method === 'files.watch'
+        ) {
+          disposeServerSubscriptionStream(id, stream)
           return
         }
         if (stream?.method === 'terminal.subscribe') {
@@ -1095,6 +1099,14 @@ export function connect(
       viewport: { cols: number; rows: number }
     ): void {
       updateCachedTerminalSubscriptionViewport(streamListeners.values(), terminal, viewport)
+    },
+
+    sendTerminalBinaryFrame(frame: TerminalStreamFrame): boolean {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !sharedKey) {
+        return false
+      }
+      ws.send(encryptedTerminalMultiplexFrame(frame, sharedKey))
+      return true
     },
 
     getState(): ConnectionState {
@@ -1156,8 +1168,12 @@ export function connect(
         reconnectTimer = null
       }
       clearConnectTimer()
-      clearHandshakeTimer()
-      activityProbe.stop()
+      if (handshakeTimer) {
+        clearTimeout(handshakeTimer)
+        handshakeTimer = null
+      }
+      stopActivityProbe()
+      disposeActiveOutbound()
       if (ws) {
         ws.close()
         ws = null

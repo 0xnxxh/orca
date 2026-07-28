@@ -1,4 +1,3 @@
-import { open, stat } from 'node:fs/promises'
 import type {
   AgentType,
   NativeChatMessage,
@@ -17,8 +16,15 @@ import {
   nativeChatTurnLifecycleDecoderForAgent,
   type NativeChatTurnLifecycleDecoder
 } from './transcript-turn-lifecycle'
+import { estimateTranscriptMessageRetainedBytes } from './transcript-message-retention'
+import {
+  localTranscriptFileSource,
+  type TranscriptFileReader,
+  type TranscriptFileSource
+} from './transcript-file-source'
 
 export const MAX_NATIVE_CHAT_TRANSCRIPT_RECORD_BYTES = 2 * 1024 * 1024
+export const MAX_NATIVE_CHAT_TRANSCRIPT_PAGE_RETAINED_BYTES = 16 * 1024 * 1024
 const TAIL_CHUNK_BYTES = 64 * 1024
 
 export type NativeChatLineDecoder = (line: string, fallbackId: string) => NativeChatMessage | null
@@ -46,7 +52,8 @@ export async function readNativeChatTranscriptTailFile(
   decode: NativeChatLineDecoder,
   includeTrailingLine = false,
   endOffset?: number,
-  decodeLifecycle?: NativeChatTurnLifecycleDecoder | null
+  decodeLifecycle?: NativeChatTurnLifecycleDecoder | null,
+  fileSource: TranscriptFileSource = localTranscriptFileSource
 ): Promise<{
   messages: NativeChatMessage[]
   lifecycle?: NativeChatTurnLifecycle
@@ -56,11 +63,11 @@ export async function readNativeChatTranscriptTailFile(
   malformedRecordCount?: number
   oversizedRecordCount?: number
 }> {
-  const end = Math.min((await stat(filePath)).size, endOffset ?? Number.MAX_SAFE_INTEGER)
+  const end = Math.min((await fileSource.stat(filePath)).size, endOffset ?? Number.MAX_SAFE_INTEGER)
   if (end === 0) {
     return { messages: [], consumedTo: 0, hasMore: false, beforeOffset: 0 }
   }
-  const handle = await open(filePath, 'r')
+  const reader = await fileSource.open(filePath)
   const lineParts: Buffer[] = []
   let lineBytes = 0
   let lineOversized = false
@@ -68,22 +75,26 @@ export async function readNativeChatTranscriptTailFile(
   let malformedRecordCount = 0
   let oversizedRecordCount = 0
   let ignoreNextMalformedRecord = false
+  let retainedMessageBytes = 0
+  let pageBudgetReached = false
   try {
-    const consumedTo = includeTrailingLine ? end : await findLastCompleteLineEnd(handle, end)
+    const consumedTo = includeTrailingLine ? end : await findLastCompleteLineEnd(reader, end)
     if (consumedTo === 0) {
       return { messages: [], consumedTo: 0, hasMore: false, beforeOffset: 0 }
     }
     const newestFirst: { message: NativeChatMessage; offset: number }[] = []
-    const finalByte = Buffer.allocUnsafe(1)
-    await handle.read(finalByte, 0, 1, consumedTo - 1)
+    const finalByte = await reader.read(consumedTo - 1, 1)
     ignoreNextMalformedRecord = finalByte[0] !== 0x0a
     let cursor = consumedTo - (finalByte[0] === 0x0a ? 1 : 0)
-    while (cursor > 0 && newestFirst.length <= limit) {
+    while (cursor > 0 && newestFirst.length <= limit && !pageBudgetReached) {
       const start = Math.max(0, cursor - TAIL_CHUNK_BYTES)
-      const buffer = Buffer.allocUnsafe(cursor - start)
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, start)
-      let segmentEnd = bytesRead
-      for (let index = bytesRead - 1; index >= 0 && newestFirst.length <= limit; index--) {
+      const buffer = await reader.read(start, cursor - start)
+      let segmentEnd = buffer.length
+      for (
+        let index = buffer.length - 1;
+        index >= 0 && newestFirst.length <= limit && !pageBudgetReached;
+        index--
+      ) {
         if (buffer[index] !== 0x0a) {
           continue
         }
@@ -99,7 +110,7 @@ export async function readNativeChatTranscriptTailFile(
       }
       cursor = start
     }
-    if (cursor === 0 && lineParts.length > 0 && newestFirst.length <= limit) {
+    if (cursor === 0 && lineParts.length > 0 && newestFirst.length <= limit && !pageBudgetReached) {
       decodeLine(0, newestFirst)
     }
     const chronological = newestFirst.toReversed()
@@ -110,13 +121,13 @@ export async function readNativeChatTranscriptTailFile(
       messages: selected.map((entry) => entry.message),
       ...(lifecycle ? { lifecycle } : {}),
       consumedTo,
-      hasMore: limit > 0 && chronological.length > limit,
+      hasMore: limit > 0 && (chronological.length > limit || pageBudgetReached),
       beforeOffset: selected[0]?.offset ?? end,
       ...(malformedRecordCount > 0 ? { malformedRecordCount } : {}),
       ...(oversizedRecordCount > 0 ? { oversizedRecordCount } : {})
     }
   } finally {
-    await handle.close()
+    await reader.close()
   }
 
   function retainPart(part: Buffer): void {
@@ -168,26 +179,27 @@ export async function readNativeChatTranscriptTailFile(
     lifecycle ??= decodeLifecycle?.(line, fallbackId) ?? undefined
     const message = decode(line, fallbackId)
     if (message) {
+      const estimatedBytes = estimateTranscriptMessageRetainedBytes(lineBytes)
+      if (estimatedBytes > MAX_NATIVE_CHAT_TRANSCRIPT_PAGE_RETAINED_BYTES - retainedMessageBytes) {
+        pageBudgetReached = true
+        return
+      }
+      retainedMessageBytes += estimatedBytes
       messages.push({ message, offset: lineOffset })
     }
   }
 }
 
-async function findLastCompleteLineEnd(
-  handle: Awaited<ReturnType<typeof open>>,
-  end: number
-): Promise<number> {
-  const lastByte = Buffer.allocUnsafe(1)
-  await handle.read(lastByte, 0, 1, end - 1)
+async function findLastCompleteLineEnd(reader: TranscriptFileReader, end: number): Promise<number> {
+  const lastByte = await reader.read(end - 1, 1)
   if (lastByte[0] === 0x0a) {
     return end
   }
   let cursor = end
   while (cursor > 0) {
     const start = Math.max(0, cursor - TAIL_CHUNK_BYTES)
-    const buffer = Buffer.allocUnsafe(cursor - start)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start)
-    const newline = buffer.subarray(0, bytesRead).lastIndexOf(0x0a)
+    const buffer = await reader.read(start, cursor - start)
+    const newline = buffer.lastIndexOf(0x0a)
     if (newline >= 0) {
       return start + newline + 1
     }
@@ -202,6 +214,7 @@ export async function readNativeChatTranscriptTail(
     sessionId: string
     transcriptPath?: string
     filePath?: string
+    fileSource?: TranscriptFileSource
     limit: number
     beforeOffset?: number
   }
@@ -216,7 +229,9 @@ export async function readNativeChatTranscriptTail(
 > {
   const decode = nativeChatLineDecoderForAgent(args.agent)
   const decodeLifecycle = nativeChatTurnLifecycleDecoderForAgent(args.agent)
-  const filePath = args.filePath ?? (await resolveSessionFilePath(args.agent, args.sessionId, args))
+  const filePath =
+    args.filePath ??
+    (args.fileSource ? null : await resolveSessionFilePath(args.agent, args.sessionId, args))
   if (!decode) {
     return { error: 'Transcript unavailable' }
   }
@@ -232,7 +247,8 @@ export async function readNativeChatTranscriptTail(
       decode,
       true,
       args.beforeOffset,
-      decodeLifecycle
+      decodeLifecycle,
+      args.fileSource
     )
     return {
       messages: result.messages,

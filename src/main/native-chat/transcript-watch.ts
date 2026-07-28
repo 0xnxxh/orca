@@ -25,7 +25,9 @@ async function attemptInstall(
   args: SubscribeNativeChatTranscriptArgs,
   decode: (line: string, fallbackId: string) => NativeChatMessage | null
 ): Promise<NativeChatTranscriptSubscription | null> {
-  const filePath = args.filePath ?? (await resolveSessionFilePath(args.agent, args.sessionId, args))
+  const filePath =
+    args.filePath ??
+    (args.fileSource ? null : await resolveSessionFilePath(args.agent, args.sessionId, args))
   if (!filePath) {
     return null
   }

@@ -1,4 +1,3 @@
-import { open, stat } from 'node:fs/promises'
 import type { NativeChatMessage, NativeChatTurnLifecycle } from '../../shared/native-chat-types'
 import {
   readTranscriptFileVersion,
@@ -6,11 +5,12 @@ import {
   type TranscriptFileVersion
 } from './transcript-file-version'
 import {
+  createIncrementalTranscriptState,
   readIncrementalTranscriptMessages,
-  resetIncrementalTranscriptState,
-  type IncrementalTranscriptState
+  resetIncrementalTranscriptState
 } from './transcript-incremental-reader'
 import { createTranscriptNativeWatcher } from './transcript-native-watcher'
+import { withNativeChatTranscriptWatchDrainAdmission } from './transcript-read-admission'
 import { readNativeChatTranscriptTailFile } from './transcript-tail-reader'
 import { nativeChatTurnLifecycleDecoderForAgent } from './transcript-turn-lifecycle'
 import type {
@@ -18,6 +18,8 @@ import type {
   SubscribeNativeChatTranscriptArgs
 } from './transcript-watch-contract'
 import { createTranscriptWatchScheduler } from './transcript-watch-scheduler'
+import { localTranscriptFileSource } from './transcript-file-source'
+import { readTranscriptBoundaryFingerprint } from './transcript-boundary-fingerprint'
 
 const ROTATION_RETRY_MS = 25
 const MAX_ROTATION_RETRY_MS = 2_000
@@ -25,21 +27,6 @@ let activeWatcherCount = 0
 
 export function getActiveNativeChatWatcherCount(): number {
   return activeWatcherCount
-}
-
-async function boundaryFingerprint(filePath: string, offset: number): Promise<string> {
-  if (offset <= 0) {
-    return ''
-  }
-  const start = Math.max(0, offset - 64)
-  const handle = await open(filePath, 'r')
-  try {
-    const buffer = Buffer.allocUnsafe(offset - start)
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start)
-    return buffer.subarray(0, bytesRead).toString('base64')
-  } finally {
-    await handle.close()
-  }
 }
 
 /**
@@ -53,21 +40,16 @@ export async function installTranscriptWatcher(
   decode: (line: string, fallbackId: string) => NativeChatMessage | null,
   args: SubscribeNativeChatTranscriptArgs
 ): Promise<NativeChatTranscriptSubscription | null> {
+  const fileSource = args.fileSource ?? localTranscriptFileSource
   try {
-    await stat(filePath)
+    await fileSource.stat(filePath)
   } catch {
     return null
   }
   const { onAppend, onInitialSnapshot, onReplace, initialLimit } = args
   const decodeLifecycle = nativeChatTurnLifecycleDecoderForAgent(args.agent)
 
-  const state: IncrementalTranscriptState = {
-    offset: 0,
-    pendingChunks: [],
-    pendingStart: 0,
-    pendingBytes: 0,
-    droppingOversizedRecord: false
-  }
+  const state = createIncrementalTranscriptState()
   let watchedVersion: TranscriptFileVersion | null = null
   let watchedBoundary = ''
   let initialDrain = true
@@ -78,6 +60,7 @@ export async function installTranscriptWatcher(
   let reading = false
   let pendingReadRequested = false
   let rotationRetryCount = 0
+  const drainController = new AbortController()
 
   function scheduleRotationRetry(): void {
     if (closed) {
@@ -106,7 +89,8 @@ export async function installTranscriptWatcher(
       decodeLifecycle ?? undefined,
       (nextLifecycle) => {
         lifecycle = nextLifecycle
-      }
+      },
+      { fileSource }
     )
     if (!closed && (remaining.length > 0 || lifecycle)) {
       onAppend(remaining, lifecycle)
@@ -114,8 +98,8 @@ export async function installTranscriptWatcher(
   }
 
   async function finishSuccessfulDrain(startVersion: TranscriptFileVersion): Promise<void> {
-    watchedBoundary = await boundaryFingerprint(filePath, state.offset)
-    const completedVersion = await readTranscriptFileVersion(filePath)
+    watchedBoundary = await readTranscriptBoundaryFingerprint(filePath, state.offset, fileSource)
+    const completedVersion = await readTranscriptFileVersion(filePath, fileSource)
     if (transcriptFileVersionChanged(completedVersion, startVersion)) {
       // Why: a write racing this drain needs another pass even when the reader
       // happened to reach its new EOF; timestamp-only rewrites may need replace.
@@ -134,9 +118,13 @@ export async function installTranscriptWatcher(
     scheduleRotationRetry()
   }
 
-  async function drainOnce(): Promise<void> {
-    const current = await readTranscriptFileVersion(filePath)
-    const currentBoundary = await boundaryFingerprint(filePath, state.offset)
+  async function drainOnceAdmitted(): Promise<void> {
+    const current = await readTranscriptFileVersion(filePath, fileSource)
+    const currentBoundary = await readTranscriptBoundaryFingerprint(
+      filePath,
+      state.offset,
+      fileSource
+    )
     if (closed) {
       return
     }
@@ -168,7 +156,8 @@ export async function installTranscriptWatcher(
             decode,
             false,
             undefined,
-            decodeLifecycle
+            decodeLifecycle,
+            fileSource
           )
         : null
     if (closed) {
@@ -196,7 +185,8 @@ export async function installTranscriptWatcher(
             decode,
             false,
             undefined,
-            decodeLifecycle
+            decodeLifecycle,
+            fileSource
           )
         : null
     if (closed) {
@@ -225,7 +215,8 @@ export async function installTranscriptWatcher(
           decodeLifecycle ?? undefined,
           (nextLifecycle) => {
             lifecycle = nextLifecycle
-          }
+          },
+          { fileSource }
         )
         if (closed) {
           return
@@ -237,6 +228,14 @@ export async function installTranscriptWatcher(
       await readAndEmitAppends()
     }
     await finishSuccessfulDrain(current)
+  }
+
+  async function drainOnce(): Promise<void> {
+    await withNativeChatTranscriptWatchDrainAdmission(drainController.signal, async () => {
+      if (!closed) {
+        await drainOnceAdmitted()
+      }
+    })
   }
 
   async function drain(): Promise<void> {
@@ -277,7 +276,7 @@ export async function installTranscriptWatcher(
       return
     }
     try {
-      const current = await readTranscriptFileVersion(filePath)
+      const current = await readTranscriptFileVersion(filePath, fileSource)
       if (closed) {
         return
       }
@@ -299,11 +298,18 @@ export async function installTranscriptWatcher(
     drain: () => void drain(),
     reconcile
   })
-  const nativeWatcher = createTranscriptNativeWatcher(
-    filePath,
-    () => scheduler.scheduleEventDrain(),
-    scheduleRotationRetry
-  )
+  const nativeWatcher = fileSource.supportsNativeWatch
+    ? createTranscriptNativeWatcher(
+        filePath,
+        () => scheduler.scheduleEventDrain(),
+        scheduleRotationRetry
+      )
+    : {
+        bind: () => false,
+        invalidate: () => {},
+        needsRebind: () => false,
+        dispose: () => {}
+      }
 
   nativeWatcher.bind()
   activeWatcherCount++
@@ -317,6 +323,7 @@ export async function installTranscriptWatcher(
         return
       }
       closed = true
+      drainController.abort()
       scheduler.dispose()
       nativeWatcher.dispose()
       activeWatcherCount--

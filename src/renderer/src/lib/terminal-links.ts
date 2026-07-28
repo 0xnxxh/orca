@@ -93,7 +93,7 @@ function hasSpacedPathExtension(text: string): boolean {
     startIndex: 0,
     endIndex: text.length
   })
-  const trimmedText = trimmedRange.text.trimEnd()
+  const trimmedText = trimmedRange?.text.trimEnd() ?? ''
   return /\s/.test(trimmedText) && /\.[A-Za-z0-9_+-]+(?::\d+)?(?::\d+)?$/.test(trimmedText)
 }
 
@@ -117,7 +117,7 @@ function isInsideUriScheme(lineText: string, range: DetectedTerminalFileLinkRang
 
 function trimSpacedPathTrailingProse(
   range: DetectedTerminalFileLinkRange
-): DetectedTerminalFileLinkRange {
+): DetectedTerminalFileLinkRange | null {
   // Why: keep one extension-terminated path, but drop trailing prose or a
   // second unrelated path that the broad spaced-path scan also captured. A
   // line-end extension token only extends the span when the added segment is
@@ -141,7 +141,7 @@ function trimSpacedPathTrailingProse(
     }
   }
   if (!selected) {
-    return range
+    return countPathStarts(range.text) > 1 ? null : range
   }
   return {
     text: selected,
@@ -257,11 +257,10 @@ function detectSpacedLocalPathLinks(
           ? [range, ...buildLineEndingSpacedPathPrefixRanges(range)]
           : [range]
       const candidateLinks = candidateRanges
-        .map((candidateRange) =>
-          toParsedTerminalFileLink(
-            trimSpacedPathTrailingProse(trimTrailingWhitespace(candidateRange))
-          )
-        )
+        .map((candidateRange) => {
+          const trimmedRange = trimSpacedPathTrailingProse(trimTrailingWhitespace(candidateRange))
+          return trimmedRange ? toParsedTerminalFileLink(trimmedRange) : null
+        })
         .filter((link): link is ParsedTerminalFileLink => link !== null)
       const link = candidateLinks[0]
       if (link) {

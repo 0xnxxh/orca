@@ -86,13 +86,15 @@ import {
   rankRuntimeMobileFilePaths,
   RuntimeMobileFilePathSearchCache
 } from './runtime-mobile-file-path-search'
+import { QUICK_OPEN_READDIR_MAX_FILES } from '../../shared/quick-open-readdir-budget'
 import { beginWatcherInstall } from '../ipc/watcher-removal-gate'
 import { assertSshMutationExpectation } from '../ssh/ssh-connection-generation'
 import { toSshExecutionHostId, type ExecutionHostId } from '../../shared/execution-host'
 import { renameLocalPathSerializedByDestination } from '../destination-serialized-local-rename'
 
 const MOBILE_FILE_LIST_LIMIT = 5000
-const MOBILE_FILE_PATH_SEARCH_CACHE_LIMIT = 20_000
+// Why: reserve one sentinel result without asking the no-ripgrep fallback to exceed its hard scan budget.
+const MOBILE_FILE_PATH_SEARCH_CACHE_LIMIT = QUICK_OPEN_READDIR_MAX_FILES - 1
 const MOBILE_FILE_PATH_SEARCH_CACHE_ENTRIES = 8
 const MOBILE_FILE_PATH_SEARCH_CACHE_TTL_MS = 30_000
 const MOBILE_FILE_READ_MAX_BYTES = 512 * 1024
@@ -1108,6 +1110,80 @@ export class RuntimeFileCommands {
     }
   }
 
+  async readTerminalArtifactChunk(
+    worktreeSelector: string,
+    grantId: string,
+    absolutePath: string,
+    offset: number,
+    length: number,
+    maxBytes: number,
+    clientId?: string
+  ): Promise<RuntimeFileReadChunkResult> {
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      !Number.isSafeInteger(length) ||
+      length < 1 ||
+      length > 512 * 1024 ||
+      !Number.isSafeInteger(maxBytes) ||
+      maxBytes < 1 ||
+      maxBytes > RUNTIME_PREVIEWABLE_BINARY_MAX_BYTES
+    ) {
+      throw new Error('invalid_terminal_artifact_chunk')
+    }
+    const { grant } = await this.requireTerminalFileGrant(
+      worktreeSelector,
+      grantId,
+      absolutePath,
+      clientId
+    )
+    let result: RuntimeFileReadChunkResult
+    if (grant.connectionId) {
+      const provider = await this.assertRemoteTerminalFileGrantPathStillCanonical(grant)
+      if (!provider.readTerminalArtifactChunk) {
+        throw new Error('terminal_file_grant_unavailable')
+      }
+      result = await provider.readTerminalArtifactChunk(
+        grant.absolutePath,
+        offset,
+        length,
+        this.terminalArtifactAccessOptions(grant, maxBytes)
+      )
+    } else {
+      const handle = await openLocalTerminalArtifactGrant(grant, constants.O_RDONLY)
+      try {
+        const fileStats = await handle.stat()
+        if (fileStats.isDirectory()) {
+          throw new Error('Cannot read a directory')
+        }
+        if (fileStats.size > maxBytes) {
+          throw new Error('file_too_large')
+        }
+        assertTerminalFileGrantFresh(grant, fileStats)
+        const buffer = Buffer.alloc(Math.min(length, Math.max(0, fileStats.size - offset)))
+        const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, offset)
+        result = {
+          contentBase64: buffer.subarray(0, bytesRead).toString('base64'),
+          bytesRead,
+          eof: offset + bytesRead >= fileStats.size
+        }
+      } finally {
+        await handle.close()
+      }
+    }
+    const decoded = Buffer.from(result.contentBase64, 'base64')
+    if (
+      decoded.toString('base64') !== result.contentBase64 ||
+      result.bytesRead !== decoded.byteLength ||
+      result.bytesRead > length ||
+      (result.bytesRead === 0 && !result.eof)
+    ) {
+      throw new Error('invalid_terminal_artifact_chunk')
+    }
+    this.refreshTerminalFileGrant(grant)
+    return result
+  }
+
   async writeTerminalArtifactFile(
     worktreeSelector: string,
     grantId: string,
@@ -1474,7 +1550,10 @@ export class RuntimeFileCommands {
       if (fileStat.type === 'directory') {
         throw new Error('Cannot download a directory')
       }
-      throw new Error('SSH runtime chunked download is unavailable; use the SSH download path')
+      if (!provider.readFileChunk) {
+        throw new Error('SSH runtime chunked download requires an updated Orca host')
+      }
+      return provider.readFileChunk(target.path, offset, length)
     }
 
     const filePath = await resolveAuthorizedPath(target.path, this.host.requireStore())

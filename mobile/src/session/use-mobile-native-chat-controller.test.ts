@@ -2,7 +2,6 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
-import type { ConnectionState } from '../transport/types'
 
 const acceptSend = vi.fn()
 const captureSendOrigin = vi.fn()
@@ -87,7 +86,7 @@ import {
   useMobileNativeChatController,
   type MobileNativeChatController
 } from './use-mobile-native-chat-controller'
-import type { MobileNativeChatStatus } from './use-mobile-native-chat-session'
+import { nativeHostSessionNativeChatOperations } from './native-host-session-native-chat-operations'
 
 const sendWithOutcome = vi.mocked(sendMobileNativeChatMessageWithOutcome)
 
@@ -108,13 +107,17 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
   // itself is mocked above).
   const clientStub = { sendRequest: vi.fn() }
 
-  function Harness({ connState = 'connected' }: { connState?: ConnectionState }): null {
+  function Harness({ connected = true }: { connected?: boolean }): null {
     controller = useMobileNativeChatController({
-      client: clientStub as unknown as RpcClient,
-      connState,
+      operations: nativeHostSessionNativeChatOperations(clientStub as unknown as RpcClient),
+      connected,
       hostId: 'h',
       worktreeId: 'w',
-      activeSessionTab: null,
+      activeSessionTab: {
+        type: 'terminal',
+        launchAgent: 'codex',
+        nativeChatSessionId: 'session-1'
+      },
       activeSessionTabId: 'tab-1',
       activeHandleRef: { current: 'term-1' },
       deviceTokenRef: { current: null },
@@ -287,11 +290,11 @@ describe('useMobileNativeChatController handleNativeChatSend', () => {
   })
 
   it('fails a send fast while the socket is down, before spending the heal budget', async () => {
-    // The lease collapses a render after connState, so a question-card answer could
+    // The lease collapses a render after transport state, so a question-card answer could
     // otherwise sit in `sending` for the whole 15s heal+send budget.
     markMobileNativeChatInputStale('term-1')
     await act(async () => {
-      renderer?.update(createElement(Harness, { connState: 'connecting' }))
+      renderer?.update(createElement(Harness, { connected: false }))
     })
     let accepted = true
     await act(async () => {

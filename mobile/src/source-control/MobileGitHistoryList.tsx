@@ -22,6 +22,7 @@ type Props = {
   bottomInset: number
   // Bumped by the hub header refresh so History reloads without remounting.
   refreshNonce?: number
+  onReconnect?: () => Promise<void>
 }
 
 // Headerless commit-history list. Extracted from the /history route so the hub's
@@ -34,7 +35,8 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
   worktreeId,
   hostId,
   bottomInset,
-  refreshNonce = 0
+  refreshNonce = 0,
+  onReconnect
 }: Props) {
   const forceReconnect = useForceReconnect()
   const [rows, setRows] = useState<MobileCommitRow[] | null>(null)
@@ -86,11 +88,11 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
     // MobileSourceControlPanel / issue #5049). The load effect re-runs via
     // connState once the fresh client connects.
     if (connState !== 'connected' && hostId) {
-      void forceReconnect(hostId)
+      void (onReconnect ? onReconnect() : forceReconnect(hostId))
       return
     }
     setReloadNonce((n) => n + 1)
-  }, [connState, forceReconnect, hostId])
+  }, [connState, forceReconnect, hostId, onReconnect])
 
   const toggleCommit = useCallback((row: MobileCommitRow) => {
     setExpanded((current) => (current === row.id ? null : row.id))
@@ -114,12 +116,35 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
         if (!stale) {
           setFilesById((prev) => ({ ...prev, [commitId]: entries }))
         }
-      })
-      .catch(() => {
-        // Keep an already-loaded list; a first load that fails resolves to "No file changes".
-        if (!stale) {
-          setFilesById((prev) =>
-            prev[commitId] === 'loading' ? { ...prev, [commitId]: [] } : prev
+        setFilesById((prev) => ({ ...prev, [row.id]: 'loading' }))
+        void client
+          .sendRequest('git.commitCompare', {
+            worktree: `id:${worktreeId}`,
+            commitId: row.id
+          })
+          .then((response) => {
+            const entries = response.ok
+              ? (
+                  (response as RpcSuccess).result as {
+                    entries: GitBranchChangeEntry[]
+                  }
+                ).entries
+              : []
+            setFilesById((prev) => {
+              // Drop stale responses if the row is no longer loading (collapsed + re-opened).
+              if (prev[row.id] !== 'loading') {
+                return prev
+              }
+              return { ...prev, [row.id]: entries }
+            })
+          })
+          .catch(() =>
+            setFilesById((prev) => {
+              if (prev[row.id] !== 'loading') {
+                return prev
+              }
+              return { ...prev, [row.id]: [] }
+            })
           )
         }
       })
@@ -225,7 +250,12 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
 })
 
 const styles = StyleSheet.create({
-  state: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+  state: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg
+  },
   stateText: { color: colors.textMuted, fontSize: typography.bodySize },
   retryButton: {
     marginTop: spacing.md,
@@ -234,7 +264,11 @@ const styles = StyleSheet.create({
     borderRadius: radii.button,
     backgroundColor: colors.bgRaised
   },
-  retryText: { color: colors.textPrimary, fontSize: typography.bodySize, fontWeight: '600' },
+  retryText: {
+    color: colors.textPrimary,
+    fontSize: typography.bodySize,
+    fontWeight: '600'
+  },
   commit: { borderBottomWidth: 1, borderBottomColor: colors.borderSubtle },
   commitHeader: {
     flexDirection: 'row',
@@ -260,7 +294,10 @@ const styles = StyleSheet.create({
     fontSize: typography.metaSize,
     fontFamily: typography.monoFamily
   },
-  fileStat: { fontSize: typography.metaSize, fontFamily: typography.monoFamily },
+  fileStat: {
+    fontSize: typography.metaSize,
+    fontFamily: typography.monoFamily
+  },
   add: { color: colors.gitDecorationAdded },
   del: { color: colors.gitDecorationDeleted },
   empty: { color: colors.textMuted, fontSize: typography.metaSize }

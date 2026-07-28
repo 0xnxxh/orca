@@ -2,6 +2,8 @@ import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { NativeChatMessage } from '../../../src/shared/native-chat-types'
+import type { HostSessionChatDraftOperations } from './host-session-chat-draft-operations'
+import type { HostSessionChatPendingDeliveryOperations } from './host-session-chat-pending-delivery-operations'
 import { useMobileNativeChatDrafts } from './use-mobile-native-chat-drafts'
 
 type DraftState = ReturnType<typeof useMobileNativeChatDrafts>
@@ -46,7 +48,9 @@ describe('useMobileNativeChatDrafts', () => {
     messages = [],
     launchDraft = null,
     chatActive = true,
-    transcriptLoading = false
+    transcriptLoading = false,
+    persistence,
+    pendingPersistence
   }: {
     tabId: string
     sessionId?: string | null
@@ -54,6 +58,8 @@ describe('useMobileNativeChatDrafts', () => {
     launchDraft?: string | null
     chatActive?: boolean
     transcriptLoading?: boolean
+    persistence?: HostSessionChatDraftOperations
+    pendingPersistence?: HostSessionChatPendingDeliveryOperations
   }): null {
     state = useMobileNativeChatDrafts({
       hostId: 'host',
@@ -63,7 +69,9 @@ describe('useMobileNativeChatDrafts', () => {
       messages,
       launchDraft,
       chatActive,
-      transcriptLoading
+      transcriptLoading,
+      persistence,
+      pendingPersistence
     })
     return null
   }
@@ -206,6 +214,107 @@ describe('useMobileNativeChatDrafts', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('hydrates and coalesces shell-owned draft persistence without changing composer state', async () => {
+    vi.useFakeTimers()
+    const persistence: HostSessionChatDraftOperations = {
+      load: vi.fn().mockResolvedValue('restored draft'),
+      save: vi.fn().mockResolvedValue(undefined)
+    }
+    try {
+      const original = console.error
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
+        if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
+          return
+        }
+        original(...args)
+      })
+      try {
+        await act(async () => {
+          renderer = create(createElement(Harness, { tabId: 'a', persistence }))
+        })
+      } finally {
+        consoleSpy.mockRestore()
+      }
+
+      expect(state?.composerText).toBe('restored draft')
+      act(() => state?.setComposerText('edited draft'))
+      await act(async () => vi.advanceTimersByTimeAsync(250))
+      expect(persistence.save).toHaveBeenLastCalledWith('worktree', 'a', 'edited draft')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('hydrates and reconciles shell-owned pending delivery state', async () => {
+    const pendingPersistence: HostSessionChatPendingDeliveryOperations = {
+      load: vi.fn().mockResolvedValue([{ text: 'restored pending', expectedOccurrence: 1 }]),
+      save: vi.fn().mockResolvedValue(undefined)
+    }
+    const original = console.error
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
+      if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
+        return
+      }
+      original(...args)
+    })
+    try {
+      await act(async () => {
+        renderer = create(createElement(Harness, { tabId: 'a', pendingPersistence }))
+      })
+    } finally {
+      consoleSpy.mockRestore()
+    }
+
+    expect(state?.pending.map((pending) => pending.text)).toEqual(['restored pending'])
+    await act(async () =>
+      renderer?.update(
+        createElement(Harness, {
+          tabId: 'a',
+          pendingPersistence,
+          messages: [userTextMessage('landed', 'restored pending')]
+        })
+      )
+    )
+    expect(state?.pending).toEqual([])
+    expect(pendingPersistence.save).toHaveBeenLastCalledWith('worktree', 'a', 'session-a', [])
+  })
+
+  it('persists an accepted send under its originating session after a tab switch', async () => {
+    const pendingPersistence: HostSessionChatPendingDeliveryOperations = {
+      load: vi.fn().mockResolvedValue([]),
+      save: vi.fn().mockResolvedValue(undefined)
+    }
+    const original = console.error
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
+      if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
+        return
+      }
+      original(...args)
+    })
+    try {
+      await act(async () => {
+        renderer = create(createElement(Harness, { tabId: 'a', pendingPersistence }))
+      })
+    } finally {
+      consoleSpy.mockRestore()
+    }
+    const origin = state?.captureSendOrigin('from a')
+    await act(async () =>
+      renderer?.update(createElement(Harness, { tabId: 'b', pendingPersistence }))
+    )
+    await act(async () => {
+      if (origin) {
+        state?.acceptSend(origin, 'from a')
+      }
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(pendingPersistence.save).toHaveBeenCalledWith('worktree', 'a', 'session-a', [
+      { text: 'from a', expectedOccurrence: 1 }
+    ])
   })
 
   it('clears one pending per landed message so duplicate sends are not all dropped', async () => {

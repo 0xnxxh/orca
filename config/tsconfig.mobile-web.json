@@ -1,0 +1,33 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "include": [
+    "../src/mobile-web/src/**/*",
+    "../src/renderer/src/components/ui/badge.tsx",
+    "../src/renderer/src/components/ui/button.tsx",
+    "../src/renderer/src/components/ui/card.tsx",
+    "../src/renderer/src/components/ui/dialog-foundation.tsx",
+    "../src/renderer/src/components/ui/input.tsx",
+    "../src/renderer/src/components/ui/select.tsx",
+    "../src/renderer/src/components/ui/tabs.tsx",
+    "../src/renderer/src/lib/utils.ts",
+    "../src/shared/agent-status-limits.ts",
+    "../src/shared/clipboard-text.ts",
+    "../src/shared/event-loop-yield.ts",
+    "../src/shared/mobile-markdown-document.ts",
+    "../src/shared/mobile-web/**/*",
+    "../src/shared/terminal-file-link-matcher.ts",
+    "../src/shared/terminal-quick-command-limits.ts",
+    "../src/shared/terminal-query-reply.ts"
+  ],
+  "exclude": ["../src/shared/mobile-web/**/*.test.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "paths": {
+      "@mobile-web/*": ["../src/mobile-web/src/*"],
+      "@renderer/*": ["../src/renderer/src/*"],
+      "@/*": ["../src/renderer/src/*"]
+    }
+  }
+}

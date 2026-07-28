@@ -2663,118 +2663,352 @@
       "demotionRule": "Demote or quarantine if the gate flakes without a product or harness bug, if a Pi handler can again await receiver I/O, or if coalescing allows an older status to overwrite a newer one."
     },
     {
-      "id": "agent-status.manual-compact-identity",
-      "title": "Manual Claude compact completion retires only its exact status generation",
+      "id": "mobile-relay.hosted-bridge-e2ee",
+      "title": "Hosted authority and package integrity survive the real Relay E2EE clients",
       "maturity": "experimental",
       "protection": "partial",
-      "owner": "agent-session",
-      "layer": "shared-main-relay-contract",
+      "owner": "mobile-runtime",
+      "layer": "mobile-relay-integration",
       "surfaces": [
-        "Claude status hooks",
-        "manual compact lifecycle",
-        "last-status persistence",
-        "SSH relay ingest"
+        "hosted mobile capability bridge",
+        "mobile Relay RPC session",
+        "CloudRelayTransport",
+        "mobile E2EE v2",
+        "workspace authority projection",
+        "production package delivery"
       ],
-      "platforms": ["macos", "linux", "windows"],
-      "providers": ["local", "daemon", "ssh", "wsl", "remote-runtime"],
+      "platforms": ["macos", "linux", "windows", "mobile"],
+      "providers": ["local"],
       "coveredPlatforms": ["macos"],
-      "coveredProviders": ["local", "ssh"],
-      "coverageNotes": "Deterministic listener, loopback HTTP, relay-restart, persisted-restore, and fake-SSH transport contracts run on macOS. Claude Code 2.1.220 captures prove manual PreCompact starts a new prompt UUID and exact PreCompact/PostCompact pairs share it. The shared Node paths are platform-independent; live Linux, Windows, WSL, and paired-runtime journeys remain gaps.",
+      "coveredProviders": ["local"],
+      "coverageNotes": "A deterministic macOS integration uses a local protocol-compatible relay cell, the production mobile Relay RPC session, real NaCl E2EE v2, Desktop CloudRelayTransport and MobileSocketWiring, the production hosted capability broker/page client, and the production package asset provider/downloader. It proves sanitized hosted workspace/session/native-chat reads and a canonical multi-asset package download across the full in-repo transport composition, including multi-chunk hashes, exact staging order, assembled bytes, and commit timing. It does not exercise the production cloud service, realistic internet latency, an actual mobile WebView, native-chat subscriptions, reconnect, credential rotation, Android, Windows, Linux, or physical devices.",
       "motivatingLinks": [
-        "https://github.com/stablyai/orca/issues/11352",
-        "https://github.com/stablyai/orca/pull/11353"
+        "docs/reference/plans/2026-07-22-mobile-hybrid-webview-single-pr-migration.md"
       ],
-      "invariant": "A Claude manual PreCompact may replace only a current Claude row from the same receiving connection and provider session; a manual PostCompact may mark done only when the current authoritative row is its exact manual PreCompact generation, including provider prompt UUID. Missing identity is never a wildcard; later cross-provider work, replay, duplication, pane or tab retirement, and server stop invalidate completion. Automatic Claude and Kimi completion remain fail-closed until their hooks expose independently proven generation identity.",
-      "oracle": "Run one byte-identical state-machine oracle plus local HTTP, relay-restart, SSH, and persisted-restore streams using Claude's observed different prior-turn and compact prompt UUIDs. Require matching manual completion to emit done while wrong or absent prompt UUID, session-presence mismatch, wrong source or connection, stale replay and duplicate delivery, later Codex work, automatic completion, and lifecycle cleanup cannot retire the current row. Assert both emitted event order and the authoritative lastStatusByPaneKey snapshot.",
+      "invariant": "A hosted page request or production package download crossing Relay remains bound to the authenticated paired device and exact Relay host, passes only through E2EE v2, returns page-scoped opaque authority rather than Desktop identifiers, and commits package bytes only after canonical manifest, chunk, and asset integrity checks pass.",
+      "oracle": "Splice the real mobile resume client to Desktop CloudRelayTransport through a protocol-compatible relay cell; require exact query-free outer-auth paths and credentials, complete real E2EE authentication and resume confirmation, send production hosted workspace/session/native-chat requests, and drive the real package downloader against the production asset provider. Assert opaque page authority plus exact multi-chunk offsets, hashes, reconstructed bytes, staging order, and final commit timing.",
       "commands": [
-        "pnpm exec vitest run --config config/vitest.config.ts src/shared/manual-compact-prompt-identity.test.ts src/main/agent-hooks/manual-compact-hook-stream.test.ts src/main/agent-hooks/manual-compact-status-cleanup.test.ts src/shared/agent-hook-listener.test.ts src/shared/agent-hook-relay.test.ts src/relay/agent-hook-server.test.ts src/main/agent-hooks/server.test.ts src/main/ssh/ssh-relay-session-agent-hooks.integration.test.ts --reporter=dot",
-        "Manual Claude Code 2.1.220 interactive compact: isolate UserPromptSubmit, PreCompact, and PostCompact hooks; submit one ordinary prompt then /compact; compare source, trigger, session_id, and prompt_id"
+        "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/mobile-relay-hosted-bridge.integration.test.ts"
       ],
-      "testFiles": [
-        "src/shared/manual-compact-prompt-identity.test.ts",
-        "src/main/agent-hooks/manual-compact-hook-stream.test.ts",
-        "src/main/agent-hooks/manual-compact-status-cleanup.test.ts",
-        "src/shared/agent-hook-listener.test.ts",
-        "src/shared/agent-hook-relay.test.ts",
-        "src/relay/agent-hook-server.test.ts",
-        "src/main/agent-hooks/server.test.ts",
-        "src/main/ssh/ssh-relay-session-agent-hooks.integration.test.ts"
-      ],
+      "testFiles": ["mobile/src/transport/mobile-relay-hosted-bridge.integration.test.ts"],
       "assertionRefs": [
         {
-          "file": "src/shared/manual-compact-prompt-identity.test.ts",
+          "file": "mobile/src/transport/mobile-relay-hosted-bridge.integration.test.ts",
           "assertions": [
-            "matching manual identity settles once",
-            "stale, duplicate, session-mismatched, malformed, automatic, and unproven provider completion fail closed",
-            "4,097 rejected pane keys allocate no ownership state"
-          ]
-        },
-        {
-          "file": "src/main/agent-hooks/manual-compact-hook-stream.test.ts",
-          "assertions": [
-            "local HTTP and relay-restart streams preserve the distinct prior-turn and compact prompt identities",
-            "later provider work and wrong transport identity remain authoritative",
-            "persisted PreCompact restores its prompt"
-          ]
-        },
-        {
-          "file": "src/main/agent-hooks/manual-compact-status-cleanup.test.ts",
-          "assertions": ["pane, tab, and server cleanup revoke compact completion authority"]
-        },
-        {
-          "file": "src/main/ssh/ssh-relay-session-agent-hooks.integration.test.ts",
-          "assertions": [
-            "SSH stamps the receiving connection and forwards source, prompt UUID, session, and manual trigger"
+            "the phone and host use exact query-free Relay paths with resume and host-data credentials outside E2EE",
+            "the real mobile Relay client completes E2EE v2 and exact resume confirmation through Desktop MobileSocketWiring",
+            "the production hosted bridge carries workspace, session, and native-chat reads through the connected Relay RpcClient",
+            "the hosted response contains page-scoped opaque authority and excludes Desktop provider-session and transcript-path authority",
+            "the production package downloader receives a canonical document/script manifest and a multi-chunk script through the same Relay/E2EE path",
+            "package staging receives exact ordered offsets and verified bytes, finishes every asset, and commits last"
           ]
         }
       ],
       "evidenceRuns": [
         {
-          "date": "2026-08-02",
+          "date": "2026-07-26",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/manual-compact-prompt-identity.test.ts src/main/agent-hooks/manual-compact-hook-stream.test.ts src/main/agent-hooks/manual-compact-status-cleanup.test.ts src/shared/agent-hook-listener.test.ts src/shared/agent-hook-relay.test.ts src/relay/agent-hook-server.test.ts src/main/agent-hooks/server.test.ts src/main/ssh/ssh-relay-session-agent-hooks.integration.test.ts --reporter=dot",
+          "command": "pnpm --dir mobile exec vitest run --root .. mobile/src/transport/mobile-relay-hosted-bridge.integration.test.ts",
           "result": "passed",
-          "durationSeconds": 2.66,
-          "summary": "Eight focused files and 435 tests passed with local HTTP, relay, SSH, persistence, adversarial identity, cleanup, and existing provider-regression coverage."
-        },
-        {
-          "date": "2026-08-02",
-          "runner": "manual",
-          "platform": "macos",
-          "command": "Manual Claude Code 2.1.220 interactive compact: isolate UserPromptSubmit, PreCompact, and PostCompact hooks; submit one ordinary prompt then /compact; compare source, trigger, session_id, and prompt_id",
-          "result": "passed",
-          "durationSeconds": 120,
-          "summary": "A fresh capture proved /compact emits no UserPromptSubmit and its PreCompact uses a new UUID distinct from the preceding user turn; the preserved authenticated capture proved the matching manual PreCompact and PostCompact share that UUID and session. Automatic capture reused one prompt UUID across multiple compact generations, so automatic completion remains disabled."
+          "durationSeconds": 0.91,
+          "summary": "One deterministic hosted Relay integration passed opaque hosted authority and verified production package delivery through the real mobile client, E2EE v2, and Desktop relay transport."
         }
       ],
       "runtimeBudget": {
-        "p95Seconds": 20,
-        "scope": "shared, main-process, relay, persistence, and fake-SSH contract tests"
+        "p95Seconds": 5,
+        "scope": "one local protocol-compatible Relay, E2EE, and hosted-bridge integration"
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "New deterministic gate with one local run; CI soak history is not yet available."
+        "evidence": "One green local run is recorded; CI soak history is not yet available."
       },
       "redGreenEvidence": {
-        "status": "complete",
-        "evidence": "The byte-identical oracle (SHA-256 24e80c15b467ffa9c47a81099f11bf26dea71293e47b5d950b2fad1497094764) failed 5 of 6 on origin/main@a20165a43d, passed 6 of 6 on the candidate, failed 3 of 6 when only the exact-transition guard was disabled, and passed 6 of 6 after restoration."
+        "status": "missing",
+        "evidence": "No saved intentional-break artifact yet; remove exact resume confirmation, E2EE forwarding, or opaque projection and retain the resulting failure before promotion."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Each compact event performs one O(1) current-status lookup plus bounded UUID, source, connection, session, and event comparisons. Identity lives on the existing status row and is removed by its existing lifecycle; the change adds no owner map, global scan, polling, timer, subprocess, network request, or listener. The 4,097-key adversarial arm retains zero status, prompt, or ownership entries."
+        "evidence": "The integration completes in about one second locally, opens one host-data and one phone socket, uses bounded production frame admission and outbound queues, and downloads one document plus a script spanning two 48 KiB requests. Realistic Relay latency, sustained streams, and reconnect resource behavior remain required."
       },
       "promotionCriteria": [
-        "Collect 100 consecutive focused CI passes or 14 days of soak history.",
-        "Run live manual compact journeys on Linux and Windows and through a real SSH target.",
-        "Keep automatic compact completion disabled until a generation-unique provider identity is proven."
+        "Run the deterministic integration for at least 100 consecutive passes or 14 days.",
+        "Add a production cloud Relay mobile journey with realistic latency and reconnect.",
+        "Assert native-chat subscription rendering in an actual hosted mobile WebView.",
+        "Add Android plus representative desktop-platform evidence."
       ],
       "knownGaps": [
-        "No live Linux, Windows, WSL, paired-runtime, or real-SSH manual compact journey was run.",
-        "Claude versions before prompt_id support intentionally cannot complete a manual compact row through PostCompact.",
-        "Automatic Claude and Kimi completion remain intentionally fail-closed because their hooks do not prove an exact compact generation."
+        "The local relay cell implements the production splice contract but is not the production cloud Relay service.",
+        "The integration proves hosted workspace/session/native-chat reads and package delivery, not native-chat subscriptions, terminal streaming, reconnect, credential rotation, or ambiguous delivery.",
+        "No actual iOS/Android WebView or physical device participates."
       ],
-      "demotionRule": "Demote or quarantine if identity-mismatched completion can retire newer work, cleanup retains compact authority, or the focused gate flakes without a product or harness bug."
+      "demotionRule": "Demote or quarantine if the real mobile client and Desktop transport cannot complete exact E2EE/resume authentication, if host identifiers reach the page, or if the gate flakes without a product or harness bug."
+    },
+    {
+      "id": "mobile-webview.ios-network-isolation",
+      "title": "Hosted iOS WebView cannot escape its private document",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "mobile-runtime",
+      "layer": "native-webview-simulator-e2e",
+      "surfaces": [
+        "hosted mobile WKWebView",
+        "Content Security Policy",
+        "fetch and XMLHttpRequest",
+        "WebSocket",
+        "image loading",
+        "navigation and redirect subframes",
+        "popups and downloads",
+        "service workers and external schemes"
+      ],
+      "platforms": ["macos", "mobile"],
+      "providers": ["local"],
+      "coveredPlatforms": ["macos", "mobile"],
+      "coveredProviders": ["local"],
+      "coverageNotes": "The gate builds the exact current Debug iOS target into worktree-scoped DerivedData with normal Xcode ad-hoc simulator signing, installs that app, pairs through an isolated authenticated Desktop runtime, and opens the actual private-origin WKWebView. A simulator-scoped document-start probe attempts fetch, XHR, WebSocket, image loading, a popup, an external redirect subframe, a download, service-worker registration, and external-scheme main-frame navigation. The private document remains active, popup and worker rejection are observed, and an independent loopback sentinel receives zero HTTP requests or WebSocket upgrades. Android source policy now matches the RNW CSP, blocks platform network loads, and rejects downloads, but no Android SDK is configured for compile/runtime evidence. Physical devices, Release-binary inspection, a deliberate red run, and independent adversarial review remain open.",
+      "motivatingLinks": [
+        "docs/reference/plans/2026-07-22-mobile-hybrid-webview-single-pr-migration.md"
+      ],
+      "invariant": "A verified hosted mobile document may use the native capability bridge but cannot establish a page-owned network path, replace the active private document, open a popup, load an external subframe, download content, register a worker, or navigate to an external scheme.",
+      "oracle": "Build and install the exact current Debug iOS app, pair it through an isolated runtime, require the actual visible orca-mobile-web document to mark every per-run network and navigation attempt complete while retaining its exact URL, require popup and worker rejection, and fail if the independent HTTP/WebSocket sentinel observes any request or upgrade.",
+      "commands": [
+        "pnpm --dir mobile exec vitest run --root .. mobile/src/mobile-web/hosted-webview-cdp-session.test.ts mobile/src/mobile-web/mobile-web-native-transport-source.test.ts --maxWorkers=1",
+        "pnpm --dir mobile run test:e2e:hosted-webview:security"
+      ],
+      "testFiles": [
+        "mobile/src/mobile-web/hosted-webview-cdp-session.test.ts",
+        "mobile/src/mobile-web/mobile-web-native-transport-source.test.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "mobile/src/mobile-web/hosted-webview-cdp-session.test.ts",
+          "assertions": [
+            "the native document-start probe is compiled only under DEBUG and accepts only validated simulator launch values",
+            "all network targets are fixed to loopback and the completion marker requires four attempted browser APIs",
+            "the inspector oracle requires exact per-run network and navigation tokens, document retention, and popup and worker rejection"
+          ]
+        },
+        {
+          "file": "mobile/src/mobile-web/mobile-web-native-transport-source.test.ts",
+          "assertions": [
+            "iOS and Android share the verified RNW CSP including its sandboxed data-frame and inline-style requirements",
+            "Android blocks platform network loads and both platforms reject downloads and non-active-origin navigation",
+            "iOS response policy admits only the exact displayable private document or displayable data subframes"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-07-26",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm --dir mobile run test:e2e:hosted-webview:security",
+          "result": "passed",
+          "durationSeconds": 41.83,
+          "summary": "The exact freshly built and installed iPhone 17 Pro Simulator app retained its private document through network, redirect-frame, download, popup, worker, and external-scheme attempts while producing zero loopback sentinel observations."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 60,
+        "scope": "one exact native Debug build/install, isolated paired runtime, Metro, actual iOS WKWebView, and loopback sentinel"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "One green exact-build/install document-start-probe run is recorded; CI soak history is not yet available."
+      },
+      "redGreenEvidence": {
+        "status": "missing",
+        "evidence": "No saved intentional CSP-relaxation failure is retained yet; remove connect-src/img-src isolation and retain the sentinel-observation failure before promotion."
+      },
+      "performanceBudget": {
+        "required": false,
+        "evidence": "This is a security oracle, not a performance gate. It adds four one-shot Debug-only attempts and retains no production timers, sockets, or page capability."
+      },
+      "promotionCriteria": [
+        "Retain a red run showing the sentinel detects a deliberate CSP relaxation.",
+        "Run the iOS harness for at least 100 consecutive passes or 14 days.",
+        "Add equivalent Android WebView and physical-device evidence.",
+        "Complete independent adversarial review of network, navigation, frame, worker, and download isolation."
+      ],
+      "knownGaps": [
+        "Only an iOS Simulator Debug build is exercised.",
+        "The source test proves DEBUG guards structurally; a packaged Release binary inspection is still required.",
+        "The Android source change has no current compile or runtime evidence because no Android SDK is configured.",
+        "No physical-device or independent adversarial result is registered.",
+        "No deliberate relaxation has been retained to prove the gate's red path."
+      ],
+      "demotionRule": "Demote or quarantine if any browser API reaches the sentinel, the private document can be replaced, popup or worker rejection disappears, a completion marker becomes optional, the probe enters Release builds, or the harness flakes without a product or harness bug."
+    },
+    {
+      "id": "native-chat.transcript-source-authority",
+      "title": "Native-chat transcripts stay bound to their terminal and execution provider",
+      "maturity": "experimental",
+      "protection": "partial",
+      "owner": "native-chat",
+      "layer": "runtime-rpc-provider-contract",
+      "surfaces": [
+        "native and hosted mobile chat",
+        "transcript pagination and subscriptions",
+        "SSH filesystem reads",
+        "disconnect and reconnect recovery"
+      ],
+      "platforms": ["macos", "linux", "windows"],
+      "providers": ["local", "ssh", "wsl", "remote-runtime"],
+      "coveredPlatforms": ["macos"],
+      "coveredProviders": ["local", "ssh", "remote-runtime"],
+      "coverageNotes": "Deterministic local contracts cover bounded local/provider reads, parser reuse, exact terminal/worktree/agent/provider-session authority, provider reacquisition, disconnect without local fallback, reconnect appends, and unsubscribe cleanup. A macOS Electron client paired through the runtime RPC boundary to a real Docker Linux SSH target covers remote hook publication, raw transcript authority, and the production hosted capability broker/page client contract through sanitized workspace discovery, opaque native-chat authority, disconnect failure, reacquisition, and reconnect recovery. A durable iPhone Simulator harness pairs the production shell to that isolated Electron/Docker SSH fixture by exact public identity, opens the unchanged hosted UI in the actual iOS WKWebView, sends through the existing buffered command control, verifies the terminal mutation on the remote container, renders a remote Claude transcript, retains the chat with Reconnecting… during provider loss, reattaches the PTY/provider, and renders an appended assistant message. The packaged variant points the Desktop process at the actual unpacked macOS Resources directory, removes its checkout-output fallback, verifies the expected package build through authenticated RPC, and repeats the same Docker SSH/WKWebView journey. A separate opt-in Direct simulator harness launches an isolated paired stack and asserts the visible unchanged hosted DOM through debug-only WebKit CDP. Cloud Relay mobile transport, WSL, Windows, Android, and physical devices remain separate gaps.",
+      "motivatingLinks": [
+        "docs/reference/plans/2026-07-22-mobile-hybrid-webview-single-pr-migration.md"
+      ],
+      "invariant": "A native-chat transcript request may read only the transcript bound by the current runtime-issued terminal handle to the exact worktree, agent, connection, and provider session. Provider-backed reads stay range-bounded, transport loss remains unavailable instead of falling back to the desktop filesystem, and reconnect reacquires the same provider authority before delivering new content.",
+      "oracle": "Attempt valid and mismatched terminal/worktree/session/path requests against injected local and provider sources; assert only the exact binding can open, every provider range is at most 64 KiB, malformed chunks are rejected before allocation, disconnect returns unavailable without any local read, reconnect resumes appended messages, and unsubscribe stops reconciliation. Repeat the user journey through isolated Electron, a separate paired runtime client, the production hosted capability broker/page client, a real Docker sshd/relay/provider, a remote Claude hook publication, and a remote JSONL file.",
+      "commands": [
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/native-chat/transcript-file-source.test.ts src/main/native-chat/transcript-incremental-reader.test.ts src/main/native-chat/transcript-reader.test.ts src/main/native-chat/transcript-watch-provider.test.ts src/main/native-chat/transcript-watch.test.ts src/main/runtime/rpc/native-chat-transcript-source.test.ts src/main/runtime/rpc/methods/native-chat.test.ts",
+        "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/ssh-docker-native-chat-transcript.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+        "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/hosted-mobile-webview-ssh.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+        "ORCA_E2E_FORWARD_APP_LOGS=1 SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh",
+        "SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh:packaged"
+      ],
+      "testFiles": [
+        "src/main/native-chat/transcript-file-source.test.ts",
+        "src/main/native-chat/transcript-incremental-reader.test.ts",
+        "src/main/native-chat/transcript-reader.test.ts",
+        "src/main/native-chat/transcript-watch-provider.test.ts",
+        "src/main/native-chat/transcript-watch.test.ts",
+        "src/main/runtime/rpc/native-chat-transcript-source.test.ts",
+        "src/main/runtime/rpc/methods/native-chat.test.ts",
+        "tests/e2e/ssh-docker-native-chat-transcript.spec.ts",
+        "tests/e2e/hosted-mobile-webview-ssh.spec.ts"
+      ],
+      "assertionRefs": [
+        {
+          "file": "src/main/native-chat/transcript-file-source.test.ts",
+          "assertions": [
+            "provider reads use exact bounded ranges and never call the full-file API",
+            "oversized or malformed provider chunks are rejected before allocation",
+            "disconnect never falls back to the desktop filesystem"
+          ]
+        },
+        {
+          "file": "src/main/native-chat/transcript-watch-provider.test.ts",
+          "assertions": [
+            "remote reconciliation resumes appended transcript delivery after reconnect",
+            "unsubscribe removes provider reconciliation work"
+          ]
+        },
+        {
+          "file": "src/main/runtime/rpc/native-chat-transcript-source.test.ts",
+          "assertions": [
+            "the source requires exact terminal, worktree, agent, provider-session, and transcript-path authority",
+            "the current provider is reacquired after reconnect"
+          ]
+        },
+        {
+          "file": "tests/e2e/ssh-docker-native-chat-transcript.spec.ts",
+          "assertions": [
+            "a paired runtime client reads an authorized transcript from a real SSH provider",
+            "the hosted client resolves a sanitized SSH workspace and opaque native-chat authority through production workspace and session contracts",
+            "the hosted native-chat contract reads the remote transcript without receiving provider paths",
+            "SSH disconnect returns raw unavailability and a stable hosted host_error rather than reading a same-path desktop file",
+            "reconnect reacquires opaque hosted authority and reads the appended remote assistant message"
+          ]
+        },
+        {
+          "file": "tests/e2e/hosted-mobile-webview-ssh.spec.ts",
+          "assertions": [
+            "the exact newly paired public identity wins over stale simulator cold-resume state",
+            "the actual orca-mobile-web WKWebView renders the unchanged Docker SSH workspace and worktree UI",
+            "the existing buffered command UI emits the command plus carriage return through OrcaNative",
+            "the remote Docker SSH host creates the requested proof file",
+            "the unchanged native-chat view renders a real remote transcript and remains mounted with Reconnecting… while the SSH provider is unavailable",
+            "reconnect reattaches the existing PTY/provider and the WKWebView renders the appended remote assistant message",
+            "the packaged variant resolves the actual unpacked macOS Resources tree without a checkout-output fallback and returns its exact build through authenticated mobile RPC"
+          ]
+        }
+      ],
+      "evidenceRuns": [
+        {
+          "date": "2026-07-24",
+          "runner": "local",
+          "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/native-chat/transcript-file-source.test.ts src/main/native-chat/transcript-incremental-reader.test.ts src/main/native-chat/transcript-reader.test.ts src/main/native-chat/transcript-watch-provider.test.ts src/main/native-chat/transcript-watch.test.ts src/main/runtime/rpc/native-chat-transcript-source.test.ts src/main/runtime/rpc/methods/native-chat.test.ts",
+          "result": "passed",
+          "durationSeconds": 2.84,
+          "summary": "Seven focused files and 69 tests passed for bounded file sources, incremental parsing, local and provider watching, exact runtime authority, and RPC behavior."
+        },
+        {
+          "date": "2026-07-24",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/ssh-docker-native-chat-transcript.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 45.7,
+          "summary": "One isolated Electron/Docker SSH journey passed: remote hook publication and transcript read succeeded, disconnect returned an explicit error without local fallback, and reconnect delivered the appended assistant message."
+        },
+        {
+          "date": "2026-07-24",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/ssh-docker-native-chat-transcript.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 43,
+          "summary": "The extended full-build Docker SSH journey passed through the production hosted capability broker/page client: sanitized workspace discovery yielded opaque native-chat authority, remote reads succeeded, disconnect became host_error, and reconnect reacquired authority before reading the appended assistant message."
+        },
+        {
+          "date": "2026-07-25",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_SSH_DOCKER=1 pnpm exec playwright test tests/e2e/hosted-mobile-webview-ssh.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
+          "result": "passed",
+          "durationSeconds": 84,
+          "summary": "Invoked by SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh, one actual iOS WKWebView journey passed against Docker SSH: the unchanged workspace/session UI rendered, its buffered command emitted command plus CR through the native bridge, and the remote proof file was verified."
+        },
+        {
+          "date": "2026-07-26",
+          "runner": "local",
+          "platform": "macos",
+          "command": "ORCA_E2E_FORWARD_APP_LOGS=1 SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh",
+          "result": "passed",
+          "durationSeconds": 126,
+          "summary": "One actual iOS WKWebView journey passed against classic Docker SSH: the unchanged chat rendered remote hello, stayed mounted with Reconnecting… across provider loss, reattached the existing PTY/provider, and rendered the appended remote recovered assistant message."
+        },
+        {
+          "date": "2026-07-26",
+          "runner": "local",
+          "platform": "macos",
+          "command": "SKIP_BUILD=1 pnpm run test:e2e:hosted-mobile-webview:ssh:packaged",
+          "result": "passed",
+          "durationSeconds": 84,
+          "summary": "The Desktop runtime resolved build c24ff987… through the actual unpacked macOS Resources directory with no checkout-output fallback; authenticated package RPC, unchanged iOS WKWebView presentation, Docker SSH terminal mutation, provider loss, and native-chat recovery all passed."
+        }
+      ],
+      "runtimeBudget": {
+        "p95Seconds": 150,
+        "scope": "focused native-chat contracts plus opt-in Docker SSH Electron and actual-iOS-WKWebView journeys"
+      },
+      "flakeHistory": {
+        "status": "unknown",
+        "evidence": "New deterministic contracts plus green Docker SSH Electron and actual-iOS-WKWebView journeys; CI soak history is not yet available."
+      },
+      "redGreenEvidence": {
+        "status": "partial",
+        "evidence": "The provider-source contract was red before the abstraction existed, and the candidate is green across bounded read, authority, reconnect, and real Docker SSH coverage. The initial E2E fixture posted the hook before shell completion and was corrected to publish after that completion boundary; this was a harness sequencing issue rather than a product failure."
+      },
+      "performanceBudget": {
+        "required": true,
+        "evidence": "Provider reads request at most 64 KiB per range, validate returned bounds before allocation, retain no full remote transcript, use one bounded reconciliation loop per subscription instead of native remote filesystem watches, and remove that loop on unsubscribe. Tests count exact provider ranges and cleanup."
+      },
+      "promotionCriteria": [
+        "Run the deterministic contracts and Docker SSH journey for at least 100 consecutive passes or 14 days.",
+        "Add a cloud Relay mobile-native-chat journey without treating Docker SSH as equivalent.",
+        "Add live Windows/WSL and Android coverage before claiming full cross-platform protection."
+      ],
+      "knownGaps": [
+        "Docker SSH proves the SSH provider and relay subprocess path, not the paired mobile cloud Relay transport.",
+        "The real transport run uses a Linux Docker target from macOS; Windows, WSL, Android, and physical mobile devices are not exercised.",
+        "Native-chat subscription rendering after SSH reconnect is contract-tested below the existing unchanged UI but is not asserted in the actual mobile WebView by this gate."
+      ],
+      "demotionRule": "Demote or quarantine if an authority mismatch can read a transcript, transport loss can fall back to a local path, provider reads become unbounded, reconnect appends are lost, or the real SSH journey flakes without a product or harness bug."
     },
     {
       "id": "agent-session.provider-ownership",

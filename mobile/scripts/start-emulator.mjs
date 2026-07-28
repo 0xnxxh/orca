@@ -19,19 +19,32 @@
 import { spawn, execFile } from 'node:child_process'
 import net from 'node:net'
 import os from 'node:os'
-import { promisify } from 'node:util'
+import { promisify, stripVTControlCharacters } from 'node:util'
 import path from 'node:path'
 import process from 'node:process'
-import readline from 'node:readline'
 import {
   registerWorktreeForPairingRuntime,
   startHeadlessPairingRuntime
 } from './start-emulator-pairing-runtime.mjs'
+import { installEmulatorPairingRuntimeRestart } from './emulator-pairing-runtime-restart.mjs'
+import { hostedMobileMetroArguments } from './hosted-mobile-e2e-launch.mjs'
+import { waitForEmulatorLauncherShutdown } from './emulator-launcher-shutdown.mjs'
+import { emulatorControlRuntime } from './emulator-control-runtime.mjs'
+import {
+  appendProcessOutputTail,
+  attachBoundedProcessLineReader
+} from './bounded-process-line-reader.mjs'
+import { responseBodyIncludesWithinLimit } from './bounded-response-body.mjs'
+import { confirmEmulatorPairingDeepLink } from './emulator-deep-link-confirmation.mjs'
+import { dismissEmulatorDeveloperMenuBeforePairing } from './emulator-developer-menu-dismissal.mjs'
+import { buildEmulatorOrcaArgs, resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
+import { pairingPublicKeyFromUrl } from './emulator-pairing-public-key.mjs'
 import { ensureMobileExpoCli, getMobileExpoExecutablePath } from './mobile-expo-cli.mjs'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_METRO_PORT = 8081
 const METRO_PORT_SEARCH_LIMIT = 100
+const METRO_STATUS_MAX_BYTES = 64 * 1024
 
 // Parse CLI arguments
 const args = process.argv.slice(2)
@@ -78,7 +91,14 @@ Options:
   }
 }
 
-const ORCA_CLI = process.env.ORCA_CLI || 'orca'
+const orcaCliSelection = resolveEmulatorOrcaCli({
+  explicitCommand: process.env.ORCA_CLI,
+  managedCommand: process.env.ORCA_CLI_COMMAND,
+  devRepoRoot: process.env.ORCA_DEV_REPO_ROOT,
+  worktree: options.worktree,
+  cwd: process.cwd()
+})
+const ORCA_CLI = orcaCliSelection.command
 
 // Colors for output
 const colors = {
@@ -111,6 +131,22 @@ function logSuccess(message) {
 
 function logInfo(message) {
   log(`[info] ${message}`, 'yellow')
+}
+
+function createBackpressuredLineWriter(source, target, color) {
+  let waitingForDrain = false
+  return (line) => {
+    const accepted = target.write(color + line + colors.reset + '\n')
+    if (accepted || waitingForDrain) {
+      return
+    }
+    waitingForDrain = true
+    source.pause()
+    target.once('drain', () => {
+      waitingForDrain = false
+      source.resume()
+    })
+  }
 }
 
 function assertIosSimulatorPlatform() {
@@ -151,18 +187,10 @@ async function getWorktree() {
   return process.cwd()
 }
 
-// Get mobile directory path (worktree/mobile or current directory if already in mobile)
 function getMobileDir(worktree) {
-  const currentDir = process.cwd()
-  if (!options.worktree && path.basename(currentDir) === 'mobile') {
-    return currentDir
-  }
-  return path.join(worktree, 'mobile')
-}
-
-async function ensureMobileDependencies(worktree) {
-  const mobileDir = getMobileDir(worktree)
-  await ensureMobileExpoCli(mobileDir, { logStep, logSuccess })
+  return !options.worktree && path.basename(process.cwd()) === 'mobile'
+    ? process.cwd()
+    : path.join(worktree, 'mobile')
 }
 
 // Attach to emulator
@@ -170,7 +198,7 @@ async function attachEmulator(worktree, device, runtime) {
   logStep('1', `Attaching to emulator: ${device.name}`)
 
   try {
-    await orca(['emulator', 'attach', device.udid, '--worktree', worktree, '--focus', '--json'], {
+    await orca(buildEmulatorOrcaArgs('attach', [device.udid, '--focus'], worktree), {
       cwd: worktree,
       env: runtime?.env || process.env,
       timeout: 60000
@@ -226,8 +254,11 @@ async function findBestDevice(requestedDevice) {
     throw new Error('No iOS simulators found. Make sure Xcode is installed.')
   }
 
-  // First try exact match
-  let device = devices.find((d) => d.name === requestedDevice)
+  // First try an exact stable identifier, then a human-readable name.
+  let device = devices.find((d) => d.udid === requestedDevice)
+  if (!device) {
+    device = devices.find((d) => d.name === requestedDevice)
+  }
 
   // Then try partial match
   if (!device) {
@@ -352,16 +383,24 @@ async function resolveMetroPort() {
 }
 
 // Start Metro bundler
-async function startMetro(worktree) {
+async function startMetro(worktree, pairingRuntime) {
   logStep('2', 'Starting Metro bundler...')
 
   const mobileDir = getMobileDir(worktree)
   const metroPort = await resolveMetroPort()
 
   return new Promise((resolve, reject) => {
+    const freshPublicEnvironment = process.env.ORCA_E2E_MOBILE_AUTO_SELECT_PAIRED_HOST === '1'
     const env = {
       ...process.env,
-      EXPO_NO_TELEMETRY: '1'
+      EXPO_NO_TELEMETRY: '1',
+      ...(freshPublicEnvironment
+        ? {
+            EXPO_PUBLIC_ORCA_E2E_MOBILE_WEB_HOST_PUBLIC_KEY: pairingPublicKeyFromUrl(
+              pairingRuntime?.pairingUrl
+            )
+          }
+        : {})
     }
 
     // Use local expo CLI directly instead of pnpm start to avoid workspace issues
@@ -370,7 +409,7 @@ async function startMetro(worktree) {
       reject(new Error('Mobile Expo CLI is missing after dependency setup.'))
       return
     }
-    const expoArgs = ['start', '--host', 'lan', '--port', String(metroPort)]
+    const expoArgs = hostedMobileMetroArguments(metroPort, freshPublicEnvironment)
     logInfo(`Using expo at: ${expoPath}`)
     const metro = spawn(expoPath, expoArgs, {
       cwd: mobileDir,
@@ -382,8 +421,10 @@ async function startMetro(worktree) {
     let url = null
     let resolved = false
     let exited = false
-    let rl = null
-    let rlErr = null
+    let closeStdout = () => {}
+    let closeStderr = () => {}
+    const writeStdoutLine = createBackpressuredLineWriter(metro.stdout, process.stdout, colors.dim)
+    const writeStderrLine = createBackpressuredLineWriter(metro.stderr, process.stderr, colors.red)
 
     const metroResult = () => ({
       process: metro,
@@ -391,8 +432,8 @@ async function startMetro(worktree) {
       output,
       isExited: () => exited,
       closeOutput: () => {
-        rl?.close()
-        rlErr?.close()
+        closeStdout()
+        closeStderr()
         metro.stdin?.destroy()
         metro.stdout?.destroy()
         metro.stderr?.destroy()
@@ -400,14 +441,16 @@ async function startMetro(worktree) {
     })
 
     // Parse Metro output for the development URL
-    rl = readline.createInterface({ input: metro.stdout })
-    rl.on('line', (line) => {
-      output += line + '\n'
-      process.stdout.write(colors.dim + line + colors.reset + '\n')
+    closeStdout = attachBoundedProcessLineReader(metro.stdout, (line) => {
+      if (!resolved) {
+        output = appendProcessOutputTail(output, line)
+      }
+      writeStdoutLine(line)
+      const parseLine = stripVTControlCharacters(line)
 
       // Look for "Waiting on" message from Metro
       // When Metro says "Waiting on http://localhost:8081", we need to construct the dev-client URL
-      const waitingMatch = line.match(/Waiting on (http:\/\/[^:]+):(\d+)/)
+      const waitingMatch = parseLine.match(/Waiting on (http:\/\/[^:]+):(\d+)/)
       if (waitingMatch && !resolved) {
         const host = waitingMatch[1]
         const port = waitingMatch[2]
@@ -421,7 +464,9 @@ async function startMetro(worktree) {
       }
 
       // Also check for the dev-client URL format directly
-      const urlMatch = line.match(/exp\+orca-mobile:\/\/expo-development-client\/\?url=([^\s]+)/)
+      const urlMatch = parseLine.match(
+        /exp\+orca-mobile:\/\/expo-development-client\/\?url=([^\s]+)/
+      )
       if (urlMatch && !resolved) {
         url = normalizeMetroUrl(decodeURIComponent(urlMatch[1]))
         logInfo(`Found Metro URL: ${url}`)
@@ -434,9 +479,9 @@ async function startMetro(worktree) {
 
       // Also check for "packager-status:running" or ready indicator
       if (
-        line.includes('packager-status:running') ||
-        line.includes('Metro waiting') ||
-        line.includes('Logs for your project will appear below')
+        parseLine.includes('packager-status:running') ||
+        parseLine.includes('Metro waiting') ||
+        parseLine.includes('Logs for your project will appear below')
       ) {
         if (url && !resolved) {
           resolved = true
@@ -446,10 +491,11 @@ async function startMetro(worktree) {
     })
 
     // Also check stderr
-    rlErr = readline.createInterface({ input: metro.stderr })
-    rlErr.on('line', (line) => {
-      output += line + '\n'
-      process.stderr.write(colors.red + line + colors.reset + '\n')
+    closeStderr = attachBoundedProcessLineReader(metro.stderr, (line) => {
+      if (!resolved) {
+        output = appendProcessOutputTail(output, line)
+      }
+      writeStderrLine(line)
     })
 
     metro.on('error', (error) => {
@@ -505,19 +551,21 @@ async function openPairingUrlInSimulator(pairingUrl, deviceUdid, runtime, worktr
   logStep('4', 'Pairing mobile app to temporary desktop runtime...')
   await execFileAsync('xcrun', ['simctl', 'openurl', deviceUdid, pairingUrl])
   await new Promise((resolve) => setTimeout(resolve, 2000))
+  const controlRuntime = emulatorControlRuntime(runtime)
+  const emulator = {
+    deviceUdid,
+    orcaCli: ORCA_CLI,
+    userDataDir: controlRuntime?.env?.ORCA_DEV_USER_DATA_PATH,
+    worktree
+  }
+  await dismissEmulatorDeveloperMenuBeforePairing(emulator, 120_000)
 
   // Why: the first deep link can arrive while the freshly opened Expo app is
   // still mounting, so resend it once the JS router is ready to receive URLs.
   await execFileAsync('xcrun', ['simctl', 'openurl', deviceUdid, pairingUrl])
   await new Promise((resolve) => setTimeout(resolve, 2000))
 
-  // Why: the mobile app intentionally asks for a trust confirmation before
-  // saving a host. This lands on the Pair button on current iPhone simulators.
-  await orca(['emulator', 'tap', '0.5', '0.56', '--worktree', worktree, '--json'], {
-    cwd: worktree,
-    env: runtime?.env || process.env,
-    timeout: 30000
-  })
+  await confirmEmulatorPairingDeepLink(emulator, 10_000)
   logSuccess('Opened pairing link and confirmed Pair')
 }
 
@@ -547,7 +595,11 @@ async function verifyMetro(url) {
 
   try {
     const response = await fetch(statusUrl, { signal: controller.signal })
-    return (await response.text()).includes('packager-status:running')
+    return await responseBodyIncludesWithinLimit(
+      response,
+      'packager-status:running',
+      METRO_STATUS_MAX_BYTES
+    )
   } catch {
     return false
   } finally {
@@ -567,6 +619,7 @@ async function findReachableMetroUrl(initialUrl) {
 // Main function
 async function main() {
   log(colors.bright + 'Starting Orca Mobile in Emulator\n' + colors.reset)
+  logInfo(`Using Orca CLI: ${ORCA_CLI} (${orcaCliSelection.source})`)
   let pairingRuntime = null
 
   try {
@@ -575,16 +628,18 @@ async function main() {
     // Get worktree
     const worktree = await getWorktree()
     logInfo(`Using worktree: ${worktree}`)
-    await ensureMobileDependencies(worktree)
+    await ensureMobileExpoCli(getMobileDir(worktree), { logStep, logSuccess })
 
-    pairingRuntime = await startHeadlessPairingRuntime({
+    const pairingRuntimeOptions = {
       enabled: options.pair,
       orcaCli: ORCA_CLI,
       cwd: process.cwd(),
+      runDirectory: process.env.ORCA_E2E_MOBILE_RUN_DIRECTORY,
       lanIpCandidates,
       logStep,
       logSuccess
-    })
+    }
+    pairingRuntime = await startHeadlessPairingRuntime(pairingRuntimeOptions)
     await registerWorktreeForPairingRuntime(pairingRuntime, worktree, {
       orca,
       logStep,
@@ -597,10 +652,10 @@ async function main() {
 
     // Why: emulator helpers are worktree-scoped in Orca; attach is idempotent
     // for the active worktree, while a global helper list cannot prove that.
-    await attachEmulator(worktree, device, pairingRuntime)
+    await attachEmulator(worktree, device, emulatorControlRuntime(pairingRuntime))
 
     // Start Metro
-    const metro = await startMetro(worktree)
+    const metro = await startMetro(worktree, pairingRuntime)
     logSuccess('Metro is running')
 
     // Verify Metro is reachable
@@ -641,43 +696,21 @@ async function main() {
 
     log(colors.bright + '\nSetup complete!' + colors.reset)
     logInfo('Press Ctrl+C to stop Metro and the temporary desktop runtime')
+    const runtimeState = { current: pairingRuntime }
+    const removeRuntimeRestart = installEmulatorPairingRuntimeRestart(
+      runtimeState,
+      pairingRuntimeOptions,
+      { logStep, logSuccess, logError }
+    )
 
-    // Keep running until Metro exits
-    await new Promise((resolve) => {
-      let stopping = false
-      let stopTimeout = null
-      const finish = () => {
-        if (stopTimeout) {
-          clearTimeout(stopTimeout)
-        }
-        metro.process.off('exit', finish)
-        process.off('SIGINT', stopMetro)
-        process.off('SIGTERM', stopMetro)
-        metro.closeOutput?.()
-        pairingRuntime?.stop()
-        resolve()
-      }
-      const stopMetro = () => {
-        if (stopping) {
-          finish()
-          return
-        }
-        stopping = true
-        metro.process.kill('SIGINT')
-        stopTimeout = setTimeout(finish, 2000)
-        stopTimeout.unref?.()
-      }
-      metro.process.once('exit', finish)
-      if (metro.isExited()) {
-        finish()
-        return
-      }
-      process.once('SIGINT', stopMetro)
-      process.once('SIGTERM', stopMetro)
+    await waitForEmulatorLauncherShutdown({
+      metro,
+      removeRuntimeRestart,
+      runtimeState
     })
     process.exit(0)
   } catch (error) {
-    pairingRuntime?.stop()
+    await pairingRuntime?.stop({ shutdownDaemon: true })
     logError(error.message)
     process.exit(1)
   }
