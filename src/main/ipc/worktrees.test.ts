@@ -156,6 +156,7 @@ vi.mock('../source-control/hosted-review', () => ({
 }))
 
 vi.mock('../providers/ssh-git-dispatch', () => ({
+  getSshGitProviderGeneration: () => 0,
   getSshGitProvider: getSshGitProviderMock,
   SSH_GIT_PROVIDER_UNAVAILABLE_MESSAGE:
     'Remote connection dropped. Click Reconnect on the SSH target before retrying.',
@@ -893,6 +894,35 @@ describe('registerWorktreeHandlers', () => {
         branch: 'improve-dashboard-2'
       })
     })
+  })
+
+  it('keeps an emoji-only display name while using safe branch and path names', async () => {
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/rocket',
+        head: 'abc123',
+        branch: 'rocket',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+
+    await handlers['worktrees:create'](null, {
+      repoId: 'repo-1',
+      name: '🚀'
+    })
+
+    expect(addWorktreeMock).toHaveBeenCalledWith(
+      '/workspace/repo',
+      '/workspace/rocket',
+      'rocket',
+      'origin/main',
+      false
+    )
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith(
+      'repo-1::/workspace/rocket',
+      expect.objectContaining({ displayName: '🚀' })
+    )
   })
 
   it('uses a repo-specific worktree base path when creating local worktrees', async () => {
