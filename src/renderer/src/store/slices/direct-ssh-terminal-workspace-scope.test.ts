@@ -129,6 +129,61 @@ describe('resolveDirectSshTerminalWorkspaceKeys', () => {
     ).toEqual(new Set())
   })
 
+  it('refuses parsed PTY fallback when explicit host provenance is malformed', () => {
+    expect(
+      resolveDirectSshTerminalWorkspaceKeys(
+        {
+          targetId: 'target-a',
+          catalogRevision: 1,
+          repos: [],
+          worktreesByRepo: {
+            repo: [
+              {
+                id: 'malformed-worktree',
+                repoId: 'repo',
+                hostId: 'ssh:%'
+              }
+            ]
+          }
+        },
+        {
+          'malformed-worktree': [tab('malformed-worktree', 'ssh:target-a@@pty-1')]
+        }
+      )
+    ).toEqual(new Set())
+  })
+
+  it('refuses folder PTY fallback when project host provenance is malformed', () => {
+    expect(
+      resolveDirectSshTerminalWorkspaceKeys(
+        {
+          targetId: 'target-a',
+          catalogRevision: 1,
+          repos: [],
+          folderWorkspaces: [
+            {
+              id: 'folder-a',
+              projectGroupId: 'group-a',
+              folderPath: '/srv/project',
+              connectionId: 'target-a'
+            }
+          ],
+          projectGroups: [
+            {
+              id: 'group-a',
+              parentGroupId: null,
+              connectionId: 'target-a',
+              executionHostId: 'ssh:%'
+            }
+          ]
+        },
+        {
+          'folder:folder-a': [tab('folder:folder-a', 'ssh:target-a@@pty-1')]
+        }
+      )
+    ).toEqual(new Set())
+  })
+
   it('refuses fallback when explicit worktree and repo-derived ownership disagree', () => {
     expect(
       resolveDirectSshTerminalWorkspaceKeys(

@@ -21,7 +21,7 @@ function isExplicitContradictoryHost(
     return false
   }
   const parsed = parseExecutionHostId(rawHostId)
-  return parsed != null && parsed.id !== expectedHostId
+  return parsed == null || parsed.id !== expectedHostId
 }
 
 function worktreeHasContradictoryOwner(

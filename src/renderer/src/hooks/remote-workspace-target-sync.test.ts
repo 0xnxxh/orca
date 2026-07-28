@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { RemoteWorkspaceSnapshot } from '../../../shared/remote-workspace-types'
+import type {
+  RemoteWorkspacePatchResult,
+  RemoteWorkspaceSnapshot
+} from '../../../shared/remote-workspace-types'
 import type { DirectSshAuthority, SshProviderEpoch } from '../../../shared/ssh-types'
+import { i18n } from '@/i18n/i18n'
+import { PSEUDO_LOCALIZATION_LOCALE } from '@/i18n/pseudo-localization'
 import type { AppState } from '../store/types'
 import type {
   DirectSshPreparationInput,
@@ -123,12 +128,13 @@ function appState(overrides: Record<string, unknown> = {}): AppState {
 
 function createHarness(
   state: AppState,
-  get: (args: { targetId: string }) => Promise<RemoteWorkspaceSnapshot | null>
+  get: (args: { targetId: string }) => Promise<RemoteWorkspaceSnapshot | null>,
+  patchResult: RemoteWorkspacePatchResult = { ok: true, snapshot: snapshot(1) }
 ) {
   const setForConnectedTargets = vi.fn(async () => [
     {
       targetId: owner.targetId,
-      result: { ok: true as const, snapshot: snapshot(1) }
+      result: patchResult
     }
   ])
   let current = true
@@ -208,6 +214,34 @@ describe('createRemoteWorkspaceTargetSync', () => {
     expect(harness.setForConnectedTargets).toHaveBeenCalledWith(
       expect.objectContaining({ hydratedTargetIds: ['target-a'] })
     )
+  })
+
+  it.each([
+    ['stale-revision', 'Workspace changed on another device'],
+    ['unavailable', 'Remote workspace sync unavailable']
+  ] as const)('localizes the %s upload fallback', async (reason, message) => {
+    const previousLanguage = i18n.language
+    await i18n.changeLanguage(PSEUDO_LOCALIZATION_LOCALE)
+    try {
+      const state = appState({
+        tabsByWorktree: {
+          'repo-a::/remote/work': [{ id: 'tab-a', worktreeId: 'repo-a::/remote/work', ptyId: null }]
+        }
+      })
+      const harness = createHarness(state, async () => snapshot(0), {
+        ok: false,
+        reason
+      })
+
+      await harness.sync.syncAfterConnect(token())
+
+      expect(state.setRemoteWorkspaceSyncStatus).toHaveBeenLastCalledWith(
+        'target-a',
+        expect.objectContaining({ message: `[${message}]` })
+      )
+    } finally {
+      await i18n.changeLanguage(previousLanguage)
+    }
   })
 
   it('publishes nothing from a snapshot response after its authority turns stale', async () => {

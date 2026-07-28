@@ -277,6 +277,44 @@ describe('createIpcPtyTransport', () => {
     expect(exitSeenByNewPane).toHaveBeenCalledWith(0)
   })
 
+  it('rejects a stale reattach before it can replace newer PTY handlers', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const spawn = window.api.pty.spawn as unknown as ReturnType<typeof vi.fn>
+    let resolveStale!: (value: { id: string; isReattach: boolean }) => void
+    spawn.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStale = resolve
+      })
+    )
+    const staleData = vi.fn()
+    const staleExit = vi.fn()
+    const stalePane = createIpcPtyTransport({})
+    const staleConnect = stalePane.connect({
+      url: '',
+      sessionId: 'pty-1',
+      admitPtyId: () => false,
+      callbacks: { onData: staleData, onExit: staleExit }
+    })
+    const currentData = vi.fn()
+    const currentExit = vi.fn()
+    const currentPane = createIpcPtyTransport({})
+    currentPane.attach({
+      existingPtyId: 'pty-1',
+      callbacks: { onData: currentData, onExit: currentExit }
+    })
+
+    resolveStale({ id: 'pty-1', isReattach: true })
+    await staleConnect
+    onData?.({ id: 'pty-1', data: 'current output' })
+    onExit?.({ id: 'pty-1', code: 0 })
+
+    expect(currentData).toHaveBeenCalledWith('current output')
+    expect(currentExit).toHaveBeenCalledWith(0)
+    expect(staleData).not.toHaveBeenCalled()
+    expect(staleExit).not.toHaveBeenCalled()
+    expect(window.api.pty.kill).not.toHaveBeenCalled()
+  })
+
   it('buffers data across a normal detach-then-attach gap and drains it to the next pane', async () => {
     const { createIpcPtyTransport } = await import('./pty-transport')
     const receivedByNewPane = vi.fn()
@@ -2024,6 +2062,23 @@ describe('createIpcPtyTransport', () => {
 
     expect(onPtyExit).toHaveBeenCalledWith('pty-detached')
     expect(transport.getPtyId()).toBeNull()
+  })
+
+  it('drops the exit observer when abandoning an obsolete reattach without killing it', async () => {
+    const { createIpcPtyTransport } = await import('./pty-transport')
+    const onPtyExit = vi.fn()
+    const kill = window.api.pty.kill as unknown as ReturnType<typeof vi.fn>
+    const transport = createIpcPtyTransport({ onPtyExit })
+
+    transport.attach({
+      existingPtyId: 'pty-obsolete',
+      callbacks: {}
+    })
+    transport.detach?.({ preserveExitObserver: false })
+    onExit?.({ id: 'pty-obsolete', code: 0 })
+
+    expect(onPtyExit).not.toHaveBeenCalled()
+    expect(kill).not.toHaveBeenCalled()
   })
 })
 

@@ -407,8 +407,11 @@ function applyRemoteWorkspacePatchStatus(
     message:
       result.message ??
       (result.reason === 'stale-revision'
-        ? 'Workspace changed on another device'
-        : 'Remote workspace sync unavailable')
+        ? translate(
+            'auto.hooks.useIpcEvents.workspaceChangedOnAnotherDevice',
+            'Workspace changed on another device'
+          )
+        : translate('auto.hooks.useIpcEvents.2fe88c2e06', 'Remote workspace sync unavailable'))
   })
 }
 

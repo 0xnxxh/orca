@@ -2627,10 +2627,13 @@ function directSshAuthoritiesEqual(
   left: DirectSshAuthority | null | undefined,
   right: DirectSshAuthority | null | undefined
 ): boolean {
+  if (!left || !right) {
+    return false
+  }
   return (
-    left?.targetId === right?.targetId &&
-    left?.providerEpoch === right?.providerEpoch &&
-    left?.connectionGeneration === right?.connectionGeneration
+    left.targetId === right.targetId &&
+    left.providerEpoch === right.providerEpoch &&
+    left.connectionGeneration === right.connectionGeneration
   )
 }
 

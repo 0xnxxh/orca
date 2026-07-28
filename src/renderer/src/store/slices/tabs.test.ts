@@ -1872,6 +1872,75 @@ describe('TabsSlice', () => {
       expect(store.getState().unifiedTabsByWorktree[siblingWorktreeId]).toBe(siblingTabs)
       expect(store.getState().groupsByWorktree[siblingWorktreeId]).toBe(siblingGroups)
     })
+
+    it('deletes omitted target chrome while preserving sibling references', () => {
+      const siblingWorktreeId = 'repo2::/tmp/sibling'
+      const targetGroup = makeTabGroup({
+        id: 'group-target',
+        worktreeId: WT,
+        activeTabId: 'target-tab',
+        tabOrder: ['target-tab']
+      })
+      const siblingGroup = makeTabGroup({
+        id: 'group-sibling',
+        worktreeId: siblingWorktreeId,
+        activeTabId: 'sibling-tab',
+        tabOrder: ['sibling-tab']
+      })
+      const siblingTabs = [
+        makeUnifiedTab({
+          id: 'sibling-tab',
+          worktreeId: siblingWorktreeId,
+          groupId: siblingGroup.id
+        })
+      ]
+      const siblingGroups = [siblingGroup]
+      const siblingLayout = { type: 'leaf' as const, groupId: siblingGroup.id }
+      store.setState({
+        worktreesByRepo: {
+          repo1: [makeWorktree({ id: WT, repoId: 'repo1' })],
+          repo2: [makeWorktree({ id: siblingWorktreeId, repoId: 'repo2' })]
+        },
+        unifiedTabsByWorktree: {
+          [WT]: [makeUnifiedTab({ id: 'target-tab', worktreeId: WT, groupId: targetGroup.id })],
+          [siblingWorktreeId]: siblingTabs
+        },
+        groupsByWorktree: {
+          [WT]: [targetGroup],
+          [siblingWorktreeId]: siblingGroups
+        },
+        activeGroupIdByWorktree: {
+          [WT]: targetGroup.id,
+          [siblingWorktreeId]: siblingGroup.id
+        },
+        layoutByWorktree: {
+          [WT]: { type: 'leaf', groupId: targetGroup.id },
+          [siblingWorktreeId]: siblingLayout
+        }
+      })
+
+      store.getState().hydrateTabsSession(
+        {
+          activeRepoId: 'repo1',
+          activeWorktreeId: WT,
+          activeTabId: null,
+          tabsByWorktree: {},
+          terminalLayoutsByTabId: {},
+          unifiedTabs: {},
+          tabGroups: {}
+        },
+        { replaceWorkspaceKeys: [WT] }
+      )
+
+      const state = store.getState()
+      expect(state.unifiedTabsByWorktree).not.toHaveProperty(WT)
+      expect(state.groupsByWorktree).not.toHaveProperty(WT)
+      expect(state.activeGroupIdByWorktree).not.toHaveProperty(WT)
+      expect(state.layoutByWorktree).not.toHaveProperty(WT)
+      expect(state.unifiedTabsByWorktree[siblingWorktreeId]).toBe(siblingTabs)
+      expect(state.groupsByWorktree[siblingWorktreeId]).toBe(siblingGroups)
+      expect(state.layoutByWorktree[siblingWorktreeId]).toBe(siblingLayout)
+    })
   })
 
   // ─── Cross-content-type neighbor selection ────────────────────────

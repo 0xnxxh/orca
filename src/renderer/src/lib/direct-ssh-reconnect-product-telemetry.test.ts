@@ -71,6 +71,7 @@ describe('direct SSH reconnect product telemetry', () => {
       cancel_debt_count: 2,
       replacement_admission_delayed_count: 1,
       overlapping_join_count: 3,
+      timeout_retry_count: 2,
       damped_preparation_count: 1
     })
     expect(Object.keys(props).join(' ')).not.toMatch(

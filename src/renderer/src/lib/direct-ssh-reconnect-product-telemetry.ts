@@ -69,6 +69,7 @@ export function toDirectSshReconnectProductProps(
     catalog_stale_count: event.catalogOutcome === 'stale' ? 1 : 0,
     repo_complete_count: boundedInteger(event.repoOutcomes.complete),
     repo_non_authoritative_count: boundedInteger(event.repoOutcomes['non-authoritative']),
+    // One first-timeout transition per repo makes retrying repos equal timeout retries.
     repo_retrying_count: boundedInteger(event.timeoutRetryCount),
     repo_timed_out_count: boundedInteger(event.repoOutcomes['timed-out']),
     repo_cancel_budget_exhausted_count: boundedInteger(

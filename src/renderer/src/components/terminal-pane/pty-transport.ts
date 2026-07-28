@@ -696,6 +696,9 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
 
       if (options.sessionId && hasPreHandlerPtyExit(options.sessionId)) {
+        if (options.admitPtyId && !options.admitPtyId(options.sessionId)) {
+          return { id: options.sessionId } satisfies PtyConnectResult
+        }
         // Why: deliver the exited parked session's buffered final frame/exit before spawn, so the dead incarnation can't orphan a fresh shell reusing its id.
         ptyId = options.sessionId
         connected = true
@@ -768,6 +771,10 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
             window.api.pty.kill(spawnResult.id)
           }
           return
+        }
+
+        if (options.admitPtyId && !options.admitPtyId(spawnResult.id)) {
+          return spawnResult
         }
 
         ptyId = spawnResult.id
@@ -933,12 +940,16 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       }
     },
 
-    detach() {
+    detach(options) {
       clearAccumulatedState()
       inputWriteQueue.clear()
       if (ptyId) {
         // Why: on remount keep the exit observer alive so a shell dying in the gap still clears stale tab/leaf bindings before reattach.
-        unregisterPtyDataAndStatusHandlers(ptyId)
+        if (options?.preserveExitObserver === false) {
+          unregisterPtyHandlers(ptyId)
+        } else {
+          unregisterPtyDataAndStatusHandlers(ptyId)
+        }
       }
       connected = false
       ptyId = null

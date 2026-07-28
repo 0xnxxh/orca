@@ -7545,6 +7545,8 @@ export function connectPanePty(
         return false
       }
       if (!claimCapturedDirectSshRetryPty(ptyId)) {
+        // Why: an obsolete reattach must stop consuming frames without killing the durable PTY a newer lease may adopt.
+        transport.detach?.({ preserveExitObserver: false })
         return false
       }
       const isCurrentReattachPayload = (): boolean => {
@@ -7979,6 +7981,7 @@ export function connectPanePty(
                 : {}),
               ...(coldRestoreStartup?.agent ? { launchAgent: coldRestoreStartup.agent } : {}),
               ...(shouldDeclareHiddenAtSpawn() ? { initiallyHidden: true } : {}),
+              ...(directSshRetryAttempt ? { admitPtyId: claimCapturedDirectSshRetryPty } : {}),
               callbacks: outputCallbacks.callbacks
             })
             void Promise.resolve(reattachPromise)
@@ -8201,6 +8204,7 @@ export function connectPanePty(
         ...(coldRestoreStartup?.launchToken ? { launchToken: coldRestoreStartup.launchToken } : {}),
         ...(coldRestoreStartup?.agent ? { launchAgent: coldRestoreStartup.agent } : {}),
         ...(shouldDeclareHiddenAtSpawn() ? { initiallyHidden: true } : {}),
+        ...(directSshRetryAttempt ? { admitPtyId: claimCapturedDirectSshRetryPty } : {}),
         callbacks: outputCallbacks.callbacks
       })
 
