@@ -10,7 +10,7 @@ import { parseWorkspaceKey } from '../../shared/workspace-scope'
 
 export type RestoredSubagentLivenessSweepDeps = {
   /** Targeted provider liveness, or null when the provider cannot prove either state. */
-  hasLiveLocalPty: (ptyId: string) => boolean | null
+  probeLiveLocalPty: (ptyId: string) => Promise<boolean | null>
   isLocalExecutionHost: (worktreeId: string | undefined) => boolean
   /** PTY bound to this pane in the current session, if it has one. */
   getBoundPtyIdForPaneKey: (paneKey: string) => string | undefined
@@ -19,25 +19,33 @@ export type RestoredSubagentLivenessSweepDeps = {
   getPersistedPtyIdForPaneKey: (paneKey: string) => string | undefined
   reap: (
     isLocalExecutionHost: (worktreeId: string | undefined) => boolean,
-    isLocalPaneAgentLive: (paneKey: string) => boolean
-  ) => number
+    isLocalPaneAgentLive: (paneKey: string) => Promise<boolean>
+  ) => Promise<number>
 }
 
 /** Drop restored rows only when the owning host is local and its provider proves
  *  the exact PTY absent. */
-export function sweepRestoredSubagentsWithoutLiveAgent(
+export async function sweepRestoredSubagentsWithoutLiveAgent(
   deps: RestoredSubagentLivenessSweepDeps
-): number {
-  return deps.reap(
+): Promise<number> {
+  const probesByPtyId = new Map<string, Promise<boolean | null>>()
+  return await deps.reap(
     (worktreeId) => deps.isLocalExecutionHost(worktreeId),
-    (paneKey) => {
-      const ptyId =
+    async (paneKey) => {
+      const resolvePtyId = (): string | undefined =>
         deps.getBoundPtyIdForPaneKey(paneKey) ?? deps.getPersistedPtyIdForPaneKey(paneKey)
+      const ptyId = resolvePtyId()
       if (!ptyId) {
         return true
       }
       try {
-        return deps.hasLiveLocalPty(ptyId) !== false
+        let probe = probesByPtyId.get(ptyId)
+        if (!probe) {
+          probe = deps.probeLiveLocalPty(ptyId)
+          probesByPtyId.set(ptyId, probe)
+        }
+        const live = await probe
+        return resolvePtyId() !== ptyId || live !== false
       } catch {
         return true
       }

@@ -749,7 +749,7 @@ ipcMain.handle(
  *  retire — pinning the pane 'working' and locking its agent out of hibernation
  *  for good. Once provider and hook hydration settle, targeted PTY liveness can
  *  retire only rows whose local owner is proven gone. */
-function reapRestoredSubagentsWithoutLiveAgent(): void {
+async function reapRestoredSubagentsWithoutLiveAgent(): Promise<void> {
   const currentStore = store
   if (!currentStore) {
     return
@@ -761,8 +761,8 @@ function reapRestoredSubagentsWithoutLiveAgent(): void {
   const persistedPtyIdByPaneKey = indexPersistedPaneKeyPtyIds(
     currentStore.getWorkspaceSession().terminalLayoutsByTabId ?? {}
   )
-  sweepRestoredSubagentsWithoutLiveAgent({
-    hasLiveLocalPty: (ptyId) => provider.hasPty?.(ptyId) ?? null,
+  await sweepRestoredSubagentsWithoutLiveAgent({
+    probeLiveLocalPty: (ptyId) => provider.probePtyLiveness(ptyId),
     isLocalExecutionHost: (worktreeId) =>
       isLocalExecutionHost(
         resolveAgentWorkspaceExecutionHostId(worktreeId, {
@@ -827,7 +827,9 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
   })
   void localPtyStartupReady.then(() => {
     logStartupMilestone('local-pty-startup-ready')
-    reapRestoredSubagentsWithoutLiveAgent()
+    void reapRestoredSubagentsWithoutLiveAgent().catch((error) => {
+      console.warn('[agent-hooks] restored-subagent liveness probe failed:', error)
+    })
   })
   return firstWindowStartupServicesReady
 }

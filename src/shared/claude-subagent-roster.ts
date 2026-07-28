@@ -317,6 +317,20 @@ export function reapRestoredClaudeSubagentsWithoutLiveAgent(roster: ClaudeSubage
   return changed
 }
 
+export function claudeRosterHasRestoredSnapshotSubagent(
+  roster: ClaudeSubagentRoster | undefined
+): boolean {
+  if (!roster) {
+    return false
+  }
+  for (const tracked of roster.values()) {
+    if (tracked.restoredFromSnapshot === true) {
+      return true
+    }
+  }
+  return false
+}
+
 /** Whether a lifecycle agent id belongs to the named teammate. Teammate ids
  *  embed the name as `a<name>-<hex>`; requiring a hyphen-free suffix keeps
  *  teammate "rev" from matching "rev-two"'s ids (`arev-two-<hex>`), while a

@@ -38,6 +38,7 @@ afterEach(() => {
 async function restartWithInFlightSubagent(options?: {
   connectionId?: string
   subagents?: AgentSubagentSnapshot[]
+  additionalPaneKey?: string
 }): Promise<AgentHookServer> {
   const first = new AgentHookServer()
   await first.start({ env: 'production', userDataPath: dir })
@@ -53,6 +54,20 @@ async function restartWithInFlightSubagent(options?: {
       subagents: options?.subagents ?? [WORKING_CHILD]
     }
   })
+  if (options?.additionalPaneKey) {
+    first.ingestTerminalStatus({
+      paneKey: options.additionalPaneKey,
+      tabId: 'tab-2',
+      worktreeId: 'wt-1',
+      connectionId: options.connectionId ?? null,
+      payload: {
+        state: 'working',
+        prompt: 'review the PR',
+        agentType: 'claude',
+        subagents: options.subagents ?? [WORKING_CHILD]
+      }
+    })
+  }
   first.flushStatusPersistSync()
   first.stop()
 
@@ -64,14 +79,15 @@ async function restartWithInFlightSubagent(options?: {
 function sweepWith(
   server: AgentHookServer,
   overrides: {
-    hasLiveLocalPty?: (ptyId: string) => boolean | null
+    probeLiveLocalPty?: (ptyId: string) => boolean | null | Promise<boolean | null>
     executionHostId?: string | null
     boundPtyIdByPaneKey?: Record<string, string>
     persistedPtyIdByPaneKey?: Record<string, string>
   } = {}
-): number {
+): Promise<number> {
   return sweepRestoredSubagentsWithoutLiveAgent({
-    hasLiveLocalPty: overrides.hasLiveLocalPty ?? (() => false),
+    probeLiveLocalPty: async (ptyId) =>
+      overrides.probeLiveLocalPty ? await overrides.probeLiveLocalPty(ptyId) : false,
     isLocalExecutionHost: () =>
       isLocalExecutionHost(
         overrides.executionHostId === undefined ? 'local' : overrides.executionHostId
@@ -97,7 +113,7 @@ describe('restored subagent liveness sweep', () => {
     try {
       expect(paneStatus(server)).toEqual({ state: 'working', subagents: [WORKING_CHILD] })
 
-      expect(sweepWith(server, { persistedPtyIdByPaneKey: { [PANE]: PTY } })).toBe(1)
+      expect(await sweepWith(server, { persistedPtyIdByPaneKey: { [PANE]: PTY } })).toBe(1)
 
       expect(paneStatus(server)).toEqual({ state: 'done', subagents: undefined })
     } finally {
@@ -109,8 +125,8 @@ describe('restored subagent liveness sweep', () => {
     const server = await restartWithInFlightSubagent()
     try {
       expect(
-        sweepWith(server, {
-          hasLiveLocalPty: (ptyId) => ptyId === PTY,
+        await sweepWith(server, {
+          probeLiveLocalPty: (ptyId) => ptyId === PTY,
           persistedPtyIdByPaneKey: { [PANE]: PTY }
         })
       ).toBe(0)
@@ -124,11 +140,51 @@ describe('restored subagent liveness sweep', () => {
   it('uses targeted liveness for a PTY bound in this runtime', async () => {
     const server = await restartWithInFlightSubagent()
     try {
-      const hasLiveLocalPty = vi.fn((ptyId: string) => ptyId === PTY)
-      expect(sweepWith(server, { hasLiveLocalPty, boundPtyIdByPaneKey: { [PANE]: PTY } })).toBe(0)
+      const probeLiveLocalPty = vi.fn((ptyId: string) => ptyId === PTY)
+      expect(
+        await sweepWith(server, {
+          probeLiveLocalPty,
+          boundPtyIdByPaneKey: { [PANE]: PTY }
+        })
+      ).toBe(0)
 
-      expect(hasLiveLocalPty).toHaveBeenCalledExactlyOnceWith(PTY)
+      expect(probeLiveLocalPty).toHaveBeenCalledExactlyOnceWith(PTY)
       expect(paneStatus(server).state).toBe('working')
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('probes only restored rosters and deduplicates a shared exact PTY', async () => {
+    const otherPane = makePaneKey('tab-2', LEAF)
+    const server = await restartWithInFlightSubagent({ additionalPaneKey: otherPane })
+    const probeLiveLocalPty = vi.fn(() => false)
+    try {
+      expect(
+        await sweepWith(server, {
+          probeLiveLocalPty,
+          persistedPtyIdByPaneKey: { [PANE]: PTY, [otherPane]: PTY }
+        })
+      ).toBe(2)
+
+      expect(probeLiveLocalPty).toHaveBeenCalledExactlyOnceWith(PTY)
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('does not probe a hydrated Claude pane without restored rows', async () => {
+    const server = await restartWithInFlightSubagent({ subagents: [] })
+    const probeLiveLocalPty = vi.fn(() => false)
+    try {
+      expect(
+        await sweepWith(server, {
+          probeLiveLocalPty,
+          persistedPtyIdByPaneKey: { [PANE]: PTY }
+        })
+      ).toBe(0)
+
+      expect(probeLiveLocalPty).not.toHaveBeenCalled()
     } finally {
       server.stop()
     }
@@ -139,7 +195,7 @@ describe('restored subagent liveness sweep', () => {
     const server = await restartWithInFlightSubagent()
     try {
       expect(
-        sweepWith(server, {
+        await sweepWith(server, {
           executionHostId: 'ssh:conn-1',
           persistedPtyIdByPaneKey: { [PANE]: sshPtyId }
         })
@@ -154,7 +210,7 @@ describe('restored subagent liveness sweep', () => {
   it('never reaps a relay-owned pane even with no local PTY at all', async () => {
     const server = await restartWithInFlightSubagent({ connectionId: 'conn-1' })
     try {
-      expect(sweepWith(server)).toBe(0)
+      expect(await sweepWith(server)).toBe(0)
 
       expect(paneStatus(server).state).toBe('working')
     } finally {
@@ -164,17 +220,17 @@ describe('restored subagent liveness sweep', () => {
 
   it('never reaps a runtime-hosted pane from the desktop local provider', async () => {
     const server = await restartWithInFlightSubagent()
-    const hasLiveLocalPty = vi.fn(() => false)
+    const probeLiveLocalPty = vi.fn(() => false)
     try {
       expect(
-        sweepWith(server, {
+        await sweepWith(server, {
           executionHostId: 'runtime:ephemeral-vm-1',
-          hasLiveLocalPty,
+          probeLiveLocalPty,
           persistedPtyIdByPaneKey: { [PANE]: 'remote:ephemeral-vm-1@@pty-1' }
         })
       ).toBe(0)
 
-      expect(hasLiveLocalPty).not.toHaveBeenCalled()
+      expect(probeLiveLocalPty).not.toHaveBeenCalled()
       expect(paneStatus(server).state).toBe('working')
     } finally {
       server.stop()
@@ -185,8 +241,8 @@ describe('restored subagent liveness sweep', () => {
     const server = await restartWithInFlightSubagent()
     try {
       expect(
-        sweepWith(server, {
-          hasLiveLocalPty: () => null,
+        await sweepWith(server, {
+          probeLiveLocalPty: () => null,
           persistedPtyIdByPaneKey: { [PANE]: PTY }
         })
       ).toBe(0)
@@ -199,11 +255,11 @@ describe('restored subagent liveness sweep', () => {
 
   it('does nothing without an exact pane PTY binding', async () => {
     const server = await restartWithInFlightSubagent()
-    const hasLiveLocalPty = vi.fn(() => false)
+    const probeLiveLocalPty = vi.fn(() => false)
     try {
-      expect(sweepWith(server, { hasLiveLocalPty })).toBe(0)
+      expect(await sweepWith(server, { probeLiveLocalPty })).toBe(0)
 
-      expect(hasLiveLocalPty).not.toHaveBeenCalled()
+      expect(probeLiveLocalPty).not.toHaveBeenCalled()
       expect(paneStatus(server).state).toBe('working')
     } finally {
       server.stop()
@@ -225,7 +281,65 @@ describe('restored subagent liveness sweep', () => {
         }
       })
 
-      expect(sweepWith(server)).toBe(0)
+      expect(await sweepWith(server)).toBe(0)
+      expect(paneStatus(server).state).toBe('working')
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('keeps a pane that reports while its liveness probe is pending', async () => {
+    const server = await restartWithInFlightSubagent()
+    let resolveProbe!: (live: boolean | null) => void
+    const probeLiveLocalPty = vi.fn(
+      () =>
+        new Promise<boolean | null>((resolve) => {
+          resolveProbe = resolve
+        })
+    )
+    try {
+      const sweep = sweepWith(server, {
+        probeLiveLocalPty,
+        persistedPtyIdByPaneKey: { [PANE]: PTY }
+      })
+      await vi.waitFor(() => expect(probeLiveLocalPty).toHaveBeenCalledOnce())
+      server.ingestTerminalStatus({
+        paneKey: PANE,
+        tabId: 'tab-1',
+        worktreeId: 'wt-1',
+        payload: {
+          state: 'working',
+          prompt: 'confirmed during probe',
+          agentType: 'claude',
+          subagents: [WORKING_CHILD]
+        }
+      })
+      resolveProbe(false)
+
+      expect(await sweep).toBe(0)
+      expect(paneStatus(server).state).toBe('working')
+    } finally {
+      server.stop()
+    }
+  })
+
+  it('keeps a pane that binds a newer PTY while the old probe is pending', async () => {
+    const server = await restartWithInFlightSubagent()
+    const boundPtyIdByPaneKey = { [PANE]: PTY }
+    let resolveProbe!: (live: boolean | null) => void
+    const probeLiveLocalPty = vi.fn(
+      () =>
+        new Promise<boolean | null>((resolve) => {
+          resolveProbe = resolve
+        })
+    )
+    try {
+      const sweep = sweepWith(server, { probeLiveLocalPty, boundPtyIdByPaneKey })
+      await vi.waitFor(() => expect(probeLiveLocalPty).toHaveBeenCalledExactlyOnceWith(PTY))
+      boundPtyIdByPaneKey[PANE] = 'wt-1__pty-new'
+      resolveProbe(false)
+
+      expect(await sweep).toBe(0)
       expect(paneStatus(server).state).toBe('working')
     } finally {
       server.stop()
@@ -244,7 +358,7 @@ describe('restored subagent liveness sweep', () => {
         payload: { state: 'working', prompt: 'still going', agentType: 'claude' }
       })
 
-      sweepWith(server)
+      await sweepWith(server)
 
       expect(paneStatus(server, makePaneKey('tab-2', LEAF)).state).toBe('working')
     } finally {
@@ -254,13 +368,13 @@ describe('restored subagent liveness sweep', () => {
 
   it('reports zero and leaves state alone when targeted liveness throws', async () => {
     const server = await restartWithInFlightSubagent()
-    const hasLiveLocalPty = vi.fn(() => {
+    const probeLiveLocalPty = vi.fn(() => {
       throw new Error('daemon unreachable')
     })
     try {
       expect(
-        sweepWith(server, {
-          hasLiveLocalPty,
+        await sweepWith(server, {
+          probeLiveLocalPty,
           persistedPtyIdByPaneKey: { [PANE]: PTY }
         })
       ).toBe(0)

@@ -37,6 +37,7 @@ import {
   type HookListenerState
 } from '../../shared/agent-hook-listener'
 import {
+  claudeRosterHasRestoredSnapshotSubagent,
   claudeRosterHasWorkingSubagent,
   claudeRosterToSnapshots
 } from '../../shared/claude-subagent-roster'
@@ -1932,19 +1933,42 @@ export class AgentHookServer {
    *  Both the execution host and relay binding must prove local ownership before
    *  targeted PTY liveness is consulted. Panes that reported in this runtime are
    *  also skipped. Returns the number of panes changed. */
-  reapRestoredClaudeSubagentsWithoutLiveAgent(
+  async reapRestoredClaudeSubagentsWithoutLiveAgent(
     isLocalExecutionHost: (worktreeId: string | undefined) => boolean,
-    isLocalPaneAgentLive: (paneKey: string) => boolean
-  ): number {
-    let changedPanes = 0
+    isLocalPaneAgentLive: (paneKey: string) => Promise<boolean>
+  ): Promise<number> {
+    const candidates: { paneKey: string; entry: EnrichedAgentHookEventPayload }[] = []
     for (const [paneKey, entry] of this.state.lastStatusByPaneKey) {
       const enriched = entry as EnrichedAgentHookEventPayload
       if (
-        enriched.payload.agentType !== 'claude' ||
-        enriched.connectionId !== null ||
-        !isLocalExecutionHost(enriched.worktreeId) ||
+        enriched.payload.agentType === 'claude' &&
+        enriched.connectionId === null &&
+        isLocalExecutionHost(enriched.worktreeId) &&
+        claudeRosterHasRestoredSnapshotSubagent(
+          this.state.claudeSubagentRosterByPaneKey.get(paneKey)
+        ) &&
+        !this.runtimeObservedStatusPaneKeys.has(paneKey)
+      ) {
+        candidates.push({ paneKey, entry: enriched })
+      }
+    }
+    const liveness = await Promise.all(
+      candidates.map(async (candidate) => {
+        try {
+          return await isLocalPaneAgentLive(candidate.paneKey)
+        } catch {
+          return true
+        }
+      })
+    )
+    let changedPanes = 0
+    for (const [index, candidate] of candidates.entries()) {
+      const { paneKey, entry: enriched } = candidate
+      if (
+        liveness[index] ||
+        this.state.lastStatusByPaneKey.get(paneKey) !== enriched ||
         this.runtimeObservedStatusPaneKeys.has(paneKey) ||
-        isLocalPaneAgentLive(paneKey)
+        !isLocalExecutionHost(enriched.worktreeId)
       ) {
         continue
       }
