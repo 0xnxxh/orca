@@ -86,6 +86,8 @@ const ORCA_E2E_SLOWMO_MS = ((): number => {
   return Math.max(parsed, 0)
 })()
 
+const E2E_VIDEO_SIZE = { width: 1920, height: 1080 }
+
 async function removeUserDataDirAfterShutdown(userDataDir: string): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -232,7 +234,7 @@ export const test = base.extend<OrcaTestFixtures, OrcaWorkerFixtures>({
     const app = await electron.launch({
       args: [...orcaAppExtraArgs, ...getOrcaElectronLaunchArgs(mainPath, headful)],
       ...(slowMo > 0 ? { slowMo } : {}),
-      ...(recordVideoDir ? { recordVideo: { dir: recordVideoDir } } : {}),
+      ...(recordVideoDir ? { recordVideo: { dir: recordVideoDir, size: E2E_VIDEO_SIZE } } : {}),
       // Why: keep NODE_ENV=development so window.__store is exposed and
       // dev-only helpers activate. ORCA_E2E_USER_DATA_DIR overrides the usual
       // shared dev profile so every spec gets a clean persistence root.
