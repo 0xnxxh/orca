@@ -515,6 +515,31 @@ async function stageUnparkableWorktreeTabs(page: Page, worktreeId: string): Prom
   )
 }
 
+// Why: a live pane can call updateTabPtyId with its real local id after we rewrite
+// tab.ptyId, so a visible-stage of remote:… can race back to park-restorable. Poll
+// until every tab still carries the un-parkable prefix before relying on it.
+async function waitForUnparkableWorktreeTabs(page: Page, worktreeId: string): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          ({ worktreeId, prefix }) => {
+            const tabs = window.__store?.getState().tabsByWorktree[worktreeId] ?? []
+            return (
+              tabs.length > 0 &&
+              tabs.every((tab) => typeof tab.ptyId === 'string' && tab.ptyId.startsWith(prefix))
+            )
+          },
+          { worktreeId, prefix: UNPARKABLE_PTY_PREFIX }
+        ),
+      {
+        timeout: 5_000,
+        message: `worktree ${worktreeId} did not keep un-parkable remote: pty ids after staging`
+      }
+    )
+    .toBe(true)
+}
+
 // Why not getTerminalContent: it serializes the whole scrollback, which is
 // megabytes of string per poll tick at RETENTION_SCROLLBACK_ROWS. The fill
 // marker is the last line written, so scanning the buffer tail is enough.
@@ -646,24 +671,84 @@ test.describe('Terminal hidden worktree retention budget', () => {
       // Hiding the victim first makes the decoy the more-recently-hidden
       // candidate, so the cap's last-active exemption lands on the decoy.
       await switchToWorktree(orcaPage, decoyWorktreeId)
+      await expect
+        .poll(() => orcaPage.evaluate(() => window.__store?.getState().activeWorktreeId), {
+          timeout: 5_000,
+          message: 'decoy worktree did not become active before staging'
+        })
+        .toBe(decoyWorktreeId)
       await ensureTerminalVisible(orcaPage)
       await waitForActiveTerminalManager(orcaPage, 30_000)
-      await stageUnparkableWorktreeTabs(orcaPage, decoyWorktreeId)
       const decoyTabIds = (await getWorktreeTabs(orcaPage, decoyWorktreeId)).map((tab) => tab.id)
+      expect(decoyTabIds.length).toBeGreaterThan(0)
+      // Why assert before hide: if the decoy pane never mounted, the later
+      // "stays mounted" control arm is a false failure of the budget path.
+      expect(await countMountedPaneManagers(orcaPage, decoyTabIds)).toBe(decoyTabIds.length)
 
       // Leaving the terminal view hides BOTH worktrees while keeping them
       // mounted (App.tsx hides the workbench, it does not unmount it).
       await orcaPage.evaluate(() => {
         window.__store?.getState().setActiveView('tasks')
       })
-      await orcaPage.waitForTimeout(PARKING_DELAY_MS * 4)
+      // Why stage AFTER hide: while a pane is visible/active, bind/updateTabPtyId
+      // can rewrite our remote: fake id back to the live local transport, so the
+      // decoy looks park-restorable and ordinary parking unmounts it during the
+      // control arm. Staging (and re-staging the victim) only once both are
+      // hidden keeps the un-parkable classification stable for the wait below.
+      await stageUnparkableWorktreeTabs(orcaPage, victimWorktreeId)
+      await stageUnparkableWorktreeTabs(orcaPage, decoyWorktreeId)
+      await waitForUnparkableWorktreeTabs(orcaPage, victimWorktreeId)
+      await waitForUnparkableWorktreeTabs(orcaPage, decoyWorktreeId)
 
       const victimTabIds = victimTabs.map((tab) => tab.tabId)
       expect(victimTabIds).toHaveLength(RETENTION_TAB_COUNT)
-      // Control arm: hidden well past the parking window, nothing parks —
-      // ordinary parking cannot restore these ptys, so it never evicts them.
-      expect(await countMountedPaneManagers(orcaPage, victimTabIds)).toBe(RETENTION_TAB_COUNT)
-      expect(await countMountedPaneManagers(orcaPage, decoyTabIds)).toBe(decoyTabIds.length)
+      // Control arm: stay hidden past the ordinary parking window with budget
+      // still off. Re-stage inside the poll so a late updateTabPtyId cannot
+      // flip a tab back to park-restorable and unmount mid-wait.
+      const controlArmStartedAt = Date.now()
+      await expect
+        .poll(
+          async () => {
+            await stageUnparkableWorktreeTabs(orcaPage, victimWorktreeId)
+            await stageUnparkableWorktreeTabs(orcaPage, decoyWorktreeId)
+            const victimMounted = await countMountedPaneManagers(orcaPage, victimTabIds)
+            const decoyMounted = await countMountedPaneManagers(orcaPage, decoyTabIds)
+            const heldLongEnough = Date.now() - controlArmStartedAt >= PARKING_DELAY_MS * 4
+            return {
+              victimMounted,
+              decoyMounted,
+              heldLongEnough,
+              unparkable:
+                (await orcaPage.evaluate(
+                  ({ worktreeIds, prefix }) =>
+                    worktreeIds.every((worktreeId) => {
+                      const tabs = window.__store?.getState().tabsByWorktree[worktreeId] ?? []
+                      return (
+                        tabs.length > 0 &&
+                        tabs.every(
+                          (tab) => typeof tab.ptyId === 'string' && tab.ptyId.startsWith(prefix)
+                        )
+                      )
+                    }),
+                  {
+                    worktreeIds: [victimWorktreeId, decoyWorktreeId],
+                    prefix: UNPARKABLE_PTY_PREFIX
+                  }
+                )) === true
+            }
+          },
+          {
+            timeout: Math.max(30_000, PARKING_DELAY_MS * 10),
+            message:
+              'control arm: un-parkable hidden worktrees did not stay mounted for the parking window'
+          }
+        )
+        .toEqual({
+          victimMounted: RETENTION_TAB_COUNT,
+          decoyMounted: decoyTabIds.length,
+          heldLongEnough: true,
+          unparkable: true
+        })
 
       const before = await readRetentionMemorySample(orcaPage)
       expect(before.bufferMb).toBeGreaterThan(MIN_STAGED_BUFFER_MB)
