@@ -154,6 +154,37 @@ describe('stopMissingWorktreeTerminals', () => {
     expect(provider.shutdownCalls).toHaveLength(ids.length)
   })
 
+  // Why: the batching must not leak past the calls it was built for. If the proxy
+  // were the receiver, a provider whose own method called `this.listProcesses()`
+  // would silently read this sweep's cached snapshot instead of the live host.
+  it('does not serve the shared snapshot to provider-internal listProcesses', async () => {
+    class SelfListingProvider {
+      listCalls = 0
+      constructor(private readonly sessions: { id: string; cwd: string; title: string }[]) {}
+      async listProcesses(): Promise<{ id: string; cwd: string; title: string }[]> {
+        this.listCalls += 1
+        return this.sessions
+      }
+      async shutdown(): Promise<void> {
+        // A provider that re-reads live state as part of stopping.
+        await this.listProcesses()
+      }
+    }
+    const ids = ['repo-1::/workspace/a', 'repo-1::/workspace/b']
+    const provider = new SelfListingProvider(
+      ids.map((id) => ({ id: `${id}@@session`, cwd: '/workspace', title: 'shell' }))
+    )
+
+    await stopMissingWorktreeTerminals({ ...localRepo, connectionId: 'ssh-1' }, ids, [], {
+      runtime: createRuntime(),
+      getLocalProvider: () => null,
+      getSshProvider: () => provider as unknown as IPtyProvider
+    })
+
+    // One shared sweep scan, plus each shutdown's own live re-read.
+    expect(provider.listCalls).toBe(1 + ids.length)
+  })
+
   // Why: caching a rejected scan would let one transient failure suppress
   // teardown for every remaining worktree in the sweep.
   it('does not reuse a failed process scan', async () => {

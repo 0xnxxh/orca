@@ -18,9 +18,14 @@ const MISSING_WORKTREE_TEARDOWN_CONCURRENCY = 4
 function withSharedProcessSnapshot(provider: IPtyProvider): IPtyProvider {
   let snapshot: Promise<Awaited<ReturnType<IPtyProvider['listProcesses']>>> | null = null
   return new Proxy(provider, {
-    get(target, property, receiver) {
+    get(target, property) {
       if (property !== 'listProcesses') {
-        return Reflect.get(target, property, receiver)
+        // Why: bind other members to `target`, not the proxy. With the proxy as
+        // receiver, a provider whose own method called `this.listProcesses()`
+        // would silently read this sweep's cached snapshot instead of the live
+        // host — the batching must not leak past the calls it was built for.
+        const member: unknown = Reflect.get(target, property)
+        return typeof member === 'function' ? member.bind(target) : member
       }
       return async (opts?: { deadlineMs?: number }) => {
         const pending = (snapshot ??= target.listProcesses(opts))
