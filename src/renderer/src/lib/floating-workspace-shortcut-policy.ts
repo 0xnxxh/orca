@@ -15,13 +15,16 @@ type FloatingWorkspaceShortcutEvent = Partial<
   Pick<KeyboardEvent, 'target'> & { doubleTapModifier?: PhysicalModifierToken }
 
 const FLOATING_WORKSPACE_SHORTCUT_SURFACE_SELECTOR = '[data-floating-terminal-shortcut-surface]'
-const FLOATING_WORKSPACE_PANEL_SHORTCUT_ACTIONS: readonly KeybindingActionId[] = [
+const FLOATING_WORKSPACE_PANEL_SHORTCUT_ACTIONS = [
   'tab.newTerminal',
   'tab.newBrowser',
   'tab.newMarkdown',
   'tab.openMarkdown',
   'tab.close'
-]
+] as const satisfies readonly KeybindingActionId[]
+
+export type FloatingWorkspacePanelOwnedAction =
+  (typeof FLOATING_WORKSPACE_PANEL_SHORTCUT_ACTIONS)[number]
 
 function defaultIsMacPlatform(): boolean {
   return typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
@@ -41,6 +44,23 @@ export function isFloatingWorkspacePanelShortcutTarget(
   )
 }
 
+// Which tab-creation/close action the panel claims, without the target gate — the panel's own
+// window-capture dispatch owns chords from anywhere inside the panel (xterm, browser slot, editor),
+// not just its shortcut surface. Returning the identity lets one pass serve both the claim check and
+// the dispatch branch.
+export function matchFloatingWorkspacePanelOwnedAction(
+  event: FloatingWorkspaceShortcutEvent,
+  platform: NodeJS.Platform,
+  keybindings: KeybindingOverrides | undefined,
+  options: KeybindingMatchOptions
+): FloatingWorkspacePanelOwnedAction | null {
+  return (
+    FLOATING_WORKSPACE_PANEL_SHORTCUT_ACTIONS.find((actionId) =>
+      keybindingMatchesAction(actionId, event, platform, keybindings, options)
+    ) ?? null
+  )
+}
+
 export function isFloatingWorkspacePanelShortcut(
   event: FloatingWorkspaceShortcutEvent,
   platformOrIsMac: NodeJS.Platform | boolean = defaultIsMacPlatform(),
@@ -53,9 +73,7 @@ export function isFloatingWorkspacePanelShortcut(
   }
   const platform: NodeJS.Platform =
     typeof platformOrIsMac === 'boolean' ? (platformOrIsMac ? 'darwin' : 'linux') : platformOrIsMac
-  return FLOATING_WORKSPACE_PANEL_SHORTCUT_ACTIONS.some((actionId) =>
-    keybindingMatchesAction(actionId, event, platform, keybindings, options)
-  )
+  return matchFloatingWorkspacePanelOwnedAction(event, platform, keybindings, options) !== null
 }
 
 export type FloatingWorkspacePanelShortcutMatch =
@@ -106,4 +124,25 @@ export function matchFloatingWorkspacePanelShortcut(
     return { kind: 'action', action: 'floatingWorkspace.minimize' }
   }
   return null
+}
+
+// One pass over everything the panel claims, for callers (App.tsx's yield gate, the panel's keydown
+// preflight) that would otherwise scan the creation table and the chrome table separately per keydown.
+// Creation chords stay target-gated; chrome chords stay ungated — same order and semantics as the two
+// matchers it composes.
+export function matchFloatingWorkspacePanelChord(
+  event: FloatingWorkspaceShortcutEvent,
+  platform: NodeJS.Platform,
+  panelRoot: HTMLElement | null,
+  keybindings: KeybindingOverrides | undefined,
+  options: KeybindingMatchOptions,
+  chromeOptions: KeybindingMatchOptions = options
+): FloatingWorkspacePanelShortcutMatch | null {
+  const ownedAction = isFloatingWorkspacePanelShortcutTarget(event.target, panelRoot)
+    ? matchFloatingWorkspacePanelOwnedAction(event, platform, keybindings, options)
+    : null
+  if (ownedAction) {
+    return { kind: 'action', action: ownedAction }
+  }
+  return matchFloatingWorkspacePanelShortcut(event, platform, keybindings, options, chromeOptions)
 }

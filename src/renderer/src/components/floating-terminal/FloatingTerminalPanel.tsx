@@ -41,8 +41,9 @@ import {
   switchFloatingWorkspaceTab
 } from '@/lib/floating-workspace-terminal-actions'
 import {
-  isFloatingWorkspacePanelShortcut,
-  matchFloatingWorkspacePanelShortcut
+  matchFloatingWorkspacePanelOwnedAction,
+  matchFloatingWorkspacePanelShortcut,
+  type FloatingWorkspacePanelOwnedAction
 } from '@/lib/floating-workspace-shortcut-policy'
 import {
   armFloatingPanelReclaimIntent,
@@ -131,6 +132,13 @@ type FloatingPanelShortcutInput = Partial<
 // terminal pane's L3 handler closes the focused split pane" — callers must NOT consume it. Both
 // 'handled' and 'deferred' stop L2's own directional dispatch; only 'unmatched' falls through.
 type FloatingShortcutOutcome = 'handled' | 'deferred' | 'unmatched'
+
+// What the panel claimed for one keydown, resolved once and then applied — see resolveFloatingPanelShortcut.
+type FloatingPanelShortcutResolution =
+  | { kind: 'create'; action: Exclude<FloatingWorkspacePanelOwnedAction, 'tab.close'> }
+  | { kind: 'close'; focusedFloatingTerminal: boolean }
+  | { kind: 'index'; index: number }
+  | { kind: 'chrome'; action: KeybindingActionId }
 
 const FLOATING_TERMINAL_NO_DRAG_SELECTOR =
   'button,input,textarea,select,[role="menuitem"],[data-testid="sortable-tab"],[data-floating-terminal-no-drag]'
@@ -278,6 +286,11 @@ export function FloatingTerminalPanel({
   // Live imperative handles per floating terminal tab, so a double-tap-bound close (which L3's window
   // listener never resolves) can reach the same split-aware pane-close authority directly (F2/F-feas).
   const terminalPaneHandlesRef = useRef<Map<string, TerminalPaneHandle | null>>(new Map())
+  // Per-tab ref callbacks are cached so a parent render doesn't hand TerminalPane a new function
+  // identity, which would make React detach (dropping the handle) and re-attach it every render.
+  const terminalPaneRefCallbacksRef = useRef<
+    Map<string, (handle: TerminalPaneHandle | null) => void>
+  >(new Map())
   const doubleTapDetectorRef = useRef<ModifierDoubleTapDetector | null>(null)
   if (!doubleTapDetectorRef.current) {
     doubleTapDetectorRef.current = new ModifierDoubleTapDetector()
@@ -1128,6 +1141,26 @@ export function FloatingTerminalPanel({
     }
   }, [open, maximizePanel])
 
+  const getTerminalPaneRefCallback = useCallback(
+    (tabId: string): ((handle: TerminalPaneHandle | null) => void) => {
+      const cached = terminalPaneRefCallbacksRef.current.get(tabId)
+      if (cached) {
+        return cached
+      }
+      const register = (handle: TerminalPaneHandle | null): void => {
+        if (handle) {
+          terminalPaneHandlesRef.current.set(tabId, handle)
+          return
+        }
+        terminalPaneHandlesRef.current.delete(tabId)
+        terminalPaneRefCallbacksRef.current.delete(tabId)
+      }
+      terminalPaneRefCallbacksRef.current.set(tabId, register)
+      return register
+    },
+    []
+  )
+
   // Double-tap-bound close: invoke the active terminal pane's own split-aware close authority directly
   // (the same executeClosePane L3 runs). L3's window listener can't resolve a synthetic double-tap, so
   // deferring would strand it — this is the direct path. Falls back to a whole-item confirmed close
@@ -1143,8 +1176,10 @@ export function FloatingTerminalPanel({
     }
   }, [activeClosableTab, activeTerminalId, closeFloatingItemConfirmed])
 
-  const handleFloatingPanelShortcutAction = useCallback(
-    (input: FloatingPanelShortcutInput, consume: () => void): FloatingShortcutOutcome => {
+  // One pass over every chord the panel claims. Its keydown preflight and its dispatch consume the
+  // same resolution, so a single event is never re-scanned against the shortcut table.
+  const resolveFloatingPanelShortcut = useCallback(
+    (input: FloatingPanelShortcutInput): FloatingPanelShortcutResolution | null => {
       const state = useAppStore.getState()
       const platform = getShortcutPlatform()
       const terminalShortcutPolicy = state.settings?.terminalShortcutPolicy
@@ -1164,38 +1199,67 @@ export function FloatingTerminalPanel({
         isFloatingTerminalInput && terminalShortcutPolicy === 'terminal-first'
           ? { context: 'app', terminalShortcutPolicy }
           : matchOptions
-      const matches = (actionId: KeybindingActionId): boolean =>
-        keybindingMatchesAction(actionId, input, platform, state.keybindings, matchOptions)
 
-      if (matches('tab.newTerminal')) {
-        consume()
-        createFloatingTerminalTab()
-        return 'handled'
-      }
-      if (matches('tab.newBrowser')) {
-        consume()
-        createFloatingBrowserTab()
-        return 'handled'
-      }
-      if (matches('tab.newMarkdown')) {
-        consume()
-        createFloatingMarkdownTab()
-        return 'handled'
-      }
-      if (matches('tab.openMarkdown')) {
-        consume()
-        openFloatingMarkdownTab()
-        return 'handled'
+      const ownedAction = matchFloatingWorkspacePanelOwnedAction(
+        input,
+        platform,
+        state.keybindings,
+        matchOptions
+      )
+      if (ownedAction !== null && ownedAction !== 'tab.close') {
+        return { kind: 'create', action: ownedAction }
       }
       // A focused floating terminal defers its close chord to L3 (the split-pane/confirm authority);
       // a double-tap L3 can't observe closes the active pane here. Non-terminal closes the tab.
       const focusedFloatingTerminal =
         isFloatingTerminalInput && activeTab?.contentType === 'terminal'
-      const isCloseChord = focusedFloatingTerminal
-        ? isTerminalPaneCloseChord(input, platform, state.keybindings, matchOptions, matchOptions)
-        : matches('tab.close')
-      if (isCloseChord) {
-        if (focusedFloatingTerminal) {
+      if (
+        ownedAction === 'tab.close' ||
+        (focusedFloatingTerminal &&
+          isTerminalPaneCloseChord(input, platform, state.keybindings, matchOptions, matchOptions))
+      ) {
+        return { kind: 'close', focusedFloatingTerminal }
+      }
+      // Rename / indexed-switch / window max-min via the shared policy so dispatch, its preflight, and
+      // App.tsx's gate stay single-sourced.
+      const panelShortcut = matchFloatingWorkspacePanelShortcut(
+        input,
+        platform,
+        state.keybindings,
+        matchOptions,
+        floatingChromeMatchOptions
+      )
+      if (panelShortcut === null) {
+        return null
+      }
+      return panelShortcut.kind === 'index'
+        ? { kind: 'index', index: panelShortcut.index }
+        : { kind: 'chrome', action: panelShortcut.action }
+    },
+    [activeTab]
+  )
+
+  const applyFloatingPanelShortcut = useCallback(
+    (
+      resolution: FloatingPanelShortcutResolution,
+      input: FloatingPanelShortcutInput,
+      consume: () => void
+    ): FloatingShortcutOutcome => {
+      if (resolution.kind === 'create') {
+        consume()
+        if (resolution.action === 'tab.newTerminal') {
+          createFloatingTerminalTab()
+        } else if (resolution.action === 'tab.newBrowser') {
+          createFloatingBrowserTab()
+        } else if (resolution.action === 'tab.newMarkdown') {
+          createFloatingMarkdownTab()
+        } else {
+          openFloatingMarkdownTab()
+        }
+        return 'handled'
+      }
+      if (resolution.kind === 'close') {
+        if (resolution.focusedFloatingTerminal) {
           if (input.doubleTapModifier) {
             consume()
             closeActiveFloatingTerminalPane()
@@ -1211,41 +1275,30 @@ export function FloatingTerminalPanel({
         }
         return 'handled'
       }
-      // Rename / indexed-switch / window max-min via the shared policy so dispatch, its preflight, and
-      // App.tsx's gate stay single-sourced. Consume a matched index even out-of-range so it never leaks.
-      const panelShortcut = matchFloatingWorkspacePanelShortcut(
-        input,
-        platform,
-        state.keybindings,
-        matchOptions,
-        floatingChromeMatchOptions
-      )
-      if (panelShortcut?.kind === 'index') {
+      // Consume a matched index even out-of-range so it never leaks.
+      if (resolution.kind === 'index') {
         consume()
-        const visibleId = visibleFloatingTabOrder[panelShortcut.index]
+        const visibleId = visibleFloatingTabOrder[resolution.index]
         if (visibleId) {
           activateFloatingItem(visibleId)
         }
         return 'handled'
       }
-      if (panelShortcut?.kind === 'action') {
-        if (panelShortcut.action === 'tab.rename') {
-          if (!activeTab) {
-            return 'unmatched'
-          }
-          consume()
-          state.setRenamingTabId(activeTab.id)
-          return 'handled'
+      if (resolution.action === 'tab.rename') {
+        if (!activeTab) {
+          return 'unmatched'
         }
         consume()
-        if (panelShortcut.action === 'floatingWorkspace.maximize') {
-          toggleMaximized()
-        } else {
-          onOpenChange(false)
-        }
+        useAppStore.getState().setRenamingTabId(activeTab.id)
         return 'handled'
       }
-      return 'unmatched'
+      consume()
+      if (resolution.action === 'floatingWorkspace.maximize') {
+        toggleMaximized()
+      } else {
+        onOpenChange(false)
+      }
+      return 'handled'
     },
     [
       activeClosableTab,
@@ -1263,6 +1316,39 @@ export function FloatingTerminalPanel({
     ]
   )
 
+  const handleFloatingPanelShortcutAction = useCallback(
+    (input: FloatingPanelShortcutInput, consume: () => void): FloatingShortcutOutcome => {
+      const resolution = resolveFloatingPanelShortcut(input)
+      return resolution === null
+        ? 'unmatched'
+        : applyFloatingPanelShortcut(resolution, input, consume)
+    },
+    [applyFloatingPanelShortcut, resolveFloatingPanelShortcut]
+  )
+
+  // Live closures for the window-capture and guest-bridge listeners. Reading them through a ref pins
+  // those subscriptions to [open] instead of tearing down and re-adding on every tab reorder,
+  // active-tab change, or close-helper identity change.
+  const floatingShortcutListenersRef = useRef({
+    activateFloatingItem,
+    closeFloatingItemConfirmed,
+    handleFloatingPanelShortcutAction,
+    visibleFloatingTabOrder
+  })
+  useEffect(() => {
+    floatingShortcutListenersRef.current = {
+      activateFloatingItem,
+      closeFloatingItemConfirmed,
+      handleFloatingPanelShortcutAction,
+      visibleFloatingTabOrder
+    }
+  }, [
+    activateFloatingItem,
+    closeFloatingItemConfirmed,
+    handleFloatingPanelShortcutAction,
+    visibleFloatingTabOrder
+  ])
+
   const handleShortcutSurfaceKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (!open || event.defaultPrevented || event.repeat) {
@@ -1277,45 +1363,17 @@ export function FloatingTerminalPanel({
         return
       }
 
-      const state = useAppStore.getState()
-      const platform = getShortcutPlatform()
-      const terminalShortcutPolicy = state.settings?.terminalShortcutPolicy
-      const isFloatingTerminalInput = isFloatingWorkspaceTerminalInputTarget(event.target)
-      const context: KeybindingContext = isFloatingTerminalInput ? 'terminal' : 'app'
-      const matchOptions: KeybindingMatchOptions = {
-        context,
-        terminalShortcutPolicy
-      }
-      const floatingChromeMatchOptions: KeybindingMatchOptions =
-        isFloatingTerminalInput && terminalShortcutPolicy === 'terminal-first'
-          ? { context: 'app', terminalShortcutPolicy }
-          : matchOptions
+      // The target check above already enforces the panel's shortcut-surface gate, so the shared
+      // resolution is the whole preflight — no second scan of the match table.
       const nativeEvent = event.nativeEvent
-      const isFloatingChromeShortcut =
-        matchFloatingWorkspacePanelShortcut(
-          nativeEvent,
-          platform,
-          state.keybindings,
-          matchOptions,
-          floatingChromeMatchOptions
-        ) !== null
-
-      if (
-        !isFloatingWorkspacePanelShortcut(
-          nativeEvent,
-          platform,
-          panelRef.current,
-          state.keybindings,
-          matchOptions
-        ) &&
-        !isFloatingChromeShortcut
-      ) {
+      const resolution = resolveFloatingPanelShortcut(nativeEvent)
+      if (resolution === null) {
         return
       }
 
-      handleFloatingPanelShortcutAction(nativeEvent, () => event.preventDefault())
+      applyFloatingPanelShortcut(resolution, nativeEvent, () => event.preventDefault())
     },
-    [handleFloatingPanelShortcutAction, open]
+    [applyFloatingPanelShortcut, open, resolveFloatingPanelShortcut]
   )
 
   useEffect(() => {
@@ -1372,11 +1430,13 @@ export function FloatingTerminalPanel({
         event.stopImmediatePropagation()
       }
 
+      const dispatchShortcut =
+        floatingShortcutListenersRef.current.handleFloatingPanelShortcutAction
       // Both 'handled' and 'deferred' stop L2's own directional dispatch; only 'deferred' leaves the
       // event un-consumed so the terminal pane's L3 handler runs.
       if (
         detected &&
-        handleFloatingPanelShortcutAction(
+        dispatchShortcut(
           { doubleTapModifier: detected.modifier, target: event.target },
           consume
         ) !== 'unmatched'
@@ -1384,7 +1444,7 @@ export function FloatingTerminalPanel({
         return
       }
 
-      if (handleFloatingPanelShortcutAction(event, consume) !== 'unmatched') {
+      if (dispatchShortcut(event, consume) !== 'unmatched') {
         return
       }
 
@@ -1451,7 +1511,7 @@ export function FloatingTerminalPanel({
       window.removeEventListener('blur', handleFloatingPanelBlur)
       doubleTapDetectorRef.current?.reset()
     }
-  }, [handleFloatingPanelShortcutAction, open])
+  }, [open])
 
   // A focused floating *browser* guest's close/index chords arrive over IPC (useIpcEvents)
   // as these window events; handle them through the exact same closures the keyboard path uses so
@@ -1463,14 +1523,17 @@ export function FloatingTerminalPanel({
     const handleGuestClose = (event: Event): void => {
       const detail = (event as CustomEvent<FloatingWorkspaceGuestCloseDetail>).detail
       if (detail) {
-        closeFloatingItemConfirmed(detail.sourceId, { guestOwned: true })
+        floatingShortcutListenersRef.current.closeFloatingItemConfirmed(detail.sourceId, {
+          guestOwned: true
+        })
       }
     }
     const handleGuestSelectIndex = (event: Event): void => {
       const detail = (event as CustomEvent<FloatingWorkspaceGuestSelectIndexDetail>).detail
-      const visibleId = detail ? visibleFloatingTabOrder[detail.index] : undefined
+      const listeners = floatingShortcutListenersRef.current
+      const visibleId = detail ? listeners.visibleFloatingTabOrder[detail.index] : undefined
       if (visibleId) {
-        activateFloatingItem(visibleId)
+        listeners.activateFloatingItem(visibleId)
       }
     }
     window.addEventListener(FLOATING_WORKSPACE_GUEST_CLOSE_EVENT, handleGuestClose)
@@ -1482,7 +1545,7 @@ export function FloatingTerminalPanel({
         handleGuestSelectIndex
       )
     }
-  }, [activateFloatingItem, closeFloatingItemConfirmed, open, visibleFloatingTabOrder])
+  }, [open])
 
   useEffect(() => {
     const pendingReclaimArms = pendingReclaimArmByFileIdRef.current
@@ -1776,13 +1839,7 @@ export function FloatingTerminalPanel({
                     aria-hidden={!isActive}
                   >
                     <TerminalPane
-                      ref={(handle) => {
-                        if (handle) {
-                          terminalPaneHandlesRef.current.set(tab.id, handle)
-                        } else {
-                          terminalPaneHandlesRef.current.delete(tab.id)
-                        }
-                      }}
+                      ref={getTerminalPaneRefCallback(tab.id)}
                       tabId={tab.id}
                       worktreeId={FLOATING_TERMINAL_WORKTREE_ID}
                       cwd={cwd}

@@ -19,6 +19,7 @@ export {
 export {
   isFloatingWorkspacePanelShortcut,
   isFloatingWorkspacePanelShortcutTarget,
+  matchFloatingWorkspacePanelChord,
   matchFloatingWorkspacePanelShortcut
 } from './floating-workspace-shortcut-policy'
 

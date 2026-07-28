@@ -75,9 +75,8 @@ import {
 } from '@/lib/floating-terminal'
 import {
   isFloatingWorkspacePanelFocused,
-  isFloatingWorkspacePanelShortcut,
   isFloatingWorkspaceTerminalInputTarget,
-  matchFloatingWorkspacePanelShortcut,
+  matchFloatingWorkspacePanelChord,
   shouldMinimizeFloatingWorkspacePanelOnCloseShortcut
 } from '@/lib/floating-workspace-terminal-actions'
 import { createFloatingWorkspaceTourInteractionSnapshot } from '@/lib/floating-workspace-tour-interaction-snapshot'
@@ -1844,16 +1843,10 @@ function App(): React.JSX.Element {
       if (floatingWorkspaceFocused) {
         const floatingMatchOptions: KeybindingMatchOptions = { context, terminalShortcutPolicy }
         if (
-          isFloatingWorkspacePanelShortcut(
+          matchFloatingWorkspacePanelChord(
             input,
             shortcutPlatform,
             null,
-            keybindings,
-            floatingMatchOptions
-          ) ||
-          matchFloatingWorkspacePanelShortcut(
-            input,
-            shortcutPlatform,
             keybindings,
             floatingMatchOptions
           ) !== null
