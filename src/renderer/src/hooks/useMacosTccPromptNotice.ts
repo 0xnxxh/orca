@@ -3,11 +3,6 @@ import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
 
-type TccPromptNoticePayload = {
-  promptCount: number
-  accessingBinaryName?: string
-}
-
 /**
  * Shows the Full Disk Access hint only after macOS has repeatedly raised its
  * consent dialog naming Orca (#9756). The main process counts the dialogs, so
@@ -22,22 +17,16 @@ export function useMacosTccPromptNotice(): void {
     if (!subscribe) {
       return
     }
-    return subscribe((payload: TccPromptNoticePayload) => {
-      const binary = payload.accessingBinaryName
+    return subscribe(() => {
       toast.warning(
-        binary
-          ? translate(
-              'auto.hooks.useMacosTccPromptNotice.titleWithBinary',
-              'macOS keeps asking about "{{binary}}" reading other apps\' data'
-            ).replace('{{binary}}', binary)
-          : translate(
-              'auto.hooks.useMacosTccPromptNotice.title',
-              "macOS keeps asking about access to other apps' data"
-            ),
+        translate(
+          'auto.hooks.useMacosTccPromptNotice.title',
+          'Reduce repeated macOS permission prompts'
+        ),
         {
           description: translate(
             'auto.hooks.useMacosTccPromptNotice.description',
-            'It names Orca because Orca runs your terminal commands. Full Disk Access reduces these prompts.'
+            'macOS credits file access by your agents and terminal tools to Orca. Granting Full Disk Access reduces these prompts.'
           ),
           duration: 12_000,
           action: {

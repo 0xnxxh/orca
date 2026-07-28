@@ -774,9 +774,8 @@
         "pasteTooLarge": "Paste is too large."
       },
       "useMacosTccPromptNotice": {
-        "title": "macOS keeps asking about access to other apps' data",
-        "titleWithBinary": "macOS keeps asking about \"{{binary}}\" reading other apps' data",
-        "description": "It names Orca because Orca runs your terminal commands. Full Disk Access reduces these prompts.",
+        "title": "Reduce repeated macOS permission prompts",
+        "description": "macOS credits file access by your agents and terminal tools to Orca. Granting Full Disk Access reduces these prompts.",
         "openSettings": "Open Settings",
         "dismiss": "Don't show again"
       }

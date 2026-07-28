@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { join } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { writeFileAtomically } from './codex-accounts/fs-utils'
 import { getCanonicalUserDataPath } from './persistence'
-import { MacosTccPromptWatch, type TccPromptEvent } from './macos-tcc-prompt-watch'
+import { MacosTccPromptWatch } from './macos-tcc-prompt-watch'
 
 /**
  * Surfaces Full Disk Access guidance only to users macOS is actually prompting
@@ -18,8 +18,6 @@ export const TCC_PROMPT_NOTICE_CHANNEL = 'macosTccPrompts:threshold'
 
 export type TccPromptNoticePayload = {
   promptCount: number
-  /** Binary that triggered the most recent dialog, so the notice can name it. */
-  accessingBinaryName?: string
 }
 
 type TccPromptTally = {
@@ -59,22 +57,11 @@ function saveTally(): void {
   }
 }
 
-/** Exported for tests: the binary name is all the notice shows, never the full path. */
-export function describeAccessingBinary(event: TccPromptEvent): string | undefined {
-  const path = event.binaryPath
-  if (!path) {
-    return undefined
-  }
-  // Why: basename('/') returns '/', which is not a binary name worth showing.
-  const name = basename(path)
-  return name && name !== '/' ? name : undefined
+export function handleTccPromptForTests(): TccPromptNoticePayload | null {
+  return recordPrompt()
 }
 
-export function handleTccPromptForTests(event: TccPromptEvent): TccPromptNoticePayload | null {
-  return recordPrompt(event)
-}
-
-function recordPrompt(event: TccPromptEvent): TccPromptNoticePayload | null {
+function recordPrompt(): TccPromptNoticePayload | null {
   if (tally.dismissed) {
     return null
   }
@@ -87,11 +74,7 @@ function recordPrompt(event: TccPromptEvent): TccPromptNoticePayload | null {
   if (!shouldNotify) {
     return null
   }
-  const accessingBinaryName = describeAccessingBinary(event)
-  return {
-    promptCount: tally.promptCount,
-    ...(accessingBinaryName ? { accessingBinaryName } : {})
-  }
+  return { promptCount: tally.promptCount }
 }
 
 /** Permanently stops the notice for this user; the watcher shuts down with it. */
@@ -111,8 +94,8 @@ export function initTccPromptNotice(mainWindow: BrowserWindow): void {
     return
   }
   watch = new MacosTccPromptWatch({
-    onPrompt: (event) => {
-      const payload = recordPrompt(event)
+    onPrompt: () => {
+      const payload = recordPrompt()
       if (payload) {
         mainWindowRef?.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, payload)
       }
