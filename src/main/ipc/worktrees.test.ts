@@ -899,9 +899,9 @@ describe('registerWorktreeHandlers', () => {
   it('keeps an emoji-only display name while using safe branch and path names', async () => {
     listWorktreesMock.mockResolvedValue([
       {
-        path: '/workspace/workspace',
+        path: '/workspace/rocket',
         head: 'abc123',
-        branch: 'workspace',
+        branch: 'rocket',
         isBare: false,
         isMainWorktree: false
       }
@@ -914,13 +914,13 @@ describe('registerWorktreeHandlers', () => {
 
     expect(addWorktreeMock).toHaveBeenCalledWith(
       '/workspace/repo',
-      '/workspace/workspace',
-      'workspace',
+      '/workspace/rocket',
+      'rocket',
       'origin/main',
       false
     )
     expect(store.setWorktreeMeta).toHaveBeenCalledWith(
-      'repo-1::/workspace/workspace',
+      'repo-1::/workspace/rocket',
       expect.objectContaining({ displayName: '🚀' })
     )
   })

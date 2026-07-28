@@ -178,8 +178,7 @@ test.describe('Create Workspace', () => {
         const worktrees = Object.values(window.__store!.getState().worktreesByRepo).flat()
         return worktrees.find((worktree) => worktree.displayName === displayName)?.branch ?? null
       }, workspaceName)
-      expect(branch).not.toBeNull()
-      expect(branch).not.toMatch(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u)
+      expect(branch).toBe('refs/heads/rocket-test-tube-sparkles')
     } finally {
       await orcaPage
         .evaluate(() => {

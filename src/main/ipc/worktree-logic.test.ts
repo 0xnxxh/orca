@@ -74,15 +74,19 @@ describe('sanitizeWorktreeName', () => {
     expect(sanitizeWorktreeName('feat: 中文 (v2)')).toBe('feat-中文-v2')
   })
 
-  it('uses a git-safe fallback when a name contains only emoji', () => {
-    expect(sanitizeWorktreeName('🚀')).toBe('workspace')
-    expect(sanitizeWorktreeName('👩‍💻✨')).toBe('workspace')
-    expect(sanitizeWorktreeName('🇯🇵')).toBe('workspace')
-    expect(sanitizeWorktreeName('1️⃣')).toBe('1')
+  it('uses readable git-safe shortcodes for known emoji', () => {
+    expect(sanitizeWorktreeName('🚀')).toBe('rocket')
+    expect(sanitizeWorktreeName('👩‍💻✨')).toBe('woman-technologist-sparkles')
+    expect(sanitizeWorktreeName('🇯🇵')).toBe('jp')
+    expect(sanitizeWorktreeName('1️⃣')).toBe('one')
   })
 
-  it('keeps readable text while removing emoji from branch and path names', () => {
-    expect(sanitizeWorktreeName('Ship it 🚀')).toBe('Ship-it')
+  it('keeps readable text and emoji shortcodes in branch and path names', () => {
+    expect(sanitizeWorktreeName('Ship it 🚀')).toBe('Ship-it-rocket')
+  })
+
+  it('uses a git-safe fallback for emoji newer than the shortcode catalog', () => {
+    expect(sanitizeWorktreeName('\u{1fae9}')).toBe('workspace')
   })
 
   it('does not treat arbitrary punctuation as a workspace name', () => {
