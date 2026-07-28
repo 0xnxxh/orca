@@ -107,6 +107,7 @@ import {
   retrySettledDirectSshTerminalPane
 } from './direct-ssh-pane-retry-ledger'
 import {
+  directSshAuthoritiesEqual,
   settleDirectSshPaneRetryState,
   transferDirectSshPaneDetachLedger
 } from './direct-ssh-terminal-authority-ledger'
@@ -2139,16 +2140,22 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     set((s) => {
       if (directSshRetryAttemptId) {
         const pendingRetry = s.directSshPaneRetryByTabId[tabId]
+        const liveRetry = s.directSshLivePtyBindingByTabId[tabId]
+        const retryLease =
+          pendingRetry?.attemptId === directSshRetryAttemptId
+            ? pendingRetry
+            : liveRetry?.attemptId === directSshRetryAttemptId
+              ? liveRetry
+              : undefined
         const boundTab = Object.values(s.tabsByWorktree)
           .flat()
           .find((candidate) => candidate.id === tabId)
         if (
-          !pendingRetry ||
-          pendingRetry.attemptId !== directSshRetryAttemptId ||
+          !retryLease ||
           !boundTab ||
-          parseAppSshPtyId(ptyId)?.connectionId !== pendingRetry.authority.targetId ||
-          !isCurrentDirectSshAuthority(s, pendingRetry.authority) ||
-          (boundTab.generation ?? 0) !== pendingRetry.tabGeneration
+          parseAppSshPtyId(ptyId)?.connectionId !== retryLease.authority.targetId ||
+          !isCurrentDirectSshAuthority(s, retryLease.authority) ||
+          (boundTab.generation ?? 0) !== retryLease.tabGeneration
         ) {
           return s
         }
@@ -2256,31 +2263,46 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         }
       }
       const pendingRetry = s.directSshPaneRetryByTabId[tabId]
+      const liveRetry = s.directSshLivePtyBindingByTabId[tabId]
+      const retryLease =
+        pendingRetry?.attemptId === directSshRetryAttemptId
+          ? pendingRetry
+          : liveRetry?.attemptId === directSshRetryAttemptId
+            ? liveRetry
+            : undefined
       const boundTab = worktreeId
         ? nextTabsByWorktree[worktreeId]?.find((candidate) => candidate.id === tabId)
         : undefined
       const parsedSshPty = parseAppSshPtyId(ptyId)
       const acknowledgesDirectSshRetry = Boolean(
-        pendingRetry &&
-        pendingRetry.attemptId === directSshRetryAttemptId &&
+        retryLease &&
         boundTab &&
-        parsedSshPty?.connectionId === pendingRetry.authority.targetId &&
-        isCurrentDirectSshAuthority(s, pendingRetry.authority) &&
-        (boundTab.generation ?? 0) === pendingRetry.tabGeneration &&
-        boundTab.ptyId === ptyId &&
+        parsedSshPty?.connectionId === retryLease.authority.targetId &&
+        isCurrentDirectSshAuthority(s, retryLease.authority) &&
+        (boundTab.generation ?? 0) === retryLease.tabGeneration &&
         nextPtyIds.includes(ptyId)
       )
       let nextDirectSshPaneRetryByTabId = s.directSshPaneRetryByTabId
       let nextDirectSshLivePtyBindingByTabId = s.directSshLivePtyBindingByTabId
-      if (acknowledgesDirectSshRetry && pendingRetry) {
-        nextDirectSshPaneRetryByTabId = { ...s.directSshPaneRetryByTabId }
-        delete nextDirectSshPaneRetryByTabId[tabId]
-        nextDirectSshLivePtyBindingByTabId = {
-          ...s.directSshLivePtyBindingByTabId,
-          [tabId]: {
-            authority: pendingRetry.authority,
-            tabGeneration: pendingRetry.tabGeneration,
-            ptyId
+      if (acknowledgesDirectSshRetry && retryLease && boundTab?.ptyId) {
+        if (pendingRetry?.attemptId === directSshRetryAttemptId) {
+          nextDirectSshPaneRetryByTabId = { ...s.directSshPaneRetryByTabId }
+          delete nextDirectSshPaneRetryByTabId[tabId]
+        }
+        if (!liveRetry || liveRetry.attemptId !== directSshRetryAttemptId) {
+          nextDirectSshLivePtyBindingByTabId = {
+            ...s.directSshLivePtyBindingByTabId,
+            [tabId]: {
+              attemptId: retryLease.attemptId,
+              authority: retryLease.authority,
+              tabGeneration: retryLease.tabGeneration,
+              ptyId: boundTab.ptyId
+            }
+          }
+        } else if (replacementPtyId === liveRetry.ptyId && boundTab.ptyId === ptyId) {
+          nextDirectSshLivePtyBindingByTabId = {
+            ...s.directSshLivePtyBindingByTabId,
+            [tabId]: { ...liveRetry, ptyId }
           }
         }
       } else {
@@ -2422,7 +2444,19 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         nextDirectSshLivePtyBindingByTabId = {
           ...s.directSshLivePtyBindingByTabId
         }
-        delete nextDirectSshLivePtyBindingByTabId[tabId]
+        const promotedPtyId = ptyId ? remainingPtyIds.at(-1) : undefined
+        if (
+          promotedPtyId &&
+          parseAppSshPtyId(promotedPtyId)?.connectionId === liveBinding.authority.targetId &&
+          isCurrentDirectSshAuthority(s, liveBinding.authority)
+        ) {
+          nextDirectSshLivePtyBindingByTabId[tabId] = {
+            ...liveBinding,
+            ptyId: promotedPtyId
+          }
+        } else {
+          delete nextDirectSshLivePtyBindingByTabId[tabId]
+        }
       }
 
       return {
@@ -2728,6 +2762,15 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   settleDirectSshPaneRetry: (result, now = Date.now()) => {
     set((s) => {
       if (!isCurrentDirectSshAuthority(s, result.authority)) {
+        return s
+      }
+      const history = s.directSshPaneRetryHistoryByTabId[result.tabId]
+      const preservesExhaustedSplitAttempt =
+        (result.status === 'failed' || result.status === 'timed-out') &&
+        history != null &&
+        directSshAuthoritiesEqual(history.authority, result.authority) &&
+        history.attemptedAt.length >= 2
+      if (preservesExhaustedSplitAttempt) {
         return s
       }
       const settlement = settleDirectSshPaneRetryState(s, result)

@@ -3310,6 +3310,9 @@ export function connectPanePty(
     ? JSON.stringify([cacheKey, directSshRetryAttempt.attemptId])
     : cacheKey
   let capturedDirectSshRetryPtyAccepted = false
+  let directSshPaneRetrySettlementCancelled = false
+  const directSshPaneRetrySettlementTimers = new Set<ReturnType<typeof setTimeout>>()
+  const directSshPaneRetryTimedPromises = new WeakSet<object>()
   const capturedDirectSshRetryStateMatches = (
     ptyId: string,
     requirePendingAttempt: boolean
@@ -3343,15 +3346,13 @@ export function connectPanePty(
     if (pendingMatches) {
       return true
     }
-    if (requirePendingAttempt) {
-      return false
-    }
     const liveBinding = currentState.directSshLivePtyBindingByTabId?.[deps.tabId]
+    const liveBindingMatchesAttempt =
+      liveBinding?.attemptId === directSshRetryAttempt.attemptId &&
+      directSshAuthoritiesEqual(liveBinding.authority, directSshRetryAttempt.authority) &&
+      liveBinding.tabGeneration === directSshRetryAttempt.tabGeneration
     return (
-      capturedDirectSshRetryPtyAccepted ||
-      (liveBinding?.ptyId === ptyId &&
-        directSshAuthoritiesEqual(liveBinding.authority, directSshRetryAttempt.authority) &&
-        liveBinding.tabGeneration === directSshRetryAttempt.tabGeneration)
+      liveBindingMatchesAttempt || (!requirePendingAttempt && capturedDirectSshRetryPtyAccepted)
     )
   }
   const claimCapturedDirectSshRetryPty = (ptyId: string): boolean => {
@@ -3387,14 +3388,21 @@ export function connectPanePty(
     promise: Promise<unknown>,
     attempt: DirectSshPaneRetryAttempt | undefined
   ): void => {
-    if (!attempt) {
+    if (!attempt || disposed || directSshPaneRetryTimedPromises.has(promise)) {
       return
     }
+    directSshPaneRetryTimedPromises.add(promise)
     const timer = setTimeout(() => {
+      directSshPaneRetrySettlementTimers.delete(timer)
+      if (directSshPaneRetrySettlementCancelled) {
+        return
+      }
       settleDirectSshPaneRetryAttempt(attempt, 'timed-out')
     }, DIRECT_SSH_PANE_RETRY_SETTLEMENT_TIMEOUT_MS)
+    directSshPaneRetrySettlementTimers.add(timer)
     void promise
       .finally(() => {
+        directSshPaneRetrySettlementTimers.delete(timer)
         clearTimeout(timer)
       })
       .catch(() => {})
@@ -5131,7 +5139,7 @@ export function connectPanePty(
           return
         }
         queueMicrotask(() => {
-          if (transport.getPtyId() || pendingSpawnByPaneKey.has(pendingSpawnKey)) {
+          if (disposed || transport.getPtyId() || pendingSpawnByPaneKey.has(pendingSpawnKey)) {
             return
           }
           settleDirectSshPaneRetryAttempt(directSshRetryAttempt, 'failed')
@@ -8311,6 +8319,7 @@ export function connectPanePty(
       const pendingSpawn = pendingSpawnByPaneKey.get(pendingSpawnKey)
       if (pendingSpawn) {
         recordPtyConnectDiagnostic(`pane=${pane.id} -> PENDING SPAWN`)
+        armDirectSshPaneRetryTimeout(pendingSpawn, directSshRetryAttempt)
         void pendingSpawn
           .then((spawnedPtyId) => {
             if (disposed) {
@@ -8518,6 +8527,11 @@ export function connectPanePty(
     reconcileIfSessionMissing,
     dispose() {
       disposed = true
+      directSshPaneRetrySettlementCancelled = true
+      for (const timer of directSshPaneRetrySettlementTimers) {
+        clearTimeout(timer)
+      }
+      directSshPaneRetrySettlementTimers.clear()
       // Why: a stalled xterm replay may never reach its finally; release live-frame credit when this renderer no longer owns the stream.
       for (const chunk of deferredReattachLiveData ?? []) {
         chunk.ackCredit?.()

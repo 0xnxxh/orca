@@ -97,6 +97,7 @@ describe('direct SSH terminal retry ledger', () => {
       },
       directSshLivePtyBindingByTabId: {
         'tab-healthy': {
+          attemptId: 'healthy-attempt' as DirectSshPaneRetryAttemptId,
           authority: authority(),
           tabGeneration: 0,
           ptyId: 'ssh:target@@pty-healthy'
@@ -214,11 +215,123 @@ describe('direct SSH terminal retry ledger', () => {
       3_000
     )
 
-    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBe(secondAttempt)
     expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
     expect(store.getState().retryDirectSshTargetPanes(authority(), 30_999)).toBe(0)
     expect(store.getState().retryDirectSshTargetPanes(authority(), 31_000)).toBe(0)
     expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
+  })
+
+  it('keeps one split-pane attempt valid until every sibling settles', () => {
+    const store = seedStore()
+    store.setState({
+      terminalLayoutsByTabId: {
+        [TAB_ID]: {
+          root: {
+            type: 'split',
+            direction: 'horizontal',
+            first: { type: 'leaf', leafId: '11111111-1111-4111-8111-111111111111' },
+            second: { type: 'leaf', leafId: '22222222-2222-4222-8222-222222222222' }
+          },
+          activeLeafId: '11111111-1111-4111-8111-111111111111',
+          expandedLeafId: null,
+          ptyIdsByLeafId: {}
+        }
+      }
+    })
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].pendingActivationSpawn).toBe(2)
+    const firstAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    const firstPtyId = 'ssh:target@@pty-first'
+    const siblingPtyId = 'ssh:target@@pty-sibling'
+
+    store.getState().updateTabPtyId(TAB_ID, firstPtyId, undefined, firstAttempt.attemptId)
+    store.getState().updateTabPtyId(TAB_ID, siblingPtyId, undefined, firstAttempt.attemptId)
+
+    expect(store.getState().ptyIdsByTabId[TAB_ID]).toEqual([firstPtyId, siblingPtyId])
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].ptyId).toBe(firstPtyId)
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].pendingActivationSpawn).toBeUndefined()
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toMatchObject({
+      attemptId: firstAttempt.attemptId,
+      ptyId: firstPtyId
+    })
+
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'failed',
+        tabId: TAB_ID,
+        attemptId: firstAttempt.attemptId,
+        authority: firstAttempt.authority,
+        tabGeneration: firstAttempt.tabGeneration
+      },
+      2_000
+    )
+    const secondAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    expect(secondAttempt.tabGeneration).toBe(2)
+    expect(store.getState().ptyIdsByTabId[TAB_ID]).toEqual([])
+
+    const beforeStaleCallback = store.getState()
+    store
+      .getState()
+      .updateTabPtyId(TAB_ID, 'ssh:target@@pty-stale', undefined, firstAttempt.attemptId)
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'failed',
+        tabId: TAB_ID,
+        attemptId: firstAttempt.attemptId,
+        authority: firstAttempt.authority,
+        tabGeneration: firstAttempt.tabGeneration
+      },
+      2_001
+    )
+
+    expect(store.getState().tabsByWorktree).toBe(beforeStaleCallback.tabsByWorktree)
+    expect(store.getState().ptyIdsByTabId).toBe(beforeStaleCallback.ptyIdsByTabId)
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBe(secondAttempt)
+    expect(store.getState().directSshPaneRetryHistoryByTabId[TAB_ID].attemptedAt).toEqual([
+      1_000, 2_000
+    ])
+
+    const secondFirstPtyId = 'ssh:target@@pty-second-first'
+    const secondSiblingPtyId = 'ssh:target@@pty-second-sibling'
+    store.getState().updateTabPtyId(TAB_ID, secondFirstPtyId, undefined, secondAttempt.attemptId)
+    store.getState().settleDirectSshPaneRetry(
+      {
+        status: 'failed',
+        tabId: TAB_ID,
+        attemptId: secondAttempt.attemptId,
+        authority: secondAttempt.authority,
+        tabGeneration: secondAttempt.tabGeneration
+      },
+      3_000
+    )
+    store.getState().updateTabPtyId(TAB_ID, secondSiblingPtyId, undefined, secondAttempt.attemptId)
+
+    expect(store.getState().ptyIdsByTabId[TAB_ID]).toEqual([secondFirstPtyId, secondSiblingPtyId])
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 3_001)).toBe(0)
+  })
+
+  it('promotes a surviving split PTY without revoking its exact retry lease', () => {
+    const store = seedStore()
+    store.setState({ activeWorktreeId: null })
+    store.getState().retryDirectSshTargetPanes(authority(), 1_000)
+    const attempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    const firstPtyId = 'ssh:target@@pty-first'
+    const siblingPtyId = 'ssh:target@@pty-sibling'
+    store.getState().updateTabPtyId(TAB_ID, firstPtyId, undefined, attempt.attemptId)
+    store.getState().updateTabPtyId(TAB_ID, siblingPtyId, undefined, attempt.attemptId)
+
+    store.getState().clearTabPtyId(TAB_ID, firstPtyId)
+
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].ptyId).toBe(siblingPtyId)
+    expect(store.getState().ptyIdsByTabId[TAB_ID]).toEqual([siblingPtyId])
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toMatchObject({
+      attemptId: attempt.attemptId,
+      ptyId: siblingPtyId
+    })
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 2_000)).toBe(0)
   })
 
   it('does not turn two thirty-one-second timeouts into an unbounded retry chain', () => {
@@ -250,7 +363,7 @@ describe('direct SSH terminal retry ledger', () => {
       63_000
     )
 
-    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBe(secondAttempt)
     expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
     expect(store.getState().retryDirectSshTargetPanes(authority(), 63_000)).toBe(0)
     expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)

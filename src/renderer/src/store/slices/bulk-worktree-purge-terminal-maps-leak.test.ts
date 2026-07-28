@@ -150,8 +150,18 @@ function seedMaps(store: ReturnType<typeof createTestStore>): void {
       }
     },
     directSshLivePtyBindingByTabId: {
-      [TAB1]: { authority, tabGeneration: 0, ptyId: PTY1 },
-      [TAB2]: { authority, tabGeneration: 0, ptyId: PTY2 }
+      [TAB1]: {
+        attemptId: 'attempt-1' as DirectSshPaneRetryAttemptId,
+        authority,
+        tabGeneration: 0,
+        ptyId: PTY1
+      },
+      [TAB2]: {
+        attemptId: 'attempt-2' as DirectSshPaneRetryAttemptId,
+        authority,
+        tabGeneration: 0,
+        ptyId: PTY2
+      }
     },
     directSshPaneRetryHistoryByTabId: {
       [TAB1]: { authority, attemptedAt: [1] },

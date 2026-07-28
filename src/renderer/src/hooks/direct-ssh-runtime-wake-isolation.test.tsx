@@ -106,6 +106,7 @@ describe('runtime and direct SSH wake isolation', () => {
       ptyIdsByTabId: { 'tab-direct': [directPtyId], 'tab-runtime': [] },
       directSshLivePtyBindingByTabId: {
         'tab-direct': {
+          attemptId: 'direct-attempt' as never,
           authority: currentAuthority,
           tabGeneration: 0,
           ptyId: directPtyId

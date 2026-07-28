@@ -3,8 +3,6 @@ import type { StateCreator, StoreApi } from 'zustand'
 import type { AppState } from '../types'
 import type {
   DetectedWorktreeListResult,
-  TerminalLayoutSnapshot,
-  TerminalPaneLayoutNode,
   LocalBaseRefRefreshResult,
   ForceDeleteWorktreeBranchResult,
   FolderWorkspace,
@@ -107,6 +105,7 @@ import {
   createDetectedWorktreeRefreshLeaseRegistry,
   type DetectedWorktreeRefreshLease
 } from './detected-worktree-refresh-leases'
+import { getTerminalActivationSpawnSuppression } from './terminal-activation-spawn-suppression'
 import type {
   HostQualifiedDetectedWorktreeResult,
   ListDetectedWorktreesArgs,
@@ -208,25 +207,6 @@ async function mapReposForWorktreeRefresh<TRepo extends { id: string }, TResult>
   )
 
   return results
-}
-
-function countTerminalLayoutLeaves(node: TerminalPaneLayoutNode | null | undefined): number {
-  if (!node) {
-    return 0
-  }
-  if (node.type === 'leaf') {
-    return 1
-  }
-  return countTerminalLayoutLeaves(node.first) + countTerminalLayoutLeaves(node.second)
-}
-
-function getActivationSpawnSuppression(layout: TerminalLayoutSnapshot | undefined): true | number {
-  const paneCount = Math.max(
-    1,
-    countTerminalLayoutLeaves(layout?.root),
-    Object.keys(layout?.ptyIdsByLeafId ?? {}).length
-  )
-  return paneCount === 1 ? true : paneCount
 }
 
 function shouldDeferActivationTerminalPrep(): boolean {
@@ -4943,7 +4923,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
           // Why: bump generation to remount a pane whose renderer died while its PTY stayed alive, so it reattaches, not spawns.
           generation: (tab.generation ?? 0) + 1,
           // Why: recovery isn't a user interaction — suppress its PTY updates from reshuffling Recent, like activation remounts.
-          pendingActivationSpawn: getActivationSpawnSuppression(s.terminalLayoutsByTabId[tab.id])
+          pendingActivationSpawn: getTerminalActivationSpawnSuppression(
+            s.terminalLayoutsByTabId[tab.id]
+          )
         }
         remounted = true
         return {
@@ -5136,7 +5118,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                 [worktreeId]: tabs.map((tab) => ({
                   ...tab,
                   generation: (tab.generation ?? 0) + 1,
-                  pendingActivationSpawn: getActivationSpawnSuppression(
+                  pendingActivationSpawn: getTerminalActivationSpawnSuppression(
                     s.terminalLayoutsByTabId[tab.id]
                   )
                 }))
@@ -5215,7 +5197,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                 ...tab,
                 ...(allDead ? { generation: (tab.generation ?? 0) + 1 } : {}),
                 // Why: slept terminal remount/spawn is click-driven wake work; tag its PTY updates so they don't reshuffle Recent.
-                pendingActivationSpawn: getActivationSpawnSuppression(
+                pendingActivationSpawn: getTerminalActivationSpawnSuppression(
                   s.terminalLayoutsByTabId[tab.id]
                 )
               }))

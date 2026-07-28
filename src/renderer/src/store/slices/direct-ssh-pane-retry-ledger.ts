@@ -1,4 +1,5 @@
 import type { DirectSshAuthority } from '../../../../shared/ssh-types'
+import type { TerminalLayoutSnapshot } from '../../../../shared/types'
 import { shouldRetryPaneSpawnOnSshReconnect } from '../../hooks/ssh-reconnect-pane-retry'
 import {
   directSshAuthoritiesEqual,
@@ -6,6 +7,7 @@ import {
   pruneObsoleteAuthorityState
 } from './direct-ssh-terminal-authority-ledger'
 import { invalidateStaleDirectSshTerminalBindings } from './direct-ssh-terminal-recovery'
+import { getTerminalActivationSpawnSuppression } from './terminal-activation-spawn-suppression'
 import type {
   DirectSshPaneRetryAttemptId,
   DirectSshTerminalBindingState,
@@ -37,6 +39,7 @@ function createAttemptId(
 export function retryDirectSshTerminalPanes(
   state: DirectSshTerminalBindingState & {
     deferredSshSessionIdsByTabId: Record<string, string>
+    terminalLayoutsByTabId?: Record<string, TerminalLayoutSnapshot>
   },
   terminalWorkspaceKeys: ReadonlySet<string>,
   authority: DirectSshAuthority,
@@ -98,7 +101,9 @@ export function retryDirectSshTerminalPanes(
       nextTabs[index] = {
         ...tab,
         generation: tabGeneration,
-        pendingActivationSpawn: true
+        pendingActivationSpawn: getTerminalActivationSpawnSuppression(
+          state.terminalLayoutsByTabId?.[tab.id]
+        )
       }
       if (pending === working.directSshPaneRetryByTabId) {
         pending = { ...working.directSshPaneRetryByTabId }

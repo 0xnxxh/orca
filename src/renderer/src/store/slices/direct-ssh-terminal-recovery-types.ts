@@ -14,6 +14,7 @@ export type DirectSshPaneRetryAttempt = {
 }
 
 export type DirectSshLivePtyBinding = {
+  attemptId: DirectSshPaneRetryAttemptId
   authority: DirectSshAuthority
   tabGeneration: number
   ptyId: string

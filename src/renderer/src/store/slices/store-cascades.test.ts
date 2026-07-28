@@ -1324,7 +1324,12 @@ describe('setActiveWorktree', () => {
       },
       ptyIdsByTabId: { [sourceTabId]: [detachedPtyId], [targetTabId]: [] },
       directSshLivePtyBindingByTabId: {
-        [sourceTabId]: { authority, tabGeneration: 0, ptyId: detachedPtyId }
+        [sourceTabId]: {
+          attemptId: 'live-detach' as DirectSshPaneRetryAttemptId,
+          authority,
+          tabGeneration: 0,
+          ptyId: detachedPtyId
+        }
       },
       directSshPaneRetryHistoryByTabId: {
         [sourceTabId]: { authority, attemptedAt: [1] }
@@ -1357,6 +1362,7 @@ describe('setActiveWorktree', () => {
     expect(state.directSshLivePtyBindingByTabId[sourceTabId]).toBeUndefined()
     expect(state.directSshPaneRetryHistoryByTabId[sourceTabId]).toBeUndefined()
     expect(state.directSshLivePtyBindingByTabId[targetTabId]).toEqual({
+      attemptId: 'live-detach',
       authority,
       tabGeneration: 0,
       ptyId: detachedPtyId
@@ -1422,6 +1428,7 @@ describe('setActiveWorktree', () => {
     expect(state.directSshLivePtyBindingByTabId[sourceTabId]).toBeUndefined()
     expect(state.directSshPaneRetryHistoryByTabId[sourceTabId]).toBeUndefined()
     expect(state.directSshLivePtyBindingByTabId[targetTabId]).toEqual({
+      attemptId: 'pending-detach',
       authority,
       tabGeneration: 0,
       ptyId: detachedPtyId
