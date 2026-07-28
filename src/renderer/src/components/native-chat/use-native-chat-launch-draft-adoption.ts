@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '../../store'
 import type { NativeChatLaunchDraft } from '@/lib/native-chat-launch-prompt'
 import type { NativeChatMessage } from '../../../../shared/native-chat-types'
@@ -26,24 +26,29 @@ export function useNativeChatLaunchDraftSignal(args: {
   // Deferred until the read settles — a baseline taken on the empty in-flight
   // list would be exceeded by the backfill itself, dropping a draft the user
   // never saw.
-  const baselineRef = useRef<{ key: string; baseline: NativeChatLaunchDraftTurnBaseline } | null>(
-    null
-  )
+  const [heldBaseline, setHeldBaseline] = useState<{
+    key: string
+    baseline: NativeChatLaunchDraftTurnBaseline
+  } | null>(null)
   // Keyed on draft identity alone: a reload mid-draft must not discard a
   // baseline already taken from a settled transcript — re-taking it from the
   // fuller list would swallow the very user turn that resolves the draft.
   const baselineKey = paneLaunchDraft
     ? `${paneLaunchDraft.tabId} ${paneLaunchDraft.createdAt}`
     : null
+  // Adjusted during render, not in an effect: the same render that first sees a
+  // settled transcript must already resolve against the captured baseline.
+  let held = heldBaseline
   if (baselineKey === null) {
-    baselineRef.current = null
-  } else if (baselineRef.current?.key !== baselineKey && !transcriptLoading) {
-    baselineRef.current = {
-      key: baselineKey,
-      baseline: nativeChatLaunchDraftTurnBaseline(messages)
+    if (heldBaseline !== null) {
+      setHeldBaseline(null)
     }
+    held = null
+  } else if (heldBaseline?.key !== baselineKey && !transcriptLoading) {
+    held = { key: baselineKey, baseline: nativeChatLaunchDraftTurnBaseline(messages) }
+    setHeldBaseline(held)
   }
-  const baseline = baselineRef.current?.baseline ?? null
+  const baseline = held?.baseline ?? null
   const launchDraftResolved = useMemo(
     () =>
       paneLaunchDraft && !transcriptLoading
