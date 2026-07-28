@@ -313,7 +313,9 @@ test('contains hostile panel network and navigation probes', async ({
     ]) {
       const sourceDocumentId = `source:${navigation.probe}`
       const sourceDocumentKey = `__orcaNavigationProbeDocument:${navigation.probe}`
-      await frame.locator('html').evaluate(
+      const invocationKey = `__orcaNavigationProbeInvoked:${navigation.probe}`
+      const button = frame.getByRole('button', { name: navigation.button })
+      await button.evaluate(
         (element, sourceDocument) => {
           Object.defineProperty(element.ownerDocument, sourceDocument.key, {
             value: sourceDocument.id
@@ -321,44 +323,70 @@ test('contains hostile panel network and navigation probes', async ({
         },
         { id: sourceDocumentId, key: sourceDocumentKey }
       )
-      await frame.getByRole('button', { name: navigation.button }).click()
-      let outcome = 'pending'
-      await expect
-        .poll(
-          async () => {
-            outcome = await frame.locator('html').evaluate(
-              (element, expected) => {
-                const result = element.querySelector(`[data-probe="${expected.probe}"]`)
-                const contained = result?.getAttribute('data-contained')
-                if (contained) {
-                  return contained === 'true' ? 'contained' : 'escaped'
-                }
-                return Reflect.get(element.ownerDocument, expected.documentKey) ===
-                  expected.documentId
-                  ? 'pending'
-                  : 'replaced'
-              },
-              {
-                documentId: sourceDocumentId,
-                documentKey: sourceDocumentKey,
-                probe: navigation.probe
-              }
-            )
-            return outcome
-          },
-          { timeout: 5_000 }
-        )
-        .toMatch(/^(contained|replaced)$/)
-      if (outcome === 'replaced') {
+      await button.click()
+      const outcome = await frame.locator('html').evaluate(
+        (element, expected) => {
+          const document = element.ownerDocument
+          const result = element.querySelector(`[data-probe="${expected.probe}"]`)
+          return {
+            contained: result?.getAttribute('data-contained') ?? null,
+            invoked: Reflect.get(document, expected.invocationKey) === true,
+            retained: Reflect.get(document, expected.documentKey) === expected.documentId
+          }
+        },
+        {
+          documentId: sourceDocumentId,
+          documentKey: sourceDocumentKey,
+          invocationKey,
+          probe: navigation.probe
+        }
+      )
+      expect(outcome.contained === null || outcome.contained === 'true').toBe(true)
+      if (outcome.retained) {
+        expect(outcome.invoked).toBe(true)
+      } else {
         replacedNavigations.push(navigation)
       }
       const currentDocument = await readPanelDocument(frame)
       panelDocuments.push(currentDocument)
       expect(currentDocument.url).toBe(initialDocument.url)
       expect(currentDocument.html).toContain('Hostile panel fixture')
+      if (outcome.retained && navigation.probe === 'anchor-form-navigation') {
+        await expect(frame.locator(`a[href="${navigation.destinations[0]}"]`)).toHaveCount(1)
+        await expect(frame.locator(`form[action="${navigation.destinations[1]}"]`)).toHaveCount(1)
+      }
+      if (outcome.retained && navigation.probe === 'meta-refresh-navigation') {
+        await expect(frame.locator('meta[http-equiv="refresh"]')).toHaveAttribute(
+          'content',
+          `0;url=${navigation.destinations[0]}`
+        )
+      }
       expect(server.requests).toEqual([])
       expect(orcaPage.url()).toBe(appUrl)
     }
+    const guardDestination = `${server.origin}/frame-guard-navigation`
+    await iframe.evaluate((element, destination) => {
+      const panelWindow = (element as HTMLIFrameElement).contentWindow
+      if (!panelWindow) {
+        throw new Error('plugin panel window unavailable')
+      }
+      panelWindow.location.href = destination
+    }, guardDestination)
+    await expect
+      .poll(async () => {
+        navigationObservation = await readPanelNavigationObserver(electronApp)
+        return navigationObservation.willFrameNavigations.find(
+          ({ url }) => url === guardDestination
+        )?.defaultPrevented
+      })
+      .toBe(true)
+    const guardedDocument = await readPanelDocument(frame)
+    panelDocuments.push(guardedDocument)
+    expect(guardedDocument.url).toBe(initialDocument.url)
+    expect(guardedDocument.html).toContain('Hostile panel fixture')
+    expect(server.requests).toEqual([])
+    expect(orcaPage.url()).toBe(appUrl)
+
     navigationObservation = await readPanelNavigationObserver(electronApp)
     const attemptedProbeNavigations = navigationObservation.willFrameNavigations.filter(({ url }) =>
       url.startsWith(server.origin)
