@@ -469,6 +469,35 @@ describe('getEditorExternalWatchTargets', () => {
     ).toEqual([])
   })
 
+  it('returns the identical snapshot when folderWorkspaces is reallocated but equivalent', () => {
+    const repo = makeRepo('repo-folder-stable')
+    const worktree = makeWorktree(repo.id, 'wt-folder-stable')
+    const openFiles = [{ ...makeOpenFile('folder:fw-stable'), id: 'stable-file' }]
+    const projectGroups = [makeProjectGroup('group-1')]
+
+    const first = getEditorExternalWatchTargets(
+      makeState({
+        repo,
+        worktree,
+        openFiles,
+        folderWorkspaces: [makeFolderWorkspace('fw-stable', '/folders/stable')],
+        projectGroups
+      })
+    )
+    // Why: a fresh-but-equivalent array must not churn the snapshot, or the [targetsKey] effect re-runs and thrashes watch/unwatch IPC.
+    const second = getEditorExternalWatchTargets(
+      makeState({
+        repo,
+        worktree,
+        openFiles,
+        folderWorkspaces: [makeFolderWorkspace('fw-stable', '/folders/stable')],
+        projectGroups: [makeProjectGroup('group-1')]
+      })
+    )
+
+    expect(second).toBe(first)
+  })
+
   it('recomputes targets when folderWorkspaces changes identity', () => {
     const repo = makeRepo('repo-folder-memo')
     const worktree = makeWorktree(repo.id, 'wt-folder-memo')
