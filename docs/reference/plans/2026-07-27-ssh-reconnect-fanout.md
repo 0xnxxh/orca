@@ -1,10 +1,10 @@
 # Direct SSH reconnect fan-out
 
-Status: implemented and locally validated; final CI and review pending
+Status: implemented and validated; ready for maintainer merge
 
 This design was reviewed in two full rounds, reconciled with current main, and implemented across main, preload, renderer, shared contracts, reliability gates, and Docker SSH fixtures. Review findings are absorbed into the invariants and implementation below.
 
-Validated against `origin/main` at `77d4c64f7a05e7fb2caa48e3d0acad5db39ff1f2`. Current main includes remote-runtime resume/online recovery (#8255), worktree-owned multi-host routing (#10986), negotiated paired close intent (#10129), fail-closed runtime SSH setup (#10799), terminal-view parking (#11016), host-correct SSH folder adoption (#10818), hydration-loop ID indexes (#10891), runtime output chunking (#10915), consolidated changed-code quality gates (#11117), and orchestration migration safety (#11107). None replaces the direct desktop SSH reconnect path, but each constrains its ownership and lifecycle integration below.
+Validated against `origin/main` at `21dee21a6d9d398bb332ddf0f85fbb4d5de7cd1b`. Current main includes remote-runtime resume/online recovery (#8255), worktree-owned multi-host routing (#10986), negotiated paired close intent (#10129), fail-closed runtime SSH setup (#10799), terminal-view parking (#11016), host-correct SSH folder adoption (#10818), hydration-loop ID indexes (#10891), runtime output chunking (#10915), consolidated changed-code quality gates (#11117), orchestration migration safety (#11107), and CLI-compatible remote timeout parsing (#11206). None replaces the direct desktop SSH reconnect path, but each constrains its ownership and lifecycle integration below.
 
 Scope: direct SSH reconnect recovery across main, preload, and renderer
 
