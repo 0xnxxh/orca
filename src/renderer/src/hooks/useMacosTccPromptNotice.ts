@@ -21,12 +21,12 @@ export function useMacosTccPromptNotice(): void {
       toast.warning(
         translate(
           'auto.hooks.useMacosTccPromptNotice.title',
-          'Reduce repeated macOS permission prompts'
+          'Reduce repeated macOS file-access prompts'
         ),
         {
           description: translate(
             'auto.hooks.useMacosTccPromptNotice.description',
-            'macOS credits file access by your agents and terminal tools to Orca. Granting Full Disk Access reduces these prompts.'
+            'macOS attributes file access by your agents and terminal tools to Orca. Granting Full Disk Access reduces these prompts.'
           ),
           duration: 12_000,
           action: {

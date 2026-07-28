@@ -751,10 +751,10 @@
         "pasteTooLarge": "貼り付け内容が大きすぎます。"
       },
       "useMacosTccPromptNotice": {
-        "title": "Reduce repeated macOS permission prompts",
-        "description": "macOS credits file access by your agents and terminal tools to Orca. Granting Full Disk Access reduces these prompts.",
-        "openSettings": "Open Settings",
-        "dismiss": "Don't show again"
+        "title": "macOSのファイルアクセス権限の確認を減らす",
+        "description": "エージェントやターミナルツールがファイルにアクセスすると、macOS はそのアクセス元を Orca として扱います。フルディスクアクセスを許可すると、これらの確認を減らせます。",
+        "openSettings": "設定を開く",
+        "dismiss": "今後表示しない"
       }
     },
     "components": {
@@ -5527,7 +5527,7 @@
           "e7bb06007c": "LAN",
           "4a73f5217a": "他のローカル アプリを制御するスクリプトの Apple Events。",
           "e119f0d66b": "オートメーション",
-          "7ca17b62c8": "macOS names Orca when the agents it runs read other apps' data, because Orca is the responsible process for terminal commands. Grant this to Orca and Orca Helper to reduce those prompts. Then quit Orca, end any surviving Orca Helper process, and reopen Orca.",
+          "7ca17b62c8": "Orca が実行するエージェントがほかのアプリのデータを読み取ると、ターミナルコマンドの実行元プロセスである Orca の名前が macOS に表示されます。これらの確認を減らすには、Orca と Orca Helper にこの権限を許可してください。その後、Orca を終了し、残っている Orca Helper プロセスもすべて終了してから、Orca を再度開いてください。",
           "c566bca278": "フルディスクアクセス",
           "9f35980756": "キーストローク インジェクション、ウィンドウ コントロール、UI 自動化ツール。",
           "5b2f22ca2d": "アクセシビリティ",
