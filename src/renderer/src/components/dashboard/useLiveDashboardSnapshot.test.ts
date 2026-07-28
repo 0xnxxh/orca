@@ -123,4 +123,22 @@ describe('useLiveDashboardSnapshot', () => {
       'repo-1': { type: 'lucide', name: 'Rocket' }
     })
   })
+
+  // Why: the profile resolves from connection/runtime slices this hook does not
+  // subscribe to. Dropping one degrades the drawer's preview terminal to
+  // client-OS byte routing while the pop-out keeps encoding correctly.
+  it("resolves each card's host-input profile from the slices it does not subscribe to", () => {
+    seed({ tabAutoGenerateTitle: false })
+    const { result: localResult } = renderHook(() => useLiveDashboardSnapshot())
+    expect(localResult.current.cards[0].terminalInput?.hostPlatform).toBe('linux')
+
+    useAppStore.setState({
+      repos: [{ ...repo(), connectionId: 'conn-1', executionHostId: 'ssh:conn-1' }],
+      sshConnectionStates: new Map([
+        ['conn-1', { remotePlatform: 'win32' }]
+      ]) as unknown as ReturnType<typeof useAppStore.getState>['sshConnectionStates']
+    })
+    const { result: sshResult } = renderHook(() => useLiveDashboardSnapshot())
+    expect(sshResult.current.cards[0].terminalInput?.hostPlatform).toBe('win32')
+  })
 })
