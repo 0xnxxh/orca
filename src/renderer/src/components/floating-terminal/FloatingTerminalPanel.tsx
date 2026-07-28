@@ -70,6 +70,10 @@ import {
 import { useAppStore } from '@/store'
 import type { OpenFile } from '@/store/slices/editor'
 import { destroyWorkspaceWebviews } from '@/store/slices/browser-webview-cleanup'
+import {
+  createTerminalPaneHandleRegistry,
+  type TerminalPaneHandleRegistry
+} from './terminal-pane-handle-registry'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import {
   keybindingMatchesAction,
@@ -285,12 +289,15 @@ export function FloatingTerminalPanel({
   const panelRef = useRef<HTMLDivElement | null>(null)
   // Live imperative handles per floating terminal tab, so a double-tap-bound close (which L3's window
   // listener never resolves) can reach the same split-aware pane-close authority directly (F2/F-feas).
-  const terminalPaneHandlesRef = useRef<Map<string, TerminalPaneHandle | null>>(new Map())
-  // Per-tab ref callbacks are cached so a parent render doesn't hand TerminalPane a new function
-  // identity, which would make React detach (dropping the handle) and re-attach it every render.
-  const terminalPaneRefCallbacksRef = useRef<
-    Map<string, (handle: TerminalPaneHandle | null) => void>
-  >(new Map())
+  // Its ref callbacks are cached per tab id so a parent render doesn't hand TerminalPane a new
+  // function identity, which would make React detach (dropping the handle) and re-attach every render.
+  const terminalPaneRegistryRef = useRef<TerminalPaneHandleRegistry<TerminalPaneHandle> | null>(
+    null
+  )
+  if (!terminalPaneRegistryRef.current) {
+    terminalPaneRegistryRef.current = createTerminalPaneHandleRegistry<TerminalPaneHandle>()
+  }
+  const terminalPaneRegistry = terminalPaneRegistryRef.current
   const doubleTapDetectorRef = useRef<ModifierDoubleTapDetector | null>(null)
   if (!doubleTapDetectorRef.current) {
     doubleTapDetectorRef.current = new ModifierDoubleTapDetector()
@@ -1141,32 +1148,18 @@ export function FloatingTerminalPanel({
     }
   }, [open, maximizePanel])
 
-  const getTerminalPaneRefCallback = useCallback(
-    (tabId: string): ((handle: TerminalPaneHandle | null) => void) => {
-      const cached = terminalPaneRefCallbacksRef.current.get(tabId)
-      if (cached) {
-        return cached
-      }
-      const register = (handle: TerminalPaneHandle | null): void => {
-        if (handle) {
-          terminalPaneHandlesRef.current.set(tabId, handle)
-          return
-        }
-        terminalPaneHandlesRef.current.delete(tabId)
-        terminalPaneRefCallbacksRef.current.delete(tabId)
-      }
-      terminalPaneRefCallbacksRef.current.set(tabId, register)
-      return register
-    },
-    []
-  )
+  // Detach can't prune the registry (it would drop the entry the current render just wrote), so the
+  // live tab list does it here instead.
+  useEffect(() => {
+    terminalPaneRegistry.retainOnly(tabs.map((tab) => tab.id))
+  }, [tabs, terminalPaneRegistry])
 
   // Double-tap-bound close: invoke the active terminal pane's own split-aware close authority directly
   // (the same executeClosePane L3 runs). L3's window listener can't resolve a synthetic double-tap, so
   // deferring would strand it — this is the direct path. Falls back to a whole-item confirmed close
   // when no terminal handle is mounted (e.g. active tab is not a terminal).
   const closeActiveFloatingTerminalPane = useCallback(() => {
-    const handle = activeTerminalId ? terminalPaneHandlesRef.current.get(activeTerminalId) : null
+    const handle = activeTerminalId ? terminalPaneRegistry.getHandle(activeTerminalId) : null
     if (handle) {
       handle.closeActivePane()
       return
@@ -1174,7 +1167,7 @@ export function FloatingTerminalPanel({
     if (activeClosableTab) {
       closeFloatingItemConfirmed(activeClosableTab.id)
     }
-  }, [activeClosableTab, activeTerminalId, closeFloatingItemConfirmed])
+  }, [activeClosableTab, activeTerminalId, closeFloatingItemConfirmed, terminalPaneRegistry])
 
   // One pass over every chord the panel claims. Its keydown preflight and its dispatch consume the
   // same resolution, so a single event is never re-scanned against the shortcut table.
@@ -1839,7 +1832,7 @@ export function FloatingTerminalPanel({
                     aria-hidden={!isActive}
                   >
                     <TerminalPane
-                      ref={getTerminalPaneRefCallback(tab.id)}
+                      ref={terminalPaneRegistry.getRefCallback(tab.id)}
                       tabId={tab.id}
                       worktreeId={FLOATING_TERMINAL_WORKTREE_ID}
                       cwd={cwd}

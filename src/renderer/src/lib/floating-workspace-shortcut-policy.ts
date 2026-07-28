@@ -126,10 +126,9 @@ export function matchFloatingWorkspacePanelShortcut(
   return null
 }
 
-// One pass over everything the panel claims, for callers (App.tsx's yield gate, the panel's keydown
-// preflight) that would otherwise scan the creation table and the chrome table separately per keydown.
-// Creation chords stay target-gated; chrome chords stay ungated — same order and semantics as the two
-// matchers it composes.
+// Everything the panel claims, resolved in one call for claim-only callers like App.tsx's yield gate
+// (which otherwise pairs the two matchers by hand and can drift from the dispatch). Creation chords
+// stay target-gated; chrome chords stay ungated — same order and semantics as the matchers it composes.
 export function matchFloatingWorkspacePanelChord(
   event: FloatingWorkspaceShortcutEvent,
   platform: NodeJS.Platform,
