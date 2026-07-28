@@ -535,7 +535,9 @@ platforms. Cache mutation faults additionally require every destructive
 Android store path to delete only lexical descendants without following
 symlinks; quota traversal ignores linked trees. Direct, nested, and
 live-stage-replacement links plus host-subtree and dangling host links preserve
-external sentinels on both native stores.
+external sentinels on both native stores. Staged-asset and activation-host
+writes reject linked paths before opening them. Atomic activation replacement
+replaces an in-cache file link without changing its external target.
 The standalone renderer-based workspace, session, files, terminal,
 source-control, and review presentation is also removed with its Vite-only
 package path. A production-source boundary requires `src/mobile-web/` to remain

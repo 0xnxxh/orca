@@ -233,6 +233,14 @@ The iOS native fault executable, Android Debug unit/Release Kotlin gates,
 569-file mobile suite, mobile/mobile-web typechecks and lints, reliability,
 max-lines, focused formatting, diff hygiene, and unchanged `b17ead7a…` package
 verification pass after the cleanup repair.
+Native cache writes now use the same no-link boundary before opening staged
+assets or an activation host tree. Mirrored mutation faults replace an asset,
+activation file, and whole host tree with symlinks. Staged and host-tree writes
+fail with stable errors, while atomic activation replacement removes the
+in-cache link rather than modifying its external target.
+The 569-file mobile suite, mobile/mobile-web typechecks and lints, reliability,
+max-lines, focused formatting, diff hygiene, and unchanged `b17ead7a…` package
+verification also pass after the write-boundary repair.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -293,9 +301,11 @@ cross-scope races, privacy/authorization audit, and independent review.
       manifests, canonical manifests, and activation metadata. Native cleanup
       faults now reject direct, nested, host-subtree, generation, and dangling
       symlink traversal without touching external sentinels; Android quota
-      accounting ignores linked external bytes. A fresh exact-app rerun,
-      further generated mutation, concurrent cache mutation, and the other
-      listed boundaries remain.
+      accounting ignores linked external bytes. Staged-asset and activation
+      writes also reject linked parents, while atomic activation replacement
+      preserves an external file behind an in-cache link. A fresh exact-app
+      rerun, further generated mutation, concurrent cache mutation, and the
+      other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,

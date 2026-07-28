@@ -2838,6 +2838,12 @@ stores remove a linked entry itself, never its target, and remove dangling host
 links even though ordinary existence checks follow links. Quota measurement and
 eviction ignore linked trees.
 
+The same boundary applies before native cache writes. A stage asset or
+activation host tree replaced by a symlink fails closed with a stable storage
+error. Activation uses an atomic sibling replacement, so an in-cache activation
+file link is replaced rather than followed and its external target remains
+unchanged.
+
 ### Native-shell rollback
 
 A defect in the asset origin, credential broker, native bridge, audio/picker

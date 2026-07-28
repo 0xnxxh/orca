@@ -34,7 +34,7 @@ func readMobileWebFile(
   }
 }
 
-private func requireMobileWebRegularFile(
+func requireMobileWebRegularFile(
   _ url: URL,
   within cacheRoot: URL,
   errorCode: String

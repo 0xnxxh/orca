@@ -147,6 +147,7 @@ internal class MobileWebPackageStore internal constructor(
         sha256Hex(bytes) == chunkSha256
     ) { "mobile_web_stage_chunk_invalid" }
     val file = assetFile(stage.root, path)
+    requireMobileWebRegularFile(file, cacheRoot, "mobile_web_stage_write_failed")
     require(offset >= 0 && file.length() == offset.toLong()) {
       "mobile_web_stage_offset_invalid"
     }
@@ -480,7 +481,13 @@ internal class MobileWebPackageStore internal constructor(
   }
 
   private fun writeActivation(hostRoot: File, active: String, previous: String?) {
+    require(isMobileWebUnlinkedPath(hostRoot, cacheRoot)) {
+      "mobile_web_activation_write_failed"
+    }
     require(hostRoot.mkdirs() || hostRoot.isDirectory) { "mobile_web_activation_write_failed" }
+    require(isMobileWebUnlinkedPath(hostRoot, cacheRoot) && hostRoot.isDirectory) {
+      "mobile_web_activation_write_failed"
+    }
     val value = JSONObject().put("active", active)
     if (previous != null) value.put("previous", previous)
     val destination = File(hostRoot, "activation.json")

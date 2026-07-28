@@ -191,6 +191,11 @@ final class MobileWebPackageStore {
         throw MobileWebStoreError("mobile_web_stage_chunk_invalid")
       }
       let file = assetUrl(root: stage.root, path: path)
+      try requireMobileWebRegularFile(
+        file,
+        within: try cacheRoot(),
+        errorCode: "mobile_web_stage_write_failed"
+      )
       let currentLength = try fileManager.attributesOfItem(atPath: file.path)[.size] as? NSNumber
       guard
         offset >= 0,
@@ -662,7 +667,18 @@ final class MobileWebPackageStore {
   }
 
   private func writeActivation(_ activation: MobileWebActivationRecord, hostRoot: URL) throws {
+    let root = try cacheRoot()
+    guard isMobileWebUnlinkedPath(hostRoot, within: root) else {
+      throw MobileWebStoreError("mobile_web_activation_write_failed")
+    }
     try fileManager.createDirectory(at: hostRoot, withIntermediateDirectories: true)
+    let values = try hostRoot.resourceValues(forKeys: [.isDirectoryKey])
+    guard
+      isMobileWebUnlinkedPath(hostRoot, within: root),
+      values.isDirectory == true
+    else {
+      throw MobileWebStoreError("mobile_web_activation_write_failed")
+    }
     let data = try JSONEncoder().encode(activation)
     try data.write(to: hostRoot.appendingPathComponent("activation.json"), options: .atomic)
   }

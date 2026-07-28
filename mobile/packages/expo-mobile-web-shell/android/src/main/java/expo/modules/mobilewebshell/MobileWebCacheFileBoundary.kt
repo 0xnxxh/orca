@@ -28,7 +28,7 @@ internal fun readMobileWebFile(
   }
 }
 
-private fun requireMobileWebRegularFile(file: File, root: File, errorCode: String) {
+internal fun requireMobileWebRegularFile(file: File, root: File, errorCode: String) {
   val rootPath = root.absoluteFile.path.trimEnd(File.separatorChar)
   val prefix = rootPath + File.separator
   val filePath = file.absoluteFile.path
