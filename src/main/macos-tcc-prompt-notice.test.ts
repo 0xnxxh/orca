@@ -161,6 +161,39 @@ describe('tcc prompt notice threshold', () => {
     }
   })
 
+  it('starts the log reader only after the first window is ready to show', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const mainWindow = createWindowStub()
+    try {
+      initTccPromptNotice(mainWindow as never, { deferWatchUntilReadyToShow: true })
+      expect(watchStart).not.toHaveBeenCalled()
+
+      const readyToShow = mainWindow.once.mock.calls.find(
+        ([event]) => event === 'ready-to-show'
+      )?.[1]
+      readyToShow?.()
+      await new Promise((resolve) => {
+        setImmediate(resolve)
+      })
+
+      expect(watchStart).toHaveBeenCalledOnce()
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
+  it('starts immediately when aborted-quit recovery does not request startup deferral', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    try {
+      initTccPromptNotice(createWindowStub() as never)
+      expect(watchStart).toHaveBeenCalledOnce()
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
   it('does not send through a destroyed main window', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })

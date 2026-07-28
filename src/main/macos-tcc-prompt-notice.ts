@@ -144,12 +144,34 @@ function sendTccPromptNotice(mainWindow: BrowserWindow, payload: TccPromptNotice
   }
 }
 
-export function initTccPromptNotice(mainWindow: BrowserWindow): void {
+function startWatchAfterFirstVisibleProgress(
+  mainWindow: BrowserWindow,
+  targetWatch: MacosTccPromptWatch,
+  deferUntilReadyToShow: boolean
+): void {
+  if (!deferUntilReadyToShow) {
+    targetWatch.start()
+    return
+  }
+  mainWindow.once('ready-to-show', () => {
+    setImmediate(() => {
+      if (watch === targetWatch) {
+        targetWatch.start()
+      }
+    })
+  })
+}
+
+export function initTccPromptNotice(
+  mainWindow: BrowserWindow,
+  options?: { deferWatchUntilReadyToShow?: boolean }
+): void {
   if (process.platform !== 'darwin') {
     return
   }
   if (watch) {
     trackMainWindow(mainWindow)
+    watch.start()
     return
   }
   tally = loadTally()
@@ -177,7 +199,11 @@ export function initTccPromptNotice(mainWindow: BrowserWindow): void {
       stopTccPromptNotice()
     }
   })
-  watch.start()
+  startWatchAfterFirstVisibleProgress(
+    mainWindow,
+    watch,
+    options?.deferWatchUntilReadyToShow === true
+  )
 }
 
 export function stopTccPromptNotice(): void {
