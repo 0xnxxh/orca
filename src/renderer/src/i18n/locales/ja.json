@@ -4916,6 +4916,10 @@
           "close": "閉じる",
           "image": "画像",
           "expand": "画像を拡大"
+        },
+        "WorktreeDeveloperMenu": {
+          "developer": "Developer",
+          "parkTerminal": "Park terminal"
         }
       },
       "shared": {
@@ -13939,6 +13943,11 @@
           },
           "undo": "元に戻す",
           "widthOption": "{{value0}} px"
+        }
+      },
+      "terminalPane": {
+        "useManualTerminalWorktreeParking": {
+          "cannotPark": "These terminals cannot be parked safely."
         }
       }
     },
