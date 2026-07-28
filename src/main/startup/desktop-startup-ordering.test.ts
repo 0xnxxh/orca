@@ -8,7 +8,9 @@ describe('startup ordering', () => {
     const attachStart = source.indexOf('attachMainWindowServices(')
     const attachEnd = source.indexOf('rateLimits.attach(window)', attachStart)
     const attachBlock = source.slice(attachStart, attachEnd)
-    const desktopStart = source.indexOf('const [win, runtimeRpcStartResult] = await Promise.all([')
+    // Why: anchor on the destructure head only — the settled-result variable's name is not the
+    // contract, and pinning it turns a rename into a cryptic `expected -1` failure here.
+    const desktopStart = source.indexOf('const [win')
     const desktopEnd = source.indexOf('// Why: the macOS notification permission dialog')
     const desktopStartup = source.slice(desktopStart, desktopEnd)
 
@@ -25,10 +27,10 @@ describe('startup ordering', () => {
 
     expect(windowIndex).toBeGreaterThanOrEqual(0)
     expect(Math.max(rpcStartIndex, legacyRpcStartIndex)).toBeGreaterThanOrEqual(0)
-    expect(desktopStartup).toContain('recordRuntimeRpcStartFailure(error)')
-    expect(desktopStartup).toContain(
-      'void showRuntimeRpcStartupFailureDialog(win, runtimeRpcStartResult.error)'
-    )
+    expect(desktopStartup).toContain('recordRuntimeRpcStartFailure(')
+    // Why: `void`, not `await` — awaiting the dialog would park the rest of startup behind a modal.
+    expect(desktopStartup).toMatch(/void showRuntimeRpcStartupFailureDialog\(\s*win,/)
+    // Why (#11025): a bare console.error here is exactly what left the CLI dead but the app healthy.
     expect(desktopStartup).not.toContain(
       "console.error('[runtime] Failed to start local RPC transport:'"
     )
