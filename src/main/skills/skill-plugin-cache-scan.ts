@@ -32,9 +32,8 @@ export type KnownPluginSkillScan = {
    */
   unverifiedPaths: string[]
   /**
-   * Paths deliberately not descended into. A prune or depth stop is the scan's own
-   * choice over ground that cannot hold an installed skill package, so it proves
-   * nothing was missed and must never be read as a fault.
+   * Vendor/VCS paths deliberately not descended into because they cannot hold an
+   * installed skill package. They prove nothing was missed and are not faults.
    */
   prunedPaths: string[]
 }
@@ -73,8 +72,8 @@ export async function scanKnownPluginSkillCandidates(
   }
 
   function recordPruned(path: string): void {
-    // Why: a bounded walk is the normal shape of a plugin cache, not a fault, so
-    // recording one must never abort the scan the way an unverified path does.
+    // Why: expected vendor/VCS trees are not faults, so recording one must never
+    // abort the scan the way an unverified path does.
     if (prunedPaths.size < MAXIMUM_PLUGIN_PRUNED_PATHS) {
       prunedPaths.add(path)
     }
@@ -85,7 +84,9 @@ export async function scanKnownPluginSkillCandidates(
       return
     }
     if (depth > MAXIMUM_PLUGIN_SCAN_DEPTH) {
-      recordPruned(directory)
+      // Why: unlike a named vendor/VCS directory, arbitrary deep ground can
+      // still contain a valid skill placement.
+      recordUnverified(directory)
       return
     }
     let resolved: string

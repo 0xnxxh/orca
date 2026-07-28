@@ -29,7 +29,7 @@ describe('plugin skill candidate scan', () => {
     expect(result.unverifiedPaths).toEqual([root])
   })
 
-  it('treats a depth cutoff as pruned ground rather than a name it cannot vouch for', async () => {
+  it('cannot vouch for arbitrary ground beyond the depth budget', async () => {
     const root = await scanRoot('orca-plugin-skill-depth-')
     const segments = Array.from({ length: 11 }, (_, index) => `level-${index}`)
     const hiddenSkill = join(root, ...segments, 'orca-cli')
@@ -38,10 +38,9 @@ describe('plugin skill candidate scan', () => {
     const result = await scanKnownPluginSkillCandidates(root, new Set(['orca-cli']))
 
     expect(result.candidates).toEqual([])
-    // Why: no official skill sits this deep, so absence here is a real answer.
-    expect(result.unverifiedPaths).toEqual([])
-    expect(result.prunedPaths).toHaveLength(1)
-    expect(hiddenSkill.startsWith(result.prunedPaths[0] ?? '')).toBe(true)
+    expect(result.unverifiedPaths).toHaveLength(1)
+    expect(hiddenSkill.startsWith(result.unverifiedPaths[0] ?? '')).toBe(true)
+    expect(result.prunedPaths).toEqual([])
   })
 
   it('prunes vendored dependency trees instead of spending depth on them', async () => {

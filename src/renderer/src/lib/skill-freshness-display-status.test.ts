@@ -5,7 +5,10 @@ import type {
   SkillFreshnessStatus
 } from '../../../shared/skill-freshness'
 import { groupSkillFreshness } from '../components/skills/skill-freshness-grouping'
-import { getSkillFreshnessDisplayStatus } from './skill-freshness-display-status'
+import {
+  getSkillFreshnessDisplayStatus,
+  hasSkillCopyNeedingAttention
+} from './skill-freshness-display-status'
 
 const SKILL_NAME = 'orca-cli'
 
@@ -83,8 +86,16 @@ describe('getSkillFreshnessDisplayStatus', () => {
       // Why: the badge and the dialog once derived attention separately, so a copy
       // could turn the pill amber while the dialog reported everything up to date.
       const value = inventory([placement(status)])
-      expect(getSkillFreshnessDisplayStatus(value, SKILL_NAME)).not.toBe('up-to-date')
+      expect(getSkillFreshnessDisplayStatus(value, SKILL_NAME)).toBe('needs-attention')
       expect(groupSkillFreshness(value.installations, value.eligibleUpdateNames)).toHaveLength(1)
     }
   )
+
+  it('marks an unsafe convergent copy as needing attention', () => {
+    const unsafe = placement('outdated')
+    unsafe.resolvedPath = null
+    unsafe.physicalIdentity = null
+
+    expect(hasSkillCopyNeedingAttention(inventory([unsafe]), SKILL_NAME)).toBe(true)
+  })
 })
