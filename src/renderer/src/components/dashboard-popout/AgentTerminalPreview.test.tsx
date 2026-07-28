@@ -470,6 +470,33 @@ describe('AgentTerminalPreview', () => {
     expect(terminal.input).not.toHaveBeenCalled()
   })
 
+  // Why: a snapshot carries the TUI's one-time kitty push and the post-snapshot
+  // replay redelivers it. Applying replays with stack semantics would leave the
+  // TUI's single pop on a stale frame, so a plain shell keeps getting
+  // kitty-encoded Option chords.
+  it('does not let a redelivered kitty push outlive the TUI pop', async () => {
+    connect.mockResolvedValueOnce({
+      snapshot: { data: '\x1b[>1u', cols: 80, rows: 24, seq: 1 },
+      replay: ['\x1b[>1u']
+    })
+    render(<AgentTerminalPreview ptyId="pty-1" />)
+    await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
+    const terminal = terminalHarness.instances[0]!
+    await waitFor(() => expect(terminal.customKeyHandler).not.toBeNull())
+
+    const altBackspace = (): KeyboardEvent =>
+      new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', altKey: true })
+    expect(terminal.customKeyHandler!(altBackspace())).toBe(true)
+
+    // The TUI exits and pops once on the live stream.
+    act(() => {
+      emitData?.({ type: 'data', ptyId: 'pty-1', data: '\x1b[<u', bytes: 4 })
+    })
+
+    expect(terminal.customKeyHandler!(altBackspace())).toBe(false)
+    expect(terminal.input).toHaveBeenCalledWith('\x1b\x7f')
+  })
+
   it('scrolls the viewport on the macOS scrollback chord', async () => {
     platformState.value = 'darwin'
     render(<AgentTerminalPreview ptyId="pty-1" />)
