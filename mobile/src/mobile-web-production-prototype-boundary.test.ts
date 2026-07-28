@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { extname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -18,6 +18,17 @@ const forbiddenProductionReferences = [
   'mobile-web-prototype',
   'MobileWebPrototype',
   'mobileWeb.prototype'
+]
+const standaloneClientRoot = new URL('../../src/mobile-web', import.meta.url)
+const retiredStandaloneArtifacts = [
+  new URL('../../src/mobile-web/index.html', import.meta.url),
+  new URL('../../src/mobile-web/src/entry.tsx', import.meta.url),
+  new URL('../../src/mobile-web/src/mobile-web-shell.tsx', import.meta.url),
+  new URL('../../vite.mobile-web.config.ts', import.meta.url),
+  new URL('../../config/scripts/verify-mobile-web-build.mjs', import.meta.url),
+  new URL('../../build-plugins/mobile-web-content-addressed.ts', import.meta.url),
+  new URL('../../build-plugins/mobile-web-import-boundary.ts', import.meta.url),
+  new URL('../../build-plugins/mobile-web-style-boundary.ts', import.meta.url)
 ]
 
 function sourceFiles(root: URL): URL[] {
@@ -43,5 +54,15 @@ describe('mobile web production prototype boundary', () => {
     })
 
     expect(violations).toEqual([])
+  })
+
+  it('keeps the retired standalone presentation out of production', () => {
+    expect(retiredStandaloneArtifacts.filter((artifact) => existsSync(artifact))).toEqual([])
+    const rendererImports = sourceFiles(standaloneClientRoot).flatMap((file) => {
+      const source = readFileSync(file, 'utf8')
+      return source.includes('@renderer') || source.includes('src/renderer') ? [file.pathname] : []
+    })
+
+    expect(rendererImports).toEqual([])
   })
 })

@@ -181,6 +181,17 @@ activation metadata with a 1 KiB ceiling, and assets with their exact declared
 length plus one overflow byte. Oversized files fail with the existing stable
 generation or activation error before whole-file allocation; mirrored Swift
 and Kotlin fault suites pass.
+The obsolete standalone `src/mobile-web/` presentation and Vite-only package
+path are removed. The directory now contains only production bridge clients,
+transport state, and focused tests consumed by the real React Native Web route
+graph. A source boundary prevents the duplicate renderer-based UI from
+returning, and the production package remains build `b17ead7a…`.
+Post-removal validation passes 568 mobile files / 3,375 tests with 2 expected
+skips and 3,752 root files / 39,218 tests with 62 expected skips. Root, mobile,
+and mobile-web lint; node, mobile, and mobile-web typechecks; reliability,
+localization, max-lines, formatting, package verification, and diff hygiene
+pass. The packaged-resource fixture now includes the same required safe-area
+viewport contract as the production document.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -197,9 +208,6 @@ cross-scope races, privacy/authorization audit, and independent review.
 - [ ] Remove the Experimental Settings entry and `hybrid-prototype` route.
 - [ ] Remove superseded prototype contracts, package generation, RPC names,
       cache, bridge code, and fixtures.
-- [ ] Remove the purpose-built `src/mobile-web/` validation presentation while
-      retaining the shared React Native components rendered through React
-      Native Web.
 - [ ] Confirm production source and imports contain no `prototype` names.
 - [ ] Document Desktop web-package rollback and native store-rollout rollback.
 

@@ -2,14 +2,6 @@
   "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
   "include": [
     "../src/mobile-web/src/**/*",
-    "../src/renderer/src/components/ui/badge.tsx",
-    "../src/renderer/src/components/ui/button.tsx",
-    "../src/renderer/src/components/ui/card.tsx",
-    "../src/renderer/src/components/ui/dialog-foundation.tsx",
-    "../src/renderer/src/components/ui/input.tsx",
-    "../src/renderer/src/components/ui/select.tsx",
-    "../src/renderer/src/components/ui/tabs.tsx",
-    "../src/renderer/src/lib/utils.ts",
     "../src/shared/agent-status-limits.ts",
     "../src/shared/clipboard-text.ts",
     "../src/shared/event-loop-yield.ts",
@@ -23,11 +15,6 @@
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
-    "types": ["vite/client"],
-    "paths": {
-      "@mobile-web/*": ["../src/mobile-web/src/*"],
-      "@renderer/*": ["../src/renderer/src/*"],
-      "@/*": ["../src/renderer/src/*"]
-    }
+    "types": []
   }
 }

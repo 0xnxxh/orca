@@ -71,7 +71,7 @@ At the end of every implementation session:
 | ---------------------------------- | ----------- | --------: | ------------------------------------------------------ |
 | Prototype evidence                 | Complete    |       8/8 | Simulator-only bounded vertical slice                  |
 | Contracts and parity inventory     | Complete    |     10/10 | Route, RPC, native, state, and failure ledgers frozen  |
-| Mobile web build                   | In progress |      9/12 | Packaged macOS/SSH lookup verified                     |
+| Mobile web build                   | In progress |     10/12 | Duplicate validation UI removed; packaging gates open  |
 | Package delivery RPC               | In progress |      9/10 | Production names and RPC pass focused validation       |
 | Native asset origin and cache      | In progress |      7/15 | Cross-platform unit faults pass; device drills remain  |
 | Capability bridge                  | In progress |     10/17 | Replay/race hardening passes; binary matrix remains    |
@@ -83,7 +83,7 @@ At the end of every implementation session:
 | Security and adversarial review    | In progress |      1/15 | Executable isolation passes; broader review open       |
 | Device and topology validation     | In progress |      0/18 | Direct iOS and Android emulators pass core journeys    |
 | App Store validation               | Not started |      0/10 | Production submission, not TestFlight                  |
-| Cutover and cleanup                | Not started |      0/12 | Last implementation workstream                         |
+| Cutover and cleanup                | In progress |      1/12 | Duplicate validation UI removed                        |
 | Release evidence and documentation | Not started |      0/10 | Required before merge                                  |
 
 **Current workstream:** Complete remaining parity, cutover cleanup, and the
@@ -99,7 +99,8 @@ a second platform boundary: native retains those authorities, while the hosted
 page receives shell-owned identity and no page persistence. Leaving a host,
 reconnect, pairing repair, and paired-host removal now use a third narrow
 shell-operations boundary without changing rendered JSX. The purpose-built web
-screens remain infrastructure fixtures and cannot be the cutover UI. The
+screens and Vite-only package path are removed; only production page clients
+and transport state remain under `src/mobile-web/`. The
 existing `NewWorktreeModalController`, `NewWorktreeModal`, Smart source drawer,
 and their view models now consume a named
 `HostWorkspaceCreationOperations` domain interface. Native maps that interface
@@ -535,14 +536,14 @@ recovery, or physical-device gates.
       RPC returned build `c24ff987…`, then the actual iOS WKWebView rendered the
       unchanged Docker SSH workspace, mutated its remote terminal, and
       recovered native chat across SSH disconnect/reconnect.
-- [~] Replace the Vite validation presentation with the React Native Web build
-  and remove equivalent `src/mobile-web/` UI components. The existing
-  mobile UI now packages deterministically through the production asset
-  format. `build:mobile-web`, development lookup, and Electron packaging now
-  select the RNW artifact by default; the Vite presentation remains only as an
-  explicitly named infrastructure fixture until its tests migrate. Cutover is
-  still blocked on full route parity, device evidence, and distribution
-  packaging.
+- [x] Replace the Vite validation presentation with the React Native Web build
+      and remove equivalent `src/mobile-web/` UI components. The existing mobile
+      UI packages deterministically through the production asset format.
+      `build:mobile-web`, development lookup, and Electron packaging select the
+      RNW artifact. The retired Vite entry, package plugin/verifier, duplicate
+      workspace/session/files/source-control UI, and UI-only tests are removed.
+      Production bridge clients and transport tests remain. The rebuilt package
+      retains build `b17ead7a…`.
 
 ## 3. Production Package Delivery RPC
 
@@ -1676,9 +1677,10 @@ copy.
 - [ ] Remove the Experimental Settings entry and prototype route.
 - [ ] Remove prototype contracts, package generator, RPC names, cache, bridge,
       and test fixtures superseded by production implementations.
-- [ ] Remove the parallel `src/mobile-web/` presentation after parity and App
-      Store gates pass; retain the shared React Native component source rendered
-      through React Native Web.
+- [x] Remove the parallel `src/mobile-web/` presentation while retaining its
+      production bridge clients and the shared React Native component source
+      rendered through React Native Web. The native workspace fallback remains
+      untouched until the App Store and release gates pass.
 - [ ] Keep native pairing, recovery, permissions, settings, and diagnostics.
 - [~] Drill automatic rollback from a crash-looping staged package. The exact
   Pixel 9 Pro API 36 Debug app crashed three distinct Chromium renderer
@@ -2620,4 +2622,8 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-28 | Finding  | Native manifest parsing enforced asset count and field bounds only after parsing both supplied JSON documents. Swift and Kotlin now reject either raw manifest above 256 KiB before handing it to `JSONSerialization` or `JSONObject`.                                                                                                                                                                                                  |
 | 2026-07-28 | Complete | Mirrored oversized primary/canonical manifest regressions pass the Swift fault executable and the refreshed Android module suite across 76 Gradle tasks. No staging directory is created for the rejected Android inputs.                                                                                                                                                                                                               |
 | 2026-07-28 | Complete | The RNW packager, build verifier, iOS response policy, and Android response policy now share one exact document-CSP contract. Focused packager/native-source tests pass, and a fresh production RNW build retains build `9ed8c7f7…`, 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                                                                                          |
-| 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |
+| 2026-07-28 | Finding  | Persisted native primary/canonical manifests, activation metadata, and generation assets used whole-file APIs before their post-read bounds. Both stores now read only each limit plus one overflow byte and preserve stable staging, generation, and activation failures.                                                                                                                                                              |
+| 2026-07-28 | Complete | Mirrored oversized persisted-file faults pass the Swift executable and Android 76-task module suite. Shared contracts pass 24 files / 203 tests; native source parity passes 1 file / 4 tests; all relevant typechecks, lints, formatting, max-lines, and diff hygiene pass.                                                                                                                                                            |
+| 2026-07-28 | Complete | The obsolete standalone renderer-based mobile-web presentation, its Vite-only package path, and 12,621 lines of duplicate UI/tests are removed. Production bridge clients and transport state remain, and a boundary test prevents renderer UI from returning. The authoritative RNW package remains `b17ead7a…`: 49 assets, 9,281,663 raw bytes, and 2,684,764 gzip bytes.                                                             |
+| 2026-07-28 | Complete | Post-removal validation passes 568 mobile files / 3,375 tests with 2 expected skips and 3,752 root files / 39,218 tests with 62 expected skips. Root/mobile/mobile-web lint, node/mobile/mobile-web typechecks, reliability, localization, max-lines, changed-file formatting, package verification, and diff hygiene pass. The packaged-resource fixture now matches the required safe-area viewport contract.                         |
+| 2026-07-28 | Next     | Complete compatibility release policy and the remaining gated cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                |

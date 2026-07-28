@@ -30,8 +30,9 @@ not satisfy parity.
 - Existing React Native screen, component, style, and view-model source is
   shared by the native and web runtimes. Target ownership identifies where the
   feature executes, not permission to reimplement its presentation.
-- `src/mobile-web/` presentation components are temporary validation fixtures
-  and must be removed as shared mobile screens replace them.
+- The obsolete `src/mobile-web/` validation presentation is removed. Its
+  remaining modules are production bridge clients and transport state used by
+  the shared React Native Web routes, not a second product UI.
 - A native settings route may configure a web-owned feature when the setting
   controls native input, permission, lifecycle, or recovery behavior.
 - Compatibility redirects disappear when all supported deep links route through
@@ -521,6 +522,11 @@ activation records use a 1 KiB bounded reader, and assets use their declared
 length on both native platforms. Each path reads only one overflow byte before
 failing with its stable error, and mirrored Swift/Kotlin oversized-file faults
 pass.
+The standalone renderer-based workspace, session, files, terminal,
+source-control, and review presentation is also removed with its Vite-only
+package path. A production-source boundary requires `src/mobile-web/` to remain
+renderer-independent, while the authoritative RNW package still verifies as
+build `b17ead7a…`.
 
 ## Next Inventory Action
 

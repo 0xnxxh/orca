@@ -66,9 +66,10 @@ it reaches Desktop authority; it does not authorize a redesign.
   review any intentional product UI change separately against both runtimes.
 - Keep the native workspace route as the behavior oracle and working fallback
   until the final parity, security, device, and App Store gates pass.
-- The current `src/mobile-web/` presentation is a security and transport
-  validation harness. Its workspace, session, file, diff, source-control, and
-  review components must not become the production UI.
+- The former `src/mobile-web/` validation presentation is removed. Its
+  surviving modules are production bridge clients and transport state; the
+  workspace, session, file, diff, source-control, and review UI comes only from
+  the shared React Native source.
 - Automated screenshot comparisons and interaction fixtures against the
   existing mobile routes are merge gates. Functional parity without visual and
   interaction parity is insufficient.
@@ -181,7 +182,8 @@ prototype:
   activate, and close controls.
 - Those purpose-built screens are a validation harness only. They prove the
   bridge operations and package lifecycle but do not satisfy the UI preservation
-  contract and are not eligible for production cutover.
+  contract and are not eligible for production cutover. They were retired after
+  the authoritative React Native Web route graph replaced their evidence.
 - Direct, Relay, and stable logical RPC clients expose a typed
   `terminal.multiplex` transport. The native broker resolves only workspace and
   tab IDs; terminal handles, cwd, credentials, connection identity, and input
@@ -591,9 +593,9 @@ crossing that boundary.
 Build `abd43c62…` packages that shared route as 49 content-addressed assets,
 7,201,072 bytes raw and 1,537,245 bytes with gzip. This is a production,
 minified Metro bundle, not a debug artifact. The earlier 2 MiB / 512 KiB
-ceiling remains appropriate for the purpose-built infrastructure fixture, but
-it cannot hold the complete authoritative mobile route graph without removing
-features or reintroducing a parallel UI. That checkpoint introduced an 8 MiB
+ceiling measured the now-retired infrastructure fixture; it could not hold the
+complete authoritative mobile route graph without removing features or
+reintroducing a parallel UI. That checkpoint introduced an 8 MiB
 total / 2 MiB gzip / 7.5 MiB script RNW ceiling. The later locally bundled
 Mermaid engine required the reviewed current ceiling of 10 MiB total, 3 MiB
 gzip, 9.5 MiB of scripts, 256 KiB of styles, and 64 assets. The verifier
@@ -1286,13 +1288,11 @@ workspace scoping, input leases, provider checks, or filesystem boundaries.
 Use the dedicated host-only Expo Router entry to export the existing mobile
 presentation through React Native Web, then post-process it into
 `out/mobile-web-rnw/` as part of every desktop build and release. The separate
-Vite entry under `src/mobile-web/` remains an infrastructure fixture until its
-bridge/package tests have migrated and the shared presentation passes cutover.
+Vite validation entry, content-addressing plugin, verifier, and duplicate
+presentation have been removed after their bridge/package coverage migrated.
 Development fallback, `build:mobile-web`, and Electron's macOS/Linux/Windows
-resource mapping now select `out/mobile-web-rnw/` without an environment
-override. `ORCA_MOBILE_WEB_PACKAGE_ROOT` remains an explicit diagnostic/test
-override. The Vite build is available only as `build:mobile-web-fixture`; it
-must not become the runtime or release presentation.
+resource mapping select `out/mobile-web-rnw/` without an environment override.
+`ORCA_MOBILE_WEB_PACKAGE_ROOT` remains an explicit diagnostic/test override.
 Electron `afterPack` now runs the production package verifier against the
 copied `<resources>/mobile-web` tree, so a missing, corrupt, non-content-
 addressed, over-budget, or CSP-invalid resource fails packaging rather than
@@ -2108,8 +2108,8 @@ measurement above its ceiling. The current 49-asset package is 9,281,663 bytes
 / 2,684,764 bytes gzip and build
 `b17ead7a3c85071f5cfc45dd695bd457e37a49c4895ad3ac979689ca2a13805f`.
 `build:mobile-web` and release resource mapping therefore select the RNW
-package; the original 2 MiB ceiling continues to govern only the isolated Vite
-infrastructure fixture. Workspace snapshots now page through
+package; the original 2 MiB Vite-fixture ceiling is retired with that fixture.
+Workspace snapshots now page through
 opaque single-use cursors:
 each page is capped at 200 rows and 120 KiB, the stable native-only source
 snapshot is capped at 10,000 rows and 8 MiB, and lifecycle cleanup revokes every
@@ -2351,9 +2351,9 @@ config/
   mobile-web-package.ts        deterministic Expo Web package post-processing
 ```
 
-The existing `src/mobile-web/` DOM presentation is a temporary infrastructure
-validation harness. Remove it when its bridge consumers have moved behind the
-shared React Native presentation adapters.
+The `src/mobile-web/` DOM presentation and Vite-only package path are removed.
+The remaining directory contains production bridge clients and transport state
+consumed by the shared React Native presentation adapters.
 
 Production names must drop `prototype`. Do not leave production behavior split
 between the experimental screen and a second implementation.
@@ -2434,7 +2434,8 @@ feature UI.
   the shared source and rerun the parity fixtures; do not preserve an older
   forked snapshot for the web runtime.
 - Remove the purpose-built `src/mobile-web/` presentation as each shared screen
-  reaches parity; keep only the web entry, bridge client, and runtime adapters.
+  reaches parity. This is complete: only bridge clients and runtime transport
+  adapters remain, while the host-only Expo Router entry owns the web route.
 
 ### 7. Adapt workspace and session surfaces
 
@@ -2578,9 +2579,9 @@ silent WebKit miss.
 ### 12. Cut over and remove duplicate workspace UI
 
 - Make the hybrid workspace route the default only after every gate passes.
-- Remove the experimental entry and the parallel `src/mobile-web/`
-  presentation. Retain the shared React Native screen/component source used by
-  React Native Web; remove only superseded route/runtime adapters.
+- Remove the experimental entry at cutover. The parallel `src/mobile-web/`
+  presentation is already removed; retain its production bridge clients and the
+  shared React Native screen/component source used by React Native Web.
 - Keep native pairing, recovery, permissions, settings, and diagnostics.
 - Build the final exact release candidate, rerun smoke/performance/security
   checks, and resubmit if the binary materially differs from the accepted

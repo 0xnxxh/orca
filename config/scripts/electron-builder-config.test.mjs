@@ -724,7 +724,7 @@ async function createMobileWebResourceFixture(resourcesDir) {
     "frame-ancestors 'none'"
   ].join(';')
   const document = Buffer.from(
-    `<!doctype html><meta http-equiv="Content-Security-Policy" content="${csp}"><script src="./${scriptPath}"></script>`,
+    `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"><meta http-equiv="Content-Security-Policy" content="${csp}"><script src="./${scriptPath}"></script>`,
     'utf8'
   )
   const assets = [
