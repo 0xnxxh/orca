@@ -1091,9 +1091,6 @@ function openMainWindow(): BrowserWindow {
     onQuitAborted: () => {
       isQuitting = false
       clearExpectedRendererReload()
-      if (mainWindow) {
-        initTccPromptNotice(mainWindow)
-      }
     },
     onRendererProcessGone: (details, webContentsId) => {
       recordProcessGoneCrash(

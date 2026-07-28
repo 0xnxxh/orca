@@ -102,7 +102,7 @@ describe('startup ordering', () => {
     expect(source.slice(tccNoticeIndex, tccNoticeIndex + 120)).toContain(
       'deferWatchUntilReadyToShow: true'
     )
-    expect(source.slice(quitAbortStart, quitAbortEnd)).toContain('initTccPromptNotice(mainWindow)')
+    expect(source.slice(quitAbortStart, quitAbortEnd)).not.toContain('initTccPromptNotice')
     expect(source).toContain("process.once('exit', stopTccPromptNotice)")
     const willQuitStart = source.indexOf("app.on('will-quit'")
     const windowAllClosedStart = source.indexOf("app.on('window-all-closed'", willQuitStart)

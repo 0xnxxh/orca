@@ -185,7 +185,7 @@ describe('tcc prompt notice threshold', () => {
     }
   })
 
-  it('starts immediately when aborted-quit recovery does not request startup deferral', () => {
+  it('starts immediately when startup deferral is not requested', () => {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
     try {
