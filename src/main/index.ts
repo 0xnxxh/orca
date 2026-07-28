@@ -1187,6 +1187,8 @@ function openMainWindow(): BrowserWindow {
         prepareLegacySharedCodexSessionResume(args, {
           isHostSystemDefaultRealHome: () =>
             codexRuntimeHome?.isHostSystemDefaultRealHome() === true,
+          getSelectedHostAccountCodexHomePath: () =>
+            codexRuntimeHome?.getSelectedHostAccountCodexHomePath() ?? null,
           systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
         }),
       onBeforeRelaunch: async () => {
@@ -2144,6 +2146,8 @@ app.whenReady().then(async () => {
     prepareAiVaultSessionResume: (args) =>
       prepareLegacySharedCodexSessionResume(args, {
         isHostSystemDefaultRealHome: () => codexRuntimeHome?.isHostSystemDefaultRealHome() === true,
+        getSelectedHostAccountCodexHomePath: () =>
+          codexRuntimeHome?.getSelectedHostAccountCodexHomePath() ?? null,
         systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
       }),
     buildAgentHookPtyEnv: () =>
