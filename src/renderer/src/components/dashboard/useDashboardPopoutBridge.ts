@@ -59,6 +59,17 @@ export function dashboardSnapshotInputsChanged(
   )
 }
 
+/** Watches the store for snapshot-relevant writes. Lives outside the effect so
+ *  the effect owns exactly one disposable: the returned unsubscribe. */
+function watchSnapshotInputs(onChanged: () => void): () => void {
+  return useAppStore.subscribe((state, previousState) => {
+    // Why: unrelated high-frequency store writes must not rebuild a cross-worktree snapshot.
+    if (dashboardSnapshotInputsChanged(state, previousState)) {
+      onChanged()
+    }
+  })
+}
+
 /**
  * Runs in the MAIN window (mount once in App). Two responsibilities:
  *  1. While the pop-out dashboard is open, derive the snapshot from the live
@@ -150,12 +161,7 @@ export function useDashboardPopoutBridge(enabled: boolean): void {
       open = next
       if (open) {
         if (!unsubscribeStore) {
-          unsubscribeStore = useAppStore.subscribe((state, previousState) => {
-            // Why: unrelated high-frequency store writes must not rebuild a cross-worktree snapshot.
-            if (dashboardSnapshotInputsChanged(state, previousState)) {
-              publishThrottled()
-            }
-          })
+          unsubscribeStore = watchSnapshotInputs(publishThrottled)
         }
         publishNow(true)
       } else {
