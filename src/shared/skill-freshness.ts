@@ -91,6 +91,29 @@ export type SkillFreshnessInventory = {
   scannedAt: number
 }
 
+/** Whether the global update command writes to this placement. */
+export function isConvergentSkillPlacement(installation: SkillFreshnessInstallation): boolean {
+  return SUPPORTED_GLOBAL_SKILL_TOPOLOGIES.has(installation.topology)
+}
+
+/**
+ * The single definition of drift: this copy is not the current official bytes.
+ *
+ * The badge, the review dialog and the skipped sentence all derive from this one
+ * predicate, so a copy can never be amber on the badge and absent from the dialog.
+ */
+export function isDriftedSkillPlacement(installation: SkillFreshnessInstallation): boolean {
+  return installation.status !== 'current'
+}
+
+/** Drift the update command cannot converge, so it needs the user's own hands. */
+export function skillPlacementNeedsAttention(installation: SkillFreshnessInstallation): boolean {
+  return (
+    isDriftedSkillPlacement(installation) &&
+    !(isConvergentSkillPlacement(installation) && installation.status === 'outdated')
+  )
+}
+
 export function buildTargetedSkillUpdateCommand(names: readonly string[]): string | null {
   const canonicalNames = [...new Set(names)].sort((left, right) => left.localeCompare(right, 'en'))
   // Why: names become editable shell input. Official manifests use this

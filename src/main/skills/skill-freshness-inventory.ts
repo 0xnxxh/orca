@@ -13,6 +13,7 @@ import {
   classifyHomeSkillCandidate,
   classifyUnsupportedSkillCandidate,
   dedupeSkillFreshnessPlacements,
+  isForeignPluginSkillPlacement,
   observeSkillFreshnessInstallation,
   type CandidateLstat
 } from './skill-freshness-placement-observation'
@@ -140,9 +141,10 @@ export async function inventorySkillFreshness(args: {
           ]
         : []
     }),
-    // Why: unreadable plugin subtrees could hide any official name. An
-    // incomplete scan must conservatively poison every name rather than imply absence.
-    ...scan.incompletePaths.flatMap((incompletePath) =>
+    // Why: a subtree the scan could not read could hide any official name, so it
+    // must poison every name rather than imply absence. Ground the scan pruned by
+    // its own policy is excluded — it cannot hold a skill, so it hides nothing.
+    ...scan.unverifiedPaths.flatMap((unverifiedPath) =>
       artifacts.manifest.skills.map(
         (current) => () =>
           observeSkillFreshnessInstallation({
@@ -153,12 +155,12 @@ export async function inventorySkillFreshness(args: {
             providers: root.providers,
             sourceKind: 'plugin',
             sourceLabel: root.label,
-            unresolvedPath: join(incompletePath, current.name),
+            unresolvedPath: join(unverifiedPath, current.name),
             topology: {
               topology: 'plugin-cache',
               resolvedPath: null,
               identity: null,
-              errorCategory: 'plugin-cache-scan-incomplete'
+              errorCategory: 'plugin-cache-scan-unverified'
             }
           })
       )
@@ -166,7 +168,10 @@ export async function inventorySkillFreshness(args: {
   ])
   const unsupportedInstallations = (
     await runSkillCandidateTasks([...repoTasks, ...omittedRepoTasks, ...pluginTasks])
-  ).filter((installation): installation is SkillFreshnessInstallation => installation !== null)
+  ).filter(
+    (installation): installation is SkillFreshnessInstallation =>
+      installation !== null && !isForeignPluginSkillPlacement(installation)
+  )
   const installations = dedupeSkillFreshnessPlacements([
     ...homeInstallations,
     ...unsupportedInstallations

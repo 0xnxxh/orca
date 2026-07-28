@@ -39,16 +39,26 @@ describe('groupSkillFreshness', () => {
     ])
   })
 
-  it('hides skills with nothing out of date (current, unrecognized-only, unreadable-only)', () => {
+  it('hides a skill whose every copy is current', () => {
+    const groups = groupSkillFreshness([placement('orca-cli', { status: 'current' })], [])
+    expect(groups).toEqual([])
+  })
+
+  it('explains drift the update cannot converge, so the badge is never unactionable', () => {
+    // Why: the badge flags any drifted copy. Dropping the non-outdated ones here
+    // left the user an amber pill whose Details dialog said everything was fine.
     const groups = groupSkillFreshness(
       [
-        placement('orca-cli', { status: 'current' }),
         placement('dataviz', { status: 'unrecognized', topology: 'independent-copy' }),
-        placement('linear-tickets', { status: 'inaccessible' })
+        placement('linear-tickets', { status: 'inaccessible' }),
+        placement('orca-cli', { status: 'newer-known' })
       ],
       []
     )
-    expect(groups).toEqual([])
+    expect(groups.map((group) => group.name)).toEqual(['dataviz', 'linear-tickets', 'orca-cli'])
+    expect(groups.every((group) => group.status === 'cannot-update')).toBe(true)
+    expect(groups[0]?.locations[0]?.chip).toBe('unrecognized')
+    expect(groups[1]?.locations[0]?.chip).toBe('inaccessible')
   })
 
   it('groups a blocked skill and flags the culprit location, not the main copy', () => {

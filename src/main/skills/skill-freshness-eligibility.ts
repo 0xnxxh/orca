@@ -1,5 +1,5 @@
 import {
-  SUPPORTED_GLOBAL_SKILL_TOPOLOGIES,
+  isConvergentSkillPlacement,
   type SkillFreshnessInstallation
 } from '../../shared/skill-freshness'
 
@@ -26,9 +26,7 @@ export function eligibleSkillUpdateNames(
 
   const eligible: string[] = []
   for (const [, entries] of byName) {
-    const convergent = entries.filter((entry) =>
-      SUPPORTED_GLOBAL_SKILL_TOPOLOGIES.has(entry.topology)
-    )
+    const convergent = entries.filter(isConvergentSkillPlacement)
     // Why: without a convergent placement the command has no anchor, so it would
     // no-op or error against a canonical install that isn't there.
     if (convergent.length === 0) {

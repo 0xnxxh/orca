@@ -233,6 +233,15 @@ export async function classifyUnsupportedSkillCandidate(args: {
   })
 }
 
+/**
+ * A skill a plugin ships that merely shares an official name. Plugin caches are
+ * vendor-managed and Orca never writes there, so a package matching no Orca release
+ * is someone else's skill — reporting it would blame the user's install for it.
+ */
+export function isForeignPluginSkillPlacement(installation: SkillFreshnessInstallation): boolean {
+  return installation.topology === 'plugin-cache' && installation.status === 'unrecognized'
+}
+
 function topologyDedupeBucket(installation: SkillFreshnessInstallation): string {
   return installation.topology === 'canonical-copy' || installation.topology === 'provider-alias'
     ? 'managed-global'

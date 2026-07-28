@@ -378,3 +378,92 @@ describe('read-only skill freshness inventory', () => {
     expect(inventory.eligibleUpdateNames).toEqual(['orca-cli'])
   })
 })
+
+describe('plugin cache placements', () => {
+  const pluginCache = (homeDir: string): string => join(homeDir, '.codex', 'plugins', 'cache')
+
+  it('keeps an installed skill current when a plugin vendors a deep dependency tree', async () => {
+    const test = await fixture()
+    await test.writeSkill(join(test.homeDir, '.agents', 'skills'), test.currentMarkdown)
+    // Why: the shape that broke this — a vendored npm tree under a versioned plugin
+    // reaches past the depth budget, which used to read as "a skill could be hiding".
+    await mkdir(
+      join(
+        pluginCache(test.homeDir),
+        'openai-bundled/browser/26.721.41059/scripts/node_modules/classic-level/deps/leveldb/leveldb-1.20/db'
+      ),
+      { recursive: true }
+    )
+
+    const inventory = await inventorySkillFreshness({
+      currentAppVersion: '2.0.0',
+      homeDir: test.homeDir,
+      repos: [],
+      resourceRoot: test.resourceRoot
+    })
+
+    expect(inventory.installations.map((entry) => entry.status)).toEqual(['current'])
+  })
+
+  it('still poisons every name when the cache itself cannot be read', async () => {
+    const test = await fixture()
+    await test.writeSkill(join(test.homeDir, '.agents', 'skills'), test.currentMarkdown)
+    await mkdir(join(test.homeDir, '.codex', 'plugins'), { recursive: true })
+    await writeFile(pluginCache(test.homeDir), 'not a directory')
+
+    const inventory = await inventorySkillFreshness({
+      currentAppVersion: '2.0.0',
+      homeDir: test.homeDir,
+      repos: [],
+      resourceRoot: test.resourceRoot
+    })
+
+    expect(inventory.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'inaccessible',
+          errorCategory: 'plugin-cache-scan-unverified'
+        })
+      ])
+    )
+  })
+
+  it('ignores a plugin skill that only shares an official name', async () => {
+    const test = await fixture()
+    await test.writeSkill(join(test.homeDir, '.agents', 'skills'), test.currentMarkdown)
+    const foreign = join(pluginCache(test.homeDir), 'openai-bundled', 'orca-cli', '1.0.0', 'skills')
+    await mkdir(foreign, { recursive: true })
+    await writeFile(
+      join(foreign, 'SKILL.md'),
+      '---\nname: orca-cli\ndescription: A plugin skill that is not ours.\n---\n'
+    )
+
+    const inventory = await inventorySkillFreshness({
+      currentAppVersion: '2.0.0',
+      homeDir: test.homeDir,
+      repos: [],
+      resourceRoot: test.resourceRoot
+    })
+
+    expect(inventory.installations.map((entry) => entry.topology)).toEqual(['canonical-copy'])
+  })
+
+  it('still reports an outdated official copy a plugin vendors', async () => {
+    const test = await fixture()
+    await test.writeSkill(join(test.homeDir, '.agents', 'skills'), test.currentMarkdown)
+    await test.writeSkill(join(pluginCache(test.homeDir), 'openai-bundled'), test.oldMarkdown)
+
+    const inventory = await inventorySkillFreshness({
+      currentAppVersion: '2.0.0',
+      homeDir: test.homeDir,
+      repos: [],
+      resourceRoot: test.resourceRoot
+    })
+
+    expect(inventory.installations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ topology: 'plugin-cache', status: 'outdated' })
+      ])
+    )
+  })
+})

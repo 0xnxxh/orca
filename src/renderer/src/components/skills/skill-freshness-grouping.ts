@@ -1,4 +1,7 @@
-import type { SkillFreshnessInstallation } from '../../../../shared/skill-freshness'
+import {
+  isDriftedSkillPlacement,
+  type SkillFreshnessInstallation
+} from '../../../../shared/skill-freshness'
 
 export type SkillGroupStatus = 'update-available' | 'cannot-update'
 
@@ -57,9 +60,9 @@ export function locationChip(installation: SkillFreshnessInstallation): SkillLoc
 
 /**
  * Groups installations by skill for the update modal and derives each skill's
- * update disposition. Only skills with an out-of-date official copy are returned —
- * up-to-date, unrecognized-only, and unreadable-only skills have nothing to change
- * here, so they are omitted entirely.
+ * update disposition. A skill is returned when any copy has drifted, which is the
+ * same predicate the badge reads — so whatever the badge flags, the dialog can
+ * explain. Fully up-to-date skills have nothing to say here and are omitted.
  */
 export function groupSkillFreshness(
   installations: readonly SkillFreshnessInstallation[],
@@ -74,7 +77,7 @@ export function groupSkillFreshness(
   }
   const groups: SkillFreshnessGroupModel[] = []
   for (const [name, entries] of byName) {
-    if (!entries.some((entry) => entry.status === 'outdated')) {
+    if (!entries.some(isDriftedSkillPlacement)) {
       continue
     }
     const locations = entries

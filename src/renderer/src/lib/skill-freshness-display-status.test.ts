@@ -4,6 +4,7 @@ import type {
   SkillFreshnessInventory,
   SkillFreshnessStatus
 } from '../../../shared/skill-freshness'
+import { groupSkillFreshness } from '../components/skills/skill-freshness-grouping'
 import { getSkillFreshnessDisplayStatus } from './skill-freshness-display-status'
 
 const SKILL_NAME = 'orca-cli'
@@ -75,4 +76,15 @@ describe('getSkillFreshnessDisplayStatus', () => {
     // all-clear over drift the update command cannot reach and the user cannot see.
     expect(getSkillFreshnessDisplayStatus(value, SKILL_NAME)).toBe('needs-attention')
   })
+
+  it.each<SkillFreshnessStatus>(['outdated', 'newer-known', 'unrecognized', 'inaccessible'])(
+    'always gives the review dialog something to say about a %s copy',
+    (status) => {
+      // Why: the badge and the dialog once derived attention separately, so a copy
+      // could turn the pill amber while the dialog reported everything up to date.
+      const value = inventory([placement(status)])
+      expect(getSkillFreshnessDisplayStatus(value, SKILL_NAME)).not.toBe('up-to-date')
+      expect(groupSkillFreshness(value.installations, value.eligibleUpdateNames)).toHaveLength(1)
+    }
+  )
 })

@@ -1,5 +1,6 @@
 import {
-  SUPPORTED_GLOBAL_SKILL_TOPOLOGIES,
+  isDriftedSkillPlacement,
+  skillPlacementNeedsAttention,
   type SkillFreshnessInventory
 } from '../../../shared/skill-freshness'
 
@@ -24,7 +25,7 @@ export function getSkillFreshnessDisplayStatus(
       continue
     }
     hasPlacement = true
-    if (installation.status !== 'current') {
+    if (isDriftedSkillPlacement(installation)) {
       hasBlockedCopy = true
     }
   }
@@ -49,13 +50,6 @@ export function hasSkillCopyNeedingAttention(
   skillName: string
 ): boolean {
   return (inventory?.installations ?? []).some(
-    (installation) =>
-      installation.name === skillName &&
-      installation.status !== 'current' &&
-      // Why: an out-of-date copy the command converges is ordinary work, not a problem.
-      !(
-        SUPPORTED_GLOBAL_SKILL_TOPOLOGIES.has(installation.topology) &&
-        installation.status === 'outdated'
-      )
+    (installation) => installation.name === skillName && skillPlacementNeedsAttention(installation)
   )
 }
