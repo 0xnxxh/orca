@@ -8,8 +8,8 @@ describe('serve desktop activation wiring', () => {
   it('routes second-instance and windowless app activation through one safety gate', () => {
     expect(source).toContain('createServeDesktopActivationGate({')
     expect(source).toContain('acquireSingleInstanceLock(app, requestDesktopActivation)')
-    expect(source).toContain("app.on('activate', requestDesktopActivationForAppEvent)")
-    expect(source).toContain('if (!mainWindow || mainWindow.isDestroyed()) {')
+    expect(source).toContain('createMacAppActivationHandler({')
+    expect(source).toContain("app.on('activate', handleMacAppActivation)")
     expect(source).toContain('getDesktopWindowStatus: getDesktopWindowStatus')
   })
 
