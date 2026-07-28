@@ -1866,6 +1866,13 @@ changed pixels, 0.099 mean channel difference, and 0.000544 vertical-title
 delta against the 3% / 4 / 0.005 budgets. This extends source-sharing evidence;
 it does not replace or restyle the account presentation.
 
+The base host-workspace route now has equivalent evidence. The exact-app gate
+captures the unchanged shared `HostScreen` before any feature navigation and
+passes at 0.879% changed pixels, 1.876 mean channel difference, and 0.000395
+vertical landmark delta. The route remains the existing worktree list,
+creation, action, and host-entry presentation rendered through its native/web
+operations boundary.
+
 The host-only router now imports the existing
 `mobile/app/h/[hostId]/session/[worktreeId].tsx` route directly; a
 source-identity test prevents that wrapper from growing copied presentation.

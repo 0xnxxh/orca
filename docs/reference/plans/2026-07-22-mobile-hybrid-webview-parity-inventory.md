@@ -62,7 +62,7 @@ but is a component, not a route. It migrates with the session UI.
 | `mobile/app/about.tsx`                                  | Native application identity/version                                                | Native shell   | Keep; add shell and active web build versions where useful                                                                                                                              |
 | `mobile/app/h/_layout.tsx`                              | Host protocol gate and host route stack                                            | Native shell   | Keep as host security/recovery boundary; mount one production hybrid workspace route                                                                                                    |
 | `mobile/app/h/[hostId]/edit.tsx`                        | Paired host display name, endpoint, reconnect                                      | Native shell   | Keep because it changes paired connectivity rather than workspace content                                                                                                               |
-| `mobile/app/h/[hostId]/index.tsx`                       | Worktree list, creation, actions, host workspace entry                             | Mobile web app | Reuse `HostScreen` presentation unchanged through a web route/transport adapter                                                                                                         |
+| `mobile/app/h/[hostId]/index.tsx`                       | Worktree list, creation, actions, host workspace entry                             | Mobile web app | Complete on iOS Simulator: native and hosted mount the same `HostScreen` and pass strict screenshot parity                                                                              |
 | `mobile/app/h/[hostId]/accounts.tsx`                    | Host agent-account usage and selection                                             | Mobile web app | Complete on iOS Simulator: the same screen uses typed native/web host-account adapters and passes strict screenshot parity                                                              |
 | `mobile/app/h/[hostId]/tasks.tsx`                       | Host task providers, task details, mutations, workspace creation                   | Mobile web app | Complete on iOS Simulator: same route/presentation with strict native/web operations                                                                                                    |
 | `mobile/app/h/[hostId]/session/[worktreeId].tsx`        | Sessions, tabs, terminal, browser, native chat, files, attachments, dictation      | Mobile web app | Reuse current session presentation; native-chat/agent-state slice is adapter-complete and awaiting live parity evidence                                                                 |
@@ -501,6 +501,12 @@ vertical-title delta, within the 3% / 4 / 0.005 budgets. The driver uses the
 existing unlabeled non-embedded toolbar icon position; its missing
 accessibility label remains part of the open VoiceOver review rather than a
 presentation change in this migration.
+
+The fixture now starts by capturing the unchanged base workspace screen in
+native and hosted modes. Workspace measures 0.879% changed pixels / 1.876 mean
+channel difference / 0.000395 vertical landmark delta, within the 3% / 4 /
+0.005 budgets. This proves the shared `HostScreen` itself before the same
+fixture navigates into Accounts and the downstream route matrix.
 
 The interrupted-transcript versus hook-status mismatch and a real structured
 prompt response pass Host 37 Simulator replay. Current package `4b7df7d4…`

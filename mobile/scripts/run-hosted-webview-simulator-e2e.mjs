@@ -29,6 +29,10 @@ import {
   captureHostedFilesPreviewParity,
   captureNativeFilesPreviewBaselines
 } from './hosted-ios-files-preview-parity.mjs'
+import {
+  captureHostedWorkspaceParity,
+  captureNativeWorkspaceBaseline
+} from './hosted-ios-workspace-parity.mjs'
 import { verifyHostedAgentHistoryJourney } from './hosted-ios-agent-history-journey.mjs'
 import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
 import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-settings-handoff.mjs'
@@ -107,6 +111,20 @@ async function main() {
     const nativeOnboarding = await evidenceStep('native onboarding', () =>
       completeHostedIosNativeOnboarding(emulator, expectedWorkspace, options.timeoutMs)
     )
+    const nativeWorkspace =
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
+        ? null
+        : await evidenceStep('native workspace baseline', () =>
+            captureNativeWorkspaceBaseline({
+              deviceUdid,
+              emulator,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs
+            })
+          )
     const nativeAccounts =
       options.securityOnly ||
       options.filesPreviewOnly ||
@@ -179,6 +197,21 @@ async function main() {
       expectedText: 'Orca Desktop',
       timeoutMs: options.timeoutMs
     })
+    const hostedWorkspace =
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
+        ? null
+        : await evidenceStep('hosted workspace parity', () =>
+            captureHostedWorkspaceParity({
+              deviceUdid,
+              document: workspaceDocument,
+              nativeBaseline: nativeWorkspace,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs
+            })
+          )
     const hostedAccounts =
       options.securityOnly ||
       options.filesPreviewOnly ||
@@ -340,6 +373,7 @@ async function main() {
           networkIsolation,
           navigationIsolation,
           nativeOnboarding,
+          workspaceParity: hostedWorkspace,
           accountsParity: hostedAccounts?.evidence ?? null,
           agentHistory: historyEvidence,
           coreRouteParity: hostedCoreRoutes?.evidence ?? null,
