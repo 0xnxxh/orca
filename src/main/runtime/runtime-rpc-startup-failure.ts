@@ -25,9 +25,13 @@ function getErrorCode(error: unknown, seen = new Set<object>()): string | null {
     return null
   }
   seen.add(error)
+  // Why: only a mapped code ends the walk — an unmapped wrapper code would otherwise mask a nested EACCES/ENOSPC.
   const code = 'code' in error ? error.code : undefined
   if (typeof code === 'string') {
-    return code.toUpperCase()
+    const normalizedCode = code.toUpperCase()
+    if (ERROR_CLASS_BY_CODE[normalizedCode]) {
+      return normalizedCode
+    }
   }
   return 'cause' in error ? getErrorCode(error.cause, seen) : null
 }

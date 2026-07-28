@@ -76,6 +76,15 @@ describe('runtime RPC startup failure reporting', () => {
     expect(classifyRuntimeRpcStartFailure(error)).toBe('storage_unavailable')
   })
 
+  it('walks past an unmapped wrapper code to the mapped cause', () => {
+    const error = Object.assign(new Error('failed to publish orca-runtime.json'), {
+      code: 'ERR_PUBLISH_FAILED',
+      cause: Object.assign(new Error('permission denied'), { code: 'EACCES' })
+    })
+
+    expect(classifyRuntimeRpcStartFailure(error)).toBe('permission_denied')
+  })
+
   it('survives a self-referential cause chain', () => {
     const error: Error & { cause?: unknown } = new Error('cyclic')
     error.cause = error
