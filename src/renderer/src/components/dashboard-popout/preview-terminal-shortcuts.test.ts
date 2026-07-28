@@ -24,6 +24,7 @@ function contextFor(
     keybindings: undefined,
     terminalInput: LOCAL_MAC,
     kittyKeyboardActive: () => overrides.kitty === true,
+    terminalShortcutPolicy: 'orca-first',
     ...overrides
   }
 }
@@ -108,6 +109,34 @@ describe('resolvePreviewShortcutAction', () => {
     expect(
       resolvePreviewShortcutAction(keydown({ key: 'd', code: 'KeyD', metaKey: true }), contextFor())
     ).toEqual({ type: 'splitActivePane', direction: 'vertical' })
+  })
+
+  // Why: a terminal-first user remapped terminal.closePane away, so only the
+  // tab.close alias still matches Ctrl+W — which the shell owns as a word-kill.
+  // The pane yields it; the preview must not swallow it.
+  it('follows the terminal shortcut policy for the tab.close pane-close alias', () => {
+    const keybindings = {
+      'terminal.closePane': ['Mod+Shift+W'],
+      'tab.close': ['Ctrl+W']
+    } as unknown as PreviewShortcutContext['keybindings']
+    const chord = (): KeyboardEvent => keydown({ key: 'w', code: 'KeyW', ctrlKey: true })
+    expect(
+      resolvePreviewShortcutAction(
+        chord(),
+        contextFor({ clientPlatform: 'linux', terminalInput: null, keybindings })
+      )
+    ).toEqual({ type: 'closeActivePane' })
+    expect(
+      resolvePreviewShortcutAction(
+        chord(),
+        contextFor({
+          clientPlatform: 'linux',
+          terminalInput: null,
+          keybindings,
+          terminalShortcutPolicy: 'terminal-first'
+        })
+      )
+    ).toBeNull()
   })
 
   it('leaves ordinary typing to xterm', () => {

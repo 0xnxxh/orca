@@ -227,7 +227,8 @@ export function AgentTerminalPreview({
           macOptionAsAlt: macOptionAsAltRef.current,
           keybindings: useAppStore.getState().keybindings,
           terminalInput: terminalInputRef.current,
-          kittyKeyboardActive: () => kittyKeyboardModes.flags > 0
+          kittyKeyboardActive: () => kittyKeyboardModes.flags > 0,
+          terminalShortcutPolicy: settingsRef.current?.terminalShortcutPolicy
         })
       })
     }

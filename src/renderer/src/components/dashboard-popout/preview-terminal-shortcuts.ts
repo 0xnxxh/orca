@@ -5,7 +5,11 @@ import {
 } from '@/components/terminal-pane/terminal-shortcut-policy'
 import { getLayoutBaseCharacterForCode } from '@/lib/keyboard-layout/layout-base-character'
 import type { DashboardCardTerminalInput } from '../../../../shared/dashboard-snapshot'
-import type { KeybindingOverrides } from '../../../../shared/keybindings'
+import {
+  normalizeTerminalShortcutPolicy,
+  type KeybindingOverrides,
+  type TerminalShortcutPolicy
+} from '../../../../shared/keybindings'
 
 export type PreviewShortcutContext = {
   clientPlatform: NodeJS.Platform
@@ -17,6 +21,8 @@ export type PreviewShortcutContext = {
   terminalInput: DashboardCardTerminalInput | null
   /** Live kitty-protocol flags mirrored from this pty's output. */
   kittyKeyboardActive: () => boolean
+  /** The user's setting; terminal-first yields the tab.close alias to the shell. */
+  terminalShortcutPolicy: TerminalShortcutPolicy | null | undefined
 }
 
 /**
@@ -44,6 +50,9 @@ export function resolvePreviewShortcutAction(
     getLayoutBaseCharacterForCode,
     () => context.terminalInput?.windowsShiftEnterEncoding ?? 'alt-enter',
     // Why: byte protocols follow the pty's host, which differs from the client OS on remote runtimes.
-    () => hostPlatform === 'win32'
+    () => hostPlatform === 'win32',
+    // Why: without it a terminal-first user's remapped tab.close chord — Ctrl+W
+    // is a shell word-kill — reaches the shell in the pane but is swallowed here.
+    normalizeTerminalShortcutPolicy(context.terminalShortcutPolicy)
   )
 }
