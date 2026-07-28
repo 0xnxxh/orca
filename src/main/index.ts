@@ -3,7 +3,7 @@ import { existsSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import os from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type Tray } from 'electron'
-import { stopTccPromptNotice } from './macos-tcc-prompt-notice'
+import { initTccPromptNotice, stopTccPromptNotice } from './macos-tcc-prompt-notice'
 import { electronApp, is } from '@electron-toolkit/utils'
 import {
   Store,
@@ -1220,6 +1220,9 @@ function openMainWindow(): BrowserWindow {
   )
   automations.setWebContents(window.webContents)
   automations.start()
+  // Why: spawns a `log stream` child, so it starts from real app bootstrap rather
+  // than attachMainWindowServices, which unit tests invoke directly (#9756).
+  initTccPromptNotice(window)
   attachMainWindowServices(
     window,
     store,

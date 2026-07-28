@@ -9,7 +9,7 @@ import type {
   UpdateCheckOptions,
   WorktreeStartupLaunch
 } from '../../shared/types'
-import { dismissTccPromptNotice, initTccPromptNotice } from '../macos-tcc-prompt-notice'
+import { dismissTccPromptNotice } from '../macos-tcc-prompt-notice'
 import { registerRepoHandlers } from '../ipc/repos'
 import { registerWorktreeHandlers } from '../ipc/worktrees'
 import { registerWorkspaceCleanupHandlers } from '../ipc/workspace-cleanup'
@@ -133,9 +133,8 @@ export function attachMainWindowServices(
   registerSshHandlers(store, () => mainWindow, runtime)
   registerRemoteWorkspaceHandlers(store, () => mainWindow)
   registerFileDropRelay(mainWindow)
-  // Why: macOS-only inside; counts TCC dialogs raised in Orca's name so the FDA
-  // hint reaches only users macOS is actually prompting (#9756).
-  initTccPromptNotice(mainWindow)
+  // Why: handler only — initTccPromptNotice spawns a `log stream` child, so it is
+  // started from the app bootstrap instead of here, which unit tests call directly.
   ipcMain.handle('macosTccPrompts:dismiss', () => {
     dismissTccPromptNotice()
   })
