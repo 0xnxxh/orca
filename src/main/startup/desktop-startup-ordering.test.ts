@@ -62,7 +62,9 @@ describe('startup ordering', () => {
     expect(reconciliationStart).toBeGreaterThanOrEqual(0)
     expect(serveStart).toBeGreaterThan(reconciliationStart)
     expect(serveEnd).toBeGreaterThan(serveStart)
-    expect(desktopWindowStart).toBeGreaterThan(reconciliationStart)
+    // Why: bound against serveEnd, not reconciliationStart — an earlier openMainWindow() call
+    // would steal this anchor, collapse desktopStartup to '', and pass the negative check below.
+    expect(desktopWindowStart).toBeGreaterThan(serveEnd)
     expect(serveStartup).toContain('await managedWslCliStartupBarrierReady')
     expect(serveStartup).not.toContain('await managedWslCliReconciliationReady')
     expect(serveStartup.indexOf('await managedWslCliStartupBarrierReady')).toBeLessThan(
@@ -81,6 +83,11 @@ describe('startup ordering', () => {
     const readyStart = source.indexOf('await serveReadinessPublisher.publish(')
     const readyEnd = source.indexOf('pairing: pairing.available', readyStart)
     const readyPayload = source.slice(readyStart, readyEnd)
+
+    // Why: unbounded, a renamed pairing key slices to EOF and the status only has to survive
+    // somewhere later in the file — not in the serve-ready payload this test is about.
+    expect(readyStart).toBeGreaterThanOrEqual(0)
+    expect(readyEnd).toBeGreaterThan(readyStart)
     expect(readyPayload).toContain('managedWslCliReconciliation: managedWslCliReconciliationStatus')
 
     expect(source).toContain("managedWslCliReconciliationStatus = 'pending'")
