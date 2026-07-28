@@ -218,17 +218,19 @@ Reconnect finalization must:
 - use `shouldRetryPaneSpawnOnSshReconnect`;
 - include exact direct SSH Git-worktree and folder-workspace keys;
 - run synchronously before catalog or provider awaits;
-- treat a non-null `ptyId` as live only when transient binding provenance names the current authority and the current spawn/reattach attempt has settled successfully;
+- treat a non-null `ptyId` as live only when transient binding provenance names the current authority and the current tab-wide spawn/reattach attempt has established live authority;
 - clear stale binding evidence from a missed disconnect or prior authority before testing retry eligibility;
-- keep at most one retry attempt in flight per tab and authority;
+- keep at most one tab-wide retry attempt in flight per tab and authority;
 - join renderer pending-spawn promises only for the same retry attempt; authority or tab-generation advance starts independently, and a late obsolete fresh PTY is rejected and retired;
-- accept a spawn or reattach acknowledgement only when its attempt, authority, tab generation, committed `tab.ptyId`, and PTY index all match; a rejected acknowledgement returns the original store state and mutates none of the tab, PTY-index, pending-attempt, retry-history, or live-binding maps;
-- on a successful exact reattach, atomically retire the pending attempt and record the current-authority live binding; failure, timeout, later clear, or snapshot overwrite removes pending/success state and re-arms the tab;
+- accept a spawn or reattach acknowledgement only when its attempt, authority, tab generation, target-qualified PTY, and committed PTY index all match; the first split success establishes the tab fallback and a live continuation lease, and later siblings may commit through that exact lease without replacing the fallback;
+- preserve the continuation lease if its primary PTY exits while another split leaf from the same attempt is still activating, then promote the late sibling when it commits;
+- on an attempt-one sibling failure or timeout, revoke that attempt and rotate the whole tab once; after attempt two is exhausted, retain its continuation lease for siblings already settling while forbidding attempt three;
+- when a split pane detaches to a new tab, project the same exact live authority and retry history to the surviving source PTY and detached destination PTY; a rejected acknowledgement or detach returns the original relevant maps unchanged;
 - permit a tab hydrated, newly discovered, or left unbound after a failed spawn to receive a bounded same-authority corrective bump;
 - update all affected workspace buckets in one Zustand publication; and
 - leave preparation-only requests, nonqualifying tabs, and every other host unchanged.
 
-The coordinator keeps separate authority-scoped pending-attempt state and successful-binding state, not a set of bump attempts and not a cached preparation outcome. A healthy live binding suppresses correction; an unresolved tab is reconsidered on wake, snapshot completion, and preparation completion with at most one attempt in flight. One authority chain preserves its complete attempt history and has a hard limit of two automatic attempts. A timeout taking longer than the former rolling 30-second window cannot age out the first attempt and start a third automatic attempt; later wake, snapshot, and preparation triggers remain exhausted until authority replacement rotates pending, binding, and history state.
+The coordinator keeps separate authority-scoped pending-attempt state and successful-binding state, not a set of bump attempts and not a cached preparation outcome. The live binding carries the exact attempt ID as a continuation lease for every split leaf in that tab generation. A healthy live binding, including a bounded empty-primary activation gap, suppresses correction; an unresolved tab is reconsidered on wake, snapshot completion, and preparation completion with at most one tab-wide attempt in flight. One authority chain preserves its complete attempt history and has a hard limit of two automatic attempts. A timeout taking longer than the former rolling 30-second window cannot age out the first attempt and start a third automatic attempt; later wake, snapshot, and preparation triggers remain exhausted until authority replacement rotates pending, binding, and history state.
 
 ## Design
 
@@ -599,9 +601,9 @@ Put pure projections in `src/renderer/src/store/slices/direct-ssh-terminal-recov
 
 `invalidateStaleDirectSshTargetPtyBindings` validates the authority inside the updater and applies that complete atomic projection to a non-null `ptyId` when its transient `ptyAuthorityByTabId` does not equal the current authority. Snapshot-imported or legacy bindings without current-authority provenance are wake hints, not live bindings.
 
-`retryDirectSshTargetPanes` validates the exact authority inside the updater, resolves scope from that same state snapshot, applies `shouldRetryPaneSpawnOnSshReconnect` plus stale-binding evidence, excludes only current live-success and pending-attempt tab IDs, and commits one `tabsByWorktree` patch. It records a unique attempt outside the success ledger. `settleDirectSshPaneRetry` records current-authority success only after a live PTY binding is committed; failed, timed-out, superseded, or later-cleared attempts re-arm the tab.
+`retryDirectSshTargetPanes` validates the exact authority inside the updater, resolves scope from that same state snapshot, applies `shouldRetryPaneSpawnOnSshReconnect` plus stale-binding evidence, excludes only current live-success and pending-attempt tab IDs, and commits one `tabsByWorktree` patch. It records a unique tab-wide attempt outside the success ledger. `settleDirectSshPaneRetry` records current-authority success only after a live PTY binding is committed. A failed or timed-out first attempt rotates the tab once; an exhausted second attempt retains continuation authority for sibling callbacks but cannot start a third attempt.
 
-Keep `clearTabPtyId` unchanged for genuine single-PTY exits. Permanent target removal continues through `src/renderer/src/store/slices/ssh-target-cleanup.ts`, whose deletion of last-known and deferred liveness is invalid for a reconnectable disconnect.
+`clearTabPtyId` keeps genuine single-PTY exit semantics, but split recovery adds two exact-authority projections: promote an already-bound surviving PTY under the same lease, or preserve the lease and activation suppression across an empty-primary gap until a same-attempt sibling commits or settles. `syncPaneDetachPtyOwnership` likewise projects one current split lease and history to both resulting tabs without spawning, exiting, or changing authority. Permanent target removal continues through `src/renderer/src/store/slices/ssh-target-cleanup.ts`, whose deletion of last-known and deferred liveness is invalid for a reconnectable disconnect.
 
 `applySshConnectionStateChange` receives an explicit origin and becomes orchestration:
 
@@ -810,7 +812,7 @@ This implementation registers the worktree scan-count, host/authority, timeout-b
 - An authority advance with five old slow calls cancels queued work, settles/aborts old leases, starts new terminal finalization immediately, admits new work under cancel-debt rules, and permits zero old main/renderer mutations.
 - A changed authority supersedes old target work by arrival, without numeric comparison.
 - A same-authority connected rebroadcast performs bounded correction plus preparation/sync without retrying healthy terminals.
-- A failed or timed-out pane spawn is removed from pending state and retries on a later same-authority wake; one pending attempt cannot duplicate.
+- A failed or timed-out pane on attempt one rotates the tab once; attempt-two failure cannot start attempt three or revoke continuation authority from siblings already settling.
 - Three authority rotations inside the stabilization window perform three immediate terminal checks but only one full preparation for the final stable authority.
 - `prepareOnly` never invokes terminal retry or reconnect sync.
 - A preparation-only request shares exact in-flight repo work with reconnect preparation but not reconnect finalization.
@@ -834,7 +836,9 @@ This implementation registers the worktree scan-count, host/authority, timeout-b
 - A relay/provider replacement after a missed disconnect clears a pre-authority `ptyId` and retries it while preserving last-known relay IDs.
 - Binding provenance for another authority or no provenance is stale; a successful current-authority spawn becomes live and suppresses healthy correction.
 - One authority chain permits at most two automatic correction attempts even when each timeout exceeds 30 seconds; later same-authority triggers remain exhausted until authority replacement.
-- Rejected stale/mismatched acknowledgements preserve every store map and publish nothing. A successful exact spawn or reattach acknowledgement retires its pending attempt and records one current-authority live binding atomically.
+- Rejected stale/mismatched acknowledgements preserve every store map and publish nothing. Concurrent split spawn or reattach acknowledgements share one exact attempt; the first establishes the fallback/live lease and later siblings join it.
+- Primary exit before a sibling binds preserves the exact continuation lease and activation suppression; the sibling then becomes the fallback without a corrective remount.
+- Primary and non-primary split detach both preserve exact authority and retry history on the surviving source and detached destination, and a same-authority correction leaves both live.
 - Disconnect retains exact existing ordering and effects for `clearRemoteDetectedAgents`, `clearPortForwards`, `setDetectedPorts([])`, and atomic PTY clear.
 - Disconnect and reconnect emit zero paired `session.tabs.close`/`closeLifecycle`, provider shutdowns, or process signals.
 - A manually parked direct-SSH worktree follows the same store patch and retry eligibility without invoking parking, close, or layout mutation.

@@ -334,6 +334,52 @@ describe('direct SSH terminal retry ledger', () => {
     expect(store.getState().retryDirectSshTargetPanes(authority(), 2_000)).toBe(0)
   })
 
+  it('keeps exact retry authority through a primary-exit gap before a sibling binds', () => {
+    const store = seedStore()
+    store.setState({
+      activeWorktreeId: null,
+      terminalLayoutsByTabId: {
+        [TAB_ID]: {
+          root: {
+            type: 'split',
+            direction: 'horizontal',
+            first: { type: 'leaf', leafId: '11111111-1111-4111-8111-111111111111' },
+            second: { type: 'leaf', leafId: '22222222-2222-4222-8222-222222222222' }
+          },
+          activeLeafId: '11111111-1111-4111-8111-111111111111',
+          expandedLeafId: null,
+          ptyIdsByLeafId: {}
+        }
+      }
+    })
+    store.getState().retryDirectSshTargetPanes(authority(), 1_000)
+    const attempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    const firstPtyId = 'ssh:target@@pty-first'
+    const siblingPtyId = 'ssh:target@@pty-sibling'
+
+    store.getState().updateTabPtyId(TAB_ID, firstPtyId, undefined, attempt.attemptId)
+    store.getState().clearTabPtyId(TAB_ID, firstPtyId)
+
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0]).toMatchObject({
+      ptyId: null,
+      pendingActivationSpawn: true
+    })
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toMatchObject({
+      attemptId: attempt.attemptId,
+      ptyId: firstPtyId
+    })
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_001)).toBe(0)
+
+    store.getState().updateTabPtyId(TAB_ID, siblingPtyId, undefined, attempt.attemptId)
+
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].ptyId).toBe(siblingPtyId)
+    expect(store.getState().ptyIdsByTabId[TAB_ID]).toEqual([siblingPtyId])
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toMatchObject({
+      attemptId: attempt.attemptId,
+      ptyId: siblingPtyId
+    })
+  })
+
   it('does not turn two thirty-one-second timeouts into an unbounded retry chain', () => {
     const store = seedStore()
 

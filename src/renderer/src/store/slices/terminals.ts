@@ -2299,10 +2299,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
               ptyId: boundTab.ptyId
             }
           }
-        } else if (replacementPtyId === liveRetry.ptyId && boundTab.ptyId === ptyId) {
+        } else if (
+          (replacementPtyId === liveRetry.ptyId && boundTab.ptyId === ptyId) ||
+          !nextPtyIds.includes(liveRetry.ptyId)
+        ) {
           nextDirectSshLivePtyBindingByTabId = {
             ...s.directSshLivePtyBindingByTabId,
-            [tabId]: { ...liveRetry, ptyId }
+            [tabId]: { ...liveRetry, ptyId: boundTab.ptyId }
           }
         }
       } else {
@@ -2353,10 +2356,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     }
     let worktreeId: string | null = null
     let wasActivationSpawn = false
+    let preservesDirectSshContinuationGap = false
     let isRemoteRuntimeMirror = isRemoteRuntimePtyId(ptyId)
     set((s) => {
       const existingPtyIds = s.ptyIdsByTabId[tabId] ?? []
       const remainingPtyIds = ptyId ? existingPtyIds.filter((id) => id !== ptyId) : []
+      const liveBinding = s.directSshLivePtyBindingByTabId[tabId]
       let nextTabsByWorktree = s.tabsByWorktree
       for (const [wId, tabs] of Object.entries(s.tabsByWorktree)) {
         const index = tabs.findIndex((t) => t.id === tabId)
@@ -2376,8 +2381,16 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         const { pendingActivationSpawn: _unused, ...rest } = tab
         void _unused
         const nextTabPtyId = remainingPtyIds.at(-1) ?? null
+        preservesDirectSshContinuationGap = Boolean(
+          ptyId &&
+          remainingPtyIds.length === 0 &&
+          liveBinding?.ptyId === ptyId &&
+          getPendingActivationSpawnCount(tab.pendingActivationSpawn) > 0 &&
+          isCurrentDirectSshAuthority(s, liveBinding.authority)
+        )
         const shouldRetainActivationSpawn =
-          wasActivationSpawn && ptyId != null && !existingPtyIds.includes(ptyId)
+          preservesDirectSshContinuationGap ||
+          (wasActivationSpawn && ptyId != null && !existingPtyIds.includes(ptyId))
         const nextPendingActivationSpawn = shouldRetainActivationSpawn
           ? tab.pendingActivationSpawn
           : consumePendingActivationSpawn(tab.pendingActivationSpawn)
@@ -2439,7 +2452,6 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         delete nextDirectSshPaneRetryByTabId[tabId]
       }
       let nextDirectSshLivePtyBindingByTabId = s.directSshLivePtyBindingByTabId
-      const liveBinding = s.directSshLivePtyBindingByTabId[tabId]
       if (liveBinding && (!ptyId || liveBinding.ptyId === ptyId)) {
         nextDirectSshLivePtyBindingByTabId = {
           ...s.directSshLivePtyBindingByTabId
@@ -2454,7 +2466,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
             ...liveBinding,
             ptyId: promotedPtyId
           }
-        } else {
+        } else if (!preservesDirectSshContinuationGap) {
           delete nextDirectSshLivePtyBindingByTabId[tabId]
         }
       }
@@ -3433,6 +3445,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         : sourceTabsByWorktree
       const directSshLedger = transferDirectSshPaneDetachLedger(s, {
         detachedPtyId,
+        sourcePtyId: sourcePrimaryPtyId,
         sourceTabId,
         targetTabId,
         isAuthorityCurrent: (authority) => isCurrentDirectSshAuthority(s, authority)

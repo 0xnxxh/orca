@@ -72,7 +72,7 @@ export function liveBindingMatches(
     binding &&
     directSshAuthoritiesEqual(binding.authority, authority) &&
     binding.tabGeneration === (tab.generation ?? 0) &&
-    binding.ptyId === tab.ptyId
+    (binding.ptyId === tab.ptyId || (tab.ptyId == null && Boolean(tab.pendingActivationSpawn)))
   )
 }
 
@@ -138,6 +138,7 @@ export function transferDirectSshPaneDetachLedger(
   state: DirectSshTerminalBindingState,
   args: {
     detachedPtyId: string | null
+    sourcePtyId: string | null
     sourceTabId: string
     targetTabId: string
     isAuthorityCurrent: (authority: DirectSshAuthority) => boolean
@@ -149,7 +150,7 @@ export function transferDirectSshPaneDetachLedger(
   | 'directSshPaneRetryHistoryByTabId'
 > {
   const tabIds = new Set([args.sourceTabId, args.targetTabId])
-  const directSshPaneRetryByTabId = withoutTabIds(state.directSshPaneRetryByTabId, tabIds)
+  let directSshPaneRetryByTabId = withoutTabIds(state.directSshPaneRetryByTabId, tabIds)
   let directSshLivePtyBindingByTabId = withoutTabIds(state.directSshLivePtyBindingByTabId, tabIds)
   let directSshPaneRetryHistoryByTabId = withoutTabIds(
     state.directSshPaneRetryHistoryByTabId,
@@ -161,15 +162,14 @@ export function transferDirectSshPaneDetachLedger(
   const live = state.directSshLivePtyBindingByTabId[args.sourceTabId]
   const pending = state.directSshPaneRetryByTabId[args.sourceTabId]
   const sourceLease =
-    live &&
-    sourceTab &&
-    liveBindingMatches(sourceTab, live, live.authority) &&
-    live.ptyId === args.detachedPtyId
+    live && sourceTab && liveBindingMatches(sourceTab, live, live.authority)
       ? live
       : pending &&
           sourceTab &&
           pending.tabGeneration === (sourceTab.generation ?? 0) &&
-          parseAppSshPtyId(args.detachedPtyId ?? '')?.connectionId === pending.authority.targetId
+          [args.detachedPtyId, args.sourcePtyId].some(
+            (ptyId) => parseAppSshPtyId(ptyId ?? '')?.connectionId === pending.authority.targetId
+          )
         ? pending
         : null
   const authority = sourceLease?.authority
@@ -180,19 +180,38 @@ export function transferDirectSshPaneDetachLedger(
     args.detachedPtyId &&
     args.isAuthorityCurrent(authority)
   ) {
-    directSshLivePtyBindingByTabId = {
-      ...directSshLivePtyBindingByTabId,
-      [args.targetTabId]: {
-        attemptId: sourceLease.attemptId,
-        authority,
-        tabGeneration: targetTab.generation ?? 0,
-        ptyId: args.detachedPtyId
+    const nextLiveBindings = { ...directSshLivePtyBindingByTabId }
+    if (
+      sourceTab &&
+      args.sourcePtyId &&
+      parseAppSshPtyId(args.sourcePtyId)?.connectionId === authority.targetId
+    ) {
+      if (live) {
+        nextLiveBindings[args.sourceTabId] = {
+          attemptId: sourceLease.attemptId,
+          authority,
+          tabGeneration: sourceTab.generation ?? 0,
+          ptyId: args.sourcePtyId
+        }
+      } else if (pending) {
+        directSshPaneRetryByTabId = {
+          ...directSshPaneRetryByTabId,
+          [args.sourceTabId]: pending
+        }
       }
     }
+    nextLiveBindings[args.targetTabId] = {
+      attemptId: sourceLease.attemptId,
+      authority,
+      tabGeneration: targetTab.generation ?? 0,
+      ptyId: args.detachedPtyId
+    }
+    directSshLivePtyBindingByTabId = nextLiveBindings
     const history = state.directSshPaneRetryHistoryByTabId[args.sourceTabId]
     if (history && directSshAuthoritiesEqual(history.authority, authority)) {
       directSshPaneRetryHistoryByTabId = {
         ...directSshPaneRetryHistoryByTabId,
+        ...(args.sourcePtyId ? { [args.sourceTabId]: history } : {}),
         [args.targetTabId]: history
       }
     }
