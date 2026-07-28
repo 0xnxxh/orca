@@ -115,7 +115,8 @@ describe('useMobileDiffReviewSendActions', () => {
       enter: false
     })
     expect(sendRequest.mock.calls[1]?.[1]).toMatchObject({ terminal: 'terminal-1', enter: true })
-    expect(sendRequest.mock.calls[1]?.[1]).not.toMatchObject({ text: '\x15' })
+    // The second call is the notes themselves, not another clear.
+    expect(String(sendRequest.mock.calls[1]?.[1]?.text)).toContain('rename this')
     expect(isMobileNativeChatInputStale('terminal-1')).toBe(false)
     expect(setActionError).toHaveBeenCalledWith('Review notes sent')
   })
