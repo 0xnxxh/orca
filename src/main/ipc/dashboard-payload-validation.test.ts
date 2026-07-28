@@ -100,6 +100,36 @@ describe('dashboard payload validation', () => {
     ).toBe(false)
   })
 
+  it('validates the preview terminal input profile', () => {
+    const terminalInput = {
+      hostPlatform: 'win32',
+      localWindowsConpty: true,
+      osRelease: '10.0.22631',
+      windowsShiftEnterEncoding: 'alt-enter',
+      kittyKeyboardAdvertised: false
+    }
+    expect(
+      isDashboardSnapshot({
+        ...SNAPSHOT,
+        cards: [{ ...SNAPSHOT.cards[0], terminalInput }]
+      })
+    ).toBe(true)
+    for (const invalid of [
+      { ...terminalInput, hostPlatform: 'windows' },
+      { ...terminalInput, localWindowsConpty: 'true' },
+      { ...terminalInput, osRelease: 'x'.repeat(1_025) },
+      { ...terminalInput, windowsShiftEnterEncoding: 'enter' },
+      { ...terminalInput, kittyKeyboardAdvertised: 1 }
+    ]) {
+      expect(
+        isDashboardSnapshot({
+          ...SNAPSHOT,
+          cards: [{ ...SNAPSHOT.cards[0], terminalInput: invalid }]
+        })
+      ).toBe(false)
+    }
+  })
+
   it('requires complete bounded reveal routing', () => {
     expect(
       isDashboardRevealAgentArgs({
