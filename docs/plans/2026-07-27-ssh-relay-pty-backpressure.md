@@ -3,11 +3,12 @@
 Date: 2026-07-27
 
 Status: architecture reviewed; SSH V1 implementation complete behind an
-experimental startup gate; final branch/CI validation pending
+experimental startup gate; rebased implementation and local validation complete
 
 Historical unbounded baseline: `badf91101babf96fa09cb79a8294f7e23b9f081c`
-(the implementation branch parent). The final validation record is updated
-after rebasing this PR onto current `origin/main`.
+(the implementation branch parent). The implementation was rebased onto
+`origin/main@d3681f630670a3a95003aaae4e65f14bac0ffebd`; final GitHub CI remains
+the merge gate.
 
 ## Scope
 
@@ -272,6 +273,15 @@ Later adversarial review also required exact recovery continuity, stale-attempt
 isolation, startup-latched rollout semantics, and idempotent remote detach
 after token reclamation. Those are incorporated in the activation, lifecycle,
 cleanup, tests, and rollout sections below.
+
+The final 2026-07-28 architecture/terminal re-review found and closed three
+additional interleavings:
+
+| Finding                                                                                 | Implemented resolution                                                                                                                                                                 |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Failed exit publication could discard a sealed delivery before its suffix was credited  | Failed publication retains the sealed delivery; late cumulative ACK and exact owner recovery can still settle it, and exit is republished without reopening source admission.          |
+| Recovery-response cancellation authority ended at enqueue rather than writer settlement | The request remains cancellation-authoritative until its response settles; retry reuses the same provisional replacement identity instead of creating an unfenced owner.               |
+| Snapshot replacement transferred every pending remote span at one sequence fence        | Each immutable span retains its model-sequence end; replacement transfers only spans covered by the authoritative `SnapshotEnd`, while trailing spans remain live and replay in order. |
 
 The common state machine accepts only:
 
@@ -2000,6 +2010,27 @@ topology ran. The executable implementation evidence in this PR is:
   eight-wide reconnect, retention budgets, rollout latching, and deploy policy;
 - the four-test Docker OpenSSH/deployed-relay suite for source-window plateau,
   concurrent typing, fixed-size filesystem/Git churn, and owner reconnect.
+
+The final rebased tree at `38fbf3520741ce4ccd86410f7cea9ff8217a7834`
+passed:
+
+- frozen dependency setup, full lint, full typecheck, `git diff --check`, and
+  the 52-gate reliability manifest validation;
+- all Linux, macOS, Windows, and WSL relay build targets plus
+  `electron-vite build --mode e2e`;
+- 24 focused SSH/source-credit files with 354 tests;
+- 14 watcher/daemon/package/glibc-adjacent files with 409 tests;
+- a 57-file deterministic changed-surface sweep with 1,186 tests;
+- the joined renderer/headless snapshot seam with 59 tests and its broader
+  focused slice with 180 tests;
+- the relay recovery and fixed-size filesystem/Git slice with 105 tests.
+
+The final Docker OpenSSH/deployed-relay run passed all four tests in 1.0 minute:
+direct typing median/worst was 107.7/113.6 ms; ACK-stalled typing was
+3.6/107.3 ms at an exact 262,144-source-unit plateau; fixed-size filesystem/Git
+churn was 148.1/161.1 ms with 93 bulk reads; owner reconnect completed in
+15.7 seconds. These measurements are direct SSH/deployed Linux relay evidence
+only.
 
 The deterministic recovery seam specifically covers an empty recovery followed
 by a gapped live frame, overlapping reconnect attempts, late frames after

@@ -3345,13 +3345,13 @@
           "summary": "Two deterministic main/runtime files passed 59 tests, including the joined renderer/headless snapshot-admission oracle; no live paired server or Docker topology was exercised."
         },
         {
-          "date": "2026-07-27",
+          "date": "2026-07-28",
           "runner": "local",
           "platform": "macos",
           "command": "ORCA_E2E_SSH_DOCKER=1 ORCA_SSH_PTY_SOURCE_CREDIT_V1=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 57.4,
-          "summary": "Four Docker OpenSSH/deployed-relay tests passed: direct typing median/worst 106.2/114.0 ms, stalled-ACK typing 3.4/6.1 ms at an exact 262,144-source-unit plateau, fixed-size filesystem/Git churn 141.8/153.6 ms with 85 completed reads, and terminal owner-lease reconnect in 15.7 seconds."
+          "durationSeconds": 60,
+          "summary": "Four post-rebase Docker OpenSSH/deployed-relay tests passed: direct typing median/worst 107.7/113.6 ms, stalled-ACK typing 3.6/107.3 ms at an exact 262,144-source-unit plateau, fixed-size filesystem/Git churn 148.1/161.1 ms with 93 bulk reads, and terminal owner-lease reconnect in 15.7 seconds."
         }
       ],
       "runtimeBudget": {
@@ -3368,7 +3368,7 @@
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Suggested ceilings: renderer in-flight <=8MB total, <=512KB per PTY plus active reserve, renderer queued chars <=2MB, dropped backlogs 0, hidden restore <=1000ms, active key median/worst <=75ms/300ms in perf scenarios. The Docker SSH gate enforces median/worst typing below 500/2,000 ms and observed 3.4/6.1 ms during an exact 256 KiB stalled-credit plateau plus 141.8/153.6 ms during 85 completed filesystem/Git operations. With 1,024 retained provenance candidates, 4,096 pathless chunks dropped from 78.84ms and 4,096 array replacements to 1.74ms and zero replacements. Brace-free 1 KiB output dropped from 20.32/79.12/318.23ms to 0.31/0.64/2.35ms across 4,096/16,384/65,536 chunks. Repeated ordinary 252,000-character tail checks dropped from 96.34/464.20/941.79/3,796.70ms to 3.21/15.68/31.34/129.72ms across 100/500/1,000/4,096 updates."
+        "evidence": "Suggested ceilings: renderer in-flight <=8MB total, <=512KB per PTY plus active reserve, renderer queued chars <=2MB, dropped backlogs 0, hidden restore <=1000ms, active key median/worst <=75ms/300ms in perf scenarios. The Docker SSH gate enforces median/worst typing below 500/2,000 ms and observed 3.6/107.3 ms during an exact 256 KiB stalled-credit plateau plus 148.1/161.1 ms during 93 completed filesystem/Git bulk reads. With 1,024 retained provenance candidates, 4,096 pathless chunks dropped from 78.84ms and 4,096 array replacements to 1.74ms and zero replacements. Brace-free 1 KiB output dropped from 20.32/79.12/318.23ms to 0.31/0.64/2.35ms across 4,096/16,384/65,536 chunks. Repeated ordinary 252,000-character tail checks dropped from 96.34/464.20/941.79/3,796.70ms to 3.21/15.68/31.34/129.72ms across 100/500/1,000/4,096 updates."
       },
       "promotionCriteria": [
         "Split daemon stream backpressure into a deterministic provider/IPC contract if full E2E is flaky.",
