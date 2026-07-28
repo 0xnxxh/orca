@@ -220,4 +220,56 @@ describe('direct SSH split-pane detach ledger', () => {
     expect(store.getState().ptyIdsByTabId[SOURCE_TAB_ID]).toEqual([SIBLING_PTY_ID])
     expect(store.getState().ptyIdsByTabId[TARGET_TAB_ID]).toEqual([PRIMARY_PTY_ID])
   })
+
+  it('preserves a pending-only lease when both detach sides are still unbound', () => {
+    const store = createSplitDetachStore()
+    const attemptId = 'split-pending-only' as DirectSshPaneRetryAttemptId
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: state.tabsByWorktree[WORKTREE_ID].map((tab) => ({
+          ...tab,
+          ptyId: null,
+          pendingActivationSpawn: true
+        }))
+      },
+      ptyIdsByTabId: {
+        ...state.ptyIdsByTabId,
+        [SOURCE_TAB_ID]: []
+      },
+      directSshLivePtyBindingByTabId: {},
+      directSshPaneRetryByTabId: {
+        [SOURCE_TAB_ID]: {
+          attemptId,
+          authority,
+          tabGeneration: 0,
+          startedAt: 1
+        }
+      }
+    }))
+
+    store.getState().syncPaneDetachPtyOwnership({
+      detachedLeafId: DETACHED_LEAF_ID,
+      detachedPtyId: null,
+      sourceLayout: {
+        root: { type: 'leaf', leafId: SURVIVOR_LEAF_ID },
+        activeLeafId: SURVIVOR_LEAF_ID,
+        expandedLeafId: null,
+        ptyIdsByLeafId: {}
+      },
+      sourceTabId: SOURCE_TAB_ID,
+      targetTabId: TARGET_TAB_ID
+    })
+
+    expect(store.getState().directSshPaneRetryByTabId).toMatchObject({
+      [SOURCE_TAB_ID]: { attemptId, authority, tabGeneration: 0 },
+      [TARGET_TAB_ID]: { attemptId, authority, tabGeneration: 0 }
+    })
+
+    store.getState().updateTabPtyId(SOURCE_TAB_ID, SIBLING_PTY_ID, undefined, attemptId)
+    store.getState().updateTabPtyId(TARGET_TAB_ID, PRIMARY_PTY_ID, undefined, attemptId)
+
+    expect(store.getState().ptyIdsByTabId[SOURCE_TAB_ID]).toEqual([SIBLING_PTY_ID])
+    expect(store.getState().ptyIdsByTabId[TARGET_TAB_ID]).toEqual([PRIMARY_PTY_ID])
+  })
 })

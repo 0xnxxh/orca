@@ -1386,6 +1386,139 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(12)
   })
 
+  it('captures retained live authority when a sibling mounts after first success', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const delayedSpawn = createDeferred<string>()
+    const transport = createMockTransport()
+    transport.connect.mockReturnValueOnce(delayedSpawn.promise)
+    transportFactoryQueue.push(transport)
+    const livePtyId = toAppSshPtyId('target-a', 'pty-live')
+    const siblingPtyId = toAppSshPtyId('target-a', 'pty-delayed-sibling')
+    const liveRetry = {
+      attemptId: 'attempt-live-sibling',
+      authority: {
+        targetId: 'target-a',
+        providerEpoch: 'epoch-1',
+        connectionGeneration: 3
+      },
+      tabGeneration: 7,
+      ptyId: livePtyId
+    }
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: livePtyId, generation: 7 }] },
+      ptyIdsByTabId: { 'tab-1': [livePtyId] },
+      repos: [{ id: 'repo1', connectionId: 'target-a', displayName: 'orca' }],
+      sshConnectionStates: new Map([
+        [
+          'target-a',
+          {
+            targetId: 'target-a',
+            status: 'connected',
+            providerEpoch: 'epoch-1',
+            connectionGeneration: 3
+          }
+        ]
+      ]),
+      directSshPaneRetryByTabId: {},
+      directSshLivePtyBindingByTabId: { 'tab-1': liveRetry },
+      settleDirectSshPaneRetry: vi.fn()
+    }
+    const paneTransportsRef = {
+      current: new Map([[1, createMockTransport(livePtyId)]])
+    }
+    const deps = createDeps({ paneTransportsRef })
+
+    connectPanePty(createPane(2) as never, createManager(2) as never, deps as never)
+    await flushAsyncTicks()
+
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
+    onPtySpawn?.(siblingPtyId)
+
+    expect(deps.updateTabPtyId).toHaveBeenCalledWith(
+      'tab-1',
+      siblingPtyId,
+      undefined,
+      liveRetry.attemptId
+    )
+
+    delayedSpawn.resolve(siblingPtyId)
+    await flushAsyncTicks(12)
+  })
+
+  it('rejects a delayed live-lease sibling after direct SSH authority rotates', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const delayedSpawn = createDeferred<string>()
+    const transport = createMockTransport()
+    const stalePtyId = toAppSshPtyId('target-a', 'pty-stale-live-sibling')
+    transport.getPtyId.mockReturnValue(stalePtyId)
+    transport.connect.mockReturnValueOnce(delayedSpawn.promise)
+    transportFactoryQueue.push(transport)
+    const livePtyId = toAppSshPtyId('target-a', 'pty-live')
+    const liveRetry = {
+      attemptId: 'attempt-live-stale',
+      authority: {
+        targetId: 'target-a',
+        providerEpoch: 'epoch-old',
+        connectionGeneration: 3
+      },
+      tabGeneration: 7,
+      ptyId: livePtyId
+    }
+    mockStoreState = {
+      ...mockStoreState,
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1', ptyId: livePtyId, generation: 7 }] },
+      ptyIdsByTabId: { 'tab-1': [livePtyId] },
+      repos: [{ id: 'repo1', connectionId: 'target-a', displayName: 'orca' }],
+      sshConnectionStates: new Map([
+        [
+          'target-a',
+          {
+            targetId: 'target-a',
+            status: 'connected',
+            providerEpoch: 'epoch-old',
+            connectionGeneration: 3
+          }
+        ]
+      ]),
+      directSshPaneRetryByTabId: {},
+      directSshLivePtyBindingByTabId: { 'tab-1': liveRetry },
+      settleDirectSshPaneRetry: vi.fn()
+    }
+    const paneTransportsRef = {
+      current: new Map([[1, createMockTransport(livePtyId)]])
+    }
+    const deps = createDeps({ paneTransportsRef })
+
+    connectPanePty(createPane(2) as never, createManager(2) as never, deps as never)
+    await flushAsyncTicks()
+    mockStoreState.sshConnectionStates = new Map([
+      [
+        'target-a',
+        {
+          targetId: 'target-a',
+          status: 'connected',
+          providerEpoch: 'epoch-new',
+          connectionGeneration: 4
+        }
+      ]
+    ])
+
+    const onPtySpawn = createdTransportOptions[0]?.onPtySpawn as
+      | ((ptyId: string) => void)
+      | undefined
+    onPtySpawn?.(stalePtyId)
+    await flushAsyncTicks()
+
+    expect(deps.updateTabPtyId).not.toHaveBeenCalled()
+    expect(transport.disconnect).toHaveBeenCalledOnce()
+
+    delayedSpawn.resolve(stalePtyId)
+    await flushAsyncTicks(12)
+  })
+
   it('starts a new spawn and rejects a late callback after direct SSH authority rotates', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const oldPendingSpawn = createDeferred<string>()

@@ -161,22 +161,33 @@ export function transferDirectSshPaneDetachLedger(
   const targetTab = tabs.find((tab) => tab.id === args.targetTabId)
   const live = state.directSshLivePtyBindingByTabId[args.sourceTabId]
   const pending = state.directSshPaneRetryByTabId[args.sourceTabId]
+  const sourceHasPendingContinuation = Boolean(
+    sourceTab && !args.sourcePtyId && sourceTab.pendingActivationSpawn
+  )
+  const targetHasPendingContinuation = Boolean(
+    targetTab && !args.detachedPtyId && targetTab.pendingActivationSpawn
+  )
+  const hasEmptyPendingContinuation = Boolean(
+    pending &&
+    sourceHasPendingContinuation &&
+    targetHasPendingContinuation &&
+    pending.tabGeneration === (sourceTab?.generation ?? 0) &&
+    args.isAuthorityCurrent(pending.authority)
+  )
   const liveLease =
     live && sourceTab && liveBindingMatches(sourceTab, live, live.authority) ? live : null
   const pendingLease =
     pending &&
     sourceTab &&
     pending.tabGeneration === (sourceTab.generation ?? 0) &&
-    [args.detachedPtyId, args.sourcePtyId].some(
+    ([args.detachedPtyId, args.sourcePtyId].some(
       (ptyId) => parseAppSshPtyId(ptyId ?? '')?.connectionId === pending.authority.targetId
-    )
+    ) ||
+      hasEmptyPendingContinuation)
       ? pending
       : null
   const sourceLease = liveLease ?? pendingLease
   const authority = sourceLease?.authority
-  const targetHasPendingContinuation = Boolean(
-    targetTab && !args.detachedPtyId && targetTab.pendingActivationSpawn
-  )
   if (
     sourceLease &&
     authority &&
@@ -185,9 +196,6 @@ export function transferDirectSshPaneDetachLedger(
     args.isAuthorityCurrent(authority)
   ) {
     const nextLiveBindings = { ...directSshLivePtyBindingByTabId }
-    const sourceHasPendingContinuation = Boolean(
-      sourceTab && !args.sourcePtyId && sourceTab.pendingActivationSpawn
-    )
     if (
       sourceTab &&
       ((args.sourcePtyId &&

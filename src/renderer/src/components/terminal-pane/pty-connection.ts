@@ -3299,12 +3299,22 @@ export function connectPanePty(
     !terminalOwnerUnresolved && !connectionOwnerHydrating && runtimeEnvironmentId === null
       ? (worktreeConnectionId ?? null)
       : null
-  const directSshRetryAttempt: DirectSshPaneRetryAttempt | undefined = (() => {
-    const attempt = state.directSshPaneRetryByTabId?.[deps.tabId]
-    return attempt?.authority.targetId === connectionId &&
-      attempt.tabGeneration === (tab?.generation ?? 0)
-      ? attempt
-      : undefined
+  type DirectSshRetryLease = Pick<
+    DirectSshPaneRetryAttempt,
+    'attemptId' | 'authority' | 'tabGeneration'
+  >
+  const directSshRetryAttempt: DirectSshRetryLease | undefined = (() => {
+    const pendingAttempt = state.directSshPaneRetryByTabId?.[deps.tabId]
+    const liveBinding = state.directSshLivePtyBindingByTabId?.[deps.tabId]
+    const attempt =
+      pendingAttempt?.authority.targetId === connectionId &&
+      pendingAttempt.tabGeneration === (tab?.generation ?? 0)
+        ? pendingAttempt
+        : liveBinding?.authority.targetId === connectionId &&
+            liveBinding.tabGeneration === (tab?.generation ?? 0)
+          ? liveBinding
+          : undefined
+    return attempt
   })()
   const pendingSpawnKey = directSshRetryAttempt
     ? JSON.stringify([cacheKey, directSshRetryAttempt.attemptId])
@@ -3370,7 +3380,7 @@ export function connectPanePty(
     return canAdopt
   }
   const settleDirectSshPaneRetryAttempt = (
-    attempt: DirectSshPaneRetryAttempt | undefined,
+    attempt: DirectSshRetryLease | undefined,
     status: 'failed' | 'timed-out'
   ): void => {
     if (!attempt) {
@@ -3386,7 +3396,7 @@ export function connectPanePty(
   }
   const armDirectSshPaneRetryTimeout = (
     promise: Promise<unknown>,
-    attempt: DirectSshPaneRetryAttempt | undefined
+    attempt: DirectSshRetryLease | undefined
   ): void => {
     if (!attempt || disposed || directSshPaneRetryTimedPromises.has(promise)) {
       return

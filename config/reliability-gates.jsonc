@@ -3883,6 +3883,7 @@
             "primary and non-primary split detach preserve exact live authority and retry history on both resulting tabs",
             "detaching the only bound split while its sibling is still spawning preserves the source continuation lease until that sibling binds",
             "detaching during a null-PTY continuation gap projects the exact lease to both pending tabs",
+            "a pending-only all-null detach preserves the exact lease on both tabs before either leaf binds",
             "same-authority invalidation and correction leave both detached live PTYs unchanged"
           ]
         },
@@ -3957,6 +3958,8 @@
             "late stale rebind and reattach completions cannot stamp current-authority state",
             "both concurrent split-pane spawns commit through the same exact retry attempt",
             "both concurrent split-pane reattaches commit through the same exact retry attempt",
+            "a sibling mounted after first success captures the retained live lease",
+            "authority rotation rejects and retires a delayed sibling spawned from a retained live lease",
             "intentional pane disposal cancels retry settlement while a same-attempt StrictMode remount retains one timeout"
           ]
         },
@@ -4010,8 +4013,8 @@
           "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-pane-detach-ledger.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/store/slices/terminals-hydration.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/terminal-pane-tab-detach.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 18.4,
-          "summary": "Eleven direct SSH files and 624 tests passed, adding primary-exit continuation-gap, primary/non-primary two-sided split-detach authority, and null-PTY detach activation coverage."
+          "durationSeconds": 16.9,
+          "summary": "Eleven direct SSH files and 627 tests passed, adding primary-exit continuation-gap, pending-only and live null-PTY two-sided split-detach authority, delayed post-success sibling admission, and stale-authority provider retirement."
         },
         {
           "date": "2026-07-27",
@@ -4028,7 +4031,7 @@
           "platform": "macos",
           "command": "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 96,
+          "durationSeconds": 56.2,
           "summary": "Four Electron Docker SSH tests passed, including exact-authority repo/worktree hydration, live terminal input before and after disconnect/reconnect, and an independent container-visible remote proof file."
         },
         {
@@ -4037,7 +4040,7 @@
           "platform": "macos",
           "command": "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-cold-activation-restore.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
           "result": "passed",
-          "durationSeconds": 24.8,
+          "durationSeconds": 13.5,
           "summary": "One Electron journey passed after exact-authority hydration; six restored SSH terminal managers remounted after renderer reload and remote input reached the Linux target."
         }
       ],
@@ -4047,15 +4050,15 @@
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "Focused renderer contracts, one current 624-test direct SSH run, and current Docker/Linux reconnect and six-terminal cold-restore journeys pass locally; live multi-target fanout still needs CI soak history before promotion."
+        "evidence": "Focused renderer contracts, one current 627-test direct SSH run, and current Docker/Linux reconnect and six-terminal cold-restore journeys pass locally. One full Docker pressure run timed out waiting for its seeded secondary worktree; the exact case and an immediate full 4/4 rerun passed. Live multi-target fanout still needs CI soak history before promotion."
       },
       "redGreenEvidence": {
         "status": "partial",
-        "evidence": "The remote-runtime fault tests failed before the recovery changes by leaving a cold restored subscription detached, reporting connected before authoritative replay, delivering a fatal setup error twice, and allowing an unknown create outcome to spawn again after process-local state was lost. On exact pre-fix HEAD 939719443, the split-pane store, fresh-spawn, and reattach oracles failed because the first success removed pending authority and the sibling could not bind; the same three oracles pass after live bindings retain the exact attempt ID. On exact committed HEAD d501f2e96, primary-exit-before-sibling and primary/non-primary split-detach oracles failed because live authority was deleted during the empty gap or transferred to only one resulting tab; all three pass after continuation-gap preservation and two-sided detach projection. Other direct SSH tests encode red conditions for non-atomic binding clear, cross-target retry, folder omission, duplicate same-authority attempts, hydration overwrite, terminal finalization delayed behind provider work, obsolete-authority pending-spawn adoption, Git lineage namespace mismatch, and snapshot PTY hint promotion without exact-attempt acknowledgement. Existing SSH and stale-handle reattach coverage remains green. Needs WSL, paired-close, and a patched live remote-runtime partition journey before promotion."
+        "evidence": "The remote-runtime fault tests failed before the recovery changes by leaving a cold restored subscription detached, reporting connected before authoritative replay, delivering a fatal setup error twice, and allowing an unknown create outcome to spawn again after process-local state was lost. On exact pre-fix HEAD 939719443, the split-pane store, fresh-spawn, and reattach oracles failed because the first success removed pending authority and the sibling could not bind; the same three oracles pass after live bindings retain the exact attempt ID. On exact committed HEAD d501f2e96, primary-exit-before-sibling and primary/non-primary split-detach oracles failed because live authority was deleted during the empty gap or transferred to only one resulting tab; all three pass after continuation-gap preservation and two-sided detach projection. On exact committed HEAD d44ea382b with test-only oracles, a pending-only all-null detach deleted the attempt ledger, a sibling mounted after first success committed without its lease, and that sibling could bind after authority rotation; all three pass after pending-only projection and retained-live-lease capture with provider retirement. Other direct SSH tests encode red conditions for non-atomic binding clear, cross-target retry, folder omission, duplicate same-authority attempts, hydration overwrite, terminal finalization delayed behind provider work, obsolete-authority pending-spawn adoption, Git lineage namespace mismatch, and snapshot PTY hint promotion without exact-attempt acknowledgement. Existing SSH and stale-handle reattach coverage remains green. Needs WSL, paired-close, and a patched live remote-runtime partition journey before promotion."
       },
       "performanceBudget": {
         "required": true,
-        "evidence": "Direct SSH terminal invalidation and retry each use one exact-target store publication and execute before provider discovery; another target's five occupied provider slots cannot delay terminal finalization. Each split-pane completion adds one constant-time tab attempt/live-binding lookup and no provider listing, polling, subprocess, cross-tab scan, or new fanout; two mounted leaves still perform exactly their two existing provider operations. The scheduler caps locally unsettled detected-worktree work at five with a two-call late-work allowance. Remote-runtime recovery allocates at most one backoff timer and one one-minute deadline per detached pane, then stops all PTY retry work until explicit user action. Timers, accepted-snapshot listeners, stale streams, and pane UI entries are released on health, cutoff, rebind, removal, detach, or destroy; ten-cycle tests prove one unsubscribe per epoch. Common terminal input/output paths add only constant-time state checks. No live large-terminal-map direct SSH timing is claimed."
+        "evidence": "Direct SSH terminal invalidation and retry each use one exact-target store publication and execute before provider discovery; another target's five occupied provider slots cannot delay terminal finalization. Each split-pane completion or delayed mount adds constant-time pending/live lease lookups and no provider listing, polling, subprocess, cross-tab scan, or new fanout; two mounted leaves still perform exactly their two existing provider operations. The scheduler caps locally unsettled detected-worktree work at five with a two-call late-work allowance. Remote-runtime recovery allocates at most one backoff timer and one one-minute deadline per detached pane, then stops all PTY retry work until explicit user action. Timers, accepted-snapshot listeners, stale streams, and pane UI entries are released on health, cutoff, rebind, removal, detach, or destroy; ten-cycle tests prove one unsubscribe per epoch. Common terminal input/output paths add only constant-time state checks. No live large-terminal-map direct SSH timing is claimed."
       },
       "promotionCriteria": [
         "Use deterministic fake providers for failure and unknown-liveness cases.",
