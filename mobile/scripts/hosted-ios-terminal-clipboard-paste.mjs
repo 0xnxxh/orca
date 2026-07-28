@@ -8,7 +8,7 @@ import {
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 
 const execFileAsync = promisify(execFile)
-const CLIPBOARD_MARKER = 'ORCA_HOSTED_CLIPBOARD_TEXT_PASTE'
+export const CLIPBOARD_MARKER = 'ORCA_HOSTED_CLIPBOARD_TEXT_PASTE'
 
 export async function verifyHostedIosTerminalClipboardPaste(
   {
@@ -112,7 +112,7 @@ export function writeHostedIosSimulatorPasteboard(deviceUdid, text, spawnProcess
   })
 }
 
-async function allowHostedIosPasteIfRequested(emulator, tapControl) {
+export async function allowHostedIosPasteIfRequested(emulator, tapControl) {
   try {
     await tapControl(emulator, 'Allow Paste', 3_000)
     return 'allowed'

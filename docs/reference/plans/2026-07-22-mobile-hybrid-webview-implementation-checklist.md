@@ -1062,7 +1062,7 @@ copy.
 - [~] Preserve delayed input, IME composition, dictation, accessory keys, and
   paste ordering. The unchanged buffered/live/accessory input controller now
   calls the named terminal boundary, whose page adapter splits input into
-  bounded ordered requests. Dictation, clipboard-image paste, and emulator IME
+  bounded ordered requests. Dictation interruption and emulator/physical IME
   evidence remain open.
 - [~] Preserve resize/reflow, text zoom, selection, scroll, links, and file taps.
   The existing terminal-pane contract now resolves to direct xterm on web and
@@ -1331,7 +1331,12 @@ copy.
   the page. The exact cached iPhone app now seeds the simulator pasteboard,
   activates the unchanged Paste control through a native accessibility tap,
   accepts the real iOS privacy prompt, and requires the exact text marker in the
-  temporary Desktop terminal. Live image paste and denial evidence remain.
+  temporary Desktop terminal. A focused exact-app iPhone 17 Pro run also copies
+  the 48×48 fixture through Photos, accepts the real paste prompt, injects only
+  a shell-owned host path, and matches decoded RGBA SHA-256
+  `a2773eaed936229595e49669b8705cb179a6a004a48a4d8304d6ee2710ab26b9`.
+  The filename, path, pixel digest, encoded prefix, and `data:image/` marker
+  remain absent from hosted page text. Physical-device evidence remains open.
 - [~] Implement photo, camera, and document picker capabilities. The existing
   Attach control now opens the shell-owned iOS permission flow and Photos
   picker through a recent-gesture-gated terminal operation. Picker bytes,
@@ -2509,4 +2514,8 @@ copy.
 | 2026-07-28 | Complete | The exact cached iPhone 17 Pro / iOS 26.5 app long-pressed unchanged Attach, opened Files, and selected the seeded `orca-document-upload-fixture.png`. Native touch plus the existing RNW responder activated the real picker; a Files-specific thumbnail hit point made selection deterministic without product UI changes.                                                                                                            |
 | 2026-07-28 | Complete | Shell-owned authority uploaded the selected 123-byte PNG and injected only its `orca-paste-…png` host temp path into the Desktop terminal. Independent size and SHA-256 verification matched `dec4a91731905b9e8ed450a6c46931258528fc034fcfc64d95b0b23264f8e9d4`; filename, bytes, digest, and temp path were absent from hosted page state. Photos denial and both isolation probes passed in the same unattended run.                  |
 | 2026-07-28 | Complete | Document-upload validation passes 566 mobile files / 3,345 tests with 2 expected skips and 6 focused files / 31 tests. Mobile and RNW typechecks/lints, mobile and plan formatting, reliability, max-lines, package verification, and diff hygiene pass. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                      |
+| 2026-07-28 | Complete | The exact cached iPhone 17 Pro / iOS 26.5 app imported the existing 48×48 fixture into Photos, traversed native onboarding, used Share → Copy Photo → Return to Orca, accepted the real paste privacy prompt, and injected only a shell-owned host temp path through unchanged Paste. The 411-byte Photos encoding matched decoded RGBA SHA-256 `a2773eaed936229595e49669b8705cb179a6a004a48a4d8304d6ee2710ab26b9`.                     |
+| 2026-07-28 | Complete | The clipboard-image gate found no filename, temp path, pixel digest, encoded prefix, or `data:image/` marker in hosted page text. Network and navigation isolation passed. A focused `--clipboard-image-only` journey keeps this proof independent of unrelated native picker timing while the full security journey retains all stages.                                                                                                |
+| 2026-07-28 | Finding  | The iPhone 17 Pro Max accessibility export omitted unchanged Attach while still exposing its adjacent mic in the chained journey. Clipboard-image copy itself was feasible there; the exact live proof completed on the established iPhone 17 Pro parity device. Large-device and physical VoiceOver coverage remains in the accessibility gate.                                                                                        |
+| 2026-07-28 | Complete | Clipboard-image validation passes 567 mobile files / 3,353 tests with 2 expected skips. Mobile and RNW typechecks/lints, full mobile and plan formatting, 55 reliability gates, max-lines, package verification, and diff hygiene pass. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                       |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

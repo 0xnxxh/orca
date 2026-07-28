@@ -39,7 +39,7 @@ import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-s
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
 import { captureNativeSourceControlReviewBaselines } from './hosted-ios-source-control-review-parity.mjs'
 import { resetHostedIosPhotosPermission } from './hosted-ios-photo-permission-denial.mjs'
-import { verifyHostedIosTerminalDeviceInputJourney } from './hosted-ios-terminal-device-input-journey.mjs'
+import { verifyHostedIosTerminalInputJourney } from './hosted-ios-terminal-device-input-journey.mjs'
 import { completeHostedIosNativeOnboarding } from './hosted-ios-native-onboarding.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
@@ -232,11 +232,10 @@ async function main() {
     }
     const terminalDeviceInput = options.securityOnly
       ? await evidenceStep('hosted terminal device input journey', () =>
-          verifyHostedIosTerminalDeviceInputJourney({
-            ...securityJourney,
-            expectedWorkspace,
-            workspaceDocument
-          })
+          verifyHostedIosTerminalInputJourney(
+            { ...securityJourney, expectedWorkspace, workspaceDocument },
+            options.clipboardImageOnly
+          )
         )
       : null
     const hostedWorkspace =
@@ -380,7 +379,7 @@ async function main() {
           })
     const securityDocument =
       options.securityOnly && terminalDeviceInput
-        ? terminalDeviceInput.documentUpload.sessionDocument
+        ? terminalDeviceInput.terminalClipboardImagePaste.sessionDocument
         : options.accountsOnly || options.filesPreviewOnly
           ? parityWorkspaceDocument
           : await waitForVisibleHostedWebView({
@@ -420,8 +419,10 @@ async function main() {
           networkIsolation,
           navigationIsolation,
           nativeOnboarding,
-          documentUpload: terminalDeviceInput?.documentUpload.evidence ?? null,
-          photoPermissionDenial: terminalDeviceInput?.photoPermissionDenial.evidence ?? null,
+          documentUpload: terminalDeviceInput?.documentUpload?.evidence ?? null,
+          photoPermissionDenial: terminalDeviceInput?.photoPermissionDenial?.evidence ?? null,
+          terminalClipboardImagePaste:
+            terminalDeviceInput?.terminalClipboardImagePaste.evidence ?? null,
           terminalClipboardPaste: terminalDeviceInput?.terminalClipboardPaste.evidence ?? null,
           workspaceParity: hostedWorkspace,
           accountsParity: hostedAccounts?.evidence ?? null,

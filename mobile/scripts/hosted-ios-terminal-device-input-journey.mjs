@@ -5,7 +5,24 @@ import {
   verifyHostedIosDocumentUpload
 } from './hosted-ios-document-upload.mjs'
 import { verifyHostedIosPhotoPermissionDenial } from './hosted-ios-photo-permission-denial.mjs'
+import { verifyHostedIosTerminalClipboardImagePaste } from './hosted-ios-terminal-clipboard-image-paste.mjs'
 import { verifyHostedIosTerminalClipboardPaste } from './hosted-ios-terminal-clipboard-paste.mjs'
+
+export function verifyHostedIosTerminalInputJourney(args, clipboardImageOnly) {
+  return clipboardImageOnly
+    ? verifyHostedIosTerminalClipboardImageJourney(args)
+    : verifyHostedIosTerminalDeviceInputJourney(args)
+}
+
+export async function verifyHostedIosTerminalClipboardImageJourney(args) {
+  const terminalClipboardPaste = await verifyHostedIosTerminalClipboardPaste(args)
+  const terminalClipboardImagePaste = await verifyHostedIosTerminalClipboardImagePaste({
+    ...args,
+    sessionDocument: terminalClipboardPaste.sessionDocument,
+    terminalHandle: terminalClipboardPaste.evidence.terminalHandle
+  })
+  return { terminalClipboardImagePaste, terminalClipboardPaste }
+}
 
 export async function verifyHostedIosTerminalDeviceInputJourney(args, operations = {}) {
   const seedFixture = operations.seedFixture ?? seedHostedIosDocumentFixture
@@ -27,7 +44,17 @@ export async function verifyHostedIosTerminalDeviceInputJourney(args, operations
       sessionDocument: documentUpload.sessionDocument,
       terminalHandle: terminalClipboardPaste.evidence.terminalHandle
     })
-    return { documentUpload, photoPermissionDenial, terminalClipboardPaste }
+    const terminalClipboardImagePaste = await verifyHostedIosTerminalClipboardImagePaste({
+      ...args,
+      sessionDocument: photoPermissionDenial.sessionDocument,
+      terminalHandle: terminalClipboardPaste.evidence.terminalHandle
+    })
+    return {
+      documentUpload,
+      photoPermissionDenial,
+      terminalClipboardImagePaste,
+      terminalClipboardPaste
+    }
   } finally {
     await removeFixture(documentFixture.destinationPath)
   }

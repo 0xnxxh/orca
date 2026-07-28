@@ -26,6 +26,7 @@ describe('emulator developer menu dismissal', () => {
   it('dismisses late developer overlays until pairing is accessible', async () => {
     const waitForControl = vi
       .fn()
+      .mockResolvedValueOnce({ label: 'Open' })
       .mockResolvedValueOnce({ label: 'Continue' })
       .mockResolvedValueOnce({ label: 'Close' })
       .mockResolvedValueOnce({ label: 'Pair' })
@@ -35,7 +36,8 @@ describe('emulator developer menu dismissal', () => {
     await expect(
       dismissEmulatorDeveloperMenuBeforePairing(emulator, 10_000, waitForControl, tapControl)
     ).resolves.toBeUndefined()
-    expect(tapControl).toHaveBeenNthCalledWith(1, emulator, 'Continue', 2_000)
-    expect(tapControl).toHaveBeenNthCalledWith(2, emulator, 'Close', 2_000)
+    expect(tapControl).toHaveBeenNthCalledWith(1, emulator, 'Open', 2_000)
+    expect(tapControl).toHaveBeenNthCalledWith(2, emulator, 'Continue', 2_000)
+    expect(tapControl).toHaveBeenNthCalledWith(3, emulator, 'Close', 2_000)
   })
 })

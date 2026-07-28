@@ -3,6 +3,7 @@ import {
   rotateHostedIosEmulator,
   tapHostedIosAccessibilityControl,
   tapHostedIosAccessibilityControlAtOccurrence,
+  tapHostedIosAccessibilityControlAtLastOccurrence,
   tapHostedIosAccessibilityControlByLabelPrefix,
   tapHostedIosAccessibilityControlByLabelPrefixAtPosition,
   tapHostedIosAccessibilityControlStartingWith,
@@ -84,6 +85,35 @@ describe('hosted iOS emulator accessibility controls', () => {
       tapHostedIosAccessibilityControlAtOccurrence(emulator, 'mobile-rearch', 1, 1_000, runCommand)
     ).resolves.toEqual({ x: 0.25, y: 0.35 })
     expect(runCommand).toHaveBeenLastCalledWith(emulator, ['tap', '0.25', '0.35'])
+  })
+
+  it('targets the last visible occurrence for native photo grids', async () => {
+    const runCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stderr: '',
+        stdout: JSON.stringify({
+          ok: true,
+          result: [
+            {
+              label: 'Photo',
+              enabled: true,
+              frame: { x: 0, y: 0.2, width: 0.3, height: 0.1 }
+            },
+            {
+              label: 'Photo',
+              enabled: true,
+              frame: { x: 0.3, y: 0.4, width: 0.3, height: 0.1 }
+            }
+          ]
+        })
+      })
+      .mockResolvedValueOnce({ stderr: '', stdout: JSON.stringify({ ok: true }) })
+
+    await expect(
+      tapHostedIosAccessibilityControlAtLastOccurrence(emulator, 'Photo', 1_000, runCommand)
+    ).resolves.toEqual({ x: 0.44999999999999996, y: 0.45 })
+    expect(runCommand).toHaveBeenLastCalledWith(emulator, ['tap', '0.44999999999999996', '0.45'])
   })
 
   it('targets a composite native row by its leading visible label', async () => {

@@ -33,7 +33,7 @@ export async function dismissEmulatorDeveloperMenuBeforePairing(
   while (Date.now() < deadline) {
     const match = await waitForControl(
       emulator,
-      ['Close', 'Continue', 'Pair'],
+      ['Close', 'Continue', 'Open', 'Pair'],
       Math.max(1, deadline - Date.now())
     )
     if (match.label === 'Pair') {

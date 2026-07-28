@@ -9,6 +9,7 @@ import {
   readHostedWebViewState,
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
+import { CLIPBOARD_MARKER } from './hosted-ios-terminal-clipboard-paste.mjs'
 
 const execFileAsync = promisify(execFile)
 const MOBILE_APP_BUNDLE_ID = 'com.stably.orca.mobile'
@@ -96,8 +97,8 @@ export async function verifyHostedIosPhotoPermissionDenial(
     terminalHandle,
     worktree
   })
-  const beforeText = beforeTerminal.join('')
-  const afterText = afterTerminal.join('')
+  const beforeText = terminalJourneyPayload(beforeTerminal)
+  const afterText = terminalJourneyPayload(afterTerminal)
   if (afterText !== beforeText) {
     throw new Error(
       `Photo permission denial changed the Desktop terminal: before=${JSON.stringify(beforeText.slice(-240))} after=${JSON.stringify(afterText.slice(-240))}`
@@ -120,6 +121,12 @@ export async function verifyHostedIosPhotoPermissionDenial(
     },
     sessionDocument: activeSessionDocument
   }
+}
+
+function terminalJourneyPayload(snapshot) {
+  const text = snapshot.join('')
+  const markerIndex = text.indexOf(CLIPBOARD_MARKER)
+  return markerIndex === -1 ? text : text.slice(markerIndex)
 }
 
 export async function readHostedRuntimeTerminalSnapshot({

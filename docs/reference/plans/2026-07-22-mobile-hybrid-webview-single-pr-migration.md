@@ -703,10 +703,15 @@ bridge result. A later exact-app run long-pressed the same unchanged control,
 opened Files, selected a deterministic 123-byte PNG, and required shell-owned
 host upload plus terminal path injection. Independent size and SHA-256 checks
 matched the source, while the filename, bytes, digest, and temp path remained
-absent from hosted page state. Live clipboard-image paste, permission
-revocation after a grant, background interruption, and physical-device evidence
-remain open. Camera is currently owned by the native QR-pairing route; the
-existing attachment UI has no camera action to migrate.
+absent from hosted page state. A focused exact-app run then copied the existing
+48×48 fixture through Photos, accepted the real iOS paste privacy prompt from
+unchanged Paste, and required only the shell-owned host path in the terminal.
+The 411-byte Photos encoding matched decoded RGBA SHA-256
+`a2773eaed936229595e49669b8705cb179a6a004a48a4d8304d6ee2710ab26b9`;
+filename, path, digest, encoded prefix, and `data:image/` stayed out of page
+state. Permission revocation after a grant, background interruption, and
+physical-device evidence remain open. Camera is currently owned by the native
+QR-pairing route; the existing attachment UI has no camera action to migrate.
 
 The following persistence checkpoint leaves the existing native-chat composer
 unchanged and injects `HostSessionChatDraftOperations` below it. Native and
@@ -1010,8 +1015,11 @@ passes without upload, terminal mutation, or a hosted page-text marker. Selected
 document upload now also passes through unchanged Attach and the real Files
 picker: a 123-byte fixture reaches a shell-owned host temp path with matching
 SHA-256 and no filename, bytes, digest, or path in page state. Permission
-revocation after a grant and physical-device evidence remain. Camera remains
-in native QR pairing rather than the unchanged attachment UI. On the Pixel 9 Pro API
+revocation after a grant and physical-device evidence remain. Clipboard-image
+paste also passes on iPhone Simulator with Photos-owned copy, real paste
+privacy, decoded-pixel identity, terminal-only path injection, and no
+privileged page marker. Camera remains in native QR pairing rather than the
+unchanged attachment UI. On the Pixel 9 Pro API
 36 emulator, the unchanged Attach control opens Android's real Photos picker.
 Backgrounding through Home and returning to Orca cancels the pending picker,
 retains the exact hosted session, and exposes no selected path or bytes to the

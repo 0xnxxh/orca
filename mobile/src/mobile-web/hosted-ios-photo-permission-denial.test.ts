@@ -125,8 +125,16 @@ describe('hosted iOS Photos permission denial', () => {
   it('accepts terminal row reflow when the character stream is unchanged', async () => {
     const operations = createOperations()
     operations.readTerminal
-      .mockResolvedValueOnce(['ORCA_HOSTED_', 'CLIPBOARD_TEXT_PASTE'])
-      .mockResolvedValueOnce(['ORCA_HOSTED_CLIPBOARD_', 'TEXT_PASTE'])
+      .mockResolvedValueOnce([
+        'jinwoo ~/orca/',
+        'ORCA_HOSTED_CLIPBOARD_TEXT_PASTE',
+        '/tmp/orca-paste.png'
+      ])
+      .mockResolvedValueOnce([
+        'jinwoo ~/orca/workspaces/orca/mobile-rearch [mobile-rearch] $ ',
+        'ORCA_HOSTED_CLIPBOARD_',
+        'TEXT_PASTE/tmp/orca-paste.png'
+      ])
 
     await expect(verifyHostedIosPhotoPermissionDenial(args, operations)).resolves.toBeDefined()
   })

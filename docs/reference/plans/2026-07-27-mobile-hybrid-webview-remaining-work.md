@@ -97,7 +97,7 @@ formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
 `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`:
 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes. The current mobile
-suite passes 566 files / 3,345 tests with 2 expected skips. Mobile and
+suite passes 567 files / 3,353 tests with 2 expected skips. Mobile and
 mobile-web typechecks and lints, changed-file formatting, max-lines, package
 verification, and diff hygiene pass. The repository-wide formatter still
 reports 19 unrelated baseline files, so changed-file formatting is the
@@ -135,7 +135,15 @@ SHA-256 checks match the source; the filename, bytes, digest, and host path are
 absent from hosted page state. The picker uses native touch plus the existing
 React Native Web responder because physical WebKit touch alone does not
 reliably dispatch the shared long-press handler on iOS 26.5. Permission
-revocation after a prior grant and clipboard-image paste remain open.
+revocation after a prior grant remains open.
+
+A focused exact-app iPhone 17 Pro / iOS 26.5 run now also copies the existing
+48×48 PNG through Photos, accepts the real iOS paste privacy prompt from the
+unchanged Paste control, and requires a shell-owned host temp path in the
+Desktop terminal. The 411-byte Photos encoding matches the source RGBA SHA-256
+`a2773eaed936229595e49669b8705cb179a6a004a48a4d8304d6ee2710ab26b9`.
+The filename, path, pixel digest, encoded prefix, and `data:image/` marker stay
+out of hosted page text, and both isolation probes pass.
 
 ## 1. Finish Hosted Feature Parity
 

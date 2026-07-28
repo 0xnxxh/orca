@@ -5,6 +5,7 @@ describe('hosted WebView simulator E2E options', () => {
   it('retains bounded defaults', () => {
     expect(parseHostedWebViewSimulatorE2eOptions([])).toEqual({
       accountsOnly: false,
+      clipboardImageOnly: false,
       device: 'iPhone 17 Pro',
       filesPreviewOnly: false,
       nativeSettingsOnly: false,
@@ -34,9 +35,19 @@ describe('hosted WebView simulator E2E options', () => {
     })
   })
 
+  it('maps the clipboard-image journey onto focused security setup', () => {
+    expect(parseHostedWebViewSimulatorE2eOptions(['--clipboard-image-only'])).toMatchObject({
+      clipboardImageOnly: true,
+      securityOnly: true
+    })
+  })
+
   it('rejects mutually exclusive focused journeys', () => {
     expect(() =>
       parseHostedWebViewSimulatorE2eOptions(['--accounts-only', '--source-control-only'])
+    ).toThrow('mutually exclusive')
+    expect(() =>
+      parseHostedWebViewSimulatorE2eOptions(['--clipboard-image-only', '--security-only'])
     ).toThrow('mutually exclusive')
   })
 

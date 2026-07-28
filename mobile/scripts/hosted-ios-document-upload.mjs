@@ -154,8 +154,10 @@ export async function verifyHostedIosDocumentUpload(
       `Document picker did not open (DOM ${formatPoint(attachControlPoint)}, accessibility ${formatPoint(attachAccessibilityPoint)}): ${error instanceof Error ? error.message : String(error)}`
     )
   }
-  const upload = await waitForNewDocumentUpload({
+  const upload = await waitForNewHostedIosTerminalImageUpload({
     beforeTerminal,
+    description: 'Selected document',
+    failureMessages: ['Attach failed', 'Image too large to attach'],
     readState,
     readTerminal,
     sessionDocument,
@@ -202,8 +204,10 @@ export function uploadedPathsFromTerminalSnapshot(snapshot) {
   return [...String(snapshot.join('')).matchAll(UPLOADED_PATH_PATTERN)].map((match) => match[0])
 }
 
-async function waitForNewDocumentUpload({
+export async function waitForNewHostedIosTerminalImageUpload({
   beforeTerminal,
+  description,
+  failureMessages,
   readState,
   readTerminal,
   sessionDocument,
@@ -223,16 +227,14 @@ async function waitForNewDocumentUpload({
       return { path: pathValue, terminal: lastTerminal }
     }
     lastPageText = (await readState(sessionDocument)).bodyText
-    const failure = ['Attach failed', 'Image too large to attach'].find((message) =>
-      lastPageText.includes(message)
-    )
+    const failure = failureMessages.find((message) => lastPageText.includes(message))
     if (failure) {
-      throw new Error(`Selected document upload failed in the native shell: ${failure}`)
+      throw new Error(`${description} upload failed in the native shell: ${failure}`)
     }
     await delay(150)
   }
   throw new Error(
-    `Selected document path did not reach Desktop terminal: ${lastTerminal.slice(-8).join(' | ')}; page: ${lastPageText.slice(-160)}`
+    `${description} path did not reach Desktop terminal: ${lastTerminal.slice(-8).join(' | ')}; page: ${lastPageText.slice(-160)}`
   )
 }
 
