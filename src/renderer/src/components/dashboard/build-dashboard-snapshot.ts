@@ -107,10 +107,11 @@ function rowConversationName(
 export function buildDashboardSnapshot(
   state: DashboardSnapshotState,
   now: number,
-  options: { includeFilterOptions?: boolean } = {}
+  options: { includeCardDetails?: boolean; includeFilterOptions?: boolean } = {}
 ): DashboardSnapshot {
   const cards: DashboardCard[] = []
   const repoIconsByRepoId: Record<string, RepoIcon | null> = {}
+  const includeCardDetails = options.includeCardDetails !== false
   const generatedTitlesEnabled = state.settings?.tabAutoGenerateTitle === true
   const activeWorktrees: {
     repo: AppState['repos'][number]
@@ -189,31 +190,37 @@ export function buildDashboardSnapshot(
         now
       })
     )
-    const subagentsByParentPaneKey = new Map<string, DashboardCardSubagent[]>()
-    for (const row of rows) {
-      if (row.rowSource !== 'subagent') {
-        continue
-      }
-      const parentPaneKey = row.entry.orchestration?.parentPaneKey
-      if (!parentPaneKey) {
-        continue
-      }
-      const subagent: DashboardCardSubagent = {
-        id: row.paneKey,
-        name:
-          nonEmpty(row.entry.orchestration?.displayName) ??
-          nonEmpty(row.entry.prompt) ??
-          row.agentType,
-        dotState: row.state
-      }
-      const existing = subagentsByParentPaneKey.get(parentPaneKey)
-      if (existing) {
-        existing.push(subagent)
-      } else {
-        subagentsByParentPaneKey.set(parentPaneKey, [subagent])
+    const subagentsByParentPaneKey = includeCardDetails
+      ? new Map<string, DashboardCardSubagent[]>()
+      : undefined
+    if (subagentsByParentPaneKey) {
+      for (const row of rows) {
+        if (row.rowSource !== 'subagent') {
+          continue
+        }
+        const parentPaneKey = row.entry.orchestration?.parentPaneKey
+        if (!parentPaneKey) {
+          continue
+        }
+        const subagent: DashboardCardSubagent = {
+          id: row.paneKey,
+          name:
+            nonEmpty(row.entry.orchestration?.displayName) ??
+            nonEmpty(row.entry.prompt) ??
+            row.agentType,
+          dotState: row.state
+        }
+        const existing = subagentsByParentPaneKey.get(parentPaneKey)
+        if (existing) {
+          existing.push(subagent)
+        } else {
+          subagentsByParentPaneKey.set(parentPaneKey, [subagent])
+        }
       }
     }
-    const context = resolveDashboardCardContext(state, repo, worktree)
+    const context = includeCardDetails
+      ? resolveDashboardCardContext(state, repo, worktree)
+      : undefined
 
     for (const row of rows) {
       // Child rows have no pane of their own; the board lists top-level agents.
@@ -256,12 +263,12 @@ export function buildDashboardSnapshot(
         leafId,
         repoName: repo.displayName,
         worktreeName: worktree.displayName,
-        workspaceStatusId: context.workspaceStatus.id,
-        workspaceStatusLabel: context.workspaceStatus.label,
-        workspaceStatusColor: context.workspaceStatus.color,
-        hasReview: context.hasReview || context.review !== undefined,
-        review: context.review,
-        subagents: subagentsByParentPaneKey.get(row.paneKey),
+        workspaceStatusId: context?.workspaceStatus.id,
+        workspaceStatusLabel: context?.workspaceStatus.label,
+        workspaceStatusColor: context?.workspaceStatus.color,
+        hasReview: context ? context.hasReview || context.review !== undefined : undefined,
+        review: context?.review,
+        subagents: subagentsByParentPaneKey?.get(row.paneKey),
         lastUserMessage: isTitleDerived ? undefined : nonEmpty(row.entry.prompt),
         lastAgentMessage: isTitleDerived ? undefined : nonEmpty(row.entry.lastAssistantMessage),
         startedAt: row.startedAt,

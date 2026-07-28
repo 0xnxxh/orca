@@ -14234,7 +14234,7 @@
       "working": "Working",
       "idle": "Idle",
       "empty": "None",
-      "done": "Done"
+      "done": "已完成"
     },
     "title": "Agents",
     "total": "{{count}} total",
@@ -14247,10 +14247,10 @@
         "days": "{{count}} 天"
       },
       "review": {
-        "open": "Open review",
-        "draft": "Draft review",
-        "merged": "Merged review",
-        "closed": "Closed review"
+        "open": "开放的评审",
+        "draft": "草稿评审",
+        "merged": "已合并的评审",
+        "closed": "已关闭的评审"
       },
       "subagents_one": "{{count}} 个子代理",
       "subagents_other": "{{count}} 个子代理"
@@ -14263,33 +14263,33 @@
     "close": "Close dashboard",
     "settingsTooltip": "看板设置",
     "filters": {
-      "remove": "Remove {{label}} filter",
-      "active": "Filters",
-      "clear": "Clear",
+      "remove": "移除 {{label}} 筛选条件",
+      "active": "筛选条件",
+      "clear": "清除",
       "review": {
-        "open": "Open",
-        "draft": "Draft",
-        "merged": "Merged",
-        "closed": "Closed",
-        "none": "No review"
+        "open": "开放",
+        "draft": "草稿",
+        "merged": "已合并",
+        "closed": "已关闭",
+        "none": "无评审"
       },
-      "reviewChip": "Review: {{state}}",
-      "label": "Filter",
-      "project": "Project",
-      "workspaceStatus": "Workspace status",
+      "reviewChip": "评审：{{state}}",
+      "label": "筛选",
+      "project": "项目",
+      "workspaceStatus": "工作区状态",
       "reviewStatus": "PR / MR 状态",
-      "clearAll": "Clear all filters"
+      "clearAll": "清除所有筛选条件"
     },
     "search": {
-      "placeholder": "Search worktree, project, or agent…",
-      "label": "Search agents",
-      "clear": "Clear search",
-      "results": "{{shown}} of {{total}} shown"
+      "placeholder": "搜索工作树、项目或智能体…",
+      "label": "搜索智能体",
+      "clear": "清除搜索",
+      "results": "显示 {{shown}} / {{total}}"
     },
     "settingsLabel": "智能体仪表盘设置",
     "settings": {
-      "showIdle": "Show idle agents",
-      "showIdleCopy": "Include agents that have gone quiet for 30 minutes without reporting completion. Hidden by default."
+      "showIdle": "显示空闲智能体",
+      "showIdleCopy": "包括已安静 30 分钟且未报告完成的智能体。默认隐藏。"
     }
   },
   "dashboard": {

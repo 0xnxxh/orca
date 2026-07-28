@@ -117,11 +117,31 @@ describe('AgentKanbanCard', () => {
     })
 
     expect(screen.getByText('#11012')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Open review #11012' })).toBeInTheDocument()
     expect(screen.queryByText('Review loop')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '2 subagents' }))
     expect(screen.getByText('Review loop')).toBeInTheDocument()
     expect(screen.getByText('Smoke tests')).toBeInTheDocument()
     expect(onOpenTerminal).not.toHaveBeenCalled()
+  })
+
+  it('opens the terminal from the footer while keeping subagent disclosure isolated', () => {
+    const onOpenTerminal = vi.fn()
+    renderCard({
+      card: card({
+        conversationName: 'Dashboard review',
+        review: { number: 11042, state: 'open' },
+        subagents: [{ id: 'child-1', name: 'Review loop', dotState: 'working' }]
+      }),
+      now: 61_000,
+      onOpenTerminal
+    })
+
+    fireEvent.click(screen.getByText('#11042'))
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '1 subagent' }))
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1)
   })
 
   it('labels one subagent and the workspace status accessibly', () => {

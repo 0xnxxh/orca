@@ -343,6 +343,30 @@ describe('buildDashboardSnapshot', () => {
     })
   })
 
+  it('skips card-only context for count snapshots', () => {
+    let linkedReviewReads = 0
+    const countWorktree = worktree()
+    Object.defineProperty(countWorktree, 'linkedPR', {
+      enumerable: true,
+      get: () => {
+        linkedReviewReads += 1
+        return null
+      }
+    })
+    const snapshot = buildDashboardSnapshot(
+      baseState({
+        worktreesByRepo: { r1: [countWorktree] },
+        agentStatusByPaneKey: { [PANE_KEY]: entry({}) }
+      }),
+      NOW,
+      { includeCardDetails: false, includeFilterOptions: false }
+    )
+
+    expect(snapshot.cards[0].workspaceStatusId).toBeUndefined()
+    expect(snapshot.cards[0].subagents).toBeUndefined()
+    expect(linkedReviewReads).toBe(0)
+  })
+
   it('relays the idle-column setting in the serialized snapshot', () => {
     const snapshot = buildDashboardSnapshot(
       baseState({

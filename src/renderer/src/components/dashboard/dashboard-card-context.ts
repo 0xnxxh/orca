@@ -1,15 +1,19 @@
 import { branchName } from '@/lib/git-utils'
-import { getGitHubPRCacheKey } from '@/store/slices/github-cache-key'
 import { getHostedReviewCacheKey } from '@/store/slices/hosted-review-cache-identity'
 import type { AppState } from '@/store/types'
 import type { DashboardCardReview } from '../../../../shared/dashboard-snapshot'
+import { hostedReviewInfoFromGitHubPRInfo } from '../../../../shared/hosted-review-github'
 import { isPositiveHostedReviewNumber } from '../../../../shared/hosted-review'
 import type { Repo, Worktree, WorkspaceStatusDefinition } from '../../../../shared/types'
 import {
   DEFAULT_WORKSPACE_STATUSES,
   getWorkspaceStatus
 } from '../../../../shared/workspace-statuses'
-import { selectChecksPanelReview } from '../right-sidebar/checks-panel-review'
+import {
+  canUseParentPrChecksGitHubPRCacheEntry,
+  getParentPrChecksGitHubPRCacheEntry
+} from '../right-sidebar/parent-pr-checks-github-pr-cache'
+import { canUseParentPrChecksHostedReviewCacheEntry } from '../right-sidebar/parent-pr-checks-hosted-review-cache'
 
 export type DashboardCardContextState = Partial<
   Pick<AppState, 'hostedReviewCache' | 'prCache' | 'settings' | 'workspaceStatuses'>
@@ -40,34 +44,34 @@ function resolveReview(
     return undefined
   }
   const branch = branchName(worktree.branch)
-  const keyArgs = [
-    repo.path,
-    repo.id,
+  const hostedReviewEntry =
+    state.hostedReviewCache[
+      getHostedReviewCacheKey(
+        repo.path,
+        branch,
+        state.settings,
+        repo.id,
+        repo.connectionId,
+        repo.executionHostId,
+        true
+      )
+    ]
+  const hostedReview = hostedReviewEntry?.data
+  if (
+    hostedReview &&
+    canUseParentPrChecksHostedReviewCacheEntry(worktree, hostedReview, hostedReviewEntry)
+  ) {
+    return { number: hostedReview.number, state: hostedReview.state }
+  }
+  const prEntry = getParentPrChecksGitHubPRCacheEntry({
+    prCache: state.prCache,
+    repo,
     branch,
-    state.settings,
-    repo.connectionId,
-    repo.executionHostId,
-    true
-  ] as const
-  const review = selectChecksPanelReview({
-    hostedReview:
-      state.hostedReviewCache[
-        getHostedReviewCacheKey(
-          repo.path,
-          branch,
-          state.settings,
-          repo.id,
-          repo.connectionId,
-          repo.executionHostId,
-          true
-        )
-      ]?.data,
-    pr: state.prCache[getGitHubPRCacheKey(...keyArgs)]?.data,
-    linkedGitLabMR: worktree.linkedGitLabMR ?? null,
-    linkedBitbucketPR: worktree.linkedBitbucketPR ?? null,
-    linkedAzureDevOpsPR: worktree.linkedAzureDevOpsPR ?? null,
-    linkedGiteaPR: worktree.linkedGiteaPR ?? null
+    settings: state.settings ?? null
   })
+  const review = canUseParentPrChecksGitHubPRCacheEntry(worktree, prEntry, hostedReviewEntry)
+    ? hostedReviewInfoFromGitHubPRInfo(prEntry.data)
+    : undefined
   return review ? { number: review.number, state: review.state } : undefined
 }
 

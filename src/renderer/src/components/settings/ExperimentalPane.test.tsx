@@ -166,16 +166,29 @@ describe('ExperimentalPane', () => {
     root.unmount()
   })
 
-  it('keeps idle-agent visibility out of Experimental Settings', () => {
+  it('exposes idle-agent visibility for pop-out dashboards', async () => {
+    const updateSettings = vi.fn()
     const settings = {
       ...getDefaultSettings('/tmp'),
       experimentalAgentDashboardPopout: true
     }
-    const markup = renderToStaticMarkup(
-      <ExperimentalPane settings={settings} updateSettings={vi.fn()} />
+    const { root, container } = await renderExperimentalPane({
+      settings,
+      updateSettings
+    })
+    const idleSwitch = container.querySelector<HTMLButtonElement>(
+      '#experimental-agent-dashboard button[role="switch"][aria-label="Show idle agents"]'
     )
+    if (!idleSwitch) {
+      throw new Error('Idle-agent visibility switch was not rendered')
+    }
 
-    expect(markup).not.toContain('Show idle agents')
+    await act(async () => {
+      idleSwitch.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(updateSettings).toHaveBeenCalledWith({ experimentalAgentDashboardShowIdle: true })
+    root.unmount()
   })
 
   it('renders per-workspace environments as an off-by-default experimental subsection', () => {

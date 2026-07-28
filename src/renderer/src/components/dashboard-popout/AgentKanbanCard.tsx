@@ -148,7 +148,8 @@ function ReviewPill({ card }: { card: DashboardCard }): React.JSX.Element | null
   })()
   return (
     <span
-      title={title}
+      role="img"
+      aria-label={`${title} #${card.review.number}`}
       className={cn(
         'inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1 py-px text-[10px] leading-none tabular-nums',
         presentation.className
@@ -316,7 +317,11 @@ export const AgentKanbanCard = memo(
           </>
         ) : null}
 
-        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <button
+          type="button"
+          onClick={() => onOpenTerminal(card)}
+          className="flex w-full items-center gap-2 rounded-md text-left text-[11px] text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
           {workspaceStatusMeta ? (
             <span
               role="img"
@@ -345,7 +350,7 @@ export const AgentKanbanCard = memo(
               {formatStartedAgo(displayTimestamp(card), now)}
             </span>
           ) : null}
-        </div>
+        </button>
       </div>
     )
   },

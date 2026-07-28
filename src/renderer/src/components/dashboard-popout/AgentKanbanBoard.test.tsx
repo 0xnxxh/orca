@@ -9,6 +9,7 @@ import type {
   DashboardSnapshot
 } from '../../../../shared/dashboard-snapshot'
 import type { RepoIcon } from '../../../../shared/repo-icon'
+import { i18n } from '@/i18n/i18n'
 import { AgentKanbanBoard } from './AgentKanbanBoard'
 
 // Stub the card and dialog so the board test stays free of xterm / Radix
@@ -93,7 +94,8 @@ function renderBoard(
 const ackAgent = vi.fn(async () => {})
 
 describe('AgentKanbanBoard', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await i18n.changeLanguage('en')
     // The board relays seen-acks through the dashboard preload API.
     ;(window as unknown as { api: unknown }).api = { dashboard: { ackAgent } }
   })
@@ -171,6 +173,15 @@ describe('AgentKanbanBoard', () => {
     expect(screen.getByText('first')).toBeInTheDocument()
     expect(screen.queryByText('second')).not.toBeInTheDocument()
     expect(screen.getByText('1 of 2 shown')).toBeInTheDocument()
+  })
+
+  it('localizes the new board status and filter controls', async () => {
+    await i18n.changeLanguage('ja')
+    renderBoard([card({ bucket: 'done' })])
+
+    expect(screen.getByText('完了')).toBeInTheDocument()
+    expect(screen.getByLabelText('エージェントを検索')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^フィルター/ })).toBeInTheDocument()
   })
 
   it('offers store-derived project and status filters without cards', async () => {

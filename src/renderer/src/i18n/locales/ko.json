@@ -14234,7 +14234,7 @@
       "working": "Working",
       "idle": "Idle",
       "empty": "None",
-      "done": "Done"
+      "done": "완료"
     },
     "title": "Agents",
     "total": "{{count}} total",
@@ -14247,10 +14247,10 @@
         "days": "{{count}}일"
       },
       "review": {
-        "open": "Open review",
-        "draft": "Draft review",
-        "merged": "Merged review",
-        "closed": "Closed review"
+        "open": "열린 리뷰",
+        "draft": "초안 리뷰",
+        "merged": "병합된 리뷰",
+        "closed": "닫힌 리뷰"
       },
       "subagents_one": "서브에이전트 {{count}}개",
       "subagents_other": "서브에이전트 {{count}}개"
@@ -14263,33 +14263,33 @@
     "close": "Close dashboard",
     "settingsTooltip": "보드 설정",
     "filters": {
-      "remove": "Remove {{label}} filter",
-      "active": "Filters",
-      "clear": "Clear",
+      "remove": "{{label}} 필터 제거",
+      "active": "필터",
+      "clear": "지우기",
       "review": {
-        "open": "Open",
-        "draft": "Draft",
-        "merged": "Merged",
-        "closed": "Closed",
-        "none": "No review"
+        "open": "열림",
+        "draft": "초안",
+        "merged": "병합됨",
+        "closed": "닫힘",
+        "none": "리뷰 없음"
       },
-      "reviewChip": "Review: {{state}}",
-      "label": "Filter",
-      "project": "Project",
-      "workspaceStatus": "Workspace status",
+      "reviewChip": "리뷰: {{state}}",
+      "label": "필터",
+      "project": "프로젝트",
+      "workspaceStatus": "워크스페이스 상태",
       "reviewStatus": "PR / MR 상태",
-      "clearAll": "Clear all filters"
+      "clearAll": "모든 필터 지우기"
     },
     "search": {
-      "placeholder": "Search worktree, project, or agent…",
-      "label": "Search agents",
-      "clear": "Clear search",
-      "results": "{{shown}} of {{total}} shown"
+      "placeholder": "워크트리, 프로젝트 또는 에이전트 검색…",
+      "label": "에이전트 검색",
+      "clear": "검색 지우기",
+      "results": "총 {{total}}개 중 {{shown}}개 표시"
     },
     "settingsLabel": "에이전트 대시보드 설정",
     "settings": {
-      "showIdle": "Show idle agents",
-      "showIdleCopy": "Include agents that have gone quiet for 30 minutes without reporting completion. Hidden by default."
+      "showIdle": "유휴 에이전트 표시",
+      "showIdleCopy": "완료를 보고하지 않은 채 30분 동안 조용한 에이전트를 포함합니다. 기본적으로 숨겨집니다."
     }
   },
   "dashboard": {

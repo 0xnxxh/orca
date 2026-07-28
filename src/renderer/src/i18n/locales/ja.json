@@ -14234,7 +14234,7 @@
       "working": "Working",
       "idle": "Idle",
       "empty": "None",
-      "done": "Done"
+      "done": "完了"
     },
     "title": "Agents",
     "total": "{{count}} total",
@@ -14247,10 +14247,10 @@
         "days": "{{count}}日"
       },
       "review": {
-        "open": "Open review",
-        "draft": "Draft review",
-        "merged": "Merged review",
-        "closed": "Closed review"
+        "open": "オープン中のレビュー",
+        "draft": "下書きのレビュー",
+        "merged": "マージ済みのレビュー",
+        "closed": "クローズ済みのレビュー"
       },
       "subagents_one": "{{count}} 個のサブエージェント",
       "subagents_other": "{{count}} 個のサブエージェント"
@@ -14263,33 +14263,33 @@
     "close": "Close dashboard",
     "settingsTooltip": "ボード設定",
     "filters": {
-      "remove": "Remove {{label}} filter",
-      "active": "Filters",
-      "clear": "Clear",
+      "remove": "{{label}} フィルターを削除",
+      "active": "フィルター",
+      "clear": "クリア",
       "review": {
-        "open": "Open",
-        "draft": "Draft",
-        "merged": "Merged",
-        "closed": "Closed",
-        "none": "No review"
+        "open": "オープン",
+        "draft": "下書き",
+        "merged": "マージ済み",
+        "closed": "クローズ済み",
+        "none": "レビューなし"
       },
-      "reviewChip": "Review: {{state}}",
-      "label": "Filter",
-      "project": "Project",
-      "workspaceStatus": "Workspace status",
+      "reviewChip": "レビュー: {{state}}",
+      "label": "フィルター",
+      "project": "プロジェクト",
+      "workspaceStatus": "ワークスペースのステータス",
       "reviewStatus": "PR / MR ステータス",
-      "clearAll": "Clear all filters"
+      "clearAll": "すべてのフィルターをクリア"
     },
     "search": {
-      "placeholder": "Search worktree, project, or agent…",
-      "label": "Search agents",
-      "clear": "Clear search",
-      "results": "{{shown}} of {{total}} shown"
+      "placeholder": "ワークツリー、プロジェクト、エージェントを検索…",
+      "label": "エージェントを検索",
+      "clear": "検索をクリア",
+      "results": "{{total}} 件中 {{shown}} 件を表示"
     },
     "settingsLabel": "エージェント ダッシュボード設定",
     "settings": {
-      "showIdle": "Show idle agents",
-      "showIdleCopy": "Include agents that have gone quiet for 30 minutes without reporting completion. Hidden by default."
+      "showIdle": "アイドル状態のエージェントを表示",
+      "showIdleCopy": "完了を報告せずに30分間停止しているエージェントを含めます。デフォルトでは非表示です。"
     }
   },
   "dashboard": {

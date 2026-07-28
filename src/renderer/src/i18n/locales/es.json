@@ -14234,7 +14234,7 @@
       "working": "Working",
       "idle": "Idle",
       "empty": "None",
-      "done": "Done"
+      "done": "Finalizado"
     },
     "title": "Agents",
     "total": "{{count}} total",
@@ -14247,10 +14247,10 @@
         "days": "{{count}} d"
       },
       "review": {
-        "open": "Open review",
-        "draft": "Draft review",
-        "merged": "Merged review",
-        "closed": "Closed review"
+        "open": "Revisión abierta",
+        "draft": "Revisión en borrador",
+        "merged": "Revisión fusionada",
+        "closed": "Revisión cerrada"
       },
       "subagents_one": "{{count}} subagente",
       "subagents_other": "{{count}} subagentes"
@@ -14263,33 +14263,33 @@
     "close": "Close dashboard",
     "settingsTooltip": "Configuración del tablero",
     "filters": {
-      "remove": "Remove {{label}} filter",
-      "active": "Filters",
-      "clear": "Clear",
+      "remove": "Eliminar filtro {{label}}",
+      "active": "Filtros",
+      "clear": "Limpiar",
       "review": {
-        "open": "Open",
-        "draft": "Draft",
-        "merged": "Merged",
-        "closed": "Closed",
-        "none": "No review"
+        "open": "Abierta",
+        "draft": "Borrador",
+        "merged": "Fusionada",
+        "closed": "Cerrada",
+        "none": "Sin revisión"
       },
-      "reviewChip": "Review: {{state}}",
-      "label": "Filter",
-      "project": "Project",
-      "workspaceStatus": "Workspace status",
+      "reviewChip": "Revisión: {{state}}",
+      "label": "Filtrar",
+      "project": "Proyecto",
+      "workspaceStatus": "Estado del espacio de trabajo",
       "reviewStatus": "Estado de PR / MR",
-      "clearAll": "Clear all filters"
+      "clearAll": "Limpiar todos los filtros"
     },
     "search": {
-      "placeholder": "Search worktree, project, or agent…",
-      "label": "Search agents",
-      "clear": "Clear search",
-      "results": "{{shown}} of {{total}} shown"
+      "placeholder": "Buscar worktree, proyecto o agente…",
+      "label": "Buscar agentes",
+      "clear": "Borrar búsqueda",
+      "results": "{{shown}} de {{total}} mostrados"
     },
     "settingsLabel": "Configuración del Panel de agentes",
     "settings": {
-      "showIdle": "Show idle agents",
-      "showIdleCopy": "Include agents that have gone quiet for 30 minutes without reporting completion. Hidden by default."
+      "showIdle": "Mostrar agentes inactivos",
+      "showIdleCopy": "Incluye agentes que han permanecido inactivos durante 30 minutos sin informar que finalizaron. Ocultos de forma predeterminada."
     }
   },
   "dashboard": {

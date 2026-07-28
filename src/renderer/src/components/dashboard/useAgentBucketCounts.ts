@@ -62,7 +62,7 @@ export function useAgentBucketCounts(): AgentBucketCounts {
         settings: null
       },
       Date.now(),
-      { includeFilterOptions: false }
+      { includeCardDetails: false, includeFilterOptions: false }
     )
     if (snapshot.cards.length === 0) {
       return EMPTY_COUNTS
