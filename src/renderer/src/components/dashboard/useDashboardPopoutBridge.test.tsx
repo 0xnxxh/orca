@@ -34,8 +34,10 @@ vi.mock('@/lib/activate-tab-and-focus-pane', () => ({
   activateTabAndFocusPane: vi.fn()
 }))
 
+import type { RepoIcon } from '../../../../shared/repo-icon'
 import {
   dashboardSnapshotInputsChanged,
+  repoIconsUnchanged,
   useDashboardPopoutBridge
 } from './useDashboardPopoutBridge'
 import type { DashboardSnapshotState } from './build-dashboard-snapshot'
@@ -148,5 +150,33 @@ describe('useDashboardPopoutBridge', () => {
     expect(mocks.offAckAgent).toHaveBeenCalledTimes(1)
     expect(mocks.offPopoutOpenChanged).toHaveBeenCalledTimes(1)
     expect(mocks.offSnapshotRequested).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('repoIconsUnchanged', () => {
+  const icon: RepoIcon = { type: 'image', src: 'data:image/png;base64,AAAA', source: 'upload' }
+
+  it('treats a first publish as changed so the pop-out always gets a map', () => {
+    expect(repoIconsUnchanged({ r1: icon }, null)).toBe(false)
+  })
+
+  it('matches on reference, not deep value, so an unchanged repo skips the resend', () => {
+    expect(repoIconsUnchanged({ r1: icon }, { r1: icon })).toBe(true)
+    // Why: a structurally identical but freshly allocated icon means the store
+    // record was rebuilt, so the pop-out's copy may genuinely be stale.
+    expect(repoIconsUnchanged({ r1: { ...icon } }, { r1: icon })).toBe(false)
+  })
+
+  it('detects an added, removed, or swapped repo', () => {
+    expect(repoIconsUnchanged({ r1: icon, r2: icon }, { r1: icon })).toBe(false)
+    expect(repoIconsUnchanged({ r1: icon }, { r1: icon, r2: icon })).toBe(false)
+    // Same size, different keys — a plain length check would miss this.
+    expect(repoIconsUnchanged({ r2: icon }, { r1: icon })).toBe(false)
+  })
+
+  it('handles repos with no icon', () => {
+    expect(repoIconsUnchanged({ r1: null }, { r1: null })).toBe(true)
+    expect(repoIconsUnchanged({ r1: icon }, { r1: null })).toBe(false)
+    expect(repoIconsUnchanged({}, {})).toBe(true)
   })
 })
