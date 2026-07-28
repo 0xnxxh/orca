@@ -57,14 +57,27 @@ The fixture locates its unchanged row from the accessible Filter control and
 uses the existing icon position. This is recorded as an accessibility finding,
 not treated as a reason to change product UI inside the migration.
 
+The same exact-app iOS gate now covers the unchanged Files route and a real
+Preview navigation through `Casks/orca.rb`. Files passes at 0.030% changed
+pixels and 0.128 mean channel difference; Preview passes at 0.061% and 0.274.
+Both cached-app and fresh Xcode build/install journeys pass the complete route,
+recovery, review, and isolation matrix. Equivalent hosted route values no
+longer restart Preview loads, and RNW preserves the native iOS font fallback.
+
 The migration is rebased onto `origin/main` at `0404f27b3`. Current post-rebase
 validation passes 552 mobile files / 3,291 tests with 2 expected skips and
 3,770 root files / 39,212 tests with 62 expected skips. All project typechecks,
 root/mobile/mobile-web lint, reliability gates, changed-file and full-mobile
 formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
-`f852d8525d2b0e20d79262d74ce3ef74bfa73c3e55b95176bfb1b467beafae61`:
-49 assets, 9,330,210 raw bytes, and 2,697,838 gzip bytes.
+`9e5e807523e8b917fef68f221cc1fd2e1a16dbe07d7077e717238eed17003b52`:
+49 assets, 9,330,604 raw bytes, and 2,697,919 gzip bytes. The current mobile
+suite passes 553 files / 3,297 tests with 2 expected skips; all project
+typechecks and repository-wide quality gates pass. A fresh root-suite attempt
+hit an unrelated 30-second timeout in
+`project-view-wrapper-source-context-boundary.test.ts` and was interrupted
+under concurrent test load; that exact file passes alone, so the prior complete
+root-suite checkpoint above remains authoritative.
 
 ## 1. Finish Hosted Feature Parity
 

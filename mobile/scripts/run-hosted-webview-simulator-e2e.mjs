@@ -21,6 +21,10 @@ import {
   captureHostedCoreRouteParity,
   captureNativeCoreRouteBaselines
 } from './hosted-ios-core-route-parity.mjs'
+import {
+  captureHostedFilesPreviewParity,
+  captureNativeFilesPreviewBaselines
+} from './hosted-ios-files-preview-parity.mjs'
 import { verifyHostedAgentHistoryJourney } from './hosted-ios-agent-history-journey.mjs'
 import { openHostedIosHybridRoute } from './hosted-ios-hybrid-route-handoff.mjs'
 import { verifyHostedNativeTerminalSettingsHandoff } from './hosted-ios-native-settings-handoff.mjs'
@@ -100,7 +104,10 @@ async function main() {
       completeHostedIosNativeOnboarding(emulator, expectedWorkspace, options.timeoutMs)
     )
     const nativeCoreRoutes =
-      options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
         ? null
         : await evidenceStep('native Tasks and Session baselines', () =>
             captureNativeCoreRouteBaselines({
@@ -111,8 +118,23 @@ async function main() {
               timeoutMs: options.timeoutMs
             })
           )
-    const nativeAgentHistory =
+    const nativeFilesPreview =
       options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
+        ? null
+        : await evidenceStep('native Files and Preview baselines', () =>
+            captureNativeFilesPreviewBaselines({
+              deviceUdid,
+              emulator,
+              expectedWorkspace,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs
+            })
+          )
+    const nativeAgentHistory =
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
         ? null
         : await evidenceStep('native Agent History baseline', () =>
             captureNativeAgentHistoryBaseline({
@@ -134,7 +156,10 @@ async function main() {
       timeoutMs: options.timeoutMs
     })
     const hostedCoreRoutes =
-      options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
         ? null
         : await evidenceStep('hosted Tasks and Session parity', () =>
             captureHostedCoreRouteParity({
@@ -149,15 +174,31 @@ async function main() {
             })
           )
     const activeWorkspaceDocument = hostedCoreRoutes?.workspaceDocument ?? workspaceDocument
+    const hostedFilesPreview =
+      options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
+        ? null
+        : await evidenceStep('hosted Files and Preview parity', () =>
+            captureHostedFilesPreviewParity({
+              deviceUdid,
+              discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
+              emulator,
+              expectedWorkspace,
+              nativeBaselines: nativeFilesPreview,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs,
+              workspaceDocument: activeWorkspaceDocument
+            })
+          )
+    const parityWorkspaceDocument = hostedFilesPreview?.workspaceDocument ?? activeWorkspaceDocument
     const historyEvidence =
-      options.securityOnly || options.sourceControlOnly
+      options.securityOnly || options.filesPreviewOnly || options.sourceControlOnly
         ? null
         : options.nativeSettingsOnly
           ? await evidenceStep('native Terminal Settings journey', () =>
               verifyNativeSettingsJourney({
                 discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
                 emulator,
-                workspaceDocument: activeWorkspaceDocument,
+                workspaceDocument: parityWorkspaceDocument,
                 expectedWorkspace,
                 timeoutMs: options.timeoutMs
               })
@@ -169,13 +210,13 @@ async function main() {
                 emulator,
                 nativeAgentHistory,
                 runtimeDirectory,
-                workspaceDocument: activeWorkspaceDocument,
+                workspaceDocument: parityWorkspaceDocument,
                 expectedWorkspace,
                 timeoutMs: options.timeoutMs
               })
             )
     const sourceControlReview =
-      options.securityOnly || options.nativeSettingsOnly
+      options.securityOnly || options.filesPreviewOnly || options.nativeSettingsOnly
         ? null
         : await evidenceStep('Source Control and Review journey', async () => {
             if (options.sourceControlOnly) {
@@ -207,14 +248,15 @@ async function main() {
               timeoutMs: options.timeoutMs
             })
           })
-    const securityDocument = options.securityOnly
-      ? workspaceDocument
-      : await waitForVisibleHostedWebView({
-          discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
-          expectedText: options.nativeSettingsOnly ? 'Mobile Emulator' : 'reviewed',
-          expectedHrefIncludes: options.nativeSettingsOnly ? '/session/' : '/review/',
-          timeoutMs: options.timeoutMs
-        })
+    const securityDocument =
+      options.securityOnly || options.filesPreviewOnly
+        ? parityWorkspaceDocument
+        : await waitForVisibleHostedWebView({
+            discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
+            expectedText: options.nativeSettingsOnly ? 'Mobile Emulator' : 'reviewed',
+            expectedHrefIncludes: options.nativeSettingsOnly ? '/session/' : '/review/',
+            timeoutMs: options.timeoutMs
+          })
     const networkIsolation = await evidenceStep('network isolation probe', () =>
       verifyHostedWebViewNetworkIsolation({
         document: securityDocument,
@@ -248,6 +290,7 @@ async function main() {
           nativeOnboarding,
           agentHistory: historyEvidence,
           coreRouteParity: hostedCoreRoutes?.evidence ?? null,
+          filesPreviewParity: hostedFilesPreview?.evidence ?? null,
           sourceControlReview
         },
         null,

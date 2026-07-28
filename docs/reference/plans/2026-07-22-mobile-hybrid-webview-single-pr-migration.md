@@ -1851,6 +1851,15 @@ failure, or fatal process error. The final post-rebase run uses independently
 verified build
 `f852d8525d2b0e20d79262d74ce3ef74bfa73c3e55b95176bfb1b467beafae61`.
 
+The deterministic iOS fixture now covers the full Files-to-Preview transition
+with the real `Casks/orca.rb` content. Native and hosted use the same
+`MobileFilePreviewScreen`; equivalent route values retain one logical preview
+load, and RNW follows the native iOS font fallback. Files and Preview pass
+strict screenshot parity in both cached-app and fresh Xcode build/install
+complete journeys. The independently verified package containing this work is
+`9e5e807523e8b917fef68f221cc1fd2e1a16dbe07d7077e717238eed17003b52`:
+49 assets, 9,330,604 raw bytes, and 2,697,919 gzip bytes.
+
 The host-only router now imports the existing
 `mobile/app/h/[hostId]/session/[worktreeId].tsx` route directly; a
 source-identity test prevents that wrapper from growing copied presentation.

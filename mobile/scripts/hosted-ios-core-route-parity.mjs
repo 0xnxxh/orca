@@ -130,8 +130,7 @@ export async function captureHostedCoreRouteParity({
     screenshotName: 'hosted-session-portrait.png',
     title: expectedWorkspace
   })
-  const backPoint = await readHostedWebViewControlPoint(sessionDocument, 'Back to worktrees')
-  await tapHostedIosPoint(emulator, backPoint)
+  await tapHostedSessionBack(emulator, sessionDocument, timeoutMs)
   activeWorkspaceDocument = await waitForVisibleHostedWebView({
     discoveryUrl,
     expectedText: 'Orca Desktop',
@@ -212,6 +211,19 @@ async function captureHostedRoute({
 
 function tasksBackPoint(titlePoint) {
   return { x: Math.max(0.04, titlePoint.x - 0.12), y: titlePoint.y }
+}
+
+async function tapHostedSessionBack(emulator, document, timeoutMs) {
+  try {
+    await tapHostedIosAccessibilityControl(
+      emulator,
+      'Back to worktrees',
+      Math.min(timeoutMs, 5_000)
+    )
+  } catch {
+    const backPoint = await readHostedWebViewControlPoint(document, 'Back to worktrees')
+    await tapHostedIosPoint(emulator, backPoint)
+  }
 }
 
 async function captureSimulatorScreenshot(deviceUdid, outputPath) {

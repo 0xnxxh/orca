@@ -486,6 +486,14 @@ History and PR compatibility redirects are present. The non-embedded Tasks
 toolbar icon's missing native accessibility label remains open. Close the
 remaining native-versus-hosted interaction matrix.
 
+The iOS fixture now also navigates the unchanged Files tree into the real
+`Casks/orca.rb` Preview in native and hosted modes. Files measures 0.030%
+changed pixels / 0.128 mean channel difference and Preview measures 0.061% /
+0.274, within the 3% / 4 budgets. Both the cached-app and fresh Xcode
+build/install complete journeys pass. Hosted Preview source identity is stable
+across equivalent route rerenders, while web typography follows the existing
+native iOS fallback rather than introducing a replacement presentation.
+
 The interrupted-transcript versus hook-status mismatch and a real structured
 prompt response pass Host 37 Simulator replay. Current package `4b7df7d4…`
 also carries the network-denied local Mermaid engine and its WebKit-compatible

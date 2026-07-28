@@ -7,13 +7,13 @@ const mocks = vi.hoisted(() => ({
   compareScreenshots: vi.fn(),
   dismissDeveloperMenu: vi.fn(),
   readControlPoint: vi.fn(),
+  readState: vi.fn(),
   readTextPoint: vi.fn(),
   tapControl: vi.fn(),
   tapControlByPrefix: vi.fn(),
   tapPoint: vi.fn(),
   waitForControl: vi.fn(),
   waitForControlByPrefix: vi.fn(),
-  waitForControlMatch: vi.fn(),
   waitForDocument: vi.fn()
 }))
 
@@ -28,14 +28,14 @@ vi.mock('../../scripts/hosted-ios-emulator-accessibility.mjs', () => ({
   tapHostedIosAccessibilityControlByLabelPrefix: mocks.tapControlByPrefix,
   tapHostedIosPoint: mocks.tapPoint,
   waitForHostedIosAccessibilityControl: mocks.waitForControl,
-  waitForHostedIosAccessibilityControlByLabelPrefix: mocks.waitForControlByPrefix,
-  waitForHostedIosAccessibilityControlMatch: mocks.waitForControlMatch
+  waitForHostedIosAccessibilityControlByLabelPrefix: mocks.waitForControlByPrefix
 }))
 vi.mock('../../scripts/hosted-ios-screenshot-parity.mjs', () => ({
   assertHostedIosScreenshotParity: mocks.compareScreenshots
 }))
 vi.mock('../../scripts/hosted-webview-cdp-session.mjs', () => ({
   activateHostedWebViewControl: mocks.activateControl,
+  readHostedWebViewState: mocks.readState,
   readHostedWebViewTextPoint: mocks.readTextPoint,
   waitForVisibleHostedWebView: mocks.waitForDocument
 }))
@@ -47,11 +47,11 @@ vi.mock('../../scripts/hosted-webview-workspace-activation.mjs', () => ({
 }))
 
 import {
-  captureHostedCoreRouteParity,
-  captureNativeCoreRouteBaselines
-} from '../../scripts/hosted-ios-core-route-parity.mjs'
+  captureHostedFilesPreviewParity,
+  captureNativeFilesPreviewBaselines
+} from '../../scripts/hosted-ios-files-preview-parity.mjs'
 
-describe('hosted iOS core-route parity', () => {
+describe('hosted iOS Files and Preview parity', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.captureScreenshot.mockImplementation((_command, _args, callback) =>
@@ -59,24 +59,26 @@ describe('hosted iOS core-route parity', () => {
     )
     mocks.compareScreenshots.mockResolvedValue({ changedPixelRatio: 0.01 })
     mocks.readControlPoint.mockResolvedValue({ x: 0.8, y: 0.1 })
+    mocks.readState.mockResolvedValue({
+      href: 'orca-mobile-web://build/h/host/files/worktree',
+      bodyText: 'Files Casks orca.rb',
+      labels: ['Open folder Casks', 'Preview file orca.rb', 'File preview'],
+      placeholders: []
+    })
     mocks.readTextPoint.mockResolvedValue({ x: 0.2, y: 0.1 })
     mocks.tapControl.mockResolvedValue(undefined)
     mocks.tapControlByPrefix.mockResolvedValue(undefined)
     mocks.tapPoint.mockResolvedValue(undefined)
     mocks.waitForControl.mockResolvedValue({ x: 0.2, y: 0.1 })
     mocks.waitForControlByPrefix.mockResolvedValue({ x: 0.2, y: 0.1 })
-    mocks.waitForControlMatch.mockResolvedValue({
-      label: 'Connect your Linear account',
-      x: 0.5,
-      y: 0.5
-    })
     mocks.waitForDocument.mockImplementation(({ expectedHrefIncludes }) => ({
-      href: `orca-mobile-web://build${expectedHrefIncludes ?? '/h/host'}`
+      href: `orca-mobile-web://build${expectedHrefIncludes ?? '/h/host'}`,
+      targetId: expectedHrefIncludes ?? 'workspace'
     }))
   })
 
-  it('captures native Tasks and Session from the same presentation source', async () => {
-    const baselines = await captureNativeCoreRouteBaselines({
+  it('captures native Files and Preview and returns to worktrees', async () => {
+    const baselines = await captureNativeFilesPreviewBaselines({
       deviceUdid: 'simulator',
       emulator: { deviceUdid: 'simulator' },
       expectedWorkspace: 'mobile-rearch',
@@ -84,90 +86,47 @@ describe('hosted iOS core-route parity', () => {
       timeoutMs: 30_000
     })
 
-    expect(baselines.tasks.stableText).toBe('Connect your Linear account')
-    expect(mocks.tapPoint).toHaveBeenNthCalledWith(
-      1,
+    expect(mocks.tapControl).toHaveBeenCalledWith(
       { deviceUdid: 'simulator' },
-      { x: 0.87, y: 0.1 }
+      'Open file explorer',
+      30_000
     )
-    expect(mocks.tapPoint).toHaveBeenNthCalledWith(
-      2,
+    expect(mocks.tapControl).toHaveBeenCalledWith(
       { deviceUdid: 'simulator' },
-      expect.objectContaining({ y: 0.1 })
+      'Preview file orca.rb',
+      30_000
     )
-    expect(mocks.tapPoint.mock.calls[1][1].x).toBeCloseTo(0.08)
     expect(mocks.tapControl).toHaveBeenCalledWith(
       { deviceUdid: 'simulator' },
       'Back to worktrees',
       30_000
     )
-    expect(baselines.session.screenshot).toBe('/tmp/parity/native-session-portrait.png')
-  })
-
-  it('compares hosted Tasks and Session and returns to the workspace route', async () => {
-    const nativeBaselines = {
-      tasks: {
+    expect(baselines).toEqual({
+      files: {
         screenTitlePoint: { x: 0.2, y: 0.1 },
-        screenshot: '/tmp/parity/native-tasks-portrait.png',
-        stableText: 'Connect your Linear account'
+        screenshot: '/tmp/parity/native-files-portrait.png'
       },
-      session: {
+      preview: {
         screenTitlePoint: { x: 0.2, y: 0.1 },
-        screenshot: '/tmp/parity/native-session-portrait.png'
+        screenshot: '/tmp/parity/native-file-preview-portrait.png'
       }
-    }
-
-    const result = await captureHostedCoreRouteParity({
-      deviceUdid: 'simulator',
-      discoveryUrl: 'http://127.0.0.1:9222',
-      emulator: { deviceUdid: 'simulator' },
-      expectedWorkspace: 'mobile-rearch',
-      nativeBaselines,
-      runtimeDirectory: '/tmp/parity',
-      timeoutMs: 30_000,
-      workspaceDocument: { href: 'orca-mobile-web://build/h/host' }
     })
-
-    expect(result.evidence.tasks.screenshotParity).toEqual({
-      changedPixelRatio: 0.01
-    })
-    expect(result.evidence.session.screenshotParity).toEqual({
-      changedPixelRatio: 0.01
-    })
-    expect(result.workspaceDocument.href).toContain('/h/host')
-    expect(mocks.activateWorkspace).toHaveBeenCalledWith(
-      expect.anything(),
-      'mobile-rearch',
-      mocks.activateControl,
-      30_000,
-      expect.any(Function)
-    )
-    expect(mocks.readTextPoint).toHaveBeenCalledWith(expect.anything(), 'Filter')
-    expect(mocks.tapControl).toHaveBeenCalledWith(
-      { deviceUdid: 'simulator' },
-      'Back to worktrees',
-      5_000
-    )
-    expect(mocks.compareScreenshots).toHaveBeenCalledTimes(2)
   })
 
-  it('uses a measured point when the hosted session back control is missing from AX', async () => {
-    mocks.tapControl.mockRejectedValueOnce(new Error('missing accessibility descendant'))
-
-    await captureHostedCoreRouteParity({
+  it('compares hosted Files and Preview and returns to the workspace route', async () => {
+    const result = await captureHostedFilesPreviewParity({
       deviceUdid: 'simulator',
       discoveryUrl: 'http://127.0.0.1:9222',
       emulator: { deviceUdid: 'simulator' },
       expectedWorkspace: 'mobile-rearch',
       nativeBaselines: {
-        tasks: {
+        files: {
           screenTitlePoint: { x: 0.2, y: 0.1 },
-          screenshot: '/tmp/parity/native-tasks-portrait.png',
-          stableText: 'Connect your Linear account'
+          screenshot: '/tmp/parity/native-files-portrait.png'
         },
-        session: {
+        preview: {
           screenTitlePoint: { x: 0.2, y: 0.1 },
-          screenshot: '/tmp/parity/native-session-portrait.png'
+          screenshot: '/tmp/parity/native-file-preview-portrait.png'
         }
       },
       runtimeDirectory: '/tmp/parity',
@@ -175,7 +134,47 @@ describe('hosted iOS core-route parity', () => {
       workspaceDocument: { href: 'orca-mobile-web://build/h/host' }
     })
 
-    expect(mocks.readControlPoint).toHaveBeenCalledWith(expect.anything(), 'Back to worktrees')
+    expect(result.evidence.files.screenshotParity).toEqual({ changedPixelRatio: 0.01 })
+    expect(result.evidence.preview.screenshotParity).toEqual({ changedPixelRatio: 0.01 })
+    expect(result.workspaceDocument.href).toContain('/h/host')
+    expect(mocks.activateWorkspace).toHaveBeenCalledOnce()
+    expect(mocks.tapControl).toHaveBeenCalledWith(
+      { deviceUdid: 'simulator' },
+      'Open file explorer',
+      5_000
+    )
+    expect(mocks.tapControl).toHaveBeenCalledWith(
+      { deviceUdid: 'simulator' },
+      'Preview file orca.rb',
+      5_000
+    )
+    expect(mocks.compareScreenshots).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses a measured WebView point when a control is missing from native accessibility', async () => {
+    mocks.tapControl.mockRejectedValueOnce(new Error('missing accessibility descendant'))
+
+    await captureHostedFilesPreviewParity({
+      deviceUdid: 'simulator',
+      discoveryUrl: 'http://127.0.0.1:9222',
+      emulator: { deviceUdid: 'simulator' },
+      expectedWorkspace: 'mobile-rearch',
+      nativeBaselines: {
+        files: {
+          screenTitlePoint: { x: 0.2, y: 0.1 },
+          screenshot: '/tmp/parity/native-files-portrait.png'
+        },
+        preview: {
+          screenTitlePoint: { x: 0.2, y: 0.1 },
+          screenshot: '/tmp/parity/native-file-preview-portrait.png'
+        }
+      },
+      runtimeDirectory: '/tmp/parity',
+      timeoutMs: 30_000,
+      workspaceDocument: { href: 'orca-mobile-web://build/h/host' }
+    })
+
+    expect(mocks.readControlPoint).toHaveBeenCalledWith(expect.anything(), 'Open file explorer')
     expect(mocks.tapPoint).toHaveBeenCalledWith({ deviceUdid: 'simulator' }, { x: 0.8, y: 0.1 })
   })
 })

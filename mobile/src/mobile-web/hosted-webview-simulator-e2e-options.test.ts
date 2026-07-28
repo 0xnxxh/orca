@@ -5,6 +5,7 @@ describe('hosted WebView simulator E2E options', () => {
   it('retains bounded defaults', () => {
     expect(parseHostedWebViewSimulatorE2eOptions([])).toEqual({
       device: 'iPhone 17 Pro',
+      filesPreviewOnly: false,
       nativeSettingsOnly: false,
       securityOnly: false,
       skipNativeBuild: false,
@@ -34,7 +35,7 @@ describe('hosted WebView simulator E2E options', () => {
 
   it('rejects mutually exclusive focused journeys', () => {
     expect(() =>
-      parseHostedWebViewSimulatorE2eOptions(['--security-only', '--source-control-only'])
+      parseHostedWebViewSimulatorE2eOptions(['--files-preview-only', '--source-control-only'])
     ).toThrow('mutually exclusive')
   })
 

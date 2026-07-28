@@ -17,7 +17,11 @@ import {
   displayNameFromPreviewPath,
   type MobileFilePreviewRouteState
 } from './mobile-file-preview-route'
-import { previewSourceFromRoute, sourceKeyForPreview } from './mobile-file-preview-source'
+import {
+  previewSourceFromRoute,
+  sourceKeyForPreview,
+  sourceRevisionForPreview
+} from './mobile-file-preview-source'
 import { normalizeMobileFilePreviewLineColumn } from './mobile-file-preview-line-column'
 import {
   hasUnsavedMobileTerminalArtifactDraft,
@@ -43,17 +47,16 @@ export function MobileFilePreviewScreen({
 }: Props) {
   const router = useRouter()
   const previewParams = route.ok ? route.params : null
-  const nativeHost = useHostClient(nativeHostBinding ? previewParams?.hostId : undefined)
+  const previewHostId = previewParams?.hostId
+  const nativeHost = useHostClient(nativeHostBinding ? previewHostId : undefined)
   const forceReconnect = useForceReconnect()
   const operations = useMemo(
     () =>
       operationsProp ??
-      (nativeHost.client && previewParams
-        ? defaultHostFilePreviewOperations(nativeHost.client, () =>
-            forceReconnect(previewParams.hostId)
-          )
+      (nativeHost.client && previewHostId
+        ? defaultHostFilePreviewOperations(nativeHost.client, () => forceReconnect(previewHostId))
         : null),
-    [forceReconnect, nativeHost.client, operationsProp, previewParams]
+    [forceReconnect, nativeHost.client, operationsProp, previewHostId]
   )
   const connState = connectionState ?? nativeHost.state
   const handleOpenExternalUrl = useCallback(
@@ -73,10 +76,15 @@ export function MobileFilePreviewScreen({
   const savedContentRef = useRef(savedContent)
   const draftSourceKeyRef = useRef<string | null>(null)
   const { width, height } = useWindowDimensions()
-  const routePreviewSource = useMemo(
-    () => (previewParams ? previewSourceFromRoute(previewParams) : null),
-    [previewParams]
-  )
+  const routePreviewSourceCandidate = previewParams ? previewSourceFromRoute(previewParams) : null
+  const routePreviewSourceRevision = sourceRevisionForPreview(routePreviewSourceCandidate)
+  const routePreviewSourceRef = useRef(routePreviewSourceCandidate)
+  const routePreviewSourceRevisionRef = useRef(routePreviewSourceRevision)
+  if (routePreviewSourceRevisionRef.current !== routePreviewSourceRevision) {
+    routePreviewSourceRef.current = routePreviewSourceCandidate
+    routePreviewSourceRevisionRef.current = routePreviewSourceRevision
+  }
+  const routePreviewSource = routePreviewSourceRef.current
   const [previewSource, setPreviewSource] = useState<MobileFilePreviewSource | null>(
     routePreviewSource
   )
@@ -85,6 +93,8 @@ export function MobileFilePreviewScreen({
     () => sourceKeyForPreview(routePreviewSource),
     [routePreviewSource]
   )
+  const hasPreviewParams = previewParams !== null
+  const routeErrorMessage = route.ok ? null : route.message
   const previewSourceKeyRef = useRef(previewSourceKey)
   const lineColumn = useMemo(
     () =>
@@ -113,8 +123,8 @@ export function MobileFilePreviewScreen({
 
   const loadPreview = useCallback(async () => {
     const loadSourceKey = previewSourceKey
-    if (!previewParams || !previewSource || loadSourceKey !== routePreviewSourceKey) {
-      setPreview(previewError(route.ok ? 'Unable to load preview' : route.message))
+    if (!hasPreviewParams || !previewSource || loadSourceKey !== routePreviewSourceKey) {
+      setPreview(previewError(routeErrorMessage ?? 'Unable to load preview'))
       return
     }
     const preserveDirtyDraft =
@@ -167,11 +177,11 @@ export function MobileFilePreviewScreen({
     }
   }, [
     connState,
+    hasPreviewParams,
     operations,
-    previewParams,
     previewSource,
     previewSourceKey,
-    route,
+    routeErrorMessage,
     routePreviewSourceKey
   ])
 
