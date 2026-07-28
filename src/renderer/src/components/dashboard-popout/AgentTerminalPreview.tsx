@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
@@ -81,9 +81,10 @@ export function AgentTerminalPreview({
   const [ptyGone, setPtyGone] = useState(false)
 
   // Why: refs are seeded at first render and refreshed on commit — assigning
-  // during render trips react-compiler. Every consumer reads them from an event
-  // or a post-await continuation, never during a render pass.
-  useEffect(() => {
+  // during render trips react-compiler. Layout, not passive: xterm's keydown is
+  // a native listener, so React would not flush a passive effect before the
+  // next keystroke and a just-relayed profile could miss it.
+  useLayoutEffect(() => {
     settingsRef.current = settings
     macOptionAsAltRef.current = macOptionAsAlt
     terminalInputRef.current = terminalInput
