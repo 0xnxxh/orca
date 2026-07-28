@@ -125,7 +125,8 @@ export function recordRuntimeRpcStartFailure(error: unknown): void {
 }
 
 function waitForWindowToShow(parentWindow: BrowserWindow): Promise<boolean> {
-  if (parentWindow.isDestroyed()) {
+  const parentWebContents = parentWindow.webContents
+  if (parentWindow.isDestroyed() || parentWebContents.isDestroyed()) {
     return Promise.resolve(false)
   }
   if (parentWindow.isVisible()) {
@@ -134,13 +135,15 @@ function waitForWindowToShow(parentWindow: BrowserWindow): Promise<boolean> {
   return new Promise((resolve) => {
     const settle = (visible: boolean): void => {
       parentWindow.removeListener('show', onShow)
-      parentWindow.removeListener('closed', onClosed)
+      parentWebContents.removeListener('destroyed', onDestroyed)
       resolve(visible)
     }
-    const onShow = (): void => settle(!parentWindow.isDestroyed())
-    const onClosed = (): void => settle(false)
+    const onShow = (): void =>
+      settle(!parentWindow.isDestroyed() && !parentWebContents.isDestroyed())
+    const onDestroyed = (): void => settle(false)
     parentWindow.once('show', onShow)
-    parentWindow.once('closed', onClosed)
+    // Why: keep this failure-only waiter off the crowded BrowserWindow `closed` event.
+    parentWebContents.once('destroyed', onDestroyed)
   })
 }
 

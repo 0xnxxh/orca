@@ -39,7 +39,11 @@ import {
 type FakeParentWindow = Electron.BrowserWindow & EventEmitter
 
 function createParentWindow(visible = true, destroyed = false): FakeParentWindow {
+  const webContents = Object.assign(new EventEmitter(), {
+    isDestroyed: () => destroyed
+  })
   return Object.assign(new EventEmitter(), {
+    webContents,
     isDestroyed: () => destroyed,
     isVisible: () => visible
   }) as unknown as FakeParentWindow
@@ -198,7 +202,7 @@ describe('runtime RPC startup failure reporting', () => {
 
     expect(showMessageBoxMock).toHaveBeenCalledOnce()
     expect(parentWindow.listenerCount('show')).toBe(0)
-    expect(parentWindow.listenerCount('closed')).toBe(0)
+    expect(parentWindow.webContents.listenerCount('destroyed')).toBe(0)
   })
 
   it('never shows a dialog against an already destroyed window', async () => {
@@ -217,12 +221,15 @@ describe('runtime RPC startup failure reporting', () => {
       new Error('metadata write failed')
     )
 
-    parentWindow.emit('closed')
+    await flushMicrotasks()
+    expect(parentWindow.listenerCount('closed')).toBe(0)
+    expect(parentWindow.webContents.listenerCount('destroyed')).toBe(1)
+    parentWindow.webContents.emit('destroyed')
     await reporting
 
     expect(showMessageBoxMock).not.toHaveBeenCalled()
     expect(parentWindow.listenerCount('show')).toBe(0)
-    expect(parentWindow.listenerCount('closed')).toBe(0)
+    expect(parentWindow.webContents.listenerCount('destroyed')).toBe(0)
   })
 
   it('logs instead of rejecting if Electron cannot show the dialog', async () => {
