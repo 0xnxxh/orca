@@ -9,6 +9,7 @@ import {
   verifyHostedWebViewNetworkIsolation,
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
+import { verifyHostedWebViewExecutableIsolation } from './hosted-webview-executable-isolation.mjs'
 import { startHostedWebViewSecurityProbe } from './hosted-ios-webview-security-probe.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -136,6 +137,10 @@ async function main() {
       document,
       probeId: probe.token
     })
+    const executable = await verifyHostedWebViewExecutableIsolation({
+      document,
+      probeId: probe.token
+    })
     if (probe.observations.length > 0) {
       throw new Error(
         `Hosted Android WebView reached the sentinel: ${probe.observations.join(', ')}`
@@ -150,6 +155,7 @@ async function main() {
           sentinelRedCheck: 'observed_then_cleared',
           network,
           navigation,
+          executable,
           sentinelObservations: probe.observations
         },
         null,

@@ -13,6 +13,7 @@ import {
   verifyHostedWebViewNavigationIsolation,
   verifyHostedWebViewNetworkIsolation
 } from '../../scripts/hosted-webview-cdp-session.mjs'
+import { verifyHostedWebViewExecutableIsolation } from '../../scripts/hosted-webview-executable-isolation.mjs'
 
 const iosShellSource = readFileSync(
   new URL('../../packages/expo-mobile-web-shell/ios/MobileWebShellView.swift', import.meta.url),
@@ -220,6 +221,67 @@ describe('hosted WebView CDP target selection', () => {
     expect(socket.evaluations[0]?.params.expression).toContain(
       '__orcaDebugNavigationProbeCompletion'
     )
+  })
+
+  it('requires the active script and blocks an undeclared executable asset', async () => {
+    const socket = new FakeCdpSocket([
+      JSON.stringify({
+        token: 'probe-a',
+        activeDeclaredScriptLoaded: true,
+        undeclaredScriptBlocked: true,
+        documentRetained: true,
+        bridgeListening: true,
+        scriptPaths: ['/h/host/review/assets/bundle.js']
+      })
+    ])
+
+    await expect(
+      verifyHostedWebViewExecutableIsolation({
+        document: {
+          webSocketDebuggerUrl: 'ws://127.0.0.1/devtools/page/current'
+        },
+        probeId: 'probe-a',
+        settleDelayMs: 0,
+        WebSocketCtor: class {
+          constructor() {
+            return socket
+          }
+        }
+      })
+    ).resolves.toEqual({
+      activeDeclaredScriptLoaded: true,
+      undeclaredScriptBlocked: true,
+      documentRetained: true
+    })
+    expect(socket.evaluations[0]?.params.expression).toContain(
+      '__orcaDebugExecutableProbeCompletion'
+    )
+  })
+
+  it('rejects incomplete executable isolation evidence', async () => {
+    const socket = new FakeCdpSocket([
+      JSON.stringify({
+        token: 'probe-a',
+        activeDeclaredScriptLoaded: true,
+        undeclaredScriptBlocked: false,
+        documentRetained: true
+      })
+    ])
+
+    await expect(
+      verifyHostedWebViewExecutableIsolation({
+        document: {
+          webSocketDebuggerUrl: 'ws://127.0.0.1/devtools/page/current'
+        },
+        probeId: 'probe-a',
+        settleDelayMs: 0,
+        WebSocketCtor: class {
+          constructor() {
+            return socket
+          }
+        }
+      })
+    ).rejects.toThrow('executable isolation failed')
   })
 
   it('reads a normalized hosted text landmark', async () => {
@@ -441,6 +503,12 @@ describe('hosted WebView CDP target selection', () => {
     expect(probeSource).toContain('ws://127.0.0.1:')
     expect(probeSource).toContain('completed===4')
     expect(probeSource).toContain('__orcaDebugNavigationProbeCompletion')
+    expect(probeSource).toContain('__orcaDebugExecutableProbeCompletion')
+    expect(probeSource).toContain('activeDeclaredScriptLoaded')
+    expect(probeSource).toContain('undeclaredScriptBlocked')
+    expect(probeSource).toContain('[a-f0-9]{64}\\\\.js$')
+    expect(probeSource).toContain("script.getAttribute('src')")
+    expect(probeSource).toContain('new URL(declaredScriptPath(activeScript),location.origin)')
     expect(probeSource).toContain("window.open(probeBase+'/popup-probe','_blank')")
     expect(probeSource).toContain("frame.src=probeBase+'/redirect-probe'")
     expect(probeSource).toContain("download.href=probeBase+'/download-probe'")
@@ -466,6 +534,14 @@ describe('hosted WebView CDP target selection', () => {
     expect(androidProbeSource).toContain('globalThis.__orcaMobileWebShellListening!==true')
     expect(androidProbeSource).toContain('completed===4')
     expect(androidProbeSource).toContain('__orcaDebugNavigationProbeCompletion')
+    expect(androidProbeSource).toContain('__orcaDebugExecutableProbeCompletion')
+    expect(androidProbeSource).toContain('activeDeclaredScriptLoaded')
+    expect(androidProbeSource).toContain('undeclaredScriptBlocked')
+    expect(androidProbeSource).toContain('[a-f0-9]{64}\\.js')
+    expect(androidProbeSource).toContain("script.getAttribute('src')")
+    expect(androidProbeSource).toContain(
+      'new URL(declaredScriptPath(activeScript),location.origin)'
+    )
     expect(androidProbeSource).toContain("window.open(probeBase+'/popup-probe','_blank')")
     expect(androidProbeSource).toContain("frame.src=probeBase+'/redirect-probe'")
     expect(androidProbeSource).toContain("download.href=probeBase+'/download-probe'")
@@ -525,6 +601,7 @@ describe('hosted WebView CDP target selection', () => {
     expect(simulatorHarnessSource).toContain(
       'terminalDeviceInput?.terminalClipboardImagePaste?.evidence'
     )
+    expect(simulatorHarnessSource).toContain('verifyHostedWebViewExecutableIsolation')
     expect(simulatorHarnessSource).toContain("await evidenceStep('Photos permission reset'")
     expect(simulatorHarnessSource).toContain('await clearHostedIosWebViewSecurityProbe(deviceUdid)')
     expect(simulatorAppBuildSource).toContain("'xcodebuild'")
@@ -545,6 +622,7 @@ describe('hosted WebView CDP target selection', () => {
     expect(androidSecurityHarnessSource).toContain('waitForVisibleHostedWebView')
     expect(androidSecurityHarnessSource).toContain('verifyHostedWebViewNetworkIsolation')
     expect(androidSecurityHarnessSource).toContain('verifyHostedWebViewNavigationIsolation')
+    expect(androidSecurityHarnessSource).toContain('verifyHostedWebViewExecutableIsolation')
     expect(androidSecurityHarnessSource).toContain('probe.observations.length > 0')
   })
 

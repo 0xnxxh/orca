@@ -2699,6 +2699,15 @@ the pass threshold for the real app.
 - An independent reviewer completes threat-model and adversarial testing with no
   unresolved high-severity finding.
 
+Fresh exact-app iPhone 17 Pro / iOS 26.5 and Android API 36 arm64 Debug
+emulator runs now prove the executable-asset part of this acceptance gate. The
+active manifest-declared RNW script loads, a mutated undeclared same-origin
+script is rejected by the native manifest store, and the hosted document
+remains intact.
+Both runs also pass network/navigation isolation; Android records zero sentinel
+observations and no native bridge error. This does not replace physical-device,
+store-signed release, fuzz, or independent adversarial evidence.
+
 ## App Store Gate
 
 App Review is a product gate. The PR must provide:

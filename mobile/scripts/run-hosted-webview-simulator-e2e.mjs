@@ -8,6 +8,7 @@ import process from 'node:process'
 import { promisify } from 'node:util'
 import { startCdpServer } from 'inspect-webkit'
 import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
+import { stopHostedChildProcess } from './hosted-child-process-shutdown.mjs'
 import { parseHostedWebViewSimulatorE2eOptions } from './hosted-webview-simulator-e2e-options.mjs'
 import {
   captureHostedAccountsParity,
@@ -20,6 +21,7 @@ import {
   verifyHostedWebViewNetworkIsolation,
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
+import { verifyHostedWebViewExecutableIsolation } from './hosted-webview-executable-isolation.mjs'
 import { captureNativeAgentHistoryBaseline } from './hosted-ios-agent-history-parity.mjs'
 import {
   captureHostedCoreRouteParity,
@@ -402,6 +404,12 @@ async function main() {
         probeId: networkProbe.token
       })
     )
+    const executableIsolation = await evidenceStep('executable isolation probe', () =>
+      verifyHostedWebViewExecutableIsolation({
+        document: securityDocument,
+        probeId: networkProbe.token
+      })
+    )
     await delay(500)
     if (networkProbe.observations.length > 0) {
       throw new Error(
@@ -420,6 +428,7 @@ async function main() {
           interactiveControls: workspaceDocument.buttonCount,
           networkIsolation,
           navigationIsolation,
+          executableIsolation,
           nativeOnboarding,
           documentUpload: terminalDeviceInput?.documentUpload?.evidence ?? null,
           photoPermissionDenial: terminalDeviceInput?.photoPermissionDenial?.evidence ?? null,
@@ -441,7 +450,7 @@ async function main() {
     )
   } finally {
     inspector?.stop()
-    await stopProcess(launcher)
+    await stopHostedChildProcess(launcher)
     await emulatorController?.stop()
     await clearHostedIosWebViewSecurityProbe(deviceUdid)
     await networkProbe?.stop()
@@ -585,21 +594,6 @@ function findAvailableLoopbackPort() {
       )
     })
   })
-}
-
-async function stopProcess(child) {
-  if (!child || child.exitCode !== null) {
-    return
-  }
-  child.kill('SIGTERM')
-  await Promise.race([
-    new Promise((resolve) => child.once('exit', resolve)),
-    delay(5_000).then(() => {
-      if (child.exitCode === null) {
-        child.kill('SIGKILL')
-      }
-    })
-  ])
 }
 
 function delay(ms) {

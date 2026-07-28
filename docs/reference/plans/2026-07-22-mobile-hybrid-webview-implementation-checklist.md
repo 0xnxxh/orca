@@ -80,7 +80,7 @@ At the end of every implementation session:
 | Terminal                           | In progress |     11/19 | Shared route stream adapter exports                    |
 | Files, diffs, and source control   | In progress |      9/19 | Core Git and bounded text writes pass                  |
 | Remaining host/native features     | In progress |      4/13 | Core hosted paths and native settings handoff pass     |
-| Security and adversarial review    | In progress |      0/15 | iOS/Android emulator isolation passes; review open     |
+| Security and adversarial review    | In progress |      1/15 | Executable isolation passes; broader review open       |
 | Device and topology validation     | In progress |      0/18 | Direct iOS and Android emulators pass core journeys    |
 | App Store validation               | Not started |      0/10 | Production submission, not TestFlight                  |
 | Cutover and cleanup                | Not started |      0/12 | Last implementation workstream                         |
@@ -1486,7 +1486,12 @@ copy.
   interrupted Chromium's React Native Web bootstrap even though native policy
   rejected the navigation. Physical-device, production-store-signed runtime,
   and independent-review evidence remain open.
-- [ ] Verify only active manifest-declared executable assets can run.
+- [x] Verify only active manifest-declared executable assets can run. DEBUG-only
+      probes in the exact iOS and Android hosted WebViews locate the active
+      content-addressed RNW script, request a different same-origin 64-hex script,
+      require native manifest-store rejection, and verify the active document and
+      bridge remain intact. The focused Android gate also requires zero sentinel
+      observations and a clean native bridge log.
 - [~] Run the XSS corpus through Markdown, HTML, SVG, filenames, diffs, terminal
   links, task/provider content, and error messages. The shared rich Markdown
   editor now applies the same strict CSP in native and hosted documents, admits
@@ -2539,4 +2544,6 @@ copy.
 | 2026-07-28 | Complete | Photos-revocation validation passes 568 mobile files / 3,366 tests with 2 expected skips, both typechecks and lints, changed-file formatting, 55 reliability gates, max-lines, package verification, and diff hygiene. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                        |
 | 2026-07-28 | Complete | The exact iPhone 17 Pro / iOS 26.5 Photos picker remains presented across Home/foreground. Explicit Cancel returns to the same hosted Session while private origin and opaque workspace authority remain unchanged; the journey then completes post-grant revocation, denial, terminal/page isolation, and network/navigation isolation.                                                                                                |
 | 2026-07-28 | Complete | Picker-interruption validation passes 568 mobile files / 3,371 tests with 2 expected skips, both typechecks and lints, changed-file formatting, 55 reliability gates, max-lines, package verification, and diff hygiene. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                      |
+| 2026-07-28 | Complete | Fresh exact-app iPhone 17 Pro / iOS 26.5 and Android API 36 arm64 Debug emulator runs loaded the active manifest-declared RNW script, rejected a mutated undeclared same-origin script path, and retained the hosted document. Both runs also passed network/navigation isolation; Android recorded zero sentinel observations and a clean bridge log.                                                                                    |
+| 2026-07-28 | Complete | Executable-isolation validation passes 568 mobile files / 3,373 tests with 2 expected skips and 1 focused file / 23 tests. Mobile and RNW typechecks/lints, full mobile and changed-file formatting, 55 reliability gates, max-lines, native Swift faults, 76-task Android module tests, package verification, and diff hygiene pass. RNW remains `9ed8c7f7…`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                   |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |

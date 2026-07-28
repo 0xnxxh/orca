@@ -32,6 +32,7 @@ import {
   verifyHostedWebViewNetworkIsolation,
   waitForVisibleHostedWebView
 } from './hosted-webview-cdp-session.mjs'
+import { verifyHostedWebViewExecutableIsolation } from './hosted-webview-executable-isolation.mjs'
 import { resolveHostedWebViewRuntimeDirectory } from './hosted-webview-runtime-directory.mjs'
 import { activateHostedWorkspaceRow } from './hosted-webview-workspace-activation.mjs'
 import { verifyHostedSourceControlReviewJourney } from './hosted-ios-source-control-review-journey.mjs'
@@ -177,41 +178,53 @@ async function main() {
         timeoutMs: options.timeoutMs
       })
     )
-    const agentHistoryResult = await stage('Agent History journey', () =>
-      verifyHostedAndroidAgentHistoryJourney({
+    let agentHistory = null
+    let sourceControlReview = null
+    let isolationDocument = sessionDocument
+    if (!options.securityOnly) {
+      const agentHistoryResult = await stage('Agent History journey', () =>
+        verifyHostedAndroidAgentHistoryJourney({
+          discoveryUrl,
+          emulator,
+          sessionDocument,
+          timeoutMs: options.timeoutMs
+        })
+      )
+      const { returnedSessionDocument, ...evidence } = agentHistoryResult
+      agentHistory = evidence
+      sourceControlReview = await stage('Source Control and Review journey', () =>
+        verifyHostedSourceControlReviewJourney({
+          discoveryUrl,
+          emulator,
+          sessionDocument: returnedSessionDocument,
+          expectedSessionDiffText: '3 tabs',
+          timeoutMs: options.timeoutMs,
+          tapPoint: tapHostedAndroidJourneyControl
+        })
+      )
+      isolationDocument = await waitForVisibleHostedWebView({
         discoveryUrl,
-        emulator,
-        sessionDocument,
+        expectedText: 'reviewed',
+        expectedHrefIncludes: '/review/',
         timeoutMs: options.timeoutMs
       })
-    )
-    const { returnedSessionDocument, ...agentHistory } = agentHistoryResult
-    const sourceControlReview = await stage('Source Control and Review journey', () =>
-      verifyHostedSourceControlReviewJourney({
-        discoveryUrl,
-        emulator,
-        sessionDocument: returnedSessionDocument,
-        expectedSessionDiffText: '3 tabs',
-        timeoutMs: options.timeoutMs,
-        tapPoint: tapHostedAndroidJourneyControl
-      })
-    )
-    const reviewDocument = await waitForVisibleHostedWebView({
-      discoveryUrl,
-      expectedText: 'reviewed',
-      expectedHrefIncludes: '/review/',
-      timeoutMs: options.timeoutMs
-    })
+    }
     const networkIsolation = await stage('network isolation probe', () =>
       verifyHostedWebViewNetworkIsolation({
-        document: reviewDocument,
+        document: isolationDocument,
         probeId: probe.token
       })
     )
     const navigationIsolation = await stage('navigation isolation probe', () =>
       verifyHostedWebViewNavigationIsolation({
-        document: reviewDocument,
+        document: isolationDocument,
         discoveryUrl,
+        probeId: probe.token
+      })
+    )
+    const executableIsolation = await stage('executable isolation probe', () =>
+      verifyHostedWebViewExecutableIsolation({
+        document: isolationDocument,
         probeId: probe.token
       })
     )
@@ -233,6 +246,7 @@ async function main() {
           sourceControlReview,
           networkIsolation,
           navigationIsolation,
+          executableIsolation,
           sentinelObservations: probe.observations
         },
         null,
@@ -346,6 +360,7 @@ function parseOptions(args) {
   const result = {
     adb: null,
     apk: defaultApk,
+    securityOnly: false,
     skipNativeBuild: false,
     timeoutMs: 90_000
   }
@@ -359,6 +374,8 @@ function parseOptions(args) {
       result.apk = path.resolve(requireValue(args, ++index, option))
     } else if (option === '--skip-native-build') {
       result.skipNativeBuild = true
+    } else if (option === '--security-only') {
+      result.securityOnly = true
     } else if (option === '--timeout-ms') {
       result.timeoutMs = Number.parseInt(requireValue(args, ++index, option), 10)
     } else {

@@ -504,7 +504,7 @@ IDs, and unrelated provider state never enter the page result.
 The dedicated hosted Files, Preview, Source Control, Review, and Agent History
 routes mount the unchanged presentations through native/web adapters. The
 iPhone 17 Pro Simulator verifies Session-origin changed-file handoff,
-standalone Review, and both isolation probes. The Pixel 9 Pro API 36 emulator
+standalone Review, and the isolation probes. The Pixel 9 Pro API 36 emulator
 now verifies those paths in the same fresh app session as Agent History scopes,
 preview, filtering, synthetic-resume rejection, and native-touch resume.
 The iPhone fixture also captures native and hosted Tasks and Session from the
@@ -514,6 +514,14 @@ channel difference / 0.000016 vertical-title delta, and Session passes at
 History and PR compatibility redirects are present. The non-embedded Tasks
 toolbar icon's missing native accessibility label remains open. Close the
 remaining native-versus-hosted interaction matrix.
+
+Fresh exact-app iOS and Android emulator runs now prove executable isolation at
+the native asset origin. Each hosted document loaded its active
+manifest-declared content-addressed script, failed to load a mutated undeclared
+same-origin script, and remained intact. The same runs passed network and
+navigation isolation; Android recorded no sentinel traffic or native bridge
+error. Physical-device, store-signed release, fuzz, and independent-review
+evidence remains open.
 
 The iOS fixture now also navigates the unchanged Files tree into the real
 `Casks/orca.rb` Preview in native and hosted modes. Files measures 0.030%

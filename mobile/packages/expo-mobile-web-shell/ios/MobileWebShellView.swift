@@ -137,6 +137,7 @@ private func mobileWebNetworkIsolationProbeUserScript() -> WKUserScript? {
       var originalLocation=String(location.href);
       var popupBlocked=false;
       var serviceWorkerBlocked=typeof navigator.serviceWorker==='undefined';
+      var executableProbeFinished=false;
       var completed=0;
       var complete=function(){
         completed+=1;
@@ -186,6 +187,53 @@ private func mobileWebNetworkIsolationProbeUserScript() -> WKUserScript? {
         }
       } catch (_) { serviceWorkerBlocked=true; }
       try { location.assign('orca-security-probe://blocked'); } catch (_) {}
+      var declaredScriptPath=function(script){
+        var source=script.getAttribute('src');
+        if(!source) return null;
+        var relative=source.match(/^(?:\\.\\/|\\/)?assets\\/([a-f0-9]{64}\\.js)$/);
+        if(relative) return '/assets/'+relative[1];
+        try {
+          var url=new URL(source,location.origin+'/');
+          return url.origin===location.origin&&
+            /^\\/assets\\/[a-f0-9]{64}\\.js$/.test(url.pathname)?url.pathname:null;
+        } catch (_) { return null; }
+      };
+      var finishExecutableProbe=function(undeclaredScriptBlocked){
+        if(executableProbeFinished) return;
+        executableProbeFinished=true;
+        var scripts=Array.from(document.scripts).filter(function(script){
+          return script.src&&new URL(script.src).origin===location.origin;
+        });
+        var activeScript=scripts.find(function(script){
+          return declaredScriptPath(script)!==null;
+        });
+        globalThis.__orcaDebugExecutableProbeCompletion=JSON.stringify({
+          token:'\(token)',
+          activeDeclaredScriptLoaded:Boolean(
+            activeScript&&globalThis.__orcaMobileWebShellListening===true
+          ),
+          undeclaredScriptBlocked:undeclaredScriptBlocked,
+          documentRetained:String(location.href)===originalLocation
+        });
+      };
+      try {
+        var activeScript=Array.from(document.scripts).find(function(script){
+          return declaredScriptPath(script)!==null;
+        });
+        if(!activeScript){
+          finishExecutableProbe(false);
+        }else{
+          var undeclaredUrl=new URL(declaredScriptPath(activeScript),location.origin);
+          var name=undeclaredUrl.pathname.split('/').pop();
+          undeclaredUrl.pathname='/assets/'+(name[0]==='0'?'1':'0')+name.slice(1);
+          var undeclaredScript=document.createElement('script');
+          undeclaredScript.src=undeclaredUrl.href;
+          undeclaredScript.onload=function(){finishExecutableProbe(false);};
+          undeclaredScript.onerror=function(){finishExecutableProbe(true);};
+          document.documentElement.appendChild(undeclaredScript);
+          setTimeout(function(){finishExecutableProbe(false);},250);
+        }
+      } catch (_) { finishExecutableProbe(false); }
       setTimeout(function(){
         globalThis.__orcaDebugNavigationProbeCompletion=JSON.stringify({
           token:'\(token)',
