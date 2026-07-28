@@ -53,6 +53,7 @@ import { remoteCliRequestTimeoutMs } from './remote-cli-timeout'
 import { shouldReadRemoteCliStdin } from './remote-cli-stdin'
 import { registerManagedHookInstaller } from './managed-hook-installer'
 import { registerRelayPluginHostCallHandlers } from './plugin-host-call-handler'
+import { DispatcherClientWriter } from './dispatcher-client-writer'
 
 const DEFAULT_GRACE_MS = DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS * 1000
 const SOCK_NAME = 'relay.sock'
@@ -151,6 +152,25 @@ function parseArgs(argv: string[]): {
 function runConnectMode(sockPath: string): void {
   const myVersion = readLaunchVersion()
   const sock = createConnection({ path: sockPath })
+  const stdoutWriter = new DispatcherClientWriter(
+    (data, onSettled) =>
+      process.stdout.write(data, (error) => {
+        onSettled(error ? { ok: false, error } : { ok: true })
+      }),
+    {
+      supportsWriteCallback: true,
+      writableLength: () => process.stdout.writableLength,
+      writableHighWaterMark: () => process.stdout.writableHighWaterMark,
+      waitWriteDrain: (callback) => {
+        process.stdout.once('drain', callback)
+        return () => process.stdout.off('drain', callback)
+      }
+    },
+    () => {
+      sock.destroy()
+      process.exit(1)
+    }
+  )
 
   const connectTimeout = setTimeout(() => {
     process.stderr.write(`[relay-connect] Connection timed out after ${CONNECT_TIMEOUT_MS}ms\n`)
@@ -162,22 +182,51 @@ function runConnectMode(sockPath: string): void {
     clearTimeout(connectTimeout)
     runConnectHandshake(sock, myVersion, {
       onAccepted: (leftover: Buffer) => {
-        // Why: write RELAY_SENTINEL only after the handshake passes, so a version mismatch is a clean exit-42 instead of a false sentinel + channel drop.
-        process.stdout.write(RELAY_SENTINEL)
-        // Why: forward handshake-buffered leftover bytes before sock.pipe(process.stdout) so the downstream mux sees them in order.
+        stdoutWriter.enqueue('control', () => Buffer.from(RELAY_SENTINEL), RELAY_SENTINEL.length)
         if (leftover.length > 0) {
-          process.stdout.write(leftover)
+          stdoutWriter.enqueue('control', () => leftover, leftover.length)
         }
         process.stdin.pipe(sock)
-        sock.pipe(process.stdout)
+        sock.on('data', (data: Buffer) => {
+          sock.pause()
+          let offset = 0
+          const writeNext = (): void => {
+            if (offset >= data.length) {
+              sock.resume()
+              return
+            }
+            const bytes = Math.min(stdoutWriter.producerFrameCapacity, data.length - offset)
+            if (bytes <= 0) {
+              stdoutWriter.close(new Error('Relay stdout has no producer capacity'))
+              return
+            }
+            const chunk = data.subarray(offset, offset + bytes)
+            if (
+              !stdoutWriter.enqueue(
+                'ordinary',
+                () => chunk,
+                chunk.length,
+                (result) => {
+                  if (!result.ok) {
+                    return
+                  }
+                  offset += bytes
+                  writeNext()
+                }
+              )
+            ) {
+              stdoutWriter.close(new Error('Relay stdout bridge capacity exceeded'))
+            }
+          }
+          writeNext()
+        })
       }
     })
   })
 
   // Why: Node swallows EPIPE on stdout, so the bridge would zombie and drop frames; exit on stdout error so the relay enters grace promptly.
   process.stdout.on('error', () => {
-    sock.destroy()
-    process.exit(1)
+    stdoutWriter.close(new Error('Relay stdout closed'))
   })
 
   sock.on('error', (err) => {
@@ -186,7 +235,8 @@ function runConnectMode(sockPath: string): void {
     process.exit(1)
   })
 
-  sock.on('close', () => {
+  sock.on('close', async () => {
+    await stdoutWriter.waitForIdle()
     process.exit(0)
   })
 }
@@ -195,6 +245,22 @@ async function runOrcaCliMode(sockPath: string, argv: string[]): Promise<void> {
   const myVersion = readLaunchVersion()
   const stdin = shouldReadRemoteCliStdin(argv) ? await readOrcaCliStdin() : undefined
   const sock = createConnection({ path: sockPath })
+  const stdoutWriter = new DispatcherClientWriter(
+    (data, onSettled) =>
+      process.stdout.write(data, (error) => {
+        onSettled(error ? { ok: false, error } : { ok: true })
+      }),
+    {
+      supportsWriteCallback: true,
+      writableLength: () => process.stdout.writableLength,
+      writableHighWaterMark: () => process.stdout.writableHighWaterMark,
+      waitWriteDrain: (callback) => {
+        process.stdout.once('drain', callback)
+        return () => process.stdout.off('drain', callback)
+      }
+    },
+    () => process.exit(1)
+  )
   let nextSeq = 1
   let highestReceivedSeq = 0
   const requestId = 1
@@ -241,14 +307,24 @@ async function runOrcaCliMode(sockPath: string, argv: string[]): Promise<void> {
       stderr?: unknown
       exitCode?: unknown
     }
-    if (typeof result.stdout === 'string' && result.stdout.length > 0) {
-      process.stdout.write(result.stdout)
-    }
     if (typeof result.stderr === 'string' && result.stderr.length > 0) {
       process.stderr.write(result.stderr)
     }
     sock.destroy()
-    process.exit(typeof result.exitCode === 'number' ? result.exitCode : 0)
+    const exitCode = typeof result.exitCode === 'number' ? result.exitCode : 0
+    if (typeof result.stdout === 'string' && result.stdout.length > 0) {
+      const output = Buffer.from(result.stdout)
+      stdoutWriter.enqueue(
+        'control',
+        () => output,
+        output.length,
+        (settlement) => {
+          process.exit(settlement.ok ? exitCode : 1)
+        }
+      )
+    } else {
+      process.exit(exitCode)
+    }
   })
 
   const connectTimeout = setTimeout(() => {
@@ -357,26 +433,36 @@ async function main(): Promise<void> {
   }
   process.stdout.on('drain', flushStdoutDrainWaiters)
   const dispatcher = new RelayDispatcher(
-    (data) => {
+    (data, onSettled) => {
       if (!stdoutAlive) {
-        return
+        onSettled({ ok: false, error: new Error('Relay stdout is closed') })
+        return false
       }
       try {
-        // Why: surface Node's backpressure so bulk frames (fs.streamChunk) wait for drain instead of queueing ahead of interactive pty.data.
-        return process.stdout.write(data)
-      } catch {
+        return process.stdout.write(data, (error) => {
+          onSettled(error ? { ok: false, error } : { ok: true })
+        })
+      } catch (error) {
         stdoutAlive = false
         flushStdoutDrainWaiters()
-        return undefined
+        onSettled({
+          ok: false,
+          error: error instanceof Error ? error : new Error(String(error))
+        })
+        return false
       }
     },
     {
+      supportsWriteCallback: true,
+      writableLength: () => process.stdout.writableLength,
+      writableHighWaterMark: () => process.stdout.writableHighWaterMark,
       waitWriteDrain: (cb) => {
         if (!stdoutAlive) {
           cb()
           return
         }
         stdoutDrainWaiters.add(cb)
+        return () => stdoutDrainWaiters.delete(cb)
       }
     }
   )
@@ -640,19 +726,27 @@ async function main(): Promise<void> {
     sock.on('close', flushSockDrainWaiters)
     sock.on('error', flushSockDrainWaiters)
     const clientId = dispatcher.attachClient(
-      (data) => {
+      (data, onSettled) => {
         if (!sock.destroyed) {
-          return sock.write(data)
+          return sock.write(data, (error) => {
+            onSettled(error ? { ok: false, error } : { ok: true })
+          })
         }
-        return undefined
+        onSettled({ ok: false, error: new Error('Relay socket is closed') })
+        return false
       },
       {
+        supportsWriteCallback: true,
+        writableLength: () => sock.writableLength,
+        writableHighWaterMark: () => sock.writableHighWaterMark,
+        close: () => sock.destroy(),
         waitWriteDrain: (cb) => {
           if (sock.destroyed) {
             cb()
             return
           }
           sockDrainWaiters.add(cb)
+          return () => sockDrainWaiters.delete(cb)
         }
       }
     )
@@ -865,7 +959,6 @@ async function main(): Promise<void> {
 
   if (detached) {
     // Why: detached stdin is /dev/null, so listening would EOF → grace → shutdown before --connect arrives; use the socket instead.
-    stdoutAlive = false
     startGrace('detached startup')
   } else {
     process.stdin.on('data', (chunk: Buffer) => {
@@ -937,8 +1030,11 @@ async function main(): Promise<void> {
     relayLogLine(`[relay] Process exiting with code ${code}`)
   })
 
-  // Why: the client waits for this exact sentinel string before sending framed data.
-  process.stdout.write(RELAY_SENTINEL)
+  dispatcher.writePrimaryBytes(Buffer.from(RELAY_SENTINEL))
+  if (detached) {
+    stdoutAlive = false
+    dispatcher.invalidateClient()
+  }
 }
 
 function cleanupSocket(sockPath: string): void {

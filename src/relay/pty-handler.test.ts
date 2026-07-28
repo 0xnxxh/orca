@@ -24,7 +24,9 @@ const { mockPtySpawn, mockPtyInstance } = vi.hoisted(() => ({
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
-    clear: vi.fn()
+    clear: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn()
   }
 }))
 
@@ -39,7 +41,8 @@ import {
   attachIdentityMismatches,
   formatNodePtyUnavailableMessage
 } from './pty-handler'
-import type { RelayDispatcher } from './dispatcher'
+import { RelayDispatcher } from './dispatcher'
+import { encodeJsonRpcFrame } from './protocol'
 
 type TestRequestContext = {
   isStale: () => boolean
@@ -127,6 +130,8 @@ describe('PtyHandler', () => {
     mockPtyInstance.resize.mockReset()
     mockPtyInstance.kill.mockReset()
     mockPtyInstance.clear.mockReset()
+    mockPtyInstance.pause.mockReset()
+    mockPtyInstance.resume.mockReset()
 
     mockPtySpawn.mockReturnValue({ ...mockPtyInstance })
 
@@ -160,6 +165,60 @@ describe('PtyHandler', () => {
     expect(notifMethods).toContain('pty.data')
     expect(notifMethods).toContain('pty.resize')
     expect(notifMethods).toContain('pty.ackData')
+  })
+
+  it('pauses native output at the producer hard water and resumes after retained writes settle', async () => {
+    let onData: ((data: string) => void) | undefined
+    const pause = vi.fn()
+    const resume = vi.fn()
+    mockPtySpawn.mockReturnValueOnce({
+      ...mockPtyInstance,
+      pause,
+      resume,
+      onData: vi.fn((callback: (data: string) => void) => {
+        onData = callback
+      })
+    })
+    const writeCallbacks: (() => void)[] = []
+    let writableLength = 0
+    const boundedDispatcher = new RelayDispatcher(
+      (data, settle) => {
+        writableLength += data.length
+        writeCallbacks.push(() => {
+          writableLength -= data.length
+          settle({ ok: true })
+        })
+        return true
+      },
+      {
+        supportsWriteCallback: true,
+        writableLength: () => writableLength,
+        writableHighWaterMark: () => 4 * 1024 * 1024
+      }
+    )
+    const boundedHandler = new PtyHandler(boundedDispatcher)
+    try {
+      boundedDispatcher.feed(
+        encodeJsonRpcFrame({ jsonrpc: '2.0', id: 1, method: 'pty.spawn', params: {} }, 1, 0)
+      )
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onData).toBeTypeOf('function')
+
+      onData?.('x'.repeat(1536 * 1024))
+      expect(pause).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(writeCallbacks.length).toBeGreaterThan(50)
+      expect(resume).not.toHaveBeenCalled()
+      for (const settle of writeCallbacks.splice(0)) {
+        settle()
+      }
+      await vi.advanceTimersByTimeAsync(0)
+      expect(resume).toHaveBeenCalledTimes(1)
+    } finally {
+      await boundedHandler.dispose({ waitForPhysicalExit: false }).catch(() => {})
+      boundedDispatcher.dispose()
+    }
   })
 
   it('rejects strict process inspection for a missing relay PTY', async () => {
@@ -1547,6 +1606,42 @@ describe('PtyHandler', () => {
       incarnationId: spawn.incarnationId
     })
     expect(handler.activePtyCount).toBe(0)
+  })
+
+  it('retains PTY exit until the ordinary writer admits it', async () => {
+    await handler.dispose({ waitForPhysicalExit: false })
+    let capacityListener: (() => void) | undefined
+    const tryNotifyPtyExit = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true)
+    Object.assign(dispatcher, {
+      onLegacyPtyCapacity: vi.fn((listener: () => void) => {
+        capacityListener = listener
+        return vi.fn()
+      }),
+      tryNotifyPtyData: vi.fn(() => true),
+      tryNotifyPtyExit,
+      legacyRetentionBelowLowWater: true
+    })
+    handler = new PtyHandler(dispatcher as unknown as RelayDispatcher)
+    let exitCallback: ((info: { exitCode: number }) => void) | undefined
+    mockPtySpawn.mockReturnValue({
+      ...mockPtyInstance,
+      onData: vi.fn(),
+      onExit: vi.fn((callback: (info: { exitCode: number }) => void) => {
+        exitCallback = callback
+      })
+    })
+
+    const spawn = await spawnPty()
+    exitCallback?.({ exitCode: 0 })
+    expect(tryNotifyPtyExit).toHaveBeenCalledOnce()
+
+    capacityListener?.()
+    expect(tryNotifyPtyExit).toHaveBeenLastCalledWith({
+      id: 'pty-1',
+      code: 0,
+      incarnationId: spawn.incarnationId
+    })
+    expect(tryNotifyPtyExit).toHaveBeenCalledTimes(2)
   })
 
   it('flushes pending PTY output before notifying exit', async () => {
