@@ -1572,8 +1572,12 @@ copy.
   primary/canonical manifests now read at most 256 KiB plus one overflow byte,
   activation metadata at most 1 KiB plus one, and assets at most their declared
   length plus one on both platforms. Mirrored Swift/Kotlin faults preserve the
-  stable generation and activation errors. Broader generated mutation, CSP
-  behavior, and generation-directory cache fuzzing remains open.
+  stable generation and activation errors. Every persisted read now also
+  requires a regular descendant of the native cache root. A mirrored corpus
+  rejects outside-root files, file and ancestor-directory symlinks,
+  directories, and missing files with the requested stable error. Broader
+  generated mutation, CSP behavior, and cache mutation/cleanup fuzzing remains
+  open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -2648,4 +2652,6 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-28 | Complete | Post-runbook validation passes 569 mobile files / 3,378 tests with 2 expected skips. Mobile and mobile-web typechecks/lints, reliability, max-lines, formatting, diff hygiene, and the unchanged `b17ead7a…` 49-asset package verification pass.                                                                                                                                                                                        |
 | 2026-07-28 | Finding  | Swift `Decodable` ignored unknown activation fields, both stores admitted an explicit null or identical previous generation, and Android `JSONObject` accepted a valid activation object followed by trailing tokens. Both native stores now consume one exact activation object with only distinct lowercase string hashes.                                                                                                            |
 | 2026-07-28 | Complete | The mirrored two-valid/eleven-invalid activation corpus passes the iOS native fault executable and Android Debug unit/Release Kotlin gates. Full mobile validation remains 569 files / 3,378 tests with 2 expected skips; typechecks, lints, reliability, max-lines, formatting, diff hygiene, and unchanged `b17ead7a…` package verification pass.                                                                                     |
+| 2026-07-28 | Finding  | Persisted cache reads bounded allocation and verified hashes but still followed a symlinked file or ancestor directory. Both stores now require a regular descendant of the native cache root before opening any staged asset, manifest, activation record, or committed asset.                                                                                                                                                         |
+| 2026-07-28 | Complete | The mirrored cache-file corpus accepts an in-root regular file and rejects an outside-root file, file symlink, ancestor-directory symlink, directory, and missing file with the requested stable error. The iOS native fault executable, Android Debug unit/Release Kotlin gates, 569-file mobile suite, typechecks, lints, reliability, max-lines, formatting, diff hygiene, and unchanged `b17ead7a…` package verification pass.      |
 | 2026-07-28 | Next     | Complete the remaining gated cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                                 |

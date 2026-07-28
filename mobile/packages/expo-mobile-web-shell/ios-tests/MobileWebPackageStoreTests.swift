@@ -28,6 +28,9 @@ enum MobileWebPackageStoreTests {
     try MobileWebActivationMetadataTests.run(
       root: root.appendingPathComponent("activation-types")
     )
+    try MobileWebCacheFileBoundaryTests.run(
+      root: root.appendingPathComponent("cache-file-boundary")
+    )
     try rejectsLowStorage(root: root.appendingPathComponent("low-storage"))
     try evictsUnprotectedGeneration(root: root.appendingPathComponent("eviction"))
     try evictsAnotherHostForGlobalQuota(root: root.appendingPathComponent("global-eviction"))

@@ -211,6 +211,11 @@ The mirrored two-valid/eleven-invalid corpus closes unknown fields, null and
 non-string hashes, identical active/previous generations, and trailing tokens.
 The iOS native fault executable, Android Debug unit/Release Kotlin gates, and
 the same broader validation pass.
+Persisted native cache reads now require a regular descendant of the cache
+root before opening staged assets, manifests, activation metadata, or committed
+assets. Mirrored Swift/Kotlin faults reject outside-root, symlinked,
+non-regular, and missing paths with a stable error. Mutation and cleanup fuzzing
+remains open below.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -263,9 +268,11 @@ cross-scope races, privacy/authorization audit, and independent review.
       shared extension/MIME/role map now has exact native source parity and
       mirrored valid/mutated coverage. Persisted primary/canonical manifests,
       activation metadata, and assets now use bounded `limit + 1` readers on
-      both platforms, with mirrored oversized-file faults and stable errors. A
-      fresh exact-app rerun, generated mutation, and the other listed
-      boundaries remain.
+      both platforms, with mirrored oversized-file faults and stable errors.
+      Every cache read also rejects outside-root files, file or ancestor
+      symlinks, directories, and missing files before opening bytes. A fresh
+      exact-app rerun, generated mutation, cache mutation/cleanup faults, and
+      the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,

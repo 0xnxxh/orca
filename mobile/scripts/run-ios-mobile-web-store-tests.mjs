@@ -20,10 +20,15 @@ try {
     '-DMOBILE_WEB_PACKAGE_STORE_TESTING',
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebCacheStoragePolicy.swift'),
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebActivationMetadata.swift'),
+    join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebCacheFileBoundary.swift'),
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebPackageStore.swift'),
     join(
       mobileRoot,
       'packages/expo-mobile-web-shell/ios-tests/MobileWebActivationMetadataTests.swift'
+    ),
+    join(
+      mobileRoot,
+      'packages/expo-mobile-web-shell/ios-tests/MobileWebCacheFileBoundaryTests.swift'
     ),
     join(
       mobileRoot,

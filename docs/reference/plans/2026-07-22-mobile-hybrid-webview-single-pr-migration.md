@@ -2753,8 +2753,11 @@ exact directive sequence. Both native stores now cap persisted primary and
 canonical manifest reads at 256 KiB, activation records at 1 KiB, and asset
 reads at the manifest-declared length before hashing or parsing. Each reader
 consumes at most one overflow byte, and mirrored Swift/Kotlin faults preserve
-the stable generation and activation errors. Generated mutation and the
-remaining CSP/generation-directory cache corpus are still required.
+the stable generation and activation errors. Every persisted read also
+requires a regular descendant of the native cache root; the mirrored corpus
+rejects outside-root files, file and ancestor-directory symlinks, directories,
+and missing files with the requested stable error. Generated mutation and the
+remaining CSP/cache mutation and cleanup corpus are still required.
 
 ## App Store Gate
 

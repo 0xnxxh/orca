@@ -524,7 +524,10 @@ failing with its stable error, and mirrored Swift/Kotlin oversized-file faults
 pass. Activation parsing is also exact on both platforms: only `active` and an
 optional distinct `previous` string hash are accepted, while the mirrored
 shape/type/trailing-token corpus fails with
-`mobile_web_activation_invalid`.
+`mobile_web_activation_invalid`. Persisted cache reads additionally require a
+regular descendant of the native cache root. The mirrored boundary corpus
+rejects outside-root, symlinked, non-regular, and missing inputs before any
+manifest, activation, or executable asset bytes are consumed.
 The standalone renderer-based workspace, session, files, terminal,
 source-control, and review presentation is also removed with its Vite-only
 package path. A production-source boundary requires `src/mobile-web/` to remain
