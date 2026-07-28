@@ -5,8 +5,9 @@ import { translate } from '@/i18n/i18n'
 import { isCodexRestartEligiblePane } from './codex-pane-restart-eligibility'
 import {
   getCodexAccountSwitchLaneMatcher,
+  isForeignMachineCodexPtyId,
   isLocalCodexSelectionLaneKey,
-  resolveCodexPaneSelectionLaneKey
+  resolveCodexPaneSelectionLane
 } from './codex-pane-selection-lane'
 import type { CodexAccountSelectionTarget } from '../../../shared/codex-selection-lane'
 
@@ -27,6 +28,37 @@ export type CodexPaneScanResult = {
   launchedCodex: boolean
   /** A restart notice was raised for this pane by this scan. */
   notified: boolean
+  /** The lane this pane was filtered on. */
+  laneKey: string
+  /** Whether that lane came from main's spawn record or the renderer's derivation. */
+  laneSource: 'recorded' | 'derived'
+}
+
+/**
+ * Asks main which lane each pane actually launched from.
+ *
+ * Why failure is silent: the answer only upgrades the derivation's accuracy, so
+ * an older preload, a web client, or a missing registry must degrade to the
+ * derivation rather than lose every pane's restart notice.
+ */
+async function readRecordedCodexPaneLanes(
+  ptyIds: readonly string[]
+): Promise<Record<string, string>> {
+  // Why filtered: main only records daemon host spawns, so asking about a
+  // remote or SSH pane is a guaranteed miss.
+  const localPtyIds = ptyIds.filter((ptyId) => !isForeignMachineCodexPtyId(ptyId))
+  if (localPtyIds.length === 0) {
+    return {}
+  }
+  try {
+    const listRecordedPaneLanes = window.api.codexAccounts.listRecordedPaneLanes
+    if (typeof listRecordedPaneLanes !== 'function') {
+      return {}
+    }
+    return (await listRecordedPaneLanes({ ptyIds: localPtyIds }).catch(() => null)) ?? {}
+  } catch {
+    return {}
+  }
 }
 
 /**
@@ -45,49 +77,58 @@ async function scanCodexPanes(
     isLaneInScope: (laneKey: string) => boolean
   }
 ): Promise<CodexPaneScanResult[]> {
-  const tabs = Object.values(state.tabsByWorktree).flat()
-  const scans = await Promise.all(
-    tabs.map(async (tab) => {
-      const ptyIds = (state.ptyIdsByTabId[tab.id] ?? []).filter(
-        (ptyId) => args.ptyIdFilter === null || args.ptyIdFilter.has(ptyId)
+  const panes = Object.values(state.tabsByWorktree)
+    .flat()
+    .flatMap((tab) =>
+      (state.ptyIdsByTabId[tab.id] ?? [])
+        .filter((ptyId) => args.ptyIdFilter === null || args.ptyIdFilter.has(ptyId))
+        .map((ptyId) => ({ tab, ptyId }))
+    )
+  const recordedLanes = await readRecordedCodexPaneLanes(panes.map((pane) => pane.ptyId))
+
+  // Why: Codex sessions are not reliably discoverable from tab labels. Tabs keep
+  // fallback names until a CLI emits an OSC title, and Codex does not always do
+  // that. The live process tree plus the tab's recorded launchAgent are the
+  // stable evidence that this pane is running Codex.
+  return Promise.all(
+    panes.map(async ({ tab, ptyId }) => {
+      const lane = resolveCodexPaneSelectionLane({
+        state,
+        tab,
+        ptyId,
+        recordedLaneKey: recordedLanes[ptyId]
+      })
+      if (!args.isLaneInScope(lane.laneKey)) {
+        // Why not inconclusive: a pane's lane is fixed at spawn, so this is a
+        // final answer and the sweep must not spend a retry rung re-asking.
+        return {
+          ptyId,
+          eligible: false,
+          inconclusive: false,
+          launchedCodex: false,
+          notified: false,
+          laneKey: lane.laneKey,
+          laneSource: lane.source
+        }
+      }
+      const inspection = await inspectRuntimeTerminalProcess(state.settings, ptyId).then(
+        (result) => result,
+        // Why: one stale remote pane must not hide restart notices for other confirmed Codex panes.
+        () => null
       )
-      // Why: Codex sessions are not reliably discoverable from tab labels.
-      // Tabs keep fallback names until a CLI emits an OSC title, and Codex
-      // does not always do that. The live process tree plus the tab's recorded
-      // launchAgent are the stable evidence that this pane is running Codex.
-      return Promise.all(
-        ptyIds.map(async (ptyId) => {
-          if (!args.isLaneInScope(resolveCodexPaneSelectionLaneKey({ state, tab, ptyId }))) {
-            // Why not inconclusive: a pane's lane is fixed at spawn, so this is a
-            // final answer and the sweep must not spend a retry rung re-asking.
-            return {
-              ptyId,
-              eligible: false,
-              inconclusive: false,
-              launchedCodex: false,
-              notified: false
-            }
-          }
-          const inspection = await inspectRuntimeTerminalProcess(state.settings, ptyId).then(
-            (result) => result,
-            // Why: one stale remote pane must not hide restart notices for other confirmed Codex panes.
-            () => null
-          )
-          return {
-            ptyId,
-            eligible:
-              inspection !== null &&
-              isCodexRestartEligiblePane({ inspection, launchAgent: tab.launchAgent }),
-            inconclusive: inspection === null || inspection.unavailable === true,
-            launchedCodex: tab.launchAgent === 'codex',
-            notified: false
-          }
-        })
-      )
+      return {
+        ptyId,
+        eligible:
+          inspection !== null &&
+          isCodexRestartEligiblePane({ inspection, launchAgent: tab.launchAgent }),
+        inconclusive: inspection === null || inspection.unavailable === true,
+        launchedCodex: tab.launchAgent === 'codex',
+        notified: false,
+        laneKey: lane.laneKey,
+        laneSource: lane.source
+      }
     })
   )
-
-  return scans.flat()
 }
 
 /**

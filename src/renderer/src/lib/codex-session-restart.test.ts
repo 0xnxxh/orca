@@ -488,7 +488,8 @@ describe('markLiveCodexSessionsForRestart lane scoping', () => {
         codexAccounts: {
           ...originalWindow?.api?.codexAccounts,
           list: vi.fn().mockResolvedValue({ accounts: [], activeAccountId: null }),
-          listStalePanes: vi.fn().mockResolvedValue([])
+          listStalePanes: vi.fn().mockResolvedValue([]),
+          listRecordedPaneLanes: vi.fn().mockResolvedValue({})
         },
         runtimeEnvironments: {
           ...originalWindow?.api?.runtimeEnvironments,
@@ -623,6 +624,105 @@ describe('markLiveCodexSessionsForRestart lane scoping', () => {
       }
     })
     expect(window.api.pty.inspectProcess).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Main writes the lane from the shell, cwd and distro the spawn resolved, so
+   * it is exact where re-deriving from current state can only approximate. Four
+   * review rounds each found another divergence in that derivation; these pin
+   * the record beating it in both directions.
+   */
+  describe('recorded launch lanes', () => {
+    it('spares a pane the record puts in another lane, and never inspects it', async () => {
+      // Derivation says `host`; the pane really launched under WSL. Carding it
+      // would take a working terminal deaf — this is the bug class in one test.
+      seedPanes([{ ptyId: 'pty-1' }])
+      vi.mocked(window.api.codexAccounts.listRecordedPaneLanes).mockResolvedValue({
+        'pty-1': 'wsl:Ubuntu'
+      })
+
+      await markLiveCodexSessionsForRestart({
+        previousAccountLabel: ACCOUNT_A,
+        nextAccountLabel: ACCOUNT_B,
+        target: { runtime: 'host' }
+      })
+
+      expect(useAppStore.getState().codexRestartNoticeByPtyId).toEqual({})
+      expect(window.api.pty.inspectProcess).not.toHaveBeenCalled()
+    })
+
+    it('cards a pane the record puts in the switched lane against the derivation', async () => {
+      // The mirror: the user changed a runtime preference after this WSL-looking
+      // pane spawned on the host, and re-derivation would now miss its notice.
+      seedPanes([{ ptyId: 'pty-1' }], { wt1: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\orca' })
+      vi.mocked(window.api.codexAccounts.listRecordedPaneLanes).mockResolvedValue({
+        'pty-1': 'host'
+      })
+
+      await markLiveCodexSessionsForRestart({
+        previousAccountLabel: ACCOUNT_A,
+        nextAccountLabel: ACCOUNT_B,
+        target: { runtime: 'host' }
+      })
+
+      expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+        previousAccountLabel: ACCOUNT_A,
+        nextAccountLabel: ACCOUNT_B
+      })
+    })
+
+    // THE regression check: over-filtering silently kills the feature and reads
+    // as a pass. A genuine local host pane must be carded on every fallback path.
+    it.each([
+      ['no record exists for the pane', () => ({ 'pty-other': 'wsl:Ubuntu' })],
+      ['the lookup rejects', null],
+      ['the preload predates the lookup', undefined]
+    ])('still cards a local host pane when %s', async (_label, recorded) => {
+      seedPanes([{ ptyId: 'pty-1' }])
+      if (recorded === null) {
+        vi.mocked(window.api.codexAccounts.listRecordedPaneLanes).mockRejectedValue(
+          new Error('no handler')
+        )
+      } else if (recorded === undefined) {
+        ;(
+          window.api.codexAccounts as unknown as { listRecordedPaneLanes?: unknown }
+        ).listRecordedPaneLanes = undefined
+      } else {
+        vi.mocked(window.api.codexAccounts.listRecordedPaneLanes).mockResolvedValue(recorded())
+      }
+
+      await markLiveCodexSessionsForRestart({
+        previousAccountLabel: ACCOUNT_A,
+        nextAccountLabel: ACCOUNT_B,
+        target: { runtime: 'host' }
+      })
+
+      expect(useAppStore.getState().codexRestartNoticeByPtyId['pty-1']).toEqual({
+        previousAccountLabel: ACCOUNT_A,
+        nextAccountLabel: ACCOUNT_B
+      })
+    })
+
+    it('asks only about panes main could have recorded', async () => {
+      seedPanes([
+        { ptyId: 'pty-1' },
+        { ptyId: 'remote:env-1@@term-1' },
+        { ptyId: 'ssh:my-box@@pty-7' }
+      ])
+
+      await markLiveCodexSessionsForRestart({
+        previousAccountLabel: ACCOUNT_A,
+        nextAccountLabel: ACCOUNT_B,
+        target: { runtime: 'host' }
+      })
+
+      // Why: main only records daemon host spawns, so a foreign id is a certain
+      // miss — and one batched call, not one per pane.
+      expect(window.api.codexAccounts.listRecordedPaneLanes).toHaveBeenCalledTimes(1)
+      expect(window.api.codexAccounts.listRecordedPaneLanes).toHaveBeenCalledWith({
+        ptyIds: ['pty-1']
+      })
+    })
   })
 })
 

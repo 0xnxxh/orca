@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { AppState } from '@/store'
 import { getCodexSelectionLaneKey } from '../../../shared/codex-selection-lane'
 import {
   getCodexAccountSwitchLaneMatcher,
   isForeignMachineCodexPtyId,
   isLocalCodexSelectionLaneKey,
+  resolveCodexPaneSelectionLane,
   resolveCodexPaneSelectionLaneKey
 } from './codex-pane-selection-lane'
 
@@ -263,6 +264,122 @@ describe('resolveCodexPaneSelectionLaneKey', () => {
     // switch can produce this key — the pane is unreachable by any selection.
     expect(laneKey).not.toBe(getCodexSelectionLaneKey({ runtime: 'host' }))
     expect(isLocalCodexSelectionLaneKey(laneKey)).toBe(false)
+  })
+})
+
+describe('resolveCodexPaneSelectionLane', () => {
+  it('prefers the lane main recorded at spawn over the current derivation', () => {
+    // Why this is the whole point: the derivation reads CURRENT state, so the
+    // user editing a runtime preference after the pane opened must not re-key it.
+    const lane = resolveCodexPaneSelectionLane({
+      state: laneState(),
+      tab: HOST_TAB,
+      ptyId: 'pty-1',
+      recordedLaneKey: 'wsl:Ubuntu'
+    })
+    expect(lane).toEqual({
+      laneKey: 'wsl:Ubuntu',
+      source: 'recorded',
+      derivedLaneKey: 'host'
+    })
+  })
+
+  it('reports the disagreement so a re-derivation bug stays diagnosable', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      resolveCodexPaneSelectionLane({
+        state: laneState(),
+        tab: HOST_TAB,
+        ptyId: 'pty-1',
+        recordedLaneKey: 'wsl:Ubuntu'
+      })
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('[codex-lane]'),
+        expect.objectContaining({ ptyId: 'pty-1', recorded: 'wsl:Ubuntu', derived: 'host' })
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('stays quiet when the record and the derivation agree', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const lane = resolveCodexPaneSelectionLane({
+        state: laneState(),
+        tab: HOST_TAB,
+        ptyId: 'pty-1',
+        recordedLaneKey: 'host'
+      })
+      expect(lane.source).toBe('recorded')
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  // THE regression that matters: over-filtering silently kills the feature.
+  it('derives a local host pane that main never recorded', () => {
+    for (const recordedLaneKey of [undefined, null, '', '   ']) {
+      expect(
+        resolveCodexPaneSelectionLane({
+          state: laneState(),
+          tab: HOST_TAB,
+          ptyId: 'pty-1',
+          recordedLaneKey
+        })
+      ).toEqual({ laneKey: 'host', source: 'derived', derivedLaneKey: 'host' })
+    }
+  })
+
+  it('falls back to the derivation when the record names no selectable lane', () => {
+    // Why: the registry accepts any string it finds on disk, and a lane key that
+    // matches no switch would silently drop the pane's notice instead of failing.
+    expect(
+      resolveCodexPaneSelectionLane({
+        state: laneState(),
+        tab: HOST_TAB,
+        ptyId: 'pty-1',
+        recordedLaneKey: 'env:env-1'
+      })
+    ).toEqual({ laneKey: 'host', source: 'derived', derivedLaneKey: 'host' })
+  })
+
+  it.each([
+    ['remote:env-1@@term-1', 'env:env-1'],
+    ['ssh:my-box@@pty-7', 'ssh-connection']
+  ])('keeps a record from re-keying the foreign pane %s', (ptyId, expectedLaneKey) => {
+    // Why: a foreign pane's lane is settled by its id, so a record here can only
+    // be a recycled id — and honouring it would mute a working remote terminal.
+    expect(
+      resolveCodexPaneSelectionLane({
+        state: laneState({ activeRuntimeEnvironmentId: 'env-1' }),
+        tab: HOST_TAB,
+        ptyId,
+        recordedLaneKey: 'host'
+      })
+    ).toEqual({ laneKey: expectedLaneKey, source: 'derived', derivedLaneKey: expectedLaneKey })
+  })
+
+  it('still answers with the record when the derivation throws', () => {
+    const exploding = new Proxy(laneState(), {
+      get(target, property) {
+        if (property === 'worktreesByRepo') {
+          throw new Error('state read blew up')
+        }
+        return Reflect.get(target, property)
+      }
+    }) as LaneState
+    // Why: this call sits outside the scan's per-pane failure guard, so a throw
+    // would lose the notice for every pane in the batch, not just this one.
+    expect(
+      resolveCodexPaneSelectionLane({
+        state: exploding,
+        tab: HOST_TAB,
+        ptyId: 'pty-1',
+        recordedLaneKey: 'host'
+      })
+    ).toEqual({ laneKey: 'host', source: 'recorded', derivedLaneKey: null })
   })
 })
 

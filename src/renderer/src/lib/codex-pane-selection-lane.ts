@@ -100,7 +100,74 @@ export function getCodexAccountSwitchLaneMatcher(args: {
   return (laneKey) => laneKey === switchLaneKey
 }
 
-/** The lane a live pane resolves its Codex account from. */
+export type CodexPaneSelectionLane = {
+  /** The lane the caller must filter on. */
+  laneKey: string
+  /** Which answer won: main's spawn-time record, or the renderer's re-derivation. */
+  source: 'recorded' | 'derived'
+  /** What the derivation said, or null when it threw. Diagnostics only. */
+  derivedLaneKey: string | null
+}
+
+/**
+ * The lane a pane launched from, preferring the one main recorded at spawn.
+ *
+ * Why recorded wins: main writes `selectionKey` from the shell, cwd and distro
+ * the spawn actually resolved, so it cannot drift. The derivation below reads
+ * CURRENT state, so flipping the global WSL distro or a project's runtime
+ * preference after a pane opened makes it answer for a launch that never
+ * happened — a missed notice one way, a muted working terminal the other.
+ *
+ * The derivation stays because it is the only answer for the panes main never
+ * records: every pre-feature pane, and every LocalPtyProvider or remote spawn.
+ */
+export function resolveCodexPaneSelectionLane(args: {
+  state: CodexPaneLaneState
+  tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>
+  ptyId: string
+  /** The pane's `selectionKey` from the on-disk registry, when it has one. */
+  recordedLaneKey?: string | null
+}): CodexPaneSelectionLane {
+  const recorded = args.recordedLaneKey?.trim()
+  // Why the local-key check: the registry accepts any string it finds on disk,
+  // and a lane key that matches no switch silently drops that pane's notice.
+  // Why foreign ids still derive: their lane is settled by the id itself and no
+  // record can exist for one, so a hit here would mean a recycled id.
+  const trustsRecord =
+    Boolean(recorded) &&
+    isLocalCodexSelectionLaneKey(recorded as string) &&
+    !isForeignMachineCodexPtyId(args.ptyId)
+  if (!trustsRecord) {
+    const laneKey = resolveCodexPaneSelectionLaneKey(args)
+    return { laneKey, source: 'derived', derivedLaneKey: laneKey }
+  }
+  const derivedLaneKey = deriveLaneKeyForDiagnostics(args)
+  if (derivedLaneKey !== null && derivedLaneKey !== recorded) {
+    // Why loud: every divergence found in review was this exact disagreement,
+    // and the recorded key now hides it instead of producing a visible bug.
+    console.warn('[codex-lane] recorded launch lane disagrees with the derived one:', {
+      ptyId: args.ptyId,
+      recorded,
+      derived: derivedLaneKey
+    })
+  }
+  return { laneKey: recorded as string, source: 'recorded', derivedLaneKey }
+}
+
+/** Never let the diagnostic derivation break a pane whose lane is already known. */
+function deriveLaneKeyForDiagnostics(args: {
+  state: CodexPaneLaneState
+  tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>
+  ptyId: string
+}): string | null {
+  try {
+    return resolveCodexPaneSelectionLaneKey(args)
+  } catch {
+    return null
+  }
+}
+
+/** The lane a live pane resolves its Codex account from, re-derived from state. */
 export function resolveCodexPaneSelectionLaneKey(args: {
   state: CodexPaneLaneState
   tab: Pick<TerminalTab, 'shellOverride' | 'startupCwd' | 'worktreeId'>

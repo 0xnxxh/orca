@@ -1999,6 +1999,8 @@ const api = {
     }): Promise<
       { ptyId: string; launchAccountId: string | null; activeAccountId: string | null }[]
     > => ipcRenderer.invoke('codexAccounts:listStalePanes', args),
+    listRecordedPaneLanes: (args: { ptyIds: string[] }): Promise<Record<string, string>> =>
+      ipcRenderer.invoke('codexAccounts:listRecordedPaneLanes', args),
     forgetStalePanes: (args: { ptyIds: string[] }): Promise<void> =>
       ipcRenderer.invoke('codexAccounts:forgetStalePanes', args)
   },
