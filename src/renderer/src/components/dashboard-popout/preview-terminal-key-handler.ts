@@ -125,10 +125,21 @@ export function installPreviewTerminalKeyHandler(args: {
         // Why: the OS owns this chord — block xterm without preventing the default.
         event.stopPropagation()
         return false
-      default:
-        // Pane-scoped chords (splits, search, focus, titles) have no target in a
-        // preview dialog. Swallow them: a pane never sends these bytes to the
-        // shell, and xterm would encode e.g. Ctrl+Shift+D as a bare Ctrl+D.
+      // Why: pane-scoped chords have no target in a preview dialog. Swallow them
+      // — a pane never sends these bytes to the shell, and xterm would encode
+      // e.g. Ctrl+Shift+D as a bare Ctrl+D. Listed one by one rather than under a
+      // `default` so a newly added action has to be classified here, not
+      // silently swallowed.
+      case 'clearActivePane':
+      case 'clearPaneTitle':
+      case 'closeActivePane':
+      case 'copySelection':
+      case 'equalizePaneSizes':
+      case 'focusPane':
+      case 'setTitle':
+      case 'splitActivePane':
+      case 'toggleExpandActivePane':
+      case 'toggleSearch':
         return consumeEvent(event)
     }
   })
