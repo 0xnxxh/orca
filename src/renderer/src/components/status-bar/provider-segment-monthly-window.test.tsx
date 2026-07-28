@@ -43,7 +43,38 @@ function grokMonthlyLimits(status: ProviderRateLimits['status']): ProviderRateLi
   }
 }
 
-describe('ProviderSegment monthly window', () => {
+function grokWeeklyLimits(): ProviderRateLimits {
+  return {
+    provider: 'grok',
+    session: null,
+    weekly: windowOf(27, 10080),
+    monthly: null,
+    updatedAt: Date.now(),
+    error: null,
+    status: 'ok'
+  }
+}
+
+describe('ProviderSegment usage windows', () => {
+  it('renders a usage bar for weekly-only Grok in detailed mode (#9366)', async () => {
+    const { ProviderSegment } = await import('./StatusBar')
+    const markup = renderToStaticMarkup(
+      <ProviderSegment p={grokWeeklyLimits()} compact={false} display="used" mode="verbose" />
+    )
+    expect(markup).toContain('data-usage-bar')
+    expect(markup).toContain('27% used')
+    expect(markup).toContain('width:27%')
+  })
+
+  it('renders the weekly-only Grok label in compact mode', async () => {
+    const { ProviderSegment } = await import('./StatusBar')
+    const markup = renderToStaticMarkup(
+      <ProviderSegment p={grokWeeklyLimits()} compact={false} display="used" mode="compact" />
+    )
+    expect(markup).toContain('27% used wk')
+    expect(markup).not.toContain('data-usage-bar')
+  })
+
   it('renders a monthly-only snapshot in the chip instead of a bare icon', async () => {
     const { ProviderSegment } = await import('./StatusBar')
 
