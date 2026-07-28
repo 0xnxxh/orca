@@ -1,5 +1,5 @@
 import { symlink, mkdir, stat, lstat, unlink, cp, realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import {
   ApfsCloneUnavailableError,
   canCloneWithApfs,
@@ -14,6 +14,10 @@ import {
   type SkippedWorktreeCopyPath,
   type WorktreeCopyBudget
 } from './worktree-include-copy-budget'
+import {
+  findExistingWorktreeSymlinkPaths,
+  getSafeRelativePath
+} from '../git/worktree-symlink-detection'
 
 type WorktreeLinkedPathOptions = {
   platform?: NodeJS.Platform
@@ -30,30 +34,6 @@ type WorktreeLinkedPathOptions = {
 // 'share': always symlink (orca.yaml sharedDirectories). An APFS clone would give
 // each worktree an independent node_modules, defeating one-install-serves-all.
 type WorktreeMaterializeMode = 'link' | 'copy' | 'share'
-
-type SafeRelativePathResult =
-  | {
-      safe: true
-      rel: string
-    }
-  | {
-      safe: false
-    }
-
-function getSafeRelativePath(rawPath: string): SafeRelativePathResult {
-  // Why: strip leading separators (both `/` and `\`) before the guard so
-  // Windows-style input like `\foo` is normalized the same way POSIX `/foo`
-  // is, and the traversal check below sees the already-relative form.
-  const rel = rawPath.trim().replace(/^[\\/]+/, '')
-  // Why: split on both separators so a Windows-authored `..\escape` is
-  // rejected the same way POSIX `../escape` is. `path.isAbsolute` catches
-  // drive-letter absolutes (`C:\...`); the split catches relative
-  // backslash traversal that `.split('/')` would otherwise miss.
-  if (!rel || isAbsolute(rel) || rel.split(/[\\/]/).includes('..')) {
-    return { safe: false }
-  }
-  return { safe: true, rel }
-}
 
 async function symlinkWorktreePath(
   source: string,
@@ -371,26 +351,7 @@ export async function removeWorktreeLinkedPaths(
   }
 }
 
-export async function findExistingWorktreeSymlinkPaths(
-  worktreePath: string,
-  paths: readonly string[]
-): Promise<string[]> {
-  const symlinkPaths: string[] = []
-  for (const rawPath of paths) {
-    const safePath = getSafeRelativePath(rawPath)
-    if (!safePath.safe) {
-      continue
-    }
-    try {
-      if ((await lstat(resolve(worktreePath, safePath.rel))).isSymbolicLink()) {
-        symlinkPaths.push(safePath.rel)
-      }
-    } catch {
-      // Why: only a positively identified symlink may bypass dirty preflight.
-    }
-  }
-  return symlinkPaths
-}
+export { findExistingWorktreeSymlinkPaths }
 
 /** Remove previously-created symlinks from a worktree before deletion.
  *

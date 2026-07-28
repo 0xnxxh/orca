@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { checkIgnoredPaths } from './check-ignored-paths'
 import type { GitRuntimeOptions } from './git-runtime-options'
 import { loadHooks } from '../hooks'
+import type { Repo } from '../../shared/types'
 
 // Why: a fresh worktree has no node_modules/.cache, and copying them is slow and
 // duplicates disk; `orca.yaml` names the ones every worktree should share instead.
@@ -16,6 +17,18 @@ import { loadHooks } from '../hooks'
  *  tolerate and unlink it, and the resolver would have already dropped it. */
 export function getConfiguredWorktreeSharedDirectories(repoPath: string): string[] {
   return loadHooks(repoPath)?.worktree?.sharedDirectories ?? []
+}
+
+/** Every path Orca may have symlinked into a worktree: the per-user Worktree
+ *  Shared Paths setting plus the repo's `orca.yaml` shared directories.
+ *
+ *  Callers pair this with `findExistingWorktreeSymlinkPaths`, which keeps only
+ *  the entries that really are symlinks — so a configured name that the user
+ *  happens to own as a regular file is never treated as one of ours. */
+export function getWorktreeSharedLinkPaths(repo: Pick<Repo, 'path' | 'symlinkPaths'>): string[] {
+  return Array.from(
+    new Set([...(repo.symlinkPaths ?? []), ...getConfiguredWorktreeSharedDirectories(repo.path)])
+  )
 }
 
 /** Resolve `worktree.sharedDirectories` from the repo-root `orca.yaml` to
