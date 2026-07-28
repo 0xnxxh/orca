@@ -769,6 +769,12 @@
       },
       "useLargeTextControlPaste": {
         "pasteTooLarge": "El contenido pegado es demasiado grande."
+      },
+      "useMacosTccPromptNotice": {
+        "title": "Reduce los avisos repetidos de acceso a archivos de macOS",
+        "description": "macOS atribuye a Orca el acceso a archivos realizado por tus agentes y herramientas de terminal. Conceder acceso total al disco reduce estos avisos.",
+        "openSettings": "Abrir ajustes",
+        "dismiss": "No volver a mostrar"
       }
     },
     "components": {
@@ -5620,7 +5626,7 @@
           "e7bb06007c": "LAN",
           "4a73f5217a": "Apple Events para scripts que controlan otras apps locales.",
           "e119f0d66b": "Automatización",
-          "7ca17b62c8": "Recomendado cuando proyectos, worktrees o archivos symlinked tocan carpetas protegidas de macOS.",
+          "7ca17b62c8": "Cuando los agentes que ejecuta Orca leen datos de otras apps, macOS muestra el nombre de Orca porque es el proceso responsable de los comandos de terminal. Concede este permiso a Orca y Orca Helper para reducir esos avisos. Después, cierra Orca, finaliza cualquier proceso de Orca Helper que siga en ejecución y vuelve a abrir Orca.",
           "c566bca278": "Acceso total al disco",
           "9f35980756": "Herramientas de inyección de teclas, control de ventanas y automatización de UI.",
           "5b2f22ca2d": "Accesibilidad",
