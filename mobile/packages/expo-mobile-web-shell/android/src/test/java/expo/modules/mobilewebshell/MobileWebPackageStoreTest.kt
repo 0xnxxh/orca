@@ -117,6 +117,24 @@ class MobileWebPackageStoreTest {
   }
 
   @Test
+  fun rejectsOversizedManifestInputBeforeParsing() {
+    val root = temporary.newFolder()
+    val store = MobileWebPackageStore(root)
+    val fixture = packageFixture()
+
+    listOf(
+      " ".repeat(256 * 1024 + 1) to fixture.canonical,
+      fixture.manifest to " ".repeat(256 * 1024 + 1)
+    ).forEach { (manifest, canonical) ->
+      val error = assertThrows(IllegalArgumentException::class.java) {
+        store.beginStage("paired-host", manifest, canonical)
+      }
+      assertEquals("mobile_web_stage_manifest_invalid", error.message)
+    }
+    assertFalse(root.walkTopDown().any { it.name == "staging" })
+  }
+
+  @Test
   fun deletesAnInterruptedStageWhenTheStoreRestarts() {
     val root = temporary.newFolder()
     val firstStore = MobileWebPackageStore(root)

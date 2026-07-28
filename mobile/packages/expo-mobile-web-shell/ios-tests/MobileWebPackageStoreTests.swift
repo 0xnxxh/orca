@@ -15,6 +15,7 @@ enum MobileWebPackageStoreTests {
     try rejectsMalformedManifests(root: root.appendingPathComponent("manifests"))
     try rejectsQuotedNumericManifestFields(root: root.appendingPathComponent("scalar-types"))
     try rejectsBooleanNumericManifestFields(root: root.appendingPathComponent("boolean-types"))
+    try rejectsOversizedManifestInput(root: root.appendingPathComponent("manifest-limit"))
     try deletesInterruptedStage(root: root.appendingPathComponent("interrupted"))
     try rejectsOversizedEncodedChunks(root: root.appendingPathComponent("chunk-limit"))
     try rejectsIncompleteAndCorruptGeneration(root: root.appendingPathComponent("corrupt"))
@@ -149,6 +150,28 @@ enum MobileWebPackageStoreTests {
             hostIdentity: "paired-host",
             manifestJson: fixture.manifest,
             canonicalManifestJson: fixture.canonical
+          )
+        }
+      )
+    }
+  }
+
+  private static func rejectsOversizedManifestInput(root: URL) throws {
+    let store = MobileWebPackageStore(cacheRoot: root)
+    let fixture = try packageFixture()
+    let oversized = String(repeating: " ", count: 256 * 1024 + 1)
+    let invalid = [
+      (oversized, fixture.canonical),
+      (fixture.manifest, oversized),
+    ]
+
+    for (manifest, canonical) in invalid {
+      precondition(
+        throwsCode("mobile_web_stage_manifest_invalid") {
+          _ = try store.beginStage(
+            hostIdentity: "paired-host",
+            manifestJson: manifest,
+            canonicalManifestJson: canonical
           )
         }
       )

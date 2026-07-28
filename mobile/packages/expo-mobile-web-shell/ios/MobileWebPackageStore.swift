@@ -4,6 +4,7 @@ import Security
 
 private let chunkByteLimit = 48 * 1024
 private let chunkBase64CharacterLimit = ((chunkByteLimit + 2) / 3) * 4
+private let manifestJsonByteLimit = 256 * 1024
 private let assetByteLimit = 10 * 1024 * 1024
 private let sha256Pattern = "^[a-f0-9]{64}$"
 private let safePathPattern = "^[A-Za-z0-9._/-]+$"
@@ -476,6 +477,8 @@ final class MobileWebPackageStore {
     canonicalManifestJson: String
   ) throws -> MobileWebManifestRecord {
     guard
+      manifestJson.utf8.count <= manifestJsonByteLimit,
+      canonicalManifestJson.utf8.count <= manifestJsonByteLimit,
       let manifest = try jsonObject(manifestJson) as? [String: Any],
       let canonical = try jsonObject(canonicalManifestJson) as? [String: Any],
       Set(manifest.keys)

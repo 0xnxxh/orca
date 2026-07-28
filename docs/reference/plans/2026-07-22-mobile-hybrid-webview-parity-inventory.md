@@ -485,19 +485,19 @@ IDs, and unrelated provider state never enter the page result.
 
 ## Production Contract Status
 
-| Contract                         | Status                                          | Source                                                                                                                                                            |
-| -------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-asset manifest v1          | Implemented and focused-test passing            | `src/shared/mobile-web/manifest-contract.ts`; TypeScript, Swift, and Kotlin reject quoted/Boolean numeric scalar confusion before staging                         |
-| Manifest resource bounds         | Implemented, measured, and focused-test passing | 48 KiB chunks / 65,536 base64 chars before native decode, 10 MiB/asset, 32 MiB/package, 256 assets; shared/Desktop/native limits pass; RNW has a 10 MiB CI budget |
-| Bridge envelope and capabilities | Implemented and focused-test passing            | `src/shared/mobile-web/bridge-contract.ts`; bounded native-chat schemas and remaining operation payload schemas                                                   |
-| Terminal stream                  | Implemented and focused-test passing            | `src/shared/mobile-web/terminal-stream-contract.ts`; broker adapter and real-stream validation remain                                                             |
-| Shell navigation events          | Implemented and focused-test passing            | Strict opaque routes with monotonic sequence, shell-session/build context, and one-shot restore                                                                   |
-| Stable bridge errors             | Implemented and focused-test passing            | Strict stable enum; response/error schemas reject raw Desktop/native messages                                                                                     |
-| Shell compatibility range        | Partial                                         | Manifest range and exact v1 envelopes exist; supported-version release policy remains                                                                             |
-| Bridge request/subscription caps | Implemented and focused-test passing            | 640 KiB envelope, 64 pending requests, 32 subscriptions, per-operation byte/concurrency/rate grants                                                               |
-| Package read concurrency         | Implemented and focused-test passing            | Four concurrent 48 KiB reads / 192 KiB in flight per connection                                                                                                   |
-| Terminal stream memory           | Implemented and focused-test passing            | 16 KiB input, 64 KiB output batch, 256 KiB outstanding, 2 MiB snapshot                                                                                            |
-| Native verified cache            | Implemented and native-policy-test passing      | 128 MiB per host, 512 MiB global, 16 MiB minimum free; active/session generations are protected; activation hashes are exact-type validated                       |
+| Contract                         | Status                                          | Source                                                                                                                                       |
+| -------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multi-asset manifest v1          | Implemented and focused-test passing            | `src/shared/mobile-web/manifest-contract.ts`; TypeScript, Swift, and Kotlin reject quoted/Boolean numeric scalar confusion before staging    |
+| Manifest resource bounds         | Implemented, measured, and focused-test passing | 256 KiB/raw manifest before native parse; 48 KiB chunks / 65,536 base64 chars before native decode; 10 MiB/asset, 32 MiB/package, 256 assets |
+| Bridge envelope and capabilities | Implemented and focused-test passing            | `src/shared/mobile-web/bridge-contract.ts`; bounded native-chat schemas and remaining operation payload schemas                              |
+| Terminal stream                  | Implemented and focused-test passing            | `src/shared/mobile-web/terminal-stream-contract.ts`; broker adapter and real-stream validation remain                                        |
+| Shell navigation events          | Implemented and focused-test passing            | Strict opaque routes with monotonic sequence, shell-session/build context, and one-shot restore                                              |
+| Stable bridge errors             | Implemented and focused-test passing            | Strict stable enum; response/error schemas reject raw Desktop/native messages                                                                |
+| Shell compatibility range        | Partial                                         | Manifest range and exact v1 envelopes exist; supported-version release policy remains                                                        |
+| Bridge request/subscription caps | Implemented and focused-test passing            | 640 KiB envelope, 64 pending requests, 32 subscriptions, per-operation byte/concurrency/rate grants                                          |
+| Package read concurrency         | Implemented and focused-test passing            | Four concurrent 48 KiB reads / 192 KiB in flight per connection                                                                              |
+| Terminal stream memory           | Implemented and focused-test passing            | 16 KiB input, 64 KiB output batch, 256 KiB outstanding, 2 MiB snapshot                                                                       |
+| Native verified cache            | Implemented and native-policy-test passing      | 128 MiB per host, 512 MiB global, 16 MiB minimum free; active/session generations are protected; activation hashes are exact-type validated  |
 
 ## Next Inventory Action
 

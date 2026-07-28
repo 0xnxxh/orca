@@ -2718,9 +2718,10 @@ staging. The corpus found Android `JSONObject.optInt` string coercion and iOS
 JSON scalar types. The shared chunk envelope also caps base64 at the exact
 65,536-character encoding of 48 KiB and rejects type confusion, noncanonical
 encoding, decoded-length mismatch, and extra fields. Swift and Kotlin enforce
-that encoded ceiling before invoking their native decoders. Native activation
-metadata likewise requires string-typed active and previous hashes on both
-platforms; hash-shaped JSON numbers fail with
+that encoded ceiling before invoking their native decoders and cap each raw
+manifest document at 256 KiB before JSON parsing. Native activation metadata
+likewise requires string-typed active and previous hashes on both platforms;
+hash-shaped JSON numbers fail with
 `mobile_web_activation_invalid`. Generated mutation and the remaining
 path/MIME/CSP/cache corpus are still required.
 

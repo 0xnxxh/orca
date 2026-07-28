@@ -13,6 +13,7 @@ import java.util.Base64
 
 private const val CHUNK_BYTE_LIMIT = 48 * 1024
 private const val CHUNK_BASE64_CHARACTER_LIMIT = ((CHUNK_BYTE_LIMIT + 2) / 3) * 4
+private const val MANIFEST_JSON_BYTE_LIMIT = 256 * 1024
 private const val ASSET_BYTE_LIMIT = 10 * 1024 * 1024
 private val SHA256_PATTERN = Regex("^[a-f0-9]{64}$")
 private val SAFE_PATH_PATTERN = Regex("^[A-Za-z0-9._/-]+$")
@@ -323,6 +324,10 @@ internal class MobileWebPackageStore internal constructor(
     manifestJson: String,
     canonicalManifestJson: String
   ): MobileWebManifestRecord {
+    require(
+      isBoundedManifestJson(manifestJson) &&
+        isBoundedManifestJson(canonicalManifestJson)
+    ) { "mobile_web_stage_manifest_invalid" }
     val manifest = parseJsonObject(manifestJson)
     val canonical = parseJsonObject(canonicalManifestJson)
     require(
@@ -596,6 +601,10 @@ private fun parseJsonObject(value: String): JSONObject = try {
 } catch (_: Exception) {
   throw IllegalArgumentException("mobile_web_stage_manifest_invalid")
 }
+
+private fun isBoundedManifestJson(value: String): Boolean =
+  value.length <= MANIFEST_JSON_BYTE_LIMIT &&
+    value.toByteArray(Charsets.UTF_8).size <= MANIFEST_JSON_BYTE_LIMIT
 
 private fun assetFile(root: File, path: String): File =
   path.split('/').fold(root) { parent, component -> File(parent, component) }
