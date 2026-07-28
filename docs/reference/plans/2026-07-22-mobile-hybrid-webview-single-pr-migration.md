@@ -1860,6 +1860,12 @@ complete journeys. The independently verified package containing this work is
 `9e5e807523e8b917fef68f221cc1fd2e1a16dbe07d7077e717238eed17003b52`:
 49 assets, 9,330,604 raw bytes, and 2,697,919 gzip bytes.
 
+The same exact-app gate now captures the unchanged Accounts screen through its
+existing native/web operations boundary. Native and hosted pass at 0.050%
+changed pixels, 0.099 mean channel difference, and 0.000544 vertical-title
+delta against the 3% / 4 / 0.005 budgets. This extends source-sharing evidence;
+it does not replace or restyle the account presentation.
+
 The host-only router now imports the existing
 `mobile/app/h/[hostId]/session/[worktreeId].tsx` route directly; a
 source-identity test prevents that wrapper from growing copied presentation.

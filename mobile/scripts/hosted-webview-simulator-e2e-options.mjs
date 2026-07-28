@@ -1,10 +1,11 @@
 import process from 'node:process'
 
 const usage =
-  'Usage: node scripts/run-hosted-webview-simulator-e2e.mjs [--device <name|udid>] [--timeout-ms <ms>] [--security-only] [--files-preview-only] [--native-settings-only] [--source-control-only] [--skip-native-build]'
+  'Usage: node scripts/run-hosted-webview-simulator-e2e.mjs [--device <name|udid>] [--timeout-ms <ms>] [--accounts-only] [--security-only] [--files-preview-only] [--native-settings-only] [--source-control-only] [--skip-native-build]'
 
 export function parseHostedWebViewSimulatorE2eOptions(args) {
   const parsed = {
+    accountsOnly: false,
     device: 'iPhone 17 Pro',
     filesPreviewOnly: false,
     nativeSettingsOnly: false,
@@ -20,6 +21,8 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
       parsed.device = args[++index]
     } else if (args[index] === '--timeout-ms' && args[index + 1]) {
       parsed.timeoutMs = Number(args[++index])
+    } else if (args[index] === '--accounts-only') {
+      parsed.accountsOnly = true
     } else if (args[index] === '--security-only') {
       parsed.securityOnly = true
     } else if (args[index] === '--files-preview-only') {
@@ -42,6 +45,7 @@ export function parseHostedWebViewSimulatorE2eOptions(args) {
   }
   if (
     [
+      parsed.accountsOnly,
       parsed.securityOnly,
       parsed.filesPreviewOnly,
       parsed.nativeSettingsOnly,

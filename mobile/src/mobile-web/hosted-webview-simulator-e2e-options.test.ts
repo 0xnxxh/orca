@@ -4,6 +4,7 @@ import { parseHostedWebViewSimulatorE2eOptions } from '../../scripts/hosted-webv
 describe('hosted WebView simulator E2E options', () => {
   it('retains bounded defaults', () => {
     expect(parseHostedWebViewSimulatorE2eOptions([])).toEqual({
+      accountsOnly: false,
       device: 'iPhone 17 Pro',
       filesPreviewOnly: false,
       nativeSettingsOnly: false,
@@ -35,7 +36,7 @@ describe('hosted WebView simulator E2E options', () => {
 
   it('rejects mutually exclusive focused journeys', () => {
     expect(() =>
-      parseHostedWebViewSimulatorE2eOptions(['--files-preview-only', '--source-control-only'])
+      parseHostedWebViewSimulatorE2eOptions(['--accounts-only', '--source-control-only'])
     ).toThrow('mutually exclusive')
   })
 

@@ -64,6 +64,15 @@ Both cached-app and fresh Xcode build/install journeys pass the complete route,
 recovery, review, and isolation matrix. Equivalent hosted route values no
 longer restart Preview loads, and RNW preserves the native iOS font fallback.
 
+The unchanged Accounts screen now also passes deterministic iOS
+native-versus-hosted parity at 0.050% changed pixels, 0.099 mean channel
+difference, and 0.000544 vertical-title delta, within the 3% / 4 / 0.005
+budgets. Its existing non-embedded toolbar icon has no native accessibility
+label, so the fixture uses the unchanged icon position and leaves the semantic
+gap for the broader VoiceOver review. The complete cached-app journey passes
+with Accounts inserted before Tasks, Session, Files/Preview, Agent History,
+Desktop restart/recovery, Source Control, Review, and both isolation probes.
+
 The migration is rebased onto `origin/main` at `0404f27b3`. Current post-rebase
 validation passes 552 mobile files / 3,291 tests with 2 expected skips and
 3,770 root files / 39,212 tests with 62 expected skips. All project typechecks,
@@ -72,7 +81,7 @@ formatting, localization, and the max-lines ratchet pass.
 The independently verified React Native Web package is
 `9e5e807523e8b917fef68f221cc1fd2e1a16dbe07d7077e717238eed17003b52`:
 49 assets, 9,330,604 raw bytes, and 2,697,919 gzip bytes. The current mobile
-suite passes 553 files / 3,297 tests with 2 expected skips; all project
+suite passes 554 files / 3,299 tests with 2 expected skips; all project
 typechecks and repository-wide quality gates pass. A fresh root-suite attempt
 hit an unrelated 30-second timeout in
 `project-view-wrapper-source-context-boundary.test.ts` and was interrupted

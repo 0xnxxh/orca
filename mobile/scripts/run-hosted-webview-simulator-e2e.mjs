@@ -9,6 +9,10 @@ import { promisify } from 'node:util'
 import { startCdpServer } from 'inspect-webkit'
 import { resolveEmulatorOrcaCli } from './emulator-orca-cli-selection.mjs'
 import { parseHostedWebViewSimulatorE2eOptions } from './hosted-webview-simulator-e2e-options.mjs'
+import {
+  captureHostedAccountsParity,
+  captureNativeAccountsBaseline
+} from './hosted-ios-accounts-parity.mjs'
 import { startHostedIosEmulatorController } from './hosted-ios-emulator-controller.mjs'
 import {
   activateHostedWebViewControl,
@@ -103,7 +107,23 @@ async function main() {
     const nativeOnboarding = await evidenceStep('native onboarding', () =>
       completeHostedIosNativeOnboarding(emulator, expectedWorkspace, options.timeoutMs)
     )
+    const nativeAccounts =
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
+        ? null
+        : await evidenceStep('native Accounts baseline', () =>
+            captureNativeAccountsBaseline({
+              deviceUdid,
+              emulator,
+              expectedWorkspace,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs
+            })
+          )
     const nativeCoreRoutes =
+      options.accountsOnly ||
       options.securityOnly ||
       options.filesPreviewOnly ||
       options.nativeSettingsOnly ||
@@ -119,7 +139,10 @@ async function main() {
             })
           )
     const nativeFilesPreview =
-      options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
+      options.accountsOnly ||
+      options.securityOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
         ? null
         : await evidenceStep('native Files and Preview baselines', () =>
             captureNativeFilesPreviewBaselines({
@@ -131,6 +154,7 @@ async function main() {
             })
           )
     const nativeAgentHistory =
+      options.accountsOnly ||
       options.securityOnly ||
       options.filesPreviewOnly ||
       options.nativeSettingsOnly ||
@@ -150,12 +174,31 @@ async function main() {
     )
     const inspectorPort = await findAvailableLoopbackPort()
     inspector = await startCdpServer({ port: inspectorPort })
-    const workspaceDocument = await waitForVisibleHostedWebView({
+    let workspaceDocument = await waitForVisibleHostedWebView({
       discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
       expectedText: 'Orca Desktop',
       timeoutMs: options.timeoutMs
     })
+    const hostedAccounts =
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
+        ? null
+        : await evidenceStep('hosted Accounts parity', () =>
+            captureHostedAccountsParity({
+              deviceUdid,
+              discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
+              emulator,
+              nativeBaseline: nativeAccounts,
+              runtimeDirectory,
+              timeoutMs: options.timeoutMs,
+              workspaceDocument
+            })
+          )
+    workspaceDocument = hostedAccounts?.workspaceDocument ?? workspaceDocument
     const hostedCoreRoutes =
+      options.accountsOnly ||
       options.securityOnly ||
       options.filesPreviewOnly ||
       options.nativeSettingsOnly ||
@@ -175,7 +218,10 @@ async function main() {
           )
     const activeWorkspaceDocument = hostedCoreRoutes?.workspaceDocument ?? workspaceDocument
     const hostedFilesPreview =
-      options.securityOnly || options.nativeSettingsOnly || options.sourceControlOnly
+      options.accountsOnly ||
+      options.securityOnly ||
+      options.nativeSettingsOnly ||
+      options.sourceControlOnly
         ? null
         : await evidenceStep('hosted Files and Preview parity', () =>
             captureHostedFilesPreviewParity({
@@ -191,7 +237,10 @@ async function main() {
           )
     const parityWorkspaceDocument = hostedFilesPreview?.workspaceDocument ?? activeWorkspaceDocument
     const historyEvidence =
-      options.securityOnly || options.filesPreviewOnly || options.sourceControlOnly
+      options.accountsOnly ||
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.sourceControlOnly
         ? null
         : options.nativeSettingsOnly
           ? await evidenceStep('native Terminal Settings journey', () =>
@@ -216,7 +265,10 @@ async function main() {
               })
             )
     const sourceControlReview =
-      options.securityOnly || options.filesPreviewOnly || options.nativeSettingsOnly
+      options.accountsOnly ||
+      options.securityOnly ||
+      options.filesPreviewOnly ||
+      options.nativeSettingsOnly
         ? null
         : await evidenceStep('Source Control and Review journey', async () => {
             if (options.sourceControlOnly) {
@@ -249,7 +301,7 @@ async function main() {
             })
           })
     const securityDocument =
-      options.securityOnly || options.filesPreviewOnly
+      options.accountsOnly || options.securityOnly || options.filesPreviewOnly
         ? parityWorkspaceDocument
         : await waitForVisibleHostedWebView({
             discoveryUrl: `http://127.0.0.1:${inspectorPort}`,
@@ -288,6 +340,7 @@ async function main() {
           networkIsolation,
           navigationIsolation,
           nativeOnboarding,
+          accountsParity: hostedAccounts?.evidence ?? null,
           agentHistory: historyEvidence,
           coreRouteParity: hostedCoreRoutes?.evidence ?? null,
           filesPreviewParity: hostedFilesPreview?.evidence ?? null,
