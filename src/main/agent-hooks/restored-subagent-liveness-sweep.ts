@@ -34,7 +34,7 @@ export function sweepRestoredSubagentsWithoutLiveAgent(
       const ptyId =
         deps.getBoundPtyIdForPaneKey(paneKey) ?? deps.getPersistedPtyIdForPaneKey(paneKey)
       if (!ptyId) {
-        return false
+        return true
       }
       try {
         return deps.hasLiveLocalPty(ptyId) !== false

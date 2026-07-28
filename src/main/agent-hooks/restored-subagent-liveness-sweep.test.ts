@@ -197,6 +197,19 @@ describe('restored subagent liveness sweep', () => {
     }
   })
 
+  it('does nothing without an exact pane PTY binding', async () => {
+    const server = await restartWithInFlightSubagent()
+    const hasLiveLocalPty = vi.fn(() => false)
+    try {
+      expect(sweepWith(server, { hasLiveLocalPty })).toBe(0)
+
+      expect(hasLiveLocalPty).not.toHaveBeenCalled()
+      expect(paneStatus(server).state).toBe('working')
+    } finally {
+      server.stop()
+    }
+  })
+
   it('skips panes that have reported to this runtime', async () => {
     const server = await restartWithInFlightSubagent()
     try {

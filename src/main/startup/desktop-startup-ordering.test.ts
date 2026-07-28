@@ -27,6 +27,19 @@ describe('startup ordering', () => {
     expect(Math.max(rpcStartIndex, legacyRpcStartIndex)).toBeGreaterThanOrEqual(0)
   })
 
+  it('requires daemon authority before restored-subagent liveness runs', () => {
+    const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const sweepStart = source.indexOf('function reapRestoredSubagentsWithoutLiveAgent()')
+    const sweepEnd = source.indexOf('function startTerminalRuntimeStartupServices()', sweepStart)
+    const sweep = source.slice(sweepStart, sweepEnd)
+
+    expect(sweepStart).toBeGreaterThanOrEqual(0)
+    expect(sweepEnd).toBeGreaterThan(sweepStart)
+    expect(sweep).toContain('const provider = getDaemonProvider()')
+    expect(sweep).toContain('if (!provider) {')
+    expect(sweep).toContain('provider.hasPty?.(ptyId) ?? null')
+  })
+
   it('bounds WSL reconciliation before serve RPC while leaving desktop startup independent', () => {
     const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
     const barrierStart = source.indexOf("ipcMain.handle('app:awaitFirstWindowStartupServices'")

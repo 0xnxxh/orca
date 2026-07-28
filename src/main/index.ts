@@ -29,7 +29,12 @@ import {
   getSshPtyProvider,
   registerHeadlessPtyRuntime
 } from './ipc/pty'
-import { initDaemonPtyProvider, disconnectDaemon, shutdownDaemon } from './daemon/daemon-init'
+import {
+  initDaemonPtyProvider,
+  disconnectDaemon,
+  getDaemonProvider,
+  shutdownDaemon
+} from './daemon/daemon-init'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
@@ -749,7 +754,10 @@ function reapRestoredSubagentsWithoutLiveAgent(): void {
   if (!currentStore) {
     return
   }
-  const provider = getLocalPtyProvider()
+  const provider = getDaemonProvider()
+  if (!provider) {
+    return
+  }
   const persistedPtyIdByPaneKey = indexPersistedPaneKeyPtyIds(
     currentStore.getWorkspaceSession().terminalLayoutsByTabId ?? {}
   )
