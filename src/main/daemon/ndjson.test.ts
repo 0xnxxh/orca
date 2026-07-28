@@ -24,6 +24,14 @@ describe('encodeNdjson', () => {
     expect(encodeNdjson({ data: 'abc' }, emptyBytes + 3)).toBe('{"data":"abc"}\n')
     expect(() => encodeNdjson({ data: 'abcd' }, emptyBytes + 3)).toThrow(NdjsonLineTooLongError)
   })
+
+  // Why: the cap is UTF-8 bytes, not characters — a code-unit count would let a 4-byte emoji slip past.
+  it('measures multibyte payloads in UTF-8 bytes, not characters', () => {
+    const emptyBytes = Buffer.byteLength(JSON.stringify({ data: '' }), 'utf8')
+    expect(encodeNdjson({ data: '🐙' }, emptyBytes + 4)).toBe('{"data":"🐙"}\n')
+    expect(() => encodeNdjson({ data: '🐙' }, emptyBytes + 3)).toThrow(NdjsonLineTooLongError)
+    expect(() => encodeNdjson({ data: 'é' }, emptyBytes + 1)).toThrow(NdjsonLineTooLongError)
+  })
 })
 
 describe('createNdjsonParser', () => {

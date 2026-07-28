@@ -23,6 +23,19 @@ function makeWebRuntimeWorktree() {
   }
 }
 
+/** Activates and asserts a focusable tab appeared with no queued startup, returning its id. */
+function activateAndExpectNoRelaunch(
+  worktreeId: string,
+  opts?: Parameters<typeof activateAndRevealWorktree>[1]
+): string {
+  const result = activateAndRevealWorktree(worktreeId, opts)
+  const tabId = result === false ? undefined : (result.primaryTabId ?? undefined)
+
+  expect(tabId).toBeDefined()
+  expect(useAppStore.getState().pendingStartupByTabId[tabId!]).toBeUndefined()
+  return tabId!
+}
+
 afterEach(() => {
   delete (globalThis as { __ORCA_WEB_CLIENT__?: boolean }).__ORCA_WEB_CLIENT__
   vi.unstubAllGlobals()
@@ -78,12 +91,7 @@ describe('activateAndRevealWorktree', () => {
     seedEmptyActivatableWorktree(worktree)
 
     for (let cycle = 0; cycle < 3; cycle += 1) {
-      const result = activateAndRevealWorktree(worktree.id)
-      const state = useAppStore.getState()
-      const tabId = result === false ? undefined : (result.primaryTabId ?? undefined)
-
-      expect(tabId).toBeDefined()
-      expect(state.pendingStartupByTabId[tabId!]).toBeUndefined()
+      activateAndExpectNoRelaunch(worktree.id)
 
       // Return to zero tabs, the state that used to re-arm the relaunch. Sets state
       // directly rather than via closeTab — the sleeping-record purge is covered in
@@ -99,12 +107,7 @@ describe('activateAndRevealWorktree', () => {
 
     // The shape post-delete focus handoff produces. That caller passes no opts at all —
     // asserted directly in active-worktree-focus-after-delete.test.ts.
-    const result = activateAndRevealWorktree(target.id)
-    const state = useAppStore.getState()
-    const tabId = result === false ? undefined : (result.primaryTabId ?? undefined)
-
-    expect(tabId).toBeDefined()
-    expect(state.pendingStartupByTabId[tabId!]).toBeUndefined()
+    activateAndExpectNoRelaunch(target.id)
   })
 
   it('does not relaunch when activation opts carry no startup payload', () => {
@@ -114,12 +117,7 @@ describe('activateAndRevealWorktree', () => {
     // The opts shape CLI/relay navigation and notification clicks arrive with; those
     // callers are asserted in useIpcEvents.test.ts. The host's `didSpawnStartup` leg is
     // a main-process concern and is not reachable from here.
-    const result = activateAndRevealWorktree(worktree.id, { notifyHostRuntime: false })
-    const state = useAppStore.getState()
-    const tabId = result === false ? undefined : (result.primaryTabId ?? undefined)
-
-    expect(tabId).toBeDefined()
-    expect(state.pendingStartupByTabId[tabId!]).toBeUndefined()
+    activateAndExpectNoRelaunch(worktree.id, { notifyHostRuntime: false })
   })
 
   it('still queues an explicit startup supplied by the caller', () => {

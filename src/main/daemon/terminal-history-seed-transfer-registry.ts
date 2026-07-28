@@ -124,6 +124,9 @@ export class TerminalHistorySeedTransferRegistry {
   }
 
   private validateManifest(manifest: TerminalHistorySeedTransferManifest): void {
+    // Why codeUnits is compared to a byte cap: UTF-8 never encodes a UTF-16 code unit in under one byte,
+    // so codeUnits > maxRetainedBytes proves the payload cannot fit. Scaling up for multibyte would
+    // reject ASCII seeds that do fit; append() enforces the real byte budget.
     if (
       !Number.isInteger(manifest.chunkCount) ||
       manifest.chunkCount < 1 ||

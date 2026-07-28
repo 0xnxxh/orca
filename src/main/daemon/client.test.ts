@@ -586,5 +586,29 @@ describe('DaemonClient', () => {
       client = new DaemonClient({ socketPath, tokenPath })
       expect(client.notify('write', { sessionId: 'session-1', data: 'hello' })).toBe(false)
     })
+
+    it('reports a dropped delivery for an oversized payload without writing', async () => {
+      await startMockDaemon()
+      client = new DaemonClient({ socketPath, tokenPath })
+      await client.ensureConnected()
+      const internals = client as unknown as { controlSocket: Socket }
+      const writeSpy = vi.spyOn(internals.controlSocket, 'write')
+
+      expect(client.notify('write', { data: 'x'.repeat(NDJSON_MAX_LINE_BYTES) })).toBe(false)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('reports a dropped delivery when the socket write throws', async () => {
+      await startMockDaemon()
+      client = new DaemonClient({ socketPath, tokenPath })
+      await client.ensureConnected()
+      const internals = client as unknown as { controlSocket: Socket }
+      vi.spyOn(internals.controlSocket, 'write').mockImplementation(() => {
+        throw new Error('EPIPE')
+      })
+
+      // Swallowed, not rethrown: a dead socket must not tear down the caller.
+      expect(client.notify('write', { sessionId: 'session-1', data: 'hello' })).toBe(false)
+    })
   })
 })

@@ -448,54 +448,62 @@ export class DaemonPtyAdapter implements IPtyProvider {
       })
     }
 
-    let historySeedUnavailable = false
     const createOrAttach = async (
       historySeedSegments: readonly string[] | null
     ): Promise<CreateOrAttachResult> => {
-      if (!historySeedSegments || historySeedSegments.length === 0) {
-        return requestCreateOrAttach(undefined, undefined)
-      }
-      const metrics = measureTerminalHistorySeed(historySeedSegments)
-      if (metrics.codeUnits <= TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS) {
+      // Why scoped per call: the aliveness-probe retry re-runs this with its own seed, so a first-call
+      // delivery failure must not force historySeeded=false on a retry that seeded successfully.
+      let historySeedUnavailable = false
+      const deliverSeedAndCreate = async (): Promise<CreateOrAttachResult> => {
+        if (!historySeedSegments || historySeedSegments.length === 0) {
+          return requestCreateOrAttach(undefined, undefined)
+        }
+        const metrics = measureTerminalHistorySeed(historySeedSegments)
+        if (metrics.codeUnits <= TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS) {
+          try {
+            return await requestCreateOrAttach(historySeedSegments.join(''), undefined)
+          } catch (error) {
+            if (!(error instanceof NdjsonLineTooLongError)) {
+              throw error
+            }
+            historySeedUnavailable = true
+            return requestCreateOrAttach(undefined, undefined)
+          }
+        }
+        if (this.protocolVersion < HISTORY_SEED_TRANSFER_PROTOCOL_VERSION) {
+          historySeedUnavailable = true
+          return requestCreateOrAttach(undefined, undefined)
+        }
+
+        let transferId: string | undefined
         try {
-          return await requestCreateOrAttach(historySeedSegments.join(''), undefined)
+          const started = await this.client.request<{ transferId: string }>(
+            'startHistorySeedTransfer',
+            metrics
+          )
+          transferId = started.transferId
+          let index = 0
+          for (const data of iterateTerminalHistorySeedChunks(historySeedSegments)) {
+            await this.client.request('appendHistorySeedTransfer', { transferId, index, data })
+            index += 1
+          }
+          await this.client.request('finishHistorySeedTransfer', { transferId })
         } catch (error) {
-          if (!(error instanceof NdjsonLineTooLongError)) {
+          if (transferId) {
+            await this.client.request('abortHistorySeedTransfer', { transferId }).catch(() => {})
+          }
+          if (isDaemonGoneError(error)) {
             throw error
           }
           historySeedUnavailable = true
           return requestCreateOrAttach(undefined, undefined)
         }
+        return requestCreateOrAttach(undefined, transferId)
       }
-      if (this.protocolVersion < HISTORY_SEED_TRANSFER_PROTOCOL_VERSION) {
-        historySeedUnavailable = true
-        return requestCreateOrAttach(undefined, undefined)
-      }
-
-      let transferId: string | undefined
-      try {
-        const started = await this.client.request<{ transferId: string }>(
-          'startHistorySeedTransfer',
-          metrics
-        )
-        transferId = started.transferId
-        let index = 0
-        for (const data of iterateTerminalHistorySeedChunks(historySeedSegments)) {
-          await this.client.request('appendHistorySeedTransfer', { transferId, index, data })
-          index += 1
-        }
-        await this.client.request('finishHistorySeedTransfer', { transferId })
-      } catch (error) {
-        if (transferId) {
-          await this.client.request('abortHistorySeedTransfer', { transferId }).catch(() => {})
-        }
-        if (isDaemonGoneError(error)) {
-          throw error
-        }
-        historySeedUnavailable = true
-        return requestCreateOrAttach(undefined, undefined)
-      }
-      return requestCreateOrAttach(undefined, transferId)
+      const result = await deliverSeedAndCreate()
+      return historySeedUnavailable && result.historySeeded === undefined
+        ? { ...result, historySeeded: false }
+        : result
     }
 
     let historySeedSegments = restoreInfo ? getRecoveredHistorySeedSegments(restoreInfo) : null
@@ -524,9 +532,6 @@ export class DaemonPtyAdapter implements IPtyProvider {
       historySeedSegments = null
     }
     let result = await createOrAttach(historySeedSegments)
-    if (historySeedUnavailable && result.historySeeded === undefined) {
-      result = { ...result, historySeeded: false }
-    }
     await adoptSpawnResultSession(result)
     // Both ids: adoptSpawnResultSession may have rewritten sessionId to the claim owner.
     this.clearSessionAwaitingDaemonRecovery(requestedSessionId)
@@ -602,9 +607,6 @@ export class DaemonPtyAdapter implements IPtyProvider {
         effectiveCols = restoreInfo.cols
         effectiveRows = restoreInfo.rows
         result = await createOrAttach(historySeedSegments)
-        if (historySeedUnavailable && result.historySeeded === undefined) {
-          result = { ...result, historySeeded: false }
-        }
         await adoptSpawnResultSession(result)
         const exitedRetryResult = this.resultForExitBeforeSpawnReply(sessionId, result, operation)
         if (exitedRetryResult) {
