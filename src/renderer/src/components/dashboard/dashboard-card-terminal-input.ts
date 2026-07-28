@@ -39,7 +39,6 @@ function withHydratedSlices(
   state: Partial<DashboardCardTerminalInputState>
 ): DashboardCardTerminalInputState {
   return {
-    ...state,
     repos: state.repos ?? [],
     worktreesByRepo: state.worktreesByRepo ?? EMPTY_RECORD,
     detectedWorktreesByRepo: state.detectedWorktreesByRepo ?? EMPTY_RECORD,

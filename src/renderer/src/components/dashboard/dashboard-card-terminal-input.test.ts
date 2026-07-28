@@ -112,4 +112,17 @@ describe('resolveDashboardCardTerminalInput', () => {
       kittyKeyboardAdvertised: true
     })
   })
+
+  it('does not enumerate unrelated store slices per card', () => {
+    const state = stateWith() as Partial<DashboardCardTerminalInputState> & {
+      unrelatedSlice?: unknown
+    }
+    Object.defineProperty(state, 'unrelatedSlice', {
+      enumerable: true,
+      get: () => {
+        throw new Error('unrelated store slice was read')
+      }
+    })
+    expect(() => resolveDashboardCardTerminalInput(state, MAC_ARGS)).not.toThrow()
+  })
 })

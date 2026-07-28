@@ -32,14 +32,10 @@ export function useLiveDashboardSnapshot(): DashboardSnapshot {
   return useMemo(
     // Why: Date.now() is read inside the memo (not a dep) so stale-decay
     // recalculates whenever agentStatusEpoch ticks, matching useDashboardData.
-    () =>
-      buildDashboardSnapshot(
+    () => {
+      const state = useAppStore.getState()
+      return buildDashboardSnapshot(
         {
-          // Why: each card's host-input profile reads connection/runtime/agent
-          // slices this hook does not subscribe to (they would re-render the
-          // board on unrelated churn). Read them non-reactively — the profile
-          // re-derives on the next rebuild, which agent activity already drives.
-          ...useAppStore.getState(),
           repos,
           worktreesByRepo,
           tabsByWorktree,
@@ -51,10 +47,24 @@ export function useLiveDashboardSnapshot(): DashboardSnapshot {
           ptyIdsByTabId,
           runtimePaneTitlesByTabId,
           acknowledgedAgentsByPaneKey,
-          settings
+          settings,
+          detectedWorktreesByRepo: state.detectedWorktreesByRepo,
+          folderWorkspaces: state.folderWorkspaces,
+          projectGroups: state.projectGroups,
+          sshConnectionStates: state.sshConnectionStates,
+          sshStateByEnvironment: state.sshStateByEnvironment,
+          runtimeStatusByEnvironmentId: state.runtimeStatusByEnvironmentId,
+          restoredRuntimeHostIdByWorkspaceSessionKey:
+            state.restoredRuntimeHostIdByWorkspaceSessionKey,
+          runtimeEnvironments: state.runtimeEnvironments,
+          runtimeEnvironmentCatalogHydrated: state.runtimeEnvironmentCatalogHydrated,
+          removedRuntimeEnvironmentIds: state.removedRuntimeEnvironmentIds,
+          paneForegroundAgentByPaneKey: state.paneForegroundAgentByPaneKey,
+          agentLaunchConfigByPaneKey: state.agentLaunchConfigByPaneKey
         },
         Date.now()
-      ),
+      )
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       repos,
