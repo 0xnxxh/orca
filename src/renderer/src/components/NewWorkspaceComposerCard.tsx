@@ -699,7 +699,10 @@ export default function NewWorkspaceComposerCard({
             </p>
           ) : null}
           {shouldShowRunTargetPicker ? (
-            <div className="space-y-1">
+            // Why: Run on is nested in the Project block (so they share the
+            // error/empty states), which put it on the block's 4px rhythm. It's
+            // its own field, so give it the 16px other fields get.
+            <div className="space-y-1 pt-3">
               <label className="block min-w-0 truncate text-xs font-medium text-muted-foreground">
                 {translate('auto.components.NewWorkspaceComposerCard.runOn', 'Run on')}
               </label>

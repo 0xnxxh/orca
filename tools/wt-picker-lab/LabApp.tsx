@@ -7,6 +7,7 @@ import ComposerFrame from './ComposerFrame'
 import CompareGrid from './CompareGrid'
 import DialogFrame from './DialogFrame'
 import RunTargetFrame from './RunTargetFrame'
+import ComposerPairFrame from './ComposerPairFrame'
 import { ALL_VARIANTS } from './registry'
 import {
   LAB_LONG_NAME_PROJECT_OPTIONS,
@@ -47,6 +48,7 @@ export default function LabApp(): React.JSX.Element {
   const [mode, setMode] = React.useState<'single' | 'compare'>('single')
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [runTargetOpen, setRunTargetOpen] = React.useState(false)
+  const [pairOpen, setPairOpen] = React.useState(false)
   const [dataCase, setDataCase] = React.useState<DataCase>('full')
   const [activeId, setActiveId] = React.useState(ALL_VARIANTS[0]?.id ?? 'baseline')
   const [pickedId, setPickedId] = React.useState<string | null>(() =>
@@ -191,6 +193,11 @@ export default function LabApp(): React.JSX.Element {
                 </Button>
               ) : null}
               {mode === 'single' ? (
+                <Button type="button" variant="outline" size="sm" onClick={() => setPairOpen(true)}>
+                  Pair
+                </Button>
+              ) : null}
+              {mode === 'single' ? (
                 <Button
                   type="button"
                   variant={pickedId === active.id ? 'secondary' : 'default'}
@@ -247,6 +254,7 @@ export default function LabApp(): React.JSX.Element {
             )}
           </div>
         </main>
+        {pairOpen ? <ComposerPairFrame open={pairOpen} onOpenChange={setPairOpen} /> : null}
         {runTargetOpen ? (
           <RunTargetFrame open={runTargetOpen} onOpenChange={setRunTargetOpen} />
         ) : null}
