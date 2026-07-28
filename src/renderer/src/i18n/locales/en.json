@@ -13363,10 +13363,7 @@
           "f0202f3a89": "Daily",
           "57e83307d0": "Weekdays",
           "837d902bba": "Weekly",
-          "ddba78647e": "Custom cron",
-          "b08ccb4d06": "hourly",
-          "8cc026fd73": "weekly",
-          "c3e39e17cf": "custom"
+          "ddba78647e": "Custom cron"
         },
         "AutomationSessionField": {
           "f3c76dce51": "Reuse",
