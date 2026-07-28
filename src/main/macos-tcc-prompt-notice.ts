@@ -20,6 +20,10 @@ export type TccPromptNoticePayload = {
   promptCount: number
 }
 
+export type TccPromptNoticeClaim = TccPromptNoticePayload & {
+  claimId: number
+}
+
 type TccPromptTally = {
   promptCount: number
   notified: boolean
@@ -31,6 +35,8 @@ const EMPTY_TALLY: TccPromptTally = { promptCount: 0, notified: false, dismissed
 let tally: TccPromptTally = { ...EMPTY_TALLY }
 let mainWindowRef: BrowserWindow | null = null
 let watch: MacosTccPromptWatch | null = null
+let nextClaimId = 0
+let pendingClaim: { claimId: number; ownerToken: number } | null = null
 
 function tallyPath(): string {
   return join(getCanonicalUserDataPath(), 'macos-tcc-prompt-tally.json')
@@ -73,20 +79,55 @@ function recordPrompt(): TccPromptNoticePayload | null {
   return { promptCount: tally.promptCount }
 }
 
-export function consumePendingTccPromptNotice(): TccPromptNoticePayload | null {
-  if (tally.dismissed || tally.notified || tally.promptCount < TCC_PROMPT_NOTICE_THRESHOLD) {
+export function consumePendingTccPromptNotice(ownerToken: number): TccPromptNoticeClaim | null {
+  if (
+    pendingClaim ||
+    tally.dismissed ||
+    tally.notified ||
+    tally.promptCount < TCC_PROMPT_NOTICE_THRESHOLD
+  ) {
     return null
   }
+  const claimId = ++nextClaimId
+  pendingClaim = { claimId, ownerToken }
+  return { claimId, promptCount: tally.promptCount }
+}
+
+export function acknowledgePendingTccPromptNotice(ownerToken: number, claimId: number): void {
+  if (
+    pendingClaim?.ownerToken !== ownerToken ||
+    pendingClaim.claimId !== claimId ||
+    tally.dismissed ||
+    tally.notified
+  ) {
+    return
+  }
+  pendingClaim = null
   tally = { ...tally, notified: true }
   saveTally()
-  return { promptCount: tally.promptCount }
+}
+
+export function releasePendingTccPromptNotice(ownerToken: number): void {
+  if (pendingClaim?.ownerToken === ownerToken) {
+    pendingClaim = null
+  }
 }
 
 /** Permanently stops the notice for this user; the watcher shuts down with it. */
 export function dismissTccPromptNotice(): void {
+  pendingClaim = null
   tally = { ...tally, dismissed: true, notified: true }
   saveTally()
   stopTccPromptNotice()
+}
+
+function trackMainWindow(mainWindow: BrowserWindow): void {
+  mainWindowRef = mainWindow
+  mainWindow.once('closed', () => {
+    if (mainWindowRef === mainWindow) {
+      mainWindowRef = null
+    }
+  })
 }
 
 export function initTccPromptNotice(mainWindow: BrowserWindow): void {
@@ -94,20 +135,20 @@ export function initTccPromptNotice(mainWindow: BrowserWindow): void {
     return
   }
   if (watch) {
-    mainWindowRef = mainWindow
+    trackMainWindow(mainWindow)
     return
   }
   tally = loadTally()
   if (tally.dismissed || tally.notified) {
     return
   }
-  mainWindowRef = mainWindow
   if (tally.promptCount >= TCC_PROMPT_NOTICE_THRESHOLD) {
     mainWindow.webContents.send(TCC_PROMPT_NOTICE_CHANNEL, {
       promptCount: tally.promptCount
     })
     return
   }
+  trackMainWindow(mainWindow)
   watch = new MacosTccPromptWatch({
     onPrompt: () => {
       const payload = recordPrompt()
@@ -135,4 +176,6 @@ export function resetTccPromptNoticeForTests(): void {
   tally = { ...EMPTY_TALLY }
   watch = null
   mainWindowRef = null
+  nextClaimId = 0
+  pendingClaim = null
 }

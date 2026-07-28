@@ -9,7 +9,12 @@ import type {
   UpdateCheckOptions,
   WorktreeStartupLaunch
 } from '../../shared/types'
-import { consumePendingTccPromptNotice, dismissTccPromptNotice } from '../macos-tcc-prompt-notice'
+import {
+  acknowledgePendingTccPromptNotice,
+  consumePendingTccPromptNotice,
+  dismissTccPromptNotice,
+  releasePendingTccPromptNotice
+} from '../macos-tcc-prompt-notice'
 import { registerRepoHandlers } from '../ipc/repos'
 import { registerWorktreeHandlers } from '../ipc/worktrees'
 import { registerWorkspaceCleanupHandlers } from '../ipc/workspace-cleanup'
@@ -208,17 +213,27 @@ export function attachMainWindowServices(
 
 function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
   const handlerToken = ++tccPromptHandlerTokenCounter
+  if (activeTccPromptHandlerToken !== null) {
+    releasePendingTccPromptNotice(activeTccPromptHandlerToken)
+  }
   activeTccPromptHandlerToken = handlerToken
   const consumeChannel = 'macosTccPrompts:consumePending'
+  const acknowledgeChannel = 'macosTccPrompts:acknowledgePending'
   const dismissChannel = 'macosTccPrompts:dismiss'
   ipcMain.removeHandler(consumeChannel)
+  ipcMain.removeHandler(acknowledgeChannel)
   ipcMain.removeHandler(dismissChannel)
   const mainWebContents = mainWindow.webContents
   const ownsNotice = (event: IpcMainInvokeEvent): boolean =>
     !mainWindow.isDestroyed() && !mainWebContents.isDestroyed() && event.sender === mainWebContents
   ipcMain.handle(consumeChannel, (event) =>
-    ownsNotice(event) ? consumePendingTccPromptNotice() : null
+    ownsNotice(event) ? consumePendingTccPromptNotice(handlerToken) : null
   )
+  ipcMain.handle(acknowledgeChannel, (event, claimId: number) => {
+    if (ownsNotice(event) && Number.isSafeInteger(claimId)) {
+      acknowledgePendingTccPromptNotice(handlerToken, claimId)
+    }
+  })
   ipcMain.handle(dismissChannel, (event) => {
     if (ownsNotice(event)) {
       dismissTccPromptNotice()
@@ -229,7 +244,9 @@ function registerTccPromptNoticeHandlers(mainWindow: BrowserWindow): void {
     if (activeTccPromptHandlerToken !== handlerToken) {
       return
     }
+    releasePendingTccPromptNotice(handlerToken)
     ipcMain.removeHandler(consumeChannel)
+    ipcMain.removeHandler(acknowledgeChannel)
     ipcMain.removeHandler(dismissChannel)
     activeTccPromptHandlerToken = null
   })

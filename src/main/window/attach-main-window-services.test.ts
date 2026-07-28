@@ -18,8 +18,10 @@ const {
   setupAutoUpdaterMock,
   browserManagerUnregisterAllMock,
   runWorktreeChangeInvalidatorsMock,
+  acknowledgePendingTccPromptNoticeMock,
   consumePendingTccPromptNoticeMock,
-  dismissTccPromptNoticeMock
+  dismissTccPromptNoticeMock,
+  releasePendingTccPromptNoticeMock
 } = vi.hoisted(() => ({
   onMock: vi.fn(),
   removeAllListenersMock: vi.fn(),
@@ -37,8 +39,10 @@ const {
   setupAutoUpdaterMock: vi.fn(),
   browserManagerUnregisterAllMock: vi.fn(),
   runWorktreeChangeInvalidatorsMock: vi.fn(),
+  acknowledgePendingTccPromptNoticeMock: vi.fn(),
   consumePendingTccPromptNoticeMock: vi.fn(),
-  dismissTccPromptNoticeMock: vi.fn()
+  dismissTccPromptNoticeMock: vi.fn(),
+  releasePendingTccPromptNoticeMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -97,8 +101,10 @@ vi.mock('../updater', () => ({
 }))
 
 vi.mock('../macos-tcc-prompt-notice', () => ({
+  acknowledgePendingTccPromptNotice: acknowledgePendingTccPromptNoticeMock,
   consumePendingTccPromptNotice: consumePendingTccPromptNoticeMock,
-  dismissTccPromptNotice: dismissTccPromptNoticeMock
+  dismissTccPromptNotice: dismissTccPromptNoticeMock,
+  releasePendingTccPromptNotice: releasePendingTccPromptNoticeMock
 }))
 
 import { attachMainWindowServices } from './attach-main-window-services'
@@ -204,8 +210,10 @@ describe('attachMainWindowServices', () => {
     hydrateLocalPtyRegistryAtBootMock.mockReset()
     setupAutoUpdaterMock.mockReset()
     browserManagerUnregisterAllMock.mockReset()
+    acknowledgePendingTccPromptNoticeMock.mockReset()
     consumePendingTccPromptNoticeMock.mockReset()
     dismissTccPromptNoticeMock.mockReset()
+    releasePendingTccPromptNoticeMock.mockReset()
     systemPreferencesAskForMediaAccessMock.mockResolvedValue(true)
     systemPreferencesGetMediaAccessStatusMock.mockReturnValue('granted')
   })
@@ -302,17 +310,23 @@ describe('attachMainWindowServices', () => {
 
   it('replaces the TCC handlers when the main window is reattached', () => {
     attachMainWindowServices(createMainWindow() as never, createStore(), createRuntime() as never)
+    const releaseCount = releasePendingTccPromptNoticeMock.mock.calls.length
     attachMainWindowServices(createMainWindow() as never, createStore(), createRuntime() as never)
 
-    for (const channel of ['macosTccPrompts:consumePending', 'macosTccPrompts:dismiss']) {
+    for (const channel of [
+      'macosTccPrompts:consumePending',
+      'macosTccPrompts:acknowledgePending',
+      'macosTccPrompts:dismiss'
+    ]) {
       expect(removeHandlerMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
       expect(handleMock.mock.calls.filter(([value]) => value === channel)).toHaveLength(2)
     }
+    expect(releasePendingTccPromptNoticeMock).toHaveBeenCalledTimes(releaseCount + 1)
   })
 
   it('lets only the current main renderer consume the pending TCC notice', () => {
     const mainWindow = createMainWindow()
-    consumePendingTccPromptNoticeMock.mockReturnValue({ promptCount: 3 })
+    consumePendingTccPromptNoticeMock.mockReturnValue({ claimId: 1, promptCount: 3 })
     attachMainWindowServices(mainWindow as never, createStore(), createRuntime() as never)
 
     const handler = handleMock.mock.calls.find(
@@ -320,7 +334,23 @@ describe('attachMainWindowServices', () => {
     )?.[1]
     expect(handler?.({ sender: { id: 999 } })).toBeNull()
     expect(consumePendingTccPromptNoticeMock).not.toHaveBeenCalled()
-    expect(handler?.({ sender: mainWindow.webContents })).toEqual({ promptCount: 3 })
+    expect(handler?.({ sender: mainWindow.webContents })).toEqual({ claimId: 1, promptCount: 3 })
+    expect(consumePendingTccPromptNoticeMock).toHaveBeenCalledWith(expect.any(Number))
+  })
+
+  it('acknowledges a claim only from the current main renderer', () => {
+    const mainWindow = createMainWindow()
+    attachMainWindowServices(mainWindow as never, createStore(), createRuntime() as never)
+
+    const handler = handleMock.mock.calls.find(
+      ([channel]) => channel === 'macosTccPrompts:acknowledgePending'
+    )?.[1]
+    handler?.({ sender: { id: 999 } }, 7)
+    handler?.({ sender: mainWindow.webContents }, Number.NaN)
+    expect(acknowledgePendingTccPromptNoticeMock).not.toHaveBeenCalled()
+
+    handler?.({ sender: mainWindow.webContents }, 7)
+    expect(acknowledgePendingTccPromptNoticeMock).toHaveBeenCalledWith(expect.any(Number), 7)
   })
 
   it('removes the TCC handlers when the owning window closes', () => {
@@ -328,12 +358,15 @@ describe('attachMainWindowServices', () => {
     attachMainWindowServices(mainWindow as never, createStore(), createRuntime() as never)
 
     removeHandlerMock.mockClear()
+    releasePendingTccPromptNoticeMock.mockClear()
     for (const handler of getClosedHandlers(mainWindow.on)) {
       handler()
     }
 
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:consumePending')
+    expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:acknowledgePending')
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:dismiss')
+    expect(releasePendingTccPromptNoticeMock).toHaveBeenCalledOnce()
   })
 
   it('keeps newer TCC handlers when an older window closes late', () => {
@@ -348,12 +381,14 @@ describe('attachMainWindowServices', () => {
       handler()
     }
     expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:consumePending')
+    expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:acknowledgePending')
     expect(removeHandlerMock).not.toHaveBeenCalledWith('macosTccPrompts:dismiss')
 
     for (const handler of getClosedHandlers(newWindow.on)) {
       handler()
     }
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:consumePending')
+    expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:acknowledgePending')
     expect(removeHandlerMock).toHaveBeenCalledWith('macosTccPrompts:dismiss')
   })
 

@@ -1,8 +1,11 @@
 export type TccPromptNoticePayload = { promptCount: number }
 
+type TccPromptNoticeClaim = TccPromptNoticePayload & { claimId?: number }
+
 type MacosTccPromptNoticeApi = {
   onThreshold?: (callback: (payload: TccPromptNoticePayload) => void) => () => void
-  consumePending?: () => Promise<TccPromptNoticePayload | null>
+  consumePending?: () => Promise<TccPromptNoticeClaim | null>
+  acknowledgePending?: (claimId: number) => Promise<void>
 }
 
 export function subscribeToMacosTccPromptNotice(
@@ -16,18 +19,21 @@ export function subscribeToMacosTccPromptNotice(
       }
       return
     }
-    void api
-      .consumePending()
-      .then((pending) => {
+    void api.consumePending().then(
+      (pending) => {
         if (pending) {
-          onNotice(pending)
+          onNotice({ promptCount: pending.promptCount })
+          if (typeof pending.claimId === 'number') {
+            void api.acknowledgePending?.(pending.claimId).catch(() => {})
+          }
         }
-      })
-      .catch(() => {
+      },
+      () => {
         if (fallback) {
           onNotice(fallback)
         }
-      })
+      }
+    )
   }
 
   const unsubscribe = api?.onThreshold?.((payload) => consume(payload)) ?? (() => {})

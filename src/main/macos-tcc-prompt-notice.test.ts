@@ -30,10 +30,12 @@ vi.mock('node:fs', async (importOriginal) => ({
 
 const {
   TCC_PROMPT_NOTICE_THRESHOLD,
+  acknowledgePendingTccPromptNotice,
   consumePendingTccPromptNotice,
   dismissTccPromptNotice,
   handleTccPromptForTests,
   initTccPromptNotice,
+  releasePendingTccPromptNotice,
   resetTccPromptNoticeForTests
 } = await import('./macos-tcc-prompt-notice')
 
@@ -88,17 +90,54 @@ describe('tcc prompt notice threshold', () => {
     expect(writeFileAtomically).not.toHaveBeenCalled()
   })
 
-  it('retains the threshold until the renderer consumes it', () => {
+  it('retains the threshold until the renderer acknowledges its claim', () => {
+    for (let i = 0; i < TCC_PROMPT_NOTICE_THRESHOLD; i += 1) {
+      handleTccPromptForTests()
+    }
+    writeFileAtomically.mockClear()
+
+    const claim = consumePendingTccPromptNotice(1)
+    expect(claim).toEqual({
+      claimId: 1,
+      promptCount: TCC_PROMPT_NOTICE_THRESHOLD
+    })
+    expect(consumePendingTccPromptNotice(2)).toBeNull()
+    expect(writeFileAtomically).not.toHaveBeenCalled()
+    acknowledgePendingTccPromptNotice(1, claim!.claimId)
+    expect(consumePendingTccPromptNotice(2)).toBeNull()
+    expect(writeFileAtomically).toHaveBeenCalledOnce()
+    const [, contents] = writeFileAtomically.mock.calls.at(-1) as [string, string]
+    expect(JSON.parse(contents)).toMatchObject({ promptCount: 3, notified: true })
+  })
+
+  it('releases an unacknowledged claim for a replacement renderer', () => {
     for (let i = 0; i < TCC_PROMPT_NOTICE_THRESHOLD; i += 1) {
       handleTccPromptForTests()
     }
 
-    expect(consumePendingTccPromptNotice()).toEqual({
-      promptCount: TCC_PROMPT_NOTICE_THRESHOLD
-    })
-    expect(consumePendingTccPromptNotice()).toBeNull()
+    const oldClaim = consumePendingTccPromptNotice(1)
+    releasePendingTccPromptNotice(1)
+    const replacementClaim = consumePendingTccPromptNotice(2)
+
+    expect(oldClaim).toEqual({ claimId: 1, promptCount: 3 })
+    expect(replacementClaim).toEqual({ claimId: 2, promptCount: 3 })
+    acknowledgePendingTccPromptNotice(1, oldClaim!.claimId)
+    releasePendingTccPromptNotice(2)
+    expect(consumePendingTccPromptNotice(3)).toEqual({ claimId: 3, promptCount: 3 })
+  })
+
+  it('invalidates an outstanding claim when the user dismisses the notice', () => {
+    for (let i = 0; i < TCC_PROMPT_NOTICE_THRESHOLD; i += 1) {
+      handleTccPromptForTests()
+    }
+    const claim = consumePendingTccPromptNotice(1)
+
+    dismissTccPromptNotice()
+    acknowledgePendingTccPromptNotice(1, claim!.claimId)
+
+    expect(consumePendingTccPromptNotice(2)).toBeNull()
     const [, contents] = writeFileAtomically.mock.calls.at(-1) as [string, string]
-    expect(JSON.parse(contents)).toMatchObject({ promptCount: 3, notified: true })
+    expect(JSON.parse(contents)).toMatchObject({ dismissed: true, notified: true })
   })
 
   it('routes a later prompt to the replacement main window', () => {
@@ -134,7 +173,7 @@ describe('tcc prompt notice threshold', () => {
       }).not.toThrow()
       expect(mainWindow.webContents.send).not.toHaveBeenCalled()
       expect(watchStop).toHaveBeenCalledTimes(1)
-      expect(consumePendingTccPromptNotice()).toEqual({ promptCount: 3 })
+      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 3 })
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }
@@ -154,7 +193,29 @@ describe('tcc prompt notice threshold', () => {
       expect(mainWindow.webContents.send).toHaveBeenCalledWith('macosTccPrompts:threshold', {
         promptCount: 3
       })
-      expect(consumePendingTccPromptNotice()).toEqual({ promptCount: 3 })
+      expect(mainWindow.once).not.toHaveBeenCalled()
+      expect(consumePendingTccPromptNotice(1)).toEqual({ claimId: 1, promptCount: 3 })
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
+  it('does not let a late old-window close clear the replacement target', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const oldWindow = createWindowStub()
+    const newWindow = createWindowStub()
+    try {
+      initTccPromptNotice(oldWindow as never)
+      const oldClosed = oldWindow.once.mock.calls.find(([event]) => event === 'closed')?.[1]
+      initTccPromptNotice(newWindow as never)
+      oldClosed?.()
+      for (let i = 0; i < TCC_PROMPT_NOTICE_THRESHOLD; i += 1) {
+        watchOptions[0].onPrompt()
+      }
+
+      expect(oldWindow.webContents.send).not.toHaveBeenCalled()
+      expect(newWindow.webContents.send).toHaveBeenCalledTimes(1)
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }
@@ -164,6 +225,7 @@ describe('tcc prompt notice threshold', () => {
 function createWindowStub() {
   return {
     isDestroyed: vi.fn(() => false),
+    once: vi.fn(),
     webContents: {
       isDestroyed: vi.fn(() => false),
       send: vi.fn()

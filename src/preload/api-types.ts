@@ -2430,7 +2430,8 @@ export type PreloadApi = {
   macosTccPrompts: {
     /** Fires once macOS has raised its Nth consent dialog naming Orca (#9756). */
     onThreshold: (callback: (payload: { promptCount: number }) => void) => () => void
-    consumePending: () => Promise<{ promptCount: number } | null>
+    consumePending: () => Promise<{ claimId: number; promptCount: number } | null>
+    acknowledgePending: (claimId: number) => Promise<void>
     dismiss: () => Promise<void>
   }
   developerPermissions: {
