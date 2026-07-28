@@ -10,11 +10,13 @@ class MobileWebExactJsonTest {
     val valid = listOf(
       "{}",
       """{"a":1,"b":[true,false,null,{"c":"\u0063"}]}""",
-      """{"a":-1.25e+2}"""
+      """{"a":-1.25e+2}""",
+      """{"emoji":"\uD83D\uDE00"}""",
+      """{"emoji":"😀"}""",
+      nestedObject(32)
     )
     valid.forEach { assertTrue(it, isExactMobileWebJsonDocument(it)) }
 
-    val deeplyNested = """{"a":""".repeat(34) + "0" + "}".repeat(34)
     val invalid = listOf(
       "",
       """{"a":1} trailing""",
@@ -27,8 +29,15 @@ class MobileWebExactJsonTest {
       """{"a":1٢}""",
       """{"a":1,}""",
       """{"a":"\x"}""",
-      deeplyNested
+      """{"a":"\uD800"}""",
+      """{"a":"\uDC00"}""",
+      """{"a":"\uD800\uD800"}""",
+      """{"\uD800":1}""",
+      nestedObject(33)
     )
     invalid.forEach { assertFalse(it, isExactMobileWebJsonDocument(it)) }
   }
+
+  private fun nestedObject(depth: Int): String =
+    """{"a":""".repeat(depth) + "0" + "}".repeat(depth)
 }

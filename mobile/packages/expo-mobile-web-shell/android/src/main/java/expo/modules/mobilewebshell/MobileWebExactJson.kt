@@ -72,19 +72,39 @@ private class MobileWebExactJsonParser(
       val character = value[index++]
       if (character == '"') return value.substring(start, index)
       if (character.code < 0x20) return null
+      if (character.isHighSurrogate()) {
+        if (index >= value.length || !value[index].isLowSurrogate()) return null
+        index += 1
+        continue
+      }
+      if (character.isLowSurrogate()) return null
       if (character != '\\') continue
       if (index >= value.length) return null
       val escaped = value[index++]
       if (escaped == 'u') {
-        if (index + 4 > value.length) return null
-        repeat(4) {
-          if (!value[index++].isHexDigit()) return null
+        val codeUnit = parseUnicodeCodeUnit() ?: return null
+        if (codeUnit in 0xD800..0xDBFF) {
+          if (!consume('\\') || !consume('u')) return null
+          val lowSurrogate = parseUnicodeCodeUnit() ?: return null
+          if (lowSurrogate !in 0xDC00..0xDFFF) return null
+        } else if (codeUnit in 0xDC00..0xDFFF) {
+          return null
         }
       } else if (escaped !in "\"\\/bfnrt") {
         return null
       }
     }
     return null
+  }
+
+  private fun parseUnicodeCodeUnit(): Int? {
+    if (index + 4 > value.length) return null
+    var codeUnit = 0
+    repeat(4) {
+      val digit = value[index++].hexValue() ?: return null
+      codeUnit = (codeUnit shl 4) or digit
+    }
+    return codeUnit
   }
 
   private fun parseNumber(): Boolean {
@@ -137,8 +157,16 @@ private class MobileWebExactJsonParser(
     null
   }
 
-  private fun Char.isHexDigit(): Boolean =
-    isJsonDigit() || this in 'A'..'F' || this in 'a'..'f'
+  private fun Char.hexValue(): Int? = when (this) {
+    in '0'..'9' -> code - '0'.code
+    in 'A'..'F' -> code - 'A'.code + 10
+    in 'a'..'f' -> code - 'a'.code + 10
+    else -> null
+  }
 
   private fun Char.isJsonDigit(): Boolean = this in '0'..'9'
+
+  private fun Char.isHighSurrogate(): Boolean = code in 0xD800..0xDBFF
+
+  private fun Char.isLowSurrogate(): Boolean = code in 0xDC00..0xDFFF
 }

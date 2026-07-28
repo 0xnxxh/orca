@@ -2844,6 +2844,12 @@ error. Activation uses an atomic sibling replacement, so an in-cache activation
 file link is replaced rather than followed and its external target remains
 unchanged.
 
+Persisted manifest and activation parsing also applies one bounded exact JSON
+grammar before Foundation or `org.json`. It rejects duplicate decoded keys,
+trailing tokens, malformed numbers/escapes, nesting beyond 32 levels, and
+unpaired Unicode surrogate escapes, avoiding platform-specific coercion or
+Unicode behavior before schema validation.
+
 ### Native-shell rollback
 
 A defect in the asset origin, credential broker, native bridge, audio/picker

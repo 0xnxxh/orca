@@ -531,7 +531,9 @@ manifest, activation, or executable asset bytes are consumed. Primary and
 canonical manifests plus activation metadata also pass a bounded exact JSON
 grammar before native parsing. Duplicate decoded keys, trailing tokens,
 malformed scalars, and nesting beyond 32 levels fail consistently on both
-platforms. Cache mutation faults additionally require every destructive
+platforms. Escaped Unicode surrogate pairs and raw supplementary characters
+pass, while unpaired surrogate escapes in keys or values fail before platform
+JSON parsing. Cache mutation faults additionally require every destructive
 Android store path to delete only lexical descendants without following
 symlinks; quota traversal ignores linked trees. Direct, nested, and
 live-stage-replacement links plus host-subtree and dangling host links preserve

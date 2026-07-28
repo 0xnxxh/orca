@@ -6,13 +6,12 @@ enum MobileWebExactJsonTests {
       "{}",
       #"{"a":1,"b":[true,false,null,{"c":"\u0063"}]}"#,
       #"{"a":-1.25e+2}"#,
+      #"{"emoji":"\uD83D\uDE00"}"#,
+      #"{"emoji":"😀"}"#,
+      nestedObject(depth: 32),
     ]
     precondition(valid.allSatisfy(isExactMobileWebJsonDocument))
 
-    let deeplyNested =
-      String(repeating: #"{"a":"#, count: 34)
-      + "0"
-      + String(repeating: "}", count: 34)
     let invalid = [
       "",
       #"{"a":1} trailing"#,
@@ -25,8 +24,18 @@ enum MobileWebExactJsonTests {
       #"{"a":1٢}"#,
       #"{"a":1,}"#,
       #"{"a":"\x"}"#,
-      deeplyNested,
+      #"{"a":"\uD800"}"#,
+      #"{"a":"\uDC00"}"#,
+      #"{"a":"\uD800\uD800"}"#,
+      #"{"\uD800":1}"#,
+      nestedObject(depth: 33),
     ]
     precondition(invalid.allSatisfy { !isExactMobileWebJsonDocument($0) })
+  }
+
+  private static func nestedObject(depth: Int) -> String {
+    String(repeating: #"{"a":"#, count: depth)
+      + "0"
+      + String(repeating: "}", count: depth)
   }
 }

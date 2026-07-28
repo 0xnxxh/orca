@@ -241,6 +241,14 @@ in-cache link rather than modifying its external target.
 The 569-file mobile suite, mobile/mobile-web typechecks and lints, reliability,
 max-lines, focused formatting, diff hygiene, and unchanged `b17ead7a…` package
 verification also pass after the write-boundary repair.
+The exact native JSON grammar now validates Unicode surrogate pairing before
+Foundation or `org.json` parsing. Escaped pairs and raw supplementary
+characters pass, while lone, reversed, or high/high surrogate escapes fail in
+keys and values. Mirrored corpora also prove the exact 32-level acceptance and
+33-level rejection boundary.
+The 569-file mobile suite, typechecks, lints, reliability, max-lines, focused
+formatting, diff hygiene, and unchanged `b17ead7a…` package verification remain
+green after the parser repair.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -303,9 +311,10 @@ cross-scope races, privacy/authorization audit, and independent review.
       symlink traversal without touching external sentinels; Android quota
       accounting ignores linked external bytes. Staged-asset and activation
       writes also reject linked parents, while atomic activation replacement
-      preserves an external file behind an in-cache link. A fresh exact-app
-      rerun, further generated mutation, concurrent cache mutation, and the
-      other listed boundaries remain.
+      preserves an external file behind an in-cache link. Exact JSON now rejects
+      unpaired Unicode surrogate escapes and has explicit depth-edge coverage.
+      A fresh exact-app rerun, further generated mutation, concurrent cache
+      mutation, and the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,

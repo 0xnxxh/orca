@@ -88,16 +88,35 @@ private struct MobileWebExactJsonParser {
       let escaped = bytes[index]
       index += 1
       if escaped == 0x75 {
-        guard index + 4 <= bytes.count else { return nil }
-        for byte in bytes[index..<(index + 4)] where !isHexDigit(byte) {
+        guard let codeUnit = parseUnicodeCodeUnit() else { return nil }
+        if (0xD800...0xDBFF).contains(codeUnit) {
+          guard
+            consumeByte(0x5C),
+            consumeByte(0x75),
+            let lowSurrogate = parseUnicodeCodeUnit(),
+            (0xDC00...0xDFFF).contains(lowSurrogate)
+          else {
+            return nil
+          }
+        } else if (0xDC00...0xDFFF).contains(codeUnit) {
           return nil
         }
-        index += 4
       } else if ![0x22, 0x5C, 0x2F, 0x62, 0x66, 0x6E, 0x72, 0x74].contains(escaped) {
         return nil
       }
     }
     return nil
+  }
+
+  private mutating func parseUnicodeCodeUnit() -> UInt16? {
+    guard index + 4 <= bytes.count else { return nil }
+    var codeUnit: UInt16 = 0
+    for byte in bytes[index..<(index + 4)] {
+      guard let digit = hexValue(byte) else { return nil }
+      codeUnit = (codeUnit << 4) | UInt16(digit)
+    }
+    index += 4
+    return codeUnit
   }
 
   private mutating func parseNumber() -> Bool {
@@ -171,7 +190,10 @@ private struct MobileWebExactJsonParser {
     (0x31...0x39).contains(byte)
   }
 
-  private func isHexDigit(_ byte: UInt8) -> Bool {
-    isDigit(byte) || (0x41...0x46).contains(byte) || (0x61...0x66).contains(byte)
+  private func hexValue(_ byte: UInt8) -> UInt8? {
+    if (0x30...0x39).contains(byte) { return byte - 0x30 }
+    if (0x41...0x46).contains(byte) { return byte - 0x41 + 10 }
+    if (0x61...0x66).contains(byte) { return byte - 0x61 + 10 }
+    return nil
   }
 }
