@@ -72,6 +72,15 @@ export function seedEmptyActivatableWorktree(
     revealWorktreeInSidebar
   })
 
+  // Why: orphan terminals and reconnectable PTYs also feed renderableTabCount, so
+  // assert the premise — drift here would make the regression tests pass blind.
+  const { renderableTabCount } = useAppStore.getState().reconcileWorktreeTabModel(worktree.id)
+  if (renderableTabCount !== 0) {
+    throw new Error(
+      `seedEmptyActivatableWorktree: expected 0 renderable tabs, got ${renderableTabCount}`
+    )
+  }
+
   return { revealWorktreeInSidebar }
 }
 

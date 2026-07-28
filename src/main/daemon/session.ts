@@ -80,7 +80,7 @@ export type SessionOptions = {
   subprocess: SubprocessHandle
   shellReadySupported: boolean
   shellReadyTimeoutMs?: number
-  historySeed?: string
+  historySeedChunks?: readonly string[]
   scrollback?: number
   wslDistro?: string
   // Fired once the session reaches a terminal state so the owner (TerminalHost) can reap it; without
@@ -147,7 +147,9 @@ export class Session {
     })
     // Why: seed recovery must precede listener registration; shells can emit their prompt synchronously once onData subscribes.
     this._historySeeded =
-      opts.historySeed === undefined ? undefined : this.emulator.writeSync(opts.historySeed)
+      opts.historySeedChunks === undefined
+        ? undefined
+        : opts.historySeedChunks.every((chunk) => this.emulator.writeSync(chunk))
 
     if (opts.shellReadySupported) {
       this._shellState = 'pending'

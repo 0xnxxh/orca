@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { DaemonClient } from './client'
-import { encodeNdjson } from './ndjson'
+import { encodeNdjson, NDJSON_MAX_LINE_BYTES, NdjsonLineTooLongError } from './ndjson'
 import type { HelloMessage, DaemonRequest, DaemonEvent } from './types'
 import { getDaemonSocketPath } from './daemon-spawner'
 
@@ -328,6 +328,30 @@ describe('DaemonClient', () => {
   })
 
   describe('RPC', () => {
+    it('rejects an oversized request before installing a timer or writing', async () => {
+      await startMockDaemon()
+      client = new DaemonClient({ socketPath, tokenPath })
+      await client.ensureConnected()
+      const internals = client as unknown as {
+        controlSocket: Socket
+        pendingRequests: Map<string, unknown>
+      }
+      const writeSpy = vi.spyOn(internals.controlSocket, 'write')
+      const timerSpy = vi.spyOn(globalThis, 'setTimeout')
+      try {
+        await expect(
+          client.request('write', { data: 'x'.repeat(NDJSON_MAX_LINE_BYTES) })
+        ).rejects.toBeInstanceOf(NdjsonLineTooLongError)
+
+        expect(timerSpy).not.toHaveBeenCalled()
+        expect(writeSpy).not.toHaveBeenCalled()
+        expect(internals.pendingRequests.size).toBe(0)
+      } finally {
+        timerSpy.mockRestore()
+        writeSpy.mockRestore()
+      }
+    })
+
     it('sends request and receives response', async () => {
       await startMockDaemon({
         onControlMessage: (msg) => {

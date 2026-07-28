@@ -20,6 +20,7 @@ import type { DaemonFileLog } from './daemon-file-log'
 import type * as DaemonHealthModule from './daemon-health'
 import { getDaemonSocketPath } from './daemon-spawner'
 import { PtyWriteUnavailableError } from '../providers/pty-write-unavailable-error'
+import { TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS } from './terminal-history-seed-chunks'
 
 const { getMacDaemonSystemResolverHealthMock } = vi.hoisted(() => ({
   getMacDaemonSystemResolverHealthMock: vi.fn(async () => 'unknown')
@@ -1824,7 +1825,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
           snapshot: null
         }
       })
-      const checkpoint = vi.fn(async () => {})
+      const checkpoint = vi.fn(async () => 'committed' as const)
       const appendIncrements = vi.fn(async () => 'ok' as const)
       const dispose = vi.fn(async () => {})
       const disconnect = vi.fn()
@@ -1896,7 +1897,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         const internals = historyAdapter as unknown as CooldownInternals
         internals.client = { request, disconnect: vi.fn() }
         internals.historyManager = {
-          checkpoint: vi.fn(async () => {}),
+          checkpoint: vi.fn(async () => 'committed' as const),
           appendIncrements: vi.fn(async () => takeResult.appendResult ?? 'ok'),
           dispose: vi.fn(async () => {})
         }
@@ -2227,6 +2228,146 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         cols: 120,
         rows: 40
       })
+    })
+
+    it('uploads a large cold-restore seed in bounded protocol chunks', async () => {
+      const sessionId = 'chunked-cold-restore'
+      const sessionDir = join(historyDir, getHistorySessionDirName(sessionId))
+      const snapshotAnsi = `${'x'.repeat(TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS + 1)}\r\nCHUNKED-SEED-MARKER`
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(
+        join(sessionDir, 'meta.json'),
+        JSON.stringify({
+          cwd: '/projects/chunked',
+          cols: 80,
+          rows: 24,
+          startedAt: '2026-07-25T10:00:00Z',
+          endedAt: null,
+          exitCode: null
+        })
+      )
+      writeFileSync(
+        join(sessionDir, 'checkpoint.json'),
+        JSON.stringify({
+          snapshotAnsi,
+          scrollbackAnsi: '',
+          rehydrateSequences: '',
+          cwd: '/projects/chunked',
+          cols: 80,
+          rows: 24,
+          modes: {
+            bracketedPaste: false,
+            mouseTracking: false,
+            applicationCursor: false,
+            alternateScreen: false
+          },
+          scrollbackLines: 0,
+          generation: 0,
+          checkpointedAt: '2026-07-25T10:00:00Z'
+        })
+      )
+      historyAdapter = new DaemonPtyAdapter({ socketPath, tokenPath, historyPath: historyDir })
+      const client = (
+        historyAdapter as unknown as {
+          client: { request: (type: string, payload?: unknown) => Promise<unknown> }
+        }
+      ).client
+      const requestSpy = vi.spyOn(client, 'request')
+
+      const result = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
+
+      expect(result.coldRestore?.scrollback).toContain('CHUNKED-SEED-MARKER')
+      expect(requestSpy.mock.calls.map(([type]) => type)).toEqual(
+        expect.arrayContaining([
+          'startHistorySeedTransfer',
+          'appendHistorySeedTransfer',
+          'finishHistorySeedTransfer',
+          'createOrAttach'
+        ])
+      )
+      const createPayload = requestSpy.mock.calls.find(([type]) => type === 'createOrAttach')?.[1]
+      expect(createPayload).toMatchObject({
+        historySeedTransferId: expect.any(String)
+      })
+      expect(createPayload).not.toHaveProperty('historySeed')
+      await expect(historyAdapter.getBufferSnapshot(sessionId)).resolves.toMatchObject({
+        data: expect.stringContaining('CHUNKED-SEED-MARKER')
+      })
+    })
+
+    it('keeps large recovery renderer-only with a preserved legacy daemon', async () => {
+      await server.shutdown()
+      server = new DaemonServer({
+        socketPath,
+        tokenPath,
+        protocolVersion: 29,
+        spawnSubprocess: (opts) => {
+          lastSpawnOpts = opts
+          lastSubprocess = createMockSubprocess()
+          return lastSubprocess
+        }
+      })
+      await server.start()
+      const sessionId = 'legacy-large-cold-restore'
+      const sessionDir = join(historyDir, getHistorySessionDirName(sessionId))
+      const checkpointPath = join(sessionDir, 'checkpoint.json')
+      mkdirSync(sessionDir, { recursive: true })
+      writeFileSync(
+        join(sessionDir, 'meta.json'),
+        JSON.stringify({
+          cwd: '/projects/legacy',
+          cols: 80,
+          rows: 24,
+          startedAt: '2026-07-25T10:00:00Z',
+          endedAt: null,
+          exitCode: null
+        })
+      )
+      writeFileSync(
+        checkpointPath,
+        JSON.stringify({
+          snapshotAnsi: `${'x'.repeat(TERMINAL_HISTORY_INLINE_SEED_CODE_UNITS + 1)}LEGACY-MARKER`,
+          scrollbackAnsi: '',
+          rehydrateSequences: '',
+          cwd: '/projects/legacy',
+          cols: 80,
+          rows: 24,
+          modes: {
+            bracketedPaste: false,
+            mouseTracking: false,
+            applicationCursor: false,
+            alternateScreen: false
+          },
+          scrollbackLines: 0,
+          generation: 0,
+          checkpointedAt: '2026-07-25T10:00:00Z'
+        })
+      )
+      historyAdapter = new DaemonPtyAdapter({
+        socketPath,
+        tokenPath,
+        protocolVersion: 29,
+        historyPath: historyDir
+      })
+      const client = (
+        historyAdapter as unknown as {
+          client: { request: (type: string, payload?: unknown) => Promise<unknown> }
+        }
+      ).client
+      const requestSpy = vi.spyOn(client, 'request')
+
+      const result = await historyAdapter.spawn({ cols: 80, rows: 24, sessionId })
+
+      expect(result.coldRestore?.scrollback).toContain('LEGACY-MARKER')
+      expect(requestSpy.mock.calls.map(([type]) => type)).not.toContain('startHistorySeedTransfer')
+      const createPayload = requestSpy.mock.calls.find(([type]) => type === 'createOrAttach')?.[1]
+      expect(createPayload).not.toHaveProperty('historySeed')
+      expect(createPayload).not.toHaveProperty('historySeedTransferId')
+      expect(existsSync(checkpointPath)).toBe(true)
+      const managerInternals = historyAdapter.getHistoryManager()! as unknown as {
+        writers: Map<string, unknown>
+      }
+      expect(managerInternals.writers.has(sessionId)).toBe(false)
     })
 
     it('repairs legacy hostname UNC cwd for WSL spawn and cold-restore metadata', async () => {
