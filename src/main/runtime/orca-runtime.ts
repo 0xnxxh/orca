@@ -2577,7 +2577,10 @@ export class OrcaRuntimeService {
   private worktreeScanInFlight = new Map<string, RuntimeWorktreeScanInFlight>()
   private worktreeScanBackoff = new Map<string, RuntimeWorktreeScanBackoff>()
   private worktreeScanSweepCursor = 0
-  private readonly worktreeScanGate = new WorktreeScanGate(WORKTREE_SCAN_CONCURRENCY)
+  private readonly worktreeScanGate = new WorktreeScanGate(
+    WORKTREE_SCAN_CONCURRENCY + WORKTREE_SCAN_INTERACTIVE_RESERVE,
+    { reservedForInteractive: WORKTREE_SCAN_INTERACTIVE_RESERVE }
+  )
   private cloneInFlightByPath = new Map<string, Promise<void>>()
   private agentDetector: AgentDetector | null = null
   private ptyForegroundAgentRefreshes = new Map<string, PtyForegroundAgentRefresh>()
@@ -24999,7 +25002,9 @@ export class OrcaRuntimeService {
 
   /**
    * Repos with a live pane stay on the eager TTL; the rest share a global spawn budget so the
-   * steady-state git rate stops scaling linearly with how many repos are registered.
+   * steady-state git rate stops scaling linearly with how many repos are registered. "Live pane"
+   * is the only activity signal, so a repo the user is only looking at can take up to the idle TTL
+   * to pick up worktrees created outside Orca — an explicit refresh is the fast path for that.
    */
   private resolveWorktreeScanFleet(repos: readonly Repo[]): WorktreeScanFleet {
     const activeRepoIds = new Set<string>()
@@ -25108,10 +25113,15 @@ export class OrcaRuntimeService {
       previous.runtimeKey === runtimeKey &&
       previous.kind === kind
     const failures = continued ? previous.failures + 1 : 1
-    if (kind === 'missing_repo_path' && (!continued || previous.kind !== 'missing_repo_path')) {
-      console.warn(
-        `[runtime] repo directory missing, backing off worktree scans: ${repo.id} (${repo.path})`
-      )
+    if (kind === 'missing_repo_path') {
+      // Why: the directory is provably gone, so its cached rows describe worktrees that no longer
+      // exist. Without this the 5-minute backoff would keep replaying them until app restart.
+      this.worktreeScanCache.delete(repo.id)
+      if (!continued || previous.kind !== 'missing_repo_path') {
+        console.warn(
+          `[runtime] repo directory missing, backing off worktree scans: ${repo.id} (${repo.path})`
+        )
+      }
     }
     this.worktreeScanBackoff.set(repo.id, {
       generation,
@@ -25237,7 +25247,13 @@ export class OrcaRuntimeService {
     }
     const tracked = this.worktreeScanGate.runTracked(
       () => this.startRepoWorktreesForResolution(repo, projectRuntime, provider),
-      acquisitionSignal
+      {
+        signal: acquisitionSignal,
+        ownerKey: runtimeKey,
+        // Why: explicit refreshes pass no fleet; they take the reserved lane so a saturated
+        // sweep can't push them past their acquisition deadline into metadata-fallback.
+        interactive: !sweepFleet
+      }
     )
     let activeRecord!: RuntimeWorktreeScanInFlight
     const promise = tracked.result.then(
@@ -25339,7 +25355,7 @@ export class OrcaRuntimeService {
     options: ReturnType<typeof getLocalProjectWorktreeGitOptionsForRuntime>
   ): Promise<WorktreeScanFailureKind> {
     if (options.wslDistro) {
-      return 'scan_failed'
+      return this.classifyWslWorktreeScanFailure(repoPath)
     }
     try {
       await lstat(repoPath)
@@ -25347,6 +25363,29 @@ export class OrcaRuntimeService {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException | null)?.code
       return code === 'ENOENT' || code === 'ENOTDIR' ? 'missing_repo_path' : 'scan_failed'
+    }
+  }
+
+  /** A stopped distro looks exactly like a deleted repo over UNC, so confirm the share first. */
+  private async classifyWslWorktreeScanFailure(repoPath: string): Promise<WorktreeScanFailureKind> {
+    const shareRoot = resolveWslShareRootForScanProbe(repoPath)
+    if (!shareRoot) {
+      return 'scan_failed'
+    }
+    try {
+      await lstat(repoPath)
+      return 'scan_failed'
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        return 'scan_failed'
+      }
+    }
+    try {
+      await lstat(shareRoot)
+      return 'missing_repo_path'
+    } catch {
+      return 'scan_failed'
     }
   }
 
@@ -30813,6 +30852,10 @@ const RESOLVED_WORKTREE_REPO_TIMEOUT_MS = 5000
 // same pass, so an uncapped fan-out spawned one git per repo at once (82 concurrent measured on a
 // 107-repo install, crash-cluster C2 2026-07) and saturated the machine.
 const WORKTREE_SCAN_CONCURRENCY = 8
+// Why: the sweep can hold every shared permit for its whole deadline, and an explicit refresh
+// gives up acquiring after 5s. Keep a small lane the background sweep may never take so a user
+// refresh still spawns git instead of falling back to metadata.
+const WORKTREE_SCAN_INTERACTIVE_RESERVE = 2
 // Why: the flat 30s TTL made steady-state spawn rate linear in repo count (~2 execs/repo/min ⇒
 // ~214/min at 107 repos). Idle repos instead share a global budget; visible ones stay eager.
 const WORKTREE_SCAN_GLOBAL_BUDGET_PER_MIN = 60
@@ -30822,6 +30865,12 @@ const WORKTREE_SCAN_MISSING_REPO_RETRY_MS = 5 * 60_000
 const WORKTREE_SCAN_FAILURE_BASE_RETRY_MS = WORKTREE_SCAN_CACHE_TTL_MS
 const WORKTREE_SCAN_FAILURE_RETRY_CAP_MS = 5 * 60_000
 
+/**
+ * Precedence is deliberate: an explicit scan or a repo with a live pane always gets the eager TTL,
+ * even for agent scratch — freshness where the user is looking outranks the scratch budget. Past
+ * ~300 idle repos the 5-minute cap wins, so the real ceiling is `repoCount / 5` scans per minute,
+ * not the nominal budget.
+ */
 export function resolveWorktreeScanCacheTtlMs(
   repo: Pick<Repo, 'path' | 'connectionId'> & { id?: string },
   fleet?: WorktreeScanFleet
@@ -30836,6 +30885,19 @@ export function resolveWorktreeScanCacheTtlMs(
     (fleet.scannedRepoCount / WORKTREE_SCAN_GLOBAL_BUDGET_PER_MIN) * 60_000
   )
   return Math.min(Math.max(WORKTREE_SCAN_CACHE_TTL_MS, budgetTtlMs), WORKTREE_SCAN_IDLE_TTL_CAP_MS)
+}
+
+/**
+ * The `\\wsl$\<distro>` prefix of a WSL repo path, or null when a missing path can't tell a
+ * deleted repo from a stopped distro (non-UNC path, or a repo mounted at the share root).
+ */
+export function resolveWslShareRootForScanProbe(repoPath: string): string | null {
+  const parsed = parseWslUncPath(repoPath)
+  if (!parsed || parsed.linuxPath === '/') {
+    return null
+  }
+  // Separators map one-to-one between the Windows and Linux forms, so the tail length is shared.
+  return repoPath.slice(0, repoPath.length - parsed.linuxPath.length)
 }
 
 /** Missing directories back off to the cap immediately; transient errors double from the base TTL. */

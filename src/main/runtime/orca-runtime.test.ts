@@ -66,6 +66,7 @@ import {
   recentTerminalOutputIncludesPath,
   resolveWorktreeScanCacheTtlMs,
   resolveWorktreeScanRetryDelayMs,
+  resolveWslShareRootForScanProbe,
   type RuntimeTerminalAgentStatusEvent
 } from './orca-runtime'
 import { RecentPtyOutputBuffer } from './recent-pty-output-buffer'
@@ -38303,6 +38304,22 @@ describe('resolveWorktreeScanCacheTtlMs', () => {
   })
 })
 
+describe('resolveWslShareRootForScanProbe', () => {
+  it('isolates the distro share so a stopped distro is not read as a deleted repo', () => {
+    expect(resolveWslShareRootForScanProbe('\\\\wsl$\\Ubuntu\\home\\dev\\app')).toBe(
+      '\\\\wsl$\\Ubuntu'
+    )
+    expect(resolveWslShareRootForScanProbe('\\\\wsl.localhost\\Debian\\srv\\repo')).toBe(
+      '\\\\wsl.localhost\\Debian'
+    )
+  })
+
+  it('declines to classify paths with no share to probe', () => {
+    expect(resolveWslShareRootForScanProbe('/home/dev/app')).toBeNull()
+    expect(resolveWslShareRootForScanProbe('\\\\wsl$\\Ubuntu')).toBeNull()
+  })
+})
+
 describe('resolveWorktreeScanRetryDelayMs', () => {
   it('sends a missing repo directory straight to the long retry window', () => {
     expect(resolveWorktreeScanRetryDelayMs('missing_repo_path', 1)).toBe(5 * 60_000)
@@ -38415,7 +38432,8 @@ describe('worktree scan fan-out', () => {
       }
       await combined
 
-      expect(peak).toBeLessThanOrEqual(8)
+      // Background work shares eight permits; explicit scans may add the interactive reserve.
+      expect(peak).toBeLessThanOrEqual(10)
       expect(listWorktrees).toHaveBeenCalledTimes(22)
     } finally {
       releases.splice(0).forEach((resolve) => resolve())
@@ -38449,7 +38467,11 @@ describe('worktree scan fan-out', () => {
           id === directRepo.id ? directRepo : sweepRepos.find((repo) => repo.id === id)
       } as never)
       const internals = runtime as unknown as {
-        listRepoWorktreesForResolution: (repo: typeof directRepo) => Promise<unknown>
+        listRepoWorktreesForResolution: (
+          repo: typeof directRepo,
+          projectRuntimeByRepoId?: undefined,
+          sweepFleet?: { scannedRepoCount: number; activeRepoIds: Set<string> }
+        ) => Promise<unknown>
         listResolvedWorktrees: () => Promise<unknown>
       }
       const sweep = internals.listResolvedWorktrees()
@@ -38457,7 +38479,12 @@ describe('worktree scan fan-out', () => {
       await vi.advanceTimersByTimeAsync(5_000)
       await expect(sweep).resolves.toBeTruthy()
 
-      const direct = internals.listRepoWorktreesForResolution(directRepo)
+      // Why: a background scan may not touch the interactive reserve, so it proves the timed-out
+      // sweep still owns all eight shared permits.
+      const direct = internals.listRepoWorktreesForResolution(directRepo, undefined, {
+        scannedRepoCount: 9,
+        activeRepoIds: new Set<string>()
+      })
       await vi.advanceTimersByTimeAsync(0)
       expect(listWorktrees).toHaveBeenCalledTimes(8)
 
@@ -38472,6 +38499,52 @@ describe('worktree scan fan-out', () => {
       vi.mocked(listWorktrees).mockReset()
       vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
       vi.useRealTimers()
+    }
+  })
+
+  it('lets an explicit scan through while the sweep holds every shared permit', async () => {
+    vi.mocked(listWorktrees).mockClear()
+    const sweepRepos = buildRepos(8)
+    const directRepo = {
+      id: 'repo-direct',
+      path: '/tmp/repo-direct',
+      displayName: 'direct',
+      badgeColor: 'blue',
+      addedAt: 1
+    }
+    const releases: (() => void)[] = []
+    vi.mocked(listWorktrees).mockImplementation(async (path: string) => {
+      if (path === directRepo.path) {
+        return []
+      }
+      await new Promise<void>((resolve) => releases.push(resolve))
+      return []
+    })
+    try {
+      const runtime = new OrcaRuntimeService({
+        ...store,
+        getRepos: () => sweepRepos,
+        getRepo: (id: string) =>
+          id === directRepo.id ? directRepo : sweepRepos.find((repo) => repo.id === id)
+      } as never)
+      const internals = runtime as unknown as {
+        listRepoWorktreesForResolution: (repo: typeof directRepo) => Promise<unknown>
+        listResolvedWorktrees: () => Promise<unknown>
+      }
+      const sweep = internals.listResolvedWorktrees()
+      await vi.waitFor(() => expect(listWorktrees).toHaveBeenCalledTimes(8))
+
+      // Why: an explicit refresh gives up acquiring after 5s; without a reserved lane it would
+      // fall back to metadata whenever the sweep is slow.
+      await expect(internals.listRepoWorktreesForResolution(directRepo)).resolves.toMatchObject({
+        ok: true
+      })
+      releases.splice(0).forEach((resolve) => resolve())
+      await expect(sweep).resolves.toBeTruthy()
+    } finally {
+      releases.splice(0).forEach((resolve) => resolve())
+      vi.mocked(listWorktrees).mockReset()
+      vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
     }
   })
 
@@ -38508,13 +38581,22 @@ describe('worktree scan fan-out', () => {
           id === localRepo.id ? localRepo : remoteRepos.find((repo) => repo.id === id)
       } as never)
       const internals = runtime as unknown as {
-        listRepoWorktreesForResolution: (repo: typeof localRepo) => Promise<unknown>
+        listRepoWorktreesForResolution: (
+          repo: typeof localRepo,
+          projectRuntimeByRepoId?: undefined,
+          sweepFleet?: { scannedRepoCount: number; activeRepoIds: Set<string> }
+        ) => Promise<unknown>
         listResolvedWorktrees: () => Promise<unknown>
       }
       await internals.listResolvedWorktrees()
       expect(provider.listWorktreesTracked).toHaveBeenCalledTimes(8)
 
-      const local = internals.listRepoWorktreesForResolution(localRepo)
+      // Why: background work shares the eight-permit pool, so a failed-but-unsettled remote scan
+      // must still block it — a dead SSH host holding permits is the wedge this guards.
+      const local = internals.listRepoWorktreesForResolution(localRepo, undefined, {
+        scannedRepoCount: 9,
+        activeRepoIds: new Set<string>()
+      })
       await Promise.resolve()
       expect(listWorktrees).not.toHaveBeenCalled()
 
@@ -38785,6 +38867,55 @@ describe('worktree scan fan-out', () => {
       vi.advanceTimersByTime(MISSING_REPO_RETRY_MS)
       await internals.listResolvedWorktrees()
       expect(scansFor(missingPath)).toBe(2)
+    } finally {
+      warn.mockRestore()
+      vi.mocked(listWorktrees).mockReset()
+      vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops replaying cached rows once the repo directory is gone', async () => {
+    vi.useFakeTimers()
+    vi.mocked(listWorktrees).mockClear()
+    const missingPath = '/tmp/repo-vanished'
+    let present = true
+    vi.mocked(listWorktrees).mockImplementation(async () => {
+      if (!present) {
+        throw Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' })
+      }
+      return [makeWorktreeInfo(missingPath)]
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const runtime = new OrcaRuntimeService({
+        ...store,
+        getRepos: () => [
+          {
+            id: 'repo-vanished',
+            path: missingPath,
+            displayName: 'vanished',
+            badgeColor: 'blue',
+            addedAt: 1
+          }
+        ]
+      } as never)
+      const internals = runtime as unknown as {
+        listResolvedWorktrees: () => Promise<unknown[]>
+        worktreeScanCache: Map<string, unknown>
+      }
+
+      expect(await internals.listResolvedWorktrees()).toHaveLength(1)
+
+      present = false
+      vi.advanceTimersByTime(BASE_TTL_MS + 1_000)
+      // Why: the directory is provably gone, so the long backoff must not keep serving rows for
+      // worktrees that no longer exist.
+      expect(await internals.listResolvedWorktrees()).toHaveLength(0)
+      expect(internals.worktreeScanCache.has('repo-vanished')).toBe(false)
+
+      vi.advanceTimersByTime(BASE_TTL_MS + 1_000)
+      expect(await internals.listResolvedWorktrees()).toHaveLength(0)
     } finally {
       warn.mockRestore()
       vi.mocked(listWorktrees).mockReset()

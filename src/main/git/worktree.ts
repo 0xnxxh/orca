@@ -453,9 +453,21 @@ async function normalizeMainWorktreePath(
     return worktrees
   }
 
-  const location = await readRepoLocation(repoPath, comparablePath, options)
+  // Why: this is enrichment for separate-git-dir repos, not the listing itself. A failed secondary
+  // rev-parse must degrade to the porcelain path instead of discarding the whole graph (#10721).
+  let location: RepoLocation | undefined
+  try {
+    location = await readRepoLocation(repoPath, comparablePath, options)
+  } catch (err) {
+    if ((err as Error | null)?.name === 'AbortError') {
+      throw err
+    }
+    throwIfWorktreeScanAborted(options.signal)
+    console.warn(`[git/worktree] main worktree path normalization failed for ${repoPath}:`, err)
+    return worktrees
+  }
   if (!location) {
-    throw new Error(`Could not normalize the main worktree path for ${repoPath}.`)
+    return worktrees
   }
 
   // Why: only a separate-git-dir/submodule main worktree reports git-common-dir as its path; gate on
@@ -619,10 +631,9 @@ export async function annotatePrunableByExistence(
 ): Promise<GitWorktreeInfo[]> {
   const annotated = [...worktrees]
   let nextIndex = 0
-  let probeError: unknown
 
   async function probeNext(): Promise<void> {
-    while (probeError === undefined && nextIndex < worktrees.length) {
+    while (nextIndex < worktrees.length) {
       if (options.signal?.aborted) {
         return
       }
@@ -647,7 +658,9 @@ export async function annotatePrunableByExistence(
         if (code === 'ENOENT' || code === 'ENOTDIR') {
           annotated[index] = { ...worktree, prunable: true }
         } else {
-          probeError ??= err
+          // Why: an unreadable path (EPERM, EIO, TCC-denied) says nothing about whether the
+          // registration is stale. Leave the row unannotated instead of failing the whole graph.
+          console.warn(`[git/worktree] prunable probe failed for ${worktree.path}:`, err)
         }
       }
     }
@@ -656,9 +669,6 @@ export async function annotatePrunableByExistence(
   const workerCount = Math.min(PRUNABLE_EXISTENCE_PROBE_CONCURRENCY, worktrees.length)
   await Promise.all(Array.from({ length: workerCount }, () => probeNext()))
   throwIfWorktreeScanAborted(options.signal)
-  if (probeError !== undefined) {
-    throw probeError
-  }
   return annotated
 }
 
@@ -744,75 +754,92 @@ export function _resetWorktreeScanCacheForTests(): void {
 }
 
 /**
- * List all worktrees for a git repo at the given path. Concurrent calls for
- * the same repo share one scan (unless the caller passes an AbortSignal,
+ * List all worktrees for a git repo at the given path, swallowing scan failures to an empty list.
+ * Concurrent calls for the same repo share one scan (unless the caller passes an AbortSignal,
  * which must only cancel its own scan).
  */
 export function listWorktrees(
   repoPath: string,
   options: GitWorktreeExecOptions = {}
 ): Promise<GitWorktreeInfo[]> {
+  return sharedWorktreeScan(repoPath, options).catch((err) =>
+    recoverFromWorktreeScanFailure(repoPath, err)
+  )
+}
+
+/**
+ * Same scan, but failures reject instead of collapsing to `[]` — the caller needs to tell
+ * "this repo has no worktrees" apart from "the scan never ran".
+ */
+export function listWorktreesStrict(
+  repoPath: string,
+  options: GitWorktreeExecOptions = {}
+): Promise<GitWorktreeInfo[]> {
+  return sharedWorktreeScan(repoPath, options)
+}
+
+/** Why: strict and swallowing callers must collapse onto one git spawn per repo (#7225). */
+function sharedWorktreeScan(
+  repoPath: string,
+  options: GitWorktreeExecOptions
+): Promise<GitWorktreeInfo[]> {
   if (options.signal) {
-    return listWorktreesUnshared(repoPath, options)
+    return scanWorktrees(repoPath, options)
   }
   const generation = worktreeScanGenerations.get(repoPath) ?? 0
   const timeout = options.timeout ?? WORKTREE_LIST_TIMEOUT_MS
-  // Why: callers with different deadlines cannot safely share which timeout wins the scan.
-  const key = `${repoPath}\0${options.wslDistro ?? ''}\0${timeout}\0${generation}`
+  // Why: callers with different deadlines cannot safely share which timeout wins the scan, and a
+  // joiner that skips tree settlement must not shorten the owner's teardown.
+  const key = `${repoPath}\0${options.wslDistro ?? ''}\0${timeout}\0${
+    options.settleProcessTree ? 1 : 0
+  }\0${generation}`
   const inFlight = inFlightWorktreeScans.get(key)
   if (inFlight) {
     return inFlight
   }
-  const scan = listWorktreesUnshared(repoPath, options).finally(() => {
+  const scan = scanWorktrees(repoPath, options).finally(() => {
     if (inFlightWorktreeScans.get(key) === scan) {
       inFlightWorktreeScans.delete(key)
     }
     pruneWorktreeScanGeneration(repoPath)
   })
+  // Why: joiners attach their own handlers; the stored promise must not look unhandled meanwhile.
+  void scan.catch(() => {})
   inFlightWorktreeScans.set(key, scan)
   return scan
 }
 
-async function listWorktreesUnshared(
+async function scanWorktrees(
   repoPath: string,
-  options: GitWorktreeExecOptions = {}
+  options: GitWorktreeExecOptions
 ): Promise<GitWorktreeInfo[]> {
-  try {
-    const worktrees = await readTranslatedWorktreeGraph(repoPath, options)
-    return annotateSparseCheckoutStatus(worktrees, options)
-  } catch (err) {
-    // Why: a cancelled scan is not an empty repo; swallowing it would cache "no worktrees".
-    if ((err as Error | null)?.name === 'AbortError') {
-      throw err
-    }
-    if (getErrorCode(err) === 'ENOENT') {
-      try {
-        await stat(repoPath)
-      } catch (statErr) {
-        if (getErrorCode(statErr) === 'ENOENT') {
-          console.warn(`[git/worktree] repo path missing; skipping worktree list: ${repoPath}`)
-          return []
-        }
-      }
-    }
-    if (isNotGitRepositoryError(err)) {
-      return []
-    }
-    // Why: don't swallow git-compat/repo-state failures — else they resurface as opaque "created but not found in listing" errors.
-    console.warn(`[git/worktree] listWorktrees failed for ${repoPath}:`, err)
-    return []
-  }
+  return annotateSparseCheckoutStatus(await readTranslatedWorktreeGraph(repoPath, options), options)
 }
 
-export async function listWorktreesStrict(
+async function recoverFromWorktreeScanFailure(
   repoPath: string,
-  options: GitWorktreeExecOptions = {}
+  err: unknown
 ): Promise<GitWorktreeInfo[]> {
-  const worktrees = (await readWorktreeList(repoPath, options)).map((worktree) => {
-    const translatedPath = translateWorktreePath(worktree.path, repoPath, options)
-    return translatedPath === worktree.path ? worktree : { ...worktree, path: translatedPath }
-  })
-  return annotateSparseCheckoutStatus(worktrees, options)
+  // Why: a cancelled scan is not an empty repo; swallowing it would cache "no worktrees".
+  if ((err as Error | null)?.name === 'AbortError') {
+    throw err
+  }
+  if (getErrorCode(err) === 'ENOENT') {
+    try {
+      await stat(repoPath)
+    } catch (statErr) {
+      if (getErrorCode(statErr) === 'ENOENT') {
+        console.warn(`[git/worktree] repo path missing; skipping worktree list: ${repoPath}`)
+        return []
+      }
+    }
+  }
+  if (isNotGitRepositoryError(err)) {
+    return []
+  }
+  // Why: don't swallow git-compat/repo-state failures — else they resurface as opaque "created but not found in listing" errors.
+  console.warn(`[git/worktree] listWorktrees failed for ${repoPath}:`, err)
+  return []
 }
 
 async function annotateSparseCheckoutStatus(

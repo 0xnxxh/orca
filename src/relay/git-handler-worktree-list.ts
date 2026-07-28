@@ -45,10 +45,9 @@ export async function annotatePrunableWorktreesByExistence(
 ): Promise<Record<string, unknown>[]> {
   const annotated = [...worktrees]
   let nextIndex = 0
-  let probeError: unknown
 
   async function probeNext(): Promise<void> {
-    while (probeError === undefined && nextIndex < worktrees.length) {
+    while (nextIndex < worktrees.length) {
       if (signal?.aborted) {
         return
       }
@@ -77,7 +76,9 @@ export async function annotatePrunableWorktreesByExistence(
         if (code === 'ENOENT' || code === 'ENOTDIR') {
           annotated[index] = { ...worktree, prunable: true }
         } else {
-          probeError ??= err
+          // Why: an unreadable path (EPERM, EIO, dead NFS mount) says nothing about whether the
+          // registration is stale. Leave the row unannotated instead of failing the whole graph.
+          console.warn(`[git-handler] prunable probe failed for ${worktreePath}:`, err)
         }
       }
     }
@@ -89,9 +90,6 @@ export async function annotatePrunableWorktreesByExistence(
     const error = new Error('Relay worktree scan was cancelled.')
     error.name = 'AbortError'
     throw error
-  }
-  if (probeError !== undefined) {
-    throw probeError
   }
   return annotated
 }

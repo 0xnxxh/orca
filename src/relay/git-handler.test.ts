@@ -27,6 +27,11 @@ type GitSpyTarget = {
     cwd: string,
     opts?: { signal?: AbortSignal }
   ): Promise<{ stdout: string; stderr: string }>
+  gitWorktreeScan(
+    args: string[],
+    cwd: string,
+    signal?: AbortSignal
+  ): Promise<{ stdout: string; stderr: string }>
 }
 
 function deferredRelayBuffer(content: string): {
@@ -1995,7 +2000,7 @@ describe('GitHandler', () => {
       const controller = new AbortController()
       const gitSpy = vi
         .spyOn(handler as unknown as GitSpyTarget, 'git')
-        .mockRejectedValue(new Error('aborted'))
+        .mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }))
 
       await expect(
         dispatcher.callRequest(
@@ -2040,13 +2045,30 @@ describe('GitHandler', () => {
 
     it('classifies a missing scan root even when the git failure is not an object', async () => {
       const missingPath = path.join(tmpDir, 'missing-repo')
-      vi.spyOn(handler as unknown as GitSpyTarget, 'git').mockRejectedValue(null)
+      vi.spyOn(handler as unknown as GitSpyTarget, 'gitWorktreeScan').mockRejectedValue(null)
 
       await expect(
-        dispatcher.callRequest('git.listWorktrees', { repoPath: missingPath })
+        dispatcher.callRequest('git.listWorktrees', {
+          repoPath: missingPath,
+          __orcaSettlementToken: 'token'
+        })
       ).rejects.toMatchObject({
         data: { worktreeScanRootMissing: true }
       })
+    })
+
+    it('still answers untracked callers with an empty list when the scan fails', async () => {
+      // Why: only the tracked scan path tells failure from "no worktrees"; branch checks and
+      // cleanup scans predate that contract and would change behavior if this threw.
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      vi.spyOn(handler as unknown as GitSpyTarget, 'git').mockRejectedValue(
+        new Error('git exploded')
+      )
+
+      await expect(
+        dispatcher.callRequest('git.listWorktrees', { repoPath: tmpDir })
+      ).resolves.toEqual([])
+      warn.mockRestore()
     })
 
     it('leaves a cancelled scan unclassified even when the root is missing', async () => {
@@ -2070,7 +2092,8 @@ describe('GitHandler', () => {
       })
     })
 
-    it('propagates required main-worktree normalization failures', async () => {
+    it('keeps the porcelain graph when main-worktree normalization fails', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
       const gitSpy = vi
         .spyOn(handler as unknown as GitSpyTarget, 'git')
         .mockImplementation(async (args) => {
@@ -2083,14 +2106,16 @@ describe('GitHandler', () => {
           throw new Error('rev-parse failed')
         })
 
+      // Why: normalization enriches separate-git-dir repos; losing it must not erase the repo.
       await expect(
         dispatcher.callRequest('git.listWorktrees', { repoPath: tmpDir })
-      ).rejects.toThrow('rev-parse failed')
+      ).resolves.toMatchObject([{ path: '/git-store/project.git', isMainWorktree: true }])
       expect(gitSpy).toHaveBeenCalledWith(
         ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
         tmpDir,
         { signal: undefined }
       )
+      warn.mockRestore()
     })
 
     it.skipIf(process.platform === 'win32')(

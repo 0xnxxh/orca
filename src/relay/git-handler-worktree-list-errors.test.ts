@@ -31,32 +31,39 @@ describe('relay prunable worktree probe errors', () => {
     ])
   })
 
-  it('drains started probes and rejects permission errors without scheduling more', async () => {
+  it('keeps unreadable rows unannotated instead of failing the whole listing', async () => {
+    // Why: one denied worktree used to reject the scan, erasing every row for the repo.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const held = deferred<void>()
-    statMock.mockImplementation((path: string) => {
-      if (path.endsWith('/child-0')) {
-        return Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }))
+    let inFlight = 0
+    let peakInFlight = 0
+    statMock.mockImplementation(async (path: string) => {
+      inFlight += 1
+      peakInFlight = Math.max(peakInFlight, inFlight)
+      try {
+        if (path.endsWith('/child-0')) {
+          throw Object.assign(new Error('denied'), { code: 'EACCES' })
+        }
+        if (path.endsWith('/child-1')) {
+          await held.promise
+          return
+        }
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' })
+      } finally {
+        inFlight -= 1
       }
-      if (path.endsWith('/child-1')) {
-        return held.promise
-      }
-      return Promise.resolve()
     })
     const worktrees = Array.from({ length: 12 }, (_, index) => ({
       path: `/repo/child-${index}`
     }))
     const result = annotatePrunableWorktreesByExistence(worktrees)
-    let rejected = false
-    void result.catch(() => {
-      rejected = true
-    })
-
-    await Promise.resolve()
-    expect(rejected).toBe(false)
-    expect(statMock.mock.calls.length).toBeLessThanOrEqual(8)
     held.resolve()
+    const annotated = await result
 
-    await expect(result).rejects.toMatchObject({ code: 'EACCES' })
-    expect(statMock.mock.calls.length).toBeLessThanOrEqual(8)
+    expect(annotated[0].prunable).toBeUndefined()
+    expect(annotated[1].prunable).toBeUndefined()
+    expect(annotated.slice(2).every((worktree) => worktree.prunable === true)).toBe(true)
+    expect(peakInFlight).toBeLessThanOrEqual(8)
+    warn.mockRestore()
   })
 })

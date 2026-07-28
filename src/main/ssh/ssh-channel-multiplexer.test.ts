@@ -522,6 +522,25 @@ describe('SshChannelMultiplexer', () => {
       expect(getMuxInternals(mux).trackedSettlementWaiters.size).toBe(1)
     })
 
+    it('releases tracked settlement shortly after a disposed connection', async () => {
+      // Why: a dropped SSH link must not strand the caller's scan permit — the desktop gate is
+      // process-wide, so enough stranded permits would freeze scanning for every host.
+      const tracked = mux.requestTracked('git.listWorktrees')
+      const resultExpectation = expect(tracked.result).rejects.toThrow('SSH connection lost')
+      let settled = false
+      void tracked.settled.then(() => {
+        settled = true
+      })
+
+      mux.dispose('connection_lost')
+      await resultExpectation
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      await tracked.settled
+      expect(settled).toBe(true)
+      expect(getMuxInternals(mux).trackedSettlementWaiters.size).toBe(0)
+    })
+
     it('returns settled ownership when a tracked request was never sent', async () => {
       mux.dispose()
 

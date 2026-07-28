@@ -1476,9 +1476,20 @@ export class GitHandler {
       return worktrees
     }
 
-    const location = await this.readRepoLocation(resolvedRepoPath, git)
+    // Why: this is enrichment for separate-git-dir repos, not the listing itself. A failed
+    // secondary rev-parse must degrade to the porcelain path, not discard the whole graph.
+    let location: RelayRepoLocation | undefined
+    try {
+      location = await this.readRepoLocation(resolvedRepoPath, git)
+    } catch (error) {
+      if ((error as { name?: string } | null)?.name === 'AbortError') {
+        throw error
+      }
+      console.warn(`[git-handler] main worktree path normalization failed for ${repoPath}:`, error)
+      return worktrees
+    }
     if (!location) {
-      throw new Error(`Could not normalize the main worktree path for ${repoPath}.`)
+      return worktrees
     }
 
     // Why: only separate-git-dir/submodule repos have main entry == git-common-dir; gate on it so we don't clobber a linked worktree's real root.
@@ -1526,6 +1537,13 @@ export class GitHandler {
       // missing root the client never verified.
       if ((error as { name?: string } | null)?.name === 'AbortError') {
         throw error
+      }
+      if (!tracked) {
+        // Why: only the tracked scan path distinguishes failure from "no worktrees". Every other
+        // caller (branch checks, cleanup scans, file pickers) predates that and still expects the
+        // empty list, so failing them here would change unrelated SSH behavior.
+        console.warn(`[git-handler] worktree list failed for ${repoPath}:`, error)
+        return []
       }
       let classifiedError = error
       try {
