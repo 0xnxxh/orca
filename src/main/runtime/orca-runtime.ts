@@ -184,7 +184,20 @@ import type {
   TuiAgent,
   WorkspaceCreateTelemetrySource,
   WorkspaceSessionState,
-  DirEntry
+  DirEntry,
+  GitHubIssueUpdate,
+  GitHubPullRequestStateUpdate,
+  GitHubPRFile,
+  GitHubPRReviewCommentInput,
+  GitLabIssueUpdate,
+  GitLabMRInlineCommentInput,
+  GitLabProjectRef,
+  GitLabWorkItem,
+  ListWorkItemsResult,
+  MRListState,
+  PRRefreshOutcome,
+  ClaudeRateLimitAccountsState,
+  CodexRateLimitAccountsState
 } from '../../shared/types'
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
 import {
@@ -237,7 +250,65 @@ import type {
 } from '../../shared/linear-agent-access'
 import {
   HEADLESS_RUNTIME_WINDOW_ID,
-  type RuntimeDesktopWindowStatus
+  type RuntimeDesktopWindowStatus,
+  type RuntimeGraphStatus,
+  type RuntimeRepoSearchRefs,
+  type RuntimeTerminalRead,
+  type RuntimeTerminalRename,
+  type RuntimeTerminalAgentStatus,
+  type RuntimeTerminalSend,
+  type RuntimeTerminalCreate,
+  type RuntimeTerminalPresentation,
+  type RuntimeTerminalSplit,
+  type RuntimeTerminalFocus,
+  type RuntimeTerminalClose,
+  type RuntimeTerminalListResult,
+  type RuntimeTerminalOrphanAdoptionRequest,
+  type RuntimeTerminalOrphanAdoptionResult,
+  type RuntimeWorktreeTerminalSleepResult,
+  type RuntimeTerminalResolvePane,
+  type RuntimeTerminalState,
+  type RuntimeStatus,
+  type RuntimeSyncWindowGraphResult,
+  type RuntimeTerminalWait,
+  type RuntimeTerminalWaitBlockedReason,
+  type RuntimeTerminalWaitCondition,
+  type RuntimeWorktreePsSummary,
+  type RuntimeWorktreeAgentRow,
+  type RuntimeWorktreeStatus,
+  type RuntimeSpeechModelSummary,
+  type RuntimeSpeechSetupState,
+  type RuntimeTerminalShow,
+  type RuntimeTerminalSummary,
+  type RuntimeTerminalVisualGroupNode,
+  type RuntimeTerminalVisualLayout,
+  type RuntimeTerminalVisualLayoutNode,
+  type RuntimeTerminalVisualPaneNode,
+  type RuntimeTerminalVisualTab,
+  type RuntimeSyncedLeaf,
+  type RuntimeSyncedTab,
+  type RuntimeMarkdownReadTabResult,
+  type RuntimeMarkdownSaveTabResult,
+  type RuntimeMobileSessionCreateTerminalResult,
+  type RuntimeMobileSessionClientTab,
+  type RuntimeMobileSessionTabCloseResult,
+  type RuntimeMobileSessionMarkdownTab,
+  type RuntimeMobileSessionTabMove,
+  type RuntimeMobileSessionTabMoveResult,
+  type RuntimeMobileSessionTabGroup,
+  type RuntimeMobileSessionSnapshotTab,
+  type RuntimeMobileSessionTerminalTab,
+  type RuntimeMobileSessionBrowserTab,
+  type RuntimeMobileSessionTabsRemovedResult,
+  type RuntimeMobileSessionTabsResult,
+  type RuntimeMobileSessionTabsSnapshot,
+  type RuntimeSessionTabCloseReason,
+  type RuntimeBrowserDriverState,
+  type RuntimeTerminalDriverState,
+  type RuntimeSyncWindowGraph,
+  type RuntimeWorktreeListResult,
+  type BrowserTabInfo,
+  type BrowserScreencastResult
 } from '../../shared/runtime-types'
 import {
   LINEAR_SEARCH_MAX_LIMIT,
@@ -377,66 +448,6 @@ import {
   scanWorkspacePortProbes
 } from '../ports/workspace-port-ownership'
 import { advertisedUrlWatcher } from '../ports/advertised-url-watcher'
-import type {
-  RuntimeGraphStatus,
-  RuntimeRepoSearchRefs,
-  RuntimeTerminalRead,
-  RuntimeTerminalRename,
-  RuntimeTerminalAgentStatus,
-  RuntimeTerminalSend,
-  RuntimeTerminalCreate,
-  RuntimeTerminalPresentation,
-  RuntimeTerminalSplit,
-  RuntimeTerminalFocus,
-  RuntimeTerminalClose,
-  RuntimeTerminalListResult,
-  RuntimeTerminalOrphanAdoptionRequest,
-  RuntimeTerminalOrphanAdoptionResult,
-  RuntimeWorktreeTerminalSleepResult,
-  RuntimeTerminalResolvePane,
-  RuntimeTerminalState,
-  RuntimeStatus,
-  RuntimeSyncWindowGraphResult,
-  RuntimeTerminalWait,
-  RuntimeTerminalWaitBlockedReason,
-  RuntimeTerminalWaitCondition,
-  RuntimeWorktreePsSummary,
-  RuntimeWorktreeAgentRow,
-  RuntimeWorktreeStatus,
-  RuntimeSpeechModelSummary,
-  RuntimeSpeechSetupState,
-  RuntimeTerminalShow,
-  RuntimeTerminalSummary,
-  RuntimeTerminalVisualGroupNode,
-  RuntimeTerminalVisualLayout,
-  RuntimeTerminalVisualLayoutNode,
-  RuntimeTerminalVisualPaneNode,
-  RuntimeTerminalVisualTab,
-  RuntimeSyncedLeaf,
-  RuntimeSyncedTab,
-  RuntimeMarkdownReadTabResult,
-  RuntimeMarkdownSaveTabResult,
-  RuntimeMobileSessionCreateTerminalResult,
-  RuntimeMobileSessionClientTab,
-  RuntimeMobileSessionTabCloseResult,
-  RuntimeMobileSessionMarkdownTab,
-  RuntimeMobileSessionTabMove,
-  RuntimeMobileSessionTabMoveResult,
-  RuntimeMobileSessionTabGroup,
-  RuntimeMobileSessionSnapshotTab,
-  RuntimeMobileSessionTerminalTab,
-  RuntimeMobileSessionBrowserTab,
-  RuntimeMobileSessionTabsRemovedResult,
-  RuntimeMobileSessionTabsResult,
-  RuntimeMobileSessionTabsSnapshot,
-  RuntimeSessionTabCloseReason,
-  RuntimeBrowserDriverState,
-  RuntimeTerminalDriverState,
-  RuntimeSyncWindowGraph,
-  RuntimeWorktreeListResult,
-  BrowserTabInfo,
-  BrowserScreencastResult
-} from '../../shared/runtime-types'
 import type { AutomationService } from '../automations/service'
 import { RuntimeBrowserCommands } from './orca-runtime-browser'
 import { RemoteRuntimeTerminalCreateIdempotency } from './remote-runtime-terminal-create-idempotency'
@@ -474,7 +485,13 @@ import {
   deriveClientSessionTabSelection,
   projectClientSessionTabSelection
 } from './client-session-tab-selection'
-import type { PtyProviderBufferSnapshot } from '../providers/types'
+import type {
+  PtyProviderBufferSnapshot,
+  IFilesystemProvider,
+  IPtyProvider,
+  PtyProcessInfo,
+  PtyTransientFact
+} from '../providers/types'
 import { ClaudeAgentTeamsService } from './claude-agent-teams-service'
 import type {
   AgentTeamsTmuxCompatRequest,
@@ -527,9 +544,9 @@ import {
   addPRReviewCommentReply,
   listLabels,
   listAssignableUsers,
-  type MainWorkItem
+  type MainWorkItem,
+  type GitHubPRBranchLookupOptions
 } from '../github/client'
-import type { GitHubPRBranchLookupOptions } from '../github/client'
 import { resolveGitHubPrStartPoint } from '../github/pr-start-point'
 import {
   fetchGitHubPullRequestHeadRef,
@@ -579,19 +596,6 @@ import {
   type GitLabIssueListState
 } from '../gitlab/gitlab-preload-args'
 import { recordGitLabProjectRecent } from '../gitlab/gitlab-project-recents'
-import type {
-  GitHubIssueUpdate,
-  GitHubPullRequestStateUpdate,
-  GitHubPRFile,
-  GitHubPRReviewCommentInput,
-  GitLabIssueUpdate,
-  GitLabMRInlineCommentInput,
-  GitLabProjectRef,
-  GitLabWorkItem,
-  ListWorkItemsResult,
-  MRListState,
-  PRRefreshOutcome
-} from '../../shared/types'
 import { inspectSetupScriptImportCandidates } from '../../shared/setup-script-imports'
 import type {
   CreateHostedReviewInput,
@@ -785,7 +789,7 @@ import {
   removeWorktree
 } from '../git/worktree'
 import type { AddWorktreeOptions, AddWorktreeResult } from '../git/worktree'
-import { isENOENT } from '../ipc/filesystem-auth'
+import { isENOENT, invalidateAuthorizedRootsCache } from '../ipc/filesystem-auth'
 import {
   createSetupRunnerScript,
   getDefaultTabCommandTrustContent,
@@ -810,11 +814,16 @@ import { listRepoWorktrees } from '../repo-worktrees'
 import {
   createWorktreeCopiedPaths,
   createWorktreeLinkedPaths,
+  createWorktreeSharedPaths,
   findExistingWorktreeSymlinkPaths,
   removeWorktreeLinkedPaths
 } from '../ipc/worktree-symlinks'
 import { formatWorktreeIncludeCopyWarning } from '../ipc/worktree-include-copy-budget'
 import { resolveWorktreeIncludePaths } from '../git/worktree-include-file'
+import {
+  getWorktreeSharedLinkPaths,
+  resolveWorktreeSharedDirectories
+} from '../git/worktree-shared-directories'
 import { deleteWorktreeHistoryDir } from '../terminal-history'
 import {
   cleanupUnusedWorktreePushTargetRemote,
@@ -862,7 +871,6 @@ import {
   UNREGISTERED_MISSING_WORKTREE_MESSAGE
 } from '../worktree-removal-safety'
 import { prefetchWorktreeCreateBase } from '../worktree-create-base-prefetch'
-import { invalidateAuthorizedRootsCache } from '../ipc/filesystem-auth'
 import { prepareLocalWorktreeRootForRepo } from '../worktree-root-preparation'
 import {
   closeLocalWatcherForWorktreePath,
@@ -895,12 +903,6 @@ import {
   createMobileSessionTabsNotifyCoalescer,
   type MobileSessionTabsNotifyCoalescer
 } from './mobile-session-tabs-notify-coalescer'
-import type {
-  IFilesystemProvider,
-  IPtyProvider,
-  PtyProcessInfo,
-  PtyTransientFact
-} from '../providers/types'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
   assertFolderWorkspacePathUsable,
@@ -923,7 +925,6 @@ import type {
 } from '../codex-accounts/service'
 import type { CodexAccountSelectionTarget } from '../codex-accounts/runtime-selection'
 import type { RateLimitService } from '../rate-limits/service'
-import type { ClaudeRateLimitAccountsState, CodexRateLimitAccountsState } from '../../shared/types'
 import { applyPRBotAuthorOverride } from '../../shared/pr-bot-author-overrides'
 import type { CodexRateLimitResetOutcome, RateLimitState } from '../../shared/rate-limit-types'
 import type { CodexResetCreditExpectedScope } from '../../shared/codex-reset-credit-scope'
@@ -19461,6 +19462,16 @@ export class OrcaRuntimeService {
       await createWorktreeLinkedPaths(repo.path, created.path, symlinkPaths)
     }
 
+    // Why: project-level `orca.yaml` shared directories add to (never replace) the
+    // per-user setting, so a repo's shared dirs reach every teammate (issue #10451).
+    const sharedDirectories = await resolveWorktreeSharedDirectories(
+      repo.path,
+      localWorktreeGitOptions
+    )
+    if (sharedDirectories.length > 0) {
+      await createWorktreeSharedPaths(repo.path, created.path, sharedDirectories)
+    }
+
     // Why: project-level `.worktreeinclude` travels with the repo (issue #7549); copy semantics
     // (never symlink) so each worktree owns its files. Paths already linked above are skipped.
     const worktreeIncludePaths = await resolveWorktreeIncludePaths(
@@ -21586,7 +21597,10 @@ export class OrcaRuntimeService {
         throw new Error(formatWorktreeRemovalError(error, canonicalWorktreePath, force))
       }
 
-      const linkedPaths = repo.symlinkPaths ?? []
+      // Why: `orca.yaml` shared directories are symlinked in too, and a
+      // directory-only ignore rule leaves those links untracked, so removal must
+      // tolerate and unlink them exactly like the per-user shared paths.
+      const linkedPaths = getWorktreeSharedLinkPaths(repo)
       const ignoredLinkedPaths = force
         ? []
         : await findExistingWorktreeSymlinkPaths(canonicalWorktreePath, linkedPaths)
@@ -26842,6 +26856,7 @@ export class OrcaRuntimeService {
         ...(tab.color != null ? { color: tab.color } : {}),
         ...(tab.isPinned ? { isPinned: true } : {}),
         ...(tab.viewMode ? { viewMode: tab.viewMode } : {}),
+        ...(tab.launchDraft ? { launchDraft: tab.launchDraft } : {}),
         isActive: tab.isActive,
         ...(terminalHandle
           ? { status: 'ready' as const, terminal: terminalHandle }

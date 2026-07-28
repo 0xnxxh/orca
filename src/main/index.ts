@@ -3,6 +3,7 @@ import { existsSync, statSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import os from 'node:os'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type Tray } from 'electron'
+import { initTccPromptNotice, stopTccPromptNotice } from './macos-tcc-prompt-notice'
 import { electronApp, is } from '@electron-toolkit/utils'
 import {
   Store,
@@ -20,7 +21,15 @@ import { StatsCollector, initStatsPath } from './stats/collector'
 import { ClaudeUsageStore, initClaudeUsagePath } from './claude-usage/store'
 import { CodexUsageStore, initCodexUsagePath } from './codex-usage/store'
 import { OpenCodeUsageStore, initOpenCodeUsagePath } from './opencode-usage/store'
-import { killAllPty } from './ipc/pty'
+import {
+  killAllPty,
+  clearProviderPtyState,
+  getPtyIdForPaneKey,
+  registerPaneKeyTeardownListener,
+  getLocalPtyProvider,
+  getSshPtyProvider,
+  registerHeadlessPtyRuntime
+} from './ipc/pty'
 import { initDaemonPtyProvider, disconnectDaemon, shutdownDaemon } from './daemon/daemon-init'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
 import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
@@ -157,6 +166,7 @@ import {
   setTrayAttention,
   type SystemTrayOptions
 } from './tray/system-tray'
+import { createMacAppActivationHandler } from './window/macos-app-activation'
 import { focusExistingMainWindow } from './window/focus-existing-window'
 import { notifyMainWindowBecameVisible } from './window/main-window-visibility'
 import { CodexAccountService } from './codex-accounts/service'
@@ -203,14 +213,6 @@ import { setDefaultWslDistroOverride } from './git/runner'
 import { getRepoIdFromWorktreeId } from '../shared/worktree-id'
 import { parseWorkspaceKey } from '../shared/workspace-scope'
 import { setMigrationUnsupportedPtyListener } from './agent-hooks/migration-unsupported-pty-state'
-import {
-  clearProviderPtyState,
-  getPtyIdForPaneKey,
-  registerPaneKeyTeardownListener,
-  getLocalPtyProvider,
-  getSshPtyProvider,
-  registerHeadlessPtyRuntime
-} from './ipc/pty'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { EmulatorBridge } from './emulator/emulator-bridge'
 import { browserCertificateTrustController, browserManager } from './browser/browser-manager'
@@ -556,6 +558,11 @@ function focusExistingWindow(): void {
 function requestDesktopActivation(): void {
   desktopActivationGate.requestActivation()
 }
+
+const handleMacAppActivation = createMacAppActivationHandler({
+  getWindow: () => mainWindow,
+  requestActivation: requestDesktopActivation
+})
 
 function getDesktopWindowStatus(): RuntimeDesktopWindowStatus {
   const state = desktopActivationGate.getState()
@@ -1194,6 +1201,8 @@ function openMainWindow(): BrowserWindow {
         prepareLegacySharedCodexSessionResume(args, {
           isHostSystemDefaultRealHome: () =>
             codexRuntimeHome?.isHostSystemDefaultRealHome() === true,
+          getSelectedHostAccountCodexHomePath: () =>
+            codexRuntimeHome?.getSelectedHostAccountCodexHomePath() ?? null,
           systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
         }),
       onBeforeRelaunch: async () => {
@@ -1235,6 +1244,8 @@ function openMainWindow(): BrowserWindow {
       onWorktreeLifecycle: emitPluginWorktreeLifecycle
     }
   )
+  // Why: attach the durable renderer pull now, but launch the diagnostic process after first paint.
+  initTccPromptNotice(window, { deferWatchUntilReadyToShow: true })
   rateLimits.attach(window)
   // Why: quota probes spawn CLIs and hit network, so don't fetch immediately and compete with first paint; show/focus listeners refresh later.
   rateLimits.start({ fetchImmediately: false })
@@ -1843,7 +1854,7 @@ function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
   )
 }
 
-app.whenReady().then(async () => {
+void app.whenReady().then(async () => {
   logStartupMilestone('app-ready')
   // Why: install certificate decisions before any webview or headless window issues its first TLS request.
   app.on(
@@ -2172,6 +2183,8 @@ app.whenReady().then(async () => {
     prepareAiVaultSessionResume: (args) =>
       prepareLegacySharedCodexSessionResume(args, {
         isHostSystemDefaultRealHome: () => codexRuntimeHome?.isHostSystemDefaultRealHome() === true,
+        getSelectedHostAccountCodexHomePath: () =>
+          codexRuntimeHome?.getSelectedHostAccountCodexHomePath() ?? null,
         systemCodexHomePath: resolveHostCodexSessionSourceHome(store!.getSettings())
       }),
     buildAgentHookPtyEnv: () =>
@@ -2602,7 +2615,7 @@ app.whenReady().then(async () => {
   })
 
   startTerminalRuntimeStartupServices()
-  app.on('activate', requestDesktopActivation)
+  app.on('activate', handleMacAppActivation)
 
   if (serveOptions) {
     // Why: give managed WSL launchers a brief chance to migrate before headless PTYs go live, without slow repairs withholding all RPC readiness.
@@ -2726,6 +2739,9 @@ app.whenReady().then(async () => {
   })
 })
 
+// Why: app.exit() skips Electron quit events, so keep its log child from surviving forced exits.
+process.once('exit', stopTccPromptNotice)
+
 app.on('before-quit', () => {
   if (isQuittingForUpdate()) {
     recordUpdaterLifecycle('before_quit_allowed', undefined, {
@@ -2748,6 +2764,8 @@ app.on('before-quit', () => {
 // Why: will-quit fires twice — first pass runs sync cleanup + preventDefault to await checkpoint writes; second pass exits.
 let daemonDisconnectDone = false
 app.on('will-quit', (e) => {
+  // Why: renderer guards can still cancel before this committed phase; `log stream` must survive those vetoes.
+  stopTccPromptNotice()
   const updateQuitInProgress = isQuittingForUpdate()
   if (updateQuitInProgress) {
     recordUpdaterLifecycle(
