@@ -49,7 +49,7 @@ export function AgentDashboardFilterChips({
   onClear: () => void
 }): React.JSX.Element {
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border px-3 pb-2">
+    <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border px-3 py-2">
       <span className="mr-0.5 text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
         {translate('dashboardPopout.filters.active', 'Filters')}
       </span>
