@@ -201,7 +201,10 @@ cross-scope races, privacy/authorization audit, and independent review.
       release app on both platforms and complete independent live interaction
       testing.
 - [ ] Fuzz manifests, chunks, paths, MIME types, CSP, cache metadata, bridge
-      envelopes, limits, ordering, cancellation, and subscriptions.
+      envelopes, limits, ordering, cancellation, and subscriptions. The
+      five-case TypeScript/Swift/Kotlin quoted-numeric manifest corpus passes
+      after removing Android `JSONObject.optInt` coercion; generated mutation
+      and the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,

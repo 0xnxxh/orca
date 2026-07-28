@@ -103,6 +103,32 @@ describe('mobile web manifest contract', () => {
     expect(MobileWebManifestSchema.safeParse(wrongTotal).success).toBe(false)
   })
 
+  it.each([
+    ['schemaVersion', (manifest: Record<string, unknown>) => (manifest.schemaVersion = '1')],
+    [
+      'bridge.minimum',
+      (manifest: Record<string, unknown>) =>
+        ((manifest.bridge as Record<string, unknown>).minimum = '1')
+    ],
+    [
+      'bridge.testedThrough',
+      (manifest: Record<string, unknown>) =>
+        ((manifest.bridge as Record<string, unknown>).testedThrough = '2')
+    ],
+    ['totalBytes', (manifest: Record<string, unknown>) => (manifest.totalBytes = '60')],
+    [
+      'assets.byteLength',
+      (manifest: Record<string, unknown>) => {
+        const assets = manifest.assets as Record<string, unknown>[]
+        assets[0]!.byteLength = '20'
+      }
+    ]
+  ])('rejects quoted numeric field %s', (_field, mutate) => {
+    const manifest = validManifest() as unknown as Record<string, unknown>
+    mutate(manifest)
+    expect(MobileWebManifestSchema.safeParse(manifest).success).toBe(false)
+  })
+
   it('enforces bridge, per-asset, and file-count bounds', () => {
     const invalidBridge = validManifest()
     invalidBridge.bridge = { minimum: 3, testedThrough: 2 }

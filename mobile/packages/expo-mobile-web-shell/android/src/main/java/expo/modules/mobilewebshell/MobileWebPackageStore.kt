@@ -324,14 +324,14 @@ internal class MobileWebPackageStore internal constructor(
     require(
       manifest.keys().asSequence().toSet() ==
         setOf("schemaVersion", "buildId", "bridge", "entrypoint", "totalBytes", "assets") &&
-        manifest.optInt("schemaVersion", -1) == 1
+        strictJsonInt(manifest, "schemaVersion") == 1
     ) { "mobile_web_stage_manifest_invalid" }
     val bridge = manifest.optJSONObject("bridge")
       ?: throw IllegalArgumentException("mobile_web_stage_manifest_invalid")
-    val bridgeMinimum = bridge.optInt("minimum", -1)
-    val bridgeTestedThrough = bridge.optInt("testedThrough", -1)
-    val entrypoint = manifest.optString("entrypoint")
-    val declaredTotalBytes = manifest.optInt("totalBytes", -1)
+    val bridgeMinimum = strictJsonInt(bridge, "minimum") ?: -1
+    val bridgeTestedThrough = strictJsonInt(bridge, "testedThrough") ?: -1
+    val entrypoint = strictJsonString(manifest, "entrypoint") ?: ""
+    val declaredTotalBytes = strictJsonInt(manifest, "totalBytes") ?: -1
     require(
       bridge.keys().asSequence().toSet() == setOf("minimum", "testedThrough") &&
         bridgeMinimum > 0 &&
@@ -340,7 +340,7 @@ internal class MobileWebPackageStore internal constructor(
         isSafeAssetPath(entrypoint) &&
         declaredTotalBytes in 1..(32 * 1024 * 1024)
     ) { "mobile_web_stage_manifest_invalid" }
-    val buildId = manifest.optString("buildId")
+    val buildId = strictJsonString(manifest, "buildId") ?: ""
     require(
       SHA256_PATTERN.matches(buildId) &&
         sha256Hex(canonicalManifestJson.toByteArray(Charsets.UTF_8)) == buildId
@@ -361,11 +361,11 @@ internal class MobileWebPackageStore internal constructor(
         value.keys().asSequence().toSet() ==
           setOf("path", "sha256", "byteLength", "contentType", "role")
       ) { "mobile_web_stage_manifest_invalid" }
-      val path = value.optString("path")
-      val hash = value.optString("sha256")
-      val length = value.optInt("byteLength", -1)
-      val contentType = value.optString("contentType")
-      val role = value.optString("role")
+      val path = strictJsonString(value, "path") ?: ""
+      val hash = strictJsonString(value, "sha256") ?: ""
+      val length = strictJsonInt(value, "byteLength") ?: -1
+      val contentType = strictJsonString(value, "contentType") ?: ""
+      val role = strictJsonString(value, "role") ?: ""
       require(
         isSafeAssetPath(path) &&
           SHA256_PATTERN.matches(hash) &&
@@ -382,9 +382,7 @@ internal class MobileWebPackageStore internal constructor(
     require(
       totalBytes == declaredTotalBytes &&
         documentCount == 1 &&
-        assetValues.asObjectSequence().any {
-          it.optString("path") == entrypoint && it.optString("role") == "document"
-        }
+        assets[entrypoint]?.role == "document"
     ) { "mobile_web_stage_manifest_invalid" }
     return MobileWebManifestRecord(
       buildId,
@@ -638,11 +636,9 @@ private fun isValidAssetMetadata(
   return fileHash == hash && expectedMetadata.first == contentType && expectedMetadata.second == role
 }
 
-private fun JSONArray.asObjectSequence(): Sequence<JSONObject> = sequence {
-  for (index in 0 until length()) {
-    optJSONObject(index)?.let { yield(it) }
-  }
-}
+private fun strictJsonInt(value: JSONObject, key: String): Int? = value.opt(key) as? Int
+
+private fun strictJsonString(value: JSONObject, key: String): String? = value.opt(key) as? String
 
 private fun sha256Hex(bytes: ByteArray): String =
   MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

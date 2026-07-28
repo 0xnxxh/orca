@@ -1526,7 +1526,12 @@ copy.
   terminal-link tests reject unsupported targets. The exact Orca app route,
   native nested component, Android, physical-device, Release, broader live
   adversarial interaction, and independent review remain open.
-- [ ] Fuzz manifest, chunks, asset paths, MIME types, CSP, and cache metadata.
+- [~] Fuzz manifest, chunks, asset paths, MIME types, CSP, and cache metadata.
+  A mirrored TypeScript, Swift, and Kotlin scalar-type corpus rejects quoted
+  schema, bridge, total-byte, and asset-byte integers before staging. It found
+  and removed Android `JSONObject.optInt` coercion so native validation now
+  requires exact JSON integer/string types. Broader generated mutation,
+  chunk/path/MIME/CSP, and persisted-cache metadata fuzzing remains open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -2546,4 +2551,6 @@ copy.
 | 2026-07-28 | Complete | Picker-interruption validation passes 568 mobile files / 3,371 tests with 2 expected skips, both typechecks and lints, changed-file formatting, 55 reliability gates, max-lines, package verification, and diff hygiene. RNW remains `9ed8c7f7d9be87c85b2431ece4eac3365a73e62bebf409846dea0ce72c9d1dde`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                                                                      |
 | 2026-07-28 | Complete | Fresh exact-app iPhone 17 Pro / iOS 26.5 and Android API 36 arm64 Debug emulator runs loaded the active manifest-declared RNW script, rejected a mutated undeclared same-origin script path, and retained the hosted document. Both runs also passed network/navigation isolation; Android recorded zero sentinel observations and a clean bridge log.                                                                                    |
 | 2026-07-28 | Complete | Executable-isolation validation passes 568 mobile files / 3,373 tests with 2 expected skips and 1 focused file / 23 tests. Mobile and RNW typechecks/lints, full mobile and changed-file formatting, 55 reliability gates, max-lines, native Swift faults, 76-task Android module tests, package verification, and diff hygiene pass. RNW remains `9ed8c7f7…`: 49 assets, 9,280,463 raw bytes, and 2,684,481 gzip bytes.                   |
+| 2026-07-28 | Finding  | Android native manifest parsing accepted quoted numeric schema, bridge, total-byte, and asset-byte fields through coercive `JSONObject.optInt`, unlike the strict shared TypeScript schema and iOS parser. The Android store now requires exact scalar types, and the same five-case deterministic corpus passes in TypeScript, Swift, and Kotlin before any stage is created.                                                              |
+| 2026-07-28 | Complete | Manifest scalar hardening passes 1 shared contract file / 20 tests, the native Swift fault executable, and the refreshed Android module suite across 76 Gradle tasks. Node typecheck, changed TypeScript lint/formatting, max-lines, and diff hygiene pass. No RNW package content changed.                                                                                                                                                   |
 | 2026-07-28 | Next     | Complete the remaining parity inventory and cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                  |
