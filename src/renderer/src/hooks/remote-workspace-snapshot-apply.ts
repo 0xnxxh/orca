@@ -124,10 +124,13 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
   snapshotApplyDepth += 1
   try {
     const currentStore = store.getState()
-    currentStore.hydrateWorkspaceSession(merged)
-    currentStore.hydrateTabsSession(merged)
-    currentStore.hydrateEditorSession(merged)
-    currentStore.hydrateBrowserSession(merged)
+    const replaceWorkspaceKeys = [...worktreeIds]
+    currentStore.hydrateWorkspaceSession(merged, {
+      directSshAuthority: authority,
+      replaceWorkspaceKeys
+    })
+    currentStore.hydrateTabsSession(merged, { replaceWorkspaceKeys })
+    // Why: direct SSH snapshots project terminal state only; global editor/browser hydration would reset unrelated hosts.
     currentStore.markRemoteWorkspaceHydrated(authority.targetId)
     currentStore.setRemoteWorkspaceSyncStatus(authority.targetId, {
       phase: 'synced',
@@ -141,7 +144,12 @@ export async function applyDirectSshRemoteWorkspaceSnapshot({
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     await Promise.race([
       Promise.resolve()
-        .then(() => store.getState().reconnectPersistedTerminals(reconnectAbort.signal))
+        .then(() =>
+          store.getState().reconnectPersistedTerminals(reconnectAbort.signal, {
+            directSshAuthority: authority,
+            workspaceKeys: replaceWorkspaceKeys
+          })
+        )
         .catch(() => {}),
       new Promise<void>((resolve) => {
         reconnectTimer = setTimeout(() => {

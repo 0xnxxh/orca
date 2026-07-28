@@ -165,12 +165,13 @@ Current-main reconciliation:
 10. After every await and inside every authoritative store updater, current state must still name the same connected target and exact authority pair.
 11. Supersession is determined by coordinator arrival order and exact equality, never numeric ordering.
 12. On any authority change, before new preparation admission, cancel the target's queued work, locally settle obsolete waiter leases, send exactly one cancellation for every affected in-flight provider request ID, mark all late results stale, and retain main-side post-await fences. Terminal finalization for the new authority does not wait for old relay work.
+13. Exhausting one target's per-session generation counter rolls the process generation scope and revokes every direct SSH target, not only the target that exhausted its counter. Main invalidates every cached authority and aborts every registered provider request from the old scope before any target can publish or admit work under the new scope.
 
 ### Host-qualified ownership
 
 1. Direct reconnect work owns only `toSshExecutionHostId(targetId)`.
 2. Every coordinator detected-worktree provider invocation carries `(repoId, executionHostId, expectedAuthority, providerRequestId)`. Each renderer consumer separately owns a `waiterLeaseId`; a lease ID never crosses IPC or names provider work.
-3. Main resolves a repo by the complete `(repo.id, getRepoExecutionHostId(repo))` identity. Zero or multiple matches fail closed. It never falls back to first-match `getRepo(repoId)` for a host-qualified request.
+3. Main resolves a repo by the complete `(repo.id, executionHostId)` identity only after validating all present repo provenance. `executionHostId` and legacy `connectionId` must agree when both are present; a catalog row for which either source names the requested host while the other names another SSH, local, or runtime host makes the host catalog non-authoritative. Zero, contradictory, or multiple matches fail closed. Main never uses explicit-field precedence to hide a contradiction and never falls back to first-match `getRepo(repoId)` for a host-qualified request.
 4. A local host request can select only a local repo. A direct SSH host request can select only the matching target/provider. A runtime host is rejected by the desktop handler and must use the existing runtime RPC route.
 5. A successful response uses a local or direct-SSH discriminant. The direct-SSH variant cannot be constructed without the resolved execution host and full authority pair. Renderer validates the wire discriminant and rejects a mismatch before any use.
 6. Runtime-owned or runtime-transported worktrees remain under the runtime environment scheduler, including SSH execution hosts whose `runtimeOwnerEnvironmentId` names a HUB.
@@ -221,12 +222,13 @@ Reconnect finalization must:
 - clear stale binding evidence from a missed disconnect or prior authority before testing retry eligibility;
 - keep at most one retry attempt in flight per tab and authority;
 - join renderer pending-spawn promises only for the same retry attempt; authority or tab-generation advance starts independently, and a late obsolete fresh PTY is rejected and retired;
-- record only a successful live binding in the finalized ledger; failure, timeout, later clear, or snapshot overwrite removes pending/success state and re-arms the tab;
+- accept a spawn or reattach acknowledgement only when its attempt, authority, tab generation, committed `tab.ptyId`, and PTY index all match; a rejected acknowledgement returns the original store state and mutates none of the tab, PTY-index, pending-attempt, retry-history, or live-binding maps;
+- on a successful exact reattach, atomically retire the pending attempt and record the current-authority live binding; failure, timeout, later clear, or snapshot overwrite removes pending/success state and re-arms the tab;
 - permit a tab hydrated, newly discovered, or left unbound after a failed spawn to receive a bounded same-authority corrective bump;
 - update all affected workspace buckets in one Zustand publication; and
 - leave preparation-only requests, nonqualifying tabs, and every other host unchanged.
 
-The coordinator keeps separate authority-scoped pending-attempt state and successful-binding state, not a set of bump attempts and not a cached preparation outcome. A spawn acknowledgement records success only if its attempt, tab generation, and authority are still current. Failure or timeout removes the pending entry. A healthy live binding suppresses correction; an unresolved tab is reconsidered on wake, snapshot completion, and preparation completion with at most one attempt in flight and a per-tab token bucket of two automatic attempts per rolling 30 seconds. Rotate both states when authority changes. This bounds same-authority correction without stranding a pane for the connection lifetime.
+The coordinator keeps separate authority-scoped pending-attempt state and successful-binding state, not a set of bump attempts and not a cached preparation outcome. A healthy live binding suppresses correction; an unresolved tab is reconsidered on wake, snapshot completion, and preparation completion with at most one attempt in flight. One authority chain preserves its complete attempt history and has a hard limit of two automatic attempts. A timeout taking longer than the former rolling 30-second window cannot age out the first attempt and start a third automatic attempt; later wake, snapshot, and preparation triggers remain exhausted until authority replacement rotates pending, binding, and history state.
 
 ## Design
 
@@ -384,6 +386,8 @@ listReposForExecutionHost({
   expectedAuthority
 })
 ```
+
+Main validates explicit and legacy ownership before producing the host snapshot. A row with contradictory `executionHostId` and `connectionId` cannot be filtered into one host by precedence or silently omitted from the other; a contradiction touching the requested host returns a non-authoritative catalog with no rows.
 
 The renderer merges the immutable response into only that host scope after a full-authority fence. This action owns a per-host catalog revision and in-flight entry; it does not share `reposFetchGeneration` with focused-runtime or all-host fetches. Thus a concurrent runtime-focused catalog refresh cannot silently supersede direct SSH hydration.
 Its authoritative response uses the same `AuthoritativeHost` discriminant as detected worktrees and lineage, so direct-SSH catalog data also requires the complete pair.
@@ -673,6 +677,7 @@ An already-connected same-authority rebroadcast is a wake refresh, not a healthy
 4. The function validates the token, obtains the snapshot, and passes the same token to `applyRemoteWorkspaceSnapshot`.
 5. Snapshot apply does not prepare again and is preparation-only with respect to coordinator retry; existing snapshot-driven `reconnectPersistedTerminals` behavior remains.
 6. For `revision === 0`, mark hydration and publish the current local session only when the pre-await `hasLocalTabs` capture was true. Revalidate authority before upload. Do not recompute that predicate after preparation/hydration, which could overwrite a newer relay snapshot with locally imported state.
+7. Snapshot projection and persisted-terminal reconnect receive only host-qualified worktree references from the token's exact target scope. They cannot reset, replace, remove, or reattach sibling SSH, local, WSL, or runtime-owned tabs or their PTY indexes, layouts, active selection, generations, retry state, or live-binding state, even when raw repo/worktree IDs or paths collide.
 
 ### Unsolicited snapshot
 
@@ -682,7 +687,7 @@ An already-connected same-authority rebroadcast is a wake refresh, not a healthy
 4. Capture the target terminal-recovery revision and same-ID local tab recovery fields before snapshot projection.
 5. Revalidate the token, snapshot revision, arrival order, and recovery revision immediately before merge. If recovery advanced, rebase the projection on the latest local recovery fields rather than applying the stale captured copy.
 6. Apply once as preparation-only. For a same-ID tab, preserve any newer local `generation`, pending attempt, successful current-authority binding, and terminal-recovery revision. Remote `generation` is not comparable across clients and cannot overwrite a local retry. Imported `ptyId`/pending reconnect data is a wake hint until `reconnectPersistedTerminals` settles and current-authority binding provenance is recorded.
-7. Run `reconnectPersistedTerminals`, then `finalizeHydratedTerminals` for a reconnect authority. A failed reattach clears pending state and re-arms correction; success records the current binding without an extra bump.
+7. Run the target-scoped, host-qualified `reconnectPersistedTerminals`, then `finalizeHydratedTerminals` for a reconnect authority. A failed reattach clears pending state and re-arms correction; a successful exact reattach atomically retires its pending attempt and records the current binding without an extra bump.
 8. If path resolution still reports unknown worktrees, record a degraded result; do not loop unboundedly.
 
 A later same-authority snapshot always receives a new preparation attempt after earlier work completed. This preserves convergence when another client creates a worktree while the connection stays live.
@@ -752,6 +757,7 @@ This implementation registers the worktree scan-count, host/authority, timeout-b
 - Compile-time fixtures cannot construct a direct-SSH `complete` result or `authoritative: true` lineage snapshot without both authority fields. Runtime admission rejects malformed wire values that omit either field. Local authoritative variants carry neither SSH field.
 - A response echoes exact host and complete authority; renderer rejects any host, target, epoch, generation, provider request, or discriminant mismatch.
 - Relay loss/replacement, transport loss/replacement, provider disposal, target readoption, and permanent removal rotate epoch and generation in one helper.
+- A per-target generation counter exhaustion rolls the process generation scope, revokes every target's old authority and mutation token, and aborts every old-scope provider request before new-scope admission.
 - Relay-only replacement rejects both old reconnect/provider work and an old `SshMutationExpectation`.
 - A fresh `connected` authority is not broadcast until its provider is registered.
 - An old provider result after any rotation performs no root-memory, lineage-prune, or metadata-backfill mutation.
@@ -763,6 +769,7 @@ This implementation registers the worktree scan-count, host/authority, timeout-b
 - Retained-state admission accepts a bounded valid epoch, rejects malformed/oversized epochs, and never strips a valid authority component.
 - The web preload compatibility overload preserves requested-host echo for runtime reads; this does not enable direct-SSH coordination in paired web clients.
 - A stale `ssh:getState` reply arriving after a disconnect/reconnect push cannot change status or fill authority; a same-watermark reply can fill only missing authority.
+- Main host-catalog admission rejects a row whose explicit execution host contradicts its legacy connection host; it returns no authoritative rows instead of selecting or hiding that row by precedence.
 
 ### Renderer worktree/catalog/lineage fences
 
@@ -772,6 +779,7 @@ This implementation registers the worktree scan-count, host/authority, timeout-b
 - An old result after disconnect/reconnect or relay-only replacement causes zero store publications.
 - Git identity, hosted-review links, purge state, both worktree maps, and best-effort lineage remain byte-identical on stale results.
 - Local, another SSH target, and runtime owners with the same repo ID remain unchanged.
+- Target snapshot hydration and persisted-terminal reconnect use host-qualified worktree references and leave sibling SSH, local, WSL, and runtime tabs, PTY indexes, layouts, active state, generations, and recovery ledgers unchanged.
 - A target-scoped catalog fetch cannot be superseded by focused-runtime `fetchRepos`.
 - Host-scoped lineage deletes a stale direct SSH row while preserving local, another SSH target, runtime, and unknown-owner rows.
 - Runtime-focused UI state cannot redirect direct SSH catalog, worktree, or lineage ownership.
@@ -825,7 +833,8 @@ This implementation registers the worktree scan-count, host/authority, timeout-b
 - A parsed target PTY recovers a stale-catalog tab only without contradictory ownership.
 - A relay/provider replacement after a missed disconnect clears a pre-authority `ptyId` and retries it while preserving last-known relay IDs.
 - Binding provenance for another authority or no provenance is stale; a successful current-authority spawn becomes live and suppresses healthy correction.
-- Two automatic correction attempts per rolling 30 seconds are allowed; later triggers wait for token refill rather than permanently ledgering the tab.
+- One authority chain permits at most two automatic correction attempts even when each timeout exceeds 30 seconds; later same-authority triggers remain exhausted until authority replacement.
+- Rejected stale/mismatched acknowledgements preserve every store map and publish nothing. A successful exact spawn or reattach acknowledgement retires its pending attempt and records one current-authority live binding atomically.
 - Disconnect retains exact existing ordering and effects for `clearRemoteDetectedAgents`, `clearPortForwards`, `setDetectedPorts([])`, and atomic PTY clear.
 - Disconnect and reconnect emit zero paired `session.tabs.close`/`closeLifecycle`, provider shutdowns, or process signals.
 - A manually parked direct-SSH worktree follows the same store patch and retry eligibility without invoking parking, close, or layout mutation.
@@ -841,7 +850,8 @@ This implementation registers the worktree scan-count, host/authority, timeout-b
 - Reconnect finalized before session hydration retries newly hydrated tabs exactly once afterward.
 - Immediate finalization bumps a tab, then a snapshot with the same stable tab ID and an older/absent generation cannot reduce the local generation or suppress correction.
 - Snapshot hydration that lands after a newer local retry preserves the newer terminal-recovery revision, pending attempt, and current binding provenance.
-- Snapshot-imported `ptyId` without current-authority live evidence remains retry-eligible; successful `reconnectPersistedTerminals` records it live, while failure re-arms it.
+- Snapshot-imported `ptyId` without current-authority live evidence remains retry-eligible; successful exact target-scoped `reconnectPersistedTerminals` retires the pending attempt and records it live, while failure re-arms it.
+- Snapshot projection and reconnect are host-qualified end to end; another SSH target, local, WSL, and runtime-owned state remain byte-identical despite colliding raw IDs or paths.
 - Same-authority wake rebroadcast performs bounded fresh discovery.
 - Revision-zero sync captures `hasLocalTabs` before `remoteWorkspace.get`, uploads only on that capture, and revalidates authority before publish.
 - Snapshot apply rejects a token whose `snapshotRevision` differs, and reconnect sync can create a `SnapshotApplyToken` only from the snapshot fetched by that same fenced operation.

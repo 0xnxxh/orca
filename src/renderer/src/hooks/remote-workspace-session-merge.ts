@@ -1,4 +1,5 @@
 import type { TerminalTab, WorkspaceSessionState } from '../../../shared/types'
+import { worktreeWorkspaceKey } from '../../../shared/workspace-scope'
 import { splitWorktreeId } from '../../../shared/worktree-id'
 import type { AppState } from '../store/types'
 
@@ -21,8 +22,8 @@ export function mergeDirectSshRemoteWorkspaceSession(
   preserveLocalTerminalTabIds: ReadonlySet<string>
 ): WorkspaceSessionState {
   const currentTabsById = new Map(
-    Object.values(liveTabsByWorktree)
-      .flat()
+    [...replaceWorktreeIds]
+      .flatMap((worktreeId) => liveTabsByWorktree[worktreeId] ?? [])
       .map((tab) => [tab.id, tab])
   )
   const locallyPreservedTabIds = new Set<string>()
@@ -69,21 +70,18 @@ export function mergeDirectSshRemoteWorkspaceSession(
       )
     )
   }
+  const activeOutsideTarget =
+    current.activeWorktreeId != null && !replaceWorktreeIds.has(current.activeWorktreeId)
   return {
     ...current,
-    activeRepoId:
-      remote.activeRepoId ??
-      (current.activeWorktreeId && replaceWorktreeIds.has(current.activeWorktreeId)
-        ? null
-        : current.activeRepoId),
-    activeWorktreeId:
-      remote.activeWorktreeId ??
-      (current.activeWorktreeId && replaceWorktreeIds.has(current.activeWorktreeId)
-        ? null
-        : current.activeWorktreeId),
-    activeTabId:
-      remote.activeTabId ??
-      (current.activeTabId && replacedTabIds.has(current.activeTabId) ? null : current.activeTabId),
+    activeRepoId: activeOutsideTarget ? current.activeRepoId : remote.activeRepoId,
+    activeWorktreeId: activeOutsideTarget ? current.activeWorktreeId : remote.activeWorktreeId,
+    activeWorkspaceKey: activeOutsideTarget
+      ? current.activeWorkspaceKey
+      : remote.activeWorktreeId
+        ? worktreeWorkspaceKey(remote.activeWorktreeId)
+        : null,
+    activeTabId: activeOutsideTarget ? current.activeTabId : remote.activeTabId,
     tabsByWorktree: {
       ...omitTargetWorktrees(current.tabsByWorktree),
       ...tabsByWorktree

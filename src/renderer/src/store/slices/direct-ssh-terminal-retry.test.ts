@@ -173,6 +173,9 @@ describe('direct SSH terminal retry ledger', () => {
       )
     expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeDefined()
     expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].ptyId).toBeNull()
+    expect(store.getState().ptyIdsByTabId[TAB_ID]).toEqual([])
+    expect(store.getState().lastKnownRelayPtyIdByTabId[TAB_ID]).toBeUndefined()
 
     store.getState().updateTabPtyId(TAB_ID, 'ssh:target@@pty-new', undefined, attempt.attemptId)
     expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
@@ -183,7 +186,7 @@ describe('direct SSH terminal retry ledger', () => {
     expect(store.getState().retryDirectSshTargetPanes(authority(), 1_002)).toBe(0)
   })
 
-  it('re-arms failures and enforces two attempts per rolling thirty seconds', () => {
+  it('re-arms one failure and exhausts the authority chain after two attempts', () => {
     const store = seedStore()
 
     expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
@@ -214,8 +217,8 @@ describe('direct SSH terminal retry ledger', () => {
     expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
     expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
     expect(store.getState().retryDirectSshTargetPanes(authority(), 30_999)).toBe(0)
-    expect(store.getState().retryDirectSshTargetPanes(authority(), 31_000)).toBe(1)
-    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(3)
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 31_000)).toBe(0)
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
   })
 
   it('does not turn two thirty-one-second timeouts into an unbounded retry chain', () => {
@@ -249,7 +252,8 @@ describe('direct SSH terminal retry ledger', () => {
 
     expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
     expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
-    expect(store.getState().retryDirectSshTargetPanes(authority(), 63_000)).toBe(1)
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 63_000)).toBe(0)
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(2)
   })
 
   it('re-arms only the exact failed tab', () => {

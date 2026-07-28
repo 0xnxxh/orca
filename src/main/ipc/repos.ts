@@ -146,6 +146,27 @@ function hasValidCatalogSshAuthority(
   )
 }
 
+function repoHostContradictsConnection(repo: Repo): boolean {
+  if (!repo.executionHostId || !repo.connectionId) {
+    return false
+  }
+  const explicitHost = parseExecutionHostId(repo.executionHostId)
+  return explicitHost?.kind !== 'ssh' || explicitHost.targetId !== repo.connectionId
+}
+
+function getConsistentRepoCatalogForHost(
+  repos: readonly Repo[],
+  host: NonNullable<ReturnType<typeof parseExecutionHostId>>
+): Repo[] | null {
+  const hasContradiction = repos.some(
+    (repo) =>
+      repoHostContradictsConnection(repo) &&
+      (getRepoExecutionHostId(repo) === host.id ||
+        (host.kind === 'ssh' && repo.connectionId === host.targetId))
+  )
+  return hasContradiction ? null : repos.filter((repo) => getRepoExecutionHostId(repo) === host.id)
+}
+
 async function listReposForExecutionHost(
   store: Store,
   args: ListReposForExecutionHostArgs
@@ -165,12 +186,14 @@ async function listReposForExecutionHost(
     if ('expectedAuthority' in args) {
       return rejected('rejected')
     }
+    const repos = getConsistentRepoCatalogForHost(store.getRepos(), parsedHost)
+    if (!repos) {
+      return rejected('rejected')
+    }
     return {
       authoritative: true,
       authority: { kind: 'local', executionHostId: LOCAL_EXECUTION_HOST_ID },
-      repos: structuredClone(
-        store.getRepos().filter((repo) => getRepoExecutionHostId(repo) === parsedHost.id)
-      )
+      repos: structuredClone(repos)
     }
   }
   if (
@@ -187,9 +210,11 @@ async function listReposForExecutionHost(
   if (!provider) {
     return rejected('unavailable')
   }
-  const repos = structuredClone(
-    store.getRepos().filter((repo) => getRepoExecutionHostId(repo) === parsedHost.id)
-  )
+  const matchingRepos = getConsistentRepoCatalogForHost(store.getRepos(), parsedHost)
+  if (!matchingRepos) {
+    return rejected('rejected')
+  }
+  const repos = structuredClone(matchingRepos)
   await Promise.resolve()
   if (
     getSshGitProvider(parsedHost.targetId) !== provider ||

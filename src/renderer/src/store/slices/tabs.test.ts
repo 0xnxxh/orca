@@ -104,7 +104,13 @@ const mockApi = {
 // @ts-expect-error -- mock
 globalThis.window = { api: mockApi }
 
-import { createTestStore, makeOpenFile, makeTabGroup, makeUnifiedTab } from './store-test-helpers'
+import {
+  createTestStore,
+  makeOpenFile,
+  makeTabGroup,
+  makeUnifiedTab,
+  makeWorktree
+} from './store-test-helpers'
 
 const WT = 'repo1::/tmp/feature'
 
@@ -1782,6 +1788,89 @@ describe('TabsSlice', () => {
       })
 
       expect(store.getState().unifiedTabsByWorktree).toEqual({})
+    })
+
+    it('replaces only explicitly scoped worktree tab chrome', () => {
+      const siblingWorktreeId = 'repo2::/tmp/sibling'
+      const targetGroup = makeTabGroup({
+        id: 'group-target',
+        worktreeId: WT,
+        activeTabId: 'target-old',
+        tabOrder: ['target-old']
+      })
+      const siblingGroup = makeTabGroup({
+        id: 'group-sibling',
+        worktreeId: siblingWorktreeId,
+        activeTabId: 'sibling-tab',
+        tabOrder: ['sibling-tab']
+      })
+      const siblingTabs = [
+        makeUnifiedTab({
+          id: 'sibling-tab',
+          worktreeId: siblingWorktreeId,
+          groupId: siblingGroup.id
+        })
+      ]
+      const siblingGroups = [siblingGroup]
+      store.setState({
+        worktreesByRepo: {
+          repo1: [makeWorktree({ id: WT, repoId: 'repo1' })],
+          repo2: [makeWorktree({ id: siblingWorktreeId, repoId: 'repo2' })]
+        },
+        unifiedTabsByWorktree: {
+          [WT]: [makeUnifiedTab({ id: 'target-old', worktreeId: WT, groupId: targetGroup.id })],
+          [siblingWorktreeId]: siblingTabs
+        },
+        groupsByWorktree: {
+          [WT]: [targetGroup],
+          [siblingWorktreeId]: siblingGroups
+        },
+        activeGroupIdByWorktree: {
+          [WT]: targetGroup.id,
+          [siblingWorktreeId]: siblingGroup.id
+        },
+        layoutByWorktree: {
+          [WT]: { type: 'leaf', groupId: targetGroup.id },
+          [siblingWorktreeId]: { type: 'leaf', groupId: siblingGroup.id }
+        }
+      })
+      const targetNew = makeUnifiedTab({
+        id: 'target-new',
+        worktreeId: WT,
+        groupId: targetGroup.id,
+        label: 'Remote target'
+      })
+
+      store.getState().hydrateTabsSession(
+        {
+          activeRepoId: 'repo1',
+          activeWorktreeId: WT,
+          activeTabId: targetNew.id,
+          tabsByWorktree: {},
+          terminalLayoutsByTabId: {},
+          unifiedTabs: {
+            [WT]: [targetNew],
+            [siblingWorktreeId]: [
+              makeUnifiedTab({
+                id: 'sibling-replaced',
+                worktreeId: siblingWorktreeId,
+                groupId: siblingGroup.id
+              })
+            ]
+          },
+          tabGroups: {
+            [WT]: [{ ...targetGroup, activeTabId: targetNew.id, tabOrder: [targetNew.id] }],
+            [siblingWorktreeId]: [
+              { ...siblingGroup, activeTabId: 'sibling-replaced', tabOrder: ['sibling-replaced'] }
+            ]
+          }
+        },
+        { replaceWorkspaceKeys: [WT] }
+      )
+
+      expect(store.getState().unifiedTabsByWorktree[WT]).toEqual([targetNew])
+      expect(store.getState().unifiedTabsByWorktree[siblingWorktreeId]).toBe(siblingTabs)
+      expect(store.getState().groupsByWorktree[siblingWorktreeId]).toBe(siblingGroups)
     })
   })
 

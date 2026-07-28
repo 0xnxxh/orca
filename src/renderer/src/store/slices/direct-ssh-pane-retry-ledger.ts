@@ -13,11 +13,9 @@ import type {
 } from './direct-ssh-terminal-recovery-types'
 
 const AUTOMATIC_RETRY_LIMIT = 2
-const AUTOMATIC_RETRY_WINDOW_MS = 30_000
 
 type DirectSshTerminalRetryOptions = {
   qualifiedTabIds?: ReadonlySet<string>
-  preserveAttemptChain?: boolean
 }
 
 function createAttemptId(
@@ -88,11 +86,8 @@ export function retryDirectSshTerminalPanes(
         previousHistory && directSshAuthoritiesEqual(previousHistory.authority, authority)
           ? previousHistory.attemptedAt
           : []
-      const recentAttempts = options.preserveAttemptChain
-        ? sameAuthorityAttempts
-        : sameAuthorityAttempts.filter(
-            (attemptedAt) => now - attemptedAt < AUTOMATIC_RETRY_WINDOW_MS
-          )
+      // Why: a 31s PTY timeout outlives the old rolling window; authority rotation is the reset boundary for this automatic chain.
+      const recentAttempts = sameAuthorityAttempts
       if (recentAttempts.length >= AUTOMATIC_RETRY_LIMIT) {
         continue
       }
@@ -159,7 +154,6 @@ export function retrySettledDirectSshTerminalPane(
   now: number
 ): DirectSshTerminalRetryResult {
   return retryDirectSshTerminalPanes(state, terminalWorkspaceKeys, authority, now, {
-    qualifiedTabIds: new Set([tabId]),
-    preserveAttemptChain: true
+    qualifiedTabIds: new Set([tabId])
   })
 }

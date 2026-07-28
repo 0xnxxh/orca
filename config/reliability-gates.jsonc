@@ -255,7 +255,9 @@
         "worktree discovery",
         "Source Control status refresh",
         "direct SSH detected-worktree scheduling",
-        "direct SSH reconnect telemetry"
+        "direct SSH reconnect telemetry",
+        "direct SSH host catalog authority",
+        "direct SSH generation-scope rollover"
       ],
       "platforms": [
         "macos",
@@ -273,14 +275,15 @@
         "local",
         "ssh"
       ],
-      "coverageNotes": "Local deterministic evidence covers git-common classification, desktop watcher debounce counts, non-overlapping poller semantics, macOS native-watch fallback, preload cleanup, Source Control active-visible repo filtering, and the direct SSH five-slot fair scheduler, timeout barrier, aggregate privacy schema, and coordinator-to-renderer telemetry wiring. A macOS Electron client completed a direct SSH disconnect/reconnect against an ephemeral Linux Docker target with exact host/authority hydration and remote proof-file verification. Linux/Windows desktop clients, multi-target live fanout, paired-client, and WSL runs remain gaps.",
+      "coverageNotes": "Local deterministic evidence covers git-common classification, desktop watcher debounce counts, non-overlapping poller semantics, macOS native-watch fallback, preload cleanup, Source Control active-visible repo filtering, the direct SSH five-slot fair scheduler, timeout barrier, aggregate privacy schema, coordinator-to-renderer telemetry wiring, host-catalog provenance rejection, and process generation-scope rollover across sibling targets. A macOS Electron client completed a direct SSH disconnect/reconnect against an ephemeral Linux Docker target with exact host/authority hydration and remote proof-file verification. Linux/Windows desktop clients, multi-target live fanout, paired-client, and WSL runs remain gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/7086"
       ],
-      "invariant": "Index-only Git activity below the common Git directory must not emit worktrees:changed, invalidate worktree caches, or trigger fetchWorktrees fanout; structural add/remove/HEAD/gitdir/locked/config.worktree changes must still refresh worktrees and nudge Source Control; external head moves (commit, amend, reset) must reach background worktree rows through spawn-free metadata reads, never through structural fanout. Direct SSH reconnect discovery must stay host- and authority-qualified, admit at most five locally unsettled provider calls, retain a retrying timeout barrier, and emit one identifier-free aggregate product event per target operation.",
-      "oracle": "Classify exact git-common paths as structural, status-only, or ignored; count notifications from debounced watcher events; force the Linux/Windows poll path to emit allowlisted leaf events, detect linked HEAD rewrites independent of entry-directory mtime, and surface in-place index rewrites via the backstop re-stat; diff head identities from metadata-file reads and notify only real head moves; assert Source Control subscribes to both structural and status-only signals with active-repo and visibility filters. For direct SSH, count locally unsettled attempts and round-robin admissions, keep lineage blocked through the first timeout retry, distinguish timeout/rejection/cancel/stale results, and reject telemetry properties carrying target, repo, host, path, label, user, request, lease, terminal, or raw-error data.",
+      "invariant": "Index-only Git activity below the common Git directory must not emit worktrees:changed, invalidate worktree caches, or trigger fetchWorktrees fanout; structural add/remove/HEAD/gitdir/locked/config.worktree changes must still refresh worktrees and nudge Source Control; external head moves (commit, amend, reset) must reach background worktree rows through spawn-free metadata reads, never through structural fanout. Direct SSH reconnect discovery must stay host- and authority-qualified, reject contradictory main-catalog provenance without returning rows, admit at most five locally unsettled provider calls, retain a retrying timeout barrier, and emit one identifier-free aggregate product event per target operation. A process generation-scope rollover revokes every direct SSH target and old-scope provider request, not only the target whose counter exhausted.",
+      "oracle": "Classify exact git-common paths as structural, status-only, or ignored; count notifications from debounced watcher events; force the Linux/Windows poll path to emit allowlisted leaf events, detect linked HEAD rewrites independent of entry-directory mtime, and surface in-place index rewrites via the backstop re-stat; diff head identities from metadata-file reads and notify only real head moves; assert Source Control subscribes to both structural and status-only signals with active-repo and visibility filters. For direct SSH, reject catalog rows whose explicit and legacy host provenance contradict, roll one exhausted target into a fresh process generation scope while invalidating sibling target tokens, count locally unsettled attempts and round-robin admissions, keep lineage blocked through the first timeout retry, distinguish timeout/rejection/cancel/stale results, and reject telemetry properties carrying target, repo, host, path, label, user, request, lease, terminal, or raw-error data.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/worktree-base-directory-event-filter.test.ts src/main/ipc/worktree-base-directory-watcher.test.ts src/main/ipc/worktree-base-directory-poller.test.ts src/main/ipc/worktree-head-identity-reader.test.ts src/renderer/src/hooks/worktree-head-identity-apply.test.ts src/renderer/src/components/right-sidebar/git-status-push-signal-refresh.test.ts src/renderer/src/hooks/useIpcEvents.test.ts",
+        "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/repos-remote.test.ts src/main/ssh/ssh-connection-generation.test.ts src/main/ssh/ssh-provider-authority.test.ts --reporter=dot",
         "pnpm exec vitest run --config config/vitest.config.ts src/shared/direct-ssh-reconnect-telemetry-schema.test.ts src/renderer/src/lib/direct-ssh-reconnect-product-telemetry.test.ts src/renderer/src/hooks/direct-ssh-worktree-refresh-scheduler.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/useIpcEvents.test.ts --reporter=dot",
         "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-docker-relay-perf.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1"
       ],
@@ -292,6 +295,9 @@
         "src/renderer/src/hooks/worktree-head-identity-apply.test.ts",
         "src/renderer/src/components/right-sidebar/git-status-push-signal-refresh.test.ts",
         "src/renderer/src/hooks/useIpcEvents.test.ts",
+        "src/main/ipc/repos-remote.test.ts",
+        "src/main/ssh/ssh-connection-generation.test.ts",
+        "src/main/ssh/ssh-provider-authority.test.ts",
         "src/shared/direct-ssh-reconnect-telemetry-schema.test.ts",
         "src/renderer/src/lib/direct-ssh-reconnect-product-telemetry.test.ts",
         "src/renderer/src/hooks/direct-ssh-worktree-refresh-scheduler.test.ts",
@@ -357,6 +363,27 @@
           ]
         },
         {
+          "file": "src/main/ipc/repos-remote.test.ts",
+          "assertions": [
+            "a host-qualified catalog rejects contradictory executionHostId and connectionId provenance without returning rows",
+            "local, sibling SSH, and runtime rows remain excluded from the exact direct SSH catalog"
+          ]
+        },
+        {
+          "file": "src/main/ssh/ssh-connection-generation.test.ts",
+          "assertions": [
+            "one exhausted target rolls the process generation scope and invalidates every sibling target token",
+            "old-scope mutation expectations fail while the new-scope authority continues rotating"
+          ]
+        },
+        {
+          "file": "src/main/ssh/ssh-provider-authority.test.ts",
+          "assertions": [
+            "generation-scope rollover invalidates every target authority before abort callbacks run",
+            "every registered old-scope provider request aborts exactly once"
+          ]
+        },
+        {
           "file": "src/renderer/src/hooks/direct-ssh-worktree-refresh-scheduler.test.ts",
           "assertions": [
             "coordinator-owned locally unsettled provider work never exceeds five and target lanes round-robin",
@@ -408,6 +435,15 @@
           "date": "2026-07-27",
           "runner": "local",
           "platform": "macos",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/main/ipc/repos-remote.test.ts src/main/ssh/ssh-connection-generation.test.ts src/main/ssh/ssh-provider-authority.test.ts --reporter=dot",
+          "result": "passed",
+          "durationSeconds": 1.61,
+          "summary": "Three main-process catalog and authority files passed with 118 tests, including contradictory catalog provenance rejection and all-target generation-scope revocation."
+        },
+        {
+          "date": "2026-07-27",
+          "runner": "local",
+          "platform": "macos",
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/shared/direct-ssh-reconnect-telemetry-schema.test.ts src/renderer/src/lib/direct-ssh-reconnect-product-telemetry.test.ts src/renderer/src/hooks/direct-ssh-worktree-refresh-scheduler.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/useIpcEvents.test.ts --reporter=dot",
           "result": "passed",
           "durationSeconds": 3.45,
@@ -429,7 +465,7 @@
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "Two deterministic local macOS runs cover the original watcher lane and the direct SSH scheduler/telemetry lane; CI soak is still unavailable."
+        "evidence": "Three deterministic local macOS runs cover the original watcher lane, main catalog/authority lane, and direct SSH scheduler/telemetry lane; CI soak is still unavailable."
       },
       "redGreenEvidence": {
         "status": "partial",
@@ -3662,7 +3698,7 @@
         "ssh",
         "remote-runtime"
       ],
-      "coverageNotes": "Deterministic renderer coverage proves startup publishes the state returned by ssh.connect, stale cleanup cannot unregister a replacement runtime terminal, direct SSH Git and folder panes clear and retry by exact authority, an exact failed attempt atomically re-arms once without sibling fanout, hydration cannot supersede its pending owner, and a mounted remote-runtime terminal survives repeated transport partitions without changing PTY identity. Direct SSH coordinator tests cover immediate terminal finalization, hydration correction, damping, bounded retry, and telemetry non-interference. Client/server heartbeat tests cover timer suspension, socket generations fence stale callbacks, cold restored-terminal attachment retries, cached pixels remain unhealthy until authoritative replay, automatic retries stop after one minute, manual reconnect preserves the PTY, and pane closure releases recovery UI state. Current macOS Electron journeys against an ephemeral Linux Docker SSH target cover exact-authority repo/worktree hydration, live terminal recovery after disconnect/reconnect, and eager six-terminal remount after renderer reload. A Windows remote-runtime smoke covers reachability and PTY round-trip. Multi-target live fanout, paired-close, WSL, and patched live partition journeys remain gaps.",
+      "coverageNotes": "Deterministic renderer coverage proves startup publishes the state returned by ssh.connect, stale cleanup cannot unregister a replacement runtime terminal, direct SSH Git and folder panes clear and retry by exact authority, one authority chain stops after two automatic attempts even when each timeout exceeds the rolling window, rejected acknowledgements mutate no store maps, successful exact binding acknowledgement retires pending state and records live binding, target snapshot hydration/reconnect preserves sibling SSH/local/WSL/runtime state, and a mounted remote-runtime terminal survives repeated transport partitions without changing PTY identity. Direct SSH coordinator tests cover immediate terminal finalization, hydration correction, damping, bounded retry, and telemetry non-interference. Client/server heartbeat tests cover timer suspension, socket generations fence stale callbacks, cold restored-terminal attachment retries, cached pixels remain unhealthy until authoritative replay, automatic retries stop after one minute, manual reconnect preserves the PTY, and pane closure releases recovery UI state. Current macOS Electron journeys against an ephemeral Linux Docker SSH target cover exact-authority repo/worktree hydration, live terminal recovery after disconnect/reconnect, and eager six-terminal remount after renderer reload. A Windows remote-runtime smoke covers reachability and PTY round-trip. Multi-target live fanout, paired-close, WSL, and patched live partition journeys remain gaps.",
       "motivatingLinks": [
         "https://github.com/stablyai/orca/pull/6951",
         "https://github.com/stablyai/orca/pull/6955",
@@ -3670,12 +3706,12 @@
         "https://github.com/stablyai/orca/pull/7009",
         "https://github.com/stablyai/orca/pull/8597"
       ],
-      "invariant": "SSH, WSL, and remote-runtime restore paths must treat provider listing failures and unknown liveness as unknown, not dead, while still avoiding duplicate spawn and clearing expired relay leases exactly once. Direct SSH reconnect must atomically clear only exact-target live PTY bindings, preserve relay identity, retry Git and folder panes without paired close or provider shutdown, and re-arm only the exact failed or timed-out attempt for one bounded same-authority correction. Hydrated PTY hints cannot supersede a current exact-attempt owner. Every restored remote terminal must preserve its provider PTY identity. After a recoverable partition the same authenticated runtime must reattach the same PTY, reject detached input, apply the latest viewport, and report healthy only after authoritative replay. Automatic PTY recovery stops after one bounded minute without a fatal terminal error; a manual reconnect starts a newly fenced epoch against the same PTY, and closed panes retain no recovery UI state. One capability-gated terminal-create mutation must produce at most one host PTY across an unknown response outcome, remain manually retryable after cutoff, and never let a stale completion replace a newer pane lifecycle.",
-      "oracle": "Deterministic tests cover bounded stale-handle replacement, suspended heartbeat clocks, cold and established subscription failure, ten partition/recovery cycles, automatic-recovery cutoff, manual reconnect, and exact direct SSH binding recovery. They assert one atomic store publication clears only exact-target PTY indexes, null-PTY activation remains unchanged, relay identity survives, Git and folder panes retry symmetrically, another target/local/WSL/runtime panes remain byte-identical, only an accepted exact failure or timeout starts the second attempt, two 31-second timeouts cannot start a third, stale authority/generation and sibling tabs remain unchanged, hydration clears an untrusted PTY hint without clearing its current pending owner, healthy current-authority bindings suppress correction, hydration finalizes once, and reconnect emits no paired close lifecycle. They also assert one unsubscribe per remote-runtime epoch, observable recovery phases, stable PTY identity, resumed snapshot/output/input, no healthy state before replay, no retry or input after cutoff, a new manual epoch against the same PTY, quiet recovery UI with an explicit Reconnect action, pane-close state cleanup, one stable create mutation id, old-runtime no-retry behavior, cross-process PTY adoption, and bounded in-flight coordination.",
+      "invariant": "SSH, WSL, and remote-runtime restore paths must treat provider listing failures and unknown liveness as unknown, not dead, while still avoiding duplicate spawn and clearing expired relay leases exactly once. Direct SSH reconnect must atomically clear only exact-target live PTY bindings, preserve relay identity, retry Git and folder panes without paired close or provider shutdown, and allow at most two automatic attempts in one authority chain even when each settlement exceeds the rolling window. A rejected acknowledgement mutates no store map; a successful exact spawn or reattach retires its pending attempt and records current-authority binding atomically. Hydrated PTY hints cannot supersede a current exact-attempt owner, and target snapshot hydration/reconnect cannot reset sibling SSH, local, WSL, or runtime-owned state. Every restored remote terminal must preserve its provider PTY identity. After a recoverable partition the same authenticated runtime must reattach the same PTY, reject detached input, apply the latest viewport, and report healthy only after authoritative replay. Automatic PTY recovery stops after one bounded minute without a fatal terminal error; a manual reconnect starts a newly fenced epoch against the same PTY, and closed panes retain no recovery UI state. One capability-gated terminal-create mutation must produce at most one host PTY across an unknown response outcome, remain manually retryable after cutoff, and never let a stale completion replace a newer pane lifecycle.",
+      "oracle": "Deterministic tests cover bounded stale-handle replacement, suspended heartbeat clocks, cold and established subscription failure, ten partition/recovery cycles, automatic-recovery cutoff, manual reconnect, and exact direct SSH binding recovery. They assert one atomic store publication clears only exact-target PTY indexes, null-PTY activation remains unchanged, relay identity survives, Git and folder panes retry symmetrically, another target/local/WSL/runtime panes remain byte-identical through target snapshot hydration and reconnect, only an accepted exact failure or timeout starts the second attempt, two 31-second timeouts cannot start a third settlement-triggered attempt, rejected stale/mismatched acknowledgements preserve every store map, an exact committed spawn or reattach retires pending state and records one live binding, hydration clears an untrusted PTY hint without clearing its current pending owner, healthy current-authority bindings suppress correction, hydration finalizes once, and reconnect emits no paired close lifecycle. They also assert one unsubscribe per remote-runtime epoch, observable recovery phases, stable PTY identity, resumed snapshot/output/input, no healthy state before replay, no retry or input after cutoff, a new manual epoch against the same PTY, quiet recovery UI with an explicit Reconnect action, pane-close state cleanup, one stable create mutation id, old-runtime no-retry behavior, cross-process PTY adoption, and bounded in-flight coordination.",
       "commands": [
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/startup/ssh-startup-reconnect.test.ts src/renderer/src/lib/resolved-worktree-execution-host.test.ts src/renderer/src/components/terminal/background-terminal-worktree-mount.test.ts src/renderer/src/runtime/sync-runtime-graph-scheduling.test.ts src/renderer/src/components/terminal-pane/use-terminal-pane-lifecycle.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/runtime/remote-runtime-session-tabs-inflight.test.ts src/renderer/src/runtime/web-session-terminal-handle-events.test.ts src/renderer/src/store/slices/terminal-pty-identity-replacement.test.ts",
         "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-transport.test.ts src/renderer/src/components/terminal-pane/remote-runtime-pty-recovery-state.test.ts src/renderer/src/components/terminal-pane/TerminalRemoteRuntimeReconnectBanner.test.tsx src/renderer/src/components/terminal-pane/terminal-remote-runtime-recovery-ui-state.test.ts src/shared/remote-runtime-socket-liveness.test.ts src/shared/remote-runtime-shared-control-connection.test.ts src/shared/remote-runtime-shared-control-socket-generation.test.ts src/shared/remote-runtime-client-error-classification.test.ts src/main/runtime/rpc/remote-runtime-server-heartbeat.test.ts src/main/runtime/rpc/methods/terminal-create-idempotency.test.ts src/main/runtime/orca-runtime-terminal-create-idempotency.test.ts",
-        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts --reporter=dot",
+        "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/store/slices/terminals-hydration.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts --reporter=dot",
         "pnpm exec electron-vite build --mode e2e",
         "SKIP_BUILD=1 pnpm exec playwright test tests/e2e/terminal-cold-activation-deferral.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
         "ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test tests/e2e/ssh-cold-activation-restore.spec.ts --config tests/playwright.config.ts --project electron-headless --workers=1",
@@ -3705,6 +3741,7 @@
         "src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts",
         "src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts",
         "src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts",
+        "src/renderer/src/store/slices/terminals-hydration.test.ts",
         "src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts",
         "src/renderer/src/hooks/direct-ssh-host-hydration.test.ts",
         "src/renderer/src/hooks/direct-ssh-state-routing.test.ts",
@@ -3818,8 +3855,16 @@
         {
           "file": "src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts",
           "assertions": [
-            "an accepted exact failure or timeout atomically starts only that tab's second same-authority attempt",
-            "stale authority, stale attempt, success, and the rolling two-attempt budget suppress further correction"
+            "one authority chain permits at most two automatic attempts even when both timeouts exceed the rolling thirty-second window",
+            "rejected stale-authority, stale-attempt, or pre-commit success acknowledgements mutate none of the tab, PTY-index, pending, history, or live-binding maps",
+            "an exact committed spawn or reattach acknowledgement retires pending state and records one current-authority live binding"
+          ]
+        },
+        {
+          "file": "src/renderer/src/store/slices/terminals-hydration.test.ts",
+          "assertions": [
+            "target-scoped hydration and reconnect preserve sibling SSH and runtime tabs, PTY indexes, runtime ownership, and active selection",
+            "a snapshot PTY from another SSH host is rejected from the target scope"
           ]
         },
         {
@@ -3833,14 +3878,15 @@
         {
           "file": "src/renderer/src/hooks/direct-ssh-host-hydration.test.ts",
           "assertions": [
-            "exact-host hydration replaces raw Git lineage and namespaced Git/folder workspace lineage while preserving foreign, ambiguous, and contradictory rows"
+            "exact-host catalog and lineage hydration preserves sibling SSH, local, runtime, ambiguous, and contradictory rows"
           ]
         },
         {
           "file": "src/renderer/src/hooks/remote-workspace-target-sync.test.ts",
           "assertions": [
             "snapshot hydration preserves newer local recovery and keeps imported PTY ids retryable until exact-attempt transport acknowledgement",
-            "stale operation tokens cannot apply an older snapshot over current authority"
+            "stale operation tokens cannot apply an older snapshot over current authority",
+            "target snapshot projection and persisted-terminal reconnect are host-qualified and preserve sibling SSH, local, WSL, and runtime state"
           ]
         },
         {
@@ -3848,7 +3894,8 @@
           "assertions": [
             "StrictMode remounts join only the same direct SSH retry attempt",
             "authority rotation starts a new spawn and rejects then retires a late obsolete-authority fresh PTY",
-            "late stale rebind and reattach completions cannot stamp current-authority state"
+            "late stale rebind and reattach completions cannot stamp current-authority state",
+            "a successful exact direct SSH reattach commits through its attempt id so pending state retires and live binding records"
           ]
         },
         {
@@ -3899,10 +3946,10 @@
           "date": "2026-07-27",
           "runner": "local",
           "platform": "macos",
-          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts --reporter=dot",
+          "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/direct-ssh-terminal-retry.test.ts src/renderer/src/store/slices/direct-ssh-terminal-recovery.test.ts src/renderer/src/store/slices/direct-ssh-terminal-workspace-scope.test.ts src/renderer/src/store/slices/terminals-hydration.test.ts src/renderer/src/hooks/direct-ssh-reconnect-coordinator.test.ts src/renderer/src/hooks/direct-ssh-host-hydration.test.ts src/renderer/src/hooks/direct-ssh-state-routing.test.ts src/renderer/src/hooks/remote-workspace-target-sync.test.ts src/renderer/src/components/terminal-pane/pty-connection.test.ts --reporter=dot",
           "result": "passed",
-          "durationSeconds": 15.61,
-          "summary": "Eight current direct SSH terminal, coordinator, hydration, routing, snapshot, and PTY files passed with 582 tests."
+          "durationSeconds": 18.3,
+          "summary": "Nine current direct SSH terminal, coordinator, hydration, routing, snapshot, and PTY files passed with 604 tests."
         },
         {
           "date": "2026-07-27",
@@ -3924,12 +3971,12 @@
         }
       ],
       "runtimeBudget": {
-        "p95Seconds": 45,
-        "scope": "provider contract plus optional SSH soak"
+        "p95Seconds": 150,
+        "scope": "all configured provider-contract, build, Electron, Docker SSH reconnect, and six-terminal cold-restore commands"
       },
       "flakeHistory": {
         "status": "unknown",
-        "evidence": "Focused renderer contracts, one current 582-test direct SSH run, and current Docker/Linux reconnect and six-terminal cold-restore journeys pass locally; live multi-target fanout still needs CI soak history before promotion."
+        "evidence": "Focused renderer contracts, one current 604-test direct SSH run, and current Docker/Linux reconnect and six-terminal cold-restore journeys pass locally; live multi-target fanout still needs CI soak history before promotion."
       },
       "redGreenEvidence": {
         "status": "partial",

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   assertSshMutationExpectation,
-  resetSshConnectionGenerations
+  resetSshConnectionGenerations,
+  setSshConnectionGeneration
 } from './ssh-connection-generation'
 import {
   getSshProviderAuthority,
@@ -66,6 +67,32 @@ describe('SSH provider authority', () => {
     expect(abortB).not.toHaveBeenCalled()
     rotateSshProviderAuthority('ssh-b')
     expect(abortB).toHaveBeenCalledOnce()
+  })
+
+  it('revokes every target when one target rolls the generation session scope', () => {
+    setSshConnectionGeneration('ssh-a', 2 ** 13 - 1)
+    const authorityA = getSshProviderAuthority('ssh-a')
+    const authorityB = getSshProviderAuthority('ssh-b')
+    const controllerA = new AbortController()
+    const controllerB = new AbortController()
+    const abortA = vi.spyOn(controllerA, 'abort')
+    const abortB = vi.spyOn(controllerB, 'abort')
+    let oldAuthoritiesWereCurrent = true
+    controllerA.signal.addEventListener('abort', () => {
+      oldAuthoritiesWereCurrent =
+        isCurrentSshProviderAuthority(authorityA) || isCurrentSshProviderAuthority(authorityB)
+    })
+    registerSshProviderRequestAbort(authorityA, controllerA)
+    registerSshProviderRequestAbort(authorityB, controllerB)
+
+    const rotated = rotateSshProviderAuthority('ssh-a')
+
+    expect(rotated.connectionGeneration).toBe(2 ** 13 + 1)
+    expect(abortA).toHaveBeenCalledOnce()
+    expect(abortB).toHaveBeenCalledOnce()
+    expect(oldAuthoritiesWereCurrent).toBe(false)
+    expect(isCurrentSshProviderAuthority(authorityA)).toBe(false)
+    expect(isCurrentSshProviderAuthority(authorityB)).toBe(false)
   })
 
   it('rejects old-authority registration reentered from an abort callback', () => {

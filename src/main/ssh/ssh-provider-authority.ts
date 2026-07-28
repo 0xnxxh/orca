@@ -117,7 +117,15 @@ export function getSshProviderAuthority(targetId: string): DirectSshAuthority {
 
 export function rotateSshProviderAuthority(targetId: string): DirectSshAuthority {
   const previous = authorityByTarget.get(targetId)
-  const authority = createAuthority(targetId, advanceSshConnectionGeneration(targetId))
+  const previousGeneration = getSshConnectionGeneration(targetId)
+  const nextGeneration = advanceSshConnectionGeneration(targetId)
+  const authority = createAuthority(targetId, nextGeneration)
+  if (nextGeneration !== previousGeneration + 1) {
+    authorityByTarget.clear()
+    authorityByTarget.set(targetId, authority)
+    abortAllProviderRequests()
+    return authority
+  }
   authorityByTarget.set(targetId, authority)
   if (previous) {
     abortProviderRequestsForAuthority(previous)

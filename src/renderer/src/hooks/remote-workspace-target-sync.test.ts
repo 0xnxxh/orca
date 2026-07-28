@@ -278,6 +278,18 @@ describe('createRemoteWorkspaceTargetSync', () => {
     expect(harness.capturePreparationInput).toHaveBeenCalledOnce()
     expect(harness.prepareOnly).toHaveBeenCalledOnce()
     expect(calls).toEqual(['hydrate', 'reconnect', 'finalize'])
+    expect(state.hydrateWorkspaceSession).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        directSshAuthority: owner,
+        replaceWorkspaceKeys: ['repo-a::/remote/work']
+      })
+    )
+    expect(state.hydrateTabsSession).toHaveBeenCalledWith(expect.any(Object), {
+      replaceWorkspaceKeys: ['repo-a::/remote/work']
+    })
+    expect(state.hydrateEditorSession).not.toHaveBeenCalled()
+    expect(state.hydrateBrowserSession).not.toHaveBeenCalled()
   })
 
   it('preserves a higher local generation from an older remote snapshot', async () => {

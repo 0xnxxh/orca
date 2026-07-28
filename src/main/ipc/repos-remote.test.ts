@@ -265,6 +265,50 @@ describe('projectGroups IPC validation', () => {
     expect((local as { repos: object[] }).repos[0]).not.toBe(localRepo)
   })
 
+  it('rejects repo catalogs whose execution host contradicts their SSH connection', async () => {
+    const baseRepo = {
+      id: 'repo-1',
+      path: '/repo',
+      displayName: 'repo',
+      badgeColor: '#000',
+      addedAt: 0
+    }
+    mockStore.getRepos.mockReturnValue([
+      {
+        ...baseRepo,
+        connectionId: 'conn-1',
+        executionHostId: 'local'
+      }
+    ])
+
+    await expect(
+      handlers.get('repos:listForExecutionHost')!(null, {
+        executionHostId: 'local'
+      })
+    ).resolves.toMatchObject({ authoritative: false, reason: 'rejected' })
+    await expect(
+      handlers.get('repos:listForExecutionHost')!(null, {
+        executionHostId: toSshExecutionHostId('conn-1'),
+        expectedAuthority: getSshProviderAuthority('conn-1')
+      })
+    ).resolves.toMatchObject({ authoritative: false, reason: 'rejected' })
+
+    mockStore.getRepos.mockReturnValue([
+      {
+        ...baseRepo,
+        connectionId: 'conn-1',
+        executionHostId: toSshExecutionHostId('conn-2')
+      }
+    ])
+
+    await expect(
+      handlers.get('repos:listForExecutionHost')!(null, {
+        executionHostId: toSshExecutionHostId('conn-1'),
+        expectedAuthority: getSshProviderAuthority('conn-1')
+      })
+    ).resolves.toMatchObject({ authoritative: false, reason: 'rejected' })
+  })
+
   it('rejects runtime, partial, mismatched, and stale catalog authority', async () => {
     await expect(
       handlers.get('repos:listForExecutionHost')!(null, {
