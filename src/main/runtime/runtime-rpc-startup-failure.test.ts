@@ -38,15 +38,27 @@ import {
 
 type FakeParentWindow = Electron.BrowserWindow & EventEmitter
 
-function createParentWindow(visible = true, destroyed = false): FakeParentWindow {
+function createParentWindow(
+  visible = true,
+  destroyed = false,
+  webContentsDestroyed = destroyed
+): FakeParentWindow {
   const webContents = Object.assign(new EventEmitter(), {
-    isDestroyed: () => destroyed
+    isDestroyed: () => webContentsDestroyed
   })
-  return Object.assign(new EventEmitter(), {
-    webContents,
+  const parentWindow = Object.assign(new EventEmitter(), {
     isDestroyed: () => destroyed,
     isVisible: () => visible
   }) as unknown as FakeParentWindow
+  Object.defineProperty(parentWindow, 'webContents', {
+    get: () => {
+      if (destroyed) {
+        throw new Error('Object has been destroyed')
+      }
+      return webContents
+    }
+  })
+  return parentWindow
 }
 
 // Why: the dialog is deferred behind an await, so a synchronous "not called yet" assertion
@@ -212,6 +224,16 @@ describe('runtime RPC startup failure reporting', () => {
 
     expect(showMessageBoxMock).not.toHaveBeenCalled()
     expect(parentWindow.listenerCount('show')).toBe(0)
+  })
+
+  it('never waits on already destroyed web contents', async () => {
+    const parentWindow = createParentWindow(false, false, true)
+
+    await showRuntimeRpcStartupFailureDialog(parentWindow, new Error('metadata write failed'))
+
+    expect(showMessageBoxMock).not.toHaveBeenCalled()
+    expect(parentWindow.listenerCount('show')).toBe(0)
+    expect(parentWindow.webContents.listenerCount('destroyed')).toBe(0)
   })
 
   it('drops the pending dialog and its listeners when the window closes first', async () => {

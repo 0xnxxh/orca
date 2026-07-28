@@ -125,8 +125,11 @@ export function recordRuntimeRpcStartFailure(error: unknown): void {
 }
 
 function waitForWindowToShow(parentWindow: BrowserWindow): Promise<boolean> {
+  if (parentWindow.isDestroyed()) {
+    return Promise.resolve(false)
+  }
   const parentWebContents = parentWindow.webContents
-  if (parentWindow.isDestroyed() || parentWebContents.isDestroyed()) {
+  if (parentWebContents.isDestroyed()) {
     return Promise.resolve(false)
   }
   if (parentWindow.isVisible()) {
