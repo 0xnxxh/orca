@@ -552,6 +552,9 @@ export function ensureWorktreeHasInitialTerminal(
           ...initialAgentTabViewModeProps(store.settings ?? null, {
             agent: launchAgent,
             promptDelivery: sequencedStartup?.draftPrompt != null ? 'draft' : undefined,
+            ...(sequencedStartup?.draftPrompt != null
+              ? { launchDraftText: sequencedStartup.draftPrompt }
+              : {}),
             nativeChatTranscriptIsLocalReadable: isNativeChatTranscriptLocalReadable(
               getConnectionId(worktreeId)
             )
@@ -624,6 +627,9 @@ function applyDefaultTerminalTabs(
             ...initialAgentTabViewModeProps(store.settings ?? null, {
               agent: launchAgent,
               promptDelivery: isStartupTab && startup?.draftPrompt != null ? 'draft' : undefined,
+              ...(isStartupTab && startup?.draftPrompt != null
+                ? { launchDraftText: startup.draftPrompt }
+                : {}),
               nativeChatTranscriptIsLocalReadable: isNativeChatTranscriptLocalReadable(
                 getConnectionId(worktreeId)
               )

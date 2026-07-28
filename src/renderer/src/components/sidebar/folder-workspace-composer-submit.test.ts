@@ -22,6 +22,7 @@ vi.mock('@/lib/new-workspace', async (importOriginal) => {
   }
 })
 
+import { useAppStore } from '@/store'
 import {
   buildFolderWorkspaceLinkedStartupPlan,
   getFolderWorkspaceAgentLaunchPlatform,
@@ -656,5 +657,119 @@ describe('buildFolderWorkspaceLinkedStartupPlan', () => {
     })
 
     expect(plan?.launchCommand).toBe('hermes --tui "--provider" "value with space"')
+  })
+})
+
+describe('submitFolderWorkspaceCreate native-chat launch draft', () => {
+  const ISSUE_URL = 'https://github.com/stablyai/orca/issues/42'
+  const linkedIssue = {
+    provider: 'github' as const,
+    type: 'issue' as const,
+    number: 42,
+    title: 'Restore linked quick-create',
+    url: ISSUE_URL,
+    repoId: 'repo-1'
+  }
+
+  function seededDraftFor(tabId: string): { text: string } | undefined {
+    return useAppStore.getState().nativeChatLaunchDraftByTabId[tabId]
+  }
+
+  beforeEach(() => {
+    mocks.activateAndRevealFolderWorkspace.mockReturnValue({ primaryTabId: 'tab-1' })
+    useAppStore.setState({ nativeChatLaunchDraftByTabId: {} })
+    Object.assign(window, {
+      api: { agentTrust: { markTrusted: vi.fn().mockResolvedValue(undefined) } }
+    })
+  })
+
+  afterEach(() => {
+    mocks.activateAndRevealFolderWorkspace.mockReset()
+    mocks.ensureAgentStartupInTerminal.mockReset()
+    useAppStore.setState({ nativeChatLaunchDraftByTabId: {} })
+    Reflect.deleteProperty(window, 'api')
+    vi.restoreAllMocks()
+  })
+
+  it('mirrors a startup-paste draft into the chat composer', async () => {
+    await submitFolderWorkspaceCreate({
+      projectGroup: makeProjectGroup(),
+      name: '',
+      lastAutoName: '',
+      linkedWorkItem: linkedIssue,
+      note: '',
+      quickAgent: 'codex',
+      autoRenameBranchFromWork: false,
+      agentCmdOverrides: {},
+      createFolderWorkspace: vi.fn(async () => makeFolderWorkspace()),
+      onOpenChange: vi.fn()
+    })
+
+    expect(seededDraftFor('tab-1')?.text).toBe(ISSUE_URL)
+  })
+
+  it('mirrors an argv-prefill draft, which never lands in startupPlan.draftPrompt', async () => {
+    await submitFolderWorkspaceCreate({
+      projectGroup: makeProjectGroup(),
+      name: '',
+      lastAutoName: '',
+      linkedWorkItem: linkedIssue,
+      note: '',
+      quickAgent: 'claude',
+      autoRenameBranchFromWork: false,
+      agentCmdOverrides: {},
+      createFolderWorkspace: vi.fn(async () => makeFolderWorkspace()),
+      onOpenChange: vi.fn()
+    })
+
+    // The draft rides in on `--prefill`, so the plan carries no draftPrompt at
+    // all — keying the mirror off it would silently drop this whole branch.
+    const startup = mocks.activateAndRevealFolderWorkspace.mock.calls[0]?.[1]?.startup
+    expect(startup?.draftPrompt).toBeUndefined()
+    expect(startup?.command).toContain(ISSUE_URL)
+    expect(seededDraftFor('tab-1')?.text).toBe(ISSUE_URL)
+  })
+
+  it('leaves a multi-line draft in the terminal only', async () => {
+    await submitFolderWorkspaceCreate({
+      projectGroup: makeProjectGroup(),
+      name: '',
+      lastAutoName: '',
+      linkedWorkItem: linkedIssue,
+      note: 'Reproduce on Windows first',
+      quickAgent: 'codex',
+      autoRenameBranchFromWork: false,
+      agentCmdOverrides: {},
+      createFolderWorkspace: vi.fn(async () => makeFolderWorkspace()),
+      onOpenChange: vi.fn()
+    })
+
+    // Terminal still gets it; the chat mirror is withheld until multi-line send
+    // is safe, and decideInitialAgentTabViewMode keeps this launch in terminal.
+    expect(mocks.ensureAgentStartupInTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        startup: expect.objectContaining({
+          draftPrompt: `Reproduce on Windows first\n\n${ISSUE_URL}`
+        })
+      })
+    )
+    expect(seededDraftFor('tab-1')).toBeUndefined()
+  })
+
+  it('does not mirror an unlinked note, which is submitted rather than drafted', async () => {
+    await submitFolderWorkspaceCreate({
+      projectGroup: makeProjectGroup(),
+      name: '',
+      lastAutoName: '',
+      linkedWorkItem: null,
+      note: 'Fix the flaky checkout flow',
+      quickAgent: 'codex',
+      autoRenameBranchFromWork: false,
+      agentCmdOverrides: {},
+      createFolderWorkspace: vi.fn(async () => makeFolderWorkspace()),
+      onOpenChange: vi.fn()
+    })
+
+    expect(seededDraftFor('tab-1')).toBeUndefined()
   })
 })
