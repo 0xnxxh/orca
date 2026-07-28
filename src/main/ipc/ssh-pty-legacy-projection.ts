@@ -1,13 +1,11 @@
-import {
-  INITIAL_MODE_2031_REPLY_SCAN_STATE,
-  scanMode2031ReplyDecision
-} from '../../shared/terminal-color-scheme-protocol'
+import { scanMode2031ReplyDecision } from '../../shared/terminal-color-scheme-protocol'
 import {
   closeProjectionPty,
   getOrCreateProjectionCursor,
   projectionDebugSnapshot,
   projectionError,
   reclaimProjectionRecord,
+  resetProjectionCursorForGap,
   requireProjectionRecord,
   scannerSnapshot,
   type LegacySshProjectionDebugSnapshot,
@@ -16,6 +14,12 @@ import {
   type ProjectionRecord,
   type PtyProjectionCursor
 } from './ssh-pty-legacy-projection-record'
+import {
+  projectionHasOpen,
+  resolveProjectionTerminality,
+  SshPtyProjectionTerminality,
+  unpublishedProjectionIds
+} from './ssh-pty-projection-terminality'
 
 export type {
   LegacySshProjectionIdentity,
@@ -28,6 +32,7 @@ export class SshPtyLegacyProjectionLedger {
   private readonly records = new Map<string, ProjectionRecord>()
   private readonly cursorByPty = new Map<string, PtyProjectionCursor>()
   private readonly idsByPty = new Map<string, string[]>()
+  private readonly terminality = new SshPtyProjectionTerminality()
   private settledCount = 0
   private transferredCount = 0
   private rolledBackCount = 0
@@ -194,25 +199,41 @@ export class SshPtyLegacyProjectionLedger {
         break
       }
     }
+    resolveProjectionTerminality(this.terminality, this.records, this.idsByPty, ptyId)
     return settled
   }
 
   transfer(ids: readonly string[], _reason: string): number {
     let transferred = 0
+    const touchedPtys = new Set<string>()
     for (const id of ids.slice()) {
       const record = this.records.get(id)
       if (!record || record.state === 'reserved') {
         continue
       }
       this.transferredCount++
-      reclaimProjectionRecord(this.records, this.idsByPty, id, record.semantics.identity.ptyId)
+      const ptyId = record.semantics.identity.ptyId
+      reclaimProjectionRecord(this.records, this.idsByPty, id, ptyId)
+      touchedPtys.add(ptyId)
       transferred++
+    }
+    for (const ptyId of touchedPtys) {
+      resolveProjectionTerminality(this.terminality, this.records, this.idsByPty, ptyId)
     }
     return transferred
   }
 
-  transferUnpublished(id: string, reason: string): boolean {
-    return this.transfer([id], reason) === 1
+  whenPtyTerminal(
+    ptyId: string,
+    providerGeneration: number,
+    ptyIncarnation: string
+  ): Promise<void> {
+    return this.terminality.whenTerminal(
+      ptyId,
+      providerGeneration,
+      ptyIncarnation,
+      projectionHasOpen(this.records, this.idsByPty, ptyId)
+    )
   }
 
   transferGeneration(providerGeneration: number, reason: string): number {
@@ -227,6 +248,21 @@ export class SshPtyLegacyProjectionLedger {
 
   transferPty(ptyId: string, reason: string): number {
     return this.transfer(this.idsByPty.get(ptyId) ?? [], reason)
+  }
+
+  transferUnpublishedPty(
+    ptyId: string,
+    providerGeneration: number,
+    ptyIncarnation: string,
+    reason: string
+  ): number {
+    const ids = unpublishedProjectionIds(
+      this.records,
+      this.idsByPty.get(ptyId) ?? [],
+      providerGeneration,
+      ptyIncarnation
+    )
+    return this.transfer(ids, reason)
   }
 
   closePty(
@@ -262,10 +298,7 @@ export class SshPtyLegacyProjectionLedger {
   }
 
   resetForGap(ptyId: string): void {
-    const cursor = this.cursorByPty.get(ptyId)
-    if (cursor) {
-      cursor.scanner = { ...INITIAL_MODE_2031_REPLY_SCAN_STATE }
-    }
+    resetProjectionCursorForGap(this.cursorByPty, ptyId)
   }
 
   get(id: string): LegacySshProjectionSemantics | undefined {

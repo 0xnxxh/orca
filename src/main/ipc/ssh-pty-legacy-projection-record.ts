@@ -59,6 +59,16 @@ export function scannerSnapshot(state: Mode2031ReplyScanState): Readonly<Mode203
   return Object.freeze({ tail: state.tail, pendingSubscribe: state.pendingSubscribe })
 }
 
+export function resetProjectionCursorForGap(
+  cursors: ReadonlyMap<string, PtyProjectionCursor>,
+  ptyId: string
+): void {
+  const cursor = cursors.get(ptyId)
+  if (cursor) {
+    cursor.scanner = { ...INITIAL_MODE_2031_REPLY_SCAN_STATE }
+  }
+}
+
 export function projectionError(code: string): Error {
   return Object.assign(new Error(code), { code })
 }

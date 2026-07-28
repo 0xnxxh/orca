@@ -3,6 +3,7 @@ import {
   type LegacySshProjectionSemantics
 } from './ssh-pty-legacy-projection'
 import { SshPtyModelAdmission } from './ssh-pty-model-admission'
+import { settleSshPtyOutputExit } from './ssh-pty-output-exit'
 import type {
   SshPtyOutputDataEvent,
   SshPtyOutputExitEvent,
@@ -86,9 +87,7 @@ export class SshPtyOutputIntake {
           this.dependencies.project(event, projection)
         } catch {
           const id = projection.identity.projectionSemanticsId
-          if (!this.projections.transferUnpublished(id, 'projection-admission-failed')) {
-            this.projections.transfer([id], 'projection-admission-failed')
-          }
+          this.projections.transfer([id], 'projection-admission-failed')
         }
         return model
       }
@@ -120,32 +119,17 @@ export class SshPtyOutputIntake {
       throw outputIntakeError('ssh_output_duplicate_exit')
     }
     this.sealedPtys.add(sealKey)
-    await this.withExitDeadline(
-      event.providerGeneration,
-      this.admission.whenIdle({
-        ptyId: event.id,
-        providerGeneration: event.providerGeneration
-      })
-    )
-    this.validateGeneration(event)
-    try {
-      this.dependencies.finalizeExit(event)
-      this.projections.closePty(
-        event.id,
-        event.providerGeneration,
-        event.ptyIncarnation,
-        'pty-exit'
-      )
-    } catch (error) {
-      this.projections.closePty(
-        event.id,
-        event.providerGeneration,
-        event.ptyIncarnation,
-        'pty-exit-finalize-failed'
-      )
-      this.dependencies.closeProvider?.(event.providerGeneration, 'pty-exit-finalize-failed')
-      throw error
-    }
+    await this.withExitDeadline(event.providerGeneration, this.finishExit(event))
+  }
+
+  private async finishExit(event: SshPtyOutputExitEvent): Promise<void> {
+    await settleSshPtyOutputExit({
+      event,
+      admission: this.admission,
+      projections: this.projections,
+      dependencies: this.dependencies,
+      validateGeneration: () => this.validateGeneration(event)
+    })
   }
 
   publishProjectionPrefix(

@@ -2177,6 +2177,9 @@ export function registerPtyHandlers(
     producerFlowControl.releaseAll()
     clearDeliveryResyncProbe()
     deliveryResyncUnansweredWarnLogged = false
+    for (const id of rendererDeliveryAccountingByPty.keys()) {
+      sshOutputIntake?.transferPtyProjections(id, 'renderer-lifecycle-reset')
+    }
     rendererDeliveryAccountingByPty.clear()
     rendererInFlightTotalChars = 0
     clearPendingPtyData()
@@ -2843,8 +2846,9 @@ export function registerPtyHandlers(
     return true
   }
 
-  function sendPtyExitToRenderer(payload: { id: string; code: number }): void {
+  function preparePtyExitForRenderer(payload: { id: string; code: number }): void {
     if (mainWindow.isDestroyed()) {
+      sshOutputIntake?.transferPtyProjections(payload.id, 'renderer-destroyed')
       return
     }
     if (rendererExitingPtyIds.has(payload.id)) {
@@ -2852,7 +2856,6 @@ export function registerPtyHandlers(
     }
     rendererExitingPtyIds.add(payload.id)
     try {
-      const hadReleasableRendererCredit = getRendererInFlightCharsForPty(payload.id) > 0
       // Why flush before exit: the renderer tears down the terminal on pty:exit, so any batched output not yet flushed would be silently lost.
       const remaining = pendingData.delete(payload.id)
       clearFlushTimerIfIdle()
@@ -2883,7 +2886,21 @@ export function registerPtyHandlers(
           )
         }
       }
-      sshOutputIntake?.transferPtyProjections(payload.id, 'pty-exit')
+    } finally {
+      rendererExitingPtyIds.delete(payload.id)
+    }
+  }
+
+  function finalizePtyExitForRenderer(payload: { id: string; code: number }): void {
+    if (mainWindow.isDestroyed()) {
+      return
+    }
+    if (rendererExitingPtyIds.has(payload.id)) {
+      return
+    }
+    rendererExitingPtyIds.add(payload.id)
+    try {
+      const hadReleasableRendererCredit = getRendererInFlightCharsForPty(payload.id) > 0
       // Why resume a dead PTY (no-op): avoid leaving a stale paused mark behind for a reused id.
       producerFlowControl.release(payload.id)
       pendingOverflowMarkedPtys.delete(payload.id)
@@ -2910,6 +2927,12 @@ export function registerPtyHandlers(
     } finally {
       rendererExitingPtyIds.delete(payload.id)
     }
+  }
+
+  function sendPtyExitToRenderer(payload: { id: string; code: number }): void {
+    preparePtyExitForRenderer(payload)
+    sshOutputIntake?.transferPtyProjections(payload.id, 'legacy-pty-exit')
+    finalizePtyExitForRenderer(payload)
   }
 
   function sendPtySpawnedToRenderer(id: string): void {
@@ -3080,9 +3103,10 @@ export function registerPtyHandlers(
         projection.identity.sequenceEnd,
         projection
       ),
+    prepareExit: (event) => preparePtyExitForRenderer(event),
     finalizeExit: (event) => {
       runtime?.onPtyExit(event.id, event.code, event.ptyIncarnation)
-      sendPtyExitToRenderer(event)
+      finalizePtyExitForRenderer(event)
     },
     pauseProvider: (_generation, id) => {
       const provider = tryGetProviderForPty(id) as

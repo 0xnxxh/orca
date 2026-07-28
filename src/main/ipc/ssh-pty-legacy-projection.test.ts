@@ -72,6 +72,26 @@ describe('SshPtyLegacyProjectionLedger', () => {
     expect(ledger.getDebugSnapshot()).toMatchObject({ transferred: 1, records: 0 })
   })
 
+  it('resolves exact PTY terminal waiters only after settlement or transfer', async () => {
+    const ledger = new SshPtyLegacyProjectionLedger()
+    const projection = ledger.commit(reserve(ledger))
+    ledger.publishPrefix([projection.identity.projectionSemanticsId], 3, 3)
+
+    let settled = false
+    const terminal = ledger.whenPtyTerminal('pty-1', 3, 'incarnation-1').then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    ledger.settlePublishedPrefix('pty-1', 2)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    ledger.transfer([projection.identity.projectionSemanticsId], 'renderer-reload')
+    await terminal
+    expect(settled).toBe(true)
+  })
+
   it('publishes and settles transformed source accounting with no display text', () => {
     const ledger = new SshPtyLegacyProjectionLedger()
     const projection = ledger.commit(

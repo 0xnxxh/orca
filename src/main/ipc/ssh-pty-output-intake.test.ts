@@ -45,6 +45,7 @@ function createHarness(
       return { sequence, completion: completion.promise }
     },
     project: (input) => order.push(`project:${input.data}`),
+    prepareExit: vi.fn(),
     finalizeExit: () => order.push('exit'),
     pauseProvider: vi.fn(() => true),
     resumeProvider: vi.fn(),
@@ -246,6 +247,64 @@ describe('SshPtyOutputIntake', () => {
     harness.completions[0]!.resolve()
     await Promise.all([dataReceipt, exitReceipt])
     expect(harness.order).toEqual(['model:aaaa', 'project:aaaa', 'exit'])
+  })
+
+  it('retains exited delivery until published renderer projections settle', async () => {
+    const harness = createHarness({}, { exitBarrierMs: 1000 })
+    const dataReceipt = harness.intake.acceptData(event())
+    harness.completions[0]!.resolve()
+    const receipt = await dataReceipt
+    harness.intake.publishProjectionPrefix(
+      [receipt.projection.identity.projectionSemanticsId],
+      4,
+      4
+    )
+
+    let exited = false
+    const exitReceipt = harness.intake
+      .acceptExit({
+        id: 'pty-1',
+        code: 0,
+        providerGeneration: 1,
+        ptyIncarnation: 'incarnation-1'
+      })
+      .then(() => {
+        exited = true
+      })
+    await Promise.resolve()
+
+    expect(exited).toBe(false)
+    expect(harness.intake.getDebugSnapshot().projection.records).toBe(1)
+    expect(harness.intake.settleProjectionPrefix('pty-1', 4)).toBe(4)
+    await exitReceipt
+    expect(harness.order.at(-1)).toBe('exit')
+    expect(harness.intake.getDebugSnapshot().projection.records).toBe(0)
+  })
+
+  it('keeps timed-out exit projections until generation-close proof', async () => {
+    const harness = createHarness({}, { exitBarrierMs: 1 })
+    const dataReceipt = harness.intake.acceptData(event())
+    harness.completions[0]!.resolve()
+    const receipt = await dataReceipt
+    harness.intake.publishProjectionPrefix(
+      [receipt.projection.identity.projectionSemanticsId],
+      4,
+      4
+    )
+
+    await expect(
+      harness.intake.acceptExit({
+        id: 'pty-1',
+        code: 0,
+        providerGeneration: 1,
+        ptyIncarnation: 'incarnation-1'
+      })
+    ).rejects.toThrow('ssh_exit_barrier_timeout')
+    expect(harness.dependencies.closeProvider).toHaveBeenCalledWith(1, 'ssh-exit-barrier-timeout')
+    expect(harness.intake.getDebugSnapshot().projection.records).toBe(1)
+
+    harness.intake.closeGeneration(1, 'provider-closed')
+    expect(harness.intake.getDebugSnapshot().projection.records).toBe(0)
   })
 
   it('rejects late same-generation data after ordered exit cleanup', async () => {
