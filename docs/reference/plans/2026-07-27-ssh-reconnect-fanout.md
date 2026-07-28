@@ -4,7 +4,7 @@ Status: implemented and locally validated; final CI and review pending
 
 This design was reviewed in two full rounds, reconciled with current main, and implemented across main, preload, renderer, shared contracts, reliability gates, and Docker SSH fixtures. Review findings are absorbed into the invariants and implementation below.
 
-Validated against `origin/main` at `3f5098a0f2fb255deecb22e0a2d4095ad6ba0cca`. Current main includes remote-runtime resume/online recovery (#8255), worktree-owned multi-host routing (#10986), negotiated paired close intent (#10129), fail-closed runtime SSH setup (#10799), terminal-view parking (#11016), host-correct SSH folder adoption (#10818), hydration-loop ID indexes (#10891), and runtime output chunking (#10915). None replaces the direct desktop SSH reconnect path, but each constrains its ownership and lifecycle integration below.
+Validated against `origin/main` at `77d4c64f7a05e7fb2caa48e3d0acad5db39ff1f2`. Current main includes remote-runtime resume/online recovery (#8255), worktree-owned multi-host routing (#10986), negotiated paired close intent (#10129), fail-closed runtime SSH setup (#10799), terminal-view parking (#11016), host-correct SSH folder adoption (#10818), hydration-loop ID indexes (#10891), runtime output chunking (#10915), consolidated changed-code quality gates (#11117), and orchestration migration safety (#11107). None replaces the direct desktop SSH reconnect path, but each constrains its ownership and lifecycle integration below.
 
 Scope: direct SSH reconnect recovery across main, preload, and renderer
 
@@ -115,14 +115,13 @@ Results initially on `79ec57d04`, then rerun after rebasing through `974447175`:
 
 The candidate implements the composed authority pair, host-qualified catalog/worktree/lineage reads, separate waiter and provider identities, five-slot fair scheduling with a seven-start provider budget, the first-timeout retry barrier, exact-target terminal recovery, fenced remote-workspace hydration, and privacy-safe aggregate telemetry. Coordinator routing defaults on and can be disabled per build with `VITE_DIRECT_SSH_RECONNECT_COORDINATOR=false` or per renderer session with `orca.directSshReconnectCoordinator.enabled=false`; the fallback retains host/authority fencing, atomic terminal recovery, and bounded preparation.
 
-Deterministic validation passed the focused changed surface (34 files, 1,616 tests), full typecheck, lint, localization, reliability-gate and max-lines checks, and `git diff --check`. A clean full `pnpm test` passed 3,664 files and 38,656 tests, with one unrelated load-sensitive `worktree-base-directory-poller` five-second timing failure; that file passed alone 21/21. Final post-rebase validation and build evidence are recorded in the PR description.
+Deterministic validation on the final rebased implementation passed all 37 changed unit suites (1,738 tests), including the 10-file direct-SSH terminal gate (612 tests), plus full typecheck, changed-code quality, reliability-gate and max-lines checks, `git diff --check`, and an Electron E2E-mode build. A final full `pnpm test` exercise ran 3,707 files and 39,083 tests; only two assertions in unchanged `agent-exec-handler.test.ts` failed because the managed terminal already injects `GIT_CONFIG_*` prompt settings. The file passed 10/10 with those inherited settings removed. Final CI evidence is recorded in the PR description.
 
 Real transport validation used a macOS Electron headless client against an ephemeral Linux Docker SSH/relay target:
 
 ```bash
 ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test \
   tests/e2e/ssh-docker-relay-perf.spec.ts \
-  --grep "keeps an SSH workspace terminal usable after disconnect and reconnect" \
   --config tests/playwright.config.ts \
   --project electron-headless \
   --workers=1
@@ -134,7 +133,7 @@ ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test \
   --workers=1
 ```
 
-Both journeys passed. The reconnect journey proved live terminal input/output before and after SSH disconnect/reconnect and independently read the post-reconnect proof file inside the Linux container. The cold-restore journey proved all six restored SSH terminals remounted and accepted remote input after renderer reload. Repo registration waits on exact renderer catalog ownership and full authority, requires an authoritative host-qualified worktree response, and uses no timing sleep.
+The four-test relay suite and the cold-restore journey passed. The relay suite covered streaming, a background ACK-stalled PTY, file/Git pressure, and live terminal input/output before and after SSH disconnect/reconnect; the reconnect case independently read the post-reconnect proof file inside the Linux container. The cold-restore journey proved all six restored SSH terminals remounted and accepted remote input after renderer reload. Repo registration waits on exact renderer catalog ownership and full authority, requires an authoritative host-qualified worktree response, and uses no timing sleep.
 
 Remaining live gaps are headed paired-Orca-server and headless `orca serve` non-interference, WSL, physical Windows and Linux desktop clients, and a multi-target live fan-out/large-terminal-map benchmark. Docker SSH proves the direct SSH provider/relay path, not paired-runtime parity.
 
