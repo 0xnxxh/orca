@@ -1,13 +1,14 @@
 import { WebglAddon } from '@xterm/addon-webgl'
 import type { ManagedPaneInternal } from './pane-manager-types'
 import { recordTerminalWebglDiagnostic } from '../../../../shared/terminal-webgl-diagnostics'
+import { getLivePaneCensus } from './pane-manager-registry'
 import { forceRepaintThroughRenderPause } from './terminal-render-pause-release'
-import { releaseRetainedWebglPane } from './pane-webgl-context-retention'
 import {
   getTerminalWebglAutoDecision,
   resetTerminalWebglAutoDecision
 } from './terminal-webgl-auto-policy'
 import { safeFitAndThen } from './pane-fit'
+import { releaseAbandonedSynchronizedOutput } from './terminal-synchronized-output-release'
 
 export const ENABLE_WEBGL_RENDERER = true
 let suggestedRendererType: 'dom' | undefined
@@ -17,11 +18,9 @@ let suggestedRendererType: 'dom' | undefined
 // attach constantly in "on" mode. Latch the first failure and skip attempts
 // until the next recovery boundary (rendering resume or GPU-setting change).
 let webglAttachFailedSinceRecovery = false
-let contextInspectionUnavailableRecorded = false
 
 type ReleasableWebglContext = {
   getExtension(name: 'WEBGL_lose_context'): WEBGL_lose_context | null
-  isContextLost?: () => boolean
 }
 
 type XtermWebglAddonInternals = {
@@ -73,28 +72,10 @@ export function cancelPendingWebglRefresh(pane: ManagedPaneInternal): void {
   pane.pendingWebglRefreshRafId = null
 }
 
-export function isPaneWebglContextLost(pane: ManagedPaneInternal): boolean {
-  try {
-    const renderer = (pane.webglAddon as unknown as XtermWebglAddonInternals | null)?._renderer
-    const isContextLost = renderer?._gl?.isContextLost
-    if (!isContextLost) {
-      if (pane.webglAddon && !contextInspectionUnavailableRecorded) {
-        contextInspectionUnavailableRecorded = true
-        recordTerminalWebglDiagnostic('webgl-context-inspection-unavailable', { paneId: pane.id })
-      }
-      return false
-    }
-    return isContextLost.call(renderer._gl) === true
-  } catch {
-    return true
-  }
-}
-
 export function disposeWebgl(
   pane: ManagedPaneInternal,
   options?: { refreshDimensions?: boolean }
 ): void {
-  releaseRetainedWebglPane(pane)
   cancelPendingWebglRefresh(pane)
   if (!pane.webglAddon) {
     return
@@ -145,11 +126,14 @@ export function markComplexScriptOutput(pane: ManagedPaneInternal): void {
 }
 
 export function resetWebglTextureAtlas(pane: ManagedPaneInternal): void {
-  // Retained contexts repaint on resume; hidden DOM panes keep the existing recovery path.
-  if (pane.webglDisabledAfterContextLoss || (pane.webglAttachmentDeferred && pane.webglAddon)) {
+  if (pane.webglDisabledAfterContextLoss) {
     return
   }
   try {
+    // Why first: a TUI hidden mid-`?2026h` leaves synchronized output latched,
+    // and RenderService buffers every refresh while it holds — so the repaint
+    // below would render nothing at all. See terminal-synchronized-output-release.
+    releaseAbandonedSynchronizedOutput(pane.terminal)
     // Why: rapid TUI redraws can corrupt xterm's WebGL glyph atlas without a
     // context-loss event. Clearing the atlas preserves GPU rendering and forces
     // a fresh paint when the pane becomes visible/focused again.
@@ -200,17 +184,24 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
       // Why: a lost context is the decisive signal for a post-wake garble
       // report — it means the glyph atlas was wiped (needs a full reset), not
       // just a missed repaint. Silent breadcrumb; the console.warn stays.
-      recordTerminalWebglDiagnostic('webgl-context-loss', { paneId: pane.id })
+      // Census rides along: a GPU-process death loses every pane's context at
+      // once, and the crash-report ring coalesces repeats, so the count has to
+      // be in the payload rather than in the number of crumbs.
+      const census = getLivePaneCensus()
+      recordTerminalWebglDiagnostic('webgl-context-loss', {
+        paneId: pane.id,
+        livePanes: census.panes,
+        livePaneManagers: census.managers
+      })
       // Why: Chromium starts reclaiming terminal contexts under pressure.
       // Recreating WebGL for this pane can loop context loss and leave xterm
       // visually blank, so keep the pane on the DOM renderer until the next
       // rendering resume (worktree foreground / window wake) retries it.
       pane.webglDisabledAfterContextLoss = true
-      disposeWebgl(pane, { refreshDimensions: !pane.webglAttachmentDeferred })
+      disposeWebgl(pane, { refreshDimensions: true })
     })
     pane.terminal.loadAddon(addon)
     pane.webglAddon = addon
-    pane.webglRebuildDeferred = false
     refreshTerminalAfterWebglAttach(pane)
   } catch (err) {
     if (pane.terminalGpuAcceleration === 'auto') {
