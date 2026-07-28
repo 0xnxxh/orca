@@ -36,7 +36,12 @@ const MAX_SHARED_DIRECTORIES = 100
 
 /** Normalize `worktree.sharedDirectories` into deduped repo-root-relative paths.
  *  `\` becomes `/`, a `./` prefix and trailing `/` are stripped. Absolute paths,
- *  `..` traversal and `.git` are dropped here so callers get only safe entries. */
+ *  `..` traversal and `.git` are dropped here so callers get only safe entries.
+ *
+ *  Entries that would still need collapsing (`apps/./web`) are dropped rather
+ *  than rewritten: `resolve()` collapses them when the symlink is created, but
+ *  Git reports the collapsed path, so every later comparison against the stored
+ *  entry would miss and the link would look like permanent untracked work. */
 function normalizeSharedDirectories(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return []
@@ -55,6 +60,7 @@ function normalizeSharedDirectories(value: unknown): string[] {
       normalized.startsWith('/') ||
       /^[a-zA-Z]:/.test(normalized) ||
       segments.includes('..') ||
+      segments.includes('.') ||
       segments.includes('') ||
       segments.includes('.git')
     ) {

@@ -332,6 +332,23 @@ describe('parseOrcaYaml', () => {
     expect(result?.worktree?.sharedDirectories).toEqual(['node_modules'])
   })
 
+  // Why: `resolve()` collapses `.` when the link is created, but Git reports the
+  // collapsed path — keeping the raw entry would leave a link that every later
+  // comparison misses, which is the permanently-dirty worktree this feature fixes.
+  it('drops sharedDirectories entries that still need path collapsing', () => {
+    const result = parseOrcaYaml(
+      [
+        'worktree:',
+        '  sharedDirectories:',
+        '    - apps/./web/node_modules',
+        '    - apps//web/.cache',
+        '    - node_modules'
+      ].join('\n')
+    )
+
+    expect(result?.worktree?.sharedDirectories).toEqual(['node_modules'])
+  })
+
   it('returns null when sharedDirectories is the only key and holds nothing usable', () => {
     expect(parseOrcaYaml('worktree:\n  sharedDirectories: []\n')).toBeNull()
     expect(parseOrcaYaml('worktree:\n  sharedDirectories: node_modules\n')).toBeNull()

@@ -124,7 +124,9 @@ export function registerHostedReviewHandlers(store: Store, stats: StatsCollector
     const worktreePath = await resolveHostedReviewWorktreePath(repo, store, args.worktreePath)
     const localGitOptions = getLocalProjectWorktreeGitOptions(store, repo)
     // Why: the dirty preflight must not count Orca's own shared symlinks as user work (issue #10451).
-    const sharedLinkPaths = getWorktreeSharedLinkPaths(repo)
+    // Remote creation never materializes them, and `repo.path` is a path on the
+    // remote host — reading it locally would resolve an unrelated `orca.yaml`.
+    const sharedLinkPaths = repo.connectionId ? [] : getWorktreeSharedLinkPaths(repo)
     const executionOptions =
       Object.keys(localGitOptions).length > 0 || sharedLinkPaths.length > 0
         ? {

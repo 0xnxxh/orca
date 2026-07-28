@@ -247,7 +247,7 @@ function getStatusReadKey(worktreePath: string, options: GetStatusOptions): stri
     options.bypassEffectiveUpstreamNegativeCache === true,
     limit,
     // Why: this changes which entries survive, so it must not share a cache slot.
-    (options.sharedLinkPaths ?? []).join('')
+    (options.sharedLinkPaths ?? []).join('\u0001')
   ].join('\0')
 }
 

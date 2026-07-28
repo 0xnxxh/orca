@@ -102,6 +102,7 @@ import { registerFilesystemMutationHandlers } from './filesystem-mutations'
 import { searchWithGitGrep } from './filesystem-search-git'
 import {
   getLocalGitOptionsForRegisteredWorktree,
+  getLocalGitOptionsForRepo,
   getLocalRepoForRegisteredWorktree
 } from './local-worktree-runtime-options'
 import { resolveSourceControlAiLinkedIssue } from './source-control-ai-linked-issue'
@@ -1120,12 +1121,10 @@ export function registerFilesystemHandlers(
           return await provider.getStatus(args.worktreePath, options)
         }
         const worktreePath = await resolveRegisteredWorktreePath(args.worktreePath, store)
-        const gitOptions = getLocalGitOptionsForRegisteredWorktree(
-          store,
-          args.worktreePath,
-          worktreePath
-        )
+        // Why: one registered-worktree lookup feeds both — status polls this
+        // handler, and the scan walks every repo's worktree meta.
         const repo = getLocalRepoForRegisteredWorktree(store, args.worktreePath, worktreePath)
+        const gitOptions = getLocalGitOptionsForRepo(store, repo)
         const sharedLinkPaths = repo ? getWorktreeSharedLinkPaths(repo) : []
         return await getStatus(worktreePath, {
           ...options,

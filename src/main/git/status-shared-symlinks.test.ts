@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -27,6 +27,8 @@ describe('getStatus shared symlink exclusion', () => {
     git(['config', 'user.name', 'Test'], primary)
     writeFileSync(join(primary, '.gitignore'), 'node_modules/\n')
     writeFileSync(join(primary, 'README.md'), '# tracked\n')
+    writeFileSync(join(primary, 'OTHER.md'), '# other\n')
+    symlinkSync('README.md', join(primary, 'tracked-link'))
     git(['add', '-A'], primary)
     git(['commit', '-qm', 'init'], primary)
     mkdirSync(join(primary, 'node_modules'))
@@ -103,6 +105,22 @@ describe('getStatus shared symlink exclusion', () => {
     })
 
     expect(status.entries).toEqual([expect.objectContaining({ path: 'notes', area: 'untracked' })])
+  })
+
+  // Why: only *untracked* entries are Orca's artifacts. A symlink Git tracks is
+  // versioned content, so an edit to it is the user's work even when the path is
+  // declared shared — dropping it would hide a committable change.
+  it('keeps a modified tracked symlink at a declared shared path', async () => {
+    unlinkSync(join(worktree, 'tracked-link'))
+    symlinkSync('OTHER.md', join(worktree, 'tracked-link'))
+
+    const status = await getStatus(worktree, {
+      sharedLinkPaths: ['node_modules', 'tracked-link']
+    })
+
+    expect(status.entries).toEqual([
+      expect.objectContaining({ path: 'tracked-link', area: 'unstaged' })
+    ])
   })
 
   it('keeps a symlink at a path that was never declared shared', async () => {

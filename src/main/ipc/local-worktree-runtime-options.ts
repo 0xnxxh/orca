@@ -55,6 +55,20 @@ export function getLocalRepoForRegisteredWorktree(
     )
 }
 
+/** Git options for a repo already resolved by `getLocalRepoForRegisteredWorktree`,
+ *  so a caller needing both does not walk every repo's worktree meta twice. */
+export function getLocalGitOptionsForRepo(
+  store: Store,
+  repo: Repo | undefined
+): LocalProjectWorktreeGitOptions {
+  if (!repo || typeof store.getProjects !== 'function' || typeof store.getSettings !== 'function') {
+    return {}
+  }
+  // Why: file discovery must use the same resolved runtime as project git,
+  // terminals, and agents even when the worktree path is a Windows path.
+  return getLocalProjectWorktreeGitOptions(store, repo)
+}
+
 export function getLocalGitOptionsForRegisteredWorktree(
   store: Store,
   worktreePath: string,
@@ -64,11 +78,8 @@ export function getLocalGitOptionsForRegisteredWorktree(
     return {}
   }
 
-  const repo = getLocalRepoForRegisteredWorktree(store, worktreePath, resolvedWorktreePath)
-  if (repo) {
-    // Why: file discovery must use the same resolved runtime as project git,
-    // terminals, and agents even when the worktree path is a Windows path.
-    return getLocalProjectWorktreeGitOptions(store, repo)
-  }
-  return {}
+  return getLocalGitOptionsForRepo(
+    store,
+    getLocalRepoForRegisteredWorktree(store, worktreePath, resolvedWorktreePath)
+  )
 }
