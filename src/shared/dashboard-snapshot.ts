@@ -8,8 +8,7 @@ import type { RepoIcon } from './repo-icon'
  * Every field must be structured-clone-safe (no functions / class instances).
  */
 
-/** Agent lifecycle columns. Idle is optional in the UI; completed agents stay
- *  visible in their own hook-backed column. */
+/** Agent lifecycle columns; idle is optional while completed agents remain visible. */
 export type DashboardBucket = 'attention' | 'working' | 'done' | 'idle'
 
 /** Column order shared by producer and pop-out so they never drift. */
@@ -20,9 +19,7 @@ export const DASHBOARD_BUCKET_ORDER: readonly DashboardBucket[] = [
   'idle'
 ]
 
-/** Precise per-card state marker (drives AgentStateDot). Kept distinct from
- *  `bucket` so the "Needs You" column can still show amber (waiting/permission)
- *  vs red (blocked) dots. */
+/** Kept distinct from `bucket` so attention cards retain their precise dot state. */
 export type DashboardCardDotState = 'working' | 'blocked' | 'waiting' | 'done' | 'idle'
 
 export type DashboardCardReview = {

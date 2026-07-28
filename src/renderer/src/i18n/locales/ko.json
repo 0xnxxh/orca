@@ -14248,7 +14248,8 @@
         "merged": "Merged review",
         "closed": "Closed review"
       },
-      "subagents": "{{count}} subagents"
+      "subagents_one": "서브에이전트 {{count}}개",
+      "subagents_other": "서브에이전트 {{count}}개"
     },
     "terminal": {
       "closed": "No live terminal — this agent's pane has closed.",

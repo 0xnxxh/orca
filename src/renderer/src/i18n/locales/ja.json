@@ -14248,7 +14248,8 @@
         "merged": "Merged review",
         "closed": "Closed review"
       },
-      "subagents": "{{count}} subagents"
+      "subagents_one": "{{count}} 個のサブエージェント",
+      "subagents_other": "{{count}} 個のサブエージェント"
     },
     "terminal": {
       "closed": "No live terminal — this agent's pane has closed.",

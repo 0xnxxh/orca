@@ -44,6 +44,12 @@ function displayTimestamp(card: DashboardCard): number {
   return card.finishedAt ?? card.startedAt
 }
 
+function formatSubagentCount(count: number): string {
+  return count === 1
+    ? translate('dashboardPopout.card.subagents_one', '{{count}} subagent', { count })
+    : translate('dashboardPopout.card.subagents_other', '{{count}} subagents', { count })
+}
+
 function sameSubagents(a: DashboardCard['subagents'], b: DashboardCard['subagents']): boolean {
   if (a === b) {
     return true
@@ -292,9 +298,7 @@ export const AgentKanbanCard = memo(
               <ChevronRight
                 className={cn('size-3 transition-transform', subagentsOpen && 'rotate-90')}
               />
-              {translate('dashboardPopout.card.subagents', '{{count}} subagents', {
-                count: card.subagents.length
-              })}
+              {formatSubagentCount(card.subagents.length)}
             </button>
             {subagentsOpen ? (
               <div className="ml-1 flex flex-col gap-1 border-l border-border pl-2">
@@ -315,6 +319,8 @@ export const AgentKanbanCard = memo(
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           {workspaceStatusMeta ? (
             <span
+              role="img"
+              aria-label={card.workspaceStatusLabel}
               className={cn('size-2 shrink-0 rounded-full', workspaceStatusMeta.swatch)}
               title={card.workspaceStatusLabel}
             />

@@ -256,10 +256,7 @@ export function AgentKanbanBoard({
           onFiltersChange={setFilters}
         />
         <div className="scrollbar-sleek flex min-h-0 flex-1 overflow-x-auto p-3">
-          {/* Why: columns share the window width up to a readable cap; mx-auto
-            centers the capped board so leftover space splits evenly instead of
-            pooling on the right. In overflow the auto margins collapse to 0,
-            keeping the left edge reachable while scrolling. */}
+          {/* Auto margins center the capped board and collapse during horizontal overflow. */}
           <div className="mx-auto flex w-full max-w-[1280px] gap-3">
             {visibleBuckets.map((bucket) => (
               <KanbanColumn

@@ -14277,7 +14277,8 @@
         "merged": "Merged review",
         "closed": "Closed review"
       },
-      "subagents": "{{count}} subagents"
+      "subagents_one": "{{count}} subagent",
+      "subagents_other": "{{count}} subagents"
     },
     "terminal": {
       "closed": "No live terminal — this agent's pane has closed.",
