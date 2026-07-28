@@ -141,4 +141,24 @@ describe('useLiveDashboardSnapshot', () => {
     const { result: sshResult } = renderHook(() => useLiveDashboardSnapshot())
     expect(sshResult.current.cards[0].terminalInput?.hostPlatform).toBe('win32')
   })
+
+  // Why: a fresh renderHook always recomputes, so only re-rendering the SAME
+  // hook proves the memo watches the slice. An idle board publishes nothing
+  // else, so a missed subscription never heals.
+  it('re-derives the host-input profile when only a host slice changes', () => {
+    seed({ tabAutoGenerateTitle: false })
+    useAppStore.setState({
+      repos: [{ ...repo(), connectionId: 'conn-1', executionHostId: 'ssh:conn-1' }]
+    })
+    const { result, rerender } = renderHook(() => useLiveDashboardSnapshot())
+    expect(result.current.cards[0].terminalInput?.hostPlatform).toBe('linux')
+
+    useAppStore.setState({
+      sshConnectionStates: new Map([
+        ['conn-1', { remotePlatform: 'win32' }]
+      ]) as unknown as ReturnType<typeof useAppStore.getState>['sshConnectionStates']
+    })
+    rerender()
+    expect(result.current.cards[0].terminalInput?.hostPlatform).toBe('win32')
+  })
 })
