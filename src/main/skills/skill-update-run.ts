@@ -29,8 +29,12 @@ export const CANCEL_RELEASE_TIMEOUT_MS = 12_000
 export type SkillUpdateRunnerDeps = {
   spawnProcess?: typeof spawn
   resolveCommand?: (commandName: string) => string
-  /** Returns the subset of `names` that did not land, re-read from disk. */
-  rescanOutdatedNames?: (names: string[]) => Promise<string[]>
+  /**
+   * Returns the subset of `names` that did not land, re-read from disk.
+   * `commandFailed` relays whether the CLI itself reported failure, which
+   * decides whether a merely-outdated copy is forgiven.
+   */
+  rescanOutdatedNames?: (names: string[], commandFailed: boolean) => Promise<string[]>
   killTree?: (pid: number, killRoot: () => void) => Promise<void>
   /** Injected so the Windows cmd.exe rail is reachable off Windows. */
   buildSpawnArgs?: typeof getSpawnArgsForWindows
@@ -194,8 +198,9 @@ export class SkillUpdateRunner {
 
     // Why: when the re-scan produces a verdict it *is* the answer — it re-hashes
     // what landed on disk, which is what the user actually cares about. The exit
-    // code only decides the outcome when no verdict is available, because
-    // `skills update` reports nothing else we can trust.
+    // code decides the outcome alone only when no verdict is available, but the
+    // verdict is told whether the command failed: a copy the CLI merely left old
+    // is forgiven after a clean exit and blamed after a failed one.
     const finish = (failedNames: string[] | null): void => {
       // The re-scan is slow enough that a cancel — or a whole replacement run —
       // can land while it is still in flight; its verdict is about a run that no
@@ -222,7 +227,7 @@ export class SkillUpdateRunner {
       finish(null)
       return
     }
-    void rescan(names).then(
+    void rescan(names, spawnError !== null).then(
       (failedNames) => finish(failedNames),
       () => finish(null)
     )

@@ -35,7 +35,9 @@ function placement(
 
 describe('skillUpdateFailedNames', () => {
   it('treats a convergent copy that is now current as landed', () => {
-    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'current')])).toEqual([])
+    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'current')], false)).toEqual(
+      []
+    )
   })
 
   // Reversed deliberately. `skills update` compares its lock against the source
@@ -44,37 +46,61 @@ describe('skillUpdateFailedNames', () => {
   // older revision that no retry converges. Blaming the run for that invented a
   // failure the CLI never reported and armed a Retry that could not succeed.
   it('does not blame the run for a copy the update command cannot converge', () => {
-    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'outdated')])).toEqual([])
+    expect(
+      skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'outdated')], false)
+    ).toEqual([])
+  })
+
+  it('still blames an outdated copy when the command itself failed', () => {
+    // An offline run exits non-zero having written nothing; forgiving the
+    // outdated copy there would read the failure as "Updated N skills".
+    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'outdated')], true)).toEqual(
+      ['orca-cli']
+    )
+  })
+
+  it('accepts current and newer copies even when the command failed', () => {
+    // A peer skill outside the request can fail the process; what landed, landed.
+    expect(
+      skillUpdateFailedNames(
+        ['orca-cli', 'orchestration'],
+        [placement('orca-cli', 'current'), placement('orchestration', 'newer-known')],
+        true
+      )
+    ).toEqual([])
   })
 
   it('reports a half-written bundle instead of reading it as success', () => {
     // The old "still eligible?" test passed here: an unrecognized copy is not
     // eligible either, so a corrupt write looked identical to a clean update.
-    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'unrecognized')])).toEqual([
-      'orca-cli'
-    ])
+    expect(
+      skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'unrecognized')], false)
+    ).toEqual(['orca-cli'])
   })
 
   it('reports an unreadable copy', () => {
-    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'inaccessible')])).toEqual([
-      'orca-cli'
-    ])
+    expect(
+      skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'inaccessible')], false)
+    ).toEqual(['orca-cli'])
   })
 
   it('reports a skill the run removed outright', () => {
-    expect(skillUpdateFailedNames(['orca-cli'], [])).toEqual(['orca-cli'])
+    expect(skillUpdateFailedNames(['orca-cli'], [], false)).toEqual(['orca-cli'])
   })
 
   it('accepts a revision newer than this build ships', () => {
     // The CLI pulls from the source repo, which runs ahead of the bundled manifest.
-    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'newer-known')])).toEqual([])
+    expect(
+      skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'newer-known')], false)
+    ).toEqual([])
   })
 
   it('ignores placements the update command never writes to', () => {
     expect(
       skillUpdateFailedNames(
         ['orca-cli'],
-        [placement('orca-cli', 'current'), placement('orca-cli', 'outdated', 'plugin-cache')]
+        [placement('orca-cli', 'current'), placement('orca-cli', 'outdated', 'plugin-cache')],
+        false
       )
     ).toEqual([])
   })
@@ -85,7 +111,8 @@ describe('skillUpdateFailedNames', () => {
     expect(
       skillUpdateFailedNames(
         ['orca-cli'],
-        [placement('orca-cli', 'current'), placement('orca-cli', 'unrecognized', 'provider-alias')]
+        [placement('orca-cli', 'current'), placement('orca-cli', 'unrecognized', 'provider-alias')],
+        false
       )
     ).toEqual(['orca-cli'])
   })
@@ -94,7 +121,8 @@ describe('skillUpdateFailedNames', () => {
     expect(
       skillUpdateFailedNames(
         ['orca-cli'],
-        [placement('orca-cli', 'current'), placement('orca-cli', 'outdated', 'provider-alias')]
+        [placement('orca-cli', 'current'), placement('orca-cli', 'outdated', 'provider-alias')],
+        false
       )
     ).toEqual([])
   })
@@ -103,7 +131,8 @@ describe('skillUpdateFailedNames', () => {
     expect(
       skillUpdateFailedNames(
         ['orca-cli', 'orchestration'],
-        [placement('orca-cli', 'current'), placement('orchestration', 'unrecognized')]
+        [placement('orca-cli', 'current'), placement('orchestration', 'unrecognized')],
+        false
       )
     ).toEqual(['orchestration'])
   })

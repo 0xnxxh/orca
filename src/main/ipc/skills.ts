@@ -30,9 +30,9 @@ export function registerSkillsHandlers(store: Store): void {
   const runner = new SkillUpdateRunner({
     // Why: per-skill outcomes come from re-hashing what is actually on disk, not
     // from scraping stdout.
-    rescanOutdatedNames: async (names) => {
+    rescanOutdatedNames: async (names, commandFailed) => {
       const inventory = await scanInventory()
-      return skillUpdateFailedNames(names, inventory.installations)
+      return skillUpdateFailedNames(names, inventory.installations, commandFailed)
     },
     onState: (run: SkillUpdateRun) => {
       for (const window of BrowserWindow.getAllWindows()) {

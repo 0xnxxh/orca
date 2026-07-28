@@ -12,7 +12,7 @@ class FakeChild extends EventEmitter {
 
 function makeRunner(
   overrides: {
-    rescanOutdatedNames?: (names: string[]) => Promise<string[]>
+    rescanOutdatedNames?: (names: string[], commandFailed: boolean) => Promise<string[]>
     resolveCommand?: (name: string) => string
     killTree?: (pid: number, killRoot: () => void) => Promise<void>
     buildSpawnArgs?: (command: string, args: string[]) => { spawnCmd: string; spawnArgs: string[] }
@@ -103,6 +103,35 @@ describe('SkillUpdateRunner', () => {
     child.emit('close', 1)
     await flush()
 
+    expect(runner.getState().state).toBe('success')
+  })
+
+  it('reports the failure when the command failed and nothing converged', async () => {
+    // The verdict forgives `outdated` only on a clean exit; without the flag an
+    // offline run that wrote nothing would publish "Updated N skills".
+    const rescan = vi.fn(async (names: string[], commandFailed: boolean) =>
+      commandFailed ? names : []
+    )
+    const { runner, child } = makeRunner({ rescanOutdatedNames: rescan })
+    runner.start(['orca-cli'])
+    child.emit('close', 1)
+    await flush()
+
+    expect(rescan).toHaveBeenCalledWith(['orca-cli'], true)
+    const run = runner.getState()
+    expect(run.state).toBe('error')
+    expect(run.state === 'error' && run.failedNames).toEqual(['orca-cli'])
+    expect(run.state === 'error' && run.message).toBe('skills update exited with code 1')
+  })
+
+  it('tells the verdict the command succeeded on a clean exit', async () => {
+    const rescan = vi.fn(async () => [])
+    const { runner, child } = makeRunner({ rescanOutdatedNames: rescan })
+    runner.start(['orca-cli'])
+    child.emit('close', 0)
+    await flush()
+
+    expect(rescan).toHaveBeenCalledWith(['orca-cli'], false)
     expect(runner.getState().state).toBe('success')
   })
 
