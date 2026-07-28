@@ -51,12 +51,24 @@ function sameSubagents(a: DashboardCard['subagents'], b: DashboardCard['subagent
   if (!a || !b || a.length !== b.length) {
     return false
   }
-  return a.every(
-    (subagent, index) =>
-      subagent.id === b[index].id &&
-      subagent.name === b[index].name &&
-      subagent.dotState === b[index].dotState
-  )
+  for (let index = 0; index < a.length; index += 1) {
+    if (!(index in a) || !(index in b)) {
+      if (index in a !== index in b) {
+        return false
+      }
+      continue
+    }
+    const subagent = a[index]
+    const other = b[index]
+    if (
+      subagent.id !== other.id ||
+      subagent.name !== other.name ||
+      subagent.dotState !== other.dotState
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 function sameCard(a: DashboardCard, b: DashboardCard): boolean {
