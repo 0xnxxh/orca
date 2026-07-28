@@ -2,7 +2,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import type { ElectronApplication } from '@stablyai/playwright-test'
 import { test, expect } from './helpers/orca-app'
 import { TEST_REPO_PATH_FILE } from './global-setup'
-import { waitForActiveTerminalManager, waitForPaneCount } from './helpers/terminal'
+import {
+  waitForActivePaneHookDescriptor,
+  waitForActiveTerminalManager,
+  waitForPaneCount
+} from './helpers/terminal'
 import {
   ensureTerminalVisible,
   getActiveTabId,
@@ -55,12 +59,13 @@ test('durable whole-tab close removes a split tab across restart', async (// oxl
     }
     expect(await getWorktreeTabs(firstLaunch.page, worktreeId)).toHaveLength(1)
 
+    const pane = await waitForActivePaneHookDescriptor(firstLaunch.page)
     const client = new RuntimeClient(session.userDataDir, 30_000)
-    const active = await client.call<{ handle: string }>('terminal.resolveActive', {
-      worktree: `id:${worktreeId}`
+    const active = await client.call<{ terminal: { handle: string } }>('terminal.resolvePane', {
+      paneKey: pane.paneKey
     })
     const split = await client.call<{ split: RuntimeTerminalSplit }>('terminal.split', {
-      terminal: active.result.handle,
+      terminal: active.result.terminal.handle,
       direction: 'vertical'
     })
     expect(split.result.split.tabId).toBe(closedTabId)
@@ -80,12 +85,19 @@ test('durable whole-tab close removes a split tab across restart', async (// oxl
       })
       .toEqual([])
 
-    const afterClose = await client.call<RuntimeTerminalListResult>('terminal.list', {
-      worktree: `id:${worktreeId}`
-    })
-    expect(
-      afterClose.result.terminals.filter((terminal) => terminal.tabId === closedTabId)
-    ).toEqual([])
+    await expect
+      .poll(
+        async () => {
+          const afterClose = await client.call<RuntimeTerminalListResult>('terminal.list', {
+            worktree: `id:${worktreeId}`
+          })
+          return afterClose.result.terminals
+            .filter((terminal) => terminal.tabId === closedTabId)
+            .map((terminal) => terminal.handle)
+        },
+        { message: 'The acknowledged close left host terminal rows alive' }
+      )
+      .toEqual([])
 
     await session.close(firstApp)
     firstApp = null
