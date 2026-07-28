@@ -201,10 +201,17 @@ async function teardownSshTargetTransport(
   } catch (error) {
     transportDisconnect = Promise.resolve({ ok: false, error })
   }
-  const [disconnectResult] = await Promise.all([
+  const sessionTeardown = teardownActiveSshSession(targetId, teardown).then(
+    () => ({ ok: true }) as const,
+    (error: unknown) => ({ ok: false, error }) as const
+  )
+  const [disconnectResult, teardownResult] = await Promise.all([
     transportDisconnect,
-    teardownActiveSshSession(targetId, teardown)
+    sessionTeardown
   ])
+  if (!teardownResult.ok) {
+    throw teardownResult.error
+  }
   if (!disconnectResult.ok) {
     throw disconnectResult.error
   }
@@ -218,13 +225,25 @@ async function teardownActiveSshSession(
   if (!session) {
     return
   }
-  // Why: await port teardown so local listeners are released before disconnect/remove completes, else an immediate reconnect hits EADDRINUSE.
-  await portForwardManager?.removeAllForwards(targetId)
-  teardown(session)
+  let teardownError: { error: unknown } | null = null
+  try {
+    // Why: await port teardown so local listeners are released before disconnect/remove completes, else an immediate reconnect hits EADDRINUSE.
+    await portForwardManager?.removeAllForwards(targetId)
+  } catch (error) {
+    teardownError = { error }
+  }
+  try {
+    teardown(session)
+  } catch (error) {
+    teardownError ??= { error }
+  }
   if (activeSessions.get(targetId) === session) {
     activeSessions.delete(targetId)
     clearRelayLostBackoff(targetId)
     clearRelayStateOverride(targetId)
+  }
+  if (teardownError) {
+    throw teardownError.error
   }
 }
 
@@ -885,12 +904,13 @@ export function registerSshHandlers(
       appendFileSync(e2eProbePath, `${JSON.stringify(targetId)}\n`)
       throw new Error('e2e_forbidden_local_ssh_connect')
     }
+    // Why: fence callers that entered before a same-turn disconnect/reset but resume after its cleanup.
+    const admissionAuthority = getSshProviderAuthority(targetId)
     await awaitTargetLifecycle(targetId)
     const reset = resetRelayInFlight.get(targetId)
     if (reset) {
       await reset
     }
-    const observedAuthority = getSshProviderAuthority(targetId)
 
     // Why: serialize concurrent ssh:connect for the same target; interleaved connects otherwise leak the first session.
     const existing = connectInFlight.get(targetId)
@@ -899,6 +919,12 @@ export function registerSshHandlers(
       if (isCurrentConnectAttempt(targetId, existing.authority)) {
         return existing.promise
       }
+    }
+    if (!isCurrentConnectAttempt(targetId, admissionAuthority)) {
+      throw connectCancelledError()
+    }
+    const observedAuthority = admissionAuthority
+    if (existing) {
       if (connectInFlight.get(targetId) === existing) {
         connectInFlight.delete(targetId)
         replacePendingTransport = true
@@ -1187,13 +1213,13 @@ export function registerSshHandlers(
     }
 
     let resetPromise: Promise<void>
-    resetPromise = Promise.resolve()
-      .then(() => doResetRelay(args.targetId, target))
-      .finally(() => {
-        if (resetRelayInFlight.get(args.targetId) === resetPromise) {
-          resetRelayInFlight.delete(args.targetId)
-        }
-      })
+    resetPromise = runTargetLifecycle(args.targetId, () =>
+      doResetRelay(args.targetId, target)
+    ).finally(() => {
+      if (resetRelayInFlight.get(args.targetId) === resetPromise) {
+        resetRelayInFlight.delete(args.targetId)
+      }
+    })
     resetRelayInFlight.set(args.targetId, resetPromise)
     return resetPromise
   })
