@@ -1,5 +1,5 @@
 import { closeSync, openSync, readSync, readdirSync, statSync, type Stats } from 'node:fs'
-import { dirname, extname, isAbsolute, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 
 import {
   finishCodexSubagent,
@@ -10,6 +10,8 @@ import {
 const TRANSCRIPT_READ_MAX_BYTES = 1024 * 1024
 const TRANSCRIPT_LINE_MAX_BYTES = 256 * 1024
 const TRANSCRIPT_DIRECTORY_MAX_ENTRIES = 4096
+// Why: retire a child whose rollout stays unreadable this long, else a deleted/never-written file pins a phantom row forever.
+const CHILD_UNREADABLE_GRACE_MS = 60_000
 const SAFE_THREAD_ID = /^[A-Za-z0-9-]{1,64}$/
 
 type JsonlCursor = {
@@ -21,6 +23,7 @@ type JsonlCursor = {
 type TrackedTranscriptSubagent = JsonlCursor & {
   description?: string
   startedAt: number
+  unresolvedSince?: number
 }
 
 export type CodexSubagentTranscriptState = {
@@ -34,18 +37,19 @@ function record(value: unknown): JsonRecord | undefined {
   return typeof value === 'object' && value !== null ? (value as JsonRecord) : undefined
 }
 
-function readJsonlCursor(cursor: JsonlCursor): JsonRecord[] {
+/** Returns undefined when the file is unreadable, distinguishing a vanished rollout from one with no new lines. */
+function readJsonlCursor(cursor: JsonlCursor): JsonRecord[] | undefined {
   if (!cursor.filePath) {
-    return []
+    return undefined
   }
   let stats: Stats
   try {
     stats = statSync(cursor.filePath)
   } catch {
-    return []
+    return undefined
   }
   if (!stats.isFile()) {
-    return []
+    return undefined
   }
   if (stats.size < cursor.offset) {
     cursor.offset = 0
@@ -63,7 +67,7 @@ function readJsonlCursor(cursor: JsonlCursor): JsonRecord[] {
     fd = openSync(cursor.filePath, 'r')
     bytesRead = readSync(fd, buffer, 0, bytesToRead, start)
   } catch {
-    return []
+    return undefined
   } finally {
     if (fd !== undefined) {
       closeSync(fd)
@@ -94,10 +98,10 @@ function readJsonlCursor(cursor: JsonlCursor): JsonRecord[] {
   return records
 }
 
-function readTranscriptDirectory(parentPath: string): string[] {
+function readTranscriptDirectory(directory: string): string[] {
   let entries: string[]
   try {
-    entries = readdirSync(dirname(parentPath))
+    entries = readdirSync(directory)
   } catch {
     return []
   }
@@ -107,17 +111,57 @@ function readTranscriptDirectory(parentPath: string): string[] {
   return entries
 }
 
+// Why: Codex files each rollout under its OWN local start date, so a session running past midnight spawns children into a sibling day directory.
+function childDayDirectory(parentPath: string, startedAt: number): string | undefined {
+  const dayDir = dirname(parentPath)
+  const monthDir = dirname(dayDir)
+  const yearDir = dirname(monthDir)
+  if (
+    !/^\d{2}$/.test(basename(dayDir)) ||
+    !/^\d{2}$/.test(basename(monthDir)) ||
+    !/^\d{4}$/.test(basename(yearDir)) ||
+    !Number.isFinite(startedAt)
+  ) {
+    return undefined
+  }
+  const startedOn = new Date(startedAt)
+  if (Number.isNaN(startedOn.getTime())) {
+    return undefined
+  }
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return join(
+    dirname(yearDir),
+    String(startedOn.getFullYear()).padStart(4, '0'),
+    pad(startedOn.getMonth() + 1),
+    pad(startedOn.getDate())
+  )
+}
+
 function resolveChildTranscript(
   parentPath: string,
-  entries: readonly string[],
-  threadId: string
+  threadId: string,
+  startedAt: number,
+  entriesByDirectory: Map<string, string[]>
 ): string | undefined {
   if (!SAFE_THREAD_ID.test(threadId)) {
     return undefined
   }
   const suffix = `-${threadId}.jsonl`
-  const fileName = entries.find((entry) => entry.endsWith(suffix))
-  return fileName ? join(dirname(parentPath), fileName) : undefined
+  const parentDir = dirname(parentPath)
+  const childDir = childDayDirectory(parentPath, startedAt)
+  const directories = childDir && childDir !== parentDir ? [parentDir, childDir] : [parentDir]
+  for (const directory of directories) {
+    let entries = entriesByDirectory.get(directory)
+    if (!entries) {
+      entries = readTranscriptDirectory(directory)
+      entriesByDirectory.set(directory, entries)
+    }
+    const fileName = entries.find((entry) => entry.endsWith(suffix))
+    if (fileName) {
+      return join(directory, fileName)
+    }
+  }
+  return undefined
 }
 
 function readActivity(recordValue: JsonRecord):
@@ -200,7 +244,7 @@ export function reconcileCodexSubagentTranscript(
     state.parent = { filePath: normalizedPath, offset: 0, carry: '' }
     state.subagents.clear()
   }
-  for (const recordValue of readJsonlCursor(state.parent)) {
+  for (const recordValue of readJsonlCursor(state.parent) ?? []) {
     const activity = readActivity(recordValue)
     if (!activity) {
       continue
@@ -224,14 +268,30 @@ export function reconcileCodexSubagentTranscript(
       tracked.startedAt
     )
   }
-  let directoryEntries: string[] | undefined
+  const entriesByDirectory = new Map<string, string[]>()
+  const now = Date.now()
   for (const [id, tracked] of state.subagents) {
     if (!tracked.filePath) {
-      directoryEntries ??= readTranscriptDirectory(normalizedPath)
-      tracked.filePath = resolveChildTranscript(normalizedPath, directoryEntries, id)
+      tracked.filePath = resolveChildTranscript(
+        normalizedPath,
+        id,
+        tracked.startedAt,
+        entriesByDirectory
+      )
     }
-    if (!tracked.filePath || !childIsComplete(readJsonlCursor(tracked))) {
-      continue
+    const records = readJsonlCursor(tracked)
+    if (!records) {
+      // Why: a rollout that never appears (or is deleted) has no completion event, so time-box it instead of leaking a working row.
+      tracked.filePath = undefined
+      tracked.unresolvedSince ??= now
+      if (now - tracked.unresolvedSince <= CHILD_UNREADABLE_GRACE_MS) {
+        continue
+      }
+    } else {
+      tracked.unresolvedSince = undefined
+      if (!childIsComplete(records)) {
+        continue
+      }
     }
     finishCodexSubagent(roster, id)
     state.subagents.delete(id)
