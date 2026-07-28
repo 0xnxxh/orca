@@ -108,6 +108,25 @@ describe('nativeChatLaunchDraftByTabId teardown', () => {
     expect(s.nativeChatLaunchDraftByTabId[TAB2]).toBeDefined()
   })
 
+  it('persists the adopted flag, idempotently, and clears the whole entry', () => {
+    // Every consumer test injects these reducers as bare vi.fn()s. `adopted` is
+    // what stops a manually cleared composer from resurrecting the prefill, so
+    // assert the real reducers here.
+    const store = createTestStore()
+    store.getState().seedNativeChatLaunchDraft(draft(TAB1, 'https://github.com/o/r/issues/1'))
+    expect(store.getState().nativeChatLaunchDraftByTabId[TAB1]?.adopted).toBeUndefined()
+
+    store.getState().markNativeChatLaunchDraftAdopted(TAB1)
+    const adopted = store.getState().nativeChatLaunchDraftByTabId[TAB1]
+    expect(adopted).toMatchObject({ tabId: TAB1, adopted: true })
+
+    store.getState().markNativeChatLaunchDraftAdopted(TAB1)
+    expect(store.getState().nativeChatLaunchDraftByTabId[TAB1]).toBe(adopted)
+
+    store.getState().clearNativeChatLaunchDraft(TAB1)
+    expect(TAB1 in store.getState().nativeChatLaunchDraftByTabId).toBe(false)
+  })
+
   it('the orphan terminal cleanup patch drops swept tabs’ drafts only', () => {
     const store = createTestStore()
     seedDrafts(store)
