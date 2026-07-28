@@ -75,10 +75,8 @@ export function useMobileDiffReviewSendActions(input: SendActionsInput) {
       if (!client || connState !== 'connected') {
         throw new Error('Waiting for desktop...')
       }
-      // The stale marker is keyed by terminal handle, not by surface, so an image
-      // paste orphaned on this terminal by native chat would be submitted along
-      // with these notes (#10228). No device token is threaded here — this send
-      // carries none either.
+      // Marked by terminal handle, not by surface, so a paste orphaned here by native
+      // chat would ride along with these notes (#10228). Diff review carries no device token.
       if (!(await healMobileNativeChatStaleInput({ client, terminal, deviceToken: null }))) {
         throw new Error('Failed to send notes')
       }
