@@ -14325,5 +14325,21 @@
       "certificateChallengeUnavailable": "This certificate request is no longer available. Retry the page to request a new one.",
       "certificateProceedFailed": "Orca could not approve this certificate request. Retry the page and try again."
     }
+  },
+  "runtimeRpc": {
+    "startupFailure": {
+      "unknownCause": "No additional error details were available.",
+      "continueButton": "Continue without CLI",
+      "title": "Orca CLI unavailable",
+      "message": "Orca couldn't start its local command transport.",
+      "detail": "Orca will continue to work, but commands such as orca status, orca terminal, and orchestration are unavailable for this session.\n\n{{guidance}}\n\nCause: {{cause}}",
+      "guidance": {
+        "permissionDenied": "Orca couldn't write its runtime file. Check permissions on Orca's data folder, then restart.",
+        "storageUnavailable": "Your disk may be full or read-only. Free up space, then restart Orca.",
+        "invalidPath": "Orca's data folder may be missing, moved, or at a path that is too long. Restore it or use a shorter path, then restart Orca.",
+        "addressInUse": "Another process may be holding the port. Restart Orca to try again.",
+        "unknown": "Restart Orca to try again."
+      }
+    }
   }
 }
