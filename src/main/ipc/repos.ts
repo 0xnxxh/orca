@@ -83,11 +83,16 @@ import { track } from '../telemetry/client'
 import { scheduleCurrentWorktreeBaseDirectoryWatcherSync } from './worktree-base-directory-watcher'
 import { getCohortAtEmit } from '../telemetry/cohort-classifier'
 import type { RepoMethod } from '../../shared/telemetry-events'
+import type {
+  HostRepoCatalogSnapshot,
+  ListReposForExecutionHostArgs
+} from '../../shared/host-repo-catalog-contract'
 import { detectRepoIconAndUpstream } from '../repo-icon-autodetect'
 import { enrichMissingRepoGitRemoteIdentities } from '../repo-git-remote-identity-enrichment'
 import { getProjectHostSetupForRepo } from '../../shared/project-host-setup-projection'
 import {
   getRepoExecutionHostId,
+  LOCAL_EXECUTION_HOST_ID,
   normalizeExecutionHostId,
   parseExecutionHostId,
   type ExecutionHostId
@@ -101,6 +106,8 @@ import {
 import { getGitCloneFailureMessage } from '../../shared/git-clone-failure-message'
 import { prepareLocalWorktreeRootForRepo } from '../worktree-root-preparation'
 import { runWithGitReadCacheInvalidation } from '../git/status'
+import { SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES } from '../../shared/ssh-retained-payload-admission'
+import { isCurrentSshProviderAuthority } from '../ssh/ssh-provider-authority'
 
 // Why: `method` is the IPC entry point the user took, not what they added (never path/URL/name); repos:create → 'folder_picker'.
 // Why: `isGitRepo` is a non-identifying git-vs-folder signal from the caller's detection; pass undefined when unknown, never default false.
@@ -117,6 +124,88 @@ function emitRepoAdded(method: RepoMethod, alreadyExisted: boolean, isGitRepo?: 
     ...getCohortAtEmit()
   }
   track('repo_added', props)
+}
+
+function hasValidCatalogSshAuthority(
+  args: ListReposForExecutionHostArgs
+): args is Extract<ListReposForExecutionHostArgs, { expectedAuthority: unknown }> {
+  if (!('expectedAuthority' in args)) {
+    return false
+  }
+  const authority = args.expectedAuthority
+  return (
+    authority !== null &&
+    typeof authority === 'object' &&
+    typeof authority.targetId === 'string' &&
+    authority.targetId.length > 0 &&
+    typeof authority.providerEpoch === 'string' &&
+    authority.providerEpoch.length > 0 &&
+    Buffer.byteLength(authority.providerEpoch, 'utf8') <= SSH_PROVIDER_EPOCH_MAX_UTF8_BYTES &&
+    Number.isSafeInteger(authority.connectionGeneration) &&
+    authority.connectionGeneration >= 0
+  )
+}
+
+async function listReposForExecutionHost(
+  store: Store,
+  args: ListReposForExecutionHostArgs
+): Promise<HostRepoCatalogSnapshot> {
+  const parsedHost = parseExecutionHostId(args?.executionHostId)
+  const rejected = (
+    reason: Extract<HostRepoCatalogSnapshot, { authoritative: false }>['reason']
+  ): HostRepoCatalogSnapshot => ({
+    authoritative: false,
+    executionHostId: args.executionHostId,
+    reason
+  })
+  if (!parsedHost || parsedHost.kind === 'runtime') {
+    return rejected('rejected')
+  }
+  if (parsedHost.kind === 'local') {
+    if ('expectedAuthority' in args) {
+      return rejected('rejected')
+    }
+    return {
+      authoritative: true,
+      authority: { kind: 'local', executionHostId: LOCAL_EXECUTION_HOST_ID },
+      repos: structuredClone(
+        store.getRepos().filter((repo) => getRepoExecutionHostId(repo) === parsedHost.id)
+      )
+    }
+  }
+  if (
+    !hasValidCatalogSshAuthority(args) ||
+    args.expectedAuthority.targetId !== parsedHost.targetId
+  ) {
+    return rejected('rejected')
+  }
+  const authority = { ...args.expectedAuthority }
+  if (!isCurrentSshProviderAuthority(authority)) {
+    return rejected('stale')
+  }
+  const provider = getSshGitProvider(parsedHost.targetId)
+  if (!provider) {
+    return rejected('unavailable')
+  }
+  const repos = structuredClone(
+    store.getRepos().filter((repo) => getRepoExecutionHostId(repo) === parsedHost.id)
+  )
+  await Promise.resolve()
+  if (
+    getSshGitProvider(parsedHost.targetId) !== provider ||
+    !isCurrentSshProviderAuthority(authority)
+  ) {
+    return rejected('stale')
+  }
+  return {
+    authoritative: true,
+    authority: {
+      kind: 'direct-ssh',
+      executionHostId: parsedHost.id,
+      ...authority
+    },
+    repos
+  }
 }
 
 function buildProjectHostSetupResult(store: Store, repo: Repo): ProjectHostSetupResult {
@@ -1119,6 +1208,7 @@ async function runNestedRepoScanForIpc(
 export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): void {
   // Remove previously registered handlers so we can re-register on macOS app re-activation (new window).
   ipcMain.removeHandler('repos:list')
+  ipcMain.removeHandler('repos:listForExecutionHost')
   ipcMain.removeHandler('repos:add')
   ipcMain.removeHandler('repos:remove')
   ipcMain.removeHandler('repos:removeForHost')
@@ -1174,6 +1264,12 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
     })
     return store.getRepos()
   })
+
+  ipcMain.handle(
+    'repos:listForExecutionHost',
+    (_event, args: ListReposForExecutionHostArgs): Promise<HostRepoCatalogSnapshot> =>
+      listReposForExecutionHost(store, args)
+  )
 
   ipcMain.handle('projects:list', () => {
     enrichMissingRepoGitRemoteIdentities(store, {

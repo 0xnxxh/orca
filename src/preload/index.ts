@@ -31,6 +31,14 @@ import type {
   EnrichedDetectedPort
 } from '../shared/ssh-types'
 import type {
+  HostRepoCatalogSnapshot,
+  ListReposForExecutionHostArgs
+} from '../shared/host-repo-catalog-contract'
+import type {
+  HostLineageSnapshot,
+  ListDesktopLineageForHostArgs
+} from '../shared/host-lineage-contract'
+import type {
   PluginPanelActionOutcome,
   PluginPanelEntry
 } from '../shared/plugins/plugin-panel-bridge'
@@ -591,6 +599,9 @@ const api = {
   repos: {
     list: () => ipcRenderer.invoke('repos:list'),
 
+    listForExecutionHost: (args: ListReposForExecutionHostArgs): Promise<HostRepoCatalogSnapshot> =>
+      ipcRenderer.invoke('repos:listForExecutionHost', args),
+
     add: (args) => ipcRenderer.invoke('repos:add', args),
 
     addRemote: (args) => ipcRenderer.invoke('repos:addRemote', args),
@@ -724,6 +735,8 @@ const api = {
 
     listDetected: (args) => ipcRenderer.invoke('worktrees:listDetected', args),
 
+    cancelListDetected: (args) => ipcRenderer.invoke('worktrees:cancelListDetected', args),
+
     listAll: () => ipcRenderer.invoke('worktrees:listAll'),
 
     create: (args) => ipcRenderer.invoke('worktrees:create', args),
@@ -755,6 +768,9 @@ const api = {
     updateMeta: (args) => ipcRenderer.invoke('worktrees:updateMeta', args),
 
     listLineage: () => ipcRenderer.invoke('worktrees:listLineage'),
+
+    listLineageForHost: (args: ListDesktopLineageForHostArgs): Promise<HostLineageSnapshot> =>
+      ipcRenderer.invoke('worktrees:listLineageForHost', args),
 
     updateLineage: (args) => ipcRenderer.invoke('worktrees:updateLineage', args),
 

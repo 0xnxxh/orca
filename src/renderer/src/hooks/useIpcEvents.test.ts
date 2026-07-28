@@ -1426,7 +1426,7 @@ describe('useIpcEvents updater integration', () => {
   })
 
   it('clears stale remote PTYs when an SSH connection fully disconnects', async () => {
-    const clearTabPtyId = vi.fn()
+    const clearDirectSshTargetPtyBindings = vi.fn(() => 1)
     const setSshConnectionState = vi.fn()
     const setSshTargetsMetadata = vi.fn()
     const clearRemovedSshTargetState = vi.fn()
@@ -1478,7 +1478,7 @@ describe('useIpcEvents updater integration', () => {
       removeSshCredentialRequest: vi.fn(),
       clearRemoteDetectedAgents: vi.fn(),
       clearRemovedSshTargetState,
-      clearTabPtyId,
+      clearDirectSshTargetPtyBindings,
       repos: [{ id: 'repo-1', connectionId: 'conn-1' }],
       worktreesByRepo: {
         'repo-1': [{ id: 'wt-1', repoId: 'repo-1' }]
@@ -1663,8 +1663,8 @@ describe('useIpcEvents updater integration', () => {
       'conn-1',
       expect.objectContaining({ status: 'disconnected' })
     )
-    expect(clearTabPtyId).toHaveBeenCalledWith('tab-1')
-    expect(clearTabPtyId).not.toHaveBeenCalledWith('tab-2')
+    expect(clearDirectSshTargetPtyBindings).toHaveBeenCalledOnce()
+    expect(clearDirectSshTargetPtyBindings).toHaveBeenCalledWith('conn-1')
     expect(storeState.clearRemoteDetectedAgents).toHaveBeenCalledWith('conn-1')
 
     setSshConnectionState.mockClear()
@@ -4805,6 +4805,8 @@ describe('useIpcEvents agent status snapshot integration', () => {
     drop?: (paneKey: string) => void
     remoteWorkspace?: Record<string, unknown>
     runtime?: Record<string, unknown>
+    ssh?: Record<string, unknown>
+    ui?: Record<string, unknown>
   }): Record<string, unknown> {
     return {
       api: {
@@ -4864,7 +4866,8 @@ describe('useIpcEvents agent status snapshot integration', () => {
           onFullscreenChanged: () => () => {},
           onTerminalZoom: () => () => {},
           getZoomLevel: () => 0,
-          set: vi.fn()
+          set: vi.fn(),
+          ...args.ui
         },
         settings: { onChanged: () => () => {} },
         updater: {
@@ -4901,7 +4904,8 @@ describe('useIpcEvents agent status snapshot integration', () => {
           onCredentialRequest: () => () => {},
           onCredentialResolved: () => () => {},
           onPortForwardsChanged: () => () => {},
-          onDetectedPortsChanged: () => () => {}
+          onDetectedPortsChanged: () => () => {},
+          ...args.ssh
         },
         agentStatus: {
           onSet: args.onSet,
@@ -4947,10 +4951,320 @@ describe('useIpcEvents agent status snapshot integration', () => {
     vi.doMock('@/lib/zoom-events', () => ({ dispatchZoomLevelChanged: vi.fn() }))
   }
 
+  function buildSshAuthorityReconciliationHarness(args: {
+    partialAuthority: { providerEpoch?: string; connectionGeneration?: number }
+    latestAuthority: { providerEpoch: string; connectionGeneration: number }
+  }): {
+    emitPartialState: () => void
+    getState: ReturnType<typeof vi.fn>
+    requestReconnect: ReturnType<typeof vi.fn>
+    setSshConnectionState: ReturnType<typeof vi.fn>
+    storedState: () => Record<string, unknown> | undefined
+  } {
+    const targetId = 'target-reconciliation'
+    const baseState = {
+      targetId,
+      status: 'connected' as const,
+      error: null,
+      reconnectAttempt: 0
+    }
+    const partialState = { ...baseState, ...args.partialAuthority }
+    const latestState = { ...baseState, ...args.latestAuthority }
+    const sshConnectionStates = new Map<string, Record<string, unknown>>()
+    let sshStateListener: ((data: { targetId: string; state: unknown }) => void) | undefined
+    const getState = vi.fn(() => Promise.resolve(latestState))
+    const requestReconnect = vi.fn(async () => ({ status: 'complete' }))
+    const setSshConnectionState = vi.fn((nextTargetId: string, state: Record<string, unknown>) => {
+      sshConnectionStates.set(nextTargetId, state)
+    })
+    const storeState = buildStoreState({
+      sshTargetLabels: new Map([[targetId, 'Reconciliation Target']]),
+      sshConnectionStates,
+      setSshConnectionState,
+      invalidateStaleDirectSshTargetPtyBindings: vi.fn(() => 0),
+      retryDirectSshTargetPanes: vi.fn(() => 0),
+      setSshTargetsMetadata: vi.fn(),
+      setRemovedSshTargetLabels: vi.fn(),
+      setRemoteWorkspaceSyncStatus: vi.fn(),
+      clearRemoteDetectedAgents: vi.fn(),
+      clearDirectSshTargetPtyBindings: vi.fn(),
+      clearRemovedSshTargetState: vi.fn()
+    })
+    const coordinator = {
+      requestReconnect,
+      replaceAuthority: vi.fn(),
+      prepareOnly: vi.fn(),
+      correctUnboundTerminals: vi.fn(() => 0),
+      finalizeHydratedTerminals: vi.fn(() => 0),
+      invalidate: vi.fn(),
+      stop: vi.fn()
+    }
+
+    stubReactSyncEffect()
+    stubAuxiliaryModules()
+    vi.doMock('../store', () => ({
+      useAppStore: {
+        subscribe: vi.fn(() => () => {}),
+        getState: () => storeState
+      }
+    }))
+    vi.doMock('./direct-ssh-reconnect-rollout', () => ({
+      isDirectSshReconnectCoordinatorRoutingEnabled: () => true
+    }))
+    vi.doMock('./direct-ssh-worktree-refresh-scheduler', () => ({
+      createDirectSshWorktreeRefreshScheduler: () => ({
+        stop: vi.fn(),
+        disposeProvider: vi.fn()
+      })
+    }))
+    vi.doMock('./direct-ssh-host-hydration', () => ({
+      createDirectSshHostHydration: () => ({
+        capturePreparationInput: vi.fn(),
+        readHostScopedLineage: vi.fn(),
+        isPreparationTokenCurrent: vi.fn(() => true),
+        stop: vi.fn()
+      })
+    }))
+    vi.doMock('./direct-ssh-reconnect-coordinator', () => ({
+      createDirectSshReconnectCoordinator: () => coordinator
+    }))
+    vi.doMock('@/lib/direct-ssh-reconnect-product-telemetry', () => ({
+      createDirectSshReconnectProductTelemetryAdapter: vi.fn()
+    }))
+    vi.stubGlobal(
+      'window',
+      buildWindowApi({
+        onSet: () => () => {},
+        ssh: {
+          getState,
+          onStateChanged: (listener: (data: { targetId: string; state: unknown }) => void) => {
+            sshStateListener = listener
+            return () => {}
+          }
+        }
+      })
+    )
+
+    return {
+      emitPartialState: () => {
+        if (!sshStateListener) {
+          throw new Error('Expected SSH state listener')
+        }
+        sshStateListener({ targetId, state: partialState })
+      },
+      getState,
+      requestReconnect,
+      setSshConnectionState,
+      storedState: () => sshConnectionStates.get(targetId)
+    }
+  }
+
   beforeEach(() => {
     vi.resetModules()
     vi.unstubAllGlobals()
   })
+
+  it.each([
+    { partialAuthority: { providerEpoch: 'epoch-current' } },
+    { partialAuthority: { connectionGeneration: 7 } }
+  ])(
+    'fills a same-watermark partial SSH authority and routes it once',
+    async ({ partialAuthority }) => {
+      const harness = buildSshAuthorityReconciliationHarness({
+        partialAuthority,
+        latestAuthority: {
+          providerEpoch: 'epoch-current',
+          connectionGeneration: 7
+        }
+      })
+      const { useIpcEvents } = await import('./useIpcEvents')
+      useIpcEvents()
+
+      harness.emitPartialState()
+
+      await vi.waitFor(() => {
+        expect(harness.requestReconnect).toHaveBeenCalledOnce()
+      })
+      expect(harness.getState).toHaveBeenCalledOnce()
+      expect(harness.setSshConnectionState).toHaveBeenCalledTimes(2)
+      expect(harness.storedState()).toEqual({
+        targetId: 'target-reconciliation',
+        status: 'connected',
+        error: null,
+        reconnectAttempt: 0,
+        providerEpoch: 'epoch-current',
+        connectionGeneration: 7
+      })
+    }
+  )
+
+  it.each([
+    { partialAuthority: { providerEpoch: 'epoch-conflict' } },
+    { partialAuthority: { connectionGeneration: 6 } }
+  ])(
+    'rejects a reconciliation reply that conflicts with present authority',
+    async ({ partialAuthority }) => {
+      const harness = buildSshAuthorityReconciliationHarness({
+        partialAuthority,
+        latestAuthority: {
+          providerEpoch: 'epoch-current',
+          connectionGeneration: 7
+        }
+      })
+      const { useIpcEvents } = await import('./useIpcEvents')
+      useIpcEvents()
+
+      harness.emitPartialState()
+
+      await vi.waitFor(() => {
+        expect(harness.getState).toHaveBeenCalledOnce()
+      })
+      await Promise.resolve()
+      expect(harness.requestReconnect).not.toHaveBeenCalled()
+      expect(harness.setSshConnectionState).toHaveBeenCalledOnce()
+      expect(harness.storedState()).toEqual(
+        expect.objectContaining({
+          targetId: 'target-reconciliation',
+          ...partialAuthority
+        })
+      )
+    }
+  )
+
+  it.each([
+    { enabled: true, expectedRoute: ['request'] },
+    {
+      enabled: false,
+      expectedRoute: ['replace', 'invalidate', 'retry', 'capture', 'prepare']
+    }
+  ])(
+    'routes a changed direct SSH authority through the enabled=$enabled path',
+    async ({ enabled, expectedRoute }) => {
+      const order: string[] = []
+      let sshStateListener: ((data: { targetId: string; state: unknown }) => void) | undefined
+      const oldState = {
+        targetId: 'target-a',
+        status: 'connected' as const,
+        error: null,
+        reconnectAttempt: 0,
+        providerEpoch: 'epoch-old',
+        connectionGeneration: 1
+      }
+      const nextState = {
+        ...oldState,
+        providerEpoch: 'epoch-new',
+        connectionGeneration: 2
+      }
+      const storeState = buildStoreState({
+        sshTargetLabels: new Map([['target-a', 'Target A']]),
+        sshConnectionStates: new Map([['target-a', oldState]]),
+        setSshConnectionState: (targetId: string, state: unknown) => {
+          ;(storeState.sshConnectionStates as Map<string, unknown>).set(targetId, state)
+        },
+        invalidateStaleDirectSshTargetPtyBindings: () => {
+          order.push('invalidate')
+          return 1
+        },
+        retryDirectSshTargetPanes: () => {
+          order.push('retry')
+          return 1
+        },
+        setSshTargetsMetadata: vi.fn(),
+        setRemovedSshTargetLabels: vi.fn(),
+        setRemoteWorkspaceSyncStatus: vi.fn(),
+        clearRemoteDetectedAgents: vi.fn(),
+        clearDirectSshTargetPtyBindings: vi.fn(),
+        clearRemovedSshTargetState: vi.fn()
+      })
+      const coordinator = {
+        requestReconnect: vi.fn(async () => {
+          order.push('request')
+          return { status: 'complete' }
+        }),
+        replaceAuthority: vi.fn(() => {
+          order.push('replace')
+        }),
+        prepareOnly: vi.fn(async () => {
+          order.push('prepare')
+          return { token: null }
+        }),
+        correctUnboundTerminals: vi.fn(() => 0),
+        finalizeHydratedTerminals: vi.fn(() => 0),
+        invalidate: vi.fn(),
+        stop: vi.fn()
+      }
+      const capturePreparationInput = vi.fn(async (authority, reason) => {
+        order.push('capture')
+        return {
+          ...authority,
+          reason,
+          catalogRevision: 1,
+          repoRefs: [],
+          authorityRequirement: 'required'
+        }
+      })
+
+      stubReactSyncEffect()
+      stubAuxiliaryModules()
+      vi.doMock('../store', () => ({
+        useAppStore: {
+          subscribe: vi.fn(() => () => {}),
+          getState: () => storeState
+        }
+      }))
+      vi.doMock('./direct-ssh-reconnect-rollout', () => ({
+        isDirectSshReconnectCoordinatorRoutingEnabled: () => enabled
+      }))
+      vi.doMock('./direct-ssh-worktree-refresh-scheduler', () => ({
+        createDirectSshWorktreeRefreshScheduler: () => ({
+          stop: vi.fn(),
+          disposeProvider: vi.fn()
+        })
+      }))
+      vi.doMock('./direct-ssh-host-hydration', () => ({
+        createDirectSshHostHydration: () => ({
+          capturePreparationInput,
+          readHostScopedLineage: vi.fn(),
+          isPreparationTokenCurrent: vi.fn(() => true),
+          stop: vi.fn()
+        })
+      }))
+      vi.doMock('./direct-ssh-reconnect-coordinator', () => ({
+        createDirectSshReconnectCoordinator: () => coordinator
+      }))
+      vi.doMock('@/lib/direct-ssh-reconnect-product-telemetry', () => ({
+        createDirectSshReconnectProductTelemetryAdapter: vi.fn()
+      }))
+      vi.stubGlobal(
+        'window',
+        buildWindowApi({
+          onSet: () => () => {},
+          ssh: {
+            onStateChanged: (listener: (data: { targetId: string; state: unknown }) => void) => {
+              sshStateListener = listener
+              return () => {}
+            }
+          }
+        })
+      )
+
+      const { useIpcEvents } = await import('./useIpcEvents')
+      useIpcEvents()
+      sshStateListener?.({ targetId: 'target-a', state: nextState })
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(order).toEqual(expectedRoute)
+      if (enabled) {
+        expect(coordinator.requestReconnect).toHaveBeenCalledOnce()
+        expect(coordinator.prepareOnly).not.toHaveBeenCalled()
+      } else {
+        expect(coordinator.requestReconnect).not.toHaveBeenCalled()
+        expect(coordinator.replaceAuthority).toHaveBeenCalledOnce()
+        expect(coordinator.prepareOnly).toHaveBeenCalledOnce()
+      }
+    }
+  )
 
   it('caps pending mobile state events while startup hydration is unresolved', async () => {
     const setFitOverride = vi.fn()

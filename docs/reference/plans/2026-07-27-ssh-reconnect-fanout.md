@@ -1,10 +1,10 @@
 # Direct SSH reconnect fan-out
 
-Status: implementation-ready design, reconciled with current main
+Status: implemented and locally validated; final CI and review pending
 
-This design was reviewed by multi-model LLM counsel for **two full rounds** (round 1 rewrite of fan-out / host-blind provider selection / terminal cleanup / store-fence gaps; round 2 residual seam audit for epoch boundaries, cancellation settlement, snapshot hydration, authority advance, and disconnect cleanup). It was then reconciled with current main and revised for independent waiter/provider identities, authoritative response construction, contradictory ownership provenance, and timeout retry barriers. Review findings are absorbed into the invariants and rollout plan below; raw counsel artifacts are not part of this PR.
+This design was reviewed in two full rounds, reconciled with current main, and implemented across main, preload, renderer, shared contracts, reliability gates, and Docker SSH fixtures. Review findings are absorbed into the invariants and implementation below.
 
-Validated against `origin/main` at `6943638053861ae8288673e8c90c9f2d9f75ac11` after rebasing the design branch. Current main includes remote-runtime resume/online recovery (#8255), worktree-owned routing for multi-host projects (#10986), negotiated paired-runtime close intent (#10129), fail-closed runtime project setup for SSH hosts (#10799), manual terminal-view parking (#11016), host-correct SSH folder automation with bind-before-publish terminal adoption (#10818), hydration-loop ID indexes (#10891), and runtime terminal output chunking (#10915). None replaces the direct desktop SSH reconnect path, but each constrains its ownership and lifecycle integration below.
+Validated against `origin/main` at `3f5098a0f2fb255deecb22e0a2d4095ad6ba0cca`. Current main includes remote-runtime resume/online recovery (#8255), worktree-owned multi-host routing (#10986), negotiated paired close intent (#10129), fail-closed runtime SSH setup (#10799), terminal-view parking (#11016), host-correct SSH folder adoption (#10818), hydration-loop ID indexes (#10891), and runtime output chunking (#10915). None replaces the direct desktop SSH reconnect path, but each constrains its ownership and lifecycle integration below.
 
 Scope: direct SSH reconnect recovery across main, preload, and renderer
 
@@ -109,7 +109,34 @@ pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/lib/agent
 pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/store/slices/worktree-by-id-index.test.ts src/main/runtime/rpc/terminal-output-frame-chunks-equivalence.test.ts
 ```
 
-Results initially on `79ec57d04`, then rerun after rebasing through `974447175`: 3/3, 1/1, 2/2, 4/4, and 3/3 selected SSH seam tests passed respectively; the three newly relevant parking files passed 39/39. On `1fd0f731f`, the four folder-automation/adoption files passed 516/516. On `694363805`, the hydration-index and output-frame equivalence files passed 25/25. Source-contract inspection confirmed the `2R`/`3R` call graph and the dropped host field; later main changes did not alter those seams. This is baseline evidence, not candidate green evidence: this PR contains no runtime implementation. Docker SSH is unnecessary for these disputed design claims because the renderer/main seams express them deterministically.
+Results initially on `79ec57d04`, then rerun after rebasing through `974447175`: 3/3, 1/1, 2/2, 4/4, and 3/3 selected SSH seam tests passed respectively; the three newly relevant parking files passed 39/39. On `1fd0f731f`, the four folder-automation/adoption files passed 516/516. On `694363805`, the hydration-index and output-frame equivalence files passed 25/25. Source-contract inspection confirmed the `2R`/`3R` call graph and the dropped host field; later main changes did not alter those seams. This is the historical baseline evidence used to define the candidate oracles. Candidate runtime and Docker SSH evidence is recorded separately below.
+
+### Candidate implementation and validation
+
+The candidate implements the composed authority pair, host-qualified catalog/worktree/lineage reads, separate waiter and provider identities, five-slot fair scheduling with a seven-start provider budget, the first-timeout retry barrier, exact-target terminal recovery, fenced remote-workspace hydration, and privacy-safe aggregate telemetry. Coordinator routing defaults on and can be disabled per build with `VITE_DIRECT_SSH_RECONNECT_COORDINATOR=false` or per renderer session with `orca.directSshReconnectCoordinator.enabled=false`; the fallback retains host/authority fencing, atomic terminal recovery, and bounded preparation.
+
+Deterministic validation passed the focused changed surface (34 files, 1,616 tests), full typecheck, lint, localization, reliability-gate and max-lines checks, and `git diff --check`. A clean full `pnpm test` passed 3,664 files and 38,656 tests, with one unrelated load-sensitive `worktree-base-directory-poller` five-second timing failure; that file passed alone 21/21. Final post-rebase validation and build evidence are recorded in the PR description.
+
+Real transport validation used a macOS Electron headless client against an ephemeral Linux Docker SSH/relay target:
+
+```bash
+ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test \
+  tests/e2e/ssh-docker-relay-perf.spec.ts \
+  --grep "keeps an SSH workspace terminal usable after disconnect and reconnect" \
+  --config tests/playwright.config.ts \
+  --project electron-headless \
+  --workers=1
+
+ORCA_E2E_SSH_DOCKER=1 SKIP_BUILD=1 pnpm exec playwright test \
+  tests/e2e/ssh-cold-activation-restore.spec.ts \
+  --config tests/playwright.config.ts \
+  --project electron-headless \
+  --workers=1
+```
+
+Both journeys passed. The reconnect journey proved live terminal input/output before and after SSH disconnect/reconnect and independently read the post-reconnect proof file inside the Linux container. The cold-restore journey proved all six restored SSH terminals remounted and accepted remote input after renderer reload. Repo registration waits on exact renderer catalog ownership and full authority, requires an authoritative host-qualified worktree response, and uses no timing sleep.
+
+Remaining live gaps are headed paired-Orca-server and headless `orca serve` non-interference, WSL, physical Windows and Linux desktop clients, and a multi-target live fan-out/large-terminal-map benchmark. Docker SSH proves the direct SSH provider/relay path, not paired-runtime parity.
 
 Current-main reconciliation:
 
@@ -193,6 +220,7 @@ Reconnect finalization must:
 - treat a non-null `ptyId` as live only when transient binding provenance names the current authority and the current spawn/reattach attempt has settled successfully;
 - clear stale binding evidence from a missed disconnect or prior authority before testing retry eligibility;
 - keep at most one retry attempt in flight per tab and authority;
+- join renderer pending-spawn promises only for the same retry attempt; authority or tab-generation advance starts independently, and a late obsolete fresh PTY is rejected and retired;
 - record only a successful live binding in the finalized ledger; failure, timeout, later clear, or snapshot overwrite removes pending/success state and re-arms the tab;
 - permit a tab hydrated, newly discovered, or left unbound after a failed spawn to receive a bounded same-authority corrective bump;
 - update all affected workspace buckets in one Zustand publication; and
@@ -326,6 +354,7 @@ type DirectSshTargetScope = {
   gitRepos: DirectSshGitRepoRef[]
   gitWorktreeIds: Set<string>
   terminalWorkspaceKeys: Set<string>
+  lineageWorkspaceKeys: Set<WorkspaceKey>
   ambiguousOwnerCount: number
   contradictoryOwnerCount: number
 }
@@ -345,7 +374,7 @@ Resolution rules:
 - Treat mixed/conflicting folder provenance as contradictory; duplicate same-host owners and unresolved legacy rows are ambiguous/unowned.
 - A parsed live app-SSH PTY can recover a stale-catalog terminal only when no explicit other-host or runtime ownership contradicts it.
 
-Git refresh uses `gitRepos`; terminal clear/retry uses `terminalWorkspaceKeys`; snapshot projection uses `gitWorktreeIds`. Folder workspaces never enter the path-based remote-workspace schema.
+Git refresh uses `gitRepos`; terminal clear/retry uses raw Git IDs and folder keys from `terminalWorkspaceKeys`; unified lineage uses `worktree:<id>` and folder keys from `lineageWorkspaceKeys`; snapshot projection uses `gitWorktreeIds`. Folder workspaces never enter the path-based remote-workspace schema.
 
 When exact repo rows are missing, use a new host-scoped desktop catalog read rather than focused `fetchRepos()` or an all-desktop refresh:
 
@@ -688,7 +717,7 @@ Emit one aggregate diagnostic per target operation, not per global wave and not 
 Fields:
 
 - mode and reason;
-- terminal tabs considered/retried and terminal-finalization duration;
+- terminal panes retried, stale bindings cleared, successful corrections, and terminal-finalization duration;
 - catalog outcome and duration;
 - repo tasks completed, non-authoritative, retrying, final timed-out, cancel-budget-exhausted, canceled, stale, and rejected;
 - direct-scheduler queue-wait and provider-execution duration distributions;
@@ -697,20 +726,22 @@ Fields:
 - lineage outcome;
 - Git-worktree, folder-workspace, ambiguous-owner, and contradictory-owner counts;
 - overlapping request joins;
-- authority rotations observed, preparations damped during flapping, stale bindings cleared, terminal attempts failed/re-armed, and arrival-order replies discarded;
+- authority rotations observed and preparations damped during flapping;
 - total target-operation duration.
 
 Expected supersession/cancellation is debug-level and does not increment degraded/error metrics. Timeout is separate from queue wait and operational rejection. `fetchWorktrees === false` is not used as a failure proxy; the new discriminated result preserves non-authoritative versus rejected outcomes.
 
 Do not log target IDs, repo IDs, paths, labels, hosts, usernames, credential errors, snapshot content, raw request IDs, or terminal output. A stable per-session opaque target alias may correlate concurrent aggregate events and is discarded at process exit.
 
-Product telemetry is required for rollout, not optional. Emit a typed aggregate event with only the count/duration fields above into the existing privacy-reviewed histogram sink. The dogfood dashboard aggregates per build over a seven-day rolling window and reports p50/p95/p99 queue wait and provider execution separately, timeout/retry/cancel-debt rates, locally unsettled peak concurrency, flapping damping, and terminal correction outcomes. Schema tests reject identifiers and keep queue wait, execution, timeout, operational rejection, cancellation, and stale results distinct.
+The product event deliberately omits terminal correction failure/re-arm counts, concurrent non-coordinator call counts, and arrival-order discard counts because this implementation has no truthful production observation for them. It does not populate unobserved fields with constant zeroes.
 
-The concurrency metric is explicitly `coordinator_owned_direct_ssh_detected_worktree_concurrency`. It measures locally unsettled provider promises and says nothing about runtime lineage RPCs, sidebar's eight-worker pool, filesystem-event calls, catalog/lineage IPC, total application provider concurrency, or relay handlers finishing after local cancel. Report concurrent non-coordinator same-connection calls and cancel debt beside timeout percentiles so the release gate does not misattribute contention.
+Typed product telemetry is implemented with one strict identifier-free aggregate event per target operation. Queue and provider percentiles are derived from that operation's real scheduler samples. The seven-day dogfood dashboard/query is operational follow-up outside this repository; this PR does not claim a dashboard artifact. Schema tests reject identifiers and keep queue wait, execution, timeout, operational rejection, cancellation, and stale results distinct.
+
+The concurrency metric is explicitly `coordinator_owned_direct_ssh_detected_worktree_concurrency`. It measures locally unsettled provider promises and says nothing about runtime lineage RPCs, sidebar's eight-worker pool, filesystem-event calls, catalog/lineage IPC, total application provider concurrency, non-coordinator same-connection calls, or relay handlers finishing after local cancel.
 
 ## Tests
 
-Implementation PRs register the worktree scan-count, host/authority, timeout-barrier, and no-cross-host mutation oracles in the existing `git-worktree.refresh-event-semantics` gate. They extend `terminal-provider.ssh-remote-reattach-contract` for direct-SSH binding clear/retry, hydration, folder workspace, paired-close non-interference, and #8255 wake isolation. A new reliability gate is unnecessary unless implementation reveals a distinct lifecycle contract that neither existing gate owns.
+This implementation registers the worktree scan-count, host/authority, timeout-barrier, and no-cross-host mutation oracles in the existing `git-worktree.refresh-event-semantics` gate. It extends `terminal-provider.ssh-remote-reattach-contract` for direct-SSH binding clear/retry, hydration, folder workspace, paired-close non-interference, and #8255 wake isolation. A new reliability gate is unnecessary because those existing gates own the lifecycle contracts.
 
 ### Main/preload host and authority contract
 
@@ -829,8 +860,8 @@ Seed direct SSH targets, a runtime environment, sidebar refreshes, worktrees, fo
 - queue wait, provider duration, timeout, and cancellation are distinct;
 - canceled/stale outcomes do not console-error or increment degraded counts;
 - diagnostics contain counts/durations plus only an ephemeral target alias;
-- the typed telemetry schema rejects identifiers and emits queue/provider histograms, timeout/retry/cancel-debt counts, flapping damping, arrival discards, and correction results; and
-- the aggregate load-test/dashboard fixture computes p95/p99 over multiple target operations instead of inferring percentiles from per-operation console records.
+- the typed telemetry schema rejects identifiers and emits observed queue/provider distributions, timeout/retry/cancel-debt counts, flapping damping, and successful correction results; and
+- the adapter computes bounded p50/p95/p99 values from each operation's real scheduler samples.
 
 ## Implementation map
 
@@ -844,11 +875,11 @@ Seed direct SSH targets, a runtime environment, sidebar refreshes, worktrees, fo
 - `src/renderer/src/lib/direct-ssh-target-scope.ts` uses explicit provenance for Git and folder scope; it never reads focused-runtime ownership.
 - Terminal slice actions and `src/renderer/src/store/slices/direct-ssh-terminal-recovery.ts` own atomic clear, stale-binding invalidation, transient PTY authority, attempt settlement, and single-publication retry projection.
 - `src/renderer/src/hooks/remote-workspace-target-sync.ts` owns capture-before-await revision-zero push, token/revision fences, repo-qualified legacy-safe resolution, local recovery preservation, snapshot-driven reattach, and post-hydration finalization.
-- Typed aggregate telemetry owns the privacy schema and histogram emission; release automation owns the seven-day dogfood percentile query and aggregate load-test artifact.
+- Typed aggregate telemetry owns the privacy schema, per-operation distributions, and fail-soft histogram emission. External dogfood dashboard/query configuration remains an operational follow-up.
 
 ## Rollout
 
-Land in bisectable stages:
+The implementation preserves this dependency order:
 
 1. Add the opaque epoch and `rotateSshProviderAuthority`, expand `connectionGeneration` rotation to the same transition set, and inventory every state equality/copy/preload/retained/reconciliation boundary. Land complete-pair publication, malformed partial-authority rejection, retained-admission, stale-reconciliation, provider-before-broadcast, and old-mutation-expectation tests before any coordinator routing.
 2. Add host-qualified detected-worktree and lineage IPC, discriminated authoritative response admission, exact main provider selection, main-owned 30-second deadline, provider-request cancellation, and main pre-mutation fences. Preserve the web/runtime overload without enabling direct-SSH web coordination. Keep the coordinator disabled.
@@ -879,7 +910,7 @@ Release checks:
 - direct SSH lineage deletion is host-correct; and
 - Git and folder terminal overlays clear and retry symmetrically while port and detected-agent cleanup remains intact.
 
-Rollback disables coordinator routing while retaining composed authority rotation, authority-boundary preservation, host-qualified IPC, mutation fences, and atomic terminal actions. The fallback reconnect path must use the dedicated bounded scheduler and preserve port/detected-agent cleanup; do not restore host-blind or unbounded `Promise.all`.
+Rollback disables coordinator routing with build-time `VITE_DIRECT_SSH_RECONNECT_COORDINATOR=false` or session key `orca.directSshReconnectCoordinator.enabled=false` while retaining composed authority rotation, authority-boundary preservation, host-qualified IPC, mutation fences, and atomic terminal actions. The fallback reconnect path uses the dedicated bounded scheduler and preserves port/detected-agent cleanup; it does not restore host-blind or unbounded `Promise.all`.
 
 ## Cross-platform and compatibility
 

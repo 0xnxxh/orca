@@ -16,6 +16,8 @@ import type {
   AgentProviderSessionMetadata,
   SleepingAgentLaunchConfig
 } from '../../../../shared/agent-session-resume'
+import type { DirectSshAuthority } from '../../../../shared/ssh-types'
+import { parseAppSshPtyId } from '../../../../shared/ssh-pty-id'
 import {
   DEFAULT_REPO_BADGE_COLOR,
   FLOATING_TERMINAL_WORKTREE_ID
@@ -91,6 +93,21 @@ import { toRuntimeWorktreeSelector } from '@/runtime/runtime-worktree-selector'
 import { requestRemoteWorktreeSleep } from '@/runtime/remote-worktree-sleep'
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { getFolderWorkspaceConnectionId } from '@/lib/folder-workspace-connection'
+import {
+  clearDirectSshTerminalBindings,
+  invalidateStaleDirectSshTerminalBindings,
+  type DirectSshLivePtyBinding,
+  type DirectSshPaneRetryAttempt,
+  type DirectSshPaneRetryAttemptId,
+  type DirectSshPaneRetryHistory,
+  type DirectSshPaneRetryResult
+} from './direct-ssh-terminal-recovery'
+import { retryDirectSshTerminalPanes } from './direct-ssh-pane-retry-ledger'
+import {
+  settleDirectSshPaneRetryState,
+  transferDirectSshPaneDetachLedger
+} from './direct-ssh-terminal-authority-ledger'
+import { resolveDirectSshTerminalWorkspaceKeys } from './direct-ssh-terminal-workspace-scope'
 import { hasWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
 import { sanitizeTerminalLayoutPaneTitles } from '@/lib/terminal-pane-title-sanitization'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
@@ -141,6 +158,32 @@ function getNextTerminalOrdinal(tabs: TerminalTab[]): number {
 
 function isRemoteRuntimePtyId(ptyId: string | null | undefined): boolean {
   return typeof ptyId === 'string' && parseRemoteRuntimePtyId(ptyId) !== null
+}
+
+function isCurrentDirectSshAuthority(state: AppState, authority: DirectSshAuthority): boolean {
+  const current = state.sshConnectionStates.get(authority.targetId)
+  return Boolean(
+    current?.status === 'connected' &&
+    current.providerEpoch === authority.providerEpoch &&
+    current.connectionGeneration === authority.connectionGeneration
+  )
+}
+
+function resolveDirectSshTerminalKeys(state: AppState, targetId: string): Set<string> {
+  return resolveDirectSshTerminalWorkspaceKeys(
+    {
+      targetId,
+      catalogRevision: 0,
+      repos: state.repos,
+      worktreesByRepo: state.worktreesByRepo,
+      detectedWorktreesByRepo: state.detectedWorktreesByRepo,
+      folderWorkspaces: state.folderWorkspaces,
+      projectGroups: state.projectGroups,
+      restoredRuntimeHostIdByWorkspaceSessionKey: state.restoredRuntimeHostIdByWorkspaceSessionKey
+    },
+    state.tabsByWorktree,
+    state.lastKnownRelayPtyIdByTabId
+  )
 }
 
 function getPendingActivationSpawnCount(value: boolean | number | undefined): number {
@@ -495,6 +538,9 @@ export type TerminalSlice = {
   pendingPtyShutdownIds: Record<string, number>
   pendingCodexPaneRestartIds: Record<string, true>
   codexRestartNoticeByPtyId: Record<string, CodexRestartNotice>
+  directSshPaneRetryByTabId: Record<string, DirectSshPaneRetryAttempt>
+  directSshLivePtyBindingByTabId: Record<string, DirectSshLivePtyBinding>
+  directSshPaneRetryHistoryByTabId: Record<string, DirectSshPaneRetryHistory>
   expandedPaneByTabId: Record<string, boolean>
   canExpandPaneByTabId: Record<string, boolean>
   terminalLayoutsByTabId: Record<string, TerminalLayoutSnapshot>
@@ -624,8 +670,17 @@ export type TerminalSlice = {
     opts?: { recordInteraction?: boolean }
   ) => void
   setTabColor: (tabId: string, color: string | null) => void
-  updateTabPtyId: (tabId: string, ptyId: string, replacedPtyId?: string) => void
+  updateTabPtyId: (
+    tabId: string,
+    ptyId: string,
+    replacedPtyId?: string,
+    directSshRetryAttemptId?: DirectSshPaneRetryAttemptId
+  ) => void
   clearTabPtyId: (tabId: string, ptyId?: string) => void
+  clearDirectSshTargetPtyBindings: (targetId: string) => number
+  invalidateStaleDirectSshTargetPtyBindings: (authority: DirectSshAuthority) => number
+  retryDirectSshTargetPanes: (authority: DirectSshAuthority, now?: number) => number
+  settleDirectSshPaneRetry: (result: DirectSshPaneRetryResult) => void
   shutdownWorktreeTerminals: (
     worktreeId: string,
     opts?: {
@@ -757,6 +812,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
   pendingPtyShutdownIds: {},
   pendingCodexPaneRestartIds: {},
   codexRestartNoticeByPtyId: {},
+  directSshPaneRetryByTabId: {},
+  directSshLivePtyBindingByTabId: {},
+  directSshPaneRetryHistoryByTabId: {},
   expandedPaneByTabId: {},
   canExpandPaneByTabId: {},
   terminalLayoutsByTabId: {},
@@ -1300,6 +1358,16 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       delete nextPendingReconnectPtyIdByTabId[tabId]
       const nextRuntimePaneTitlesByTabId = { ...s.runtimePaneTitlesByTabId }
       delete nextRuntimePaneTitlesByTabId[tabId]
+      const nextDirectSshPaneRetryByTabId = { ...s.directSshPaneRetryByTabId }
+      delete nextDirectSshPaneRetryByTabId[tabId]
+      const nextDirectSshLivePtyBindingByTabId = {
+        ...s.directSshLivePtyBindingByTabId
+      }
+      delete nextDirectSshLivePtyBindingByTabId[tabId]
+      const nextDirectSshPaneRetryHistoryByTabId = {
+        ...s.directSshPaneRetryHistoryByTabId
+      }
+      delete nextDirectSshPaneRetryHistoryByTabId[tabId]
       // Why: keep the same reference when the closing tab had no unread flag, so unrelated closes don't force full-state selector re-eval.
       let nextUnreadTerminalTabs = s.unreadTerminalTabs
       if (s.unreadTerminalTabs[tabId]) {
@@ -1400,6 +1468,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         deferredSshSessionIdsByTabId: nextDeferredSshSessionIdsByTabId,
         pendingReconnectPtyIdByTabId: nextPendingReconnectPtyIdByTabId,
         runtimePaneTitlesByTabId: nextRuntimePaneTitlesByTabId,
+        directSshPaneRetryByTabId: nextDirectSshPaneRetryByTabId,
+        directSshLivePtyBindingByTabId: nextDirectSshLivePtyBindingByTabId,
+        directSshPaneRetryHistoryByTabId: nextDirectSshPaneRetryHistoryByTabId,
         ...(nextSleepingAgentSessionsByPaneKey !== s.sleepingAgentSessionsByPaneKey
           ? { sleepingAgentSessionsByPaneKey: nextSleepingAgentSessionsByPaneKey }
           : {}),
@@ -1906,7 +1977,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     }
   },
 
-  updateTabPtyId: (tabId, ptyId, replacedPtyId) => {
+  updateTabPtyId: (tabId, ptyId, replacedPtyId, directSshRetryAttemptId) => {
     // Why: final guard preventing a late caller from recreating retired tab maps (async spawn owners still do their own provider teardown).
     if (!isTerminalTabPresent(get(), tabId)) {
       return
@@ -2017,6 +2088,48 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           delete nextMigrationUnsupportedByPtyId[replacementPtyId]
         }
       }
+      const pendingRetry = s.directSshPaneRetryByTabId[tabId]
+      const boundTab = worktreeId
+        ? nextTabsByWorktree[worktreeId]?.find((candidate) => candidate.id === tabId)
+        : undefined
+      const parsedSshPty = parseAppSshPtyId(ptyId)
+      const acknowledgesDirectSshRetry = Boolean(
+        pendingRetry &&
+        pendingRetry.attemptId === directSshRetryAttemptId &&
+        boundTab &&
+        parsedSshPty?.connectionId === pendingRetry.authority.targetId &&
+        isCurrentDirectSshAuthority(s, pendingRetry.authority) &&
+        (boundTab.generation ?? 0) === pendingRetry.tabGeneration &&
+        boundTab.ptyId === ptyId &&
+        nextPtyIds.includes(ptyId)
+      )
+      let nextDirectSshPaneRetryByTabId = s.directSshPaneRetryByTabId
+      let nextDirectSshLivePtyBindingByTabId = s.directSshLivePtyBindingByTabId
+      if (acknowledgesDirectSshRetry && pendingRetry) {
+        nextDirectSshPaneRetryByTabId = { ...s.directSshPaneRetryByTabId }
+        delete nextDirectSshPaneRetryByTabId[tabId]
+        nextDirectSshLivePtyBindingByTabId = {
+          ...s.directSshLivePtyBindingByTabId,
+          [tabId]: {
+            authority: pendingRetry.authority,
+            tabGeneration: pendingRetry.tabGeneration,
+            ptyId
+          }
+        }
+      } else {
+        const liveBinding = s.directSshLivePtyBindingByTabId[tabId]
+        if (
+          liveBinding &&
+          replacementPtyId === liveBinding.ptyId &&
+          boundTab?.ptyId === ptyId &&
+          isCurrentDirectSshAuthority(s, liveBinding.authority)
+        ) {
+          nextDirectSshLivePtyBindingByTabId = {
+            ...s.directSshLivePtyBindingByTabId,
+            [tabId]: { ...liveBinding, ptyId }
+          }
+        }
+      }
       return {
         ...(nextTabsByWorktree !== s.tabsByWorktree ? { tabsByWorktree: nextTabsByWorktree } : {}),
         ptyIdsByTabId: {
@@ -2031,6 +2144,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds,
         codexRestartNoticeByPtyId: nextCodexRestartNoticeByPtyId,
         migrationUnsupportedByPtyId: nextMigrationUnsupportedByPtyId,
+        directSshPaneRetryByTabId: nextDirectSshPaneRetryByTabId,
+        directSshLivePtyBindingByTabId: nextDirectSshLivePtyBindingByTabId,
         ...(shouldBumpSortEpoch ? { sortEpoch: s.sortEpoch + 1 } : {})
       }
     })
@@ -2122,13 +2237,34 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
           delete nextLastKnownRelay[tabId]
         }
       }
+      let nextDirectSshPaneRetryByTabId = s.directSshPaneRetryByTabId
+      const pendingRetry = s.directSshPaneRetryByTabId[tabId]
+      if (
+        pendingRetry &&
+        (!ptyId ||
+          (existingPtyIds.includes(ptyId) &&
+            parseAppSshPtyId(ptyId)?.connectionId === pendingRetry.authority.targetId))
+      ) {
+        nextDirectSshPaneRetryByTabId = { ...s.directSshPaneRetryByTabId }
+        delete nextDirectSshPaneRetryByTabId[tabId]
+      }
+      let nextDirectSshLivePtyBindingByTabId = s.directSshLivePtyBindingByTabId
+      const liveBinding = s.directSshLivePtyBindingByTabId[tabId]
+      if (liveBinding && (!ptyId || liveBinding.ptyId === ptyId)) {
+        nextDirectSshLivePtyBindingByTabId = {
+          ...s.directSshLivePtyBindingByTabId
+        }
+        delete nextDirectSshLivePtyBindingByTabId[tabId]
+      }
 
       return {
         ...(nextTabsByWorktree !== s.tabsByWorktree ? { tabsByWorktree: nextTabsByWorktree } : {}),
         ptyIdsByTabId: nextPtyIdsByTabId,
         lastKnownRelayPtyIdByTabId: nextLastKnownRelay,
         pendingCodexPaneRestartIds: nextPendingCodexPaneRestartIds,
-        codexRestartNoticeByPtyId: nextCodexRestartNoticeByPtyId
+        codexRestartNoticeByPtyId: nextCodexRestartNoticeByPtyId,
+        directSshPaneRetryByTabId: nextDirectSshPaneRetryByTabId,
+        directSshLivePtyBindingByTabId: nextDirectSshLivePtyBindingByTabId
       }
     })
 
@@ -2373,6 +2509,60 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
 
     get().dropHibernatedAgentStatusPane(worktreeId, opts.paneKey, {
       retainedCompletionEvidence
+    })
+  },
+
+  clearDirectSshTargetPtyBindings: (targetId) => {
+    let clearedCount = 0
+    set((s) => {
+      const result = clearDirectSshTerminalBindings(s, resolveDirectSshTerminalKeys(s, targetId))
+      clearedCount = result.clearedCount
+      return result.patch ?? s
+    })
+    return clearedCount
+  },
+
+  invalidateStaleDirectSshTargetPtyBindings: (authority) => {
+    let clearedCount = 0
+    set((s) => {
+      if (!isCurrentDirectSshAuthority(s, authority)) {
+        return s
+      }
+      const result = invalidateStaleDirectSshTerminalBindings(
+        s,
+        resolveDirectSshTerminalKeys(s, authority.targetId),
+        authority
+      )
+      clearedCount = result.clearedCount
+      return result.patch ?? s
+    })
+    return clearedCount
+  },
+
+  retryDirectSshTargetPanes: (authority, now = Date.now()) => {
+    let retriedCount = 0
+    set((s) => {
+      if (!isCurrentDirectSshAuthority(s, authority)) {
+        return s
+      }
+      const result = retryDirectSshTerminalPanes(
+        s,
+        resolveDirectSshTerminalKeys(s, authority.targetId),
+        authority,
+        now
+      )
+      retriedCount = result.retriedCount
+      return result.patch ?? s
+    })
+    return retriedCount
+  },
+
+  settleDirectSshPaneRetry: (result) => {
+    set((s) => {
+      if (!isCurrentDirectSshAuthority(s, result.authority)) {
+        return s
+      }
+      return settleDirectSshPaneRetryState(s, result) ?? s
     })
   },
 
@@ -3015,10 +3205,17 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const nextTabsByWorktree = detachedPtyId
         ? withTerminalTabPtyId(sourceTabsByWorktree, targetTabId, detachedPtyId)
         : sourceTabsByWorktree
+      const directSshLedger = transferDirectSshPaneDetachLedger(s, {
+        detachedPtyId,
+        sourceTabId,
+        targetTabId,
+        isAuthorityCurrent: (authority) => isCurrentDirectSshAuthority(s, authority)
+      })
 
       return {
         ptyIdsByTabId: nextPtyIdsByTabId,
         lastKnownRelayPtyIdByTabId: nextLastKnownRelayPtyIdByTabId,
+        ...directSshLedger,
         ...(nextTabsByWorktree !== s.tabsByWorktree ? { tabsByWorktree: nextTabsByWorktree } : {})
       }
     })
@@ -3425,7 +3622,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     })
   },
 
-  reconnectPersistedTerminals: async (_signal) => {
+  reconnectPersistedTerminals: async (signal) => {
+    if (signal?.aborted) {
+      return
+    }
     const {
       pendingReconnectWorktreeIds,
       pendingReconnectTabByWorktree,
@@ -3539,6 +3739,9 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       }
     }
 
+    if (signal?.aborted) {
+      return
+    }
     set({
       ...(reconnectedTabsByWorktree ? { tabsByWorktree: reconnectedTabsByWorktree } : {}),
       ...(reconnectedPtyIdsByTabId ? { ptyIdsByTabId: reconnectedPtyIdsByTabId } : {}),

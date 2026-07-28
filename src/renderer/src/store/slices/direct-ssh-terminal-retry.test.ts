@@ -1,0 +1,366 @@
+import { describe, expect, it } from 'vitest'
+import type { DirectSshAuthority, SshProviderEpoch } from '../../../../shared/ssh-types'
+import type { DirectSshPaneRetryAttemptId } from './direct-ssh-terminal-recovery'
+import { createTestStore, makeTab, makeWorktree } from './store-test-helpers'
+
+const WORKTREE_ID = 'repo-ssh::/work/demo'
+const TAB_ID = 'tab-ssh'
+
+function authority(epoch = 'epoch-1', generation = 1): DirectSshAuthority {
+  return {
+    targetId: 'target',
+    providerEpoch: epoch as SshProviderEpoch,
+    connectionGeneration: generation
+  }
+}
+
+function seedStore(ptyId: string | null = null) {
+  const store = createTestStore()
+  const currentAuthority = authority()
+  store.setState({
+    repos: [
+      {
+        id: 'repo-ssh',
+        path: '/work/demo',
+        displayName: 'demo',
+        badgeColor: '#000',
+        addedAt: 1,
+        connectionId: 'target',
+        executionHostId: 'ssh:target'
+      }
+    ],
+    worktreesByRepo: {
+      'repo-ssh': [
+        makeWorktree({
+          id: WORKTREE_ID,
+          repoId: 'repo-ssh',
+          path: '/work/demo',
+          hostId: 'ssh:target'
+        })
+      ]
+    },
+    tabsByWorktree: {
+      [WORKTREE_ID]: [makeTab({ id: TAB_ID, worktreeId: WORKTREE_ID, ptyId })]
+    },
+    ptyIdsByTabId: { [TAB_ID]: ptyId ? [ptyId] : [] },
+    lastKnownRelayPtyIdByTabId: ptyId ? { [TAB_ID]: ptyId } : {},
+    sshConnectionStates: new Map([
+      [
+        'target',
+        {
+          targetId: 'target',
+          status: 'connected',
+          error: null,
+          reconnectAttempt: 0,
+          providerEpoch: currentAuthority.providerEpoch,
+          connectionGeneration: currentAuthority.connectionGeneration
+        }
+      ]
+    ])
+  })
+  return store
+}
+
+describe('direct SSH terminal retry ledger', () => {
+  it('invalidates a non-null binding without current-authority evidence atomically', () => {
+    const ptyId = 'ssh:target@@pty-old'
+    const store = seedStore(ptyId)
+    let publications = 0
+    const unsubscribe = store.subscribe(() => {
+      publications += 1
+    })
+
+    expect(store.getState().invalidateStaleDirectSshTargetPtyBindings(authority())).toBe(1)
+    unsubscribe()
+
+    expect(publications).toBe(1)
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].ptyId).toBeNull()
+    expect(store.getState().ptyIdsByTabId[TAB_ID]).toEqual([])
+    expect(store.getState().lastKnownRelayPtyIdByTabId[TAB_ID]).toBe(ptyId)
+  })
+
+  it('preserves a healthy current-authority sibling in the same workspace', () => {
+    const store = seedStore('ssh:target@@pty-stale')
+    const sibling = makeTab({
+      id: 'tab-healthy',
+      worktreeId: WORKTREE_ID,
+      ptyId: 'ssh:target@@pty-healthy'
+    })
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: [...state.tabsByWorktree[WORKTREE_ID], sibling]
+      },
+      ptyIdsByTabId: {
+        ...state.ptyIdsByTabId,
+        'tab-healthy': ['ssh:target@@pty-healthy']
+      },
+      directSshLivePtyBindingByTabId: {
+        'tab-healthy': {
+          authority: authority(),
+          tabGeneration: 0,
+          ptyId: 'ssh:target@@pty-healthy'
+        }
+      }
+    }))
+
+    expect(store.getState().invalidateStaleDirectSshTargetPtyBindings(authority())).toBe(1)
+
+    const tabs = store.getState().tabsByWorktree[WORKTREE_ID]
+    expect(tabs.find((tab) => tab.id === TAB_ID)?.ptyId).toBeNull()
+    expect(tabs.find((tab) => tab.id === 'tab-healthy')).toBe(sibling)
+    expect(store.getState().ptyIdsByTabId['tab-healthy']).toEqual(['ssh:target@@pty-healthy'])
+    expect(store.getState().directSshLivePtyBindingByTabId['tab-healthy']).toBeDefined()
+  })
+
+  it('keeps one pending attempt and acknowledges success after the live commit', () => {
+    const store = seedStore()
+    let publications = 0
+    const unsubscribe = store.subscribe(() => {
+      publications += 1
+    })
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
+    unsubscribe()
+    expect(publications).toBe(1)
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_001)).toBe(0)
+    const retried = store.getState().tabsByWorktree[WORKTREE_ID][0]
+    expect(retried).toMatchObject({ generation: 1, pendingActivationSpawn: true })
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toMatchObject({
+      tabGeneration: 1,
+      startedAt: 1_000
+    })
+    const attempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    const pendingBeforeStaleSettlement = store.getState().directSshPaneRetryByTabId
+    store.getState().settleDirectSshPaneRetry({
+      status: 'failed',
+      tabId: TAB_ID,
+      attemptId: attempt.attemptId,
+      authority: attempt.authority,
+      tabGeneration: attempt.tabGeneration - 1
+    })
+    expect(store.getState().directSshPaneRetryByTabId).toBe(pendingBeforeStaleSettlement)
+
+    store.getState().settleDirectSshPaneRetry({
+      status: 'success',
+      tabId: TAB_ID,
+      attemptId: attempt.attemptId,
+      authority: attempt.authority,
+      tabGeneration: attempt.tabGeneration,
+      ptyId: 'ssh:target@@pty-new'
+    })
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeDefined()
+
+    store
+      .getState()
+      .updateTabPtyId(
+        TAB_ID,
+        'ssh:target@@pty-new',
+        undefined,
+        'wrong-attempt' as DirectSshPaneRetryAttemptId
+      )
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeDefined()
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toBeUndefined()
+
+    store.getState().updateTabPtyId(TAB_ID, 'ssh:target@@pty-new', undefined, attempt.attemptId)
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toMatchObject({
+      tabGeneration: 1,
+      ptyId: 'ssh:target@@pty-new'
+    })
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_002)).toBe(0)
+  })
+
+  it('re-arms failures and enforces two attempts per rolling thirty seconds', () => {
+    const store = seedStore()
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
+    const firstAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    store.getState().settleDirectSshPaneRetry({
+      status: 'failed',
+      tabId: TAB_ID,
+      attemptId: firstAttempt.attemptId,
+      authority: firstAttempt.authority,
+      tabGeneration: firstAttempt.tabGeneration
+    })
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 2_000)).toBe(1)
+    const secondAttempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    store.getState().settleDirectSshPaneRetry({
+      status: 'timed-out',
+      tabId: TAB_ID,
+      attemptId: secondAttempt.attemptId,
+      authority: secondAttempt.authority,
+      tabGeneration: secondAttempt.tabGeneration
+    })
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 30_999)).toBe(0)
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 31_000)).toBe(1)
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(3)
+  })
+
+  it('re-arms a pending attempt when its bound SSH PTY exits', () => {
+    const store = seedStore()
+    store.getState().retryDirectSshTargetPanes(authority(), 1_000)
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: state.tabsByWorktree[WORKTREE_ID].map((tab) => ({
+          ...tab,
+          ptyId: 'ssh:target@@pty-failed'
+        }))
+      },
+      ptyIdsByTabId: {
+        ...state.ptyIdsByTabId,
+        [TAB_ID]: ['ssh:target@@pty-failed']
+      }
+    }))
+
+    store.getState().clearTabPtyId(TAB_ID, 'ssh:target@@pty-failed')
+
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 2_000)).toBe(1)
+  })
+
+  it('clearing a successful binding re-arms it without discarding relay identity', () => {
+    const store = seedStore()
+    store.getState().retryDirectSshTargetPanes(authority(), 1_000)
+    const attempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    store.getState().updateTabPtyId(TAB_ID, 'ssh:target@@pty-new', undefined, attempt.attemptId)
+
+    store.getState().clearTabPtyId(TAB_ID)
+
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().lastKnownRelayPtyIdByTabId[TAB_ID]).toBe('ssh:target@@pty-new')
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 2_000)).toBe(1)
+  })
+
+  it('removes successful evidence when a snapshot overwrites the live binding', () => {
+    const store = seedStore()
+    store.getState().retryDirectSshTargetPanes(authority(), 1_000)
+    const attempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    store.getState().updateTabPtyId(TAB_ID, 'ssh:target@@pty-new', undefined, attempt.attemptId)
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: state.tabsByWorktree[WORKTREE_ID].map((tab) => ({
+          ...tab,
+          ptyId: null
+        }))
+      },
+      ptyIdsByTabId: { ...state.ptyIdsByTabId, [TAB_ID]: [] }
+    }))
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 2_000)).toBe(1)
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeDefined()
+  })
+
+  it('keeps snapshot-restored PTY hints eligible for corrective retry', () => {
+    const store = seedStore()
+    store.setState((state) => ({
+      tabsByWorktree: {
+        ...state.tabsByWorktree,
+        [WORKTREE_ID]: state.tabsByWorktree[WORKTREE_ID].map((tab) => ({
+          ...tab,
+          ptyId: 'ssh:target@@pty-snapshot'
+        }))
+      },
+      ptyIdsByTabId: {
+        ...state.ptyIdsByTabId,
+        [TAB_ID]: ['ssh:target@@pty-snapshot']
+      }
+    }))
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toMatchObject({
+      authority: authority(),
+      tabGeneration: 1
+    })
+  })
+
+  it('rotates obsolete pending, success, and retry history by exact authority', () => {
+    const store = seedStore()
+    store.getState().retryDirectSshTargetPanes(authority(), 1_000)
+    const attempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    store.getState().updateTabPtyId(TAB_ID, 'ssh:target@@pty-new', undefined, attempt.attemptId)
+    const nextAuthority = authority('epoch-2', 2)
+    store.setState({
+      sshConnectionStates: new Map([
+        [
+          'target',
+          {
+            targetId: 'target',
+            status: 'connected',
+            error: null,
+            reconnectAttempt: 0,
+            providerEpoch: nextAuthority.providerEpoch,
+            connectionGeneration: nextAuthority.connectionGeneration
+          }
+        ]
+      ])
+    })
+
+    expect(store.getState().retryDirectSshTargetPanes(nextAuthority, 1_001)).toBe(1)
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]?.authority).toEqual(nextAuthority)
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().directSshPaneRetryHistoryByTabId[TAB_ID]).toEqual({
+      authority: nextAuthority,
+      attemptedAt: [1_001]
+    })
+  })
+
+  it('fails closed when the store no longer names the exact authority', () => {
+    const store = seedStore()
+    const stale = authority('stale', 0)
+    const before = store.getState()
+
+    expect(store.getState().retryDirectSshTargetPanes(stale, 1_000)).toBe(0)
+    expect(store.getState().invalidateStaleDirectSshTargetPtyBindings(stale)).toBe(0)
+    expect(store.getState().tabsByWorktree).toBe(before.tabsByWorktree)
+    expect(store.getState().directSshPaneRetryByTabId).toBe(before.directSshPaneRetryByTabId)
+  })
+
+  it('retries a stale-catalog tab from retained SSH ownership exactly once', () => {
+    const store = seedStore()
+    store.setState({
+      repos: [],
+      worktreesByRepo: {},
+      lastKnownRelayPtyIdByTabId: { [TAB_ID]: 'ssh:target@@pty-retained' },
+      tabsByWorktree: {
+        [WORKTREE_ID]: [makeTab({ id: TAB_ID, worktreeId: WORKTREE_ID, ptyId: null })],
+        local: [makeTab({ id: 'tab-local', worktreeId: 'local', ptyId: null })]
+      }
+    })
+
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_000)).toBe(1)
+    expect(store.getState().retryDirectSshTargetPanes(authority(), 1_001)).toBe(0)
+    expect(store.getState().tabsByWorktree[WORKTREE_ID][0].generation).toBe(1)
+    expect(store.getState().tabsByWorktree.local[0].generation ?? 0).toBe(0)
+  })
+
+  it('removes all direct SSH retry ledgers when a tab closes', () => {
+    const store = seedStore()
+    store.getState().retryDirectSshTargetPanes(authority(), 1_000)
+    const attempt = store.getState().directSshPaneRetryByTabId[TAB_ID]
+    store.getState().updateTabPtyId(TAB_ID, 'ssh:target@@pty-live', undefined, attempt.attemptId)
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toBeDefined()
+    store.setState((state) => ({
+      directSshPaneRetryByTabId: {
+        ...state.directSshPaneRetryByTabId,
+        [TAB_ID]: {
+          attemptId: 'pending-close' as DirectSshPaneRetryAttemptId,
+          authority: authority(),
+          tabGeneration: 1,
+          startedAt: 2_000
+        }
+      }
+    }))
+
+    store.getState().closeTab(TAB_ID, { reason: 'pty-exit' })
+
+    expect(store.getState().directSshPaneRetryByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().directSshLivePtyBindingByTabId[TAB_ID]).toBeUndefined()
+    expect(store.getState().directSshPaneRetryHistoryByTabId[TAB_ID]).toBeUndefined()
+  })
+})

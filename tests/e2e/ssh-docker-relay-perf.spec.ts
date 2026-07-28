@@ -11,6 +11,7 @@ import {
 import {
   cleanupDockerSshRelayTarget,
   DOCKER_SSH_RELAY_REMOTE_REPO_PATH,
+  execDockerSshRelayTargetCommand,
   startDockerSshRelayTarget,
   type DockerSshRelayTarget
 } from './helpers/docker-ssh-relay-target'
@@ -376,8 +377,16 @@ test.describe('Docker SSH relay perf', () => {
       await waitForActiveTerminalManager(orcaPage, 60_000)
       const afterPtyId = await waitForActivePanePtyId(orcaPage, 60_000)
       const afterMarker = `SSH_RECONNECT_AFTER_${Date.now()}`
-      await execInTerminal(orcaPage, afterPtyId, `printf ${shellQuote(afterMarker)}`)
+      const remoteProofPath = `/tmp/${afterMarker}`
+      await execInTerminal(
+        orcaPage,
+        afterPtyId,
+        `printf ${shellQuote(afterMarker)} | tee ${shellQuote(remoteProofPath)}`
+      )
       await waitForTerminalOutput(orcaPage, afterMarker, 20_000, 60_000)
+      expect(execDockerSshRelayTargetCommand(target, `cat ${shellQuote(remoteProofPath)}`)).toBe(
+        afterMarker
+      )
 
       testInfo.annotations.push({
         type: 'docker-ssh-reconnect',
