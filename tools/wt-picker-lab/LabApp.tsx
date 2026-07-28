@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import ComposerFrame from './ComposerFrame'
 import CompareGrid from './CompareGrid'
 import DialogFrame from './DialogFrame'
+import RunTargetFrame from './RunTargetFrame'
 import { ALL_VARIANTS } from './registry'
 import {
   LAB_LONG_NAME_PROJECT_OPTIONS,
@@ -45,6 +46,7 @@ export default function LabApp(): React.JSX.Element {
 
   const [mode, setMode] = React.useState<'single' | 'compare'>('single')
   const [dialogOpen, setDialogOpen] = React.useState(false)
+  const [runTargetOpen, setRunTargetOpen] = React.useState(false)
   const [dataCase, setDataCase] = React.useState<DataCase>('full')
   const [activeId, setActiveId] = React.useState(ALL_VARIANTS[0]?.id ?? 'baseline')
   const [pickedId, setPickedId] = React.useState<string | null>(() =>
@@ -181,6 +183,16 @@ export default function LabApp(): React.JSX.Element {
               {mode === 'single' ? (
                 <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setRunTargetOpen(true)}
+                >
+                  Run on
+                </Button>
+              ) : null}
+              {mode === 'single' ? (
+                <Button
+                  type="button"
                   variant={pickedId === active.id ? 'secondary' : 'default'}
                   size="sm"
                   onClick={() => pick(active.id)}
@@ -235,6 +247,9 @@ export default function LabApp(): React.JSX.Element {
             )}
           </div>
         </main>
+        {runTargetOpen ? (
+          <RunTargetFrame open={runTargetOpen} onOpenChange={setRunTargetOpen} />
+        ) : null}
         {dialogOpen ? (
           <DialogFrame
             variant={active}

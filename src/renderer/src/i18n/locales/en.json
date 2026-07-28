@@ -11417,6 +11417,11 @@
             "browse": "Browse projects",
             "listLabel": "Projects",
             "noProjects": "No projects yet."
+          },
+          "RunTargetCombobox": {
+            "listLabel": "Run targets",
+            "label": "Run on",
+            "browse": "Browse run targets"
           }
         }
       },
