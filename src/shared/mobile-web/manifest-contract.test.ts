@@ -4,6 +4,7 @@ import {
   MOBILE_WEB_MAX_ASSET_BYTES,
   MOBILE_WEB_MAX_ASSET_COUNT,
   MobileWebManifestSchema,
+  isMobileWebAssetPath,
   serializeMobileWebManifestForBuildId,
   supportsMobileWebBridgeVersion,
   type MobileWebManifest
@@ -67,6 +68,33 @@ describe('mobile web manifest contract', () => {
       manifest.entrypoint = path
       manifest.assets[2] = { ...manifest.assets[2]!, path }
       expect(MobileWebManifestSchema.safeParse(manifest).success).toBe(false)
+    }
+  )
+
+  it.each([
+    '',
+    '../index.html',
+    './index.html',
+    '/index.html',
+    'index.html/',
+    'assets//app.js',
+    'assets\\app.js',
+    'assets/app.js?query',
+    'assets/app.js#fragment',
+    'assets/%2e%2e/app.js',
+    'assets/./app.js',
+    'assets/../app.js',
+    'assets/app.js\n',
+    'a'.repeat(241),
+    'assets/café.js'
+  ])('rejects noncanonical package path %s', (path) => {
+    expect(isMobileWebAssetPath(path)).toBe(false)
+  })
+
+  it.each(['index.html', `assets/${SCRIPT_HASH}.js`, 'assets/a_b-c.d.js'])(
+    'accepts canonical package path %s',
+    (path) => {
+      expect(isMobileWebAssetPath(path)).toBe(true)
     }
   )
 

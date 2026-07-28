@@ -487,7 +487,7 @@ IDs, and unrelated provider state never enter the page result.
 
 | Contract                         | Status                                          | Source                                                                                                                                       |
 | -------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Multi-asset manifest v1          | Implemented and focused-test passing            | `src/shared/mobile-web/manifest-contract.ts`; TypeScript, Swift, and Kotlin reject quoted/Boolean numeric scalar confusion before staging    |
+| Multi-asset manifest v1          | Implemented and focused-test passing            | One exact path predicate and mirrored TypeScript/Swift/Kotlin path corpus; exact scalar types before staging                                 |
 | Manifest resource bounds         | Implemented, measured, and focused-test passing | 256 KiB/raw manifest before native parse; 48 KiB chunks / 65,536 base64 chars before native decode; 10 MiB/asset, 32 MiB/package, 256 assets |
 | Document CSP                     | Implemented and focused-test passing            | One shared directive contract drives packaging/verification and exact-sequence checks for both native response policies                      |
 | Bridge envelope and capabilities | Implemented and focused-test passing            | `src/shared/mobile-web/bridge-contract.ts`; bounded native-chat schemas and remaining operation payload schemas                              |
@@ -499,6 +499,13 @@ IDs, and unrelated provider state never enter the page result.
 | Package read concurrency         | Implemented and focused-test passing            | Four concurrent 48 KiB reads / 192 KiB in flight per connection                                                                              |
 | Terminal stream memory           | Implemented and focused-test passing            | 16 KiB input, 64 KiB output batch, 256 KiB outstanding, 2 MiB snapshot                                                                       |
 | Native verified cache            | Implemented and native-policy-test passing      | 128 MiB per host, 512 MiB global, 16 MiB minimum free; active/session generations are protected; activation hashes are exact-type validated  |
+
+Manifest and package-RPC validation now consume the same exact asset-path
+predicate. Swift additionally requires its regular-expression match range to
+cover the full string rather than ending before a trailing newline. The
+mirrored native/shared corpus rejects empty, absolute, traversal,
+repeated-separator, percent-encoded, query, fragment, backslash, non-ASCII,
+overlong, and trailing-newline paths.
 
 ## Next Inventory Action
 

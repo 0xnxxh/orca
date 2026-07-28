@@ -2722,10 +2722,14 @@ that encoded ceiling before invoking their native decoders and cap each raw
 manifest document at 256 KiB before JSON parsing. Native activation metadata
 likewise requires string-typed active and previous hashes on both platforms;
 hash-shaped JSON numbers fail with
-`mobile_web_activation_invalid`. The RNW packager and verifier consume one
+`mobile_web_activation_invalid`. Manifest and package-RPC schemas now share one
+exact asset-path predicate. A mirrored TypeScript, Swift, and Kotlin corpus
+rejects empty, absolute, traversal, repeated-separator, percent-encoded, query,
+fragment, backslash, non-ASCII, overlong, and trailing-newline paths while
+accepting the reviewed relative form. The RNW packager and verifier consume one
 document-CSP contract, and source tests require both native response policies
 to match its exact directive sequence. Generated mutation and the remaining
-path/MIME/CSP behavior/cache corpus are still required.
+MIME/CSP/cache corpus are still required.
 
 ## App Store Gate
 

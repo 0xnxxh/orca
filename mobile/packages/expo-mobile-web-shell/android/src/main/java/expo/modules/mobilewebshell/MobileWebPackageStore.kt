@@ -346,7 +346,7 @@ internal class MobileWebPackageStore internal constructor(
         bridgeMinimum > 0 &&
         bridgeMinimum <= bridgeTestedThrough &&
         bridgeTestedThrough <= 65_535 &&
-        isSafeAssetPath(entrypoint) &&
+        isSafeMobileWebAssetPath(entrypoint) &&
         declaredTotalBytes in 1..(32 * 1024 * 1024)
     ) { "mobile_web_stage_manifest_invalid" }
     val buildId = strictJsonString(manifest, "buildId") ?: ""
@@ -376,7 +376,7 @@ internal class MobileWebPackageStore internal constructor(
       val contentType = strictJsonString(value, "contentType") ?: ""
       val role = strictJsonString(value, "role") ?: ""
       require(
-        isSafeAssetPath(path) &&
+        isSafeMobileWebAssetPath(path) &&
           SHA256_PATTERN.matches(hash) &&
           length in 1..ASSET_BYTE_LIMIT &&
           path !in assets &&
@@ -609,7 +609,7 @@ private fun isBoundedManifestJson(value: String): Boolean =
 private fun assetFile(root: File, path: String): File =
   path.split('/').fold(root) { parent, component -> File(parent, component) }
 
-private fun isSafeAssetPath(path: String): Boolean =
+internal fun isSafeMobileWebAssetPath(path: String): Boolean =
   path.length in 1..240 &&
     !path.startsWith('/') &&
     !path.endsWith('/') &&

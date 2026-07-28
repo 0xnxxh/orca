@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import {
-  MOBILE_WEB_MAX_PATH_CHARS,
   MOBILE_WEB_PACKAGE_CHUNK_BYTES,
-  MobileWebManifestSchema
+  MobileWebManifestSchema,
+  isMobileWebAssetPath
 } from './manifest-contract'
 
 export const MOBILE_WEB_PACKAGE_MAX_CONCURRENT_READS = 4
@@ -26,14 +26,10 @@ export const MOBILE_WEB_PACKAGE_ERROR_CODES = [
 ] as const
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
-const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 const AssetPathSchema = z
   .string()
-  .min(1)
-  .max(MOBILE_WEB_MAX_PATH_CHARS)
-  .regex(SAFE_PATH_PATTERN)
-  .refine(isNormalizedAssetPath, 'Asset path must be normalized and relative')
+  .refine(isMobileWebAssetPath, 'Asset path must be normalized and relative')
 
 export const MobileWebPackageManifestResponseSchema = z
   .object({
@@ -80,13 +76,6 @@ const MOBILE_WEB_PACKAGE_ERROR_CODE_SET: ReadonlySet<string> = new Set(
 
 export function isMobileWebPackageErrorCode(value: string): value is MobileWebPackageErrorCode {
   return MOBILE_WEB_PACKAGE_ERROR_CODE_SET.has(value)
-}
-
-function isNormalizedAssetPath(path: string): boolean {
-  if (path.startsWith('/') || path.endsWith('/') || path.includes('//')) {
-    return false
-  }
-  return path.split('/').every((segment) => segment !== '.' && segment !== '..')
 }
 
 function decodedBase64Length(value: string): number {

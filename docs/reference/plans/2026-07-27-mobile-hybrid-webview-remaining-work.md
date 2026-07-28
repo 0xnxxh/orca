@@ -165,6 +165,10 @@ manifest-declared content-addressed RNW script loads while a mutated undeclared
 same-origin script is rejected by the native manifest store. The hosted
 document remains intact, both platforms retain network/navigation isolation,
 and Android records zero sentinel observations plus a clean native bridge log.
+Manifest and package-RPC schemas now share one exact asset-path predicate. A
+mirrored TypeScript, Swift, and Kotlin corpus rejects empty, absolute,
+traversal, repeated-separator, percent-encoded, query, fragment, backslash,
+non-ASCII, overlong, and trailing-newline paths.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -211,7 +215,9 @@ cross-scope races, privacy/authorization audit, and independent review.
       platforms. Both native stores cap each raw manifest at 256 KiB before JSON
       parsing. Android now requires the exact root document URL and rejects
       percent-encoded or query-bearing asset requests. One document-CSP contract
-      now drives packaging/verification and exact native source parity; a fresh
+      now drives packaging/verification and exact native source parity.
+      Manifest and package RPC reuse one exact path predicate, and the same
+      18-case path corpus passes in TypeScript, Swift, and Kotlin. A fresh
       exact-app rerun, generated mutation, and the other listed boundaries
       remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,

@@ -521,7 +521,7 @@ final class MobileWebPackageStore {
         let length = strictJsonInt(value["byteLength"]),
         let contentType = value["contentType"] as? String,
         let role = value["role"] as? String,
-        isSafeAssetPath(path),
+        isSafeMobileWebAssetPath(path),
         isSha256(hash),
         length > 0,
         length <= assetByteLimit,
@@ -916,16 +916,16 @@ private func strictJsonInt(_ value: Any?) -> Int? {
   return Int(exactly: number.doubleValue)
 }
 
-private func isSafeAssetPath(_ path: String) -> Bool {
+func isSafeMobileWebAssetPath(_ path: String) -> Bool {
   guard
+    (1...240).contains(path.count),
     !path.hasPrefix("/"),
     !path.hasSuffix("/"),
     !path.contains("//"),
     !path.contains("\\"),
     !path.contains("?"),
     !path.contains("#"),
-    path.count <= 240,
-    path.range(of: safePathPattern, options: .regularExpression) != nil
+    path.range(of: safePathPattern, options: .regularExpression) == path.startIndex..<path.endIndex
   else {
     return false
   }

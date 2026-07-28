@@ -13,6 +13,7 @@ enum MobileWebPackageStoreTests {
 
     try stagesAndReadsExactGeneration(root: root.appendingPathComponent("verified"))
     try rejectsMalformedManifests(root: root.appendingPathComponent("manifests"))
+    acceptsOnlyExactCanonicalAssetPaths()
     try rejectsQuotedNumericManifestFields(root: root.appendingPathComponent("scalar-types"))
     try rejectsBooleanNumericManifestFields(root: root.appendingPathComponent("boolean-types"))
     try rejectsOversizedManifestInput(root: root.appendingPathComponent("manifest-limit"))
@@ -89,6 +90,34 @@ enum MobileWebPackageStoreTests {
         }
       )
     }
+  }
+
+  private static func acceptsOnlyExactCanonicalAssetPaths() {
+    let invalid = [
+      "",
+      "../index.html",
+      "./index.html",
+      "/index.html",
+      "index.html/",
+      "assets//app.js",
+      "assets\\app.js",
+      "assets/app.js?query",
+      "assets/app.js#fragment",
+      "assets/%2e%2e/app.js",
+      "assets/./app.js",
+      "assets/../app.js",
+      "assets/app.js\n",
+      String(repeating: "a", count: 241),
+      "assets/café.js",
+    ]
+    let valid = [
+      "index.html",
+      "assets/\(String(repeating: "a", count: 64)).js",
+      "assets/a_b-c.d.js",
+    ]
+
+    precondition(invalid.allSatisfy { !isSafeMobileWebAssetPath($0) })
+    precondition(valid.allSatisfy(isSafeMobileWebAssetPath))
   }
 
   private static func rejectsQuotedNumericManifestFields(root: URL) throws {

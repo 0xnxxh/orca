@@ -47,10 +47,7 @@ const ROLE_BY_EXTENSION = {
 
 const MobileWebAssetPathSchema = z
   .string()
-  .min(1)
-  .max(MOBILE_WEB_MAX_PATH_CHARS)
-  .regex(SAFE_PATH_PATTERN)
-  .refine(isNormalizedAssetPath, 'Asset path must be normalized and relative')
+  .refine(isMobileWebAssetPath, 'Asset path must be normalized and relative')
 
 export const MobileWebAssetSchema = z
   .object({
@@ -101,6 +98,20 @@ export function supportsMobileWebBridgeVersion(
   )
 }
 
+export function isMobileWebAssetPath(path: string): boolean {
+  if (
+    path.length < 1 ||
+    path.length > MOBILE_WEB_MAX_PATH_CHARS ||
+    SAFE_PATH_PATTERN.exec(path)?.[0] !== path ||
+    path.startsWith('/') ||
+    path.endsWith('/') ||
+    path.includes('//')
+  ) {
+    return false
+  }
+  return path.split('/').every((segment) => segment !== '.' && segment !== '..')
+}
+
 export function serializeMobileWebManifestForBuildId(manifest: MobileWebManifest): string {
   return JSON.stringify({
     schemaVersion: manifest.schemaVersion,
@@ -118,13 +129,6 @@ export function serializeMobileWebManifestForBuildId(manifest: MobileWebManifest
       role: asset.role
     }))
   })
-}
-
-function isNormalizedAssetPath(path: string): boolean {
-  if (path.startsWith('/') || path.endsWith('/') || path.includes('//')) {
-    return false
-  }
-  return path.split('/').every((segment) => segment !== '.' && segment !== '..')
 }
 
 function validateContentAddressedAsset(asset: MobileWebAsset, context: z.RefinementCtx): void {

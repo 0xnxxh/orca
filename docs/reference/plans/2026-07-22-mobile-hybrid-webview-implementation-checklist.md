@@ -1541,10 +1541,14 @@ copy.
   They also cap each raw manifest document at 256 KiB before JSON parsing.
   Native activation records also require exact string-typed active/previous
   hashes; numeric hash-shaped values fail with the same stable error on iOS and
-  Android. The packager and verifier now consume one document-CSP contract, and
-  source tests require the iOS and Android response policies to match its exact
-  directive sequence. Broader generated mutation, path/MIME/CSP behavior, and
-  persisted-cache metadata fuzzing remains open.
+  Android. Manifest and package-RPC schemas now share one exact asset-path
+  predicate. A mirrored TypeScript, Swift, and Kotlin corpus rejects empty,
+  absolute, traversal, repeated-separator, percent-encoded, query, fragment,
+  backslash, non-ASCII, overlong, and trailing-newline paths while accepting
+  only the reviewed relative form. The packager and verifier now consume one
+  document-CSP contract, and source tests require the iOS and Android response
+  policies to match its exact directive sequence. Broader generated mutation,
+  MIME/CSP behavior, and persisted-cache metadata fuzzing remains open.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -1750,6 +1754,12 @@ copy.
       architecture.
 
 ## Evidence Log
+
+The exact asset-path slice passes the mirrored 18-case TypeScript, Swift, and
+Kotlin corpus: 2 shared files / 57 tests, the Swift native fault executable,
+and the refreshed Android module suite across 76 Gradle tasks. Node/mobile
+typechecks, lint, formatting, max-lines, and diff hygiene also pass. The change
+does not alter RNW package content.
 
 | Date       | Workstream              | Evidence                                                                                                                                                                                                                    | Result                                                                                                                                                                                            |
 | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

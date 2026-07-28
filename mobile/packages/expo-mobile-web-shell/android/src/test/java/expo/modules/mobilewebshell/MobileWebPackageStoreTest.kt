@@ -60,6 +60,35 @@ class MobileWebPackageStoreTest {
   }
 
   @Test
+  fun acceptsOnlyExactCanonicalAssetPaths() {
+    val invalid = listOf(
+      "",
+      "../index.html",
+      "./index.html",
+      "/index.html",
+      "index.html/",
+      "assets//app.js",
+      "assets\\app.js",
+      "assets/app.js?query",
+      "assets/app.js#fragment",
+      "assets/%2e%2e/app.js",
+      "assets/./app.js",
+      "assets/../app.js",
+      "assets/app.js\n",
+      "a".repeat(241),
+      "assets/café.js"
+    )
+    val valid = listOf(
+      "index.html",
+      "assets/${"a".repeat(64)}.js",
+      "assets/a_b-c.d.js"
+    )
+
+    invalid.forEach { assertFalse(it, isSafeMobileWebAssetPath(it)) }
+    valid.forEach { assertEquals(it, true, isSafeMobileWebAssetPath(it)) }
+  }
+
+  @Test
   fun rejectsQuotedNumericManifestFieldsBeforeCreatingAStage() {
     val root = temporary.newFolder()
     val store = MobileWebPackageStore(root)
