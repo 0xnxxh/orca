@@ -11404,7 +11404,8 @@
             "searchGitLab": "Search GitLab MRs and issues",
             "searchBranches": "Search branches",
             "searchLinear": "Search Linear issues",
-            "workspaceName": "Workspace name"
+            "workspaceName": "Workspace name",
+            "emoji": "Emoji"
           },
           "ProjectHostSetupCombobox": {
             "empty": "No hosts are ready for this project.",
