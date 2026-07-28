@@ -19,6 +19,8 @@ export type MultiplexerTransport = {
   write: (data: Buffer) => void
   onData: (cb: (data: Buffer) => void) => void
   onClose: (cb: () => void) => void
+  pauseReads?: () => void
+  resumeReads?: () => void
   close?: () => void
 }
 
@@ -34,6 +36,8 @@ export type MethodNotificationHandler = (params: Record<string, unknown>) => voi
 export type RequestHandler = (params: Record<string, unknown>) => Promise<unknown> | unknown
 
 const REQUEST_TIMEOUT_MS = 30_000
+const MAX_ORDINARY_UNACKED_TIMESTAMPS = 4095
+const MAX_UNACKED_TIMESTAMPS = MAX_ORDINARY_UNACKED_TIMESTAMPS + 1
 // Why: a tick gap far beyond the interval means the process was paused
 // (system sleep, App Nap timer throttling) — not that the link is dead (#7773).
 const WAKE_GAP_MS = KEEPALIVE_SEND_MS * 3
@@ -56,6 +60,7 @@ export class SshChannelMultiplexer {
   private disposeHandlers: ((reason: 'shutdown' | 'connection_lost') => void)[] = []
   private connectionHealthTimer: ReturnType<typeof setInterval> | null = null
   private disposed = false
+  private decoderReadPaused = false
 
   // Track the oldest unacked outgoing message timestamp
   private unackedTimestamps = new Map<number, number>()
@@ -69,7 +74,11 @@ export class SshChannelMultiplexer {
 
     this.decoder = new FrameDecoder(
       (frame) => this.handleFrame(frame),
-      (err) => this.handleProtocolError(err)
+      (err) => this.handleProtocolError(err),
+      {
+        pause: () => this.pauseDecoderReads(),
+        resume: () => this.resumeDecoderReads()
+      }
     )
 
     transport.onData((data) => {
@@ -324,7 +333,7 @@ export class SshChannelMultiplexer {
   private sendMessage(msg: JsonRpcMessage): void {
     const seq = this.nextOutgoingSeq++
     const frame = encodeJsonRpcFrame(msg, seq, this.highestReceivedSeq)
-    this.unackedTimestamps.set(seq, Date.now())
+    this.trackOutgoingTimestamp(seq, false)
     try {
       this.transport.write(frame)
     } catch (err) {
@@ -341,7 +350,7 @@ export class SshChannelMultiplexer {
     }
     const seq = this.nextOutgoingSeq++
     const frame = encodeKeepAliveFrame(seq, this.highestReceivedSeq)
-    this.unackedTimestamps.set(seq, Date.now())
+    this.trackOutgoingTimestamp(seq, true)
     try {
       this.transport.write(frame)
     } catch (err) {
@@ -363,12 +372,16 @@ export class SshChannelMultiplexer {
       this.highestReceivedSeq = frame.id
     }
 
-    // Process ack from remote: discard timestamps for acked messages
-    if (frame.ack > this.highestAckedBySelf) {
-      for (let i = this.highestAckedBySelf + 1; i <= frame.ack; i++) {
-        this.unackedTimestamps.delete(i)
+    // Header ACKs are untrusted uint32 values; work stays proportional to the
+    // bounded set of sequence keys we actually retained.
+    const acknowledgedSeq = Math.min(frame.ack, this.nextOutgoingSeq - 1)
+    if (acknowledgedSeq > this.highestAckedBySelf) {
+      for (const seq of this.unackedTimestamps.keys()) {
+        if (seq <= acknowledgedSeq) {
+          this.unackedTimestamps.delete(seq)
+        }
       }
-      this.highestAckedBySelf = frame.ack
+      this.highestAckedBySelf = acknowledgedSeq
     }
 
     if (frame.type === MessageType.KeepAlive) {
@@ -495,15 +508,12 @@ export class SshChannelMultiplexer {
       // before this tick's fresh probe, then allow the next full window.
       const resumedAfterWake = sinceLastTick > WAKE_GAP_MS
       if (resumedAfterWake) {
-        this.lastReceivedAt = now
-        for (const seq of this.unackedTimestamps.keys()) {
-          this.unackedTimestamps.set(seq, now)
-        }
+        this.rebaseHealthClocks(now)
       }
 
       this.sendKeepAlive()
 
-      if (this.disposed || resumedAfterWake) {
+      if (this.disposed || resumedAfterWake || this.decoderReadPaused) {
         return
       }
 
@@ -528,5 +538,47 @@ export class SshChannelMultiplexer {
   private handleProtocolError(err: unknown): void {
     console.warn(`[ssh-mux] Protocol error: ${err instanceof Error ? err.message : String(err)}`)
     this.dispose('connection_lost')
+  }
+
+  private trackOutgoingTimestamp(seq: number, liveness: boolean): void {
+    const limit = liveness ? MAX_UNACKED_TIMESTAMPS : MAX_ORDINARY_UNACKED_TIMESTAMPS
+    if (this.unackedTimestamps.size < limit) {
+      this.unackedTimestamps.set(seq, Date.now())
+    }
+  }
+
+  private pauseDecoderReads(): void {
+    if (this.disposed || this.decoderReadPaused) {
+      return
+    }
+    this.decoderReadPaused = true
+    try {
+      this.transport.pauseReads?.()
+    } catch (error) {
+      this.handleProtocolError(error)
+    }
+  }
+
+  private resumeDecoderReads(): void {
+    if (!this.decoderReadPaused) {
+      return
+    }
+    this.decoderReadPaused = false
+    if (this.disposed) {
+      return
+    }
+    this.rebaseHealthClocks(Date.now())
+    try {
+      this.transport.resumeReads?.()
+    } catch (error) {
+      this.handleProtocolError(error)
+    }
+  }
+
+  private rebaseHealthClocks(now: number): void {
+    this.lastReceivedAt = now
+    for (const seq of this.unackedTimestamps.keys()) {
+      this.unackedTimestamps.set(seq, now)
+    }
   }
 }
