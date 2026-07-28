@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { BrowserWindow, Event } from 'electron'
+import type { BrowserWindow } from 'electron'
 import { writeFileAtomically } from './codex-accounts/fs-utils'
 import { getCanonicalUserDataPath } from './persistence'
 import { MacosTccPromptWatch } from './macos-tcc-prompt-watch'
@@ -42,7 +42,6 @@ let nextClaimId = 0
 let pendingClaim: { claimId: number; ownerToken: number } | null = null
 let deferredWatchStartTimer: ReturnType<typeof setTimeout> | null = null
 let deferredWatchStartGeneration = 0
-let quitRecoveryGeneration = 0
 
 function tallyPath(): string {
   return join(getCanonicalUserDataPath(), 'macos-tcc-prompt-tally.json')
@@ -235,36 +234,13 @@ export function initTccPromptNotice(
 }
 
 export function stopTccPromptNotice(): void {
-  quitRecoveryGeneration += 1
   cancelDeferredWatchStart()
   watch?.stop()
   watch = null
   mainWindowRef = null
 }
 
-export function stopTccPromptNoticeForQuit(
-  event: Pick<Event, 'defaultPrevented'>,
-  getMainWindow: () => BrowserWindow | null
-): void {
-  stopTccPromptNotice()
-  if (process.platform !== 'darwin') {
-    return
-  }
-  const generation = quitRecoveryGeneration
-  // Why: updater listeners can prevent the same event after this listener returns.
-  setImmediate(() => {
-    if (!event.defaultPrevented || quitRecoveryGeneration !== generation) {
-      return
-    }
-    const mainWindow = getMainWindow()
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      initTccPromptNotice(mainWindow)
-    }
-  })
-}
-
 export function resetTccPromptNoticeForTests(): void {
-  quitRecoveryGeneration += 1
   cancelDeferredWatchStart()
   tally = { ...EMPTY_TALLY }
   watch = null

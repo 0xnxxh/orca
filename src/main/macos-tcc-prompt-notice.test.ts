@@ -38,8 +38,7 @@ const {
   initTccPromptNotice,
   releasePendingTccPromptNotice,
   resetTccPromptNoticeForTests,
-  stopTccPromptNotice,
-  stopTccPromptNoticeForQuit
+  stopTccPromptNotice
 } = await import('./macos-tcc-prompt-notice')
 
 beforeEach(() => {
@@ -244,61 +243,6 @@ describe('tcc prompt notice threshold', () => {
       })
       expect(watchStart).not.toHaveBeenCalled()
       expect(watchStop).toHaveBeenCalledOnce()
-    } finally {
-      Object.defineProperty(process, 'platform', platform!)
-    }
-  })
-
-  it('recovers after another listener prevents quit', async () => {
-    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
-    const mainWindow = createWindowStub()
-    try {
-      initTccPromptNotice(mainWindow as never)
-      const event = { defaultPrevented: false }
-      stopTccPromptNoticeForQuit(event, () => mainWindow as never)
-      event.defaultPrevented = true
-      await new Promise((resolve) => {
-        setImmediate(resolve)
-      })
-
-      expect(watchStop).toHaveBeenCalledOnce()
-      expect(watchStart).toHaveBeenCalledTimes(2)
-    } finally {
-      Object.defineProperty(process, 'platform', platform!)
-    }
-  })
-
-  it('does not recover an invalidated or committed quit', async () => {
-    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
-    const mainWindow = createWindowStub()
-    try {
-      initTccPromptNotice(mainWindow as never)
-      stopTccPromptNoticeForQuit({ defaultPrevented: true }, () => mainWindow as never)
-      stopTccPromptNoticeForQuit({ defaultPrevented: false }, () => mainWindow as never)
-      await new Promise((resolve) => {
-        setImmediate(resolve)
-      })
-
-      expect(watchStop).toHaveBeenCalledOnce()
-      expect(watchStart).toHaveBeenCalledOnce()
-    } finally {
-      Object.defineProperty(process, 'platform', platform!)
-    }
-  })
-
-  it('does not schedule prevented-quit recovery off macOS', async () => {
-    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
-    Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
-    try {
-      stopTccPromptNoticeForQuit({ defaultPrevented: true }, () => createWindowStub() as never)
-      await new Promise((resolve) => {
-        setImmediate(resolve)
-      })
-
-      expect(watchStart).not.toHaveBeenCalled()
-      expect(watchStop).not.toHaveBeenCalled()
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }

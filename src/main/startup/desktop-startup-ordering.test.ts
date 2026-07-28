@@ -104,6 +104,10 @@ describe('startup ordering', () => {
     )
     expect(source.slice(quitAbortStart, quitAbortEnd)).toContain('initTccPromptNotice(mainWindow)')
     expect(source).toContain("process.once('exit', stopTccPromptNotice)")
+    const willQuitStart = source.indexOf("app.on('will-quit'")
+    const windowAllClosedStart = source.indexOf("app.on('window-all-closed'", willQuitStart)
+    expect(source.slice(willQuitStart, windowAllClosedStart)).toContain('stopTccPromptNotice()')
+    expect(source.slice(0, willQuitStart)).not.toContain('stopTccPromptNoticeForQuit')
   })
 
   it('starts the automation scheduler before headless serve reports ready', () => {
