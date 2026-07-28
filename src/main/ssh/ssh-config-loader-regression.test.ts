@@ -74,7 +74,7 @@ async function loadUserSshConfig() {
     }
   })
   const mod = await import('./ssh-config-parser')
-  return mod.loadUserSshConfig()
+  return mod.loadUserSshConfig().hosts
 }
 
 describe('loadUserSshConfig regressions', () => {
