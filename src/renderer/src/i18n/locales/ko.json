@@ -11388,9 +11388,17 @@
             "placeholder": "호스트 선택"
           },
           "ProjectCombobox": {
-            "search": "프로젝트 검색...",
             "empty": "검색과 일치하는 프로젝트가 없습니다.",
-            "addProject": "Add a new project"
+            "addProject": "Add a new project",
+            "label": "Project",
+            "browse": "Browse projects",
+            "listLabel": "Projects",
+            "noProjects": "No projects yet."
+          },
+          "RunTargetCombobox": {
+            "listLabel": "Run targets",
+            "label": "Run on",
+            "browse": "Browse run targets"
           }
         }
       },
