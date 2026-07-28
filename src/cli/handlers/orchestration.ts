@@ -22,6 +22,7 @@ import type {
 import type { NativeChatMessage } from '../../shared/native-chat-types'
 import type { RuntimeTerminalRead } from '../../shared/runtime-types'
 import {
+  ORCHESTRATION_LEGACY_RUN_ID,
   orchestrationMigrationData,
   orchestrationSkillRecoveryData
 } from '../../shared/orchestration-rpc-contract'
@@ -76,6 +77,7 @@ const TASK_STATUS_VALUES = [
 
 type MessageSummary = {
   id: string
+  run_id?: string
   from_handle: string
   to_handle?: string
   subject: string
@@ -83,6 +85,10 @@ type MessageSummary = {
   body?: string
   payload?: string | null
   read?: number
+}
+
+function formatMessageReadOnlyTag(message: MessageSummary): string {
+  return message.run_id === ORCHESTRATION_LEGACY_RUN_ID ? ' [legacy, read-only]' : ''
 }
 
 type LifecycleSendRejection = {
@@ -631,7 +637,10 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
         return 'No messages.'
       }
       const rendered = r.messages
-        .map((m) => `${m.id} [${m.type ?? 'status'}] from=${m.from_handle} "${m.subject}"`)
+        .map(
+          (m) =>
+            `${m.id}${formatMessageReadOnlyTag(m)} [${m.type ?? 'status'}] from=${m.from_handle} "${m.subject}"`
+        )
         .join('\n')
       return r.deliveryId ? `Delivery ${r.deliveryId}\n${rendered}` : rendered
     })
@@ -669,7 +678,7 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       // Why: default output omits body/payload for at-a-glance sweeps; --full prints them for auditing.
       return r.messages
         .map((m) => {
-          const head = `${m.id} ${m.from_handle} -> ${m.to_handle ?? '?'}: "${m.subject}"`
+          const head = `${m.id}${formatMessageReadOnlyTag(m)} ${m.from_handle} -> ${m.to_handle ?? '?'}: "${m.subject}"`
           if (!full) {
             return head
           }
