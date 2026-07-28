@@ -39,6 +39,11 @@ import { initTelemetry, shutdownTelemetry, trackAppOpenedOnce, track } from './t
 import { classifyError } from './telemetry/classify-error'
 import { runManagedHookInstallers } from './agent-hooks/install-telemetry'
 import {
+  indexPersistedPaneKeyPtyIds,
+  RESTORED_SUBAGENT_LIVENESS_SWEEP_DELAY_MS,
+  sweepRestoredSubagentsWithoutLiveAgent
+} from './agent-hooks/restored-subagent-liveness-sweep'
+import {
   isAgentStatusHooksEnabled,
   MANAGED_AGENT_HOOK_INSTALLERS,
   removeManagedAgentHooks
@@ -733,6 +738,38 @@ ipcMain.handle(
   }
 )
 
+/** A PTY that dies while Orca is down never runs the teardown that clears pane
+ *  state, so hydrate can rebuild a Claude subagent roster that no later hook can
+ *  retire — pinning the pane 'working' and locking its agent out of hibernation
+ *  for good. One post-restore pass drops those rows once the live PTY inventory
+ *  proves no agent process is left behind them. */
+function scheduleRestoredSubagentLivenessSweep(): void {
+  const timer = setTimeout(() => {
+    const persistedPtyIdByPaneKey = indexPersistedPaneKeyPtyIds(
+      store?.getWorkspaceSession?.()?.terminalLayoutsByTabId ?? {}
+    )
+    void sweepRestoredSubagentsWithoutLiveAgent({
+      listLiveLocalPtyIds: async () => {
+        try {
+          const sessions = await getLocalPtyProvider().listProcesses()
+          return sessions.map((session) => session.id)
+        } catch (err) {
+          console.warn('[agent-hooks] restored-subagent sweep skipped; PTY listing failed:', err)
+          return null
+        }
+      },
+      getBoundPtyIdForPaneKey: getPtyIdForPaneKey,
+      getPersistedPtyIdForPaneKey: (paneKey) => persistedPtyIdByPaneKey.get(paneKey),
+      reap: (isLocalPaneAgentLive) =>
+        agentHookServer.reapRestoredClaudeSubagentsWithoutLiveAgent(isLocalPaneAgentLive)
+    }).catch((err) => {
+      console.error('[agent-hooks] restored-subagent liveness sweep failed:', err)
+    })
+  }, RESTORED_SUBAGENT_LIVENESS_SWEEP_DELAY_MS)
+  // Why: recovery bookkeeping must never hold the process open at quit.
+  timer.unref?.()
+}
+
 function startTerminalRuntimeStartupServices(): Promise<void> {
   logStartupMilestone('first-window-startup-services-start')
   const startupServices = startFirstWindowStartupServices({
@@ -778,6 +815,7 @@ function startTerminalRuntimeStartupServices(): Promise<void> {
   localPtyProviderStartupReady = startupServices.localPtyProviderReady
   void firstWindowStartupServicesReady.then(() => {
     logStartupMilestone('first-window-startup-services-ready')
+    scheduleRestoredSubagentLivenessSweep()
   })
   void localPtyStartupReady.then(() => {
     logStartupMilestone('local-pty-startup-ready')

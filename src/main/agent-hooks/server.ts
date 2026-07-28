@@ -25,6 +25,7 @@ import {
   normalizeHookPayload,
   parseFormEncodedBody,
   readRequestBody,
+  reapRestoredClaudeSubagentsForDeadPane,
   reconcileRemoteCodexState,
   resolveHookSource,
   preparePendingGrokResultDiscovery,
@@ -35,6 +36,10 @@ import {
   type AgentHookEventPayload,
   type HookListenerState
 } from '../../shared/agent-hook-listener'
+import {
+  claudeRosterHasWorkingSubagent,
+  claudeRosterToSnapshots
+} from '../../shared/claude-subagent-roster'
 import type { AgentHookSource } from '../../shared/agent-hook-relay'
 import {
   CLAUDE_STATUSLINE_PATHNAME,
@@ -1914,6 +1919,60 @@ export class AgentHookServer {
       this.notifyStatusChangeListeners()
       this.onPaneStatusCleared?.({ paneKey: resolvedPaneKey })
     }
+  }
+
+  /** Second reap path for restored Claude subagent rows: drop the ones whose pane
+   *  has no live local agent process behind it any more. A PTY that dies while Orca
+   *  is down never runs the teardown that clears pane state, so hydrate rebuilds a
+   *  roster nothing can ever retire — the inventory reap needs the parent to emit a
+   *  complete `background_tasks` list and an idle parent never does. The row then
+   *  gates the pane 'working' for the rest of its life and hibernation, which
+   *  requires 'done', can never reclaim the agent's heap.
+   *
+   *  `isLocalPaneAgentLive` is only consulted for panes whose binding is local
+   *  (`connectionId === null`): a remote/SSH agent runs on the far host and can
+   *  never appear in a local process index, so scanning for it would prune every
+   *  live remote binding. Panes that have produced hook traffic in this runtime are
+   *  skipped as well — their rows are backed by the process that is talking to us.
+   *  Returns the number of panes changed. */
+  reapRestoredClaudeSubagentsWithoutLiveAgent(
+    isLocalPaneAgentLive: (paneKey: string) => boolean
+  ): number {
+    let changedPanes = 0
+    for (const [paneKey, entry] of this.state.lastStatusByPaneKey) {
+      const enriched = entry as EnrichedAgentHookEventPayload
+      if (
+        enriched.payload.agentType !== 'claude' ||
+        enriched.connectionId !== null ||
+        this.runtimeObservedStatusPaneKeys.has(paneKey) ||
+        isLocalPaneAgentLive(paneKey)
+      ) {
+        continue
+      }
+      if (!reapRestoredClaudeSubagentsForDeadPane(this.state, paneKey)) {
+        continue
+      }
+      changedPanes += 1
+      const roster = this.state.claudeSubagentRosterByPaneKey.get(paneKey)
+      const subagents = claudeRosterToSnapshots(roster)
+      // Why: the pane's persisted 'working' was the child gate holding a finished
+      // lead open (subagent events never set lead state). With the last working row
+      // gone and no process left to report, 'done' is the only truthful state — and
+      // the one hibernation needs once this pane's agent is restored.
+      const state =
+        enriched.payload.state === 'working' && !claudeRosterHasWorkingSubagent(roster)
+          ? 'done'
+          : enriched.payload.state
+      this.state.lastStatusByPaneKey.set(paneKey, {
+        ...enriched,
+        payload: { ...enriched.payload, state, subagents }
+      })
+    }
+    if (changedPanes > 0) {
+      this.scheduleStatusPersist()
+      this.notifyStatusChangeListeners()
+    }
+    return changedPanes
   }
 
   buildPtyEnv(): Record<string, string> {
