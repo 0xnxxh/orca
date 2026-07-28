@@ -333,6 +333,7 @@
           "0708ed89f1": "Claude",
           "fc80296033": "Devin",
           "da41abbdd4": "Ante",
+          "060d152fb5": "Trae",
           "mimo_code_label": "MiMo Code"
         },
         "skill": {
@@ -12290,6 +12291,7 @@
           "4cc7b83ffe": "Filtrar archivos...",
           "21783df79f": "Contraer árbol de archivos",
           "481e63ca52": "Archivos",
+          "resizeFileTree": "Cambiar el tamaño del árbol de archivos",
           "d5ac717d65": "sin commit",
           "39b6b9e4e4": "Commits en la rama"
         },
@@ -13336,9 +13338,11 @@
           "d90981f766": "Tiempo",
           "6b914c5fbb": "Día",
           "233b8c94b6": "Cadencia",
-          "b08ccb4d06": "cada hora",
-          "8cc026fd73": "semanalmente",
-          "c3e39e17cf": "costumbre"
+          "55b2ef82a4": "Cada hora",
+          "f0202f3a89": "Diario",
+          "57e83307d0": "Días laborables",
+          "837d902bba": "Semanal",
+          "ddba78647e": "Cron personalizado"
         },
         "AutomationSessionField": {
           "f3c76dce51": "Reutilizar",

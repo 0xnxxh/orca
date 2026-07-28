@@ -356,6 +356,7 @@
           "0708ed89f1": "Claude",
           "fc80296033": "Devin",
           "da41abbdd4": "Ante",
+          "060d152fb5": "Trae",
           "mimo_code_label": "MiMo Code"
         },
         "skill": {
@@ -12313,6 +12314,7 @@
           "4cc7b83ffe": "Filter files...",
           "21783df79f": "Collapse file tree",
           "481e63ca52": "Files",
+          "resizeFileTree": "Resize file tree",
           "d5ac717d65": "uncommitted",
           "39b6b9e4e4": "Committed on Branch"
         },
@@ -13359,9 +13361,11 @@
           "d90981f766": "Time",
           "6b914c5fbb": "Day",
           "233b8c94b6": "Cadence",
-          "b08ccb4d06": "hourly",
-          "8cc026fd73": "weekly",
-          "c3e39e17cf": "custom"
+          "55b2ef82a4": "Hourly",
+          "f0202f3a89": "Daily",
+          "57e83307d0": "Weekdays",
+          "837d902bba": "Weekly",
+          "ddba78647e": "Custom cron"
         },
         "AutomationSessionField": {
           "f3c76dce51": "Reuse",

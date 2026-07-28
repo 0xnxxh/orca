@@ -333,6 +333,7 @@
           "0708ed89f1": "Claude",
           "fc80296033": "Devin",
           "da41abbdd4": "Ante",
+          "060d152fb5": "Trae",
           "mimo_code_label": "MiMo Code"
         },
         "skill": {
@@ -12290,6 +12291,7 @@
           "4cc7b83ffe": "ファイルをフィルタリング...",
           "21783df79f": "ファイルツリーを折りたたむ",
           "481e63ca52": "ファイル",
+          "resizeFileTree": "ファイルツリーのサイズを変更",
           "d5ac717d65": "commit されていない",
           "39b6b9e4e4": "Committed on Branch"
         },
@@ -13336,9 +13338,11 @@
           "d90981f766": "時間",
           "6b914c5fbb": "日",
           "233b8c94b6": "ケイデンス",
-          "b08ccb4d06": "毎時",
-          "8cc026fd73": "毎週",
-          "c3e39e17cf": "カスタム"
+          "55b2ef82a4": "毎時",
+          "f0202f3a89": "毎日",
+          "57e83307d0": "平日",
+          "837d902bba": "毎週",
+          "ddba78647e": "カスタム cron"
         },
         "AutomationSessionField": {
           "f3c76dce51": "再利用",

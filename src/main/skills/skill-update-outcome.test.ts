@@ -38,13 +38,10 @@ describe('skillUpdateFailedNames', () => {
     expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'current')])).toEqual([])
   })
 
-  // Reversed deliberately. `skills update` compares its lock against the source
-  // and never reads disk, so once the lock has advanced past the installed bytes
-  // it prints "up to date", exits 0 and writes nothing — leaving a recognised
-  // older revision that no retry converges. Blaming the run for that invented a
-  // failure the CLI never reported and armed a Retry that could not succeed.
-  it('does not blame the run for a copy the update command cannot converge', () => {
-    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'outdated')])).toEqual([])
+  it('reports a copy the run left outdated', () => {
+    expect(skillUpdateFailedNames(['orca-cli'], [placement('orca-cli', 'outdated')])).toEqual([
+      'orca-cli'
+    ])
   })
 
   it('reports a half-written bundle instead of reading it as success', () => {
@@ -79,31 +76,20 @@ describe('skillUpdateFailedNames', () => {
     ).toEqual([])
   })
 
-  // Still fails on a DEGRADED alias — only `outdated` was reclassified, so a
-  // half-written alias beside a good canonical copy must not read as success.
-  it('fails the name when any convergent alias was left broken', () => {
-    expect(
-      skillUpdateFailedNames(
-        ['orca-cli'],
-        [placement('orca-cli', 'current'), placement('orca-cli', 'unrecognized', 'provider-alias')]
-      )
-    ).toEqual(['orca-cli'])
-  })
-
-  it('does not fail the name for an alias the command merely left old', () => {
+  it('fails the name when any convergent alias was left behind', () => {
     expect(
       skillUpdateFailedNames(
         ['orca-cli'],
         [placement('orca-cli', 'current'), placement('orca-cli', 'outdated', 'provider-alias')]
       )
-    ).toEqual([])
+    ).toEqual(['orca-cli'])
   })
 
   it('judges each requested name independently', () => {
     expect(
       skillUpdateFailedNames(
         ['orca-cli', 'orchestration'],
-        [placement('orca-cli', 'current'), placement('orchestration', 'unrecognized')]
+        [placement('orca-cli', 'current'), placement('orchestration', 'outdated')]
       )
     ).toEqual(['orchestration'])
   })
