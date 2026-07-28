@@ -218,3 +218,87 @@ describe('useMobileNativeChatSession', () => {
     expect(state?.messages.map((entry) => entry.id)).toEqual(['fresh-growing-tail'])
   })
 })
+
+describe('useMobileNativeChatSession transcriptLoading', () => {
+  let renderer: ReactTestRenderer | null = null
+  const renders: { sessionId: string | null; transcriptLoading: boolean; ids: string[] }[] = []
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    renders.length = 0
+  })
+
+  afterEach(() => {
+    act(() => renderer?.unmount())
+    renderer = null
+  })
+
+  function Harness({
+    client,
+    sessionId
+  }: {
+    client: RpcClient | null
+    sessionId: string | null
+  }): null {
+    const session = useMobileNativeChatSession({
+      client,
+      agent: 'claude',
+      sessionId,
+      transcriptPath: null
+    })
+    renders.push({
+      sessionId,
+      transcriptLoading: session.transcriptLoading,
+      ids: session.messages.map((entry) => entry.id)
+    })
+    return null
+  }
+
+  async function mountAt(client: RpcClient | null, sessionId: string | null): Promise<void> {
+    const original = console.error
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation((...args) => {
+      if (typeof args[0] === 'string' && args[0].includes('react-test-renderer is deprecated')) {
+        return
+      }
+      original(...args)
+    })
+    try {
+      await act(async () => {
+        renderer = create(createElement(Harness, { client, sessionId }))
+      })
+    } finally {
+      consoleSpy.mockRestore()
+    }
+  }
+
+  it('reports loading on the very first render, before the subscription effect runs', async () => {
+    // `status` starts at 'idle', so on its own it would tell the launch-draft
+    // seed that an empty transcript is this session's real history.
+    const subscribe: RpcClient['subscribe'] = vi.fn(() => () => {})
+    await mountAt({ subscribe } as unknown as RpcClient, 'session-a')
+
+    expect(renders[0]).toMatchObject({ transcriptLoading: true, ids: [] })
+  })
+
+  it('reports loading on the commit that still carries the previous session’s messages', async () => {
+    const subscribe: RpcClient['subscribe'] = vi.fn((_method, params, onData) => {
+      if ((params as { sessionId: string }).sessionId === 'session-a') {
+        onData({ type: 'snapshot', messages: [message('a-1')], hasMore: false })
+      }
+      return () => {}
+    })
+    const client = { subscribe } as unknown as RpcClient
+    await mountAt(client, 'session-a')
+    await act(async () =>
+      renderer?.update(createElement(Harness, { client, sessionId: 'session-b' }))
+    )
+
+    // The effect resets the list a commit later, so this render hands out
+    // session-a's transcript under session-b's identity.
+    const staleRender = renders.find(
+      (entry) => entry.sessionId === 'session-b' && entry.ids.includes('a-1')
+    )
+    expect(staleRender).toBeDefined()
+    expect(staleRender?.transcriptLoading).toBe(true)
+  })
+})

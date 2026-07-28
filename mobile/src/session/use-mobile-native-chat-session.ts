@@ -13,6 +13,12 @@ export type MobileNativeChatStatus = 'idle' | 'loading' | 'waiting-session' | 'r
 export type MobileNativeChatSession = {
   messages: NativeChatMessage[]
   status: MobileNativeChatStatus
+  /** True while `messages` cannot be trusted as this session's real history:
+   *  the read is in flight, OR the subscription effect has not yet caught up to
+   *  a just-changed agent/session, so `messages`/`status` still describe the
+   *  previous tab. Consumers that decide something from an empty transcript
+   *  (the launch-draft seed) must wait for this to clear. */
+  transcriptLoading: boolean
   error?: string
   /** True when an older page may exist (the last read filled the window). */
   hasMore: boolean
@@ -43,6 +49,12 @@ export function useMobileNativeChatSession(args: {
   const { client, agent, sessionId, transcriptPath } = args
   const [messages, setMessages] = useState<NativeChatMessage[]>([])
   const [status, setStatus] = useState<MobileNativeChatStatus>('idle')
+  // The transcript identity `messages`/`status` currently describe. Written by
+  // the subscription effect, so it lags the props by exactly the commit on
+  // which the active tab changes — the render that would otherwise judge the
+  // new tab by the previous tab's transcript.
+  const identity = `${agent ?? ''}\0${sessionId ?? ''}\0${transcriptPath ?? ''}`
+  const [loadedIdentity, setLoadedIdentity] = useState<string | null>(null)
   const [error, setError] = useState<string | undefined>(undefined)
   const [hasMore, setHasMore] = useState(false)
   const [loadingEarlier, setLoadingEarlier] = useState(false)
@@ -73,6 +85,7 @@ export function useMobileNativeChatSession(args: {
     limitRef.current = INITIAL_LIMIT
     loadingEarlierRef.current = false
     setLoadingEarlier(false)
+    setLoadedIdentity(identity)
     setList([])
     setError(undefined)
     setHasMore(false)
@@ -148,7 +161,7 @@ export function useMobileNativeChatSession(args: {
       cancelled = true
       unsubscribe()
     }
-  }, [client, agent, sessionId, transcriptPath, setList])
+  }, [client, agent, sessionId, transcriptPath, identity, setList])
 
   const loadEarlier = useCallback(() => {
     if (!client || !agent || !sessionId || loadingEarlierRef.current || !hasMore) {
@@ -215,5 +228,13 @@ export function useMobileNativeChatSession(args: {
     })()
   }, [client, agent, sessionId, transcriptPath, hasMore, setList])
 
-  return { messages, status, error, hasMore, loadingEarlier, loadEarlier }
+  return {
+    messages,
+    status,
+    transcriptLoading: status === 'loading' || loadedIdentity !== identity,
+    error,
+    hasMore,
+    loadingEarlier,
+    loadEarlier
+  }
 }
