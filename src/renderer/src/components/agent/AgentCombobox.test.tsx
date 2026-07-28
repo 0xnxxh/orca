@@ -36,9 +36,27 @@ describe('AgentCombobox', () => {
     expect(markup).not.toContain('!min-w-[260px]')
     expect(markup).toContain('min-w-0 w-full')
     expect(markup).toContain('leading-none')
-    expect(markup).toContain('size-3.5 shrink-0')
+    expect(markup).toContain('size-3.5 -translate-y-px shrink-0')
     // Why: React HTML-escapes `[`/`&` in class strings during static markup.
     expect(markup).toContain('size-3.5!')
+  })
+
+  it('uses the same 14px optical alignment for every agent mark', () => {
+    for (const agent of AGENT_CATALOG) {
+      const markup = renderToStaticMarkup(
+        <AgentCombobox
+          agents={AGENT_CATALOG}
+          value={agent.id}
+          onValueChange={vi.fn()}
+          allowNarrowTrigger
+        />
+      )
+
+      expect(markup).toContain(agent.label)
+      expect(markup).toContain('size-3.5 -translate-y-px shrink-0')
+      expect(markup).toContain('width="14"')
+      expect(markup).toContain('height="14"')
+    }
   })
 
   it('supports an Agent-only empty state without presenting a blank terminal', () => {

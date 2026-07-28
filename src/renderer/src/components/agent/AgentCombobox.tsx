@@ -69,6 +69,24 @@ type ItemRenderArgs = {
   label: string
 }
 
+function AgentIconLabel({
+  icon,
+  label
+}: {
+  icon: React.ReactNode
+  label: string
+}): React.JSX.Element {
+  return (
+    <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+      {/* Why: Geist's visible glyphs sit high in their line box, so lift marks to their optical center. */}
+      <span className="inline-flex size-3.5 -translate-y-px shrink-0 items-center justify-center [&_img]:size-3.5 [&_svg]:size-3.5!">
+        {icon}
+      </span>
+      <span className="truncate leading-none">{label}</span>
+    </span>
+  )
+}
+
 function renderItem({
   key,
   itemValue,
@@ -87,14 +105,12 @@ function renderItem({
       className="items-center gap-2 px-3 py-1.5"
     >
       <Check
-        className={cn('size-4 shrink-0 text-foreground', isChecked ? 'opacity-100' : 'opacity-0')}
+        className={cn(
+          'size-4 -translate-y-px shrink-0 text-foreground',
+          isChecked ? 'opacity-100' : 'opacity-0'
+        )}
       />
-      <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
-        <span className="inline-flex size-3.5 shrink-0 items-center justify-center [&_img]:size-3.5 [&_svg]:size-3.5!">
-          {icon}
-        </span>
-        <span className="truncate leading-none">{label}</span>
-      </span>
+      <AgentIconLabel icon={icon} label={label} />
     </CommandItem>
   )
   if (!onSetDefault) {
@@ -295,23 +311,20 @@ export default function AgentCombobox({
             data-agent-combobox-root="true"
           >
             {selectedAgent ? (
-              <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
-                {/* Why: pin a 14px box so Button's [&_svg]:size-4 cannot inflate agent marks. */}
-                <span className="inline-flex size-3.5 shrink-0 items-center justify-center [&_img]:size-3.5 [&_svg]:size-3.5!">
-                  <AgentIcon agent={selectedAgent.id} size={14} />
-                </span>
-                <span className="truncate leading-none">{selectedAgent.label}</span>
-              </span>
+              <AgentIconLabel
+                icon={<AgentIcon agent={selectedAgent.id} size={14} />}
+                label={selectedAgent.label}
+              />
             ) : (
-              <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
-                <Terminal className="size-3.5 shrink-0" />
-                <span className="truncate leading-none">
-                  {emptyLabel ??
-                    translate('auto.components.agent.AgentCombobox.986f946354', 'Blank Terminal')}
-                </span>
-              </span>
+              <AgentIconLabel
+                icon={<Terminal className="size-3.5" />}
+                label={
+                  emptyLabel ??
+                  translate('auto.components.agent.AgentCombobox.986f946354', 'Blank Terminal')
+                }
+              />
             )}
-            <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
+            <ChevronsUpDown className="size-3.5 -translate-y-px shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
         <PopoverContent
