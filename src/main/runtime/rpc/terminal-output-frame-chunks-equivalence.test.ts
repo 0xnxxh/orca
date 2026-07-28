@@ -25,9 +25,10 @@ function legacyByteLengthExceeds(data: string, maxBytes: number): boolean {
 }
 
 function expectGateEquivalent(data: string, label: string): void {
-  expect(exceedsTerminalStreamChunkBytes(data), label).toBe(
-    legacyByteLengthExceeds(data, TERMINAL_STREAM_CHUNK_BYTES)
-  )
+  expect({ label, result: exceedsTerminalStreamChunkBytes(data) }).toEqual({
+    label,
+    result: legacyByteLengthExceeds(data, TERMINAL_STREAM_CHUNK_BYTES)
+  })
 }
 
 function makeExactByteLength(unit: string, byteLength: number): string {
