@@ -98,6 +98,8 @@ export type EditorExternalWatchTargetState = Pick<
   | 'sshConnectionStates'
   | 'folderWorkspaces'
   | 'projectGroups'
+  | 'restoredRuntimeHostIdByWorkspaceSessionKey'
+  | 'runtimeEnvironments'
 >
 
 let cachedOpenFiles: AppState['openFiles'] | null = null
@@ -112,7 +114,21 @@ let cachedGitStatusHugeByWorktree: AppState['gitStatusHugeByWorktree'] | null = 
 let cachedSshConnectionStates: AppState['sshConnectionStates'] | null = null
 let cachedFolderWorkspaces: AppState['folderWorkspaces'] | null = null
 let cachedProjectGroups: AppState['projectGroups'] | null = null
+let cachedRestoredRuntimeHostIds: AppState['restoredRuntimeHostIdByWorkspaceSessionKey'] | null =
+  null
+let cachedRuntimeEnvironments: AppState['runtimeEnvironments'] | null = null
 let cachedWatchedTargetsSnapshot: WatchedTargetsSnapshot = { targets: [], targetsKey: '' }
+
+// Why: main keys local watchers by path alone (one listener entry per renderer, not a refcount), so two targets on the same root share one subscription.
+export function sharesLocalWatchRoot(left: WatchedTarget, right: WatchedTarget): boolean {
+  return (
+    !left.runtimeEnvironmentId &&
+    !right.runtimeEnvironmentId &&
+    left.connectionId === right.connectionId &&
+    normalizeRuntimePathForComparison(left.worktreePath) ===
+      normalizeRuntimePathForComparison(right.worktreePath)
+  )
+}
 
 export function getWatchedTargetKey(target: WatchedTarget): string {
   // Why: include connectionId so a local placeholder watch is replaced by the real SSH watch once an SSH worktree's provider metadata hydrates.
@@ -169,7 +185,9 @@ export function getEditorExternalWatchTargets(
     cachedGitStatusHugeByWorktree === state.gitStatusHugeByWorktree &&
     cachedSshConnectionStates === state.sshConnectionStates &&
     cachedFolderWorkspaces === state.folderWorkspaces &&
-    cachedProjectGroups === state.projectGroups
+    cachedProjectGroups === state.projectGroups &&
+    cachedRestoredRuntimeHostIds === state.restoredRuntimeHostIdByWorkspaceSessionKey &&
+    cachedRuntimeEnvironments === state.runtimeEnvironments
   ) {
     return cachedWatchedTargetsSnapshot
   }
@@ -251,6 +269,8 @@ export function getEditorExternalWatchTargets(
   cachedSshConnectionStates = state.sshConnectionStates
   cachedFolderWorkspaces = state.folderWorkspaces
   cachedProjectGroups = state.projectGroups
+  cachedRestoredRuntimeHostIds = state.restoredRuntimeHostIdByWorkspaceSessionKey
+  cachedRuntimeEnvironments = state.runtimeEnvironments
 
   if (targetsKey === cachedWatchedTargetsSnapshot.targetsKey) {
     return cachedWatchedTargetsSnapshot
@@ -301,7 +321,8 @@ export function useEditorExternalWatch(): void {
       if (remoteUnsubscribe) {
         remoteUnsubscribe()
         remoteWatchUnsubsRef.current.delete(key)
-      } else {
+      } else if (!nextTargets.some((t) => sharesLocalWatchRoot(t, target))) {
+        // Why: the local watcher is keyed by path with no per-target refcount, so unwatching a removed target would kill delivery for a surviving target on the same root.
         void window.api.fs.unwatchWorktree({
           worktreePath: target.worktreePath,
           connectionId: target.connectionId
@@ -364,7 +385,7 @@ export function useEditorExternalWatch(): void {
     const remoteWatchUnsubs = remoteWatchUnsubsRef.current
     const { handleFsChanged, dispose } = createExternalWatchEventHandler(
       (worktreePath, runtimeEnvironmentId) =>
-        targetsRef.current.find(
+        targetsRef.current.filter(
           (t) =>
             normalizeRuntimePathForComparison(t.worktreePath) ===
               normalizeRuntimePathForComparison(worktreePath) &&
@@ -404,10 +425,7 @@ export function useEditorExternalWatch(): void {
  * without mounting the hook.
  */
 export function createExternalWatchEventHandler(
-  findTarget: (
-    worktreePath: string,
-    runtimeEnvironmentId: string | null
-  ) => WatchedTarget | undefined
+  findTargets: (worktreePath: string, runtimeEnvironmentId: string | null) => WatchedTarget[]
 ): {
   handleFsChanged: (payload: FsChangedPayload, runtimeEnvironmentId?: string | null) => void
   dispose: () => void
@@ -424,10 +442,13 @@ export function createExternalWatchEventHandler(
     payload: FsChangedPayload,
     runtimeEnvironmentId: string | null = null
   ): void => {
-    const target = findTarget(payload.worktreePath, runtimeEnvironmentId)
-    if (!target) {
-      return
+    // Why: folder workspaces can share a path with each other or with a git worktree, so one payload may own several targets; dispatching only the first silently stops reloading the others' tabs.
+    for (const target of findTargets(payload.worktreePath, runtimeEnvironmentId)) {
+      dispatchToTarget(payload, target)
     }
+  }
+
+  const dispatchToTarget = (payload: FsChangedPayload, target: WatchedTarget): void => {
     // Why: this app-level hook owns watcher subscriptions; other consumers listen here so they don't fight over watch/unwatch ownership.
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
       window.dispatchEvent(
