@@ -63,7 +63,14 @@ function makeSnapshotWatchState(): DashboardSnapshotWatchState {
     sshConnectionStates: new Map(),
     sshStateByEnvironment: new Map(),
     runtimeStatusByEnvironmentId: new Map(),
-    paneForegroundAgentByPaneKey: {}
+    paneForegroundAgentByPaneKey: {},
+    detectedWorktreesByRepo: {},
+    folderWorkspaces: [],
+    projectGroups: [],
+    restoredRuntimeHostIdByWorkspaceSessionKey: {},
+    runtimeEnvironments: [],
+    runtimeEnvironmentCatalogHydrated: false,
+    removedRuntimeEnvironmentIds: new Set()
   } as DashboardSnapshotWatchState
 }
 
@@ -145,19 +152,22 @@ describe('useDashboardPopoutBridge', () => {
       { sshConnectionStates: new Map() },
       { sshStateByEnvironment: new Map() },
       { runtimeStatusByEnvironmentId: new Map() },
-      { paneForegroundAgentByPaneKey: {} }
+      { paneForegroundAgentByPaneKey: {} },
+      { detectedWorktreesByRepo: {} },
+      // A folder workspace is not a git worktree; its host resolves through these.
+      { folderWorkspaces: [] },
+      { projectGroups: [] },
+      { restoredRuntimeHostIdByWorkspaceSessionKey: {} },
+      { runtimeEnvironments: [] },
+      { runtimeEnvironmentCatalogHydrated: true },
+      { removedRuntimeEnvironmentIds: new Set() }
     ]
     const republished = profileInputs
       .filter((next) =>
         dashboardSnapshotInputsChanged({ ...previousState, ...next }, previousState)
       )
       .map((next) => Object.keys(next)[0])
-    expect(republished).toEqual([
-      'sshConnectionStates',
-      'sshStateByEnvironment',
-      'runtimeStatusByEnvironmentId',
-      'paneForegroundAgentByPaneKey'
-    ])
+    expect(republished).toEqual(profileInputs.map((next) => Object.keys(next)[0]))
   })
 
   it('releases every dashboard listener when the experiment is disabled', async () => {
