@@ -54,8 +54,9 @@ export function RunTargetRow({
       role="option"
       id={optionId}
       aria-selected={armed}
+      // `option` supports aria-haspopup but not aria-expanded, so the row
+      // announces that it opens a menu without claiming an invalid state.
       aria-haspopup={submenu ? 'menu' : undefined}
-      aria-expanded={submenu ? armed : undefined}
       data-armed={armed || undefined}
       data-current={current ? 'true' : undefined}
       onMouseDown={(event) => event.preventDefault()}

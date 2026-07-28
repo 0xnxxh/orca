@@ -118,8 +118,8 @@ export function AddHostSubmenuRow({
           role="option"
           id={optionId}
           aria-selected={armed}
+          // `option` supports aria-haspopup but not aria-expanded.
           aria-haspopup="menu"
-          aria-expanded={open}
           data-armed={armed || undefined}
           data-run-target-add-host="true"
           onMouseDown={(event) => event.preventDefault()}
