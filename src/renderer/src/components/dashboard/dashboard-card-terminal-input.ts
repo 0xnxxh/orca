@@ -106,7 +106,17 @@ export function resolveDashboardCardTerminalInput(
       transport: {
         getConnectionId: () => connectionId,
         getPtyId: () => args.ptyId,
-        getExecutionHostId: () => executionHostId
+        getExecutionHostId: () => executionHostId,
+        // Why: gated exactly like the pane transport's own accessor — without
+        // it a WSL pty on a Windows client resolves to win32 and Shift+Enter
+        // would encode CSI-u where the pane sends alt-enter.
+        getLocalSessionMetadata: () =>
+          connectionId
+            ? null
+            : {
+                ...(args.cwd ? { cwd: args.cwd } : {}),
+                ...(args.shellOverride ? { shellOverride: args.shellOverride } : {})
+              }
       }
     }),
     localWindowsConpty: isLocalNativeWindowsConpty(windowsPtyContext),

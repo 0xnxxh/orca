@@ -62,13 +62,29 @@ describe('resolveDashboardCardTerminalInput', () => {
     expect(profile.kittyKeyboardAdvertised).toBe(true)
   })
 
-  it('treats a WSL shell override as a non-ConPTY pty', () => {
+  // Why: the pty runs Linux inside WSL, so byte protocols must follow it and
+  // not the Windows client — the pane resolves this from its own session cwd.
+  it('treats a WSL shell override as a non-ConPTY Linux-hosted pty', () => {
     const profile = resolveDashboardCardTerminalInput(stateWith(), {
       ...WINDOWS_ARGS,
       shellOverride: 'wsl.exe'
     })
     expect(profile.localWindowsConpty).toBe(false)
     expect(profile.kittyKeyboardAdvertised).toBe(true)
+    expect(profile.hostPlatform).toBe('linux')
+  })
+
+  it('follows the WSL host for a UNC session path with no shell override', () => {
+    const profile = resolveDashboardCardTerminalInput(stateWith(), {
+      ...WINDOWS_ARGS,
+      cwd: '\\\\wsl$\\Ubuntu\\home\\dev\\repo'
+    })
+    expect(profile.hostPlatform).toBe('linux')
+    expect(profile.localWindowsConpty).toBe(false)
+  })
+
+  it('keeps a native Windows pane on the client host', () => {
+    expect(resolveDashboardCardTerminalInput(stateWith(), WINDOWS_ARGS).hostPlatform).toBe('win32')
   })
 
   it('follows the SSH host platform rather than the client OS', () => {
