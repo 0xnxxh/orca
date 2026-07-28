@@ -228,8 +228,7 @@ async function anyRecordIsUserDirt(
   records: readonly PorcelainV1Record[],
   sharedLinkPaths: readonly string[]
 ): Promise<boolean> {
-  const untracked = records.filter((record) => record.xy === '??')
-  if (sharedLinkPaths.length === 0 || untracked.length === 0) {
+  if (sharedLinkPaths.length === 0 || !records.some((record) => record.xy === '??')) {
     return true
   }
   // Why: only entries that are configured AND really symlinks are excluded, so a

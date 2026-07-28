@@ -20,8 +20,12 @@ const configuredSharedDirectoriesByRepoPath = new Map<
  *  Why deletion can't reuse the resolver below: a directory-only ignore rule
  *  (`node_modules/`) matches the primary's real directory but never the
  *  worktree's symlink, so Git reports that symlink as untracked. Removal has to
- *  tolerate and unlink it, and the resolver would have already dropped it. */
-export function getConfiguredWorktreeSharedDirectories(repoPath: string): string[] {
+ *  tolerate and unlink it, and the resolver would have already dropped it.
+ *
+ *  `readonly` because this is the cached array itself: a mutating caller would
+ *  corrupt every later read for the rest of the TTL. Copying on return would fix
+ *  that too, but this runs on the status-polling path — the type costs nothing. */
+export function getConfiguredWorktreeSharedDirectories(repoPath: string): readonly string[] {
   const cached = configuredSharedDirectoriesByRepoPath.get(repoPath)
   const now = Date.now()
   if (cached && cached.expiresAt > now) {
