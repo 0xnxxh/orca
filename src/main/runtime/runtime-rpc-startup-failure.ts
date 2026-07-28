@@ -81,9 +81,13 @@ function createRuntimeRpcStartupFailureDialogOptions(error: unknown): MessageBox
 
 export function recordRuntimeRpcStartFailure(error: unknown): void {
   console.error('[runtime] Failed to start local RPC transport:', error)
-  track('runtime_rpc_start_failed', {
-    error_class: classifyRuntimeRpcStartFailure(error)
-  })
+  try {
+    track('runtime_rpc_start_failed', {
+      error_class: classifyRuntimeRpcStartFailure(error)
+    })
+  } catch (telemetryError) {
+    console.error('[runtime] Failed to record RPC startup failure telemetry:', telemetryError)
+  }
 }
 
 function waitForWindowToShow(parentWindow: BrowserWindow): Promise<boolean> {

@@ -71,6 +71,21 @@ describe('runtime RPC startup failure reporting', () => {
     consoleError.mockRestore()
   })
 
+  it('does not let telemetry failure escape the startup failure handler', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const telemetryError = new Error('telemetry unavailable')
+    trackMock.mockImplementationOnce(() => {
+      throw telemetryError
+    })
+
+    expect(() => recordRuntimeRpcStartFailure(new Error('RPC failed'))).not.toThrow()
+    expect(consoleError).toHaveBeenCalledWith(
+      '[runtime] Failed to record RPC startup failure telemetry:',
+      telemetryError
+    )
+    consoleError.mockRestore()
+  })
+
   it('shows the CLI impact and local cause', async () => {
     const parentWindow = createParentWindow()
     const error = new Error('metadata write failed')
