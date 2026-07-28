@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const electronBuilderConfig = require('../electron-builder.config.cjs')
+const { FileMatcher } = require('app-builder-lib/out/fileMatcher')
 const electronBuilderNativeRebuild = require('./electron-builder-native-rebuild.cjs')
 const {
   createPackagedRuntimeNodeModuleResources,
@@ -48,23 +49,27 @@ describe('electron-builder config', () => {
     )
   })
 
-  // Why: `files` is an all-negation list, so electron-builder's default `**/*`
-  // packs anything without an explicit `!` entry. examples/ landed without one
-  // and shipped hostile-panel — the adversarial fixture the panel containment
-  // tests point at — into 1.4.160-rc.3's app.asar. Assert the exclusion by the
-  // repo paths that must never ship, so adding a new example cannot re-break it.
+  // Why: `files` is an all-negation list, so electron-builder's default `**/*` packs
+  // anything without an explicit `!` entry — examples/ landed without one and shipped
+  // hostile-panel, the adversarial containment fixture, into 1.4.160-rc.3's app.asar.
+  // Drive the real matcher: pinning the pattern string cannot prove it excludes the tree.
   it('keeps plugin authoring examples out of app.asar', () => {
-    const negatedDirs = new Set(
-      electronBuilderConfig.files
-        .filter((pattern) => pattern.startsWith('!'))
-        .map((pattern) => pattern.slice(1).replace(/\{.*$/, '').replace(/\/.*$/, ''))
-    )
-    for (const shippedOnlyForAuthoring of [
+    const matcher = new FileMatcher('/app', '/dest', (value) => value, electronBuilderConfig.files)
+    // copyFiles() prepends this itself once the pattern list is all-negation.
+    matcher.prependPattern('**/*')
+    const isPacked = matcher.createFilter()
+    const packs = (repoPath) => isPacked(join('/app', repoPath), { isDirectory: () => false })
+
+    for (const authoringOnly of [
       'examples/plugins/hostile-panel/panel.html',
-      'examples/plugins/hello-orca/main.mjs'
+      'examples/plugins/hostile-panel/orca-plugin.json',
+      'examples/plugins/hello-orca/main.mjs',
+      'examples/plugins/hello-orca/orca-plugin.json'
     ]) {
-      expect(negatedDirs).toContain(shippedOnlyForAuthoring.split('/')[0])
+      expect(packs(authoringOnly)).toBe(false)
     }
+    // The negation stays anchored at the app root, so nested `examples` segments still ship.
+    expect(packs('out/main/examples/index.js')).toBe(true)
   })
 
   it('keeps runtime resources available through extraResources', () => {
