@@ -333,6 +333,7 @@
           "0708ed89f1": "Claude",
           "fc80296033": "Devin",
           "da41abbdd4": "Ante",
+          "060d152fb5": "Trae",
           "mimo_code_label": "MiMo Code"
         },
         "skill": {
@@ -11381,16 +11382,25 @@
             "searchGitLab": "搜索 GitLab MR 和议题",
             "searchBranches": "搜索分支",
             "searchLinear": "搜索 Linear 议题",
-            "workspaceName": "工作区名称"
+            "workspaceName": "工作区名称",
+            "emoji": "Emoji"
           },
           "ProjectHostSetupCombobox": {
             "empty": "此项目没有已就绪的主机。",
             "placeholder": "选择主机"
           },
           "ProjectCombobox": {
-            "search": "搜索项目...",
             "empty": "没有匹配搜索的项目。",
-            "addProject": "Add a new project"
+            "addProject": "Add a new project",
+            "label": "Project",
+            "browse": "Browse projects",
+            "listLabel": "Projects",
+            "noProjects": "No projects yet."
+          },
+          "RunTargetCombobox": {
+            "listLabel": "Run targets",
+            "label": "Run on",
+            "browse": "Browse run targets"
           }
         }
       },
@@ -11975,8 +11985,25 @@
           "agents": {
             "orchestration": {
               "OrchestrationPage": {
-                "30b509a467": "2名儿童",
-                "862605d066": "2 个子工作区"
+                "30b509a467": "2 个子工作区",
+                "862605d066": "2 个子工作区",
+                "coordinatorName": "重新设计身份验证流程",
+                "childPr1Name": "PR 1/2: 迁移 users.sql",
+                "childPr2Name": "PR 2/2: withSession 中间件"
+              },
+              "types": {
+                "coordinatorInitial": "将身份验证重写拆分为 2 个 PR…",
+                "codexInitial": "编写 users 表迁移…",
+                "claudeInitial": "草拟 withSession 中间件…",
+                "codexBeat1": "添加 email_verified 列…",
+                "claudeBeat1": "连接 withSession 中间件…",
+                "coordinatorBeat1": "PR 1/2 就绪",
+                "coordinatorBeat2": "PR 2/2 就绪"
+              },
+              "steps": {
+                "name": "编排",
+                "subtitle": "编排",
+                "description": "让智能体管理和协调 Orca 工作区，以执行更大的任务。"
               },
               "StatusesPage": {
                 "2f549fc0ba": "src/auth/session.test.ts",
@@ -12264,6 +12291,7 @@
           "4cc7b83ffe": "搜索文件...",
           "21783df79f": "折叠文件树",
           "481e63ca52": "文件",
+          "resizeFileTree": "调整文件树大小",
           "d5ac717d65": "未提交",
           "39b6b9e4e4": "已提交到分支"
         },
@@ -13310,9 +13338,11 @@
           "d90981f766": "时间",
           "6b914c5fbb": "天",
           "233b8c94b6": "节奏",
-          "b08ccb4d06": "每小时",
-          "8cc026fd73": "每周",
-          "c3e39e17cf": "风俗"
+          "55b2ef82a4": "每小时",
+          "f0202f3a89": "每天",
+          "57e83307d0": "工作日",
+          "837d902bba": "每周",
+          "ddba78647e": "自定义 cron"
         },
         "AutomationSessionField": {
           "f3c76dce51": "重复利用",
