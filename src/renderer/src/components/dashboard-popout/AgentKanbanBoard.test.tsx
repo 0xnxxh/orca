@@ -4,6 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { DashboardCard, DashboardSnapshot } from '../../../../shared/dashboard-snapshot'
+import type { RepoIcon } from '../../../../shared/repo-icon'
 import { AgentKanbanBoard } from './AgentKanbanBoard'
 
 // Stub the card and dialog so the board test stays free of xterm / Radix
@@ -11,10 +12,12 @@ import { AgentKanbanBoard } from './AgentKanbanBoard'
 vi.mock('./AgentKanbanCard', () => ({
   AgentKanbanCard: ({
     card,
+    repoIcon,
     now,
     onOpenTerminal
   }: {
     card: DashboardCard
+    repoIcon?: RepoIcon | null
     now: number
     onOpenTerminal: (card: DashboardCard) => void
   }) => (
@@ -23,6 +26,7 @@ vi.mock('./AgentKanbanCard', () => ({
       data-bucket={card.bucket}
       data-unseen={card.unseen}
       data-now={now}
+      data-repo-icon={repoIcon === null ? 'none' : JSON.stringify(repoIcon)}
       onClick={() => onOpenTerminal(card)}
     >
       {card.worktreeName}
@@ -70,8 +74,14 @@ function card(overrides: Partial<DashboardCard>): DashboardCard {
   }
 }
 
-function renderBoard(cards: DashboardCard[], showIdle = false): void {
-  const snapshot: DashboardSnapshot = { generatedAt: 1, cards, showIdle }
+function renderBoard(
+  cards: DashboardCard[],
+  options: {
+    showIdle?: boolean
+    repoIconsByRepoId?: Record<string, RepoIcon | null>
+  } = {}
+): void {
+  const snapshot: DashboardSnapshot = { generatedAt: 1, cards, ...options }
   render(<AgentKanbanBoard snapshot={snapshot} />)
 }
 
@@ -108,6 +118,30 @@ describe('AgentKanbanBoard', () => {
     expect(screen.getByText('3 total')).toBeTruthy()
   })
 
+  it('leaves every column border neutral now that cards carry the state color', () => {
+    renderBoard([card({ bucket: 'attention' })])
+    for (const column of document.querySelectorAll('section')) {
+      expect(column.className).toContain('border-border/60')
+      expect(column.className).not.toContain('amber')
+    }
+  })
+
+  it('routes each card its own repo icon', () => {
+    renderBoard(
+      [
+        card({ repoId: 'r1', worktreeName: 'from-r1' }),
+        card({ repoId: 'r2', worktreeName: 'from-r2' }),
+        card({ repoId: 'r3', worktreeName: 'from-r3' })
+      ],
+      { repoIconsByRepoId: { r1: { type: 'lucide', name: 'Rocket' }, r2: null } }
+    )
+
+    expect(screen.getByText('from-r1').dataset.repoIcon).toBe('{"type":"lucide","name":"Rocket"}')
+    expect(screen.getByText('from-r2').dataset.repoIcon).toBe('none')
+    // Unknown repo → the card's own default glyph, never another repo's icon.
+    expect(screen.getByText('from-r3').dataset.repoIcon).toBe('none')
+  })
+
   it('shows "None" for empty columns', () => {
     renderBoard([card({ bucket: 'working' })])
     // attention and done are empty → two "None" placeholders.
@@ -115,7 +149,7 @@ describe('AgentKanbanBoard', () => {
   })
 
   it('shows the idle column only when enabled', () => {
-    renderBoard([card({ bucket: 'idle', worktreeName: 'quiet-agent' })], true)
+    renderBoard([card({ bucket: 'idle', worktreeName: 'quiet-agent' })], { showIdle: true })
 
     expect(screen.getByText('Idle')).toBeInTheDocument()
     expect(screen.getByText('quiet-agent')).toBeInTheDocument()

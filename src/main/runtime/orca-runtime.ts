@@ -2387,6 +2387,7 @@ export type MobileNotificationDispatchEvent = {
   worktreeId?: string
   notificationId?: string
   notificationSeq?: number
+  notificationEpoch?: string
 }
 
 export type RuntimeWorktreeLifecycleEvent =
@@ -2397,6 +2398,7 @@ export type MobileNotificationDismissEvent = {
   type: 'dismiss'
   notificationId: string
   notificationSeq?: number
+  notificationEpoch?: string
 }
 
 export type MobileNotificationEvent =
@@ -7402,6 +7404,11 @@ export class OrcaRuntimeService {
     listener: (snapshot: RuntimeMobileSessionTabsResult) => void,
     clientNavigationId?: string
   ): () => void {
+    // Why: a notify coalesced before this subscriber existed is already folded
+    // into the initial snapshot it was just sent. Draining it here — before the
+    // listener joins — keeps that pending timer from landing as a redundant
+    // `updated` frame carrying pre-subscribe state. Mirrors the unsubscribe flush.
+    this.mobileSessionTabsNotifyCoalescer.flushAll()
     const subscription = { listener, clientNavigationId }
     this.mobileSessionTabListeners.add(subscription)
     return () => {
@@ -8075,7 +8082,12 @@ export class OrcaRuntimeService {
    *  facts itself and the delivered bytes may be gapped — feeding them to
    *  main's transient scanners would mint phantom or duplicate facts. Title
    *  processing stays main-side either way. */
-  setPtyTransientFactDelegation(ptyId: string, delegated: boolean, scanSeedAnsi?: string): void {
+  setPtyTransientFactDelegation(
+    ptyId: string,
+    delegated: boolean,
+    scanSeedAnsi?: string,
+    mode2031PendingSubscribe?: true
+  ): void {
     const entry = this.getOrCreatePtyTitleTrackerEntry(ptyId)
     entry.tracker.setTransientFactScanningSuppressed(delegated)
     if (!delegated && scanSeedAnsi) {
@@ -8083,7 +8095,10 @@ export class OrcaRuntimeService {
       // incomplete escape at the handoff position — a sequence split across
       // the un-background toggle must not mint a phantom bell or lose its
       // fact. titleScanData:'' keeps titles out (they were never suppressed).
-      entry.tracker.handleChunk(scanSeedAnsi, { titleScanData: '' })
+      entry.tracker.handleChunk(scanSeedAnsi, {
+        titleScanData: '',
+        mode2031PendingSubscribe
+      })
     }
   }
 
@@ -8106,6 +8121,9 @@ export class OrcaRuntimeService {
         return
       case '2031-subscribe':
         this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' })
+        return
+      case '2031-unsubscribe':
+        this.recordTerminalSideEffectFact(ptyId, { kind: '2031-unsubscribe' })
     }
   }
 
@@ -8353,6 +8371,12 @@ export class OrcaRuntimeService {
               // still sent by the renderer (query authority stays with the view).
               onMode2031Subscribe: () => {
                 this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' })
+              },
+              // Why: the gated view never sees the withdrawal bytes either, so the
+              // subscription registry it keeps for theme flips needs this fact to
+              // stay truthful.
+              onMode2031Unsubscribe: () => {
+                this.recordTerminalSideEffectFact(ptyId, { kind: '2031-unsubscribe' })
               }
             }
           : {})
@@ -10203,7 +10227,12 @@ export class OrcaRuntimeService {
     // delivered and feed it back to getMissedSince on reconnect (idempotent catch-up, no dupes).
     notifyRuntimeListeners(
       this.notificationListeners,
-      (listener) => listener({ ...event, notificationSeq: seq }),
+      (listener) =>
+        listener({
+          ...event,
+          notificationSeq: seq,
+          notificationEpoch: this.mobileNotificationReplay.epoch
+        }),
       'mobile-notification'
     )
   }
@@ -10211,8 +10240,15 @@ export class OrcaRuntimeService {
   // Returns notifications dispatched after lastSeenSeq. Idempotent: the same
   // watermark always yields the same set, so a client cannot be re-pushed an
   // already-delivered event (the adversarial-review gate for #8129).
-  getMissedNotificationsSince(lastSeenSeq: number): ReplayableMobileNotification[] {
-    return this.mobileNotificationReplay.getMissedSince(lastSeenSeq)
+  getMissedNotificationsSince(lastSeenSeq: number, epoch?: string): ReplayableMobileNotification[] {
+    return this.mobileNotificationReplay.getMissedSince(lastSeenSeq, epoch)
+  }
+
+  // Why (#8591): the seq counter is per-process and restarts at 0 on every desktop
+  // launch, but the client's watermark is persisted. Clients need the epoch to tell
+  // a stale watermark from a valid one — see MobileNotificationReplayBuffer.
+  getMobileNotificationEpoch(): string {
+    return this.mobileNotificationReplay.epoch
   }
 
   dismissMobileNotification(notificationId: string): void {

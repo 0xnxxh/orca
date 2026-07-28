@@ -25,6 +25,7 @@ export function useLiveDashboardSnapshot(): DashboardSnapshot {
   const acknowledgedAgentsByPaneKey = useAppStore((s) => s.acknowledgedAgentsByPaneKey)
   const hostedReviewCache = useAppStore((s) => s.hostedReviewCache)
   const prCache = useAppStore((s) => s.prCache)
+  // Why: controls idle visibility and gates generated conversation names.
   const settings = useAppStore((s) => s.settings)
   const workspaceStatuses = useAppStore((s) => s.workspaceStatuses)
   // Why: freshness can flip a bucket without any backing map changing; the epoch

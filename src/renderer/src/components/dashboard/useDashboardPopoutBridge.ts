@@ -28,6 +28,7 @@ export function dashboardSnapshotInputsChanged(
     state.acknowledgedAgentsByPaneKey !== previousState.acknowledgedAgentsByPaneKey ||
     state.hostedReviewCache !== previousState.hostedReviewCache ||
     state.prCache !== previousState.prCache ||
+    // Why: settings controls idle visibility and generated conversation names.
     state.settings !== previousState.settings ||
     state.workspaceStatuses !== previousState.workspaceStatuses ||
     // Why: freshness can change a bucket without replacing any backing map.

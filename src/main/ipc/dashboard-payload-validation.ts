@@ -1,4 +1,5 @@
 import type { DashboardRevealAgentArgs, DashboardSnapshot } from '../../shared/dashboard-snapshot'
+import { sanitizeRepoIcon } from '../../shared/repo-icon'
 import {
   AGENT_STATUS_ASSISTANT_MESSAGE_MAX_LENGTH,
   AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH,
@@ -8,6 +9,7 @@ import {
 
 const MAX_DASHBOARD_CARDS = 1_000
 const MAX_DASHBOARD_SUBAGENTS = 100
+const MAX_DASHBOARD_REPO_ICONS = 500
 const MAX_ID_LENGTH = 4_096
 const MAX_LABEL_LENGTH = 1_024
 const DASHBOARD_BUCKETS = new Set(['attention', 'working', 'done', 'idle'])
@@ -53,7 +55,28 @@ export function isDashboardSnapshot(value: unknown): value is DashboardSnapshot 
     Array.isArray(snapshot.cards) &&
     snapshot.cards.length <= MAX_DASHBOARD_CARDS &&
     snapshot.cards.every(isDashboardCard) &&
-    (snapshot.showIdle === undefined || typeof snapshot.showIdle === 'boolean')
+    (snapshot.showIdle === undefined || typeof snapshot.showIdle === 'boolean') &&
+    isDashboardRepoIcons(snapshot.repoIconsByRepoId)
+  )
+}
+
+/** Repo icons reach the pop-out's `<img src>`, so each one must survive the
+ *  same sanitizer the settings picker writes through. */
+function isDashboardRepoIcons(value: unknown): boolean {
+  if (value === undefined) {
+    return true
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+  return (
+    entries.length <= MAX_DASHBOARD_REPO_ICONS &&
+    entries.every(
+      ([repoId, icon]) =>
+        isBoundedString(repoId, MAX_ID_LENGTH) &&
+        (icon === null || sanitizeRepoIcon(icon) !== undefined)
+    )
   )
 }
 
@@ -127,6 +150,7 @@ function isDashboardCard(value: unknown): boolean {
     (card.finishedAt === null || isFiniteNumber(card.finishedAt)) &&
     isFiniteNumber(card.stateChangedAt) &&
     typeof card.unseen === 'boolean' &&
-    isOptionalBoundedString(card.askSummary, AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH)
+    isOptionalBoundedString(card.askSummary, AGENT_STATUS_INTERACTIVE_PROMPT_MAX_LENGTH) &&
+    isOptionalBoundedString(card.conversationName, MAX_LABEL_LENGTH)
   )
 }

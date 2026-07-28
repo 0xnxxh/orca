@@ -6,7 +6,9 @@ import type {
   DashboardCardSubagent,
   DashboardSnapshot
 } from '../../../../shared/dashboard-snapshot'
+import type { RepoIcon } from '../../../../shared/repo-icon'
 import { parsePaneKey } from '../../../../shared/stable-pane-id'
+import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
 import { migrationUnsupportedToAgentStatusEntry } from '@/lib/migration-unsupported-agent-entry'
 import { applyAgentRowLineage } from './agent-row-lineage'
 import { lastEnteredDoneAt } from './agent-finished-timestamp'
@@ -48,6 +50,7 @@ export type DashboardSnapshotState = Pick<
   | 'ptyIdsByTabId'
   | 'runtimePaneTitlesByTabId'
   | 'acknowledgedAgentsByPaneKey'
+  | 'settings'
 > &
   DashboardCardContextState
 
@@ -75,6 +78,24 @@ function nonEmpty(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
+/** Mirrors useAgentRowConversationName so the board and the sidebar label the
+ *  same agent with the same name. */
+function rowConversationName(
+  row: DashboardAgentRow,
+  generatedTitlesEnabled: boolean
+): string | undefined {
+  const parentPaneKey = row.entry.orchestration?.parentPaneKey
+  // Why: a child row rendered on its parent's tab does not own that tab's name.
+  if (
+    row.lineage?.depth === 1 &&
+    parentPaneKey !== undefined &&
+    parsePaneKey(parentPaneKey)?.tabId === row.tab.id
+  ) {
+    return undefined
+  }
+  return getAgentRowConversationName(row.tab, row.agentType, generatedTitlesEnabled) ?? undefined
+}
+
 /**
  * Derive the serializable dashboard snapshot from the live renderer store.
  * Reuses the exact per-worktree row machinery the sidebar uses
@@ -87,6 +108,8 @@ export function buildDashboardSnapshot(
   now: number
 ): DashboardSnapshot {
   const cards: DashboardCard[] = []
+  const repoIconsByRepoId: Record<string, RepoIcon | null> = {}
+  const generatedTitlesEnabled = state.settings?.tabAutoGenerateTitle === true
   const activeWorktrees: {
     repo: AppState['repos'][number]
     worktree: AppState['worktreesByRepo'][string][number]
@@ -199,6 +222,8 @@ export function buildDashboardSnapshot(
           : null
       const dotState = row.state as DashboardCardDotState
       const bucket = bucketForState(row.state)
+      // Only repos that actually contribute a card ship their icon.
+      repoIconsByRepoId[repo.id] = repo.repoIcon ?? null
 
       cards.push({
         paneKey: row.paneKey,
@@ -229,7 +254,8 @@ export function buildDashboardSnapshot(
         unseen:
           !isTitleDerived &&
           (state.acknowledgedAgentsByPaneKey?.[row.paneKey] ?? 0) < row.entry.stateStartedAt,
-        askSummary: bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined
+        askSummary: bucket === 'attention' ? (row.entry.interactivePrompt ?? undefined) : undefined,
+        conversationName: rowConversationName(row, generatedTitlesEnabled)
       })
     }
   }
@@ -237,6 +263,7 @@ export function buildDashboardSnapshot(
   return {
     generatedAt: now,
     cards,
-    showIdle: state.settings?.experimentalAgentDashboardShowIdle === true
+    showIdle: state.settings?.experimentalAgentDashboardShowIdle === true,
+    repoIconsByRepoId
   }
 }
