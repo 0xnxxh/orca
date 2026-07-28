@@ -21,7 +21,44 @@ vi.mock('@/store', () => ({
   }
 }))
 
-import { deliverLaunchPromptToAgentTab } from './agent-launch-prompt-delivery'
+import {
+  deliverLaunchPromptToAgentTab,
+  seedNativeChatLaunchDraftForAgentTab
+} from './agent-launch-prompt-delivery'
+
+describe('seedNativeChatLaunchDraftForAgentTab', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('rejects multi-line text at the helper, not just at the delivery caller', () => {
+    // Worktree-create and work-item launches seed through this helper directly
+    // (a Linear draft is always `Linked Linear issue: …\n<url>\n`), so the
+    // Ctrl+U kill-to-start-of-LINE constraint has to live here.
+    seedNativeChatLaunchDraftForAgentTab({
+      tabId: 'linear-tab',
+      agent: 'codex',
+      text: 'Linked Linear issue: STA-1234\nhttps://linear.app/o/issue/STA-1234\n'
+    })
+
+    expect(mocks.seedNativeChatLaunchDraft).not.toHaveBeenCalled()
+  })
+
+  it('seeds single-line text', () => {
+    seedNativeChatLaunchDraftForAgentTab({
+      tabId: 'issue-tab',
+      agent: 'codex',
+      text: 'https://github.com/o/r/issues/12'
+    })
+
+    expect(mocks.seedNativeChatLaunchDraft).toHaveBeenCalledWith({
+      tabId: 'issue-tab',
+      agent: 'codex',
+      text: 'https://github.com/o/r/issues/12',
+      createdAt: expect.any(Number)
+    })
+  })
+})
 
 describe('deliverLaunchPromptToAgentTab', () => {
   beforeEach(() => {

@@ -12,7 +12,14 @@ export function seedNativeChatLaunchDraftForAgentTab(args: {
   agent: TuiAgent
   text: string
 }): void {
-  if (args.text.trim().length === 0 || !isNativeChatSupportedAgent(args.agent)) {
+  // Single-line only: the chat send pre-clears the TUI with Ctrl+U
+  // (kill-to-start-of-LINE), so a multi-line prefill (e.g. a Linear issue block)
+  // would leave earlier lines to glue onto the next message.
+  if (
+    args.text.trim().length === 0 ||
+    args.text.includes('\n') ||
+    !isNativeChatSupportedAgent(args.agent)
+  ) {
     return
   }
   useAppStore.getState().seedNativeChatLaunchDraft({
@@ -43,12 +50,9 @@ export function deliverLaunchPromptToAgentTab(args: {
       text: content,
       createdAt: Date.now()
     })
-  } else if (submit !== true && !content.includes('\n')) {
+  } else if (submit !== true) {
     // Why: an unsubmitted draft lives only in the TUI input buffer; seed the
     // chat-composer copy so the context isn't invisible in the GUI view.
-    // Single-line only: the chat send pre-clears the TUI with Ctrl+U
-    // (kill-to-start-of-LINE), so a multi-line prefill (e.g. scraped fork
-    // context) would leave earlier lines to glue onto the next message.
     seedNativeChatLaunchDraftForAgentTab({ tabId, agent, text: content })
   }
 

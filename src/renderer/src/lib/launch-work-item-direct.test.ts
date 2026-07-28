@@ -461,6 +461,32 @@ describe('launchWorkItemDirect', () => {
     expect(mocks.seedNativeChatLaunchPrompt).not.toHaveBeenCalled()
   })
 
+  it('withholds the chat-composer launch draft for a multi-line Linear draft launch', async () => {
+    // A Linear draft is always `Linked Linear issue: ENG-42\n<url>\n`. The chat
+    // send pre-clears the TUI with Ctrl+U (kill-to-start-of-LINE), so seeding it
+    // would leave the first line parked to glue onto the next message.
+    mocks.ensureDetectedAgents.mockResolvedValue(['claude'])
+    const { launchWorkItemDirect } = await import('./launch-work-item-direct')
+
+    await expect(
+      launchWorkItemDirect({
+        repoId: 'repo-1',
+        launchSource: 'task_page',
+        openModalFallback: vi.fn(),
+        agentOverride: 'claude',
+        item: {
+          type: 'issue',
+          number: null,
+          title: 'Ship Linear parity',
+          url: 'https://linear.app/acme/issue/ENG-42/ship-linear-parity',
+          linearIdentifier: 'ENG-42'
+        }
+      })
+    ).resolves.toBe(true)
+
+    expect(mocks.seedNativeChatLaunchDraft).not.toHaveBeenCalled()
+  })
+
   it('preserves explicit Linear paste content submit-after-ready behavior', async () => {
     mocks.ensureDetectedAgents.mockResolvedValue(['claude'])
     const { launchWorkItemDirect } = await import('./launch-work-item-direct')
