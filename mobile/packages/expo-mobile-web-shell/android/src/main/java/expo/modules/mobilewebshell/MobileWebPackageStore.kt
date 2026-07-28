@@ -342,7 +342,9 @@ internal class MobileWebPackageStore internal constructor(
   ): MobileWebManifestRecord {
     require(
       isBoundedManifestJson(manifestJson) &&
-        isBoundedManifestJson(canonicalManifestJson)
+        isBoundedManifestJson(canonicalManifestJson) &&
+        isExactMobileWebJsonDocument(manifestJson) &&
+        isExactMobileWebJsonDocument(canonicalManifestJson)
     ) { "mobile_web_stage_manifest_invalid" }
     val manifest = parseJsonObject(manifestJson)
     val canonical = parseJsonObject(canonicalManifestJson)

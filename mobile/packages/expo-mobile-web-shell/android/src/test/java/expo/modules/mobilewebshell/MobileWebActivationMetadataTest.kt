@@ -30,6 +30,7 @@ class MobileWebActivationMetadataTest {
       """{"active":"$active","previous":true}""",
       """{"active":"$active","previous":"$active"}""",
       """{"active":"$active","unexpected":true}""",
+      """{"active":"$active","active":"$active"}""",
       """{"active":"$active"} trailing"""
     )
     invalid.forEach { value ->

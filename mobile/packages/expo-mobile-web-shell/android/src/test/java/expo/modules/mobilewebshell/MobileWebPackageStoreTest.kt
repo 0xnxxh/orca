@@ -43,8 +43,20 @@ class MobileWebPackageStoreTest {
     val root = temporary.newFolder()
     val store = MobileWebPackageStore(root)
     val valid = packageFixture()
+    val duplicateCanonical = valid.canonical.dropLast(1) + ""","schemaVersion":1}"""
+    val duplicateBuildId = sha256Hex(duplicateCanonical.toByteArray())
+    val duplicateManifest = JSONObject(valid.manifest)
+      .put("buildId", duplicateBuildId)
+      .toString()
     val invalid = listOf(
       valid.copy(canonical = "${valid.canonical} "),
+      valid.copy(manifest = "${valid.manifest} trailing"),
+      valid.copy(manifest = valid.manifest.dropLast(1) + ""","schemaVersion":1}"""),
+      valid.copy(
+        canonical = duplicateCanonical,
+        manifest = duplicateManifest,
+        buildId = duplicateBuildId
+      ),
       packageFixture(mutateAsset = { asset -> asset.put("path", "../index.html") }),
       packageFixture(mutateAsset = { asset -> asset.put("contentType", "application/octet-stream") }),
       packageFixture { _, manifest -> manifest.put("totalBytes", valid.bytes.size + 1) }

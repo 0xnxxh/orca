@@ -494,6 +494,8 @@ final class MobileWebPackageStore {
     guard
       manifestJson.utf8.count <= manifestJsonByteLimit,
       canonicalManifestJson.utf8.count <= manifestJsonByteLimit,
+      isExactMobileWebJsonDocument(manifestJson),
+      isExactMobileWebJsonDocument(canonicalManifestJson),
       let manifest = try jsonObject(manifestJson) as? [String: Any],
       let canonical = try jsonObject(canonicalManifestJson) as? [String: Any],
       Set(manifest.keys)

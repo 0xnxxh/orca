@@ -2735,9 +2735,9 @@ manifest document at 256 KiB before JSON parsing. Native activation metadata
 now accepts only an exact object containing string-typed `active` and optional
 distinct `previous` hashes. A mirrored Swift/Kotlin corpus rejects missing,
 null, Boolean, numeric, array, uppercase, duplicate-generation, unknown-field,
-and trailing-token mutations with `mobile_web_activation_invalid`. Manifest
-and package-RPC schemas now share one exact asset-path predicate. A mirrored
-TypeScript, Swift, and Kotlin corpus
+duplicate-key, and trailing-token mutations with
+`mobile_web_activation_invalid`. Manifest and package-RPC schemas now share one
+exact asset-path predicate. A mirrored TypeScript, Swift, and Kotlin corpus
 rejects empty, absolute, traversal, repeated-separator, percent-encoded, query,
 fragment, backslash, non-ASCII, overlong, and trailing-newline paths while
 accepting the reviewed relative form. Shared application SHA-256, Git object
@@ -2757,7 +2757,12 @@ the stable generation and activation errors. Every persisted read also
 requires a regular descendant of the native cache root; the mirrored corpus
 rejects outside-root files, file and ancestor-directory symlinks, directories,
 and missing files with the requested stable error. Generated mutation and the
-remaining CSP/cache mutation and cleanup corpus are still required.
+remaining CSP/cache mutation and cleanup corpus are still required. Before
+platform parsing, both native stores now require each primary manifest,
+canonical manifest, and activation record to be one JSON value with unique
+decoded object keys and no more than 32 nesting levels. Mirrored corpora reject
+duplicate and escaped-equivalent keys, trailing tokens, malformed scalars, and
+excess depth consistently.
 
 ## App Store Gate
 

@@ -7,6 +7,7 @@ enum MobileWebPackageStoreTests {
     if try MobileWebPackageStoreProcessInterruptionTests.runIfChild() {
       return
     }
+    MobileWebExactJsonTests.run()
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("orca-mobile-web-store-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -70,12 +71,42 @@ enum MobileWebPackageStoreTests {
   private static func rejectsMalformedManifests(root: URL) throws {
     let store = MobileWebPackageStore(cacheRoot: root)
     let valid = try packageFixture()
+    let duplicateCanonical = String(valid.canonical.dropLast()) + ",\"schemaVersion\":1}"
+    let duplicateBuildId = sha256Hex(Data(duplicateCanonical.utf8))
+    var duplicateManifest =
+      try JSONSerialization.jsonObject(
+        with: Data(valid.manifest.utf8)
+      ) as! [String: Any]
+    duplicateManifest["buildId"] = duplicateBuildId
+    let duplicateManifestJson = String(
+      decoding: try JSONSerialization.data(
+        withJSONObject: duplicateManifest, options: [.sortedKeys]),
+      as: UTF8.self
+    )
     let invalid = [
       PackageFixture(
         bytes: valid.bytes,
         canonical: valid.canonical + " ",
         manifest: valid.manifest,
         buildId: valid.buildId
+      ),
+      PackageFixture(
+        bytes: valid.bytes,
+        canonical: valid.canonical,
+        manifest: valid.manifest + " trailing",
+        buildId: valid.buildId
+      ),
+      PackageFixture(
+        bytes: valid.bytes,
+        canonical: valid.canonical,
+        manifest: valid.manifest.dropLast() + ",\"schemaVersion\":1}",
+        buildId: valid.buildId
+      ),
+      PackageFixture(
+        bytes: valid.bytes,
+        canonical: duplicateCanonical,
+        manifest: duplicateManifestJson,
+        buildId: duplicateBuildId
       ),
       try packageFixture { manifest in
         mutateAsset(&manifest) { $0["path"] = "../index.html" }

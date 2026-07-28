@@ -1551,10 +1551,10 @@ copy.
   Native activation records now accept only an exact object containing
   string-typed `active` and optional distinct `previous` hashes. The mirrored
   Swift/Kotlin corpus rejects missing, null, Boolean, numeric, array, uppercase,
-  duplicate-generation, unknown-field, and trailing-token mutations with
-  `mobile_web_activation_invalid`. Manifest and package-RPC schemas now share
-  one exact asset-path predicate. A mirrored TypeScript, Swift, and Kotlin
-  corpus rejects empty,
+  duplicate-generation, duplicate-key, unknown-field, and trailing-token
+  mutations with `mobile_web_activation_invalid`. Manifest and package-RPC
+  schemas now share one exact asset-path predicate. A mirrored TypeScript,
+  Swift, and Kotlin corpus rejects empty,
   absolute, traversal, repeated-separator, percent-encoded, query, fragment,
   backslash, non-ASCII, overlong, and trailing-newline paths while accepting
   only the reviewed relative form. Shared application SHA-256, Git object ID,
@@ -1577,7 +1577,11 @@ copy.
   rejects outside-root files, file and ancestor-directory symlinks,
   directories, and missing files with the requested stable error. Broader
   generated mutation, CSP behavior, and cache mutation/cleanup fuzzing remains
-  open.
+  open. Both native stores now preflight the primary manifest, canonical
+  manifest, and activation metadata with a single-document, unique-decoded-key,
+  32-level JSON grammar before platform parsing. Mirrored mutations reject
+  literal and escaped-equivalent duplicate keys, trailing tokens, malformed
+  scalars, and excess nesting.
 - [ ] Fuzz bridge envelopes, schemas, sizes, IDs, ordering, cancellation, and
       subscription lifecycle.
 - [ ] Attempt cross-host, cross-build, cross-workspace, and cross-session races.
@@ -2654,4 +2658,7 @@ and diff hygiene pass. A fresh production RNW build remains
 | 2026-07-28 | Complete | The mirrored two-valid/eleven-invalid activation corpus passes the iOS native fault executable and Android Debug unit/Release Kotlin gates. Full mobile validation remains 569 files / 3,378 tests with 2 expected skips; typechecks, lints, reliability, max-lines, formatting, diff hygiene, and unchanged `b17ead7a…` package verification pass.                                                                                     |
 | 2026-07-28 | Finding  | Persisted cache reads bounded allocation and verified hashes but still followed a symlinked file or ancestor directory. Both stores now require a regular descendant of the native cache root before opening any staged asset, manifest, activation record, or committed asset.                                                                                                                                                         |
 | 2026-07-28 | Complete | The mirrored cache-file corpus accepts an in-root regular file and rejects an outside-root file, file symlink, ancestor-directory symlink, directory, and missing file with the requested stable error. The iOS native fault executable, Android Debug unit/Release Kotlin gates, 569-file mobile suite, typechecks, lints, reliability, max-lines, formatting, diff hygiene, and unchanged `b17ead7a…` package verification pass.      |
+| 2026-07-28 | Finding  | Swift `JSONSerialization` collapsed duplicate object keys while Android rejected them, and Android's `JSONObject(String)` accepted trailing tokens. Deep remote JSON also had no pre-parser nesting ceiling. Primary/canonical manifests and activation metadata now pass one exact JSON grammar before platform parsing.                                                                                                               |
+| 2026-07-28 | Complete | Mirrored Swift/Kotlin corpora reject literal or escaped-equivalent duplicate keys, nested duplicates, trailing tokens, malformed scalars, and more than 32 nesting levels. Store-level primary/canonical-manifest and activation mutations fail before staging on both platforms.                                                                                                                                                       |
+| 2026-07-28 | Complete | Native Debug/Release gates, the 569-file mobile suite, typechecks, lints, reliability, max-lines, formatting, diff hygiene, and unchanged `b17ead7a…` package verification pass after exact JSON preflight.                                                                                                                                                                                                                             |
 | 2026-07-28 | Next     | Complete the remaining gated cutover cleanup, then execute the physical-device, topology, security, performance, packaged-release, and App Store gates.                                                                                                                                                                                                                                                                                 |

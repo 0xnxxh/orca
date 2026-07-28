@@ -207,8 +207,9 @@ skips. Mobile and mobile-web typechecks/lints, reliability, max-lines,
 formatting, diff hygiene, and the unchanged `b17ead7a…` package verification
 pass.
 Native activation metadata now consumes one exact object on both platforms.
-The mirrored two-valid/eleven-invalid corpus closes unknown fields, null and
-non-string hashes, identical active/previous generations, and trailing tokens.
+The mirrored two-valid/twelve-invalid corpus closes unknown fields, null and
+non-string hashes, identical active/previous generations, duplicate keys, and
+trailing tokens.
 The iOS native fault executable, Android Debug unit/Release Kotlin gates, and
 the same broader validation pass.
 Persisted native cache reads now require a regular descendant of the cache
@@ -216,6 +217,10 @@ root before opening staged assets, manifests, activation metadata, or committed
 assets. Mirrored Swift/Kotlin faults reject outside-root, symlinked,
 non-regular, and missing paths with a stable error. Mutation and cleanup fuzzing
 remains open below.
+Primary/canonical manifests and activation metadata now pass the same exact
+JSON grammar before platform parsing. Literal and escaped-equivalent duplicate
+keys, nested duplicates, trailing tokens, malformed scalars, and nesting beyond
+32 levels fail consistently in the mirrored native corpora.
 The remaining security work below is release-app corpus testing, fuzzing,
 cross-scope races, privacy/authorization audit, and independent review.
 
@@ -271,8 +276,11 @@ cross-scope races, privacy/authorization audit, and independent review.
       both platforms, with mirrored oversized-file faults and stable errors.
       Every cache read also rejects outside-root files, file or ancestor
       symlinks, directories, and missing files before opening bytes. A fresh
-      exact-app rerun, generated mutation, cache mutation/cleanup faults, and
-      the other listed boundaries remain.
+      exact-JSON preflight also rejects duplicate decoded keys, trailing
+      tokens, malformed scalars, and more than 32 nesting levels across primary
+      manifests, canonical manifests, and activation metadata. A fresh
+      exact-app rerun, further generated mutation, cache mutation/cleanup
+      faults, and the other listed boundaries remain.
 - [ ] Attempt cross-host, cross-build, cross-workspace, cross-session, replay,
       reconnect, process-loss, and host-removal races.
 - [ ] Verify no credential or privileged host identity reaches URLs, DOM state,

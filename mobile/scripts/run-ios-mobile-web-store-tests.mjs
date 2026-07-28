@@ -19,9 +19,11 @@ try {
     'swiftc',
     '-DMOBILE_WEB_PACKAGE_STORE_TESTING',
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebCacheStoragePolicy.swift'),
+    join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebExactJson.swift'),
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebActivationMetadata.swift'),
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebCacheFileBoundary.swift'),
     join(mobileRoot, 'packages/expo-mobile-web-shell/ios/MobileWebPackageStore.swift'),
+    join(mobileRoot, 'packages/expo-mobile-web-shell/ios-tests/MobileWebExactJsonTests.swift'),
     join(
       mobileRoot,
       'packages/expo-mobile-web-shell/ios-tests/MobileWebActivationMetadataTests.swift'

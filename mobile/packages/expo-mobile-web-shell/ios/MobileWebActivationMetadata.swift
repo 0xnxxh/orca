@@ -7,6 +7,8 @@ struct MobileWebActivationRecord: Codable, Equatable {
 
 func parseMobileWebActivationRecord(_ data: Data) -> MobileWebActivationRecord? {
   guard
+    let json = String(data: data, encoding: .utf8),
+    isExactMobileWebJsonDocument(json),
     let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
     Set(value.keys) == Set(["active"]) || Set(value.keys) == Set(["active", "previous"]),
     let active = value["active"] as? String,

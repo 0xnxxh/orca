@@ -27,6 +27,7 @@ enum MobileWebActivationMetadataTests {
       "{\"active\":\"\(active)\",\"previous\":true}",
       "{\"active\":\"\(active)\",\"previous\":\"\(active)\"}",
       "{\"active\":\"\(active)\",\"unexpected\":true}",
+      "{\"active\":\"\(active)\",\"active\":\"\(active)\"}",
       "{\"active\":\"\(active)\"} trailing",
     ]
     precondition(

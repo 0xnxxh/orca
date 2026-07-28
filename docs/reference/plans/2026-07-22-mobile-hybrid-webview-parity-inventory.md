@@ -527,7 +527,11 @@ shape/type/trailing-token corpus fails with
 `mobile_web_activation_invalid`. Persisted cache reads additionally require a
 regular descendant of the native cache root. The mirrored boundary corpus
 rejects outside-root, symlinked, non-regular, and missing inputs before any
-manifest, activation, or executable asset bytes are consumed.
+manifest, activation, or executable asset bytes are consumed. Primary and
+canonical manifests plus activation metadata also pass a bounded exact JSON
+grammar before native parsing. Duplicate decoded keys, trailing tokens,
+malformed scalars, and nesting beyond 32 levels fail consistently on both
+platforms.
 The standalone renderer-based workspace, session, files, terminal,
 source-control, and review presentation is also removed with its Vite-only
 package path. A production-source boundary requires `src/mobile-web/` to remain

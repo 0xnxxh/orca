@@ -10,6 +10,7 @@ internal data class MobileWebActivationRecord(
 
 internal fun parseMobileWebActivationRecord(json: String): MobileWebActivationRecord {
   val value = try {
+    require(isExactMobileWebJsonDocument(json))
     val tokens = JSONTokener(json)
     val candidate = tokens.nextValue()
     require(candidate is JSONObject && tokens.nextClean() == '\u0000')
