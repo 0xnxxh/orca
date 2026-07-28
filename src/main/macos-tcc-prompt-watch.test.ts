@@ -49,8 +49,15 @@ describe('parseTccPromptEvent', () => {
 })
 
 describe('isOrcaAttributedPrompt', () => {
-  it('accepts watched services across all three Orca build identities', () => {
-    for (const id of ['com.stablyai.orca', 'com.stablyai.orca.dev', 'com.stablyai.orca.local']) {
+  it('accepts the app and detached terminal helper across Orca build identities', () => {
+    for (const id of [
+      'com.stablyai.orca',
+      'com.stablyai.orca.helper',
+      'com.stablyai.orca.dev',
+      'com.stablyai.orca.dev.helper',
+      'com.stablyai.orca.local',
+      'com.stablyai.orca.local.helper'
+    ]) {
       expect(
         isOrcaAttributedPrompt({
           service: 'kTCCServiceSystemPolicyAppData',
@@ -156,6 +163,47 @@ describe('MacosTccPromptWatch', () => {
     watch.start()
     watch.stop()
     expect(killed).toEqual(['SIGTERM'])
+  })
+
+  it('restarts once after an unexpected termination without creating a retry loop', async () => {
+    const first = createFakeLogStream()
+    const second = createFakeLogStream()
+    const spawnLogStream = vi
+      .fn<() => LogStreamChild>()
+      .mockReturnValueOnce(first.child)
+      .mockReturnValueOnce(second.child)
+    const watch = new MacosTccPromptWatch({
+      onPrompt: vi.fn(),
+      spawnLogStream,
+      restartDelayMs: 0
+    })
+    watch.start()
+
+    first.child.emit('error', new Error('logd restarted'))
+    first.child.emit('exit', 1)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(spawnLogStream).toHaveBeenCalledTimes(2)
+
+    second.child.emit('exit', 1)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(spawnLogStream).toHaveBeenCalledTimes(2)
+    watch.stop()
+  })
+
+  it('cancels a pending restart when stopped', async () => {
+    const first = createFakeLogStream()
+    const spawnLogStream = vi.fn(() => first.child)
+    const watch = new MacosTccPromptWatch({
+      onPrompt: vi.fn(),
+      spawnLogStream,
+      restartDelayMs: 0
+    })
+    watch.start()
+    first.child.emit('exit', 1)
+    watch.stop()
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(spawnLogStream).toHaveBeenCalledOnce()
   })
 
   it('does not restart after stop, and survives a spawn failure', () => {

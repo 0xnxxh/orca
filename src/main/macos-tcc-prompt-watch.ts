@@ -17,11 +17,14 @@ export type LogStreamChild = ChildProcessByStdio<null, Readable, Readable>
  * (the overwhelming majority of TCC log traffic) do not emit it.
  */
 
-/** Why: prod, dev-wrapper, and local-package builds are separate TCC identities that all mean "Orca". */
+/** Why: terminals run from the detached helper, which TCC can hold responsible independently. */
 const ORCA_RESPONSIBLE_IDENTIFIERS = new Set([
   'com.stablyai.orca',
+  'com.stablyai.orca.helper',
   'com.stablyai.orca.dev',
-  'com.stablyai.orca.local'
+  'com.stablyai.orca.dev.helper',
+  'com.stablyai.orca.local',
+  'com.stablyai.orca.local.helper'
 ])
 
 /** Why: the prompt classes #9756 is about — other-apps' data plus the protected home folders agents sweep. */
@@ -81,6 +84,8 @@ export type TccPromptWatchOptions = {
   onPrompt: (event: TccPromptEvent) => void
   /** Injected in tests; defaults to spawning `log stream`. */
   spawnLogStream?: () => LogStreamChild
+  /** Injected in tests; production waits before its single recovery attempt. */
+  restartDelayMs?: number
 }
 
 function spawnDefaultLogStream(): LogStreamChild {
@@ -100,6 +105,8 @@ function spawnDefaultLogStream(): LogStreamChild {
 export class MacosTccPromptWatch {
   private child: LogStreamChild | null = null
   private reader: Interface | null = null
+  private restartTimer: ReturnType<typeof setTimeout> | null = null
+  private restartAttempted = false
   private stopped = false
 
   constructor(private readonly options: TccPromptWatchOptions) {}
@@ -118,14 +125,28 @@ export class MacosTccPromptWatch {
       return
     }
     this.child = child
-    child.on('error', () => this.stop())
-    child.on('exit', () => {
-      this.reader?.close()
-      this.reader = null
-      this.child = null
-    })
+    child.on('error', () => this.handleUnexpectedTermination(child))
+    child.on('exit', () => this.handleUnexpectedTermination(child))
     this.reader = createInterface({ input: child.stdout })
     this.reader.on('line', (line) => this.handleLine(line))
+  }
+
+  private handleUnexpectedTermination(child: LogStreamChild): void {
+    if (this.child !== child) {
+      return
+    }
+    this.reader?.close()
+    this.reader = null
+    this.child = null
+    if (this.stopped || this.restartAttempted) {
+      return
+    }
+    this.restartAttempted = true
+    // Why: recover one transient logd failure without respawning forever when logging is unavailable.
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null
+      this.start()
+    }, this.options.restartDelayMs ?? 1_000)
   }
 
   private handleLine(line: string): void {
@@ -138,6 +159,10 @@ export class MacosTccPromptWatch {
 
   stop(): void {
     this.stopped = true
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer)
+      this.restartTimer = null
+    }
     this.reader?.close()
     this.reader = null
     // Why: log stream ignores a closed stdout, so the child needs an explicit kill or it outlives quit.
