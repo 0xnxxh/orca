@@ -14,6 +14,9 @@ import { MacosTccPromptWatch } from './macos-tcc-prompt-watch'
 /** Why: one dialog is normal and two is bad luck; three means it is recurring for this user. */
 export const TCC_PROMPT_NOTICE_THRESHOLD = 3
 
+/** Why: preserve detection when Electron never emits `ready-to-show` without competing with startup. */
+export const TCC_PROMPT_WATCH_START_FALLBACK_MS = 10_000
+
 export const TCC_PROMPT_NOTICE_CHANNEL = 'macosTccPrompts:threshold'
 
 export type TccPromptNoticePayload = {
@@ -37,6 +40,8 @@ let mainWindowRef: BrowserWindow | null = null
 let watch: MacosTccPromptWatch | null = null
 let nextClaimId = 0
 let pendingClaim: { claimId: number; ownerToken: number } | null = null
+let deferredWatchStartTimer: ReturnType<typeof setTimeout> | null = null
+let deferredWatchStartGeneration = 0
 
 function tallyPath(): string {
   return join(getCanonicalUserDataPath(), 'macos-tcc-prompt-tally.json')
@@ -144,22 +149,40 @@ function sendTccPromptNotice(mainWindow: BrowserWindow, payload: TccPromptNotice
   }
 }
 
+function cancelDeferredWatchStart(): void {
+  deferredWatchStartGeneration += 1
+  if (deferredWatchStartTimer) {
+    clearTimeout(deferredWatchStartTimer)
+    deferredWatchStartTimer = null
+  }
+}
+
 function startWatchAfterFirstVisibleProgress(
   mainWindow: BrowserWindow,
   targetWatch: MacosTccPromptWatch,
   deferUntilReadyToShow: boolean
 ): void {
+  cancelDeferredWatchStart()
   if (!deferUntilReadyToShow) {
     targetWatch.start()
     return
   }
-  mainWindow.once('ready-to-show', () => {
+  const generation = deferredWatchStartGeneration
+  const startDeferredWatch = (): void => {
+    if (deferredWatchStartGeneration !== generation) {
+      return
+    }
+    cancelDeferredWatchStart()
+    const startGeneration = deferredWatchStartGeneration
     setImmediate(() => {
-      if (watch === targetWatch) {
+      if (deferredWatchStartGeneration === startGeneration && watch === targetWatch) {
         targetWatch.start()
       }
     })
-  })
+  }
+  mainWindow.once('ready-to-show', startDeferredWatch)
+  deferredWatchStartTimer = setTimeout(startDeferredWatch, TCC_PROMPT_WATCH_START_FALLBACK_MS)
+  deferredWatchStartTimer.unref?.()
 }
 
 export function initTccPromptNotice(
@@ -171,7 +194,11 @@ export function initTccPromptNotice(
   }
   if (watch) {
     trackMainWindow(mainWindow)
-    watch.start()
+    startWatchAfterFirstVisibleProgress(
+      mainWindow,
+      watch,
+      options?.deferWatchUntilReadyToShow === true
+    )
     return
   }
   tally = loadTally()
@@ -207,12 +234,14 @@ export function initTccPromptNotice(
 }
 
 export function stopTccPromptNotice(): void {
+  cancelDeferredWatchStart()
   watch?.stop()
   watch = null
   mainWindowRef = null
 }
 
 export function resetTccPromptNoticeForTests(): void {
+  cancelDeferredWatchStart()
   tally = { ...EMPTY_TALLY }
   watch = null
   mainWindowRef = null

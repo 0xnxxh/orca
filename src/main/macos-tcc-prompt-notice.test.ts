@@ -30,13 +30,15 @@ vi.mock('node:fs', async (importOriginal) => ({
 
 const {
   TCC_PROMPT_NOTICE_THRESHOLD,
+  TCC_PROMPT_WATCH_START_FALLBACK_MS,
   acknowledgePendingTccPromptNotice,
   consumePendingTccPromptNotice,
   dismissTccPromptNotice,
   handleTccPromptForTests,
   initTccPromptNotice,
   releasePendingTccPromptNotice,
-  resetTccPromptNoticeForTests
+  resetTccPromptNoticeForTests,
+  stopTccPromptNotice
 } = await import('./macos-tcc-prompt-notice')
 
 beforeEach(() => {
@@ -189,6 +191,58 @@ describe('tcc prompt notice threshold', () => {
     try {
       initTccPromptNotice(createWindowStub() as never)
       expect(watchStart).toHaveBeenCalledOnce()
+    } finally {
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
+  it('starts once from the fallback when ready-to-show never arrives', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    vi.useFakeTimers()
+    const mainWindow = createWindowStub()
+    try {
+      initTccPromptNotice(mainWindow as never, { deferWatchUntilReadyToShow: true })
+      await vi.advanceTimersByTimeAsync(TCC_PROMPT_WATCH_START_FALLBACK_MS)
+      await vi.runAllTimersAsync()
+
+      expect(watchStart).toHaveBeenCalledOnce()
+      const readyToShow = mainWindow.once.mock.calls.find(
+        ([event]) => event === 'ready-to-show'
+      )?.[1]
+      readyToShow?.()
+      await vi.runAllTimersAsync()
+      expect(watchStart).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+      Object.defineProperty(process, 'platform', platform!)
+    }
+  })
+
+  it('invalidates deferred starts across repeated init and stop', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'darwin' })
+    const oldWindow = createWindowStub()
+    const newWindow = createWindowStub()
+    try {
+      initTccPromptNotice(oldWindow as never, { deferWatchUntilReadyToShow: true })
+      const oldReady = oldWindow.once.mock.calls.find(([event]) => event === 'ready-to-show')?.[1]
+      initTccPromptNotice(newWindow as never, { deferWatchUntilReadyToShow: true })
+      const newReady = newWindow.once.mock.calls.find(([event]) => event === 'ready-to-show')?.[1]
+
+      oldReady?.()
+      await new Promise((resolve) => {
+        setImmediate(resolve)
+      })
+      expect(watchStart).not.toHaveBeenCalled()
+
+      stopTccPromptNotice()
+      newReady?.()
+      await new Promise((resolve) => {
+        setImmediate(resolve)
+      })
+      expect(watchStart).not.toHaveBeenCalled()
+      expect(watchStop).toHaveBeenCalledOnce()
     } finally {
       Object.defineProperty(process, 'platform', platform!)
     }
